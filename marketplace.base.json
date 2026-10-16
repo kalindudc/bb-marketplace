@@ -1,0 +1,14 @@
+{
+  "$schema": "https://getbb.app/schemas/marketplace-v2.schema.json",
+  "schemaVersion": 2,
+  "name": "kalindudc",
+  "displayName": "kalindudc",
+  "description": "bb plugins by Kalindu De Costa.",
+  "categories": [
+    {
+      "id": "thread-content",
+      "displayName": "Thread Content",
+      "description": "Change what people see or do inside an open thread."
+    }
+  ]
+}

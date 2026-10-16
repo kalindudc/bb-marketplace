@@ -1,0 +1,10 @@
+{
+  "name": "bb-marketplace",
+  "private": true,
+  "type": "module",
+  "description": "kalindudc's bb plugin marketplace.",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "check": "node scripts/build.mjs --check"
+  }
+}

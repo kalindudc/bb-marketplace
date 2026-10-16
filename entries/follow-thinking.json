@@ -1,0 +1,21 @@
+{
+  "id": "follow-thinking",
+  "displayName": "Follow Thinking",
+  "description": "Expands thinking blocks in threads automatically and keeps streaming thinking scrolled into view. Toggle it from the thread header.",
+  "icon": "AiBrain01",
+  "tags": ["thinking", "reasoning", "timeline", "auto-scroll"],
+  "author": {
+    "name": "Kalindu De Costa",
+    "github": "kalindudc"
+  },
+  "category": "thread-content",
+  "overview": "./plugins/follow-thinking/PLUGIN_OVERVIEW.md",
+  "source": {
+    "git": {
+      "url": "https://github.com/kalindudc/bb-marketplace.git",
+      "subdir": "plugins/follow-thinking",
+      "range": ">=0.1.0 <1.0.0",
+      "tagPrefix": "follow-thinking/"
+    }
+  }
+}
