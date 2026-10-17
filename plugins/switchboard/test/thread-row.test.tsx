@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, screen } from "@testing-library/react";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
@@ -43,6 +45,21 @@ describe("thread row", () => {
     expect(onToggle).toHaveBeenCalledWith("thread:t");
     fireEvent.click(screen.getByRole("button", { name: "Thread actions" }));
     expect(screen.getByRole("menuitem", { name: "Archive" })).toBeTruthy();
+    slot.unmount();
+  });
+
+  it("keeps the menu trigger laid out while its menu is open so the menu stays anchored", () => {
+    const { slot } = mount({}, { threadActions: () => [{ key: "bb--core/archive", pluginId: "bb--core", group: "thread",
+      action: { label: "Archive", icon: "Archive", run: async () => {} } }] });
+    const element = slot.container.querySelector<HTMLElement>("[data-sb-row]")!;
+    expect(element.hasAttribute("data-menu-open")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Thread actions" }));
+    expect(element.hasAttribute("data-menu-open")).toBe(true);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Archive" }));
+    expect(element.hasAttribute("data-menu-open")).toBe(false);
+    const css = readFileSync(join(process.cwd(), "src/switchboard.css"), "utf8");
+    const hover = css.slice(css.indexOf("@media (hover: hover)"));
+    expect(hover).toMatch(/\.sb-row\[data-menu-open\] \.sb-menu-trigger[^{]*\{ display: grid; \}/);
     slot.unmount();
   });
 

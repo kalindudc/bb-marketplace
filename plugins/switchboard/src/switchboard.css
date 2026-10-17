@@ -109,7 +109,7 @@
   display: flex; align-items: center; padding: 0 12px;
   border-radius: 8px; font-size: 11px;
 }
-.sb-row:hover::before, .sb-group-header:hover::before { background: var(--sidebar-accent); }
+.sb-row:hover::before, .sb-row[data-menu-open]::before, .sb-group-header:hover::before { background: var(--sidebar-accent); }
 .sb-row[data-active="true"]::before { background: var(--state-active); }
 .sb-row[data-selected="true"]::before { background: var(--surface-selected); }
 .sb-row[data-selected="true"]:hover::before {
@@ -196,9 +196,11 @@
 @media (pointer: coarse) { .sb-row { min-height: max(var(--sb-row-h), var(--bb-sidebar-row-height-coarse, 2.5rem)); } }
 @media (hover: hover) {
   .sb-quick-actions, .sb-menu-trigger { display: none; }
-  .sb-row:hover .sb-quick-actions { display: inline-flex; }
-  .sb-row:hover .sb-menu-trigger, .sb-row:focus-within .sb-menu-trigger { display: grid; }
-  .sb-row:hover .sb-age { display: none; }
+  /* The open menu is portalled outside the row and anchored to the trigger: hiding the
+     trigger once the pointer leaves the row collapses its rect and flings the menu to 0,0. */
+  .sb-row:hover .sb-quick-actions, .sb-row[data-menu-open] .sb-quick-actions { display: inline-flex; }
+  .sb-row:hover .sb-menu-trigger, .sb-row:focus-within .sb-menu-trigger, .sb-row[data-menu-open] .sb-menu-trigger { display: grid; }
+  .sb-row:hover .sb-age, .sb-row[data-menu-open] .sb-age { display: none; }
 }
 @media (hover: none) {
   .sb-quick-actions { display: none; }

@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 import type { DragController } from "./use-drag";
 import type { PluginSidebarThread, PluginThreadActionTarget } from "@get-bb/plugin-sdk/app";
 import {
@@ -60,6 +60,7 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
   drag, isSelected, selectedRun, isDragging, dropState, flash, onSelect, onKeyboardMove,
   variant = "tree", parentTitle, hue, stale, wakeLabel, onSnooze, onWake }: ThreadRowProps) {
   const { thread, state, depth, guides, isLast, childCount, collapsed, rollup, rollupCount } = row;
+  const [menuOpen, setMenuOpen] = useState(false);
   const split = experimental_useSidebarThreadSplit(thread.id);
   const navigate = useBbNavigate();
   const rowStatus = useSidebarThreadRowStatus(thread.id);
@@ -100,7 +101,7 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
     <div data-sb-row="" data-thread-id={thread.id} data-depth={depth} data-last-child={isLast}
       data-open-children={childCount > 0 && !collapsed} data-collapsed={collapsed}
       data-active={isActive} data-selected={isSelected} data-run={selectedRun}
-      data-dragging={isDragging} data-drop={dropState ?? undefined}
+      data-dragging={isDragging} data-drop={dropState ?? undefined} data-menu-open={menuOpen || undefined}
       className={`sb-row relative flex min-w-0 overflow-hidden text-sidebar-foreground ${stale ? "sb-stale" : ""} ${row.dim ? "opacity-60" : ""} ${flash ? "sb-flash" : ""}`}
       title={stale ? `Idle for ${Math.floor((now - lastActivity(thread)) / 86_400_000)} days` : undefined}
       style={{ paddingLeft: `calc(var(--sb-base) + ${variant === "tree" ? depth : 0} * var(--sb-indent))` }}>
@@ -172,7 +173,7 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
       {variant === "snoozed" && <button type="button" className="sb-control sb-text-button relative z-10 shrink-0 text-[11px] text-muted-foreground"
         onClick={onWake}>Wake</button>}
       {actions}
-      {withThreadActions && <ThreadActionsMenu thread={target} side="right" align="start"
+      {withThreadActions && <ThreadActionsMenu thread={target} side="right" align="start" onOpenChange={setMenuOpen}
         trigger={(triggerProps) => <button {...triggerProps} type="button" aria-label="Thread actions"
           className={`${triggerProps.className ?? ""} sb-control sb-menu-trigger sb-icon-button relative z-10 shrink-0 place-items-center text-muted-foreground`}>⋯</button>} />}
     </div>
