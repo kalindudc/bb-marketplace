@@ -1,0 +1,21 @@
+{
+  "id": "session-log",
+  "displayName": "Session Log",
+  "description": "Shows everything a thread's agent did as one flat, live, searchable log in the thread's side panel: messages, thinking, commands with output and exit codes, tool calls, diffs and subagents.",
+  "icon": { "url": "plugins/session-log/icons/logs.svg" },
+  "tags": ["timeline", "log", "tools", "search", "debugging"],
+  "author": {
+    "name": "Kalindu De Costa",
+    "github": "kalindudc"
+  },
+  "category": "thread-content",
+  "overview": "./plugins/session-log/PLUGIN_OVERVIEW.md",
+  "source": {
+    "git": {
+      "url": "https://github.com/kalindudc/bb-marketplace.git",
+      "subdir": "plugins/session-log",
+      "range": ">=0.1.0 <1.0.0",
+      "tagPrefix": "session-log/"
+    }
+  }
+}
