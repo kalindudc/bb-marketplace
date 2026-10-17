@@ -1,0 +1,21 @@
+{
+  "id": "switchboard",
+  "displayName": "Switchboard",
+  "description": "A sidebar thread list for many parallel agent threads: sections as coloured groups, children as trees, status at a glance, drag-and-drop organizing, status lanes and snooze.",
+  "icon": "Layers",
+  "tags": ["sidebar", "threads", "sections", "drag-and-drop", "status"],
+  "author": {
+    "name": "Kalindu De Costa",
+    "github": "kalindudc"
+  },
+  "category": "sidebar",
+  "overview": "./plugins/switchboard/PLUGIN_OVERVIEW.md",
+  "source": {
+    "git": {
+      "url": "https://github.com/kalindudc/bb-marketplace.git",
+      "subdir": "plugins/switchboard",
+      "range": ">=0.1.0 <1.0.0",
+      "tagPrefix": "switchboard/"
+    }
+  }
+}

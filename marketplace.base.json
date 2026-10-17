@@ -9,6 +9,11 @@
       "id": "thread-content",
       "displayName": "Thread Content",
       "description": "Change what people see or do inside an open thread."
+    },
+    {
+      "id": "sidebar",
+      "displayName": "Sidebar",
+      "description": "Change how threads are listed and organized in the sidebar."
     }
   ]
 }

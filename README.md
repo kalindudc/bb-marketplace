@@ -9,6 +9,7 @@ own setup.
 bb marketplace add git:github.com/kalindudc/bb-marketplace@main
 bb plugin install follow-thinking@kalindudc
 bb plugin install session-log@kalindudc
+bb plugin install switchboard@kalindudc
 bb plugin update follow-thinking     # after a new release is tagged
 ```
 
@@ -22,6 +23,7 @@ plugin store.
 |---|---|---|
 | [Follow Thinking](plugins/follow-thinking) | `follow-thinking` | Opens thinking blocks in the timeline automatically and keeps live thinking scrolled to its newest line. Toggle it from the thread header or the command palette. |
 | [Session Log](plugins/session-log) | `session-log` | Adds a thread side-panel tab with one flat, live, searchable log of everything the agent did: messages, thinking, commands with output and exit codes, tool calls, diffs and subagents. Open it with Mod+Shift+L. |
+| [Switchboard](plugins/switchboard) | `switchboard` | Replaces the sidebar thread list: your bb sections as coloured groups, children as trees, status at a glance, drag-and-drop organizing, status lanes and snooze. Choose it under Settings → Appearance → Sidebar. |
 
 ## Layout
 
