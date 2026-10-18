@@ -5,6 +5,8 @@ side-panel tab. Open it from the thread header or with Mod+Shift+L (Command
 on macOS, Control elsewhere). bb's Maximize pane button, at the top right of
 the panel, gives the log the whole window.
 
+![Session Log beside a thread: a new test, a failing test run, the fix as a diff, and a passing run](../../screenshots/session-log/side-panel.png)
+
 Incoming messages, steers and child reports start labeled dividers. The log
 then shows agent replies, thoughts, commands with output, exit codes and
 duration, tool calls, file diffs and subagent steps in bb's timeline order.
@@ -12,6 +14,8 @@ Replies stay visible in full; long outputs show their first and last lines,
 and failures open in full. Filters narrow to Messages, Thinking, Tools or
 Errors. The log follows new output until you scroll up or move to an older
 row with the keyboard; “↓ Latest” or `G` resumes it.
+
+![Session Log maximized to the whole window, with a follow-up message, the agent's thinking and file diffs](../../screenshots/session-log/full-window.png)
 
 ## Keys
 

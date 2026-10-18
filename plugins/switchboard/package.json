@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-switchboard",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "engines": {
@@ -11,7 +11,7 @@
     "name": "Switchboard",
     "description": "A sidebar thread list for many parallel agent threads: your bb sections as coloured groups, children as trees, and status at a glance.",
     "branding": {
-      "icon": "Layers"
+      "icon": "./icons/switchboard.svg"
     },
     "server": "./server.ts",
     "app": "./app.tsx"

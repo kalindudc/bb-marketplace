@@ -1,9 +1,14 @@
 {
   "id": "switchboard",
   "displayName": "Switchboard",
-  "description": "A sidebar thread list for many parallel agent threads: sections as coloured groups, children as trees, status at a glance, drag-and-drop organizing, status lanes and snooze.",
-  "icon": "Layers",
-  "tags": ["sidebar", "threads", "sections", "drag-and-drop", "status"],
+  "description": "See which agent threads failed, need you or are still running, grouped under your bb sections. Child threads nest under their parent across projects, and a collapsed parent still shows its most urgent child. A status-lanes view lists every awake thread under Failed, Needs you, Running, Unread or Idle. Drag threads to reorder, nest or move them between sections, and snooze a quiet family until tomorrow morning. Hover a row for the thread's model, context use, branch, uncommitted changes and pull request. Choose Switchboard under Settings → Appearance → Sidebar in each bb client.",
+  "icon": { "url": "plugins/switchboard/icons/switchboard.svg" },
+  "screenshots": [
+    "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/switchboard/sections.png",
+    "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/switchboard/hover-card.png",
+    "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/switchboard/status-lanes.png"
+  ],
+  "tags": ["sidebar", "threads", "sections", "status", "triage", "snooze", "drag-and-drop", "child-threads", "parallel-agents"],
   "author": {
     "name": "Kalindu De Costa",
     "github": "kalindudc"

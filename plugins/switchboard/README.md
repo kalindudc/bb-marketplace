@@ -2,6 +2,8 @@
 
 A bb sidebar thread list for supervising many parallel agent threads. It groups threads by your bb sections, shows children as trees and puts state at a glance. A status-lanes view, per-section sorting, stale fading and snooze help with triage.
 
+![Switchboard with Pinned, Checkout, Release 2.4, Search and Threads sections, failed, waiting and running threads, and a parent with two children](../../screenshots/switchboard/sections.png)
+
 ## Install and turn it on
 
 ```sh
@@ -19,6 +21,8 @@ Density choices are Compact (28 px), Comfortable (32 px) and Two lines (48 px). 
 
 Hover a row, or tab to it, to see an info card with the thread's model, context use, branch, changes and pull request. The Thread info card setting picks At a glance (the default), Briefing, which adds the first prompt and the latest reply, Full details, or Off. Cards never open on touch screens or in compact windows.
 
+![The Briefing info card for a parent thread: first prompt, latest reply, model, context use, branch, uncommitted changes and its children](../../screenshots/switchboard/hover-card.png)
+
 The Archive button beside the view switch shows or hides an **Archived** shelf at the end of the list. It lists archived threads, most recently archived first, follows the filter box, and loads older ones with **Show more**. Each row offers Unarchive and bb's thread menu; archived rows never appear in sections and take no jump shortcuts.
 
 ## Organize
@@ -30,6 +34,8 @@ Making a thread a child is a bb operation: bb tells the parent's agent, then del
 ## Triage
 
 Status lanes list each visible, awake thread once under its own state: Failed, Needs you, Running, Unread and Idle. Lanes sort by recent attention, unlike the stable sections view. Empty lanes are hidden, and a lane can be collapsed. Lanes have no drag or multi-selection. The optional Needs-you shelf repeats urgent threads above sections without duplicating bb's sidebar shortcuts.
+
+![The status-lanes view with Failed, Needs you, Running, Finished unread and Idle lanes, beside a thread waiting on a question](../../screenshots/switchboard/status-lanes.png)
 
 Each section and Threads can sort its roots By hand, Recent activity or Status; Pinned keeps bb's pin order and children keep their own order. Reorder drops and `Alt+↑/↓` are refused at a sorted section root, but nesting and dropping onto its header still work. A Sort glyph identifies sorted headers.
 
