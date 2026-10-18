@@ -177,11 +177,10 @@ describe("WorktreeList", () => {
     expect(slot.container.textContent).not.toContain("changed in more than one worktree");
   });
 
-  it("groups the rows by project, in tree order", () => {
+  it("groups the rows by project, in tree order, with archived rows in their own group at the end", () => {
     const { slot } = mountList();
-    const groups = [...slot.container.querySelectorAll("[data-worktree-group]")].map((node) => node.getAttribute("data-worktree-group"));
-    expect(groups).toEqual(["Project", "Other project"]);
-    expect(slot.container.querySelector('[data-worktree-group="Project"]')!.textContent).toContain("Project · 5 workspaces");
+    const groups = [...slot.container.querySelectorAll("[data-worktree-group]")].map((node) => node.textContent);
+    expect(groups).toEqual(["Project · 4 workspaces", "Other project · 1 worktree", "Archived · Project · 1 archived branch"]);
   });
 
   it("names the machine in the group only when the tree spans more than one", () => {
@@ -984,18 +983,17 @@ describe("Vantage panel: the instant outline and archived threads", () => {
     expect(overview.mock.calls[0]?.[0]).toEqual({ target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
   });
 
-  it("has a 'Show archived' toggle with a hint, pressed by default, that hides them and is remembered", async () => {
+  it("has an 'Include archived' checkbox, ticked by default, that leaves them out and is remembered", async () => {
     const first = await mountPanel();
     await first.slot.findByText("Child A (live)");
-    const toggle = first.slot.getByRole("button", { name: /Show archived/ });
-    expect(toggle.getAttribute("aria-pressed")).toBe("true");
-    expect(toggle.querySelector("[data-icon='Archive']")).not.toBeNull();
+    const toggle = first.slot.getByRole("checkbox", { name: "Include archived (1)" }) as HTMLInputElement;
+    expect(toggle.checked).toBe(true);
     fireEvent.click(toggle);
     expect(window.localStorage.getItem("bb-plugin-vantage:panel-archived")).toBe("false");
     await waitFor(() => expect(first.overview).toHaveBeenCalledTimes(2));
     expect(first.overview.mock.calls[1]?.[0]).toMatchObject({ includeArchived: false });
     expect(first.shell.mock.calls[1]?.[0]).toMatchObject({ includeArchived: false });
-    expect(first.slot.getByRole("button", { name: /Show archived/ }).getAttribute("aria-pressed")).toBe("false");
+    expect((first.slot.getByRole("checkbox", { name: /Include archived/ }) as HTMLInputElement).checked).toBe(false);
     first.slot.lifecycle.unmount();
     const second = await mountPanel();
     await waitFor(() => expect(second.overview).toHaveBeenCalled());
@@ -1006,13 +1004,29 @@ describe("Vantage panel: the instant outline and archived threads", () => {
     window.localStorage.setItem("bb-plugin-vantage:panel-archived", "false");
     const { slot } = await mountPanel({ overview: () => sampleOverview({ archivedHidden: 2 }) });
     await slot.findByText("Child A (live)");
-    expect(slot.getByRole("button", { name: "Show archived (2)" }).getAttribute("aria-pressed")).toBe("false");
+    expect((slot.getByRole("checkbox", { name: "Include archived (2)" }) as HTMLInputElement).checked).toBe(false);
   });
 
   it("shows the hint for the toggle on hover", async () => {
     const { slot } = await mountPanel();
     await slot.findByText("Child A (live)");
-    fireEvent.pointerMove(slot.getByRole("button", { name: /Show archived/ }), { pointerType: "mouse" });
-    expect((await within(document.body).findByRole("tooltip")).textContent).toBe("Include archived threads and their kept branches");
+    fireEvent.pointerMove(slot.getByText(/Include archived/).closest("label")!, { pointerType: "mouse" });
+    expect((await within(document.body).findByRole("tooltip")).textContent).toBe("Add archived threads and their kept branches below the active ones");
+  });
+
+  it("puts archived workspaces in their own groups after every active group", async () => {
+    const { slot } = await mountPanel();
+    await slot.findByText("Child A (live)");
+    const rows = [...slot.container.querySelectorAll("[data-worktree-row]")].map((row) => row.getAttribute("data-worktree-row"));
+    expect(rows.at(-1)).toBe("wt3");
+    const headings = [...slot.container.querySelectorAll("[data-worktree-group]")].map((heading) => heading.textContent ?? "");
+    expect(headings.at(-1)).toMatch(/^Archived · /);
+    expect(headings.slice(0, -1).every((heading) => !heading.startsWith("Archived"))).toBe(true);
+  });
+
+  it("says how many archived workspaces are in view, and lists them after the active ones", async () => {
+    const { slot } = await mountPanel();
+    await slot.findByText("Child A (live)");
+    expect(slot.container.textContent).toContain("6 workspaces · 1 running · 1 needs you · 1 failed · 1 archived");
   });
 });

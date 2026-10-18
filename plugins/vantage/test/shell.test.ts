@@ -145,6 +145,33 @@ describe("buildShell", () => {
     expect(shown.worktrees).toHaveLength(2);
   });
 
+  it("lists the rows of archived threads after the active ones, in the outline and in the full result", async () => {
+    const now = Date.now();
+    const threads = [
+      makeThreadResponse({ id: "thr_live", environmentId: "env_1", updatedAt: now - 5 * 3_600_000 }),
+      makeThreadResponse({ id: "thr_done", environmentId: "env_2", updatedAt: now - 60_000, archivedAt: now - 60_000 }),
+    ];
+    const environments = [environment(), environment({ id: "env_2", path: "/work/two" })];
+    const { deps, sdk } = setup({ threads, environments, archived: [threads[1]!] });
+    const outline = await buildShell(deps, { target: { kind: "all" }, includeArchived: true });
+    expect(outline.worktrees.map((entry) => entry.key)).toEqual(["host_1:/work/one", "host_1:/work/two"]);
+    expect(outline.repos.map((entry) => entry.key)).toEqual(["host_1:/work/one", "host_1:/work/two"]);
+    sdk.environments.status.mockImplementation((async () => ({
+      outcome: "available",
+      workspace: {
+        branch: { currentBranch: "feature/work", defaultBranch: "main" },
+        checkout: { kind: "branch", branchName: "feature/work", headSha: null },
+        mergeBase: null,
+        workingTree: { deletions: 0, fileCount: 0, files: [], hasUncommittedChanges: false, insertions: 0, lineStatsComplete: true, state: "clean" },
+      },
+    })) as never);
+    deps.edits = { get: vi.fn(async () => ({ records: [], primaryCwd: null })), forget: vi.fn() } as unknown as CollectDeps["edits"];
+    deps.host = (async () => ({ results: [] })) as unknown as HostCall;
+    const full = await buildOverview(deps, { target: { kind: "all" }, scope: "uncommitted", includeArchived: true });
+    expect(full.worktrees.map((entry) => entry.key)).toEqual(["host_1:/work/one", "host_1:/work/two"]);
+    expect(full.repos.map((entry) => entry.key)).toEqual(["host_1:/work/one", "host_1:/work/two"]);
+  });
+
   it("builds the shell of every thread, with the window", async () => {
     const { deps } = setup({ threads: [makeThreadResponse({ id: "thr_1", environmentId: "env_1", updatedAt: Date.now() - 3_600_000 })] });
     const overview = await buildShell(deps, { target: { kind: "all" }, includeArchived: false });

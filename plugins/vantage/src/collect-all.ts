@@ -67,8 +67,10 @@ export async function collectAll(
   const archivedInWindow = (await listAll(sdk, true, MAX_ARCHIVED_SCANNED, signal))
     .filter((thread) => thread.archivedAt !== null && thread.archivedAt >= cutoff);
   const archived = options.includeArchived ? archivedInWindow : [];
-  const matched = [...new Map([...active, ...archived].map((thread) => [thread.id, thread])).values()]
-    .sort((a, b) => b.updatedAt - a.updatedAt || (a.id < b.id ? -1 : 1));
+  const newestFirst = (a: Listed, b: Listed): number => b.updatedAt - a.updatedAt || (a.id < b.id ? -1 : 1);
+  const activeIds = new Set(active.map((thread) => thread.id));
+  // Active threads come first under the limit, so including archived ones can never push an active thread off the page.
+  const matched = [...active.sort(newestFirst), ...archived.filter((thread) => !activeIds.has(thread.id)).sort(newestFirst)];
   const kept = matched.slice(0, options.maxThreads);
 
   const byId = new Map(kept.map((thread) => [thread.id, thread]));

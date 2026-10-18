@@ -4,7 +4,7 @@ import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import type { Overview, OverviewInput, PatchRequest, ShellInput, rpcContract } from "../src/contract";
 import { clearFileCache } from "../src/file-row";
-import { allOverview, partialOverview, sharedFile, sidebarThread } from "./fixtures";
+import { allOverview, branchRepo, branchWorktree, fileChange, overview, partialOverview, sharedFile, sidebarThread, threadSummary } from "./fixtures";
 
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { error: vi.fn() }) }));
 
@@ -516,20 +516,21 @@ describe("Vantage page: the instant outline", () => {
 
 describe("Vantage page: archived threads", () => {
   const ARCHIVED_KEY = "bb-plugin-vantage:page-archived";
+  const HINT = "Add archived threads and their kept branches below the active ones";
   const withHidden = (input: OverviewInput) => allOverview({ archivedHidden: input.includeArchived ? 0 : 2 });
 
-  it("starts without archived threads and offers 'Show archived (2)' to bring them back", async () => {
+  it("starts without archived threads and offers an unticked 'Include archived (2)' checkbox to add them", async () => {
     const { slot } = await mount("", { overview: withHidden });
     await loaded(slot);
-    const toggle = slot.getByRole("button", { name: "Show archived (2)" });
-    expect(toggle.getAttribute("aria-pressed")).toBe("false");
-    expect(toggle.querySelector("[data-icon='Archive']")).not.toBeNull();
+    const toggle = slot.getByRole("checkbox", { name: "Include archived (2)" }) as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+    expect(slot.queryByRole("button", { name: /Show archived/ })).toBeNull();
   });
 
   it("sits after 'With changes only' in the toolbar", async () => {
     const { slot } = await mount("", { overview: withHidden });
     await loaded(slot);
-    const toggle = slot.getByRole("button", { name: /Show archived/ });
+    const toggle = slot.getByRole("checkbox", { name: /Include archived/ });
     const changesOnly = slot.getByLabelText("With changes only");
     expect(changesOnly.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
@@ -537,11 +538,11 @@ describe("Vantage page: archived threads", () => {
   it("reloads with archived threads included when clicked, remembers the choice, and keeps it for the next visit", async () => {
     const { slot, overview, shell } = await mount("", { overview: withHidden });
     await loaded(slot);
-    fireEvent.click(slot.getByRole("button", { name: "Show archived (2)" }));
+    fireEvent.click(slot.getByRole("checkbox", { name: "Include archived (2)" }));
     expect(window.localStorage.getItem(ARCHIVED_KEY)).toBe("true");
     await waitFor(() => expect(overview.mock.calls.at(-1)?.[0]).toEqual({ target: { kind: "all" }, scope: "uncommitted", includeArchived: true }));
     expect(shell.mock.calls.at(-1)?.[0]).toEqual({ target: { kind: "all" }, includeArchived: true });
-    await waitFor(() => expect(slot.getByRole("button", { name: "Show archived" }).getAttribute("aria-pressed")).toBe("true"));
+    await waitFor(() => expect((slot.getByRole("checkbox", { name: /Include archived/ }) as HTMLInputElement).checked).toBe(true));
     slot.lifecycle.unmount();
     const again = await mount("", { overview: withHidden });
     expect(again.overview.mock.calls[0]?.[0]).toEqual({ target: { kind: "all" }, scope: "uncommitted", includeArchived: true });
@@ -551,7 +552,7 @@ describe("Vantage page: archived threads", () => {
     window.localStorage.setItem(ARCHIVED_KEY, "true");
     const { slot, overview } = await mount("", { overview: withHidden });
     await loaded(slot);
-    fireEvent.click(slot.getByRole("button", { name: "Show archived" }));
+    fireEvent.click(slot.getByRole("checkbox", { name: /Include archived/ }));
     expect(window.localStorage.getItem(ARCHIVED_KEY)).toBe("false");
     await waitFor(() => expect(overview.mock.calls.at(-1)?.[0]).toMatchObject({ includeArchived: false }));
   });
@@ -559,8 +560,30 @@ describe("Vantage page: archived threads", () => {
   it("explains the toggle in a hint", async () => {
     const { slot } = await mount("", { overview: withHidden });
     await loaded(slot);
-    fireEvent.pointerMove(slot.getByRole("button", { name: /Show archived/ }), { pointerType: "mouse" });
-    expect((await within(document.body).findByRole("tooltip")).textContent).toBe("Include archived threads and their kept branches");
+    fireEvent.pointerMove(slot.getByText(/Include archived/).closest("label")!, { pointerType: "mouse" });
+    expect((await within(document.body).findByRole("tooltip")).textContent).toBe(HINT);
+  });
+
+  it("while archived rows are still loading, shows one placeholder for them instead of rows that may vanish", async () => {
+    const base = allOverview();
+    const gone = threadSummary({ id: "thr_gone", title: "Old work", archived: true, environmentId: "env_9", rootThreadId: "thr_gone" });
+    const pending = branchWorktree({ key: "k_gone", label: "Shop", projectId: "proj_shop", threadIds: ["thr_gone"], state: "loading", committed: [] });
+    const { slot } = await mount("", { overview: () => overview({ ...base, threads: [...base.threads, gone], worktrees: [...base.worktrees, pending] }) });
+    await loaded(slot);
+    expect(slot.container.querySelector("[data-worktree-row='k_gone']")).toBeNull();
+    expect(slot.getByRole("status", { name: "Loading archived threads" })).toBeTruthy();
+  });
+
+  it("lists archived repositories in their own project groups after every active group", async () => {
+    window.localStorage.setItem(ARCHIVED_KEY, "true");
+    const base = allOverview();
+    const gone = threadSummary({ id: "thr_gone", title: "Old work", archived: true, environmentId: "env_9", rootThreadId: "thr_gone" });
+    const kept = branchRepo({ key: "r_gone", label: "Shop", projectId: "proj_shop", threadIds: ["thr_gone"], files: [fileChange({ path: "old.ts" })] });
+    const { slot } = await mount("repositories", { overview: () => overview({ ...base, threads: [...base.threads, gone], repos: [...base.repos, kept] }) });
+    await loaded(slot);
+    const headings = [...slot.container.querySelectorAll("[data-project-group]")].map((node) => node.textContent ?? "");
+    expect(headings.at(-1)).toMatch(/^Archived · Shop · 1 repo/);
+    expect(headings.slice(0, -1).every((heading) => !heading.startsWith("Archived"))).toBe(true);
   });
 
   it("applies to a thread's tree on the page too, and leaves the side tab's own choice alone", async () => {

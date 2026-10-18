@@ -8,6 +8,7 @@ import { EditsSkeleton, Skeleton, SkeletonRows } from "./skeleton";
 import { Hint } from "./hint";
 import { formatRoute } from "./route";
 import { createArchivedPreference } from "./archived-preference";
+import { ArchivedToggle } from "./archived-toggle";
 import { createVantageStore, type VantageSnapshot, type VantageStore } from "./store";
 import { createViewPreference, type VantageView } from "./view-preference";
 import { WorktreeDetail, type WorktreeDetailProps } from "./worktree-detail";
@@ -205,13 +206,7 @@ export function VantagePanel({ threadId }: PluginThreadPanelProps) {
               <Icon name="Maximize2" className="size-3.5" aria-hidden />
             </button>
           </Hint>
-          <Hint label="Include archived threads and their kept branches">
-            <button type="button" aria-pressed={includeArchived} onClick={() => archivedPreference.set(!includeArchived)}
-              className={`inline-flex shrink-0 cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-xs hover:bg-state-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${includeArchived ? "bg-surface-selected text-foreground" : "text-muted-foreground"}`}>
-              <Icon name="Archive" className="size-3.5" aria-hidden />
-              {!includeArchived && overview !== null && overview.archivedHidden > 0 ? `Show archived (${overview.archivedHidden})` : "Show archived"}
-            </button>
-          </Hint>
+          <ArchivedToggle overview={overview} included={includeArchived} onChange={(next) => archivedPreference.set(next)} />
           <button type="button" aria-label="Refresh" title="Refresh" onClick={() => store?.refresh({ hard: true })}
             className="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-foreground">
             <Icon name="Refresh" className={`size-3.5 ${snapshot.refreshing ? "animate-spin" : ""}`} aria-hidden />

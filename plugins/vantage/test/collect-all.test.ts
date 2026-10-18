@@ -160,6 +160,16 @@ describe("collectAll with archived threads hidden", () => {
     expect([...environments.keys()]).toEqual(["env_live"]);
   });
 
+  it("keeps every active thread ahead of archived ones under the thread limit, however recent the archived ones are", async () => {
+    const { deps } = setup(
+      [thread("live-old", { updatedAt: NOW - 20 * HOUR }), thread("live-new", { updatedAt: NOW - 2 * HOUR })],
+      [archivedThread("a1"), archivedThread("a2")].map((entry) => ({ ...entry, updatedAt: NOW - 1000 })),
+    );
+    const { threads, truncated } = await run(deps, { includeArchived: true, maxThreads: 3 });
+    expect(threads.map((entry) => entry.id)).toEqual(["live-new", "live-old", "a1"]);
+    expect(truncated).toBe(true);
+  });
+
   it("does not let hidden threads use up the thread limit", async () => {
     const { deps } = setup([thread("live")], [archivedThread("a1"), archivedThread("a2")]);
     const { threads, truncated } = await run(deps, { includeArchived: false, maxThreads: 1 });

@@ -9,7 +9,7 @@ See how every agent's worktree is doing, open any one of them to read its diffs,
 - Terminal here opens a shell in the worktree's folder. Open thread opens the child, and bb's own thread menu offers stop, archive and the rest. The keys [ and ] step between worktrees and Escape goes back.
 - The Repositories view groups everything the thread tree changed by repository: thread workspaces, other checkouts agents edited by path, archived children's branches, and recorded edits for files outside any repository.
 - A full-screen Vantage page in bb's left navigation covers every thread active in the last 24 hours, plus anything running and threads archived in that time. The worktree list sits on the left, grouped by project, and the selected worktree's changes, commits, chat and terminal sit on the right. Filter by project, by text, or to worktrees with changes only. Every view has its own address, so back and forward work. "Open full screen" in a thread's tab opens the page for just that thread's tree.
-- Both views paint every row at once and fill in the git numbers as they arrive. The page starts without archived threads; "Show archived" brings them back, and the side tab shows them by default.
+- Both views paint every row at once and fill in the git numbers as they arrive. The page starts without archived threads; ticking "Include archived" adds them below the active ones without touching the active rows, and the side tab includes them by default.
 
 ## For agents
 

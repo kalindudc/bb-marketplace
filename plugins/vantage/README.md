@@ -22,7 +22,7 @@ this device.
 
 ## The Worktrees view
 
-![The Vantage tab beside a parent thread: four storefront worktrees, an API worktree and an archived docs branch, each with branch, commits ahead and behind and uncommitted files, a warning that README.md changed in two worktrees, and a docs repository edited by path](../../screenshots/vantage/side-panel.png)
+![The Vantage tab beside a parent thread: four storefront worktrees and an API worktree, each with branch, commits ahead and behind and uncommitted files, an archived docs branch in its own Archived group below them, a warning that README.md changed in two worktrees, and a docs repository edited by path](../../screenshots/vantage/side-panel.png)
 
 
 This is the default. It lists one row for each workspace in the thread tree:
@@ -57,7 +57,7 @@ Click a row to open that worktree inside the parent's panel:
 
 ## The Repositories view
 
-![The Repositories view on the full-screen page: the API workspace, the docs repository an agent edited by path with its diff, and an archived child's kept branch with its new file](../../screenshots/vantage/repositories.png)
+![The Repositories view on the full-screen page, filtered to the docs project with archived threads included: the docs repository an agent edited by path with its diff, and an archived child's kept branch with its new file in its own Archived group](../../screenshots/vantage/repositories.png)
 
 
 A toolbar with a summary ("3 repos · 12 files · +120 −30 · 5 threads"), a scope
@@ -169,12 +169,20 @@ agent's edit, the 60-second refresh, the Refresh button) ask for the overview
 only. A failed outline is ignored; a failed overview shows the usual error.
 
 **Archived threads.** Most of a busy page is finished work, so the full-screen
-page starts without archived threads and their kept branches. The toolbar's
-**Show archived (N)** button, after "With changes only", brings them back; N is
-how many were left out. The side tab is about one tree's children, so it shows
-archived children by default and has the same button. Each choice is
+page starts without archived threads and their kept branches. Tick
+**Include archived (N)**, after "With changes only", to add them; N is how many
+were left out, or how many are in view once ticked. Archived rows get their
+own groups, headed "Archived · <project>", after every active group, and the
+summary line says how many are showing, such as "6 workspaces · … · 1 archived".
+Switching keeps every active row and its numbers on screen: archived rows
+appear below them, or disappear, while the rest reloads. With "With changes
+only" ticked, archived rows whose changes are still being read wait behind one
+"Loading archived threads…" placeholder, so rows with nothing changed never
+flash up and vanish. Active threads always come first under the
+thread limit. The side tab is about one tree's children, so it includes
+archived children by default and has the same checkbox. Each choice is
 remembered on this device (`bb-plugin-vantage:page-archived` and
-`bb-plugin-vantage:panel-archived`), and changing it reloads at once.
+`bb-plugin-vantage:panel-archived`).
 
 **What makes it faster.** A workspace's git status is read once and feeds both
 the worktree row and the Repositories view; bb's diff call is used only for the
@@ -321,6 +329,11 @@ nothing on disk.
 
 ## Changes
 
+- **0.3.1**: "Show archived" becomes an "Include archived (N)" checkbox;
+  switching it keeps the active rows and their numbers on screen and adds or
+  removes only archived rows, which are listed after the active ones; the
+  summary line counts archived workspaces; active threads come first under
+  the thread limit.
 - **0.3.0**: the side tab and the page paint worktree rows and repository
   headers at once from a quick `shell` request, with placeholders for the git
   numbers; the full-screen page hides archived threads until "Show archived"

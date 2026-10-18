@@ -5,7 +5,8 @@ import {
   type PluginSidebarThread, type PluginSidebarThreadIndicator,
 } from "@get-bb/plugin-sdk/app";
 import type { Overview, SharedFile, ThreadSummary, Worktree } from "./contract";
-import { EditsSkeleton, Skeleton } from "./skeleton";
+import { ArchivedSkeleton, EditsSkeleton, Skeleton } from "./skeleton";
+import { countArchived, isArchivedOnly } from "./archived";
 import { primaryThreadId } from "./worktrees";
 
 export { primaryThreadId };
@@ -202,7 +203,7 @@ function SharedBanner({ files, titles }: { files: readonly SharedFile[]; titles:
   );
 }
 
-function GroupHeading({ group, children, icon }: { group?: string; children: string; icon: "FolderGit" | "Folder" }) {
+function GroupHeading({ group, children, icon }: { group?: string; children: string; icon: "FolderGit" | "Folder" | "Archive" }) {
   return (
     <h3 data-worktree-group={group} className="flex items-center gap-1.5 px-3 pb-1 pt-3.5 text-[10.5px] font-semibold uppercase tracking-wider text-subtle-foreground">
       <Icon name={icon} className="size-3" aria-hidden />
@@ -259,6 +260,7 @@ export function WorktreeList({
     for (const file of overview.sharedFiles) for (const key of file.worktreeKeys) counts.set(key, (counts.get(key) ?? 0) + 1);
     return counts;
   }, [overview.sharedFiles]);
+  const archived = countArchived(worktrees, overview.threads);
   const shownKeys = new Set(worktrees.map((worktree) => worktree.key));
   // The files two worktrees share are only known once every worktree's files are.
   const sharedFiles = overview.partial ? [] : overview.sharedFiles.filter((file) => file.worktreeKeys.some((key) => shownKeys.has(key)));
@@ -270,12 +272,18 @@ export function WorktreeList({
     return titleOf(summary.rootThreadId);
   };
 
-  const groups: Array<{ label: string; hostName: string; items: Worktree[] }> = [];
+  // Archived rows get their own groups after every active group, so including them never moves an active row.
+  const groups: Array<{ label: string; hostName: string; archived: boolean; items: Worktree[] }> = [];
   for (const worktree of worktrees) {
-    let group = groups.find((entry) => entry.label === worktree.label && entry.hostName === worktree.hostName);
-    if (group === undefined) groups.push(group = { label: worktree.label, hostName: worktree.hostName, items: [] });
+    const archivedRow = isArchivedOnly(worktree, threads);
+    let group = groups.find((entry) => entry.label === worktree.label && entry.hostName === worktree.hostName && entry.archived === archivedRow);
+    if (group === undefined) groups.push(group = { label: worktree.label, hostName: worktree.hostName, archived: archivedRow, items: [] });
     group.items.push(worktree);
   }
+  groups.sort((a, b) => Number(a.archived) - Number(b.archived));
+  // Rows added by "Include archived" that are still loading and were held back by "With changes only".
+  const archivedPending = !overview.partial && overview.worktrees.some((worktree) =>
+    worktree.state === "loading" && !shownKeys.has(worktree.key) && isArchivedOnly(worktree, threads));
   const severalMachines = new Set(worktrees.map((worktree) => worktree.hostId)).size > 1;
   const checkouts = overview.repos.filter((repo) => repo.ref.kind === "checkout");
   const outside = overview.partial || checkouts.length > 0 || overview.otherFiles.length > 0;
@@ -289,6 +297,7 @@ export function WorktreeList({
           : showSummary && (
             <p className="px-3.5 pt-2.5 text-xs text-muted-foreground">
               {plural(worktrees.length, "workspace")} · {tally.running} running · {tally.needs} {tally.needs === 1 ? "needs" : "need"} you · {tally.failed} failed
+              {archived > 0 && ` · ${archived} archived`}
             </p>
           )}
       {sharedFiles.length > 0 && (
@@ -298,9 +307,9 @@ export function WorktreeList({
         const first = group.items[0]!;
         const noun = group.items.length === 1 ? (first.kind === "branch" ? "archived branch" : "worktree") : "workspaces";
         return (
-          <section key={`${group.label}\0${group.hostName}`}>
-            <GroupHeading group={group.label} icon="FolderGit">
-              {`${group.label} · ${group.items.length} ${noun}${severalMachines ? ` · ${group.hostName}` : ""}`}
+          <section key={`${group.archived ? "archived" : "active"}\0${group.label}\0${group.hostName}`}>
+            <GroupHeading group={group.label} icon={group.archived ? "Archive" : "FolderGit"}>
+              {`${group.archived ? "Archived · " : ""}${group.label} · ${group.items.length} ${noun}${severalMachines ? ` · ${group.hostName}` : ""}`}
             </GroupHeading>
             {group.items.map((worktree) => (
               <WorktreeRow key={worktree.key} worktree={worktree} currentThreadId={currentThreadId} selected={worktree.key === selectedKey}
@@ -310,6 +319,12 @@ export function WorktreeList({
           </section>
         );
       })}
+      {archivedPending && (
+        <section>
+          {!groups.some((group) => group.archived) && <GroupHeading icon="Archive">Archived</GroupHeading>}
+          <ArchivedSkeleton />
+        </section>
+      )}
       {outside && (
         <section>
           <GroupHeading icon="Folder">Changed outside worktrees</GroupHeading>

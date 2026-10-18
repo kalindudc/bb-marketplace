@@ -85,6 +85,24 @@ describe("filterWorktrees", () => {
   });
 });
 
+describe("loading rows with changes only", () => {
+  const loadingWorktree = branchWorktree({ key: "wt9", threadIds: ["thr_4"], state: "loading", committed: [] });
+  const loadingRepo = repo({ key: "r9", threadIds: ["thr_4"], state: "loading", files: [] });
+
+  it("keeps them in the first outline, which has no numbers yet for any row", () => {
+    const partial = makeOverview({ partial: true, threads: sample.threads, worktrees: [loadingWorktree], repos: [loadingRepo] });
+    expect(keys(filterWorktrees(partial, filter()))).toEqual(["wt9"]);
+    expect(keys(filterRepos(partial, filter()).repos)).toEqual(["r9"]);
+  });
+
+  it("holds them back once the other rows have numbers, until their own changes are known", () => {
+    const merged = makeOverview({ threads: sample.threads, worktrees: [...sample.worktrees, loadingWorktree], repos: [...sample.repos, loadingRepo] });
+    expect(keys(filterWorktrees(merged, filter()))).not.toContain("wt9");
+    expect(keys(filterRepos(merged, filter()).repos)).not.toContain("r9");
+    expect(keys(filterWorktrees(merged, everything))).toContain("wt9");
+  });
+});
+
 describe("filterRepos", () => {
   it("shows every repository and the other files when nothing is filtered", () => {
     const shown = filterRepos(sample, everything);

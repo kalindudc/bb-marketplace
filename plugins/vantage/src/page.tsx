@@ -7,9 +7,10 @@ import type { FileChange, Overview, Repo, Scope, rpcContract } from "./contract"
 import { fileKey, FileRow } from "./file-row";
 import { createLimiter } from "./limit";
 import { RepoSection } from "./repo-section";
-import { EditsSkeleton, Skeleton, SkeletonRows } from "./skeleton";
-import { Hint } from "./hint";
+import { ArchivedSkeleton, EditsSkeleton, Skeleton, SkeletonRows } from "./skeleton";
 import { createArchivedPreference } from "./archived-preference";
+import { ArchivedToggle } from "./archived-toggle";
+import { countArchived, isArchivedOnly } from "./archived";
 import { formatRoute, parseRoute, type PageRoute, type PageView } from "./route";
 import { createVantageStore, type VantageSnapshot, type VantageStore } from "./store";
 import { WorktreeDetail, type WorktreeDetailProps } from "./worktree-detail";
@@ -78,9 +79,11 @@ function WorktreeSummary({ overview, worktrees }: { overview: Overview; worktree
   const files = worktrees.reduce((sum, worktree) => sum + worktree.uncommitted.length + worktree.committed.length, 0);
   const lines = worktrees.map(lineCounts);
   const projects = new Set(worktrees.map((worktree) => worktree.projectId)).size;
+  const archived = countArchived(worktrees, overview.threads);
   return (
     <span data-page-summary className="text-xs text-muted-foreground">
       {plural(worktrees.length, "workspace")} · {tally.running} running · {tally.needs} {tally.needs === 1 ? "needs" : "need"} you · {tally.failed} failed ·{" "}
+      {archived > 0 && `${archived} archived · `}
       {overview.partial
         ? <Skeleton className="h-3 w-24 align-middle" />
         : (
@@ -272,14 +275,24 @@ function VantageScreen({ subPath }: PluginNavPanelProps) {
       onOpen={select} onShowRepositories={() => setView("repositories")} />
   );
 
+  const threadIndex = useMemo(() => new Map((overview?.threads ?? []).map((thread) => [thread.id, thread])), [overview?.threads]);
+  // Archived repositories get their own project groups after every active one, as in the worktree list.
   const groups = useMemo(() => {
-    const byProject = new Map<string | null, Repo[]>();
-    for (const repo of repoView.repos) byProject.set(repo.projectId, [...(byProject.get(repo.projectId) ?? []), repo]);
-    const named = projects.flatMap((project) => (byProject.has(project.id) ? [{ id: project.id, name: project.name, repos: byProject.get(project.id)! }] : []));
-    const listed = new Set(projects.map((project) => project.id));
-    const rest = [...byProject].flatMap(([id, repos]) => (id !== null && listed.has(id) ? [] : [{ id, name: "Other repositories", repos }]));
-    return [...named, ...rest];
-  }, [repoView.repos, projects]);
+    const byProject = (repos: readonly Repo[], archived: boolean) => {
+      const found = new Map<string | null, Repo[]>();
+      for (const repo of repos) found.set(repo.projectId, [...(found.get(repo.projectId) ?? []), repo]);
+      const named = projects.flatMap((project) => (found.has(project.id) ? [{ id: project.id, name: project.name, archived, repos: found.get(project.id)! }] : []));
+      const listed = new Set(projects.map((project) => project.id));
+      const rest = [...found].flatMap(([id, entries]) => (id !== null && listed.has(id) ? [] : [{ id, name: "Other repositories", archived, repos: entries }]));
+      return [...named, ...rest];
+    };
+    return [
+      ...byProject(repoView.repos.filter((repo) => !isArchivedOnly(repo, threadIndex)), false),
+      ...byProject(repoView.repos.filter((repo) => isArchivedOnly(repo, threadIndex)), true),
+    ];
+  }, [repoView.repos, projects, threadIndex]);
+  const archivedReposPending = overview !== null && !overview.partial && overview.repos.some((repo) =>
+    repo.state === "loading" && !repoView.repos.includes(repo) && isArchivedOnly(repo, threadIndex));
   const showHost = overview !== null && new Set(overview.repos.map((repo) => repo.hostId)).size > 1;
 
   let body;
@@ -295,9 +308,9 @@ function VantageScreen({ subPath }: PluginNavPanelProps) {
             </p>
           )}
           {groups.map((group) => (
-            <section key={group.id ?? "none"}>
+            <section key={`${group.archived ? "archived" : "active"}\0${group.id ?? "none"}`}>
               <h3 data-project-group={group.name} className="px-4 pb-1 pt-4 text-[10.5px] font-semibold uppercase tracking-wider text-subtle-foreground">
-                {`${group.name} · ${plural(group.repos.length, "repo")} · ${plural(group.repos.reduce((sum, repo) => sum + repo.totals.files, 0), "file")}`}
+                {`${group.archived ? "Archived · " : ""}${group.name} · ${plural(group.repos.length, "repo")} · ${plural(group.repos.reduce((sum, repo) => sum + repo.totals.files, 0), "file")}`}
               </h3>
               {group.repos.map((repo) => (
                 <RepoSection key={repo.key} repo={repo} scope={overview.scope} threads={threads} expanded={!collapsedRepos.has(repo.key)}
@@ -306,6 +319,7 @@ function VantageScreen({ subPath }: PluginNavPanelProps) {
               ))}
             </section>
           ))}
+          {archivedReposPending && <ArchivedSkeleton />}
           {overview.partial && <EditsSkeleton />}
           {repoView.otherFiles.length > 0 && (
             <section data-other-files className="pb-2">
@@ -357,13 +371,7 @@ function VantageScreen({ subPath }: PluginNavPanelProps) {
           <input type="checkbox" checked={filter.changedOnly} onChange={(event) => setFilter({ ...filter, changedOnly: event.target.checked })} />
           With changes only
         </label>
-        <Hint label="Include archived threads and their kept branches">
-          <button type="button" aria-pressed={includeArchived} onClick={() => archivedPreference.set(!includeArchived)}
-            className={`inline-flex shrink-0 cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-xs hover:bg-state-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${includeArchived ? "bg-surface-selected text-foreground" : "text-muted-foreground"}`}>
-            <Icon name="Archive" className="size-3.5" aria-hidden />
-            {!includeArchived && overview !== null && overview.archivedHidden > 0 ? `Show archived (${overview.archivedHidden})` : "Show archived"}
-          </button>
-        </Hint>
+        <ArchivedToggle overview={overview} included={includeArchived} onChange={(next) => archivedPreference.set(next)} />
         {route.view === "repositories" && (
           <>
             <SwitchButtons label="Scope" options={SCOPES.map((entry) => ({ value: entry.scope, text: entry.label }))} value={snapshot.scope}

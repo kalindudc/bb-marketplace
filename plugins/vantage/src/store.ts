@@ -27,6 +27,31 @@ const FILE_EVENT_TYPES = ["item/completed", "turn/completed"];
 
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
+// Switching archived threads on or off changes which rows exist, not the active rows' numbers: keep those on screen, add the
+// outline's new rows below them, and drop the rows of threads the outline no longer has. The full result then replaces it all.
+export function mergeOutline(current: Overview, outline: Overview): Overview {
+  const threadIds = new Set(outline.threads.map((thread) => thread.id));
+  const stays = (row: { threadIds: readonly string[] }) => row.threadIds.length === 0 || row.threadIds.some((id) => threadIds.has(id));
+  const merge = <T extends { key: string; threadIds: readonly string[] }>(shown: readonly T[], next: readonly T[]): T[] => {
+    const kept = shown.filter(stays);
+    const keys = new Set(kept.map((row) => row.key));
+    return [...kept, ...next.filter((row) => !keys.has(row.key))];
+  };
+  const worktrees = merge(current.worktrees, outline.worktrees);
+  const worktreeKeys = new Set(worktrees.map((row) => row.key));
+  return {
+    ...current,
+    threads: outline.threads,
+    worktrees,
+    repos: merge(current.repos, outline.repos),
+    sharedFiles: current.sharedFiles
+      .map((file) => ({ ...file, worktreeKeys: file.worktreeKeys.filter((key) => worktreeKeys.has(key)) }))
+      .filter((file) => file.worktreeKeys.length >= 2),
+    environmentIds: [...new Set([...current.environmentIds, ...outline.environmentIds])],
+    archivedHidden: outline.archivedHidden,
+  };
+}
+
 interface StoreCalls { shell: ShellInput; overview: OverviewInput }
 
 export function createVantageStore(options: {
@@ -51,6 +76,8 @@ export function createVantageStore(options: {
   let known: { overview: Overview; threads: Set<string>; environments: Set<string> } | null = null;
   // A load (the first one, or one after the scope or the archived choice changed) draws the outline while the full result is read.
   let outlineWanted = true;
+  // After an archived switch the outline is merged into the rows on screen instead of replacing them.
+  let mergeNextOutline = false;
 
   const update = (change: Partial<VantageSnapshot>) => {
     const next = { ...snapshot, ...change };
@@ -80,10 +107,14 @@ export function createVantageStore(options: {
     let fullArrived = false;
     if (outlineWanted) {
       outlineWanted = false;
+      const merging = mergeNextOutline;
+      mergeNextOutline = false;
       // A failed outline is ignored: the full result is on its way and paints the same rows.
       rpc.call("shell", { target, includeArchived }).then((outline) => {
         if (disposed || token.generation !== generation || fullArrived) return;
-        update({ status: "ready", overview: { ...outline, scope: snapshot.scope }, refreshing: true, error: null });
+        const shown = snapshot.overview;
+        const next = merging && shown !== null && !shown.partial ? mergeOutline(shown, outline) : { ...outline, scope: snapshot.scope };
+        update({ status: "ready", overview: next, refreshing: true, error: null });
       }, () => {});
     }
     const finish = (change: () => Partial<VantageSnapshot>) => {
@@ -179,6 +210,7 @@ export function createVantageStore(options: {
       includeArchived = next;
       generation++;
       outlineWanted = true;
+      mergeNextOutline = true;
       update({ error: null });
       request(false, true);
     },

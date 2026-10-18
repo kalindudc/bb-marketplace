@@ -11,13 +11,18 @@ function matcher(text: string): (values: readonly string[]) => boolean {
   return (values) => query === "" || values.some((value) => value.toLowerCase().includes(query));
 }
 
+// In the first outline every row is loading, so they all stay. Once the other rows have numbers, a row still loading is one
+// that archived threads just added; it waits for its own numbers, so rows with nothing changed never flash up and vanish.
+function maybeChanged(overview: Overview, row: { state: string }): boolean {
+  return row.state === "loading" && overview.partial;
+}
+
 export function filterWorktrees(overview: Overview, filter: PageFilter): Worktree[] {
   const matches = matcher(filter.text);
   const titles = new Map(overview.threads.map((thread) => [thread.id, thread.title]));
   return overview.worktrees.filter((worktree) => {
     if (filter.projectId !== null && worktree.projectId !== filter.projectId) return false;
-    // A worktree whose git state is still being read might have changes, so it stays.
-    const changed = worktree.uncommitted.length + worktree.committed.length > 0 || worktree.state !== "ready";
+    const changed = worktree.uncommitted.length + worktree.committed.length > 0 || worktree.state === "unavailable" || maybeChanged(overview, worktree);
     if (filter.changedOnly && !changed) return false;
     return matches([
       ...worktree.threadIds.map((id) => titles.get(id) ?? ""),
@@ -31,7 +36,7 @@ export function filterRepos(overview: Overview, filter: PageFilter): { repos: Re
   const repos = overview.repos.filter((repo) => {
     if (filter.projectId !== null && repo.projectId !== filter.projectId) return false;
     // A "clean" row is a file an agent edited that has no change now, so it is not a change.
-    const changed = repo.files.some((file) => file.status !== "clean") || repo.otherFiles.length > 0 || repo.state !== "ready";
+    const changed = repo.files.some((file) => file.status !== "clean") || repo.otherFiles.length > 0 || repo.state === "unavailable" || maybeChanged(overview, repo);
     if (filter.changedOnly && !changed) return false;
     return matches([repo.label, repo.root ?? "", ...paths(repo.files), ...paths(repo.otherFiles)]);
   });

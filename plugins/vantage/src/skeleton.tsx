@@ -18,6 +18,21 @@ export function SkeletonRows({ count, label }: { count: number; label: string })
   );
 }
 
+export const ARCHIVED_HINT = "Loading archived threads…";
+
+// Stands for archived rows that were just included and whose changes are not known yet.
+export function ArchivedSkeleton() {
+  return (
+    <div role="status" aria-label="Loading archived threads" className="space-y-1.5 px-3.5 py-2">
+      <div className="flex items-center gap-2">
+        <Skeleton className="size-3.5 shrink-0" />
+        <Skeleton className="h-3.5 w-40" />
+      </div>
+      <p className="text-xs text-muted-foreground">{ARCHIVED_HINT}</p>
+    </div>
+  );
+}
+
 // Stands where the edits made outside the worktrees will appear; those need the event scan, which is not done yet.
 export function EditsSkeleton() {
   return (

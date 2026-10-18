@@ -1,3 +1,4 @@
+import { archivedLast } from "./archived";
 import { posix } from "node:path";
 import type { PluginBbSdk } from "@get-bb/plugin-sdk";
 import type { EditIndex, EditRecord, ThreadEdits } from "./edits";
@@ -422,8 +423,8 @@ export async function buildOverview(
     windowHours: target.kind === "all" ? deps.allOptions!.windowHours : null,
     scope: input.scope,
     threads: tree.threads,
-    repos,
-    worktrees,
+    repos: archivedLast(repos, tree.threads),
+    worktrees: archivedLast(worktrees, tree.threads),
     sharedFiles: findSharedFiles(worktrees),
     otherFiles: [...otherFiles].map(([path, entry]) => recordedFile(path, entry)).sort(byPath).slice(0, MAX_OTHER_FILES),
     environmentIds: [...tree.environments.keys()],
@@ -454,8 +455,8 @@ export async function buildShell(deps: CollectDeps, input: ShellInput, signal?: 
     windowHours: target.kind === "all" ? deps.allOptions!.windowHours : null,
     scope: "uncommitted",
     threads: tree.threads,
-    repos: plans.map((plan) => loadingRepo(plan, tree.environments, plan.hostId === null ? null : (hostNames.get(plan.hostId) ?? plan.hostId))),
-    worktrees: loadingWorktrees(plans, tree.environments, hostNames),
+    repos: archivedLast(plans.map((plan) => loadingRepo(plan, tree.environments, plan.hostId === null ? null : (hostNames.get(plan.hostId) ?? plan.hostId))), tree.threads),
+    worktrees: archivedLast(loadingWorktrees(plans, tree.environments, hostNames), tree.threads),
     sharedFiles: [],
     otherFiles: [],
     environmentIds: [...tree.environments.keys()],

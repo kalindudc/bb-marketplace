@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PluginBrowserBbSdk } from "@get-bb/plugin-sdk";
 import type { Overview, OverviewInput, OverviewTarget, ShellInput } from "../src/contract";
 import { createVantageStore } from "../src/store";
-import { overview, threadSummary } from "./fixtures";
+import { branchRepo, fileChange, overview, repo, sharedFile, threadSummary, worktree } from "./fixtures";
 
 type Callback = (event: unknown) => void;
 
@@ -566,6 +566,65 @@ describe("the instant outline", () => {
     await vi.advanceTimersByTimeAsync(0);
     store.setIncludeArchived(false);
     expect(calls[2]?.input).toMatchObject({ includeArchived: false });
+  });
+
+  describe("switching archived threads keeps the active rows on screen", () => {
+    const live = threadSummary({ id: "thr_1" });
+    const old = threadSummary({ id: "thr_old", archived: true, environmentId: "env_old" });
+    const activeRow = worktree({ key: "host_1:/work/live", threadIds: ["thr_1"], uncommitted: [fileChange({ path: "a.ts" })] });
+    const archivedRow = worktree({ key: "host_1:/work/old", threadIds: ["thr_old"], state: "loading", uncommitted: [] });
+    const activeRepo = repo({ key: "host_1:/work/live", threadIds: ["thr_1"] });
+    const archivedRepo = branchRepo({ key: "host_1:/code/proj@old", threadIds: ["thr_old"] });
+    const full = overview({ threads: [live], worktrees: [activeRow], repos: [activeRepo], warnings: ["kept"], archivedHidden: 1 });
+
+    it("adds the archived rows from the outline under the active ones, whose numbers stay", async () => {
+      const { store, shells, calls } = setup({ includeArchived: false });
+      calls[0]!.resolve(full);
+      await vi.advanceTimersByTimeAsync(0);
+      store.setIncludeArchived(true);
+      shells[1]!.resolve(overview({
+        partial: true, threads: [live, old], archivedHidden: 0,
+        worktrees: [{ ...activeRow, state: "loading", uncommitted: [] }, archivedRow],
+        repos: [{ ...activeRepo, state: "loading" }, { ...archivedRepo, state: "loading" }],
+      }));
+      await vi.advanceTimersByTimeAsync(0);
+      const shown = store.getSnapshot();
+      expect(shown.refreshing).toBe(true);
+      expect(shown.overview?.partial).toBe(false);
+      expect(shown.overview?.worktrees).toEqual([activeRow, archivedRow]);
+      expect(shown.overview?.repos.map((entry) => [entry.key, entry.state])).toEqual([[activeRepo.key, "ready"], [archivedRepo.key, "loading"]]);
+      expect(shown.overview?.threads.map((thread) => thread.id)).toEqual(["thr_1", "thr_old"]);
+      expect(shown.overview).toMatchObject({ archivedHidden: 0, warnings: ["kept"] });
+      calls[1]!.resolve(overview({ threads: [live, old], worktrees: [activeRow, { ...archivedRow, state: "ready" }] }));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.getSnapshot().overview?.worktrees.map((entry) => entry.state)).toEqual(["ready", "ready"]);
+    });
+
+    it("removes only the archived rows when archived threads are switched off", async () => {
+      const { store, shells, calls } = setup({ includeArchived: true });
+      calls[0]!.resolve(overview({
+        threads: [live, old], worktrees: [activeRow, { ...archivedRow, state: "ready" }], repos: [activeRepo, archivedRepo],
+        sharedFiles: [sharedFile({ worktreeKeys: [activeRow.key, archivedRow.key] })],
+      }));
+      await vi.advanceTimersByTimeAsync(0);
+      store.setIncludeArchived(false);
+      shells[1]!.resolve(overview({ partial: true, threads: [live], archivedHidden: 1, worktrees: [{ ...activeRow, state: "loading" }] }));
+      await vi.advanceTimersByTimeAsync(0);
+      const shown = store.getSnapshot().overview;
+      expect(shown?.worktrees).toEqual([activeRow]);
+      expect(shown?.repos).toEqual([activeRepo]);
+      expect(shown?.sharedFiles).toEqual([]);
+      expect(shown?.archivedHidden).toBe(1);
+    });
+
+    it("still paints a plain outline when nothing has loaded yet", async () => {
+      const { store, shells } = setup({ includeArchived: false });
+      store.setIncludeArchived(true);
+      const outline = overview({ partial: true, threads: [live, old], worktrees: [archivedRow] });
+      shells[1]!.resolve(outline);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.getSnapshot().overview).toEqual(outline);
+    });
   });
 
   it("does nothing when the flag is set to the value it already has", async () => {
