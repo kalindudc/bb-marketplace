@@ -1,8 +1,10 @@
 import { posix } from "node:path";
 import type { PluginBbSdk } from "@get-bb/plugin-sdk";
 import type { EditIndex, EditRecord, ThreadEdits } from "./edits";
-import type { FileChange, HostInput, HostMethod, HostOutput, Overview, Repo, RepoRef, Scope, ThreadSummary } from "./contract";
+import { collectAll, FETCH_CONCURRENCY, loadEnvironments, summarizeThread, type AllOptions } from "./collect-all";
+import type { FileChange, HostInput, HostMethod, HostOutput, Overview, OverviewTarget, Repo, RepoRef, Scope, ThreadSummary } from "./contract";
 import { mapLimit } from "./limit";
+import { planCached, type RepoCache } from "./repo-cache";
 import { loadRepoFiles, recordedFile, recordedLiveFiles, type LiveFiles } from "./sources";
 import { findSharedFiles, loadWorktrees } from "./worktrees";
 
@@ -10,11 +12,11 @@ export type Environment = Awaited<ReturnType<PluginBbSdk["environments"]["get"]>
 export type HostCall = <M extends HostMethod>(
   method: M, input: HostInput<M>, options: { hostId: string; signal?: AbortSignal },
 ) => Promise<HostOutput<M>>;
-export interface CollectDeps { sdk: PluginBbSdk; host: HostCall; edits: EditIndex }
+export interface CollectDeps { sdk: PluginBbSdk; host: HostCall; edits: EditIndex; allOptions?: Omit<AllOptions, "now">; cache?: RepoCache }
 
 export interface Touched { threadIds: Set<string>; rawPaths: Set<string>; records: EditRecord[] }
 export interface RepoPlan {
-  key: string; ref: RepoRef; label: string; root: string | null; hostId: string | null;
+  key: string; ref: RepoRef; label: string; projectId: string | null; root: string | null; hostId: string | null;
   threadIds: string[]; touched: Map<string, Touched>;
 }
 export interface ProjectInfo { id: string; name: string; sources: readonly { hostId: string; path: string; isDefault: boolean }[] }
@@ -22,12 +24,10 @@ export interface HostInfo { id: string; name: string }
 export type ResolvedRoots = ReadonlyMap<string, ReadonlyMap<string, { root: string | null; relative: string | null }>>;
 
 const MAX_THREADS = 200;
-const FETCH_CONCURRENCY = 8;
 const MAX_FILES = 500;
 const MAX_OTHER_FILES = 200;
 const RESOLVE_CHUNK = 2000;
 const MAX_PATH_LENGTH = 4096;
-const MAX_TITLE = 500;
 const MAX_MESSAGE = 1000;
 
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error)).slice(0, MAX_MESSAGE);
@@ -59,23 +59,9 @@ export async function collectTree(
     const parentDepth = thread.parentThreadId === null ? undefined : depths.get(thread.parentThreadId);
     const depth = thread.id === threadId ? 0 : (parentDepth ?? 0) + 1;
     depths.set(thread.id, depth);
-    return {
-      id: thread.id,
-      title: (thread.title ?? thread.titleFallback ?? thread.id).slice(0, MAX_TITLE),
-      parentThreadId: thread.parentThreadId,
-      archived: thread.archivedAt !== null,
-      depth,
-      environmentId: thread.environmentId,
-      status: thread.status,
-    };
+    return summarizeThread(thread, depth, threadId);
   });
-
-  const environmentIds = [...new Set(threads.flatMap((thread) => (thread.environmentId === null ? [] : [thread.environmentId])))];
-  const environments = new Map<string, Environment>();
-  await mapLimit(environmentIds, FETCH_CONCURRENCY, async (environmentId) => {
-    const environment = await sdk.environments.get({ environmentId, signal }).catch(() => null);
-    if (environment !== null) environments.set(environmentId, environment);
-  });
+  const environments = await loadEnvironments(sdk, threads, signal);
   return { threads, environments, truncated: descendantIds.length > MAX_THREADS - 1 };
 }
 
@@ -168,7 +154,7 @@ export function planRepos(input: {
       const root = resolved(env.hostId, env.path)?.root ?? env.path;
       const plan = open(`${env.hostId}:${root}`, () => ({
         key: `${env.hostId}:${root}`, ref: { kind: "workspace", environmentId: env.id, base },
-        label: projectName(env) ?? posix.basename(root), root, hostId: env.hostId, threadIds: [], touched: new Map(),
+        label: projectName(env) ?? posix.basename(root), projectId: env.projectId, root, hostId: env.hostId, threadIds: [], touched: new Map(),
       }), thread.id);
       planOfEnvironment.set(env.id, plan);
     } else if (isDestroyed(env)) {
@@ -178,18 +164,17 @@ export function planRepos(input: {
       const plan = env.branchName !== null && root !== null
         ? open(`${env.hostId}:${root}@${env.branchName}`, () => ({
           key: `${env.hostId}:${root}@${env.branchName}`, ref: { kind: "branch", hostId: env.hostId, root, base, head: env.branchName! },
-          label, root, hostId: env.hostId, threadIds: [], touched: new Map(),
+          label, projectId: env.projectId, root, hostId: env.hostId, threadIds: [], touched: new Map(),
         }), thread.id)
         : open(`recorded:${env.id}`, () => ({
-          key: `recorded:${env.id}`, ref: { kind: "recorded" }, label, root: null, hostId: env.hostId, threadIds: [], touched: new Map(),
+          key: `recorded:${env.id}`, ref: { kind: "recorded" }, label, projectId: env.projectId, root: null, hostId: env.hostId, threadIds: [], touched: new Map(),
         }), thread.id);
       planOfEnvironment.set(env.id, plan);
     }
   }
 
-  const checkoutLabel = (hostId: string, root: string): string =>
-    projects.find((project) => project.sources.some((source) => source.hostId === hostId && resolved(hostId, source.path)?.root === root))?.name
-    ?? posix.basename(root);
+  const checkoutProject = (hostId: string, root: string): ProjectInfo | undefined =>
+    projects.find((project) => project.sources.some((source) => source.hostId === hostId && resolved(hostId, source.path)?.root === root));
 
   for (const thread of threads) {
     const env = thread.environmentId === null ? undefined : environments.get(thread.environmentId);
@@ -208,7 +193,8 @@ export function planRepos(input: {
           const root = found.root;
           const plan = open(`${location.hostId}:${root}`, () => ({
             key: `${location.hostId}:${root}`, ref: { kind: "checkout", hostId: location.hostId, root, base: null },
-            label: checkoutLabel(location.hostId, root), root, hostId: location.hostId, threadIds: [], touched: new Map(),
+            label: checkoutProject(location.hostId, root)?.name ?? posix.basename(root), projectId: checkoutProject(location.hostId, root)?.id ?? null,
+            root, hostId: location.hostId, threadIds: [], touched: new Map(),
           }), thread.id);
           destination = { touched: plan.touched, key: found.relative };
         }
@@ -249,7 +235,7 @@ function cleanFile(path: string, edits: NonNullable<FileChange["edits"]>): FileC
 }
 
 function toRepo(plan: RepoPlan, loaded: LiveFiles | { unavailable: string }, hostName: string | null, branchFallback: string | null): Repo {
-  const base = { key: plan.key, ref: plan.ref, label: plan.label, root: plan.root, hostId: plan.hostId, hostName, threadIds: plan.threadIds };
+  const base = { key: plan.key, ref: plan.ref, label: plan.label, projectId: plan.projectId, root: plan.root, hostId: plan.hostId, hostName, threadIds: plan.threadIds };
   if ("unavailable" in loaded) {
     return {
       ...base, branch: null, base: null, aheadCount: null, state: "unavailable", message: loaded.unavailable.slice(0, MAX_MESSAGE),
@@ -282,12 +268,26 @@ function toRepo(plan: RepoPlan, loaded: LiveFiles | { unavailable: string }, hos
   };
 }
 
+async function collectTarget(
+  deps: CollectDeps, target: OverviewTarget, signal?: AbortSignal,
+): Promise<{ threads: ThreadSummary[]; environments: Map<string, Environment>; truncated: boolean }> {
+  if (target.kind === "tree") return collectTree(deps, target.threadId, signal);
+  if (deps.allOptions === undefined) throw new Error("An all-threads overview needs the time window and thread limit");
+  return collectAll(deps, deps.allOptions, signal);
+}
+
 export async function buildOverview(
-  deps: CollectDeps, input: { threadId: string; scope: Scope; refresh?: boolean }, signal?: AbortSignal,
+  deps: CollectDeps, input: { target: OverviewTarget; scope: Scope; refresh?: boolean }, signal?: AbortSignal,
 ): Promise<Overview> {
-  const { sdk, host, edits } = deps;
-  const tree = await collectTree(deps, input.threadId, signal);
-  if (input.refresh === true) edits.forget(tree.threads.map((thread) => thread.id));
+  const { target } = input;
+  // Only the all-threads page reads through the cache; a thread's own tab always asks bb afresh.
+  const scoped: CollectDeps = target.kind === "all" ? deps : { ...deps, cache: undefined };
+  const { sdk, host, edits } = scoped;
+  const tree = await collectTarget(scoped, target, signal);
+  if (input.refresh === true) {
+    if (target.kind === "tree") edits.forget(tree.threads.map((thread) => thread.id));
+    else scoped.cache?.clear();
+  }
   const warnings: string[] = [];
 
   const [editList, projectList, hostList] = await Promise.all([
@@ -336,8 +336,8 @@ export async function buildOverview(
     threads: tree.threads, environments: tree.environments, edits: editMap, roots, projects, hosts,
   });
   const [settled, worktrees] = await Promise.all([
-    Promise.allSettled(plans.map((plan) => loadRepoFiles(deps, plan, input.scope, signal))),
-    loadWorktrees(deps, plans, tree.environments, new Map(hosts.map((host) => [host.id, host.name])), signal),
+    Promise.allSettled(plans.map((plan) => planCached(scoped.cache, plan, input.scope, () => loadRepoFiles(scoped, plan, input.scope, signal)))),
+    loadWorktrees(scoped, plans, tree.environments, new Map(hosts.map((host) => [host.id, host.name])), signal),
   ]);
   const repos = plans.map((plan, index): Repo => {
     const outcome = settled[index]!;
@@ -352,7 +352,9 @@ export async function buildOverview(
   });
 
   return {
-    threadId: input.threadId,
+    threadId: target.kind === "tree" ? target.threadId : "",
+    target,
+    windowHours: target.kind === "all" ? deps.allOptions!.windowHours : null,
     scope: input.scope,
     threads: tree.threads,
     repos,

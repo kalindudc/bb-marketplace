@@ -39,7 +39,7 @@ export function destroyedEnvironment(overrides: Partial<Environment> = {}): Envi
 }
 
 export function threadSummary(overrides: Partial<ThreadSummary> = {}): ThreadSummary {
-  return { id: "thr_1", title: "Parent thread", parentThreadId: null, archived: false, depth: 0, environmentId: "env_1", status: "idle", ...overrides };
+  return { id: "thr_1", title: "Parent thread", parentThreadId: null, archived: false, depth: 0, environmentId: "env_1", status: "idle", rootThreadId: "thr_1", ...overrides };
 }
 
 export function fileChange(overrides: Partial<FileChange> = {}): FileChange {
@@ -53,6 +53,7 @@ const repoBase: Repo = {
   key: "host_1:/work/one",
   ref: { kind: "workspace", environmentId: "env_1", base: "origin/main" },
   label: "Project",
+  projectId: "proj_1",
   root: "/work/one",
   hostId: "host_1",
   hostName: "Laptop",
@@ -144,6 +145,8 @@ export function sharedFile(overrides: Partial<SharedFile> = {}): SharedFile {
 export function overview(overrides: Partial<Overview> = {}): Overview {
   return {
     threadId: "thr_1",
+    target: { kind: "tree", threadId: "thr_1" },
+    windowHours: null,
     scope: "uncommitted",
     threads: [threadSummary()],
     repos: [],
@@ -156,6 +159,44 @@ export function overview(overrides: Partial<Overview> = {}): Overview {
     generatedAt: 1_700_000_000_000,
     ...overrides,
   };
+}
+
+/** An all-threads overview over two projects: Shop (a parent, its child and an idle worktree) and Docs site (one worktree). */
+export function allOverview(overrides: Partial<Overview> = {}): Overview {
+  const threads = [
+    threadSummary({ id: "thr_root", title: "Parent thread", environmentId: "env_1", rootThreadId: "thr_root", status: "active" }),
+    threadSummary({ id: "thr_child", title: "Child worker", parentThreadId: "thr_root", depth: 1, environmentId: "env_2", rootThreadId: "thr_root" }),
+    threadSummary({ id: "thr_docs", title: "Docs thread", environmentId: "env_3", rootThreadId: "thr_docs" }),
+    threadSummary({ id: "thr_idle", title: "Idle thread", environmentId: "env_4", rootThreadId: "thr_idle" }),
+  ];
+  const parent = worktree({
+    key: "k_parent", label: "Shop", projectId: "proj_shop", root: "/work/shop", branch: "feature/main", threadIds: ["thr_root"],
+    ref: { kind: "workspace", environmentId: "env_1", base: "origin/main" }, uncommitted: [fileChange({ path: "src/app.ts", additions: 4, deletions: 1 })],
+  });
+  const child = worktree({
+    key: "k_child", label: "Shop", projectId: "proj_shop", root: "/work/shop-child", branch: "agent/child", threadIds: ["thr_child"],
+    ref: { kind: "workspace", environmentId: "env_2", base: "origin/main" }, aheadCount: 1,
+    uncommitted: [fileChange({ path: "src/child.ts", additions: 2, deletions: 0 }), fileChange({ path: "README.md", additions: 1, deletions: 1 })],
+    committed: [fileChange({ path: "lib/done.ts", additions: 9, deletions: 0 })],
+    commits: [commit({ subject: "Finish the lib" })],
+  });
+  const docs = worktree({
+    key: "k_docs", label: "Docs site", projectId: "proj_docs", root: "/work/docs", branch: "agent/docs", threadIds: ["thr_docs"],
+    ref: { kind: "workspace", environmentId: "env_3", base: "origin/main" }, aheadCount: 2, committed: [fileChange({ path: "guide.md", additions: 7, deletions: 2 })],
+  });
+  const idle = worktree({
+    key: "k_idle", label: "Shop", projectId: "proj_shop", root: "/work/shop-idle", branch: "agent/idle", threadIds: ["thr_idle"],
+    ref: { kind: "workspace", environmentId: "env_4", base: "origin/main" },
+  });
+  const worktrees = [parent, child, docs, idle];
+  const repos = worktrees.map((entry) => repo({
+    key: entry.key, label: entry.label, projectId: entry.projectId, root: entry.root, branch: entry.branch, threadIds: entry.threadIds,
+    ref: entry.ref as Repo["ref"], files: [...entry.uncommitted, ...entry.committed],
+  }));
+  return overview({
+    threadId: "", target: { kind: "all" }, windowHours: 24, threads, worktrees, repos,
+    environmentIds: ["env_1", "env_2", "env_3", "env_4"], ...overrides,
+  });
 }
 
 export function sidebarThread(overrides: Partial<PluginSidebarThread> = {}): PluginSidebarThread {

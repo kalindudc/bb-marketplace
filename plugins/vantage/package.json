@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-vantage",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -9,7 +9,7 @@
   },
   "bb": {
     "name": "Vantage",
-    "description": "See every worktree your parallel agents work in, and everything they changed across repositories, from the parent thread. Each worktree shows status, branch, commits ahead and behind, uncommitted files and its pull request; open one to read its diffs and commits, talk to its agent, or start a terminal in it. Files changed in two worktrees are flagged before they conflict.",
+    "description": "See every worktree your parallel agents work in, and everything they changed across repositories, from the parent thread. Each worktree shows status, branch, commits ahead and behind, uncommitted files and its pull request; open one to read its diffs and commits, talk to its agent, or start a terminal in it. Files changed in two worktrees are flagged before they conflict. A full-screen Vantage page in bb's left navigation shows every recent thread's worktrees and changed repositories at once, filtered by project.",
     "branding": {
       "icon": "FolderGit"
     },

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PluginBrowserBbSdk } from "@get-bb/plugin-sdk";
-import type { Overview, OverviewInput } from "../src/contract";
+import type { Overview, OverviewInput, OverviewTarget } from "../src/contract";
 import { createVantageStore } from "../src/store";
 import { overview, threadSummary } from "./fixtures";
 
@@ -8,7 +8,7 @@ type Callback = (event: unknown) => void;
 
 interface PendingCall { input: OverviewInput; resolve(value: Overview): void; reject(error: Error): void }
 
-function setup(options: { refreshDelayMs?: number } = {}) {
+function setup(options: { refreshDelayMs?: number; target?: OverviewTarget } = {}) {
   const callbacks = { "thread:changed": new Set<Callback>(), "environment:changed": new Set<Callback>(), "realtime:connection": new Set<Callback>() };
   const unsubscribed: string[] = [];
   const sdk = {
@@ -26,7 +26,7 @@ function setup(options: { refreshDelayMs?: number } = {}) {
       calls.push({ input, resolve, reject });
     })),
   };
-  const store = createVantageStore({ rpc, sdk, threadId: "thr_1", ...options });
+  const store = createVantageStore({ rpc, sdk, target: { kind: "tree", threadId: "thr_1" }, ...options });
   const emit = (event: keyof typeof callbacks, payload: object) => {
     for (const callback of [...callbacks[event]]) callback(payload);
   };
@@ -39,7 +39,7 @@ const tree = overview({
   environmentIds: ["env_1", "env_2"],
 });
 
-async function loaded(options: { refreshDelayMs?: number } = {}) {
+async function loaded(options: { refreshDelayMs?: number; target?: OverviewTarget } = {}) {
   const harness = setup(options);
   harness.calls[0]!.resolve(tree);
   await vi.advanceTimersByTimeAsync(0);
@@ -59,7 +59,7 @@ describe("loading", () => {
     const { store, rpc, calls } = setup();
     expect(store.getSnapshot()).toEqual({ status: "loading", overview: null, scope: "uncommitted", refreshing: false, error: null });
     expect(rpc.call).toHaveBeenCalledTimes(1);
-    expect(calls[0]?.input).toEqual({ threadId: "thr_1", scope: "uncommitted" });
+    expect(calls[0]?.input).toEqual({ target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted" });
     calls[0]!.resolve(tree);
     await vi.advanceTimersByTimeAsync(0);
     expect(store.getSnapshot()).toEqual({ status: "ready", overview: tree, scope: "uncommitted", refreshing: false, error: null });
@@ -144,7 +144,7 @@ describe("thread events", () => {
     const { calls, thread } = await loaded();
     await vi.advanceTimersByTimeAsync(5000);
     thread("thr_child", ["history-rewritten"]);
-    expect(calls[1]?.input).toEqual({ threadId: "thr_1", scope: "uncommitted", refresh: true });
+    expect(calls[1]?.input).toEqual({ target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", refresh: true });
     calls[1]!.resolve(tree);
     await vi.advanceTimersByTimeAsync(1500);
     thread("thr_1", ["history-compacted"]);
@@ -244,7 +244,7 @@ describe("scope and manual refresh", () => {
     const { store, rpc, calls } = await loaded();
     store.setScope("branch");
     expect(rpc.call).toHaveBeenCalledTimes(2);
-    expect(calls[1]?.input).toEqual({ threadId: "thr_1", scope: "branch" });
+    expect(calls[1]?.input).toEqual({ target: { kind: "tree", threadId: "thr_1" }, scope: "branch" });
     expect(store.getSnapshot()).toMatchObject({ scope: "branch", refreshing: true, overview: tree });
 
     const fresh = overview({ scope: "branch", repos: [] });
@@ -280,11 +280,11 @@ describe("scope and manual refresh", () => {
   it("refresh() starts at once, and refresh({ hard: true }) asks the server to forget its cache", async () => {
     const { store, calls } = await loaded();
     store.refresh();
-    expect(calls[1]?.input).toEqual({ threadId: "thr_1", scope: "uncommitted" });
+    expect(calls[1]?.input).toEqual({ target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted" });
     calls[1]!.resolve(tree);
     await vi.advanceTimersByTimeAsync(0);
     store.refresh({ hard: true });
-    expect(calls[2]?.input).toEqual({ threadId: "thr_1", scope: "uncommitted", refresh: true });
+    expect(calls[2]?.input).toEqual({ target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", refresh: true });
   });
 
   it("waits for the running request of the same scope instead of overlapping it", async () => {
@@ -340,6 +340,126 @@ describe("snapshots and disposal", () => {
     const { store, rpc, thread } = await loaded();
     thread("thr_1", ["events-appended"]);
     store.dispose();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(rpc.call).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("every thread", () => {
+  const ALL: OverviewTarget = { kind: "all" };
+  const everyThread = overview({
+    threads: [threadSummary({ id: "thr_a" }), threadSummary({ id: "thr_b", environmentId: "env_2" })],
+    environmentIds: ["env_1", "env_2"], target: ALL, windowHours: 24, threadId: "",
+  });
+  const allLoaded = async (options: { refreshDelayMs?: number } = {}) => {
+    const harness = setup({ target: ALL, ...options });
+    harness.calls[0]!.resolve(everyThread);
+    await vi.advanceTimersByTimeAsync(0);
+    return harness;
+  };
+  let visibility: "visible" | "hidden" = "visible";
+  const setVisibility = (next: "visible" | "hidden") => {
+    visibility = next;
+    document.dispatchEvent(new Event("visibilitychange"));
+  };
+  beforeEach(() => {
+    visibility = "visible";
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => visibility });
+  });
+  afterEach(() => {
+    delete (document as unknown as { visibilityState?: string }).visibilityState;
+  });
+
+  it("asks for the all target", async () => {
+    const { calls, store } = setup({ target: ALL });
+    expect(calls[0]?.input).toEqual({ target: ALL, scope: "uncommitted" });
+    store.dispose();
+  });
+
+  it("refreshes for any thread's file changes, even one that is not in the overview", async () => {
+    const { rpc, thread } = await allLoaded();
+    await vi.advanceTimersByTimeAsync(5000);
+    thread("thr_unseen", ["events-appended"], { eventTypes: ["item/completed"] });
+    expect(rpc.call).toHaveBeenCalledTimes(2);
+  });
+
+  it("still ignores deltas and changes that cannot alter files", async () => {
+    const { rpc, thread } = await allLoaded();
+    await vi.advanceTimersByTimeAsync(5000);
+    thread("thr_a", ["events-appended"], { eventTypes: ["item/agentMessage/delta"] });
+    thread("thr_a", ["title-changed", "read-state-changed"]);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(rpc.call).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks for a hard refresh after a history rewrite, like a tree", async () => {
+    const { calls, thread } = await allLoaded();
+    await vi.advanceTimersByTimeAsync(5000);
+    thread("thr_unseen", ["history-rewritten"]);
+    expect(calls[1]?.input).toEqual({ target: ALL, scope: "uncommitted", refresh: true });
+  });
+
+  it("waits 5 seconds after a request ended before it refreshes again", async () => {
+    const { rpc, thread } = await allLoaded();
+    thread("thr_a", ["events-appended"]);
+    await vi.advanceTimersByTimeAsync(4999);
+    expect(rpc.call).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(rpc.call).toHaveBeenCalledTimes(2);
+  });
+
+  it("only follows the environments the overview lists", async () => {
+    const { rpc, emit } = await allLoaded();
+    await vi.advanceTimersByTimeAsync(5000);
+    emit("environment:changed", { entity: "environment", type: "changed", id: "env_other", changes: ["git-refs-changed"] });
+    expect(rpc.call).toHaveBeenCalledTimes(1);
+    emit("environment:changed", { entity: "environment", type: "changed", id: "env_2", changes: ["git-refs-changed"] });
+    expect(rpc.call).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes every 60 seconds while the page is visible, and not while it is hidden", async () => {
+    const { rpc, calls } = await allLoaded();
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(rpc.call).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(rpc.call).toHaveBeenCalledTimes(2);
+    calls[1]!.resolve(everyThread);
+    await vi.advanceTimersByTimeAsync(0);
+    visibility = "hidden";
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(rpc.call).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes when the page becomes visible, and not when it becomes hidden", async () => {
+    const { rpc } = await allLoaded();
+    await vi.advanceTimersByTimeAsync(5000);
+    setVisibility("hidden");
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(rpc.call).toHaveBeenCalledTimes(1);
+    setVisibility("visible");
+    expect(rpc.call).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes at once on request, which is how the settings signal reaches it", async () => {
+    const { rpc, store } = await allLoaded();
+    store.refresh();
+    expect(rpc.call).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops the heartbeat and the visibility listener on dispose", async () => {
+    const { rpc, store } = await allLoaded();
+    store.dispose();
+    await vi.advanceTimersByTimeAsync(180_000);
+    setVisibility("hidden");
+    setVisibility("visible");
+    expect(rpc.call).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not run a heartbeat or follow visibility for a tree", async () => {
+    const { rpc } = await loaded();
+    await vi.advanceTimersByTimeAsync(180_000);
+    setVisibility("hidden");
+    setVisibility("visible");
     await vi.advanceTimersByTimeAsync(5000);
     expect(rpc.call).toHaveBeenCalledTimes(1);
   });

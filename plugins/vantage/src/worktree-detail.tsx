@@ -6,15 +6,20 @@ import {
 import { toast } from "sonner";
 import type { Commit, CommitFilesInput, CommitFilesOutput, FileChange, Overview, ThreadSummary, Worktree } from "./contract";
 import { FileRow, fileKey, useLoaded, type FileLoaders } from "./file-row";
-import { openWorktreeTerminal } from "./terminal";
+import { openEnvironmentTerminal, openWorktreeTerminal } from "./terminal";
 import { PullRequestBadge, lineCounts, primaryThreadId, useLiveThread, useWorktreeTitles } from "./worktree-list";
 
 export interface WorktreeDetailProps {
   overview: Overview;
   worktreeKey: string;
   tab: "changes" | "commits" | "chat";
-  currentThreadId: string;
+  // The side panel's own thread; null on the full-screen page, which belongs to no thread.
+  currentThreadId: string | null;
   currentHostId: string | null;
+  // "thread": a terminal of the panel's thread, on that thread's machine. "environment": one of the worktree's own, wherever it is.
+  terminal?: "thread" | "environment";
+  // The sequence [ and ] step through, such as the rows the page's filters leave; every worktree of the overview by default.
+  worktrees?: readonly Worktree[];
   onTab(tab: WorktreeDetailProps["tab"]): void;
   onStep(delta: -1 | 1): void;
   onBack(): void;
@@ -40,10 +45,10 @@ const errorMessage = (error: unknown): string => (error instanceof Error ? error
 const ACTION_BUTTON = "inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border-seam px-2.5 py-1 text-xs text-foreground hover:bg-state-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-45 disabled:hover:bg-transparent";
 const ICON_BUTTON = "inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent";
 
-function terminalBlock(worktree: Worktree, currentHostId: string | null): string | null {
+function terminalBlock(worktree: Worktree, currentHostId: string | null, terminal: "thread" | "environment"): string | null {
   if (worktree.kind === "branch") return "The worktree was removed, so there is no folder to open";
   if (worktree.state === "unavailable") return "This worktree cannot be read, so there is no folder to open";
-  if (currentHostId !== worktree.hostId) return "The worktree is on another machine than this thread, so its terminal cannot be shown here";
+  if (terminal === "thread" && currentHostId !== worktree.hostId) return "The worktree is on another machine than this thread, so its terminal cannot be shown here";
   return null;
 }
 
@@ -84,6 +89,7 @@ function Empty({ children }: { children: string }) {
 
 interface BodyProps extends WorktreeDetailProps {
   worktree: Worktree;
+  sequence: readonly Worktree[];
   index: number;
 }
 
@@ -112,13 +118,13 @@ function CommitFiles({ worktree, commit, sharedWith, expandedFiles, onToggleFile
 }
 
 function WorktreeDetailBody(props: BodyProps) {
-  const { overview, worktree, index, tab, currentThreadId, currentHostId, onTab, onStep, onBack, loaders } = props;
+  const { overview, worktree, sequence, index, tab, currentThreadId, currentHostId, terminal = "thread", onTab, onStep, onBack, loaders } = props;
   const sdk = useSdk();
   const navigate = useBbNavigate();
   const threads = useMemo(() => new Map(overview.threads.map((thread) => [thread.id, thread])), [overview.threads]);
   const titles = useWorktreeTitles(overview, currentThreadId);
   const primary = primaryThreadId(worktree, currentThreadId);
-  const own = primary === currentThreadId;
+  const own = currentThreadId !== null && primary === currentThreadId;
   const live = useLiveThread(primary, threads.get(primary));
   const [expandedFiles, setExpandedFiles] = useState<ReadonlySet<string>>(() => new Set());
   const [openCommits, setOpenCommits] = useState<ReadonlySet<string>>(() => new Set());
@@ -144,7 +150,7 @@ function WorktreeDetailBody(props: BodyProps) {
   }, [overview.sharedFiles, worktree.key, worktree.projectId, titles]);
 
   const unavailable = worktree.state === "unavailable";
-  const blocked = terminalBlock(worktree, currentHostId);
+  const blocked = terminalBlock(worktree, currentHostId, terminal);
   const needsAttention = !live.archived && (live.indicator === "waiting-for-input" || live.indicator === "unread-error");
   const { additions, deletions } = lineCounts(worktree);
   const changeCount = worktree.uncommitted.length + worktree.committed.length;
@@ -156,9 +162,11 @@ function WorktreeDetailBody(props: BodyProps) {
   const shown = tab === "chat" && own ? "changes" : tab;
 
   const startTerminal = () => {
-    openWorktreeTerminal(sdk, navigate, {
-      threadId: currentThreadId, path: worktree.root, title: `${live.title} · ${worktree.branch ?? "worktree"}`,
-    }).then(
+    const title = `${live.title} · ${worktree.branch ?? "worktree"}`;
+    const opening = terminal === "environment" && worktree.ref.kind === "workspace"
+      ? openEnvironmentTerminal(sdk, navigate, { environmentId: worktree.ref.environmentId, title })
+      : openWorktreeTerminal(sdk, navigate, { threadId: currentThreadId!, path: worktree.root, title });
+    opening.then(
       (opened) => { if (!opened) toast.error("bb could not show the terminal"); },
       (error: unknown) => { toast.error(`Could not start a terminal: ${errorMessage(error)}`); },
     );
@@ -232,11 +240,11 @@ function WorktreeDetailBody(props: BodyProps) {
             All worktrees
           </button>
           <span className="flex-1" />
-          <button type="button" aria-label="Previous worktree" title="Previous worktree ([)" disabled={index === 0} onClick={() => onStep(-1)} className={ICON_BUTTON}>
+          <button type="button" aria-label="Previous worktree" title="Previous worktree ([)" disabled={index <= 0} onClick={() => onStep(-1)} className={ICON_BUTTON}>
             <Icon name="ChevronLeft" className="size-3.5" aria-hidden />
           </button>
-          <span>{index + 1} of {overview.worktrees.length}</span>
-          <button type="button" aria-label="Next worktree" title="Next worktree (])" disabled={index === overview.worktrees.length - 1} onClick={() => onStep(1)} className={ICON_BUTTON}>
+          {index !== -1 && <span>{index + 1} of {sequence.length}</span>}
+          <button type="button" aria-label="Next worktree" title="Next worktree (])" disabled={index === -1 || index === sequence.length - 1} onClick={() => onStep(1)} className={ICON_BUTTON}>
             <Icon name="ChevronRight" className="size-3.5" aria-hidden />
           </button>
         </div>
@@ -270,7 +278,7 @@ function WorktreeDetailBody(props: BodyProps) {
         )}
         <div className="ml-6 mt-2.5 flex flex-wrap items-center gap-1.5">
           {!own && (
-            <button type="button" className={ACTION_BUTTON} onClick={() => navigate.toThread(primary, { split: true })}>
+            <button type="button" className={ACTION_BUTTON} onClick={() => (currentThreadId === null ? navigate.toThread(primary) : navigate.toThread(primary, { split: true }))}>
               <Icon name="PanelRight" className="size-3.5" aria-hidden />
               Open thread
             </button>
@@ -333,8 +341,9 @@ function WorktreeDetailBody(props: BodyProps) {
 }
 
 export function WorktreeDetail(props: WorktreeDetailProps) {
-  const index = props.overview.worktrees.findIndex((worktree) => worktree.key === props.worktreeKey);
-  const worktree = props.overview.worktrees[index];
+  const worktree = props.overview.worktrees.find((entry) => entry.key === props.worktreeKey);
   if (worktree === undefined) return null;
-  return <WorktreeDetailBody key={worktree.key} {...props} worktree={worktree} index={index} />;
+  const sequence = props.worktrees ?? props.overview.worktrees;
+  const index = sequence.findIndex((entry) => entry.key === worktree.key);
+  return <WorktreeDetailBody key={worktree.key} {...props} worktree={worktree} sequence={sequence} index={index} />;
 }

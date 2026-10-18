@@ -11,7 +11,12 @@ export { primaryThreadId };
 
 export interface WorktreeListProps {
   overview: Overview;
-  currentThreadId: string;
+  // The side panel's own thread; null on the full-screen page, which belongs to no thread.
+  currentThreadId: string | null;
+  selectedKey?: string | null;
+  // The rows to show (filtered by the page); every worktree of the overview by default.
+  worktrees?: readonly Worktree[];
+  showSummary?: boolean;
   onOpen(key: string): void;
   onShowRepositories(): void;
 }
@@ -39,8 +44,11 @@ export function LiveThreadsProvider({ children }: { children: ReactNode }) {
   return <LiveThreadsContext.Provider value={index}>{children}</LiveThreadsContext.Provider>;
 }
 
+const RUNNING_STATUSES = new Set(["active", "starting", "pending"]);
+
 function resolveLive(sidebar: PluginSidebarThread | null, fallback: ThreadSummary | undefined, threadId: string): LiveThread {
-  const indicator = sidebar?.indicator ?? "none";
+  // bb's sidebar leaves out hidden threads, such as a study's workers; the overview still knows when one is running.
+  const indicator = sidebar?.indicator ?? (fallback !== undefined && RUNNING_STATUSES.has(fallback.status) ? "runtime" : "none");
   const archived = sidebar?.isArchived ?? fallback?.archived ?? false;
   return {
     title: sidebar?.displayTitle ?? fallback?.title ?? threadId,
@@ -83,7 +91,7 @@ export function PullRequestBadge({ threadId }: { threadId: string }) {
 }
 
 // Each worktree's display title, keyed by worktree: the panel's own reads "This thread".
-export function useWorktreeTitles(overview: Pick<Overview, "worktrees" | "threads">, currentThreadId: string): ReadonlyMap<string, string> {
+export function useWorktreeTitles(overview: Pick<Overview, "worktrees" | "threads">, currentThreadId: string | null): ReadonlyMap<string, string> {
   const live = useContext(LiveThreadsContext);
   return useMemo(() => {
     const summaries = new Map(overview.threads.map((thread) => [thread.id, thread]));
@@ -96,20 +104,22 @@ export function useWorktreeTitles(overview: Pick<Overview, "worktrees" | "thread
 
 interface RowProps {
   worktree: Worktree;
-  currentThreadId: string;
+  currentThreadId: string | null;
   fallback: ThreadSummary | undefined;
   sharedCount: number;
+  selected: boolean;
+  underTitle: string | null;
   onOpen(key: string): void;
 }
 
-function WorktreeRowView({ worktree, currentThreadId, fallback, sharedCount, onOpen }: RowProps) {
+function WorktreeRowView({ worktree, currentThreadId, fallback, sharedCount, selected, underTitle, onOpen }: RowProps) {
   const id = primaryThreadId(worktree, currentThreadId);
   const live = useLiveThread(id, fallback);
   const unavailable = worktree.state === "unavailable";
   const { additions, deletions } = lineCounts(worktree);
   return (
-    <button type="button" data-worktree-row={worktree.key} onClick={() => onOpen(worktree.key)}
-      className="mx-1 grid w-[calc(100%-0.5rem)] cursor-pointer grid-cols-[1rem_minmax(0,1fr)_auto_0.875rem] items-center gap-x-2 gap-y-0.5 rounded-md py-1.5 pl-3 pr-2.5 text-left text-xs hover:bg-state-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
+    <button type="button" data-worktree-row={worktree.key} aria-current={selected ? "true" : undefined} onClick={() => onOpen(worktree.key)}
+      className={`mx-1 grid w-[calc(100%-0.5rem)] cursor-pointer grid-cols-[1rem_minmax(0,1fr)_auto_0.875rem] items-center gap-x-2 gap-y-0.5 rounded-md py-1.5 pl-3 pr-2.5 text-left text-xs hover:bg-state-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${selected ? "bg-surface-selected" : ""}`}>
       <span title={live.label} className="col-start-1 row-span-2 row-start-1 flex size-4 items-center justify-center">
         {!unavailable && <ThreadStatusGlyph indicator={live.indicator} archived={live.archived} size="compact" />}
       </span>
@@ -141,6 +151,7 @@ function WorktreeRowView({ worktree, currentThreadId, fallback, sharedCount, onO
       <span className="col-start-2 row-start-2 flex min-w-0 items-center gap-1 font-mono text-[11px] text-muted-foreground">
         {worktree.branch !== null && <Icon name="GitBranch" className="size-3 shrink-0" aria-hidden />}
         <span title={worktree.branch ?? undefined} className="truncate">{worktree.branch}</span>
+        {underTitle !== null && <span title={underTitle} className="min-w-0 shrink truncate font-sans text-subtle-foreground">· under {underTitle}</span>}
         {worktree.threadIds.length > 1 && id !== currentThreadId && (
           <span className="shrink-0 font-sans text-subtle-foreground">· +{worktree.threadIds.length - 1} {worktree.threadIds.length === 2 ? "thread" : "threads"}</span>
         )}
@@ -207,33 +218,57 @@ function OutsideRow({ icon, children, detail, onClick }: { icon: "Folder" | "Edi
   );
 }
 
-export function WorktreeList({ overview, currentThreadId, onOpen, onShowRepositories }: WorktreeListProps) {
+export interface WorktreeTally { running: number; needs: number; failed: number }
+
+// What bb says each shown thread is doing; archived and unreadable worktrees count as none of these.
+export function useWorktreeTally(
+  overview: Pick<Overview, "threads">, worktrees: readonly Worktree[], currentThreadId: string | null,
+): WorktreeTally {
+  const live = useContext(LiveThreadsContext);
+  return useMemo(() => {
+    const threads = new Map(overview.threads.map((thread) => [thread.id, thread]));
+    const tally = { running: 0, needs: 0, failed: 0 };
+    for (const worktree of worktrees) {
+      const id = primaryThreadId(worktree, currentThreadId);
+      const { indicator, archived } = resolveLive(live?.get(id) ?? null, threads.get(id), id);
+      if (archived || worktree.state === "unavailable") continue;
+      if (indicator === "runtime") tally.running++;
+      else if (indicator === "waiting-for-input") tally.needs++;
+      else if (indicator === "unread-error") tally.failed++;
+    }
+    return tally;
+  }, [live, overview.threads, worktrees, currentThreadId]);
+}
+
+export function WorktreeList({
+  overview, currentThreadId, selectedKey = null, worktrees = overview.worktrees, showSummary = true, onOpen, onShowRepositories,
+}: WorktreeListProps) {
   const live = useContext(LiveThreadsContext);
   const threads = useMemo(() => new Map(overview.threads.map((thread) => [thread.id, thread])), [overview.threads]);
   const titles = useWorktreeTitles(overview, currentThreadId);
+  const tally = useWorktreeTally(overview, worktrees, currentThreadId);
   const sharedCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const file of overview.sharedFiles) for (const key of file.worktreeKeys) counts.set(key, (counts.get(key) ?? 0) + 1);
     return counts;
   }, [overview.sharedFiles]);
-
-  const tally = { running: 0, needs: 0, failed: 0 };
-  for (const worktree of overview.worktrees) {
-    const id = primaryThreadId(worktree, currentThreadId);
-    const { indicator, archived } = resolveLive(live?.get(id) ?? null, threads.get(id), id);
-    if (archived || worktree.state === "unavailable") continue;
-    if (indicator === "runtime") tally.running++;
-    else if (indicator === "waiting-for-input") tally.needs++;
-    else if (indicator === "unread-error") tally.failed++;
-  }
+  const shownKeys = new Set(worktrees.map((worktree) => worktree.key));
+  const sharedFiles = overview.sharedFiles.filter((file) => file.worktreeKeys.some((key) => shownKeys.has(key)));
+  const titleOf = (id: string): string => resolveLive(live?.get(id) ?? null, threads.get(id), id).title;
+  // On the page a child's row says which thread it belongs to; the side panel already is that thread's.
+  const underTitleOf = (worktree: Worktree): string | null => {
+    const summary = threads.get(primaryThreadId(worktree, currentThreadId));
+    if (currentThreadId !== null || summary === undefined || summary.parentThreadId === null || !threads.has(summary.parentThreadId)) return null;
+    return titleOf(summary.rootThreadId);
+  };
 
   const groups: Array<{ label: string; hostName: string; items: Worktree[] }> = [];
-  for (const worktree of overview.worktrees) {
+  for (const worktree of worktrees) {
     let group = groups.find((entry) => entry.label === worktree.label && entry.hostName === worktree.hostName);
     if (group === undefined) groups.push(group = { label: worktree.label, hostName: worktree.hostName, items: [] });
     group.items.push(worktree);
   }
-  const severalMachines = new Set(overview.worktrees.map((worktree) => worktree.hostId)).size > 1;
+  const severalMachines = new Set(worktrees.map((worktree) => worktree.hostId)).size > 1;
   const checkouts = overview.repos.filter((repo) => repo.ref.kind === "checkout");
   const outside = checkouts.length > 0 || overview.otherFiles.length > 0;
 
@@ -241,13 +276,15 @@ export function WorktreeList({ overview, currentThreadId, onOpen, onShowReposito
     <div data-worktree-list className="pb-3">
       {overview.worktrees.length === 0
         ? <p className="px-3.5 pt-3.5 text-sm text-muted-foreground">No worktrees in this thread or its child threads yet.</p>
-        : (
-          <p className="px-3.5 pt-2.5 text-xs text-muted-foreground">
-            {plural(overview.worktrees.length, "workspace")} · {tally.running} running · {tally.needs} {tally.needs === 1 ? "needs" : "need"} you · {tally.failed} failed
-          </p>
-        )}
-      {overview.sharedFiles.length > 0 && (
-        <SharedBanner files={overview.sharedFiles} titles={titles} />
+        : worktrees.length === 0
+          ? <p className="px-3.5 pt-3.5 text-sm text-muted-foreground">No worktrees match the filters.</p>
+          : showSummary && (
+            <p className="px-3.5 pt-2.5 text-xs text-muted-foreground">
+              {plural(worktrees.length, "workspace")} · {tally.running} running · {tally.needs} {tally.needs === 1 ? "needs" : "need"} you · {tally.failed} failed
+            </p>
+          )}
+      {sharedFiles.length > 0 && (
+        <SharedBanner files={sharedFiles} titles={titles} />
       )}
       {groups.map((group) => {
         const first = group.items[0]!;
@@ -258,7 +295,8 @@ export function WorktreeList({ overview, currentThreadId, onOpen, onShowReposito
               {`${group.label} · ${group.items.length} ${noun}${severalMachines ? ` · ${group.hostName}` : ""}`}
             </GroupHeading>
             {group.items.map((worktree) => (
-              <WorktreeRow key={worktree.key} worktree={worktree} currentThreadId={currentThreadId}
+              <WorktreeRow key={worktree.key} worktree={worktree} currentThreadId={currentThreadId} selected={worktree.key === selectedKey}
+                underTitle={underTitleOf(worktree)}
                 fallback={threads.get(primaryThreadId(worktree, currentThreadId))} sharedCount={sharedCounts.get(worktree.key) ?? 0} onOpen={onOpen} />
             ))}
           </section>

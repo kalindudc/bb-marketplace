@@ -322,7 +322,7 @@ describe("VantagePanel", () => {
     fireEvent.click(slot.getByRole("button", { name: "Branch" }));
     await slot.findByText("scope branch");
     expect(overview.mock.calls.map(([input]) => input)).toEqual([
-      { threadId: "thr_1", scope: "uncommitted" }, { threadId: "thr_1", scope: "branch" },
+      { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted" }, { target: { kind: "tree", threadId: "thr_1" }, scope: "branch" },
     ]);
     expect(slot.getByRole("button", { name: "Branch" }).getAttribute("aria-pressed")).toBe("true");
   });
@@ -332,7 +332,7 @@ describe("VantagePanel", () => {
     await slot.findByText("cortex");
     fireEvent.click(slot.getByRole("button", { name: "Refresh" }));
     await waitFor(() => expect(overview).toHaveBeenCalledTimes(2));
-    expect(overview.mock.calls[1]?.[0]).toEqual({ threadId: "thr_1", scope: "uncommitted", refresh: true });
+    expect(overview.mock.calls[1]?.[0]).toEqual({ target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", refresh: true });
   });
 
   it("says Updating… while a refresh runs and keeps the repositories visible", async () => {

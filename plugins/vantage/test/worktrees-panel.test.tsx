@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { fireEvent, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginSidebarThread, PluginThreadPanelProps } from "@get-bb/plugin-sdk/app";
-import type { CommitFilesInput, CommitFilesOutput, Overview, OverviewInput, PatchOutput, PatchRequest, rpcContract } from "../src/contract";
+import type { CommitFilesInput, CommitFilesOutput, Overview, OverviewInput, PatchOutput, PatchRequest, Worktree, rpcContract } from "../src/contract";
 import { clearFileCache } from "../src/file-row";
 import { VIEW_STORAGE_KEY } from "../src/view-preference";
 import { WorktreeDetail, relativeTime, type WorktreeDetailProps } from "../src/worktree-detail";
@@ -77,13 +77,17 @@ const row = (slot: Slot, key: string): HTMLElement => {
   return found;
 };
 
-function mountList(options: { overview?: Overview; onOpen?: (key: string) => void; onShowRepositories?: () => void; pullRequests?: Record<string, ReturnType<typeof sidebarPullRequest>> } = {}) {
+function mountList(options: {
+  overview?: Overview; onOpen?: (key: string) => void; onShowRepositories?: () => void; pullRequests?: Record<string, ReturnType<typeof sidebarPullRequest>>;
+  currentThreadId?: string | null; selectedKey?: string | null; worktrees?: readonly Worktree[]; showSummary?: boolean;
+} = {}) {
   const onOpen = options.onOpen ?? vi.fn();
   const onShowRepositories = options.onShowRepositories ?? vi.fn();
   const slot = renderSlot({
     component: () => (
       <LiveThreadsProvider>
-        <WorktreeList overview={options.overview ?? sampleOverview()} currentThreadId="thr_1" onOpen={onOpen} onShowRepositories={onShowRepositories} />
+        <WorktreeList overview={options.overview ?? sampleOverview()} currentThreadId={options.currentThreadId === undefined ? "thr_1" : options.currentThreadId}
+          selectedKey={options.selectedKey} worktrees={options.worktrees} showSummary={options.showSummary} onOpen={onOpen} onShowRepositories={onShowRepositories} />
       </LiveThreadsProvider>
     ),
   }, {}, { sidebarThreads: { status: "ready", threads: SIDEBAR }, sidebarPullRequests: options.pullRequests ?? {} });
@@ -238,6 +242,7 @@ function mountDetail(options: {
   patch?: (input: PatchRequest) => PatchOutput | Promise<PatchOutput>; commitFiles?: (input: CommitFilesInput) => CommitFilesOutput | Promise<CommitFilesOutput>;
   openTerminal?: () => boolean; create?: () => unknown; pullRequests?: Record<string, ReturnType<typeof sidebarPullRequest>>;
   sidebar?: PluginSidebarThread[]; threadActions?: (thread: unknown) => never[];
+  currentThreadId?: string | null; terminal?: WorktreeDetailProps["terminal"]; worktrees?: readonly Worktree[];
 } = {}) {
   const patch = vi.fn(async (input: PatchRequest) => (options.patch ?? ((request: PatchRequest) => ({
     patch: `+patch ${request.scope} ${request.sha ?? "-"} ${request.path}`, truncated: false, binary: false,
@@ -254,7 +259,8 @@ function mountDetail(options: {
     return (
       <LiveThreadsProvider>
         <WorktreeDetail overview={options.overview ?? sampleOverview()} worktreeKey={options.key ?? "wt1"} tab={tab}
-          currentThreadId="thr_1" currentHostId={options.currentHostId === undefined ? "host_1" : options.currentHostId}
+          currentThreadId={options.currentThreadId === undefined ? "thr_1" : options.currentThreadId} terminal={options.terminal} worktrees={options.worktrees}
+          currentHostId={options.currentHostId === undefined ? "host_1" : options.currentHostId}
           onTab={(next) => { onTab(next); setTab(next); }} onStep={onStep} onBack={onBack}
           loaders={{ patch, recordedEdits, commitFiles }} />
       </LiveThreadsProvider>
@@ -535,6 +541,134 @@ describe("WorktreeDetail actions", () => {
   });
 });
 
+
+describe("WorktreeList on the full-screen page", () => {
+  it("marks the selected row as current and leaves the others unmarked", () => {
+    const { slot } = mountList({ currentThreadId: null, selectedKey: "wt1" });
+    expect(row(slot, "wt1").getAttribute("aria-current")).toBe("true");
+    expect(row(slot, "wt1").className).toContain("bg-surface-selected");
+    expect(row(slot, "wt2").hasAttribute("aria-current")).toBe(false);
+    expect(row(slot, "wt2").className).not.toContain("bg-surface-selected");
+  });
+
+  it("marks nothing when nothing is selected, and never in the side panel", () => {
+    const { slot } = mountList();
+    expect(slot.container.querySelector("[aria-current]")).toBeNull();
+  });
+
+  it("has no 'This thread' label, since the page belongs to no thread", () => {
+    const { slot } = mountList({ currentThreadId: null });
+    expect(row(slot, "wt0").textContent).not.toContain("This thread");
+    expect(row(slot, "wt0").textContent).toContain("Parent thread");
+  });
+
+  it("says which thread a child's row is under, using the live title of the root", () => {
+    const { slot } = mountList({ currentThreadId: null });
+    expect(row(slot, "wt1").textContent).toContain("under Parent thread");
+    expect(row(slot, "wt0").textContent).not.toContain("under");
+    const sidePanel = mountList();
+    expect(row(sidePanel.slot, "wt1").textContent).not.toContain("under");
+  });
+
+  it("leaves out 'under' when the parent is not in the overview", () => {
+    const orphan = sampleOverview({ threads: THREADS.map((thread) => (thread.id === "thr_2" ? { ...thread, parentThreadId: "thr_gone" } : thread)) });
+    const { slot } = mountList({ currentThreadId: null, overview: orphan });
+    expect(row(slot, "wt1").textContent).not.toContain("under");
+  });
+
+  it("shows only the worktrees it is given, and counts only those in its summary", () => {
+    const shown = WORKTREES.filter((worktree) => worktree.key === "wt1" || worktree.key === "wt2");
+    const { slot } = mountList({ currentThreadId: null, worktrees: shown });
+    expect(slot.container.querySelectorAll("[data-worktree-row]")).toHaveLength(2);
+    expect(slot.container.textContent).toContain("2 workspaces · 0 running · 1 needs you · 1 failed");
+    expect(slot.container.querySelector('[data-worktree-group="Other project"]')).toBeNull();
+  });
+
+  it("keeps the shared-files banner to files that a shown worktree changed", () => {
+    const outside = mountList({ currentThreadId: null, worktrees: WORKTREES.filter((worktree) => worktree.key === "wt0" || worktree.key === "wt5") });
+    expect(outside.slot.container.textContent).not.toContain("changed in more than one worktree");
+    const inside = mountList({ currentThreadId: null, worktrees: WORKTREES.filter((worktree) => worktree.key === "wt1") });
+    expect(inside.slot.container.textContent).toContain("1 file is changed in more than one worktree");
+  });
+
+  it("counts and draws a running thread that bb's sidebar does not list, from the status the overview carries", () => {
+    const hidden = sampleOverview({
+      threads: THREADS.map((thread) => (thread.id === "thr_6" ? { ...thread, status: "active" } : thread)),
+    });
+    const sidebar = SIDEBAR.filter((thread) => thread.id !== "thr_6");
+    const slot = renderSlot({
+      component: () => (
+        <LiveThreadsProvider><WorktreeList overview={hidden} currentThreadId={null} onOpen={vi.fn()} onShowRepositories={vi.fn()} /></LiveThreadsProvider>
+      ),
+    }, {}, { sidebarThreads: { status: "ready", threads: sidebar }, sidebarPullRequests: {} });
+    mounts.push(slot);
+    expect(slot.container.textContent).toContain("6 workspaces · 2 running · 1 needs you · 1 failed");
+    expect(row(slot, "wt5").querySelector('[data-thread-status-glyph="runtime"]')).not.toBeNull();
+  });
+
+  it("does not guess a status for an idle thread that the sidebar does not list", () => {
+    const { slot } = mountList({ currentThreadId: null });
+    expect(slot.container.textContent).toContain("6 workspaces · 1 running");
+  });
+
+  it("can leave out its own summary, when the page shows one", () => {
+    const { slot } = mountList({ currentThreadId: null, showSummary: false });
+    expect(slot.container.textContent).not.toContain("workspaces ·");
+    expect(slot.container.querySelectorAll("[data-worktree-row]")).toHaveLength(6);
+  });
+});
+
+describe("WorktreeDetail on the full-screen page", () => {
+  it("offers Chat and bb's thread menu for every thread, the first one included", () => {
+    const { slot } = mountDetail({ currentThreadId: null, key: "wt0", sidebar: SIDEBAR });
+    expect(tab(slot, /^Chat/)).toBeTruthy();
+    expect(button(slot, /Open thread/)).toBeTruthy();
+    expect(button(slot, "Thread actions")).toBeTruthy();
+    expect(slot.container.querySelector("[data-worktree-header]")!.textContent).not.toContain("This thread");
+  });
+
+  it("starts a terminal in the worktree's environment, with no start command and no machine check", async () => {
+    const { slot, create } = mountDetail({ currentThreadId: null, terminal: "environment", currentHostId: null });
+    const terminal = button(slot, /Terminal here/) as HTMLButtonElement;
+    expect(terminal.disabled).toBe(false);
+    fireEvent.click(terminal);
+    await waitFor(() => expect(slot.inspection.navigateCalls).toEqual([{ method: "experimental_openTerminal", options: { terminalId: "term_1" } }]));
+    expect(create).toHaveBeenCalledWith({
+      cols: 120, rows: 32, scope: { kind: "environment", environmentId: "env_1" }, title: "Child A (live) · agent/a",
+    });
+  });
+
+  it("still has no terminal for a removed worktree or one that cannot be read", () => {
+    for (const [key, reason] of [["wt3", "removed"], ["wt4", "cannot be read"]] as const) {
+      const { slot } = mountDetail({ currentThreadId: null, terminal: "environment", key });
+      const terminal = button(slot, /Terminal here/) as HTMLButtonElement;
+      expect(terminal.disabled).toBe(true);
+      expect(terminal.getAttribute("title")).toContain(reason);
+      slot.lifecycle.unmount();
+    }
+  });
+
+  it("steps through the sequence it is given and shows its position there", () => {
+    const sequence = WORKTREES.filter((worktree) => worktree.key === "wt1" || worktree.key === "wt2");
+    const first = mountDetail({ currentThreadId: null, worktrees: sequence });
+    expect(first.slot.container.textContent).toContain("1 of 2");
+    expect((button(first.slot, "Previous worktree") as HTMLButtonElement).disabled).toBe(true);
+    expect((button(first.slot, "Next worktree") as HTMLButtonElement).disabled).toBe(false);
+    first.slot.lifecycle.unmount();
+    const last = mountDetail({ currentThreadId: null, worktrees: sequence, key: "wt2" });
+    expect(last.slot.container.textContent).toContain("2 of 2");
+    expect((button(last.slot, "Next worktree") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("still shows a worktree that the filters hide, without a position", () => {
+    const sequence = WORKTREES.filter((worktree) => worktree.key === "wt2");
+    const { slot } = mountDetail({ currentThreadId: null, worktrees: sequence, key: "wt1" });
+    expect(slot.container.querySelector("[data-worktree-header]")!.textContent).toContain("Child A (live)");
+    expect(slot.container.textContent).not.toMatch(/\d of \d/);
+    expect((button(slot, "Previous worktree") as HTMLButtonElement).disabled).toBe(true);
+    expect((button(slot, "Next worktree") as HTMLButtonElement).disabled).toBe(true);
+  });
+});
 
 async function mountPanel(options: { overview?: (input: OverviewInput) => Overview | Promise<Overview>; threadActions?: () => never[] } = {}) {
   const app = await loadPluginApp(() => import("../app"));

@@ -1,5 +1,5 @@
 import type { PluginBrowserBbSdk } from "@get-bb/plugin-sdk";
-import type { Overview, OverviewInput, Scope } from "./contract";
+import type { Overview, OverviewInput, OverviewTarget, Scope } from "./contract";
 
 export interface VantageSnapshot {
   status: "loading" | "ready" | "error";
@@ -17,7 +17,9 @@ export interface VantageStore {
   dispose(): void;
 }
 
-const DEFAULT_REFRESH_DELAY_MS = 1500;
+const TREE_REFRESH_DELAY_MS = 1500;
+const ALL_REFRESH_DELAY_MS = 5000;
+const HEARTBEAT_MS = 60_000;
 const THREAD_CHANGES = ["archived-changed", "environment-changed", "parent-changed"];
 const ENVIRONMENT_CHANGES = ["work-status-changed", "git-refs-changed", "status-changed"];
 const FILE_EVENT_TYPES = ["item/completed", "turn/completed"];
@@ -27,11 +29,12 @@ const errorMessage = (error: unknown): string => (error instanceof Error ? error
 export function createVantageStore(options: {
   rpc: { call(method: "overview", input: OverviewInput): Promise<Overview> };
   sdk: Pick<PluginBrowserBbSdk, "subscribe">;
-  threadId: string;
+  target: OverviewTarget;
   refreshDelayMs?: number;
 }): VantageStore {
-  const { rpc, sdk, threadId } = options;
-  const refreshDelayMs = options.refreshDelayMs ?? DEFAULT_REFRESH_DELAY_MS;
+  const { rpc, sdk, target } = options;
+  const everyThread = target.kind === "all";
+  const refreshDelayMs = options.refreshDelayMs ?? (everyThread ? ALL_REFRESH_DELAY_MS : TREE_REFRESH_DELAY_MS);
   const listeners = new Set<() => void>();
   let snapshot: VantageSnapshot = { status: "loading", overview: null, scope: "uncommitted", refreshing: false, error: null };
   let disposed = false;
@@ -66,7 +69,7 @@ export function createVantageStore(options: {
     const token = { generation };
     running = token;
     update(snapshot.overview === null ? { status: "loading", error: null } : { refreshing: true });
-    const input: OverviewInput = { threadId, scope: snapshot.scope, ...(hard ? { refresh: true } : {}) };
+    const input: OverviewInput = { target, scope: snapshot.scope, ...(hard ? { refresh: true } : {}) };
     const finish = (change: () => Partial<VantageSnapshot>) => {
       if (disposed || token.generation !== generation) return;
       update(change());
@@ -110,8 +113,8 @@ export function createVantageStore(options: {
       event: "thread:changed",
       callback(event) {
         if (event.changes.includes("thread-created")) return request(false, false);
-        const tree = ids();
-        if (event.id === undefined || tree === null || !tree.threads.has(event.id)) return;
+        const known = ids();
+        if (event.id === undefined || (!everyThread && (known === null || !known.threads.has(event.id)))) return;
         if (event.changes.includes("history-rewritten") || event.changes.includes("history-compacted")) return request(true, false);
         const types = event.metadata?.eventTypes;
         const filesMayHaveChanged = event.changes.includes("events-appended") &&
@@ -128,6 +131,17 @@ export function createVantageStore(options: {
     }),
     sdk.subscribe({ event: "realtime:connection", callback(event) { if (event.reconnected) request(false, false); } }),
   ];
+  // A page that stays open keeps up with changes no event announces, such as a file edited by hand.
+  let stopWatching = () => {};
+  if (everyThread && typeof document !== "undefined") {
+    const refreshIfVisible = () => { if (document.visibilityState === "visible") request(false, false); };
+    const heartbeat = setInterval(refreshIfVisible, HEARTBEAT_MS);
+    document.addEventListener("visibilitychange", refreshIfVisible);
+    stopWatching = () => {
+      clearInterval(heartbeat);
+      document.removeEventListener("visibilitychange", refreshIfVisible);
+    };
+  }
   request(false, false);
 
   return {
@@ -151,6 +165,7 @@ export function createVantageStore(options: {
       generation++;
       if (timer !== null) clearTimeout(timer);
       timer = null;
+      stopWatching();
       for (const unsubscribe of unsubscribers) unsubscribe();
       listeners.clear();
     },

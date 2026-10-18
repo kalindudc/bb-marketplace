@@ -47,20 +47,20 @@ function setup(options: { status?: (environmentId: string) => unknown | Promise<
 
 const workspaceRef = (environmentId: string, base: string | null = "origin/main"): RepoRef => ({ kind: "workspace", environmentId, base });
 const workspacePlan = (n: number, overrides: Partial<RepoPlan> = {}): RepoPlan => ({
-  key: `host_1:/work/${n}`, ref: workspaceRef(`env_${n}`), label: "Project", root: `/work/${n}`, hostId: "host_1",
+  key: `host_1:/work/${n}`, ref: workspaceRef(`env_${n}`), label: "Project", projectId: "proj_1", root: `/work/${n}`, hostId: "host_1",
   threadIds: [`thr_${n}`], touched: new Map(), ...overrides,
 });
 const branchPlan = (overrides: Partial<RepoPlan> = {}): RepoPlan => ({
   key: "host_1:/code/proj@feature/old",
   ref: { kind: "branch", hostId: "host_1", root: "/code/proj", base: "origin/main", head: "feature/old" },
-  label: "Project", root: "/code/proj", hostId: "host_1", threadIds: ["thr_9"], touched: new Map(), ...overrides,
+  label: "Project", projectId: "proj_1", root: "/code/proj", hostId: "host_1", threadIds: ["thr_9"], touched: new Map(), ...overrides,
 });
 const checkoutPlan: RepoPlan = {
-  key: "host_1:/code/cortex", ref: { kind: "checkout", hostId: "host_1", root: "/code/cortex", base: null }, label: "cortex",
+  key: "host_1:/code/cortex", ref: { kind: "checkout", hostId: "host_1", root: "/code/cortex", base: null }, label: "cortex", projectId: null,
   root: "/code/cortex", hostId: "host_1", threadIds: ["thr_1"], touched: new Map(),
 };
 const recordedPlan: RepoPlan = {
-  key: "recorded:env_9", ref: { kind: "recorded" }, label: "Gone", root: null, hostId: "host_1", threadIds: ["thr_3"], touched: new Map(),
+  key: "recorded:env_9", ref: { kind: "recorded" }, label: "Gone", projectId: "proj_1", root: null, hostId: "host_1", threadIds: ["thr_3"], touched: new Map(),
 };
 
 const environments = (...list: Environment[]): ReadonlyMap<string, Environment> => new Map(list.map((env) => [env.id, env]));

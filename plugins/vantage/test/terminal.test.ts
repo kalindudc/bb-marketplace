@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { openWorktreeTerminal, shellQuote, terminalCommand } from "../src/terminal";
+import { openEnvironmentTerminal, openWorktreeTerminal, shellQuote, terminalCommand } from "../src/terminal";
 
 describe("shellQuote", () => {
   it("wraps a path in single quotes, keeping spaces", () => {
@@ -40,5 +40,26 @@ describe("openWorktreeTerminal", () => {
     expect(await openWorktreeTerminal({ terminals: { create } } as never, { experimental_openTerminal: async () => false } as never, input)).toBe(false);
     create.mockRejectedValueOnce(new Error("no terminal for you"));
     await expect(openWorktreeTerminal({ terminals: { create } } as never, { experimental_openTerminal: async () => true } as never, input)).rejects.toThrow("no terminal for you");
+  });
+});
+
+describe("openEnvironmentTerminal", () => {
+  const input = { environmentId: "env_1", title: "Child A · feature/work" };
+
+  it("starts an environment-scoped terminal with no command, so it opens in the workspace, then shows it", async () => {
+    const create = vi.fn(async (..._args: unknown[]) => ({ id: "term_7" }));
+    const experimental_openTerminal = vi.fn(async (..._args: unknown[]) => true);
+    const opened = await openEnvironmentTerminal({ terminals: { create } } as never, { experimental_openTerminal } as never, input);
+    expect(opened).toBe(true);
+    expect(create).toHaveBeenCalledWith({ cols: 120, rows: 32, scope: { kind: "environment", environmentId: "env_1" }, title: "Child A · feature/work" });
+    expect(create.mock.calls[0]![0]).not.toHaveProperty("start");
+    expect(experimental_openTerminal).toHaveBeenCalledWith({ terminalId: "term_7" });
+  });
+
+  it("returns false when bb cannot show the terminal, and lets a failed create reject", async () => {
+    const create = vi.fn(async (..._args: unknown[]) => ({ id: "term_7" }));
+    expect(await openEnvironmentTerminal({ terminals: { create } } as never, { experimental_openTerminal: async () => false } as never, input)).toBe(false);
+    create.mockRejectedValueOnce(new Error("nope"));
+    await expect(openEnvironmentTerminal({ terminals: { create } } as never, { experimental_openTerminal: async () => true } as never, input)).rejects.toThrow("nope");
   });
 });

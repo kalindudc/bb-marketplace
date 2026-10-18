@@ -3,8 +3,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { act, fireEvent, screen, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
-import type { PluginCommandContext } from "@get-bb/plugin-sdk/app";
+import type { PluginCommandContext, PluginThreadPanelProps } from "@get-bb/plugin-sdk/app";
 import { PANEL_ACTION_ID, createCommands } from "../src/commands";
+import type { rpcContract } from "../src/contract";
+import { overview } from "./fixtures";
 
 afterEach(() => {
   document.body.replaceChildren();
@@ -54,6 +56,33 @@ describe("plugin app", () => {
 });
 
 const TOOLTIP = "Vantage: what this thread and its child threads changed, by worktree and repository";
+
+describe("full-screen page", () => {
+  it("registers a Vantage entry for bb's left navigation", async () => {
+    const app = await loadPluginApp(() => import("../app"));
+    expect(app.navPanels.map(({ id, title, icon, path }) => ({ id, title, icon, path }))).toEqual([
+      { id: "vantage", title: "Vantage", icon: "FolderGit", path: "vantage" },
+    ]);
+  });
+
+  it("opens that thread's tree on the page from the side panel's Open full screen button, and names it in a tooltip", async () => {
+    const app = await loadPluginApp(() => import("../app"));
+    const slot = renderSlot<PluginThreadPanelProps, typeof rpcContract>(app.threadPanelActions[0]!, { threadId: "thr_1", params: null }, {
+      pluginId: "vantage",
+      rpc: { overview: () => overview(), patch: () => ({ patch: "", truncated: false, binary: false }), recordedEdits: () => ({ edits: [] }), commitFiles: () => ({ files: [] }) },
+      sdk: { subscribe: (() => () => {}) as never },
+      sidebarThreads: { status: "ready", threads: [] }, sidebarPullRequests: {}, threadActions: (() => []) as never,
+    });
+    const button = within(slot.container).getByRole("button", { name: "Open full screen" });
+    expect(button.querySelector("[data-icon='Maximize2']")).not.toBeNull();
+    expect(button.hasAttribute("title")).toBe(false);
+    fireEvent.click(button);
+    expect(slot.inspection.navigateCalls).toEqual([{ method: "toPluginPanel", path: "vantage", options: { subPath: "tree/thr_1" } }]);
+    fireEvent.pointerMove(button, { pointerType: "mouse" });
+    expect((await screen.findByRole("tooltip")).textContent).toBe("Open Vantage full screen for this thread tree");
+    slot.lifecycle.unmount();
+  });
+});
 
 describe("commands", () => {
   const context = (overrides: Partial<PluginCommandContext> = {}): PluginCommandContext => ({

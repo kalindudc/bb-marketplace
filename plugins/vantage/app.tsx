@@ -4,6 +4,7 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import { createCommands, PANEL_ACTION_ID } from "./src/commands";
 import { Hint } from "./src/hint";
+import { VantagePage } from "./src/page";
 import { VantagePanel } from "./src/panel";
 
 function VantageButton(_props: PluginThreadHeaderActionProps) {
@@ -20,6 +21,7 @@ function VantageButton(_props: PluginThreadHeaderActionProps) {
 }
 
 export default definePluginApp((app) => {
+  app.slots.navPanel({ id: "vantage", title: "Vantage", icon: "FolderGit", path: "vantage", component: VantagePage });
   app.slots.threadPanelAction({
     id: PANEL_ACTION_ID,
     title: "Vantage",

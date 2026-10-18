@@ -8,6 +8,18 @@ export function terminalCommand(path: string): string {
   return `cd ${shellQuote(path)} && exec "\${SHELL:-/bin/sh}" -l`;
 }
 
+// The page belongs to no thread, so its terminal belongs to the worktree's environment and opens in its folder.
+export async function openEnvironmentTerminal(
+  sdk: Pick<PluginBrowserBbSdk, "terminals">,
+  navigate: Pick<BbNavigate, "experimental_openTerminal">,
+  input: { environmentId: string; title: string },
+): Promise<boolean> {
+  const session = await sdk.terminals.create({
+    cols: 120, rows: 32, scope: { kind: "environment", environmentId: input.environmentId }, title: input.title,
+  });
+  return navigate.experimental_openTerminal({ terminalId: session.id });
+}
+
 // The terminal belongs to the panel's thread: bb shows a thread only its own terminals.
 export async function openWorktreeTerminal(
   sdk: Pick<PluginBrowserBbSdk, "terminals">,

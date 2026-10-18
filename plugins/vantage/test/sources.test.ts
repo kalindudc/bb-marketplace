@@ -24,7 +24,7 @@ function deps(overrides: { diffFiles?: unknown; diffPatch?: unknown; host?: unkn
 }
 
 const planOf = (ref: RepoRef, touched: Map<string, Touched> = new Map()): RepoPlan => ({
-  key: "k", ref, label: "L", root: "/repo", hostId: "host_1", threadIds: ["thr_1"], touched,
+  key: "k", ref, label: "L", projectId: "proj_1", root: "/repo", hostId: "host_1", threadIds: ["thr_1"], touched,
 });
 const workspace = (base: string | null): RepoRef => ({ kind: "workspace", environmentId: "env_1", base });
 const checkout: RepoRef = { kind: "checkout", hostId: "host_1", root: "/repo", base: null };

@@ -130,6 +130,7 @@ export const repoSchema = z.object({
   key: text,
   ref: repoRefSchema,
   label: text,
+  projectId: text.nullable(),
   root: text.nullable(),
   hostId: text.nullable(),
   hostName: text.nullable(),
@@ -183,11 +184,20 @@ export const threadSummarySchema = z.object({
   depth: count,
   environmentId: text.nullable(),
   status: text,
+  rootThreadId: text,
 }).strict();
 export type ThreadSummary = z.infer<typeof threadSummarySchema>;
 
+export const overviewTargetSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("tree"), threadId: text.min(1) }).strict(),
+  z.object({ kind: z.literal("all") }).strict(),
+]);
+export type OverviewTarget = z.infer<typeof overviewTargetSchema>;
+
 export const overviewSchema = z.object({
   threadId: text,
+  target: overviewTargetSchema,
+  windowHours: z.number().int().nullable(),
   scope: scopeSchema,
   threads: z.array(threadSummarySchema),
   repos: z.array(repoSchema),
@@ -202,7 +212,7 @@ export const overviewSchema = z.object({
 export type Overview = z.infer<typeof overviewSchema>;
 
 export const overviewInputSchema = z.object({
-  threadId: text.min(1),
+  target: overviewTargetSchema,
   scope: scopeSchema,
   refresh: z.boolean().optional(),
 }).strict();

@@ -4,6 +4,8 @@ import type { Overview, Scope, rpcContract } from "./contract";
 import { fileKey, type FileLoaders, FileRow } from "./file-row";
 import { createLimiter } from "./limit";
 import { RepoSection } from "./repo-section";
+import { Hint } from "./hint";
+import { formatRoute } from "./route";
 import { createVantageStore, type VantageSnapshot, type VantageStore } from "./store";
 import { createViewPreference, type VantageView } from "./view-preference";
 import { WorktreeDetail, type WorktreeDetailProps } from "./worktree-detail";
@@ -57,7 +59,9 @@ export function VantagePanel({ threadId }: PluginThreadPanelProps) {
   const [mounted, setMounted] = useState<{ threadId: string; store: VantageStore } | null>(null);
   const store = mounted?.threadId === threadId ? mounted.store : null;
   useEffect(() => {
-    const next = createVantageStore({ rpc: { call: (method, input) => rpcRef.current.call(method, input) }, sdk: sdkRef.current, threadId });
+    const next = createVantageStore({
+      rpc: { call: (method, input) => rpcRef.current.call(method, input) }, sdk: sdkRef.current, target: { kind: "tree", threadId },
+    });
     setMounted({ threadId, store: next });
     return () => next.dispose();
   }, [threadId]);
@@ -188,6 +192,13 @@ export function VantagePanel({ threadId }: PluginThreadPanelProps) {
               </button>
             </>
           )}
+          <Hint label="Open Vantage full screen for this thread tree">
+            <button type="button" aria-label="Open full screen"
+              onClick={() => navigate.toPluginPanel("vantage", { subPath: formatRoute({ target: { kind: "tree", threadId }, view: "worktrees", selectedKey: null }) })}
+              className="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
+              <Icon name="Maximize2" className="size-3.5" aria-hidden />
+            </button>
+          </Hint>
           <button type="button" aria-label="Refresh" title="Refresh" onClick={() => store?.refresh({ hard: true })}
             className="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-foreground">
             <Icon name="Refresh" className={`size-3.5 ${snapshot.refreshing ? "animate-spin" : ""}`} aria-hidden />
