@@ -1,0 +1,38 @@
+{
+  "name": "bb-plugin-pi-services",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "bb": ">=0.46",
+    "bbPluginSdk": ">=0.6.49"
+  },
+  "bb": {
+    "name": "Pi AI Services",
+    "description": "Delegates bb helper AI tasks (thread titles, commit messages) to the pi CLI on this machine, with model selection and a regenerate-title button in the thread header.",
+    "branding": {
+      "icon": "AiBrain01"
+    },
+    "server": "./server.ts",
+    "app": "./app.tsx"
+  },
+  "scripts": {
+    "build": "bb plugin build",
+    "test": "vitest run",
+    "typecheck": "tsc"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.6.49",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "hono": "^4.13.13",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "sonner": "^1.7.4",
+    "typescript": "^5.7.0",
+    "zod": "^4.6.7",
+    "vitest": "^4.1.12"
+  }
+}

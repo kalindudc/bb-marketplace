@@ -24,6 +24,7 @@ plugin store.
 | [Follow Thinking](plugins/follow-thinking) | `follow-thinking` | Opens thinking blocks in the timeline automatically and keeps live thinking scrolled to its newest line. Toggle it from the thread header or the command palette. |
 | [Session Log](plugins/session-log) | `session-log` | Adds a thread side-panel tab with one flat, live, searchable log of everything the agent did: messages, thinking, commands with output and exit codes, tool calls, diffs and subagents. Open it with Mod+Shift+L. |
 | [Switchboard](plugins/switchboard) | `switchboard` | Replaces the sidebar thread list: your bb sections as coloured groups, children as trees, status at a glance, drag-and-drop organizing, status lanes and snooze. Choose it under Settings → Appearance → Sidebar. |
+| [Pi AI Services](plugins/pi-services) | `pi-services` | Writes bb's thread titles and commit messages with your own pi CLI setup — your credentials and model, no bb account. Adds a regenerate-title button to the thread header and pi executable/model knobs in the plugin settings. |
 
 ## Layout
 
