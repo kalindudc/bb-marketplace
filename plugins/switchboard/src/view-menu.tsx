@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import type { SwitchboardSettings, View } from "./settings";
@@ -20,9 +21,10 @@ export function ViewSwitch({ view, onChange }: { view: View; onChange(view: View
   </div>;
 }
 
-export function ViewMenu({ settings, onChange }: {
-  settings: SwitchboardSettings; onChange(values: Partial<SwitchboardSettings>): void;
+export function ViewMenu({ settings, onChange, onNewSection }: {
+  settings: SwitchboardSettings; onChange(values: Partial<SwitchboardSettings>): void; onNewSection?(): void;
 }) {
+  const editPending = useRef(false);
   const radios = <>
     <DropdownMenu.Label className="px-2 pt-1 text-[11px] font-semibold uppercase text-subtle-foreground">View</DropdownMenu.Label>
     <DropdownMenu.RadioGroup value={settings.view} onValueChange={(value) => onChange({ view: value as View })}>
@@ -49,12 +51,20 @@ export function ViewMenu({ settings, onChange }: {
     { key: "showPullRequests", label: "Pull request numbers" }, { key: "showAge", label: "Ages" },
   ];
   return <DropdownMenu.Root>
-    <Hint label="View options: view, density, colours and row details">
+    <Hint label="View options: new section, view, density, colours and row details">
       <DropdownMenu.Trigger asChild><button type="button" aria-label="View options"
         className="sb-control sb-icon-button shrink-0 text-muted-foreground">
         <Icon name="SlidersHorizontal" aria-hidden /></button></DropdownMenu.Trigger>
     </Hint>
-    <DropdownMenu.Portal><DropdownMenu.Content {...portalScopeProps()} side="bottom" align="end" sideOffset={4} className={content}>
+    <DropdownMenu.Portal><DropdownMenu.Content {...portalScopeProps()} side="bottom" align="end" sideOffset={4} className={content}
+      onCloseAutoFocus={(event) => {
+        if (editPending.current) { event.preventDefault(); editPending.current = false; }
+      }}>
+      {onNewSection && <>
+        <DropdownMenu.Item className={item} onSelect={() => { editPending.current = true; onNewSection(); }}>
+          <Icon name="SectionAdd" className="size-3.5" aria-hidden />New section</DropdownMenu.Item>
+        <DropdownMenu.Separator className="my-1 h-px bg-sidebar-border" />
+      </>}
       {radios}
       <DropdownMenu.Separator className="my-1 h-px bg-sidebar-border" />
       {toggles.map(({ key, label }) => <DropdownMenu.CheckboxItem key={key} className={choice}

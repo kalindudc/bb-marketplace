@@ -33,8 +33,9 @@ export function FilterBar(props: {
   onChange(filter: ListFilter): void;
   settings?: SwitchboardSettings;
   onSettingsChange?(values: Partial<SwitchboardSettings>): void;
+  onNewSection?(): void;
 }) {
-  const { filter, counts, showChips, inputRef, onChange, settings, onSettingsChange } = props;
+  const { filter, counts, showChips, inputRef, onChange, settings, onSettingsChange, onNewSection } = props;
   const states: Exclude<RowState, "idle">[] = ["failed", "needs", "running", "unread"];
   return <div className="sb-filter-bar pt-1">
     <div className="sb-filter-controls flex min-w-0 items-center gap-1">
@@ -52,7 +53,7 @@ export function FilterBar(props: {
     </label>
     {settings && onSettingsChange && <><ViewSwitch view={settings.view} onChange={(view) => onSettingsChange({ view })} />
       <ArchivedToggle shown={settings.showArchived} onChange={(showArchived) => onSettingsChange({ showArchived })} />
-      <ViewMenu settings={settings} onChange={onSettingsChange} /></>}
+      <ViewMenu settings={settings} onChange={onSettingsChange} onNewSection={onNewSection} /></>}
     </div>
     {showChips && <div className="sb-chips flex">
       {states.map((state) => (counts[state] > 0 || filter.states.has(state)) && <Hint key={state}

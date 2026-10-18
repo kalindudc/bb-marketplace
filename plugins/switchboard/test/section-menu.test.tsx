@@ -5,7 +5,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { installTestPluginRuntime } from "@get-bb/plugin-sdk/testing/app";
 import { EMPTY_LAYOUT } from "../src/layout";
 import { buildGroups } from "../src/tree";
-import { RenameInput, SectionMenu } from "../src/section-menu";
+import { SectionMenu } from "../src/section-menu";
 import { sidebarProject, sidebarSection, sidebarThread } from "./fixtures";
 
 installTestPluginRuntime();
@@ -19,19 +19,6 @@ function openMenu() {
 }
 
 describe("section controls", () => {
-  it("submits only trimmed nonempty names, and Escape cancels", () => {
-    const submit = vi.fn(), cancel = vi.fn();
-    const first = render(<RenameInput initial="Section" onSubmit={submit} onCancel={cancel} />);
-    const field = screen.getByRole("textbox", { name: "Section name" });
-    fireEvent.change(field, { target: { value: "  New name  " } });
-    fireEvent.keyDown(field, { key: "Enter" });
-    expect(submit).toHaveBeenCalledWith("New name");
-    first.unmount();
-    render(<RenameInput initial="Section" onSubmit={submit} onCancel={cancel} />);
-    fireEvent.keyDown(screen.getByRole("textbox", { name: "Section name" }), { key: "Escape" });
-    expect(cancel).toHaveBeenCalledOnce();
-  });
-
   it("offers new thread and mark read; confirms a descriptive section delete", () => {
     const onRename = vi.fn(), onDelete = vi.fn(), onNewThread = vi.fn(), onMarkAllRead = vi.fn();
     render(<SectionMenu group={group} unreadCount={1} hueOverride={null} onRename={onRename}
@@ -103,11 +90,12 @@ describe("section controls", () => {
   it("gives every item a pointer and hover highlight, and greys out the disabled ones", () => {
     render(<SectionMenu group={group} unreadCount={0} hueOverride={null} onRename={vi.fn()}
       onSetHue={vi.fn()} onNewThread={vi.fn()} onMarkAllRead={vi.fn()} onDelete={vi.fn()} onSort={vi.fn()}
-      onArchiveStale={vi.fn()} staleCount={0} projects={[sidebarProject("p", "Project")]} onSetDefaultProject={vi.fn()} />);
+      onArchiveStale={vi.fn()} staleCount={0} projects={[sidebarProject("p", "Project")]} onSetDefaultProject={vi.fn()}
+      onNewSectionBelow={vi.fn()} />);
     openMenu();
     const items = [...document.querySelectorAll<HTMLElement>(".sb-section-menu [role^='menuitem']")];
     expect(items.map((entry) => entry.textContent)).toEqual(["Rename", "Colour \u203a", "Sort \u203a",
-      "Default project \u203a", "New thread here", "Mark all read", "Archive stale threads\u2026", "Delete section\u2026"]);
+      "Default project \u203a", "New thread here", "New section below", "Mark all read", "Archive stale threads\u2026", "Delete section\u2026"]);
     for (const entry of items) {
       expect(entry.classList.contains("sb-menu-item")).toBe(true);
       expect(entry.classList.contains("cursor-default")).toBe(false);

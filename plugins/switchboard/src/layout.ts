@@ -125,3 +125,13 @@ export function defaultHue(sectionId: string): HueId {
   }
   return HUE_IDS[hash % (HUE_IDS.length - 1)];
 }
+
+// Slate stays out of the choices, as it does for defaultHue.
+export function leastUsedHue(sectionIds: readonly string[], overrides: Readonly<Record<string, HueId>>): HueId {
+  const uses = new Map<HueId, number>();
+  for (const id of sectionIds) {
+    const hue = overrides[id] ?? defaultHue(id);
+    uses.set(hue, (uses.get(hue) ?? 0) + 1);
+  }
+  return HUE_IDS.slice(0, -1).reduce((best, hue) => (uses.get(hue) ?? 0) < (uses.get(best) ?? 0) ? hue : best);
+}

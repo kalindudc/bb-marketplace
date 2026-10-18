@@ -124,7 +124,7 @@ describe("organize in the sidebar", () => {
     slot.unmount();
   });
 
-  it("renames, colours, composes, marks read, deletes and creates sections", async () => {
+  it("renames, colours, composes, marks read and deletes sections", async () => {
     const slot = await mount();
     const actions = () => screen.getAllByRole("button", { name: "Section actions" })[0]!;
     const open = () => fireEvent.pointerDown(actions(), { button: 0, ctrlKey: false, pointerType: "mouse" });
@@ -152,8 +152,6 @@ describe("organize in the sidebar", () => {
     await waitFor(() => expect(slot.rpcCalls).toContainEqual(expect.objectContaining({
       method: "setOrder", input: { container: "section:s", ids: [] },
     })));
-    fireEvent.click(screen.getByRole("button", { name: /New section/ }));
-    await waitFor(() => expect(sdkCalls(slot, "threadSections.create")[0]?.args[0]).toEqual({ name: "New section" }));
     slot.unmount();
   });
 

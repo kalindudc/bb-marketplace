@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyLayoutPatch, defaultHue, EMPTY_LAYOUT, isCollapseKey, MAX_ENTRIES, MAX_KEY_LENGTH, parseLayout } from "../src/layout";
+import { applyLayoutPatch, defaultHue, EMPTY_LAYOUT, HUE_IDS, isCollapseKey, leastUsedHue, MAX_ENTRIES, MAX_KEY_LENGTH, parseLayout } from "../src/layout";
 
 describe("layout", () => {
   it("provides safe defaults and accepts only bounded collapse keys", () => {
@@ -60,5 +60,15 @@ describe("layout", () => {
   it("hashes section IDs deterministically into the seven categorical hues", () => {
     expect(defaultHue("same")).toBe(defaultHue("same"));
     for (const id of ["local", "review", "cortex", "hello", "x"]) expect(defaultHue(id)).not.toBe("slate");
+  });
+
+  it("gives a new section the first hue that the fewest sections use, never slate", () => {
+    expect(leastUsedHue([], {})).toBe("teal");
+    expect(leastUsedHue(["a", "b"], { a: "teal", b: "cyan" })).toBe("indigo");
+    const sixHues = { a: "teal", b: "cyan", c: "indigo", d: "violet", e: "pink", f: "olive", g: "slate" } as const;
+    expect(leastUsedHue(Object.keys(sixHues), sixHues)).toBe("sand");
+    const everyHue = Object.fromEntries(HUE_IDS.map((hue) => [hue, hue]));
+    expect(leastUsedHue([...HUE_IDS, "extra"], { ...everyHue, extra: "teal" })).toBe("cyan");
+    expect(leastUsedHue(["x"], {})).not.toBe(defaultHue("x"));
   });
 });

@@ -1,10 +1,11 @@
-import { memo } from "react";
+import { memo, type ReactNode } from "react";
 import { experimental_Icon as Icon, type PluginSidebarProject } from "@get-bb/plugin-sdk/app";
 import type { DragController } from "./use-drag";
 import type { GroupKey, HueId, SortMode } from "./layout";
 import type { SectionColour } from "./settings";
 import { Hint } from "./hint";
-import { SectionMenu, RenameInput } from "./section-menu";
+import { NameEditor } from "./name-editor";
+import { SectionMenu } from "./section-menu";
 import { STATE_LABEL, type RowState } from "./status";
 import { StatusGlyph } from "./status-glyph";
 import type { Group, TreeNode } from "./tree";
@@ -24,11 +25,13 @@ export interface GroupHeaderProps {
   renaming: boolean;
   dropState: "ok" | "blocked" | null;
   hueOverride: HueId | null;
+  flash?: boolean;
   onRename(): void;
-  onRenameSubmit(name: string): void;
+  onRenameSubmit(name: string): Promise<unknown>;
   onRenameCancel(): void;
   onSetHue(hue: HueId | null): void;
   onNewThread(): void;
+  onNewSectionBelow?(): void;
   onMarkAllRead(): void;
   onDelete(): void;
   onSectionMove(direction: "up" | "down"): void;
@@ -41,19 +44,48 @@ export interface GroupHeaderProps {
   onSetDefaultProject?(projectId: string | null): void;
 }
 
+const hueClasses = (hue: HueId | null, sectionColour: SectionColour): string =>
+  hue ? `sb-hue-${hue} ${sectionColour !== "swatch" ? "sb-pill-hued" : ""} ${sectionColour === "tint" ? "sb-tint" : ""}` : "";
+
+function EditingMain({ collapsed, hue, children }: { collapsed: boolean; hue: HueId | null; children: ReactNode }) {
+  return <div className="sb-header-main flex h-full min-w-0 flex-1 items-center">
+    <span aria-hidden className="sb-header-caret shrink-0 text-center text-2xs text-subtle-foreground">{collapsed ? "▸" : "▾"}</span>
+    {hue && <span aria-hidden className="size-2.5 shrink-0 rounded-[3px]" style={{ background: "var(--sb-hue)" }} />}
+    {children}
+  </div>;
+}
+
+// A section that exists only on screen until its name is submitted, so Escape leaves nothing behind.
+export function DraftSectionHeader({ hue, sectionColour, onSubmit, onCancel }: {
+  hue: HueId; sectionColour: SectionColour; onSubmit(name: string): Promise<unknown>; onCancel(): void;
+}) {
+  return <section className={`sb-hue-${hue}`} aria-label="New section">
+    <div data-editing="" data-sb-draft=""
+      className={`sb-group-header relative flex min-w-0 items-center text-muted-foreground ${hueClasses(hue, sectionColour)}`}>
+      <EditingMain collapsed={false} hue={hue}>
+        <NameEditor placeholder="Section name" action="create" onSubmit={onSubmit} onCancel={onCancel} />
+      </EditingMain>
+    </div>
+  </section>;
+}
+
 function GroupHeaderView({ group, collapsed, sectionColour, onToggle, drag, renaming, dropState,
-  hueOverride, onRename, onRenameSubmit, onRenameCancel, onSetHue, onNewThread,
+  hueOverride, flash = false, onRename, onRenameSubmit, onRenameCancel, onSetHue, onNewThread, onNewSectionBelow,
   onMarkAllRead, onDelete, onSectionMove, sortMode = "manual", staleDays = 3, onSort, onArchiveStale,
   projects, defaultProjectId = null, onSetDefaultProject }: GroupHeaderProps) {
   const name = group.kind === "pinned" ? "Pinned" : group.kind === "loose" ? "Threads" : group.section?.name ?? "Section";
   const defaultProject = defaultProjectId ? projects?.find((project) => project.id === defaultProjectId) : undefined;
   const newThreadLabel = defaultProject ? `New ${defaultProject.name} thread in ${name}` : `New thread in ${name}`;
   const states: Exclude<RowState, "idle">[] = ["failed", "needs", "running", ...(collapsed ? ["unread" as const] : [])];
+  const editing = renaming && group.kind === "section";
   return <>
     <div data-sb-drop={group.key} data-sb-section={group.section?.id} data-collapsed={collapsed}
-      data-drop={dropState ?? undefined} className={`sb-group sb-group-header relative flex min-w-0 items-center text-muted-foreground ${group.hue ? `sb-hue-${group.hue}` : ""} ${group.hue && sectionColour !== "swatch" ? "sb-pill-hued" : ""} ${group.hue && sectionColour === "tint" ? "sb-tint" : ""}`}>
-      {renaming && group.kind === "section" ?
-        <RenameInput initial={name} onSubmit={onRenameSubmit} onCancel={onRenameCancel} /> :
+      data-drop={dropState ?? undefined} data-editing={editing ? "" : undefined}
+      className={`sb-group sb-group-header relative flex min-w-0 items-center text-muted-foreground ${hueClasses(group.hue, sectionColour)} ${flash ? "sb-flash" : ""}`}>
+      {editing ?
+        <EditingMain collapsed={collapsed} hue={group.hue}>
+          <NameEditor initial={name} action="save" onSubmit={onRenameSubmit} onCancel={onRenameCancel} />
+        </EditingMain> :
         <button type="button" aria-expanded={!collapsed} onClick={(event) => {
           if (drag.consumeClick()) { event.preventDefault(); event.stopPropagation(); return; }
           onToggle(group.key);
@@ -91,7 +123,7 @@ function GroupHeaderView({ group, collapsed, sectionColour, onToggle, drag, rena
             sortMode={sortMode} staleDays={staleDays} onSort={onSort} onArchiveStale={onArchiveStale}
             staleCount={group.roots.filter((root) => root.stale).length}
             staleChildCount={group.roots.filter((root) => root.stale).reduce((total, root) => total + descendants(root), 0)}
-            onRename={onRename} onSetHue={onSetHue} onNewThread={onNewThread}
+            onRename={onRename} onSetHue={onSetHue} onNewThread={onNewThread} onNewSectionBelow={onNewSectionBelow}
             onMarkAllRead={onMarkAllRead} onDelete={onDelete}
             projects={projects} defaultProjectId={defaultProjectId} onSetDefaultProject={onSetDefaultProject} />
         </span>

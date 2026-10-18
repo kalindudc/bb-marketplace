@@ -205,9 +205,9 @@ describe("triage UI", () => {
     void commands.find((command) => command.id === "focus-filter")!.run({} as never);
     expect(document.activeElement).toBe(screen.getByRole("searchbox", { name: "Filter threads" }));
     void commands.find((command) => command.id === "new-section")!.run({} as never);
-    await waitFor(() => expect(slot.inspection.sdkCalls).toContainEqual(expect.objectContaining({
-      method: "threadSections.create",
-    })));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Section name" })));
+    expect(slot.inspection.sdkCalls.some((call) => call.method === "threadSections.create")).toBe(false);
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Section name" }), { key: "Escape" });
     fireEvent.change(screen.getByRole("searchbox", { name: "Filter threads" }), { target: { value: "Fresh quiet" } });
     void commands.find((command) => command.id === "next-needs-you")!.run({} as never);
     expect(notify).toHaveBeenCalledWith("Nothing needs you right now");

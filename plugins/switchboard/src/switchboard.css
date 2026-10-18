@@ -76,6 +76,17 @@
 }
 .sb-group-header:hover .sb-section-controls, .sb-group-header:focus-within .sb-section-controls { visibility: visible; }
 .sb-group-header:hover .sb-section-rollups, .sb-group-header:focus-within .sb-section-rollups { visibility: hidden; }
+/* Raised so a name error can overlap the rows below. */
+.sb-group-header[data-editing] { z-index: 25; }
+.sb-group-header[data-editing] .sb-section-slot { display: none; }
+.sb-group-header[data-editing] .sb-header-main { cursor: text; padding-right: 8px; }
+.sb-name-input {
+  height: 20px; padding: 0; border: 0; background: transparent; outline: none;
+  font: inherit; font-size: 12px; font-weight: 600; letter-spacing: .01em; color: var(--sidebar-foreground);
+}
+.sb-name-input::placeholder { color: var(--subtle-foreground); font-weight: 500; }
+.sb-name-editor[aria-busy="true"] .sb-name-input { opacity: .6; }
+.sb-name-error { position: absolute; left: 8px; right: 0; top: calc(100% + 2px); white-space: normal; }
 .sb-group-body { margin-top: 2px; }
 .sb-empty-drop {
   display: grid; place-items: center; height: calc(var(--sb-row-h) - 4px);
@@ -114,6 +125,8 @@
   border-radius: 8px; font-size: 11px;
 }
 .sb-row:hover::before, .sb-row[data-menu-open]::before, .sb-group-header:hover::before { background: var(--sidebar-accent); }
+.sb-group-header[data-editing]::before { box-shadow: inset 0 0 0 1px var(--sidebar-ring); }
+.sb-group-header[data-editing]:not(.sb-tint)::before { background: var(--sidebar-accent); }
 .sb-row[data-active="true"]::before { background: var(--state-active); }
 .sb-row[data-selected="true"]::before { background: var(--surface-selected); }
 .sb-row[data-selected="true"]:hover::before {

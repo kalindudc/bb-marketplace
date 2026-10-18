@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as AlertDialog from "@radix-ui/react-alert-dialog";
 import { experimental_Icon as Icon, type PluginSidebarProject } from "@get-bb/plugin-sdk/app";
@@ -14,6 +14,7 @@ export interface SectionMenuProps {
   onRename(): void;
   onSetHue(hue: HueId | null): void;
   onNewThread(): void;
+  onNewSectionBelow?(): void;
   onMarkAllRead(): void;
   onDelete(): void;
   sortMode?: SortMode;
@@ -30,43 +31,15 @@ export interface SectionMenuProps {
 // Contains a space, so it never collides with a stored project ID.
 const AUTOMATIC_PROJECT = "automatic project";
 
-export function RenameInput({ initial, onSubmit, onCancel }: {
-  initial: string; onSubmit(name: string): void; onCancel(): void;
-}) {
-  const [value, setValue] = useState(initial);
-  const finished = useRef(false);
-  const input = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    let mounted = true;
-    queueMicrotask(() => { if (mounted) input.current?.focus(); });
-    return () => { mounted = false; };
-  }, []);
-  const submit = () => {
-    if (finished.current) return;
-    finished.current = true;
-    const name = value.trim();
-    if (name) onSubmit(name);
-    else onCancel();
-  };
-  return <input ref={input} aria-label="Section name" value={value} maxLength={100}
-    className="sb-rename min-w-0 flex-1 rounded border border-primary bg-background px-1 text-[11px] text-sidebar-foreground outline-none"
-    onChange={(event) => setValue(event.target.value)} onBlur={submit}
-    onKeyDown={(event) => {
-      if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); submit(); }
-      if (event.key === "Escape") {
-        event.preventDefault(); event.stopPropagation(); finished.current = true; onCancel();
-      }
-    }} />;
-}
-
 const item = "sb-menu-item rounded px-2 py-1.5 text-xs outline-none";
 export function SectionMenu({ group, unreadCount, hueOverride, onRename, onSetHue,
-  onNewThread, onMarkAllRead, onDelete, sortMode = "manual", staleCount = 0,
+  onNewThread, onNewSectionBelow, onMarkAllRead, onDelete, sortMode = "manual", staleCount = 0,
   staleChildCount = 0, staleDays = 3, onSort, onArchiveStale, projects = [], defaultProjectId = null,
   onSetDefaultProject }: SectionMenuProps) {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
-  const renamePending = useRef(false);
+  // Set when an item opens a name field, so closing the menu does not take focus back to its trigger.
+  const editPending = useRef(false);
   const name = group.section?.name ?? "Section";
   const count = group.threadCount;
   return <>
@@ -75,11 +48,11 @@ export function SectionMenu({ group, unreadCount, hueOverride, onRename, onSetHu
         className="sb-control sb-section-menu-trigger sb-icon-button relative z-10 shrink-0 text-muted-foreground">⋯</button></DropdownMenu.Trigger></Hint>
       <DropdownMenu.Portal><DropdownMenu.Content {...portalScopeProps()} side="right" align="start" sideOffset={4}
         onCloseAutoFocus={(event) => {
-          if (renamePending.current) { event.preventDefault(); renamePending.current = false; }
+          if (editPending.current) { event.preventDefault(); editPending.current = false; }
         }}
         className="sb-section-menu z-50 min-w-44 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-lg">
         {group.kind === "section" && <>
-          <DropdownMenu.Item className={item} onSelect={() => { renamePending.current = true; onRename(); }}>Rename</DropdownMenu.Item>
+          <DropdownMenu.Item className={item} onSelect={() => { editPending.current = true; onRename(); }}>Rename</DropdownMenu.Item>
           <DropdownMenu.Sub>
             <DropdownMenu.SubTrigger className={`${item} flex items-center justify-between`}>Colour <span aria-hidden>›</span></DropdownMenu.SubTrigger>
             <DropdownMenu.Portal><DropdownMenu.SubContent {...portalScopeProps()} sideOffset={4}
@@ -128,6 +101,8 @@ export function SectionMenu({ group, unreadCount, hueOverride, onRename, onSetHu
           </DropdownMenu.Sub>}
           <DropdownMenu.Item className={item} onSelect={onNewThread}>New thread here</DropdownMenu.Item>
         </>}
+        {group.kind === "section" && onNewSectionBelow && <DropdownMenu.Item className={item}
+          onSelect={() => { editPending.current = true; onNewSectionBelow(); }}>New section below</DropdownMenu.Item>}
         <DropdownMenu.Item className={item} disabled={unreadCount === 0} onSelect={onMarkAllRead}>Mark all read</DropdownMenu.Item>
         {group.kind !== "pinned" && onArchiveStale && <DropdownMenu.Item className={item}
           disabled={staleCount === 0} onSelect={() => setArchiveOpen(true)}>Archive stale threads…</DropdownMenu.Item>}

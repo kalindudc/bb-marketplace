@@ -69,7 +69,7 @@ describe("filter bar hints", () => {
     cleanup();
     renderBar();
     expect(await hintFor(screen.getByRole("button", { name: "View options" })))
-      .toBe("View options: view, density, colours and row details");
+      .toBe("View options: new section, view, density, colours and row details");
   });
 
   it("opens on hover too, but not when focus returns to a button after a click", async () => {
@@ -106,7 +106,7 @@ describe("section header hints", () => {
   const noop = () => undefined;
   const props: GroupHeaderProps = { group, collapsed: false, sectionColour: "rail", onToggle: noop,
     drag: { onSectionPointerDown: noop, consumeClick: () => false }, renaming: false, dropState: null, hueOverride: null,
-    onRename: noop, onRenameSubmit: noop, onRenameCancel: noop, onSetHue: noop, onNewThread: noop,
+    onRename: noop, onRenameSubmit: async () => undefined, onRenameCancel: noop, onSetHue: noop, onNewThread: noop,
     onMarkAllRead: noop, onDelete: noop, onSectionMove: noop, sortMode: "recent", onSort: noop, onArchiveStale: noop };
 
   it("explains the automatic sort indicator", async () => {

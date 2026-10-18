@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { experimental_useSidebarThreads, useBbNavigate, useSdk, type PluginThreadListProps } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import { applyPlan } from "./apply-plan";
@@ -11,9 +11,9 @@ import { FilterBar } from "./filter-bar";
 import { chipCounts, filterGroups, isFiltering, type ListFilter } from "./filter";
 import { buildLanes } from "./lanes";
 import { LanesView } from "./lanes-view";
-import { GroupHeader } from "./group-header";
+import { DraftSectionHeader, GroupHeader } from "./group-header";
 import { InfoCardProvider } from "./info-card";
-import { type CollapseKey, type GroupKey, type SortMode } from "./layout";
+import { leastUsedHue, type CollapseKey, type GroupKey, type HueId, type SortMode } from "./layout";
 import { densityMetrics } from "./metrics";
 import { flattenGroup } from "./rows";
 import { EMPTY_SELECTION, selectedRuns, selectRange, selectionRoots, toggleRow, type Selection } from "./selection";
@@ -37,6 +37,13 @@ const descendants = (node: TreeNode): number => node.children.reduce((total, chi
 const WITH_ARCHIVED = { experimental_lifecycles: ["active", "archived"] } as const;
 const message = (cause: unknown): string => cause instanceof Error && cause.message ? cause.message : "Switchboard could not save that change";
 
+interface SectionDraft {
+  after: string | null;
+  hue: HueId;
+  seq: number;
+  createdId?: string;
+}
+
 export function ThreadList(props: PluginThreadListProps) {
   const settings = useSwitchboardSettings();
   const sidebar = experimental_useSidebarThreads(settings.showArchived ? WITH_ARCHIVED : undefined);
@@ -50,7 +57,7 @@ export function ThreadList(props: PluginThreadListProps) {
   const [filter, setFilter] = useState<ListFilter>({ query: "", states: new Set() });
   const [selection, setSelection] = useState<Selection>(EMPTY_SELECTION);
   const [renamingId, setRenamingId] = useState<string | null>(null);
-  const [pendingSectionId, setPendingSectionId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<SectionDraft | null>(null);
   const [snoozedOpen, setSnoozedOpen] = useState(false);
   const [needsOpen, setNeedsOpen] = useState(true);
   const prunedSnoozes = useRef(new Set<string>());
@@ -117,12 +124,25 @@ export function ThreadList(props: PluginThreadListProps) {
   }, []);
   useEffect(() => () => { if (flashTimer.current) clearTimeout(flashTimer.current); }, []);
   useEffect(() => { setSelection(EMPTY_SELECTION); }, [props.activeThreadId]);
+  // Focus moves only when it would otherwise be lost, not when the user has clicked somewhere else.
+  const focusWhenIdle = useCallback((find: (root: HTMLElement) => HTMLElement | null | undefined) => {
+    setTimeout(() => {
+      const active = document.activeElement;
+      if (active && active !== document.body) return;
+      const root = rootRef.current;
+      if (root) find(root)?.focus({ preventScroll: true });
+    }, 0);
+  }, []);
+  const focusSectionHeader = useCallback((id: string) => focusWhenIdle((root) =>
+    [...root.querySelectorAll<HTMLElement>("[data-sb-section]")].find((header) => header.dataset.sbSection === id)
+      ?.querySelector<HTMLElement>(".sb-header-main")), [focusWhenIdle]);
+  const draftCreated = draft?.createdId !== undefined && sections.has(draft.createdId);
   useEffect(() => {
-    if (pendingSectionId && sidebar.sections.some((section) => section.id === pendingSectionId)) {
-      setRenamingId(pendingSectionId);
-      setPendingSectionId(null);
-    }
-  }, [pendingSectionId, sidebar.sections]);
+    if (!draftCreated || !draft?.createdId) return;
+    setDraft(null);
+    flash([`section:${draft.createdId}`]);
+    focusSectionHeader(draft.createdId);
+  }, [draftCreated, draft?.createdId, flash, focusSectionHeader]);
   const apply = useCallback((plan: DropPlan) => {
     if (plan.ok === false) { announce(plan.reason); return; }
     if (plan.ok !== true) return;
@@ -222,10 +242,32 @@ export function ThreadList(props: PluginThreadListProps) {
       announce(`Deleted section ${group.section!.name}`);
     }).catch((cause: unknown) => toast.error(message(cause)));
   };
-  const onNewSection = useCallback(() => {
-    void sdk.threadSections.create({ name: "New section" })
-      .then((section) => setPendingSectionId(section.id)).catch((cause: unknown) => toast.error(message(cause)));
-  }, [sdk]);
+  const startDraft = useCallback((after: string | null) => {
+    if (settings.view !== "sections") updateSettings({ view: "sections" });
+    setFilter((current) => isFiltering(current) ? { query: "", states: new Set() } : current);
+    setSelection(EMPTY_SELECTION);
+    setDraft((current) => ({ after, hue: leastUsedHue(sectionIds, layout.sectionHues), seq: (current?.seq ?? 0) + 1 }));
+  }, [settings.view, updateSettings, sectionIds, layout.sectionHues]);
+  const onNewSection = useCallback(() => startDraft(null), [startDraft]);
+  const nameTaken = (name: string, except?: string) =>
+    sidebar.sections.some((section) => section.id !== except && section.name === name);
+  const createSection = async (current: SectionDraft, name: string) => {
+    if (nameTaken(name)) throw new Error(`A section named \u201c${name}\u201d already exists`);
+    const section = await sdk.threadSections.create({ name });
+    const others = sectionIds.filter((id) => id !== section.id);
+    const anchor = current.after ? others.indexOf(current.after) : -1;
+    const at = anchor >= 0 ? anchor + 1 : others.length;
+    // Saving the full order keeps the new section where its draft was, not where bb's alphabetical list puts it.
+    setSectionOrder([...others.slice(0, at), section.id, ...others.slice(at)]);
+    setSectionHue(section.id, current.hue);
+    announce(`Created section ${section.name}`);
+    setDraft((latest) => latest?.seq === current.seq ? { ...latest, createdId: section.id } : latest);
+  };
+  const cancelDraft = (current: SectionDraft) => {
+    setDraft((latest) => latest?.seq === current.seq ? null : latest);
+    if (current.after) focusSectionHeader(current.after);
+    else focusWhenIdle((root) => root.querySelector<HTMLElement>(".sb-new-section"));
+  };
   const commandRows = useMemo(() => {
     if (settings.view === "status") return lanes.flatMap((lane) => lane.rows.map((row) =>
       ({ id: row.thread.id, state: row.state, matches: true })));
@@ -263,6 +305,10 @@ export function ThreadList(props: PluginThreadListProps) {
     event.preventDefault();
     inputRef.current?.focus();
   };
+  const draftAfter = draft?.after && sectionIds.includes(draft.after) ? draft.after : null;
+  const draftNode = draft && !draftCreated ? <DraftSectionHeader key={`draft:${draft.seq}`} hue={draft.hue}
+    sectionColour={settings.sectionColour} onSubmit={(name) => createSection(draft, name)}
+    onCancel={() => cancelDraft(draft)} /> : null;
   const current = drag.view;
   const target = current?.target;
   const blocked = current?.plan?.ok === false;
@@ -282,7 +328,7 @@ export function ThreadList(props: PluginThreadListProps) {
     <FilterBar filter={filter} counts={sidebar.status === "ready" ? counts : EMPTY_COUNTS}
       showChips={sidebar.status === "ready" && settings.statusChips} inputRef={inputRef}
       settings={settings} onSettingsChange={updateSettings}
-      onChange={(next) => { setFilter(next); setSelection(EMPTY_SELECTION); }} />
+      onChange={(next) => { setFilter(next); setSelection(EMPTY_SELECTION); }} onNewSection={onNewSection} />
     {settings.view === "sections" && selection.ids.size > 0 && <BulkBar count={selection.ids.size} childCount={childCount} groups={groups}
       canSnooze={roots.length > 0 && roots.every(canSnoozeId)} onSnooze={onBulkSnooze}
       onMove={onBulkMove} onArchive={() => { void onBulkArchive(); }} onClear={() => setSelection(EMPTY_SELECTION)} />}
@@ -309,9 +355,10 @@ export function ThreadList(props: PluginThreadListProps) {
           isActive={entry.thread.id === props.activeThreadId} settings={settings} now={now}
           projectName={names.project(entry.thread.projectId)} hue={entry.hue} onNavigate={onNavigate} />)}</div>}
       </section>}
-    {sidebar.status === "ready" && settings.view === "sections" && rows.map(({ group, items, isCollapsed }) => <section key={group.key}
-      className={group.hue ? `sb-hue-${group.hue}` : undefined}>
-      <GroupHeader group={group} collapsed={isCollapsed} sectionColour={settings.sectionColour}
+    {sidebar.status === "ready" && settings.view === "sections" && rows.map(({ group, items, isCollapsed }) => <Fragment key={group.key}>
+    {group.kind === "loose" && draftNode && draftAfter === null && draftNode}
+    <section className={group.hue ? `sb-hue-${group.hue}` : undefined}>
+      <GroupHeader group={group} collapsed={isCollapsed} sectionColour={settings.sectionColour} flash={flashIds.has(group.key)}
         onToggle={onToggle} drag={drag} renaming={renamingId === group.section?.id && group.kind === "section"}
         dropState={target && ((target.kind === "group" && target.key === group.key) ||
           (target.kind === "section" && target.sectionId === group.section?.id)) ? blocked ? "blocked" : "ok" : null}
@@ -322,12 +369,18 @@ export function ThreadList(props: PluginThreadListProps) {
         onSetDefaultProject={(projectId) => setSectionProject(group.key as "loose" | `section:${string}`, projectId)}
         onArchiveStale={() => { void onArchiveStale(group); }}
         onRename={() => setRenamingId(group.section?.id ?? null)}
-        onRenameSubmit={(name) => {
-          if (!group.section) return;
-          void sdk.threadSections.update({ id: group.section.id, name })
-            .then(() => setRenamingId(null)).catch((cause: unknown) => toast.error(message(cause)));
+        onRenameSubmit={async (name) => {
+          const id = group.section!.id;
+          if (nameTaken(name, id)) throw new Error(`A section named \u201c${name}\u201d already exists`);
+          await sdk.threadSections.update({ id, name });
+          setRenamingId(null);
+          focusSectionHeader(id);
         }}
-        onRenameCancel={() => setRenamingId(null)}
+        onRenameCancel={() => {
+          setRenamingId(null);
+          if (group.section) focusSectionHeader(group.section.id);
+        }}
+        onNewSectionBelow={group.section ? () => startDraft(group.section!.id) : undefined}
         onSetHue={(hue) => { if (group.section) setSectionHue(group.section.id, hue); }}
         onNewThread={() => onNewThread(group)} onMarkAllRead={() => onMarkAllRead(group)}
         onDelete={() => onDelete(group)} onSectionMove={(direction) => {
@@ -353,7 +406,9 @@ export function ThreadList(props: PluginThreadListProps) {
           onSnooze={canSnoozeId(row.thread.id) ? () => onSnoozeId(row.thread.id) : undefined}
           onNavigate={onNavigate} onToggle={onToggle} />)}
       </div>}
-    </section>)}
+    </section>
+    {group.kind === "section" && draftNode && draftAfter === group.section?.id && draftNode}
+    </Fragment>)}
     {sidebar.status === "ready" && snoozed.length > 0 && <section className="sb-snoozed-shelf">
       <div className="sb-group-header relative flex min-w-0 items-center text-muted-foreground">
         <button type="button" aria-expanded={snoozedOpen} onClick={() => setSnoozedOpen(!snoozedOpen)}
