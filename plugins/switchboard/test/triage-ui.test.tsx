@@ -127,8 +127,9 @@ describe("triage UI", () => {
 
   it("snoozes a quiet family, shows a collapsed shortcut-free shelf, and wakes it", async () => {
     const { slot } = await mount();
-    fireEvent.click(within(slot.container.querySelector("[data-sb-row][data-thread-id='old']")!)
-      .getByRole("button", { name: /Snooze until tomorrow/i }));
+    const row = within(slot.container.querySelector<HTMLElement>("[data-sb-row][data-thread-id='old']")!);
+    fireEvent.click(row.getByRole("button", { name: "Thread actions" }));
+    fireEvent.click(row.getByRole("menuitem", { name: /Snooze until tomorrow/i }));
     const until = nextWake(NOW, 9);
     await waitFor(() => expect(slot.rpcCalls).toContainEqual(expect.objectContaining({
       method: "snooze", input: { threadIds: ["old"], until },

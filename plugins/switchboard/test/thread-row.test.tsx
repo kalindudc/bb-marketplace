@@ -71,10 +71,53 @@ describe("thread row", () => {
 
   it("names its buttons for screen readers without browser tooltips", () => {
     const { slot } = mount({ onSnooze: vi.fn() }, { threadActions: pinAndArchive });
-    for (const name of ["Pin", "Archive", "Thread actions", /Snooze until/]) {
+    for (const name of ["Archive", "Thread actions"]) {
       expect(screen.getByRole("button", { name }).hasAttribute("title")).toBe(false);
     }
     slot.unmount();
+  });
+
+  it("keeps Pin and Snooze in the thread menus instead of on the row", () => {
+    const onSnooze = vi.fn();
+    const { slot } = mount({ onSnooze }, { threadActions: pinAndArchive });
+    expect(screen.queryByRole("button", { name: "Pin" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /snooze/i })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Thread actions" }));
+    expect(screen.getByRole("menuitem", { name: "Pin" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Snooze until tomorrow 09:00" }));
+    expect(onSnooze).toHaveBeenCalledOnce();
+    fireEvent.contextMenu(screen.getByRole("link", { name: "A thread" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Snooze until tomorrow 09:00" }));
+    expect(onSnooze).toHaveBeenCalledTimes(2);
+    slot.unmount();
+  });
+
+  it("leaves Snooze out of the menu when the family cannot snooze", () => {
+    const { slot } = mount({}, { threadActions: pinAndArchive });
+    fireEvent.click(screen.getByRole("button", { name: "Thread actions" }));
+    expect(screen.getByRole("menuitem", { name: "Pin" })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: /snooze/i })).toBeNull();
+    slot.unmount();
+  });
+
+  it("gives a status lane row the thread menu with Snooze", () => {
+    const onSnooze = vi.fn();
+    const { slot } = mount({ variant: "lane", onSnooze }, { threadActions: pinAndArchive });
+    expect(screen.queryByRole("button", { name: "Archive" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Thread actions" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Snooze until tomorrow 09:00" }));
+    expect(onSnooze).toHaveBeenCalledOnce();
+    slot.unmount();
+  });
+
+  it("centres the leading status glyph in its box instead of on the text baseline", () => {
+    for (const state of ["running", "failed", "idle"] as const) {
+      const { slot } = mount({ row: { ...row, state } });
+      const glyph = slot.container.querySelector<HTMLElement>(".sb-leading-glyph")!;
+      expect(glyph.className).toMatch(/(^| )grid( |$)/);
+      expect(glyph.className).toContain("place-items-center");
+      slot.unmount();
+    }
   });
 
   it("offers only Unarchive and bb's menu on an archived row, without jump shortcuts", () => {
@@ -149,7 +192,7 @@ describe("thread row", () => {
   });
 
   it("limits shortcut attributes and interactions to canonical rows and wakes the shelf row", () => {
-    const onSnooze = vi.fn(), onWake = vi.fn(), onSelect = vi.fn();
+    const onWake = vi.fn(), onSelect = vi.fn();
     const lane = mount({ variant: "lane", parentTitle: "Parent", settings: { ...DEFAULT_SETTINGS, density: "two-line" }, onSelect });
     expect(lane.slot.container.querySelector("[data-sidebar-thread-id='t']")).toBeTruthy();
     expect(screen.getByText("Parent")).toBeTruthy();
@@ -158,10 +201,6 @@ describe("thread row", () => {
     expect(mirror.slot.container.querySelector("[data-sidebar-thread-id]")).toBeNull();
     expect(mirror.slot.container.querySelector("[data-sidebar-thread-shortcut-target]")).toBeNull();
     mirror.slot.unmount();
-    const tree = mount({ onSnooze });
-    fireEvent.click(screen.getByRole("button", { name: /snooze until tomorrow/i }));
-    expect(onSnooze).toHaveBeenCalledOnce();
-    tree.slot.unmount();
     const shelf = mount({ variant: "snoozed", wakeLabel: "tomorrow 09:00", onWake });
     expect(shelf.slot.container.querySelector("[data-sidebar-thread-id]")).toBeNull();
     expect(screen.getByText("tomorrow 09:00")).toBeTruthy();

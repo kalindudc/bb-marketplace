@@ -43,7 +43,7 @@ Each section and Threads can sort its roots By hand, Recent activity or Status; 
 
 Idle, unpinned threads fade after three days by default, provided no descendant failed, needs you or is running. Set the threshold to zero to turn fading off. **Archive stale threads…** in a section menu confirms the stale-root and child counts, archives only that section's stale families and offers Undo.
 
-A quiet root (all family members idle or unread) can be snoozed from its Clock action or the selection bar. It leaves sections and lanes until tomorrow at the configured local hour (09:00 by default). The collapsed **Snoozed** shelf at the bottom shows wake times and a Wake button. New attention or a failed, waiting or running family member wakes it early.
+A quiet root (all family members idle or unread) can be snoozed from its thread menu (the ⋯ button or a right-click) or the selection bar. It leaves sections and lanes until tomorrow at the configured local hour (09:00 by default). The collapsed **Snoozed** shelf at the bottom shows wake times and a Wake button. New attention or a failed, waiting or running family member wakes it early.
 
 The command palette offers **Focus the thread filter** (`Mod+Alt+F`), **Go to the next thread that needs you** (`Mod+Alt+J`, wrapping through failed and waiting threads in display order), **Switch between sections and status lanes**, and **New section**. Commands are available while the Switchboard list is mounted. If another binding conflicts, bb leaves that default shortcut unbound; rebind it in keyboard settings.
 

@@ -1,8 +1,8 @@
-import { memo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import type { DragController } from "./use-drag";
-import type { PluginSidebarThread, PluginThreadActionTarget } from "@get-bb/plugin-sdk/app";
+import type { PluginSidebarThread, PluginThreadActionTarget, PluginThreadActionsInlineItem } from "@get-bb/plugin-sdk/app";
 import {
-  ThreadTitle, experimental_Icon as Icon, experimental_ThreadActionsContextMenu as ThreadActionsContextMenu,
+  ThreadTitle, experimental_Icon as Icon, experimental_THREAD_ACTION_GROUPS as ACTION_GROUPS, experimental_ThreadActionsContextMenu as ThreadActionsContextMenu,
   experimental_ThreadActionsMenu as ThreadActionsMenu, experimental_ThreadStatusGlyph as ThreadStatusGlyph,
   experimental_useSidebarThreadPullRequest, experimental_useSidebarThreadSplit,
   experimental_useThreadActions, useBbNavigate, useSidebarThreadDraft,
@@ -43,8 +43,7 @@ export interface ThreadRowProps {
   onWake?(): void;
 }
 
-const ROW_ACTIONS = ["bb--core/pin", "bb--core/archive"];
-const ARCHIVED_ACTIONS = ["bb--core/archive"];
+const QUICK_ACTIONS = ["bb--core/archive"];
 
 export function toActionTarget(thread: PluginSidebarThread): PluginThreadActionTarget {
   const { id, projectId, parentThreadId, archivedAt, pinnedAt, sectionId, isUnread, status, environment } = thread;
@@ -69,7 +68,12 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
   const shortcut = useSidebarThreadShortcut(thread.id);
   const infoCardMode = useInfoCardMode();
   const target = toActionTarget(thread);
-  const quickActions = experimental_useThreadActions(target, { keys: variant === "archived" ? ARCHIVED_ACTIONS : ROW_ACTIONS });
+  const quickActions = experimental_useThreadActions(target, { keys: QUICK_ACTIONS });
+  const snoozeUntil = onSnooze && formatWakeLabel(nextWake(now, settings.snoozeHour), now);
+  const inline = useMemo<PluginThreadActionsInlineItem[] | undefined>(() => onSnooze && [{
+    key: "switchboard/snooze", group: ACTION_GROUPS.state,
+    action: { label: `Snooze until ${snoozeUntil}`, icon: "Clock", run: onSnooze },
+  }], [onSnooze, snoozeUntil]);
   const hostGlyph = ((state === "idle" || state === "unread") && rowStatus) || (state === "idle" && draft.hasUnsubmittedDraft);
   const label = thread.indicatorLabel ?? STATE_LABEL[state];
   const emphasis = variant === "archived" ? "text-muted-foreground" :
@@ -90,16 +94,14 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
     {settings.density !== "two-line" && count}
     {!thread.parentThreadId && settings.showPullRequests && <PullRequestTag threadId={thread.id} />}
   </>;
-  const withThreadActions = variant === "tree" || variant === "archived";
-  const actions = (withThreadActions || variant === "lane") && <span className="sb-quick-actions relative z-10 shrink-0 items-center gap-0.5">
-    {onSnooze && <button type="button" aria-label={`Snooze until ${formatWakeLabel(nextWake(now, settings.snoozeHour), now)}`}
-      className="sb-control sb-icon-button grid place-items-center text-muted-foreground" onClick={onSnooze}>
-      <Icon name="Clock" aria-hidden /></button>}
-    {withThreadActions && quickActions.map(({ key, action }) => <button key={key} type="button" aria-label={action.label}
+  const withQuickActions = variant === "tree" || variant === "archived";
+  const withMenu = withQuickActions || variant === "lane";
+  const actions = withQuickActions && <span className="sb-quick-actions relative z-10 shrink-0 items-center gap-0.5">
+    {quickActions.map(({ key, action }) => <button key={key} type="button" aria-label={action.label}
       disabled={action.disabled} className="sb-control sb-icon-button text-muted-foreground"
       onClick={() => { void action.run(); }}><Icon name={action.icon} className="size-3.5" aria-hidden /></button>)}
   </span>;
-  return <ThreadActionsContextMenu thread={target} dragging={isDragging}>
+  return <ThreadActionsContextMenu thread={target} inline={inline} dragging={isDragging}>
     <div data-sb-row="" data-thread-id={thread.id} data-depth={depth} data-last-child={isLast}
       data-open-children={childCount > 0 && !collapsed} data-collapsed={collapsed}
       data-active={isActive} data-selected={isSelected} data-run={selectedRun}
@@ -156,7 +158,7 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
         }} /></InfoCard>
       {hue && <span aria-hidden className={`sb-hue-${hue} relative z-1 size-2 shrink-0 rounded-[3px]`} style={{ background: "var(--sb-hue)" }} />}
       {variant === "lane" && parentTitle && <span aria-hidden className="relative z-1 shrink-0 text-subtle-foreground">↳</span>}
-      <span className="sb-leading-glyph pointer-events-none relative z-1 shrink-0">
+      <span className="sb-leading-glyph pointer-events-none relative z-1 grid shrink-0 place-items-center">
         {variant === "archived" ? <span role="img" aria-label="Archived" className="inline-grid size-[14px] place-items-center text-subtle-foreground">
           <Icon name="Archive" className="size-3.5" aria-hidden /></span>
         : hostGlyph ? <ThreadStatusGlyph size="compact" indicator={rowStatus ? thread.indicator : "draft"} rowStatus={rowStatus} />
@@ -176,7 +178,7 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
       {variant === "snoozed" && <button type="button" className="sb-control sb-text-button relative z-10 shrink-0 text-[11px] text-muted-foreground"
         onClick={onWake}>Wake</button>}
       {actions}
-      {withThreadActions && <ThreadActionsMenu thread={target} side="right" align="start" onOpenChange={setMenuOpen}
+      {withMenu && <ThreadActionsMenu thread={target} inline={inline} side="right" align="start" onOpenChange={setMenuOpen}
         trigger={(triggerProps) => <button {...triggerProps} type="button" aria-label="Thread actions"
           className={`${triggerProps.className ?? ""} sb-control sb-menu-trigger sb-icon-button relative z-10 shrink-0 place-items-center text-muted-foreground`}>⋯</button>} />}
     </div>
