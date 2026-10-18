@@ -59,7 +59,7 @@ export function RenameInput({ initial, onSubmit, onCancel }: {
     }} />;
 }
 
-const item = "cursor-default rounded px-2 py-1.5 text-xs outline-none focus:bg-sidebar-accent";
+const item = "sb-menu-item rounded px-2 py-1.5 text-xs outline-none";
 export function SectionMenu({ group, unreadCount, hueOverride, onRename, onSetHue,
   onNewThread, onMarkAllRead, onDelete, sortMode = "manual", staleCount = 0,
   staleChildCount = 0, staleDays = 3, onSort, onArchiveStale, projects = [], defaultProjectId = null,
@@ -91,7 +91,7 @@ export function SectionMenu({ group, unreadCount, hueOverride, onRename, onSetHu
                 <div className="grid grid-cols-4 gap-1.5">
                   {HUE_IDS.map((hue) => <DropdownMenu.RadioItem key={hue} value={hue} aria-label={hue[0]!.toUpperCase() + hue.slice(1)}
                     title={hue[0]!.toUpperCase() + hue.slice(1)}
-                    className={`sb-hue-${hue} grid size-6 cursor-default place-items-center rounded-md border border-border outline-none focus:ring-1 focus:ring-primary data-[state=checked]:ring-2 data-[state=checked]:ring-primary`}>
+                    className={`sb-hue-${hue} grid size-6 cursor-pointer place-items-center rounded-md border border-border outline-none focus:ring-1 focus:ring-primary data-[state=checked]:ring-2 data-[state=checked]:ring-primary`}>
                     <span aria-hidden className="size-4 rounded-sm" style={{ background: "var(--sb-hue)" }} />
                   </DropdownMenu.RadioItem>)}
                 </div>
@@ -133,7 +133,7 @@ export function SectionMenu({ group, unreadCount, hueOverride, onRename, onSetHu
           disabled={staleCount === 0} onSelect={() => setArchiveOpen(true)}>Archive stale threads…</DropdownMenu.Item>}
         {group.kind === "section" && <>
           <DropdownMenu.Separator className="my-1 h-px bg-sidebar-border" />
-          <DropdownMenu.Item className={`${item} text-destructive focus:text-destructive`}
+          <DropdownMenu.Item className={`${item} text-destructive`}
             onSelect={() => setDeleteOpen(true)}>Delete section…</DropdownMenu.Item>
         </>}
       </DropdownMenu.Content></DropdownMenu.Portal>

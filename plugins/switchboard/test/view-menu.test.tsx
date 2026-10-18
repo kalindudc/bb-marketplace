@@ -26,6 +26,8 @@ describe("view controls", () => {
     fireEvent.pointerDown(screen.getByRole("button", { name: "View options" }),
       { button: 0, ctrlKey: false, pointerType: "mouse" });
     expect(screen.getByRole("menuitemradio", { name: "Status lanes" })).toBeTruthy();
+    expect([...document.querySelectorAll(".sb-view-menu [role^='menuitem']")]
+      .every((entry) => entry.classList.contains("sb-menu-item"))).toBe(true);
     expect(screen.getByRole("menuitemradio", { name: "Two lines" })).toBeTruthy();
     expect(screen.getByRole("menuitemradio", { name: "Tint" })).toBeTruthy();
     fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Needs-you shelf" }));

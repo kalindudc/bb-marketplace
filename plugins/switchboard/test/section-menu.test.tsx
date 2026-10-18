@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { installTestPluginRuntime } from "@get-bb/plugin-sdk/testing/app";
@@ -96,6 +98,27 @@ describe("section controls", () => {
       onSetHue={vi.fn()} onNewThread={vi.fn()} onMarkAllRead={vi.fn()} onDelete={vi.fn()} />);
     openMenu();
     expect(screen.queryByRole("menuitem", { name: "Default project" })).toBeNull();
+  });
+
+  it("gives every item a pointer and hover highlight, and greys out the disabled ones", () => {
+    render(<SectionMenu group={group} unreadCount={0} hueOverride={null} onRename={vi.fn()}
+      onSetHue={vi.fn()} onNewThread={vi.fn()} onMarkAllRead={vi.fn()} onDelete={vi.fn()} onSort={vi.fn()}
+      onArchiveStale={vi.fn()} staleCount={0} projects={[sidebarProject("p", "Project")]} onSetDefaultProject={vi.fn()} />);
+    openMenu();
+    const items = [...document.querySelectorAll<HTMLElement>(".sb-section-menu [role^='menuitem']")];
+    expect(items.map((entry) => entry.textContent)).toEqual(["Rename", "Colour \u203a", "Sort \u203a",
+      "Default project \u203a", "New thread here", "Mark all read", "Archive stale threads\u2026", "Delete section\u2026"]);
+    for (const entry of items) {
+      expect(entry.classList.contains("sb-menu-item")).toBe(true);
+      expect(entry.classList.contains("cursor-default")).toBe(false);
+    }
+    expect(items.filter((entry) => entry.hasAttribute("data-disabled")).map((entry) => entry.textContent))
+      .toEqual(["Mark all read", "Archive stale threads\u2026"]);
+    const css = readFileSync(join(process.cwd(), "src/switchboard.css"), "utf8");
+    const rule = (selector: RegExp) => css.match(new RegExp(`${selector.source}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
+    expect(rule(/\.sb-menu-item/)).toMatch(/cursor:\s*pointer/);
+    expect(rule(/\.sb-menu-item\[data-highlighted\], \.sb-menu-item\[data-state="open"\]/)).toMatch(/background:\s*var\(--sidebar-accent\)/);
+    expect(rule(/\.sb-menu-item\[data-disabled\]/)).toMatch(/cursor:\s*not-allowed;\s*opacity:\s*\.5/);
   });
 
   it("exposes automatic and eight hue choices", () => {

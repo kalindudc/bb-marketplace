@@ -17,6 +17,7 @@ describe("bulk selection bar", () => {
     expect(screen.getByText("2 selected")).toBeTruthy();
     expect(screen.getByLabelText("Selected threads").classList.contains("sb-bulk-bar")).toBe(true);
     fireEvent.pointerDown(screen.getByRole("button", { name: "Move to" }), { button: 0, ctrlKey: false, pointerType: "mouse" });
+    expect(screen.getByRole("menuitem", { name: "Section" }).classList.contains("sb-menu-item")).toBe(true);
     fireEvent.click(screen.getByRole("menuitem", { name: "Section" }));
     expect(onMove).toHaveBeenCalledWith("section:s");
     fireEvent.pointerDown(screen.getByRole("button", { name: "Move to" }), { button: 0, ctrlKey: false, pointerType: "mouse" });

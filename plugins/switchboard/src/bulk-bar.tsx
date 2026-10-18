@@ -30,7 +30,7 @@ export function BulkBar({ count, childCount, groups, onMove, onArchive, onClear,
       <DropdownMenu.Portal><DropdownMenu.Content {...portalScopeProps()} align="end"
         className="z-50 min-w-40 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-lg">
         {targets.map(({ key, name, hue }) => <DropdownMenu.Item key={key} onSelect={() => onMove(key)}
-          className="flex cursor-default items-center gap-2 rounded px-2 py-1.5 text-xs outline-none focus:bg-sidebar-accent">
+          className="sb-menu-item flex items-center gap-2 rounded px-2 py-1.5 text-xs outline-none">
           {hue ? <span aria-hidden className={`sb-hue-${hue} size-2.5 rounded-sm`} style={{ background: "var(--sb-hue)" }} /> :
             <span aria-hidden className="size-2.5" />}{name}
         </DropdownMenu.Item>)}

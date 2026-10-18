@@ -4,7 +4,7 @@ import type { SwitchboardSettings, View } from "./settings";
 import { Hint } from "./hint";
 import { portalScopeProps } from "./portal-scope";
 
-const item = "flex cursor-default items-center gap-2 rounded px-2 py-1.5 text-xs outline-none focus:bg-sidebar-accent";
+const item = "sb-menu-item flex items-center gap-2 rounded px-2 py-1.5 text-xs outline-none";
 const choice = `${item} relative pl-7`;
 const check = <DropdownMenu.ItemIndicator data-sb-check="" className="absolute left-2 inline-grid size-3.5 place-items-center">
   <Icon name="Check" className="size-3.5" aria-hidden /></DropdownMenu.ItemIndicator>;
