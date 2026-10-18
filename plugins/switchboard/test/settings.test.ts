@@ -7,6 +7,7 @@ describe("settings", () => {
       density: "default", sectionColour: "rail", treeGuides: true,
       statusChips: true, showAge: true, showBranch: false, showPullRequests: true,
       view: "sections", needsYouShelf: false, showArchived: false, staleDays: 3, snoozeHour: 9,
+      infoCard: "glance",
     });
     expect(SETTING_DESCRIPTORS.density.default).toBe(DEFAULT_SETTINGS.density);
     expect(SETTING_DESCRIPTORS.density.experimental_optionLabels).toEqual({
@@ -17,17 +18,17 @@ describe("settings", () => {
   it("keeps each valid value", () => {
     expect(parseSettings({ density: "two-line", sectionColour: "swatch", treeGuides: false,
       statusChips: false, showAge: false, showBranch: true, showPullRequests: false,
-      view: "status", needsYouShelf: true, showArchived: true, staleDays: 0, snoozeHour: 23 })).toEqual({
+      view: "status", needsYouShelf: true, showArchived: true, staleDays: 0, snoozeHour: 23, infoCard: "full" })).toEqual({
       density: "two-line", sectionColour: "swatch", treeGuides: false,
       statusChips: false, showAge: false, showBranch: true, showPullRequests: false,
-      view: "status", needsYouShelf: true, showArchived: true, staleDays: 0, snoozeHour: 23,
+      view: "status", needsYouShelf: true, showArchived: true, staleDays: 0, snoozeHour: 23, infoCard: "full",
     });
   });
 
   it("falls back independently for invalid types and unknown options", () => {
     expect(parseSettings({ density: "cozy", sectionColour: 8, treeGuides: "false",
       statusChips: null, showAge: 1, showBranch: "yes", showPullRequests: [],
-      view: "other", needsYouShelf: "true", staleDays: 1.5, snoozeHour: -1 })).toEqual(DEFAULT_SETTINGS);
+      view: "other", needsYouShelf: "true", staleDays: 1.5, snoozeHour: -1, infoCard: "cozy" })).toEqual(DEFAULT_SETTINGS);
     for (const value of [-1, 90.1, 91, Infinity, "7", NaN]) {
       expect(parseSettings({ staleDays: value }).staleDays).toBe(3);
     }

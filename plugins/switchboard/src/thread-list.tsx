@@ -12,6 +12,7 @@ import { chipCounts, filterGroups, isFiltering, type ListFilter } from "./filter
 import { buildLanes } from "./lanes";
 import { LanesView } from "./lanes-view";
 import { GroupHeader } from "./group-header";
+import { InfoCardProvider } from "./info-card";
 import { type CollapseKey, type GroupKey, type SortMode } from "./layout";
 import { densityMetrics } from "./metrics";
 import { flattenGroup } from "./rows";
@@ -267,7 +268,11 @@ export function ThreadList(props: PluginThreadListProps) {
     "--sb-base": `${metrics.base}px`, "--sb-pill-l": `${metrics.pillLeft}px`,
     "--sb-pill-r": `${metrics.pillRight}px`,
   } as CSSProperties;
-  return <nav ref={rootRef} aria-label="Threads" onKeyDown={onKeyDown} style={spacing}
+  const dragActive = useRef(false);
+  dragActive.current = current !== null;
+  const isSuppressed = useCallback(() => dragActive.current, []);
+  return <InfoCardProvider mode={props.isCompactViewport ? "off" : settings.infoCard} sdk={sdk} isSuppressed={isSuppressed}>
+  <nav ref={rootRef} aria-label="Threads" onKeyDown={onKeyDown} style={spacing}
     className={`sb-list sb-density-${settings.density} relative min-w-0 pb-3 text-[13px] text-sidebar-foreground`}>
     <FilterBar filter={filter} counts={sidebar.status === "ready" ? counts : EMPTY_COUNTS}
       showChips={sidebar.status === "ready" && settings.statusChips} inputRef={inputRef}
@@ -389,5 +394,5 @@ export function ThreadList(props: PluginThreadListProps) {
         titleOf={(id) => index.byId.get(id)?.node.thread.displayTitle ?? sections.get(id) ?? id}
         stateOf={(id) => index.byId.get(id)?.node.state ?? "idle"} /></>}
     <span className="sr-only" aria-live="polite">{announcement}</span>
-  </nav>;
+  </nav></InfoCardProvider>;
 }

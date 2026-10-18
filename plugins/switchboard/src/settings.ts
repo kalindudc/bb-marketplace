@@ -6,6 +6,7 @@ export const SETTINGS_LOCAL_CHANNEL = "switchboard:settings:local";
 export type Density = "compact" | "default" | "two-line";
 export type SectionColour = "rail" | "tint" | "swatch";
 export type View = "sections" | "status";
+export type InfoCardMode = "off" | "glance" | "briefing" | "full";
 
 const isWholeNumber = (value: unknown, max: number): value is number =>
   typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= max;
@@ -29,6 +30,7 @@ export interface SwitchboardSettings {
   showArchived: boolean;
   staleDays: number;
   snoozeHour: number;
+  infoCard: InfoCardMode;
 }
 
 export const DEFAULT_SETTINGS: SwitchboardSettings = {
@@ -44,6 +46,7 @@ export const DEFAULT_SETTINGS: SwitchboardSettings = {
   showArchived: false,
   staleDays: 3,
   snoozeHour: 9,
+  infoCard: "glance",
 };
 
 export const SETTING_DESCRIPTORS = {
@@ -78,6 +81,13 @@ export const SETTING_DESCRIPTORS = {
   showAge: { type: "boolean", label: "Show age", description: "Show the time since each thread last needed attention.", default: true },
   showBranch: { type: "boolean", label: "Show branch", description: "Show each thread's environment branch name.", default: false },
   showPullRequests: { type: "boolean", label: "Show pull requests", description: "Show pull request numbers on root threads.", default: true },
+  infoCard: {
+    type: "select", label: "Thread info card",
+    description: "Show a card with a thread's details when you hover or tab to its row.",
+    options: ["off", "glance", "briefing", "full"],
+    experimental_optionLabels: { off: "Off", glance: "At a glance", briefing: "Briefing", full: "Full details" },
+    default: DEFAULT_SETTINGS.infoCard,
+  },
 } satisfies PluginSettingDescriptors;
 
 export function parseSettings(values: Readonly<Record<string, unknown>> | undefined): SwitchboardSettings {
@@ -85,6 +95,7 @@ export function parseSettings(values: Readonly<Record<string, unknown>> | undefi
   const density = (["compact", "default", "two-line"] as const).find((value) => value === read.density) ?? DEFAULT_SETTINGS.density;
   const sectionColour = (["rail", "tint", "swatch"] as const).find((value) => value === read.sectionColour) ?? DEFAULT_SETTINGS.sectionColour;
   const view = (read.view === "status" || read.view === "sections") ? read.view : DEFAULT_SETTINGS.view;
+  const infoCard = (["off", "glance", "briefing", "full"] as const).find((value) => value === read.infoCard) ?? DEFAULT_SETTINGS.infoCard;
   const flag = (key: "treeGuides" | "statusChips" | "showAge" | "showBranch" | "showPullRequests" | "needsYouShelf" | "showArchived") =>
     typeof read[key] === "boolean" ? read[key] as boolean : DEFAULT_SETTINGS[key];
   return {
@@ -93,5 +104,6 @@ export function parseSettings(values: Readonly<Record<string, unknown>> | undefi
     snoozeHour: isWholeNumber(read.snoozeHour, 23) ? read.snoozeHour : DEFAULT_SETTINGS.snoozeHour,
     treeGuides: flag("treeGuides"), statusChips: flag("statusChips"),
     showAge: flag("showAge"), showBranch: flag("showBranch"), showPullRequests: flag("showPullRequests"),
+    infoCard,
   };
 }

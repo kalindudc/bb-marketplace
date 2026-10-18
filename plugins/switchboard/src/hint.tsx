@@ -11,7 +11,7 @@ if (typeof window !== "undefined") {
   window.addEventListener("pointerdown", () => { lastInput = "pointer"; }, { capture: true, passive: true });
 }
 
-function keyboardFocusOnly(event: FocusEvent<HTMLElement>): void {
+export function keyboardFocusOnly(event: FocusEvent<HTMLElement>): void {
   if (lastInput === "pointer") event.preventDefault();
 }
 

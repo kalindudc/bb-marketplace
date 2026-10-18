@@ -6,6 +6,7 @@ Keep parallel agent threads readable and make triage part of the sidebar.
 - A title, project, section and branch filter, status chips, three densities and an in-list View options menu, with short hints on the controls. Choose Switchboard under Settings → Appearance → Sidebar in each bb client.
 - An Archive toggle shows archived threads on a shelf at the end of the list, with Unarchive and older pages on demand.
 - A status-lanes view groups every awake thread under its own Failed, Needs you, Running, Unread or Idle state, newest attention first. An optional Needs-you shelf repeats urgent threads at the top without duplicating bb shortcuts.
+- Hover a thread for an info card: model, context use, branch, changes, pull request and, in the Briefing layout, its first prompt and latest reply.
 
 ## Organize and triage
 

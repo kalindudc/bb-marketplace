@@ -17,6 +17,8 @@ Pinned threads appear first, followed by your sections and then Threads (unfiled
 
 Density choices are Compact (28 px), Comfortable (32 px) and Two lines (48 px). A two-line status-lane child names its parent below the title. The view switch beside the filter and the View options menu change the current display; the menu also controls density, section colour, chips, the Needs-you shelf, archived threads, tree lines, branch names, pull request numbers, ages and stale fading. Hover or tab to a chip, the view switch, View options or a section's buttons for a short hint about what it does.
 
+Hover a row, or tab to it, to see an info card with the thread's model, context use, branch, changes and pull request. The Thread info card setting picks At a glance (the default), Briefing, which adds the first prompt and the latest reply, Full details, or Off. Cards never open on touch screens or in compact windows.
+
 The Archive button beside the view switch shows or hides an **Archived** shelf at the end of the list. It lists archived threads, most recently archived first, follows the filter box, and loads older ones with **Show more**. Each row offers Unarchive and bb's thread menu; archived rows never appear in sections and take no jump shortcuts.
 
 ## Organize
@@ -53,6 +55,7 @@ Change settings in bb's plugin settings or with `bb plugin config switchboard se
 | `showBranch` | `false` | boolean |
 | `showPullRequests` | `true` | boolean |
 | `showAge` | `true` | boolean |
+| `infoCard` | `glance` | `off`, `glance`, `briefing`, `full` |
 | `staleDays` | `3` | whole number 0–90; 0 turns fading off |
 | `snoozeHour` | `9` | whole local hour 0–23 |
 

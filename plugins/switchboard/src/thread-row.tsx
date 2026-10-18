@@ -8,6 +8,7 @@ import {
   experimental_useThreadActions, useBbNavigate, useSidebarThreadDraft,
   useSidebarThreadRowStatus, useSidebarThreadShortcut,
 } from "@get-bb/plugin-sdk/app";
+import { InfoCard, useInfoCardMode } from "./info-card";
 import type { CollapseKey, HueId } from "./layout";
 import type { RowModel } from "./rows";
 import type { SelectionRun } from "./selection";
@@ -66,6 +67,7 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
   const rowStatus = useSidebarThreadRowStatus(thread.id);
   const draft = useSidebarThreadDraft(thread.id);
   const shortcut = useSidebarThreadShortcut(thread.id);
+  const infoCardMode = useInfoCardMode();
   const target = toActionTarget(thread);
   const quickActions = experimental_useThreadActions(target, { keys: variant === "archived" ? ARCHIVED_ACTIONS : ROW_ACTIONS });
   const hostGlyph = ((state === "idle" || state === "unread") && rowStatus) || (state === "idle" && draft.hasUnsubmittedDraft);
@@ -103,7 +105,7 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
       data-active={isActive} data-selected={isSelected} data-run={selectedRun}
       data-dragging={isDragging} data-drop={dropState ?? undefined} data-menu-open={menuOpen || undefined}
       className={`sb-row relative flex min-w-0 overflow-hidden text-sidebar-foreground ${stale ? "sb-stale" : ""} ${row.dim ? "opacity-60" : ""} ${flash ? "sb-flash" : ""}`}
-      title={stale ? `Idle for ${Math.floor((now - lastActivity(thread)) / 86_400_000)} days` : undefined}
+      title={stale && infoCardMode === "off" ? `Idle for ${Math.floor((now - lastActivity(thread)) / 86_400_000)} days` : undefined}
       style={{ paddingLeft: `calc(var(--sb-base) + ${variant === "tree" ? depth : 0} * var(--sb-indent))` }}>
       {variant === "tree" && settings.treeGuides && depth > 0 && <>
         {[...guides].map((line, index) => line === "|" && !(childCount > 0 && index === depth - 1) &&
@@ -125,6 +127,7 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
         aria-expanded={!collapsed} onClick={() => onToggle?.(`thread:${thread.id}`)}
         className="sb-caret absolute z-10 grid place-items-center text-2xs text-subtle-foreground hover:text-sidebar-foreground"
         style={{ left: `calc(var(--sb-base) + ${depth} * var(--sb-indent) - 16px)` }}>{collapsed ? "▸" : "▾"}</button>}
+      <InfoCard thread={thread} state={state} projectName={projectName} stale={stale === true} now={now}>
       <a href={thread.href} data-sidebar-thread-shortcut-target={variant === "tree" || variant === "lane" ? "" : undefined}
         data-sidebar-thread-id={variant === "tree" || variant === "lane" ? thread.id : undefined}
         aria-label={thread.displayTitle} aria-current={isActive ? "page" : undefined}
@@ -150,7 +153,7 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
           const direction = { ArrowUp: "up", ArrowDown: "down", ArrowRight: "right", ArrowLeft: "left" } as const;
           const move = direction[event.key as keyof typeof direction];
           if (move) { event.preventDefault(); event.stopPropagation(); onKeyboardMove?.(thread.id, move); }
-        }} />
+        }} /></InfoCard>
       {hue && <span aria-hidden className={`sb-hue-${hue} relative z-1 size-2 shrink-0 rounded-[3px]`} style={{ background: "var(--sb-hue)" }} />}
       {variant === "lane" && parentTitle && <span aria-hidden className="relative z-1 shrink-0 text-subtle-foreground">↳</span>}
       <span className="sb-leading-glyph pointer-events-none relative z-1 shrink-0">
