@@ -52,12 +52,17 @@ function InfoCardRoot({ thread, state, projectName, stale, now, children, mode, 
       prefetchInfo(infoLoaders(sdk, thread, mode));
     }, PREFETCH_DELAY_MS);
   };
+  // Radix ignores a close that matches its last rendered open prop, so a leave before the opening render would leave the card stuck.
+  const leave = () => {
+    cancelPrefetch();
+    setOpen(false);
+  };
   const branch = thread.environment?.branchName;
   const label = `${thread.indicatorLabel ?? STATE_LABEL[state]}, ${projectName}${branch ? `, branch ${branch}` : ""}`;
   // Switchboard's drag listens on window without pointer capture, so other rows still see pointer moves mid-drag.
   return <Tooltip.Root open={open} onOpenChange={(next) => setOpen(next && !isSuppressed())}>
     <Tooltip.Trigger asChild onFocus={keyboardFocusOnly} onPointerDown={() => setOpen(false)}
-      onPointerEnter={startPrefetch} onPointerLeave={cancelPrefetch}>{children}</Tooltip.Trigger>
+      onPointerEnter={startPrefetch} onPointerLeave={leave}>{children}</Tooltip.Trigger>
     <Tooltip.Portal>
       <Tooltip.Content {...portalScopeProps()} side="right" align="start" sideOffset={8} collisionPadding={8}
         aria-label={label} className={`sb-info-card sb-info-${mode}`}>

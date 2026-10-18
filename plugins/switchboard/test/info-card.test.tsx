@@ -195,6 +195,25 @@ describe("info card", () => {
     expect(within(card()!).getByText("109k / 1M · 11%")).toBeTruthy();
   });
 
+  it("closes when the pointer leaves before the opened card renders", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const { link } = mount("glance");
+    const hover = () => fireEvent.pointerMove(link, { pointerType: "mouse" });
+    const leave = () => fireEvent.pointerLeave(link, { pointerType: "mouse" });
+    // One act holds React's render until both events land, as a busy main thread does.
+    hover();
+    act(() => { vi.advanceTimersByTime(300); leave(); });
+    expect(card()).toBeNull();
+    hover();
+    act(() => { vi.advanceTimersByTime(300); });
+    expect(card()).not.toBeNull();
+    leave();
+    expect(card()).toBeNull();
+    // Within the skip delay the next hover opens at once, in the same frame as a quick leave.
+    act(() => { hover(); leave(); });
+    expect(card()).toBeNull();
+  });
+
   it("closes on pointer down, stays closed while suppressed, and holds only labelled text", async () => {
     const { slot, link } = mount("glance");
     focus(link);
