@@ -10,6 +10,7 @@ bb marketplace add git:github.com/kalindudc/bb-marketplace@main
 bb plugin install follow-thinking@kalindudc
 bb plugin install session-log@kalindudc
 bb plugin install switchboard@kalindudc
+bb plugin install vantage@kalindudc
 bb plugin update follow-thinking     # after a new release is tagged
 ```
 
@@ -25,6 +26,7 @@ plugin store.
 | [Session Log](plugins/session-log) | `session-log` | Adds a thread side-panel tab with one flat, live, searchable log of everything the agent did: messages, thinking, commands with output and exit codes, tool calls, diffs and subagents. Open it with Mod+Shift+L. |
 | [Switchboard](plugins/switchboard) | `switchboard` | Replaces the sidebar thread list: your bb sections as coloured groups, children as trees, status at a glance, drag-and-drop organizing, status lanes and snooze. Choose it under Settings → Appearance → Sidebar. |
 | [Pi AI Services](plugins/pi-services) | `pi-services` | Writes bb's thread titles and commit messages with your own pi CLI setup — your credentials and model, no bb account. Adds a regenerate-title button to the thread header and pi executable/model knobs in the plugin settings. |
+| [Vantage](plugins/vantage) | `vantage` | Adds a thread side-panel tab for parallel agents: every child worktree with status, branch and changes, a drill-in with diffs, commits, chat and a terminal, and a by-repository view of everything the thread tree changed. `bb vantage` prints the same for agents. |
 
 ## Layout
 

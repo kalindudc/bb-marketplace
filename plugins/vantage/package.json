@@ -1,0 +1,49 @@
+{
+  "name": "bb-plugin-vantage",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "bb": ">=0.46",
+    "bbPluginSdk": ">=0.6.49"
+  },
+  "bb": {
+    "name": "Vantage",
+    "description": "See every worktree your parallel agents work in, and everything they changed across repositories, from the parent thread. Each worktree shows status, branch, commits ahead and behind, uncommitted files and its pull request; open one to read its diffs and commits, talk to its agent, or start a terminal in it. Files changed in two worktrees are flagged before they conflict.",
+    "branding": {
+      "icon": "FolderGit"
+    },
+    "server": "./server.ts",
+    "app": "./app.tsx",
+    "host": "./host.ts",
+    "skills": [
+      "./skills/vantage"
+    ]
+  },
+  "scripts": {
+    "build": "bb plugin build",
+    "test": "vitest run",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.6.49",
+    "@radix-ui/react-tooltip": "^1.2.12",
+    "@testing-library/react": "^16.3.3",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "better-sqlite3": "12.10.0",
+    "cron-parser": "^5.5.0",
+    "hono": "^4.13.13",
+    "jsdom": "^27.0.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "sonner": "^1.7.4",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.12"
+  }
+}
