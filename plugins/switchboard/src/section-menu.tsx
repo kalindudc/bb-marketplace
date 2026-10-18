@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as AlertDialog from "@radix-ui/react-alert-dialog";
-import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
+import { experimental_Icon as Icon, type PluginSidebarProject } from "@get-bb/plugin-sdk/app";
 import { HUE_IDS, type HueId, type SortMode } from "./layout";
 import type { Group } from "./tree";
 import { Hint } from "./hint";
@@ -22,7 +22,13 @@ export interface SectionMenuProps {
   staleDays?: number;
   onSort?(mode: SortMode): void;
   onArchiveStale?(): void;
+  projects?: readonly PluginSidebarProject[];
+  defaultProjectId?: string | null;
+  onSetDefaultProject?(projectId: string | null): void;
 }
+
+// Contains a space, so it never collides with a stored project ID.
+const AUTOMATIC_PROJECT = "automatic project";
 
 export function RenameInput({ initial, onSubmit, onCancel }: {
   initial: string; onSubmit(name: string): void; onCancel(): void;
@@ -56,7 +62,8 @@ export function RenameInput({ initial, onSubmit, onCancel }: {
 const item = "cursor-default rounded px-2 py-1.5 text-xs outline-none focus:bg-sidebar-accent";
 export function SectionMenu({ group, unreadCount, hueOverride, onRename, onSetHue,
   onNewThread, onMarkAllRead, onDelete, sortMode = "manual", staleCount = 0,
-  staleChildCount = 0, staleDays = 3, onSort, onArchiveStale }: SectionMenuProps) {
+  staleChildCount = 0, staleDays = 3, onSort, onArchiveStale, projects = [], defaultProjectId = null,
+  onSetDefaultProject }: SectionMenuProps) {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const renamePending = useRef(false);
@@ -101,6 +108,19 @@ export function SectionMenu({ group, unreadCount, hueOverride, onRename, onSetHu
               <DropdownMenu.RadioGroup value={sortMode} onValueChange={(mode) => onSort(mode as SortMode)}>
                 {([ ["manual", "By hand"], ["recent", "Recent activity"], ["status", "Status"] ] as const)
                   .map(([mode, label]) => <DropdownMenu.RadioItem key={mode} value={mode} className={`${item} relative pl-7`}>
+                    <DropdownMenu.ItemIndicator data-sb-check="" className="absolute left-2 inline-grid size-3.5 place-items-center">
+                      <Icon name="Check" className="size-3.5" aria-hidden /></DropdownMenu.ItemIndicator>{label}</DropdownMenu.RadioItem>)}
+              </DropdownMenu.RadioGroup>
+            </DropdownMenu.SubContent></DropdownMenu.Portal>
+          </DropdownMenu.Sub>}
+          {onSetDefaultProject && projects.length > 0 && <DropdownMenu.Sub>
+            <DropdownMenu.SubTrigger className={`${item} flex items-center justify-between`}>Default project <span aria-hidden>›</span></DropdownMenu.SubTrigger>
+            <DropdownMenu.Portal><DropdownMenu.SubContent {...portalScopeProps()} sideOffset={4}
+              className="sb-project-menu z-50 max-h-80 min-w-40 max-w-64 overflow-y-auto rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-lg">
+              <DropdownMenu.RadioGroup value={defaultProjectId ?? AUTOMATIC_PROJECT}
+                onValueChange={(value) => onSetDefaultProject(value === AUTOMATIC_PROJECT ? null : value)}>
+                {[{ id: AUTOMATIC_PROJECT, name: "Automatic" }, ...projects].map(({ id, name: label }) =>
+                  <DropdownMenu.RadioItem key={id} value={id} className={`${item} relative truncate pl-7`}>
                     <DropdownMenu.ItemIndicator data-sb-check="" className="absolute left-2 inline-grid size-3.5 place-items-center">
                       <Icon name="Check" className="size-3.5" aria-hidden /></DropdownMenu.ItemIndicator>{label}</DropdownMenu.RadioItem>)}
               </DropdownMenu.RadioGroup>

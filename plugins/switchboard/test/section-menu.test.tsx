@@ -4,7 +4,7 @@ import { installTestPluginRuntime } from "@get-bb/plugin-sdk/testing/app";
 import { EMPTY_LAYOUT } from "../src/layout";
 import { buildGroups } from "../src/tree";
 import { RenameInput, SectionMenu } from "../src/section-menu";
-import { sidebarSection, sidebarThread } from "./fixtures";
+import { sidebarProject, sidebarSection, sidebarThread } from "./fixtures";
 
 installTestPluginRuntime();
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
@@ -66,6 +66,36 @@ describe("section controls", () => {
     expect(onArchiveStale).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Archive stale threads" }));
     expect(onArchiveStale).toHaveBeenCalledOnce();
+  });
+
+  it("picks a default project for new threads, with Automatic as the default", () => {
+    const onSetDefaultProject = vi.fn();
+    const projects = [sidebarProject("p", "Project"), sidebarProject("q", "Other")];
+    const menu = (defaultProjectId: string | null) => <SectionMenu group={group} unreadCount={0} hueOverride={null}
+      onRename={vi.fn()} onSetHue={vi.fn()} onNewThread={vi.fn()} onMarkAllRead={vi.fn()} onDelete={vi.fn()}
+      projects={projects} defaultProjectId={defaultProjectId} onSetDefaultProject={onSetDefaultProject} />;
+    const openProjects = () => {
+      openMenu();
+      fireEvent.pointerMove(screen.getByRole("menuitem", { name: "Default project" }));
+      fireEvent.keyDown(screen.getByRole("menuitem", { name: "Default project" }), { key: "ArrowRight" });
+    };
+    const view = render(menu(null));
+    openProjects();
+    expect(screen.getByRole("menuitemradio", { name: "Automatic" }).getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Other" }));
+    expect(onSetDefaultProject).toHaveBeenCalledWith("q");
+    view.rerender(menu("q"));
+    openProjects();
+    expect(screen.getByRole("menuitemradio", { name: "Other" }).getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Automatic" }));
+    expect(onSetDefaultProject).toHaveBeenLastCalledWith(null);
+  });
+
+  it("has no default project choice without a handler", () => {
+    render(<SectionMenu group={group} unreadCount={0} hueOverride={null} onRename={vi.fn()}
+      onSetHue={vi.fn()} onNewThread={vi.fn()} onMarkAllRead={vi.fn()} onDelete={vi.fn()} />);
+    openMenu();
+    expect(screen.queryByRole("menuitem", { name: "Default project" })).toBeNull();
   });
 
   it("exposes automatic and eight hue choices", () => {

@@ -8,6 +8,7 @@ export interface LayoutStore {
   setSectionOrder(ids: readonly string[]): Promise<readonly string[]>;
   setSectionHue(sectionId: string, hue: HueId | null): Promise<Readonly<Record<string, HueId>>>;
   setSectionSort(container: ContainerKey, mode: SortMode): Promise<Readonly<Record<string, SortMode>>>;
+  setSectionProject(container: ContainerKey, projectId: string | null): Promise<Readonly<Record<string, string>>>;
   snooze(threadIds: readonly string[], until: number): Promise<Readonly<Record<string, SnoozeEntry>>>;
   unsnooze(threadIds: readonly string[]): Promise<Readonly<Record<string, SnoozeEntry>>>;
 }
@@ -18,15 +19,15 @@ export function createLayoutStore(
 ): LayoutStore {
   return {
     async read() {
-      const [sectionOrder, sectionHues, collapsed, sectionSort, keys, snoozeKeys] = await Promise.all([
+      const [sectionOrder, sectionHues, collapsed, sectionSort, sectionProjects, keys, snoozeKeys] = await Promise.all([
         kv.get("section-order"), kv.get("section-hues"), kv.get("collapsed"), kv.get("section-sort"),
-        kv.list("order:"), kv.list("snooze:"),
+        kv.get("section-projects"), kv.list("order:"), kv.list("snooze:"),
       ]);
       const [entries, snoozeEntries] = await Promise.all([
         Promise.all(keys.slice(0, MAX_ENTRIES).map(async (key) => [key.slice(6), await kv.get(key)] as const)),
         Promise.all(snoozeKeys.slice(0, MAX_ENTRIES).map(async (key) => [key.slice(7), await kv.get(key)] as const)),
       ]);
-      return parseLayout({ sectionOrder, sectionHues, collapsed, sectionSort,
+      return parseLayout({ sectionOrder, sectionHues, collapsed, sectionSort, sectionProjects,
         order: Object.fromEntries(entries), snoozes: Object.fromEntries(snoozeEntries) });
     },
     async setCollapsed(key, collapsed) {
@@ -65,6 +66,14 @@ export function createLayoutStore(
       else value[container] = mode;
       await kv.set("section-sort", value);
       publish({ key: "section-sort", value });
+      return value;
+    },
+    async setSectionProject(container, projectId) {
+      const value = { ...parseLayout({ sectionProjects: await kv.get("section-projects") }).sectionProjects };
+      if (projectId === null) delete value[container];
+      else value[container] = projectId;
+      await kv.set("section-projects", value);
+      publish({ key: "section-projects", value });
       return value;
     },
     async snooze(threadIds, until) {

@@ -10,6 +10,9 @@ export const layoutWriteFakes = {
   setSectionSort: ({ container, mode }: { container: string; mode: SortMode }) => ({
     sectionSort: mode === "manual" ? {} : { [container]: mode },
   }),
+  setSectionProject: ({ container, projectId }: { container: string; projectId: string | null }) => ({
+    sectionProjects: projectId ? { [container]: projectId } : {},
+  }),
   snooze: () => ({ snoozes: {} }),
   unsnooze: () => ({ snoozes: {} }),
 };

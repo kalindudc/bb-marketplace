@@ -44,7 +44,7 @@ export function ThreadList(props: PluginThreadListProps) {
   const navigate = useBbNavigate();
   const metrics = densityMetrics(settings.density);
   const layoutApi = useLayout();
-  const { layout, setCollapsed, setSectionOrder, setSectionHue, setSectionSort, snooze, unsnooze } = layoutApi;
+  const { layout, setCollapsed, setSectionOrder, setSectionHue, setSectionSort, setSectionProject, snooze, unsnooze } = layoutApi;
   const updateSettings = useUpdateSettings();
   const now = useNow(60_000);
   const [filter, setFilter] = useState<ListFilter>({ query: "", states: new Set() });
@@ -193,9 +193,13 @@ export function ThreadList(props: PluginThreadListProps) {
       announce(summary);
     } catch (cause) { toast.error(message(cause)); }
   };
+  const defaultProjectOf = (key: GroupKey): string | null => {
+    const projectId = layout.sectionProjects[key];
+    return projectId && projects.has(projectId) ? projectId : null;
+  };
   const onNewThread = (group: Group) => {
     const newest = [...group.roots].sort((a, b) => b.thread.updatedAt - a.thread.updatedAt)[0];
-    const projectId = props.activeProjectId ?? newest?.thread.projectId;
+    const projectId = defaultProjectOf(group.key) ?? props.activeProjectId ?? newest?.thread.projectId;
     navigate.toCompose({ ...(projectId ? { projectId } : {}),
       placement: { sectionId: group.section?.id ?? null, pinned: false }, focusPrompt: true });
     onNavigate();
@@ -214,6 +218,7 @@ export function ThreadList(props: PluginThreadListProps) {
       setSectionHue(id, null);
       layoutApi.setOrder(`section:${id}`, []);
       setSectionSort(`section:${id}`, "manual");
+      setSectionProject(`section:${id}`, null);
       announce(`Deleted section ${group.section!.name}`);
     }).catch((cause: unknown) => toast.error(message(cause)));
   };
@@ -313,6 +318,8 @@ export function ThreadList(props: PluginThreadListProps) {
         hueOverride={group.section ? layout.sectionHues[group.section.id] ?? null : null}
         sortMode={layout.sectionSort[group.key] ?? "manual"} staleDays={settings.staleDays}
         onSort={(mode: SortMode) => setSectionSort(group.key as "loose" | `section:${string}`, mode)}
+        projects={sidebar.projects} defaultProjectId={defaultProjectOf(group.key)}
+        onSetDefaultProject={(projectId) => setSectionProject(group.key as "loose" | `section:${string}`, projectId)}
         onArchiveStale={() => { void onArchiveStale(group); }}
         onRename={() => setRenamingId(group.section?.id ?? null)}
         onRenameSubmit={(name) => {

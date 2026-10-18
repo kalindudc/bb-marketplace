@@ -15,6 +15,9 @@ const sortMode = z.enum(["manual", "recent", "status"]);
 const sectionSort = z.record(z.string(), sortMode).refine((value) =>
   Object.keys(value).length <= MAX_ENTRIES && Object.keys(value).every((key) =>
     key.length <= MAX_KEY_LENGTH && /^(loose|section:\S+)$/.test(key)));
+const sectionProjects = z.record(z.string(), id).refine((value) =>
+  Object.keys(value).length <= MAX_ENTRIES && Object.keys(value).every((key) =>
+    key.length <= MAX_KEY_LENGTH && /^(loose|section:\S+)$/.test(key)));
 const snoozeEntry = z.object({ until: z.number().int().nonnegative(), at: z.number().int().nonnegative() }).strict();
 const snoozes = z.record(id, snoozeEntry).refine((value) => Object.keys(value).length <= MAX_ENTRIES);
 const threadIds = z.array(writeId).max(500);
@@ -24,7 +27,7 @@ const layout = z.object({
   collapsed: z.array(collapse).max(MAX_ENTRIES),
   order: z.record(z.string().max(MAX_KEY_LENGTH).regex(/^(loose|section:\S+|parent:\S+)$/), list)
     .refine((order) => Object.keys(order).length <= MAX_ENTRIES),
-  sectionSort, snoozes,
+  sectionSort, snoozes, sectionProjects,
 }).strict();
 
 export const rpcContract = defineRpcContract({
@@ -48,6 +51,10 @@ export const rpcContract = defineRpcContract({
   setSectionSort: {
     input: z.object({ container: sortable, mode: sortMode }).strict(),
     output: z.object({ sectionSort }).strict(),
+  },
+  setSectionProject: {
+    input: z.object({ container: sortable, projectId: writeId.nullable() }).strict(),
+    output: z.object({ sectionProjects }).strict(),
   },
   snooze: {
     input: z.object({ threadIds, until: z.number().int().nonnegative() }).strict(),

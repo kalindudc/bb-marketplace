@@ -16,6 +16,7 @@ export default function switchboard(bb: BbPluginApi): void {
         collapsed: [...layout.collapsed],
         order: Object.fromEntries(Object.entries(layout.order).map(([key, ids]) => [key, [...ids]])),
         sectionSort: { ...layout.sectionSort }, snoozes: { ...layout.snoozes },
+        sectionProjects: { ...layout.sectionProjects },
       };
     },
     setCollapsed: async ({ key, collapsed }) => ({ collapsed: [...await store.setCollapsed(key, collapsed)] }),
@@ -23,6 +24,8 @@ export default function switchboard(bb: BbPluginApi): void {
     setSectionOrder: async ({ ids }) => ({ ids: [...await store.setSectionOrder(ids)] }),
     setSectionHue: async ({ sectionId, hue }) => ({ sectionHues: { ...await store.setSectionHue(sectionId, hue) } }),
     setSectionSort: async ({ container, mode }) => ({ sectionSort: { ...await store.setSectionSort(container, mode) } }),
+    setSectionProject: async ({ container, projectId }) =>
+      ({ sectionProjects: { ...await store.setSectionProject(container, projectId) } }),
     snooze: async ({ threadIds, until }) => ({ snoozes: { ...await store.snooze(threadIds, until) } }),
     unsnooze: async ({ threadIds }) => ({ snoozes: { ...await store.unsnooze(threadIds) } }),
   });

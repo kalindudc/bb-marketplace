@@ -35,7 +35,7 @@ describe("Switchboard server", () => {
     await bb.storage.kv.set("section-order", ["review"]);
     expect(await harness.behavior.callRpc("getLayout")).toEqual({
       sectionOrder: ["review"], sectionHues: { review: "violet" }, collapsed: [], order: { loose: ["a", "b"] },
-      sectionSort: {}, snoozes: {},
+      sectionSort: {}, snoozes: {}, sectionProjects: {},
     });
   });
 
@@ -98,6 +98,21 @@ describe("Switchboard server", () => {
     } });
   });
 
+  it("stores and clears a section's default project and publishes the full map", async () => {
+    const { bb, harness } = setup();
+    expect(await harness.behavior.callRpc("setSectionProject", { container: "section:review", projectId: "p" }))
+      .toEqual({ sectionProjects: { "section:review": "p" } });
+    expect(await harness.behavior.callRpc("setSectionProject", { container: "loose", projectId: "q" }))
+      .toEqual({ sectionProjects: { "section:review": "p", loose: "q" } });
+    expect(await harness.behavior.callRpc("setSectionProject", { container: "section:review", projectId: null }))
+      .toEqual({ sectionProjects: { loose: "q" } });
+    expect(await bb.storage.kv.get("section-projects")).toEqual({ loose: "q" });
+    expect(await harness.behavior.callRpc("getLayout")).toMatchObject({ sectionProjects: { loose: "q" } });
+    expect(harness.realtimeSignals.at(-1)).toEqual({ channel: "layout", payload: {
+      key: "section-projects", value: { loose: "q" },
+    } });
+  });
+
   it("stores snoozes, publishes whole maps, clears entries on deletion and rejects over 500 IDs", async () => {
     const { bb, harness } = setup();
     const before = Date.now();
@@ -129,6 +144,10 @@ describe("Switchboard server", () => {
       ["setOrder", { container: "loose", ids: ["a"], unexpected: true }],
       ["setSectionOrder", { ids: [""] }],
       ["setSectionHue", { sectionId: "review", hue: "rainbow" }],
+      ["setSectionProject", { container: "pinned", projectId: "p" }],
+      ["setSectionProject", { container: "parent:a", projectId: "p" }],
+      ["setSectionProject", { container: "loose", projectId: "has space" }],
+      ["setSectionProject", { container: "loose", projectId: "" }],
     ] as const;
     for (const [method, input] of bad) await expect(harness.behavior.callRpc(method, input)).rejects.toThrow();
     expect(harness.realtimeSignals).toEqual([]);

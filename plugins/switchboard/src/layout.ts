@@ -15,12 +15,15 @@ export interface Layout {
   order: Readonly<Record<string, readonly string[]>>;
   sectionSort: Readonly<Record<string, SortMode>>;
   snoozes: Readonly<Record<string, SnoozeEntry>>;
+  sectionProjects: Readonly<Record<string, string>>;
 }
-export const EMPTY_LAYOUT: Layout = { sectionOrder: [], sectionHues: {}, collapsed: [], order: {}, sectionSort: {}, snoozes: {} };
+export const EMPTY_LAYOUT: Layout = { sectionOrder: [], sectionHues: {}, collapsed: [], order: {}, sectionSort: {}, snoozes: {},
+  sectionProjects: {} };
 export type LayoutPatch = { key: "collapsed" | "section-order" | `order:${string}`; value: readonly string[] }
   | { key: "section-hues"; value: Readonly<Record<string, HueId>> }
   | { key: "section-sort"; value: Readonly<Record<string, SortMode>> }
-  | { key: "snoozes"; value: Readonly<Record<string, SnoozeEntry>> }; 
+  | { key: "snoozes"; value: Readonly<Record<string, SnoozeEntry>> }
+  | { key: "section-projects"; value: Readonly<Record<string, string>> };
 
 const record = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
@@ -66,10 +69,14 @@ export function parseLayout(value: unknown): Layout {
   if (record(value.snoozes)) for (const [key, entry] of Object.entries(value.snoozes).slice(0, MAX_ENTRIES)) {
     if (id(key) && snoozeEntry(entry)) snoozes[key] = { until: entry.until, at: entry.at };
   }
+  const sectionProjects: Record<string, string> = {};
+  if (record(value.sectionProjects)) for (const [key, projectId] of Object.entries(value.sectionProjects).slice(0, MAX_ENTRIES)) {
+    if (sortableKey(key) && id(projectId)) sectionProjects[key] = projectId;
+  }
   return {
     sectionOrder: validList(value.sectionOrder, id), sectionHues: hues,
-    collapsed: validList(value.collapsed, isCollapseKey), order, sectionSort, snoozes,
-  }; 
+    collapsed: validList(value.collapsed, isCollapseKey), order, sectionSort, snoozes, sectionProjects,
+  };
 }
 
 export function applyLayoutPatch(layout: Layout, patch: unknown): Layout {
@@ -85,6 +92,11 @@ export function applyLayoutPatch(layout: Layout, patch: unknown): Layout {
       Object.entries(patch.value).every(([key, mode]) => sortableKey(key) && sortMode(mode)) :
       Object.entries(patch.value).every(([key, entry]) => id(key) && snoozeEntry(entry));
     return valid ? { ...layout, [patch.key === "section-sort" ? "sectionSort" : "snoozes"]: patch.value } : layout;
+  }
+  if (patch.key === "section-projects") {
+    if (!record(patch.value) || Object.keys(patch.value).length > MAX_ENTRIES ||
+      !Object.entries(patch.value).every(([key, projectId]) => sortableKey(key) && id(projectId))) return layout;
+    return { ...layout, sectionProjects: patch.value as Record<string, string> };
   }
   if (!Array.isArray(patch.value) || patch.value.length > MAX_ENTRIES) return layout;
   if (patch.key === "collapsed") {

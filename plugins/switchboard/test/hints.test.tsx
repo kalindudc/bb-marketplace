@@ -9,7 +9,7 @@ import { EMPTY_LAYOUT } from "../src/layout";
 import { DEFAULT_SETTINGS } from "../src/settings";
 import { EMPTY_COUNTS, type RowState } from "../src/status";
 import { buildGroups } from "../src/tree";
-import { sidebarSection, sidebarThread } from "./fixtures";
+import { sidebarProject, sidebarSection, sidebarThread } from "./fixtures";
 
 installTestPluginRuntime();
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
@@ -125,5 +125,12 @@ describe("section header hints", () => {
     const options = screen.getByRole("button", { name: "Section actions" });
     expect(options.hasAttribute("title")).toBe(false);
     expect(await hintFor(options)).toBe("Section actions: rename, colour, sort and more");
+  });
+
+  it("names the default project on the new-thread button", async () => {
+    render(<GroupHeader {...props} projects={[sidebarProject("p", "Project"), sidebarProject("q", "Shop")]}
+      defaultProjectId="q" />);
+    const add = screen.getByRole("button", { name: "New Shop thread in cortex" });
+    expect(await hintFor(add)).toBe("New Shop thread in cortex");
   });
 });

@@ -11,6 +11,7 @@ export interface LayoutApi {
   setSectionOrder(ids: readonly string[]): void;
   setSectionHue(sectionId: string, hue: HueId | null): void;
   setSectionSort(container: ContainerKey, mode: SortMode): void;
+  setSectionProject(container: ContainerKey, projectId: string | null): void;
   snooze(threadIds: readonly string[], until: number): void;
   unsnooze(threadIds: readonly string[]): void;
   refetch(): void;
@@ -118,6 +119,18 @@ export function useLayout(): LayoutApi {
     ).catch(onWriteError);
   }, [rpc, update, onWriteError]);
 
+  const setSectionProject = useCallback((container: ContainerKey, projectId: string | null) => {
+    update((current) => {
+      const sectionProjects = { ...current.sectionProjects };
+      if (projectId === null) delete sectionProjects[container];
+      else sectionProjects[container] = projectId;
+      return applyLayoutPatch(current, { key: "section-projects", value: sectionProjects });
+    });
+    void rpc.call("setSectionProject", { container, projectId }).then(({ sectionProjects }) =>
+      update((current) => applyLayoutPatch(current, { key: "section-projects", value: sectionProjects }))
+    ).catch(onWriteError);
+  }, [rpc, update, onWriteError]);
+
   const snooze = useCallback((threadIds: readonly string[], until: number) => {
     update((current) => {
       const snoozes = { ...current.snoozes };
@@ -141,5 +154,6 @@ export function useLayout(): LayoutApi {
     ).catch(onWriteError);
   }, [rpc, update, onWriteError]);
 
-  return { layout, setCollapsed, setOrder, setSectionOrder, setSectionHue, setSectionSort, snooze, unsnooze, refetch };
+  return { layout, setCollapsed, setOrder, setSectionOrder, setSectionHue, setSectionSort, setSectionProject,
+    snooze, unsnooze, refetch };
 }

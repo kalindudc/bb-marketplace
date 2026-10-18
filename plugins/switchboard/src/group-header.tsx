@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
+import { experimental_Icon as Icon, type PluginSidebarProject } from "@get-bb/plugin-sdk/app";
 import type { DragController } from "./use-drag";
 import type { GroupKey, HueId, SortMode } from "./layout";
 import type { SectionColour } from "./settings";
@@ -36,12 +36,18 @@ export interface GroupHeaderProps {
   staleDays?: number;
   onSort?(mode: SortMode): void;
   onArchiveStale?(): void;
+  projects?: readonly PluginSidebarProject[];
+  defaultProjectId?: string | null;
+  onSetDefaultProject?(projectId: string | null): void;
 }
 
 function GroupHeaderView({ group, collapsed, sectionColour, onToggle, drag, renaming, dropState,
   hueOverride, onRename, onRenameSubmit, onRenameCancel, onSetHue, onNewThread,
-  onMarkAllRead, onDelete, onSectionMove, sortMode = "manual", staleDays = 3, onSort, onArchiveStale }: GroupHeaderProps) {
+  onMarkAllRead, onDelete, onSectionMove, sortMode = "manual", staleDays = 3, onSort, onArchiveStale,
+  projects, defaultProjectId = null, onSetDefaultProject }: GroupHeaderProps) {
   const name = group.kind === "pinned" ? "Pinned" : group.kind === "loose" ? "Threads" : group.section?.name ?? "Section";
+  const defaultProject = defaultProjectId ? projects?.find((project) => project.id === defaultProjectId) : undefined;
+  const newThreadLabel = defaultProject ? `New ${defaultProject.name} thread in ${name}` : `New thread in ${name}`;
   const states: Exclude<RowState, "idle">[] = ["failed", "needs", "running", ...(collapsed ? ["unread" as const] : [])];
   return <>
     <div data-sb-drop={group.key} data-sb-section={group.section?.id} data-collapsed={collapsed}
@@ -78,7 +84,7 @@ function GroupHeaderView({ group, collapsed, sectionColour, onToggle, drag, rena
           </span>)}
         </span>
         <span className="sb-section-controls items-center gap-0.5">
-          {group.kind !== "pinned" && <Hint label={`New thread in ${name}`}><button type="button" aria-label={`New thread in ${name}`}
+          {group.kind !== "pinned" && <Hint label={newThreadLabel}><button type="button" aria-label={newThreadLabel}
             className="sb-control sb-icon-button shrink-0 text-muted-foreground"
             onClick={onNewThread}>+</button></Hint>}
           <SectionMenu group={group} unreadCount={group.roots.reduce((total, root) => total + unreadIn(root), 0)} hueOverride={hueOverride}
@@ -86,7 +92,8 @@ function GroupHeaderView({ group, collapsed, sectionColour, onToggle, drag, rena
             staleCount={group.roots.filter((root) => root.stale).length}
             staleChildCount={group.roots.filter((root) => root.stale).reduce((total, root) => total + descendants(root), 0)}
             onRename={onRename} onSetHue={onSetHue} onNewThread={onNewThread}
-            onMarkAllRead={onMarkAllRead} onDelete={onDelete} />
+            onMarkAllRead={onMarkAllRead} onDelete={onDelete}
+            projects={projects} defaultProjectId={defaultProjectId} onSetDefaultProject={onSetDefaultProject} />
         </span>
       </div>
     </div>

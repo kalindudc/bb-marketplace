@@ -22,12 +22,14 @@ describe("layout", () => {
       collapsed: ["pinned", "section:a", "section:", "thread:a", 5],
       order: { loose: ["a", "b", "a", null], "parent:p": ["c"], "thread:bad": ["d"] } })).toEqual({
       sectionOrder: ["a"], sectionHues: { a: "teal" }, collapsed: ["pinned", "section:a", "thread:a"],
-      order: { loose: ["a", "b"], "parent:p": ["c"] }, sectionSort: {}, snoozes: {},
+      order: { loose: ["a", "b"], "parent:p": ["c"] }, sectionSort: {}, snoozes: {}, sectionProjects: {},
     });
     expect(parseLayout({ sectionOrder: Array.from({ length: MAX_ENTRIES + 1 }, (_, i) => `s${i}`) }).sectionOrder).toHaveLength(MAX_ENTRIES);
     expect(parseLayout({ sectionSort: { loose: "recent", "section:a": "status", "parent:a": "recent", "section:b": "bad" },
       snoozes: { t: { until: 100, at: 5 }, x: { until: -1, at: 5 }, y: { until: 100, at: NaN } } }))
       .toMatchObject({ sectionSort: { loose: "recent", "section:a": "status" }, snoozes: { t: { until: 100, at: 5 } } });
+    expect(parseLayout({ sectionProjects: { loose: "p", "section:a": "q", "parent:a": "p", "section:b": "has space",
+      "section:c": "", "section:d": 7 } }).sectionProjects).toEqual({ loose: "p", "section:a": "q" });
   });
 
   it("applies valid patches without changing unrelated fields or accepting junk", () => {
@@ -48,6 +50,11 @@ describe("layout", () => {
     const snoozed = applyLayoutPatch(sorted, { key: "snoozes", value: { t: { until: 100, at: 5 } } });
     expect(snoozed.snoozes).toEqual({ t: { until: 100, at: 5 } });
     expect(applyLayoutPatch(sorted, { key: "snoozes", value: { t: { until: -1, at: 5 } } })).toBe(sorted);
+    const projects = applyLayoutPatch(sorted, { key: "section-projects", value: { "section:a": "p", loose: "q" } });
+    expect(projects.sectionProjects).toEqual({ "section:a": "p", loose: "q" });
+    expect(projects.sectionSort).toEqual({ loose: "status" });
+    expect(applyLayoutPatch(sorted, { key: "section-projects", value: { "parent:a": "p" } })).toBe(sorted);
+    expect(applyLayoutPatch(sorted, { key: "section-projects", value: { loose: "" } })).toBe(sorted);
   });
 
   it("hashes section IDs deterministically into the seven categorical hues", () => {

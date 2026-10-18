@@ -27,7 +27,9 @@ The Archive button beside the view switch shows or hides an **Archived** shelf a
 
 ## Organize
 
-Drag a thread above, below or into another thread, or onto a section header. A section header can move among sections. `Alt+↑/↓` reorders a focused thread among siblings; `Alt+→` nests it under the previous sibling and `Alt+←` moves it out. Section headers use `Alt+↑/↓` too. Alt-click selects a row, Shift-click extends the selection, and the selection bar can move, archive or snooze whole families. A section menu can rename, colour, add a thread, mark all read, sort, archive stale roots or delete the section. Moves and archives offer Undo.
+Drag a thread above, below or into another thread, or onto a section header. A section header can move among sections. `Alt+↑/↓` reorders a focused thread among siblings; `Alt+→` nests it under the previous sibling and `Alt+←` moves it out. Section headers use `Alt+↑/↓` too. Alt-click selects a row, Shift-click extends the selection, and the selection bar can move, archive or snooze whole families. A section menu can rename, colour, add a thread, mark all read, sort, set a default project, archive stale roots or delete the section. Moves and archives offer Undo.
+
+**Default project** in a section's menu, or in the Threads menu, picks the project that its **+** button and **New thread here** compose in. **Automatic**, the default, keeps the usual choice: the project you have open, otherwise the project of the section's newest thread. When a default is set, the **+** hint names it, for example "New Shop thread in Checkout". Deleting a section clears its default, and a default whose project no longer exists falls back to Automatic.
 
 Making a thread a child is a bb operation: bb tells the parent's agent, then delivers each finished child turn to it. Undo a parent move within two seconds and bb sends nothing. Nesting is limited to four levels.
 
@@ -67,7 +69,7 @@ Change settings in bb's plugin settings or with `bb plugin config switchboard se
 
 ## How it works and limits
 
-bb owns parents, sections, pins and archives. Switchboard stores collapse state, manual order, section colours, sort modes and snoozes in its plugin store. Settings changes publish to every window. The list is not row-windowed; very large lists render their visible rows. Status lanes intentionally reorder when attention changes; manually ordered sections do not.
+bb owns parents, sections, pins and archives. Switchboard stores collapse state, manual order, section colours, sort modes, default projects and snoozes in its plugin store. Settings changes publish to every window. The list is not row-windowed; very large lists render their visible rows. Status lanes intentionally reorder when attention changes; manually ordered sections do not.
 
 ## Develop
 

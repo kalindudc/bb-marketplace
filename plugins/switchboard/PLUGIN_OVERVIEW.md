@@ -10,7 +10,7 @@ Keep parallel agent threads readable and make triage part of the sidebar.
 
 ## Organize and triage
 
-Drag threads above, below or under another thread, or onto a section header. Alt+arrow keys move a focused thread; Alt-click and Shift-click select families for bulk moves, archive and snooze. Section menus rename, colour, sort and add threads. By-hand, recent-activity and status sort modes apply per section or to Threads. Sorted roots cannot be manually reordered, but you can still nest threads or move them onto a sorted section's header.
+Drag threads above, below or under another thread, or onto a section header. Alt+arrow keys move a focused thread; Alt-click and Shift-click select families for bulk moves, archive and snooze. Section menus rename, colour, sort and add threads, and can set a default project that the section's + button uses for new threads. By-hand, recent-activity and status sort modes apply per section or to Threads. Sorted roots cannot be manually reordered, but you can still nest threads or move them onto a sorted section's header.
 
 Idle unpinned families fade after your chosen number of days (three by default). A section menu can archive only its stale roots after a confirmation that counts their children, with Undo. Snooze a quiet family until 09:00 tomorrow (or your chosen local hour); the Snoozed shelf shows when it wakes and has a Wake button. New attention or an urgent or running child wakes it early.
 
@@ -18,4 +18,4 @@ Palette commands focus the filter (Mod+Alt+F), jump to the next failed or waitin
 
 ## Parent threads and limits
 
-Making a thread a child tells its parent's agent; bb then sends the parent each finished child turn. Undo within two seconds sends nothing, and bb allows at most four levels. Switchboard leaves parents, sections, pins and archives in bb, while its plugin store holds order, colour, collapse, sort and snooze. Status lanes reorder by design; the list does not window rows.
+Making a thread a child tells its parent's agent; bb then sends the parent each finished child turn. Undo within two seconds sends nothing, and bb allows at most four levels. Switchboard leaves parents, sections, pins and archives in bb, while its plugin store holds order, colour, collapse, sort, default projects and snooze. Status lanes reorder by design; the list does not window rows.

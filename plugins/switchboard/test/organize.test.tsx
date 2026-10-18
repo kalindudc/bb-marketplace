@@ -18,10 +18,10 @@ const threads = [
   sidebarThread({ id: "r", displayTitle: "Review", sectionId: "s", isUnread: true, createdAt: 10 }),
 ].map((thread) => ({ ...thread, href: `/projects/p/threads/${thread.id}` }));
 
-async function mount() {
+async function mount(sectionProjects: Record<string, string> = {}) {
   const app = await loadPluginApp(() => import("../app"));
   let layout = { sectionOrder: [] as string[], sectionHues: {} as Record<string, HueId>,
-    collapsed: [] as CollapseKey[], order: {} as Record<string, string[]>, sectionSort: {}, snoozes: {} };
+    collapsed: [] as CollapseKey[], order: {} as Record<string, string[]>, sectionSort: {}, snoozes: {}, sectionProjects };
   const sdk = {
     plugins: { getSettings: async () => ({ ok: true, schema: {}, values: {} }) },
     threads: {
@@ -34,7 +34,7 @@ async function mount() {
     },
   };
   const slot = renderSlot<PluginThreadListProps, RpcContract>(app.threadLists[0]!, props, {
-    pluginId: "switchboard", sidebarThreads: { threads, sections: [sidebarSection("s", "Section")], projects: [sidebarProject("p", "Project")] },
+    pluginId: "switchboard", sidebarThreads: { threads, sections: [sidebarSection("s", "Section")], projects: [sidebarProject("p", "Project"), sidebarProject("q", "Shop")] },
     rpc: {
       ...layoutWriteFakes,
       getLayout: () => layout,
@@ -47,6 +47,12 @@ async function mount() {
         if (hue) sectionHues[sectionId] = hue;
         else delete sectionHues[sectionId];
         layout = { ...layout, sectionHues }; return { sectionHues };
+      },
+      setSectionProject: ({ container, projectId }) => {
+        const next = { ...layout.sectionProjects };
+        if (projectId) next[container] = projectId;
+        else delete next[container];
+        layout = { ...layout, sectionProjects: next }; return { sectionProjects: next };
       },
     },
     sdk: sdk as never,
@@ -148,6 +154,39 @@ describe("organize in the sidebar", () => {
     })));
     fireEvent.click(screen.getByRole("button", { name: /New section/ }));
     await waitFor(() => expect(sdkCalls(slot, "threadSections.create")[0]?.args[0]).toEqual({ name: "New section" }));
+    slot.unmount();
+  });
+
+  it("composes in a section's default project from + and clears it when the section is deleted", async () => {
+    const slot = await mount();
+    const open = () => fireEvent.pointerDown(screen.getAllByRole("button", { name: "Section actions" })[0]!,
+      { button: 0, ctrlKey: false, pointerType: "mouse" });
+    fireEvent.click(screen.getByRole("button", { name: "New thread in Section" }));
+    expect(slot.inspection.navigateCalls.at(-1)).toMatchObject({ method: "toCompose", options: { projectId: "p" } });
+    open(); fireEvent.pointerMove(screen.getByRole("menuitem", { name: "Default project" }));
+    fireEvent.keyDown(screen.getByRole("menuitem", { name: "Default project" }), { key: "ArrowRight" });
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Shop" }));
+    await waitFor(() => expect(slot.rpcCalls).toContainEqual(expect.objectContaining({
+      method: "setSectionProject", input: { container: "section:s", projectId: "q" },
+    })));
+    fireEvent.click(await screen.findByRole("button", { name: "New Shop thread in Section" }));
+    expect(slot.inspection.navigateCalls.at(-1)).toMatchObject({ method: "toCompose",
+      options: { projectId: "q", placement: { sectionId: "s", pinned: false }, focusPrompt: true } });
+    fireEvent.click(screen.getByRole("button", { name: "New thread in Threads" }));
+    expect(slot.inspection.navigateCalls.at(-1)).toMatchObject({ method: "toCompose",
+      options: { projectId: "p", placement: { sectionId: null, pinned: false } } });
+    open(); fireEvent.click(screen.getByRole("menuitem", { name: /Delete section/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete section" }));
+    await waitFor(() => expect(slot.rpcCalls).toContainEqual(expect.objectContaining({
+      method: "setSectionProject", input: { container: "section:s", projectId: null },
+    })));
+    slot.unmount();
+  });
+
+  it("ignores a default project that no longer exists", async () => {
+    const slot = await mount({ "section:s": "gone" });
+    fireEvent.click(screen.getByRole("button", { name: "New thread in Section" }));
+    expect(slot.inspection.navigateCalls.at(-1)).toMatchObject({ method: "toCompose", options: { projectId: "p" } });
     slot.unmount();
   });
 

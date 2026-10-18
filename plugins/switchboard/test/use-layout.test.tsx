@@ -5,15 +5,18 @@ import type { RpcContract } from "../src/rpc";
 import { useLayout } from "../src/use-layout";
 import { layoutWriteFakes } from "./fixtures";
 
-const empty = { sectionOrder: [], sectionHues: {}, collapsed: [], order: {}, sectionSort: {}, snoozes: {} };
+const empty = { sectionOrder: [], sectionHues: {}, collapsed: [], order: {}, sectionSort: {}, snoozes: {}, sectionProjects: {} };
 function View() {
-  const { layout, setCollapsed, setOrder, setSectionOrder, setSectionHue, setSectionSort, snooze, unsnooze, refetch } = useLayout();
+  const { layout, setCollapsed, setOrder, setSectionOrder, setSectionHue, setSectionSort, setSectionProject,
+    snooze, unsnooze, refetch } = useLayout();
   return <><output>{layout.collapsed.join(",")}</output><output data-testid="layout">{JSON.stringify(layout)}</output>
     <button onClick={() => setCollapsed("section:s", true)}>Collapse</button>
     <button onClick={() => setOrder("loose", ["b", "a"])}>Order</button>
     <button onClick={() => setSectionOrder(["s"])}>Section order</button>
     <button onClick={() => setSectionHue("s", "teal")}>Hue</button>
     <button onClick={() => setSectionSort("section:s", "recent")}>Sort</button>
+    <button onClick={() => setSectionProject("section:s", "p")}>Project</button>
+    <button onClick={() => setSectionProject("section:s", null)}>Automatic</button>
     <button onClick={() => snooze(["a"], 123456)}>Snooze</button>
     <button onClick={() => unsnooze(["a"])}>Wake</button>
     <button onClick={refetch}>Refetch</button></>;
@@ -78,6 +81,20 @@ describe("browser layout", () => {
     await waitFor(() => expect(screen.getByTestId("layout").textContent).toContain('"at":42'));
     fireEvent.click(screen.getByRole("button", { name: "Wake" }));
     await waitFor(() => expect(JSON.parse(screen.getByTestId("layout").textContent!).snoozes).toEqual({}));
+    slot.unmount();
+  });
+
+  it("optimistically sets and clears a section's default project", async () => {
+    const slot = renderSlot<{}, RpcContract>(registration, {}, { pluginId: "switchboard", rpc: {
+      ...layoutWriteFakes, getLayout: () => empty, setCollapsed: () => ({ collapsed: [] }),
+    } });
+    await waitFor(() => expect(slot.rpcCalls.some((call) => call.method === "getLayout")).toBe(true));
+    fireEvent.click(screen.getByRole("button", { name: "Project" }));
+    expect(JSON.parse(screen.getByTestId("layout").textContent!).sectionProjects).toEqual({ "section:s": "p" });
+    expect(slot.rpcCalls).toContainEqual(expect.objectContaining({ method: "setSectionProject",
+      input: { container: "section:s", projectId: "p" } }));
+    fireEvent.click(screen.getByRole("button", { name: "Automatic" }));
+    await waitFor(() => expect(JSON.parse(screen.getByTestId("layout").textContent!).sectionProjects).toEqual({}));
     slot.unmount();
   });
 

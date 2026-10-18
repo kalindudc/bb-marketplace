@@ -17,7 +17,7 @@ const threads = [
   sidebarThread({ id: "loose", displayTitle: "Loose thread", hasPendingInteraction: true }),
   sidebarThread({ id: "hidden", displayTitle: "Hidden internal", isHidden: true }),
 ].map((thread) => ({ ...thread, href: `/projects/${thread.projectId}/threads/${thread.id}` }));
-const empty = { sectionOrder: [], sectionHues: {}, collapsed: [], order: {}, sectionSort: {}, snoozes: {} };
+const empty = { sectionOrder: [], sectionHues: {}, collapsed: [], order: {}, sectionSort: {}, snoozes: {}, sectionProjects: {} };
 afterEach(() => { cleanup(); localStorage.clear(); vi.clearAllMocks(); });
 
 async function mount(extra: Record<string, unknown> = {}, slotProps: PluginThreadListProps = props) {
