@@ -1,4 +1,4 @@
-import { experimental_Icon as Icon, useRpc, useSettings } from "@get-bb/plugin-sdk/app";
+import { experimental_Icon as Icon, useRpc } from "@get-bb/plugin-sdk/app";
 import type {
   PluginRpcContract,
   PluginSettingsSectionProps,
@@ -6,8 +6,13 @@ import type {
   StandardSchemaV1,
   StandardSchemaV1Result,
 } from "@get-bb/plugin-sdk/app";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type {
+  GetSettingsInput,
+  GetSettingsOutput,
+  ListModelsInput,
+  ListModelsOutput,
+  PiModelInfo,
   RegenerateTitleInput,
   RegenerateTitleOutput,
   UpdateSettingsInput,
@@ -36,32 +41,55 @@ const FRONTEND_RPC = {
     input: schema<UpdateSettingsInput>(),
     output: schema<UpdateSettingsOutput>(),
   },
+  listModels: {
+    input: schema<ListModelsInput>(),
+    output: schema<ListModelsOutput>(),
+  },
+  getSettings: {
+    input: schema<GetSettingsInput>(),
+    output: schema<GetSettingsOutput>(),
+  },
 } satisfies PluginRpcContract;
 
-/** Settings page: pi executable and model selection knobs. */
+/** Settings page: pi executable and a model dropdown populated from pi's own list. */
 export function PiServicesSettingsSection(_props: PluginSettingsSectionProps) {
-  const state = useSettings();
   const rpc = useRpc<typeof FRONTEND_RPC>();
+  const [executable, setExecutable] = useState<string>("pi");
+  const [model, setModel] = useState<string>("");
+  const [models, setModels] = useState<PiModelInfo[] | null>(null);
   const [draftExecutable, setDraftExecutable] = useState<string | null>(null);
-  const [draftModel, setDraftModel] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const storedExecutable = String(state.values?.executable ?? "pi");
-  const storedModel = String(state.values?.model ?? "");
-  const executable = draftExecutable ?? storedExecutable;
-  const model = draftModel ?? storedModel;
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const settings = await rpc.call("getSettings", {});
+        const list = await rpc.call("listModels", {});
+        if (cancelled) return;
+        setExecutable(settings.executable);
+        setModel(settings.model);
+        setModels(list.models);
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [rpc]);
 
   const save = async (field: "executable" | "model", value: string) => {
     setBusy(true);
     setError(null);
     try {
-      await rpc.call(
-        "updateSettings",
-        field === "executable" ? { executable: value || null } : { model: value || null },
-      );
-      if (field === "executable") setDraftExecutable(null);
-      else setDraftModel(null);
+      const next =
+        field === "executable"
+          ? await rpc.call("updateSettings", { executable: value || null })
+          : await rpc.call("updateSettings", { model: value || null });
+      setExecutable(next.executable);
+      setModel(next.model);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -69,9 +97,10 @@ export function PiServicesSettingsSection(_props: PluginSettingsSectionProps) {
     }
   };
 
-  if (state.isLoading || state.values === undefined) {
-    return <p className="text-sm text-muted-foreground">Loading pi services settings…</p>;
-  }
+  const modelsWithDefault: PiModelInfo[] = [
+    { id: "", provider: "pi", model: "(pi default)", thinking: false, images: false },
+    ...(models ?? []),
+  ];
 
   return (
     <div className="pi-services-settings space-y-4">
@@ -79,13 +108,14 @@ export function PiServicesSettingsSection(_props: PluginSettingsSectionProps) {
         <span className="text-sm font-medium">Pi executable</span>
         <input
           className="mt-1 w-full rounded-md border px-3 py-2 text-sm disabled:opacity-50"
-          value={executable}
+          value={draftExecutable ?? executable}
           placeholder="pi"
           disabled={busy}
           onChange={(e) => setDraftExecutable(e.target.value)}
           onBlur={() => {
-            if (draftExecutable !== null && draftExecutable !== storedExecutable) {
+            if (draftExecutable !== null && draftExecutable !== executable) {
               void save("executable", draftExecutable);
+              setDraftExecutable(null);
             }
           }}
         />
@@ -95,20 +125,24 @@ export function PiServicesSettingsSection(_props: PluginSettingsSectionProps) {
       </label>
       <label className="block">
         <span className="text-sm font-medium">Model</span>
-        <input
-          className="mt-1 w-full rounded-md border px-3 py-2 text-sm disabled:opacity-50"
+        <select
+          className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-50"
           value={model}
-          placeholder="pi's default model"
-          disabled={busy}
-          onChange={(e) => setDraftModel(e.target.value)}
-          onBlur={() => {
-            if (draftModel !== null && draftModel !== storedModel) {
-              void save("model", draftModel);
-            }
-          }}
-        />
+          disabled={busy || models === null}
+          onChange={(e) => void save("model", e.target.value)}
+        >
+          {models === null ? (
+            <option value={model}>{model || "(pi default)"}</option>
+          ) : (
+            modelsWithDefault.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.id === "" ? m.model : `${m.provider} / ${m.model}`}
+              </option>
+            ))
+          )}
+        </select>
         <span className="mt-1 block text-xs text-muted-foreground">
-          Passed to pi --model (for example sonnet:high or provider/model). Empty uses pi's default model.
+          Models come from the pi CLI's own list (pi --list-models).
         </span>
       </label>
       {error !== null && <p className="text-xs text-destructive">{error}</p>}

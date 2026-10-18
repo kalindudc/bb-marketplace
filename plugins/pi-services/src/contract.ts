@@ -1,6 +1,11 @@
 import { z } from "zod";
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import type {
+  GetSettingsInput,
+  GetSettingsOutput,
+  ListModelsInput,
+  ListModelsOutput,
+  PiModelInfo,
   RegenerateTitleInput,
   RegenerateTitleOutput,
   UpdateSettingsInput,
@@ -22,5 +27,26 @@ export const PI_SERVICES_RPC = defineRpcContract({
       executable: z.string(),
       model: z.string(),
     }) satisfies z.ZodType<UpdateSettingsOutput>,
+  },
+  listModels: {
+    input: z.object({ search: z.string().optional() }) satisfies z.ZodType<ListModelsInput>,
+    output: z.object({
+      models: z.array(
+        z.object({
+          id: z.string(),
+          provider: z.string(),
+          model: z.string(),
+          thinking: z.boolean(),
+          images: z.boolean(),
+        }),
+      ) satisfies z.ZodType<PiModelInfo[]>,
+    }) satisfies z.ZodType<ListModelsOutput>,
+  },
+  getSettings: {
+    input: z.object({}).strict() satisfies z.ZodType<GetSettingsInput>,
+    output: z.object({
+      executable: z.string(),
+      model: z.string(),
+    }) satisfies z.ZodType<GetSettingsOutput>,
   },
 });

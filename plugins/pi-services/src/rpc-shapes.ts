@@ -13,3 +13,23 @@ export interface UpdateSettingsOutput {
   executable: string;
   model: string;
 }
+export interface ListModelsInput {
+  search?: string;
+}
+export interface PiModelInfo {
+  id: string;
+  provider: string;
+  model: string;
+  thinking: boolean;
+  images: boolean;
+}
+export interface ListModelsOutput {
+  models: PiModelInfo[];
+}
+export interface GetSettingsInput {
+  [key: string]: never;
+}
+export interface GetSettingsOutput {
+  executable: string;
+  model: string;
+}
