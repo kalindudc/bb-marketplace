@@ -1,14 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PluginBrowserBbSdk } from "@get-bb/plugin-sdk";
-import type { Overview, OverviewInput, OverviewTarget } from "../src/contract";
+import type { Overview, OverviewInput, OverviewTarget, ShellInput } from "../src/contract";
 import { createVantageStore } from "../src/store";
 import { overview, threadSummary } from "./fixtures";
 
 type Callback = (event: unknown) => void;
 
 interface PendingCall { input: OverviewInput; resolve(value: Overview): void; reject(error: Error): void }
+interface PendingShell { input: ShellInput; resolve(value: Overview): void; reject(error: Error): void }
 
-function setup(options: { refreshDelayMs?: number; target?: OverviewTarget } = {}) {
+function setup(options: { refreshDelayMs?: number; target?: OverviewTarget; includeArchived?: boolean } = {}) {
   const callbacks = { "thread:changed": new Set<Callback>(), "environment:changed": new Set<Callback>(), "realtime:connection": new Set<Callback>() };
   const unsubscribed: string[] = [];
   const sdk = {
@@ -21,17 +22,27 @@ function setup(options: { refreshDelayMs?: number; target?: OverviewTarget } = {
     }),
   } as unknown as Pick<PluginBrowserBbSdk, "subscribe">;
   const calls: PendingCall[] = [];
+  const shells: PendingShell[] = [];
+  const shell = vi.fn((input: ShellInput) => new Promise<Overview>((resolve, reject) => {
+    shells.push({ input, resolve, reject });
+  }));
+  // `rpc.call` counts the overview requests only, so the tests of refreshes need not know about the shell.
   const rpc = {
-    call: vi.fn((_method: "overview", input: OverviewInput) => new Promise<Overview>((resolve, reject) => {
+    call: vi.fn((input: OverviewInput) => new Promise<Overview>((resolve, reject) => {
       calls.push({ input, resolve, reject });
     })),
   };
-  const store = createVantageStore({ rpc, sdk, target: { kind: "tree", threadId: "thr_1" }, ...options });
+  const transport = {
+    call: ((method: "shell" | "overview", input: ShellInput | OverviewInput) => (
+      method === "shell" ? shell(input as ShellInput) : rpc.call(input as OverviewInput)
+    )) as never,
+  };
+  const store = createVantageStore({ rpc: transport, sdk, target: { kind: "tree", threadId: "thr_1" }, includeArchived: true, ...options });
   const emit = (event: keyof typeof callbacks, payload: object) => {
     for (const callback of [...callbacks[event]]) callback(payload);
   };
   const thread = (id: string, changes: string[], metadata?: object) => emit("thread:changed", { entity: "thread", type: "changed", id, changes, metadata });
-  return { store, sdk, rpc, calls, emit, thread, callbacks, unsubscribed };
+  return { store, sdk, rpc, shell, shells, calls, emit, thread, callbacks, unsubscribed };
 }
 
 const tree = overview({
@@ -39,7 +50,7 @@ const tree = overview({
   environmentIds: ["env_1", "env_2"],
 });
 
-async function loaded(options: { refreshDelayMs?: number; target?: OverviewTarget } = {}) {
+async function loaded(options: { refreshDelayMs?: number; target?: OverviewTarget; includeArchived?: boolean } = {}) {
   const harness = setup(options);
   harness.calls[0]!.resolve(tree);
   await vi.advanceTimersByTimeAsync(0);
@@ -59,7 +70,7 @@ describe("loading", () => {
     const { store, rpc, calls } = setup();
     expect(store.getSnapshot()).toEqual({ status: "loading", overview: null, scope: "uncommitted", refreshing: false, error: null });
     expect(rpc.call).toHaveBeenCalledTimes(1);
-    expect(calls[0]?.input).toEqual({ target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted" });
+    expect(calls[0]?.input).toEqual({ target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
     calls[0]!.resolve(tree);
     await vi.advanceTimersByTimeAsync(0);
     expect(store.getSnapshot()).toEqual({ status: "ready", overview: tree, scope: "uncommitted", refreshing: false, error: null });
@@ -144,7 +155,7 @@ describe("thread events", () => {
     const { calls, thread } = await loaded();
     await vi.advanceTimersByTimeAsync(5000);
     thread("thr_child", ["history-rewritten"]);
-    expect(calls[1]?.input).toEqual({ target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", refresh: true });
+    expect(calls[1]?.input).toEqual({ target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true, refresh: true });
     calls[1]!.resolve(tree);
     await vi.advanceTimersByTimeAsync(1500);
     thread("thr_1", ["history-compacted"]);
@@ -244,7 +255,7 @@ describe("scope and manual refresh", () => {
     const { store, rpc, calls } = await loaded();
     store.setScope("branch");
     expect(rpc.call).toHaveBeenCalledTimes(2);
-    expect(calls[1]?.input).toEqual({ target: { kind: "tree", threadId: "thr_1" }, scope: "branch" });
+    expect(calls[1]?.input).toEqual({ target: { kind: "tree", threadId: "thr_1" }, scope: "branch", includeArchived: true });
     expect(store.getSnapshot()).toMatchObject({ scope: "branch", refreshing: true, overview: tree });
 
     const fresh = overview({ scope: "branch", repos: [] });
@@ -280,11 +291,11 @@ describe("scope and manual refresh", () => {
   it("refresh() starts at once, and refresh({ hard: true }) asks the server to forget its cache", async () => {
     const { store, calls } = await loaded();
     store.refresh();
-    expect(calls[1]?.input).toEqual({ target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted" });
+    expect(calls[1]?.input).toEqual({ target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
     calls[1]!.resolve(tree);
     await vi.advanceTimersByTimeAsync(0);
     store.refresh({ hard: true });
-    expect(calls[2]?.input).toEqual({ target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", refresh: true });
+    expect(calls[2]?.input).toEqual({ target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true, refresh: true });
   });
 
   it("waits for the running request of the same scope instead of overlapping it", async () => {
@@ -372,7 +383,7 @@ describe("every thread", () => {
 
   it("asks for the all target", async () => {
     const { calls, store } = setup({ target: ALL });
-    expect(calls[0]?.input).toEqual({ target: ALL, scope: "uncommitted" });
+    expect(calls[0]?.input).toEqual({ target: ALL, scope: "uncommitted", includeArchived: true });
     store.dispose();
   });
 
@@ -396,7 +407,7 @@ describe("every thread", () => {
     const { calls, thread } = await allLoaded();
     await vi.advanceTimersByTimeAsync(5000);
     thread("thr_unseen", ["history-rewritten"]);
-    expect(calls[1]?.input).toEqual({ target: ALL, scope: "uncommitted", refresh: true });
+    expect(calls[1]?.input).toEqual({ target: ALL, scope: "uncommitted", includeArchived: true, refresh: true });
   });
 
   it("waits 5 seconds after a request ended before it refreshes again", async () => {
@@ -462,5 +473,131 @@ describe("every thread", () => {
     setVisibility("visible");
     await vi.advanceTimersByTimeAsync(5000);
     expect(rpc.call).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the instant outline", () => {
+  const outline = overview({ ...tree, partial: true, scope: "uncommitted" });
+
+  it("asks for the outline and the full overview together on the first load", async () => {
+    const { store, shell, rpc, shells, calls } = setup({ includeArchived: false });
+    expect(shell).toHaveBeenCalledTimes(1);
+    expect(rpc.call).toHaveBeenCalledTimes(1);
+    expect(shells[0]?.input).toEqual({ target: { kind: "tree", threadId: "thr_1" }, includeArchived: false });
+    expect(calls[0]?.input).toEqual({ target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: false });
+    store.dispose();
+  });
+
+  it("paints the outline first and replaces it with the full result", async () => {
+    const { store, shells, calls } = setup();
+    shells[0]!.resolve(outline);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getSnapshot()).toEqual({ status: "ready", overview: outline, scope: "uncommitted", refreshing: true, error: null });
+    calls[0]!.resolve(tree);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getSnapshot()).toEqual({ status: "ready", overview: tree, scope: "uncommitted", refreshing: false, error: null });
+  });
+
+  it("keeps the full result when it arrives first, and drops a late outline", async () => {
+    const { store, shells, calls } = setup();
+    calls[0]!.resolve(tree);
+    await vi.advanceTimersByTimeAsync(0);
+    shells[0]!.resolve(outline);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getSnapshot()).toMatchObject({ overview: tree, refreshing: false });
+  });
+
+  it("stays loading when the outline fails, until the full result arrives", async () => {
+    const { store, shells, calls } = setup();
+    shells[0]!.reject(new Error("no outline"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getSnapshot()).toMatchObject({ status: "loading", overview: null, error: null });
+    calls[0]!.resolve(tree);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getSnapshot()).toMatchObject({ status: "ready", overview: tree, error: null });
+  });
+
+  it("reports a failed full overview as before, keeping the outline that was already drawn", async () => {
+    const { store, shells, calls } = setup();
+    shells[0]!.resolve(outline);
+    await vi.advanceTimersByTimeAsync(0);
+    calls[0]!.reject(new Error("timed out"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getSnapshot()).toMatchObject({ status: "ready", overview: outline, refreshing: false, error: "timed out" });
+  });
+
+  it("shows the scope the store is in, whatever the outline says", async () => {
+    const { store, shells, calls } = await loaded();
+    await vi.advanceTimersByTimeAsync(0);
+    store.setScope("branch");
+    shells[1]!.resolve(outline);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getSnapshot().overview).toMatchObject({ partial: true, scope: "branch" });
+    calls[1]!.resolve(overview({ scope: "branch" }));
+  });
+
+  it("asks for no outline when a refresh follows an event, a refresh button or a heartbeat", async () => {
+    const { store, shell, rpc, thread } = await loaded();
+    await vi.advanceTimersByTimeAsync(5000);
+    thread("thr_1", ["events-appended"]);
+    expect(rpc.call).toHaveBeenCalledTimes(2);
+    store.refresh({ hard: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(shell).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks for an outline again when the scope changes", async () => {
+    const { store, shell, shells, rpc, calls } = await loaded();
+    store.setScope("branch");
+    expect(shell).toHaveBeenCalledTimes(2);
+    expect(rpc.call).toHaveBeenCalledTimes(2);
+    expect(shells[1]?.input).toEqual({ target: { kind: "tree", threadId: "thr_1" }, includeArchived: true });
+    expect(calls[1]?.input).toMatchObject({ scope: "branch" });
+  });
+
+  it("reloads with the new flag when archived threads are switched on or off", async () => {
+    const { store, shell, shells, rpc, calls } = await loaded({ includeArchived: false });
+    store.setIncludeArchived(true);
+    expect(shell).toHaveBeenCalledTimes(2);
+    expect(rpc.call).toHaveBeenCalledTimes(2);
+    expect(shells[1]?.input).toMatchObject({ includeArchived: true });
+    expect(calls[1]?.input).toMatchObject({ includeArchived: true });
+    calls[1]!.resolve(tree);
+    await vi.advanceTimersByTimeAsync(0);
+    store.setIncludeArchived(false);
+    expect(calls[2]?.input).toMatchObject({ includeArchived: false });
+  });
+
+  it("does nothing when the flag is set to the value it already has", async () => {
+    const { store, shell, rpc } = await loaded({ includeArchived: false });
+    store.setIncludeArchived(false);
+    expect(shell).toHaveBeenCalledTimes(1);
+    expect(rpc.call).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops the outline and the result of a load that the flag change replaced", async () => {
+    const { store, shells, calls } = setup({ includeArchived: false });
+    store.setIncludeArchived(true);
+    shells[0]!.resolve(overview({ ...outline, archivedHidden: 3 }));
+    calls[0]!.resolve(overview({ warnings: ["old load"] }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getSnapshot()).toMatchObject({ overview: null, status: "loading" });
+    shells[1]!.resolve(outline);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getSnapshot().overview).toEqual(outline);
+  });
+
+  it("asks for the outline of the all-threads target too", async () => {
+    const { shells, store } = setup({ target: { kind: "all" }, includeArchived: false });
+    expect(shells[0]?.input).toEqual({ target: { kind: "all" }, includeArchived: false });
+    store.dispose();
+  });
+
+  it("ignores an outline that arrives after dispose", async () => {
+    const { store, shells } = setup();
+    store.dispose();
+    shells[0]!.resolve(outline);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getSnapshot().overview).toBeNull();
   });
 });

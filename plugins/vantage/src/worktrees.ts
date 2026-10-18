@@ -1,40 +1,20 @@
 import type { CollectDeps, Environment, RepoPlan } from "./collect";
-import type { Commit, FileChange, RepoRef, SharedFile, Worktree } from "./contract";
+import type { RepoRef, SharedFile, Worktree } from "./contract";
 import { mapLimit } from "./limit";
-import { planCached } from "./repo-cache";
-import { gitFileChange, hostMessage } from "./sources";
+import {
+  gitFileChange, hostMessage, loadBranchRange, loadWorkspaceStatus, MAX_COMMITS, MAX_FILES, unavailableStatus, type WorktreeStatus,
+} from "./sources";
 
 const STATUS_CONCURRENCY = 8;
-const MAX_FILES = 500;
-const MAX_COMMITS = 100;
 const MAX_SHARED_FILES = 200;
 const MAX_MESSAGE = 1000;
-const SECONDS_BELOW = 1e12;
 
 type WorktreeRef = Extract<RepoRef, { kind: "workspace" | "branch" }>;
 type WorktreePlan = RepoPlan & { ref: WorktreeRef };
-type StatusFile = { path: string; status: string; insertions: number | null; deletions: number | null };
 type Identity = Pick<Worktree, "key" | "ref" | "label" | "projectId" | "hostId" | "hostName" | "root" | "kind" | "threadIds">;
-// What git and bb report about a worktree; an entry in the repository cache holds only this, never who works in it.
-type Status = Omit<Worktree, keyof Identity>;
-
-const STATUS_BY_LETTER: Record<string, FileChange["status"]> = {
-  A: "added", M: "modified", D: "deleted", R: "renamed", C: "copied", U: "unmerged", "?": "untracked", "??": "untracked",
-};
 
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error)).slice(0, MAX_MESSAGE);
 const isWorktreePlan = (plan: RepoPlan): plan is WorktreePlan => plan.ref.kind === "workspace" || plan.ref.kind === "branch";
-
-export function fileFromStatus(file: StatusFile): FileChange {
-  const status = STATUS_BY_LETTER[file.status] ?? "modified";
-  return {
-    path: file.path, previousPath: null, status, additions: file.insertions, deletions: file.deletions,
-    binary: file.insertions === null && file.deletions === null, untracked: status === "untracked", tooLarge: false, edits: null,
-  };
-}
-
-// bb does not say whether `authoredAt` is seconds or milliseconds.
-const toMilliseconds = (value: number): number => (value < SECONDS_BELOW ? value * 1000 : value);
 
 function identify(plan: WorktreePlan, environments: ReadonlyMap<string, Environment>, hostNames: ReadonlyMap<string, string>): Identity {
   const { ref } = plan;
@@ -48,48 +28,13 @@ function identify(plan: WorktreePlan, environments: ReadonlyMap<string, Environm
   };
 }
 
-function unavailable(message: string, branch: string | null, base: string | null): Status {
-  return {
-    branch, base, state: "unavailable", message: message.slice(0, MAX_MESSAGE),
-    aheadCount: null, behindCount: null, uncommitted: [], committed: [], commits: [],
-  };
-}
-
-async function loadWorkspace(
-  deps: CollectDeps, ref: Extract<RepoRef, { kind: "workspace" }>, fallbackBranch: string | null, signal?: AbortSignal,
-): Promise<Status> {
-  const result = await deps.sdk.environments.status({
-    environmentId: ref.environmentId, ...(ref.base === null ? {} : { mergeBaseBranch: ref.base }), signal,
-  });
-  if (result.outcome === "not_applicable") return unavailable(result.message, fallbackBranch, ref.base);
-  if (result.outcome === "unavailable") return unavailable(result.failure.message, fallbackBranch, ref.base);
-  const { checkout, mergeBase, workingTree } = result.workspace;
-  const commits = (mergeBase?.commits ?? []).slice(0, MAX_COMMITS).map((commit): Commit => ({
-    sha: commit.sha, shortSha: commit.shortSha, subject: commit.subject, authorName: commit.authorName,
-    authoredAt: toMilliseconds(commit.authoredAt),
-  }));
-  return {
-    branch: "branchName" in checkout ? checkout.branchName : null,
-    base: mergeBase?.mergeBaseBranch ?? null,
-    state: "ready",
-    message: null,
-    aheadCount: mergeBase?.aheadCount ?? null,
-    behindCount: mergeBase?.behindCount ?? null,
-    uncommitted: workingTree.files.slice(0, MAX_FILES).map(fileFromStatus),
-    committed: (mergeBase?.files ?? []).slice(0, MAX_FILES).map(fileFromStatus),
-    commits,
-  };
-}
-
 // A branch the host no longer has is not a worktree: plan 01 shows it as recorded edits instead.
 async function loadBranch(
-  deps: CollectDeps, ref: Extract<RepoRef, { kind: "branch" }>, signal?: AbortSignal,
-): Promise<Status | null> {
-  const result = await deps.host(
-    "repoFiles", { root: ref.root, target: { type: "range", base: ref.base, head: ref.head } }, { hostId: ref.hostId, signal },
-  );
+  deps: CollectDeps, ref: Extract<RepoRef, { kind: "branch" }>, threadIds: readonly string[], signal?: AbortSignal,
+): Promise<WorktreeStatus | null> {
+  const result = await loadBranchRange(deps, ref, threadIds, signal);
   if (result.outcome === "unavailable") {
-    return result.reason === "missing-ref" ? null : unavailable(hostMessage(result), ref.head, ref.base);
+    return result.reason === "missing-ref" ? null : unavailableStatus(hostMessage(result), ref.head, ref.base);
   }
   return {
     branch: ref.head, base: result.base, state: "ready", message: null,
@@ -105,17 +50,40 @@ export async function loadWorktrees(
   const loaded = await mapLimit(repos.filter(isWorktreePlan), STATUS_CONCURRENCY, async (plan): Promise<Worktree | null> => {
     const identity = identify(plan, environments, hostNames);
     const { ref } = plan;
+    const branch = ref.kind === "branch" ? ref.head : (environments.get(ref.environmentId)?.branchName ?? null);
     try {
-      const status = await planCached(deps.cache, plan, "worktree", () => (ref.kind === "workspace"
-        ? loadWorkspace(deps, ref, environments.get(ref.environmentId)?.branchName ?? null, signal)
-        : loadBranch(deps, ref, signal)));
-      return status === null ? null : { ...identity, ...status };
+      if (ref.kind === "branch") {
+        const status = await loadBranch(deps, ref, plan.threadIds, signal);
+        return status === null ? null : { ...identity, ...status };
+      }
+      const status = await loadWorkspaceStatus(deps, ref, plan.threadIds, signal);
+      return {
+        ...identity, ...status, branch: status.branch ?? (status.state === "unavailable" ? branch : null),
+        uncommitted: status.uncommitted.slice(0, MAX_FILES),
+      };
     } catch (error) {
-      const branch = ref.kind === "branch" ? ref.head : (environments.get(ref.environmentId)?.branchName ?? null);
-      return { ...identity, ...unavailable(errorMessage(error), branch, ref.base) };
+      return { ...identity, ...unavailableStatus(errorMessage(error), branch, ref.base) };
     }
   });
   return loaded.filter((worktree) => worktree !== null);
+}
+
+// The rows the instant outline shows: who, where and on which branch are known; every number waits for git.
+export function loadingWorktrees(
+  repos: readonly RepoPlan[], environments: ReadonlyMap<string, Environment>, hostNames: ReadonlyMap<string, string>,
+): Worktree[] {
+  return repos.filter(isWorktreePlan).map((plan) => ({
+    ...identify(plan, environments, hostNames),
+    branch: plan.ref.kind === "branch" ? plan.ref.head : (environments.get(plan.ref.environmentId)?.branchName ?? null),
+    base: plan.ref.base,
+    state: "loading",
+    message: null,
+    aheadCount: null,
+    behindCount: null,
+    uncommitted: [],
+    committed: [],
+    commits: [],
+  }));
 }
 
 export function findSharedFiles(worktrees: readonly Worktree[]): SharedFile[] {

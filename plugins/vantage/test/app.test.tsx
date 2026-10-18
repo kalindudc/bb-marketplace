@@ -5,7 +5,7 @@ import { act, fireEvent, screen, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginCommandContext, PluginThreadPanelProps } from "@get-bb/plugin-sdk/app";
 import { PANEL_ACTION_ID, createCommands } from "../src/commands";
-import type { rpcContract } from "../src/contract";
+import type { Overview, rpcContract } from "../src/contract";
 import { overview } from "./fixtures";
 
 afterEach(() => {
@@ -69,7 +69,7 @@ describe("full-screen page", () => {
     const app = await loadPluginApp(() => import("../app"));
     const slot = renderSlot<PluginThreadPanelProps, typeof rpcContract>(app.threadPanelActions[0]!, { threadId: "thr_1", params: null }, {
       pluginId: "vantage",
-      rpc: { overview: () => overview(), patch: () => ({ patch: "", truncated: false, binary: false }), recordedEdits: () => ({ edits: [] }), commitFiles: () => ({ files: [] }) },
+      rpc: { shell: () => new Promise<Overview>(() => {}), overview: () => overview(), patch: () => ({ patch: "", truncated: false, binary: false }), recordedEdits: () => ({ edits: [] }), commitFiles: () => ({ files: [] }) },
       sdk: { subscribe: (() => () => {}) as never },
       sidebarThreads: { status: "ready", threads: [] }, sidebarPullRequests: {}, threadActions: (() => []) as never,
     });

@@ -156,6 +156,8 @@ export function overview(overrides: Partial<Overview> = {}): Overview {
     environmentIds: ["env_1"],
     warnings: [],
     truncatedThreads: false,
+    partial: false,
+    archivedHidden: 0,
     generatedAt: 1_700_000_000_000,
     ...overrides,
   };
@@ -197,6 +199,25 @@ export function allOverview(overrides: Partial<Overview> = {}): Overview {
     threadId: "", target: { kind: "all" }, windowHours: 24, threads, worktrees, repos,
     environmentIds: ["env_1", "env_2", "env_3", "env_4"], ...overrides,
   });
+}
+
+/** The instant outline of an all-threads overview: every row and header, none of the numbers. Two archived threads were left out. */
+export function partialOverview(overrides: Partial<Overview> = {}): Overview {
+  const full = allOverview();
+  return {
+    ...full,
+    partial: true,
+    archivedHidden: 2,
+    sharedFiles: [],
+    otherFiles: [],
+    worktrees: full.worktrees.map((entry) => ({
+      ...entry, state: "loading", aheadCount: null, behindCount: null, uncommitted: [], committed: [], commits: [],
+    })),
+    repos: full.repos.map((entry) => ({
+      ...entry, state: "loading", base: null, aheadCount: null, files: [], otherFiles: [], truncated: false, totals: { files: 0, additions: 0, deletions: 0 },
+    })),
+    ...overrides,
+  };
 }
 
 export function sidebarThread(overrides: Partial<PluginSidebarThread> = {}): PluginSidebarThread {

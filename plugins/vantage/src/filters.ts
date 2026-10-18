@@ -16,7 +16,8 @@ export function filterWorktrees(overview: Overview, filter: PageFilter): Worktre
   const titles = new Map(overview.threads.map((thread) => [thread.id, thread.title]));
   return overview.worktrees.filter((worktree) => {
     if (filter.projectId !== null && worktree.projectId !== filter.projectId) return false;
-    const changed = worktree.uncommitted.length + worktree.committed.length > 0 || worktree.state === "unavailable";
+    // A worktree whose git state is still being read might have changes, so it stays.
+    const changed = worktree.uncommitted.length + worktree.committed.length > 0 || worktree.state !== "ready";
     if (filter.changedOnly && !changed) return false;
     return matches([
       ...worktree.threadIds.map((id) => titles.get(id) ?? ""),
@@ -30,7 +31,7 @@ export function filterRepos(overview: Overview, filter: PageFilter): { repos: Re
   const repos = overview.repos.filter((repo) => {
     if (filter.projectId !== null && repo.projectId !== filter.projectId) return false;
     // A "clean" row is a file an agent edited that has no change now, so it is not a change.
-    const changed = repo.files.some((file) => file.status !== "clean") || repo.otherFiles.length > 0 || repo.state === "unavailable";
+    const changed = repo.files.some((file) => file.status !== "clean") || repo.otherFiles.length > 0 || repo.state !== "ready";
     if (filter.changedOnly && !changed) return false;
     return matches([repo.label, repo.root ?? "", ...paths(repo.files), ...paths(repo.otherFiles)]);
   });

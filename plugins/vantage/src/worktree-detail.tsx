@@ -6,6 +6,7 @@ import {
 import { toast } from "sonner";
 import type { Commit, CommitFilesInput, CommitFilesOutput, FileChange, Overview, ThreadSummary, Worktree } from "./contract";
 import { FileRow, fileKey, useLoaded, type FileLoaders } from "./file-row";
+import { Skeleton, SkeletonRows } from "./skeleton";
 import { openEnvironmentTerminal, openWorktreeTerminal } from "./terminal";
 import { PullRequestBadge, lineCounts, primaryThreadId, useLiveThread, useWorktreeTitles } from "./worktree-list";
 
@@ -150,13 +151,14 @@ function WorktreeDetailBody(props: BodyProps) {
   }, [overview.sharedFiles, worktree.key, worktree.projectId, titles]);
 
   const unavailable = worktree.state === "unavailable";
+  const loading = worktree.state === "loading";
   const blocked = terminalBlock(worktree, currentHostId, terminal);
   const needsAttention = !live.archived && (live.indicator === "waiting-for-input" || live.indicator === "unread-error");
   const { additions, deletions } = lineCounts(worktree);
   const changeCount = worktree.uncommitted.length + worktree.committed.length;
   const tabs: Array<{ id: WorktreeDetailProps["tab"]; label: string; count: number | null }> = [
-    { id: "changes", label: "Changes", count: changeCount },
-    { id: "commits", label: "Commits", count: worktree.commits.length },
+    { id: "changes", label: "Changes", count: loading ? null : changeCount },
+    { id: "commits", label: "Commits", count: loading ? null : worktree.commits.length },
     ...(own ? [] : [{ id: "chat" as const, label: "Chat", count: null }]),
   ];
   const shown = tab === "chat" && own ? "changes" : tab;
@@ -310,7 +312,8 @@ function WorktreeDetailBody(props: BodyProps) {
             </button>
           ))}
           <span className="ml-auto self-center whitespace-nowrap pb-1 font-mono text-[11px] text-muted-foreground">
-            {!unavailable && <><span className="text-diff-added">+{additions}</span> <span className="text-diff-removed">−{deletions}</span></>}
+            {loading && <Skeleton className="h-3 w-14 align-middle" />}
+            {!unavailable && !loading && <><span className="text-diff-added">+{additions}</span> <span className="text-diff-removed">−{deletions}</span></>}
           </span>
         </div>
       </div>
@@ -333,7 +336,8 @@ function WorktreeDetailBody(props: BodyProps) {
           <div className="min-h-0 flex-1 overflow-y-auto pb-3">
             {unavailable
               ? <p role="alert" className="mx-3.5 mt-3 rounded bg-surface-recessed px-2 py-2 text-xs text-destructive-text">{worktree.message ?? "This worktree is unavailable."}</p>
-              : shown === "changes" ? changes : commits}
+              : loading ? <SkeletonRows count={3} label="Reading this worktree's git status…" />
+                : shown === "changes" ? changes : commits}
           </div>
         )}
     </div>

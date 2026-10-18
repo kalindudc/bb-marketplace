@@ -8,6 +8,7 @@ import {
 import { overviewSchema, type OverviewTarget, type ThreadSummary } from "../src/contract";
 import type { EditRecord, ThreadEdits } from "../src/edits";
 import { createRepoCache } from "../src/repo-cache";
+import { createRootCache } from "../src/root-cache";
 import { destroyedEnvironment, environment, threadSummary } from "./fixtures";
 
 const record = (overrides: Partial<EditRecord> = {}): EditRecord => ({
@@ -288,6 +289,11 @@ const statusOf = (uncommitted: string[], committed: string[] = []) => ({
   },
 });
 
+const statusWith = (files: Array<{ path: string; status: string; insertions: number | null; deletions: number | null }>) => {
+  const base = statusOf([]);
+  return { ...base, workspace: { ...base.workspace, workingTree: { ...base.workspace.workingTree, files, fileCount: files.length } } };
+};
+
 interface Setup {
   threads?: ReturnType<typeof makeThreadResponse>[];
   descendants?: string[];
@@ -362,7 +368,7 @@ describe("collectTree", () => {
       ],
       descendants: ["thr_a", "thr_b"],
     });
-    const tree = await collectTree(deps, "thr_1");
+    const tree = await collectTree(deps, "thr_1", true);
     expect(sdk.threads.experimental_listDescendants).toHaveBeenCalledWith({
       threadIds: ["thr_1"], includeArchived: true, includeHidden: true, signal: undefined,
     });
@@ -382,7 +388,7 @@ describe("collectTree", () => {
       descendants: ["thr_gone"],
       environments: [],
     });
-    const tree = await collectTree(deps, "thr_1");
+    const tree = await collectTree(deps, "thr_1", true);
     expect(tree.threads.map((thread) => thread.id)).toEqual(["thr_1"]);
     expect(tree.environments.size).toBe(0);
   });
@@ -390,7 +396,7 @@ describe("collectTree", () => {
   it("caps the tree at 200 threads", async () => {
     const many = [makeThreadResponse({ id: "thr_1", environmentId: null }), ...threads(250)];
     const { deps } = setup({ threads: many });
-    const tree = await collectTree(deps, "thr_1");
+    const tree = await collectTree(deps, "thr_1", true);
     expect(tree.threads).toHaveLength(200);
     expect(tree.truncated).toBe(true);
   });
@@ -408,9 +414,62 @@ describe("collectTree", () => {
       running--;
       return original(args);
     });
-    await collectTree(deps, "thr_1");
+    await collectTree(deps, "thr_1", true);
     expect(peak).toBeLessThanOrEqual(9);
     expect(peak).toBeGreaterThan(1);
+  });
+});
+
+describe("collectTree with archived threads hidden", () => {
+  const family = () => setup({
+    threads: [
+      makeThreadResponse({ id: "thr_1", title: "Parent", environmentId: "env_1" }),
+      makeThreadResponse({ id: "thr_live", title: "Live child", parentThreadId: "thr_1", environmentId: "env_1" }),
+      makeThreadResponse({ id: "thr_done", title: "Done child", parentThreadId: "thr_1", archivedAt: 5, environmentId: "env_2" }),
+      makeThreadResponse({ id: "thr_deep", title: "Live grandchild", parentThreadId: "thr_done", environmentId: "env_1" }),
+    ],
+    descendants: ["thr_live", "thr_done", "thr_deep"],
+    environments: [environment({ id: "env_1" }), environment({ id: "env_2", path: "/work/two" })],
+  });
+
+  it("drops an archived descendant and counts it, but still asks bb for archived threads", async () => {
+    const { deps, sdk } = family();
+    const tree = await collectTree(deps, "thr_1", false);
+    expect(tree.threads.map((thread) => thread.id)).toEqual(["thr_1", "thr_live", "thr_deep"]);
+    expect(tree.archivedHidden).toBe(1);
+    expect(sdk.threads.experimental_listDescendants).toHaveBeenCalledWith(expect.objectContaining({ includeArchived: true }));
+  });
+
+  it("loads no environment for a dropped thread", async () => {
+    const { deps, sdk } = family();
+    const tree = await collectTree(deps, "thr_1", false);
+    expect([...tree.environments.keys()]).toEqual(["env_1"]);
+    expect(sdk.environments.get).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the depth of a live thread under a dropped archived parent", async () => {
+    const { deps } = family();
+    const tree = await collectTree(deps, "thr_1", false);
+    expect(tree.threads.find((thread) => thread.id === "thr_deep")).toMatchObject({ depth: 2, parentThreadId: "thr_done", rootThreadId: "thr_1" });
+  });
+
+  it("keeps everything and hides nothing when archived threads are asked for", async () => {
+    const { deps } = family();
+    const tree = await collectTree(deps, "thr_1", true);
+    expect(tree.threads.map((thread) => thread.id)).toEqual(["thr_1", "thr_live", "thr_done", "thr_deep"]);
+    expect(tree.archivedHidden).toBe(0);
+  });
+
+  it("always keeps the tree's root, even when it is archived", async () => {
+    const { deps } = setup({
+      threads: [
+        makeThreadResponse({ id: "thr_1", archivedAt: 5, environmentId: "env_1" }),
+        makeThreadResponse({ id: "thr_x", parentThreadId: "thr_1", archivedAt: 6, environmentId: null }),
+      ],
+    });
+    const tree = await collectTree(deps, "thr_1", false);
+    expect(tree.threads.map((thread) => [thread.id, thread.archived])).toEqual([["thr_1", true]]);
+    expect(tree.archivedHidden).toBe(1);
   });
 });
 
@@ -429,13 +488,13 @@ describe("buildOverview worktrees", () => {
 
   it("carries each thread's status", async () => {
     const { deps } = twoWorktrees();
-    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted" });
+    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
     expect(overview.threads.map((thread) => [thread.id, thread.status])).toEqual([["thr_1", "idle"], ["thr_2", "active"]]);
   });
 
   it("lists a worktree for each workspace, with its status counts and machine name", async () => {
     const { deps, sdk } = twoWorktrees();
-    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted" });
+    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
     expect(overviewSchema.safeParse(overview).success).toBe(true);
     expect(overview.worktrees.map((entry) => [entry.key, entry.kind, entry.branch, entry.hostName, entry.threadIds])).toEqual([
       ["host_1:/work/one", "workspace", "feature/work", "Laptop", ["thr_1"]],
@@ -449,7 +508,7 @@ describe("buildOverview worktrees", () => {
 
   it("flags a file two worktrees of one project both changed", async () => {
     const { deps } = twoWorktrees();
-    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted" });
+    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
     expect(overview.sharedFiles).toEqual([{ projectId: "proj_1", path: "README.md", worktreeKeys: ["host_1:/work/one", "host_1:/work/two"] }]);
   });
 
@@ -457,7 +516,7 @@ describe("buildOverview worktrees", () => {
     const { deps } = setup({
       status: () => { throw new Error("status failed"); },
     });
-    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted" });
+    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
     expect(overview.repos).toHaveLength(1);
     expect(overview.worktrees).toMatchObject([{ state: "unavailable", message: "status failed" }]);
     expect(overview.sharedFiles).toEqual([]);
@@ -469,15 +528,12 @@ describe("buildOverview", () => {
     const { deps } = setup({
       environments: [environment({ id: "env_1", path: "/work/one" })],
       edits: { thr_1: edits([record({ path: "/work/one/src/a.ts" }), record({ path: "/work/one/src/done.ts", kind: "add" })]) },
-      diffFiles: () => ({
-        outcome: "available", mergeBaseRef: null, shortstat: "", truncated: false, initialPatches: [],
-        files: [
-          { path: "src/a.ts", previousPath: null, changeKind: "modified", additions: 3, deletions: 1, binary: false, origin: "tracked", loadMode: "auto" },
-          { path: "src/other.ts", previousPath: null, changeKind: "added", additions: 4, deletions: 0, binary: false, origin: "untracked", loadMode: "auto" },
-        ],
-      }),
+      status: () => statusWith([
+        { path: "src/a.ts", status: "M", insertions: 3, deletions: 1 },
+        { path: "src/other.ts", status: "??", insertions: 4, deletions: 0 },
+      ]),
     });
-    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted" });
+    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
     expect(overviewSchema.safeParse(overview).success).toBe(true);
     expect(overview.repos).toHaveLength(1);
     const repo = overview.repos[0]!;
@@ -494,7 +550,7 @@ describe("buildOverview", () => {
 
   it("asks for the branch diff against the base when the scope is branch", async () => {
     const { deps, sdk } = setup({});
-    await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "branch" });
+    await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "branch", includeArchived: true });
     expect(sdk.environments.diffFiles).toHaveBeenCalledWith({
       environmentId: "env_1", target: "all", mergeBaseBranch: "origin/main", signal: undefined,
     });
@@ -522,7 +578,7 @@ describe("buildOverview", () => {
       edits: { thr_1: edits([record({ path: "/code/cortex/a.md" }), record({ path: "/code/cortex/gone.md" })]) },
       host,
     });
-    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted" });
+    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
     const checkout = overview.repos.find((entry) => entry.ref.kind === "checkout")!;
     expect(checkout).toMatchObject({ label: "Cortex", branch: "main", totals: { files: 1, additions: 2 } });
     expect(checkout.files.map((file) => [file.path, file.status])).toEqual([["a.md", "modified"]]);
@@ -543,23 +599,23 @@ describe("buildOverview", () => {
         if (options.hostId === "host_2") throw new Error("host is offline");
         return { results: (input.paths ?? []).map((path) => ({ path, root: path, relative: "" })) };
       }) as unknown as HostCall,
-      diffFiles: ({ environmentId }) => {
+      status: ({ environmentId }) => {
         if (environmentId === "env_2") throw new Error("Dev box is not connected");
-        return { outcome: "available", files: [], initialPatches: [], mergeBaseRef: null, shortstat: "", truncated: false };
+        return statusOf([]);
       },
     });
-    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted" });
+    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
     expect(overview.repos.map((entry) => [entry.hostName, entry.state])).toEqual([["Laptop", "ready"], ["Dev box", "unavailable"]]);
     expect(overview.repos[1]?.message).toBe("Dev box is not connected");
     expect(overview.warnings).toEqual(["Could not reach Dev box: host is offline"]);
     expect(overviewSchema.safeParse(overview).success).toBe(true);
   });
 
-  it("marks a workspace unavailable when bb cannot diff it", async () => {
+  it("marks a workspace unavailable when bb cannot read its status", async () => {
     const { deps } = setup({
-      diffFiles: () => ({ outcome: "unavailable", failure: { code: "path_not_found", message: "The folder is gone", workspacePath: "/work/one" } }),
+      status: () => ({ outcome: "unavailable", failure: { code: "path_not_found", message: "The folder is gone", workspacePath: "/work/one" } }),
     });
-    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted" });
+    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
     expect(overview.repos[0]).toMatchObject({ state: "unavailable", message: "The folder is gone", files: [] });
   });
 
@@ -578,7 +634,7 @@ describe("buildOverview", () => {
       edits: { thr_2: edits([record({ threadId: "thr_2", path: "src/lost.ts", kind: "add", added: 4 })]) },
       host,
     });
-    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted" });
+    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
     expect(overview.repos).toHaveLength(1);
     expect(overview.repos[0]).toMatchObject({
       ref: { kind: "recorded" }, state: "ready", branch: "feature/old", label: "Project", threadIds: ["thr_2"],
@@ -593,55 +649,50 @@ describe("buildOverview", () => {
       results: (input.paths ?? []).map((path) => (path.startsWith("/tmp/") ? { path, root: null, relative: null } : { path, root: path, relative: "" })),
     })) as unknown as HostCall;
     const { deps } = setup({ edits: { thr_1: edits(records) }, host });
-    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted" });
+    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
     expect(overview.otherFiles).toHaveLength(200);
     expect(overview.otherFiles[0]).toMatchObject({ path: "/tmp/file-000.txt", status: "modified", edits: { count: 1 } });
   });
 
   it("caps a repo at 500 files and says it was cut", async () => {
-    const files = Array.from({ length: 520 }, (_, index) => ({
-      path: `f${String(index).padStart(3, "0")}.ts`, previousPath: null, changeKind: "modified", additions: 1, deletions: 0,
-      binary: false, origin: "tracked", loadMode: "auto",
-    }));
-    const { deps } = setup({
-      diffFiles: () => ({ outcome: "available", files, initialPatches: [], mergeBaseRef: null, shortstat: "", truncated: false }),
-    });
-    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted" });
+    const files = Array.from({ length: 520 }, (_, index) => ({ path: `f${String(index).padStart(3, "0")}.ts`, status: "M", insertions: 1, deletions: 0 }));
+    const { deps } = setup({ status: () => statusWith(files) });
+    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
     expect(overview.repos[0]?.files).toHaveLength(500);
     expect(overview.repos[0]?.truncated).toBe(true);
   });
 
   it("sets truncatedThreads for 201 descendants", async () => {
     const { deps } = setup({ threads: [makeThreadResponse({ id: "thr_1", environmentId: null }), ...threads(201)] });
-    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted" });
+    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
     expect(overview.truncatedThreads).toBe(true);
     expect(overview.threads).toHaveLength(200);
   });
 
   it("forgets the tree's cached edits on refresh and not otherwise", async () => {
     const { deps, edits: index } = setup({ threads: [makeThreadResponse({ id: "thr_1", environmentId: null }), ...threads(2)] });
-    await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted" });
+    await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
     expect(index.forget).not.toHaveBeenCalled();
-    await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", refresh: true });
+    await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true, refresh: true });
     expect(index.forget).toHaveBeenCalledWith(["thr_1", "thr_c0", "thr_c1"]);
   });
 
-  it("calls resolveRoots once per host, with every path that host must resolve", async () => {
+  it("sends each host every path it must resolve, each path once", async () => {
     const { deps, host } = setup({
       environments: [environment({ id: "env_1", path: "/work/one" })],
       edits: { thr_1: edits([record({ path: "/work/one/src/a.ts" }), record({ path: "/work/one/src/b.ts" })]) },
     });
-    await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted" });
+    await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
     const calls = (host as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(([method]) => method === "resolveRoots");
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.[1].paths).toEqual(expect.arrayContaining(["/work/one", "/work/one/src/a.ts", "/work/one/src/b.ts"]));
-    expect(calls[0]?.[2]).toMatchObject({ hostId: "host_1" });
+    const sent = calls.flatMap((call) => call[1].paths as string[]);
+    expect(sent.slice().sort()).toEqual(["/code/cortex", "/code/proj", "/work/one", "/work/one/src/a.ts", "/work/one/src/b.ts"]);
+    expect(calls.every((call) => call[2].hostId === "host_1")).toBe(true);
   });
 
   it("warns when edits cannot be read but keeps going", async () => {
     const { deps, edits: index } = setup({});
     index.get.mockRejectedValueOnce(new Error("events failed"));
-    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted" });
+    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
     expect(overview.warnings).toEqual(["Could not read the edits of thr_1: events failed"]);
     expect(overview.repos).toHaveLength(1);
   });
@@ -665,7 +716,7 @@ describe("buildOverview for every thread", () => {
 
   it("builds one overview across unrelated threads, with the window in it and no single thread", async () => {
     const { deps } = twoProjects();
-    const overview = await buildOverview(deps, { target: ALL, scope: "uncommitted" });
+    const overview = await buildOverview(deps, { target: ALL, scope: "uncommitted", includeArchived: true });
     expect(overviewSchema.safeParse(overview).success).toBe(true);
     expect(overview).toMatchObject({ threadId: "", target: ALL, windowHours: 24, truncatedThreads: false });
     expect(overview.threads.map((thread) => [thread.id, thread.depth, thread.rootThreadId])).toEqual([
@@ -678,44 +729,42 @@ describe("buildOverview for every thread", () => {
 
   it("marks a tree overview with a null window", async () => {
     const { deps } = twoProjects();
-    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted" });
+    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
     expect(overview).toMatchObject({ threadId: "thr_1", target: { kind: "tree", threadId: "thr_1" }, windowHours: null });
   });
 
   it("needs the window and thread limit to read every thread", async () => {
     const { deps } = twoProjects();
-    await expect(buildOverview({ ...deps, allOptions: undefined }, { target: ALL, scope: "uncommitted" })).rejects.toThrow("time window");
+    await expect(buildOverview({ ...deps, allOptions: undefined }, { target: ALL, scope: "uncommitted", includeArchived: true })).rejects.toThrow("time window");
   });
 
   it("reports that more threads matched than the limit allows", async () => {
     const { deps } = twoProjects();
-    const overview = await buildOverview({ ...deps, allOptions: { windowHours: 24, maxThreads: 2 } }, { target: ALL, scope: "uncommitted" });
+    const overview = await buildOverview({ ...deps, allOptions: { windowHours: 24, maxThreads: 2 } }, { target: ALL, scope: "uncommitted", includeArchived: true });
     expect(overview.threads).toHaveLength(2);
     expect(overview.truncatedThreads).toBe(true);
   });
 
   it("does not forget edits on refresh, because the index only ever reads what is new", async () => {
     const { deps, edits: index } = twoProjects();
-    await buildOverview(deps, { target: ALL, scope: "uncommitted", refresh: true });
+    await buildOverview(deps, { target: ALL, scope: "uncommitted", includeArchived: true, refresh: true });
     expect(index.forget).not.toHaveBeenCalled();
   });
 
   describe("with the repository cache", () => {
     const ask = (deps: CollectDeps, target: OverviewTarget = ALL, refresh?: boolean) =>
-      buildOverview(deps, { target, scope: "uncommitted", ...(refresh === undefined ? {} : { refresh }) });
+      buildOverview(deps, { target, scope: "uncommitted", includeArchived: true, ...(refresh === undefined ? {} : { refresh }) });
 
     it("reads each repository and worktree once, and again after its thread changed", async () => {
       const { deps, sdk } = twoProjects();
       const cache = createRepoCache();
       await ask({ ...deps, cache });
-      expect(sdk.environments.diffFiles).toHaveBeenCalledTimes(3);
       expect(sdk.environments.status).toHaveBeenCalledTimes(3);
+      expect(sdk.environments.diffFiles).not.toHaveBeenCalled();
       await ask({ ...deps, cache });
-      expect(sdk.environments.diffFiles).toHaveBeenCalledTimes(3);
       expect(sdk.environments.status).toHaveBeenCalledTimes(3);
       cache.invalidateThreads(["thr_2"]);
       await ask({ ...deps, cache });
-      expect(sdk.environments.diffFiles).toHaveBeenCalledTimes(4);
       expect(sdk.environments.status).toHaveBeenCalledTimes(4);
     });
 
@@ -725,7 +774,7 @@ describe("buildOverview for every thread", () => {
       await ask({ ...deps, cache });
       cache.invalidateEnvironment("env_3");
       await ask({ ...deps, cache });
-      expect(sdk.environments.diffFiles).toHaveBeenCalledTimes(4);
+      expect(sdk.environments.status).toHaveBeenCalledTimes(4);
     });
 
     it("clears the cache on a refresh, so everything is read again", async () => {
@@ -733,7 +782,6 @@ describe("buildOverview for every thread", () => {
       const cache = createRepoCache();
       await ask({ ...deps, cache });
       await ask({ ...deps, cache }, ALL, true);
-      expect(sdk.environments.diffFiles).toHaveBeenCalledTimes(6);
       expect(sdk.environments.status).toHaveBeenCalledTimes(6);
     });
 
@@ -749,14 +797,183 @@ describe("buildOverview for every thread", () => {
       expect(second.otherFiles.map((file) => file.path)).toEqual(["/tmp/outside.txt"]);
     });
 
-    it("is not used for a single thread's tree", async () => {
+    it("serves a single thread's tree too, and shares its reads with the page", async () => {
       const { deps, sdk } = twoProjects();
       const cache = createRepoCache();
       const tree: OverviewTarget = { kind: "tree", threadId: "thr_1" };
       await ask({ ...deps, cache }, tree);
       await ask({ ...deps, cache }, tree);
-      expect(sdk.environments.diffFiles).toHaveBeenCalledTimes(6);
-      expect(cache.size()).toBe(0);
+      expect(sdk.environments.status).toHaveBeenCalledTimes(3);
+      await ask({ ...deps, cache }, ALL);
+      expect(sdk.environments.status).toHaveBeenCalledTimes(3);
     });
+  });
+});
+
+describe("buildOverview phases", () => {
+  const TREE: OverviewTarget = { kind: "tree", threadId: "thr_1" };
+  const ask = (deps: CollectDeps, scope: "uncommitted" | "branch" = "uncommitted", refresh?: boolean) =>
+    buildOverview(deps, { target: TREE, scope, includeArchived: true, ...(refresh === undefined ? {} : { refresh }) });
+  const twoEnvironments = (extra: Partial<Setup> = {}) => setup({
+    threads: [
+      makeThreadResponse({ id: "thr_1", title: "Parent", environmentId: "env_1" }),
+      makeThreadResponse({ id: "thr_2", title: "Child", parentThreadId: "thr_1", environmentId: "env_2" }),
+    ],
+    environments: [environment({ id: "env_1", path: "/work/one" }), environment({ id: "env_2", path: "/work/two" })],
+    ...extra,
+  });
+  const gate = () => {
+    let release: () => void = () => {};
+    const opened = new Promise<void>((resolve) => { release = resolve; });
+    return { opened, release };
+  };
+
+  it("reads a workspace's status once for its worktree and its repository, and never calls diffFiles in the uncommitted scope", async () => {
+    const { deps, sdk } = twoEnvironments({ status: () => statusOf(["a.ts"]) });
+    const overview = await ask(deps);
+    expect(sdk.environments.status).toHaveBeenCalledTimes(2);
+    expect(sdk.environments.diffFiles).not.toHaveBeenCalled();
+    expect(overview.repos.map((entry) => entry.files.map((file) => file.path))).toEqual([["a.ts"], ["a.ts"]]);
+    expect(overview.worktrees.map((entry) => entry.uncommitted.map((file) => file.path))).toEqual([["a.ts"], ["a.ts"]]);
+  });
+
+  it("asks for the branch diff once per workspace in the branch scope, next to the status", async () => {
+    const { deps, sdk } = twoEnvironments();
+    await ask(deps, "branch");
+    expect(sdk.environments.diffFiles).toHaveBeenCalledTimes(2);
+    expect(sdk.environments.status).toHaveBeenCalledTimes(2);
+  });
+
+  it("starts reading workspace status while the edit index is still running", async () => {
+    const { deps, sdk, edits: index } = twoEnvironments();
+    const held = gate();
+    index.get.mockImplementation(async () => {
+      await held.opened;
+      return { records: [], primaryCwd: null };
+    });
+    const pending = ask(deps);
+    await vi.waitFor(() => expect(sdk.environments.status).toHaveBeenCalledTimes(2));
+    held.release();
+    await pending;
+    expect(sdk.environments.status).toHaveBeenCalledTimes(2);
+  });
+
+  it("starts the branch diff while the edit index is still running", async () => {
+    const { deps, sdk, edits: index } = twoEnvironments();
+    const held = gate();
+    index.get.mockImplementation(async () => {
+      await held.opened;
+      return { records: [], primaryCwd: null };
+    });
+    const pending = ask(deps, "branch");
+    await vi.waitFor(() => expect(sdk.environments.diffFiles).toHaveBeenCalledTimes(2));
+    held.release();
+    await pending;
+  });
+
+  it("starts at most 8 early status reads at a time", async () => {
+    const many = Array.from({ length: 20 }, (_, index) => index + 1);
+    const { deps, sdk, edits: index } = setup({
+      threads: many.map((n) => makeThreadResponse({ id: `thr_${n}`, parentThreadId: n === 1 ? null : "thr_1", environmentId: `env_${n}` })),
+      environments: many.map((n) => environment({ id: `env_${n}`, path: `/work/${n}` })),
+    });
+    const heldEdits = gate();
+    const heldStatus = gate();
+    index.get.mockImplementation(async () => {
+      await heldEdits.opened;
+      return { records: [], primaryCwd: null };
+    });
+    sdk.environments.status.mockImplementation(async () => {
+      await heldStatus.opened;
+      return statusOf([]);
+    });
+    const pending = ask(deps);
+    await vi.waitFor(() => expect(sdk.environments.status).toHaveBeenCalledTimes(8));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(sdk.environments.status).toHaveBeenCalledTimes(8);
+    heldStatus.release();
+    heldEdits.release();
+    await pending;
+  });
+
+  it("does not read the history of an archived thread that is already indexed", async () => {
+    const { deps, edits: index } = setup({
+      threads: [
+        makeThreadResponse({ id: "thr_1", environmentId: null }),
+        makeThreadResponse({ id: "thr_done", parentThreadId: "thr_1", archivedAt: 5, environmentId: null }),
+      ],
+    });
+    await ask(deps);
+    expect(index.get.mock.calls.map((call) => [call[0], (call as unknown[])[2]])).toEqual([["thr_1", { settled: false }], ["thr_done", { settled: true }]]);
+  });
+
+  it("resolves the environment paths while the edit index runs and only the extra edit paths after it", async () => {
+    const { deps, host, edits: index } = setup({
+      environments: [environment({ id: "env_1", path: "/work/one" })],
+    });
+    const held = gate();
+    index.get.mockImplementation(async () => {
+      await held.opened;
+      return edits([record({ path: "/work/one/src/a.ts" })]);
+    });
+    const pending = ask(deps);
+    await vi.waitFor(() => expect(host).toHaveBeenCalledTimes(1));
+    expect(host.mock.calls[0]?.[1].paths).toEqual(expect.arrayContaining(["/work/one"]));
+    expect(host.mock.calls[0]?.[1].paths).not.toContain("/work/one/src/a.ts");
+    held.release();
+    await pending;
+    expect(host).toHaveBeenCalledTimes(2);
+    expect(host.mock.calls[1]?.[1].paths).toEqual(["/work/one/src/a.ts"]);
+  });
+
+  it("serves a second tree build within a minute without a status call, and sends resolveRoots only the paths it lacks", async () => {
+    const { deps, sdk, host, edits: index } = twoEnvironments();
+    const cache = createRepoCache();
+    const roots = createRootCache();
+    await ask({ ...deps, cache, roots });
+    expect(sdk.environments.status).toHaveBeenCalledTimes(2);
+    const firstCalls = host.mock.calls.length;
+    index.get.mockImplementation(async (threadId: string) => (threadId === "thr_1" ? edits([record({ path: "/work/one/new.ts" })]) : { records: [], primaryCwd: null }));
+    await ask({ ...deps, cache, roots });
+    expect(sdk.environments.status).toHaveBeenCalledTimes(2);
+    const later = host.mock.calls.slice(firstCalls);
+    expect(later).toHaveLength(1);
+    expect(later[0]?.[1].paths).toEqual(["/work/one/new.ts"]);
+  });
+
+  it("reads the status again for a tree after one of its threads changed", async () => {
+    const { deps, sdk } = twoEnvironments();
+    const cache = createRepoCache();
+    await ask({ ...deps, cache });
+    cache.invalidateThreads(["thr_2"]);
+    await ask({ ...deps, cache });
+    expect(sdk.environments.status).toHaveBeenCalledTimes(3);
+  });
+
+  it("on a hard refresh drops the tree's cached reads and roots, and forgets its edits", async () => {
+    const { deps, sdk, host, edits: index } = twoEnvironments();
+    const cache = createRepoCache();
+    const roots = createRootCache();
+    await ask({ ...deps, cache, roots });
+    const resolved = host.mock.calls.length;
+    await ask({ ...deps, cache, roots }, "uncommitted", true);
+    expect(sdk.environments.status).toHaveBeenCalledTimes(4);
+    expect(host.mock.calls.length).toBeGreaterThan(resolved);
+    expect(index.forget).toHaveBeenCalledWith(["thr_1", "thr_2"]);
+  });
+
+  it("builds a full overview that is not partial, with the number of hidden archived threads", async () => {
+    const { deps } = setup({
+      threads: [
+        makeThreadResponse({ id: "thr_1", environmentId: null }),
+        makeThreadResponse({ id: "thr_done", parentThreadId: "thr_1", archivedAt: 5, environmentId: null }),
+      ],
+    });
+    const hidden = await buildOverview(deps, { target: TREE, scope: "uncommitted", includeArchived: false });
+    expect(hidden).toMatchObject({ partial: false, archivedHidden: 1 });
+    expect(hidden.threads.map((thread) => thread.id)).toEqual(["thr_1"]);
+    const shown = await ask(deps);
+    expect(shown).toMatchObject({ partial: false, archivedHidden: 0 });
+    expect(shown.threads).toHaveLength(2);
   });
 });

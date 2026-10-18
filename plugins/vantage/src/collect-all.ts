@@ -4,6 +4,11 @@ import type { ThreadSummary } from "./contract";
 import { mapLimit } from "./limit";
 
 export interface AllOptions { windowHours: number; maxThreads: number; now?: number }
+export interface Collected {
+  threads: ThreadSummary[]; environments: Map<string, Environment>; truncated: boolean;
+  /** Archived threads that matched but were left out, so a toggle can say how many it would bring back. */
+  archivedHidden: number;
+}
 
 type Listed = Awaited<ReturnType<PluginBbSdk["threads"]["list"]>>[number];
 type ThreadFields = Pick<Listed, "id" | "title" | "titleFallback" | "parentThreadId" | "archivedAt" | "environmentId" | "status">;
@@ -52,14 +57,16 @@ async function listAll(sdk: PluginBbSdk, archived: boolean, maxScanned: number, 
 }
 
 export async function collectAll(
-  deps: CollectDeps, options: AllOptions, signal?: AbortSignal,
-): Promise<{ threads: ThreadSummary[]; environments: Map<string, Environment>; truncated: boolean }> {
+  deps: CollectDeps, options: AllOptions & { includeArchived: boolean }, signal?: AbortSignal,
+): Promise<Collected> {
   const { sdk } = deps;
   const cutoff = (options.now ?? Date.now()) - options.windowHours * HOUR_MS;
   const active = (await listAll(sdk, false, MAX_ACTIVE_SCANNED, signal))
     .filter((thread) => thread.updatedAt >= cutoff || RUNNING.has(thread.status));
-  const archived = (await listAll(sdk, true, MAX_ARCHIVED_SCANNED, signal))
+  // The archived list is paged even when it is hidden: one page costs about 10 ms and gives the count.
+  const archivedInWindow = (await listAll(sdk, true, MAX_ARCHIVED_SCANNED, signal))
     .filter((thread) => thread.archivedAt !== null && thread.archivedAt >= cutoff);
+  const archived = options.includeArchived ? archivedInWindow : [];
   const matched = [...new Map([...active, ...archived].map((thread) => [thread.id, thread])).values()]
     .sort((a, b) => b.updatedAt - a.updatedAt || (a.id < b.id ? -1 : 1));
   const kept = matched.slice(0, options.maxThreads);
@@ -82,5 +89,8 @@ export async function collectAll(
     const { depth, root } = place(thread, new Set());
     return summarizeThread(thread, depth, root);
   });
-  return { threads, environments: await loadEnvironments(sdk, threads, signal), truncated: matched.length > kept.length };
+  return {
+    threads, environments: await loadEnvironments(sdk, threads, signal), truncated: matched.length > kept.length,
+    archivedHidden: options.includeArchived ? 0 : archivedInWindow.length,
+  };
 }

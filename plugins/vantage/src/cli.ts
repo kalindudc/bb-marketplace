@@ -60,6 +60,7 @@ const cutNotice = (overview: Overview): string =>
   overview.target.kind === "all"
     ? `Only the ${overview.threads.length} most recent threads were read; raise the limit in Settings.`
     : "Only the first 200 threads of the tree were read.";
+const hiddenNotice = (overview: Overview): string => `${plural(overview.archivedHidden, "archived thread")} hidden (use --archived)`;
 
 // Groups in order of first appearance, one per project, for the all-threads output.
 function byProject<T extends { projectId: string | null; label: string }>(items: readonly T[]): Array<{ name: string; items: T[] }> {
@@ -85,6 +86,7 @@ export function formatOverview(overview: Overview): string {
     `${plural(overview.repos.length, "repo")} · ${plural(files, "file")} · ${counts(additions, deletions)} · ${threadCount} (${scope})`,
   ];
   if (overview.truncatedThreads) lines.push(cutNotice(overview));
+  if (overview.archivedHidden > 0) lines.push(hiddenNotice(overview));
   if (overview.repos.length === 0 && overview.otherFiles.length === 0) {
     lines.push(everyThread ? `No changes in ${windowLabel(overview)}.` : "No changes in this thread or its child threads yet.");
   }
@@ -133,7 +135,8 @@ function table(rows: readonly (readonly string[])[]): string[] {
 export function formatWorktrees(overview: Overview): string {
   const everyThread = overview.target.kind === "all";
   if (overview.worktrees.length === 0) {
-    return everyThread ? `No worktrees in ${windowLabel(overview)}.\n` : "No worktrees in this thread or its child threads yet.\n";
+    const none = everyThread ? `No worktrees in ${windowLabel(overview)}.` : "No worktrees in this thread or its child threads yet.";
+    return `${none}\n${overview.archivedHidden > 0 ? `${hiddenNotice(overview)}\n` : ""}`;
   }
   const threads = new Map(overview.threads.map((thread) => [thread.id, thread]));
   const titleOf = (worktree: Worktree): string => {
@@ -162,6 +165,7 @@ export function formatWorktrees(overview: Overview): string {
     }
   }
   if (overview.truncatedThreads) lines.push("", cutNotice(overview));
+  if (overview.archivedHidden > 0) lines.push("", hiddenNotice(overview));
   if (overview.warnings.length > 0) lines.push("", "Warnings", ...overview.warnings.map((warning) => `  - ${warning}`));
   return `${lines.join("\n")}\n`;
 }
@@ -229,6 +233,7 @@ const formatWorktreesJson = (overview: Overview): string => fitJson((cap) => ({
   target: overview.target,
   windowHours: overview.windowHours,
   threads: overview.threads,
+  archivedHidden: overview.archivedHidden,
   worktrees: overview.worktrees.map((worktree) => capWorktree(worktree, cap)),
   sharedFiles: overview.sharedFiles,
 }));
@@ -243,7 +248,7 @@ const signalOf = (ctx: { signal?: AbortSignal }): AbortSignal => ctx.signal ?? n
 const threadRequired = (): PluginCliError =>
   new PluginCliError("No thread to read.", { code: "thread_required", hint: "Pass --thread <id>, run this inside a thread, or pass --all." });
 
-export interface OverviewRequest { target: OverviewTarget; scope: Scope; hours?: number }
+export interface OverviewRequest { target: OverviewTarget; scope: Scope; includeArchived: boolean; hours?: number }
 
 const MAX_HOURS = 720;
 const ALL_OPTIONS = {
@@ -252,19 +257,27 @@ const ALL_OPTIONS = {
     type: "integer", min: 1, max: MAX_HOURS,
     description: "With --all: how many hours back to look (1 to 720); overrides the setting for this call.",
   },
+  archived: { type: "boolean", description: "With --all: include archived threads, which are hidden by default. A thread's own tree always includes them." },
 } as const;
 
-function requestOf(options: { thread?: string; all: boolean; hours?: number }, ctx: { threadId?: string }): { target: OverviewTarget; hours?: number } {
+function requestOf(
+  options: { thread?: string; all: boolean; hours?: number; archived: boolean }, ctx: { threadId?: string },
+): { target: OverviewTarget; includeArchived: boolean; hours?: number } {
   if (options.all && options.thread !== undefined) {
     throw new PluginCliError("--all and --thread cannot be used together.", { code: "target_conflict", hint: "Use --all for every thread, or --thread <id> for one thread's tree." });
   }
   if (options.hours !== undefined && !options.all) {
     throw new PluginCliError("--hours only applies with --all.", { code: "hours_requires_all", hint: "Add --all, or leave --hours out." });
   }
-  if (options.all) return { target: { kind: "all" }, ...(options.hours === undefined ? {} : { hours: options.hours }) };
+  if (options.archived && !options.all) {
+    throw new PluginCliError("--archived only applies with --all.", { code: "archived_requires_all", hint: "Add --all; a thread's own tree always includes archived threads." });
+  }
+  if (options.all) {
+    return { target: { kind: "all" }, includeArchived: options.archived, ...(options.hours === undefined ? {} : { hours: options.hours }) };
+  }
   const threadId = options.thread ?? ctx.threadId;
   if (threadId === undefined) throw threadRequired();
-  return { target: { kind: "tree", threadId } };
+  return { target: { kind: "tree", threadId }, includeArchived: true };
 }
 
 export function createCli(
@@ -312,7 +325,7 @@ export function createCli(
         options: { json: { type: "boolean", description: "Print the worktree as JSON." } },
         async run({ options, positionals }, ctx) {
           const signal = signalOf(ctx);
-          const overview = await run({ target: { kind: "tree", threadId: await rootOf(positionals.thread, signal) }, scope: "uncommitted" }, signal);
+          const overview = await run({ target: { kind: "tree", threadId: await rootOf(positionals.thread, signal) }, scope: "uncommitted", includeArchived: true }, signal);
           const worktree = overview.worktrees.find((entry) => entry.threadIds.includes(positionals.thread));
           if (worktree === undefined) {
             throw new PluginCliError(`Thread ${positionals.thread} has no worktree.`, {

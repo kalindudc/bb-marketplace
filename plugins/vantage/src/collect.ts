@@ -1,18 +1,21 @@
 import { posix } from "node:path";
 import type { PluginBbSdk } from "@get-bb/plugin-sdk";
 import type { EditIndex, EditRecord, ThreadEdits } from "./edits";
-import { collectAll, FETCH_CONCURRENCY, loadEnvironments, summarizeThread, type AllOptions } from "./collect-all";
-import type { FileChange, HostInput, HostMethod, HostOutput, Overview, OverviewTarget, Repo, RepoRef, Scope, ThreadSummary } from "./contract";
+import { collectAll, FETCH_CONCURRENCY, loadEnvironments, summarizeThread, type AllOptions, type Collected } from "./collect-all";
+import type { FileChange, HostInput, HostMethod, HostOutput, Overview, OverviewTarget, Repo, RepoRef, Scope, ShellInput, ThreadSummary } from "./contract";
 import { mapLimit } from "./limit";
-import { planCached, type RepoCache } from "./repo-cache";
-import { loadRepoFiles, recordedFile, recordedLiveFiles, type LiveFiles } from "./sources";
-import { findSharedFiles, loadWorktrees } from "./worktrees";
+import { createRepoCache, planCached, type RepoCache } from "./repo-cache";
+import { createRootCache, type RootCache, type RootEntry } from "./root-cache";
+import { loadRepoFiles, loadWorkspaceDiff, loadWorkspaceStatus, recordedFile, recordedLiveFiles, type LiveFiles } from "./sources";
+import { findSharedFiles, loadingWorktrees, loadWorktrees } from "./worktrees";
 
 export type Environment = Awaited<ReturnType<PluginBbSdk["environments"]["get"]>>;
 export type HostCall = <M extends HostMethod>(
   method: M, input: HostInput<M>, options: { hostId: string; signal?: AbortSignal },
 ) => Promise<HostOutput<M>>;
-export interface CollectDeps { sdk: PluginBbSdk; host: HostCall; edits: EditIndex; allOptions?: Omit<AllOptions, "now">; cache?: RepoCache }
+export interface CollectDeps {
+  sdk: PluginBbSdk; host: HostCall; edits: EditIndex; allOptions?: Omit<AllOptions, "now">; cache?: RepoCache; roots?: RootCache;
+}
 
 export interface Touched { threadIds: Set<string>; rawPaths: Set<string>; records: EditRecord[] }
 export interface RepoPlan {
@@ -21,7 +24,7 @@ export interface RepoPlan {
 }
 export interface ProjectInfo { id: string; name: string; sources: readonly { hostId: string; path: string; isDefault: boolean }[] }
 export interface HostInfo { id: string; name: string }
-export type ResolvedRoots = ReadonlyMap<string, ReadonlyMap<string, { root: string | null; relative: string | null }>>;
+export type ResolvedRoots = ReadonlyMap<string, ReadonlyMap<string, RootEntry>>;
 
 const MAX_THREADS = 200;
 const MAX_FILES = 500;
@@ -40,12 +43,14 @@ const isLive = (env: Environment): env is LiveEnvironment =>
   env.status === "ready" && (env.lifecycle.phase === "active" || env.lifecycle.phase === "retiring") && env.isGitRepo && env.path !== null;
 const isDestroyed = (env: Environment): boolean =>
   env.status === "destroyed" || env.lifecycle.phase === "destroyed" || env.path === null;
+const baseOf = (env: Environment): string | null => env.mergeBaseBranch ?? env.defaultBranch ?? null;
 
 export async function collectTree(
-  deps: CollectDeps, threadId: string, signal?: AbortSignal,
-): Promise<{ threads: ThreadSummary[]; environments: Map<string, Environment>; truncated: boolean }> {
+  deps: CollectDeps, threadId: string, includeArchived: boolean, signal?: AbortSignal,
+): Promise<Collected> {
   const { sdk } = deps;
   const root = await sdk.threads.get({ threadId, signal });
+  // Archived descendants are always listed: only threads.get tells which ones they are, and dropping them there keeps the count.
   const listed = await sdk.threads.experimental_listDescendants({
     threadIds: [threadId], includeArchived: true, includeHidden: true, signal,
   });
@@ -55,14 +60,16 @@ export async function collectTree(
   const responses = [root, ...fetched.filter((thread) => thread !== null)];
 
   const depths = new Map<string, number>();
-  const threads = responses.map((thread): ThreadSummary => {
+  const summaries = responses.map((thread): ThreadSummary => {
     const parentDepth = thread.parentThreadId === null ? undefined : depths.get(thread.parentThreadId);
     const depth = thread.id === threadId ? 0 : (parentDepth ?? 0) + 1;
     depths.set(thread.id, depth);
     return summarizeThread(thread, depth, threadId);
   });
+  const hidden = includeArchived ? new Set<string>() : new Set(summaries.filter((thread) => thread.archived && thread.id !== threadId).map((thread) => thread.id));
+  const threads = summaries.filter((thread) => !hidden.has(thread.id));
   const environments = await loadEnvironments(sdk, threads, signal);
-  return { threads, environments, truncated: descendantIds.length > MAX_THREADS - 1 };
+  return { threads, environments, truncated: descendantIds.length > MAX_THREADS - 1, archivedHidden: hidden.size };
 }
 
 type Location =
@@ -149,7 +156,7 @@ export function planRepos(input: {
   for (const thread of threads) {
     const env = thread.environmentId === null ? undefined : environments.get(thread.environmentId);
     if (env === undefined) continue;
-    const base = env.mergeBaseBranch ?? env.defaultBranch ?? null;
+    const base = baseOf(env);
     if (isLive(env)) {
       const root = resolved(env.hostId, env.path)?.root ?? env.path;
       const plan = open(`${env.hostId}:${root}`, () => ({
@@ -268,37 +275,27 @@ function toRepo(plan: RepoPlan, loaded: LiveFiles | { unavailable: string }, hos
   };
 }
 
-async function collectTarget(
-  deps: CollectDeps, target: OverviewTarget, signal?: AbortSignal,
-): Promise<{ threads: ThreadSummary[]; environments: Map<string, Environment>; truncated: boolean }> {
-  if (target.kind === "tree") return collectTree(deps, target.threadId, signal);
-  if (deps.allOptions === undefined) throw new Error("An all-threads overview needs the time window and thread limit");
-  return collectAll(deps, deps.allOptions, signal);
+function loadingRepo(plan: RepoPlan, environments: ReadonlyMap<string, Environment>, hostName: string | null): Repo {
+  const branch = plan.ref.kind === "branch" ? plan.ref.head : plan.ref.kind === "workspace" ? (environments.get(plan.ref.environmentId)?.branchName ?? null) : null;
+  return {
+    key: plan.key, ref: plan.ref, label: plan.label, projectId: plan.projectId, root: plan.root, hostId: plan.hostId, hostName,
+    branch, base: null, aheadCount: null, threadIds: plan.threadIds, state: "loading", message: null,
+    files: [], otherFiles: [], truncated: false, totals: { files: 0, additions: 0, deletions: 0 },
+  };
 }
 
-export async function buildOverview(
-  deps: CollectDeps, input: { target: OverviewTarget; scope: Scope; refresh?: boolean }, signal?: AbortSignal,
-): Promise<Overview> {
-  const { target } = input;
-  // Only the all-threads page reads through the cache; a thread's own tab always asks bb afresh.
-  const scoped: CollectDeps = target.kind === "all" ? deps : { ...deps, cache: undefined };
-  const { sdk, host, edits } = scoped;
-  const tree = await collectTarget(scoped, target, signal);
-  if (input.refresh === true) {
-    if (target.kind === "tree") edits.forget(tree.threads.map((thread) => thread.id));
-    else scoped.cache?.clear();
-  }
-  const warnings: string[] = [];
+async function collectTarget(
+  deps: CollectDeps, target: OverviewTarget, includeArchived: boolean, signal?: AbortSignal,
+): Promise<Collected> {
+  if (target.kind === "tree") return collectTree(deps, target.threadId, includeArchived, signal);
+  if (deps.allOptions === undefined) throw new Error("An all-threads overview needs the time window and thread limit");
+  return collectAll(deps, { ...deps.allOptions, includeArchived }, signal);
+}
 
-  const [editList, projectList, hostList] = await Promise.all([
-    mapLimit(tree.threads, FETCH_CONCURRENCY, async (thread) => {
-      try {
-        return await edits.get(thread.id, signal);
-      } catch (error) {
-        warnings.push(`Could not read the edits of ${thread.title}: ${errorMessage(error)}`);
-        return undefined;
-      }
-    }),
+type Listed = { projects: ProjectInfo[]; hosts: HostInfo[] };
+
+function listProjectsAndHosts(sdk: PluginBbSdk, warnings: string[], signal?: AbortSignal): Promise<Listed> {
+  return Promise.all([
     sdk.projects.list({ includePersonal: true, signal }).catch((error: unknown) => {
       warnings.push(`Could not list projects: ${errorMessage(error)}`);
       return [];
@@ -307,30 +304,98 @@ export async function buildOverview(
       warnings.push(`Could not list machines: ${errorMessage(error)}`);
       return [];
     }),
+  ]).then(([projects, hosts]) => ({ projects, hosts }));
+}
+
+// Asks each machine only for the paths the cache does not know, and remembers what it answers.
+async function resolveMissing(
+  deps: CollectDeps & { roots: RootCache }, wanted: ReadonlyMap<string, readonly string[]>, failed: Set<string>,
+  hostName: (hostId: string) => string, warnings: string[], signal?: AbortSignal,
+): Promise<void> {
+  await Promise.all([...wanted].map(async ([hostId, paths]) => {
+    const missing = deps.roots.missing(hostId, paths);
+    if (failed.has(hostId) || missing.length === 0) return;
+    try {
+      for (let start = 0; start < missing.length; start += RESOLVE_CHUNK) {
+        const { results } = await deps.host("resolveRoots", { paths: missing.slice(start, start + RESOLVE_CHUNK) }, { hostId, signal });
+        for (const result of results) deps.roots.store(hostId, result.path, { root: result.root, relative: result.relative });
+      }
+    } catch (error) {
+      failed.add(hostId);
+      warnings.push(`Could not reach ${hostName(hostId)}: ${errorMessage(error)}`);
+    }
+  }));
+}
+
+// Starts the git reads every live workspace needs, so they run while the edit index and the root lookups do.
+// Later phases ask the cache for the same loads and share these promises.
+function startWorkspaceLoads(
+  deps: CollectDeps, threads: readonly ThreadSummary[], environments: ReadonlyMap<string, Environment>, scope: Scope, signal?: AbortSignal,
+): Promise<unknown> {
+  return mapLimit([...environments.values()].filter(isLive), FETCH_CONCURRENCY, async (env) => {
+    const ref = { kind: "workspace", environmentId: env.id, base: baseOf(env) } as const;
+    const threadIds = threads.filter((thread) => thread.environmentId === env.id).map((thread) => thread.id);
+    // A failed read is not cached, so the phase that needs it asks again and reports the failure itself.
+    await Promise.all([
+      loadWorkspaceStatus(deps, ref, threadIds, signal),
+      scope === "branch" && ref.base !== null ? loadWorkspaceDiff(deps, { ...ref, base: ref.base }, threadIds, signal) : undefined,
+    ]).catch(() => undefined);
+  });
+}
+
+export async function buildOverview(
+  deps: CollectDeps, input: { target: OverviewTarget; scope: Scope; includeArchived: boolean; refresh?: boolean }, signal?: AbortSignal,
+): Promise<Overview> {
+  const { target } = input;
+  // A build with no shared cache still shares reads between its own phases.
+  const scoped = { ...deps, cache: deps.cache ?? createRepoCache(), roots: deps.roots ?? createRootCache() };
+  const { sdk, edits } = scoped;
+  const warnings: string[] = [];
+  const listed = listProjectsAndHosts(sdk, warnings, signal);
+  const tree = await collectTarget(scoped, target, input.includeArchived, signal);
+  if (input.refresh === true) {
+    scoped.roots.clear();
+    if (target.kind === "tree") {
+      const ids = tree.threads.map((thread) => thread.id);
+      edits.forget(ids);
+      scoped.cache.invalidateThreads(ids);
+    } else {
+      scoped.cache.clear();
+    }
+  }
+  const { projects, hosts } = await listed;
+  const hostName = (hostId: string) => hosts.find((entry) => entry.id === hostId)?.name ?? hostId;
+  const failedHosts = new Set<string>();
+
+  void startWorkspaceLoads(scoped, tree.threads, tree.environments, input.scope, signal);
+  const noEdits = new Map<string, ThreadEdits>();
+  const [editList] = await Promise.all([
+    mapLimit(tree.threads, FETCH_CONCURRENCY, async (thread) => {
+      try {
+        return await edits.get(thread.id, signal, { settled: thread.archived });
+      } catch (error) {
+        warnings.push(`Could not read the edits of ${thread.title}: ${errorMessage(error)}`);
+        return undefined;
+      }
+    }),
+    resolveMissing(scoped, pathsToResolve({ threads: tree.threads, environments: tree.environments, edits: noEdits, projects }), failedHosts, hostName, warnings, signal),
   ]);
   const editMap = new Map<string, ThreadEdits>();
   tree.threads.forEach((thread, index) => {
     const found = editList[index];
     if (found !== undefined) editMap.set(thread.id, found);
   });
-  const projects: ProjectInfo[] = projectList;
-  const hosts: HostInfo[] = hostList;
-  const hostName = (hostId: string) => hosts.find((entry) => entry.id === hostId)?.name ?? hostId;
 
-  const roots = new Map<string, Map<string, { root: string | null; relative: string | null }>>();
   const wanted = pathsToResolve({ threads: tree.threads, environments: tree.environments, edits: editMap, projects });
-  await Promise.all([...wanted].map(async ([hostId, paths]) => {
-    try {
-      const found = new Map<string, { root: string | null; relative: string | null }>();
-      for (let start = 0; start < paths.length; start += RESOLVE_CHUNK) {
-        const { results } = await host("resolveRoots", { paths: paths.slice(start, start + RESOLVE_CHUNK) }, { hostId, signal });
-        for (const result of results) found.set(result.path, { root: result.root, relative: result.relative });
-      }
-      roots.set(hostId, found);
-    } catch (error) {
-      warnings.push(`Could not reach ${hostName(hostId)}: ${errorMessage(error)}`);
-    }
-  }));
+  await resolveMissing(scoped, wanted, failedHosts, hostName, warnings, signal);
+  const roots = new Map<string, Map<string, RootEntry>>();
+  for (const [hostId, paths] of wanted) {
+    if (failedHosts.has(hostId)) continue;
+    roots.set(hostId, new Map(paths.flatMap((path) => {
+      const found = scoped.roots.peek(hostId, path);
+      return found === undefined ? [] : [[path, found] as const];
+    })));
+  }
 
   const { plans, otherFiles } = planRepos({
     threads: tree.threads, environments: tree.environments, edits: editMap, roots, projects, hosts,
@@ -364,6 +429,40 @@ export async function buildOverview(
     environmentIds: [...tree.environments.keys()],
     warnings,
     truncatedThreads: tree.truncated,
+    partial: false,
+    archivedHidden: tree.archivedHidden,
+    generatedAt: Date.now(),
+  };
+}
+
+// The outline of an overview: every row and header, none of the numbers. It makes no git, status, diff or event call.
+export async function buildShell(deps: CollectDeps, input: ShellInput, signal?: AbortSignal): Promise<Overview> {
+  const { target } = input;
+  const [tree, { projects, hosts }] = await Promise.all([
+    collectTarget(deps, target, input.includeArchived, signal),
+    listProjectsAndHosts(deps.sdk, [], signal),
+  ]);
+  const wanted = pathsToResolve({ threads: tree.threads, environments: tree.environments, edits: new Map(), projects });
+  const roots: ResolvedRoots = new Map([...wanted].map(([hostId, paths]) => [
+    hostId, new Map(paths.map((path) => [path, deps.roots?.peek(hostId, path) ?? { root: path, relative: "" }])),
+  ]));
+  const { plans } = planRepos({ threads: tree.threads, environments: tree.environments, edits: new Map(), roots, projects, hosts });
+  const hostNames = new Map(hosts.map((host) => [host.id, host.name]));
+  return {
+    threadId: target.kind === "tree" ? target.threadId : "",
+    target,
+    windowHours: target.kind === "all" ? deps.allOptions!.windowHours : null,
+    scope: "uncommitted",
+    threads: tree.threads,
+    repos: plans.map((plan) => loadingRepo(plan, tree.environments, plan.hostId === null ? null : (hostNames.get(plan.hostId) ?? plan.hostId))),
+    worktrees: loadingWorktrees(plans, tree.environments, hostNames),
+    sharedFiles: [],
+    otherFiles: [],
+    environmentIds: [...tree.environments.keys()],
+    warnings: [],
+    truncatedThreads: tree.truncated,
+    partial: true,
+    archivedHidden: tree.archivedHidden,
     generatedAt: Date.now(),
   };
 }

@@ -5,6 +5,7 @@ import {
   type PluginSidebarThread, type PluginSidebarThreadIndicator,
 } from "@get-bb/plugin-sdk/app";
 import type { Overview, SharedFile, ThreadSummary, Worktree } from "./contract";
+import { EditsSkeleton, Skeleton } from "./skeleton";
 import { primaryThreadId } from "./worktrees";
 
 export { primaryThreadId };
@@ -116,6 +117,7 @@ function WorktreeRowView({ worktree, currentThreadId, fallback, sharedCount, sel
   const id = primaryThreadId(worktree, currentThreadId);
   const live = useLiveThread(id, fallback);
   const unavailable = worktree.state === "unavailable";
+  const loading = worktree.state === "loading";
   const { additions, deletions } = lineCounts(worktree);
   return (
     <button type="button" data-worktree-row={worktree.key} aria-current={selected ? "true" : undefined} onClick={() => onOpen(worktree.key)}
@@ -143,9 +145,11 @@ function WorktreeRowView({ worktree, currentThreadId, fallback, sharedCount, sel
         <PullRequestBadge threadId={id} />
       </span>
       <span className="col-start-3 row-start-1 whitespace-nowrap text-right font-mono">
-        {unavailable
-          ? <span className="text-destructive-text" title={worktree.message ?? undefined}>unavailable</span>
-          : <><span className="text-diff-added">+{additions}</span> <span className="text-diff-removed">−{deletions}</span></>}
+        {loading
+          ? <Skeleton className="h-3 w-14 align-middle" />
+          : unavailable
+            ? <span className="text-destructive-text" title={worktree.message ?? undefined}>unavailable</span>
+            : <><span className="text-diff-added">+{additions}</span> <span className="text-diff-removed">−{deletions}</span></>}
       </span>
       <Icon name="ChevronRight" className="col-start-4 row-span-2 row-start-1 size-3.5 text-subtle-foreground" aria-hidden />
       <span className="col-start-2 row-start-2 flex min-w-0 items-center gap-1 font-mono text-[11px] text-muted-foreground">
@@ -156,7 +160,10 @@ function WorktreeRowView({ worktree, currentThreadId, fallback, sharedCount, sel
           <span className="shrink-0 font-sans text-subtle-foreground">· +{worktree.threadIds.length - 1} {worktree.threadIds.length === 2 ? "thread" : "threads"}</span>
         )}
       </span>
-      {!unavailable && (
+      {loading && (
+        <span className="col-start-3 row-start-2 flex justify-end"><Skeleton className="h-2.5 w-20" /></span>
+      )}
+      {!unavailable && !loading && (
         <span className="col-start-3 row-start-2 flex justify-end gap-1.5 whitespace-nowrap text-[11px] text-muted-foreground">
           {worktree.aheadCount !== null && worktree.behindCount !== null && (
             <span className="font-mono" title={`Commits ahead of and behind ${worktree.base ?? "the base branch"}`}>↑{worktree.aheadCount} ↓{worktree.behindCount}</span>
@@ -253,7 +260,8 @@ export function WorktreeList({
     return counts;
   }, [overview.sharedFiles]);
   const shownKeys = new Set(worktrees.map((worktree) => worktree.key));
-  const sharedFiles = overview.sharedFiles.filter((file) => file.worktreeKeys.some((key) => shownKeys.has(key)));
+  // The files two worktrees share are only known once every worktree's files are.
+  const sharedFiles = overview.partial ? [] : overview.sharedFiles.filter((file) => file.worktreeKeys.some((key) => shownKeys.has(key)));
   const titleOf = (id: string): string => resolveLive(live?.get(id) ?? null, threads.get(id), id).title;
   // On the page a child's row says which thread it belongs to; the side panel already is that thread's.
   const underTitleOf = (worktree: Worktree): string | null => {
@@ -270,7 +278,7 @@ export function WorktreeList({
   }
   const severalMachines = new Set(worktrees.map((worktree) => worktree.hostId)).size > 1;
   const checkouts = overview.repos.filter((repo) => repo.ref.kind === "checkout");
-  const outside = checkouts.length > 0 || overview.otherFiles.length > 0;
+  const outside = overview.partial || checkouts.length > 0 || overview.otherFiles.length > 0;
 
   return (
     <div data-worktree-list className="pb-3">
@@ -305,6 +313,7 @@ export function WorktreeList({
       {outside && (
         <section>
           <GroupHeading icon="Folder">Changed outside worktrees</GroupHeading>
+          {overview.partial && <EditsSkeleton />}
           {checkouts.map((repo) => (
             <OutsideRow key={repo.key} icon="Folder" onClick={onShowRepositories}
               detail={<>{plural(repo.totals.files, "file")} · <span className="text-diff-added">+{repo.totals.additions}</span> <span className="text-diff-removed">−{repo.totals.deletions}</span></>}>

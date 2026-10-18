@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, waitFor } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginThreadPanelProps } from "@get-bb/plugin-sdk/app";
-import type { Overview, OverviewInput, PatchOutput, PatchRequest, RecordedEditsInput, RecordedEditsOutput, rpcContract } from "../src/contract";
+import type { Overview, OverviewInput, PatchOutput, PatchRequest, RecordedEditsInput, RecordedEditsOutput, ShellInput, rpcContract } from "../src/contract";
 import { clearFileCache } from "../src/file-row";
 import { VIEW_STORAGE_KEY } from "../src/view-preference";
 import {
@@ -48,6 +48,7 @@ function sampleOverview(overrides: Partial<Overview> = {}): Overview {
 
 interface Handlers {
   overview?: (input: OverviewInput) => Overview | Promise<Overview>;
+  shell?: (input: ShellInput) => Overview | Promise<Overview>;
   patch?: (input: PatchRequest) => PatchOutput | Promise<PatchOutput>;
   recordedEdits?: (input: RecordedEditsInput) => RecordedEditsOutput | Promise<RecordedEditsOutput>;
 }
@@ -56,17 +57,18 @@ async function mount(handlers: Handlers = {}) {
   window.localStorage.setItem(VIEW_STORAGE_KEY, "repositories");
   const app = await loadPluginApp(() => import("../app"));
   const overview = vi.fn(handlers.overview ?? (() => sampleOverview()));
+  const shell = vi.fn(handlers.shell ?? (() => new Promise<Overview>(() => {})));
   const patch = vi.fn(handlers.patch ?? ((input: PatchRequest) => ({ patch: `+patch for ${input.path}`, truncated: false, binary: false })));
   const recordedEdits = vi.fn(handlers.recordedEdits ?? (() => ({ edits: [] })));
   const unsubscribed: string[] = [];
   const subscribe = vi.fn((args: { event: string }) => () => { unsubscribed.push(args.event); });
   const slot = renderSlot<PluginThreadPanelProps, typeof rpcContract>(app.threadPanelActions[0]!, { threadId: "thr_1", params: null }, {
     pluginId: "vantage",
-    rpc: { overview, patch, recordedEdits, commitFiles: () => ({ files: [] }) },
+    rpc: { shell, overview, patch, recordedEdits, commitFiles: () => ({ files: [] }) },
     sdk: { subscribe: subscribe as never },
   });
   mounts.push(slot);
-  return { slot, overview, patch, recordedEdits, subscribe, unsubscribed };
+  return { slot, overview, shell, patch, recordedEdits, subscribe, unsubscribed };
 }
 
 const row = (slot: Slot, path: string): HTMLElement => {
@@ -79,11 +81,18 @@ const diffs = (slot: Slot): string[] => [...slot.container.querySelectorAll('[da
 const repoHeader = (slot: Slot, key: string): HTMLButtonElement => slot.container.querySelector<HTMLButtonElement>(`[data-repo="${key}"] > button`)!;
 
 describe("VantagePanel", () => {
-  it("summarises the repositories, files, line counts and threads", async () => {
+  it("summarises the repositories, files, line counts and threads on a line of its own, outside the toolbar", async () => {
     const { slot } = await mount();
     await slot.findByText("cortex");
     const toolbar = slot.container.querySelector("section > div")!;
-    expect(toolbar.textContent).toContain("3 repos · 4 files · +12 −1 · 2 threads");
+    expect(toolbar.textContent).not.toContain("3 repos");
+    expect(slot.container.querySelector("[data-repo-summary]")!.textContent).toContain("3 repos · 4 files · +12 −1 · 2 threads");
+  });
+
+  it("lets the toolbar wrap, so the scope switch and the archived toggle are never clipped in a narrow panel", async () => {
+    const { slot } = await mount();
+    await slot.findByText("cortex");
+    expect(slot.container.querySelector("[data-vantage-panel] > div")!.className).toContain("flex-wrap");
   });
 
   it("shows one section for each repository with its label, caption, branch and thread chips", async () => {
@@ -322,7 +331,8 @@ describe("VantagePanel", () => {
     fireEvent.click(slot.getByRole("button", { name: "Branch" }));
     await slot.findByText("scope branch");
     expect(overview.mock.calls.map(([input]) => input)).toEqual([
-      { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted" }, { target: { kind: "tree", threadId: "thr_1" }, scope: "branch" },
+      { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true },
+      { target: { kind: "tree", threadId: "thr_1" }, scope: "branch", includeArchived: true },
     ]);
     expect(slot.getByRole("button", { name: "Branch" }).getAttribute("aria-pressed")).toBe("true");
   });
@@ -332,7 +342,7 @@ describe("VantagePanel", () => {
     await slot.findByText("cortex");
     fireEvent.click(slot.getByRole("button", { name: "Refresh" }));
     await waitFor(() => expect(overview).toHaveBeenCalledTimes(2));
-    expect(overview.mock.calls[1]?.[0]).toEqual({ target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", refresh: true });
+    expect(overview.mock.calls[1]?.[0]).toEqual({ target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true, refresh: true });
   });
 
   it("says Updating… while a refresh runs and keeps the repositories visible", async () => {

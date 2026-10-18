@@ -41,6 +41,29 @@ describe("createRepoCache", () => {
     expect(load).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps an entry for the time to live its value asks for instead of the default", async () => {
+    const { cache, advance } = setup({ ttlMs: 60_000 });
+    const load = vi.fn(async () => "gone");
+    const longer = (value: string) => (value === "gone" ? 600_000 : undefined);
+    await cache.get("k", meta(), load, longer);
+    advance(599_999);
+    await cache.get("k", meta(), load, longer);
+    expect(load).toHaveBeenCalledTimes(1);
+    advance(1);
+    await cache.get("k", meta(), load, longer);
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses the default time to live when the value asks for none", async () => {
+    const { cache, advance } = setup({ ttlMs: 60_000 });
+    const load = vi.fn(async () => "present");
+    const longer = (value: string) => (value === "gone" ? 600_000 : undefined);
+    await cache.get("k", meta(), load, longer);
+    advance(60_000);
+    await cache.get("k", meta(), load, longer);
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
   it("shares one load between concurrent requests for a key", async () => {
     const { cache } = setup();
     let release: (value: string) => void = () => {};

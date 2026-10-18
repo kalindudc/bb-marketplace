@@ -1,10 +1,11 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { createCli, type OverviewRequest } from "./src/cli";
-import { buildOverview, type CollectDeps, type HostCall } from "./src/collect";
-import { hostContract, rpcContract, type HostInput, type HostMethod, type HostOutput, type Overview } from "./src/contract";
+import { buildOverview, buildShell, type CollectDeps, type HostCall } from "./src/collect";
+import { hostContract, rpcContract, type HostInput, type HostMethod, type HostOutput, type Overview, type ShellInput } from "./src/contract";
 import { createEditIndex, findRecordedEdits, type EventsSdk } from "./src/edits";
 import { createRepoCache, isDeltaOnly } from "./src/repo-cache";
+import { createRootCache } from "./src/root-cache";
 import { loadCommitFiles, loadPatch } from "./src/sources";
 
 const HOST_TIMEOUT_MS = 25_000;
@@ -20,7 +21,9 @@ export default function vantage(bb: BbPluginApi): void {
   // bb.sdk only works while the plugin is bound, so it is read inside calls, never at load.
   const events: EventsSdk = { threads: { events: { list: (args) => bb.sdk.threads.events.list(args) } } };
   const edits = createEditIndex(events);
-  const deps = (): CollectDeps => ({ sdk: bb.sdk, host, edits });
+  const cache = createRepoCache();
+  const roots = createRootCache();
+  const deps = (): CollectDeps => ({ sdk: bb.sdk, host, edits, cache, roots });
 
   const settings = bb.settings.define({
     windowHours: {
@@ -34,7 +37,6 @@ export default function vantage(bb: BbPluginApi): void {
       experimental_schema: z.number().int().min(10).max(500),
     },
   });
-  const cache = createRepoCache();
   settings.onChange(() => {
     cache.clear();
     bb.realtime.publish(SETTINGS_CHANNEL, {});
@@ -56,18 +58,22 @@ export default function vantage(bb: BbPluginApi): void {
   ];
   bb.onDispose(() => { for (const unsubscribe of unsubscribers) unsubscribe(); });
 
+  const allOptionsFor = async (hours?: number) => {
+    const { windowHours, maxThreads } = await settings.get();
+    return { windowHours: hours ?? windowHours, maxThreads };
+  };
+
   // Every open window asks for the same page at once, so they share one build; the cache makes the next one cheap.
   const building = new Map<string, Promise<Overview>>();
   async function overview(input: OverviewRequest & { refresh?: boolean }): Promise<Overview> {
-    const { target, scope, refresh } = input;
-    if (target.kind === "tree") return buildOverview(deps(), { target, scope, refresh });
-    const { windowHours, maxThreads } = await settings.get();
-    const allOptions = { windowHours: input.hours ?? windowHours, maxThreads };
-    const key = [scope, allOptions.windowHours, maxThreads, refresh === true].join("\0");
+    const { target, scope, includeArchived, refresh } = input;
+    if (target.kind === "tree") return buildOverview(deps(), { target, scope, includeArchived, refresh });
+    const allOptions = await allOptionsFor(input.hours);
+    const key = [scope, allOptions.windowHours, allOptions.maxThreads, includeArchived, refresh === true].join("\0");
     let pending = building.get(key);
     if (pending === undefined) {
       // No caller's abort signal: the build is shared, and finishing it warms the cache for the next one.
-      pending = buildOverview({ ...deps(), allOptions, cache }, { target, scope, refresh });
+      pending = buildOverview({ ...deps(), allOptions }, { target, scope, includeArchived, refresh });
       building.set(key, pending);
       const done = () => { building.delete(key); };
       pending.then(done, done);
@@ -75,7 +81,13 @@ export default function vantage(bb: BbPluginApi): void {
     return pending;
   }
 
+  async function shell(input: ShellInput): Promise<Overview> {
+    const base = deps();
+    return buildShell(input.target.kind === "all" ? { ...base, allOptions: await allOptionsFor() } : base, input);
+  }
+
   bb.rpc.register(rpcContract, {
+    shell: (input) => shell(input),
     overview: (input) => overview(input),
     patch: (input) => loadPatch(deps(), input),
     commitFiles: (input) => loadCommitFiles(deps(), input),

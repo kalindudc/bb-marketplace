@@ -9,14 +9,15 @@ See how every agent's worktree is doing, open any one of them to read its diffs,
 - Terminal here opens a shell in the worktree's folder. Open thread opens the child, and bb's own thread menu offers stop, archive and the rest. The keys [ and ] step between worktrees and Escape goes back.
 - The Repositories view groups everything the thread tree changed by repository: thread workspaces, other checkouts agents edited by path, archived children's branches, and recorded edits for files outside any repository.
 - A full-screen Vantage page in bb's left navigation covers every thread active in the last 24 hours, plus anything running and threads archived in that time. The worktree list sits on the left, grouped by project, and the selected worktree's changes, commits, chat and terminal sit on the right. Filter by project, by text, or to worktrees with changes only. Every view has its own address, so back and forward work. "Open full screen" in a thread's tab opens the page for just that thread's tree.
+- Both views paint every row at once and fill in the git numbers as they arrive. The page starts without archived threads; "Show archived" brings them back, and the side tab shows them by default.
 
 ## For agents
 
-`bb vantage worktrees` prints one line for each worktree, then the shared files. `bb vantage worktree <thread>` prints one thread's files and commits. `bb vantage changes` prints the Repositories view. Each accepts `--json`; `--thread <id>` reads another thread, and `--all` (with `--hours <n>`) reads every recent thread, grouped by project.
+`bb vantage worktrees` prints one line for each worktree, then the shared files. `bb vantage worktree <thread>` prints one thread's files and commits. `bb vantage changes` prints the Repositories view. Each accepts `--json`; `--thread <id>` reads another thread, and `--all` (with `--hours <n>`) reads every recent thread, grouped by project, and `--archived` adds the archived ones.
 
 ## How it works
 
-Vantage only reads. It never stages, commits or changes a file. A worktree's counts come from one bb status call, and its status and pull request from data bb's sidebar already loads. Other checkouts are read with git on the machine that owns them. The full-screen page keeps each repository's result for 60 seconds and reloads only what an agent's edit or a workspace change touched. Two settings, the time window (24 hours) and the thread limit (200), tune it.
+Vantage only reads. It never stages, commits or changes a file. A workspace's counts come from one bb status call that both views share, and its status and pull request from data bb's sidebar already loads. Other checkouts are read with git on the machine that owns them. Results are kept for 60 seconds and reloaded only where an agent's edit or a workspace change touched, and git roots for 10 minutes. Two settings, the time window (24 hours) and the thread limit (200), tune it.
 
 ## Limits
 

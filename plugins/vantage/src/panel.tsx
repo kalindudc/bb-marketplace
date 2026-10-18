@@ -4,8 +4,10 @@ import type { Overview, Scope, rpcContract } from "./contract";
 import { fileKey, type FileLoaders, FileRow } from "./file-row";
 import { createLimiter } from "./limit";
 import { RepoSection } from "./repo-section";
+import { EditsSkeleton, Skeleton, SkeletonRows } from "./skeleton";
 import { Hint } from "./hint";
 import { formatRoute } from "./route";
+import { createArchivedPreference } from "./archived-preference";
 import { createVantageStore, type VantageSnapshot, type VantageStore } from "./store";
 import { createViewPreference, type VantageView } from "./view-preference";
 import { WorktreeDetail, type WorktreeDetailProps } from "./worktree-detail";
@@ -20,6 +22,7 @@ const SCOPES: ReadonlyArray<{ scope: Scope; label: string }> = [
 
 const limitPatches = createLimiter(PATCH_CONCURRENCY);
 const viewPreference = createViewPreference(window);
+const archivedPreference = createArchivedPreference(window, "panel");
 const VIEWS: ReadonlyArray<{ view: VantageView; label: string }> = [
   { view: "worktrees", label: "Worktrees" },
   { view: "repositories", label: "Repositories" },
@@ -37,11 +40,13 @@ function Summary({ overview }: { overview: Overview }) {
   const additions = overview.repos.reduce((sum, repo) => sum + repo.totals.additions, 0);
   const deletions = overview.repos.reduce((sum, repo) => sum + repo.totals.deletions, 0);
   return (
-    <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-      {overview.repos.length} {overview.repos.length === 1 ? "repo" : "repos"} · {files} {files === 1 ? "file" : "files"} ·{" "}
-      <span className="text-diff-added">+{additions}</span> <span className="text-diff-removed">−{deletions}</span> ·{" "}
-      {overview.threads.length} {overview.threads.length === 1 ? "thread" : "threads"}
-    </span>
+    <p data-repo-summary className="px-3.5 pt-2.5 text-xs text-muted-foreground">
+      {overview.repos.length} {overview.repos.length === 1 ? "repo" : "repos"} ·{" "}
+      {overview.partial
+        ? <Skeleton className="h-3 w-24 align-middle" />
+        : <>{files} {files === 1 ? "file" : "files"} · <span className="text-diff-added">+{additions}</span> <span className="text-diff-removed">−{deletions}</span></>}
+      {" "}· {overview.threads.length} {overview.threads.length === 1 ? "thread" : "threads"}
+    </p>
   );
 }
 
@@ -61,10 +66,13 @@ export function VantagePanel({ threadId }: PluginThreadPanelProps) {
   useEffect(() => {
     const next = createVantageStore({
       rpc: { call: (method, input) => rpcRef.current.call(method, input) }, sdk: sdkRef.current, target: { kind: "tree", threadId },
+      includeArchived: archivedPreference.get(),
     });
     setMounted({ threadId, store: next });
     return () => next.dispose();
   }, [threadId]);
+  const includeArchived = useSyncExternalStore(archivedPreference.subscribe, archivedPreference.get, archivedPreference.get);
+  useEffect(() => { store?.setIncludeArchived(includeArchived); }, [store, includeArchived]);
   const subscribe = useCallback((listener: () => void) => store?.subscribe(listener) ?? (() => {}), [store]);
   const getSnapshot = useCallback(() => store?.getSnapshot() ?? EMPTY_SNAPSHOT, [store]);
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
@@ -121,7 +129,7 @@ export function VantagePanel({ threadId }: PluginThreadPanelProps) {
   };
   const threads = useMemo(() => new Map((overview?.threads ?? []).map((thread) => [thread.id, thread])), [overview?.threads]);
 
-  const everythingOpen = overview !== null && collapsedRepos.size === 0 && allFileKeys(overview).every((key) => expandedFiles.has(key));
+  const everythingOpen = overview !== null && !overview.partial && collapsedRepos.size === 0 && allFileKeys(overview).every((key) => expandedFiles.has(key));
   const toggleAll = () => {
     if (overview === null) return;
     if (everythingOpen) {
@@ -163,7 +171,7 @@ export function VantagePanel({ threadId }: PluginThreadPanelProps) {
   return (
     <LiveThreadsProvider>
       <section data-vantage-panel tabIndex={-1} onKeyDown={onKeyDown} className="flex h-full min-h-0 min-w-0 flex-col bg-surface-recessed text-foreground">
-        <div className="flex shrink-0 items-center gap-2 border-b border-border-seam py-2 pl-3.5 pr-3">
+        <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1.5 border-b border-border-seam py-2 pl-3.5 pr-3">
           <div role="group" aria-label="View" className="inline-flex shrink-0 overflow-hidden rounded-md border border-border-seam">
             {VIEWS.map((entry) => (
               <button key={entry.view} type="button" aria-pressed={view === entry.view} onClick={() => viewPreference.set(entry.view)}
@@ -172,9 +180,7 @@ export function VantagePanel({ threadId }: PluginThreadPanelProps) {
               </button>
             ))}
           </div>
-          {view === "repositories" && overview !== null
-            ? <Summary overview={overview} />
-            : <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{overview === null ? "Looking for changes…" : ""}</span>}
+          <span className="min-w-0 flex-1" />
           {snapshot.refreshing && <span aria-live="polite" className="shrink-0 text-xs text-muted-foreground">Updating…</span>}
           {view === "repositories" && (
             <>
@@ -186,7 +192,7 @@ export function VantagePanel({ threadId }: PluginThreadPanelProps) {
                   </button>
                 ))}
               </div>
-              <button type="button" disabled={overview === null} onClick={toggleAll}
+              <button type="button" disabled={overview === null || overview.partial} onClick={toggleAll}
                 className="shrink-0 cursor-pointer rounded px-2 py-0.5 text-xs text-muted-foreground hover:bg-state-hover disabled:cursor-default disabled:opacity-60">
                 {everythingOpen ? "Collapse all" : "Expand all"}
               </button>
@@ -197,6 +203,13 @@ export function VantagePanel({ threadId }: PluginThreadPanelProps) {
               onClick={() => navigate.toPluginPanel("vantage", { subPath: formatRoute({ target: { kind: "tree", threadId }, view: "worktrees", selectedKey: null }) })}
               className="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
               <Icon name="Maximize2" className="size-3.5" aria-hidden />
+            </button>
+          </Hint>
+          <Hint label="Include archived threads and their kept branches">
+            <button type="button" aria-pressed={includeArchived} onClick={() => archivedPreference.set(!includeArchived)}
+              className={`inline-flex shrink-0 cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-xs hover:bg-state-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${includeArchived ? "bg-surface-selected text-foreground" : "text-muted-foreground"}`}>
+              <Icon name="Archive" className="size-3.5" aria-hidden />
+              {!includeArchived && overview !== null && overview.archivedHidden > 0 ? `Show archived (${overview.archivedHidden})` : "Show archived"}
             </button>
           </Hint>
           <button type="button" aria-label="Refresh" title="Refresh" onClick={() => store?.refresh({ hard: true })}
@@ -215,19 +228,21 @@ export function VantagePanel({ threadId }: PluginThreadPanelProps) {
         ) : (
           <div className="min-h-0 flex-1 overflow-y-auto">
             {banners}
-            {overview === null && snapshot.status === "loading" && <p className="p-3.5 text-sm text-muted-foreground">Looking for changes…</p>}
+            {overview === null && snapshot.status === "loading" && <SkeletonRows count={4} label="Loading worktrees" />}
             {view === "worktrees" && overview !== null && (
               <WorktreeList overview={overview} currentThreadId={threadId} onOpen={setSelectedKey}
                 onShowRepositories={() => viewPreference.set("repositories")} />
             )}
             {view === "repositories" && (
               <>
+                {overview !== null && <Summary overview={overview} />}
                 {empty && <p className="p-3.5 text-sm text-muted-foreground">No changes in this thread or its child threads yet.</p>}
                 {overview?.repos.map((repo) => (
                   <RepoSection key={repo.key} repo={repo} scope={overview.scope} threads={threads} expanded={!collapsedRepos.has(repo.key)}
                     expandedFiles={expandedFiles} onToggleRepo={onToggleRepo} onToggleFile={onToggleFile} onOpenThread={onOpenThread}
                     loaders={loaders} showHost={showHost} />
                 ))}
+                {overview?.partial === true && <EditsSkeleton />}
                 {overview !== null && overview.otherFiles.length > 0 && (
                   <section data-other-files className="pb-2">
                     <h3 className="px-3.5 pb-1 pt-3 text-[10.5px] font-semibold uppercase tracking-wider text-subtle-foreground">Other files</h3>

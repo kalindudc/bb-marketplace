@@ -7,6 +7,9 @@ import type { FileChange, Overview, Repo, Scope, rpcContract } from "./contract"
 import { fileKey, FileRow } from "./file-row";
 import { createLimiter } from "./limit";
 import { RepoSection } from "./repo-section";
+import { EditsSkeleton, Skeleton, SkeletonRows } from "./skeleton";
+import { Hint } from "./hint";
+import { createArchivedPreference } from "./archived-preference";
 import { formatRoute, parseRoute, type PageRoute, type PageView } from "./route";
 import { createVantageStore, type VantageSnapshot, type VantageStore } from "./store";
 import { WorktreeDetail, type WorktreeDetailProps } from "./worktree-detail";
@@ -28,6 +31,7 @@ const SWITCH = "inline-flex shrink-0 overflow-hidden rounded-md border border-bo
 const FIELD = "h-7 rounded-md border border-border-seam bg-transparent px-2 text-xs text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
 const limitPatches = createLimiter(PATCH_CONCURRENCY);
+const archivedPreference = createArchivedPreference(window, "page");
 const plural = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? "" : "s"}`;
 
 function fileKeys(repos: readonly Repo[], otherFiles: readonly FileChange[], scope: Scope): string[] {
@@ -77,19 +81,34 @@ function WorktreeSummary({ overview, worktrees }: { overview: Overview; worktree
   return (
     <span data-page-summary className="text-xs text-muted-foreground">
       {plural(worktrees.length, "workspace")} · {tally.running} running · {tally.needs} {tally.needs === 1 ? "needs" : "need"} you · {tally.failed} failed ·{" "}
-      {plural(files, "file")} <span className="text-diff-added">+{lines.reduce((sum, entry) => sum + entry.additions, 0)}</span>{" "}
-      <span className="text-diff-removed">−{lines.reduce((sum, entry) => sum + entry.deletions, 0)}</span> · {plural(projects, "project")}
+      {overview.partial
+        ? <Skeleton className="h-3 w-24 align-middle" />
+        : (
+          <>
+            {plural(files, "file")} <span className="text-diff-added">+{lines.reduce((sum, entry) => sum + entry.additions, 0)}</span>{" "}
+            <span className="text-diff-removed">−{lines.reduce((sum, entry) => sum + entry.deletions, 0)}</span>
+          </>
+        )}
+      {" "}· {plural(projects, "project")}
     </span>
   );
 }
 
-function RepoSummary({ repos }: { repos: readonly Repo[] }) {
+function RepoSummary({ repos, partial }: { repos: readonly Repo[]; partial: boolean }) {
   const files = repos.reduce((sum, repo) => sum + repo.totals.files, 0);
   const projects = new Set(repos.map((repo) => repo.projectId)).size;
   return (
     <span data-page-summary className="text-xs text-muted-foreground">
-      {plural(repos.length, "repo")} · {plural(files, "file")} <span className="text-diff-added">+{repos.reduce((sum, repo) => sum + repo.totals.additions, 0)}</span>{" "}
-      <span className="text-diff-removed">−{repos.reduce((sum, repo) => sum + repo.totals.deletions, 0)}</span> · {plural(projects, "project")}
+      {plural(repos.length, "repo")} ·{" "}
+      {partial
+        ? <Skeleton className="h-3 w-24 align-middle" />
+        : (
+          <>
+            {plural(files, "file")} <span className="text-diff-added">+{repos.reduce((sum, repo) => sum + repo.totals.additions, 0)}</span>{" "}
+            <span className="text-diff-removed">−{repos.reduce((sum, repo) => sum + repo.totals.deletions, 0)}</span>
+          </>
+        )}
+      {" "}· {plural(projects, "project")}
     </span>
   );
 }
@@ -117,11 +136,16 @@ function VantageScreen({ subPath }: PluginNavPanelProps) {
   const [mounted, setMounted] = useState<{ key: string; store: VantageStore } | null>(null);
   const store = mounted?.key === targetKey ? mounted.store : null;
   useEffect(() => {
-    const next = createVantageStore({ rpc: { call: (method, input) => rpcRef.current.call(method, input) }, sdk: sdkRef.current, target: route.target });
+    const next = createVantageStore({
+      rpc: { call: (method, input) => rpcRef.current.call(method, input) }, sdk: sdkRef.current, target: route.target,
+      includeArchived: archivedPreference.get(),
+    });
     setMounted({ key: targetKey, store: next });
     return () => next.dispose();
     // The store follows the target's content, not the identity of the route object.
   }, [targetKey]);
+  const includeArchived = useSyncExternalStore(archivedPreference.subscribe, archivedPreference.get, archivedPreference.get);
+  useEffect(() => { store?.setIncludeArchived(includeArchived); }, [store, includeArchived]);
   const subscribe = useCallback((listener: () => void) => store?.subscribe(listener) ?? (() => {}), [store]);
   const getSnapshot = useCallback(() => store?.getSnapshot() ?? EMPTY_SNAPSHOT, [store]);
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
@@ -154,7 +178,8 @@ function VantageScreen({ subPath }: PluginNavPanelProps) {
   const selected = selectedKey === null ? undefined : overview?.worktrees.find((worktree) => worktree.key === selectedKey);
   const detailOpen = route.view === "worktrees" && selected !== undefined;
   useEffect(() => {
-    if (overview !== null && selectedKey !== null && selected === undefined) go({ ...route, selectedKey: null }, true);
+    // The outline may leave out a worktree the full overview has, so only the full result can say it is gone.
+    if (overview !== null && !overview.partial && selectedKey !== null && selected === undefined) go({ ...route, selectedKey: null }, true);
   }, [overview, selectedKey, selected, route, go]);
   const [tab, setTab] = useState<WorktreeDetailProps["tab"]>("changes");
   useEffect(() => { setTab("changes"); }, [selectedKey]);
@@ -195,7 +220,7 @@ function VantageScreen({ subPath }: PluginNavPanelProps) {
   const onToggleRepo = useCallback((key: string) => setCollapsedRepos((current) => flip(current, key)), [flip]);
   const onToggleFile = useCallback((key: string) => setExpandedFiles((current) => flip(current, key)), [flip]);
   const allKeys = fileKeys(repoView.repos, repoView.otherFiles, snapshot.scope);
-  const everythingOpen = overview !== null && repoView.repos.every((repo) => !collapsedRepos.has(repo.key)) && allKeys.every((key) => expandedFiles.has(key));
+  const everythingOpen = overview !== null && !overview.partial && repoView.repos.every((repo) => !collapsedRepos.has(repo.key)) && allKeys.every((key) => expandedFiles.has(key));
   const toggleAll = () => {
     if (everythingOpen) {
       setCollapsedRepos(new Set(repoView.repos.map((repo) => repo.key)));
@@ -259,7 +284,7 @@ function VantageScreen({ subPath }: PluginNavPanelProps) {
 
   let body;
   if (wide === null || overview === null) {
-    body = snapshot.status === "error" ? null : <p className="p-4 text-sm text-muted-foreground">Looking for changes…</p>;
+    body = snapshot.status === "error" ? null : <SkeletonRows count={4} label="Loading worktrees" />;
   } else if (route.view === "repositories") {
     body = (
       <div className="h-full overflow-y-auto">
@@ -281,6 +306,7 @@ function VantageScreen({ subPath }: PluginNavPanelProps) {
               ))}
             </section>
           ))}
+          {overview.partial && <EditsSkeleton />}
           {repoView.otherFiles.length > 0 && (
             <section data-other-files className="pb-2">
               <h3 className="px-4 pb-1 pt-4 text-[10.5px] font-semibold uppercase tracking-wider text-subtle-foreground">Other files</h3>
@@ -331,11 +357,18 @@ function VantageScreen({ subPath }: PluginNavPanelProps) {
           <input type="checkbox" checked={filter.changedOnly} onChange={(event) => setFilter({ ...filter, changedOnly: event.target.checked })} />
           With changes only
         </label>
+        <Hint label="Include archived threads and their kept branches">
+          <button type="button" aria-pressed={includeArchived} onClick={() => archivedPreference.set(!includeArchived)}
+            className={`inline-flex shrink-0 cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-xs hover:bg-state-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${includeArchived ? "bg-surface-selected text-foreground" : "text-muted-foreground"}`}>
+            <Icon name="Archive" className="size-3.5" aria-hidden />
+            {!includeArchived && overview !== null && overview.archivedHidden > 0 ? `Show archived (${overview.archivedHidden})` : "Show archived"}
+          </button>
+        </Hint>
         {route.view === "repositories" && (
           <>
             <SwitchButtons label="Scope" options={SCOPES.map((entry) => ({ value: entry.scope, text: entry.label }))} value={snapshot.scope}
               onChange={(scope) => store?.setScope(scope)} />
-            <button type="button" disabled={overview === null} onClick={toggleAll}
+            <button type="button" disabled={overview === null || overview.partial} onClick={toggleAll}
               className="shrink-0 cursor-pointer rounded px-2 py-0.5 text-xs text-muted-foreground hover:bg-state-hover disabled:cursor-default disabled:opacity-60">
               {everythingOpen ? "Collapse all" : "Expand all"}
             </button>
@@ -350,7 +383,7 @@ function VantageScreen({ subPath }: PluginNavPanelProps) {
         </span>
         {overview !== null && (
           <div className="basis-full">
-            {route.view === "repositories" ? <RepoSummary repos={repoView.repos} /> : <WorktreeSummary overview={overview} worktrees={worktrees} />}
+            {route.view === "repositories" ? <RepoSummary repos={repoView.repos} partial={overview.partial} /> : <WorktreeSummary overview={overview} worktrees={worktrees} />}
           </div>
         )}
       </div>

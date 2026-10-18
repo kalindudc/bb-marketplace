@@ -1,5 +1,5 @@
 import type { PluginBrowserBbSdk } from "@get-bb/plugin-sdk";
-import type { Overview, OverviewInput, OverviewTarget, Scope } from "./contract";
+import type { Overview, OverviewInput, OverviewTarget, Scope, ShellInput } from "./contract";
 
 export interface VantageSnapshot {
   status: "loading" | "ready" | "error";
@@ -13,6 +13,7 @@ export interface VantageStore {
   getSnapshot(): VantageSnapshot;
   subscribe(listener: () => void): () => void;
   setScope(scope: Scope): void;
+  setIncludeArchived(includeArchived: boolean): void;
   refresh(options?: { hard?: boolean }): void;
   dispose(): void;
 }
@@ -26,13 +27,17 @@ const FILE_EVENT_TYPES = ["item/completed", "turn/completed"];
 
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
+interface StoreCalls { shell: ShellInput; overview: OverviewInput }
+
 export function createVantageStore(options: {
-  rpc: { call(method: "overview", input: OverviewInput): Promise<Overview> };
+  rpc: { call<M extends keyof StoreCalls>(method: M, input: StoreCalls[M]): Promise<Overview> };
   sdk: Pick<PluginBrowserBbSdk, "subscribe">;
   target: OverviewTarget;
+  includeArchived: boolean;
   refreshDelayMs?: number;
 }): VantageStore {
   const { rpc, sdk, target } = options;
+  let includeArchived = options.includeArchived;
   const everyThread = target.kind === "all";
   const refreshDelayMs = options.refreshDelayMs ?? (everyThread ? ALL_REFRESH_DELAY_MS : TREE_REFRESH_DELAY_MS);
   const listeners = new Set<() => void>();
@@ -44,6 +49,8 @@ export function createVantageStore(options: {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let lastEndedAt: number | null = null;
   let known: { overview: Overview; threads: Set<string>; environments: Set<string> } | null = null;
+  // A load (the first one, or one after the scope or the archived choice changed) draws the outline while the full result is read.
+  let outlineWanted = true;
 
   const update = (change: Partial<VantageSnapshot>) => {
     const next = { ...snapshot, ...change };
@@ -69,8 +76,18 @@ export function createVantageStore(options: {
     const token = { generation };
     running = token;
     update(snapshot.overview === null ? { status: "loading", error: null } : { refreshing: true });
-    const input: OverviewInput = { target, scope: snapshot.scope, ...(hard ? { refresh: true } : {}) };
+    const input: OverviewInput = { target, scope: snapshot.scope, includeArchived, ...(hard ? { refresh: true } : {}) };
+    let fullArrived = false;
+    if (outlineWanted) {
+      outlineWanted = false;
+      // A failed outline is ignored: the full result is on its way and paints the same rows.
+      rpc.call("shell", { target, includeArchived }).then((outline) => {
+        if (disposed || token.generation !== generation || fullArrived) return;
+        update({ status: "ready", overview: { ...outline, scope: snapshot.scope }, refreshing: true, error: null });
+      }, () => {});
+    }
     const finish = (change: () => Partial<VantageSnapshot>) => {
+      fullArrived = true;
       if (disposed || token.generation !== generation) return;
       update(change());
       running = null;
@@ -153,7 +170,16 @@ export function createVantageStore(options: {
     setScope(scope) {
       if (disposed || scope === snapshot.scope) return;
       generation++;
+      outlineWanted = true;
       update({ scope, error: null });
+      request(false, true);
+    },
+    setIncludeArchived(next) {
+      if (disposed || next === includeArchived) return;
+      includeArchived = next;
+      generation++;
+      outlineWanted = true;
+      update({ error: null });
       request(false, true);
     },
     refresh(refreshOptions) {

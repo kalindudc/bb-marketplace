@@ -39,10 +39,11 @@ const statusOf = (uncommitted: string[], committed: string[] = [], branchName = 
 interface TreeThread { id: string; title: string; parentThreadId: string | null; environmentId: string | null; status?: string }
 const PARENT: TreeThread = { id: "thr_1", title: "Parent", parentThreadId: null, environmentId: "env_1" };
 const CHILD: TreeThread = { id: "thr_2", title: "Child A", parentThreadId: "thr_1", environmentId: "env_2", status: "active" };
+const DONE: TreeThread = { id: "thr_3", title: "Finished child", parentThreadId: "thr_1", environmentId: null };
 
 function start(options: {
   files?: string[]; events?: object[]; hostResult?: (call: HostCall) => unknown; tree?: TreeThread[]; status?: (environmentId: string) => unknown;
-  onList?: () => void;
+  onList?: () => void; archived?: TreeThread[];
 } = {}) {
   const subscriptions: Array<{ event: string; callback: (event: unknown) => void }> = [];
   const unsubscribed: string[] = [];
@@ -66,15 +67,25 @@ function start(options: {
       threads: {
         get: async ({ threadId }: { threadId: string }) => {
           const found = tree.find((thread) => thread.id === threadId);
-          if (found === undefined) throw new Error(`no thread ${threadId}`);
+          if (found === undefined) {
+            const kept = options.archived?.find((thread) => thread.id === threadId);
+            if (kept === undefined) throw new Error(`no thread ${threadId}`);
+            return makeThreadResponse({ ...kept, status: "idle", archivedAt: Date.now() });
+          }
           return makeThreadResponse({ ...found, status: (found.status ?? "idle") as "idle" });
         },
         list: async ({ archived, limit, offset }: { archived?: boolean; limit?: number; offset?: number } = {}) => {
           options.onList?.();
-          return (archived === true ? [] : tree.map((thread) => makeThreadResponse({ ...thread, status: (thread.status ?? "idle") as "idle", updatedAt: Date.now() })))
-            .slice(offset ?? 0, (offset ?? 0) + (limit ?? 100));
+          // One timestamp per call: a clock tick between threads would reorder them, since collectAll sorts newest first.
+          const now = Date.now();
+          const listed = archived === true
+            ? (options.archived ?? []).map((thread) => makeThreadResponse({ ...thread, status: "idle", updatedAt: now, archivedAt: now }))
+            : tree.map((thread) => makeThreadResponse({ ...thread, status: (thread.status ?? "idle") as "idle", updatedAt: now }));
+          return listed.slice(offset ?? 0, (offset ?? 0) + (limit ?? 100));
         },
-        experimental_listDescendants: async () => ({ threads: [{ threadId: "thr_1", descendantIds: tree.slice(1).map((thread) => thread.id) }] }),
+        experimental_listDescendants: async () => ({
+          threads: [{ threadId: "thr_1", descendantIds: [...tree.slice(1), ...(options.archived ?? [])].map((thread) => thread.id) }],
+        }),
         experimental_listAncestors: async ({ threadIds }: { threadIds: readonly string[] }) => ({
           threads: threadIds.map((threadId) => ({ threadId, ancestorIds: ancestorsOf(threadId) })),
         }),
@@ -113,7 +124,7 @@ describe("server", () => {
   it("registers the rpc methods and the vantage command, and logs that it loaded", async () => {
     const { harness, ready } = start();
     await ready;
-    expect(harness.registrations.rpcMethods).toEqual(["overview", "patch", "commitFiles", "recordedEdits"]);
+    expect(harness.registrations.rpcMethods).toEqual(["shell", "overview", "patch", "commitFiles", "recordedEdits"]);
     expect(harness.registrations.cli?.name).toBe("vantage");
     expect(harness.logEntries).toContainEqual({ level: "info", message: "loaded" });
   });
@@ -123,7 +134,7 @@ describe("server", () => {
       events: [fileChangeRow(1, [{ path: "/work/one/src/a.ts", kind: "update", diff: "+x" }])],
     });
     await ready;
-    const result = await harness.behavior.callRpc("overview", { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted" });
+    const result = await harness.behavior.callRpc("overview", { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
     const parsed = overviewSchema.parse(result);
     expect(parsed.repos).toHaveLength(1);
     expect(parsed.repos[0]).toMatchObject({ label: "Project", state: "ready", threadIds: ["thr_1"] });
@@ -135,7 +146,14 @@ describe("server", () => {
   it("rejects an overview request with an unknown field", async () => {
     const { harness, ready } = start();
     await ready;
-    await expect(harness.behavior.callRpc("overview", { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", extra: 1 })).rejects.toThrow();
+    await expect(harness.behavior.callRpc("overview", { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true, extra: 1 })).rejects.toThrow();
+  });
+
+  it("rejects an overview request that does not say whether archived threads are wanted", async () => {
+    const { harness, ready } = start();
+    await ready;
+    await expect(harness.behavior.callRpc("overview", { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted" })).rejects.toThrow();
+    await expect(harness.behavior.callRpc("shell", { target: { kind: "tree", threadId: "thr_1" } })).rejects.toThrow();
   });
 
   it("answers patch for a workspace with the branch scope through bb's diffPatch", async () => {
@@ -196,7 +214,7 @@ describe("server", () => {
 });
 
 describe("server: every thread", () => {
-  const ALL = { target: { kind: "all" }, scope: "uncommitted" };
+  const ALL = { target: { kind: "all" }, scope: "uncommitted", includeArchived: false };
   const TWO = { tree: [PARENT, CHILD], status: (id: string) => (id === "env_1" ? statusOf(["README.md"]) : statusOf(["b.ts"], ["README.md"], "child-work")) };
   const diffs = (harness: { inspection: { sdk: { callsTo(path: string): unknown[][] } } }) => harness.inspection.sdk.callsTo("environments.diffFiles").length;
   const statuses = (harness: { inspection: { sdk: { callsTo(path: string): unknown[][] } } }) => harness.inspection.sdk.callsTo("environments.status").length;
@@ -234,23 +252,27 @@ describe("server: every thread", () => {
     expect(await harness.behavior.callRpc("overview", ALL)).toMatchObject({ windowHours: 6 });
   });
 
-  it("answers a second all overview from the cache, without asking bb for any diff or status", async () => {
+  it("answers a second all overview from the cache, without asking bb for any status", async () => {
     const { harness, ready } = start(TWO);
     await ready;
     await harness.behavior.callRpc("overview", ALL);
-    const [firstDiffs, firstStatuses] = [diffs(harness), statuses(harness)];
-    expect(firstDiffs).toBe(2);
+    expect(statuses(harness)).toBe(2);
+    expect(diffs(harness)).toBe(0);
     await harness.behavior.callRpc("overview", ALL);
-    expect([diffs(harness), statuses(harness)]).toEqual([firstDiffs, firstStatuses]);
+    expect([diffs(harness), statuses(harness)]).toEqual([0, 2]);
   });
 
-  it("does not use the cache for a thread's own tree", async () => {
+  it("uses the same cache for a thread's own tree, and a hard refresh on the tree reads it again", async () => {
     const { harness, ready } = start(TWO);
     await ready;
-    const tree = { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted" };
+    const tree = { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true };
     await harness.behavior.callRpc("overview", tree);
     await harness.behavior.callRpc("overview", tree);
-    expect(diffs(harness)).toBe(4);
+    expect(statuses(harness)).toBe(2);
+    await harness.behavior.callRpc("overview", ALL);
+    expect(statuses(harness)).toBe(2);
+    await harness.behavior.callRpc("overview", { ...tree, refresh: true });
+    expect(statuses(harness)).toBe(4);
   });
 
   it("reads a repository again after a change in one of its threads", async () => {
@@ -259,7 +281,6 @@ describe("server: every thread", () => {
     await harness.behavior.callRpc("overview", ALL);
     emit("thread:changed", threadEvent("thr_2", ["item/completed"]));
     await harness.behavior.callRpc("overview", ALL);
-    expect(diffs(harness)).toBe(3);
     expect(statuses(harness)).toBe(3);
   });
 
@@ -270,7 +291,7 @@ describe("server: every thread", () => {
     emit("thread:changed", threadEvent("thr_2", ["item/agentMessage/delta", "item/commandExecution/outputDelta"]));
     emit("thread:changed", threadEvent("thr_unrelated", ["item/completed"]));
     await harness.behavior.callRpc("overview", ALL);
-    expect(diffs(harness)).toBe(2);
+    expect(statuses(harness)).toBe(2);
   });
 
   it("treats a thread event with no event types as a change", async () => {
@@ -279,7 +300,7 @@ describe("server: every thread", () => {
     await harness.behavior.callRpc("overview", ALL);
     emit("thread:changed", threadEvent("thr_1"));
     await harness.behavior.callRpc("overview", ALL);
-    expect(diffs(harness)).toBe(3);
+    expect(statuses(harness)).toBe(3);
   });
 
   it("reads an environment again when bb reports its work status, refs or status changed", async () => {
@@ -289,7 +310,7 @@ describe("server: every thread", () => {
       await harness.behavior.callRpc("overview", ALL);
       emit("environment:changed", { id: "env_2", changes: [change] });
       await harness.behavior.callRpc("overview", ALL);
-      expect(diffs(harness), change).toBe(3);
+      expect(statuses(harness), change).toBe(3);
     }
   });
 
@@ -299,7 +320,7 @@ describe("server: every thread", () => {
     await harness.behavior.callRpc("overview", ALL);
     emit("environment:changed", { id: "env_2", changes: ["renamed"] });
     await harness.behavior.callRpc("overview", ALL);
-    expect(diffs(harness)).toBe(2);
+    expect(statuses(harness)).toBe(2);
   });
 
   it("clears the cache on a refresh", async () => {
@@ -307,7 +328,7 @@ describe("server: every thread", () => {
     await ready;
     await harness.behavior.callRpc("overview", ALL);
     await harness.behavior.callRpc("overview", { ...ALL, refresh: true });
-    expect(diffs(harness)).toBe(4);
+    expect(statuses(harness)).toBe(4);
   });
 
   it("shares one build between concurrent all overviews, and builds again once it is done", async () => {
@@ -329,7 +350,7 @@ describe("server: every thread", () => {
     await harness.behavior.setSettings({ windowHours: 12 });
     expect(harness.inspection.realtimeSignals).toEqual([{ channel: "vantage:settings", payload: {} }]);
     await harness.behavior.callRpc("overview", ALL);
-    expect(diffs(harness)).toBe(4);
+    expect(statuses(harness)).toBe(4);
   });
 
   it("stops listening when the plugin is disposed", async () => {
@@ -338,6 +359,120 @@ describe("server: every thread", () => {
     expect(subscriptions.map((entry) => entry.event).sort()).toEqual(["environment:changed", "thread:changed"]);
     await harness.lifecycle.dispose();
     expect(unsubscribed.sort()).toEqual(["environment:changed", "thread:changed"]);
+  });
+});
+
+describe("server: shell and archived threads", () => {
+  const TWO = { tree: [PARENT, CHILD], status: (id: string) => (id === "env_1" ? statusOf(["README.md"]) : statusOf(["b.ts"], ["README.md"], "child-work")) };
+  const WITH_ARCHIVED = { ...TWO, archived: [DONE] };
+  const ALL = (includeArchived: boolean) => ({ target: { kind: "all" }, scope: "uncommitted", includeArchived });
+  const TREE = (includeArchived: boolean) => ({ target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived });
+  const ids = (overview: { threads: Array<{ id: string }> }) => overview.threads.map((thread) => thread.id);
+
+  it("answers shell with a partial overview of loading rows, without asking bb or the host for any git state", async () => {
+    const { harness, ready } = start(TWO);
+    await ready;
+    const parsed = overviewSchema.parse(await harness.behavior.callRpc("shell", { target: { kind: "all" }, includeArchived: false }));
+    expect(parsed).toMatchObject({ partial: true, archivedHidden: 0, sharedFiles: [], target: { kind: "all" }, windowHours: 24 });
+    expect(parsed.worktrees.map((entry) => [entry.threadIds, entry.state, entry.branch])).toEqual([
+      [["thr_1"], "loading", "feature/work"], [["thr_2"], "loading", "child-work"],
+    ]);
+    for (const path of ["environments.status", "environments.diffFiles", "threads.events.list"]) {
+      expect(harness.inspection.sdk.callsTo(path), path).toHaveLength(0);
+    }
+    expect(harness.experimental_hostRpcCalls).toHaveLength(0);
+  });
+
+  it("answers shell for a thread's tree", async () => {
+    const { harness, ready } = start(WITH_ARCHIVED);
+    await ready;
+    const parsed = overviewSchema.parse(await harness.behavior.callRpc("shell", { target: { kind: "tree", threadId: "thr_1" }, includeArchived: false }));
+    expect(parsed).toMatchObject({ partial: true, threadId: "thr_1", archivedHidden: 1 });
+    expect(ids(parsed)).toEqual(["thr_1", "thr_2"]);
+  });
+
+  it("leaves archived threads out of an all overview unless asked, and counts them", async () => {
+    const { harness, ready } = start(WITH_ARCHIVED);
+    await ready;
+    const hidden = overviewSchema.parse(await harness.behavior.callRpc("overview", ALL(false)));
+    expect(ids(hidden).sort()).toEqual(["thr_1", "thr_2"]);
+    expect(hidden).toMatchObject({ archivedHidden: 1, partial: false });
+    const shown = overviewSchema.parse(await harness.behavior.callRpc("overview", ALL(true)));
+    expect(ids(shown).sort()).toEqual(["thr_1", "thr_2", "thr_3"]);
+    expect(shown.archivedHidden).toBe(0);
+  });
+
+  it("leaves archived threads out of a tree overview unless asked", async () => {
+    const { harness, ready } = start(WITH_ARCHIVED);
+    await ready;
+    expect(ids(overviewSchema.parse(await harness.behavior.callRpc("overview", TREE(false))))).toEqual(["thr_1", "thr_2"]);
+    expect(ids(overviewSchema.parse(await harness.behavior.callRpc("overview", TREE(true))))).toEqual(["thr_1", "thr_2", "thr_3"]);
+  });
+
+  it("does not share a build between overviews that differ in whether they include archived threads", async () => {
+    let lists = 0;
+    const { harness, ready } = start({ ...WITH_ARCHIVED, onList: () => { lists++; } });
+    await ready;
+    await Promise.all([harness.behavior.callRpc("overview", ALL(false)), harness.behavior.callRpc("overview", ALL(true))]);
+    expect(lists).toBe(4);
+  });
+});
+
+describe("bb vantage --archived", () => {
+  const WITH_ARCHIVED = {
+    tree: [PARENT, CHILD], archived: [DONE],
+    status: (id: string) => (id === "env_1" ? statusOf(["README.md"]) : statusOf(["b.ts"], ["README.md"], "child-work")),
+  };
+
+  it("hides archived threads with --all and says how many", async () => {
+    const { harness, ready } = start(WITH_ARCHIVED);
+    await ready;
+    const json = JSON.parse((await harness.behavior.runCli(["worktrees", "--all", "--json"], {})).stdout ?? "") as { threads: Array<{ id: string }>; archivedHidden: number };
+    expect(json.threads.map((thread) => thread.id).sort()).toEqual(["thr_1", "thr_2"]);
+    expect(json.archivedHidden).toBe(1);
+    const text = await harness.behavior.runCli(["worktrees", "--all"], {});
+    expect(text.stdout).toContain("1 archived thread hidden (use --archived)");
+    const changes = await harness.behavior.runCli(["changes", "--all"], {});
+    expect(changes.stdout).toContain("1 archived thread hidden (use --archived)");
+  });
+
+  it("includes them with --archived, and then says nothing is hidden", async () => {
+    const { harness, ready } = start(WITH_ARCHIVED);
+    await ready;
+    for (const command of ["worktrees", "changes"]) {
+      const result = await harness.behavior.runCli([command, "--all", "--archived", "--json"], {});
+      const json = JSON.parse(result.stdout ?? "") as { threads: Array<{ id: string }>; archivedHidden: number };
+      expect(json.threads.map((thread) => thread.id).sort(), command).toEqual(["thr_1", "thr_2", "thr_3"]);
+      expect(json.archivedHidden, command).toBe(0);
+    }
+    expect((await harness.behavior.runCli(["worktrees", "--all", "--archived"], {})).stdout).not.toContain("hidden");
+  });
+
+  it("always includes archived threads for one thread's tree", async () => {
+    const { harness, ready } = start(WITH_ARCHIVED);
+    await ready;
+    const json = JSON.parse((await harness.behavior.runCli(["worktrees", "--thread", "thr_1", "--json"], {})).stdout ?? "") as { threads: Array<{ id: string }> };
+    expect(json.threads.map((thread) => thread.id)).toEqual(["thr_1", "thr_2", "thr_3"]);
+    const one = await harness.behavior.runCli(["worktree", "thr_1", "--json"], {});
+    expect(one.exitCode).toBe(0);
+  });
+
+  it("refuses --archived without --all", async () => {
+    const { harness, ready } = start(WITH_ARCHIVED);
+    await ready;
+    for (const command of ["changes", "worktrees"]) {
+      const result = await harness.behavior.runCli([command, "--archived", "--json"], { threadId: "thr_1" });
+      expect(result.exitCode).toBe(1);
+      expect(JSON.parse(result.stdout ?? "")).toMatchObject({ ok: false, error: { code: "archived_requires_all" } });
+    }
+  });
+
+  it("prints the hidden count in the text outputs only when some threads are hidden", () => {
+    expect(formatWorktrees(overview({ archivedHidden: 3, worktrees: [worktree()] }))).toContain("3 archived threads hidden (use --archived)");
+    expect(formatWorktrees(overview({ worktrees: [worktree()] }))).not.toContain("hidden");
+    expect(formatWorktrees(overview({ archivedHidden: 2 }))).toContain("2 archived threads hidden (use --archived)");
+    expect(formatOverview(overview({ archivedHidden: 1 }))).toContain("1 archived thread hidden (use --archived)");
+    expect(formatOverview(overview())).not.toContain("hidden");
   });
 });
 
@@ -352,7 +487,7 @@ describe("server worktrees", () => {
   it("answers overview with the worktrees and the files they share", async () => {
     const { harness, ready } = start(TWO);
     await ready;
-    const parsed = overviewSchema.parse(await harness.behavior.callRpc("overview", { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted" }));
+    const parsed = overviewSchema.parse(await harness.behavior.callRpc("overview", { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true }));
     expect(parsed.worktrees.map((entry) => [entry.threadIds, entry.branch, entry.aheadCount])).toEqual([[["thr_1"], "feature/work", 0], [["thr_2"], "child-work", 1]]);
     expect(parsed.sharedFiles).toEqual([{ projectId: "proj_1", path: "README.md", worktreeKeys: ["host_1:/work/one", "host_1:/work/two"] }]);
     expect(parsed.threads.map((thread) => thread.status)).toEqual(["idle", "active"]);
@@ -584,7 +719,7 @@ describe("bb vantage changes", () => {
     expect(result.exitCode).toBe(0);
     const printed = JSON.parse(result.stdout) as Overview;
     expect(overviewSchema.safeParse(printed).success).toBe(true);
-    expect(printed).toMatchObject({ target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted" });
+    expect(printed).toMatchObject({ target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", partial: false, archivedHidden: 0 });
     expect(printed.repos[0]?.files.map((file) => file.path)).toEqual(["src/a.ts"]);
   });
 
@@ -598,7 +733,7 @@ describe("bb vantage changes", () => {
 
   it("caps a repository at 50 files in the text output", async () => {
     const files = Array.from({ length: 60 }, (_, index) => `src/file-${String(index).padStart(2, "0")}.ts`);
-    const { harness, ready } = start({ files });
+    const { harness, ready } = start({ status: () => statusOf(files) });
     await ready;
     const result = await harness.behavior.runCli(["changes"], { threadId: "thr_1" });
     expect(result.exitCode).toBe(0);

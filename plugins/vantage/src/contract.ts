@@ -138,7 +138,7 @@ export const repoSchema = z.object({
   base: text.nullable(),
   aheadCount: count.nullable(),
   threadIds: z.array(text),
-  state: z.enum(["ready", "unavailable"]),
+  state: z.enum(["ready", "unavailable", "loading"]),
   message: text.nullable(),
   files: z.array(fileChangeSchema),
   otherFiles: z.array(fileChangeSchema),
@@ -159,7 +159,7 @@ export const worktreeSchema = z.object({
   base: text.nullable(),
   kind: z.enum(["workspace", "branch"]),
   threadIds: z.array(text),
-  state: z.enum(["ready", "unavailable"]),
+  state: z.enum(["ready", "unavailable", "loading"]),
   message: text.nullable(),
   aheadCount: count.nullable(),
   behindCount: count.nullable(),
@@ -207,6 +207,8 @@ export const overviewSchema = z.object({
   environmentIds: z.array(text),
   warnings: z.array(z.string()),
   truncatedThreads: z.boolean(),
+  partial: z.boolean(),
+  archivedHidden: count,
   generatedAt: count,
 }).strict();
 export type Overview = z.infer<typeof overviewSchema>;
@@ -214,9 +216,16 @@ export type Overview = z.infer<typeof overviewSchema>;
 export const overviewInputSchema = z.object({
   target: overviewTargetSchema,
   scope: scopeSchema,
+  includeArchived: z.boolean(),
   refresh: z.boolean().optional(),
 }).strict();
 export type OverviewInput = z.infer<typeof overviewInputSchema>;
+
+export const shellInputSchema = z.object({
+  target: overviewTargetSchema,
+  includeArchived: z.boolean(),
+}).strict();
+export type ShellInput = z.infer<typeof shellInputSchema>;
 
 export const patchScopeSchema = z.enum(["uncommitted", "branch", "committed"]);
 export type PatchScope = z.infer<typeof patchScopeSchema>;
@@ -263,6 +272,7 @@ export const commitFilesOutputSchema = z.object({ files: z.array(fileChangeSchem
 export type CommitFilesOutput = z.infer<typeof commitFilesOutputSchema>;
 
 export const rpcContract = defineRpcContract({
+  shell: { input: shellInputSchema, output: overviewSchema },
   overview: { input: overviewInputSchema, output: overviewSchema },
   patch: { input: patchInputSchema, output: patchOutputSchema },
   commitFiles: { input: commitFilesInputSchema, output: commitFilesOutputSchema },

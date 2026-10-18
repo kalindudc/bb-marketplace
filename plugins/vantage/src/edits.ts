@@ -59,7 +59,8 @@ async function* pages(sdk: EventsSdk, threadId: string, afterSeq: number | null,
 }
 
 export interface EditIndex {
-  get(threadId: string, signal?: AbortSignal): Promise<ThreadEdits>;
+  /** `settled` means no event can still arrive for the thread (it is archived), so an indexed thread is not read again. */
+  get(threadId: string, signal?: AbortSignal, options?: { settled?: boolean }): Promise<ThreadEdits>;
   forget(threadIds: readonly string[]): void;
 }
 
@@ -91,7 +92,9 @@ export function createEditIndex(sdk: EventsSdk, options: { maxThreads?: number; 
   }
 
   return {
-    get(threadId, signal) {
+    get(threadId, signal, options) {
+      const known = options?.settled === true ? entries.get(threadId) : undefined;
+      if (known !== undefined) return Promise.resolve(known.edits);
       let pending = inflight.get(threadId);
       if (pending === undefined) {
         pending = read(threadId, signal).finally(() => inflight.delete(threadId));

@@ -22,8 +22,8 @@ function setup(active: Thread[], archived: Thread[] = []) {
   return { deps: { sdk } as CollectDeps, list, get };
 }
 
-const run = (deps: CollectDeps, options: { windowHours?: number; maxThreads?: number } = {}) =>
-  collectAll(deps, { windowHours: 24, maxThreads: 200, now: NOW, ...options });
+const run = (deps: CollectDeps, options: { windowHours?: number; maxThreads?: number; includeArchived?: boolean } = {}) =>
+  collectAll(deps, { windowHours: 24, maxThreads: 200, now: NOW, includeArchived: true, ...options });
 
 describe("collectAll", () => {
   it("pages the active threads and then the archived ones, hidden threads included", async () => {
@@ -124,3 +124,47 @@ describe("collectAll", () => {
     expect(get).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("collectAll with archived threads hidden", () => {
+  const archivedThread = (id: string, hoursAgo = 3) =>
+    thread(id, { archivedAt: NOW - hoursAgo * HOUR, updatedAt: NOW - hoursAgo * HOUR, environmentId: `env_${id}` });
+  const withArchived = () => setup(
+    [thread("live", { environmentId: "env_live" })],
+    [archivedThread("a1"), archivedThread("a2"), archivedThread("gone", 40)],
+  );
+
+  it("counts the archived threads inside the window and keeps none of them", async () => {
+    const { deps } = withArchived();
+    const { threads, archivedHidden } = await run(deps, { includeArchived: false });
+    expect(threads.map((entry) => entry.id)).toEqual(["live"]);
+    expect(archivedHidden).toBe(2);
+  });
+
+  it("keeps the archived threads when they are asked for, and hides none", async () => {
+    const { deps } = withArchived();
+    const { threads, archivedHidden } = await run(deps, { includeArchived: true });
+    expect(threads.map((entry) => entry.id).sort()).toEqual(["a1", "a2", "live"]);
+    expect(archivedHidden).toBe(0);
+  });
+
+  it("still pages the archived list, because that is how it counts them", async () => {
+    const { deps, list } = withArchived();
+    await run(deps, { includeArchived: false });
+    expect(list.mock.calls.map(([args]) => args.archived)).toEqual([false, true]);
+  });
+
+  it("loads no environment for a hidden thread", async () => {
+    const { deps, get } = withArchived();
+    const { environments } = await run(deps, { includeArchived: false });
+    expect(get.mock.calls.map(([args]) => args.environmentId)).toEqual(["env_live"]);
+    expect([...environments.keys()]).toEqual(["env_live"]);
+  });
+
+  it("does not let hidden threads use up the thread limit", async () => {
+    const { deps } = setup([thread("live")], [archivedThread("a1"), archivedThread("a2")]);
+    const { threads, truncated } = await run(deps, { includeArchived: false, maxThreads: 1 });
+    expect(threads.map((entry) => entry.id)).toEqual(["live"]);
+    expect(truncated).toBe(false);
+  });
+});
+

@@ -145,3 +145,26 @@ describe("projectOptions", () => {
     expect(projectOptions(bare)).toEqual([]);
   });
 });
+
+describe("filters on the instant outline", () => {
+  const outline = makeOverview({
+    target: { kind: "all" },
+    worktrees: [
+      worktree({ key: "wl1", state: "loading", aheadCount: null, behindCount: null, branch: "agent/loading" }),
+      worktree({ key: "wl2", state: "ready", branch: "agent/idle" }),
+    ],
+    repos: [repo({ key: "rl1", state: "loading" }), repo({ key: "rl2", state: "ready" })],
+    partial: true,
+  });
+
+  it("keeps a worktree or repository that is still loading under 'With changes only', since its changes are not known yet", () => {
+    expect(keys(filterWorktrees(outline, DEFAULT_FILTER))).toEqual(["wl1"]);
+    expect(keys(filterRepos(outline, DEFAULT_FILTER).repos)).toEqual(["rl1"]);
+  });
+
+  it("still applies the text and project filters to loading rows", () => {
+    expect(keys(filterWorktrees(outline, filter({ text: "agent/loading" })))).toEqual(["wl1"]);
+    expect(keys(filterWorktrees(outline, filter({ text: "nothing like this" })))).toEqual([]);
+    expect(keys(filterWorktrees(outline, filter({ projectId: "proj_other" })))).toEqual([]);
+  });
+});

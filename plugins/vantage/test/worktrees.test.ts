@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import type { PluginBbSdk } from "@get-bb/plugin-sdk";
 import type { CollectDeps, Environment, HostCall, RepoPlan } from "../src/collect";
 import type { RepoRef } from "../src/contract";
-import { fileFromStatus, findSharedFiles, loadWorktrees, primaryThreadId } from "../src/worktrees";
+import { createRepoCache } from "../src/repo-cache";
+import { fileFromStatus, loadRepoFiles } from "../src/sources";
+import { findSharedFiles, loadWorktrees, primaryThreadId } from "../src/worktrees";
 import { branchWorktree, destroyedEnvironment, environment, fileChange, worktree } from "./fixtures";
 
 type Status = { path: string; status: string; insertions: number | null; deletions: number | null };
@@ -244,6 +246,103 @@ describe("loadWorktrees branches", () => {
       environments(environment({ id: "env_1" }), environment({ id: "env_2" }), destroyed), names,
     );
     expect(result.map((entry) => entry.key)).toEqual(["host_1:/work/2", "host_1:/code/proj@feature/old", "host_1:/work/1"]);
+  });
+});
+
+describe("shared loads", () => {
+  function shared() {
+    const base = setup({ status: () => available({ workingTree: { files: [statusFile("src/a.ts"), statusFile("new.txt", "??", 4, 0)] } }) });
+    const diffFiles = vi.fn(async (..._args: unknown[]) => ({
+      outcome: "available", files: [], initialPatches: [], mergeBaseRef: null, shortstat: "", truncated: false,
+    }));
+    let now = 0;
+    const cache = createRepoCache({ now: () => now });
+    const deps: CollectDeps = { ...base.deps, sdk: { environments: { status: base.status, diffFiles } } as unknown as PluginBbSdk, cache };
+    return { ...base, deps, diffFiles, cache, advance: (ms: number) => { now += ms; } };
+  }
+  const env = environments(environment({ id: "env_1" }));
+
+  it("serves a worktree row and an uncommitted repository from one status call", async () => {
+    const { deps, status, diffFiles } = shared();
+    const [rows, repo] = await Promise.all([loadWorktrees(deps, [workspacePlan(1)], env, names), loadRepoFiles(deps, workspacePlan(1), "uncommitted")]);
+    expect(status).toHaveBeenCalledTimes(1);
+    expect(diffFiles).not.toHaveBeenCalled();
+    expect(rows[0]?.uncommitted.map((file) => file.path)).toEqual(["src/a.ts", "new.txt"]);
+    if (!("files" in repo)) throw new Error("expected files");
+    expect(repo.files.map((file) => [file.path, file.status])).toEqual([["src/a.ts", "modified"], ["new.txt", "untracked"]]);
+    expect(repo).toMatchObject({ base: null, aheadCount: null, truncated: false });
+  });
+
+  it("still asks for the branch diff in the branch scope, and shares the status with the row", async () => {
+    const { deps, status, diffFiles } = shared();
+    await Promise.all([loadWorktrees(deps, [workspacePlan(1)], env, names), loadRepoFiles(deps, workspacePlan(1), "branch")]);
+    expect(diffFiles).toHaveBeenCalledTimes(1);
+    expect(diffFiles.mock.calls[0]?.[0]).toEqual({ environmentId: "env_1", target: "all", mergeBaseBranch: "origin/main", signal: undefined });
+    expect(status).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads the status again for a different base", async () => {
+    const { deps, status } = shared();
+    await loadWorktrees(deps, [workspacePlan(1)], env, names);
+    await loadWorktrees(deps, [workspacePlan(1, { ref: workspaceRef("env_1", "main") })], env, names);
+    expect(status).toHaveBeenCalledTimes(2);
+  });
+
+  it("reads the status again after the thread that works there changed", async () => {
+    const { deps, status, cache } = shared();
+    await loadWorktrees(deps, [workspacePlan(1)], env, names);
+    await loadWorktrees(deps, [workspacePlan(1)], env, names);
+    expect(status).toHaveBeenCalledTimes(1);
+    cache.invalidateThreads(["thr_1"]);
+    await loadWorktrees(deps, [workspacePlan(1)], env, names);
+    expect(status).toHaveBeenCalledTimes(2);
+  });
+
+  it("makes an uncommitted repository unavailable when the status is", async () => {
+    const { deps } = shared();
+    const failed = setup({ status: () => ({ outcome: "unavailable", failure: { code: "path_not_found", message: "Folder is gone", workspacePath: "/x" } }) });
+    expect(await loadRepoFiles({ ...deps, sdk: { environments: { status: failed.status } } as unknown as PluginBbSdk }, workspacePlan(1), "uncommitted"))
+      .toEqual({ unavailable: "Folder is gone" });
+  });
+
+  it("does not hand a caller's abort signal to a load that other callers share, but does when nothing is shared", async () => {
+    const { deps, status, cache } = shared();
+    const controller = new AbortController();
+    await loadWorktrees(deps, [workspacePlan(1)], env, names, controller.signal);
+    expect(status.mock.calls[0]?.[0]).toMatchObject({ signal: undefined });
+    cache.clear();
+    await loadWorktrees({ ...deps, cache: undefined }, [workspacePlan(1)], env, names, controller.signal);
+    expect(status.mock.calls[1]?.[0]).toMatchObject({ signal: controller.signal });
+  });
+
+  const destroyed = destroyedEnvironment({ id: "env_9", hostId: "host_1", branchName: "feature/old", projectId: "proj_7" });
+
+  it("serves a branch worktree and its repository from one host range call", async () => {
+    const { deps, host } = shared();
+    const [rows, repo] = await Promise.all([
+      loadWorktrees(deps, [branchPlan()], environments(destroyed), names), loadRepoFiles(deps, branchPlan(), "uncommitted"),
+    ]);
+    expect(host).toHaveBeenCalledTimes(1);
+    expect(rows).toHaveLength(1);
+    expect(repo).toMatchObject({ branch: "feature/old", aheadCount: 0 });
+  });
+
+  it("remembers a branch that is gone for ten minutes, and everything else for a minute", async () => {
+    const gone = shared();
+    gone.host.mockResolvedValue({ outcome: "unavailable", reason: "missing-ref", message: "The branch no longer exists" });
+    await loadWorktrees(gone.deps, [branchPlan()], environments(destroyed), names);
+    gone.advance(9 * 60_000);
+    expect(await loadRepoFiles(gone.deps, branchPlan(), "uncommitted")).toEqual({ missingRef: true });
+    expect(gone.host).toHaveBeenCalledTimes(1);
+    gone.advance(61_000);
+    await loadRepoFiles(gone.deps, branchPlan(), "uncommitted");
+    expect(gone.host).toHaveBeenCalledTimes(2);
+
+    const present = shared();
+    await loadWorktrees(present.deps, [branchPlan()], environments(destroyed), names);
+    present.advance(61_000);
+    await loadWorktrees(present.deps, [branchPlan()], environments(destroyed), names);
+    expect(present.host).toHaveBeenCalledTimes(2);
   });
 });
 

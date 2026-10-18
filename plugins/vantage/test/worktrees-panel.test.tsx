@@ -4,13 +4,13 @@ import { toast } from "sonner";
 import { fireEvent, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginSidebarThread, PluginThreadPanelProps } from "@get-bb/plugin-sdk/app";
-import type { CommitFilesInput, CommitFilesOutput, Overview, OverviewInput, PatchOutput, PatchRequest, Worktree, rpcContract } from "../src/contract";
+import type { CommitFilesInput, CommitFilesOutput, Overview, OverviewInput, PatchOutput, PatchRequest, ShellInput, Worktree, rpcContract } from "../src/contract";
 import { clearFileCache } from "../src/file-row";
 import { VIEW_STORAGE_KEY } from "../src/view-preference";
 import { WorktreeDetail, relativeTime, type WorktreeDetailProps } from "../src/worktree-detail";
 import { LiveThreadsProvider, WorktreeList } from "../src/worktree-list";
 import {
-  branchWorktree, checkoutRepo, commit, fileChange, overview as makeOverview, sharedFile, sidebarPullRequest, sidebarThread, threadSummary, worktree,
+  branchWorktree, checkoutRepo, commit, fileChange, overview as makeOverview, repo, sharedFile, sidebarPullRequest, sidebarThread, threadSummary, worktree,
 } from "./fixtures";
 
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { error: vi.fn() }) }));
@@ -670,20 +670,23 @@ describe("WorktreeDetail on the full-screen page", () => {
   });
 });
 
-async function mountPanel(options: { overview?: (input: OverviewInput) => Overview | Promise<Overview>; threadActions?: () => never[] } = {}) {
+async function mountPanel(options: {
+  overview?: (input: OverviewInput) => Overview | Promise<Overview>; shell?: (input: ShellInput) => Overview | Promise<Overview>; threadActions?: () => never[];
+} = {}) {
   const app = await loadPluginApp(() => import("../app"));
   const overview = vi.fn(options.overview ?? (() => sampleOverview()));
+  const shell = vi.fn(options.shell ?? (() => new Promise<Overview>(() => {})));
   const patch = vi.fn(async (input: PatchRequest) => ({ patch: `+patch ${input.scope} ${input.path}`, truncated: false, binary: false }));
   const create = vi.fn(async () => ({ id: "term_1" }));
   const slot = renderSlot<PluginThreadPanelProps, typeof rpcContract>(app.threadPanelActions[0]!, { threadId: "thr_1", params: null }, {
     pluginId: "vantage",
-    rpc: { overview, patch, recordedEdits: () => ({ edits: [] }), commitFiles: () => ({ files: [] }) },
+    rpc: { shell, overview, patch, recordedEdits: () => ({ edits: [] }), commitFiles: () => ({ files: [] }) },
     sdk: { subscribe: (() => () => {}) as never, terminals: { create: create as never } },
     sidebarThreads: { status: "ready", threads: SIDEBAR }, sidebarPullRequests: {}, threadActions: (options.threadActions ?? (() => [])) as never,
     openTerminal: () => true,
   });
   mounts.push(slot);
-  return { slot, overview, patch, create };
+  return { slot, overview, shell, patch, create };
 }
 
 const panelRoot = (slot: Slot): HTMLElement => slot.container.querySelector<HTMLElement>("[data-vantage-panel]")!;
@@ -866,5 +869,150 @@ describe("Vantage panel: the Worktrees view", () => {
     expect(slot.container.textContent).toContain("Only the first 200 threads");
     fireEvent.click(row(slot, "wt1"));
     expect(slot.container.textContent).toContain("Could not reach Dev box: offline");
+  });
+});
+
+describe("loading states", () => {
+  const LOADING = [
+    worktree({ key: "wl0", threadIds: ["thr_1"], branch: "feature/main", state: "loading", aheadCount: null, behindCount: null }),
+    worktree({ key: "wl1", threadIds: ["thr_2"], branch: "agent/a", state: "loading", aheadCount: null, behindCount: null }),
+  ];
+  const outline = (overrides: Partial<Overview> = {}): Overview => sampleOverview({
+    worktrees: LOADING, partial: true, archivedHidden: 2, sharedFiles: [], repos: [], otherFiles: [], ...overrides,
+  });
+  const pulses = (node: Element) => node.querySelectorAll("[aria-hidden='true'].animate-pulse");
+
+  it("keeps a loading row's title, glyph, branch and badges, and shows skeletons where the numbers go", () => {
+    const { slot } = mountList({ overview: outline(), currentThreadId: null });
+    const loading = row(slot, "wl1");
+    expect(loading.textContent).toContain("Child A (live)");
+    expect(loading.textContent).toContain("agent/a");
+    expect(loading.textContent).toContain("Needs you");
+    expect(loading.querySelector('[data-thread-status-glyph="waiting-for-input"]')).not.toBeNull();
+    expect(loading.textContent).not.toMatch(/[+−]\d|uncommitted|clean|↑/);
+    expect(loading.querySelector(".w-14.animate-pulse")).not.toBeNull();
+    expect(loading.querySelector(".w-20.animate-pulse")).not.toBeNull();
+  });
+
+  it("counts a loading worktree in the tally from bb's sidebar, since that needs no git", () => {
+    const { slot } = mountList({ overview: outline() });
+    expect(slot.container.textContent).toContain("2 workspaces · 1 running · 1 needs you · 0 failed");
+  });
+
+  it("hides the shared-files banner and shows one skeleton row under 'Changed outside worktrees' while the overview is partial", () => {
+    const { slot } = mountList({ overview: outline({ sharedFiles: [sharedFile({ worktreeKeys: ["wl0", "wl1"] })] }) });
+    expect(slot.container.textContent).not.toContain("changed in more than one worktree");
+    const outside = [...slot.container.querySelectorAll("h3")].find((heading) => heading.textContent === "Changed outside worktrees")!;
+    expect(outside).toBeTruthy();
+    expect(outside.parentElement!.textContent).toContain("Looking for edits in other repositories…");
+    expect(pulses(outside.parentElement!).length).toBeGreaterThan(0);
+    expect(slot.container.textContent).not.toContain("recorded edits only");
+  });
+
+  it("shows the banner and the real outside rows once the overview is full", () => {
+    const { slot } = mountList({ overview: sampleOverview() });
+    expect(slot.container.textContent).toContain("changed in more than one worktree");
+    expect(slot.container.textContent).not.toContain("Looking for edits in other repositories…");
+    expect(slot.container.textContent).toContain("recorded edits only");
+  });
+
+  it("shows a loading worktree's header and actions, skeleton Changes and Commits, and a working Chat", () => {
+    const { slot } = mountDetail({ overview: outline(), key: "wl1", currentThreadId: null, terminal: "environment" });
+    const header = slot.container.querySelector("[data-worktree-header]")!;
+    expect(header.textContent).toContain("Child A (live)");
+    expect(header.textContent).toContain("agent/a");
+    expect((button(slot, /Terminal here/) as HTMLButtonElement).disabled).toBe(false);
+    expect(button(slot, /Open thread/)).toBeTruthy();
+    expect(header.textContent).not.toMatch(/↑\d|[+−]\d/);
+    expect(slot.getByRole("status", { name: "Reading this worktree's git status…" }).querySelectorAll("[aria-hidden='true'].animate-pulse").length).toBeGreaterThanOrEqual(3);
+    fireEvent.click(tab(slot, /^Commits/));
+    expect(slot.getByRole("status", { name: "Reading this worktree's git status…" })).toBeTruthy();
+    fireEvent.click(tab(slot, /^Chat/));
+    expect(slot.getByTestId("bb-thread-chat").getAttribute("data-thread-id")).toBe("thr_2");
+    expect(slot.queryByRole("status", { name: "Reading this worktree's git status…" })).toBeNull();
+  });
+
+  it("shows a loading repository's header with skeleton totals and three skeleton file rows", async () => {
+    const { slot } = await mountPanel({
+      overview: () => outline({ repos: [repo({ key: "wl1", label: "Loading repo", state: "loading", threadIds: ["thr_2"] })] }),
+    });
+    await slot.findByText("Child A (live)");
+    fireEvent.click(slot.getByRole("button", { name: "Repositories" }));
+    const section = slot.container.querySelector("[data-repo='wl1']")!;
+    expect(section.textContent).toContain("Loading repo");
+    expect(section.textContent).not.toMatch(/\d+ files?|[+−]\d/);
+    expect(pulses(section).length).toBeGreaterThanOrEqual(2 + 9);
+    expect(section.querySelector("[role='status']")).not.toBeNull();
+  });
+});
+
+describe("Vantage panel: the instant outline and archived threads", () => {
+  const outlineOf = () => sampleOverview({
+    partial: true, archivedHidden: 2, sharedFiles: [], repos: [], otherFiles: [],
+    worktrees: WORKTREES.map((entry) => ({ ...entry, state: "loading" as const, aheadCount: null, behindCount: null, uncommitted: [], committed: [], commits: [] })),
+  });
+  const hold = () => {
+    let release: (value: Overview) => void = () => {};
+    const promise = new Promise<Overview>((resolve) => { release = resolve; });
+    return { promise, release };
+  };
+
+  it("shows 'Loading worktrees' before any result", async () => {
+    const { slot } = await mountPanel({ overview: () => new Promise<Overview>(() => {}) });
+    expect(slot.getByRole("status", { name: "Loading worktrees" })).toBeTruthy();
+    expect(slot.container.textContent).not.toContain("Looking for changes…");
+  });
+
+  it("draws rows with titles and branches from the outline, then fills in the numbers from the full overview", async () => {
+    const full = hold();
+    const { slot } = await mountPanel({ overview: () => full.promise, shell: () => outlineOf() });
+    await slot.findByText("Child A (live)");
+    expect(row(slot, "wt1").textContent).toContain("agent/a");
+    expect(row(slot, "wt1").textContent).not.toMatch(/[+−]\d/);
+    expect(slot.queryByRole("status", { name: "Loading worktrees" })).toBeNull();
+    full.release(sampleOverview());
+    await waitFor(() => expect(row(slot, "wt1").textContent).toContain("↑2 ↓1"));
+    expect(row(slot, "wt1").querySelector(".animate-pulse")).toBeNull();
+  });
+
+  it("makes one shell call and one overview call for a load, both with the side tab's archived choice (shown)", async () => {
+    const { slot, overview, shell } = await mountPanel();
+    await slot.findByText("Child A (live)");
+    expect(shell).toHaveBeenCalledTimes(1);
+    expect(overview).toHaveBeenCalledTimes(1);
+    expect(shell.mock.calls[0]?.[0]).toEqual({ target: { kind: "tree", threadId: "thr_1" }, includeArchived: true });
+    expect(overview.mock.calls[0]?.[0]).toEqual({ target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
+  });
+
+  it("has a 'Show archived' toggle with a hint, pressed by default, that hides them and is remembered", async () => {
+    const first = await mountPanel();
+    await first.slot.findByText("Child A (live)");
+    const toggle = first.slot.getByRole("button", { name: /Show archived/ });
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(toggle.querySelector("[data-icon='Archive']")).not.toBeNull();
+    fireEvent.click(toggle);
+    expect(window.localStorage.getItem("bb-plugin-vantage:panel-archived")).toBe("false");
+    await waitFor(() => expect(first.overview).toHaveBeenCalledTimes(2));
+    expect(first.overview.mock.calls[1]?.[0]).toMatchObject({ includeArchived: false });
+    expect(first.shell.mock.calls[1]?.[0]).toMatchObject({ includeArchived: false });
+    expect(first.slot.getByRole("button", { name: /Show archived/ }).getAttribute("aria-pressed")).toBe("false");
+    first.slot.lifecycle.unmount();
+    const second = await mountPanel();
+    await waitFor(() => expect(second.overview).toHaveBeenCalled());
+    expect(second.overview.mock.calls[0]?.[0]).toMatchObject({ includeArchived: false });
+  });
+
+  it("says how many archived threads are hidden in the toggle's label", async () => {
+    window.localStorage.setItem("bb-plugin-vantage:panel-archived", "false");
+    const { slot } = await mountPanel({ overview: () => sampleOverview({ archivedHidden: 2 }) });
+    await slot.findByText("Child A (live)");
+    expect(slot.getByRole("button", { name: "Show archived (2)" }).getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("shows the hint for the toggle on hover", async () => {
+    const { slot } = await mountPanel();
+    await slot.findByText("Child A (live)");
+    fireEvent.pointerMove(slot.getByRole("button", { name: /Show archived/ }), { pointerType: "mouse" });
+    expect((await within(document.body).findByRole("tooltip")).textContent).toBe("Include archived threads and their kept branches");
   });
 });

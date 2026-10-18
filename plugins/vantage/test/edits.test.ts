@@ -152,6 +152,33 @@ describe("createEditIndex", () => {
     expect(records.map((record) => record.path)).toEqual(["f3.ts", "f4.ts"]);
   });
 
+  it("makes no events call for a settled thread that is already indexed", async () => {
+    const { sdk, list } = fakeSdk({ thr_1: [edit(1)] });
+    const index = createEditIndex(sdk);
+    const first = await index.get("thr_1");
+    list.mockClear();
+    expect(await index.get("thr_1", undefined, { settled: true })).toBe(first);
+    expect(list).not.toHaveBeenCalled();
+  });
+
+  it("still reads a settled thread that was never indexed", async () => {
+    const { sdk, list } = fakeSdk({ thr_1: [edit(1)] });
+    const { records } = await createEditIndex(sdk).get("thr_1", undefined, { settled: true });
+    expect(records).toHaveLength(1);
+    expect(list).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps reading new events for a thread that is not settled", async () => {
+    const rows = [edit(1)];
+    const { sdk, list } = fakeSdk({ thr_1: rows });
+    const index = createEditIndex(sdk);
+    await index.get("thr_1", undefined, { settled: false });
+    rows.push(edit(2));
+    list.mockClear();
+    expect((await index.get("thr_1", undefined, { settled: false })).records).toHaveLength(2);
+    expect(list).toHaveBeenCalledTimes(1);
+  });
+
   it("shares one read between simultaneous callers", async () => {
     const { sdk, list } = fakeSdk({ thr_1: [edit(1)] });
     const index = createEditIndex(sdk);

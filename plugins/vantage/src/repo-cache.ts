@@ -3,7 +3,8 @@ import type { RepoPlan } from "./collect";
 export interface CacheMeta { threadIds: readonly string[]; environmentId: string | null }
 
 export interface RepoCache {
-  get<T>(key: string, meta: CacheMeta, load: () => Promise<T>): Promise<T>;
+  /** `ttlFor` lets a result outlive the default time to live, for example a branch that is gone for good. */
+  get<T>(key: string, meta: CacheMeta, load: () => Promise<T>, ttlFor?: (value: T) => number | undefined): Promise<T>;
   invalidateThreads(threadIds: readonly string[]): void;
   invalidateEnvironment(environmentId: string): void;
   clear(): void;
@@ -13,6 +14,7 @@ export interface RepoCache {
 interface Entry {
   promise: Promise<unknown>;
   settledAt: number | null;
+  ttlMs: number;
   threadIds: ReadonlySet<string>;
   environmentId: string | null;
 }
@@ -40,17 +42,18 @@ export function createRepoCache(options: { ttlMs?: number; maxEntries?: number; 
   };
 
   return {
-    get<T>(key: string, meta: CacheMeta, load: () => Promise<T>): Promise<T> {
+    get<T>(key: string, meta: CacheMeta, load: () => Promise<T>, ttlFor?: (value: T) => number | undefined): Promise<T> {
       const known = entries.get(key);
       // A thread the entry never saw may have changed this repository, so it cannot vouch for it.
       const covers = known !== undefined && meta.threadIds.every((id) => known.threadIds.has(id));
-      if (known !== undefined && covers && (known.settledAt === null || now() - known.settledAt < ttlMs)) {
+      if (known !== undefined && covers && (known.settledAt === null || now() - known.settledAt < known.ttlMs)) {
         return known.promise as Promise<T>;
       }
-      const entry: Entry = { promise: Promise.resolve(), settledAt: null, threadIds: new Set(meta.threadIds), environmentId: meta.environmentId };
+      const entry: Entry = { promise: Promise.resolve(), settledAt: null, ttlMs, threadIds: new Set(meta.threadIds), environmentId: meta.environmentId };
       entry.promise = new Promise<T>((resolve) => resolve(load())).then(
         (value) => {
           entry.settledAt = now();
+          entry.ttlMs = ttlFor?.(value) ?? ttlMs;
           return value;
         },
         (error: unknown) => {

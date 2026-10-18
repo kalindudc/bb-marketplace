@@ -2,6 +2,7 @@ import { memo, useState } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import type { Repo, Scope, ThreadSummary } from "./contract";
 import { FileRow, fileKey, type FileLoaders } from "./file-row";
+import { Skeleton, SkeletonRows } from "./skeleton";
 
 export interface RepoSectionProps {
   repo: Repo;
@@ -45,6 +46,12 @@ function RepoSectionView({
             <span className="truncate">{repo.branch}</span>
           </span>
         )}
+        {repo.state === "loading" && (
+          <span className="ml-auto flex shrink-0 items-center gap-2 pl-2">
+            <Skeleton className="h-3 w-12" />
+            <Skeleton className="h-3 w-14" />
+          </span>
+        )}
         {repo.state === "ready" && (
           <span className="ml-auto flex shrink-0 gap-2 whitespace-nowrap pl-2 font-mono text-xs">
             <span className="text-muted-foreground">{totals.files} {totals.files === 1 ? "file" : "files"}</span>
@@ -72,6 +79,7 @@ function RepoSectionView({
           {repo.message ?? "This repository is unavailable."}
         </p>
       )}
+      {expanded && repo.state === "loading" && <SkeletonRows count={3} label="Reading this repository's changes…" />}
       {expanded && repo.state === "ready" && (
         <div className="pb-1">
           {repo.files.length === 0 && repo.otherFiles.length === 0 && (
