@@ -241,6 +241,8 @@
   background: color-mix(in oklch, var(--destructive) 9%, transparent);
 }
 .sb-row[data-dragging="true"] { opacity: .4; }
+/* Placed after the pointer and not-allowed cursors so it overrides them on every row and control mid-drag. */
+.sb-list[data-sb-dragging], .sb-list[data-sb-dragging] * { cursor: grabbing; }
 .sb-flash::before { animation: sb-flash .9s ease-out; }
 @keyframes sb-flash {
   from { background: color-mix(in oklch, var(--primary) 28%, transparent); }

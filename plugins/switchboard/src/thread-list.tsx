@@ -323,7 +323,7 @@ export function ThreadList(props: PluginThreadListProps) {
   dragActive.current = current !== null;
   const isSuppressed = useCallback(() => dragActive.current, []);
   return <InfoCardProvider mode={props.isCompactViewport ? "off" : settings.infoCard} sdk={sdk} isSuppressed={isSuppressed}>
-  <nav ref={rootRef} aria-label="Threads" onKeyDown={onKeyDown} style={spacing}
+  <nav ref={rootRef} aria-label="Threads" onKeyDown={onKeyDown} style={spacing} data-sb-dragging={current ? "" : undefined}
     className={`sb-list sb-density-${settings.density} relative min-w-0 pb-3 text-[13px] text-sidebar-foreground`}>
     <FilterBar filter={filter} counts={sidebar.status === "ready" ? counts : EMPTY_COUNTS}
       showChips={sidebar.status === "ready" && settings.statusChips} inputRef={inputRef}

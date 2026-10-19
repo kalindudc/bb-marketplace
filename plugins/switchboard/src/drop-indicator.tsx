@@ -1,4 +1,4 @@
-import type { RefObject } from "react";
+import type { Ref } from "react";
 import { StatusGlyph } from "./status-glyph";
 import { STATE_LABEL, type RowState } from "./status";
 import type { DragView } from "./use-drag";
@@ -14,7 +14,7 @@ export function DropIndicator({ view }: { view: DragView | null }) {
 
 export function DragGhost({ view, ghostRef, titleOf, stateOf }: {
   view: DragView | null;
-  ghostRef: RefObject<HTMLDivElement | null>;
+  ghostRef: Ref<HTMLDivElement>;
   titleOf(id: string): string;
   stateOf(id: string): RowState;
 }) {

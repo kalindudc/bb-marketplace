@@ -22,16 +22,17 @@ function Harness() {
   const [clicks, setClicks] = useState(0);
   const drag = useDrag({ index, selection: EMPTY_SELECTION, metrics: densityMetrics("default"), enabled, rootRef,
     sectionIds: ["s", "other"], hitTest: () => target, onDropThreads, onDropSection, onExpand });
-  return <div ref={rootRef}>
+  return <div data-testid="scroller" style={{ overflowY: "auto" }}><div ref={rootRef}>
     <button onPointerDown={(event) => drag.onRowPointerDown(event, "a")}
       onClick={() => { if (!drag.consumeClick()) setClicks((count) => count + 1); }}>A</button>
     <output data-testid="clicks">{clicks}</output>
     <button onPointerDown={(event) => drag.onSectionPointerDown(event, "s")}>Section</button>
     <output data-testid="view">{drag.view ? JSON.stringify({ subject: drag.view.subject, target: drag.view.target, plan: drag.view.plan }) : "idle"}</output>
+    {drag.view && <div ref={drag.ghostRef} data-testid="ghost" />}
     <div data-sb-row="" data-thread-id="b" data-depth="0" data-last-child="false" data-open-children="false" data-testid="row">B</div>
     <div data-sb-row="" data-thread-id="b" data-depth="0" data-last-child="false" data-open-children="false" data-collapsed="true" data-testid="collapsed">Collapsed</div>
     <div data-sb-section="other" data-sb-drop="section:other" data-testid="section">Other</div>
-  </div>;
+  </div></div>;
 }
 function pointer(type: "pointerMove" | "pointerUp", x: number, y: number) {
   fireEvent[type](window, { pointerId: 1, pointerType: "mouse", clientX: x, clientY: y, button: 0 });
@@ -40,38 +41,90 @@ function start(button = 0, pointerType = "mouse", altKey = false) {
   fireEvent.pointerDown(screen.getByRole("button", { name: "A" }), { pointerId: 1, pointerType, button,
     clientX: 40, clientY: 100, altKey });
 }
-afterEach(() => { cleanup(); vi.clearAllMocks(); vi.useRealTimers(); target = null; enabled = true; });
+const view = () => screen.getByTestId("view").textContent;
+const clickRow = () => fireEvent.click(screen.getByRole("button", { name: "A" }));
+const clicks = () => screen.getByTestId("clicks").textContent;
+function mount() {
+  render(<Harness />);
+  target = screen.getByTestId("row");
+  vi.spyOn(target, "getBoundingClientRect").mockReturnValue(rect);
+}
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.clearAllMocks(); vi.useRealTimers(); target = null; enabled = true; });
 
 describe("pointer drag", () => {
-  it("yields a sideways move to bb's split and ignores touch and modifiers", () => {
-    target = screen.queryByTestId("row");
-    render(<Harness />);
-    target = screen.getByTestId("row");
-    vi.spyOn(target, "getBoundingClientRect").mockReturnValue(rect);
-    start(); pointer("pointerMove", 50, 101); pointer("pointerUp", 50, 101);
-    expect(screen.getByTestId("view").textContent).toBe("idle");
-    expect(onDropThreads).not.toHaveBeenCalled();
+  it("starts after five pixels in any direction, sideways included", () => {
+    mount();
+    start(); pointer("pointerMove", 43, 103);
+    expect(view()).toBe("idle");
+    pointer("pointerMove", 44, 103);
+    expect(view()).toContain('"kind":"threads"');
+    fireEvent.keyDown(window, { key: "Escape" }); pointer("pointerUp", 44, 103);
+    start(); pointer("pointerMove", 46, 100);
+    expect(view()).toContain('"kind":"threads"');
+    pointer("pointerMove", 46, 120); pointer("pointerUp", 46, 120);
+    expect(onDropThreads).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores touch, modifiers and other buttons", () => {
+    mount();
     start(0, "touch"); pointer("pointerMove", 40, 120); pointer("pointerUp", 40, 120);
     start(0, "mouse", true); pointer("pointerMove", 40, 120); pointer("pointerUp", 40, 120);
     start(2); pointer("pointerMove", 40, 120); pointer("pointerUp", 40, 120);
     expect(onDropThreads).not.toHaveBeenCalled();
   });
 
-  it("starts after six vertical pixels, cancels on Escape and swallows the next click after drop", () => {
-    render(<Harness />);
-    target = screen.getByTestId("row");
-    vi.spyOn(target, "getBoundingClientRect").mockReturnValue(rect);
-    start(); pointer("pointerMove", 40, 106);
-    expect(screen.getByTestId("view").textContent).toContain('"kind":"threads"');
-    fireEvent.keyDown(window, { key: "Escape" });
-    expect(screen.getByTestId("view").textContent).toBe("idle");
+  it("swallows only the click its own release fires", () => {
+    mount();
     start(); pointer("pointerMove", 40, 120); pointer("pointerUp", 40, 120);
     expect(onDropThreads).toHaveBeenCalledWith(expect.objectContaining({ ok: true }));
-    expect(screen.getByTestId("view").textContent).toBe("idle");
-    fireEvent.click(screen.getByRole("button", { name: "A" }));
-    expect(screen.getByTestId("clicks").textContent).toBe("0");
-    fireEvent.click(screen.getByRole("button", { name: "A" }));
-    expect(screen.getByTestId("clicks").textContent).toBe("1");
+    expect(view()).toBe("idle");
+    clickRow();
+    expect(clicks()).toBe("0");
+    clickRow();
+    expect(clicks()).toBe("1");
+  });
+
+  it("keeps the next click when the release fired no click on a row", () => {
+    vi.useFakeTimers();
+    mount();
+    start(); pointer("pointerMove", 40, 120); pointer("pointerUp", 40, 120);
+    act(() => { vi.advanceTimersByTime(0); });
+    clickRow();
+    expect(clicks()).toBe("1");
+  });
+
+  it("yields to bb's split drag when the host sends Escape, and still swallows the release click", () => {
+    mount();
+    start(); pointer("pointerMove", 40, 120);
+    expect(view()).toContain('"kind":"threads"');
+    act(() => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true })); });
+    expect(view()).toBe("idle");
+    pointer("pointerMove", 40, 130);
+    expect(view()).toBe("idle");
+    pointer("pointerUp", 40, 130);
+    expect(onDropThreads).not.toHaveBeenCalled();
+    clickRow();
+    expect(clicks()).toBe("0");
+    clickRow();
+    expect(clicks()).toBe("1");
+  });
+
+  it("puts the ghost at the cursor on the frame that first shows it", () => {
+    mount();
+    start(); pointer("pointerMove", 40, 120);
+    expect(screen.getByTestId("ghost").style.transform).toContain("translate3d(52px, 136px");
+  });
+
+  it("auto-scrolls the sidebar only while the pointer is over it", () => {
+    mount();
+    vi.spyOn(screen.getByTestId("scroller"), "getBoundingClientRect").mockReturnValue({ ...rect, left: 0, right: 240, top: 0, bottom: 300 });
+    const frame = vi.spyOn(window, "requestAnimationFrame").mockReturnValue(1);
+    start(); pointer("pointerMove", 40, 150);
+    expect(frame).not.toHaveBeenCalled();
+    pointer("pointerMove", 400, 290);
+    expect(frame).not.toHaveBeenCalled();
+    pointer("pointerMove", 40, 290);
+    expect(frame).toHaveBeenCalledTimes(1);
   });
 
   it("expands a collapsed row after a 500 ms hover", () => {

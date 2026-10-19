@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type RefCallback, type RefObject } from "react";
 import { resolveHeaderEdge, resolveRowInstruction } from "./drop-geometry";
 import type { DensityMetrics } from "./metrics";
 import { planDrop, type DropPlan, type DropTarget, type TreeIndex } from "./drop-plan";
@@ -15,7 +15,7 @@ export interface DragView {
 }
 export interface DragController {
   view: DragView | null;
-  ghostRef: RefObject<HTMLDivElement | null>;
+  ghostRef: RefCallback<HTMLDivElement>;
   onRowPointerDown(event: ReactPointerEvent, threadId: string): void;
   onSectionPointerDown(event: ReactPointerEvent, sectionId: string): void;
   consumeClick(): boolean;
@@ -32,16 +32,30 @@ export interface DragOptions {
   onDropSection(ids: readonly string[]): void;
   onExpand(key: CollapseKey): void;
 }
-interface Gesture { pointerId: number; x: number; y: number; subject: DragSubject; started: boolean }
+interface Gesture {
+  pointerId: number; x: number; y: number; subject: DragSubject;
+  started: boolean; cancelled: boolean; scroller: HTMLElement | null;
+}
+type Ending = "drop" | "cancel" | "lost";
+// Any direction counts: bb's split drag takes over past the sidebar edge by dispatching Escape, which cancels this one.
+const DRAG_START_PX = 5;
+
+function scrollParent(element: HTMLElement | null): HTMLElement | null {
+  let current = element?.parentElement ?? null;
+  while (current && !/auto|scroll/.test(getComputedStyle(current).overflowY)) current = current.parentElement;
+  return current;
+}
 
 export function useDrag(options: DragOptions): DragController {
   const optionsRef = useRef(options);
   optionsRef.current = options;
   const [view, setView] = useState<DragView | null>(null);
   const viewRef = useRef<DragView | null>(null);
-  const ghostRef = useRef<HTMLDivElement>(null);
+  const ghost = useRef<HTMLDivElement | null>(null);
+  const pointer = useRef({ x: 0, y: 0 });
   const gesture = useRef<Gesture | null>(null);
   const swallowClick = useRef(false);
+  const swallowTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hoverKey = useRef<CollapseKey | null>(null);
   const scrollFrame = useRef<number | null>(null);
@@ -55,47 +69,76 @@ export function useDrag(options: DragOptions): DragController {
     hoverTimer.current = null;
     hoverKey.current = null;
   }, []);
-  const finish = useCallback((cancelled: boolean) => {
-    const current = gesture.current;
-    if (!current) return;
-    if (current.started) {
-      swallowClick.current = true;
-      const plan = viewRef.current?.plan;
-      const target = viewRef.current?.target;
-      if (!cancelled && current.subject.kind === "threads" && plan?.ok === true)
-        optionsRef.current.onDropThreads(plan);
-      if (!cancelled && current.subject.kind === "section" && target?.kind === "section") {
-        const sections = [...optionsRef.current.sectionIds];
-        const from = sections.indexOf(current.subject.sectionId);
-        const to = sections.indexOf(target.sectionId);
-        if (from >= 0 && to >= 0 && from !== to) {
-          sections.splice(from, 1);
-          const destination = sections.indexOf(target.sectionId) + (target.edge === "below" ? 1 : 0);
-          sections.splice(destination, 0, current.subject.sectionId);
-          if (sections.some((id, index) => id !== optionsRef.current.sectionIds[index]))
-            optionsRef.current.onDropSection(sections);
-        }
-      }
-    }
-    gesture.current = null;
+  const stopSwallowing = useCallback(() => {
+    if (swallowTimer.current !== null) clearTimeout(swallowTimer.current);
+    swallowTimer.current = null;
+    swallowClick.current = false;
+  }, []);
+  const placeGhost = useCallback((origin = optionsRef.current.rootRef.current?.getBoundingClientRect()) => {
+    if (ghost.current && origin) ghost.current.style.transform =
+      `translate3d(${pointer.current.x - origin.left + 12}px, ${pointer.current.y - origin.top + 16}px, 0)`;
+  }, []);
+  // React attaches the ghost before painting it, so placing it here keeps its first frame at the cursor.
+  const ghostRef = useCallback((element: HTMLDivElement | null) => {
+    ghost.current = element;
+    placeGhost();
+  }, [placeGhost]);
+  const hide = useCallback(() => {
     clearHover();
     if (scrollFrame.current !== null) cancelAnimationFrame(scrollFrame.current);
     scrollFrame.current = null;
-    removeListeners.current();
-    removeListeners.current = () => {};
     show(null);
   }, [clearHover, show]);
+  const applyDrop = useCallback((subject: DragSubject) => {
+    const plan = viewRef.current?.plan;
+    const target = viewRef.current?.target;
+    if (subject.kind === "threads" && plan?.ok === true) optionsRef.current.onDropThreads(plan);
+    if (subject.kind === "section" && target?.kind === "section") {
+      const sections = [...optionsRef.current.sectionIds];
+      const from = sections.indexOf(subject.sectionId);
+      const to = sections.indexOf(target.sectionId);
+      if (from >= 0 && to >= 0 && from !== to) {
+        sections.splice(from, 1);
+        const destination = sections.indexOf(target.sectionId) + (target.edge === "below" ? 1 : 0);
+        sections.splice(destination, 0, subject.sectionId);
+        if (sections.some((id, index) => id !== optionsRef.current.sectionIds[index]))
+          optionsRef.current.onDropSection(sections);
+      }
+    }
+  }, []);
+  const end = useCallback((ending: Ending) => {
+    const current = gesture.current;
+    if (!current) return;
+    // A cancelled drag keeps its press until release, so that release's click does not open the row.
+    if (ending === "cancel" && current.started) {
+      current.cancelled = true;
+      hide();
+      return;
+    }
+    if (ending === "drop" && current.started) {
+      if (!current.cancelled) applyDrop(current.subject);
+      stopSwallowing();
+      swallowClick.current = true;
+      // The browser fires a release's click before any timer its pointerup queued, so only that click is swallowed.
+      swallowTimer.current = setTimeout(stopSwallowing, 0);
+    }
+    gesture.current = null;
+    removeListeners.current();
+    removeListeners.current = () => {};
+    hide();
+  }, [applyDrop, hide, stopSwallowing]);
 
   const onMove = useCallback((event: PointerEvent) => {
     const current = gesture.current;
-    if (!current || event.pointerId !== current.pointerId) return;
-    const horizontal = Math.abs(event.clientX - current.x);
-    const vertical = Math.abs(event.clientY - current.y);
-    if (!current.started && horizontal > 8 && horizontal > vertical) { finish(true); return; }
-    if (!current.started && vertical < 6) return;
-    current.started = true;
+    if (!current || current.cancelled || event.pointerId !== current.pointerId) return;
+    if (!current.started && Math.hypot(event.clientX - current.x, event.clientY - current.y) < DRAG_START_PX) return;
     const { index, metrics, hitTest, rootRef, onExpand } = optionsRef.current;
     const root = rootRef.current;
+    if (!current.started) {
+      current.started = true;
+      current.scroller = scrollParent(root);
+    }
+    pointer.current = { x: event.clientX, y: event.clientY };
     const element = (hitTest ?? ((x, y) => document.elementFromPoint(x, y)))(event.clientX, event.clientY);
     const row = element?.closest<HTMLElement>("[data-sb-row]");
     const drop = row ? null : element?.closest<HTMLElement>("[data-sb-drop]");
@@ -137,32 +180,37 @@ export function useDrag(options: DragOptions): DragController {
       show({ subject: current.subject, target: plan?.ok === "noop" ? null : target,
         plan, indicator: plan?.ok === "noop" ? null : indicator });
     }
-    if (ghostRef.current && origin) ghostRef.current.style.transform =
-      `translate3d(${event.clientX - origin.left + 12}px, ${event.clientY - origin.top + 16}px, 0)`;
+    placeGhost(origin);
     if (scrollFrame.current !== null) cancelAnimationFrame(scrollFrame.current);
-    let scrolling = element?.parentElement;
-    while (scrolling && !/auto|scroll/.test(getComputedStyle(scrolling).overflowY)) scrolling = scrolling.parentElement;
-    if (scrolling) {
-      const rect = scrolling.getBoundingClientRect();
-      const amount = event.clientY - rect.top < 32 ? -12 : rect.bottom - event.clientY < 32 ? 12 : 0;
-      if (amount) scrollFrame.current = requestAnimationFrame(() => { scrolling.scrollTop += amount; });
+    // Only the sidebar scrolls: a drag heading for bb's split must not scroll the thread under the pointer.
+    const scroller = current.scroller;
+    if (scroller) {
+      const rect = scroller.getBoundingClientRect();
+      const over = event.clientX >= rect.left && event.clientX <= rect.right;
+      const amount = !over ? 0 : event.clientY - rect.top < 32 ? -12 : rect.bottom - event.clientY < 32 ? 12 : 0;
+      if (amount) scrollFrame.current = requestAnimationFrame(() => { scroller.scrollTop += amount; });
     }
-  }, [clearHover, finish, show]);
+  }, [clearHover, placeGhost, show]);
 
   const begin = useCallback((event: ReactPointerEvent, subject: DragSubject) => {
+    const stale = gesture.current;
+    if (stale && stale.pointerId !== event.pointerId) return;
+    // A new press from the same pointer means its last release never reached the window.
+    if (stale) end("lost");
     if (!optionsRef.current.enabled || event.button !== 0 || event.pointerType === "touch" ||
-        event.altKey || event.shiftKey || event.metaKey || event.ctrlKey || gesture.current) return;
-    gesture.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, subject, started: false };
-    const onUp = (up: PointerEvent) => { if (up.pointerId === gesture.current?.pointerId) finish(false); };
-    const onCancel = () => finish(true);
-    const onVisibility = () => { if (document.visibilityState === "hidden") finish(true); };
+        event.altKey || event.shiftKey || event.metaKey || event.ctrlKey) return;
+    gesture.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, subject,
+      started: false, cancelled: false, scroller: null };
+    const onUp = (up: PointerEvent) => { if (up.pointerId === gesture.current?.pointerId) end("drop"); };
+    const onCancel = () => end("lost");
+    const onVisibility = () => { if (document.visibilityState === "hidden") end("lost"); };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
     window.addEventListener("pointercancel", onCancel);
     window.addEventListener("keydown", onEscape);
     window.addEventListener("blur", onCancel);
     document.addEventListener("visibilitychange", onVisibility);
-    function onEscape(key: KeyboardEvent) { if (key.key === "Escape") finish(true); }
+    function onEscape(key: KeyboardEvent) { if (key.key === "Escape") end("cancel"); }
     removeListeners.current = () => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
@@ -171,13 +219,14 @@ export function useDrag(options: DragOptions): DragController {
       window.removeEventListener("blur", onCancel);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [finish, onMove]);
+  }, [end, onMove]);
   useEffect(() => () => {
     removeListeners.current();
     clearHover();
+    stopSwallowing();
     if (scrollFrame.current !== null) cancelAnimationFrame(scrollFrame.current);
-  }, [clearHover]);
-  useEffect(() => { if (!options.enabled && gesture.current) finish(true); }, [options.enabled, finish]);
+  }, [clearHover, stopSwallowing]);
+  useEffect(() => { if (!options.enabled && gesture.current) end("cancel"); }, [options.enabled, end]);
   const onRowPointerDown = useCallback((event: ReactPointerEvent, threadId: string) => {
     const { selection, index } = optionsRef.current;
     const ids = selection.ids.has(threadId) ? selectionRoots(selection, index) : [threadId];
@@ -187,8 +236,8 @@ export function useDrag(options: DragOptions): DragController {
     begin(event, { kind: "section", sectionId }), [begin]);
   const consumeClick = useCallback(() => {
     if (!swallowClick.current) return false;
-    swallowClick.current = false;
+    stopSwallowing();
     return true;
-  }, []);
+  }, [stopSwallowing]);
   return { view, ghostRef, onRowPointerDown, onSectionPointerDown, consumeClick };
 }
