@@ -1,0 +1,35 @@
+{
+  "name": "bb-plugin-agent-commands",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "bb": ">=0.46",
+    "bbPluginSdk": ">=0.6.49"
+  },
+  "bb": {
+    "name": "Agent Commands",
+    "description": "Use the prompt files in ~/.agents/commands from any bb composer. Type ! to pick a command; the plugin attaches the command's instructions for the agent when you send. Codex and Claude Code agents also learn to run a message that starts with /name from the same folder, and pi expands /name itself when ~/.pi/agent/prompts links there.",
+    "branding": {
+      "icon": "Terminal"
+    },
+    "server": "./server.ts",
+    "skills": []
+  },
+  "scripts": {
+    "build": "bb plugin build",
+    "test": "vitest run",
+    "typecheck": "tsc"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.6.49",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.3.0",
+    "better-sqlite3": "^12.10.0",
+    "cron-parser": "^5.10.2",
+    "hono": "^4.13.13",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.12"
+  }
+}

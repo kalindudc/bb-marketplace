@@ -1,0 +1,28 @@
+{
+  "id": "agent-commands",
+  "displayName": "Agent Commands",
+  "description": "Run your own prompt files from ~/.agents/commands in any bb thread. Type ! for a menu of them, or type /name as you would in pi: codex and Claude Code agents learn to run it, and pi expands it itself.",
+  "icon": "Terminal",
+  "tags": [
+    "commands",
+    "prompts",
+    "slash-commands",
+    "pi",
+    "agents",
+    "composer"
+  ],
+  "author": {
+    "name": "Kalindu De Costa",
+    "github": "kalindudc"
+  },
+  "category": "thread-content",
+  "overview": "./plugins/agent-commands/PLUGIN_OVERVIEW.md",
+  "source": {
+    "git": {
+      "url": "https://github.com/kalindudc/bb-marketplace.git",
+      "subdir": "plugins/agent-commands",
+      "range": ">=0.1.0 <1.0.0",
+      "tagPrefix": "agent-commands/"
+    }
+  }
+}
