@@ -101,6 +101,31 @@ describe("toLogEntries", () => {
     expect(toLogEntries([fileChangeRow("file")])[0]?.durationMs).toBeNull();
   });
 
+  it("tints each row kind, with failures over their kind", () => {
+    const read: TimelineRow = { ...commandRow("read"), workKind: "file-read", path: "src/file.ts", cmd: null };
+    const compaction: TimelineRow = { ...reasoningRow("compact"), operationKind: "compaction", title: "Compacted" };
+    const systemError: TimelineRow = { ...reasoningRow("sys"), systemKind: "error" };
+    const rows = [
+      userRow("you"),
+      userRow("child-failed", { initiator: "system", systemMessageKind: "child-failed" }),
+      reasoningRow("thought"),
+      reasoningRow("failed-thought", { status: "error" }),
+      assistantRow("reply"),
+      toolRow("tool"),
+      delegationRow("delegate", { childRows: [commandRow("child")] }),
+      read,
+      commandRow("cmd"),
+      commandRow("exit", { exitCode: 1 }),
+      fileChangeRow("file"),
+      toolRow("tool-error", { status: "error" }),
+      systemError,
+      compaction,
+    ];
+    expect(toLogEntries(rows).map(({ tint }) => tint)).toEqual([
+      null, null, null, null, "agent", "tool", "tool", "command", "tool", "command", "error", "file", "error", "error", null,
+    ]);
+  });
+
   it("attaches turn totals to only the first divider, including null-id messages and steer-started turns", () => {
     const rows = [
       userRow("request", { turnId: null, startedAt: 900 }),

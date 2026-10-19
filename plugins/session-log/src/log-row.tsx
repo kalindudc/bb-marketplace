@@ -151,9 +151,11 @@ export const LogRow = memo(function LogRow({
       data-entry-id={entry.id}
       onFocus={(event) => { if (event.target === event.currentTarget) onFocusRow(entry.id); }}
       style={{ contentVisibility: "auto", containIntrinsicSize: "auto 48px" }}
+      data-sl-tint={entry.tint ?? undefined}
       className={`min-w-0 border-b border-border-seam px-3 py-2 text-foreground ${
-        entry.divider ? "bg-surface-recessed" : "hover:bg-state-hover"
-      } focus:bg-surface-selected ${entry.depth === 1 ? "ml-4 border-l border-border-seam pl-3" : ""}`}
+        entry.divider ? "bg-surface-recessed focus:bg-surface-selected"
+          : entry.tint && settings.tintRows ? "sl-tinted" : "hover:bg-state-hover focus:bg-surface-selected"
+      } ${entry.depth === 1 ? "ml-4 border-l border-border-seam pl-3" : ""}`}
     >
       <div className="flex min-w-0 items-start gap-2">
         <time className="shrink-0 font-mono text-xs text-subtle-foreground" dateTime={new Date(entry.startedAt).toISOString()}>{time}</time>
@@ -163,7 +165,7 @@ export const LogRow = memo(function LogRow({
           className="flex min-w-0 flex-1 cursor-pointer items-center gap-1 text-left text-sm"
           onClick={() => onToggle(entry.id)}
         >
-          <Icon name={entry.icon} className="size-4 shrink-0" aria-hidden />
+          <Icon name={entry.icon} className={`size-4 shrink-0 ${entry.tint ? "sl-tint-icon" : ""}`} aria-hidden />
           <span className={`min-w-0 break-words ${expanded ? "" : "line-clamp-2"}`}>{highlight(entry.title, query)}</span>
         </button>
         {badge && <span className={`shrink-0 text-xs ${entry.isError ? "text-destructive-text" : statusColor(entry.status)}`}>{badge}</span>}

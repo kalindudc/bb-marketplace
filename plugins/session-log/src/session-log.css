@@ -1,0 +1,14 @@
+/* Colors come from the active bb theme, so tints follow any palette in light and dark. */
+[data-sl-tint="agent"] { --sl-tint: var(--timeline-accent); }
+[data-sl-tint="tool"] { --sl-tint: var(--pr-merged); }
+[data-sl-tint="command"] { --sl-tint: var(--attention); }
+[data-sl-tint="file"] { --sl-tint: var(--diff-added); }
+[data-sl-tint="error"] { --sl-tint: var(--destructive); --sl-tint-text: var(--destructive-text); }
+.sl-tint-icon { color: var(--sl-tint-text, var(--sl-tint)); }
+.sl-tinted {
+  background-color: color-mix(in oklab, var(--sl-tint) 6%, transparent);
+  box-shadow: inset 2px 0 0 color-mix(in oklab, var(--sl-tint) 75%, transparent);
+}
+.sl-tinted[data-sl-tint="error"] { background-color: var(--surface-destructive); }
+.sl-tinted:hover, .sl-tinted:focus { background-color: color-mix(in oklab, var(--sl-tint) 11%, transparent); }
+.sl-tinted:focus { outline: 1px solid color-mix(in oklab, var(--ring) 55%, transparent); outline-offset: -1px; }

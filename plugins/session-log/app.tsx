@@ -2,6 +2,7 @@ import {
   definePluginApp, experimental_Icon as Icon, useBbNavigate,
   type PluginThreadHeaderActionProps, type PluginThreadPanelProps,
 } from "@get-bb/plugin-sdk/app";
+import "./src/session-log.css";
 import { createCommands, LOG_ACTION_ID, requestPanelFocus } from "./src/commands";
 import { SessionLogPanel } from "./src/panel";
 import { createPreference } from "./src/preference";

@@ -3,10 +3,11 @@ See everything an agent did in a thread without opening nested chat rows.
 ## What you get
 
 - One flat side-panel log in bb's timeline order: your messages and steers, child reports, agent replies, thinking, commands, tool calls, file diffs and subagent steps.
+- Rows tinted by type in your bb theme's colors, so replies, tool calls, commands, file changes and failures stand apart.
 - Timestamps, status, exit codes and duration beside each step. Replies appear in full, long output previews its first and last lines, failed commands and tools open by default, and `x` expands every row.
 - Filters for Messages, Thinking, Tools and Errors, plus whole-session search. The log follows new output, including outputs that open up as they finish, until you scroll up or move to an older row; “↓ Latest” or `G` takes you back.
 - Keyboard navigation (`j/k`, `n/N` for replies, `e/E` for errors), copy (`c`), a message link back to chat (`s`), and Mod+Shift+L to open the tab. The thread header has an open button too. bb's Maximize pane button gives the log the whole window.
-- Settings for preview sizes, whether failures open by themselves, which rows show when the log opens, and a 12- or 24-hour clock. Changes reach open panels straight away.
+- Settings for preview sizes, whether failures open by themselves, which rows show when the log opens, a 12- or 24-hour clock, and whether rows are tinted by type. Changes reach open panels straight away.
 
 ## How it works
 

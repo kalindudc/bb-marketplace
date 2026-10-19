@@ -2,6 +2,7 @@ import type { TimelineRow } from "./types";
 
 export type EntryCategory = "message" | "thinking" | "tool";
 export type EntryStatus = "pending" | "completed" | "error" | "interrupted";
+export type EntryTint = "agent" | "tool" | "command" | "file" | "error";
 
 export interface LogEntry {
   id: string;
@@ -14,6 +15,7 @@ export interface LogEntry {
   bodyFormat: "markdown" | "text" | "diff";
   status: EntryStatus | null;
   isError: boolean;
+  tint: EntryTint | null;
   durationMs: number | null;
   startedAt: number;
   turnId: string | null;
@@ -196,6 +198,17 @@ function failed(row: TimelineRow, status: EntryStatus | null): boolean {
   return false;
 }
 
+// Thinking and incoming messages stay neutral; the Errors filter and badge still flag their failures.
+function tintFor(row: TimelineRow, category: EntryCategory, isError: boolean, isDivider: boolean): EntryTint | null {
+  if (isDivider || category === "thinking") return null;
+  if (isError) return "error";
+  if (row.kind === "conversation" && row.role === "assistant") return "agent";
+  if (row.kind !== "work") return null;
+  if (row.workKind === "command") return "command";
+  if (row.workKind === "file-change") return "file";
+  return "tool";
+}
+
 function entryFor(row: TimelineRow, id: string, depth: 0 | 1): LogEntry {
   const key = `${id}\u001f${depth}`;
   const cached = entryCache.get(row)?.get(key);
@@ -214,6 +227,7 @@ function entryFor(row: TimelineRow, id: string, depth: 0 | 1): LogEntry {
     } : { title: "Turn", body: "", icon: "Info" };
   const status: EntryStatus | null = row.kind === "work" || row.kind === "system" ? row.status : null;
   const isError = failed(row, status);
+  const tint = tintFor(row, category, isError, divider !== null);
   const icon = row.kind === "work" && "presentation" in row && row.presentation?.icon.glyph
     ? row.presentation.icon.glyph : description.icon;
   const entry: LogEntry = {
@@ -223,6 +237,7 @@ function entryFor(row: TimelineRow, id: string, depth: 0 | 1): LogEntry {
     bodyFormat: description.bodyFormat ?? "text",
     status,
     isError,
+    tint,
     durationMs: "completedAt" in row && typeof row.completedAt === "number"
       ? row.completedAt - row.startedAt : null,
     startedAt: row.startedAt,

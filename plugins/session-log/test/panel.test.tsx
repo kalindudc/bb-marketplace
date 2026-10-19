@@ -50,7 +50,10 @@ describe("LogRow", () => {
     const slot = renderRow(props);
     const row = slot.container.querySelector('[data-entry-id="failed"]') as HTMLElement;
     expect(row.tabIndex).toBe(0);
-    expect(row.classList.contains("focus:bg-surface-selected")).toBe(true);
+    expect(row.dataset.slTint).toBe("error");
+    expect(row.classList.contains("sl-tinted")).toBe(true);
+    expect(row.classList.contains("hover:bg-state-hover")).toBe(false);
+    expect(row.classList.contains("focus:bg-surface-selected")).toBe(false);
     expect(row.classList.contains("bg-surface-selected")).toBe(false);
     expect(row.style.contentVisibility).toBe("auto");
     expect(row.style.containIntrinsicSize).toBe("auto 48px");
@@ -64,6 +67,31 @@ describe("LogRow", () => {
     expect(toggle.hasAttribute("aria-label")).toBe(false);
     fireEvent.click(toggle);
     expect(props.onToggle).toHaveBeenCalledWith("failed");
+  });
+
+  it("tints rows by kind, keeps icons colored when tints are off, and leaves thinking and dividers alone", () => {
+    const rowOf = (slot: ReturnType<typeof renderRow>) => slot.container.querySelector("[data-entry-id]") as HTMLElement;
+    const tool = toLogEntries([toolRow("tool")])[0]!;
+    const tinted = rowOf(renderRow(rowProps(tool)));
+    expect(tinted.dataset.slTint).toBe("tool");
+    expect(tinted.classList.contains("sl-tinted")).toBe(true);
+    expect(tinted.querySelector("[data-icon]")?.classList.contains("sl-tint-icon")).toBe(true);
+
+    const plain = rowOf(renderRow(rowProps(tool, { settings: { ...DEFAULT_SETTINGS, tintRows: false } })));
+    expect(plain.dataset.slTint).toBe("tool");
+    expect(plain.classList.contains("sl-tinted")).toBe(false);
+    expect(plain.classList.contains("hover:bg-state-hover")).toBe(true);
+    expect(plain.classList.contains("focus:bg-surface-selected")).toBe(true);
+    expect(plain.querySelector("[data-icon]")?.classList.contains("sl-tint-icon")).toBe(true);
+
+    const [thought, divider] = [reasoningRow("thought"), userRow("request")]
+      .map((row) => rowOf(renderRow(rowProps(toLogEntries([row])[0]!))));
+    for (const row of [thought!, divider!]) {
+      expect(row.hasAttribute("data-sl-tint")).toBe(false);
+      expect(row.classList.contains("sl-tinted")).toBe(false);
+      expect(row.querySelector(".sl-tint-icon")).toBeNull();
+    }
+    expect(divider!.classList.contains("bg-surface-recessed")).toBe(true);
   });
 
   it("clips long incoming Markdown but renders agent replies in full", () => {
@@ -370,9 +398,14 @@ describe("SessionLogPanel", () => {
     expect(within(slot.container).getByRole("button", { name: "Thinking" }).getAttribute("aria-pressed")).toBe("false");
     const failedToggle = () => slot.container.querySelector('[data-entry-id="failed"] button[aria-expanded]')?.getAttribute("aria-expanded");
     expect(failedToggle()).toBe("false");
-    fake.getSettings.mockResolvedValue({ ok: true, schema: {}, values: { showThinking: false, expandFailures: true } });
+    const failedTinted = () => slot.container.querySelector('[data-entry-id="failed"]')?.classList.contains("sl-tinted");
+    expect(failedTinted()).toBe(true);
+    fake.getSettings.mockResolvedValue({
+      ok: true, schema: {}, values: { showThinking: false, expandFailures: true, tintRows: false },
+    });
     await slot.behavior.emitRealtime(SETTINGS_CHANNEL, {});
     await waitFor(() => expect(failedToggle()).toBe("true"));
+    expect(failedTinted()).toBe(false);
     expect(fake.getSettings).toHaveBeenCalledTimes(2);
     expect(fake.getSettings).toHaveBeenCalledWith(expect.objectContaining({ pluginId: "session-log" }));
   });

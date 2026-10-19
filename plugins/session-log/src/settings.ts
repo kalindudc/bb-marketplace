@@ -14,6 +14,7 @@ export interface SessionLogSettings {
   showThinking: boolean;
   showTools: boolean;
   timeFormat: TimeFormat;
+  tintRows: boolean;
 }
 
 export const DEFAULT_SETTINGS: SessionLogSettings = {
@@ -25,6 +26,7 @@ export const DEFAULT_SETTINGS: SessionLogSettings = {
   showThinking: true,
   showTools: true,
   timeFormat: "24h",
+  tintRows: true,
 };
 
 const OUTPUT_LINES_MAX = 50;
@@ -96,6 +98,12 @@ export const SETTING_DESCRIPTORS = {
     experimental_optionLabels: { "24h": "24-hour (14:02:31)", "12h": "12-hour (2:02:31 PM)" },
     default: DEFAULT_SETTINGS.timeFormat,
   },
+  tintRows: {
+    type: "boolean",
+    label: "Tint rows by type",
+    description: "Give agent replies, tool calls, commands, file changes and failures a faint background and a left rail in your theme's colors.",
+    default: DEFAULT_SETTINGS.tintRows,
+  },
 } satisfies PluginSettingDescriptors;
 
 /** Reads stored setting values, keeping the default for any value that is missing or invalid. */
@@ -105,7 +113,7 @@ export function parseSettings(values: Readonly<Record<string, unknown>> | undefi
     const value = read[key];
     return isWholeNumber(value, max) ? value : DEFAULT_SETTINGS[key];
   };
-  const flag = (key: "expandFailures" | "showMessages" | "showThinking" | "showTools") => {
+  const flag = (key: "expandFailures" | "showMessages" | "showThinking" | "showTools" | "tintRows") => {
     const value = read[key];
     return typeof value === "boolean" ? value : DEFAULT_SETTINGS[key];
   };
@@ -119,5 +127,6 @@ export function parseSettings(values: Readonly<Record<string, unknown>> | undefi
     showThinking: flag("showThinking"),
     showTools: flag("showTools"),
     timeFormat,
+    tintRows: flag("tintRows"),
   };
 }

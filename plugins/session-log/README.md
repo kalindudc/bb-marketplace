@@ -5,7 +5,7 @@ side-panel tab. Open it from the thread header or with Mod+Shift+L (Command
 on macOS, Control elsewhere). bb's Maximize pane button, at the top right of
 the panel, gives the log the whole window.
 
-![Session Log beside a thread: a new test, a failing test run, the fix as a diff, and a passing run](../../screenshots/session-log/side-panel.png)
+![Session Log beside a thread, each row tinted by type: two file reads, a thought, a new test as a diff, and a failing test run](../../screenshots/session-log/side-panel.png)
 
 Incoming messages, steers and child reports start labeled dividers. The log
 then shows agent replies, thoughts, commands with output, exit codes and
@@ -15,7 +15,12 @@ and failures open in full. Filters narrow to Messages, Thinking, Tools or
 Errors. The log follows new output until you scroll up or move to an older
 row with the keyboard; “↓ Latest” or `G` resumes it.
 
-![Session Log maximized to the whole window, with a follow-up message, the agent's thinking and file diffs](../../screenshots/session-log/full-window.png)
+Rows are tinted by type in your bb theme's colors, so they stand apart at a
+glance: agent replies, tool calls and subagents, commands, file changes and
+failures each get a faint background, a left rail and a colored icon.
+Thinking and incoming messages stay neutral.
+
+![Session Log maximized to the whole window: the fix as three diffs, a passing test run, the agent's thinking and its reply](../../screenshots/session-log/full-window.png)
 
 ## Keys
 
@@ -51,6 +56,7 @@ Changes reach open panels straight away.
 | `expandFailures` | true | Failed commands and tools start expanded |
 | `showMessages`, `showThinking`, `showTools` | true | Which rows the filter chips show, until you toggle a chip yourself |
 | `timeFormat` | `24h` | Row timestamps: `24h` (14:02:31) or `12h` (2:02:31 PM) |
+| `tintRows` | true | Tint agent replies, tool calls, commands, file changes and failures in your theme's colors; icons stay colored either way |
 
 ## Install
 
