@@ -1,5 +1,26 @@
 import type { RowState } from "./status";
 
+export const SPIN_STEPS = 12;
+export const SPIN_STEP_MS = 92;
+const spinners = new Set<HTMLElement>();
+let spinStep = 0;
+let spinTimer: ReturnType<typeof setInterval> | undefined;
+
+function stepSpinners() {
+  spinStep = (spinStep + 1) % SPIN_STEPS;
+  for (const spinner of spinners) spinner.style.transform = `rotate(${spinStep * 360 / SPIN_STEPS}deg)`;
+}
+
+// One shared timer steps every running spinner; switchboard.css says why this is not a CSS animation.
+function startSpinning(spinner: HTMLElement) {
+  spinners.add(spinner);
+  spinTimer ??= setInterval(stepSpinners, SPIN_STEP_MS);
+  return () => {
+    spinners.delete(spinner);
+    if (spinners.size === 0) { clearInterval(spinTimer); spinTimer = undefined; }
+  };
+}
+
 export function StatusGlyph(props: { state: RowState; label: string; spin?: boolean; className?: string }) {
   const { state, label, spin, className = "" } = props;
   const colour = {
@@ -26,5 +47,5 @@ export function StatusGlyph(props: { state: RowState; label: string; spin?: bool
     {state === "idle" && <circle cx="8" cy="8" r="3.3" fill="none" stroke="currentColor" strokeWidth="1.3" />}
   </svg>;
   return state === "running" && spin ?
-    <span className="sb-spin inline-grid size-[14px] shrink-0 place-items-center text-primary">{icon}</span> : icon;
+    <span ref={startSpinning} className="sb-spin inline-grid size-[14px] shrink-0 place-items-center text-primary">{icon}</span> : icon;
 }

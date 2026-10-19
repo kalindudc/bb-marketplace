@@ -246,18 +246,15 @@
   from { background: color-mix(in oklch, var(--primary) 28%, transparent); }
   to { background: transparent; }
 }
-/* The image animation avoids restyling the sidebar when bb reads timeline layout during streaming. */
-.sb-spin {
-  background: currentColor;
-  mask-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2016%2016'%3E%3Ccircle%20cx%3D'8'%20cy%3D'8'%20r%3D'5.5'%20fill%3D'none'%20stroke%3D'white'%20stroke-opacity%3D'.28'%20stroke-width%3D'1.6'%2F%3E%3Cpath%20d%3D'M8%202.5a5.5%205.5%200%200%201%205.5%205.5'%20fill%3D'none'%20stroke%3D'white'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%3E%3CanimateTransform%20attributeName%3D'transform'%20type%3D'rotate'%20from%3D'0%208%208'%20to%3D'360%208%208'%20dur%3D'1.1s'%20repeatCount%3D'indefinite'%2F%3E%3C%2Fpath%3E%3C%2Fsvg%3E");
-  mask-position: center; mask-repeat: no-repeat; mask-size: 14px 14px;
-}
-.sb-spin > svg { opacity: 0; }
+/* A shared timer in status-glyph.tsx turns the spinner 12 steps a turn; will-change keeps each step off the
+   paint path. Continuous motion costs more inside bb: an animated SVG image (the old mask) repaints every
+   frame, and a CSS animation, even a composited one, is restyled on every main-thread frame and on bb's
+   per-commit layout reads while a thread streams. */
+.sb-spin { will-change: transform; }
 @media (prefers-reduced-motion: reduce) {
   .sb-control { transition: none; }
   .sb-flash { animation: none; }
-  .sb-spin { background: transparent; mask-image: none; }
-  .sb-spin > svg { opacity: 1; }
+  .sb-spin { transform: none !important; }
 }
 @media (pointer: coarse) { .sb-row { min-height: max(var(--sb-row-h), var(--bb-sidebar-row-height-coarse, 2.5rem)); } }
 @media (hover: hover) {
