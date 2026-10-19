@@ -2,7 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, use
 import {
   experimental_Icon as Icon, useBbNavigate, useRealtime, useRpc, useSdk, type PluginNavPanelProps,
 } from "@get-bb/plugin-sdk/app";
-import { DEFAULT_FILTER, filterRepos, filterWorktrees, projectOptions, type PageFilter } from "./filters";
+import { DEFAULT_FILTER, filterRepos, filterWorktrees, focusLabel, focusRepos, projectOptions, type PageFilter, type RepoFocus } from "./filters";
+import { FocusChip } from "./focus-chip";
 import type { FileChange, Overview, Repo, Scope, rpcContract } from "./contract";
 import { fileKey, FileRow } from "./file-row";
 import { createLimiter } from "./limit";
@@ -175,6 +176,7 @@ function VantageScreen({ subPath }: PluginNavPanelProps) {
   const projects = useMemo(() => (overview === null ? [] : projectOptions(overview)), [overview]);
   // The list's "changed outside worktrees" rows follow the filters too.
   const listOverview = useMemo(() => (overview === null ? null : { ...overview, ...repoView }), [overview, repoView]);
+  const focused = useMemo(() => focusRepos(repoView, route.focus), [repoView, route.focus]);
   const threads = useMemo(() => new Map((overview?.threads ?? []).map((thread) => [thread.id, thread])), [overview?.threads]);
 
   const selectedKey = route.selectedKey;
@@ -222,11 +224,11 @@ function VantageScreen({ subPath }: PluginNavPanelProps) {
   }, []);
   const onToggleRepo = useCallback((key: string) => setCollapsedRepos((current) => flip(current, key)), [flip]);
   const onToggleFile = useCallback((key: string) => setExpandedFiles((current) => flip(current, key)), [flip]);
-  const allKeys = fileKeys(repoView.repos, repoView.otherFiles, snapshot.scope);
-  const everythingOpen = overview !== null && !overview.partial && repoView.repos.every((repo) => !collapsedRepos.has(repo.key)) && allKeys.every((key) => expandedFiles.has(key));
+  const allKeys = fileKeys(focused.repos, focused.otherFiles, snapshot.scope);
+  const everythingOpen = overview !== null && !overview.partial && focused.repos.every((repo) => !collapsedRepos.has(repo.key)) && allKeys.every((key) => expandedFiles.has(key));
   const toggleAll = () => {
     if (everythingOpen) {
-      setCollapsedRepos(new Set(repoView.repos.map((repo) => repo.key)));
+      setCollapsedRepos(new Set(focused.repos.map((repo) => repo.key)));
       setExpandedFiles(new Set());
     } else {
       setCollapsedRepos(new Set());
@@ -234,7 +236,13 @@ function VantageScreen({ subPath }: PluginNavPanelProps) {
     }
   };
 
-  const setView = (view: PageView) => { if (view !== route.view) go({ ...route, view, selectedKey: null }); };
+  const setView = (view: PageView) => {
+    if (view === route.view) return;
+    const focus: RepoFocus | null = view === "repositories" && selectedKey !== null ? { kind: "repo", key: selectedKey } : null;
+    go({ ...route, view, selectedKey: null, focus });
+  };
+  const showRepositories = (focus: RepoFocus) => go({ ...route, view: "repositories", selectedKey: null, focus });
+  const clearFocus = () => go({ ...route, focus: null });
   const showAll = () => go({ ...route, target: { kind: "all" }, selectedKey: null });
   const refreshHard = () => store?.refresh({ hard: true });
 
@@ -272,7 +280,7 @@ function VantageScreen({ subPath }: PluginNavPanelProps) {
   );
   const list = overview !== null && listOverview !== null && (
     <WorktreeList overview={listOverview} worktrees={worktrees} currentThreadId={null} selectedKey={selectedKey} showSummary={false}
-      onOpen={select} onShowRepositories={() => setView("repositories")} />
+      onOpen={select} onShowRepositories={showRepositories} />
   );
 
   const threadIndex = useMemo(() => new Map((overview?.threads ?? []).map((thread) => [thread.id, thread])), [overview?.threads]);
@@ -287,11 +295,11 @@ function VantageScreen({ subPath }: PluginNavPanelProps) {
       return [...named, ...rest];
     };
     return [
-      ...byProject(repoView.repos.filter((repo) => !isArchivedOnly(repo, threadIndex)), false),
-      ...byProject(repoView.repos.filter((repo) => isArchivedOnly(repo, threadIndex)), true),
+      ...byProject(focused.repos.filter((repo) => !isArchivedOnly(repo, threadIndex)), false),
+      ...byProject(focused.repos.filter((repo) => isArchivedOnly(repo, threadIndex)), true),
     ];
-  }, [repoView.repos, projects, threadIndex]);
-  const archivedReposPending = overview !== null && !overview.partial && overview.repos.some((repo) =>
+  }, [focused.repos, projects, threadIndex]);
+  const archivedReposPending = overview !== null && !overview.partial && route.focus === null && overview.repos.some((repo) =>
     repo.state === "loading" && !repoView.repos.includes(repo) && isArchivedOnly(repo, threadIndex));
   const showHost = overview !== null && new Set(overview.repos.map((repo) => repo.hostId)).size > 1;
 
@@ -302,7 +310,7 @@ function VantageScreen({ subPath }: PluginNavPanelProps) {
     body = (
       <div className="h-full overflow-y-auto">
         <div className="mx-auto w-full max-w-5xl pb-6">
-          {repoView.repos.length === 0 && repoView.otherFiles.length === 0 && (
+          {focused.repos.length === 0 && focused.otherFiles.length === 0 && (
             <p className="p-4 text-sm text-muted-foreground">
               {overview.repos.length === 0 && overview.otherFiles.length === 0 ? "No changes in these threads yet." : "No repositories match the filters."}
             </p>
@@ -321,11 +329,11 @@ function VantageScreen({ subPath }: PluginNavPanelProps) {
           ))}
           {archivedReposPending && <ArchivedSkeleton />}
           {overview.partial && <EditsSkeleton />}
-          {repoView.otherFiles.length > 0 && (
+          {focused.otherFiles.length > 0 && (
             <section data-other-files className="pb-2">
               <h3 className="px-4 pb-1 pt-4 text-[10.5px] font-semibold uppercase tracking-wider text-subtle-foreground">Other files</h3>
               <p className="px-4 pb-1 text-xs text-muted-foreground">Edits outside any repository, from the agents' recorded edits.</p>
-              {repoView.otherFiles.map((file) => (
+              {focused.otherFiles.map((file) => (
                 <FileRow key={file.path} repo={null} file={file} scope={overview.scope} threads={threads}
                   expanded={expandedFiles.has(fileKey(null, file.path, overview.scope))} onToggle={onToggleFile} loaders={loaders} />
               ))}
@@ -354,6 +362,9 @@ function VantageScreen({ subPath }: PluginNavPanelProps) {
       <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-border-seam px-4 py-2.5">
         <ScopeLabel overview={overview} route={route} onShowAll={showAll} />
         <SwitchButtons label="View" options={VIEWS.map((entry) => ({ value: entry.view, text: entry.label }))} value={route.view} onChange={setView} />
+        {route.view === "repositories" && route.focus !== null && (
+          <FocusChip label={focusLabel(overview?.repos ?? [], route.focus)} onClear={clearFocus} />
+        )}
         <label className="relative inline-flex items-center">
           <Icon name="Search" className="pointer-events-none absolute left-2 size-3.5 text-muted-foreground" aria-hidden />
           <input type="search" aria-label="Filter by text" placeholder="Thread, branch or file" value={filter.text}
@@ -391,7 +402,7 @@ function VantageScreen({ subPath }: PluginNavPanelProps) {
         </span>
         {overview !== null && (
           <div className="basis-full">
-            {route.view === "repositories" ? <RepoSummary repos={repoView.repos} partial={overview.partial} /> : <WorktreeSummary overview={overview} worktrees={worktrees} />}
+            {route.view === "repositories" ? <RepoSummary repos={focused.repos} partial={overview.partial} /> : <WorktreeSummary overview={overview} worktrees={worktrees} />}
           </div>
         )}
       </div>

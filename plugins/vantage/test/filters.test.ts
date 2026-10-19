@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_FILTER, filterRepos, filterWorktrees, projectOptions, type PageFilter } from "../src/filters";
+import { DEFAULT_FILTER, filterRepos, filterWorktrees, focusLabel, focusRepos, projectOptions, type PageFilter } from "../src/filters";
 import {
   branchWorktree, checkoutRepo, fileChange, overview as makeOverview, repo, threadSummary, worktree,
 } from "./fixtures";
@@ -35,7 +35,7 @@ const sample = makeOverview({
   otherFiles: [fileChange({ path: "/tmp/notes.txt" })],
 });
 
-const keys = (items: Array<{ key: string }>) => items.map((item) => item.key);
+const keys = (items: ReadonlyArray<{ key: string }>) => items.map((item) => item.key);
 
 describe("DEFAULT_FILTER", () => {
   it("shows every project and hides what has no changes", () => {
@@ -146,6 +146,42 @@ describe("filterRepos", () => {
     expect(shown.otherFiles.map((file) => file.path)).toEqual(["/tmp/notes.txt"]);
     expect(shown.repos).toEqual([]);
     expect(filterRepos(sample, filter({ text: "login" })).otherFiles).toEqual([]);
+  });
+});
+
+describe("focusRepos", () => {
+  const shown = filterRepos(sample, everything);
+
+  it("shows everything when nothing is focused", () => {
+    expect(focusRepos(shown, null)).toEqual(shown);
+  });
+
+  it("keeps only the focused repository and drops the other files", () => {
+    const focused = focusRepos(shown, { kind: "repo", key: "r4" });
+    expect(keys(focused.repos)).toEqual(["r4"]);
+    expect(focused.otherFiles).toEqual([]);
+  });
+
+  it("keeps only the other files when they are focused", () => {
+    const focused = focusRepos(shown, { kind: "otherFiles" });
+    expect(focused.repos).toEqual([]);
+    expect(focused.otherFiles.map((file) => file.path)).toEqual(["/tmp/notes.txt"]);
+  });
+
+  it("shows nothing for a repository the other filters left out", () => {
+    expect(focusRepos(filterRepos(sample, filter({ projectId: "proj_shop" })), { kind: "repo", key: "r4" })).toEqual({ repos: [], otherFiles: [] });
+  });
+});
+
+describe("focusLabel", () => {
+  it("names the focused repository by its label and branch, or the other files", () => {
+    expect(focusLabel(sample.repos, { kind: "repo", key: "r4" })).toBe("cortex · main");
+    expect(focusLabel([repo({ key: "r8", label: "Shop", branch: null })], { kind: "repo", key: "r8" })).toBe("Shop");
+    expect(focusLabel(sample.repos, { kind: "otherFiles" })).toBe("Other files");
+  });
+
+  it("says 'one repository' while the focused repository is not known", () => {
+    expect(focusLabel([], { kind: "repo", key: "r4" })).toBe("one repository");
   });
 });
 

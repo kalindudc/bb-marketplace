@@ -4,7 +4,7 @@ import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import type { Overview, OverviewInput, PatchRequest, ShellInput, rpcContract } from "../src/contract";
 import { clearFileCache } from "../src/file-row";
-import { allOverview, branchRepo, branchWorktree, fileChange, overview, partialOverview, sharedFile, sidebarThread, threadSummary } from "./fixtures";
+import { allOverview, branchRepo, branchWorktree, checkoutRepo, fileChange, overview, partialOverview, sharedFile, sidebarThread, threadSummary } from "./fixtures";
 
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { error: vi.fn() }) }));
 
@@ -339,6 +339,81 @@ describe("Vantage page: Repositories", () => {
     await waitFor(() => expect(overview).toHaveBeenCalledTimes(2));
     expect(overview.mock.calls[1]?.[0]).toEqual({ target: { kind: "all" }, scope: "branch", includeArchived: false });
     expect(slot.getByRole("button", { name: "Expand all" })).toBeTruthy();
+  });
+
+  describe("focused on one row of 'Changed outside worktrees'", () => {
+    const CORTEX = "host_1:/code/cortex";
+    const withOutside = () => {
+      const base = allOverview();
+      return {
+        ...base,
+        repos: [...base.repos, checkoutRepo({ key: CORTEX, projectId: null, threadIds: ["thr_docs"], files: [fileChange({ path: "skills/x.md", additions: 4, deletions: 1 })] })],
+        otherFiles: [fileChange({ path: "/tmp/notes.txt" })],
+      };
+    };
+    const repoKeys = (slot: Slot) => [...slot.container.querySelectorAll("[data-repo]")].map((node) => node.getAttribute("data-repo"));
+    const chip = (slot: Slot) => slot.container.querySelector("[data-repo-focus]");
+
+    it("goes to the Repositories view focused on the row clicked, keeping the tree", async () => {
+      const { slot } = await mount("tree/thr_root", { overview: withOutside });
+      await slot.findByText("Changed outside worktrees");
+      fireEvent.click(slot.getByRole("button", { name: /cortex/ }));
+      fireEvent.click(slot.getByRole("button", { name: /Other files/ }));
+      expect(navigations(slot)).toEqual([pushed(`tree/thr_root/repositories/repo/${key(CORTEX)}`), pushed("tree/thr_root/repositories/other-files")]);
+    });
+
+    it("shows only the focused repository, says so and counts only it", async () => {
+      const { slot } = await mount(`repositories/repo/${key(CORTEX)}`, { overview: withOutside });
+      await loaded(slot);
+      expect(repoKeys(slot)).toEqual([CORTEX]);
+      expect(slot.container.querySelector("[data-other-files]")).toBeNull();
+      expect(chip(slot)?.textContent).toContain("Only cortex");
+      expect(summary(slot)).toBe("1 repo · 1 file +4 −1 · 1 project");
+    });
+
+    it("shows only the other files when they are focused", async () => {
+      const { slot } = await mount("repositories/other-files", { overview: withOutside });
+      await waitFor(() => expect(slot.container.querySelector("[data-other-files]")).not.toBeNull());
+      expect(repoKeys(slot)).toEqual([]);
+      expect(chip(slot)?.textContent).toContain("Only Other files");
+    });
+
+    it("clears the focus to the plain Repositories address, keeping the tree", async () => {
+      const { slot } = await mount(`tree/thr_root/repositories/repo/${key(CORTEX)}`, { overview: withOutside });
+      await loaded(slot);
+      fireEvent.click(slot.getByRole("button", { name: "Show all repositories" }));
+      expect(navigations(slot)).toEqual([pushed("tree/thr_root/repositories")]);
+    });
+
+    it("carries the selected worktree into the Repositories view as the focus", async () => {
+      const { slot } = await mount(`tree/thr_root/worktree/${key("k_child")}`, { overview: withOutside });
+      await loaded(slot);
+      fireEvent.click(slot.getByRole("button", { name: "Repositories" }));
+      expect(navigations(slot)).toEqual([pushed(`tree/thr_root/repositories/repo/${key("k_child")}`)]);
+    });
+
+    it("names a focused workspace by its project and branch", async () => {
+      const { slot } = await mount(`repositories/repo/${key("k_child")}`, { overview: withOutside });
+      await loaded(slot);
+      expect(repoKeys(slot)).toEqual(["k_child"]);
+      expect(chip(slot)?.textContent).toContain("Only Shop · agent/child");
+    });
+
+    it("has no focus chip on the plain Repositories view", async () => {
+      const { slot } = await mount("repositories", { overview: withOutside });
+      await loaded(slot);
+      expect(chip(slot)).toBeNull();
+      expect(repoKeys(slot)).toContain(CORTEX);
+    });
+
+    it("still applies the other filters, and says nothing matches", async () => {
+      const { slot } = await mount(`repositories/repo/${key(CORTEX)}`, { overview: withOutside });
+      await loaded(slot);
+      fireEvent.change(slot.getByLabelText("Filter by text"), { target: { value: "no such file" } });
+      expect(repoKeys(slot)).toEqual([]);
+      expect(slot.container.textContent).toContain("No repositories match the filters.");
+      expect(chip(slot)).not.toBeNull();
+    });
   });
 
   it("switches with the view buttons, keeping the tree", async () => {

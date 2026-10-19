@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent } from "react";
 import { experimental_Icon as Icon, useBbNavigate, useRpc, useSdk, type PluginThreadPanelProps } from "@get-bb/plugin-sdk/app";
-import type { Overview, Scope, rpcContract } from "./contract";
+import type { Repo, Scope, rpcContract } from "./contract";
+import { focusLabel, focusRepos, type RepoFocus, type RepoView } from "./filters";
+import { FocusChip } from "./focus-chip";
 import { fileKey, type FileLoaders, FileRow } from "./file-row";
 import { createLimiter } from "./limit";
 import { RepoSection } from "./repo-section";
@@ -29,24 +31,24 @@ const VIEWS: ReadonlyArray<{ view: VantageView; label: string }> = [
   { view: "repositories", label: "Repositories" },
 ];
 
-function allFileKeys(overview: Overview): string[] {
+function allFileKeys(shown: RepoView, scope: Scope): string[] {
   return [
-    ...overview.repos.flatMap((repo) => [...repo.files, ...repo.otherFiles].map((file) => fileKey(repo, file.path, overview.scope))),
-    ...overview.otherFiles.map((file) => fileKey(null, file.path, overview.scope)),
+    ...shown.repos.flatMap((repo) => [...repo.files, ...repo.otherFiles].map((file) => fileKey(repo, file.path, scope))),
+    ...shown.otherFiles.map((file) => fileKey(null, file.path, scope)),
   ];
 }
 
-function Summary({ overview }: { overview: Overview }) {
-  const files = overview.repos.reduce((sum, repo) => sum + repo.totals.files, 0);
-  const additions = overview.repos.reduce((sum, repo) => sum + repo.totals.additions, 0);
-  const deletions = overview.repos.reduce((sum, repo) => sum + repo.totals.deletions, 0);
+function Summary({ repos, partial, threads }: { repos: readonly Repo[]; partial: boolean; threads: number }) {
+  const files = repos.reduce((sum, repo) => sum + repo.totals.files, 0);
+  const additions = repos.reduce((sum, repo) => sum + repo.totals.additions, 0);
+  const deletions = repos.reduce((sum, repo) => sum + repo.totals.deletions, 0);
   return (
     <p data-repo-summary className="px-3.5 pt-2.5 text-xs text-muted-foreground">
-      {overview.repos.length} {overview.repos.length === 1 ? "repo" : "repos"} ·{" "}
-      {overview.partial
+      {repos.length} {repos.length === 1 ? "repo" : "repos"} ·{" "}
+      {partial
         ? <Skeleton className="h-3 w-24 align-middle" />
         : <>{files} {files === 1 ? "file" : "files"} · <span className="text-diff-added">+{additions}</span> <span className="text-diff-removed">−{deletions}</span></>}
-      {" "}· {overview.threads.length} {overview.threads.length === 1 ? "thread" : "threads"}
+      {" "}· {threads} {threads === 1 ? "thread" : "threads"}
     </p>
   );
 }
@@ -95,6 +97,12 @@ export function VantagePanel({ threadId }: PluginThreadPanelProps) {
     commitFiles: (input) => rpcRef.current.call("commitFiles", input),
   }), []);
   const view = useSyncExternalStore(viewPreference.subscribe, viewPreference.get, viewPreference.get);
+  const [focus, setFocus] = useState<RepoFocus | null>(null);
+  useEffect(() => { if (view !== "repositories") setFocus(null); }, [view]);
+  const showRepositories = useCallback((next: RepoFocus) => {
+    setFocus(next);
+    viewPreference.set("repositories");
+  }, []);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [tab, setTab] = useState<WorktreeDetailProps["tab"]>("changes");
   const worktrees = overview?.worktrees ?? [];
@@ -103,6 +111,7 @@ export function VantagePanel({ threadId }: PluginThreadPanelProps) {
   useEffect(() => {
     setSelectedKey(null);
     setTab("changes");
+    setFocus(null);
   }, [threadId]);
   useEffect(() => {
     if (selectedKey !== null && overview !== null && selectedIndex === -1) {
@@ -116,6 +125,11 @@ export function VantagePanel({ threadId }: PluginThreadPanelProps) {
     if (next !== undefined) setSelectedKey(next.key);
   }, [worktrees, selectedIndex]);
   const closeDetail = useCallback(() => { setSelectedKey(null); setTab("changes"); }, []);
+  const setView = (next: VantageView) => {
+    if (next === view) return;
+    if (next === "repositories" && detailOpen) showRepositories({ kind: "repo", key: selectedKey! });
+    else viewPreference.set(next);
+  };
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (!detailOpen || event.ctrlKey || event.metaKey || event.altKey) return;
     const target = event.target;
@@ -130,20 +144,25 @@ export function VantagePanel({ threadId }: PluginThreadPanelProps) {
   };
   const threads = useMemo(() => new Map((overview?.threads ?? []).map((thread) => [thread.id, thread])), [overview?.threads]);
 
-  const everythingOpen = overview !== null && !overview.partial && collapsedRepos.size === 0 && allFileKeys(overview).every((key) => expandedFiles.has(key));
+  const shown = useMemo(() => (overview === null ? null : focusRepos(overview, focus)), [overview, focus]);
+  const shownThreads = shown === null || focus === null
+    ? overview?.threads.length ?? 0
+    : new Set([...shown.repos.flatMap((repo) => repo.threadIds), ...shown.otherFiles.flatMap((file) => file.edits?.threadIds ?? [])]).size;
+  const everythingOpen = overview !== null && shown !== null && !overview.partial && shown.repos.every((repo) => !collapsedRepos.has(repo.key))
+    && allFileKeys(shown, overview.scope).every((key) => expandedFiles.has(key));
   const toggleAll = () => {
-    if (overview === null) return;
+    if (overview === null || shown === null) return;
     if (everythingOpen) {
-      setCollapsedRepos(new Set(overview.repos.map((repo) => repo.key)));
+      setCollapsedRepos(new Set(shown.repos.map((repo) => repo.key)));
       setExpandedFiles(new Set());
     } else {
       setCollapsedRepos(new Set());
-      setExpandedFiles(new Set(allFileKeys(overview)));
+      setExpandedFiles(new Set(allFileKeys(shown, overview.scope)));
     }
   };
 
   const showHost = overview !== null && new Set(overview.repos.map((repo) => repo.hostId)).size > 1;
-  const empty = overview !== null && overview.repos.length === 0 && overview.otherFiles.length === 0;
+  const empty = shown !== null && shown.repos.length === 0 && shown.otherFiles.length === 0;
   const warnings = overview === null ? [] : [
     ...overview.warnings,
     ...(overview.truncatedThreads ? ["Only the first 200 threads of this tree were read."] : []),
@@ -175,12 +194,15 @@ export function VantagePanel({ threadId }: PluginThreadPanelProps) {
         <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1.5 border-b border-border-seam py-2 pl-3.5 pr-3">
           <div role="group" aria-label="View" className="inline-flex shrink-0 overflow-hidden rounded-md border border-border-seam">
             {VIEWS.map((entry) => (
-              <button key={entry.view} type="button" aria-pressed={view === entry.view} onClick={() => viewPreference.set(entry.view)}
+              <button key={entry.view} type="button" aria-pressed={view === entry.view} onClick={() => setView(entry.view)}
                 className={`cursor-pointer px-2 py-0.5 text-xs ${view === entry.view ? "bg-surface-selected text-foreground" : "text-muted-foreground hover:bg-state-hover"}`}>
                 {entry.label}
               </button>
             ))}
           </div>
+          {view === "repositories" && focus !== null && (
+            <FocusChip label={focusLabel(overview?.repos ?? [], focus)} onClear={() => setFocus(null)} />
+          )}
           <span className="min-w-0 flex-1" />
           {snapshot.refreshing && <span aria-live="polite" className="shrink-0 text-xs text-muted-foreground">Updating…</span>}
           {view === "repositories" && (
@@ -201,7 +223,7 @@ export function VantagePanel({ threadId }: PluginThreadPanelProps) {
           )}
           <Hint label="Open Vantage full screen for this thread tree">
             <button type="button" aria-label="Open full screen"
-              onClick={() => navigate.toPluginPanel("vantage", { subPath: formatRoute({ target: { kind: "tree", threadId }, view: "worktrees", selectedKey: null }) })}
+              onClick={() => navigate.toPluginPanel("vantage", { subPath: formatRoute({ target: { kind: "tree", threadId }, view: "worktrees", selectedKey: null, focus: null }) })}
               className="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
               <Icon name="Maximize2" className="size-3.5" aria-hidden />
             </button>
@@ -225,24 +247,27 @@ export function VantagePanel({ threadId }: PluginThreadPanelProps) {
             {banners}
             {overview === null && snapshot.status === "loading" && <SkeletonRows count={4} label="Loading worktrees" />}
             {view === "worktrees" && overview !== null && (
-              <WorktreeList overview={overview} currentThreadId={threadId} onOpen={setSelectedKey}
-                onShowRepositories={() => viewPreference.set("repositories")} />
+              <WorktreeList overview={overview} currentThreadId={threadId} onOpen={setSelectedKey} onShowRepositories={showRepositories} />
             )}
             {view === "repositories" && (
               <>
-                {overview !== null && <Summary overview={overview} />}
-                {empty && <p className="p-3.5 text-sm text-muted-foreground">No changes in this thread or its child threads yet.</p>}
-                {overview?.repos.map((repo) => (
+                {overview !== null && shown !== null && <Summary repos={shown.repos} partial={overview.partial} threads={shownThreads} />}
+                {empty && (
+                  <p className="p-3.5 text-sm text-muted-foreground">
+                    {focus === null ? "No changes in this thread or its child threads yet." : "No changes match this filter."}
+                  </p>
+                )}
+                {overview !== null && shown?.repos.map((repo) => (
                   <RepoSection key={repo.key} repo={repo} scope={overview.scope} threads={threads} expanded={!collapsedRepos.has(repo.key)}
                     expandedFiles={expandedFiles} onToggleRepo={onToggleRepo} onToggleFile={onToggleFile} onOpenThread={onOpenThread}
                     loaders={loaders} showHost={showHost} />
                 ))}
                 {overview?.partial === true && <EditsSkeleton />}
-                {overview !== null && overview.otherFiles.length > 0 && (
+                {overview !== null && shown !== null && shown.otherFiles.length > 0 && (
                   <section data-other-files className="pb-2">
                     <h3 className="px-3.5 pb-1 pt-3 text-[10.5px] font-semibold uppercase tracking-wider text-subtle-foreground">Other files</h3>
                     <p className="px-3.5 pb-1 text-xs text-muted-foreground">Edits outside any repository, from the agents' recorded edits.</p>
-                    {overview.otherFiles.map((file) => (
+                    {shown.otherFiles.map((file) => (
                       <FileRow key={file.path} repo={null} file={file} scope={overview.scope} threads={threads}
                         expanded={expandedFiles.has(fileKey(null, file.path, overview.scope))} onToggle={onToggleFile} loaders={loaders} />
                     ))}

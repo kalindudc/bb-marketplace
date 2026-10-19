@@ -3,6 +3,9 @@ import type { FileChange, Overview, Repo, Worktree } from "./contract";
 export interface PageFilter { text: string; projectId: string | null; changedOnly: boolean }
 export const DEFAULT_FILTER: PageFilter = { text: "", projectId: null, changedOnly: true };
 
+// The one row of "Changed outside worktrees" the Repositories view was opened for.
+export type RepoFocus = { kind: "repo"; key: string } | { kind: "otherFiles" };
+
 const paths = (files: readonly FileChange[]): string[] => files.map((file) => file.path);
 
 // An empty query matches everything; otherwise a case-insensitive substring of any value.
@@ -43,6 +46,21 @@ export function filterRepos(overview: Overview, filter: PageFilter): { repos: Re
   // Recorded edits outside any repository belong to no project.
   const otherFiles = filter.projectId === null ? overview.otherFiles.filter((file) => matches([file.path])) : [];
   return { repos, otherFiles };
+}
+
+export type RepoView = { repos: readonly Repo[]; otherFiles: readonly FileChange[] };
+
+export function focusRepos(shown: RepoView, focus: RepoFocus | null): RepoView {
+  if (focus === null) return shown;
+  if (focus.kind === "otherFiles") return { repos: [], otherFiles: shown.otherFiles };
+  return { repos: shown.repos.filter((repo) => repo.key === focus.key), otherFiles: [] };
+}
+
+export function focusLabel(repos: readonly Repo[], focus: RepoFocus): string {
+  if (focus.kind === "otherFiles") return "Other files";
+  const repo = repos.find((entry) => entry.key === focus.key);
+  if (repo === undefined) return "one repository";
+  return repo.branch === null ? repo.label : `${repo.label} · ${repo.branch}`;
 }
 
 export function projectOptions(overview: Overview): { id: string; name: string }[] {

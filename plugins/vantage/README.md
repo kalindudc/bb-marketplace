@@ -34,8 +34,9 @@ counts and the pull request, if there is one. Rows are grouped by project. A
 banner warns when files are changed in more than one worktree of the same
 project, because those branches may conflict when merged; it opens to list the
 files and the threads. Repositories that agents edited by path, and files
-outside any repository, are listed under "Changed outside worktrees" and link
-to the Repositories view.
+outside any repository, are listed under "Changed outside worktrees". Clicking
+one opens the Repositories view filtered to just that repository, or to just
+the other files.
 
 Click a row to open that worktree inside the parent's panel:
 
@@ -82,6 +83,11 @@ stay out of the way. A file that an agent edited but that has no change now
 shows the agent's recorded edits. Files outside any repository, such as thread
 storage or /tmp, are listed under "Other files" the same way.
 
+When the Repositories view was opened from one row, or with a worktree open,
+it shows only that repository, and an "Only <project> · <branch>" chip sits
+beside the view switch. The chip's × button shows every repository again, and
+so does switching to Worktrees and back.
+
 The switch chooses between **Uncommitted** (working-tree changes) and **Branch**
 (everything since the base branch). The tab refreshes within about two seconds
 of an agent's edit and on the Refresh button. A machine that is offline, or a
@@ -111,7 +117,10 @@ place. Threads whose parent is not in the window start their own tree.
   **Open thread** opens the thread and leaves the page.
 - **Repositories** shows every repository those threads changed, grouped by
   project ("Shop · 2 repos · 4 files"), then "Other files". The scope switch
-  and Expand all sit in the toolbar.
+  and Expand all sit in the toolbar. A row under "Changed outside worktrees",
+  or the Repositories switch pressed while a worktree is selected, opens it
+  filtered to that one repository (or to the other files), with a chip to
+  clear the filter; the toolbar filters still apply on top.
 - The toolbar's **text filter** matches thread titles, project and repository
   names, branches, folders and file paths. The **project** select narrows to one
   project. **With changes only** (on by default) hides worktrees and
@@ -127,11 +136,14 @@ place. Threads whose parent is not in the window start their own tree.
   | `repositories` | every thread, Repositories |
   | `worktree/<key>` | every thread, one worktree selected |
   | `tree/<thread id>` | only that thread's tree, Worktrees |
+  | `repositories/repo/<key>` | every thread, Repositories, only that repository |
+  | `repositories/other-files` | every thread, Repositories, only the other files |
   | `tree/<thread id>/repositories` | that tree, Repositories |
+  | `tree/<thread id>/repositories/repo/<key>` | that tree, Repositories, only that repository |
   | `tree/<thread id>/worktree/<key>` | that tree, one worktree selected |
 
-  A part that is not valid is dropped and the address is corrected. The
-  worktree key is written with letters, digits, `.`, `_`, `-` and `~XX` for any
+  A part that is not valid is dropped and the address is corrected. A
+  worktree or repository key is written with letters, digits, `.`, `_`, `-` and `~XX` for any
   other byte (a `:` is `~3A`, a `/` is `~2F`), because bb encodes each address
   segment a second time and its router would otherwise alter a percent-encoded
   key.
@@ -329,6 +341,10 @@ nothing on disk.
 
 ## Changes
 
+- **0.3.2**: clicking a row under "Changed outside worktrees", or switching to
+  Repositories with a worktree open, shows only that repository (or only the
+  other files) instead of every one, with an "Only …" chip that clears the
+  filter; the page keeps the filter in its address.
 - **0.3.1**: "Show archived" becomes an "Include archived (N)" checkbox;
   switching it keeps the active rows and their numbers on screen and adds or
   removes only archived rows, which are listed after the active ones; the

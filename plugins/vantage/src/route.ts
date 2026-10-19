@@ -1,7 +1,8 @@
 import type { OverviewTarget } from "./contract";
+import type { RepoFocus } from "./filters";
 
 export type PageView = "worktrees" | "repositories";
-export interface PageRoute { target: OverviewTarget; view: PageView; selectedKey: string | null }
+export interface PageRoute { target: OverviewTarget; view: PageView; selectedKey: string | null; focus: RepoFocus | null }
 
 const THREAD_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const MAX_KEY_LENGTH = 400;
@@ -29,6 +30,11 @@ function decodeKey(text: string): string | null {
 
 const has = (rest: string, segment: string): boolean => rest === segment || rest.startsWith(`${segment}/`);
 
+function parseKey(text: string): string | null {
+  const key = decodeKey(text);
+  return key !== null && key.length > 0 && key.length <= MAX_KEY_LENGTH ? key : null;
+}
+
 // An invalid part ends the parse: what came before it stays, the rest takes its default.
 export function parseRoute(subPath: string): { route: PageRoute; canonical: string } {
   let rest = subPath.replace(/^\/+|\/+$/g, "");
@@ -38,7 +44,7 @@ export function parseRoute(subPath: string): { route: PageRoute; canonical: stri
     rest = end === -1 ? "" : rest.slice(end + 1);
     return head;
   };
-  const route: PageRoute = { target: { kind: "all" }, view: "worktrees", selectedKey: null };
+  const route: PageRoute = { target: { kind: "all" }, view: "worktrees", selectedKey: null, focus: null };
   if (has(rest, "tree")) {
     take();
     const threadId = take();
@@ -48,10 +54,15 @@ export function parseRoute(subPath: string): { route: PageRoute; canonical: stri
   if (has(rest, "repositories")) {
     take();
     route.view = "repositories";
+    if (has(rest, "other-files")) route.focus = { kind: "otherFiles" };
+    else if (has(rest, "repo")) {
+      take();
+      const key = parseKey(rest);
+      if (key !== null) route.focus = { kind: "repo", key };
+    }
   } else if (has(rest, "worktree")) {
     take();
-    const key = decodeKey(rest);
-    if (key !== null && key.length > 0 && key.length <= MAX_KEY_LENGTH) route.selectedKey = key;
+    route.selectedKey = parseKey(rest);
   }
   return { route, canonical: formatRoute(route) };
 }
@@ -59,7 +70,10 @@ export function parseRoute(subPath: string): { route: PageRoute; canonical: stri
 export function formatRoute(route: PageRoute): string {
   const parts: string[] = [];
   if (route.target.kind === "tree") parts.push("tree", route.target.threadId);
-  if (route.view === "repositories") parts.push("repositories");
-  else if (route.selectedKey !== null) parts.push("worktree", encodeKey(route.selectedKey));
+  if (route.view === "repositories") {
+    parts.push("repositories");
+    if (route.focus?.kind === "otherFiles") parts.push("other-files");
+    else if (route.focus?.kind === "repo") parts.push("repo", encodeKey(route.focus.key));
+  } else if (route.selectedKey !== null) parts.push("worktree", encodeKey(route.selectedKey));
   return parts.join("/");
 }

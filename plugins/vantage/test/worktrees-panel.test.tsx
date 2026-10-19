@@ -6,6 +6,7 @@ import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginSidebarThread, PluginThreadPanelProps } from "@get-bb/plugin-sdk/app";
 import type { CommitFilesInput, CommitFilesOutput, Overview, OverviewInput, PatchOutput, PatchRequest, ShellInput, Worktree, rpcContract } from "../src/contract";
 import { clearFileCache } from "../src/file-row";
+import type { RepoFocus } from "../src/filters";
 import { VIEW_STORAGE_KEY } from "../src/view-preference";
 import { WorktreeDetail, relativeTime, type WorktreeDetailProps } from "../src/worktree-detail";
 import { LiveThreadsProvider, WorktreeList } from "../src/worktree-list";
@@ -78,7 +79,7 @@ const row = (slot: Slot, key: string): HTMLElement => {
 };
 
 function mountList(options: {
-  overview?: Overview; onOpen?: (key: string) => void; onShowRepositories?: () => void; pullRequests?: Record<string, ReturnType<typeof sidebarPullRequest>>;
+  overview?: Overview; onOpen?: (key: string) => void; onShowRepositories?: (focus: RepoFocus) => void; pullRequests?: Record<string, ReturnType<typeof sidebarPullRequest>>;
   currentThreadId?: string | null; selectedKey?: string | null; worktrees?: readonly Worktree[]; showSummary?: boolean;
 } = {}) {
   const onOpen = options.onOpen ?? vi.fn();
@@ -197,14 +198,15 @@ describe("WorktreeList", () => {
     expect(onOpen).toHaveBeenCalledWith("wt2");
   });
 
-  it("links to the repositories view from the changes made outside worktrees", () => {
+  it("links to the repositories view, focused on the row clicked, from the changes made outside worktrees", () => {
     const { slot, onShowRepositories } = mountList();
     expect(slot.container.textContent).toContain("Changed outside worktrees");
     const cortex = slot.getByRole("button", { name: /cortex/ });
     expect(cortex.textContent).toContain("1 file");
     fireEvent.click(cortex);
     fireEvent.click(slot.getByRole("button", { name: /Other files/ }));
-    expect(onShowRepositories).toHaveBeenCalledTimes(2);
+    expect(onShowRepositories).toHaveBeenNthCalledWith(1, { kind: "repo", key: "host_1:/code/cortex" });
+    expect(onShowRepositories).toHaveBeenNthCalledWith(2, { kind: "otherFiles" });
   });
 
   it("leaves out the outside section when only worktrees changed", () => {
@@ -859,6 +861,73 @@ describe("Vantage panel: the Worktrees view", () => {
     expect(slot.getByRole("button", { name: "Repositories" }).getAttribute("aria-pressed")).toBe("true");
     expect(slot.container.querySelector("[data-repo]")).not.toBeNull();
     expect(window.localStorage.getItem(VIEW_STORAGE_KEY)).toBe("repositories");
+  });
+
+  describe("focused on the row clicked", () => {
+    const withWorkspace = () => sampleOverview({
+      repos: [
+        repo({ key: "wt1", label: "Project", threadIds: ["thr_2"], files: [fileChange({ path: "a.ts", additions: 3, deletions: 1 })] }),
+        checkoutRepo({ label: "cortex", files: [fileChange({ additions: 4, deletions: 1 })], threadIds: ["thr_4"] }),
+      ],
+    });
+    const repoKeys = (slot: Slot) => [...slot.container.querySelectorAll("[data-repo]")].map((node) => node.getAttribute("data-repo"));
+    const chip = (slot: Slot) => slot.container.querySelector("[data-repo-focus]");
+
+    it("shows only that repository, says so, and counts only what it shows", async () => {
+      const { slot } = await mountPanel({ overview: withWorkspace });
+      await slot.findByText("Changed outside worktrees");
+      fireEvent.click(slot.getByRole("button", { name: /cortex/ }));
+      expect(repoKeys(slot)).toEqual(["host_1:/code/cortex"]);
+      expect(slot.container.querySelector("[data-other-files]")).toBeNull();
+      expect(chip(slot)?.textContent).toContain("Only cortex");
+      expect(slot.container.querySelector("[data-repo-summary]")!.textContent).toContain("1 repo · 1 file · +4 −1 · 1 thread");
+    });
+
+    it("shows only the other files from their row", async () => {
+      const { slot } = await mountPanel({ overview: withWorkspace });
+      await slot.findByText("Changed outside worktrees");
+      fireEvent.click(slot.getByRole("button", { name: /Other files/ }));
+      expect(repoKeys(slot)).toEqual([]);
+      expect(slot.container.querySelector("[data-other-files]")?.textContent).toContain("/tmp/notes.txt");
+      expect(chip(slot)?.textContent).toContain("Only Other files");
+    });
+
+    it("shows every repository again when the focus is cleared", async () => {
+      const { slot } = await mountPanel({ overview: withWorkspace });
+      await slot.findByText("Changed outside worktrees");
+      fireEvent.click(slot.getByRole("button", { name: /cortex/ }));
+      fireEvent.click(slot.getByRole("button", { name: "Show all repositories" }));
+      expect(chip(slot)).toBeNull();
+      expect(repoKeys(slot)).toEqual(["wt1", "host_1:/code/cortex"]);
+      expect(slot.container.querySelector("[data-other-files]")).not.toBeNull();
+    });
+
+    it("carries the open worktree into the Repositories view as the focus", async () => {
+      const { slot } = await mountPanel({ overview: withWorkspace });
+      await slot.findByText("Child A (live)");
+      fireEvent.click(row(slot, "wt1"));
+      fireEvent.click(slot.getByRole("button", { name: "Repositories" }));
+      expect(repoKeys(slot)).toEqual(["wt1"]);
+      expect(chip(slot)?.textContent).toContain("Only Project · feature/work");
+    });
+
+    it("forgets the focus when the view is switched, so the Repositories switch shows everything", async () => {
+      const { slot } = await mountPanel({ overview: withWorkspace });
+      await slot.findByText("Changed outside worktrees");
+      fireEvent.click(slot.getByRole("button", { name: /cortex/ }));
+      fireEvent.click(slot.getByRole("button", { name: "Worktrees" }));
+      fireEvent.click(slot.getByRole("button", { name: "Repositories" }));
+      expect(chip(slot)).toBeNull();
+      expect(repoKeys(slot)).toEqual(["wt1", "host_1:/code/cortex"]);
+    });
+
+    it("offers Collapse all once every file shown is open, whatever the hidden repositories hold", async () => {
+      const { slot } = await mountPanel({ overview: withWorkspace });
+      await slot.findByText("Changed outside worktrees");
+      fireEvent.click(slot.getByRole("button", { name: /cortex/ }));
+      fireEvent.click(slot.container.querySelector('[data-file-row="src/a.ts"] button')!);
+      expect(slot.getByRole("button", { name: "Collapse all" })).toBeTruthy();
+    });
   });
 
   it("shows the load error and the warnings above the worktrees too", async () => {

@@ -5,6 +5,7 @@ import {
   type PluginSidebarThread, type PluginSidebarThreadIndicator,
 } from "@get-bb/plugin-sdk/app";
 import type { Overview, SharedFile, ThreadSummary, Worktree } from "./contract";
+import type { RepoFocus } from "./filters";
 import { ArchivedSkeleton, EditsSkeleton, Skeleton } from "./skeleton";
 import { countArchived, isArchivedOnly } from "./archived";
 import { primaryThreadId } from "./worktrees";
@@ -20,7 +21,7 @@ export interface WorktreeListProps {
   worktrees?: readonly Worktree[];
   showSummary?: boolean;
   onOpen(key: string): void;
-  onShowRepositories(): void;
+  onShowRepositories(focus: RepoFocus): void;
 }
 
 export interface LiveThread {
@@ -330,13 +331,13 @@ export function WorktreeList({
           <GroupHeading icon="Folder">Changed outside worktrees</GroupHeading>
           {overview.partial && <EditsSkeleton />}
           {checkouts.map((repo) => (
-            <OutsideRow key={repo.key} icon="Folder" onClick={onShowRepositories}
+            <OutsideRow key={repo.key} icon="Folder" onClick={() => onShowRepositories({ kind: "repo", key: repo.key })}
               detail={<>{plural(repo.totals.files, "file")} · <span className="text-diff-added">+{repo.totals.additions}</span> <span className="text-diff-removed">−{repo.totals.deletions}</span></>}>
               {repo.label} <span className="text-muted-foreground">· edited by path</span>
             </OutsideRow>
           ))}
           {overview.otherFiles.length > 0 && (
-            <OutsideRow icon="EditFile" onClick={onShowRepositories} detail={`${plural(overview.otherFiles.length, "file")} · recorded edits only`}>
+            <OutsideRow icon="EditFile" onClick={() => onShowRepositories({ kind: "otherFiles" })} detail={`${plural(overview.otherFiles.length, "file")} · recorded edits only`}>
               Other files <span className="text-muted-foreground">· not in a repository</span>
             </OutsideRow>
           )}

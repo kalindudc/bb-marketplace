@@ -4,7 +4,7 @@ import { formatRoute, parseRoute, type PageRoute } from "../src/route";
 const KEY = "host_1:/work/one";
 const ENCODED = "host_1~3A~2Fwork~2Fone";
 
-const all = (overrides: Partial<PageRoute> = {}): PageRoute => ({ target: { kind: "all" }, view: "worktrees", selectedKey: null, ...overrides });
+const all = (overrides: Partial<PageRoute> = {}): PageRoute => ({ target: { kind: "all" }, view: "worktrees", selectedKey: null, focus: null, ...overrides });
 const tree = (overrides: Partial<PageRoute> = {}): PageRoute => all({ target: { kind: "tree", threadId: "thr_ab" }, ...overrides });
 
 describe("parseRoute and formatRoute", () => {
@@ -15,6 +15,10 @@ describe("parseRoute and formatRoute", () => {
     ["tree/thr_ab", tree()],
     ["tree/thr_ab/repositories", tree({ view: "repositories" })],
     [`tree/thr_ab/worktree/${ENCODED}`, tree({ selectedKey: KEY })],
+    [`repositories/repo/${ENCODED}`, all({ view: "repositories", focus: { kind: "repo", key: KEY } })],
+    ["repositories/other-files", all({ view: "repositories", focus: { kind: "otherFiles" } })],
+    [`tree/thr_ab/repositories/repo/${ENCODED}`, tree({ view: "repositories", focus: { kind: "repo", key: KEY } })],
+    ["tree/thr_ab/repositories/other-files", tree({ view: "repositories", focus: { kind: "otherFiles" } })],
   ])("round-trips %j", (subPath, route) => {
     expect(parseRoute(subPath)).toEqual({ route, canonical: subPath });
     expect(formatRoute(route)).toBe(subPath);
@@ -54,6 +58,18 @@ describe("parseRoute and formatRoute", () => {
     expect(parsed.canonical).toBe("repositories");
   });
 
+  it("drops a focused repository in the Worktrees view", () => {
+    expect(formatRoute(all({ focus: { kind: "repo", key: KEY } }))).toBe("");
+    expect(formatRoute(tree({ focus: { kind: "otherFiles" } }))).toBe("tree/thr_ab");
+  });
+
+  it("drops a focused repository key that is not in the encoding or is too long, and keeps the Repositories view", () => {
+    for (const bad of ["repositories/repo", "repositories/repo/host_1:/work", "repositories/repo/a~G1", `repositories/repo/${"k".repeat(401)}`]) {
+      expect(parseRoute(bad)).toEqual({ route: all({ view: "repositories" }), canonical: "repositories" });
+    }
+    expect(parseRoute("repositories/other-files/bogus").route.focus).toEqual({ kind: "otherFiles" });
+  });
+
   it("falls back to every thread for a bad thread id, and ignores what follows it", () => {
     for (const subPath of ["tree/bad id", "tree/", "tree", `tree/${"a".repeat(65)}/repositories`, "tree/thr.ab"]) {
       const parsed = parseRoute(subPath);
@@ -83,7 +99,7 @@ describe("parseRoute and formatRoute", () => {
   });
 
   it("never throws and always returns a canonical string that parses to itself", () => {
-    for (const subPath of ["%", "%%", "///", "tree//x", "worktree/~00", "worktree//", "😀", "tree/thr_ab/worktree", ".."]) {
+    for (const subPath of ["%", "%%", "///", "tree//x", "worktree/~00", "worktree//", "😀", "tree/thr_ab/worktree", "..", "repositories/repo//", "repositories/repo/~00"]) {
       const { route, canonical } = parseRoute(subPath);
       expect(parseRoute(canonical)).toEqual({ route, canonical });
     }
