@@ -36,14 +36,23 @@ interface Gesture {
   pointerId: number; x: number; y: number; subject: DragSubject;
   started: boolean; cancelled: boolean; scroller: HTMLElement | null;
 }
+interface AutoScroll { pxPerMs: number; frame: number; time: number | null; carry: number }
 type Ending = "drop" | "cancel" | "lost";
 // Any direction counts: bb's split drag takes over past the sidebar edge by dispatching Escape, which cancels this one.
 const DRAG_START_PX = 5;
+const EDGE_PX = 32;
+const MAX_SCROLL_PX_PER_MS = 0.6;
 
 function scrollParent(element: HTMLElement | null): HTMLElement | null {
   let current = element?.parentElement ?? null;
   while (current && !/auto|scroll/.test(getComputedStyle(current).overflowY)) current = current.parentElement;
   return current;
+}
+
+// Speeds up linearly across the edge band and stays at full speed past the edge.
+function edgeSpeed(y: number, top: number, bottom: number) {
+  const depth = (distance: number) => Math.min(1, Math.max(0, (EDGE_PX - distance) / EDGE_PX));
+  return (depth(bottom - y) - depth(y - top)) * MAX_SCROLL_PX_PER_MS;
 }
 
 export function useDrag(options: DragOptions): DragController {
@@ -58,7 +67,7 @@ export function useDrag(options: DragOptions): DragController {
   const swallowTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hoverKey = useRef<CollapseKey | null>(null);
-  const scrollFrame = useRef<number | null>(null);
+  const autoScroll = useRef<AutoScroll | null>(null);
   const removeListeners = useRef<() => void>(() => {});
   const show = useCallback((next: DragView | null) => {
     viewRef.current = next;
@@ -68,6 +77,10 @@ export function useDrag(options: DragOptions): DragController {
     if (hoverTimer.current !== null) clearTimeout(hoverTimer.current);
     hoverTimer.current = null;
     hoverKey.current = null;
+  }, []);
+  const stopScrolling = useCallback(() => {
+    if (autoScroll.current) cancelAnimationFrame(autoScroll.current.frame);
+    autoScroll.current = null;
   }, []);
   const stopSwallowing = useCallback(() => {
     if (swallowTimer.current !== null) clearTimeout(swallowTimer.current);
@@ -85,10 +98,9 @@ export function useDrag(options: DragOptions): DragController {
   }, [placeGhost]);
   const hide = useCallback(() => {
     clearHover();
-    if (scrollFrame.current !== null) cancelAnimationFrame(scrollFrame.current);
-    scrollFrame.current = null;
+    stopScrolling();
     show(null);
-  }, [clearHover, show]);
+  }, [clearHover, show, stopScrolling]);
   const applyDrop = useCallback((subject: DragSubject) => {
     const plan = viewRef.current?.plan;
     const target = viewRef.current?.target;
@@ -128,18 +140,11 @@ export function useDrag(options: DragOptions): DragController {
     hide();
   }, [applyDrop, hide, stopSwallowing]);
 
-  const onMove = useCallback((event: PointerEvent) => {
-    const current = gesture.current;
-    if (!current || current.cancelled || event.pointerId !== current.pointerId) return;
-    if (!current.started && Math.hypot(event.clientX - current.x, event.clientY - current.y) < DRAG_START_PX) return;
+  const track = useCallback((current: Gesture) => {
+    const { x, y } = pointer.current;
     const { index, metrics, hitTest, rootRef, onExpand } = optionsRef.current;
     const root = rootRef.current;
-    if (!current.started) {
-      current.started = true;
-      current.scroller = scrollParent(root);
-    }
-    pointer.current = { x: event.clientX, y: event.clientY };
-    const element = (hitTest ?? ((x, y) => document.elementFromPoint(x, y)))(event.clientX, event.clientY);
+    const element = (hitTest ?? ((x, y) => document.elementFromPoint(x, y)))(x, y);
     const row = element?.closest<HTMLElement>("[data-sb-row]");
     const drop = row ? null : element?.closest<HTMLElement>("[data-sb-drop]");
     let target: DragTarget | null = null;
@@ -149,7 +154,7 @@ export function useDrag(options: DragOptions): DragController {
     if (current.subject.kind === "threads" && row?.dataset.threadId) {
       const rect = row.getBoundingClientRect();
       const depth = Number(row.dataset.depth ?? 0);
-      const instruction = resolveRowInstruction({ x: event.clientX, y: event.clientY, rect, depth,
+      const instruction = resolveRowInstruction({ x, y, rect, depth,
         base: metrics.base, indent: metrics.indent,
         isLastChild: row.dataset.lastChild === "true", hasOpenChildren: row.dataset.openChildren === "true" });
       target = { kind: "row", threadId: row.dataset.threadId, instruction };
@@ -160,7 +165,7 @@ export function useDrag(options: DragOptions): DragController {
     } else if (drop?.dataset.sbDrop) {
       const rect = drop.getBoundingClientRect();
       if (current.subject.kind === "section" && drop.dataset.sbSection) {
-        target = { kind: "section", sectionId: drop.dataset.sbSection, edge: resolveHeaderEdge(event.clientY, rect) };
+        target = { kind: "section", sectionId: drop.dataset.sbSection, edge: resolveHeaderEdge(y, rect) };
       } else if (current.subject.kind === "threads") {
         target = { kind: "group", key: drop.dataset.sbDrop as GroupKey };
         if (drop.dataset.collapsed === "true") expansion = drop.dataset.sbDrop as CollapseKey;
@@ -181,16 +186,49 @@ export function useDrag(options: DragOptions): DragController {
         plan, indicator: plan?.ok === "noop" ? null : indicator });
     }
     placeGhost(origin);
-    if (scrollFrame.current !== null) cancelAnimationFrame(scrollFrame.current);
-    // Only the sidebar scrolls: a drag heading for bb's split must not scroll the thread under the pointer.
-    const scroller = current.scroller;
-    if (scroller) {
-      const rect = scroller.getBoundingClientRect();
-      const over = event.clientX >= rect.left && event.clientX <= rect.right;
-      const amount = !over ? 0 : event.clientY - rect.top < 32 ? -12 : rect.bottom - event.clientY < 32 ? 12 : 0;
-      if (amount) scrollFrame.current = requestAnimationFrame(() => { scroller.scrollTop += amount; });
-    }
   }, [clearHover, placeGhost, show]);
+
+  // Scrolls by elapsed time, so the speed holds at any refresh rate, and re-tracks the resting pointer as rows pass under it.
+  const scrollStep = useCallback((time: number) => {
+    const scroll = autoScroll.current;
+    const current = gesture.current;
+    const scroller = current?.scroller;
+    if (!scroll || !current || current.cancelled || !scroller) return;
+    scroll.carry += scroll.pxPerMs * (scroll.time === null ? 16 : Math.min(48, Math.max(0, time - scroll.time)));
+    scroll.time = time;
+    const step = Math.trunc(scroll.carry);
+    scroll.carry -= step;
+    if (step) {
+      const before = scroller.scrollTop;
+      scroller.scrollTop = before + step;
+      if (scroller.scrollTop === before) { stopScrolling(); return; }
+      track(current);
+    }
+    scroll.frame = requestAnimationFrame(scrollStep);
+  }, [stopScrolling, track]);
+
+  // Only the sidebar scrolls: a drag heading for bb's split must not scroll the thread under the pointer.
+  const steer = useCallback((current: Gesture) => {
+    const { x, y } = pointer.current;
+    const rect = current.scroller?.getBoundingClientRect();
+    const pxPerMs = rect && x >= rect.left && x <= rect.right ? edgeSpeed(y, rect.top, rect.bottom) : 0;
+    if (pxPerMs === 0) { stopScrolling(); return; }
+    if (autoScroll.current) { autoScroll.current.pxPerMs = pxPerMs; return; }
+    autoScroll.current = { pxPerMs, frame: requestAnimationFrame(scrollStep), time: null, carry: 0 };
+  }, [scrollStep, stopScrolling]);
+
+  const onMove = useCallback((event: PointerEvent) => {
+    const current = gesture.current;
+    if (!current || current.cancelled || event.pointerId !== current.pointerId) return;
+    if (!current.started && Math.hypot(event.clientX - current.x, event.clientY - current.y) < DRAG_START_PX) return;
+    if (!current.started) {
+      current.started = true;
+      current.scroller = scrollParent(optionsRef.current.rootRef.current);
+    }
+    pointer.current = { x: event.clientX, y: event.clientY };
+    track(current);
+    steer(current);
+  }, [steer, track]);
 
   const begin = useCallback((event: ReactPointerEvent, subject: DragSubject) => {
     const stale = gesture.current;
@@ -224,8 +262,8 @@ export function useDrag(options: DragOptions): DragController {
     removeListeners.current();
     clearHover();
     stopSwallowing();
-    if (scrollFrame.current !== null) cancelAnimationFrame(scrollFrame.current);
-  }, [clearHover, stopSwallowing]);
+    stopScrolling();
+  }, [clearHover, stopScrolling, stopSwallowing]);
   useEffect(() => { if (!options.enabled && gesture.current) end("cancel"); }, [options.enabled, end]);
   const onRowPointerDown = useCallback((event: ReactPointerEvent, threadId: string) => {
     const { selection, index } = optionsRef.current;

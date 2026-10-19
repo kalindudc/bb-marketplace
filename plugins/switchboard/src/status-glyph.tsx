@@ -1,24 +1,27 @@
 import type { RowState } from "./status";
 
-export const SPIN_STEPS = 12;
-export const SPIN_STEP_MS = 92;
-const spinners = new Set<HTMLElement>();
-let spinStep = 0;
-let spinTimer: ReturnType<typeof setInterval> | undefined;
+let visibility: IntersectionObserver | undefined;
 
-function stepSpinners() {
-  spinStep = (spinStep + 1) % SPIN_STEPS;
-  for (const spinner of spinners) spinner.style.transform = `rotate(${spinStep * 360 / SPIN_STEPS}deg)`;
+// switchboard.css says why only spinners on screen animate.
+function onVisibility(entries: IntersectionObserverEntry[]) {
+  for (const entry of entries) entry.target.toggleAttribute("data-visible", entry.isIntersecting);
 }
 
-// One shared timer steps every running spinner; switchboard.css says why this is not a CSS animation.
+// A spinner's animation starts when it comes on screen, and restarts when React moves its row. A start time of 0
+// keeps every spinner at the same angle, so they turn together and the compositor draws one set of steps.
+function alignSpinner(event: AnimationEvent) {
+  if (event.animationName !== "sb-spin" || !(event.target instanceof Element)) return;
+  for (const animation of event.target.getAnimations())
+    if ((animation as CSSAnimation).animationName === "sb-spin") animation.startTime = 0;
+}
+
 function startSpinning(spinner: HTMLElement) {
-  spinners.add(spinner);
-  spinTimer ??= setInterval(stepSpinners, SPIN_STEP_MS);
-  return () => {
-    spinners.delete(spinner);
-    if (spinners.size === 0) { clearInterval(spinTimer); spinTimer = undefined; }
-  };
+  if (!visibility) {
+    visibility = new IntersectionObserver(onVisibility);
+    spinner.ownerDocument.addEventListener("animationstart", alignSpinner, true);
+  }
+  visibility.observe(spinner);
+  return () => visibility?.unobserve(spinner);
 }
 
 export function StatusGlyph(props: { state: RowState; label: string; spin?: boolean; className?: string }) {

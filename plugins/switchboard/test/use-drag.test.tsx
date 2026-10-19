@@ -139,6 +139,43 @@ describe("pointer drag", () => {
     expect(onExpand).toHaveBeenCalledWith("thread:b");
   });
 
+  it("keeps scrolling near an edge without pointer moves, faster nearer the edge, and retargets as rows pass", () => {
+    vi.useFakeTimers({ toFake: ["requestAnimationFrame", "cancelAnimationFrame", "setTimeout", "clearTimeout", "performance"] });
+    render(<Harness />);
+    const scroller = screen.getByTestId("scroller");
+    vi.spyOn(scroller, "getBoundingClientRect").mockReturnValue({ ...rect, top: 0, bottom: 400, height: 400, left: 0, right: 240, width: 240 });
+    let scrollTop = 500;
+    Object.defineProperty(scroller, "scrollTop", { get: () => scrollTop, set: (value: number) => { scrollTop = Math.max(0, Math.min(1000, value)); } });
+    target = screen.getByTestId("row");
+    vi.spyOn(target, "getBoundingClientRect").mockReturnValue(rect);
+    const scrolledOver = (ms: number) => { const before = scrollTop; act(() => { vi.advanceTimersByTime(ms); }); return scrollTop - before; };
+
+    start(); pointer("pointerMove", 40, 380);
+    const shallow = scrolledOver(480);
+    expect(shallow).toBeGreaterThan(0);
+    expect(Math.abs(scrolledOver(480) - shallow)).toBeLessThanOrEqual(1);
+    pointer("pointerMove", 40, 399);
+    expect(scrolledOver(480)).toBeGreaterThan(shallow);
+
+    target = screen.getByTestId("collapsed");
+    vi.spyOn(target, "getBoundingClientRect").mockReturnValue(rect);
+    scrolledOver(532);
+    expect(onExpand).toHaveBeenCalledWith("thread:b");
+
+    pointer("pointerMove", 40, 10);
+    expect(scrolledOver(160)).toBeLessThan(0);
+    pointer("pointerMove", 260, 10);
+    expect(scrolledOver(160)).toBe(0);
+    pointer("pointerMove", 40, 200);
+    expect(scrolledOver(160)).toBe(0);
+    pointer("pointerMove", 40, 399);
+    scrollTop = 1000;
+    expect(scrolledOver(160)).toBe(0);
+    pointer("pointerUp", 40, 399);
+    act(() => { vi.advanceTimersByTime(0); });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("reorders section headers and is disabled when filtering", () => {
     render(<Harness />);
     target = screen.getByTestId("section");

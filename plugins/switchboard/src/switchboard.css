@@ -30,7 +30,7 @@
   padding-right: calc(var(--sb-pill-r) + 8px);
 }
 .sb-row-line { gap: var(--sb-gap); }
-.sb-row::before, .sb-group-header::before {
+.sb-row::before, .sb-group-header::before, .sb-flash::after {
   content: ""; position: absolute; top: var(--sb-pill-t, 1px); bottom: var(--sb-pill-b, 1px);
   left: var(--sb-pill-l); right: var(--sb-pill-r); border-radius: var(--sb-pill-radius, 6px);
   pointer-events: none; z-index: 0;
@@ -243,20 +243,22 @@
 .sb-row[data-dragging="true"] { opacity: .4; }
 /* Placed after the pointer and not-allowed cursors so it overrides them on every row and control mid-drag. */
 .sb-list[data-sb-dragging], .sb-list[data-sb-dragging] * { cursor: grabbing; }
-.sb-flash::before { animation: sb-flash .9s ease-out; }
-@keyframes sb-flash {
-  from { background: color-mix(in oklch, var(--primary) 28%, transparent); }
-  to { background: transparent; }
+/* An opacity fade on its own overlay runs on the compositor, so it stays smooth while the list re-renders after a
+   drop; a background fade repaints on the main thread every frame. */
+.sb-flash::after { background: color-mix(in oklch, var(--primary) 28%, transparent); opacity: 0; animation: sb-flash .9s ease-out; }
+@keyframes sb-flash { from { opacity: 1; } to { opacity: 0; } }
+/* The spinner turns on the compositor: a main-thread timer stutters whenever bb is busy, and an animated SVG
+   image repaints every frame. It makes one turn a second in 30 steps, which caps it at 30 frames a second with
+   an even cadence on 60 and 120 Hz screens. One iteration lasts 1000 turns because React listens for
+   animationiteration, and every iteration event wakes the main thread. bb restyles every running animation on
+   each main-thread frame while a thread streams, so status-glyph.tsx animates only the spinners on screen. */
+@keyframes sb-spin { to { transform: rotate(1000turn); } }
+@media (prefers-reduced-motion: no-preference) {
+  .sb-spin[data-visible] { animation: sb-spin 1000s steps(30000) infinite; }
 }
-/* A shared timer in status-glyph.tsx turns the spinner 12 steps a turn; will-change keeps each step off the
-   paint path. Continuous motion costs more inside bb: an animated SVG image (the old mask) repaints every
-   frame, and a CSS animation, even a composited one, is restyled on every main-thread frame and on bb's
-   per-commit layout reads while a thread streams. */
-.sb-spin { will-change: transform; }
 @media (prefers-reduced-motion: reduce) {
   .sb-control { transition: none; }
-  .sb-flash { animation: none; }
-  .sb-spin { transform: none !important; }
+  .sb-flash::after { animation: none; }
 }
 @media (pointer: coarse) { .sb-row { min-height: max(var(--sb-row-h), var(--bb-sidebar-row-height-coarse, 2.5rem)); } }
 @media (hover: hover) {

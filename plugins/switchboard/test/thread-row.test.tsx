@@ -167,6 +167,15 @@ describe("thread row", () => {
     slot.unmount();
   });
 
+  it("fades the flash in an overlay on the compositor, and leaves it out for reduced motion", () => {
+    const css = readFileSync(join(process.cwd(), "src/switchboard.css"), "utf8");
+    expect(css).toContain(".sb-row::before, .sb-group-header::before, .sb-flash::after {");
+    expect(css).toContain(".sb-flash::after { background: color-mix(in oklch, var(--primary) 28%, transparent); opacity: 0; animation: sb-flash .9s ease-out; }");
+    expect(css).toContain("@keyframes sb-flash { from { opacity: 1; } to { opacity: 0; } }");
+    expect(css).not.toMatch(/\.sb-flash::before/);
+    expect(css).toMatch(/prefers-reduced-motion: reduce\) \{[^}]*\}\s*\.sb-flash::after \{ animation: none; \}/);
+  });
+
   it("places nested content, caret and guides from shared spacing variables", () => {
     const nested = { ...row, depth: 2, guides: "||", isLast: false };
     const { slot } = mount({ row: nested });
