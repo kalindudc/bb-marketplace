@@ -14,7 +14,7 @@ const STATUS_LETTER: Record<FileChange["status"], string> = {
 
 const CAPTION: Record<Repo["ref"]["kind"], (repo: Repo) => string> = {
   workspace: () => "Thread workspace",
-  checkout: () => "Edited by path",
+  checkout: (repo) => (repo.ref.kind === "checkout" && repo.ref.worked === true ? "Thread checkout" : "Edited by path"),
   branch: (repo) => `Archived branch${repo.aheadCount === null ? "" : ` · ${repo.aheadCount} ${repo.aheadCount === 1 ? "commit" : "commits"}`}`,
   recorded: () => "Recorded edits only",
 };
@@ -170,9 +170,14 @@ export function formatWorktrees(overview: Overview): string {
   return `${lines.join("\n")}\n`;
 }
 
+// Every worktree the thread is in: its own workspace first, then any checkout it works in outside bb.
 export function formatWorktree(overview: Overview, threadId: string): string {
-  const worktree = overview.worktrees.find((entry) => entry.threadIds.includes(threadId));
-  if (worktree === undefined) return `Thread ${threadId} has no worktree.\n`;
+  const worktrees = overview.worktrees.filter((entry) => entry.threadIds.includes(threadId));
+  if (worktrees.length === 0) return `Thread ${threadId} has no worktree.\n`;
+  return worktrees.map((worktree) => worktreeBlock(overview, worktree, threadId)).join("\n");
+}
+
+function worktreeBlock(overview: Overview, worktree: Worktree, threadId: string): string {
   const thread = overview.threads.find((entry) => entry.id === primaryThreadId(worktree, threadId));
   const counts = worktree.aheadCount === null || worktree.behindCount === null
     ? null : `${behindAhead(worktree)}${worktree.base === null ? "" : ` on ${worktree.base}`}`;

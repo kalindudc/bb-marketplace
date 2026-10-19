@@ -7,6 +7,7 @@ export type LiveFiles = { files: FileChange[]; branch: string | null; base: stri
 
 type WorkspaceRef = Extract<RepoRef, { kind: "workspace" }>;
 type BranchRef = Extract<RepoRef, { kind: "branch" }>;
+type CheckoutRef = Extract<RepoRef, { kind: "checkout" }>;
 type StatusFile = { path: string; status: string; insertions: number | null; deletions: number | null };
 // What git and bb report about a worktree; a cached entry holds only this, never who works in it.
 export type WorktreeStatus = Omit<Worktree, "key" | "ref" | "label" | "projectId" | "hostId" | "hostName" | "root" | "kind" | "threadIds">;
@@ -106,6 +107,14 @@ export function loadBranchRange(
   );
 }
 
+// One read serves a worked checkout's worktree row and its uncommitted files in the repository view.
+export function loadCheckoutStatus(
+  deps: CollectDeps, ref: CheckoutRef, threadIds: readonly string[], signal?: AbortSignal,
+): Promise<HostOutput<"checkoutStatus">> {
+  const read = (own?: AbortSignal) => deps.host("checkoutStatus", { root: ref.root, base: ref.base }, { hostId: ref.hostId, signal: own });
+  return shared(deps, `co\0${ref.hostId}\0${ref.root}\0${ref.base ?? ""}`, null, threadIds, read, signal);
+}
+
 function workspaceTarget(ref: WorkspaceRef, scope: Scope): DiffTarget {
   return scope === "branch" && ref.base !== null ? { type: "all", mergeBaseBranch: ref.base } : { type: "uncommitted" };
 }
@@ -173,6 +182,11 @@ export async function loadRepoFiles(
     if (status.state === "unavailable") return { unavailable: status.message ?? "bb could not read this workspace" };
     return { files: status.uncommitted, branch: null, base: null, aheadCount: null, truncated: false };
   }
+  if (ref.kind === "checkout" && ref.worked === true && scope === "uncommitted") {
+    const status = await loadCheckoutStatus(deps, ref, plan.threadIds, signal);
+    if (status.outcome === "unavailable") return { unavailable: hostMessage(status) };
+    return { files: status.uncommitted.map(gitFileChange), branch: status.branch, base: null, aheadCount: null, truncated: status.truncated };
+  }
   const result = ref.kind === "branch"
     ? await loadBranchRange(deps, ref, plan.threadIds, signal)
     : await deps.host("repoFiles", { root: ref.root, target: hostTarget(ref, scope) }, { hostId: ref.hostId, signal });
@@ -193,9 +207,9 @@ function workspacePatchTarget(ref: WorkspaceRef, input: PatchInput): PatchTarget
 }
 
 function hostPatchTarget(ref: Exclude<RepoRef, { kind: "workspace" | "recorded" }>, input: PatchInput): HostTarget {
-  if (input.sha === null && input.scope !== "committed") return hostTarget(ref, input.scope);
-  if (ref.kind !== "branch") throw new Error("Committed changes and commits are not available for a checkout");
-  return input.sha === null ? hostTarget(ref, "branch") : { type: "commit", sha: input.sha };
+  if (input.sha !== null) return { type: "commit", sha: input.sha };
+  if (input.scope !== "committed") return hostTarget(ref, input.scope);
+  return ref.kind === "branch" ? hostTarget(ref, "branch") : { type: "committed", base: ref.base };
 }
 
 export async function loadPatch(deps: CollectDeps, input: PatchInput, signal?: AbortSignal): Promise<PatchOutput> {
@@ -227,7 +241,7 @@ export async function loadCommitFiles(deps: CollectDeps, input: CommitFilesInput
     if (result.outcome === "unavailable") throw new Error(result.failure.message);
     return { files: result.files.map(workspaceFile) };
   }
-  if (ref.kind === "branch") {
+  if (ref.kind === "branch" || ref.kind === "checkout") {
     const result = await deps.host("repoFiles", { root: ref.root, target: { type: "commit", sha } }, { hostId: ref.hostId, signal });
     if (result.outcome === "unavailable") throw new Error(hostMessage(result));
     return { files: result.files.map(gitFileChange) };

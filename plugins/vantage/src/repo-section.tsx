@@ -22,7 +22,7 @@ const KIND_ICON = { workspace: "FolderGit", checkout: "Folder", branch: "Archive
 function caption(repo: Repo): string {
   switch (repo.ref.kind) {
     case "workspace": return "Thread workspace";
-    case "checkout": return "Edited by path";
+    case "checkout": return repo.ref.worked === true ? "Thread checkout" : "Edited by path";
     case "branch": return repo.aheadCount === null ? "Archived branch" : `Archived branch · ${repo.aheadCount} ${repo.aheadCount === 1 ? "commit" : "commits"}`;
     case "recorded": return "Recorded edits only";
   }

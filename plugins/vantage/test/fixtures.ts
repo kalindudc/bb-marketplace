@@ -86,6 +86,13 @@ export function checkoutRepo(overrides: Partial<Repo> = {}): Repo {
   });
 }
 
+export function checkoutWorktree(overrides: Partial<Worktree> = {}): Worktree {
+  return worktree({
+    key: "host_1:/trees/study/src", ref: { kind: "checkout", hostId: "host_1", root: "/trees/study/src", base: null, worked: true },
+    kind: "checkout", root: "/trees/study/src", branch: "study", ...overrides,
+  });
+}
+
 export function branchRepo(overrides: Partial<Repo> = {}): Repo {
   return repo({
     key: "host_1:/code/proj@feature/old",

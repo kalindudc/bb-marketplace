@@ -20,6 +20,18 @@ export async function openEnvironmentTerminal(
   return navigate.experimental_openTerminal({ terminalId: session.id });
 }
 
+// A checkout bb does not manage has no environment, so the page opens its terminal in the folder on that machine.
+export async function openHostTerminal(
+  sdk: Pick<PluginBrowserBbSdk, "terminals">,
+  navigate: Pick<BbNavigate, "experimental_openTerminal">,
+  input: { hostId: string; path: string; title: string },
+): Promise<boolean> {
+  const session = await sdk.terminals.create({
+    cols: 120, rows: 32, scope: { kind: "host_path", hostId: input.hostId, cwd: input.path }, title: input.title,
+  });
+  return navigate.experimental_openTerminal({ terminalId: session.id });
+}
+
 // The terminal belongs to the panel's thread: bb shows a thread only its own terminals.
 export async function openWorktreeTerminal(
   sdk: Pick<PluginBrowserBbSdk, "terminals">,

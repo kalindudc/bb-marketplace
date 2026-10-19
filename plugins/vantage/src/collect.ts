@@ -93,6 +93,19 @@ function locate(env: Environment | undefined, edits: ThreadEdits | undefined, ra
   return { kind: "resolve", hostId: env.hostId, path: normalized };
 }
 
+const inside = (parent: string, path: string): boolean => {
+  const base = parent.replace(/\/$/, "");
+  return path === base || path.startsWith(`${base}/`);
+};
+
+// Only a thread that edited files outside its own environment can be working in another checkout, so only its folders are looked up.
+function editsOutside(env: Environment, edits: ThreadEdits): boolean {
+  return edits.records.some((record) => {
+    const location = locate(env, edits, record.movePath ?? record.path);
+    return location.kind === "resolve" && (env.path === null || !inside(env.path, location.path));
+  });
+}
+
 function sourceFor(projects: readonly ProjectInfo[], env: Environment): string | null {
   const sources = projects.find((project) => project.id === env.projectId)?.sources.filter((source) => source.hostId === env.hostId) ?? [];
   return (sources.find((source) => source.isDefault) ?? sources[0])?.path ?? null;
@@ -119,6 +132,9 @@ export function pathsToResolve(input: {
     for (const record of edits?.records ?? []) {
       const location = locate(env, edits, record.movePath ?? record.path);
       if (location.kind === "resolve") add(location.hostId, location.path);
+    }
+    if (edits !== undefined && edits.workDirs.length > 0 && editsOutside(env, edits)) {
+      for (const dir of edits.workDirs) add(env.hostId, dir);
     }
   }
   for (const [hostId, paths] of wanted) {
@@ -183,6 +199,19 @@ export function planRepos(input: {
 
   const checkoutProject = (hostId: string, root: string): ProjectInfo | undefined =>
     projects.find((project) => project.sources.some((source) => source.hostId === hostId && resolved(hostId, source.path)?.root === root));
+  // The repository roots of the folders a thread's commands changed into.
+  const workRootsOf = new Map<string, ReadonlySet<string>>();
+  const workRoots = (threadId: string, hostId: string): ReadonlySet<string> => {
+    let found = workRootsOf.get(threadId);
+    if (found === undefined) {
+      const dirs = edits.get(threadId)?.workDirs ?? [];
+      found = new Set(dirs.flatMap((dir) => resolved(hostId, dir)?.root ?? []));
+      workRootsOf.set(threadId, found);
+    }
+    return found;
+  };
+  // A checkout a thread both edited and ran commands in, and the first such thread.
+  const worked = new Map<RepoPlan, Environment | undefined>();
 
   for (const thread of threads) {
     const env = thread.environmentId === null ? undefined : environments.get(thread.environmentId);
@@ -205,6 +234,7 @@ export function planRepos(input: {
             root, hostId: location.hostId, threadIds: [], touched: new Map(),
           }), thread.id);
           destination = { touched: plan.touched, key: found.relative };
+          if (plan.ref.kind === "checkout" && !worked.has(plan) && workRoots(thread.id, location.hostId).has(root)) worked.set(plan, env);
         }
       }
       const { touched, key } = destination;
@@ -213,6 +243,16 @@ export function planRepos(input: {
       for (const path of raw) entry.rawPaths.add(path);
       entry.records.push(record);
       touched.set(key, entry);
+    }
+  }
+
+  for (const [plan, env] of worked) {
+    if (plan.ref.kind !== "checkout") continue;
+    plan.ref = { ...plan.ref, worked: true };
+    // A checkout outside every project, such as a tree an agent made itself, belongs with the work of the thread that made it.
+    if (plan.projectId === null && env !== undefined) {
+      plan.projectId = env.projectId;
+      plan.label = projectName(env) ?? plan.label;
     }
   }
 
@@ -257,8 +297,10 @@ function toRepo(plan: RepoPlan, loaded: LiveFiles | { unavailable: string }, hos
   } else {
     const matched = new Set<string>();
     const attached = loaded.files.map((file) => ({ ...file, edits: editsFor(plan.touched, file, matched) }));
-    files = plan.ref.kind === "checkout" ? attached.filter((file) => file.edits !== null) : attached;
-    others = plan.ref.kind === "checkout" ? attached.filter((file) => file.edits === null) : [];
+    // In a checkout only edited by path, the other changes are someone else's; in one a thread works in, they are its own.
+    const byPathOnly = plan.ref.kind === "checkout" && plan.ref.worked !== true;
+    files = byPathOnly ? attached.filter((file) => file.edits !== null) : attached;
+    others = byPathOnly ? attached.filter((file) => file.edits === null) : [];
     for (const [path, entry] of plan.touched) {
       if (matched.has(path)) continue;
       files.push(cleanFile(path, { threadIds: [...entry.threadIds], rawPaths: [...entry.rawPaths], count: entry.records.length }));
@@ -443,11 +485,17 @@ export async function buildShell(deps: CollectDeps, input: ShellInput, signal?: 
     collectTarget(deps, target, input.includeArchived, signal),
     listProjectsAndHosts(deps.sdk, [], signal),
   ]);
-  const wanted = pathsToResolve({ threads: tree.threads, environments: tree.environments, edits: new Map(), projects });
+  // Edits and roots an earlier build already read put a worked checkout's row in the outline too.
+  const edits = new Map(tree.threads.flatMap((thread) => {
+    const known = deps.edits.peek(thread.id);
+    return known === undefined ? [] : [[thread.id, known] as const];
+  }));
+  const wanted = pathsToResolve({ threads: tree.threads, environments: tree.environments, edits, projects });
   const roots: ResolvedRoots = new Map([...wanted].map(([hostId, paths]) => [
     hostId, new Map(paths.map((path) => [path, deps.roots?.peek(hostId, path) ?? { root: path, relative: "" }])),
   ]));
-  const { plans } = planRepos({ threads: tree.threads, environments: tree.environments, edits: new Map(), roots, projects, hosts });
+  const planned = planRepos({ threads: tree.threads, environments: tree.environments, edits, roots, projects, hosts }).plans;
+  const plans = planned.filter((plan) => plan.ref.kind !== "checkout" || plan.ref.worked === true);
   const hostNames = new Map(hosts.map((host) => [host.id, host.name]));
   return {
     threadId: target.kind === "tree" ? target.threadId : "",

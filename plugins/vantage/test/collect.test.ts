@@ -14,7 +14,7 @@ import { destroyedEnvironment, environment, threadSummary } from "./fixtures";
 const record = (overrides: Partial<EditRecord> = {}): EditRecord => ({
   threadId: "thr_1", path: "src/a.ts", movePath: null, kind: "update", added: 1, removed: 0, at: 1000, ...overrides,
 });
-const edits = (records: EditRecord[], primaryCwd: string | null = null): ThreadEdits => ({ records, primaryCwd });
+const edits = (records: EditRecord[], primaryCwd: string | null = null, workDirs: string[] = []): ThreadEdits => ({ records, primaryCwd, workDirs });
 const roots = (hostId: string, entries: Record<string, { root: string | null; relative: string | null }>): ResolvedRoots =>
   new Map([[hostId, new Map(Object.entries(entries))]]);
 const own = (root: string) => ({ root, relative: "" });
@@ -212,7 +212,70 @@ describe("planRepos", () => {
   });
 });
 
+describe("planRepos worked checkouts", () => {
+  const live = environment({ id: "env_1", path: "/work/one", projectId: "proj_1" });
+  const treeRoots = {
+    "/work/one": own("/work/one"), "/code/proj": own("/code/proj"), "/code/cortex": own("/code/cortex"),
+    "/trees/study/src/envoy/lib.rs": { root: "/trees/study/src", relative: "envoy/lib.rs" },
+    "~/trees/study/src/envoy": { root: "/trees/study/src", relative: "envoy" },
+    "/tmp/scratch": { root: null, relative: null },
+  };
+  const study = (threadEdits: Record<string, ThreadEdits>, threads = [threadSummary({ id: "a" })]) =>
+    plan({ threads, environments: [live], edits: threadEdits, roots: roots("host_1", treeRoots) }).plans;
+
+  it("marks a checkout worked when the same thread edited a file in it and ran commands in it", () => {
+    const plans = study({ a: edits([record({ path: "/trees/study/src/envoy/lib.rs" })], null, ["/tmp/scratch", "~/trees/study/src/envoy"]) });
+    expect(plans.map((entry) => entry.ref)).toEqual([
+      { kind: "workspace", environmentId: "env_1", base: "origin/main" },
+      { kind: "checkout", hostId: "host_1", root: "/trees/study/src", base: null, worked: true },
+    ]);
+    expect(plans[1]).toMatchObject({ label: "Project", projectId: "proj_1", threadIds: ["a"] });
+  });
+
+  it("leaves a checkout edited by path only when the thread never ran a command there", () => {
+    const plans = study({ a: edits([record({ path: "/trees/study/src/envoy/lib.rs" })], null, ["/tmp/scratch"]) });
+    expect(plans[1]).toMatchObject({ label: "src", projectId: null, ref: { kind: "checkout", root: "/trees/study/src" } });
+    expect(plans[1]!.ref).not.toHaveProperty("worked");
+  });
+
+  it("needs one thread to do both: an edit by one and commands by another do not count", () => {
+    const plans = study(
+      { a: edits([record({ path: "/trees/study/src/envoy/lib.rs" })]), b: edits([], null, ["~/trees/study/src/envoy"]) },
+      [threadSummary({ id: "a" }), threadSummary({ id: "b", parentThreadId: "a", depth: 1 })],
+    );
+    expect(plans[1]!.ref).not.toHaveProperty("worked");
+  });
+
+  it("makes no repository of a folder the thread only ran commands in", () => {
+    expect(study({ a: edits([], null, ["~/trees/study/src/envoy"]) }).map((entry) => entry.ref.kind)).toEqual(["workspace"]);
+  });
+
+  it("keeps the owning project's name for a worked checkout a project owns", () => {
+    const plans = plan({
+      threads: [threadSummary({ id: "a" })], environments: [live],
+      edits: { a: edits([record({ path: "/code/cortex/x.md" })], null, ["/code/cortex"]) },
+      roots: roots("host_1", { ...treeRoots, "/code/cortex/x.md": { root: "/code/cortex", relative: "x.md" } }),
+    }).plans;
+    expect(plans[1]).toMatchObject({ label: "Cortex", projectId: "proj_cortex", ref: { kind: "checkout", worked: true } });
+  });
+});
+
 describe("pathsToResolve", () => {
+  it("adds a thread's command folders only when it edited files outside its own environment", () => {
+    const wanted = pathsToResolve({
+      threads: [threadSummary({ id: "a" }), threadSummary({ id: "b" })],
+      environments: new Map([["env_1", environment({ id: "env_1", path: "/work/one" })]]),
+      edits: new Map([
+        ["a", edits([record({ path: "src/a.ts" }), record({ path: "/work/one/b.ts" })], null, ["~/inside-only"])],
+        ["b", edits([record({ path: "/trees/study/src/x.rs" })], null, ["~/trees/study/src", "/trees/study/src/envoy"])],
+      ]),
+      projects: [],
+    });
+    expect(wanted.get("host_1")).toEqual([
+      "/work/one", "/work/one/src/a.ts", "/work/one/b.ts", "/trees/study/src/x.rs", "~/trees/study/src", "/trees/study/src/envoy",
+    ]);
+  });
+
   it("lists live environment paths, resolvable edit paths and project sources per host", () => {
     const wanted = pathsToResolve({
       threads: [threadSummary({ id: "a" }), threadSummary({ id: "b", environmentId: "env_9" })],
@@ -338,7 +401,8 @@ function setup(options: Setup) {
     hosts: { list: vi.fn(async () => options.hosts ?? hosts) },
   };
   const edits = {
-    get: vi.fn(async (threadId: string) => options.edits?.[threadId] ?? { records: [], primaryCwd: null }),
+    get: vi.fn(async (threadId: string) => options.edits?.[threadId] ?? { records: [], primaryCwd: null, workDirs: [] }),
+    peek: vi.fn(() => undefined),
     forget: vi.fn(),
   };
   const knownRoots = [
@@ -520,6 +584,73 @@ describe("buildOverview worktrees", () => {
     expect(overview.repos).toHaveLength(1);
     expect(overview.worktrees).toMatchObject([{ state: "unavailable", message: "status failed" }]);
     expect(overview.sharedFiles).toEqual([]);
+  });
+});
+
+describe("buildOverview worked checkouts", () => {
+  const TREE_ROOT = "/trees/study/src";
+  const gitFile = (path: string, additions = 1) => ({ path, previousPath: null, status: "modified", additions, deletions: 0, binary: false });
+  const studyHost = (status: object = {}) => vi.fn(async (method: string, input: { paths?: string[] }) => {
+    if (method === "resolveRoots") {
+      return {
+        results: (input.paths ?? []).map((path) => path.startsWith(TREE_ROOT) || path.startsWith("~/trees/study/src")
+          ? { path, root: TREE_ROOT, relative: path.startsWith("~") ? "envoy" : path.slice(TREE_ROOT.length + 1) }
+          : { path, root: path === "/work/one" ? path : null, relative: path === "/work/one" ? "" : null }),
+      };
+    }
+    if (method === "checkoutStatus") {
+      return {
+        outcome: "available", branch: "study", base: "origin/main", aheadCount: 2, behindCount: 0, truncated: false,
+        commits: [{ sha: "abc1234", shortSha: "abc1234", subject: "Cut copies", authorName: "Agent", authoredAt: 1000 }],
+        uncommitted: [gitFile("envoy/lib.rs", 3), gitFile("envoy/shell-only.rs", 5)], committed: [gitFile("envoy/committed.rs", 8)],
+        ...status,
+      };
+    }
+    throw new Error(`unexpected ${method}`);
+  }) as unknown as HostCall & ReturnType<typeof vi.fn>;
+  const studyEdits = { thr_1: edits([record({ path: `${TREE_ROOT}/envoy/lib.rs` })], "/work/one", ["~/trees/study/src/envoy"]) };
+
+  it("gives the checkout a worktree row with its commits, and lists every change in it, from one host read", async () => {
+    const host = studyHost();
+    const { deps } = setup({ edits: studyEdits, host, environments: [environment({ id: "env_1", path: "/work/one" })] });
+    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
+    expect(overviewSchema.safeParse(overview).success).toBe(true);
+    const row = overview.worktrees.find((entry) => entry.kind === "checkout")!;
+    expect(row).toMatchObject({
+      key: `host_1:${TREE_ROOT}`, label: "Project", projectId: "proj_1", root: TREE_ROOT, branch: "study", base: "origin/main",
+      aheadCount: 2, behindCount: 0, state: "ready", threadIds: ["thr_1"],
+    });
+    expect(row.committed.map((file) => file.path)).toEqual(["envoy/committed.rs"]);
+    expect(row.commits.map((commit) => commit.subject)).toEqual(["Cut copies"]);
+    const repo = overview.repos.find((entry) => entry.ref.kind === "checkout")!;
+    expect(repo.ref).toEqual({ kind: "checkout", hostId: "host_1", root: TREE_ROOT, base: null, worked: true });
+    expect(repo.files.map((file) => [file.path, file.edits?.count ?? null])).toEqual([["envoy/lib.rs", 1], ["envoy/shell-only.rs", null]]);
+    expect(repo.otherFiles).toEqual([]);
+    expect(host.mock.calls.filter(([method]) => method === "checkoutStatus")).toEqual([
+      ["checkoutStatus", { root: TREE_ROOT, base: null }, { hostId: "host_1", signal: undefined }],
+    ]);
+  });
+
+  it("asks for the merge-base diff when the scope is branch, and keeps the row", async () => {
+    const host = studyHost();
+    host.mockImplementation((async (method: string, input: { paths?: string[] }) => {
+      if (method === "repoFiles") {
+        return { outcome: "available", branch: "study", base: "origin/main", aheadCount: 2, behindCount: null, commits: [], truncated: false, files: [gitFile("envoy/committed.rs")] };
+      }
+      return studyHost()(method as never, input as never, { hostId: "host_1" });
+    }) as never);
+    const { deps } = setup({ edits: studyEdits, host, environments: [environment({ id: "env_1", path: "/work/one" })] });
+    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "branch", includeArchived: true });
+    expect(host.mock.calls.find(([method]) => method === "repoFiles")?.[1]).toEqual({ root: TREE_ROOT, target: { type: "merge-base", base: null } });
+    expect(overview.worktrees.map((entry) => entry.kind)).toEqual(["workspace", "checkout"]);
+  });
+
+  it("shows the row as unavailable when the host cannot read the checkout", async () => {
+    const host = studyHost({ outcome: "unavailable", reason: "not-a-repo", message: "This folder does not exist" });
+    const { deps } = setup({ edits: studyEdits, host, environments: [environment({ id: "env_1", path: "/work/one" })] });
+    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
+    expect(overview.worktrees.find((entry) => entry.kind === "checkout")).toMatchObject({ state: "unavailable", message: "This folder is no longer a git repository" });
+    expect(overview.repos.find((entry) => entry.ref.kind === "checkout")).toMatchObject({ state: "unavailable" });
   });
 });
 
@@ -791,7 +922,7 @@ describe("buildOverview for every thread", () => {
       const first = await ask({ ...deps, cache });
       expect(first.otherFiles).toEqual([]);
       index.get.mockImplementation(async (threadId: string) => (
-        threadId === "thr_1" ? edits([record({ path: "/tmp/outside.txt" })]) : { records: [], primaryCwd: null }
+        threadId === "thr_1" ? edits([record({ path: "/tmp/outside.txt" })]) : { records: [], primaryCwd: null, workDirs: [] }
       ));
       const second = await ask({ ...deps, cache });
       expect(second.otherFiles.map((file) => file.path)).toEqual(["/tmp/outside.txt"]);
@@ -849,7 +980,7 @@ describe("buildOverview phases", () => {
     const held = gate();
     index.get.mockImplementation(async () => {
       await held.opened;
-      return { records: [], primaryCwd: null };
+      return { records: [], primaryCwd: null, workDirs: [] };
     });
     const pending = ask(deps);
     await vi.waitFor(() => expect(sdk.environments.status).toHaveBeenCalledTimes(2));
@@ -863,7 +994,7 @@ describe("buildOverview phases", () => {
     const held = gate();
     index.get.mockImplementation(async () => {
       await held.opened;
-      return { records: [], primaryCwd: null };
+      return { records: [], primaryCwd: null, workDirs: [] };
     });
     const pending = ask(deps, "branch");
     await vi.waitFor(() => expect(sdk.environments.diffFiles).toHaveBeenCalledTimes(2));
@@ -881,7 +1012,7 @@ describe("buildOverview phases", () => {
     const heldStatus = gate();
     index.get.mockImplementation(async () => {
       await heldEdits.opened;
-      return { records: [], primaryCwd: null };
+      return { records: [], primaryCwd: null, workDirs: [] };
     });
     sdk.environments.status.mockImplementation(async () => {
       await heldStatus.opened;
@@ -933,7 +1064,7 @@ describe("buildOverview phases", () => {
     await ask({ ...deps, cache, roots });
     expect(sdk.environments.status).toHaveBeenCalledTimes(2);
     const firstCalls = host.mock.calls.length;
-    index.get.mockImplementation(async (threadId: string) => (threadId === "thr_1" ? edits([record({ path: "/work/one/new.ts" })]) : { records: [], primaryCwd: null }));
+    index.get.mockImplementation(async (threadId: string) => (threadId === "thr_1" ? edits([record({ path: "/work/one/new.ts" })]) : { records: [], primaryCwd: null, workDirs: [] }));
     await ask({ ...deps, cache, roots });
     expect(sdk.environments.status).toHaveBeenCalledTimes(2);
     const later = host.mock.calls.slice(firstCalls);

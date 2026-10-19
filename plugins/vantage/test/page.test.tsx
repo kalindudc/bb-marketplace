@@ -4,7 +4,7 @@ import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import type { Overview, OverviewInput, PatchRequest, ShellInput, rpcContract } from "../src/contract";
 import { clearFileCache } from "../src/file-row";
-import { allOverview, branchRepo, branchWorktree, checkoutRepo, fileChange, overview, partialOverview, sharedFile, sidebarThread, threadSummary } from "./fixtures";
+import { allOverview, branchRepo, branchWorktree, checkoutRepo, checkoutWorktree, fileChange, overview, partialOverview, sharedFile, sidebarThread, threadSummary } from "./fixtures";
 
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { error: vi.fn() }) }));
 
@@ -245,6 +245,20 @@ describe("Vantage page: Worktrees", () => {
     fireEvent.click(slot.getByRole("button", { name: /Terminal here/ }));
     await waitFor(() => expect(navigations(slot)).toEqual([{ method: "experimental_openTerminal", options: { terminalId: "term_1" } }]));
     expect(create).toHaveBeenCalledWith({ cols: 120, rows: 32, scope: { kind: "environment", environmentId: "env_2" }, title: "Child worker · agent/child" });
+  });
+});
+
+describe("Vantage page: a checkout a thread works in", () => {
+  it("starts its terminal in the checkout's folder on its machine, since bb has no environment for it", async () => {
+    const study = checkoutWorktree({ key: "k_study", label: "Shop", projectId: "proj_shop", threadIds: ["thr_root"] });
+    const { slot, create } = await mount(`worktree/${key("k_study")}`, {
+      overview: () => { const base = allOverview(); return { ...base, worktrees: [...base.worktrees, study] }; },
+    });
+    await waitFor(() => expect(header(slot)).toContain("/trees/study/src"));
+    fireEvent.click(slot.getByRole("button", { name: /Terminal here/ }));
+    await waitFor(() => expect(create).toHaveBeenCalledWith({
+      cols: 120, rows: 32, scope: { kind: "host_path", hostId: "host_1", cwd: "/trees/study/src" }, title: "Parent thread · study",
+    }));
   });
 });
 

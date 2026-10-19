@@ -26,13 +26,13 @@ Vantage shows the worktrees of a thread and all of its descendant threads, and g
     bb vantage worktree <thread>             # one thread's worktree: files and commits
     bb vantage worktree <thread> --json
 
-`worktrees` prints one row for each workspace in the tree: the columns STATUS, THREAD, AHEAD/BEHIND, UNCOMMITTED and BRANCH, then the files that more than one worktree changed (a merge-conflict risk). STATUS is `archived` (an archived child's kept branch), `unavailable`, `running`, `failed`, or the thread's own status. A branch that no longer exists is not listed. `worktree <thread>` finds the whole tree the thread belongs to and prints the worktree that thread works in: its uncommitted files, its files committed on the branch and its commits (at most 50 files of each kind and 20 commits, then `… N more`). It fails with `worktree_not_found` for a thread without a worktree.
+`worktrees` prints one row for each workspace in the tree: the columns STATUS, THREAD, AHEAD/BEHIND, UNCOMMITTED and BRANCH, then the files that more than one worktree changed (a merge-conflict risk). STATUS is `archived` (an archived child's kept branch), `unavailable`, `running`, `failed`, or the thread's own status. A branch that no longer exists is not listed. `worktree <thread>` finds the whole tree the thread belongs to and prints each worktree that thread works in, its own workspace first and then any thread checkout: its uncommitted files, its files committed on the branch and its commits (at most 50 files of each kind and 20 commits, then `… N more`). It fails with `worktree_not_found` for a thread without a worktree.
 
 ### Worktree JSON fields
 
-`worktrees --json` prints `{ threadId, target, windowHours, threads, archivedHidden, worktrees, sharedFiles }`; `worktree <thread> --json` prints one worktree. A worktree has:
+`worktrees --json` prints `{ threadId, target, windowHours, threads, archivedHidden, worktrees, sharedFiles }`; `worktree <thread> --json` prints one worktree, the thread's own workspace when it has one. A worktree has:
 
-- `key`, `threadIds` (the threads in it, in tree order), `kind` (`workspace` or `branch`), `label` (the project's name) and `projectId`.
+- `key`, `threadIds` (the threads in it, in tree order), `kind` (`workspace`, `branch` or `checkout`), `label` (the project's name) and `projectId`. A `checkout` worktree is a thread checkout: a checkout outside bb, such as a world tree from `dev tree add`, that a thread both edited a file in and ran commands in (`cd`, `pushd` or `git -C` with an absolute or `~/` folder). It is compared with `origin/HEAD`.
 - `state` (`ready` or `unavailable`; `loading` only in the page's quick first answer) and `message` (why it is unavailable).
 - `branch`, `base`, `aheadCount` and `behindCount` (commits ahead of and behind the base; null when there is no base).
 - `uncommitted[]` and `committed[]`: `path`, `status`, `additions`, `deletions`, `previousPath`. An archived branch has no uncommitted files.
@@ -52,7 +52,8 @@ Without `--thread` or `--all`, the command uses the thread it runs in. Outside a
 ## Repository kinds
 
 - `workspace`: a thread's own workspace, read through bb's diff API (the same numbers as bb's Changes tab).
-- `checkout`: another checkout that an agent edited by path. Files the agents edited are in `files`; the repository's other changes are in `otherFiles` and are not the agents' work.
+- `checkout` with `ref.worked: true` (caption "Thread checkout"): a checkout outside bb that a thread works in. Every change in it is in `files`, like a workspace, and it also has a worktree.
+- `checkout` without `worked`: another checkout that an agent edited by path. Files the agents edited are in `files`; the repository's other changes are in `otherFiles` and are not the agents' work.
 - `branch`: an archived child whose worktree bb removed. Vantage compares its branch with its base branch in the project checkout.
 - `recorded`: no repository could be read, so the files come from the agents' recorded edits only. The same applies to `otherFiles` at the top level, which are files outside any repository such as thread storage or /tmp.
 
@@ -72,5 +73,5 @@ Read these from `--json` output:
 ## Limits
 
 - At most 500 files per repository or worktree list, 100 commits per worktree, 200 other files and 200 threads. Text output shows 50 files per repository and ends with `… N more`. JSON is cut from the end of each list to stay under bb's output limit.
-- Edits made only by shell commands in another repository are not found unless an agent also edited a file there.
+- Shell-only work in another repository is found only in a thread checkout: one where the same thread also edited a file and changed into it with an absolute or `~/` folder. Elsewhere it is not found unless an agent also edited a file there.
 - A machine that is offline marks only its own repositories as unavailable.

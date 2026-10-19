@@ -68,6 +68,8 @@ export function useLiveThread(threadId: string, fallback: ThreadSummary | undefi
 }
 
 const plural = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? "" : "s"}`;
+// Several checkouts of one thread share its title, so each row names the end of its folder.
+const folderTail = (root: string): string => root.split("/").filter((part) => part !== "").slice(-2).join("/");
 const sum = (files: Worktree["uncommitted"], field: "additions" | "deletions"): number => files.reduce((total, file) => total + (file[field] ?? 0), 0);
 
 export function lineCounts(worktree: Worktree): { additions: number; deletions: number } {
@@ -157,6 +159,9 @@ function WorktreeRowView({ worktree, currentThreadId, fallback, sharedCount, sel
       <span className="col-start-2 row-start-2 flex min-w-0 items-center gap-1 font-mono text-[11px] text-muted-foreground">
         {worktree.branch !== null && <Icon name="GitBranch" className="size-3 shrink-0" aria-hidden />}
         <span title={worktree.branch ?? undefined} className="truncate">{worktree.branch}</span>
+        {worktree.kind === "checkout" && (
+          <span title={worktree.root} className="min-w-0 shrink truncate font-sans text-subtle-foreground">· in {folderTail(worktree.root)}</span>
+        )}
         {underTitle !== null && <span title={underTitle} className="min-w-0 shrink truncate font-sans text-subtle-foreground">· under {underTitle}</span>}
         {worktree.threadIds.length > 1 && id !== currentThreadId && (
           <span className="shrink-0 font-sans text-subtle-foreground">· +{worktree.threadIds.length - 1} {worktree.threadIds.length === 2 ? "thread" : "threads"}</span>
@@ -286,7 +291,8 @@ export function WorktreeList({
   const archivedPending = !overview.partial && overview.worktrees.some((worktree) =>
     worktree.state === "loading" && !shownKeys.has(worktree.key) && isArchivedOnly(worktree, threads));
   const severalMachines = new Set(worktrees.map((worktree) => worktree.hostId)).size > 1;
-  const checkouts = overview.repos.filter((repo) => repo.ref.kind === "checkout");
+  // A checkout a thread works in has its own row above; only those edited by path are listed here.
+  const checkouts = overview.repos.filter((repo) => repo.ref.kind === "checkout" && repo.ref.worked !== true);
   const outside = overview.partial || checkouts.length > 0 || overview.otherFiles.length > 0;
 
   return (

@@ -34,7 +34,7 @@ function setup(options: Setup = {}) {
     projects: { list: vi.fn(async () => projects) },
     hosts: { list: vi.fn(async () => [{ id: "host_1", name: "Laptop" }]) },
   };
-  const edits = { get: vi.fn(async () => { throw new Error("the shell must not scan events"); }), forget: vi.fn() };
+  const edits = { get: vi.fn(async () => { throw new Error("the shell must not scan events"); }), peek: vi.fn(() => undefined), forget: vi.fn() };
   const host = vi.fn(async () => { throw new Error("the shell must not call the host"); });
   const deps = { sdk: sdk as unknown as PluginBbSdk, host: host as unknown as HostCall, edits, allOptions: { windowHours: 24, maxThreads: 200 } } as CollectDeps;
   return { deps, sdk, edits, host, status, diffFiles };
@@ -119,7 +119,7 @@ describe("buildShell", () => {
     });
     const status = { outcome: "unavailable", failure: { code: "path_not_found", message: "x", workspacePath: "/x" } };
     const full = await buildOverview(
-      { ...deps, roots, host: resolving as unknown as HostCall, sdk: { ...deps.sdk, environments: { ...deps.sdk.environments, status: async () => status, diffFiles: async () => status } } as unknown as PluginBbSdk, edits: { get: async () => ({ records: [], primaryCwd: null }), forget: vi.fn() } },
+      { ...deps, roots, host: resolving as unknown as HostCall, sdk: { ...deps.sdk, environments: { ...deps.sdk.environments, status: async () => status, diffFiles: async () => status } } as unknown as PluginBbSdk, edits: { get: async () => ({ records: [], primaryCwd: null, workDirs: [] }), peek: () => undefined, forget: vi.fn() } },
       { target: TREE, scope: "uncommitted", includeArchived: true },
     );
     expect(full.worktrees[0]?.key).toBe("host_1:/work/repo");
@@ -127,6 +127,26 @@ describe("buildShell", () => {
     expect(warm.worktrees.map((entry) => entry.key)).toEqual(full.worktrees.map((entry) => entry.key));
     expect(warm.repos.map((entry) => entry.key)).toEqual(full.repos.map((entry) => entry.key));
     expect(host).not.toHaveBeenCalled();
+  });
+
+  it("adds the row of a checkout a thread works in when earlier reads know its edits and roots, still without a call", async () => {
+    const { deps, edits, host } = setup();
+    const roots = createRootCache();
+    roots.store("host_1", "/work/one", { root: "/work/one", relative: "" });
+    roots.store("host_1", "/trees/study/src/lib.rs", { root: "/trees/study/src", relative: "lib.rs" });
+    roots.store("host_1", "~/trees/study/src", { root: "/trees/study/src", relative: "" });
+    roots.store("host_1", "/code/other/x.md", { root: "/code/other", relative: "x.md" });
+    const record = (path: string) => ({ threadId: "thr_1", path, movePath: null, kind: "update" as const, added: 1, removed: 0, at: 1 });
+    edits.peek.mockImplementation((() => ({
+      records: [record("/trees/study/src/lib.rs"), record("/code/other/x.md")], primaryCwd: "/work/one", workDirs: ["~/trees/study/src"],
+    })) as never);
+    const overview = await shell({ ...deps, roots });
+    expect(host).not.toHaveBeenCalled();
+    expect(edits.get).not.toHaveBeenCalled();
+    expect(overview.worktrees.map((entry) => [entry.kind, entry.root, entry.state])).toEqual([
+      ["workspace", "/work/one", "loading"], ["checkout", "/trees/study/src", "loading"],
+    ]);
+    expect(overview.repos.map((entry) => entry.root)).toEqual(["/work/one", "/trees/study/src"]);
   });
 
   it("leaves out archived threads unless asked, and counts them", async () => {
@@ -165,7 +185,7 @@ describe("buildShell", () => {
         workingTree: { deletions: 0, fileCount: 0, files: [], hasUncommittedChanges: false, insertions: 0, lineStatsComplete: true, state: "clean" },
       },
     })) as never);
-    deps.edits = { get: vi.fn(async () => ({ records: [], primaryCwd: null })), forget: vi.fn() } as unknown as CollectDeps["edits"];
+    deps.edits = { get: vi.fn(async () => ({ records: [], primaryCwd: null, workDirs: [] })), peek: vi.fn(() => undefined), forget: vi.fn() } as unknown as CollectDeps["edits"];
     deps.host = (async () => ({ results: [] })) as unknown as HostCall;
     const full = await buildOverview(deps, { target: { kind: "all" }, scope: "uncommitted", includeArchived: true });
     expect(full.worktrees.map((entry) => entry.key)).toEqual(["host_1:/work/one", "host_1:/work/two"]);

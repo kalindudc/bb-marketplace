@@ -4,6 +4,7 @@ See how every agent's worktree is doing, open any one of them to read its diffs,
 
 - A Vantage tab in a thread's side panel, with a button in the thread header and a command in the palette. It opens on the Worktrees view.
 - One row for each worktree in the thread tree: the parent's own checkout, every child's worktree, and the kept branch of every archived child. A row shows bb's status glyph (running, needs you, failed, finished), the branch, commits ahead and behind, uncommitted files, line counts and the pull request.
+- A row for a checkout a thread made outside bb, such as a tree from `dev tree add`, once the thread both edited a file in it and ran commands in it. The row shows the checkout's branch, commits ahead and behind, and every change in it, whether made by an edit tool or by a shell command.
 - A warning when files are changed in more than one worktree of a project, so you see a possible merge conflict before you merge.
 - Click a row to open that worktree. Changes shows uncommitted and committed files with diffs, Commits shows each commit and its files, and Chat shows the child's conversation, where you can approve a request or steer the agent.
 - Terminal here opens a shell in the worktree's folder. Open thread opens the child, and bb's own thread menu offers stop, archive and the rest. The keys [ and ] step between worktrees and Escape goes back.
@@ -23,4 +24,4 @@ Vantage only reads. It never stages, commits or changes a file. A workspace's co
 
 - 500 files per list, 100 commits per worktree, and patches cut at 1 MiB.
 - Terminal here needs a worktree on disk, and in the side panel one on the same machine as the thread.
-- Edits made only by shell commands in another repository are missed unless an agent also edited a file there.
+- A checkout outside bb gets its own row only after the thread has both edited a file in it and changed into it with `cd`, `pushd` or `git -C` and an absolute or `~/` path. Shell-only work in a repository the thread never edited is still missed.

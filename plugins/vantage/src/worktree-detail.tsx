@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import type { Commit, CommitFilesInput, CommitFilesOutput, FileChange, Overview, ThreadSummary, Worktree } from "./contract";
 import { FileRow, fileKey, useLoaded, type FileLoaders } from "./file-row";
 import { Skeleton, SkeletonRows } from "./skeleton";
-import { openEnvironmentTerminal, openWorktreeTerminal } from "./terminal";
+import { openEnvironmentTerminal, openHostTerminal, openWorktreeTerminal } from "./terminal";
 import { PullRequestBadge, lineCounts, primaryThreadId, useLiveThread, useWorktreeTitles } from "./worktree-list";
 
 export interface WorktreeDetailProps {
@@ -165,9 +165,12 @@ function WorktreeDetailBody(props: BodyProps) {
 
   const startTerminal = () => {
     const title = `${live.title} · ${worktree.branch ?? "worktree"}`;
-    const opening = terminal === "environment" && worktree.ref.kind === "workspace"
-      ? openEnvironmentTerminal(sdk, navigate, { environmentId: worktree.ref.environmentId, title })
-      : openWorktreeTerminal(sdk, navigate, { threadId: currentThreadId!, path: worktree.root, title });
+    const { ref } = worktree;
+    const opening = terminal === "environment" && ref.kind === "workspace"
+      ? openEnvironmentTerminal(sdk, navigate, { environmentId: ref.environmentId, title })
+      : terminal === "environment" && ref.kind === "checkout"
+        ? openHostTerminal(sdk, navigate, { hostId: ref.hostId, path: worktree.root, title })
+        : openWorktreeTerminal(sdk, navigate, { threadId: currentThreadId!, path: worktree.root, title });
     opening.then(
       (opened) => { if (!opened) toast.error("bb could not show the terminal"); },
       (error: unknown) => { toast.error(`Could not start a terminal: ${errorMessage(error)}`); },

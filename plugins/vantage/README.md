@@ -33,7 +33,16 @@ ahead of and behind its base branch, how many files are uncommitted, the line
 counts and the pull request, if there is one. Rows are grouped by project. A
 banner warns when files are changed in more than one worktree of the same
 project, because those branches may conflict when merged; it opens to list the
-files and the threads. Repositories that agents edited by path, and files
+files and the threads.
+
+Agents sometimes make their own checkout outside bb and work there, for
+example a world tree from `dev tree add`, while their bb workspace stays
+untouched. Once a thread has both edited a file in such a checkout and run
+commands in it (see [How it works](#how-it-works)), the checkout gets a row of
+its own, grouped with the thread's project and marked "in <folder>". It shows
+the checkout's branch, its commits ahead of and behind `origin/HEAD`, and
+every uncommitted and committed change, whether an edit tool or a shell
+command made it. Other repositories that agents only edited by path, and files
 outside any repository, are listed under "Changed outside worktrees". Clicking
 one opens the Repositories view filtered to just that repository, or to just
 the other files.
@@ -71,11 +80,13 @@ bb's own viewer.
 | Kind | Caption | Where it is read from |
 | --- | --- | --- |
 | Thread workspace | Thread workspace | bb's environment status API (the same call as the worktree row); the Branch scope uses bb's diff API |
+| A checkout a thread works in outside bb | Thread checkout | git, on the machine that owns the checkout (one call shared with its worktree row) |
 | Another checkout an agent edited by path | Edited by path | git, on the machine that owns the checkout |
 | An archived child's branch | Archived branch · N commits | git in the project checkout, comparing the branch with its base branch |
 | No repository could be read | Recorded edits only | the file edits bb keeps in each thread's history |
 
-In a checkout, the files the agents edited come first. The repository's other
+A thread checkout lists every change in it, like a workspace. In a checkout
+only edited by path, the files the agents edited come first. The repository's other
 changes sit under a folded "N other changes in this repo" row, so changes made
 by commands such as code generators are not lost and your own unrelated edits
 stay out of the way. A file that an agent edited but that has no change now
@@ -113,7 +124,9 @@ place. Threads whose parent is not in the window start their own tree.
   "under <root thread>". Click a row to select it; `[` and `]` step through the
   rows that are shown, and Escape clears the selection. **Terminal here**
   starts a shell in the worktree's folder as a terminal of the worktree's own
-  environment, in the page's terminal panel, on whichever machine it is on.
+  environment, in the page's terminal panel, on whichever machine it is on; a
+  thread checkout has no environment, so its terminal opens in its folder on
+  its machine.
   **Open thread** opens the thread and leaves the page.
 - **Repositories** shows every repository those threads changed, grouped by
   project ("Shop · 2 repos · 4 files"), then "Other files". The scope switch
@@ -237,8 +250,9 @@ repositories or worktrees, for example `Shop · 2 worktrees`.
 AHEAD/BEHIND, UNCOMMITTED and BRANCH, then the files changed in more than one
 worktree. The status is `archived`, `unavailable`, `running`, `failed` or the
 thread's own status. `worktree <thread>` reads the whole tree the thread belongs
-to and prints the worktree the thread works in: at most 50 uncommitted and 50
-committed files, then `… N more`, and at most 20 commits.
+to and prints each worktree the thread works in, its own workspace first and
+then any thread checkout: at most 50 uncommitted and 50 committed files, then
+`… N more`, and at most 20 commits.
 
 `worktrees --json` prints `{ threadId, target, windowHours, threads, archivedHidden, worktrees, sharedFiles }`.
 `archivedHidden` is how many archived threads matched and were left out (0 with
@@ -249,9 +263,11 @@ which is true only in the page's instant outline and so is false on the command 
 thread's tree). Each thread has a `rootThreadId`, the top of its tree among the
 threads read.
 Each worktree has `key`, `threadIds`, `state` (`ready`, `unavailable`, or `loading` in the instant outline),
-`message`, `branch`, `base`, `kind` (`workspace` or `branch`), `aheadCount`,
+`message`, `branch`, `base`, `kind` (`workspace`, `branch` or `checkout`), `aheadCount`,
 `behindCount`, `uncommitted`, `committed` and `commits`; `sharedFiles` lists
-`path` and `worktreeKeys`. `worktree <thread> --json` prints one worktree object.
+`path` and `worktreeKeys`. `worktree <thread> --json` prints one worktree object:
+the thread's own workspace when it has one. A thread checkout's `ref` is
+`{ "kind": "checkout", …, "worked": true }` in both the worktree and the repository.
 
 The text output of `changes` lists each repository with its kind, branch,
 totals and the titles of the threads that touched it, then at most 50 files and
@@ -293,6 +309,18 @@ nothing on disk.
 - Edits made outside a workspace come from each thread's recorded `fileChange`
   events. The server keeps an in-memory index per thread and reads only new
   events on each refresh.
+- A thread checkout is found from the thread's own commands. Every `cd`,
+  `pushd` or `git -C` with an absolute or `~/` folder in a recorded command is
+  noted, the 32 most recent per thread, as the index reads the events it
+  already reads. Only a thread that edited a file outside its own workspace has
+  those folders looked up (the host expands `~/` itself), and a checkout
+  becomes a thread checkout when the same thread both edited a file in it and
+  ran commands in it. One `checkoutStatus` host call reads its branch,
+  uncommitted and committed files, commits ahead and behind and the commit
+  list; the worktree row and the Repositories view share it through the
+  60-second cache. A checkout only edited by path keeps the cheaper
+  uncommitted-only call, and the instant outline shows a thread checkout's row
+  when earlier loads already know the edits and the roots.
 - To place a path in a repository, the host asks git itself
   (`rev-parse --show-toplevel --show-prefix`) instead of comparing path
   prefixes, so `/tmp` and `/private/tmp` agree on macOS.
@@ -331,9 +359,14 @@ nothing on disk.
   (a hidden one, such as a study's worker, or an archived page that was not
   loaded) shows the title the thread tree gave it, and is marked running only
   when its status says so; other states (needs you, failed) are not known.
-- Edits are found only from recorded file edits. Changes an agent makes only
-  with shell commands in another repository are missed unless an agent also
-  edited a file there.
+- Edits are found from recorded file edits and, for thread checkouts, from
+  git. A checkout becomes a thread checkout only when one thread both edited a
+  file in it and changed into it with `cd`, `pushd` or `git -C` and an
+  absolute or `~/` folder; a relative `cd`, a folder in a variable and a
+  checkout only reached by a shell script are not seen. Shell-only work in a
+  repository the thread never edited is still missed.
+- A thread checkout is compared with `origin/HEAD`; without one it shows its
+  uncommitted files only.
 - An archived child's branch is read from the project checkout, which is where
   bb's git-worktree provider leaves it. When the branch no longer exists,
   Vantage shows the recorded edits instead.
@@ -341,6 +374,13 @@ nothing on disk.
 
 ## Changes
 
+- **0.4.0**: a checkout a thread made outside bb and works in, such as a world
+  tree, gets a worktree row with its branch, commits ahead and behind, commits
+  and every uncommitted and committed change, including changes made by shell
+  commands; the Repositories view lists all of its changes as a "Thread
+  checkout"; its terminal on the page opens in its folder; committed diffs and
+  commit files work for any checkout; `bb vantage worktree <thread>` prints
+  every worktree the thread is in.
 - **0.3.2**: clicking a row under "Changed outside worktrees", or switching to
   Repositories with a worktree open, shows only that repository (or only the
   other files) instead of every one, with an "Only …" chip that clears the
@@ -390,5 +430,5 @@ After review, bump the package version, merge to an up-to-date `main`, and
 tag that version. This release uses:
 
 ```sh
-git tag vantage/v0.3.0 && git push origin vantage/v0.3.0
+git tag vantage/v0.4.0 && git push origin vantage/v0.4.0
 ```

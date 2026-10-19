@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createEditIndex, editsFromRows, findRecordedEdits, type EventsSdk } from "../src/edits";
+import { createEditIndex, editsFromRows, findRecordedEdits, MAX_WORK_DIRS, workDirsOf, type EventsSdk } from "../src/edits";
 
 type EventRow = Parameters<typeof editsFromRows>[1][number];
 type Change = { path: string; kind: "add" | "delete" | "update"; movePath?: string; diff?: string };
@@ -10,8 +10,8 @@ function row(seq: number, item: object, threadId = "thr_1"): EventRow {
 function fileChange(seq: number, changes: Change[], extra: object = {}, threadId = "thr_1"): EventRow {
   return row(seq, { type: "fileChange", id: `item_${seq}`, status: "completed", approvalStatus: null, changes, ...extra }, threadId);
 }
-function command(seq: number, cwd: string): EventRow {
-  return row(seq, { type: "commandExecution", id: `item_${seq}`, command: "ls", cwd, status: "completed", approvalStatus: null });
+function command(seq: number, cwd: string, text = "ls"): EventRow {
+  return row(seq, { type: "commandExecution", id: `item_${seq}`, command: text, cwd, status: "completed", approvalStatus: null });
 }
 
 function fakeSdk(threads: Record<string, EventRow[]>) {
@@ -22,6 +22,32 @@ function fakeSdk(threads: Record<string, EventRow[]>) {
   });
   return { sdk: { threads: { events: { list } } } as unknown as EventsSdk, list };
 }
+
+describe("workDirsOf", () => {
+  it("finds every cd, pushd and git -C folder in a command line", () => {
+    expect(workDirsOf("cd ~/world/trees/study-events/src && git status; pushd /tmp/x >/dev/null; git -C /code/other log -1")).toEqual([
+      "~/world/trees/study-events/src", "/tmp/x", "/code/other",
+    ]);
+  });
+
+  it("reads quoted folders, and folders inside a shell -c string", () => {
+    expect(workDirsOf(`/bin/zsh -lc 'cd "/code/with space" && ls'`)).toEqual(["/code/with space"]);
+    expect(workDirsOf(`bash -c "cd '/code/single' && ls"`)).toEqual(["/code/single"]);
+    expect(workDirsOf("(cd /code/sub && make)")).toEqual(["/code/sub"]);
+  });
+
+  it("normalizes the folder and drops a trailing slash", () => {
+    expect(workDirsOf("cd /code/a/../b/ && cd ~/src/./x/")).toEqual(["/code/b", "~/src/x"]);
+  });
+
+  it("skips relative folders, variables, globs, the home folder and the file system root", () => {
+    expect(workDirsOf('cd envoy/modules && cd "$T" && cd ~ && cd / && cd /code/* && cd -- ~/ok && cd `pwd`')).toEqual(["~/ok"]);
+  });
+
+  it("does not take a word that only ends in cd", () => {
+    expect(workDirsOf("abcd /code/x; git-C /code/y")).toEqual([]);
+  });
+});
 
 describe("editsFromRows", () => {
   it("records completed changes with line counts and the move target", () => {
@@ -66,11 +92,20 @@ describe("editsFromRows", () => {
 
   it("takes the working directory of the first command as primaryCwd", () => {
     const result = editsFromRows("thr_1", [command(1, "/work/one"), command(2, "/work/two")]);
-    expect(result).toEqual({ records: [], primaryCwd: "/work/one", lastSeq: 2 });
+    expect(result).toEqual({ records: [], primaryCwd: "/work/one", workDirs: [], lastSeq: 2 });
+  });
+
+  it("lists the folders commands changed into, once each and least recently used first", () => {
+    const result = editsFromRows("thr_1", [
+      command(1, "/work/one", "cd /code/a && ls"),
+      command(2, "/work/one", "cd /code/b"),
+      command(3, "/work/one", "cd /code/a && git diff"),
+    ]);
+    expect(result.workDirs).toEqual(["/code/b", "/code/a"]);
   });
 
   it("reports no last sequence for no rows", () => {
-    expect(editsFromRows("thr_1", [])).toEqual({ records: [], primaryCwd: null, lastSeq: null });
+    expect(editsFromRows("thr_1", [])).toEqual({ records: [], primaryCwd: null, workDirs: [], lastSeq: null });
   });
 });
 
@@ -117,6 +152,36 @@ describe("createEditIndex", () => {
     expect((await index.get("thr_1")).primaryCwd).toBe("/work/one");
     rows.push(command(3, "/work/three"));
     expect((await index.get("thr_1")).primaryCwd).toBe("/work/one");
+  });
+
+  it("adds the folders of new commands and keeps the same edits when a command only repeats the last folder", async () => {
+    const rows = [command(1, "/work/one", "cd /code/a"), command(2, "/work/one", "cd /code/b")];
+    const { sdk } = fakeSdk({ thr_1: rows });
+    const index = createEditIndex(sdk);
+    expect((await index.get("thr_1")).workDirs).toEqual(["/code/a", "/code/b"]);
+    rows.push(command(3, "/work/one", "cd /code/a"));
+    const moved = await index.get("thr_1");
+    expect(moved.workDirs).toEqual(["/code/b", "/code/a"]);
+    rows.push(command(4, "/work/one", "cd /code/a && ls"));
+    expect(await index.get("thr_1")).toBe(moved);
+  });
+
+  it("keeps only the most recent folders", async () => {
+    const rows = Array.from({ length: MAX_WORK_DIRS + 5 }, (_, i) => command(i + 1, "/work/one", `cd /code/d${i}`));
+    const { sdk } = fakeSdk({ thr_1: rows });
+    const { workDirs } = await createEditIndex(sdk).get("thr_1");
+    expect(workDirs).toHaveLength(MAX_WORK_DIRS);
+    expect(workDirs[0]).toBe("/code/d5");
+    expect(workDirs.at(-1)).toBe(`/code/d${MAX_WORK_DIRS + 4}`);
+  });
+
+  it("peeks at what an earlier read found without asking bb", async () => {
+    const { sdk, list } = fakeSdk({ thr_1: [edit(1)] });
+    const index = createEditIndex(sdk);
+    expect(index.peek("thr_1")).toBeUndefined();
+    const read = await index.get("thr_1");
+    expect(index.peek("thr_1")).toBe(read);
+    expect(list).toHaveBeenCalledTimes(1);
   });
 
   it("forgets a thread so the next read starts over", async () => {

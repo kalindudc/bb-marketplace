@@ -4,14 +4,14 @@ import { toast } from "sonner";
 import { fireEvent, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginSidebarThread, PluginThreadPanelProps } from "@get-bb/plugin-sdk/app";
-import type { CommitFilesInput, CommitFilesOutput, Overview, OverviewInput, PatchOutput, PatchRequest, ShellInput, Worktree, rpcContract } from "../src/contract";
+import type { CommitFilesInput, CommitFilesOutput, Overview, OverviewInput, PatchOutput, PatchRequest, Repo, ShellInput, Worktree, rpcContract } from "../src/contract";
 import { clearFileCache } from "../src/file-row";
 import type { RepoFocus } from "../src/filters";
 import { VIEW_STORAGE_KEY } from "../src/view-preference";
 import { WorktreeDetail, relativeTime, type WorktreeDetailProps } from "../src/worktree-detail";
 import { LiveThreadsProvider, WorktreeList } from "../src/worktree-list";
 import {
-  branchWorktree, checkoutRepo, commit, fileChange, overview as makeOverview, repo, sharedFile, sidebarPullRequest, sidebarThread, threadSummary, worktree,
+  branchWorktree, checkoutRepo, checkoutWorktree, commit, fileChange, overview as makeOverview, repo, sharedFile, sidebarPullRequest, sidebarThread, threadSummary, worktree,
 } from "./fixtures";
 
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { error: vi.fn() }) }));
@@ -207,6 +207,16 @@ describe("WorktreeList", () => {
     fireEvent.click(slot.getByRole("button", { name: /Other files/ }));
     expect(onShowRepositories).toHaveBeenNthCalledWith(1, { kind: "repo", key: "host_1:/code/cortex" });
     expect(onShowRepositories).toHaveBeenNthCalledWith(2, { kind: "otherFiles" });
+  });
+
+  it("lists a checkout a thread works in as a worktree row, not as a change outside worktrees", () => {
+    const study = checkoutWorktree({ threadIds: ["thr_1"] });
+    const { slot } = mountList({ overview: sampleOverview({
+      worktrees: [study], otherFiles: [],
+      repos: [checkoutRepo({ key: study.key, ref: study.ref as Repo["ref"], label: "study", root: study.root })],
+    }) });
+    expect(row(slot, study.key).textContent).toContain("study· in study/src");
+    expect(slot.container.textContent).not.toContain("Changed outside worktrees");
   });
 
   it("leaves out the outside section when only worktrees changed", () => {

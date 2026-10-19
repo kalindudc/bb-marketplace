@@ -152,6 +152,76 @@ describe("resolveRoots", () => {
   });
 });
 
+describe("resolveRoots under the home folder", () => {
+  it("expands ~/ against this machine's home folder and answers with the path it was asked", async () => {
+    const home = process.env.HOME;
+    process.env.HOME = scratch;
+    try {
+      const { results } = await harness.experimental_call("resolveRoots", { paths: ["~/work/src", "~/plain/file.txt"] });
+      expect(results).toEqual([
+        { path: "~/work/src", root: work, relative: "src" },
+        { path: "~/plain/file.txt", root: null, relative: null },
+      ]);
+    } finally {
+      process.env.HOME = home;
+    }
+  });
+
+  it("refuses a relative path or a bare ~ before any git call", async () => {
+    await expect(harness.experimental_call("resolveRoots", { paths: ["~"] })).rejects.toThrow();
+    await expect(harness.experimental_call("resolveRoots", { paths: ["work/src"] })).rejects.toThrow();
+  });
+});
+
+describe("checkoutStatus", () => {
+  type Status = Extract<HostOutput<"checkoutStatus">, { outcome: "available" }>;
+  const statusOf = async (root: string, base: string | null = null): Promise<Status> => {
+    const output = await harness.experimental_call("checkoutStatus", { root, base });
+    if (output.outcome !== "available") throw new Error(`unavailable: ${output.message}`);
+    return output;
+  };
+
+  it("splits uncommitted from committed work and counts the commits against origin/HEAD", async () => {
+    const status = await statusOf(work);
+    expect(status).toMatchObject({ branch: "feature", base: "origin/main", aheadCount: 1, behindCount: 0, truncated: false });
+    expect(status.commits.map((commit) => commit.subject)).toEqual(["feature work"]);
+    expect(status.committed.map((file) => file.path).sort()).toEqual(["src/a.ts", "src/feature.ts"]);
+    expect(byPath(status.committed, "src/a.ts")).toMatchObject({ status: "modified", additions: 2, deletions: 1 });
+    expect(status.uncommitted.map((file) => file.path).sort()).toEqual(["GUIDE.md", "image.bin", "notes.txt", "old.txt", "src/b.ts"]);
+  });
+
+  it("counts the commits the base has that the checkout lacks", async () => {
+    const status = await statusOf(lagging);
+    expect(status).toMatchObject({ branch: "topic", aheadCount: 2, behindCount: 1, uncommitted: [] });
+    expect(status.committed.map((file) => file.path).sort()).toEqual(["one.txt", "two.txt"]);
+  });
+
+  it("still lists uncommitted files when there is no base to compare with", async () => {
+    const status = await statusOf(unborn);
+    expect(status).toMatchObject({ base: null, aheadCount: null, behindCount: null, committed: [], commits: [] });
+    expect(status.uncommitted.map((file) => file.path).sort()).toEqual(["loose.txt", "staged.txt"]);
+    expect((await statusOf(work, "no-such-base")).base).toBeNull();
+  });
+
+  it("reports a folder that is not a repository", async () => {
+    expect(await harness.experimental_call("checkoutStatus", { root: plain, base: null })).toMatchObject({ outcome: "unavailable", reason: "not-a-repo" });
+  });
+});
+
+describe("repoFiles and repoPatch committed", () => {
+  it("shows only what is committed since the merge base, not the working tree", async () => {
+    const output = await repoFiles(work, { type: "committed", base: null });
+    expect(output).toMatchObject({ outcome: "available", branch: "feature", base: "origin/main" });
+    expect(filesOf(output).map((file) => file.path).sort()).toEqual(["src/a.ts", "src/feature.ts"]);
+    expect(patchOf(await repoPatch(work, "src/a.ts", { type: "committed", base: null })).patch).toContain("+export const c = 4;");
+    expect(patchOf(await repoPatch(work, "src/b.ts", { type: "committed", base: null })).patch).toBe("");
+  });
+
+  it("reports a checkout with no base as a missing ref", async () => {
+    expect(await repoFiles(unborn, { type: "committed", base: null })).toMatchObject({ outcome: "unavailable", reason: "missing-ref" });
+  });
+});
+
 describe("repoFiles uncommitted", () => {
   it("lists modified, renamed, deleted, untracked and binary files with counts", async () => {
     const output = await repoFiles(work, { type: "uncommitted" });

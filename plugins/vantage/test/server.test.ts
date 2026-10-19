@@ -5,7 +5,7 @@ import { createCli, formatOverview, formatWorktree, formatWorktrees } from "../s
 import { overviewSchema, type Overview } from "../src/contract";
 import server from "../server";
 import {
-  branchRepo, branchWorktree, checkoutRepo, commit, environment, fileChange, overview, recordedRepo, repo, sharedFile, threadSummary, worktree,
+  branchRepo, branchWorktree, checkoutRepo, checkoutWorktree, commit, environment, fileChange, overview, recordedRepo, repo, sharedFile, threadSummary, worktree,
 } from "./fixtures";
 
 type HostCall = { method: string; input: unknown; hostId: string };
@@ -507,7 +507,8 @@ describe("server worktrees", () => {
     const viaHost = await harness.behavior.callRpc("commitFiles", { ref: BRANCH, sha: SHA });
     expect(viaHost).toMatchObject({ files: [{ path: "lib.ts", status: "added" }] });
     expect(harness.experimental_hostRpcCalls.at(-1)).toMatchObject({ method: "repoFiles", hostId: "host_1", input: { root: "/code/proj", target: { type: "commit", sha: SHA } } });
-    await expect(harness.behavior.callRpc("commitFiles", { ref: CHECKOUT, sha: SHA })).rejects.toThrow("not available");
+    await harness.behavior.callRpc("commitFiles", { ref: CHECKOUT, sha: SHA });
+    expect(harness.experimental_hostRpcCalls.at(-1)).toMatchObject({ method: "repoFiles", input: { root: "/code/cortex", target: { type: "commit", sha: SHA } } });
     await expect(harness.behavior.callRpc("commitFiles", { ref: WORKSPACE, sha: "zz" })).rejects.toThrow();
   });
 
@@ -528,11 +529,15 @@ describe("server worktrees", () => {
     ]);
   });
 
-  it("rejects a committed or per-commit patch for a checkout", async () => {
-    const { harness, ready } = start();
+  it("answers a committed or per-commit patch for a checkout through the host", async () => {
+    const { harness, ready } = start({
+      hostResult: (call) => call.method === "repoPatch" ? { outcome: "available", patch: "+host", truncated: false, binary: false } : undefined,
+    });
     await ready;
-    await expect(harness.behavior.callRpc("patch", patch(CHECKOUT, { scope: "committed" }))).rejects.toThrow("not available");
-    await expect(harness.behavior.callRpc("patch", patch(CHECKOUT, { sha: SHA }))).rejects.toThrow("not available");
+    await harness.behavior.callRpc("patch", patch(CHECKOUT, { scope: "committed" }));
+    expect(harness.experimental_hostRpcCalls.at(-1)).toMatchObject({ method: "repoPatch", input: { root: "/code/cortex", target: { type: "committed", base: null } } });
+    await harness.behavior.callRpc("patch", patch(CHECKOUT, { sha: SHA }));
+    expect(harness.experimental_hostRpcCalls.at(-1)).toMatchObject({ method: "repoPatch", input: { target: { type: "commit", sha: SHA } } });
   });
 });
 
@@ -700,6 +705,17 @@ describe("formatWorktree", () => {
     expect(text).toContain("… 5 more");
     expect(text).toContain("Commit 19");
     expect(text).not.toContain("Commit 20");
+  });
+
+  it("prints every worktree of a thread that also works in a checkout outside bb", () => {
+    const text = formatWorktree(overview({
+      threads: [threadSummary({ id: "thr_1", title: "Parent" })],
+      worktrees: [worktree(), checkoutWorktree({ threadIds: ["thr_1"], committed: [fileChange({ path: "lib.rs" })] })],
+    }), "thr_1");
+    expect(text).toContain("path: /work/one");
+    expect(text).toContain("Parent · study");
+    expect(text).toContain("path: /trees/study/src");
+    expect(text).toContain("Committed on this branch (1 file)");
   });
 
   it("explains an unavailable worktree and labels a kept branch", () => {

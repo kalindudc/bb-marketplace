@@ -1,3 +1,4 @@
+import { posix } from "node:path";
 import type { PluginBbSdk } from "@get-bb/plugin-sdk";
 import { countDiffLines } from "./git";
 
@@ -9,6 +10,9 @@ const PAGE_SIZE = 100;
 const DIFF_LIMIT = 60_000;
 const DEFAULT_MAX_THREADS = 300;
 const DEFAULT_MAX_RECORDS = 5000;
+export const MAX_WORK_DIRS = 32;
+// `cd <dir>`, `pushd <dir>` or `git -C <dir>` anywhere in a command line, the folder a bare word or one quoted string.
+const WORK_DIR = /(?:^|[\s;&|(){}'"`])(?:(?:cd|pushd)\s+(?:--\s+)?|git\s+-C\s+)("[^"]*"|'[^']*'|[^\s;&|()<>'"`]+)/g;
 
 export interface EditRecord {
   threadId: string;
@@ -20,7 +24,8 @@ export interface EditRecord {
   at: number;
 }
 
-export interface ThreadEdits { records: readonly EditRecord[]; primaryCwd: string | null }
+/** `workDirs`: absolute or `~/` folders the thread's commands changed into, least recently used first. */
+export interface ThreadEdits { records: readonly EditRecord[]; primaryCwd: string | null; workDirs: readonly string[] }
 
 export interface RecordedEdit { threadId: string; at: number; kind: EditRecord["kind"]; diff: string | null; truncated: boolean }
 
@@ -30,19 +35,47 @@ function completedChanges(row: EventRow) {
   return item.status === "completed" && item.approvalStatus !== "denied" ? item.changes : [];
 }
 
-export function editsFromRows(threadId: string, rows: readonly EventRow[]): { records: EditRecord[]; primaryCwd: string | null; lastSeq: number | null } {
+// Only folders a later step can resolve on the thread's machine: absolute or under `~`, with no variable or glob.
+export function workDirsOf(command: string): string[] {
+  const dirs: string[] = [];
+  for (const match of command.matchAll(WORK_DIR)) {
+    const token = match[1]!;
+    const path = token.startsWith('"') || token.startsWith("'") ? token.slice(1, -1) : token;
+    if (!(path.startsWith("/") || path.startsWith("~/")) || /[$`*?\\]/.test(path)) continue;
+    const dir = posix.normalize(path).replace(/\/+$/, "");
+    if (dir !== "" && dir !== "~") dirs.push(dir);
+  }
+  return dirs;
+}
+
+function mergeWorkDirs(known: readonly string[], added: readonly string[]): readonly string[] {
+  if (added.length === 0) return known;
+  const order = new Set(known);
+  for (const dir of added) {
+    order.delete(dir);
+    order.add(dir);
+  }
+  const merged = [...order].slice(-MAX_WORK_DIRS);
+  return merged.length === known.length && merged.every((dir, index) => dir === known[index]) ? known : merged;
+}
+
+export function editsFromRows(
+  threadId: string, rows: readonly EventRow[],
+): { records: EditRecord[]; primaryCwd: string | null; workDirs: readonly string[]; lastSeq: number | null } {
   const records: EditRecord[] = [];
   let primaryCwd: string | null = null;
+  const commandDirs: string[] = [];
   for (const row of rows) {
-    if (primaryCwd === null && row.type === "item/completed" && row.data.item.type === "commandExecution") {
-      primaryCwd = row.data.item.cwd;
+    if (row.type === "item/completed" && row.data.item.type === "commandExecution") {
+      primaryCwd ??= row.data.item.cwd;
+      commandDirs.push(...workDirsOf(row.data.item.command));
     }
     for (const change of completedChanges(row)) {
       const { added, removed } = countDiffLines(change.diff);
       records.push({ threadId, path: change.path, movePath: change.movePath ?? null, kind: change.kind, added, removed, at: row.createdAt });
     }
   }
-  return { records, primaryCwd, lastSeq: rows.at(-1)?.seq ?? null };
+  return { records, primaryCwd, workDirs: mergeWorkDirs([], commandDirs), lastSeq: rows.at(-1)?.seq ?? null };
 }
 
 async function* pages(sdk: EventsSdk, threadId: string, afterSeq: number | null, signal?: AbortSignal): AsyncGenerator<readonly EventRow[]> {
@@ -61,6 +94,8 @@ async function* pages(sdk: EventsSdk, threadId: string, afterSeq: number | null,
 export interface EditIndex {
   /** `settled` means no event can still arrive for the thread (it is archived), so an indexed thread is not read again. */
   get(threadId: string, signal?: AbortSignal, options?: { settled?: boolean }): Promise<ThreadEdits>;
+  /** What an earlier read found, without asking bb: the instant outline may not wait for events. */
+  peek(threadId: string): ThreadEdits | undefined;
   forget(threadIds: readonly string[]): void;
 }
 
@@ -76,15 +111,19 @@ export function createEditIndex(sdk: EventsSdk, options: { maxThreads?: number; 
     const known = entries.get(threadId);
     let lastSeq = known?.lastSeq ?? null;
     let primaryCwd = known?.edits.primaryCwd ?? null;
+    let workDirs = known?.edits.workDirs ?? [];
     let added: EditRecord[] = [];
     for await (const rows of pages(sdk, threadId, lastSeq, signal)) {
       const parsed = editsFromRows(threadId, rows);
       added = added.concat(parsed.records);
       primaryCwd ??= parsed.primaryCwd;
+      workDirs = mergeWorkDirs(workDirs, parsed.workDirs);
       lastSeq = parsed.lastSeq;
     }
-    const changed = known === undefined || added.length > 0 || primaryCwd !== known.edits.primaryCwd;
-    const edits = changed ? { records: [...(known?.edits.records ?? []), ...added].slice(-maxRecords), primaryCwd } : known.edits;
+    const changed = known === undefined || added.length > 0 || primaryCwd !== known.edits.primaryCwd || workDirs !== known.edits.workDirs;
+    const edits = changed
+      ? { records: [...(known?.edits.records ?? []), ...added].slice(-maxRecords), primaryCwd, workDirs }
+      : known.edits;
     entries.delete(threadId);
     entries.set(threadId, { lastSeq, edits });
     while (entries.size > maxThreads) entries.delete(entries.keys().next().value!);
@@ -102,6 +141,7 @@ export function createEditIndex(sdk: EventsSdk, options: { maxThreads?: number; 
       }
       return pending;
     },
+    peek: (threadId) => entries.get(threadId)?.edits,
     forget(threadIds) {
       for (const threadId of threadIds) entries.delete(threadId);
     },

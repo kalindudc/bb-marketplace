@@ -316,9 +316,13 @@ describe("loadPatch committed and per-commit", () => {
     ]);
   });
 
-  it("rejects committed and sha for a checkout", async () => {
-    await expect(loadPatch(deps().deps, input(checkout))).rejects.toThrow("not available");
-    await expect(loadPatch(deps().deps, input(checkout, { scope: "uncommitted", sha: SHA }))).rejects.toThrow("not available");
+  it("asks the host for a checkout's commits since its merge base, or for one of its commits", async () => {
+    const { deps: d, host } = deps({ host: { outcome: "available", patch: "+x", truncated: false, binary: false } });
+    await loadPatch(d, input(checkout));
+    await loadPatch(d, input(checkout, { scope: "uncommitted", sha: SHA }));
+    expect(host.mock.calls.map((call) => ((call as unknown[])[1] as { target: unknown }).target)).toEqual([
+      { type: "committed", base: null }, { type: "commit", sha: SHA },
+    ]);
   });
 });
 
@@ -362,8 +366,15 @@ describe("loadCommitFiles", () => {
     await expect(loadCommitFiles(failed.deps, { ref: branch, sha: SHA })).rejects.toThrow("The commit was not found");
   });
 
-  it("rejects a checkout and a recorded repository", async () => {
-    await expect(loadCommitFiles(deps().deps, { ref: checkout, sha: SHA })).rejects.toThrow("not available");
+  it("asks the host for a checkout's commit", async () => {
+    const { deps: d, host } = deps({
+      host: { outcome: "available", branch: null, base: null, aheadCount: null, behindCount: null, commits: [], truncated: false, files: [] },
+    });
+    await loadCommitFiles(d, { ref: checkout, sha: SHA });
+    expect(host.mock.calls[0]?.[1]).toEqual({ root: checkout.root, target: { type: "commit", sha: SHA } });
+  });
+
+  it("rejects a recorded repository", async () => {
     await expect(loadCommitFiles(deps().deps, { ref: { kind: "recorded" }, sha: SHA })).rejects.toThrow("not available");
   });
 });

@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { lstat, open, readFile, realpath, stat } from "node:fs/promises";
+import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { experimental_defineHostEntry } from "@get-bb/plugin-sdk";
@@ -108,6 +109,16 @@ async function currentBranch(root: string, signal?: AbortSignal): Promise<string
 
 async function headTree(root: string, signal?: AbortSignal): Promise<string> {
   return (await hasCommit(root, "HEAD", signal)) ? "HEAD" : EMPTY_TREE;
+}
+
+// The merge base of HEAD and the base; a checkout with no base to compare with has none.
+async function optionalMergeBase(root: string, requested: string | null, signal?: AbortSignal): Promise<{ base: string; commit: string } | null> {
+  try {
+    return await resolveMergeBase(root, requested, signal);
+  } catch (error) {
+    if (error instanceof Unavailable && error.reason === "missing-ref") return null;
+    throw error;
+  }
 }
 
 async function resolveMergeBase(root: string, requested: string | null, signal?: AbortSignal): Promise<{ base: string; commit: string } | null> {
@@ -228,6 +239,12 @@ async function repoFiles(input: HostInput<"repoFiles">, signal: AbortSignal): Pr
       const { files, truncated } = await committedFiles(root, await resolveCommit(root, target.sha, signal), false, signal);
       return { outcome: "available" as const, branch: null, base: null, aheadCount: null, behindCount: null, commits: [], files, truncated };
     }
+    if (target.type === "committed") {
+      const [branch, mergeBase] = await Promise.all([currentBranch(root, signal), resolveMergeBase(root, target.base, signal)]);
+      if (mergeBase === null) throw new Unavailable("missing-ref", "There is no base branch to compare with");
+      const { files, truncated } = await committedFiles(root, [mergeBase.commit, "HEAD"], false, signal);
+      return { outcome: "available" as const, branch, base: mergeBase.base, aheadCount: null, behindCount: null, commits: [], files, truncated };
+    }
     const branch = await currentBranch(root, signal);
     const mergeBase = target.type === "merge-base" ? await resolveMergeBase(root, target.base, signal) : null;
     if (mergeBase === null) {
@@ -244,12 +261,44 @@ async function repoFiles(input: HostInput<"repoFiles">, signal: AbortSignal): Pr
   });
 }
 
+// Everything a worktree row shows for a checkout bb does not manage, in one call that both views share.
+async function checkoutStatus(input: HostInput<"checkoutStatus">, signal: AbortSignal): Promise<HostOutput<"checkoutStatus">> {
+  return guard(async () => {
+    const { root } = input;
+    await verifyRoot(root, signal);
+    const [branch, uncommitted, mergeBase] = await Promise.all([
+      currentBranch(root, signal), uncommittedFiles(root, signal), optionalMergeBase(root, input.base, signal),
+    ]);
+    if (mergeBase === null) {
+      return {
+        outcome: "available" as const, branch, base: null, aheadCount: null, behindCount: null, commits: [],
+        uncommitted: uncommitted.files, committed: [], truncated: uncommitted.truncated,
+      };
+    }
+    const [committed, counts, log] = await Promise.all([
+      committedFiles(root, [mergeBase.commit, "HEAD"], false, signal),
+      mustGit(root, ["rev-list", "--left-right", "--count", `${mergeBase.base}...HEAD`], signal),
+      mustGit(root, ["log", "-n", String(COMMIT_LIMIT), `--format=${LOG_FORMAT}`, `${mergeBase.commit}..HEAD`], signal),
+    ]);
+    const [behind, ahead] = counts.trim().split(/\s+/).map(Number);
+    return {
+      outcome: "available" as const, branch, base: mergeBase.base, aheadCount: ahead ?? null, behindCount: behind ?? null,
+      commits: parseLog(log), uncommitted: uncommitted.files, committed: committed.files, truncated: uncommitted.truncated || committed.truncated,
+    };
+  });
+}
+
 async function patchArgs(root: string, target: HostTarget, signal: AbortSignal): Promise<string[]> {
   if (target.type === "range") {
     const range = await resolveRange(root, target.base, target.head, signal);
     return [`${range.base}...${range.head}`];
   }
   if (target.type === "commit") return resolveCommit(root, target.sha, signal);
+  if (target.type === "committed") {
+    const committed = await resolveMergeBase(root, target.base, signal);
+    if (committed === null) throw new Unavailable("missing-ref", "There is no base branch to compare with");
+    return [committed.commit, "HEAD"];
+  }
   const mergeBase = target.type === "merge-base" ? await resolveMergeBase(root, target.base, signal) : null;
   return [mergeBase?.commit ?? (await headTree(root, signal))];
 }
@@ -283,8 +332,10 @@ async function nearestDirectory(path: string): Promise<{ dir: string; rest: stri
   }
 }
 
+const expandHome = (path: string): string => (path.startsWith("~/") ? join(homedir(), path.slice(2)) : path);
+
 async function resolveRoots(input: HostInput<"resolveRoots">, signal: AbortSignal): Promise<HostOutput<"resolveRoots">> {
-  const located = await mapLimit(input.paths, 8, async (path) => ({ path, ...(await nearestDirectory(path)) }));
+  const located = await mapLimit(input.paths, 8, async (path) => ({ path, ...(await nearestDirectory(expandHome(path))) }));
   const tops = new Map<string, Promise<{ root: string; prefix: string } | null>>();
   const topOf = (dir: string) => {
     let top = tops.get(dir);
@@ -309,6 +360,7 @@ export default experimental_defineHostEntry({
   handlers: {
     resolveRoots: (input, { signal }) => resolveRoots(input, signal),
     repoFiles: (input, { signal }) => repoFiles(input, signal),
+    checkoutStatus: (input, { signal }) => checkoutStatus(input, signal),
     repoPatch: (input, { signal }) => repoPatch(input, signal),
   },
 });

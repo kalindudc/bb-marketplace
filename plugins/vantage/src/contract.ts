@@ -4,6 +4,9 @@ import { z } from "zod";
 const text = z.string().max(4096);
 const relativePath = z.string().min(1).max(4096);
 const absolutePath = z.string().min(1).max(4096).regex(/^(\/|[A-Za-z]:[\\/]|\\\\)/);
+// A folder a command changed into, which the machine that ran it resolves against its own home folder.
+const homePath = z.string().min(3).max(4096).regex(/^~\//);
+const resolvablePath = z.union([absolutePath, homePath]);
 const count = z.number().int().nonnegative();
 
 export const scopeSchema = z.enum(["uncommitted", "branch"]);
@@ -37,6 +40,7 @@ export type GitFile = z.infer<typeof gitFileSchema>;
 export const hostTargetSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("uncommitted") }).strict(),
   z.object({ type: z.literal("merge-base"), base: text.nullable() }).strict(),
+  z.object({ type: z.literal("committed"), base: text.nullable() }).strict(),
   z.object({ type: z.literal("range"), base: text.nullable(), head: text }).strict(),
   z.object({ type: z.literal("commit"), sha: shaSchema }).strict(),
 ]);
@@ -51,10 +55,10 @@ export type HostUnavailable = z.infer<typeof hostUnavailableSchema>;
 
 export const hostContract = defineRpcContract({
   resolveRoots: {
-    input: z.object({ paths: z.array(absolutePath).max(2000) }).strict(),
+    input: z.object({ paths: z.array(resolvablePath).max(2000) }).strict(),
     output: z.object({
       results: z.array(z.object({
-        path: absolutePath,
+        path: resolvablePath,
         root: absolutePath.nullable(),
         relative: z.string().max(4096).nullable(),
       }).strict()),
@@ -71,6 +75,23 @@ export const hostContract = defineRpcContract({
         behindCount: count.nullable(),
         commits: z.array(commitSchema).max(100),
         files: z.array(gitFileSchema),
+        truncated: z.boolean(),
+      }).strict(),
+      hostUnavailableSchema,
+    ]),
+  },
+  checkoutStatus: {
+    input: z.object({ root: absolutePath, base: text.nullable() }).strict(),
+    output: z.discriminatedUnion("outcome", [
+      z.object({
+        outcome: z.literal("available"),
+        branch: text.nullable(),
+        base: text.nullable(),
+        aheadCount: count.nullable(),
+        behindCount: count.nullable(),
+        commits: z.array(commitSchema).max(100),
+        uncommitted: z.array(gitFileSchema),
+        committed: z.array(gitFileSchema),
         truncated: z.boolean(),
       }).strict(),
       hostUnavailableSchema,
@@ -102,10 +123,14 @@ export type HostOutput<M extends HostMethod> = z.output<(typeof hostContract)[M]
 
 const workspaceRefSchema = z.object({ kind: z.literal("workspace"), environmentId: text, base: text.nullable() }).strict();
 const branchRefSchema = z.object({ kind: z.literal("branch"), hostId: text, root: absolutePath, base: text.nullable(), head: text }).strict();
+// `worked`: a thread both edited files in this checkout and ran commands in it, so it is that thread's worktree too.
+const checkoutRefSchema = z.object({
+  kind: z.literal("checkout"), hostId: text, root: absolutePath, base: text.nullable(), worked: z.literal(true).optional(),
+}).strict();
 
 export const repoRefSchema = z.discriminatedUnion("kind", [
   workspaceRefSchema,
-  z.object({ kind: z.literal("checkout"), hostId: text, root: absolutePath, base: text.nullable() }).strict(),
+  checkoutRefSchema,
   branchRefSchema,
   z.object({ kind: z.literal("recorded") }).strict(),
 ]);
@@ -149,7 +174,7 @@ export type Repo = z.infer<typeof repoSchema>;
 
 export const worktreeSchema = z.object({
   key: text,
-  ref: z.discriminatedUnion("kind", [workspaceRefSchema, branchRefSchema]),
+  ref: z.discriminatedUnion("kind", [workspaceRefSchema, branchRefSchema, checkoutRefSchema]),
   label: text,
   projectId: text,
   hostId: text,
@@ -157,7 +182,7 @@ export const worktreeSchema = z.object({
   root: text,
   branch: text.nullable(),
   base: text.nullable(),
-  kind: z.enum(["workspace", "branch"]),
+  kind: z.enum(["workspace", "branch", "checkout"]),
   threadIds: z.array(text),
   state: z.enum(["ready", "unavailable", "loading"]),
   message: text.nullable(),
