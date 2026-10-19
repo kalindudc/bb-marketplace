@@ -250,14 +250,14 @@ describe("Vantage page: Worktrees", () => {
 
 describe("Vantage page: a checkout a thread works in", () => {
   it("starts its terminal in the checkout's folder on its machine, since bb has no environment for it", async () => {
-    const study = checkoutWorktree({ key: "k_study", label: "Shop", projectId: "proj_shop", threadIds: ["thr_root"] });
-    const { slot, create } = await mount(`worktree/${key("k_study")}`, {
-      overview: () => { const base = allOverview(); return { ...base, worktrees: [...base.worktrees, study] }; },
+    const side = checkoutWorktree({ key: "k_side", label: "Shop", projectId: "proj_shop", threadIds: ["thr_root"] });
+    const { slot, create } = await mount(`worktree/${key("k_side")}`, {
+      overview: () => { const base = allOverview(); return { ...base, worktrees: [...base.worktrees, side] }; },
     });
-    await waitFor(() => expect(header(slot)).toContain("/trees/study/src"));
+    await waitFor(() => expect(header(slot)).toContain("/clones/side"));
     fireEvent.click(slot.getByRole("button", { name: /Terminal here/ }));
     await waitFor(() => expect(create).toHaveBeenCalledWith({
-      cols: 120, rows: 32, scope: { kind: "host_path", hostId: "host_1", cwd: "/trees/study/src" }, title: "Parent thread · study",
+      cols: 120, rows: 32, scope: { kind: "host_path", hostId: "host_1", cwd: "/clones/side" }, title: "Parent thread · side-work",
     }));
   });
 });

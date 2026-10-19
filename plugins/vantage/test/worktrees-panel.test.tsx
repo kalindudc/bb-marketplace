@@ -210,12 +210,12 @@ describe("WorktreeList", () => {
   });
 
   it("lists a checkout a thread works in as a worktree row, not as a change outside worktrees", () => {
-    const study = checkoutWorktree({ threadIds: ["thr_1"] });
+    const side = checkoutWorktree({ threadIds: ["thr_1"] });
     const { slot } = mountList({ overview: sampleOverview({
-      worktrees: [study], otherFiles: [],
-      repos: [checkoutRepo({ key: study.key, ref: study.ref as Repo["ref"], label: "study", root: study.root })],
+      worktrees: [side], otherFiles: [],
+      repos: [checkoutRepo({ key: side.key, ref: side.ref as Repo["ref"], label: "side", root: side.root })],
     }) });
-    expect(row(slot, study.key).textContent).toContain("study· in study/src");
+    expect(row(slot, side.key).textContent).toContain("side-work· in clones/side");
     expect(slot.container.textContent).not.toContain("Changed outside worktrees");
   });
 

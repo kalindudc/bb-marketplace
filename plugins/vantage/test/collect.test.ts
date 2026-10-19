@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PluginBbSdk } from "@get-bb/plugin-sdk";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import {
@@ -8,6 +8,7 @@ import {
 import { overviewSchema, type OverviewTarget, type ThreadSummary } from "../src/contract";
 import type { EditRecord, ThreadEdits } from "../src/edits";
 import { createRepoCache } from "../src/repo-cache";
+import { BB_DEADLINE_MS } from "../src/sources";
 import { createRootCache } from "../src/root-cache";
 import { destroyedEnvironment, environment, threadSummary } from "./fixtures";
 
@@ -212,42 +213,110 @@ describe("planRepos", () => {
   });
 });
 
+describe("planRepos removed environments and folders below the repository root", () => {
+  const BRANCH = "agent/side-work";
+  const removed = (source: string | null, cwd: string | null, extra: Record<string, { root: string | null; relative: string | null }> = {}) => plan({
+    threads: [threadSummary({ id: "a", archived: true, environmentId: "env_r" })],
+    environments: [destroyedEnvironment({ id: "env_r", branchName: BRANCH, projectId: "proj_mono" })],
+    projects: [{ id: "proj_mono", name: "Mono", sources: source === null ? [] : [{ hostId: "host_1", path: source, isDefault: true }] }],
+    edits: { a: edits([record({ path: "/repos/mono/services/api/a.rb" }), record({ path: "lib/b.rb" })], cwd) },
+    roots: roots("host_1", {
+      "/mono": { root: null, relative: null }, "/repos/mono": own("/repos/mono"),
+      "/repos/mono/services/api": { root: "/repos/mono", relative: "services/api" }, ...extra,
+    }),
+  }).plans;
+
+  it("reads an archived thread's branch where it ran when the project folder is not a repository", () => {
+    const [kept] = removed("/mono", "/repos/mono");
+    expect(kept).toMatchObject({ key: `host_1:/repos/mono@${BRANCH}`, root: "/repos/mono", ref: { kind: "branch", root: "/repos/mono", head: BRANCH } });
+    expect([...kept!.touched.keys()]).toEqual(["services/api/a.rb", "lib/b.rb"]);
+  });
+
+  it("does the same for a project with no folder, such as the personal project", () => {
+    expect(removed(null, "/repos/mono")[0]?.ref).toMatchObject({ kind: "branch", root: "/repos/mono" });
+  });
+
+  it("keys edits from the repository root when the thread ran in a folder below it", () => {
+    const [kept] = removed("/mono", "/repos/mono/services/api");
+    expect(kept?.root).toBe("/repos/mono");
+    expect([...kept!.touched.keys()]).toEqual(["services/api/a.rb", "services/api/lib/b.rb"]);
+  });
+
+  it("keeps the recorded edits when neither the project folder nor where the thread ran is a repository", () => {
+    expect(removed("/mono", null)[0]?.ref).toEqual({ kind: "recorded" });
+    expect(removed("/mono", "/gone", { "/gone": { root: null, relative: null } })[0]?.ref).toEqual({ kind: "recorded" });
+  });
+
+  it("prefers the project's checkout when it is a repository", () => {
+    const [kept] = removed("/code/mono", "/repos/mono", { "/code/mono": own("/code/mono") });
+    expect(kept?.ref).toMatchObject({ kind: "branch", root: "/code/mono" });
+  });
+
+  it("marks a workspace whose folder is below its repository root with that root, so its diffs are read there", () => {
+    const sub = environment({ id: "env_sub", path: "/repos/mono/services/api", mergeBaseBranch: "origin/main" });
+    const { plans } = plan({ threads: [threadSummary({ id: "a", environmentId: "env_sub" })], environments: [sub],
+      roots: roots("host_1", { "/repos/mono/services/api": { root: "/repos/mono", relative: "services/api" } }) });
+    expect(plans[0]).toMatchObject({ key: "host_1:/repos/mono", root: "/repos/mono" });
+    expect(plans[0]?.ref).toEqual({ kind: "workspace", environmentId: "env_sub", base: "origin/main", root: "/repos/mono", hostId: "host_1" });
+  });
+
+  it("reads a workspace bb's status was too slow for with git at its root", () => {
+    const repo = environment({ id: "env_big", path: "/repos/mono", mergeBaseBranch: "origin/main" });
+    const input = { threads: [threadSummary({ id: "a", environmentId: "env_big" })], environments: [repo], roots: roots("host_1", { "/repos/mono": own("/repos/mono") }) };
+    expect(plan(input).plans[0]?.ref).toEqual({ kind: "workspace", environmentId: "env_big", base: "origin/main" });
+    const slow = planRepos({ ...input, environments: new Map([["env_big", repo]]), edits: new Map(), projects, hosts, slowWorkspaces: new Set(["env_big"]) });
+    expect(slow.plans[0]?.ref).toEqual({ kind: "workspace", environmentId: "env_big", base: "origin/main", root: "/repos/mono", hostId: "host_1" });
+  });
+
+  it("lets an environment at the repository root speak for a repository an environment below the root shares", () => {
+    const sub = environment({ id: "env_sub", path: "/repos/mono/services/api" });
+    const top = environment({ id: "env_top", path: "/repos/mono" });
+    const { plans } = plan({
+      threads: [threadSummary({ id: "a", environmentId: "env_sub" }), threadSummary({ id: "b", environmentId: "env_top" })], environments: [sub, top],
+      roots: roots("host_1", { "/repos/mono/services/api": { root: "/repos/mono", relative: "services/api" }, "/repos/mono": own("/repos/mono") }),
+    });
+    expect(plans).toHaveLength(1);
+    expect(plans[0]).toMatchObject({ threadIds: ["a", "b"], ref: { kind: "workspace", environmentId: "env_top" } });
+    expect(plans[0]?.ref).not.toHaveProperty("root");
+  });
+});
+
 describe("planRepos worked checkouts", () => {
   const live = environment({ id: "env_1", path: "/work/one", projectId: "proj_1" });
   const treeRoots = {
     "/work/one": own("/work/one"), "/code/proj": own("/code/proj"), "/code/cortex": own("/code/cortex"),
-    "/trees/study/src/envoy/lib.rs": { root: "/trees/study/src", relative: "envoy/lib.rs" },
-    "~/trees/study/src/envoy": { root: "/trees/study/src", relative: "envoy" },
+    "/clones/side/pkg/lib.rs": { root: "/clones/side", relative: "pkg/lib.rs" },
+    "~/clones/side/pkg": { root: "/clones/side", relative: "pkg" },
     "/tmp/scratch": { root: null, relative: null },
   };
-  const study = (threadEdits: Record<string, ThreadEdits>, threads = [threadSummary({ id: "a" })]) =>
+  const side = (threadEdits: Record<string, ThreadEdits>, threads = [threadSummary({ id: "a" })]) =>
     plan({ threads, environments: [live], edits: threadEdits, roots: roots("host_1", treeRoots) }).plans;
 
   it("marks a checkout worked when the same thread edited a file in it and ran commands in it", () => {
-    const plans = study({ a: edits([record({ path: "/trees/study/src/envoy/lib.rs" })], null, ["/tmp/scratch", "~/trees/study/src/envoy"]) });
+    const plans = side({ a: edits([record({ path: "/clones/side/pkg/lib.rs" })], null, ["/tmp/scratch", "~/clones/side/pkg"]) });
     expect(plans.map((entry) => entry.ref)).toEqual([
       { kind: "workspace", environmentId: "env_1", base: "origin/main" },
-      { kind: "checkout", hostId: "host_1", root: "/trees/study/src", base: null, worked: true },
+      { kind: "checkout", hostId: "host_1", root: "/clones/side", base: null, worked: true },
     ]);
     expect(plans[1]).toMatchObject({ label: "Project", projectId: "proj_1", threadIds: ["a"] });
   });
 
   it("leaves a checkout edited by path only when the thread never ran a command there", () => {
-    const plans = study({ a: edits([record({ path: "/trees/study/src/envoy/lib.rs" })], null, ["/tmp/scratch"]) });
-    expect(plans[1]).toMatchObject({ label: "src", projectId: null, ref: { kind: "checkout", root: "/trees/study/src" } });
+    const plans = side({ a: edits([record({ path: "/clones/side/pkg/lib.rs" })], null, ["/tmp/scratch"]) });
+    expect(plans[1]).toMatchObject({ label: "side", projectId: null, ref: { kind: "checkout", root: "/clones/side" } });
     expect(plans[1]!.ref).not.toHaveProperty("worked");
   });
 
   it("needs one thread to do both: an edit by one and commands by another do not count", () => {
-    const plans = study(
-      { a: edits([record({ path: "/trees/study/src/envoy/lib.rs" })]), b: edits([], null, ["~/trees/study/src/envoy"]) },
+    const plans = side(
+      { a: edits([record({ path: "/clones/side/pkg/lib.rs" })]), b: edits([], null, ["~/clones/side/pkg"]) },
       [threadSummary({ id: "a" }), threadSummary({ id: "b", parentThreadId: "a", depth: 1 })],
     );
     expect(plans[1]!.ref).not.toHaveProperty("worked");
   });
 
   it("makes no repository of a folder the thread only ran commands in", () => {
-    expect(study({ a: edits([], null, ["~/trees/study/src/envoy"]) }).map((entry) => entry.ref.kind)).toEqual(["workspace"]);
+    expect(side({ a: edits([], null, ["~/clones/side/pkg"]) }).map((entry) => entry.ref.kind)).toEqual(["workspace"]);
   });
 
   it("keeps the owning project's name for a worked checkout a project owns", () => {
@@ -267,12 +336,12 @@ describe("pathsToResolve", () => {
       environments: new Map([["env_1", environment({ id: "env_1", path: "/work/one" })]]),
       edits: new Map([
         ["a", edits([record({ path: "src/a.ts" }), record({ path: "/work/one/b.ts" })], null, ["~/inside-only"])],
-        ["b", edits([record({ path: "/trees/study/src/x.rs" })], null, ["~/trees/study/src", "/trees/study/src/envoy"])],
+        ["b", edits([record({ path: "/clones/side/x.rs" })], null, ["~/clones/side", "/clones/side/pkg"])],
       ]),
       projects: [],
     });
     expect(wanted.get("host_1")).toEqual([
-      "/work/one", "/work/one/src/a.ts", "/work/one/b.ts", "/trees/study/src/x.rs", "~/trees/study/src", "/trees/study/src/envoy",
+      "/work/one", "/work/one/src/a.ts", "/work/one/b.ts", "/clones/side/x.rs", "~/clones/side", "/clones/side/pkg",
     ]);
   });
 
@@ -291,8 +360,21 @@ describe("pathsToResolve", () => {
     });
     expect([...wanted.keys()]).toEqual(["host_1"]);
     expect(wanted.get("host_1")).toEqual([
-      "/work/one", "/work/one/src/a.ts", "/code/cortex/x.md", "/code/proj", "/other/place.ts", "/code/cortex",
+      "/work/one", "/work/one/src/a.ts", "/code/cortex/x.md", "/code/proj", "/gone/wt", "/other/place.ts", "/code/cortex",
     ]);
+  });
+
+  it("looks up where a removed environment's thread ran only while its project folder is not known to be a repository", () => {
+    const input = (known: ProjectInfo[], cache?: Record<string, { root: string | null; relative: string | null }>) => pathsToResolve({
+      threads: [threadSummary({ id: "b", environmentId: "env_9" })],
+      environments: new Map([["env_9", destroyedEnvironment({ id: "env_9", branchName: "feature/old", projectId: "proj_1" })]]),
+      edits: new Map([["b", edits([], "/clones/side")]]), projects: known,
+      ...(cache === undefined ? {} : { known: (_hostId: string, path: string) => cache[path] }),
+    }).get("host_1");
+    expect(input(projects)).toContain("/clones/side");
+    expect(input(projects, { "/code/proj": own("/code/proj") })).not.toContain("/clones/side");
+    expect(input(projects, { "/code/proj": { root: null, relative: null } })).toContain("/clones/side");
+    expect(input([])).toEqual(["/clones/side"]);
   });
 
   it("leaves out paths that are too long to send", () => {
@@ -567,7 +649,7 @@ describe("buildOverview worktrees", () => {
     expect(overview.worktrees[1]).toMatchObject({ aheadCount: 1, behindCount: 0, projectId: "proj_1" });
     expect(overview.worktrees[1]?.uncommitted.map((file) => file.path)).toEqual(["b.ts"]);
     expect(sdk.environments.status).toHaveBeenCalledTimes(2);
-    expect(sdk.environments.status).toHaveBeenCalledWith({ environmentId: "env_1", mergeBaseBranch: "origin/main", signal: undefined });
+    expect(sdk.environments.status).toHaveBeenCalledWith({ environmentId: "env_1", mergeBaseBranch: "origin/main", signal: expect.any(AbortSignal) });
   });
 
   it("flags a file two worktrees of one project both changed", async () => {
@@ -587,44 +669,134 @@ describe("buildOverview worktrees", () => {
   });
 });
 
+describe("buildOverview workspaces bb's status is too slow for", () => {
+  const ROOT = "/repos/mono";
+  const available = {
+    outcome: "available", branch: "agent/work", base: "origin/main", aheadCount: 1, behindCount: 50000, truncated: false,
+    commits: [{ sha: "abc1234", shortSha: "abc1234", subject: "Work", authorName: "Agent", authoredAt: 1000 }],
+    uncommitted: [{ path: "services/api/new.rb", previousPath: null, status: "untracked", additions: 2, deletions: 0, binary: false }],
+    committed: [{ path: "services/api/done.rb", previousPath: null, status: "modified", additions: 3, deletions: 1, binary: false }],
+  };
+  const resolveAt = (paths: string[] = []) => ({ results: paths.map((path) => ({ path, root: path === ROOT ? ROOT : null, relative: path === ROOT ? "" : null })) });
+  const slowSetup = (status?: () => unknown) => {
+    const host = vi.fn(async (method: string, input: { paths?: string[] }) => {
+      if (method === "resolveRoots") return resolveAt(input.paths);
+      if (method === "checkoutStatus") return available;
+      throw new Error(`unexpected ${method}`);
+    }) as unknown as HostCall & ReturnType<typeof vi.fn>;
+    return setup({ host, status, environments: [environment({ id: "env_1", path: ROOT, mergeBaseBranch: "origin/main" })] });
+  };
+  const build = (deps: CollectDeps, scope: "uncommitted" | "branch" = "uncommitted") =>
+    buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope, includeArchived: true });
+  const gitCalls = (host: ReturnType<typeof vi.fn>) => host.mock.calls.filter(([method]) => method === "checkoutStatus");
+
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("stops waiting for bb after the deadline, reads the workspace with git, and keeps doing so", async () => {
+    vi.useFakeTimers();
+    const { deps, sdk, host } = slowSetup(() => new Promise(() => {}));
+    const slowWorkspaces = new Set<string>();
+    const shared = { ...deps, cache: createRepoCache(), roots: createRootCache(), slowWorkspaces };
+    const first = build(shared);
+    await vi.advanceTimersByTimeAsync(BB_DEADLINE_MS);
+    const overview = await first;
+    expect(overviewSchema.safeParse(overview).success).toBe(true);
+    expect(overview.worktrees[0]).toMatchObject({ root: ROOT, aheadCount: 1, behindCount: 50000, state: "ready" });
+    expect(overview.worktrees[0]?.ref).toEqual({ kind: "workspace", environmentId: "env_1", base: "origin/main", root: ROOT, hostId: "host_1" });
+    expect(overview.repos[0]?.ref).toEqual(overview.worktrees[0]?.ref);
+    expect(overview.repos[0]?.files.map((file) => file.path)).toEqual(["services/api/new.rb"]);
+    expect([...slowWorkspaces]).toEqual(["env_1"]);
+    shared.cache.clear();
+    await build(shared);
+    expect(sdk.environments.status).toHaveBeenCalledTimes(1);
+    expect(gitCalls(host)).toHaveLength(2);
+  });
+
+  it("keeps asking bb when it answers in time", async () => {
+    const { deps, sdk, host } = slowSetup();
+    const slowWorkspaces = new Set<string>();
+    const overview = await build({ ...deps, slowWorkspaces });
+    expect(overview.worktrees[0]?.ref).not.toHaveProperty("root");
+    expect(slowWorkspaces.size).toBe(0);
+    expect(sdk.environments.status).toHaveBeenCalled();
+    expect(gitCalls(host)).toHaveLength(0);
+  });
+
+  it("reads a workspace already known to be slow with one git call on the host and none through bb", async () => {
+    const { deps, sdk, host } = slowSetup();
+    const overview = await build({ ...deps, cache: createRepoCache(), roots: createRootCache(), slowWorkspaces: new Set(["env_1"]) });
+    expect(overview.worktrees[0]?.committed.map((file) => file.path)).toEqual(["services/api/done.rb"]);
+    expect(sdk.environments.status).not.toHaveBeenCalled();
+    expect(gitCalls(host)).toEqual([["checkoutStatus", { root: ROOT, base: "origin/main" }, { hostId: "host_1", signal: undefined }]]);
+  });
+
+  it("drops the cached git read when bb reports a change to the environment", async () => {
+    const { deps, host } = slowSetup();
+    const cache = createRepoCache();
+    const run = () => build({ ...deps, cache, roots: createRootCache(), slowWorkspaces: new Set(["env_1"]) });
+    await run();
+    await run();
+    cache.invalidateEnvironment("env_1");
+    await run();
+    expect(gitCalls(host)).toHaveLength(2);
+  });
+
+  it("falls back to git for the branch scope too", async () => {
+    vi.useFakeTimers();
+    const { deps, sdk, host } = slowSetup();
+    sdk.environments.diffFiles.mockImplementation(() => new Promise(() => {}));
+    host.mockImplementation((async (method: string, input: { paths?: string[] }) => {
+      if (method === "repoFiles") return { outcome: "available", branch: null, base: "origin/main", aheadCount: 1, behindCount: null, commits: [], truncated: false, files: [] };
+      if (method === "resolveRoots") return resolveAt(input.paths);
+      return available;
+    }) as never);
+    const slowWorkspaces = new Set<string>();
+    const pending = build({ ...deps, slowWorkspaces }, "branch");
+    await vi.advanceTimersByTimeAsync(BB_DEADLINE_MS);
+    await pending;
+    expect(host.mock.calls.find(([method]) => method === "repoFiles")?.[1]).toEqual({ root: ROOT, target: { type: "merge-base", base: "origin/main" } });
+    expect([...slowWorkspaces]).toEqual(["env_1"]);
+  });
+});
+
 describe("buildOverview worked checkouts", () => {
-  const TREE_ROOT = "/trees/study/src";
+  const TREE_ROOT = "/clones/side";
   const gitFile = (path: string, additions = 1) => ({ path, previousPath: null, status: "modified", additions, deletions: 0, binary: false });
-  const studyHost = (status: object = {}) => vi.fn(async (method: string, input: { paths?: string[] }) => {
+  const sideHost = (status: object = {}) => vi.fn(async (method: string, input: { paths?: string[] }) => {
     if (method === "resolveRoots") {
       return {
-        results: (input.paths ?? []).map((path) => path.startsWith(TREE_ROOT) || path.startsWith("~/trees/study/src")
-          ? { path, root: TREE_ROOT, relative: path.startsWith("~") ? "envoy" : path.slice(TREE_ROOT.length + 1) }
+        results: (input.paths ?? []).map((path) => path.startsWith(TREE_ROOT) || path.startsWith("~/clones/side")
+          ? { path, root: TREE_ROOT, relative: path.startsWith("~") ? "pkg" : path.slice(TREE_ROOT.length + 1) }
           : { path, root: path === "/work/one" ? path : null, relative: path === "/work/one" ? "" : null }),
       };
     }
     if (method === "checkoutStatus") {
       return {
-        outcome: "available", branch: "study", base: "origin/main", aheadCount: 2, behindCount: 0, truncated: false,
+        outcome: "available", branch: "side-work", base: "origin/main", aheadCount: 2, behindCount: 0, truncated: false,
         commits: [{ sha: "abc1234", shortSha: "abc1234", subject: "Cut copies", authorName: "Agent", authoredAt: 1000 }],
-        uncommitted: [gitFile("envoy/lib.rs", 3), gitFile("envoy/shell-only.rs", 5)], committed: [gitFile("envoy/committed.rs", 8)],
+        uncommitted: [gitFile("pkg/lib.rs", 3), gitFile("pkg/shell-only.rs", 5)], committed: [gitFile("pkg/committed.rs", 8)],
         ...status,
       };
     }
     throw new Error(`unexpected ${method}`);
   }) as unknown as HostCall & ReturnType<typeof vi.fn>;
-  const studyEdits = { thr_1: edits([record({ path: `${TREE_ROOT}/envoy/lib.rs` })], "/work/one", ["~/trees/study/src/envoy"]) };
+  const sideEdits = { thr_1: edits([record({ path: `${TREE_ROOT}/pkg/lib.rs` })], "/work/one", ["~/clones/side/pkg"]) };
 
   it("gives the checkout a worktree row with its commits, and lists every change in it, from one host read", async () => {
-    const host = studyHost();
-    const { deps } = setup({ edits: studyEdits, host, environments: [environment({ id: "env_1", path: "/work/one" })] });
+    const host = sideHost();
+    const { deps } = setup({ edits: sideEdits, host, environments: [environment({ id: "env_1", path: "/work/one" })] });
     const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
     expect(overviewSchema.safeParse(overview).success).toBe(true);
     const row = overview.worktrees.find((entry) => entry.kind === "checkout")!;
     expect(row).toMatchObject({
-      key: `host_1:${TREE_ROOT}`, label: "Project", projectId: "proj_1", root: TREE_ROOT, branch: "study", base: "origin/main",
+      key: `host_1:${TREE_ROOT}`, label: "Project", projectId: "proj_1", root: TREE_ROOT, branch: "side-work", base: "origin/main",
       aheadCount: 2, behindCount: 0, state: "ready", threadIds: ["thr_1"],
     });
-    expect(row.committed.map((file) => file.path)).toEqual(["envoy/committed.rs"]);
+    expect(row.committed.map((file) => file.path)).toEqual(["pkg/committed.rs"]);
     expect(row.commits.map((commit) => commit.subject)).toEqual(["Cut copies"]);
     const repo = overview.repos.find((entry) => entry.ref.kind === "checkout")!;
     expect(repo.ref).toEqual({ kind: "checkout", hostId: "host_1", root: TREE_ROOT, base: null, worked: true });
-    expect(repo.files.map((file) => [file.path, file.edits?.count ?? null])).toEqual([["envoy/lib.rs", 1], ["envoy/shell-only.rs", null]]);
+    expect(repo.files.map((file) => [file.path, file.edits?.count ?? null])).toEqual([["pkg/lib.rs", 1], ["pkg/shell-only.rs", null]]);
     expect(repo.otherFiles).toEqual([]);
     expect(host.mock.calls.filter(([method]) => method === "checkoutStatus")).toEqual([
       ["checkoutStatus", { root: TREE_ROOT, base: null }, { hostId: "host_1", signal: undefined }],
@@ -632,22 +804,22 @@ describe("buildOverview worked checkouts", () => {
   });
 
   it("asks for the merge-base diff when the scope is branch, and keeps the row", async () => {
-    const host = studyHost();
+    const host = sideHost();
     host.mockImplementation((async (method: string, input: { paths?: string[] }) => {
       if (method === "repoFiles") {
-        return { outcome: "available", branch: "study", base: "origin/main", aheadCount: 2, behindCount: null, commits: [], truncated: false, files: [gitFile("envoy/committed.rs")] };
+        return { outcome: "available", branch: "side-work", base: "origin/main", aheadCount: 2, behindCount: null, commits: [], truncated: false, files: [gitFile("pkg/committed.rs")] };
       }
-      return studyHost()(method as never, input as never, { hostId: "host_1" });
+      return sideHost()(method as never, input as never, { hostId: "host_1" });
     }) as never);
-    const { deps } = setup({ edits: studyEdits, host, environments: [environment({ id: "env_1", path: "/work/one" })] });
+    const { deps } = setup({ edits: sideEdits, host, environments: [environment({ id: "env_1", path: "/work/one" })] });
     const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "branch", includeArchived: true });
     expect(host.mock.calls.find(([method]) => method === "repoFiles")?.[1]).toEqual({ root: TREE_ROOT, target: { type: "merge-base", base: null } });
     expect(overview.worktrees.map((entry) => entry.kind)).toEqual(["workspace", "checkout"]);
   });
 
   it("shows the row as unavailable when the host cannot read the checkout", async () => {
-    const host = studyHost({ outcome: "unavailable", reason: "not-a-repo", message: "This folder does not exist" });
-    const { deps } = setup({ edits: studyEdits, host, environments: [environment({ id: "env_1", path: "/work/one" })] });
+    const host = sideHost({ outcome: "unavailable", reason: "not-a-repo", message: "This folder does not exist" });
+    const { deps } = setup({ edits: sideEdits, host, environments: [environment({ id: "env_1", path: "/work/one" })] });
     const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
     expect(overview.worktrees.find((entry) => entry.kind === "checkout")).toMatchObject({ state: "unavailable", message: "This folder is no longer a git repository" });
     expect(overview.repos.find((entry) => entry.ref.kind === "checkout")).toMatchObject({ state: "unavailable" });
@@ -683,7 +855,7 @@ describe("buildOverview", () => {
     const { deps, sdk } = setup({});
     await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "branch", includeArchived: true });
     expect(sdk.environments.diffFiles).toHaveBeenCalledWith({
-      environmentId: "env_1", target: "all", mergeBaseBranch: "origin/main", signal: undefined,
+      environmentId: "env_1", target: "all", mergeBaseBranch: "origin/main", signal: expect.any(AbortSignal),
     });
   });
 

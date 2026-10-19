@@ -36,8 +36,8 @@ project, because those branches may conflict when merged; it opens to list the
 files and the threads.
 
 Agents sometimes make their own checkout outside bb and work there, for
-example a world tree from `dev tree add`, while their bb workspace stays
-untouched. Once a thread has both edited a file in such a checkout and run
+example a clone or `git worktree add` run from a shell, while their bb
+workspace stays untouched. Once a thread has both edited a file in such a checkout and run
 commands in it (see [How it works](#how-it-works)), the checkout gets a row of
 its own, grouped with the thread's project and marked "in <folder>". It shows
 the checkout's branch, its commits ahead of and behind `origin/HEAD`, and
@@ -321,6 +321,21 @@ nothing on disk.
   60-second cache. A checkout only edited by path keeps the cheaper
   uncommitted-only call, and the instant outline shows a thread checkout's row
   when earlier loads already know the edits and the roots.
+- bb's status call can take more than 30 seconds, and time out, on a
+  repository that is far behind its base branch. Vantage waits 10 seconds for
+  bb's status or Branch-scope diff. When bb has not answered by then, Vantage
+  reads that workspace with the same `checkoutStatus` host call as a thread
+  checkout, which took under a second on a repository 110,000 commits behind,
+  and keeps reading it, its diffs and its commit files with git on its machine
+  until the server restarts. Git gives the same numbers, so the workspace is
+  not handed back to bb.
+- A workspace whose folder is below its repository root, such as an
+  environment in a subfolder of a large repository, is grouped under that
+  root and read the same way, because bb's diff calls return empty patches
+  for it. Its file links open the file by its full path.
+- A workspace read with git has `root` and `hostId` in its `ref`. bb's
+  workspace events still refresh it. When an environment below the root and
+  one at the root share a repository, the one at the root speaks for the row.
 - To place a path in a repository, the host asks git itself
   (`rev-parse --show-toplevel --show-prefix`) instead of comparing path
   prefixes, so `/tmp` and `/private/tmp` agree on macOS.
@@ -368,14 +383,25 @@ nothing on disk.
 - A thread checkout is compared with `origin/HEAD`; without one it shows its
   uncommitted files only.
 - An archived child's branch is read from the project checkout, which is where
-  bb's git-worktree provider leaves it. When the branch no longer exists,
-  Vantage shows the recorded edits instead.
+  bb's git-worktree provider leaves it. When the project's folder is not a
+  repository, or the project has none, it is read in the folder the thread
+  ran in, which some environment providers leave in place when they remove
+  the environment. When the branch no longer exists, Vantage shows the
+  recorded edits instead. An archived thread shows only its committed work,
+  even when its folder, and any uncommitted change in it, is still on disk.
 - Git must be installed on the machine that owns each repository.
 
 ## Changes
 
-- **0.4.0**: a checkout a thread made outside bb and works in, such as a world
-  tree, gets a worktree row with its branch, commits ahead and behind, commits
+- **0.4.1**: an archived thread's branch is read in the folder it ran in when
+  its project's folder is not a repository, or the project has none, instead
+  of showing as unavailable or as recorded edits only. A workspace that bb's
+  status does not answer within 10 seconds, and a workspace whose folder is
+  below its repository root, are read with git at the repository root, like a
+  thread checkout: bb's status can time out on a repository far behind its
+  base, and bb returns empty diffs for a folder below the root.
+- **0.4.0**: a checkout a thread made outside bb and works in, such as a clone
+  it made with a shell command, gets a worktree row with its branch, commits ahead and behind, commits
   and every uncommitted and committed change, including changes made by shell
   commands; the Repositories view lists all of its changes as a "Thread
   checkout"; its terminal on the page opens in its folder; committed diffs and
@@ -430,5 +456,5 @@ After review, bump the package version, merge to an up-to-date `main`, and
 tag that version. This release uses:
 
 ```sh
-git tag vantage/v0.4.0 && git push origin vantage/v0.4.0
+git tag vantage/v0.4.1 && git push origin vantage/v0.4.1
 ```

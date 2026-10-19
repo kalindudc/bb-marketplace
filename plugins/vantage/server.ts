@@ -23,7 +23,8 @@ export default function vantage(bb: BbPluginApi): void {
   const edits = createEditIndex(events);
   const cache = createRepoCache();
   const roots = createRootCache();
-  const deps = (): CollectDeps => ({ sdk: bb.sdk, host, edits, cache, roots });
+  const slowWorkspaces = new Set<string>();
+  const deps = (): CollectDeps => ({ sdk: bb.sdk, host, edits, cache, roots, slowWorkspaces });
 
   const settings = bb.settings.define({
     windowHours: {

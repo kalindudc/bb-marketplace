@@ -25,8 +25,8 @@ function fakeSdk(threads: Record<string, EventRow[]>) {
 
 describe("workDirsOf", () => {
   it("finds every cd, pushd and git -C folder in a command line", () => {
-    expect(workDirsOf("cd ~/world/trees/study-events/src && git status; pushd /tmp/x >/dev/null; git -C /code/other log -1")).toEqual([
-      "~/world/trees/study-events/src", "/tmp/x", "/code/other",
+    expect(workDirsOf("cd ~/clones/side/src && git status; pushd /tmp/x >/dev/null; git -C /code/other log -1")).toEqual([
+      "~/clones/side/src", "/tmp/x", "/code/other",
     ]);
   });
 
@@ -41,7 +41,7 @@ describe("workDirsOf", () => {
   });
 
   it("skips relative folders, variables, globs, the home folder and the file system root", () => {
-    expect(workDirsOf('cd envoy/modules && cd "$T" && cd ~ && cd / && cd /code/* && cd -- ~/ok && cd `pwd`')).toEqual(["~/ok"]);
+    expect(workDirsOf('cd lib/modules && cd "$T" && cd ~ && cd / && cd /code/* && cd -- ~/ok && cd `pwd`')).toEqual(["~/ok"]);
   });
 
   it("does not take a word that only ends in cd", () => {

@@ -1,9 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PluginBbSdk } from "@get-bb/plugin-sdk";
 import type { CollectDeps, HostCall, RepoPlan, Touched } from "../src/collect";
 import type { PatchInput, RepoRef } from "../src/contract";
 import type { EditRecord } from "../src/edits";
-import { loadCommitFiles, loadPatch, loadRepoFiles, recordedFile } from "../src/sources";
+import { BB_DEADLINE_MS, loadCommitFiles, loadPatch, loadRepoFiles, loadWorkspaceStatus, recordedFile } from "../src/sources";
 
 const AVAILABLE = { outcome: "available", initialPatches: [], mergeBaseRef: null, shortstat: "", truncated: false };
 const diffFile = (overrides: object = {}) => ({
@@ -38,6 +38,7 @@ const planOf = (ref: RepoRef, touched: Map<string, Touched> = new Map()): RepoPl
   key: "k", ref, label: "L", projectId: "proj_1", root: "/repo", hostId: "host_1", threadIds: ["thr_1"], touched,
 });
 const workspace = (base: string | null): RepoRef => ({ kind: "workspace", environmentId: "env_1", base });
+const gitWorkspace: RepoRef = { kind: "workspace", environmentId: "env_1", base: "origin/main", root: "/repos/mono", hostId: "host_1" };
 const checkout: RepoRef = { kind: "checkout", hostId: "host_1", root: "/repo", base: null };
 const branch: RepoRef = { kind: "branch", hostId: "host_1", root: "/repo", base: "origin/main", head: "feature/old" };
 
@@ -48,14 +49,30 @@ const touched = (records: EditRecord[], threadIds = ["thr_1"], rawPaths = ["a.ts
   threadIds: new Set(threadIds), rawPaths: new Set(rawPaths), records,
 });
 
+describe("loadWorkspaceStatus deadline", () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("reports bb's silence as an error when there is no folder to read with git instead", async () => {
+    vi.useFakeTimers();
+    const { deps: d } = deps();
+    const slowWorkspaces = new Set<string>();
+    (d.sdk.environments.status as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => new Promise(() => {}));
+    const pending = loadWorkspaceStatus({ ...d, slowWorkspaces }, { kind: "workspace", environmentId: "env_1", base: null }, ["thr_1"]);
+    const failed = expect(pending).rejects.toThrow("bb took too long to read this workspace");
+    await vi.advanceTimersByTimeAsync(BB_DEADLINE_MS);
+    await failed;
+    expect(slowWorkspaces.size).toBe(0);
+  });
+});
+
 describe("loadRepoFiles targets", () => {
   it("reads a workspace's uncommitted changes from its status and, for the branch scope, diffs everything since its base", async () => {
     const { deps: d, diffFiles, status } = deps();
     await loadRepoFiles(d, planOf(workspace("origin/main")), "uncommitted");
-    expect(status.mock.calls).toEqual([[{ environmentId: "env_1", mergeBaseBranch: "origin/main", signal: undefined }]]);
+    expect(status.mock.calls).toEqual([[{ environmentId: "env_1", mergeBaseBranch: "origin/main", signal: expect.any(AbortSignal) }]]);
     expect(diffFiles).not.toHaveBeenCalled();
     await loadRepoFiles(d, planOf(workspace("origin/main")), "branch");
-    expect(diffFiles.mock.calls).toEqual([[{ environmentId: "env_1", target: "all", mergeBaseBranch: "origin/main", signal: undefined }]]);
+    expect(diffFiles.mock.calls).toEqual([[{ environmentId: "env_1", target: "all", mergeBaseBranch: "origin/main", signal: expect.any(AbortSignal) }]]);
     expect(status).toHaveBeenCalledTimes(1);
   });
 
@@ -316,6 +333,21 @@ describe("loadPatch committed and per-commit", () => {
     ]);
   });
 
+  it("asks the host at the repository root for every patch of a workspace read with git, not bb", async () => {
+    const { deps: d, host, diffPatch } = deps({ host: { outcome: "available", patch: "+x", truncated: false, binary: false } });
+    await loadPatch(d, input(gitWorkspace, { scope: "uncommitted" }));
+    await loadPatch(d, input(gitWorkspace, { scope: "branch" }));
+    await loadPatch(d, input(gitWorkspace));
+    await loadPatch(d, input(gitWorkspace, { sha: SHA }));
+    expect(host.mock.calls.map((call) => (call as unknown[])[1])).toEqual([
+      { root: "/repos/mono", path: "src/a.ts", previousPath: null, untracked: false, target: { type: "uncommitted" } },
+      { root: "/repos/mono", path: "src/a.ts", previousPath: null, untracked: false, target: { type: "merge-base", base: "origin/main" } },
+      { root: "/repos/mono", path: "src/a.ts", previousPath: null, untracked: false, target: { type: "committed", base: "origin/main" } },
+      { root: "/repos/mono", path: "src/a.ts", previousPath: null, untracked: false, target: { type: "commit", sha: SHA } },
+    ]);
+    expect(diffPatch).not.toHaveBeenCalled();
+  });
+
   it("asks the host for a checkout's commits since its merge base, or for one of its commits", async () => {
     const { deps: d, host } = deps({ host: { outcome: "available", patch: "+x", truncated: false, binary: false } });
     await loadPatch(d, input(checkout));
@@ -364,6 +396,15 @@ describe("loadCommitFiles", () => {
     ]);
     const failed = deps({ host: { outcome: "unavailable", reason: "git-failed", message: "The commit was not found" } });
     await expect(loadCommitFiles(failed.deps, { ref: branch, sha: SHA })).rejects.toThrow("The commit was not found");
+  });
+
+  it("asks the host at the repository root for the commit of a workspace read with git, not bb", async () => {
+    const { deps: d, host, diffFiles } = deps({
+      host: { outcome: "available", branch: null, base: null, aheadCount: null, behindCount: null, commits: [], truncated: false, files: [] },
+    });
+    await loadCommitFiles(d, { ref: gitWorkspace, sha: SHA });
+    expect(host.mock.calls[0]).toEqual(["repoFiles", { root: "/repos/mono", target: { type: "commit", sha: SHA } }, { hostId: "host_1", signal: undefined }]);
+    expect(diffFiles).not.toHaveBeenCalled();
   });
 
   it("asks the host for a checkout's commit", async () => {

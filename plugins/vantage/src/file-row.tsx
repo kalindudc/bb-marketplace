@@ -82,6 +82,8 @@ export function fileKey(repo: FileRepo | null, path: string, scope: PatchScope, 
 export function fileTarget(repo: FileRepo | null, file: FileChange): ExperimentalLiveFileTarget | null {
   if (repo === null || file.status === "deleted") return null;
   const { ref } = repo;
+  // A workspace read with git lists paths from its repository root, which bb would join to a folder below the root.
+  if (ref.kind === "workspace" && ref.root !== undefined && ref.hostId !== undefined) return { kind: "host", hostId: ref.hostId, path: `${ref.root}/${file.path}` };
   if (ref.kind === "workspace") return { kind: "workspace", environmentId: ref.environmentId, path: file.path };
   if (ref.kind === "checkout") return { kind: "host", hostId: ref.hostId, path: `${ref.root}/${file.path}` };
   return null;

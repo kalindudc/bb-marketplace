@@ -121,7 +121,11 @@ export type HostMethod = keyof typeof hostContract & string;
 export type HostInput<M extends HostMethod> = z.input<(typeof hostContract)[M]["input"]>;
 export type HostOutput<M extends HostMethod> = z.output<(typeof hostContract)[M]["output"]>;
 
-const workspaceRefSchema = z.object({ kind: z.literal("workspace"), environmentId: text, base: text.nullable() }).strict();
+// `root` and `hostId`: set when Vantage reads the workspace with git at its repository root instead of through bb. That
+// is a folder below the root, where bb's diffs come back empty, and a workspace bb's status did not answer in time.
+const workspaceRefSchema = z.object({
+  kind: z.literal("workspace"), environmentId: text, base: text.nullable(), root: absolutePath.optional(), hostId: text.optional(),
+}).strict();
 const branchRefSchema = z.object({ kind: z.literal("branch"), hostId: text, root: absolutePath, base: text.nullable(), head: text }).strict();
 // `worked`: a thread both edited files in this checkout and ran commands in it, so it is that thread's worktree too.
 const checkoutRefSchema = z.object({

@@ -14,8 +14,10 @@ export type Environment = Awaited<ReturnType<PluginBbSdk["environments"]["get"]>
 export type HostCall = <M extends HostMethod>(
   method: M, input: HostInput<M>, options: { hostId: string; signal?: AbortSignal },
 ) => Promise<HostOutput<M>>;
+/** `slowWorkspaces`: environments bb's status did not answer in time, read with git from then on. */
 export interface CollectDeps {
   sdk: PluginBbSdk; host: HostCall; edits: EditIndex; allOptions?: Omit<AllOptions, "now">; cache?: RepoCache; roots?: RootCache;
+  slowWorkspaces?: Set<string>;
 }
 
 export interface Touched { threadIds: Set<string>; rawPaths: Set<string>; records: EditRecord[] }
@@ -45,6 +47,19 @@ const isLive = (env: Environment): env is LiveEnvironment =>
 const isDestroyed = (env: Environment): boolean =>
   env.status === "destroyed" || env.lifecycle.phase === "destroyed" || env.path === null;
 const baseOf = (env: Environment): string | null => env.mergeBaseBranch ?? env.defaultBranch ?? null;
+// Vantage reads a workspace with git at its repository root when bb cannot: a folder below the root, where bb's diffs
+// come back empty, and a workspace bb's status did not answer in time.
+function workspaceRef(
+  env: LiveEnvironment, found: RootEntry | null | undefined, slow: boolean,
+): { ref: Extract<RepoRef, { kind: "workspace" }>; root: string; below: boolean } {
+  const root = found?.root ?? env.path;
+  const below = found != null && found.root !== null && found.relative !== null && found.relative !== "";
+  const base = baseOf(env);
+  const ref = below || slow
+    ? { kind: "workspace" as const, environmentId: env.id, base, root, hostId: env.hostId }
+    : { kind: "workspace" as const, environmentId: env.id, base };
+  return { ref, root, below };
+}
 
 export async function collectTree(
   deps: CollectDeps, threadId: string, includeArchived: boolean, signal?: AbortSignal,
@@ -114,6 +129,7 @@ function sourceFor(projects: readonly ProjectInfo[], env: Environment): string |
 export function pathsToResolve(input: {
   threads: readonly ThreadSummary[]; environments: ReadonlyMap<string, Environment>;
   edits: ReadonlyMap<string, ThreadEdits>; projects: readonly ProjectInfo[];
+  known?: (hostId: string, path: string) => RootEntry | undefined;
 }): Map<string, string[]> {
   const wanted = new Map<string, Set<string>>();
   const add = (hostId: string, path: string) => {
@@ -129,6 +145,10 @@ export function pathsToResolve(input: {
     if (!isDestroyed(env)) add(env.hostId, env.path!);
     else if (source !== null) add(env.hostId, source);
     const edits = input.edits.get(thread.id);
+    // Where the thread ran stands in for a project folder that is not a repository; one that is needs no second look.
+    const cwd = edits?.primaryCwd ?? null;
+    if (isDestroyed(env) && env.branchName !== null && cwd !== null && isAbsolute(cwd)
+      && !(source !== null && input.known?.(env.hostId, source)?.root)) add(env.hostId, posix.normalize(cwd));
     for (const record of edits?.records ?? []) {
       const location = locate(env, edits, record.movePath ?? record.path);
       if (location.kind === "resolve") add(location.hostId, location.path);
@@ -148,7 +168,7 @@ export function pathsToResolve(input: {
 export function planRepos(input: {
   threads: readonly ThreadSummary[]; environments: ReadonlyMap<string, Environment>;
   edits: ReadonlyMap<string, ThreadEdits>; roots: ResolvedRoots;
-  projects: readonly ProjectInfo[]; hosts: readonly HostInfo[];
+  projects: readonly ProjectInfo[]; hosts: readonly HostInfo[]; slowWorkspaces?: ReadonlySet<string>;
 }): { plans: RepoPlan[]; otherFiles: RepoPlan["touched"] } {
   const { threads, environments, edits, roots, projects } = input;
   const plans = new Map<string, RepoPlan>();
@@ -156,6 +176,23 @@ export function planRepos(input: {
   const otherFiles: RepoPlan["touched"] = new Map();
   const resolved = (hostId: string, path: string) => roots.get(hostId)?.get(path) ?? null;
   const projectName = (env: Environment) => projects.find((project) => project.id === env.projectId)?.name ?? null;
+
+  // A kept branch is read in the project's checkout. When the project's folder is not a repository, or the project has
+  // none, it is read where the thread ran: some environment providers leave that folder, and the branch, in place
+  // when the environment is removed. A folder no one has looked up yet is taken as the root, as before.
+  const keptRoot = (env: Environment, source: string | null, cwd: string | null): string | null => {
+    const found = source === null ? null : resolved(env.hostId, source);
+    if (found?.root) return found.root;
+    const ran = cwd === null || !isAbsolute(cwd) ? null : (resolved(env.hostId, posix.normalize(cwd))?.root ?? null);
+    if (ran !== null) return ran;
+    return source !== null && found === null ? source : null;
+  };
+  // The repository path of the folder a removed environment's thread ran in, when its branch is read from there.
+  const ranPrefix = (env: Environment | undefined, cwd: string | null, root: string | null): string => {
+    if (env === undefined || cwd === null || root === null || !isAbsolute(cwd)) return "";
+    const found = resolved(env.hostId, posix.normalize(cwd));
+    return found?.root === root ? (found.relative ?? "") : "";
+  };
 
   const join = (plan: RepoPlan, threadId: string): RepoPlan => {
     if (!plan.threadIds.includes(threadId)) plan.threadIds.push(threadId);
@@ -175,15 +212,18 @@ export function planRepos(input: {
     if (env === undefined) continue;
     const base = baseOf(env);
     if (isLive(env)) {
-      const root = resolved(env.hostId, env.path)?.root ?? env.path;
-      const plan = open(`${env.hostId}:${root}`, () => ({
-        key: `${env.hostId}:${root}`, ref: { kind: "workspace", environmentId: env.id, base },
-        label: projectName(env) ?? posix.basename(root), projectId: env.projectId, root, hostId: env.hostId, threadIds: [], touched: new Map(),
+      const { ref, root, below } = workspaceRef(env, resolved(env.hostId, env.path), input.slowWorkspaces?.has(env.id) ?? false);
+      const key = `${env.hostId}:${root}`;
+      const shared = plans.get(key);
+      // When an environment below the repository root and one at the root share a repository, the root one speaks for it.
+      if (shared !== undefined && shared.ref.kind === "workspace" && shared.ref.root !== undefined && !below) shared.ref = ref;
+      const plan = open(key, () => ({
+        key, ref, label: projectName(env) ?? posix.basename(root), projectId: env.projectId, root, hostId: env.hostId, threadIds: [], touched: new Map(),
       }), thread.id);
       planOfEnvironment.set(env.id, plan);
     } else if (isDestroyed(env)) {
       const source = env.branchName === null ? null : sourceFor(projects, env);
-      const root = source === null ? null : (resolved(env.hostId, source)?.root ?? source);
+      const root = env.branchName === null ? null : keptRoot(env, source, edits.get(thread.id)?.primaryCwd ?? null);
       const label = projectName(env) ?? env.branchName ?? env.name ?? "Removed workspace";
       const plan = env.branchName !== null && root !== null
         ? open(`${env.hostId}:${root}@${env.branchName}`, () => ({
@@ -223,7 +263,8 @@ export function planRepos(input: {
       let destination = { touched: otherFiles, key: target };
       if (location.kind === "environment") {
         const plan = planOfEnvironment.get(location.environmentId);
-        if (plan !== undefined) destination = { touched: join(plan, thread.id).touched, key: location.relative };
+        const prefix = ranPrefix(env, threadEdits?.primaryCwd ?? null, plan?.root ?? null);
+        if (plan !== undefined) destination = { touched: join(plan, thread.id).touched, key: prefix === "" ? location.relative : posix.join(prefix, location.relative) };
       } else if (location.kind === "resolve") {
         const found = resolved(location.hostId, location.path);
         if (found !== null && found.root !== null && found.relative !== null && found.relative !== "") {
@@ -376,12 +417,14 @@ function startWorkspaceLoads(
   deps: CollectDeps, threads: readonly ThreadSummary[], environments: ReadonlyMap<string, Environment>, scope: Scope, signal?: AbortSignal,
 ): Promise<unknown> {
   return mapLimit([...environments.values()].filter(isLive), FETCH_CONCURRENCY, async (env) => {
-    const ref = { kind: "workspace", environmentId: env.id, base: baseOf(env) } as const;
+    // A folder below its repository root is only known as one once its root is cached; until then its first load asks bb.
+    const { ref, root } = workspaceRef(env, deps.roots?.peek(env.hostId, env.path), deps.slowWorkspaces?.has(env.id) ?? false);
+    const at = { hostId: env.hostId, root };
     const threadIds = threads.filter((thread) => thread.environmentId === env.id).map((thread) => thread.id);
     // A failed read is not cached, so the phase that needs it asks again and reports the failure itself.
     await Promise.all([
-      loadWorkspaceStatus(deps, ref, threadIds, signal),
-      scope === "branch" && ref.base !== null ? loadWorkspaceDiff(deps, { ...ref, base: ref.base }, threadIds, signal) : undefined,
+      loadWorkspaceStatus(deps, ref, threadIds, signal, at),
+      scope === "branch" && ref.base !== null && ref.root === undefined ? loadWorkspaceDiff(deps, { ...ref, base: ref.base }, threadIds, signal, at) : undefined,
     ]).catch(() => undefined);
   });
 }
@@ -391,7 +434,9 @@ export async function buildOverview(
 ): Promise<Overview> {
   const { target } = input;
   // A build with no shared cache still shares reads between its own phases.
-  const scoped = { ...deps, cache: deps.cache ?? createRepoCache(), roots: deps.roots ?? createRootCache() };
+  const scoped = {
+    ...deps, cache: deps.cache ?? createRepoCache(), roots: deps.roots ?? createRootCache(), slowWorkspaces: deps.slowWorkspaces ?? new Set<string>(),
+  };
   const { sdk, edits } = scoped;
   const warnings: string[] = [];
   const listed = listProjectsAndHosts(sdk, warnings, signal);
@@ -429,7 +474,9 @@ export async function buildOverview(
     if (found !== undefined) editMap.set(thread.id, found);
   });
 
-  const wanted = pathsToResolve({ threads: tree.threads, environments: tree.environments, edits: editMap, projects });
+  const wanted = pathsToResolve({
+    threads: tree.threads, environments: tree.environments, edits: editMap, projects, known: (hostId, path) => scoped.roots.peek(hostId, path),
+  });
   await resolveMissing(scoped, wanted, failedHosts, hostName, warnings, signal);
   const roots = new Map<string, Map<string, RootEntry>>();
   for (const [hostId, paths] of wanted) {
@@ -441,12 +488,24 @@ export async function buildOverview(
   }
 
   const { plans, otherFiles } = planRepos({
-    threads: tree.threads, environments: tree.environments, edits: editMap, roots, projects, hosts,
+    threads: tree.threads, environments: tree.environments, edits: editMap, roots, projects, hosts, slowWorkspaces: scoped.slowWorkspaces,
   });
-  const [settled, worktrees] = await Promise.all([
+  const [settled, loadedWorktrees] = await Promise.all([
     Promise.allSettled(plans.map((plan) => planCached(scoped.cache, plan, input.scope, () => loadRepoFiles(scoped, plan, input.scope, signal)))),
     loadWorktrees(scoped, plans, tree.environments, new Map(hosts.map((host) => [host.id, host.name])), signal),
   ]);
+  // A workspace bb was too slow for during this build is read with git from now on, and so are its diffs.
+  const readWithGit = new Map<string, Extract<RepoRef, { kind: "workspace" }>>();
+  for (const plan of plans) {
+    if (plan.ref.kind !== "workspace" || plan.ref.root !== undefined || plan.root === null || plan.hostId === null) continue;
+    if (!scoped.slowWorkspaces.has(plan.ref.environmentId)) continue;
+    plan.ref = { ...plan.ref, root: plan.root, hostId: plan.hostId };
+    readWithGit.set(plan.key, plan.ref);
+  }
+  const worktrees = loadedWorktrees.map((worktree) => {
+    const ref = readWithGit.get(worktree.key);
+    return ref === undefined ? worktree : { ...worktree, ref };
+  });
   const repos = plans.map((plan, index): Repo => {
     const outcome = settled[index]!;
     const name = plan.hostId === null ? null : hostName(plan.hostId);
@@ -494,7 +553,9 @@ export async function buildShell(deps: CollectDeps, input: ShellInput, signal?: 
   const roots: ResolvedRoots = new Map([...wanted].map(([hostId, paths]) => [
     hostId, new Map(paths.map((path) => [path, deps.roots?.peek(hostId, path) ?? { root: path, relative: "" }])),
   ]));
-  const planned = planRepos({ threads: tree.threads, environments: tree.environments, edits, roots, projects, hosts }).plans;
+  const planned = planRepos({
+    threads: tree.threads, environments: tree.environments, edits, roots, projects, hosts, slowWorkspaces: deps.slowWorkspaces,
+  }).plans;
   const plans = planned.filter((plan) => plan.ref.kind !== "checkout" || plan.ref.worked === true);
   const hostNames = new Map(hosts.map((host) => [host.id, host.name]));
   return {

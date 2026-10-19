@@ -713,8 +713,8 @@ describe("formatWorktree", () => {
       worktrees: [worktree(), checkoutWorktree({ threadIds: ["thr_1"], committed: [fileChange({ path: "lib.rs" })] })],
     }), "thr_1");
     expect(text).toContain("path: /work/one");
-    expect(text).toContain("Parent · study");
-    expect(text).toContain("path: /trees/study/src");
+    expect(text).toContain("Parent · side-work");
+    expect(text).toContain("path: /clones/side");
     expect(text).toContain("Committed on this branch (1 file)");
   });
 

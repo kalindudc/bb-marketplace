@@ -133,20 +133,20 @@ describe("buildShell", () => {
     const { deps, edits, host } = setup();
     const roots = createRootCache();
     roots.store("host_1", "/work/one", { root: "/work/one", relative: "" });
-    roots.store("host_1", "/trees/study/src/lib.rs", { root: "/trees/study/src", relative: "lib.rs" });
-    roots.store("host_1", "~/trees/study/src", { root: "/trees/study/src", relative: "" });
+    roots.store("host_1", "/clones/side/lib.rs", { root: "/clones/side", relative: "lib.rs" });
+    roots.store("host_1", "~/clones/side", { root: "/clones/side", relative: "" });
     roots.store("host_1", "/code/other/x.md", { root: "/code/other", relative: "x.md" });
     const record = (path: string) => ({ threadId: "thr_1", path, movePath: null, kind: "update" as const, added: 1, removed: 0, at: 1 });
     edits.peek.mockImplementation((() => ({
-      records: [record("/trees/study/src/lib.rs"), record("/code/other/x.md")], primaryCwd: "/work/one", workDirs: ["~/trees/study/src"],
+      records: [record("/clones/side/lib.rs"), record("/code/other/x.md")], primaryCwd: "/work/one", workDirs: ["~/clones/side"],
     })) as never);
     const overview = await shell({ ...deps, roots });
     expect(host).not.toHaveBeenCalled();
     expect(edits.get).not.toHaveBeenCalled();
     expect(overview.worktrees.map((entry) => [entry.kind, entry.root, entry.state])).toEqual([
-      ["workspace", "/work/one", "loading"], ["checkout", "/trees/study/src", "loading"],
+      ["workspace", "/work/one", "loading"], ["checkout", "/clones/side", "loading"],
     ]);
-    expect(overview.repos.map((entry) => entry.root)).toEqual(["/work/one", "/trees/study/src"]);
+    expect(overview.repos.map((entry) => entry.root)).toEqual(["/work/one", "/clones/side"]);
   });
 
   it("leaves out archived threads unless asked, and counts them", async () => {

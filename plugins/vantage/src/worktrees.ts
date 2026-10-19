@@ -2,7 +2,8 @@ import type { CollectDeps, Environment, RepoPlan } from "./collect";
 import type { RepoRef, SharedFile, Worktree } from "./contract";
 import { mapLimit } from "./limit";
 import {
-  gitFileChange, hostMessage, loadBranchRange, loadCheckoutStatus, loadWorkspaceStatus, MAX_COMMITS, MAX_FILES, unavailableStatus, type WorktreeStatus,
+  checkoutWorktreeStatus, gitFileChange, hostMessage, loadBranchRange, loadCheckoutStatus, loadWorkspaceStatus, MAX_COMMITS, MAX_FILES,
+  unavailableStatus, type WorktreeStatus,
 } from "./sources";
 
 const STATUS_CONCURRENCY = 8;
@@ -54,15 +55,7 @@ async function loadBranch(
 async function loadCheckout(
   deps: CollectDeps, ref: Extract<RepoRef, { kind: "checkout" }>, threadIds: readonly string[], signal?: AbortSignal,
 ): Promise<WorktreeStatus> {
-  const result = await loadCheckoutStatus(deps, ref, threadIds, signal);
-  if (result.outcome === "unavailable") return unavailableStatus(hostMessage(result), null, ref.base);
-  return {
-    branch: result.branch, base: result.base, state: "ready", message: null,
-    aheadCount: result.aheadCount, behindCount: result.behindCount,
-    uncommitted: result.uncommitted.slice(0, MAX_FILES).map(gitFileChange),
-    committed: result.committed.slice(0, MAX_FILES).map(gitFileChange),
-    commits: result.commits.slice(0, MAX_COMMITS),
-  };
+  return checkoutWorktreeStatus(await loadCheckoutStatus(deps, ref, threadIds, signal), ref.base);
 }
 
 const plannedBranch = (plan: WorktreePlan, environments: ReadonlyMap<string, Environment>): string | null =>
@@ -82,7 +75,8 @@ export async function loadWorktrees(
         return status === null ? null : { ...identity, ...status };
       }
       if (ref.kind === "checkout") return { ...identity, ...(await loadCheckout(deps, ref, plan.threadIds, signal)) };
-      const status = await loadWorkspaceStatus(deps, ref, plan.threadIds, signal);
+      const at = plan.root === null || plan.hostId === null ? undefined : { hostId: plan.hostId, root: plan.root };
+      const status = await loadWorkspaceStatus(deps, ref, plan.threadIds, signal, at);
       return {
         ...identity, ...status, branch: status.branch ?? (status.state === "unavailable" ? branch : null),
         uncommitted: status.uncommitted.slice(0, MAX_FILES),

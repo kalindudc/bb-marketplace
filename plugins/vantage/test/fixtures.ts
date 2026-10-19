@@ -88,8 +88,8 @@ export function checkoutRepo(overrides: Partial<Repo> = {}): Repo {
 
 export function checkoutWorktree(overrides: Partial<Worktree> = {}): Worktree {
   return worktree({
-    key: "host_1:/trees/study/src", ref: { kind: "checkout", hostId: "host_1", root: "/trees/study/src", base: null, worked: true },
-    kind: "checkout", root: "/trees/study/src", branch: "study", ...overrides,
+    key: "host_1:/clones/side", ref: { kind: "checkout", hostId: "host_1", root: "/clones/side", base: null, worked: true },
+    kind: "checkout", root: "/clones/side", branch: "side-work", ...overrides,
   });
 }
 

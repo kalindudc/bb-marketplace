@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { waitFor } from "@testing-library/react";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { PatchRequest } from "../src/contract";
-import { FileRow, clearFileCache, fileKey, type FileRowProps } from "../src/file-row";
+import { FileRow, clearFileCache, fileKey, fileTarget, type FileRowProps } from "../src/file-row";
 import { fileChange } from "./fixtures";
 
 type Slot = ReturnType<typeof renderSlot>;
@@ -34,6 +34,14 @@ describe("fileKey", () => {
     expect(fileKey(REPO, "a.ts", "committed", null)).toBe("host_1:/work/one\0a.ts\0committed");
     expect(fileKey(REPO, "a.ts", "committed", "abc1234")).toBe("host_1:/work/one\0a.ts\0committed\0abc1234");
     expect(fileKey(REPO, "a.ts", "committed", "abc1234")).not.toBe(fileKey(REPO, "a.ts", "committed", "def5678"));
+  });
+});
+
+describe("fileTarget", () => {
+  it("opens a workspace file through bb, and the file of a workspace read with git by its path from the repository root", () => {
+    expect(fileTarget(REPO, fileChange({ path: "src/a.ts" }))).toEqual({ kind: "workspace", environmentId: "env_1", path: "src/a.ts" });
+    const sub = { key: "host_1:/repos/mono", ref: { kind: "workspace", environmentId: "env_sub", base: "origin/main", root: "/repos/mono", hostId: "host_1" } } as const;
+    expect(fileTarget(sub, fileChange({ path: "services/api/a.rb" }))).toEqual({ kind: "host", hostId: "host_1", path: "/repos/mono/services/api/a.rb" });
   });
 });
 

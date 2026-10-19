@@ -97,7 +97,7 @@ describe("loadWorktrees workspaces", () => {
     });
     const [result] = await loadWorktrees(deps, [workspacePlan(1)], environments(environment({ id: "env_1" })), names);
     expect(status).toHaveBeenCalledTimes(1);
-    expect(status.mock.calls[0]?.[0]).toEqual({ environmentId: "env_1", mergeBaseBranch: "origin/main", signal: undefined });
+    expect(status.mock.calls[0]?.[0]).toEqual({ environmentId: "env_1", mergeBaseBranch: "origin/main", signal: expect.any(AbortSignal) });
     expect(host).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       key: "host_1:/work/1", kind: "workspace", label: "Project", projectId: "proj_1", hostId: "host_1", hostName: "Laptop", root: "/work/1",
@@ -277,7 +277,7 @@ describe("shared loads", () => {
     const { deps, status, diffFiles } = shared();
     await Promise.all([loadWorktrees(deps, [workspacePlan(1)], env, names), loadRepoFiles(deps, workspacePlan(1), "branch")]);
     expect(diffFiles).toHaveBeenCalledTimes(1);
-    expect(diffFiles.mock.calls[0]?.[0]).toEqual({ environmentId: "env_1", target: "all", mergeBaseBranch: "origin/main", signal: undefined });
+    expect(diffFiles.mock.calls[0]?.[0]).toEqual({ environmentId: "env_1", target: "all", mergeBaseBranch: "origin/main", signal: expect.any(AbortSignal) });
     expect(status).toHaveBeenCalledTimes(1);
   });
 
@@ -307,12 +307,22 @@ describe("shared loads", () => {
 
   it("does not hand a caller's abort signal to a load that other callers share, but does when nothing is shared", async () => {
     const { deps, status, cache } = shared();
-    const controller = new AbortController();
-    await loadWorktrees(deps, [workspacePlan(1)], env, names, controller.signal);
-    expect(status.mock.calls[0]?.[0]).toMatchObject({ signal: undefined });
+    // Aborts the caller while bb's call is in flight and notes whether bb's call saw it.
+    const original = status.getMockImplementation()!;
+    const seen: boolean[] = [];
+    const abortDuring = (caller: AbortController) => status.mockImplementationOnce(async (args) => {
+      caller.abort();
+      seen.push((args as unknown as { signal: AbortSignal }).signal.aborted);
+      return original(args);
+    });
+    const sharedCaller = new AbortController();
+    abortDuring(sharedCaller);
+    await loadWorktrees(deps, [workspacePlan(1)], env, names, sharedCaller.signal);
     cache.clear();
-    await loadWorktrees({ ...deps, cache: undefined }, [workspacePlan(1)], env, names, controller.signal);
-    expect(status.mock.calls[1]?.[0]).toMatchObject({ signal: controller.signal });
+    const soleCaller = new AbortController();
+    abortDuring(soleCaller);
+    await loadWorktrees({ ...deps, cache: undefined }, [workspacePlan(1)], env, names, soleCaller.signal);
+    expect(seen).toEqual([false, true]);
   });
 
   const destroyed = destroyedEnvironment({ id: "env_9", hostId: "host_1", branchName: "feature/old", projectId: "proj_7" });

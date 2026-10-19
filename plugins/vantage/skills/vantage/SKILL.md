@@ -32,7 +32,7 @@ Vantage shows the worktrees of a thread and all of its descendant threads, and g
 
 `worktrees --json` prints `{ threadId, target, windowHours, threads, archivedHidden, worktrees, sharedFiles }`; `worktree <thread> --json` prints one worktree, the thread's own workspace when it has one. A worktree has:
 
-- `key`, `threadIds` (the threads in it, in tree order), `kind` (`workspace`, `branch` or `checkout`), `label` (the project's name) and `projectId`. A `checkout` worktree is a thread checkout: a checkout outside bb, such as a world tree from `dev tree add`, that a thread both edited a file in and ran commands in (`cd`, `pushd` or `git -C` with an absolute or `~/` folder). It is compared with `origin/HEAD`.
+- `key`, `threadIds` (the threads in it, in tree order), `kind` (`workspace`, `branch` or `checkout`), `label` (the project's name) and `projectId`. A `checkout` worktree is a thread checkout: a checkout outside bb, such as a clone made from a shell, that a thread both edited a file in and ran commands in (`cd`, `pushd` or `git -C` with an absolute or `~/` folder). It is compared with `origin/HEAD`.
 - `state` (`ready` or `unavailable`; `loading` only in the page's quick first answer) and `message` (why it is unavailable).
 - `branch`, `base`, `aheadCount` and `behindCount` (commits ahead of and behind the base; null when there is no base).
 - `uncommitted[]` and `committed[]`: `path`, `status`, `additions`, `deletions`, `previousPath`. An archived branch has no uncommitted files.
@@ -51,10 +51,10 @@ Without `--thread` or `--all`, the command uses the thread it runs in. Outside a
 
 ## Repository kinds
 
-- `workspace`: a thread's own workspace, read through bb's diff API (the same numbers as bb's Changes tab).
+- `workspace`: a thread's own workspace, read through bb's diff API (the same numbers as bb's Changes tab). A workspace whose folder is below its repository root, or that bb did not answer for within 10 seconds, is read with git at the repository root instead; its `ref` then has `root` and `hostId`, and its file paths are relative to that root.
 - `checkout` with `ref.worked: true` (caption "Thread checkout"): a checkout outside bb that a thread works in. Every change in it is in `files`, like a workspace, and it also has a worktree.
 - `checkout` without `worked`: another checkout that an agent edited by path. Files the agents edited are in `files`; the repository's other changes are in `otherFiles` and are not the agents' work.
-- `branch`: an archived child whose worktree bb removed. Vantage compares its branch with its base branch in the project checkout.
+- `branch`: an archived child whose worktree bb removed. Vantage compares its branch with its base branch in the project checkout, or, when the project's folder is not a repository, in the folder the thread ran in.
 - `recorded`: no repository could be read, so the files come from the agents' recorded edits only. The same applies to `otherFiles` at the top level, which are files outside any repository such as thread storage or /tmp.
 
 A file with status `clean` was edited by an agent and has no change now, for example because it was committed.
