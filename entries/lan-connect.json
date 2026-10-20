@@ -1,0 +1,28 @@
+{
+  "id": "lan-connect",
+  "displayName": "LAN Connect",
+  "description": "Open this bb from phones and laptops on your home network: pair a device once with a code or QR code, then use bb in its browser at <computer>.local, its LAN IP or your own name. No bb account or getbb.app needed.",
+  "icon": "Globe",
+  "tags": [
+    "lan",
+    "remote-access",
+    "mobile",
+    "pairing",
+    "home-network",
+    "self-hosted"
+  ],
+  "author": {
+    "name": "Kalindu De Costa",
+    "github": "kalindudc"
+  },
+  "category": "cloud-and-remote",
+  "overview": "./plugins/lan-connect/PLUGIN_OVERVIEW.md",
+  "source": {
+    "git": {
+      "url": "https://github.com/kalindudc/bb-marketplace.git",
+      "subdir": "plugins/lan-connect",
+      "range": ">=0.1.0 <1.0.0",
+      "tagPrefix": "lan-connect/"
+    }
+  }
+}

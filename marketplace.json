@@ -14,6 +14,11 @@
       "id": "sidebar",
       "displayName": "Sidebar",
       "description": "Change how threads are listed and organized in the sidebar."
+    },
+    {
+      "id": "cloud-and-remote",
+      "displayName": "Environments & Cloud",
+      "description": "Create and manage where threads run, locally or in the cloud."
     }
   ],
   "plugins": [
@@ -68,6 +73,34 @@
           "subdir": "plugins/follow-thinking",
           "range": ">=0.1.0 <1.0.0",
           "tagPrefix": "follow-thinking/"
+        }
+      }
+    },
+    {
+      "id": "lan-connect",
+      "displayName": "LAN Connect",
+      "description": "Open this bb from phones and laptops on your home network: pair a device once with a code or QR code, then use bb in its browser at <computer>.local, its LAN IP or your own name. No bb account or getbb.app needed.",
+      "icon": "Globe",
+      "tags": [
+        "lan",
+        "remote-access",
+        "mobile",
+        "pairing",
+        "home-network",
+        "self-hosted"
+      ],
+      "author": {
+        "name": "Kalindu De Costa",
+        "github": "kalindudc"
+      },
+      "category": "cloud-and-remote",
+      "overview": "Use this bb from your phone, tablet or another laptop on the same home network, in the device's browser. No bb account, no getbb.app and nothing to install on the device.\n\n## What you get\n\n- A \"LAN access\" switch. When it is on, bb answers on port 38890 on your local network, at its LAN IP address (such as `http://192.168.1.20:38890`), at any name you add yourself, and at the computer's Bonjour name (such as `http://macbook-pro.local:38890`).\n- A settings section, on the plugin's page and on bb's Mobile settings page, that shows the URLs, pairs new devices with a QR code and lists paired devices with a Revoke button.\n- `bb lan status`, `on`, `off`, `pair`, `devices` and `revoke` in the terminal, so agents and scripts can do the same.\n- The full bb app on the device: threads stream live, and terminals work.\n\n## Pairing\n\nPress \"Pair a device\" or run `bb lan pair`. You get a QR code, a link and an eight-character code. The link uses your first extra hostname, or the LAN IP address when you have none, because many phones cannot resolve `.local` names. Scan the code or open the link on the device and press \"Pair this device\". The code works once and expires after five minutes. The device then stays paired for 400 days, or until you revoke it. Revoking a device closes its open connection at once. A device pairs once for each name it uses, so use one name per device.\n\n## Names you can use\n\n- The LAN IP addresses, listed in the status. Give the computer a fixed address in your router (a DHCP reservation): a device pairs per address, so a new address means pairing again.\n- The computer's `.local` name, which Macs and most Linux machines announce on the network by themselves. Macs and iPhones resolve it; many Android phones and some Wi-Fi networks do not.\n- Your own name, such as `bb.home.arpa`: add a DNS record for it in your router or Pi-hole that points at this computer, then add it under \"Extra hostnames\".\n- On macOS you can set the port to 80 to drop the port from the URL.\n\n## Security\n\n- Only devices with private-network addresses are answered, and only for the names above. Tailscale addresses are refused.\n- Devices that have not paired never reach bb. They see the pairing page.\n- A paired device can do everything you can do in bb, including running commands in terminals. Pair only your own devices, and revoke one you lose.\n- Requests that another website starts in a paired browser are refused, except plain links that open the app.\n- Without HTTPS, traffic and the device cookie travel unencrypted, and browsers block voice input and clipboard access. To serve HTTPS, make a certificate (for example with mkcert, and install its root certificate on each device) and set the certificate and key file settings.\n\n## Not included\n\n- The native bb mobile app pairs only through getbb.app, so it cannot use LAN Connect. Use the phone's browser.\n- Sharing agents' dev-server ports, and publishing extra `.local` names.",
+      "source": {
+        "git": {
+          "url": "https://github.com/kalindudc/bb-marketplace.git",
+          "subdir": "plugins/lan-connect",
+          "range": ">=0.1.0 <1.0.0",
+          "tagPrefix": "lan-connect/"
         }
       }
     },

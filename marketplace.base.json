@@ -14,6 +14,11 @@
       "id": "sidebar",
       "displayName": "Sidebar",
       "description": "Change how threads are listed and organized in the sidebar."
+    },
+    {
+      "id": "cloud-and-remote",
+      "displayName": "Environments & Cloud",
+      "description": "Create and manage where threads run, locally or in the cloud."
     }
   ]
 }
