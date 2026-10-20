@@ -110,7 +110,7 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
       title={stale && infoCardMode === "off" ? `Idle for ${Math.floor((now - lastActivity(thread)) / 86_400_000)} days` : undefined}
       style={{ paddingLeft: `calc(var(--sb-base) + ${variant === "tree" ? depth : 0} * var(--sb-indent))` }}>
       {variant === "tree" && settings.treeGuides && depth > 0 && <>
-        {[...guides].map((line, index) => line === "|" && !(childCount > 0 && index === depth - 1) &&
+        {[...guides].map((line, index) => line === "|" &&
           <span key={index} aria-hidden className="sb-guide pointer-events-none absolute top-0 bottom-0 w-px"
             style={{ left: `calc(var(--sb-base) + ${index} * var(--sb-indent) + 7px)` }} />)}
         {childCount > 0 ? <>

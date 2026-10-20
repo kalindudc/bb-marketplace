@@ -177,7 +177,7 @@ describe("thread row", () => {
   });
 
   it("places nested content, caret and guides from shared spacing variables", () => {
-    const nested = { ...row, depth: 2, guides: "||", isLast: false };
+    const nested = { ...row, depth: 2, guides: "|", isLast: false };
     const { slot } = mount({ row: nested });
     const element = slot.container.querySelector<HTMLElement>("[data-sb-row]")!;
     expect(element.getAttribute("style")).toContain("var(--sb-base)");
@@ -189,6 +189,19 @@ describe("thread row", () => {
     expect(slot.container.querySelector(".sb-guide-nested-bottom")).toBeTruthy();
     expect(slot.container.querySelector(".sb-guide-nested-top")?.getAttribute("style")).toContain("var(--sb-base)");
     slot.unmount();
+  });
+
+  it("draws a last child's own column as an elbow only, with full lines just for open ancestor columns", () => {
+    const trunks = (guides: string) => {
+      const { slot } = mount({ row: { ...row, depth: 2, guides, isLast: true, childCount: 0 } });
+      const found = slot.container.querySelectorAll(".sb-guide.top-0.bottom-0").length;
+      expect(slot.container.querySelector(".sb-elbow")).toBeTruthy();
+      expect(slot.container.querySelector(".sb-guide-cont")).toBeNull();
+      slot.unmount();
+      return found;
+    };
+    expect(trunks(" ")).toBe(0);
+    expect(trunks("|")).toBe(1);
   });
 
   it("keeps at least six rems for titles before truncating tags", () => {

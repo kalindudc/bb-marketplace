@@ -20,7 +20,21 @@ describe("flattening", () => {
     expect(rows.map((row) => row.thread.id)).toEqual(["root", "first", "last"]);
     expect(rows[1]).toMatchObject({ depth: 1, crossProject: "Other project", isLast: false, guides: expect.any(String) });
     expect(rows[2]).toMatchObject({ depth: 1, crossProject: null, isLast: true });
-    expect(rows[1].guides).toHaveLength(1);
+    expect(rows[1].guides).toBe("");
+  });
+
+  it("ends each guide at its last child instead of running on to the next root", () => {
+    const [nested] = buildGroups({ layout: EMPTY_LAYOUT, sections: [], threads: [
+      sidebarThread({ id: "top", createdAt: 20 }),
+      sidebarThread({ id: "a", parentThreadId: "top", createdAt: 1 }),
+      sidebarThread({ id: "a1", parentThreadId: "a", createdAt: 1 }),
+      sidebarThread({ id: "b", parentThreadId: "top", createdAt: 2 }),
+      sidebarThread({ id: "b1", parentThreadId: "b", createdAt: 1 }),
+      sidebarThread({ id: "next", createdAt: 10 }),
+    ] });
+    expect(flattenGroup(nested, options).map((row) => [row.thread.id, row.guides, row.isLast])).toEqual([
+      ["top", "", false], ["a", "", false], ["a1", "|", true], ["b", "", true], ["b1", " ", true], ["next", "", true],
+    ]);
   });
 
   it("rolls up a collapsed parent but forces the active path open", () => {
