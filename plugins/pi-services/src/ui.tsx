@@ -1,12 +1,15 @@
-import { experimental_Icon as Icon, useRpc } from "@get-bb/plugin-sdk/app";
+import { experimental_Icon as Icon, experimental_THREAD_ACTION_GROUPS, useRpc } from "@get-bb/plugin-sdk/app";
 import type {
+  PluginRpcClient,
   PluginRpcContract,
   PluginSettingsSectionProps,
+  PluginThreadActionRegistration,
   PluginThreadHeaderActionProps,
   StandardSchemaV1,
   StandardSchemaV1Result,
 } from "@get-bb/plugin-sdk/app";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import type {
   GetSettingsInput,
   GetSettingsOutput,
@@ -151,10 +154,12 @@ export function PiServicesSettingsSection(_props: PluginSettingsSectionProps) {
 }
 
 /** Thread header button: regenerates this thread's title with pi. */
-export function RegenerateTitleButton({ threadId }: PluginThreadHeaderActionProps) {
+export function RegenerateTitleButton({ threadId, isCompactViewport }: PluginThreadHeaderActionProps) {
   const rpc = useRpc<typeof FRONTEND_RPC>();
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
+  // A phone header has no room to spare; the thread actions menu carries the action there.
+  if (isCompactViewport) return null;
 
   return (
     <button
@@ -179,3 +184,27 @@ export function RegenerateTitleButton({ threadId }: PluginThreadHeaderActionProp
     </button>
   );
 }
+
+type TitleRpc = Pick<PluginRpcClient<typeof FRONTEND_RPC>, "call">;
+
+/** The same action in every thread actions menu, including the phone's long-press drawer. */
+export const regenerateTitleAction: PluginThreadActionRegistration<TitleRpc> = {
+  id: "regenerate-title",
+  title: "Regenerate title with pi",
+  icon: "RefreshCw",
+  group: experimental_THREAD_ACTION_GROUPS.organize,
+  useData: () => useRpc<typeof FRONTEND_RPC>(),
+  item: ({ thread, data: rpc }) => ({
+    label: "Regenerate title with pi",
+    icon: "RefreshCw",
+    run: async () => {
+      try {
+        await rpc.call("regenerateTitle", { threadId: thread.id });
+      } catch (e) {
+        toast.error("Could not regenerate the title with pi", {
+          description: e instanceof Error ? e.message : String(e),
+        });
+      }
+    },
+  }),
+};

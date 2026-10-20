@@ -2,7 +2,7 @@ See how every agent's worktree is doing, open any one of them to read its diffs,
 
 ## What you get
 
-- A Vantage tab in a thread's side panel, with a button in the thread header and a command in the palette. It opens on the Worktrees view.
+- A Vantage tab in a thread's side panel, with a thread header button (not on phones) and a palette command. It opens on the Worktrees view.
 - One row for each worktree in the thread tree: the parent's own checkout, every child's worktree, and the kept branch of every archived child. A row shows bb's status glyph (running, needs you, failed, finished), the branch, commits ahead and behind, uncommitted files, line counts and the pull request.
 - A row for a checkout a thread made outside bb, such as a clone made from a shell, once the thread both edited a file in it and ran commands in it, with every change in it, including ones made by shell commands.
 - Works with any environment provider, including ones that place a thread in a repository's subfolder or keep its folder after archiving.

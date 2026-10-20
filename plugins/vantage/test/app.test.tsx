@@ -33,6 +33,15 @@ describe("plugin app", () => {
     slot.lifecycle.unmount();
   });
 
+  it("leaves the phone header to bb, since the panel launcher already opens the tab", async () => {
+    const app = await loadPluginApp(() => import("../app"));
+    const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: "thr_1", projectId: "proj_1", isCompactViewport: true }, {
+      pluginId: "vantage", openThreadPanel: () => true,
+    });
+    expect(within(slot.container).queryByRole("button")).toBeNull();
+    slot.lifecycle.unmount();
+  });
+
   it("names Vantage in a tooltip on hover and keyboard focus, not a native title", async () => {
     const app = await loadPluginApp(() => import("../app"));
     const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: "thr_1", projectId: "proj_1", isCompactViewport: false }, {

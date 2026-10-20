@@ -11,8 +11,10 @@ import { createPreference } from "./src/preference";
 const LOG_ICON = "session-log/logs";
 const preference = createPreference(window);
 
-function SessionLogButton({ threadId }: PluginThreadHeaderActionProps) {
+function SessionLogButton({ threadId, isCompactViewport }: PluginThreadHeaderActionProps) {
   const navigate = useBbNavigate();
+  // A phone header has no room to spare, and the panel launcher already lists the log.
+  if (isCompactViewport) return null;
   return (
     <button type="button" aria-label="Open session log" title="Open session log"
       className="inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-state-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"

@@ -7,8 +7,10 @@ import { Hint } from "./src/hint";
 import { VantagePage } from "./src/page";
 import { VantagePanel } from "./src/panel";
 
-function VantageButton(_props: PluginThreadHeaderActionProps) {
+function VantageButton({ isCompactViewport }: PluginThreadHeaderActionProps) {
   const navigate = useBbNavigate();
+  // A phone header has no room to spare, and the panel launcher already lists the tab.
+  if (isCompactViewport) return null;
   return (
     <Hint label="Vantage: what this thread and its child threads changed, by worktree and repository">
       <button type="button" aria-label="Open Vantage"

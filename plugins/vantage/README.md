@@ -4,7 +4,8 @@ A bb plugin for a parent thread that runs many agents at once. Its side-panel
 tab shows how every child's worktree is doing, lets you look inside any one of
 them without leaving the parent, and groups everything the thread tree changed
 by repository. Open it from the thread header, from the palette ("Vantage:
-Show changes across repositories") or from the thread's side-panel tabs. The
+Show changes across repositories") or from the thread's side-panel tabs; on
+a phone the header leaves its button out and the tabs open it. The
 command has no default shortcut; you can bind one under Settings, Keyboard.
 
 A full-screen Vantage page in bb's left navigation does the same for every

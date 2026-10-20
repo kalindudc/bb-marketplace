@@ -1,7 +1,7 @@
 {
   "id": "pi-services",
   "displayName": "Pi AI Services",
-  "description": "Let your own pi setup write bb's thread titles and commit messages: your credentials and model, no bb account needed. Adds a one-click regenerate-title button to the thread header plus pi executable and model knobs in the plugin settings.",
+  "description": "Let your own pi setup write bb's thread titles and commit messages: your credentials and model, no bb account needed. Adds a one-click regenerate-title button to the thread header and its actions menu, plus pi executable and model knobs in the plugin settings.",
   "icon": "Terminal",
   "tags": ["ai", "titles", "commit-messages", "pi", "cli", "automation"],
   "author": {

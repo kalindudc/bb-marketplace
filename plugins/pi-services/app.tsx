@@ -2,6 +2,7 @@ import { definePluginApp } from "@get-bb/plugin-sdk/app";
 import {
   PiServicesSettingsSection,
   RegenerateTitleButton,
+  regenerateTitleAction,
 } from "./src/ui";
 
 export default definePluginApp((app) => {
@@ -10,6 +11,7 @@ export default definePluginApp((app) => {
     title: "Regenerate title with pi",
     component: RegenerateTitleButton,
   });
+  app.slots.experimental_threadAction(regenerateTitleAction);
 
   app.slots.settingsSection({
     id: "pi-services",

@@ -3,6 +3,8 @@ import { toast } from "sonner";
 import {
   definePluginApp,
   experimental_Icon as Icon,
+  experimental_THREAD_ACTION_GROUPS,
+  type PluginThreadActionRegistration,
   type PluginThreadHeaderActionProps,
 } from "@get-bb/plugin-sdk/app";
 import { mountFollowThinking } from "./src/follow-thinking";
@@ -10,8 +12,16 @@ import { createPreference } from "./src/preference";
 
 const preference = createPreference(window);
 
-function FollowThinkingToggle(_props: PluginThreadHeaderActionProps) {
-  const enabled = useSyncExternalStore(preference.subscribe, preference.isEnabled);
+const useEnabled = () => useSyncExternalStore(preference.subscribe, preference.isEnabled);
+
+const announceToggle = () => {
+  toast(preference.toggle() ? "Follow thinking is on" : "Follow thinking is off");
+};
+
+function FollowThinkingToggle({ isCompactViewport }: PluginThreadHeaderActionProps) {
+  const enabled = useEnabled();
+  // A phone header has no room to spare; the thread actions menu carries the toggle there.
+  if (isCompactViewport) return null;
   return (
     <button
       type="button"
@@ -30,6 +40,20 @@ function FollowThinkingToggle(_props: PluginThreadHeaderActionProps) {
   );
 }
 
+const toggleAction: PluginThreadActionRegistration<boolean> = {
+  id: "toggle",
+  title: "Follow thinking",
+  icon: "AiBrain01",
+  group: experimental_THREAD_ACTION_GROUPS.settings,
+  useData: useEnabled,
+  item: ({ data: enabled }) => ({
+    label: "Follow thinking",
+    detail: enabled ? "On" : "Off",
+    icon: "AiBrain01",
+    run: announceToggle,
+  }),
+};
+
 export default definePluginApp((app) => {
   app.contentScripts.register({
     id: "follow-thinking",
@@ -40,11 +64,10 @@ export default definePluginApp((app) => {
     title: "Follow thinking",
     component: FollowThinkingToggle,
   });
+  app.slots.experimental_threadAction(toggleAction);
   app.commands.register({
     id: "toggle",
     title: "Follow Thinking: Toggle auto-expand and auto-scroll of thinking",
-    run: () => {
-      toast(preference.toggle() ? "Follow thinking is on" : "Follow thinking is off");
-    },
+    run: announceToggle,
   });
 });

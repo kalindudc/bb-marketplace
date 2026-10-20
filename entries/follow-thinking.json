@@ -1,7 +1,7 @@
 {
   "id": "follow-thinking",
   "displayName": "Follow Thinking",
-  "description": "Expands thinking blocks in threads automatically and keeps streaming thinking scrolled into view. Toggle it from the thread header.",
+  "description": "Expands thinking blocks in threads automatically and keeps streaming thinking scrolled into view. Toggle it from the thread header or a thread's actions menu.",
   "icon": "AiBrain01",
   "tags": ["thinking", "reasoning", "timeline", "auto-scroll"],
   "author": {

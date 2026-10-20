@@ -112,6 +112,15 @@ describe("plugin app", () => {
     slot.lifecycle.unmount();
   });
 
+  it("leaves the phone header to bb, since the panel launcher already opens the log", async () => {
+    const app = await loadPluginApp(() => import("../app"));
+    const slot = renderSlot(app.threadHeaderActions[0]!, { ...headerProps, isCompactViewport: true }, {
+      pluginId: "session-log", openThreadPanel: () => true,
+    });
+    expect(within(slot.container).queryByRole("button")).toBeNull();
+    slot.lifecycle.unmount();
+  });
+
   it("does not request focus if the host refuses to open the panel", async () => {
     const app = await loadPluginApp(() => import("../app"));
     const slot = renderSlot(app.threadHeaderActions[0]!, headerProps, {

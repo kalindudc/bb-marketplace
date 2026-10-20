@@ -2,7 +2,8 @@
 
 A bb plugin that puts a thread's whole session in one flat, live, searchable
 side-panel tab. Open it from the thread header or with Mod+Shift+L (Command
-on macOS, Control elsewhere). bb's Maximize pane button, at the top right of
+on macOS, Control elsewhere). On a phone, the header leaves the button out
+and the right panel's tab list opens the log. bb's Maximize pane button, at the top right of
 the panel, gives the log the whole window.
 
 ![Session Log beside a thread, each row tinted by type: two file reads, a thought, a new test as a diff, and a failing test run](../../screenshots/session-log/side-panel.png)

@@ -8,8 +8,10 @@ and keeps live thinking scrolled to its newest line while it streams.
 - Live thinking follows its newest line. Scrolling up inside the block stops
   following; scrolling back to the bottom resumes it.
 - A block you collapse stays collapsed.
-- Turn it on or off with the brain button in the thread header or the palette
-  command "Follow Thinking: Toggle auto-expand and auto-scroll of thinking".
+- Turn it on or off with the brain button in the thread header, the Follow
+  thinking item in any thread's actions menu, or the palette command "Follow
+  Thinking: Toggle auto-expand and auto-scroll of thinking". On a phone the
+  header leaves the button out; the actions menu still has the item.
   Turning it off collapses the blocks the plugin opened. The choice is stored
   in the app's local storage, per device, and defaults to on.
 
@@ -22,8 +24,8 @@ bb plugin install follow-thinking@kalindudc
 
 ## How it works
 
-`app.tsx` registers a content script, the header button and the palette
-command. The content script (`src/follow-thinking.ts`) watches the page for
+`app.tsx` registers a content script, the header button, the thread action
+and the palette command. The content script (`src/follow-thinking.ts`) watches the page for
 timeline rows. bb has no plugin API for timeline rows, so it relies on the
 markup bb 0.46.1 renders:
 
