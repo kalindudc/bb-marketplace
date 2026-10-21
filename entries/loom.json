@@ -1,0 +1,30 @@
+{
+  "id": "loom",
+  "displayName": "Loom",
+  "description": "Run a software project with agents: a planner turns a goal into a validated spec and tickets, workers pick up tickets in their own worktrees, separate reviewers approve or request changes, and approved work merges into an integration branch or opens a pull request.",
+  "icon": "Layers",
+  "tags": [
+    "parallel-agents",
+    "orchestration",
+    "kanban",
+    "code-review",
+    "merge-queue",
+    "worktrees",
+    "specs",
+    "metrics"
+  ],
+  "author": {
+    "name": "Kalindu De Costa",
+    "github": "kalindudc"
+  },
+  "category": "tasks-and-workflows",
+  "overview": "./plugins/loom/PLUGIN_OVERVIEW.md",
+  "source": {
+    "git": {
+      "url": "https://github.com/kalindudc/bb-marketplace.git",
+      "subdir": "plugins/loom",
+      "range": ">=0.1.0 <1.0.0",
+      "tagPrefix": "loom/"
+    }
+  }
+}

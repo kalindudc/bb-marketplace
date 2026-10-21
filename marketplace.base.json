@@ -19,6 +19,11 @@
       "id": "cloud-and-remote",
       "displayName": "Environments & Cloud",
       "description": "Create and manage where threads run, locally or in the cloud."
+    },
+    {
+      "id": "tasks-and-workflows",
+      "displayName": "Tasks & Workflows",
+      "description": "Plan, track, route, schedule, or automate work."
     }
   ]
 }

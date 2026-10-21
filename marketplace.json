@@ -19,6 +19,11 @@
       "id": "cloud-and-remote",
       "displayName": "Environments & Cloud",
       "description": "Create and manage where threads run, locally or in the cloud."
+    },
+    {
+      "id": "tasks-and-workflows",
+      "displayName": "Tasks & Workflows",
+      "description": "Plan, track, route, schedule, or automate work."
     }
   ],
   "plugins": [
@@ -101,6 +106,36 @@
           "subdir": "plugins/lan-connect",
           "range": ">=0.1.0 <1.0.0",
           "tagPrefix": "lan-connect/"
+        }
+      }
+    },
+    {
+      "id": "loom",
+      "displayName": "Loom",
+      "description": "Run a software project with agents: a planner turns a goal into a validated spec and tickets, workers pick up tickets in their own worktrees, separate reviewers approve or request changes, and approved work merges into an integration branch or opens a pull request.",
+      "icon": "Layers",
+      "tags": [
+        "parallel-agents",
+        "orchestration",
+        "kanban",
+        "code-review",
+        "merge-queue",
+        "worktrees",
+        "specs",
+        "metrics"
+      ],
+      "author": {
+        "name": "Kalindu De Costa",
+        "github": "kalindudc"
+      },
+      "category": "tasks-and-workflows",
+      "overview": "Run a software project with agents: a planner turns a goal into a validated spec and a ticket board, workers build the tickets in their own git worktrees, separate reviewers approve or ask for changes, and approved work merges into an integration branch or opens as pull requests. You watch and steer it from a full-screen page in bb's left navigation, or from `bb loom`.\n\n## What you get\n\n- A planner skill (`loom-plan`): any thread can propose a project as a TOML spec with tickets, acceptance criteria, checks, a review policy and a merge strategy. The plugin validates it with numbered errors you can act on, and you approve it before anything runs.\n- Workers that start by themselves: one thread per ready ticket, in its own worktree, only when its dependencies are done and its files do not overlap work in flight. The plugin, not the agent, commits, runs your check commands, and decides whether the work passed.\n- Reviewers on their own model: each ticket is read by fresh reviewer threads that approve or send findings back to the worker. A ticket merges only after the review you asked for and the `after_merge` checks on the merged result.\n- A Loom page: a board with a lane per ticket state, ticket threads with replies in the Usenet style, a live feed, the spec with its pending version, and flow and agent metrics: work in progress, throughput, cycle time, work item age, first-pass approval, review rounds, check failures, blocks, human interventions, tokens and a cumulative flow chart.\n- Controls with a second click: start, pause, resume, land and archive a project; requeue, block or cancel a ticket; reply to a worker, which it reads as a message. Each is logged as your action.\n- A header chip such as `CSV-3 · review` on worker, reviewer and planner threads that opens the ticket on the page.\n- `bb loom metrics <slug>` and `bb loom feed <slug>` print the same numbers and events, and `--json` is there for scripts and agents.\n\n## How it works\n\nEvery change to a project or ticket goes through one store method that appends an event in the same transaction, and the event table refuses edits. The metrics are computed from that log, so they are exact and can be recomputed. Agents get narrow tools for their role and never merge or push. On the integration strategy the branch stays local until you run `bb loom land`, which opens one pull request upstream. A blocked ticket reaches the planner in a triage round, or you answer it on the page.\n\n## Requirements\n\n- `git` on the machine that has the project's checkout.\n- `gh`, signed in, for the pull request strategy and for `bb loom land`, and a GitHub remote.\n- Provider usage: every worker, reviewer and planner is an ordinary bb thread, so your providers' usage and limits apply to all of them. Set a token budget or a deadline in the spec to have the plugin pause the project for you.",
+      "source": {
+        "git": {
+          "url": "https://github.com/kalindudc/bb-marketplace.git",
+          "subdir": "plugins/loom",
+          "range": ">=0.1.0 <1.0.0",
+          "tagPrefix": "loom/"
         }
       }
     },

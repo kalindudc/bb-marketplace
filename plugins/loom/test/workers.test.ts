@@ -1,0 +1,614 @@
+import { makeTurnFailedEvent } from "@get-bb/plugin-sdk/testing";
+import { beforeEach, describe, expect, it } from "vitest";
+import type { PostRow } from "../src/db/store";
+import { renderThread, workerBrief } from "../src/prompts";
+import type { SpawnArgs } from "../src/ports";
+import { parseSpec } from "../src/spec";
+import {
+  blockTicket,
+  endThread,
+  onThreadGone,
+  onTurnFailed,
+  onWorkerIdle,
+  recordBranch,
+  requeueTicket,
+  resolveEnvironment,
+  resumeEnding,
+  spawnWorker,
+  specOf,
+  ticketMoveFor,
+  toWorking,
+} from "../src/workers";
+import { makeCtx, seedProject, specToml, startLateWorker, startWorker, ticketOf, workerRows, type Doc, type EngineHarness } from "./helpers";
+
+let h: EngineHarness;
+
+beforeEach(() => {
+  h = makeCtx();
+});
+
+const spawnArgs = (n = 0) => h.bb.callsTo("spawnThread")[n]![0] as SpawnArgs;
+const callNames = () => h.bb.calls.map((call) => call.method);
+const kinds = (key: string) => h.store.posts(ticketOf(h, key).id).map((post) => post.kind);
+const project = () => h.store.projectBySlug("csv")!;
+const rateLimited = (over: Partial<Parameters<typeof makeTurnFailedEvent>[0]> = {}) =>
+  makeTurnFailedEvent({ threadId: "thr_w1", requestId: "req_1", errorInfo: { category: "rate-limit", httpStatusCode: 429, providerCode: null }, ...over });
+
+async function startBoth() {
+  await seedProject(h);
+  return startWorker(h);
+}
+
+describe("spawnWorker", () => {
+  it("reserves the row and claims the ticket before it calls bb, then activates the row", async () => {
+    await seedProject(h);
+    let during: unknown;
+    h.bb.spawnError = (args) => {
+      const row = h.store.threadBySpawnToken(args.metadata.spawnToken!);
+      during = { state: row?.state, thread: row?.thread_id, ticket: ticketOf(h, "CSV-1").state };
+      return null;
+    };
+    const row = await startWorker(h);
+    expect(during).toEqual({ state: "spawning", thread: null, ticket: "working" });
+    expect(spawnArgs()).toMatchObject({
+      bbProjectId: "proj_1",
+      hostId: "host_1",
+      baseBranch: "loom/csv",
+      title: "CSV-1 · Order rows",
+      sectionId: "sec_1",
+      providerId: "claude",
+      model: "sonnet",
+      permissionMode: "auto",
+      metadata: { project: "csv", role: "worker", ticket: "CSV-1", spawnToken: row.spawn_token },
+    });
+    expect(row).toMatchObject({ state: "active", thread_id: "thr_w1", environment_id: "env_1", clock_at: h.clock.t, idle_count: 0 });
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "working", attempt: 1, worker_thread_id: "thr_w1", environment_id: "env_1" });
+    expect(kinds("CSV-1")).toEqual(["brief", "claim"]);
+  });
+
+  it("gives the worker a brief with the criteria, the scope, the protected paths and the checks", async () => {
+    await seedProject(h, (doc) => {
+      doc.scope = { protected: ["db/migrations/**"] };
+      doc.ticket[0].verify = ["npm run lint"];
+    });
+    await startWorker(h);
+    const prompt = spawnArgs().prompt;
+    expect(prompt).toContain("You are a Loom worker on CSV-1");
+    expect(prompt).toContain('1. WHEN an order is mapped THE SYSTEM SHALL return one row');
+    expect(prompt).toContain('"src/model/**"');
+    expect(prompt).toContain('"db/migrations/**"');
+    expect(prompt).toContain('- "npm run lint"\n- "npm test"');
+    expect(prompt).toContain("loom_submit");
+    expect(prompt).not.toContain("Earlier work");
+  });
+
+  it("keeps a thread id that the configure hook bound through the spawn token", async () => {
+    await seedProject(h);
+    h.bb.afterSpawn = (threadId, args) => void h.projects.roleOf(threadId, { spawnToken: args.metadata.spawnToken });
+    const row = await startWorker(h);
+    expect(row).toMatchObject({ state: "active", thread_id: "thr_w1" });
+  });
+
+  it("rolls back without counting a failure when the project stopped running", async () => {
+    await seedProject(h);
+    const running = project();
+    h.store.setProjectState(running.id, "paused", "human");
+    await spawnWorker(h.ctx, running, specOf(h.store, running), ticketOf(h, "CSV-1"));
+    expect(h.bb.callsTo("spawnThread")).toEqual([]);
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", attempt: 0, failures: 0, worker_thread_id: null });
+    expect(workerRows(h, "CSV-1")).toMatchObject([{ state: "ended" }]);
+  });
+
+  it("starts a fresh ticket from the remote base on the pr strategy, and falls back to the base on a ref error", async () => {
+    await seedProject(h, (doc) => (doc.merge = { strategy: "pr" }));
+    h.bb.spawnError = (args) => (args.baseBranch === "origin/main" ? new Error("fatal: invalid reference: origin/main") : null);
+    await startWorker(h);
+    expect(h.bb.callsTo("spawnThread").map(([args]) => (args as SpawnArgs).baseBranch)).toEqual(["origin/main", "main"]);
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "working", failures: 0 });
+  });
+
+  it("resumes from the ticket's branch with the reply thread in the brief", async () => {
+    await seedProject(h);
+    const first = await startWorker(h);
+    h.bb.environments.get("env_1")!.branchName = "wt-first";
+    await blockTicket(h.ctx, ticketOf(h, "CSV-1"), { reason: "The API key is missing", needs: "A test key in the CI settings", actor: first.thread_id! });
+    h.store.addPost({ project_id: project().id, ticket_id: ticketOf(h, "CSV-1").id, parent_id: null, author_kind: "human", author_thread_id: null, kind: "reply", body: "Use the key in vault/test" });
+    await requeueTicket(h.ctx, "CSV-1", { note: "Key is in vault now", actor: "human", author: "human" });
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", branch: "wt-first", failures: 0, blocked_reason: null });
+
+    await startWorker(h);
+    expect(spawnArgs(1).baseBranch).toBe("wt-first");
+    expect(spawnArgs(1).prompt).toContain("Earlier work");
+    expect(spawnArgs(1).prompt).toContain('"wt-first"');
+    expect(spawnArgs(1).prompt).toContain("The API key is missing");
+    expect(spawnArgs(1).prompt).toContain("Use the key in vault/test");
+    expect(spawnArgs(1).prompt).toContain("Key is in vault now");
+    expect(ticketOf(h, "CSV-1").attempt).toBe(2);
+  });
+
+  it("ends the row, posts the error and requeues with a failure when the spawn throws; persistent errors block at max_attempts", async () => {
+    await seedProject(h);
+    h.bb.spawnError = () => new Error("host is unreachable");
+    await startWorker(h).catch(() => undefined);
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", failures: 1, attempt: 1, worker_thread_id: null });
+    expect(workerRows(h, "CSV-1")).toMatchObject([{ state: "ended", end_reason: "failed" }]);
+    const post = h.store.posts(ticketOf(h, "CSV-1").id).at(-1)!;
+    expect(post).toMatchObject({ kind: "system", author_kind: "loom" });
+    expect(post.body).toContain("host is unreachable");
+
+    await startWorker(h).catch(() => undefined);
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", failures: 2 });
+    await startWorker(h).catch(() => undefined);
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "blocked", failures: 3, blocked_reason: "could not start a worker 3 times" });
+    expect(project().triage_pending).toBe(1);
+  });
+
+  it("clears the branch and counts no failure when a resumed spawn fails", async () => {
+    await seedProject(h);
+    h.store.updateTicket(ticketOf(h, "CSV-1").id, { branch: "wt-old", attempt: 1 });
+    h.bb.spawnError = () => new Error("fatal: couldn't find remote ref wt-old");
+    await startWorker(h).catch(() => undefined);
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", branch: null, failures: 0 });
+    h.bb.spawnError = null;
+    await startWorker(h);
+    expect(spawnArgs(1).baseBranch).toBe("loom/csv");
+  });
+});
+
+describe("spawnWorker eligibility", () => {
+  const refuses = async (key: string) => {
+    const running = project();
+    const before = h.bb.callsTo("spawnThread").length;
+    await spawnWorker(h.ctx, running, specOf(h.store, running), ticketOf(h, key));
+    expect(h.bb.callsTo("spawnThread")).toHaveLength(before);
+    expect(workerRows(h, key)).toEqual([]);
+    expect(ticketOf(h, key)).toMatchObject({ state: "queued", attempt: 0, worker_thread_id: null });
+    expect(kinds(key)).not.toContain("claim");
+  };
+
+  it("claims nothing for a ticket whose dependencies are not done any more", async () => {
+    await seedProject(h);
+    await refuses("CSV-2");
+  });
+
+  it("claims nothing when another ticket in flight now holds an overlapping scope", async () => {
+    await seedProject(h, (doc) => (doc.ticket[1].depends_on = []));
+    await startWorker(h, "CSV-1");
+    h.store.updateTicket(ticketOf(h, "CSV-2").id, { scope_json: JSON.stringify(["src/model/**"]) });
+    await refuses("CSV-2");
+  });
+
+  it("claims nothing when max_workers are already working or checking", async () => {
+    await seedProject(h, (doc) => {
+      doc.ticket[1].depends_on = [];
+      doc.agents = { ...doc.agents, max_workers: 1 };
+    });
+    await startWorker(h, "CSV-1");
+    await refuses("CSV-2");
+  });
+});
+
+describe("idle policy", () => {
+  it("nudges the first idle and abandons the second with a WIP commit, requeueing with one failure", async () => {
+    const row = await startBoth();
+    h.host.worktree("/wt/env_1").dirty = true;
+    h.host.worktree("/wt/env_1").changed = ["src/model/a.ts"];
+
+    await onWorkerIdle(h.ctx, row);
+    expect(h.bb.sent("thr_w1")).toHaveLength(1);
+    expect(h.bb.sent("thr_w1")[0]).toMatch(/^\[loom\] CSV-1: .*loom_submit.*loom_block/s);
+    expect(h.store.thread(row.id)).toMatchObject({ state: "active", idle_count: 1 });
+    expect(h.host.callsTo("commitAll")).toEqual([]);
+
+    await onWorkerIdle(h.ctx, row);
+    expect(h.host.callsTo("commitAll")).toEqual([{ worktree: "/wt/env_1", message: "WIP CSV-1 (attempt 1)" }]);
+    expect(h.store.thread(row.id)).toMatchObject({ state: "ended", end_reason: "abandoned" });
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", failures: 1, branch: "wt-thr_w1", worker_thread_id: null });
+    expect(callNames().filter((name) => name === "stop" || name === "archive")).toEqual(["stop", "archive"]);
+  });
+
+  it("blocks the ticket once max_attempts workers failed, and flags the project for triage", async () => {
+    await seedProject(h, (doc) => (doc.budget = { max_attempts: 2 }));
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const row = await startWorker(h);
+      await onWorkerIdle(h.ctx, row);
+      await onWorkerIdle(h.ctx, row);
+    }
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "blocked", failures: 2 });
+    expect(ticketOf(h, "CSV-1").blocked_reason).toContain("failed 2 times");
+    expect(project().triage_pending).toBe(1);
+  });
+
+  it("does nothing for an idle that arrives after the row ended, while the project is paused, or while the ticket is checking", async () => {
+    const row = await startBoth();
+    h.store.setProjectState(project().id, "paused", "human");
+    await onWorkerIdle(h.ctx, row);
+    expect(h.bb.sent("thr_w1")).toEqual([]);
+    h.store.setProjectState(project().id, "running", "human");
+
+    h.store.setTicketState(ticketOf(h, "CSV-1").id, "checking", "loom");
+    await onWorkerIdle(h.ctx, row);
+    expect(h.bb.sent("thr_w1")).toEqual([]);
+    h.store.setTicketState(ticketOf(h, "CSV-1").id, "working", "loom");
+
+    await endThread(h.ctx, row, "gone", { commit: false });
+    h.bb.calls.length = 0;
+    await onWorkerIdle(h.ctx, row);
+    await onWorkerIdle(h.ctx, row);
+    expect(h.bb.calls).toEqual([]);
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", failures: 0 });
+  });
+});
+
+describe("endThread", () => {
+  it("ends a row once when two paths race, and the second caller learns it lost", async () => {
+    const row = await startBoth();
+    const results = await Promise.all([endThread(h.ctx, row, "abandoned", { commit: true }), endThread(h.ctx, row, "timeout", { commit: true })]);
+    expect(results.filter(Boolean)).toHaveLength(1);
+    expect(h.bb.callsTo("stop")).toHaveLength(1);
+    expect(h.bb.callsTo("archive")).toHaveLength(1);
+    expect(ticketOf(h, "CSV-1").failures).toBe(1);
+  });
+
+  it("releases the ticket only after the thread was stopped and archived", async () => {
+    const row = await startBoth();
+    h.bb.stopConfirms = false;
+    expect(await endThread(h.ctx, row, "abandoned", { commit: false })).toBe(true);
+    expect(h.store.thread(row.id)).toMatchObject({ state: "ending", end_reason: "abandoned" });
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "working", worker_thread_id: "thr_w1" });
+    expect(h.bb.callsTo("archive")).toEqual([]);
+
+    h.bb.stopConfirms = true;
+    await resumeEnding(h.ctx, h.store.thread(row.id)!);
+    expect(h.store.thread(row.id)?.state).toBe("ended");
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", failures: 1 });
+    const order = callNames().filter((name) => ["stop", "archive"].includes(name));
+    expect(order.indexOf("archive")).toBeGreaterThan(order.lastIndexOf("stop"));
+  });
+
+  it("archives anyway after ten minutes in ending, and records the final token count", async () => {
+    const row = await startBoth();
+    h.bb.stopConfirms = false;
+    h.bb.tokens.set("thr_w1", 4321);
+    await endThread(h.ctx, row, "timeout", { commit: false });
+    h.clock.advance(9 * 60_000);
+    await resumeEnding(h.ctx, h.store.thread(row.id)!);
+    expect(h.store.thread(row.id)?.state).toBe("ending");
+    expect(h.bb.callsTo("archive")).toEqual([]);
+
+    h.clock.advance(2 * 60_000);
+    await resumeEnding(h.ctx, h.store.thread(row.id)!);
+    expect(h.bb.callsTo("archive")).toEqual([["thr_w1"]]);
+    expect(h.store.thread(row.id)).toMatchObject({ state: "ended", tokens: 4321 });
+    expect(ticketOf(h, "CSV-1").state).toBe("queued");
+    expect(h.bb.callsTo("log").some(([level, text]) => level === "warn" && String(text).includes("did not stop"))).toBe(true);
+  });
+
+  it("leaves the ticket alone when the caller passes move null, and treats a thread that is already gone as stopped", async () => {
+    const row = await startBoth();
+    h.bb.threads.delete("thr_w1");
+    await endThread(h.ctx, row, "cancelled", { commit: false, move: null });
+    expect(h.store.thread(row.id)?.state).toBe("ended");
+    expect(h.bb.callsTo("archive")).toEqual([]);
+    expect(ticketOf(h, "CSV-1").state).toBe("working");
+  });
+
+  it("records the worker's branch before it archives, and skips the commit when there is no path", async () => {
+    const row = await startBoth();
+    h.bb.environments.get("env_1")!.path = null;
+    await endThread(h.ctx, row, "blocked", { commit: true });
+    expect(ticketOf(h, "CSV-1").branch).toBe("wt-thr_w1");
+    expect(h.host.callsTo("commitAll")).toEqual([]);
+    expect(callNames().indexOf("getEnvironment")).toBeLessThan(callNames().indexOf("archive"));
+  });
+
+  it("reads the branch through the thread when the row has no environment yet", async () => {
+    await seedProject(h);
+    h.bb.provisionEnvironment = false;
+    const row = await startWorker(h);
+    expect(row.environment_id).toBeNull();
+    h.bb.environments.set("env_late", { path: "/wt/late", branchName: "wt-late", hostId: "host_1" });
+    h.bb.threads.get("thr_w1")!.environmentId = "env_late";
+    await recordBranch(h.ctx, row);
+    expect(ticketOf(h, "CSV-1").branch).toBe("wt-late");
+    expect(h.store.thread(row.id)?.environment_id).toBe("env_late");
+  });
+});
+
+describe("resolveEnvironment", () => {
+  it("returns the environment the row already has, without asking bb for the thread", async () => {
+    const row = await startBoth();
+    const environment = await resolveEnvironment(h.ctx, row);
+    expect(environment).toEqual({ path: "/wt/env_1", branchName: "wt-thr_w1", hostId: "host_1" });
+    expect(h.bb.callsTo("getThread")).toEqual([]);
+  });
+
+  it("finds a late-provisioned environment through the thread and keeps it on the row and the ticket", async () => {
+    await seedProject(h);
+    const row = await startLateWorker(h);
+    expect(row.environment_id).toBeNull();
+    expect(await resolveEnvironment(h.ctx, row)).toEqual({ path: "/wt/late", branchName: "late-branch", hostId: "host_1" });
+    expect(h.store.thread(row.id)!.environment_id).toBe("env_late");
+    expect(ticketOf(h, "CSV-1").environment_id).toBe("env_late");
+  });
+
+  it("works from a stale snapshot: it reads the row again, and a second call does not ask the thread twice", async () => {
+    await seedProject(h);
+    const stale = await startLateWorker(h);
+    await resolveEnvironment(h.ctx, stale);
+    h.bb.calls = [];
+    expect(await resolveEnvironment(h.ctx, stale)).toMatchObject({ path: "/wt/late" });
+    expect(h.bb.callsTo("getThread")).toEqual([]);
+  });
+
+  it("is null when bb has no environment for the thread yet, or does not know the thread", async () => {
+    await seedProject(h);
+    h.bb.provisionEnvironment = false;
+    const row = await startWorker(h);
+    expect(await resolveEnvironment(h.ctx, row)).toBeNull();
+    expect(h.store.thread(row.id)!.environment_id).toBeNull();
+    h.bb.threads.delete("thr_w1");
+    expect(await resolveEnvironment(h.ctx, row)).toBeNull();
+  });
+});
+
+describe("a worker whose environment arrived after spawn", () => {
+  it("is ended with its WIP committed in the late worktree and its branch recorded", async () => {
+    await seedProject(h);
+    const row = await startLateWorker(h);
+    await endThread(h.ctx, row, "blocked", { commit: true });
+    expect(h.host.callsTo("commitAll")).toEqual([{ worktree: "/wt/late", message: "WIP CSV-1 (attempt 1)" }]);
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "blocked", branch: "late-branch" });
+    expect(h.store.thread(row.id)).toMatchObject({ state: "ended", environment_id: "env_late" });
+  });
+
+  it("saves its work through blockTicket as well", async () => {
+    await seedProject(h);
+    const row = await startLateWorker(h);
+    await blockTicket(h.ctx, ticketOf(h, "CSV-1"), { reason: "help", needs: "input", actor: row.thread_id! });
+    expect(h.host.callsTo("commitAll")).toHaveLength(1);
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "blocked", branch: "late-branch" });
+  });
+});
+
+describe("ticketMoveFor", () => {
+  it("maps each end reason to a ticket move", async () => {
+    await seedProject(h);
+    const ticket = ticketOf(h, "CSV-1");
+    const spec = specOf(h.store, project());
+    const working = { ...ticket, state: "working" as const, failures: 0 };
+    expect(ticketMoveFor("abandoned", working, spec)).toMatchObject({ to: "queued", patch: { failures: 1, worker_thread_id: null, environment_id: null } });
+    expect(ticketMoveFor("timeout", { ...working, failures: 1 }, spec)).toMatchObject({ to: "queued", patch: { failures: 2 } });
+    expect(ticketMoveFor("failed", { ...working, failures: 2 }, spec)).toMatchObject({ to: "blocked", patch: { failures: 3 } });
+    expect(ticketMoveFor("gone", { ...working, state: "checking", failures: 2 }, spec)).toMatchObject({ to: "queued", patch: { worker_thread_id: null } });
+    expect(ticketMoveFor("gone", working, spec)?.patch.failures).toBeUndefined();
+    expect(ticketMoveFor("blocked", { ...working, blocked_reason: "why" }, spec)).toMatchObject({ to: "blocked", patch: { blocked_reason: "why" } });
+    expect(ticketMoveFor("cancelled", working, spec)).toMatchObject({ to: "cancelled" });
+  });
+
+  it("returns nothing once the ticket has left working or checking, except for block and cancel", async () => {
+    await seedProject(h);
+    const spec = specOf(h.store, project());
+    const review = { ...ticketOf(h, "CSV-1"), state: "review" as const };
+    for (const reason of ["abandoned", "timeout", "failed", "gone"] as const) expect(ticketMoveFor(reason, review, spec)).toBeNull();
+    expect(ticketMoveFor("blocked", review, spec)?.to).toBe("blocked");
+    expect(ticketMoveFor("cancelled", review, spec)?.to).toBe("cancelled");
+    const done = { ...review, state: "done" as const };
+    expect(ticketMoveFor("blocked", done, spec)).toBeNull();
+    expect(ticketMoveFor("cancelled", { ...review, state: "cancelled" as const }, spec)).toBeNull();
+  });
+});
+
+describe("blocking and requeueing", () => {
+  it("stores the branch when a worker blocks before it ever submitted, and the requeued worker starts from it", async () => {
+    const row = await startBoth();
+    h.host.worktree("/wt/env_1").dirty = true;
+    await blockTicket(h.ctx, ticketOf(h, "CSV-1"), { reason: "No API key", needs: "A key", actor: row.thread_id! });
+    const ticket = ticketOf(h, "CSV-1");
+    expect(ticket).toMatchObject({ state: "blocked", branch: "wt-thr_w1", worker_thread_id: null });
+    expect(ticket.blocked_reason).toBe("No API key. Needs: A key");
+    expect(project().triage_pending).toBe(1);
+    expect(h.store.thread(row.id)?.state).toBe("ended");
+    expect(h.host.callsTo("commitAll")).toHaveLength(1);
+    const block = h.store.posts(ticket.id).at(-1)!;
+    expect(block).toMatchObject({ kind: "block", author_kind: "worker", author_thread_id: "thr_w1" });
+    expect(JSON.parse(block.data_json)).toEqual({ reason: "No API key", needs: "A key" });
+
+    await requeueTicket(h.ctx, "CSV-1", { note: "", actor: "human", author: "human" });
+    await startWorker(h);
+    expect(spawnArgs(1).baseBranch).toBe("wt-thr_w1");
+  });
+
+  it("requeues a blocked ticket with the note as a reply, resets the counters and kicks the engine, and refuses any other state", async () => {
+    await seedProject(h);
+    const ticket = ticketOf(h, "CSV-1");
+    h.store.updateTicket(ticket.id, { failures: 3, check_failures: 4, blocked_reason: "stuck" });
+    h.store.setTicketState(ticket.id, "blocked", "human");
+    const kicks = h.kicks.count;
+    const requeued = await requeueTicket(h.ctx, "CSV-1", { note: "Try the other API", actor: "thr_plan", author: "planner", threadId: "thr_plan" });
+    expect(requeued).toMatchObject({ state: "queued", failures: 0, check_failures: 0, blocked_reason: null });
+    expect(h.store.posts(ticket.id).at(-1)).toMatchObject({ kind: "reply", author_kind: "planner", author_thread_id: "thr_plan", body: "Try the other API" });
+    expect(h.kicks.count).toBe(kicks + 1);
+
+    await expect(requeueTicket(h.ctx, "CSV-1", { note: "again", actor: "human", author: "human" })).rejects.toMatchObject({ code: "loom_invalid_state" });
+    await expect(requeueTicket(h.ctx, "CSV-9", { note: "x", actor: "human", author: "human" })).rejects.toMatchObject({ code: "loom_not_found" });
+  });
+
+  it("blocks a ticket that is in review: the live worker ends and the ticket moves", async () => {
+    const row = await startBoth();
+    h.store.setTicketState(ticketOf(h, "CSV-1").id, "checking", "loom");
+    h.store.setTicketState(ticketOf(h, "CSV-1").id, "review", "loom");
+    await blockTicket(h.ctx, ticketOf(h, "CSV-1"), { reason: "Not what we want", needs: "", actor: "human" });
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "blocked", blocked_reason: "Not what we want" });
+    expect(h.store.thread(row.id)?.state).toBe("ended");
+    expect(h.store.posts(ticketOf(h, "CSV-1").id).at(-1)).toMatchObject({ kind: "block", author_kind: "human" });
+  });
+
+  it("blocks a ticket with no live worker directly", async () => {
+    await seedProject(h);
+    await blockTicket(h.ctx, ticketOf(h, "CSV-2"), { reason: "Waiting on legal", needs: "", actor: "human" });
+    expect(ticketOf(h, "CSV-2")).toMatchObject({ state: "blocked", blocked_reason: "Waiting on legal" });
+    expect(project().triage_pending).toBe(1);
+  });
+});
+
+describe("toWorking", () => {
+  it("moves the ticket to working and restarts the worker's clock and idle count", async () => {
+    const row = await startBoth();
+    h.store.setTicketState(ticketOf(h, "CSV-1").id, "checking", "loom");
+    h.store.updateThread(row.id, { idle_count: 1 });
+    h.clock.advance(90 * 60_000);
+    toWorking(h.ctx, ticketOf(h, "CSV-1"), h.store.thread(row.id)!, { why: "test" });
+    expect(ticketOf(h, "CSV-1").state).toBe("working");
+    expect(h.store.thread(row.id)).toMatchObject({ clock_at: h.clock.t, idle_count: 0 });
+    const event = h.store.events(project().id).filter((e) => e.kind === "ticket.state").at(-1)!;
+    expect(JSON.parse(event.data_json)).toMatchObject({ from: "checking", to: "working", why: "test" });
+  });
+});
+
+describe("failed turns", () => {
+  it("retries a rate-limited turn at the window's reset plus 15 seconds, holds new spawns, and does not end the worker", async () => {
+    const row = await startBoth();
+    const reset = h.clock.t + 10 * 60_000;
+    await onTurnFailed(
+      h.ctx,
+      rateLimited({
+        rateLimits: { kind: "subscription-window", overageReason: null, overageStatus: null, providerId: "claude", reachedReason: null, status: "blocked", windows: [{ label: "5h", providerKey: null, resetsAtMs: reset, status: "blocked" }] },
+      }),
+    );
+    expect(h.bb.callsTo("retryTurn")).toEqual([["thr_w1", "req_1", reset + 15_000]]);
+    expect(h.store.thread(row.id)).toMatchObject({ state: "active", rate_limit_retries: 1 });
+    expect(project().hold_until).toBe(reset + 15_000);
+    expect(ticketOf(h, "CSV-1").state).toBe("working");
+    expect(h.bb.sent("thr_w1")).toEqual([]);
+  });
+
+  it("falls back to a growing delay without a reset time, and stops retrying after three tries", async () => {
+    const row = await startBoth();
+    await onTurnFailed(h.ctx, rateLimited({ attemptNumber: 2 }));
+    expect(h.bb.callsTo("retryTurn")[0]![2]).toBe(h.clock.t + 120_000);
+    h.store.updateThread(row.id, { rate_limit_retries: 3 });
+    await onTurnFailed(h.ctx, rateLimited({ attemptNumber: 3 }));
+    expect(h.bb.callsTo("retryTurn")).toHaveLength(1);
+    expect(h.bb.sent("thr_w1")).toHaveLength(1);
+  });
+
+  it("does not retry a worker's rate limit while the project is paused", async () => {
+    await startBoth();
+    h.store.setProjectState(project().id, "paused", "human");
+    await onTurnFailed(h.ctx, rateLimited());
+    expect(h.bb.callsTo("retryTurn")).toEqual([]);
+  });
+
+  it("counts any other failed turn like an idle: nudge first, then end the worker as failed", async () => {
+    const row = await startBoth();
+    await onTurnFailed(h.ctx, makeTurnFailedEvent({ threadId: "thr_w1", requestId: "req_1" }));
+    expect(h.bb.sent("thr_w1")).toHaveLength(1);
+    await onTurnFailed(h.ctx, makeTurnFailedEvent({ threadId: "thr_w1", requestId: "req_2" }));
+    expect(h.store.thread(row.id)).toMatchObject({ state: "ended", end_reason: "failed" });
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", failures: 1 });
+  });
+
+  it("handles a provisioning failure once, as a failed spawn, even though bb reports it twice", async () => {
+    await seedProject(h);
+    h.bb.provisionEnvironment = false;
+    const row = await startWorker(h);
+    h.bb.systemErrors.set("thr_w1", { code: "thread_provisioning_failed", message: "The worktree could not be created." });
+    await onTurnFailed(h.ctx, makeTurnFailedEvent({ threadId: "thr_w1", requestId: "req_1" }));
+    await onTurnFailed(h.ctx, makeTurnFailedEvent({ threadId: "thr_w1", requestId: "req_1" }));
+    expect(h.store.thread(row.id)).toMatchObject({ state: "ended", end_reason: "failed" });
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", failures: 1 });
+    expect(h.store.posts(ticketOf(h, "CSV-1").id).at(-1)!.body).toContain("The worktree could not be created.");
+    expect(h.bb.callsTo("archive")).toEqual([["thr_w1"]]);
+    expect(h.bb.sent("thr_w1")).toEqual([]);
+  });
+
+  it("clears the branch of a resumed ticket whose thread failed before it had an environment", async () => {
+    await seedProject(h);
+    h.store.updateTicket(ticketOf(h, "CSV-1").id, { branch: "wt-old", attempt: 1 });
+    h.bb.provisionEnvironment = false;
+    await startWorker(h);
+    h.bb.systemErrors.set("thr_w1", { code: "thread_provisioning_failed", message: "fatal: bad ref" });
+    await onTurnFailed(h.ctx, makeTurnFailedEvent({ threadId: "thr_w1", requestId: "req_1" }));
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", branch: null, failures: 0 });
+  });
+
+  it("ignores turns of threads it does not know", async () => {
+    await onTurnFailed(h.ctx, rateLimited({ threadId: "thr_other" }));
+    expect(h.bb.callsTo("retryTurn")).toEqual([]);
+  });
+});
+
+describe("threads that disappear", () => {
+  it("requeues a ticket without a failure when the human archives its worker", async () => {
+    const row = await startBoth();
+    h.host.worktree("/wt/env_1").dirty = true;
+    await onThreadGone(h.ctx, "thr_w1");
+    expect(h.store.thread(row.id)).toMatchObject({ state: "ended", end_reason: "gone" });
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", failures: 0, branch: "wt-thr_w1" });
+    expect(h.host.callsTo("commitAll")).toHaveLength(1);
+  });
+
+  it("does the same for a worker deleted while the project is paused", async () => {
+    await startBoth();
+    h.store.setProjectState(project().id, "paused", "human");
+    await onThreadGone(h.ctx, "thr_w1");
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", failures: 0 });
+  });
+
+  it("ignores the archive event for a row the plugin is already ending, and for unknown threads", async () => {
+    const row = await startBoth();
+    await endThread(h.ctx, row, "abandoned", { commit: false });
+    await onThreadGone(h.ctx, "thr_w1");
+    await onThreadGone(h.ctx, "thr_unknown");
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", failures: 1 });
+  });
+});
+
+describe("prompts", () => {
+  const post = (id: number, kind: PostRow["kind"], body: string, parent: number | null = null): PostRow => ({
+    id,
+    project_id: 1,
+    ticket_id: 1,
+    parent_id: parent,
+    author_kind: kind === "block" ? "worker" : "planner",
+    author_thread_id: null,
+    kind,
+    body,
+    data_json: "{}",
+    at: 1_800_000_000_000,
+  });
+
+  it("renders replies indented under their parent", () => {
+    const text = renderThread([post(1, "brief", "Do it"), post(2, "reply", "Question?"), post(3, "reply", "Answer.", 2)], 10_000);
+    expect(text).toBe(
+      ["#1 planner brief 2027-01-15T08:00Z", "Do it", "", "#2 planner reply 2027-01-15T08:00Z", "Question?", "", "  #3 planner reply 2027-01-15T08:00Z", "  Answer."].join("\n"),
+    );
+  });
+
+  it("drops the oldest posts first and always keeps the brief and the last block post", () => {
+    const posts = [post(1, "brief", "BRIEF"), post(2, "block", "OLD BLOCK"), ...Array.from({ length: 20 }, (_, i) => post(3 + i, "note", `note ${i} ${"x".repeat(200)}`)), post(23, "block", "LAST BLOCK"), post(24, "reply", "NEWEST")];
+    const text = renderThread(posts, 1500);
+    expect(text).toContain("BRIEF");
+    expect(text).toContain("LAST BLOCK");
+    expect(text).toContain("NEWEST");
+    expect(text).not.toContain("OLD BLOCK");
+    expect(text).not.toContain("note 0 ");
+    expect(text).toMatch(/\[\d+ earlier posts left out/);
+    expect(text.length).toBeLessThan(2500);
+  });
+
+  it("puts the block reason, the branch and the thread into a resumed brief only", async () => {
+    await seedProject(h);
+    const spec = parseSpec(specToml()).spec!;
+    const ticket = { ...ticketOf(h, "CSV-1"), branch: "wt-old" };
+    const posts = [post(1, "brief", "Do it"), post(2, "block", "The key is missing")];
+    const fresh = workerBrief({ project: project(), spec, ticket, posts, resume: false });
+    const resumed = workerBrief({ project: project(), spec, ticket, posts, resume: true });
+    expect(fresh).not.toContain("The key is missing");
+    expect(resumed).toContain("The key is missing");
+    expect(resumed).toContain('"wt-old"');
+    const reject = parseSpec(specToml((doc: Doc) => (doc.scope = { enforce: "reject" }))).spec!;
+    expect(workerBrief({ project: project(), spec: reject, ticket, posts, resume: false })).toContain("makes loom_submit fail");
+  });
+});

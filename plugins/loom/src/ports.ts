@@ -1,0 +1,76 @@
+// Loom's view of bb. bb-port.ts adapts bb.sdk to this; tests fake it.
+import type { HostInput, HostMethod, HostOutput } from "./host-contract";
+
+export class SectionNameConflictError extends Error {
+  constructor(readonly sectionName: string) {
+    super(`A sidebar section named "${sectionName}" already exists.`);
+    this.name = "SectionNameConflictError";
+  }
+}
+
+export interface BbPort {
+  /** The host of the thread's environment, else the server's primary host. */
+  threadHostId(threadId: string): Promise<string | null>;
+  /** Reuses `sectionId` when bb still lists it, else creates the section. Throws SectionNameConflictError when the name is taken. */
+  ensureSection(sectionId: string | null, name: string): Promise<string>;
+  renameSection(sectionId: string, name: string): Promise<void>;
+  /** Deleting unassigns the section's threads; a section that is already gone is ignored. */
+  deleteSection(sectionId: string): Promise<void>;
+  moveThread(threadId: string, sectionId: string | null): Promise<void>;
+  setMetadata(threadId: string, set: Record<string, string | number | boolean | null>): Promise<void>;
+  log(level: "info" | "warn" | "error", message: string): void;
+
+  /** The path of the project's default source on that host, or null when the project has none there. */
+  projectCheckout(bbProjectId: string, hostId: string): Promise<string | null>;
+  spawnThread(args: SpawnArgs): Promise<{ threadId: string; environmentId: string | null }>;
+  /** A plain message, or a short summary the human sees plus detail only the agent reads. */
+  send(threadId: string, message: string | { summary: string; detail: string }): Promise<void>;
+  /** Waits for the interrupt; read getThread before treating the stop as confirmed. */
+  stop(threadId: string): Promise<void>;
+  archive(threadId: string): Promise<void>;
+  /** Null when bb no longer knows the thread. */
+  getThread(threadId: string): Promise<ThreadInfo | null>;
+  getEnvironment(environmentId: string): Promise<EnvironmentInfo | null>;
+  /** The id of the thread this plugin spawned with that token in its metadata, if there is one. */
+  findSpawnedThread(spawnToken: string): Promise<string | null>;
+  /** Cumulative tokens the thread has used, or null when its provider reports none. */
+  threadTokens(threadId: string): Promise<number | null>;
+  /** The newest system/error event of the thread. */
+  latestSystemError(threadId: string): Promise<{ code: string | null; message: string } | null>;
+  retryTurn(threadId: string, turnRequestId: string, sendAt: number): Promise<void>;
+}
+
+export interface SpawnArgs {
+  bbProjectId: string;
+  hostId: string;
+  baseBranch: string;
+  title: string;
+  prompt: string;
+  sectionId: string | null;
+  metadata: Record<string, string>;
+  providerId?: string;
+  model?: string;
+  reasoningLevel?: string;
+  permissionMode?: "accept-edits" | "auto" | "full";
+}
+
+export interface ThreadInfo {
+  id: string;
+  status: string;
+  archivedAt: number | null;
+  deletedAt: number | null;
+  environmentId: string | null;
+}
+
+export interface EnvironmentInfo {
+  path: string | null;
+  branchName: string | null;
+  hostId: string;
+  /** bb's environment status: creating, provisioning, ready, error or destroyed. */
+  status?: string;
+}
+
+/** Calls the host entry on the machine that owns a project's checkout. */
+export interface HostPort {
+  call<M extends HostMethod>(hostId: string, method: M, input: HostInput<M>): Promise<HostOutput<M>>;
+}
