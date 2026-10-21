@@ -1,9 +1,9 @@
 import { PluginCliError, cliCommand, defineCli, type PluginCliRegistration, type PluginCliResult } from "@get-bb/plugin-sdk";
 import type { Store } from "./db/store";
-import type { Engine } from "./engine";
-import { formatDuration, noTokenUsage, readyToLand } from "./format";
+import type { Approved, Engine } from "./engine";
+import { formatDuration, its, noTokenUsage, plural, readyToLand } from "./format";
 import type { ProjectMetrics } from "./metrics";
-import { LoomError, type ApproveResult, type ProjectOverview, type Projects, type SpecView, type TicketSummary, type TicketView } from "./projects";
+import { LoomError, type ProjectOverview, type Projects, type SpecView, type TicketSummary, type TicketView } from "./projects";
 import { projectFeed, projectMetrics } from "./reports";
 import { HUMAN_ACTOR, TICKET_STATES } from "./states";
 
@@ -69,7 +69,7 @@ function nextStep(project: ProjectOverview): string {
 function formatList(projects: ProjectOverview[]): string {
   if (projects.length === 0) return "No Loom projects yet. Open Loom in bb's left navigation and press New project, or ask a thread to plan one.\n";
   const width = Math.max(...projects.map((project) => project.slug.length));
-  const rows = projects.map((project) => `${project.slug.padEnd(width)}  ${project.state.padEnd(8)}  ${project.key.padEnd(8)}  ${String(project.ticketCount).padStart(3)} tickets  ${project.name}`);
+  const rows = projects.map((project) => `${project.slug.padEnd(width)}  ${project.state.padEnd(8)}  ${project.key.padEnd(8)}  ${String(project.ticketCount).padStart(3)} ${project.ticketCount === 1 ? "ticket " : "tickets"}  ${project.name}`);
   return `${rows.join("\n")}\n`;
 }
 
@@ -118,7 +118,6 @@ export function formatTicket(ticket: TicketView): string {
 }
 
 const percent = (fraction: number) => `${Math.round(fraction * 100)}%`;
-const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
 
 export function formatMetrics(m: ProjectMetrics): string {
   const counts = TICKET_STATES.filter((state) => m.counts[state] > 0).map((state) => `${state} ${m.counts[state]}`);
@@ -164,8 +163,10 @@ function newMetricLines(m: ProjectMetrics): string[] {
   ];
 }
 
-function formatApprove(result: ApproveResult): string {
-  if (result.applied === "pending") return `Applied spec v${result.version} to ${result.slug}. Its tickets are unchanged.\n`;
+function formatApprove(result: Approved): string {
+  const requeued = result.requeued.length === 0 ? "" : `Queued again, because bb never started ${its(result.requeued.length, "worker")}: ${result.requeued.join(", ")}.\n`;
+  const reviewed = result.backToReview.length === 0 ? "" : `Back in review, because bb refused to start ${its(result.backToReview.length, "reviewer")}: ${result.backToReview.join(", ")}.\n`;
+  if (result.applied === "pending") return `Applied spec v${result.version} to ${result.slug}. Its tickets are unchanged.\n${requeued}${reviewed}`;
   const keys = result.tickets.length <= 8 ? result.tickets.join(", ") : `${result.tickets[0]} to ${result.tickets.at(-1)}`;
   return `Approved ${result.slug}. It is ready with ${result.tickets.length} ${result.tickets.length === 1 ? "ticket" : "tickets"}: ${keys}.\nStart it with \`bb loom start ${result.slug}\`.\n`;
 }
@@ -324,7 +325,7 @@ export function createCli(projects: Projects, engine: Engine, store: Store, now:
           guarded(async () => {
             const project = deps.store.projectBySlug(positionals.slug);
             const pending = project !== null && project.state !== "draft" && project.pending_version !== null;
-            const result = await humanAction(deps, ctx, "approve", { slug: positionals.slug, pending }, () => projects.approve(positionals.slug, HUMAN_ACTOR, options.version));
+            const result = await humanAction(deps, ctx, "approve", { slug: positionals.slug, pending }, () => engine.approve(positionals.slug, HUMAN_ACTOR, options.version));
             return out(options.json ? toJson(result) : formatApprove(result));
           }),
       }),

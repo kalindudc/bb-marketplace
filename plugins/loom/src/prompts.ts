@@ -2,8 +2,10 @@
 import type { NewThreadRequest } from "@get-bb/plugin-sdk";
 import type { CheckRun } from "./checks";
 import type { PostRow, ProjectRow, ReviewRow, TicketRow } from "./db/store";
+import { its } from "./format";
 import type { Finding } from "./review";
 import type { Spec } from "./spec";
+import type { SpecNote } from "./spec-paths";
 import type { MergeChoice, TicketState } from "./states";
 
 const minute = (at: number) => `${new Date(at).toISOString().slice(0, 16)}Z`;
@@ -83,6 +85,23 @@ export function planningKickoff(a: { merge: MergeChoice; reviewer: string }): st
     "The human reviews, approves and starts the draft on the Loom page, so point them there when you hand over.",
     ...(a.merge === "ask" ? [] : [`The merge plan is already chosen: strategy = "${a.merge}" in [merge], so do not ask about it.`]),
     ...(reviewer === "" ? [] : [`The human asked for this reviewer model: ${JSON.stringify(reviewer)}. Write it into [agents.reviewer] as provider and model; ask only if it is unclear.`]),
+  ].join("\n");
+}
+
+/** The human's notes from the Loom page, for the planner. `version` and `status` are the newest version's. */
+export function notesMessage(a: { slug: string; version: number; status: string; notes: readonly SpecNote[] }): string {
+  const count = a.notes.length === 1 ? "1 note" : `${a.notes.length} notes`;
+  const notes = a.notes.map((note, index) => {
+    const older = note.version < a.version ? ` (written on v${note.version})` : "";
+    const body = note.body.split("\n").map((line) => (line === "" ? "" : `   ${line}`));
+    return [`${index + 1}. ${note.paths.join(", ")}${older}`, ...body].join("\n");
+  });
+  return [
+    `[loom] The human reviewed spec v${a.version} (${a.status}) of ${a.slug} on the Loom page and left ${count}.`,
+    "Revise the spec for each note, or answer it in your reply, then call loom_propose again with the whole spec.",
+    "A path names a ticket by its ref and counts list items from 0, for example ticket[csv-export].acceptance[1].",
+    "",
+    notes.join("\n\n"),
   ].join("\n");
 }
 
@@ -214,6 +233,35 @@ export function triageDigest(a: { project: ProjectRow; round: number; counts: Re
     "Answer only through the tools; the human reads the board, not this message. Never start, pause or approve the project.",
   );
   return lines.join("\n");
+}
+
+/** What the planner reads when the human approves its pending spec version. */
+export function approvedText(a: { slug: string; version: number; requeued: string[]; backToReview: string[]; stillBlocked: string[] }): { summary: string; detail: string } {
+  const moved: string[] = [];
+  if (a.requeued.length > 0) {
+    const after = a.requeued.length === 1 ? "Its failure count starts over, and a worker picks it up by itself." : "Their failure counts start over, and workers pick them up by themselves.";
+    moved.push(`Loom queued ${a.requeued.join(", ")} again, because bb never started ${its(a.requeued.length, "worker")}. ${after}`);
+  }
+  if (a.backToReview.length > 0) moved.push(`Loom sent ${a.backToReview.join(", ")} back to review, because bb refused to start ${its(a.backToReview.length, "reviewer")}; new reviewers start for the same commit.`);
+  const requeued = moved.length === 0 ? "No ticket needed to be queued again." : moved.join(" ");
+  const blocked = a.stillBlocked.length === 0 ? "" : ` Still blocked: ${a.stillBlocked.join(", ")}. Requeue one with loom_requeue when v${a.version} fixes what blocked it.`;
+  return { summary: `[loom] Spec v${a.version} of ${a.slug} is approved.`, detail: `${requeued}${blocked}` };
+}
+
+/** What the planner reads when the human answers on a blocked ticket, which no worker holds. */
+export function blockedReplyText(key: string, reply: string): { summary: string; detail: string } {
+  return {
+    summary: `[loom] The human replied on ${key}, which is blocked. Read it with loom_ticket and answer with your board tools: loom_post, then loom_requeue, loom_edit_ticket or loom_cancel_ticket if the reply settles it.`,
+    detail: reply,
+  };
+}
+
+export function startRequeueNote(version: number): string {
+  return `Spec v${version} is approved, so Loom queued this ticket again: bb never started its worker.`;
+}
+
+export function reviewRequeueNote(version: number): string {
+  return `Spec v${version} is approved, so Loom sent this ticket back to review: bb refused to start its reviewer, and its work had already passed the checks.`;
 }
 
 // ---------------------------------------------------------------- review and merge

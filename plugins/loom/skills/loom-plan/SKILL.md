@@ -22,7 +22,7 @@ Ask only what you cannot find in the repository:
 - Base branch: where work starts (default `main`).
 - Merge plan: an integration branch that collects all approved tickets (`strategy = "integration"`), or one pull request per ticket (`strategy = "pr"`).
 - Check commands: the commands that must pass on every submitted ticket (tests, type checks, lint).
-- Models: ask for a reviewer model that differs from the worker's, so the reviewer does not share the worker's blind spots.
+- Models: ask for a reviewer model that differs from the worker's, so the reviewer does not share the worker's blind spots. `provider` in `[agents.worker]` and `[agents.reviewer]` is a bb provider id, such as `claude-code`, `codex` or `pi`, not a model name such as `claude`; `loom_propose` refuses a provider bb does not have and lists the ids it has.
 - Protected paths: files no ticket may change, such as lockfiles, CI config or generated code.
 
 Anything the human cannot answer yet goes in `project.open_questions`; Loom refuses a spec while that list is not empty, so settle every question before you propose.
@@ -44,6 +44,8 @@ Read the parts of the repository the goal touches. Run each check command once a
 ## 4. Propose
 
 Call `loom_propose` with the whole spec. Fix every numbered error it returns and call it again; a refused spec creates nothing. Calling it again from this thread with the same slug revises the draft. Read any warnings and fix the ones that matter.
+
+The human can review the draft on the Loom page and send you notes. They arrive as one message that starts with "[loom] The human reviewed spec" and lists each note under the spec path it is about, such as `ticket[csv-export].acceptance[1]`: tickets by ref, list items counted from 0. Revise the spec for each note, or answer it in your reply, then call `loom_propose` again with the whole spec.
 
 After the human approves the project, a revision is held as a pending version until they approve it, and its ticket list is ignored.
 

@@ -53,14 +53,45 @@ describe("propose", () => {
     expect(bb.callsTo("ensureSection")).toEqual([]);
   });
 
-  it("revising a draft from its planner replaces the single version", async () => {
+  it("refuses a worker or reviewer provider bb does not have, naming the ids it has", async () => {
+    bb.providers = ["pi", "codex", "claude-code"];
+    const error = await failure(
+      propose((doc) => {
+        doc.agents.worker = { provider: "codex" };
+        doc.agents.reviewer = { provider: "claude", model: "sonnet" };
+      }),
+    );
+    expect(error.code).toBe("loom_invalid_spec");
+    expect(error.message).toContain('\n1. agents.reviewer.provider: bb has no provider "claude". Use one of: claude-code, codex, pi.');
+    expect(store.projects()).toEqual([]);
+
+    const both = await failure(propose((doc) => (doc.agents.reviewer = { provider: "gemini" })));
+    expect(both.message).toContain('1. agents.worker.provider: bb has no provider "claude".');
+    expect(both.message).toContain('2. agents.reviewer.provider: bb has no provider "gemini".');
+  });
+
+  it("checks no provider when the spec sets none, and accepts the spec when bb's providers cannot be read or bb lists none", async () => {
+    bb.providers = [];
+    await propose((doc) => (doc.agents = {}));
+    expect(bb.callsTo("providerIds")).toEqual([]);
+    expect(await propose((doc) => (doc.project.goal = "Export orders as CSV, with a delimiter and a date range filter."))).toMatchObject({ version: 2 });
+    bb.providers = new Error("bb is restarting");
+    expect(await propose((doc) => (doc.project.goal = "Export orders as CSV, with a delimiter the person can choose."))).toMatchObject({ version: 3 });
+    expect(bb.callsTo("log").some(([level, text]) => level === "warn" && String(text).includes("bb is restarting"))).toBe(true);
+  });
+
+  it("revising a draft adds a version and keeps the old one", async () => {
     await propose();
     const result = await propose((doc) => (doc.project.goal = "Export orders and customers as CSV files from the admin page."));
-    expect(result).toMatchObject({ version: 1, state: "draft", pending: false, change: "revised" });
+    expect(result).toMatchObject({ version: 2, state: "draft", pending: false, change: "revised" });
     const project = store.projectBySlug("csv")!;
-    expect(store.specVersion(project.id, 2)).toBeNull();
-    expect(store.specVersion(project.id, 1)?.toml).toContain("orders and customers");
-    expect(eventKinds(project.id)).toEqual(["project.created", "spec.proposed", "spec.revised"]);
+    expect(store.specVersion(project.id, 1)?.toml).not.toContain("orders and customers");
+    expect(store.specVersion(project.id, 2)?.toml).toContain("orders and customers");
+    expect(eventKinds(project.id)).toEqual(["project.created", "spec.proposed", "spec.proposed"]);
+    expect(projects.spec("csv", 1).status).toBe("superseded");
+    expect(projects.spec("csv")).toMatchObject({ version: 2, status: "draft" });
+    expect((await failure(projects.approve("csv", "human", 1))).message).toContain("is not the one waiting for approval (version 2)");
+    expect(await projects.approve("csv", "human")).toMatchObject({ version: 2, applied: "draft" });
     expect(bb.callsTo("ensureSection")).toEqual([
       [null, "Loom · CSV export (csv)"],
       ["sec_1", "Loom · CSV export (csv)"],

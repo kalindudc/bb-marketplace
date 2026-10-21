@@ -4,13 +4,16 @@ import { z } from "zod";
 import type { ProjectHealth } from "./health";
 import type { HomeProject, HomeView, NeedItem } from "./home";
 import type { ProjectMetrics } from "./metrics";
+import type { NextStep } from "./next-step";
 import type { PlanningSession, ProjectOverview } from "./projects";
 import type { Finding } from "./review";
+import type { SentNote, SpecVersionView } from "./spec-view";
+import type { TimelineEntry, TimelineRun, TimelineStage } from "./timeline";
 import type { AuthorKind, PostKind, ProjectState, ReviewVerdict, Role, ThreadState, TicketState } from "./states";
 import { MERGE_CHOICES } from "./states";
 
 export type ProjectSummary = ProjectOverview;
-export type { HomeProject, HomeView, NeedItem, PlanningSession, ProjectHealth };
+export type { HomeProject, HomeView, NeedItem, NextStep, PlanningSession, ProjectHealth, SentNote, SpecVersionView, TimelineEntry, TimelineRun, TimelineStage };
 
 export interface BoardCard {
   key: string;
@@ -44,7 +47,6 @@ export interface SpecPanel {
   toml: string;
   version: number;
   pendingVersion: number | null;
-  pendingToml: string | null;
   summary: SpecSummary;
 }
 
@@ -69,7 +71,10 @@ export interface AgentRow {
 
 export interface ProjectView {
   overview: ProjectOverview;
+  /** Before approval, the draft's tickets with the keys approval will give them. */
   board: BoardCard[];
+  /** The one thing to do next, for the bar over the tabs; null for an archived project. */
+  next: NextStep | null;
   metrics: ProjectMetrics;
   spec: SpecPanel;
   prUrl: string | null;
@@ -95,6 +100,8 @@ export interface ReviewDto {
   id: number;
   round: number;
   verdict: ReviewVerdict;
+  /** The verdict in words, or why a pending review has none: "reviewer could not start", "ended without a verdict" or "pending". */
+  status: string;
   summary: string | null;
   findings: Finding[];
   at: number;
@@ -103,6 +110,9 @@ export interface ReviewDto {
 export interface ThreadDto {
   threadId: string | null;
   role: Role;
+  /** The worker's attempt; null for a reviewer and for rows from before Loom recorded it. */
+  attempt: number | null;
+  reviewRound: number;
   state: ThreadState;
   startedAt: number;
   endedAt: number | null;
@@ -130,6 +140,7 @@ export interface TicketDetail {
   posts: PostDto[];
   reviews: ReviewDto[];
   threads: ThreadDto[];
+  timeline: TimelineEntry[];
 }
 
 export interface FeedRow {
@@ -143,10 +154,11 @@ export interface FeedRow {
 
 export interface ThreadInfo {
   role: Role;
-  slug: string;
+  /** null for a planning conversation that has not proposed a spec yet. */
+  slug: string | null;
   /** The ticket's key for a worker or reviewer; null for a planner. */
   key: string | null;
-  /** The ticket's state for a worker or reviewer, the project's for a planner. */
+  /** The ticket's state for a worker or reviewer, the project's for a planner, "planning" before a spec exists. */
   state: string;
 }
 
@@ -169,6 +181,7 @@ export const rpcContract = defineRpcContract({
   metrics: { input: z.object({ slug, days: z.union([z.literal(7), z.literal(14), z.literal(30)]) }).strict(), output: typed<ProjectMetrics>() },
   project: { input: z.object({ slug }).strict(), output: typed<ProjectView>() },
   ticket: { input: z.object({ key }).strict(), output: typed<TicketDetail>() },
+  runOutput: { input: z.object({ id: z.number().int().min(1) }).strict(), output: typed<{ output: string } | null>() },
   feed: { input: z.object({ slug, afterId: z.number().int().min(0).optional() }).strict(), output: typed<{ rows: FeedRow[]; lastId: number }>() },
   threadInfo: { input: z.object({ threadId: z.string().min(1).max(200) }).strict(), output: typed<ThreadInfo | null>() },
   reply: {
@@ -183,10 +196,25 @@ export const rpcContract = defineRpcContract({
     input: z.object({ slug, action: z.enum(CONTROL_ACTIONS), version: z.number().int().min(1).optional(), confirm }).strict(),
     output: typed<ProjectView>(),
   },
+  sendNotes: {
+    input: z
+      .object({
+        slug,
+        notes: z
+          .array(z.object({ version: z.number().int().min(1), paths: z.array(z.string().min(1).max(200)).min(1).max(10), body: z.string().trim().min(1).max(4000) }).strict())
+          .min(1)
+          .max(30),
+        includeOlder: z.literal(true).optional(),
+        confirm,
+      })
+      .strict(),
+    output: typed<SpecVersionView>(),
+  },
   planning: { input: z.null(), output: typed<PlanningSession[]>() },
   planningSession: { input: z.object({ threadId: z.string().min(1).max(200) }).strict(), output: typed<PlanningSession | null>() },
   startPlanning: {
     input: z.object({ request: z.custom<NewThreadRequest>(isComposerRequest), merge: z.enum(MERGE_CHOICES), reviewer: z.string().max(200), confirm }).strict(),
     output: typed<{ threadId: string }>(),
   },
+  specVersion: { input: z.object({ slug, version: z.number().int().min(1).optional() }).strict(), output: typed<SpecVersionView>() },
 });

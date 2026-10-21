@@ -1,19 +1,20 @@
 import { useState } from "react";
 import { experimental_Icon as Icon, useBbNavigate, useRpc, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import type { ControlAction, ProjectView, rpcContract } from "../contract";
-import { readyToLand } from "../format";
 import type { ProjectMetrics } from "../metrics";
 import type { WindowDays } from "../states";
 import { AgentsView } from "./agents";
 import { Board } from "./board";
-import { ConfirmButton, HEADING, StateBadge, countsLabel, mergeLabel, useRemote, useRun } from "./common";
+import { ConfirmButton, HEADING, MoreMenu, StateBadge, countsLabel, mergeLabel, useRemote, useRun } from "./common";
 import { Feed } from "./feed";
 import { Guide } from "./guide";
 import { HealthStrip } from "./health";
 import { Home } from "./home";
 import { MetricsView } from "./metrics-view";
 import { NewProject } from "./new-project";
+import { NextStepBar } from "./next-step-bar";
 import { PlannerChat, PlanningView } from "./planning";
+import { SpecDashboard } from "./spec-dashboard";
 import { TicketView } from "./ticket";
 
 type Tab = "board" | "agents" | "feed" | "metrics" | "spec" | "planner";
@@ -38,12 +39,12 @@ export function parseRoute(subPath: string): Route {
   return second === undefined ? { view: "project", slug: first } : { view: "ticket", slug: first, key: second };
 }
 
-function Controls({ view, busy, onControl }: { view: ProjectView; busy: boolean; onControl(action: ControlAction, version?: number): void }) {
+/** The header's secondary controls: the next-step bar's action is left out here, and Archive sits in the ⋯ menu. */
+function Controls({ view, busy, primary, onControl }: { view: ProjectView; busy: boolean; primary: ControlAction | null; onControl(action: ControlAction, version?: number): void }) {
   const { overview } = view;
   const live = overview.state === "running" || overview.state === "paused" || overview.state === "done";
-  const act = (label: string, action: ControlAction, version?: number, danger = false) => (
-    <ConfirmButton key={label} label={label} disabled={busy} danger={danger} onConfirm={() => onControl(action, version)} />
-  );
+  const act = (label: string, action: ControlAction, version?: number) =>
+    action === primary ? null : <ConfirmButton key={label} label={label} disabled={busy} onConfirm={() => onControl(action, version)} />;
   return (
     <span data-controls className="ml-auto flex flex-wrap items-center gap-2">
       {overview.state === "draft" && act("Approve", "approve")}
@@ -53,33 +54,31 @@ function Controls({ view, busy, onControl }: { view: ProjectView; busy: boolean;
       {overview.state === "running" && act("Pause now", "pauseNow")}
       {overview.state === "paused" && act("Resume", "resume")}
       {overview.strategy === "integration" && live && (overview.ticketCounts.done ?? 0) > 0 && act("Land", "land")}
-      {overview.state !== "archived" && act("Archive", "archive", undefined, true)}
+      {overview.state !== "archived" && (
+        <MoreMenu>
+          <ConfirmButton label="Archive project" danger disabled={busy} onConfirm={() => onControl("archive")} />
+        </MoreMenu>
+      )}
     </span>
   );
 }
 
+/** The dashboard, under a note on any pending version. Its Approve shows only when the next-step bar does not carry one. */
 function SpecTab({ view, busy, onApprove }: { view: ProjectView; busy: boolean; onApprove(version: number): void }) {
   const { spec, overview } = view;
-  const pre = "mt-2 overflow-x-auto rounded-md border border-border-seam p-3 text-xs leading-relaxed";
+  const barApproves = view.next?.action?.control === "approve";
   return (
     <div className="space-y-6 p-4">
-      <section data-spec-current>
-        <div className="flex items-center gap-2">
-          <h2 className="text-sm font-semibold">Spec v{spec.version}</h2>
-          <span className="text-xs text-muted-foreground">{overview.approvedVersion === null ? "draft" : "approved"}</span>
-        </div>
-        <pre className={pre}>{spec.toml}</pre>
-      </section>
-      {spec.pendingVersion !== null && spec.pendingToml !== null && (
+      {spec.pendingVersion !== null && (
         <section data-spec-pending>
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-semibold">Pending v{spec.pendingVersion}</h2>
             <span className="text-xs text-muted-foreground">waiting for approval; its tickets are unchanged</span>
-            <ConfirmButton label={`Approve v${spec.pendingVersion}`} disabled={busy} onConfirm={() => onApprove(spec.pendingVersion!)} />
+            {!barApproves && <ConfirmButton label={`Approve v${spec.pendingVersion}`} disabled={busy} onConfirm={() => onApprove(spec.pendingVersion!)} />}
           </div>
-          <pre className={pre}>{spec.pendingToml}</pre>
         </section>
       )}
+      <SpecDashboard slug={overview.slug} />
     </div>
   );
 }
@@ -116,10 +115,13 @@ function ProjectPanel({ slug, tab, onTab }: { slug: string; tab: Tab; onTab(tab:
         <span className="text-xs text-muted-foreground">{overview.key}</span>
         <StateBadge state={overview.state} />
         <span className="text-xs text-muted-foreground">{mergeLabel(overview)} · {countsLabel(overview.ticketCounts)}</span>
-        <Controls view={view} busy={busy} onControl={(action, version) => void control(action, version)} />
+        <Controls view={view} busy={busy} primary={view.next?.action?.control ?? null} onControl={(action, version) => void control(action, version)} />
       </div>
-      {readyToLand(overview) && <p data-ready-to-land className="border-b border-border-seam px-4 py-2 text-xs text-success">Every ticket is finished. Land the integration branch to open its pull request.</p>}
-      {overview.reason !== null && <p className="border-b border-border-seam px-4 py-2 text-xs text-warning-text">{overview.state === "paused" ? "Paused: " : ""}{overview.reason}</p>}
+      {view.next !== null && (
+        <div className="px-4 pt-3">
+          <NextStepBar next={view.next} busy={busy} onAct={(action, version) => void control(action, version)} />
+        </div>
+      )}
       {view.prUrl !== null && (
         <p className="border-b border-border-seam px-4 py-2 text-xs text-muted-foreground">
           Pull request <button type="button" className="underline" onClick={() => navigate.openUrl(view.prUrl!)}>{view.prUrl}</button>
@@ -135,7 +137,7 @@ function ProjectPanel({ slug, tab, onTab }: { slug: string; tab: Tab; onTab(tab:
         ))}
       </div>
       <div role="tabpanel" className="min-h-0 flex-1">
-        {tab === "board" && <Board slug={slug} cards={view.board} strategy={overview.strategy} now={view.now} />}
+        {tab === "board" && <Board slug={slug} cards={view.board} strategy={overview.strategy} now={view.now} draftVersion={overview.state === "draft" ? view.spec.version : null} />}
         {tab === "agents" && <AgentsView agents={view.agents} byRole={view.metrics.tokens.byRole} unreported={view.metrics.tokens.unreported} now={view.now} />}
         {tab === "feed" && <Feed slug={slug} />}
         {tab === "metrics" && <MetricsTab slug={slug} metrics={view.metrics} />}

@@ -50,6 +50,7 @@ describe("state maps", () => {
     expect(canMoveTicket("review", "approved")).toBe(true);
     expect(canMoveTicket("merging", "pr_open")).toBe(true);
     expect(canMoveTicket("blocked", "queued")).toBe(true);
+    expect(canMoveTicket("blocked", "review")).toBe(true);
     expect(canMoveTicket("blocked", "working")).toBe(false);
     expect(canMoveTicket("working", "blocked")).toBe(true);
     expect(canMoveTicket("blocked", "blocked")).toBe(false);
@@ -154,15 +155,14 @@ describe("projects", () => {
 });
 
 describe("spec versions", () => {
-  it("numbers versions from 1, replaces one in place, and finds the latest", () => {
+  it("numbers versions from 1 and finds the latest", () => {
     const project = store.createProject(newProject(), "human");
     expect(store.addSpecVersion(project.id, "a = 1", "{}", "h1", "thr_1")).toBe(1);
     expect(store.addSpecVersion(project.id, "a = 2", "{}", "h2", "thr_1")).toBe(2);
     expect(store.specVersion(project.id, 1)).toMatchObject({ toml: "a = 1", hash: "h1", proposed_by: "thr_1" });
-    store.replaceSpecVersion(project.id, 2, "a = 3", '{"a":3}', "h3", "thr_1");
-    expect(store.latestSpecVersion(project.id)).toMatchObject({ version: 2, toml: "a = 3", spec_json: '{"a":3}', hash: "h3" });
+    expect(store.latestSpecVersion(project.id)).toMatchObject({ version: 2, toml: "a = 2", hash: "h2" });
     expect(store.specVersion(project.id, 9)).toBeNull();
-    expect(eventKinds(project.id)).toEqual(["project.created", "spec.proposed", "spec.proposed", "spec.revised"]);
+    expect(eventKinds(project.id)).toEqual(["project.created", "spec.proposed", "spec.proposed"]);
   });
 });
 
@@ -541,5 +541,64 @@ describe("changed", () => {
       }),
     ).toThrow("boom");
     expect(seen).toEqual([]);
+  });
+});
+
+describe("runs", () => {
+  const start = (projectId: number, ticketId: number, label = "npm test") => store.startRun({ project_id: projectId, ticket_id: ticketId, stage: "check", kind: "command", label });
+
+  it("starts an open run with no output, and finishes it with its result, measuring the output it leaves out", () => {
+    const project = store.createProject(newProject(), "human");
+    const ticket = store.createTicket(newTicket(project.id, 1), "human");
+    const id = start(project.id, ticket.id);
+    expect(store.runs(ticket.id)).toEqual([
+      { id, project_id: project.id, ticket_id: ticket.id, stage: "check", kind: "command", label: "npm test", started_at: clock.t, ended_at: null, duration_ms: null, ok: null, exit_code: null, timed_out: 0, output_chars: 0 },
+    ]);
+    clock.advance(40);
+    store.finishRun(id, { ok: false, output: "boom", exitCode: 2, timedOut: true, durationMs: 12 });
+    expect(store.runs(ticket.id)[0]).toMatchObject({ ended_at: clock.t, duration_ms: 12, ok: 0, exit_code: 2, timed_out: 1, output_chars: 4 });
+    expect(store.runs(ticket.id)[0]).not.toHaveProperty("output");
+
+    const git = store.startRun({ project_id: project.id, ticket_id: ticket.id, stage: "merge", kind: "git", label: "git merge" });
+    clock.advance(25);
+    store.finishRun(git, { ok: true, output: "Merged as m1." });
+    expect(store.runs(ticket.id).map((run) => run.id)).toEqual([id, git]);
+    expect(store.runs(ticket.id)[1]).toMatchObject({ duration_ms: 25, ok: 1, exit_code: null, timed_out: 0, output_chars: 13 });
+  });
+
+  it("returns a run's output, and null for an unknown id", () => {
+    const project = store.createProject(newProject(), "human");
+    const ticket = store.createTicket(newTicket(project.id, 1), "human");
+    const id = start(project.id, ticket.id);
+    expect(store.runOutput(id)).toBe("");
+    store.finishRun(id, { ok: true, output: "all good" });
+    expect(store.runOutput(id)).toBe("all good");
+    expect(store.runOutput(999)).toBeNull();
+  });
+
+  it("ends only the open runs, with the note as output and no result, and returns their count", () => {
+    const project = store.createProject(newProject(), "human");
+    const ticket = store.createTicket(newTicket(project.id, 1), "human");
+    const done = start(project.id, ticket.id, "npm run lint");
+    store.finishRun(done, { ok: true, output: "fine", exitCode: 0 });
+    const open = start(project.id, ticket.id, "npm test");
+    clock.advance(5);
+    expect(store.endOpenRuns("Loom restarted before this step finished.")).toBe(1);
+    expect(store.runs(ticket.id)[1]).toMatchObject({ ended_at: clock.t, ok: null });
+    expect(store.runOutput(open)).toBe("Loom restarted before this step finished.");
+    expect(store.runs(ticket.id)[0]).toMatchObject({ ok: 1 });
+    expect(store.runOutput(done)).toBe("fine");
+    expect(store.endOpenRuns("again")).toBe(0);
+  });
+
+  it("tells the hook the project id after a run starts and after it finishes", () => {
+    const project = store.createProject(newProject(), "human");
+    const ticket = store.createTicket(newTicket(project.id, 1), "human");
+    const seen: Array<number | null> = [];
+    store.setOnEvent((projectId) => seen.push(projectId));
+    const id = start(project.id, ticket.id);
+    expect(seen).toEqual([project.id]);
+    store.finishRun(id, { ok: true, output: "" });
+    expect(seen).toEqual([project.id, project.id]);
   });
 });

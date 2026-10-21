@@ -101,6 +101,8 @@ export interface ThreadRow {
   tokens: number | null;
   tokens_at: number | null;
   review_round: number;
+  /** The worker's attempt; null for a reviewer and for rows from before Loom recorded it. */
+  attempt: number | null;
   started_at: number;
   clock_at: number | null;
   ended_at: number | null;
@@ -141,6 +143,23 @@ export interface PlanningRow {
   started_at: number;
   ended_at: number | null;
   end_reason: string | null;
+}
+
+/** One call Loom made to the machine for a ticket's checks or merge. `output_chars` measures the output, which `runs` leaves out. */
+export interface RunRow {
+  id: number;
+  project_id: number;
+  ticket_id: number;
+  stage: "check" | "merge";
+  kind: "command" | "git";
+  label: string;
+  started_at: number;
+  ended_at: number | null;
+  duration_ms: number | null;
+  ok: number | null;
+  exit_code: number | null;
+  timed_out: number;
+  output_chars: number;
 }
 
 export class StoreError extends Error {}
@@ -199,6 +218,11 @@ export class Store {
   /** Every event of the project, oldest first. The metrics replay all of them. */
   projectEvents(projectId: number): EventRow[] {
     return this.db.prepare("SELECT * FROM events WHERE project_id = ? ORDER BY id").all(projectId) as EventRow[];
+  }
+
+  /** A project's events of one kind, oldest first. */
+  eventsOfKind(projectId: number, kind: string): EventRow[] {
+    return this.db.prepare("SELECT * FROM events WHERE project_id = ? AND kind = ? ORDER BY id").all(projectId, kind) as EventRow[];
   }
 
   /** The newest events first, optionally only those before an event id. */
@@ -260,16 +284,6 @@ export class Store {
       this.db.prepare("INSERT INTO spec_versions (project_id, version, toml, spec_json, hash, proposed_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(projectId, version, toml, specJson, hash, proposedBy, this.now());
       this.event(projectId, null, "spec.proposed", proposedBy, { version, hash });
       return version;
-    });
-  }
-
-  replaceSpecVersion(projectId: number, version: number, toml: string, specJson: string, hash: string, proposedBy: string): void {
-    this.tx(() => {
-      const result = this.db
-        .prepare("UPDATE spec_versions SET toml = ?, spec_json = ?, hash = ?, proposed_by = ?, created_at = ? WHERE project_id = ? AND version = ?")
-        .run(toml, specJson, hash, proposedBy, this.now(), projectId, version);
-      if (result.changes === 0) throw new StoreError(`Spec version ${version} does not exist.`);
-      this.event(projectId, null, "spec.revised", proposedBy, { version, hash });
     });
   }
 
@@ -464,6 +478,38 @@ export class Store {
     if (result.changes === 0) return false;
     this.changed(null);
     return true;
+  }
+
+  // ---- runs
+
+  startRun(row: Pick<RunRow, "project_id" | "ticket_id" | "stage" | "kind" | "label">): number {
+    const result = this.db.prepare("INSERT INTO runs (project_id, ticket_id, stage, kind, label, started_at) VALUES (?, ?, ?, ?, ?, ?)").run(row.project_id, row.ticket_id, row.stage, row.kind, row.label, this.now());
+    this.changed(row.project_id);
+    return Number(result.lastInsertRowid);
+  }
+
+  /** `durationMs` defaults to the time since the run started. */
+  finishRun(id: number, r: { ok: boolean; output: string; exitCode?: number | null; timedOut?: boolean; durationMs?: number }): void {
+    const ended = this.now();
+    const row = this.db
+      .prepare("UPDATE runs SET ended_at = ?, duration_ms = COALESCE(?, ? - started_at), ok = ?, exit_code = ?, timed_out = ?, output = ? WHERE id = ? RETURNING project_id")
+      .get(ended, r.durationMs ?? null, ended, r.ok ? 1 : 0, r.exitCode ?? null, r.timedOut === true ? 1 : 0, r.output, id) as { project_id: number } | undefined;
+    if (row !== undefined) this.changed(row.project_id);
+  }
+
+  runs(ticketId: number): RunRow[] {
+    return this.db
+      .prepare("SELECT id, project_id, ticket_id, stage, kind, label, started_at, ended_at, duration_ms, ok, exit_code, timed_out, length(output) AS output_chars FROM runs WHERE ticket_id = ? ORDER BY id")
+      .all(ticketId) as RunRow[];
+  }
+
+  runOutput(id: number): string | null {
+    return (this.db.prepare("SELECT output FROM runs WHERE id = ?").get(id) as { output: string } | undefined)?.output ?? null;
+  }
+
+  /** Ends every run that has not ended, with `note` as its output and no result; returns how many it ended. */
+  endOpenRuns(note: string): number {
+    return this.db.prepare("UPDATE runs SET ended_at = ?, output = ? WHERE ended_at IS NULL").run(this.now(), note).changes;
   }
 
   // ----

@@ -1,6 +1,8 @@
-import type { AgentRow, BoardCard, FeedRow, HomeProject, HomeView, ProjectHealth, ProjectSummary, ProjectView, TicketDetail } from "../src/contract";
+import type { AgentRow, BoardCard, FeedRow, HomeProject, HomeView, ProjectHealth, ProjectSummary, ProjectView, SpecVersionView, TicketDetail } from "../src/contract";
 import type { ProjectMetrics } from "../src/metrics";
+import { parseSpec } from "../src/spec";
 import { TICKET_STATES, type TicketState } from "../src/states";
+import { specToml, type Doc } from "./helpers";
 
 export const NOW = Date.UTC(2026, 0, 10, 12);
 export const HOUR = 3_600_000;
@@ -138,7 +140,6 @@ export const projectView = (over: Partial<ProjectView> = {}): ProjectView => ({
     toml: '[project]\nslug = "csv"\n',
     version: 1,
     pendingVersion: null,
-    pendingToml: null,
     summary: {
       tickets: [
         { ref: "csv-model", title: "Order rows", dependsOn: [] },
@@ -150,6 +151,7 @@ export const projectView = (over: Partial<ProjectView> = {}): ProjectView => ({
     },
   },
   prUrl: null,
+  next: { stage: 4, tone: "normal", title: "Running.", text: "1 worker is on CSV-2.", action: null },
   health: health(),
   agents: [agent()],
   now: NOW,
@@ -176,7 +178,26 @@ export const ticketDetail = (over: Partial<TicketDetail> = {}): TicketDetail => 
   scope: ["src/export/**"],
   posts: [{ id: 1, parentId: null, depth: 0, authorKind: "planner", authorThreadId: "thr_plan", kind: "brief", body: "Serve the file.", at: NOW - 6 * HOUR }],
   reviews: [],
-  threads: [{ threadId: "thr_w1", role: "worker", state: "active", startedAt: NOW - 5 * HOUR, endedAt: null, endReason: null }],
+  threads: [{ threadId: "thr_w1", role: "worker", attempt: 1, reviewRound: 0, state: "active", startedAt: NOW - 5 * HOUR, endedAt: null, endReason: null }],
+  timeline: [],
+  ...over,
+});
+
+/** v2, a draft, of the helpers' base spec, changed from v1 in one criterion and one check. */
+export const specVersionView = (over: Partial<SpecVersionView> = {}, edit?: (doc: Doc) => void): SpecVersionView => ({
+  slug: "csv",
+  version: 2,
+  status: "draft",
+  toml: specToml(edit),
+  spec: parseSpec(specToml(edit)).spec!,
+  overlaps: [],
+  warnings: [],
+  changes: { changed: ["ticket[csv-export].acceptance[1]", "checks.commands[0]"], removed: [] },
+  versions: [
+    { version: 1, status: "superseded" },
+    { version: 2, status: "draft" },
+  ],
+  notes: [],
   ...over,
 });
 

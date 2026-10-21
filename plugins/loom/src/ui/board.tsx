@@ -3,7 +3,7 @@ import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import type { BoardCard } from "../contract";
 import { formatDuration } from "../format";
 import type { TicketState } from "../states";
-import { HEADING } from "./common";
+import { HEADING, plural } from "./common";
 
 interface Lane {
   id: TicketState;
@@ -26,8 +26,19 @@ const LANES: readonly Lane[] = [
 
 const LINK = "cursor-pointer rounded text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
-function Card({ slug, card, now }: { slug: string; card: BoardCard; now: number }) {
+function DraftCard({ card }: { card: BoardCard }) {
+  return (
+    <div data-card={card.key} data-draft className="rounded-md border border-dashed border-border-seam p-2.5">
+      <span className="text-xs font-medium text-muted-foreground">{card.key} · draft</span>
+      <span className="mt-0.5 block text-sm">{card.title}</span>
+      {!card.ready && card.waitingOn.length > 0 && <p className="mt-1 text-xs text-muted-foreground">Waits on {card.waitingOn.join(", ")}</p>}
+    </div>
+  );
+}
+
+function Card({ slug, card, now, draft }: { slug: string; card: BoardCard; now: number; draft: boolean }) {
   const navigate = useBbNavigate();
+  if (draft) return <DraftCard card={card} />;
   const detail = [`${formatDuration(Math.max(0, now - card.stateAt))} in ${card.state.replace("_", " ")}`, card.attempt > 0 ? `attempt ${card.attempt}` : null, card.reviewRound > 0 ? `round ${card.reviewRound}` : null].filter((part) => part !== null);
   return (
     <div data-card={card.key} className="rounded-md border border-border-seam p-2.5">
@@ -54,19 +65,19 @@ function Card({ slug, card, now }: { slug: string; card: BoardCard; now: number 
   );
 }
 
-function QueueGroup({ id, title, cards, slug, now }: { id: string; title: string; cards: BoardCard[]; slug: string; now: number }) {
+function QueueGroup({ id, title, cards, slug, now, draft }: { id: string; title: string; cards: BoardCard[]; slug: string; now: number; draft: boolean }) {
   if (cards.length === 0) return null;
   return (
     <div data-queue-group={id} className="space-y-2">
       <h4 className={HEADING}>{title}</h4>
       {cards.map((card) => (
-        <Card key={card.key} slug={slug} card={card} now={now} />
+        <Card key={card.key} slug={slug} card={card} now={now} draft={draft} />
       ))}
     </div>
   );
 }
 
-function LaneColumn({ lane, cards, slug, now }: { lane: Lane; cards: BoardCard[]; slug: string; now: number }) {
+function LaneColumn({ lane, cards, slug, now, draft }: { lane: Lane; cards: BoardCard[]; slug: string; now: number; draft: boolean }) {
   const [open, setOpen] = useState(lane.collapsed !== true);
   return (
     <section data-lane={lane.id} className="flex w-64 shrink-0 flex-col gap-2">
@@ -78,14 +89,14 @@ function LaneColumn({ lane, cards, slug, now }: { lane: Lane; cards: BoardCard[]
       </h3>
       {open && lane.id === "queued" && (
         <div className="space-y-3">
-          <QueueGroup id="ready" title="Ready" cards={cards.filter((card) => card.ready)} slug={slug} now={now} />
-          <QueueGroup id="waiting" title="Waiting" cards={cards.filter((card) => !card.ready)} slug={slug} now={now} />
+          <QueueGroup id="ready" title="Ready" cards={cards.filter((card) => card.ready)} slug={slug} now={now} draft={draft} />
+          <QueueGroup id="waiting" title="Waiting" cards={cards.filter((card) => !card.ready)} slug={slug} now={now} draft={draft} />
         </div>
       )}
       {open && lane.id !== "queued" && (
         <div className="space-y-2">
           {cards.map((card) => (
-            <Card key={card.key} slug={slug} card={card} now={now} />
+            <Card key={card.key} slug={slug} card={card} now={now} draft={draft} />
           ))}
         </div>
       )}
@@ -93,12 +104,21 @@ function LaneColumn({ lane, cards, slug, now }: { lane: Lane; cards: BoardCard[]
   );
 }
 
-export function Board({ slug, cards, strategy, now }: { slug: string; cards: BoardCard[]; strategy: "integration" | "pr"; now: number }) {
+/** `draftVersion` is set before approval: the cards are the draft's tickets, not yet on the board. */
+export function Board({ slug, cards, strategy, now, draftVersion }: { slug: string; cards: BoardCard[]; strategy: "integration" | "pr"; now: number; draftVersion: number | null }) {
+  const draft = draftVersion !== null;
   return (
-    <div data-board={slug} className="flex items-start gap-3 overflow-x-auto p-4">
-      {LANES.filter((lane) => lane.id !== "pr_open" || strategy === "pr").map((lane) => (
-        <LaneColumn key={lane.id} lane={lane} cards={cards.filter((card) => lane.states.includes(card.state))} slug={slug} now={now} />
-      ))}
+    <div>
+      {draft && (
+        <p data-draft-note className="mx-4 mt-4 rounded-md border border-dashed border-border-seam px-3 py-2 text-xs text-muted-foreground">
+          Draft v{draftVersion}: {cards.length === 1 ? "approving creates this ticket. Its dashed card is" : `approving creates these ${plural(cards.length, "ticket")}. Dashed cards are`} not on the board yet.
+        </p>
+      )}
+      <div data-board={slug} className="flex items-start gap-3 overflow-x-auto p-4">
+        {LANES.filter((lane) => lane.id !== "pr_open" || strategy === "pr").map((lane) => (
+          <LaneColumn key={lane.id} lane={lane} cards={cards.filter((card) => lane.states.includes(card.state))} slug={slug} now={now} draft={draft} />
+        ))}
+      </div>
     </div>
   );
 }

@@ -1,12 +1,10 @@
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import type { AgentRow } from "../contract";
-import { formatDuration, noTokenUsage } from "../format";
+import { endLabel, formatDuration, noTokenUsage } from "../format";
 import type { Role } from "../states";
 import { ShareBar, type Swatch } from "./charts";
 import { BUTTON, CARD, HEADING, plural } from "./common";
 
-const END_LABELS: Record<string, string> = { abandoned: "idle twice", verdict: "gave a verdict", merged: "merged", superseded: "superseded by a newer round", gone: "thread gone" };
-const endLabel = (reason: string | null) => (reason === null ? "ended" : (END_LABELS[reason] ?? reason));
 const ROLE_SWATCHES: Record<Role, Swatch> = {
   worker: { fill: "var(--primary, currentColor)" },
   reviewer: { fill: "var(--success, currentColor)" },

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { TomlError, parse } from "smol-toml";
 import { z } from "zod";
+import { plural } from "./format";
 import { matchesAny } from "./scope";
 
 const MAX_ERRORS = 20;
@@ -52,7 +53,7 @@ const agentSchema = z
     provider: z.string().min(1).max(100).optional(),
     model: z.string().min(1).max(100).optional(),
     reasoning: z.string().min(1).max(40).optional(),
-    permission_mode: z.enum(["accept-edits", "auto", "full"]).default("auto"),
+    permission_mode: z.enum(["accept-edits", "auto", "full"]).default("full"),
   })
   .strict();
 
@@ -328,12 +329,23 @@ export function validateSemantics(spec: Spec, rawToml: string): { errors: string
   if (worker.provider === reviewer.provider && worker.model === reviewer.model) {
     warnings.push("agents.reviewer: the reviewer uses the same provider and model as the worker, so it shares the worker's blind spots. Set agents.reviewer.provider and model to a different model.");
   }
-  warnings.push(...overlapWarnings(spec.ticket, indexOfRef));
+  warnings.push(...overlapWarnings(scopeOverlaps(spec.ticket)));
 
   return { errors, warnings };
 }
 
-function overlapWarnings(tickets: readonly TicketSpec[], indexOfRef: ReadonlyMap<string, number>): string[] {
+export interface ScopeOverlap {
+  i: number;
+  j: number;
+  paths: string[];
+}
+
+/** Every pair of tickets, by index, whose scopes overlap with no dependency path between them, and the globs of either one that overlap the other's. */
+export function scopeOverlaps(tickets: readonly TicketSpec[]): ScopeOverlap[] {
+  const indexOfRef = new Map<string, number>();
+  tickets.forEach((ticket, index) => {
+    if (!indexOfRef.has(ticket.ref)) indexOfRef.set(ticket.ref, index);
+  });
   const reaches = (from: TicketSpec, target: string): boolean => {
     const visited = new Set<string>();
     const stack = [...from.depends_on];
@@ -348,22 +360,26 @@ function overlapWarnings(tickets: readonly TicketSpec[], indexOfRef: ReadonlyMap
     return false;
   };
 
-  const warnings: string[] = [];
-  let hidden = 0;
+  const overlaps: ScopeOverlap[] = [];
   for (let i = 0; i < tickets.length; i++) {
     for (let j = i + 1; j < tickets.length; j++) {
       const a = tickets[i]!;
       const b = tickets[j]!;
-      if (!a.scope.some((left) => b.scope.some((right) => globsOverlap(left, right)))) continue;
+      const paths = [...a.scope.filter((left) => b.scope.some((right) => globsOverlap(left, right))), ...b.scope.filter((right) => a.scope.some((left) => globsOverlap(left, right)))];
+      if (paths.length === 0) continue;
       if (reaches(a, b.ref) || reaches(b, a.ref)) continue;
-      if (warnings.length < MAX_OVERLAP_WARNINGS) {
-        warnings.push(`ticket[${i}] and ticket[${j}] have overlapping scope and no dependency between them, so they will run one at a time. Add depends_on if the order matters, or narrow their scope.`);
-      } else {
-        hidden += 1;
-      }
+      overlaps.push({ i, j, paths: [...new Set(paths)] });
     }
   }
-  if (hidden > 0) warnings.push(`… and ${hidden} more pairs of tickets with overlapping scope.`);
+  return overlaps;
+}
+
+function overlapWarnings(overlaps: readonly ScopeOverlap[]): string[] {
+  const warnings = overlaps
+    .slice(0, MAX_OVERLAP_WARNINGS)
+    .map(({ i, j }) => `ticket[${i}] and ticket[${j}] have overlapping scope and no dependency between them, so they will run one at a time. Add depends_on if the order matters, or narrow their scope.`);
+  const hidden = overlaps.length - warnings.length;
+  if (hidden > 0) warnings.push(`… and ${plural(hidden, "more pair")} of tickets with overlapping scope.`);
   return warnings;
 }
 

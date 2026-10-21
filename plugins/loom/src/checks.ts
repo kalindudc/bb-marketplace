@@ -1,8 +1,10 @@
 // The submit pipeline: the worker hands in, the plugin commits, checks scope and runs the commands, and only a
 // pass moves the ticket on. Runs are keyed by ticket, so a ticket is never checked twice at once.
 import type { Store, ThreadRow, TicketRow } from "./db/store";
+import { plural } from "./format";
 import { checkFailedText, clip } from "./prompts";
 import { LoomError } from "./projects";
+import { recordingHost } from "./runs";
 import { scopeReport } from "./scope";
 import type { Spec } from "./spec";
 import { LOOM_ACTOR } from "./states";
@@ -110,7 +112,7 @@ async function pipeline(ctx: EngineCtx, ticketId: number): Promise<void> {
 
   let outcome: Outcome;
   try {
-    outcome = await runPipeline(ctx, ticket, spec, worker.row);
+    outcome = await runPipeline({ ...ctx, host: recordingHost(ctx.store, ctx.host, ticket, "check") }, ticket, spec, worker.row);
   } catch (error) {
     hostFailed(ctx, ticketId, errText(error));
     return;
@@ -221,7 +223,7 @@ async function finish(ctx: EngineCtx, ticketId: number, spec: Spec, outcome: Out
   }
   if (blocked !== null && target !== null) {
     const { checkFailures } = blocked;
-    const reason = `checks failed ${checkFailures} times`;
+    const reason = `checks failed ${plural(checkFailures, "time")}`;
     const move = { to: "blocked" as const, patch: { check_failures: checkFailures, blocked_reason: reason, worker_thread_id: null, environment_id: null } };
     if (await endThread(ctx, target, "blocked", { commit: true, move })) {
       store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "block", body: reason, data_json: JSON.stringify({ reason, needs: "" }) });

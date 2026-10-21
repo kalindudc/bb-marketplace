@@ -117,7 +117,7 @@ describe("loom_propose", () => {
   it("revises the draft from the planner thread and reports the change", async () => {
     await propose();
     const revised = text(await propose((doc) => (doc.project.goal = "Export orders and customers as CSV files from the admin page.")));
-    expect(revised).toContain("Draft `csv` revised · spec v1.");
+    expect(revised).toContain("Draft `csv` revised · spec v2.");
     expect(text(await propose((doc) => (doc.project.goal = "Export orders and customers as CSV files from the admin page.")))).toContain("No change");
   });
 

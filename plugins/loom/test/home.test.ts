@@ -101,7 +101,7 @@ describe("homeView needs you", () => {
 });
 
 describe("homeView totals and projects", () => {
-  it("counts projects and live agents, and sums the running projects' worker and reviewer limits as slots", async () => {
+  it("counts projects and live agents, and sums the worker and reviewer limits of running and paused projects as slots", async () => {
     await running("csv", "CSV", "CSV export", (doc) => (doc.agents = { ...doc.agents, max_workers: 3, max_reviewers: 1 }));
     await running("api", "API", "Public API");
     await running("bill", "BILL", "Billing API");
@@ -112,7 +112,14 @@ describe("homeView totals and projects", () => {
     host.store.addThread({ project_id: project("api").id, role: "worker", state: "ended", thread_id: "thr_w2", ticket_id: ticket("API-1").id });
 
     const { totals } = view();
-    expect(totals).toMatchObject({ projects: 4, running: 2, paused: 1, workers: 1, reviewers: 1, planners: 4, slots: 3 + 1 + 2 + 2 });
+    expect(totals).toMatchObject({ projects: 4, running: 2, paused: 1, workers: 1, reviewers: 1, planners: 4, slots: 3 + 1 + 2 + 2 + 2 + 2 });
+  });
+
+  it("counts a paused project's slots, because its workers and reviewers keep running until they finish", async () => {
+    await running("csv", "CSV", "CSV export");
+    host.store.setProjectState(project("csv").id, "paused", "human");
+    host.store.addThread({ project_id: project("csv").id, role: "worker", state: "active", thread_id: "thr_w1", ticket_id: ticket("CSV-1").id });
+    expect(view().totals).toMatchObject({ running: 0, paused: 1, workers: 1, reviewers: 0, slots: 4 });
   });
 
   it("sums each project's 14-day throughput by day, the last 7 days, and the tokens per done ticket", async () => {

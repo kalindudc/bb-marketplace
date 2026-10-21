@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { settleChecks, submit } from "../src/checks";
 import type { PostRow, ReviewRow, ThreadRow } from "../src/db/store";
-import type { SpawnArgs } from "../src/ports";
+import { SpawnRefusedError, type SpawnArgs } from "../src/ports";
 import { afterMergeFailedText, changesRequestedText, conflictText, heldCheckResult, landBody, prBody, reviewerBrief, reviewerNudgeText } from "../src/prompts";
 import { approve, onReviewerGone, onReviewerIdle, requestChanges, settleReviews, spawnReviewers, type Finding } from "../src/review";
 import { endThread, requeueTicket, specOf } from "../src/workers";
@@ -174,7 +174,7 @@ describe("spawnReviewers", () => {
       sectionId: "sec_1",
       providerId: "codex",
       model: "gpt",
-      permissionMode: "auto",
+      permissionMode: "full",
       metadata: { project: "csv", role: "reviewer", ticket: "CSV-1", round: "1", spawnToken: first!.spawn_token },
     });
     expect(spawnArgs(2).metadata).toMatchObject({ role: "reviewer", round: "1", spawnToken: second!.spawn_token });
@@ -250,6 +250,19 @@ describe("spawnReviewers", () => {
     expect(h.store.thread(worker.id)).toMatchObject({ state: "ended", end_reason: "blocked" });
     expect(project().triage_pending).toBe(1);
     expect(postsOf().at(-1)).toMatchObject({ kind: "block", body: "reviewers ended without a verdict" });
+  });
+
+  it("blocks the ticket at once, ending its worker, when bb refuses a reviewer", async () => {
+    await seedProject(h, (doc) => (doc.review = { approvals: 2 }));
+    const worker = await reachReview(h);
+    h.bb.spawnError = (args) => (args.metadata.role === "reviewer" ? new SpawnRefusedError(400, "HTTP 400: Provider pi only supports full permission mode.") : null);
+    expect(await spawn()).toBe(0);
+    expect(h.bb.callsTo("spawnThread").filter(([args]) => (args as SpawnArgs).metadata.role === "reviewer")).toHaveLength(1);
+    const reason = "bb refused to start a reviewer: HTTP 400: Provider pi only supports full permission mode.";
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "blocked", blocked_reason: reason, worker_thread_id: null });
+    expect(h.store.thread(worker.id)).toMatchObject({ state: "ended", end_reason: "blocked" });
+    expect(postsOf().at(-1)).toMatchObject({ kind: "block", body: reason });
+    expect(project().triage_pending).toBe(1);
   });
 
   it("pauses the project, with the reason, when the diff cannot be read", async () => {
@@ -368,11 +381,11 @@ describe("verdicts", () => {
     const { worker, reviewer } = await reviewerReady((doc) => (doc.review = { max_rounds: 1 }));
     await requestChanges(h.ctx, reviewer.thread_id!, "Fix it", findings);
     await settleReviews(h.ctx);
-    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "blocked", blocked_reason: "review requested changes in 1 rounds", worker_thread_id: null, environment_id: null });
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "blocked", blocked_reason: "review requested changes in 1 round", worker_thread_id: null, environment_id: null });
     expect(h.store.thread(worker.id)).toMatchObject({ state: "ended", end_reason: "blocked" });
     expect(archived()).toContain(worker.thread_id);
     expect(project().triage_pending).toBe(1);
-    expect(postsOf().at(-1)).toMatchObject({ kind: "block", author_kind: "loom", body: "review requested changes in 1 rounds" });
+    expect(postsOf().at(-1)).toMatchObject({ kind: "block", author_kind: "loom", body: "review requested changes in 1 round" });
   });
 
   it("gives a requeued ticket max_rounds fresh rounds, and never reuses an old review row", async () => {

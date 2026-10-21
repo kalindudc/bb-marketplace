@@ -76,7 +76,7 @@ function ChecksByCommand({ checks, scope }: { checks: ProjectMetrics["checksByCo
         <tbody>
           {checks.map((check) => (
             <tr key={check.command} className="border-t border-border-seam">
-              <td className={CELL}><code>{check.command}</code></td>
+              <td className={CELL}><code className="[overflow-wrap:anywhere]">{check.command}</code></td>
               <td className={CELL}>{check.runs}</td>
               <td className={`${CELL} ${check.failed > 0 ? "text-destructive-text" : ""}`}>{check.failed === 0 ? "0" : `${check.failed} · ${percent(check.failed / check.runs)}`}</td>
               <td className={CELL}>{check.p50Ms === null ? "none" : formatDuration(check.p50Ms)}</td>

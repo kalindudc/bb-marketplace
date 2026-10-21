@@ -51,7 +51,9 @@ Workers, the plugin's checks, reviewers, merging, budgets and triage all use the
 | `ticket_timeout_minutes` | integer | `120` | 10 to 1440 |
 | `triage` | boolean | `true` | |
 
-`[agents.worker]` and `[agents.reviewer]` each take `provider`, `model` and `reasoning` (optional strings) and `permission_mode` (`"accept-edits"`, `"auto"` or `"full"`, default `"auto"`).
+`[agents.worker]` and `[agents.reviewer]` each take `provider`, `model` and `reasoning` (optional strings) and `permission_mode` (`"accept-edits"`, `"auto"` or `"full"`, default `"full"`). Some providers, such as pi, accept only `"full"`.
+
+`provider` must be the id of a provider bb has, such as `claude-code`, `codex` or `pi`; a model or product name such as `claude` is not a provider id. Loom checks each provider against bb's list when the spec is proposed and refuses an unknown one with the ids bb has. When bb's list cannot be read, the spec is accepted unchecked.
 
 ### [review]
 
@@ -112,7 +114,7 @@ protected = ["package-lock.json", ".github/**"]
 max_workers = 2
 
 [agents.worker]
-provider = "claude"
+provider = "claude-code"
 model = "sonnet"
 
 [agents.reviewer]
@@ -181,6 +183,6 @@ Warnings are returned but do not block a proposal.
 
 ## Revisions
 
-- Before approval, proposing again from the planner thread with the same slug replaces the draft.
+- Before approval, proposing again from the planner thread with the same slug adds a new draft version; older drafts are kept as superseded, and approving takes the newest.
 - After approval, a revision becomes a pending version; `bb loom approve <slug>` applies it. Tickets are not recreated.
 - Proposing a spec identical to the latest one changes nothing and returns the existing version.

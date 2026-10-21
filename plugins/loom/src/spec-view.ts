@@ -1,0 +1,66 @@
+// One spec version as the page's dashboard reads it: the parsed spec, what it changed, and the notes the human sent on it.
+import type { Store } from "./db/store";
+import type { Projects, SpecView } from "./projects";
+import { scopeOverlaps, validateSemantics, type Spec } from "./spec";
+import { changedAt, specChanges, type SpecChanges, type SpecNote } from "./spec-paths";
+
+export interface SentNote extends SpecNote {
+  sentAt: number;
+  /** The newest version, when it is newer than the one the note was written on. */
+  answeredIn: number | null;
+  /** Whether `answeredIn` changed a part the note is about. */
+  changed: boolean;
+}
+
+export interface SpecVersionView {
+  slug: string;
+  version: number;
+  status: SpecView["status"];
+  toml: string;
+  spec: Spec;
+  overlaps: Array<{ a: string; b: string; paths: string[] }>;
+  warnings: string[];
+  /** Null for version 1. */
+  changes: SpecChanges | null;
+  versions: Array<{ version: number; status: SpecView["status"] }>;
+  /** Newest batch first, in the order sent within a batch. */
+  notes: SentNote[];
+}
+
+export function specVersionView(deps: { store: Store; projects: Projects }, slug: string, version?: number): SpecVersionView {
+  const { store, projects } = deps;
+  const project = projects.require(slug);
+  const newest = store.latestSpecVersion(project.id)!.version;
+  const view = projects.spec(slug, version ?? newest);
+  const parsed = new Map<number, Spec>();
+  const specAt = (n: number): Spec => {
+    if (!parsed.has(n)) parsed.set(n, JSON.parse(store.specVersion(project.id, n)!.spec_json) as Spec);
+    return parsed.get(n)!;
+  };
+  const spec = specAt(view.version);
+
+  const batches = store
+    .eventsOfKind(project.id, "human.action")
+    .map((event) => ({ at: event.at, data: JSON.parse(event.data_json) as { action: string; notes?: SpecNote[] } }))
+    .filter(({ data }) => data.action === "notes")
+    .reverse();
+  const notes = batches.flatMap(({ at, data }) =>
+    data.notes!.map((note): SentNote => {
+      const answeredIn = newest > note.version ? newest : null;
+      return { ...note, sentAt: at, answeredIn, changed: answeredIn !== null && changedAt(specChanges(specAt(note.version), specAt(answeredIn)), note.paths) };
+    }),
+  );
+
+  return {
+    slug,
+    version: view.version,
+    status: view.status,
+    toml: view.toml,
+    spec,
+    overlaps: scopeOverlaps(spec.ticket).map(({ i, j, paths }) => ({ a: spec.ticket[i]!.ref, b: spec.ticket[j]!.ref, paths })),
+    warnings: validateSemantics(spec, view.toml).warnings,
+    changes: view.version === 1 ? null : specChanges(specAt(view.version - 1), spec),
+    versions: Array.from({ length: newest }, (_, index) => ({ version: index + 1, status: projects.specStatus(project, index + 1) })),
+    notes,
+  };
+}

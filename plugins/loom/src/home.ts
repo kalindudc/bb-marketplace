@@ -1,6 +1,6 @@
 // The Loom page's home across every project: totals, what needs the human, and one row per project.
 import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
-import { readyToLand } from "./format";
+import { plural, readyToLand } from "./format";
 import { throughputOf } from "./metrics";
 import type { ProjectOverview, Projects } from "./projects";
 import { IN_FLIGHT } from "./scheduler";
@@ -37,7 +37,6 @@ export interface HomeView {
 }
 
 const TREND_DAYS = 14;
-const ticketsLabel = (count: number) => `${count} ticket${count === 1 ? "" : "s"}`;
 const sum = (values: number[]) => values.reduce((total, value) => total + value, 0);
 
 interface Loaded {
@@ -54,6 +53,8 @@ export function homeView(a: { store: Store; projects: Projects; now: number }): 
   const live = loaded.filter((entry) => entry.project.state !== "archived");
   const active = live.flatMap((entry) => entry.threads).filter((thread) => thread.state === "active");
   const running = live.filter((entry) => entry.project.state === "running");
+  // A paused project's workers and reviewers keep running until they finish, so its slots count against them.
+  const staffed = live.filter((entry) => entry.project.state === "running" || entry.project.state === "paused");
   const doneByDay = Array.from({ length: TREND_DAYS }, (_, index) => sum(live.map((entry) => entry.row.throughput[index]!)));
   const tokens = sum(live.map((entry) => entry.row.tokens));
   const done = sum(live.map((entry) => entry.row.progress.done));
@@ -65,7 +66,7 @@ export function homeView(a: { store: Store; projects: Projects; now: number }): 
       workers: active.filter((thread) => thread.role === "worker").length,
       reviewers: active.filter((thread) => thread.role === "reviewer").length,
       planners: active.filter((thread) => thread.role === "planner").length,
-      slots: sum(running.map((entry) => specOf(store, entry.project).agents).map((agents) => agents.max_workers + agents.max_reviewers)),
+      slots: sum(staffed.map((entry) => specOf(store, entry.project).agents).map((agents) => agents.max_workers + agents.max_reviewers)),
       doneLast7: sum(doneByDay.slice(-7)),
       doneByDay,
       tokens,
@@ -103,12 +104,12 @@ function needsOf(store: Store, { project, row, tickets }: Loaded): NeedItem[] {
   const items = tickets.filter((ticket) => ticket.state === "blocked").map((ticket) => item("blocked", ticket.blocked_reason ?? "blocked", ticket.state_at, ticket.key));
   if (project.state === "draft") {
     const latest = store.latestSpecVersion(project.id)!;
-    items.push(item("approve", `has a draft spec v${latest.version} with ${ticketsLabel((JSON.parse(latest.spec_json) as Spec).ticket.length)}`, latest.created_at));
+    items.push(item("approve", `has a draft spec v${latest.version} with ${plural((JSON.parse(latest.spec_json) as Spec).ticket.length, "ticket")}`, latest.created_at));
   } else if (project.pending_version !== null) {
     items.push(item("pending", `spec v${project.pending_version} waits for your approval`, store.specVersion(project.id, project.pending_version)!.created_at));
   }
   if (readyToLand(row)) {
-    items.push(item("land", `finished all ${ticketsLabel(row.progress.done)}; land the integration branch`, Math.max(...tickets.map((ticket) => ticket.state_at))));
+    items.push(item("land", `finished all ${plural(row.progress.done, "ticket")}; land the integration branch`, Math.max(...tickets.map((ticket) => ticket.state_at))));
   }
   if (project.state === "paused" && project.system_reason !== null && project.system_reason !== PAUSE_NOW_REASON) items.push(item("paused", project.system_reason, project.updated_at));
   return items;

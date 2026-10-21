@@ -3,6 +3,7 @@ import { createCli, formatMetrics } from "../src/cli";
 import { formatDuration, readyToLand } from "../src/format";
 import type { ProjectMetrics } from "../src/metrics";
 import { TICKET_STATES } from "../src/states";
+import { START_FAILED } from "../src/workers";
 import { FakePort, makeHost, specToml, type Doc } from "./helpers";
 
 let host: ReturnType<typeof makeHost>;
@@ -35,6 +36,10 @@ describe("read commands", () => {
     expect(listed.stdout).toContain("draft");
     expect(listed.stdout).toContain("CSV export");
     expect(JSON.parse((await run(["list", "--json"])).stdout)).toMatchObject([{ slug: "csv", state: "draft", ticketCount: 0 }]);
+    expect(listed.stdout).toContain("  0 tickets  CSV export");
+    await propose((doc) => doc.ticket.pop());
+    await run(["approve", "csv"]);
+    expect((await run(["list"])).stdout).toContain("  1 ticket   CSV export");
   });
 
   it("show prints the state, the goal, the merge setup and the next step", async () => {
@@ -118,6 +123,22 @@ describe("human commands", () => {
     const out = await run(["approve", "csv", "--version", "2"]);
     expect(out.stdout).toContain("Applied spec v2");
     expect(humanEvents().at(-1)).toMatchObject({ action: "approve", slug: "csv", pending: true });
+  });
+
+  it("approve of a pending version says which tickets it queued again", async () => {
+    await approved();
+    const id = host.store.ticketByKey("CSV-1")!.id;
+    host.store.setTicketState(id, "working", "loom");
+    host.store.setTicketState(id, "blocked", "loom", { reason: START_FAILED });
+    const reviewed = host.store.ticketByKey("CSV-2")!.id;
+    for (const state of ["working", "checking", "review", "blocked"] as const) host.store.setTicketState(reviewed, state, "loom");
+    host.store.updateTicket(reviewed, { head_sha: "abc1234", review_round: 1, blocked_reason: "bb refused to start a reviewer: HTTP 400: Unsupported provider claude" });
+    await propose((doc) => (doc.project.name = "Orders CSV"));
+    const out = await run(["approve", "csv", "--version", "2"]);
+    expect(out.stdout).toContain("Queued again, because bb never started its worker: CSV-1.");
+    expect(out.stdout).toContain("Back in review, because bb refused to start its reviewer: CSV-2.");
+    expect(host.store.ticketByKey("CSV-1")!.state).toBe("queued");
+    expect(host.store.ticketByKey("CSV-2")!.state).toBe("review");
   });
 
   it("start, pause, resume and archive move the project", async () => {

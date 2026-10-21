@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useRealtime, useRpc, type PluginRpcClient } from "@get-bb/plugin-sdk/app";
 import type { ProjectSummary, rpcContract } from "../contract";
 import { TICKET_STATES } from "../states";
@@ -8,12 +8,14 @@ export type Rpc = PluginRpcClient<typeof rpcContract>;
 export const BUTTON = "inline-flex h-7 shrink-0 cursor-pointer items-center rounded-md border border-border-seam px-2.5 text-xs text-foreground hover:bg-state-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50";
 export const BUTTON_DANGER = `${BUTTON} text-destructive-text`;
 export const BUTTON_PRIMARY = "inline-flex h-7 shrink-0 cursor-pointer items-center rounded-md bg-primary px-2.5 text-xs text-primary-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50";
+export const BUTTON_CTA = "inline-flex h-9 shrink-0 cursor-pointer items-center rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50";
+const BUTTON_ARMED = "relative inline-flex shrink-0 cursor-pointer items-center overflow-hidden rounded-md bg-warning font-semibold text-black focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50";
 export const CARD = "rounded-md border border-border-seam p-3";
 export const FIELD = "w-full rounded-md border border-border-seam bg-transparent px-2 py-1.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 export const HEADING = "text-[10.5px] font-semibold uppercase tracking-wider text-subtle-foreground";
 
 export const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
-export const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+export { plural } from "../format";
 
 export const mergeLabel = (project: Pick<ProjectSummary, "strategy" | "branch">) => (project.strategy === "integration" ? `integration branch ${project.branch}` : "one pull request per ticket");
 export const countsLabel = (counts: ProjectSummary["ticketCounts"]) =>
@@ -47,27 +49,72 @@ export function StateBadge({ state }: { state: string }) {
   );
 }
 
-/** A two-step button: the first click asks "Confirm <label>" for five seconds, the second one acts. */
-export function ConfirmButton({ label, onConfirm, disabled = false, danger = false }: { label: string; onConfirm(): void; disabled?: boolean; danger?: boolean }) {
+/** A two-step button: the first click turns it amber with "Click again to …" and a bar that drains for five seconds, beside Cancel; the second click acts. */
+export function ConfirmButton({ label, confirmLabel, onConfirm, disabled = false, danger = false, primary = false }: { label: string; confirmLabel?: string; onConfirm(): void; disabled?: boolean; danger?: boolean; primary?: boolean }) {
   const [armed, setArmed] = useState(false);
+  const drain = useRef<HTMLSpanElement>(null);
   useEffect(() => {
     if (!armed) return;
     const timer = setTimeout(() => setArmed(false), 5000);
     return () => clearTimeout(timer);
   }, [armed]);
+  // Reading offsetWidth forces a layout at full width, so the transition runs from full to empty without keyframes.
+  useLayoutEffect(() => {
+    const bar = drain.current;
+    if (!armed || bar === null) return;
+    void bar.offsetWidth;
+    bar.style.transform = "scaleX(0)";
+  }, [armed]);
+  const idle = primary ? BUTTON_CTA : danger ? BUTTON_DANGER : BUTTON;
+  const size = primary ? "h-9 px-4 text-sm" : "h-7 px-2.5 text-xs";
   return (
-    <button
-      type="button"
-      disabled={disabled}
-      className={danger ? BUTTON_DANGER : BUTTON}
-      onClick={() => {
-        if (!armed) return setArmed(true);
-        setArmed(false);
-        onConfirm();
-      }}
-    >
-      {armed ? `Confirm ${label.toLowerCase()}` : label}
-    </button>
+    <>
+      <button
+        type="button"
+        disabled={disabled}
+        data-confirming={armed ? "" : undefined}
+        className={armed ? `${BUTTON_ARMED} ${size}` : idle}
+        onClick={() => {
+          if (!armed) return setArmed(true);
+          setArmed(false);
+          onConfirm();
+        }}
+      >
+        {armed ? (confirmLabel ?? `Click again to ${label.toLowerCase()}`) : label}
+        {armed && <span ref={drain} data-drain aria-hidden className="absolute bottom-0 left-0 h-[3px] w-full origin-left bg-black/40" style={{ transition: "transform 5s linear" }} />}
+      </button>
+      {armed && (
+        <button type="button" className={BUTTON} onClick={() => setArmed(false)}>
+          Cancel
+        </button>
+      )}
+    </>
+  );
+}
+
+/** A "⋯" button that shows the actions it holds below it; a mousedown anywhere else closes it. */
+export function MoreMenu({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: MouseEvent) => {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+  return (
+    <span ref={root} className="relative">
+      <button type="button" aria-label="More actions" aria-expanded={open} className={BUTTON} onClick={() => setOpen(!open)}>
+        ⋯
+      </button>
+      {open && (
+        <div data-more-menu className="absolute right-0 top-8 z-10 flex min-w-48 flex-col gap-1 rounded-md border border-border-seam bg-popover p-1 text-popover-foreground shadow-md">
+          {children}
+        </div>
+      )}
+    </span>
   );
 }
 

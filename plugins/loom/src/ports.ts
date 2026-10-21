@@ -9,6 +9,14 @@ export class SectionNameConflictError extends Error {
   }
 }
 
+/** bb refused to start a thread with a 4xx other than 408, 409 or 429, so the same request fails again. The message is bb's. */
+export class SpawnRefusedError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+    this.name = "SpawnRefusedError";
+  }
+}
+
 export interface BbPort {
   /** The host of the thread's environment, else the server's primary host. */
   threadHostId(threadId: string): Promise<string | null>;
@@ -43,6 +51,10 @@ export interface BbPort {
   projectKind(bbProjectId: string): Promise<"standard" | "personal" | null>;
   /** Starts a thread from the page's composer request, `kickoff` appended as agent-only text; returns its id. */
   spawnPlanner(args: { request: NewThreadRequest; title: string; kickoff: string }): Promise<string>;
+  /** The ids of the agent providers bb has, such as claude-code, codex and pi. */
+  providerIds(): Promise<string[]>;
+  /** The ids among `threadIds` with a pending interaction (a question or an approval); unknown threads are left out. */
+  waitingOnUser(threadIds: readonly string[]): Promise<string[]>;
 }
 
 export interface SpawnArgs {

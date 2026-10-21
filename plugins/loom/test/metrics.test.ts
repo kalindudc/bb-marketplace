@@ -97,6 +97,7 @@ const thread = (role: ThreadRow["role"], tokens: number | null, over: Partial<Th
   tokens,
   tokens_at: null,
   review_round: 0,
+  attempt: null,
   started_at: at(1),
   clock_at: null,
   ended_at: null,
@@ -485,6 +486,9 @@ describe("feedText", () => {
     expect(text(event(at(1), "review.verdict", 1, { review: 1, round: 1, verdict: "changes_requested" }, "reviewer"))).toBe("A reviewer asked for changes on CSV-1 in round 1.");
     expect(text(human(at(1), "requeue", { key: "CSV-1" }))).toBe("The human ran requeue on CSV-1.");
     expect(text(human(at(1), "pause", { now: true }))).toBe("The human ran pause.");
+    const note = { version: 1, paths: ["project.goal"], body: "Shorter." };
+    expect(text(human(at(1), "notes", { notes: [note, note] }))).toBe("The human sent 2 notes on the spec to the planner.");
+    expect(text(human(at(1), "notes", { notes: [note] }))).toBe("The human sent 1 note on the spec to the planner.");
     expect(text(projectMoved(at(1), "running", "paused"))).toBe("The project moved from running to paused.");
     expect(text(event(at(1), "project.state", null, { from: "running", to: "paused", reason: "The deadline 2026-01-01 has passed." }))).toBe("The project moved from running to paused: The deadline 2026-01-01 has passed.");
     expect(text(event(at(1), "spec.proposed", null, { version: 2, hash: "x" }, "thr_1"))).toBe("Spec version 2 was proposed.");

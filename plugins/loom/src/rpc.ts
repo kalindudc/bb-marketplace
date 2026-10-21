@@ -2,16 +2,20 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { humanAction } from "./cli";
 import { rpcContract, type AgentRow, type BoardCard, type ProjectView, type SpecSummary, type ThreadInfo, type TicketDetail } from "./contract";
-import type { Store, ThreadRow, TicketRow } from "./db/store";
+import type { ReviewRow, Store, ThreadRow, TicketRow } from "./db/store";
 import type { Engine } from "./engine";
 import { projectHealth } from "./health";
 import { homeView } from "./home";
+import { nextStepOf } from "./next-step";
 import type { Projects } from "./projects";
 import { projectFeed, projectMetrics } from "./reports";
-import { IN_FLIGHT, overlaps, readyTickets, toLite } from "./scheduler";
+import { blockedAtReview } from "./review";
+import { IN_FLIGHT, overlaps, readyTickets, toLite, type TicketLite } from "./scheduler";
 import { parseSpec, type Spec } from "./spec";
+import { specVersionView } from "./spec-view";
 import { HUMAN_ACTOR } from "./states";
-import { specOf } from "./workers";
+import { ticketTimeline } from "./timeline";
+import { blockedAtStart, specOf } from "./workers";
 
 export const CHANGED_CHANNEL = "loom:changed";
 const THROTTLE_MS = 300;
@@ -86,15 +90,20 @@ export function agentRows(threads: ThreadRow[], tickets: TicketRow[], spec: Spec
     });
 }
 
-/** One card per ticket. A queued ticket that is not ready says why, from a single readyTickets pass. */
-export function boardCards(tickets: TicketRow[], threads: ThreadRow[]): BoardCard[] {
-  const lites = tickets.map(toLite);
+/** A review's verdict in words, or why a pending one has none: its reviewer never started, or ended without one. */
+function reviewStatus(review: ReviewRow, reviewer: ThreadRow | null): string {
+  if (review.verdict !== "pending") return review.verdict.replace("_", " ");
+  if (reviewer?.state !== "ended") return "pending";
+  return reviewer.thread_id === null ? "reviewer could not start" : "ended without a verdict";
+}
+
+/** Whether a ticket is ready and, when it waits, on what. */
+function queueOf(lites: TicketLite[]): (lite: TicketLite) => { ready: boolean; waitingOn: string[] } {
   const ready = readyTickets(lites);
   const readyIds = new Set(ready.map((lite) => lite.id));
   const done = new Set(lites.filter((lite) => lite.state === "done").map((lite) => lite.key));
-  return tickets.map((ticket, index) => {
-    const lite = lites[index]!;
-    const waiting = ticket.state === "queued" && !readyIds.has(ticket.id);
+  return (lite) => {
+    const waiting = lite.state === "queued" && !readyIds.has(lite.id);
     const waitingOn = waiting
       ? [
           ...lite.deps.filter((key) => !done.has(key)),
@@ -102,6 +111,16 @@ export function boardCards(tickets: TicketRow[], threads: ThreadRow[]): BoardCar
           ...ready.filter((other) => (other.priority - lite.priority || other.seq - lite.seq) < 0 && overlaps(other.scope, lite.scope)).map((other) => other.key),
         ]
       : [];
+    return { ready: readyIds.has(lite.id), waitingOn: [...new Set(waitingOn)] };
+  };
+}
+
+/** One card per ticket. A queued ticket that is not ready says why, from a single readyTickets pass. */
+export function boardCards(tickets: TicketRow[], threads: ThreadRow[]): BoardCard[] {
+  const lites = tickets.map(toLite);
+  const queue = queueOf(lites);
+  return tickets.map((ticket, index) => {
+    const lite = lites[index]!;
     const live = threads.filter((row) => row.ticket_id === ticket.id && row.state === "active" && row.thread_id !== null).sort((a, b) => Number(b.role === "worker") - Number(a.role === "worker"));
     return {
       key: ticket.key,
@@ -112,13 +131,41 @@ export function boardCards(tickets: TicketRow[], threads: ThreadRow[]): BoardCar
       attempt: ticket.attempt,
       reviewRound: ticket.review_round,
       deps: lite.deps,
-      ready: readyIds.has(ticket.id),
-      waitingOn: [...new Set(waitingOn)],
+      ...queue(lite),
       threadId: live[0]?.thread_id ?? null,
       prUrl: ticket.pr_url,
       blockedReason: ticket.blocked_reason,
     };
   });
+}
+
+/** A draft's tickets as queued cards, keyed as approval will key them, so the Board shows what approving creates. */
+export function draftCards(spec: Spec, at: number): BoardCard[] {
+  const keyOf = new Map(spec.ticket.map((ticket, index) => [ticket.ref, `${spec.project.key}-${index + 1}`]));
+  const lites: TicketLite[] = spec.ticket.map((ticket, index) => ({
+    id: index + 1,
+    key: keyOf.get(ticket.ref)!,
+    state: "queued",
+    priority: ticket.priority,
+    seq: index + 1,
+    deps: ticket.depends_on.map((ref) => keyOf.get(ref)!),
+    scope: ticket.scope,
+  }));
+  const queue = queueOf(lites);
+  return lites.map((lite, index) => ({
+    key: lite.key,
+    title: spec.ticket[index]!.title,
+    state: "queued",
+    stateAt: at,
+    priority: lite.priority,
+    attempt: 0,
+    reviewRound: 0,
+    deps: lite.deps,
+    ...queue(lite),
+    threadId: null,
+    prUrl: null,
+    blockedReason: null,
+  }));
 }
 
 export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
@@ -133,18 +180,28 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
     const spec = projects.spec(slug);
     const metrics = projectMetrics(store, project, at);
     const approved = project.approved_version === null ? null : specOf(store, project);
+    const current = approved ?? (JSON.parse(store.latestSpecVersion(project.id)!.spec_json) as Spec);
+    const board = project.state === "draft" ? draftCards(current, at) : boardCards(tickets, threads);
     return {
       overview,
-      board: boardCards(tickets, threads),
+      board,
       metrics,
       spec: {
         toml: spec.toml,
         version: spec.version,
         summary: specSummary(spec.toml),
         pendingVersion: project.pending_version,
-        pendingToml: project.pending_version === null ? null : projects.spec(slug, project.pending_version).toml,
       },
       prUrl: project.pr_url,
+      next: nextStepOf({
+        overview,
+        board,
+        version: spec.version,
+        maxWorkers: current.agents.max_workers,
+        triage: current.agents.triage,
+        startFailed: tickets.filter((ticket) => blockedAtStart(store, ticket)).map((ticket) => ticket.key),
+        reviewRefused: tickets.filter(blockedAtReview).map((ticket) => ticket.key),
+      }),
       health: approved === null ? null : projectHealth({ tickets, threads, metrics, spec: approved, now: at }),
       agents: agentRows(threads, tickets, approved),
       now: at,
@@ -155,6 +212,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
     const view = projects.ticketView(key);
     const ticket = store.ticketByKey(key)!;
     const project = store.project(ticket.project_id)!;
+    const threads = store.threadsForTicket(ticket.id);
     return {
       slug: project.slug,
       projectState: project.state,
@@ -174,8 +232,17 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       verify: view.verify,
       scope: view.scope,
       posts: view.posts.map((post) => ({ id: post.id, parentId: post.parent_id, depth: post.depth, authorKind: post.author_kind, authorThreadId: post.author_thread_id, kind: post.kind, body: post.body, at: post.at })),
-      reviews: store.reviews(ticket.id).map((review) => ({ id: review.id, round: review.round, verdict: review.verdict, summary: review.summary, findings: JSON.parse(review.findings_json), at: review.at })),
-      threads: store.threadsForTicket(ticket.id).map((row) => ({ threadId: row.thread_id, role: row.role, state: row.state, startedAt: row.started_at, endedAt: row.ended_at, endReason: row.end_reason })),
+      reviews: store.reviews(ticket.id).map((review) => ({
+        id: review.id,
+        round: review.round,
+        verdict: review.verdict,
+        status: reviewStatus(review, threads.find((row) => row.id === review.thread_row_id) ?? null),
+        summary: review.summary,
+        findings: JSON.parse(review.findings_json),
+        at: review.at,
+      })),
+      threads: threads.map((row) => ({ threadId: row.thread_id, role: row.role, attempt: row.attempt, reviewRound: row.review_round, state: row.state, startedAt: row.started_at, endedAt: row.ended_at, endReason: row.end_reason })),
+      timeline: ticketTimeline({ posts: store.posts(ticket.id), threads, runs: store.runs(ticket.id) }),
     };
   };
 
@@ -191,14 +258,23 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
     metrics: ({ slug, days }) => projectMetrics(store, projects.require(slug), now(), days),
     project: ({ slug }) => projectView(slug),
     ticket: ({ key }) => ticketDetail(key),
+    runOutput: ({ id }) => {
+      const output = store.runOutput(id);
+      return output === null ? null : { output };
+    },
     feed: ({ slug, afterId }) => projectFeed(store, projects.require(slug), afterId),
     planning: () => projects.planningSessions(),
     planningSession: ({ threadId }) => projects.planningSession(threadId),
+    specVersion: ({ slug, version }) => specVersionView({ store, projects }, slug, version),
     startPlanning: ({ request, merge, reviewer }, ctx) => act(ctx, "plan", {}, () => projects.startPlanning({ request, merge, reviewer })),
+    sendNotes: async ({ slug, notes, includeOlder }, ctx) => {
+      await act(ctx, "notes", { slug, notes }, () => projects.sendNotes(slug, notes, includeOlder === true));
+      return specVersionView({ store, projects }, slug);
+    },
     threadInfo: ({ threadId }): ThreadInfo | null => {
       const row = store.threadByThreadId(threadId);
       const project = row === null ? null : store.project(row.project_id);
-      if (row === null || project === null) return null;
+      if (row === null || project === null) return store.planning(threadId)?.ended_at === null ? { role: "planner", slug: null, key: null, state: "planning" } : null;
       if (row.role === "planner") return { role: "planner", slug: project.slug, key: null, state: project.state };
       const ticket = row.ticket_id === null ? null : store.ticket(row.ticket_id);
       return ticket === null ? null : { role: row.role, slug: project.slug, key: ticket.key, state: ticket.state };
@@ -220,7 +296,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
         case "approve": {
           const project = projects.require(slug);
           const pending = project.state !== "draft" && project.pending_version !== null;
-          await act(ctx, "approve", { slug, pending }, () => projects.approve(slug, HUMAN_ACTOR, version));
+          await act(ctx, "approve", { slug, pending }, () => engine.approve(slug, HUMAN_ACTOR, version));
           break;
         }
         case "start":

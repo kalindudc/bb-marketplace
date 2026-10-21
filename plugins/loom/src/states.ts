@@ -55,7 +55,8 @@ const TICKET_MOVES: Record<TicketState, readonly TicketState[]> = {
   merging: ["done", "pr_open", "working", "queued"],
   pr_open: ["done"],
   done: [],
-  blocked: ["queued"],
+  // Back to review only when bb refused the reviewer: the work already passed its checks (Engine.approve).
+  blocked: ["queued", "review"],
   cancelled: [],
 };
 

@@ -18,6 +18,11 @@ export function formatDuration(ms: number): string {
   return rest > 0 ? `${Math.floor(seconds / size)}${unit} ${rest}${next![1]}` : `${Math.floor(seconds / size)}${unit}`;
 }
 
+/** "1 ticket", "2 tickets". */
+export const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+/** "its worker" for one ticket, "their workers" for more. */
+export const its = (count: number, noun: string) => (count === 1 ? `its ${noun}` : `their ${noun}s`);
+
 export function noTokenUsage(threads: number): string {
   return `${threads} ${threads === 1 ? "thread reports" : "threads report"} no token usage`;
 }
@@ -27,3 +32,6 @@ export function readyToLand(p: { state: string; strategy: string; ticketCounts: 
   if (p.strategy !== "integration" || (p.state !== "running" && p.state !== "paused") || (p.ticketCounts.done ?? 0) === 0) return false;
   return Object.entries(p.ticketCounts).every(([state, count]) => state === "done" || state === "cancelled" || !count);
 }
+
+export const END_LABELS: Record<string, string> = { abandoned: "idle twice", verdict: "gave a verdict", merged: "merged", superseded: "superseded by a newer round", gone: "thread gone" };
+export const endLabel = (reason: string | null) => (reason === null ? "ended" : (END_LABELS[reason] ?? reason));

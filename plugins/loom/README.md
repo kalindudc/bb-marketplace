@@ -23,7 +23,25 @@ agents get narrow tools for their role.
 A ticket that gets stuck is blocked. The planner hears about blocked tickets in a
 triage round and answers with its board tools (`loom_board`, `loom_ticket`,
 `loom_post`, `loom_requeue`, `loom_edit_ticket`, `loom_add_tickets` and
-`loom_cancel_ticket`), or the human answers on the ticket.
+`loom_cancel_ticket`), or the human answers on the ticket. The human's reply on a
+blocked ticket goes to the planner at once, as a message that names the ticket,
+so the planner can answer with the same board tools.
+
+When bb refuses to start a worker or a reviewer with a client error (an HTTP 4xx
+status other than 408, 409 and 429), the ticket blocks at once with bb's message
+as the reason, because the same request would fail again. Network errors, server
+errors and those three statuses are retried up to `budget.max_attempts` times.
+Approving a pending spec version, on the page or with `bb loom approve`, queues
+again every blocked ticket whose worker never started, resets its failure counts
+and tells the planner which tickets it requeued. A ticket blocked because bb
+refused its reviewer goes back to review instead, in a new review round for the
+same commit: its work already passed the checks, so no worker starts again.
+
+Each `provider` in `[agents.worker]` and `[agents.reviewer]` must be a bb
+provider id, such as `claude-code`, `codex` or `pi`. Loom checks them against
+the providers bb has when the spec is proposed and refuses an unknown one,
+naming the ids bb has. When bb's list cannot be read, the spec is accepted
+unchecked.
 
 `skills/loom/references/spec.md` lists every key of the spec with its default.
 
@@ -41,7 +59,7 @@ bb loom approve <slug> [--version N]         # approve a draft (creates the tick
 bb loom start <slug>                         # workers start by themselves
 bb loom pause <slug> [--now]                 # --now also stops the worker threads
 bb loom resume <slug>
-bb loom post CSV-1 "text" --reply-to <id>    # your reply; a worker that holds the ticket gets it
+bb loom post CSV-1 "text" --reply-to <id>    # your reply; a worker that holds the ticket gets it, or the planner when it is blocked
 bb loom block CSV-1 "reason"
 bb loom requeue CSV-1 --note "answer"        # a blocked ticket back to the queue
 bb loom cancel CSV-1 "reason"
@@ -68,19 +86,30 @@ project or planning conversation exists, shows a guide: the five steps from plan
 a ticket's life. "How Loom works" opens the same guide at any time.
 
 New project shows bb's own new-thread composer, with its project, worktree,
-branch, model and permission pickers. You can also settle the merge plan and name
-a reviewer model up front. Submitting starts an ordinary bb thread as the planner,
-with the `loom-plan` skill, and opens the conversation on the page: the planner's
-chat beside a card for the draft. When the planner proposes, the card fills in
-with the tickets, checks, reviewer and warnings, and has Approve and Start
-buttons. Conversations that have not proposed yet are listed on the home page
+branch, model and permission pickers; the permission picker starts on full. You
+can also settle the merge plan and name a reviewer model up front. Submitting
+starts an ordinary bb thread as the planner, with the `loom-plan` skill, and
+opens the conversation on the page: the planner's chat beside a card for the
+draft. When the planner proposes, the card fills in with the tickets, checks and
+reviewer, and the next-step bar above the planner's chat offers Approve and then
+Start. Conversations that have not proposed yet are listed on the home page
 until their thread is archived. "Don't work in a project" is refused, because
 Loom needs a git checkout. The composer starts on the project of the last
 planning conversation you started from it.
 
+Once the planner proposes, the conversation also shows the spec dashboard under
+the chat and the draft card, with the warnings and the raw spec, the same one as
+the project's Spec tab below. Every proposal before
+approval is kept as its own version, and older drafts read as superseded. Press
+"+ note" on any part of the spec to leave a note for the planner. Notes stay in
+your browser until you send them, and the planner gets them in one message that
+names each part, such as `ticket[csv-export].acceptance[1]`. A sent note then
+shows whether the planner's next version changed that part.
+
 The home page opens with five tiles across every project that is not archived:
 projects running, agents working against the worker and reviewer slots of the
-running projects, tickets done in the last 7 days, how many things need you, and
+running and paused projects (a paused project's workers and reviewers finish
+their turn), tickets done in the last 7 days, how many things need you, and
 the sampled tokens. Under them, "Needs you" lists each blocked ticket, draft to
 approve, pending spec version, finished integration project to land, and project
 that Loom paused by itself (a budget or a deadline), newest first, each with a
@@ -93,27 +122,37 @@ spec's budget and the time of its last event.
 A project with an approved spec shows a health strip above its tabs: progress,
 pace over the last 14 days and the days left at that pace, the token budget and
 the deadline (each only when the spec sets it), and worker and reviewer capacity
-with the ready tickets that wait for a slot. When every ticket of an integration
-project is done or cancelled, a line under its header says to land it, as does
-the next step in `bb loom show`. Open a project for these views:
+with the ready tickets that wait for a slot. Every project shows a next-step bar
+under its header: the stages from Plan to Land with the current one marked, one
+sentence on what happens next, and one button such as "Approve v1 · create 7
+tickets" or "Start project · 2 workers". The bar turns yellow when tickets are
+blocked or Loom paused the project, and names the reason and what Loom is doing
+about it. When every ticket of an integration project is done or cancelled, the
+bar offers Land, as does the next step in `bb loom show`. Open a project for
+these views:
 
-- Board: one lane per ticket state, with each card's age in its state, its attempt and review round, and a link to the thread working on it. Queued tickets are split into Ready and Waiting, and a waiting ticket names what it waits on.
+- Board: one lane per ticket state, with each card's age in its state, its attempt and review round, and a link to the thread working on it. Queued tickets are split into Ready and Waiting, and a waiting ticket names what it waits on. Before approval, the draft's tickets show as dashed cards in Ready and Waiting, with the keys approval will give them.
 - Agents: every planner, worker and reviewer thread. The workers and reviewers working now come first, with their ticket, configured model, running time, timeout, tokens and rate-limit retries, and a Thread button. The planner has its own section, on call for triage rounds, with its tokens and Thread button. Below them are the tokens by role, how threads ended (idle twice, gave a verdict, timed out and so on) and the ended threads. A thread whose provider reports no token usage shows "not reported", and the tokens by role say how many such threads there are.
-- Ticket: the reply thread, indented by reply depth, with a Reply box on every post and Requeue, Block and Cancel buttons.
+- Ticket: a timeline by stage (each worker attempt and submit, every check command with its exit code, duration and output up to 64 KB, each reviewer's verdict and every git step of the merge), every thread of the ticket with a button that opens it, ended ones included, and the reply thread, indented by reply depth, with a Reply box on every post and Requeue, Block and Cancel buttons.
 - Feed: the project's events, newest first.
 - Metrics: the numbers below, with charts, and a 7, 14 or 30 day window for throughput and cumulative flow.
-- Spec: the approved spec, any pending version and an Approve button.
-- Planner: the planner thread's chat, embedded in the page.
+- Spec: the spec as a dashboard, with a summary strip and four tabs. Tickets shows the dependency waves from top to bottom, each a wrapping grid of cards that say what they wait for; selecting a ticket lights up everything it waits for and everything it unblocks, says so in a sentence, and dims the rest until you click it again or press Show all. Files starts with Shared files, one row per path that two or more tickets may change, naming the tickets and whether they run in order or one at a time; then every path grouped by folder, with an "All files" or "Shared only" filter and the selected ticket's paths highlighted; then the protected paths. Checks & review and Project & limits show the rest of the spec. Under the tabs a wide card shows the selected ticket: its brief for the worker on the left, cut short with "Show the whole brief" when it is long, and its facts on the right (priority and wave, what it waits for and unblocks, the acceptance criteria, the paths it may change and its verify commands). The dashboard also has a version switcher that marks what each version changed, "Read the raw spec", "+ note" on every part with a tray beside the tabs that sends the notes to the planner, and Approve for a pending version.
+- Planner: the planner thread's chat, embedded in the page, with its open questions above it.
 
-Start, Pause, Resume, Land, Archive and the other buttons ask twice: the first
-click changes the label to "Confirm ..." for five seconds. Each button calls the
+Every button that changes something asks twice: the first click turns it amber
+with "Click again to ..." and a bar that drains over five seconds, beside a
+Cancel button. Archive sits in the ⋯ menu. Each button calls the
 same engine method as the matching command, and each is logged as a
 `human.action` event. The page updates within about a second of an event, without
 a reload. Addresses work after a reload: `/plugins/loom/loom/<slug>` opens a
 project, `/plugins/loom/loom/<slug>/<KEY>` a ticket and
 `/plugins/loom/loom/_plan/<threadId>` a planning conversation. A worker, reviewer or
 planner thread shows a small header chip such as `CSV-3 · review` that opens
-its ticket.
+its ticket; a planning conversation shows "Planning", which opens it on the page.
+The chip is hidden on phone-sized screens. A question the planner asks with
+Ask User Question appears above its chat on the page, where you can answer it.
+The Loom icon in the left navigation rail counts what needs you: the "Needs you"
+items and Loom threads waiting on a question or an approval.
 
 ## Metrics
 
@@ -149,6 +188,7 @@ whole project.
 
 - Only plugin code moves a ticket, runs checks, merges or decides that work is done. A thread's role comes from the plugin's own table, never from thread metadata.
 - Agents never merge or push. On the integration strategy nothing is pushed until the human runs `bb loom land`.
+- Workers and reviewers run in bb's full permission mode unless the spec sets `permission_mode`, because some providers, such as pi, accept no other mode. An approved spec keeps the mode it was approved with.
 - The human's controls (`approve`, `start`, `pause`, `resume`, `archive`, `post`, `block`, `requeue`, `cancel`, `land`) refuse Loom's own planner, worker and reviewer threads with the code `loom_human_only`.
 - The page's RPC changes state, and starts a planner thread, only when the call carries `confirm: true`, and it refuses calls from other plugins. bb cannot tell the page from an agent running `bb plugin rpc`, so the skill tells agents never to call Loom's RPC.
 
@@ -181,7 +221,10 @@ whole project.
   `{ slug: null }`.
 - `app.tsx` and `src/ui/` are the page. The app imports only types from
   `src/contract.ts`, so zod stays out of its bundle, and its charts are small SVG
-  components.
+  components. It also imports `src/spec-paths.ts` and `src/prompts.ts`, which
+  import only types, so the notes preview is the text the planner receives.
+  `src/spec-view.ts` serves one spec version to the page, parsed and compared
+  with the one before.
 
 ## Credit
 

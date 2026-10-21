@@ -2,7 +2,8 @@
 // and end any worker or reviewer thread in one place (endThread). Every state change goes through the store.
 import { randomBytes } from "node:crypto";
 import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
-import type { EnvironmentInfo, HostPort } from "./ports";
+import { plural } from "./format";
+import { SpawnRefusedError, type EnvironmentInfo, type HostPort } from "./ports";
 import { latestChangesRequested, nudgeText, workerBrief } from "./prompts";
 import { LoomError, type Ctx } from "./projects";
 import { idleAction, spawnable, toLite } from "./scheduler";
@@ -46,7 +47,7 @@ export function ticketMoveFor(reason: EndReason, ticket: TicketRow, spec: Spec):
       const failures = ticket.failures + 1;
       if (failures < spec.budget.max_attempts) return { to: "queued", patch: { ...released, failures } };
       const last = { abandoned: "it went idle twice without submitting", timeout: "it ran past the ticket timeout", failed: "its turns kept failing" }[reason];
-      return { to: "blocked", patch: { ...released, failures, blocked_reason: `The worker failed ${failures} times; the last time ${last}.` } };
+      return { to: "blocked", patch: { ...released, failures, blocked_reason: `The worker failed ${plural(failures, "time")}; the last time ${last}.` } };
     }
     case "gone":
       return live ? { to: "queued", patch: released } : null;
@@ -111,9 +112,9 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
     if (fresh === null) return null;
     const tickets = store.tickets(project.id).map(toLite);
     if (!spawnable(specOf(store, fresh).agents.max_workers, tickets).some((lite) => lite.id === ticket.id)) return null;
-    const created = store.addThread({ project_id: project.id, ticket_id: ticket.id, role: "worker", state: "spawning", spawn_token: token });
-    store.updateThread(created.id, { clock_at: ctx.now() });
     const attempt = current.attempt + 1;
+    const created = store.addThread({ project_id: project.id, ticket_id: ticket.id, role: "worker", state: "spawning", spawn_token: token });
+    store.updateThread(created.id, { clock_at: ctx.now(), attempt });
     store.setTicketState(ticket.id, "working", LOOM_ACTOR, { attempt });
     store.updateTicket(ticket.id, { attempt, ...released });
     store.addPost({ project_id: project.id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "claim", body: `Worker attempt ${attempt} is starting.` });
@@ -157,7 +158,7 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
       spawned = await spawn(spec.project.base);
     }
   } catch (error) {
-    await failSpawn(ctx, row, errText(error));
+    await failSpawn(ctx, row, errText(error), { refused: error instanceof SpawnRefusedError });
     return;
   }
 
@@ -181,9 +182,9 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
 
 /**
  * A worker that never started. The thread, when there is one, is archived. A ticket that was resumed from its branch
- * loses the branch and counts no failure, so the next try starts from the fresh base.
+ * loses the branch and counts no failure, so the next try starts from the fresh base. A ticket bb refused blocks at once.
  */
-export async function failSpawn(ctx: EngineCtx, row: ThreadRow, error: string, opts: { archive?: boolean } = {}): Promise<void> {
+export async function failSpawn(ctx: EngineCtx, row: ThreadRow, error: string, opts: { archive?: boolean; refused?: boolean } = {}): Promise<void> {
   const { store } = ctx;
   if (opts.archive === true && row.thread_id !== null) await ctx.bb.archive(row.thread_id).catch((e) => ctx.bb.log("warn", `Could not archive ${row.thread_id}: ${errText(e)}`));
   store.tx(() => {
@@ -197,11 +198,27 @@ export async function failSpawn(ctx: EngineCtx, row: ThreadRow, error: string, o
       return;
     }
     const failures = ticket.failures + 1;
+    if (opts.refused === true) {
+      applyMove(ctx, ticket, { to: "blocked", patch: { ...released, failures, blocked_reason: `bb refused to start a worker: ${error}` } }, LOOM_ACTOR, { reason: START_REFUSED });
+      return;
+    }
     const blocked = failures >= specOf(store, project).budget.max_attempts;
-    const move: TicketMove = blocked ? { to: "blocked", patch: { ...released, failures, blocked_reason: `could not start a worker ${failures} times` } } : { to: "queued", patch: { ...released, failures } };
-    applyMove(ctx, ticket, move, LOOM_ACTOR, { reason: "the worker could not start" });
+    const move: TicketMove = blocked ? { to: "blocked", patch: { ...released, failures, blocked_reason: `could not start a worker ${plural(failures, "time")}` } } : { to: "queued", patch: { ...released, failures } };
+    applyMove(ctx, ticket, move, LOOM_ACTOR, { reason: START_FAILED });
   });
   store.changed(row.project_id);
+}
+
+export const START_FAILED = "the worker could not start";
+export const START_REFUSED = "bb refused to start the worker";
+
+/** A blocked ticket whose last move to blocked came from a worker that never started. */
+export function blockedAtStart(store: Store, ticket: TicketRow): boolean {
+  if (ticket.state !== "blocked") return false;
+  const last = store.ticketEvents(ticket.id, ["ticket.state"]).at(-1);
+  if (last === undefined) return false;
+  const data = JSON.parse(last.data_json) as { to?: string; reason?: string };
+  return data.to === "blocked" && (data.reason === START_FAILED || data.reason === START_REFUSED);
 }
 
 // ---------------------------------------------------------------- branch and WIP commit

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { dependencyCycle, globsOverlap, numberErrors, parseSpec, specHash } from "../src/spec";
+import { dependencyCycle, globsOverlap, numberErrors, parseSpec, scopeOverlaps, specHash } from "../src/spec";
 import { specToml, type Doc } from "./helpers";
 
 function run(edit?: (doc: Doc) => void) {
@@ -18,7 +18,7 @@ describe("parseSpec", () => {
     expect(spec.merge).toEqual({ strategy: "integration", branch: "loom/csv", remote: "origin", draft: true });
     expect(spec.checks).toEqual({ commands: ["npm test"], after_merge: [], timeout_minutes: 15 });
     expect(spec.scope).toEqual({ protected: [], enforce: "warn" });
-    expect(spec.agents).toMatchObject({ max_workers: 2, max_reviewers: 2, ticket_timeout_minutes: 120, triage: true, worker: { permission_mode: "auto" }, reviewer: { permission_mode: "auto" } });
+    expect(spec.agents).toMatchObject({ max_workers: 2, max_reviewers: 2, ticket_timeout_minutes: 120, triage: true, worker: { permission_mode: "full" }, reviewer: { permission_mode: "full" } });
     expect(spec.review).toEqual({ approvals: 1, max_rounds: 3, rubric: [] });
     expect(spec.budget).toEqual({ max_attempts: 3, max_check_failures: 5 });
     expect(spec.ticket[0]).toMatchObject({ verify: [], depends_on: [], priority: 2 });
@@ -265,6 +265,15 @@ describe("warnings", () => {
     expect(run((doc) => delete doc.agents).warnings).toHaveLength(1);
   });
 
+  it("counts the overlap warnings it leaves out, in the singular for one", () => {
+    const result = run((doc) => {
+      doc.ticket = Array.from({ length: 6 }, (_, index) => ({ ref: `t${index}`, title: `T${index}`, body: "Do it.", acceptance: ["WHEN it runs THE SYSTEM SHALL work"], scope: index === 5 ? ["src/b/**"] : ["src/a/**"] }));
+      doc.ticket[0].scope = ["src/a/**", "src/b/**"];
+    });
+    expect(result.warnings).toHaveLength(11);
+    expect(result.warnings.at(-1)).toBe("… and 1 more pair of tickets with overlapping scope.");
+  });
+
   it("warns about overlapping scopes with no dependency path, and not when one exists", () => {
     const overlapping = run((doc) => {
       doc.ticket[1].scope = ["src/model/export.ts"];
@@ -272,7 +281,10 @@ describe("warnings", () => {
     });
     expect(overlapping.ok).toBe(true);
     expect(overlapping.warnings).toEqual(["ticket[0] and ticket[1] have overlapping scope and no dependency between them, so they will run one at a time. Add depends_on if the order matters, or narrow their scope."]);
-    expect(run((doc) => (doc.ticket[1].scope = ["src/model/export.ts"])).warnings).toEqual([]);
+    expect(scopeOverlaps(overlapping.spec!.ticket)).toEqual([{ i: 0, j: 1, paths: ["src/model/**", "src/model/export.ts"] }]);
+    const ordered = run((doc) => (doc.ticket[1].scope = ["src/model/export.ts"]));
+    expect(ordered.warnings).toEqual([]);
+    expect(scopeOverlaps(ordered.spec!.ticket)).toEqual([]);
   });
 
   it("follows depends_on through intermediate tickets", () => {

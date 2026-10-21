@@ -4,6 +4,10 @@ import type { EventRow } from "./db/store";
 const WHO: Record<string, string> = { human: "The human", planner: "The planner", worker: "A worker", reviewer: "A reviewer", loom: "Loom" };
 const text = (value: unknown) => (typeof value === "string" ? value : null);
 const num = (value: unknown) => (typeof value === "number" ? value : null);
+const notesLabel = (notes: unknown) => {
+  const count = Array.isArray(notes) ? notes.length : 0;
+  return count === 1 ? "1 note" : `${count} notes`;
+};
 
 function moveReason(from: string, to: string, data: Record<string, unknown>): string | null {
   const reason = text(data.reason);
@@ -52,6 +56,7 @@ export function feedText(event: EventRow, keys: Map<number, string>): string {
     case "turn.retry":
       return `${key}'s worker hit a rate limit; retry ${data.attempt} is scheduled.`;
     case "human.action": {
+      if (data.action === "notes") return `The human sent ${notesLabel(data.notes)} on the spec to the planner.`;
       const target = text(data.key);
       return `The human ran ${data.action}${target === null ? "" : ` on ${target}`}.`;
     }

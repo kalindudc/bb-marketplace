@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BoardCard, FeedRow, HomeView, PlanningSession, ProjectSummary, ProjectView, TicketDetail, ThreadInfo } from "../src/contract";
 import type { ProjectMetrics } from "../src/metrics";
+import type { SpecVersionView } from "../src/spec-view";
 import type { BbPluginApi, NewThreadRequest } from "@get-bb/plugin-sdk";
+import { notesMessage } from "../src/prompts";
 import { agentRows, boardCards, registerRpc, specSummary, watchChanges } from "../src/rpc";
-import { specOf } from "../src/workers";
+import { START_FAILED, specOf } from "../src/workers";
 import { FakePort, makeCtx, makeHost, seedProject, specToml, startWorker, type Doc } from "./helpers";
 
 let host: ReturnType<typeof makeHost>;
@@ -67,7 +69,8 @@ describe("reads", () => {
     expect(view.board[0]).toMatchObject({ title: "Order rows", priority: 2, attempt: 0, reviewRound: 0, deps: [], threadId: null, prUrl: null });
     expect(view.metrics.counts.queued).toBe(2);
     expect(view.metrics.cumulativeFlow).toHaveLength(14);
-    expect(view.spec).toMatchObject({ version: 1, pendingVersion: null, pendingToml: null });
+    expect(view.spec).toMatchObject({ version: 1, pendingVersion: null });
+    expect(view.spec).not.toHaveProperty("pendingToml");
     expect(view.spec.toml).toContain('slug = "csv"');
     expect(view.prUrl).toBeNull();
     expect(typeof view.now).toBe("number");
@@ -79,7 +82,6 @@ describe("reads", () => {
     await propose((doc) => (doc.project.goal = "Let people export their orders as a CSV file, with filters."));
     const { spec } = await call<ProjectView>("project", { slug: "csv" });
     expect(spec).toMatchObject({ version: 1, pendingVersion: 2 });
-    expect(spec.pendingToml).toContain("with filters");
   });
 
   it("project shows the draft spec of a project that is not approved yet", async () => {
@@ -115,6 +117,50 @@ describe("reads", () => {
     expect(third.board.find((card) => card.key === "CSV-5")).toMatchObject({ ready: false, waitingOn: ["CSV-4"] });
   });
 
+  it("a draft's board holds its tickets with the keys approval will give them, in the same queue order", async () => {
+    await propose(board);
+    const view = await call<ProjectView>("project", { slug: "csv" });
+    expect(view.board.map((entry) => [entry.key, entry.state, entry.title])).toEqual([
+      ["CSV-1", "queued", "Model"],
+      ["CSV-2", "queued", "Export"],
+      ["CSV-3", "queued", "Model docs"],
+      ["CSV-4", "queued", "Docs"],
+      ["CSV-5", "queued", "Guide"],
+    ]);
+    expect(Object.fromEntries(view.board.map((entry) => [entry.key, { ready: entry.ready, waitingOn: entry.waitingOn }]))).toEqual({
+      "CSV-1": { ready: true, waitingOn: [] },
+      "CSV-2": { ready: false, waitingOn: ["CSV-1"] },
+      "CSV-3": { ready: false, waitingOn: ["CSV-1"] },
+      "CSV-4": { ready: true, waitingOn: [] },
+      "CSV-5": { ready: false, waitingOn: ["CSV-4"] },
+    });
+    expect(view.board[1]).toMatchObject({ deps: ["CSV-1"], attempt: 0, threadId: null, prUrl: null, blockedReason: null });
+  });
+
+  it("project carries the next step: approve for a draft, start for a ready project", async () => {
+    await propose();
+    const draft = await call<ProjectView>("project", { slug: "csv" });
+    expect(draft.next).toMatchObject({ stage: 1, action: { control: "approve", version: 1, label: "Approve v1 · create 2 tickets" } });
+    await host.projects.approve("csv", "human");
+    const ready = await call<ProjectView>("project", { slug: "csv" });
+    expect(ready.next).toMatchObject({ stage: 3 });
+    expect(ready.next!.action).toEqual({ control: "start", label: "Start project · 1 worker", confirm: "Click again to start 1 worker" });
+  });
+
+  it("a revised draft's next step, board and approval all take the newest version, and the older one is refused", async () => {
+    await propose();
+    await propose(board);
+    const draft = await call<ProjectView>("project", { slug: "csv" });
+    expect(draft.spec.version).toBe(2);
+    expect(draft.next!.action).toMatchObject({ control: "approve", version: 2, label: "Approve v2 · create 5 tickets" });
+    expect(draft.board.map((entry) => entry.title)).toEqual(["Model", "Export", "Model docs", "Docs", "Guide"]);
+    await expect(call("control", { slug: "csv", action: "approve", version: 1, confirm: true })).rejects.toThrow("Spec version 1 is not the one waiting for approval (version 2)");
+    const ready = await call<ProjectView>("control", { slug: "csv", action: "approve", version: draft.next!.action!.version, confirm: true });
+    expect(ready.overview).toMatchObject({ state: "ready", approvedVersion: 2 });
+    expect(ready.board.map((entry) => entry.key)).toEqual(["CSV-1", "CSV-2", "CSV-3", "CSV-4", "CSV-5"]);
+    expect(host.projects.spec("csv", 1).status).toBe("superseded");
+  });
+
   it("every queued ticket that is not ready has a reason", async () => {
     await approved(board);
     host.store.setTicketState(ticketId("CSV-1"), "working", "loom");
@@ -144,8 +190,53 @@ describe("reads", () => {
       ["reply", 2, reply.id],
       ["claim", 0, null],
     ]);
-    expect(ticket.threads).toEqual([expect.objectContaining({ threadId: "thr_w1", role: "worker", state: "active" })]);
+    expect(ticket.threads).toEqual([expect.objectContaining({ threadId: "thr_w1", role: "worker", attempt: 1, reviewRound: 0, state: "active" })]);
+    expect(ticket.timeline[0]).toMatchObject({ kind: "worker", title: "Worker, attempt 1", threadId: "thr_w1" });
     await expect(call("ticket", { key: "CSV-99" })).rejects.toThrow(/No ticket/);
+  });
+
+  it("ticket says how each review stands: its verdict, a reviewer that could not start, one that ended without a verdict, or pending", async () => {
+    await running();
+    const ticket = host.store.ticketByKey("CSV-1")!;
+    const reviewer = (state: "active" | "ended", threadId: string | null, endReason: string | null) => {
+      const row = host.store.addThread({ project_id: ticket.project_id, ticket_id: ticket.id, role: "reviewer", state, thread_id: threadId });
+      if (state === "ended") host.store.updateThread(row.id, { ended_at: row.started_at, end_reason: endReason });
+      return host.store.addReview({ ticket_id: ticket.id, round: 1, thread_row_id: row.id });
+    };
+    reviewer("ended", null, "failed");
+    reviewer("ended", "thr_r2", "abandoned");
+    reviewer("active", "thr_r3", null);
+    host.store.setVerdict(reviewer("ended", "thr_r4", "verdict").id, "changes_requested", "Off by one", []);
+    const detail = await call<TicketDetail>("ticket", { key: "CSV-1" });
+    expect(detail.reviews.map((review) => [review.verdict, review.status])).toEqual([
+      ["pending", "reviewer could not start"],
+      ["pending", "ended without a verdict"],
+      ["pending", "pending"],
+      ["changes_requested", "changes requested"],
+    ]);
+  });
+
+  it("ticket lists a recorded run on its timeline with the size of its output", async () => {
+    await running();
+    const ticket = host.store.ticketByKey("CSV-1")!;
+    const id = host.store.startRun({ project_id: ticket.project_id, ticket_id: ticket.id, stage: "check", kind: "command", label: "npm test" });
+    host.store.finishRun(id, { ok: false, output: "1 failing", exitCode: 1, durationMs: 300 });
+    const detail = await call<TicketDetail>("ticket", { key: "CSV-1" });
+    expect(detail.timeline.find((entry) => entry.kind === "run")).toMatchObject({
+      stage: "checks",
+      title: "npm test",
+      ok: false,
+      run: { id, kind: "command", exitCode: 1, timedOut: false, durationMs: 300, running: false, outputChars: 9 },
+    });
+  });
+
+  it("runOutput returns a run's output, and null for an unknown id", async () => {
+    await running();
+    const ticket = host.store.ticketByKey("CSV-1")!;
+    const id = host.store.startRun({ project_id: ticket.project_id, ticket_id: ticket.id, stage: "merge", kind: "git", label: "git merge" });
+    host.store.finishRun(id, { ok: true, output: "Merged as m1; the branch was at base000." });
+    expect(await call("runOutput", { id })).toEqual({ output: "Merged as m1; the branch was at base000." });
+    expect(await call("runOutput", { id: 999 })).toBeNull();
   });
 
   it("feed returns the newest events oldest first, and only newer ones after an id", async () => {
@@ -297,6 +388,22 @@ describe("changes", () => {
     expect(humanEvents()).toEqual([{ actor: "human", action: "approve", slug: "csv", pending: true }]);
   });
 
+  it("control approves a pending version through the engine, which requeues a ticket whose worker never started", async () => {
+    await approved();
+    host.store.setTicketState(ticketId("CSV-1"), "working", "loom");
+    host.store.setTicketState(ticketId("CSV-1"), "blocked", "loom", { reason: START_FAILED });
+    for (const state of ["working", "checking", "review", "blocked"] as const) host.store.setTicketState(ticketId("CSV-2"), state, "loom");
+    host.store.updateTicket(ticketId("CSV-2"), { head_sha: "abc1234", review_round: 1, blocked_reason: "bb refused to start a reviewer: HTTP 400: Unsupported provider claude" });
+    await propose((doc) => (doc.project.goal = "Let people export their orders as a CSV file, with filters."));
+    const pending = await call<ProjectView>("project", { slug: "csv" });
+    expect(pending.next?.action).toMatchObject({ control: "approve", version: 2, label: "Approve v2 · requeue 2 tickets" });
+    expect(pending.next?.text).toContain("sends CSV-2 back to review, because bb refused to start its reviewer");
+    const view = await call<ProjectView>("control", { slug: "csv", action: "approve", version: 2, confirm: true });
+    expect(view.board.find((card) => card.key === "CSV-1")?.state).toBe("queued");
+    expect(view.board.find((card) => card.key === "CSV-2")).toMatchObject({ state: "review", reviewRound: 2 });
+    expect(humanEvents().at(-1)).toMatchObject({ action: "approve", pending: true });
+  });
+
   it("control refuses what the engine refuses, with its message and no event", async () => {
     await approved();
     await expect(call("control", { slug: "csv", action: "pause", confirm: true })).rejects.toThrow(/needs a running project/);
@@ -373,6 +480,17 @@ describe("planning", () => {
     expect(host.store.openPlanning()).toEqual([]);
   });
 
+  it("threadInfo describes an open planning conversation until it proposes, and is null once one without a spec ends", async () => {
+    const { threadId } = await host.projects.startPlanning({ request: request(), merge: "integration", reviewer: "" });
+    expect(await call<ThreadInfo | null>("threadInfo", { threadId })).toEqual({ role: "planner", slug: null, key: null, state: "planning" });
+    await host.projects.propose({ toml: specToml(), threadId, bbProjectId: "proj_1", hostId: "host_env" });
+    expect(await call<ThreadInfo | null>("threadInfo", { threadId })).toEqual({ role: "planner", slug: "csv", key: null, state: "draft" });
+
+    const other = await host.projects.startPlanning({ request: request(), merge: "integration", reviewer: "" });
+    host.projects.planningGone(other.threadId, "archived");
+    expect(await call("threadInfo", { threadId: other.threadId })).toBeNull();
+  });
+
   it("startPlanning passes the service's refusal on with its message", async () => {
     await expect(start({ request: request({ input: [{ type: "text", text: "  ", mentions: [] }] }) })).rejects.toThrow(/Describe what should exist/);
   });
@@ -397,6 +515,96 @@ describe("planning", () => {
     const broken = specSummary("[project");
     expect(broken).toMatchObject({ tickets: [], checks: [], reviewer: null });
     expect(broken.warnings[0]).toMatch(/^TOML: /);
+  });
+});
+
+describe("spec versions", () => {
+  const revise = () =>
+    propose((doc) => {
+      doc.project.goal = "Let people export their orders and customers as CSV files.";
+      doc.ticket[1].acceptance[1] = "WHEN there are no orders THE SYSTEM SHALL return an empty file";
+    });
+
+  it("specVersion returns the newest version with its parsed spec, its status, every version and what it changed", async () => {
+    await propose();
+    await revise();
+    const view = await call<SpecVersionView>("specVersion", { slug: "csv" });
+    expect(view).toMatchObject({ slug: "csv", version: 2, status: "draft", warnings: [], overlaps: [], notes: [] });
+    expect(view.versions).toEqual([
+      { version: 1, status: "superseded" },
+      { version: 2, status: "draft" },
+    ]);
+    expect(view.changes).toEqual({ changed: ["project.goal", "ticket[csv-export].acceptance[1]"], removed: [] });
+    expect(view.spec.project.goal).toBe("Let people export their orders and customers as CSV files.");
+    expect(view.toml).toContain("orders and customers");
+
+    const first = await call<SpecVersionView>("specVersion", { slug: "csv", version: 1 });
+    expect(first).toMatchObject({ version: 1, status: "superseded", changes: null });
+    await expect(call("specVersion", { slug: "csv", version: 9 })).rejects.toThrow(/no spec version 9/);
+  });
+
+  it("specVersion names the overlapping tickets by ref, with the view's warnings", async () => {
+    await propose(board);
+    const view = await call<SpecVersionView>("specVersion", { slug: "csv" });
+    expect(view.overlaps).toEqual([
+      { a: "model", b: "model-docs", paths: ["src/model/**", "src/model/readme.md"] },
+      { a: "docs", b: "guide", paths: ["docs/**", "docs/guide/**"] },
+    ]);
+    expect(view.warnings).toHaveLength(2);
+  });
+
+  it("specVersion reads the sent notes and whether the planner's next version changed their part", async () => {
+    await propose();
+    const project = host.store.projectBySlug("csv")!;
+    const notes = [
+      { version: 1, paths: ["project.goal"], body: "Say who exports." },
+      { version: 1, paths: ["ticket[csv-model].title"], body: "Name the rows." },
+    ];
+    host.store.event(project.id, null, "human.action", "human", { action: "notes", slug: "csv", notes });
+    await revise();
+    const view = await call<SpecVersionView>("specVersion", { slug: "csv" });
+    expect(view.notes).toEqual([
+      { ...notes[0], sentAt: expect.any(Number), answeredIn: 2, changed: true },
+      { ...notes[1], sentAt: expect.any(Number), answeredIn: 2, changed: false },
+    ]);
+  });
+});
+
+describe("sendNotes", () => {
+  const notes = [{ version: 1, paths: ["ticket[csv-export].acceptance[1]"], body: "Say what the header row holds." }];
+  const send = (input: Record<string, unknown> = {}, options?: Parameters<typeof call>[2]) => call<SpecVersionView>("sendNotes", { slug: "csv", notes, confirm: true, ...input }, options);
+
+  it("sends the notes to the planner as one message and logs them as a human action", async () => {
+    await propose();
+    const view = await send();
+    expect(view.notes[0]).toMatchObject({ version: 1, answeredIn: null, changed: false });
+    const message = notesMessage({ slug: "csv", version: 1, status: "draft", notes });
+    expect(fake.sent("thr_plan")).toEqual([message]);
+    expect(message.startsWith("[loom] The human reviewed spec v1 (draft) of csv on the Loom page and left 1 note.")).toBe(true);
+    expect(message).toContain("1. ticket[csv-export].acceptance[1]\n   Say what the header row holds.");
+    expect(humanEvents().at(-1)).toEqual({ actor: "human", action: "notes", slug: "csv", notes });
+  });
+
+  it("asks to confirm notes written on an older version, and marks them when sent", async () => {
+    await propose();
+    await propose((doc) => (doc.project.goal = "Let people export their orders and customers as CSV files."));
+    await expect(send()).rejects.toThrow("1 note was written on v1, and v2 is newer. Read v2, then send it again or confirm.");
+    expect(fake.sent("thr_plan")).toEqual([]);
+    await send({ includeOlder: true });
+    expect(fake.sent("thr_plan")[0]).toContain("[loom] The human reviewed spec v2 (draft) of csv");
+    expect(fake.sent("thr_plan")[0]).toContain("1. ticket[csv-export].acceptance[1] (written on v1)\n");
+  });
+
+  it("refuses a missing version, a missing confirm, another plugin and a planner that ended, and sends nothing", async () => {
+    await propose();
+    await expect(send({ notes: [{ ...notes[0], version: 9 }] })).rejects.toThrow("Project csv has no spec version 9.");
+    await expect(send({ confirm: undefined })).rejects.toThrow();
+    await expect(send({ notes: [{ ...notes[0], body: "   " }] })).rejects.toThrow();
+    await expect(send({}, { experimental_caller: { kind: "plugin", pluginId: "other" } })).rejects.toThrow(/human/);
+    host.projects.threadGone("thr_plan", "archived");
+    await expect(send()).rejects.toThrow("Project csv has no planner thread to send notes to.");
+    expect(fake.sent("thr_plan")).toEqual([]);
+    expect(humanEvents()).toEqual([]);
   });
 });
 

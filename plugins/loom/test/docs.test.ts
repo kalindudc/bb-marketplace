@@ -58,6 +58,49 @@ describe("the plugin's own documents", () => {
     for (const field of ["timeInState", "checksByCommand", "scopeFlags", "findings", "tokensByTicket", "reliability", "--days"]) expect(skill, field).toContain(field);
   });
 
+  it("README and the loom skill describe the Planning chip, questions on the page and the rail count", () => {
+    for (const path of ["README.md", "skills/loom/SKILL.md"]) {
+      const text = read(path);
+      for (const phrase of ["Planning", "Ask User Question", "rail"]) expect(text, `${path}: ${phrase}`).toContain(phrase);
+    }
+    expect(read("PLUGIN_OVERVIEW.md")).toContain("Ask User Question");
+  });
+
+  it("README and the loom skill describe the refusal and approval requeue, and the next-step bar", () => {
+    for (const path of ["README.md", "skills/loom/SKILL.md"]) {
+      const text = read(path);
+      for (const phrase of ["never started", "next-step bar"]) expect(text, `${path}: ${phrase}`).toContain(phrase);
+    }
+    expect(read("README.md")).toContain("Click again to");
+  });
+
+  it("README and the loom skill say a reply on a blocked ticket reaches the planner, providers are checked, and approval sends a refused reviewer's ticket back to review", () => {
+    for (const path of ["README.md", "skills/loom/SKILL.md"]) {
+      const text = read(path).replace(/\s+/g, " ");
+      for (const phrase of ["reply on a blocked ticket", "back to review", "bb provider id"]) expect(text, `${path}: ${phrase}`).toContain(phrase);
+    }
+    for (const path of ["skills/loom/references/spec.md", "skills/loom-plan/SKILL.md"]) expect(read(path), path).toContain("claude-code");
+  });
+
+  it("README and the skills describe the spec dashboard, its versions and notes for the planner", () => {
+    const readme = read("README.md");
+    for (const phrase of ["Files", "Shared files", "+ note", "superseded"]) expect(readme, phrase).toContain(phrase);
+    const skill = read("skills/loom/SKILL.md");
+    for (const phrase of ["Files", "Shared files", "superseded"]) expect(skill, phrase).toContain(phrase);
+    for (const text of [readme, skill]) expect(text).not.toContain("Scope map");
+    expect(read("skills/loom/references/spec.md")).toContain("older drafts are kept as superseded");
+    expect(read("skills/loom-plan/SKILL.md")).toContain("[loom] The human reviewed spec");
+    expect(read("PLUGIN_OVERVIEW.md")).toContain("+ note");
+  });
+
+  it("README and the loom skill describe the ticket's timeline", () => {
+    for (const path of ["README.md", "skills/loom/SKILL.md"]) expect(read(path), path).toContain("timeline");
+  });
+
+  it("the README's safety rules name the default permission mode", () => {
+    expect(read("README.md")).toMatch(/## Safety[\s\S]*full permission mode[\s\S]*## How it works/);
+  });
+
   it("the skill names every command, says what the page and the metrics are, and forbids calling Loom's RPC", () => {
     const skill = read("skills/loom/SKILL.md");
     for (const command of commands) expect(skill, command).toContain(`bb loom ${command}`);

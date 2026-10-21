@@ -4,8 +4,9 @@ import type { NewThreadRequest } from "@get-bb/plugin-sdk";
 import type { PlanningRow, PostRow, ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { StoreError } from "./db/store";
 import { SectionNameConflictError, type BbPort } from "./ports";
-import { planningKickoff, planningTitle } from "./prompts";
+import { notesMessage, planningKickoff, planningTitle } from "./prompts";
 import { numberErrors, parseSpec, specHash, type Spec } from "./spec";
+import type { SpecNote } from "./spec-paths";
 import { PAUSE_NOW_REASON, TICKET_STATES, type AuthorKind, type MergeChoice, type ProjectState, type Role, type TicketState } from "./states";
 
 export type LoomErrorCode = "loom_not_found" | "loom_invalid_state" | "loom_invalid_spec" | "loom_invalid_input" | "loom_forbidden" | "loom_no_checkout" | "loom_unavailable";
@@ -131,7 +132,7 @@ export class Projects {
   async propose(args: { toml: string; threadId: string; bbProjectId: string; hostId: string | null }): Promise<ProposeResult> {
     const parsed = parseSpec(args.toml);
     if (!parsed.ok || parsed.spec === null) throw rejected(parsed.errors);
-    const errors = this.proposalErrors(args.threadId, parsed.spec);
+    const errors = [...this.proposalErrors(args.threadId, parsed.spec), ...(await this.providerErrors(parsed.spec))];
     if (errors.length > 0) throw rejected(errors);
     const existing = this.store.projectBySlug(parsed.spec.project.slug);
     return existing === null ? await this.createDraft(args, parsed.spec, parsed.warnings) : await this.revise(existing, args, parsed.spec, parsed.warnings);
@@ -154,6 +155,27 @@ export class Projects {
     if (project?.state === "archived") errors.push(`Project ${slug} is archived. Propose a new project with another slug.`);
     else if (project?.approved_version != null) errors.push(...this.lockedFieldErrors(project, spec));
     return errors;
+  }
+
+  /** bb refuses to start a thread with a provider it does not have, so the spec is refused now. A list bb cannot read blocks no proposal. */
+  private async providerErrors(spec: Spec): Promise<string[]> {
+    const set = (["worker", "reviewer"] as const).flatMap((role) => {
+      const provider = spec.agents[role].provider;
+      return provider === undefined ? [] : [{ role, provider }];
+    });
+    if (set.length === 0) return [];
+    let known: string[];
+    try {
+      known = (await this.bb.providerIds()).sort();
+    } catch (error) {
+      this.bb.log("warn", `Could not read bb's providers, so the spec's providers are not checked: ${error instanceof Error ? error.message : String(error)}`);
+      return [];
+    }
+    // bb always has a provider, so an empty list is one it could not fill yet, not a reason to refuse every provider.
+    if (known.length === 0) return [];
+    return set
+      .filter(({ provider }) => !known.includes(provider))
+      .map(({ role, provider }) => `agents.${role}.provider: bb has no provider "${provider}". Use one of: ${known.join(", ")}.`);
   }
 
   private lockedFieldErrors(project: ProjectRow, spec: Spec): string[] {
@@ -215,13 +237,14 @@ export class Projects {
     }
 
     if (project.approved_version === null) {
-      this.store.tx(() => {
-        this.store.replaceSpecVersion(project.id, latest.version, args.toml, JSON.stringify(spec), hash, args.threadId);
+      const draft = this.store.tx(() => {
+        const added = this.store.addSpecVersion(project.id, args.toml, JSON.stringify(spec), hash, args.threadId);
         this.store.updateProject(project.id, { name: spec.project.name, key: spec.project.key });
+        return added;
       });
       if (project.name !== spec.project.name) await this.renameSection(project, spec.project.name);
       this.store.changed(project.id);
-      return { slug, version: latest.version, state: project.state, warnings, pending: false, change: "revised" };
+      return { slug, version: draft, state: project.state, warnings, pending: false, change: "revised" };
     }
 
     const version = this.store.tx(() => {
@@ -455,6 +478,26 @@ export class Projects {
     }
   }
 
+  /** Sends the human's notes on the spec to the planner as one message. Notes written on an older version than the newest need `includeOlder`. */
+  async sendNotes(slug: string, notes: readonly SpecNote[], includeOlder: boolean): Promise<void> {
+    const project = this.require(slug);
+    if (project.state === "archived") throw new LoomError("loom_invalid_state", `Project ${slug} is archived.`);
+    const newest = this.store.latestSpecVersion(project.id)!.version;
+    const missing = notes.find((note) => note.version > newest);
+    if (missing !== undefined) throw new LoomError("loom_invalid_state", `Project ${slug} has no spec version ${missing.version}.`);
+    const older = notes.filter((note) => note.version < newest);
+    if (older.length > 0 && !includeOlder) {
+      const versions = [...new Set(older.map((note) => `v${note.version}`))].join(", ");
+      const one = older.length === 1;
+      throw new LoomError("loom_invalid_state", `${one ? "1 note was" : `${older.length} notes were`} written on ${versions}, and v${newest} is newer. Read v${newest}, then send ${one ? "it" : "them"} again or confirm.`);
+    }
+    const planner = project.planner_thread_id === null ? null : this.store.threadByThreadId(project.planner_thread_id);
+    if (planner?.role !== "planner" || planner.state !== "active" || planner.thread_id === null) {
+      throw new LoomError("loom_invalid_state", `Project ${slug} has no planner thread to send notes to.`);
+    }
+    await this.bb.send(planner.thread_id, notesMessage({ slug, version: newest, status: this.specStatus(project, newest), notes }));
+  }
+
   // ---------------------------------------------------------------- planning conversations
 
   /** Starts a planner thread from the page's composer request. It is an ordinary thread until its first loom_propose binds it as the planner. */
@@ -503,8 +546,15 @@ export class Projects {
     const project = this.require(slug);
     const row = version === undefined ? this.store.specVersion(project.id, project.approved_version ?? this.store.latestSpecVersion(project.id)!.version) : this.store.specVersion(project.id, version);
     if (row === null) throw new LoomError("loom_not_found", `Project ${slug} has no spec version ${version}.`, `Run \`bb loom show ${slug}\` to see its versions.`);
-    const status = project.approved_version === null ? "draft" : row.version === project.approved_version ? "approved" : row.version === project.pending_version ? "pending" : "superseded";
+    const status = this.specStatus(project, row.version);
     return { slug, version: row.version, status, toml: row.toml, hash: row.hash, proposedBy: row.proposed_by, createdAt: row.created_at };
+  }
+
+  specStatus(project: ProjectRow, version: number): SpecView["status"] {
+    if (version === project.approved_version) return "approved";
+    if (version === project.pending_version) return "pending";
+    if (project.approved_version === null && version === this.store.latestSpecVersion(project.id)?.version) return "draft";
+    return "superseded";
   }
 
   tickets(slug: string, states?: readonly TicketState[]): TicketSummary[] {

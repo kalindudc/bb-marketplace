@@ -53,6 +53,7 @@ const reviewer = (state: ThreadRow["state"]): ThreadRow => ({
   tokens: null,
   tokens_at: null,
   review_round: 1,
+  attempt: null,
   started_at: NOW,
   clock_at: null,
   ended_at: null,

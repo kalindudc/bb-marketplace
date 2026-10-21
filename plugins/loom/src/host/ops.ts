@@ -9,7 +9,8 @@ const GIT_TIMEOUT_MS = 30_000;
 // Pushes, gh calls and the first checkout of the integration worktree can take a while on a slow link or a large repository.
 const NETWORK_TIMEOUT_MS = 120_000;
 const GIT_MAX_BUFFER = 64 * 1024 * 1024;
-const OUTPUT_TAIL_BYTES = 16 * 1024;
+const OUTPUT_HEAD_BYTES = 16 * 1024;
+const OUTPUT_TAIL_BYTES = 48 * 1024;
 
 interface GitRun {
   code: number;
@@ -254,19 +255,39 @@ function parseJson<T>(text: string): T | null {
   }
 }
 
-class Tail {
+/** The first `head` bytes and the last `tail` bytes of a stream; the middle of a longer one is dropped and counted. */
+class HeadTail {
+  private headChunks: Buffer[] = [];
+  private headSize = 0;
   private chunks: Buffer[] = [];
   private size = 0;
-  constructor(private readonly max: number) {}
+  private dropped = 0;
+  constructor(
+    private readonly head: number,
+    private readonly tail: number,
+  ) {}
   push(chunk: Buffer): void {
+    if (this.headSize < this.head) {
+      const taken = chunk.subarray(0, this.head - this.headSize);
+      this.headChunks.push(taken);
+      this.headSize += taken.length;
+      chunk = chunk.subarray(taken.length);
+      if (chunk.length === 0) return;
+    }
     this.chunks.push(chunk);
     this.size += chunk.length;
-    while (this.size > this.max * 2 && this.chunks.length > 1) this.size -= this.chunks.shift()!.length;
+    while (this.chunks.length > 1 && this.size - this.chunks[0]!.length >= this.tail) {
+      const first = this.chunks.shift()!;
+      this.size -= first.length;
+      this.dropped += first.length;
+    }
   }
   toString(): string {
-    const all = Buffer.concat(this.chunks);
-    const text = all.subarray(Math.max(0, all.length - this.max)).toString("utf8");
-    return all.length > this.max ? `…${text}` : text;
+    const head = Buffer.concat(this.headChunks).toString("utf8");
+    const rest = Buffer.concat(this.chunks);
+    if (this.dropped === 0 && this.size <= this.tail) return head + rest.toString("utf8");
+    const left = this.dropped + this.size - this.tail;
+    return `${head}\n[… ${left} bytes left out …]\n${rest.subarray(this.size - this.tail).toString("utf8")}`;
   }
 }
 
@@ -276,7 +297,7 @@ export function spawnCommand(input: HostInput<"exec">, signal?: AbortSignal): Pr
   return new Promise((resolve, reject) => {
     if (signal?.aborted === true) return reject(new Error("aborted before start"));
     const child = spawn("/bin/sh", ["-c", input.command], { cwd: input.cwd, env: process.env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
-    const output = new Tail(OUTPUT_TAIL_BYTES);
+    const output = new HeadTail(OUTPUT_HEAD_BYTES, OUTPUT_TAIL_BYTES);
     let timedOut = false;
     const kill = () => {
       try {

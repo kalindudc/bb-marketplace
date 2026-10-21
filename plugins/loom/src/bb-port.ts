@@ -1,11 +1,16 @@
 // Adapts bb.sdk to Loom's BbPort. bb.sdk is read inside each call, never at load.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { hostContract, type HostInput, type HostMethod, type HostOutput } from "./host-contract";
-import { SectionNameConflictError, type BbPort, type HostPort } from "./ports";
+import { SectionNameConflictError, SpawnRefusedError, type BbPort, type HostPort } from "./ports";
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 const isNotFound = (error: unknown) => /\b404\b|not[ _]found/iu.test(message(error));
 const isNameConflict = (error: unknown) => /\b409\b|section_name_conflict/iu.test(message(error));
+/** bb's SDK throws BbHttpError, whose `status` is the HTTP status. */
+const refusedOr = (error: unknown): unknown => {
+  const status = (error as { status?: unknown } | null)?.status;
+  return typeof status === "number" && status >= 400 && status < 500 && status !== 408 && status !== 409 && status !== 429 ? new SpawnRefusedError(status, message(error)) : error;
+};
 
 export function createBbPort(bb: BbPluginApi): BbPort {
   return {
@@ -60,6 +65,8 @@ export function createBbPort(bb: BbPluginApi): BbPort {
         ...(args.model === undefined ? {} : { model: args.model }),
         ...(args.reasoningLevel === undefined ? {} : { reasoningLevel: args.reasoningLevel }),
         ...(args.permissionMode === undefined ? {} : { permissionMode: args.permissionMode }),
+      }).catch((error: unknown) => {
+        throw refusedOr(error);
       });
       return { threadId: thread.id, environmentId: thread.environmentId };
     },
@@ -129,6 +136,22 @@ export function createBbPort(bb: BbPluginApi): BbPort {
     async spawnPlanner({ request, title, kickoff }) {
       const thread = await bb.sdk.threads.spawn({ ...request, title, input: [...request.input, { type: "text", text: kickoff, mentions: [], visibility: "agent-only" }] });
       return thread.id;
+    },
+    async providerIds() {
+      return (await bb.sdk.providers.list()).map((provider) => provider.id);
+    },
+    async waitingOnUser(threadIds) {
+      const waiting = await Promise.all(
+        threadIds.map(async (threadId) => {
+          try {
+            return (await bb.sdk.threads.interactions.list({ threadId })).some((row) => row.status === "pending");
+          } catch (error) {
+            if (isNotFound(error)) return false;
+            throw error;
+          }
+        }),
+      );
+      return threadIds.filter((_, index) => waiting[index]);
     },
   };
 }

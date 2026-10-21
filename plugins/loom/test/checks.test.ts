@@ -14,6 +14,7 @@ const WORKTREE = "/wt/env_1";
 const project = () => h.store.projectBySlug("csv")!;
 const posts = (key = "CSV-1") => h.store.posts(ticketOf(h, key).id);
 const lastCheck = () => posts().filter((post) => post.kind === "check").at(-1)!;
+const runs = (key = "CSV-1") => h.store.runs(ticketOf(h, key).id);
 const checkData = () => JSON.parse(lastCheck().data_json) as { passed: boolean; runs: Array<{ command: string; exitCode: number | null }>; outside: string[]; protectedHits: string[] };
 
 /** A started worker that changed `changed` and called loom_submit; the checks have finished. */
@@ -76,6 +77,13 @@ describe("a passing submit", () => {
     expect(lastCheck().body).toContain("Checks passed");
     expect(lastCheck().body).toContain("npm test (exit 0");
     expect(h.bb.sent("thr_w1").at(-1)).toMatch(/^\[loom\] CSV-1: the checks passed.*review/s);
+    expect(runs().map((run) => [run.stage, run.label, run.ok])).toEqual([
+      ["check", "git commit", 1],
+      ["check", "git status", 1],
+      ["check", "npm run lint", 1],
+      ["check", "npm test", 1],
+      ["check", "git status", 1],
+    ]);
   });
 
   it("counts a review round on every pass: 1 first, then 2 after a changes-requested resubmit", async () => {
@@ -134,6 +142,9 @@ describe("a failing submit", () => {
     expect(message).toMatch(/^\[loom\] CSV-1: the check "npm run lint" exited with 2/);
     expect(message).toContain("no-unused-vars");
     expect(h.store.thread(row.id)).toMatchObject({ clock_at: h.clock.t, idle_count: 0 });
+    const failed = runs().at(-1)!;
+    expect(failed).toMatchObject({ stage: "check", kind: "command", label: "npm run lint", ok: 0, exit_code: 2 });
+    expect(h.store.runOutput(failed.id)).toBe("src/a.ts:1 error no-unused-vars");
   });
 
   it("reports a timed out command", async () => {

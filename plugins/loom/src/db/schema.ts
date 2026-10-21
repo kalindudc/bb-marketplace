@@ -124,4 +124,10 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE tickets ADD COLUMN merge_before TEXT`,
   `CREATE TABLE planning (id INTEGER PRIMARY KEY AUTOINCREMENT, thread_id TEXT NOT NULL UNIQUE, bb_project_id TEXT NOT NULL,
     title TEXT NOT NULL, started_at INTEGER NOT NULL, ended_at INTEGER, end_reason TEXT)`,
+  `CREATE TABLE runs (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, ticket_id INTEGER NOT NULL,
+    stage TEXT NOT NULL CHECK (stage IN ('check', 'merge')), kind TEXT NOT NULL CHECK (kind IN ('command', 'git')), label TEXT NOT NULL,
+    started_at INTEGER NOT NULL, ended_at INTEGER, duration_ms INTEGER, ok INTEGER CHECK (ok IN (0, 1)), exit_code INTEGER,
+    timed_out INTEGER NOT NULL DEFAULT 0, output TEXT NOT NULL DEFAULT '')`,
+  `CREATE INDEX runs_ticket ON runs (ticket_id, id)`,
+  `ALTER TABLE threads ADD COLUMN attempt INTEGER`,
 ];

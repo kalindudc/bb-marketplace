@@ -23,6 +23,7 @@ const queue = async () => {
   await settleMerges(h.ctx);
 };
 const withAfterMerge = (doc: Doc) => (doc.checks.after_merge = ["npm run e2e"]);
+const mergeRuns = (key = "CSV-1") => h.store.runs(ticketOf(h, key).id).filter((run) => run.stage === "merge");
 const hostCallsSince = (mark: number) => h.host.calls.slice(mark);
 const deferred = <T>() => {
   let resolve!: (value: T) => void;
@@ -49,6 +50,14 @@ describe("the integration merge", () => {
     expect(lastPost("merge")).toMatchObject({ author_kind: "loom" });
     expect(JSON.parse(lastPost("merge").data_json)).toMatchObject({ outcome: "merged", sha: "m1", before: "base000", already: false });
     expect(lastPost("merge").body).toContain("m1");
+    expect(mergeRuns().map((run) => [run.label, run.ok])).toEqual([
+      ["prepare the Loom worktree", 1],
+      ["git status", 1],
+      ["git merge", 1],
+      ["npm run e2e", 1],
+      ["git status", 1],
+    ]);
+    expect(h.store.runOutput(mergeRuns()[2]!.id)).toContain("m1");
     expect(h.store.thread(worker.id)).toMatchObject({ state: "ended", end_reason: "merged" });
     expect(h.store.thread(reviewer.id)!.state).toBe("ended");
     expect(archived()).toContain(worker.thread_id);
@@ -82,6 +91,9 @@ describe("the integration merge", () => {
     expect(sent).toContain("git merge loom/csv");
     expect(JSON.parse(lastPost("merge").data_json)).toMatchObject({ outcome: "conflict", files: ["src/model/a.ts", "src/model/b.ts"] });
     expect(heldCheckResult(posts())).toMatchObject({ kind: "merge" });
+    const merge = mergeRuns().find((run) => run.label === "git merge")!;
+    expect(merge.ok).toBe(0);
+    expect(h.store.runOutput(merge.id)).toBe("Conflicts in:\nsrc/model/a.ts\nsrc/model/b.ts");
   });
 
   it("queues the ticket again on a conflict when the worker is gone", async () => {
@@ -118,7 +130,7 @@ describe("the integration merge", () => {
     const worker = await reachApproved(h);
     h.host.execResults = [{ exitCode: 1, output: "FAILED" }];
     await queue();
-    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "blocked", blocked_reason: "checks failed 1 times", worker_thread_id: null });
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "blocked", blocked_reason: "checks failed 1 time", worker_thread_id: null });
     expect(h.store.thread(worker.id)).toMatchObject({ state: "ended", end_reason: "blocked" });
     expect(project().triage_pending).toBe(1);
   });
@@ -172,7 +184,7 @@ describe("the integration merge", () => {
     await reachApproved(h);
     h.host.onExec = (_input, worktree) => void (worktree.head = "x1");
     await queue();
-    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "blocked", blocked_reason: "checks failed 1 times" });
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "blocked", blocked_reason: "checks failed 1 time" });
     expect(h.host.worktree(WORKTREE).head).toBe("base000");
   });
 
@@ -253,6 +265,8 @@ describe("the integration merge", () => {
     await queue();
     expect(project()).toMatchObject({ state: "paused", system_reason: "loom/csv is checked out elsewhere; switch that checkout off it and resume" });
     expect(ticketOf(h, "CSV-1").state).toBe("merging");
+    expect(mergeRuns().map((run) => [run.label, run.ok])).toEqual([["prepare the Loom worktree", 0]]);
+    expect(h.store.runOutput(mergeRuns()[0]!.id)).toBe("fatal: 'loom/csv' is already used by worktree at '/repo'");
 
     h.store.setProjectState(project().id, "running", "human");
     h.host.scripted.ensureWorktree = [{ outcome: "unavailable", reason: "git", message: "The Loom worktree at /x is on main, not loom/csv." }];
@@ -376,6 +390,11 @@ describe("the pull request strategy", () => {
     expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "pr_open", pr_url: "https://github.com/acme/shop/pull/1", pr_checked_at: h.clock.t });
     expect(lastPost("merge").body).toContain("https://github.com/acme/shop/pull/1");
     expect(h.store.thread(worker.id)!.state).toBe("active");
+    expect(mergeRuns().map((run) => [run.label, run.ok])).toEqual([
+      ["git push", 1],
+      ["gh pr create", 1],
+    ]);
+    expect(h.store.runOutput(mergeRuns()[1]!.id)).toBe("Opened https://github.com/acme/shop/pull/1.");
   });
 
   it("opens a ready pull request when merge.draft is false", async () => {
@@ -393,6 +412,7 @@ describe("the pull request strategy", () => {
     await queue();
     expect(project()).toMatchObject({ state: "paused", system_reason: "git push to origin failed: no route to host" });
     expect(ticketOf(h, "CSV-1").state).toBe("merging");
+    expect(mergeRuns().map((run) => [run.label, run.ok])).toEqual([["git push", 0]]);
 
     h.store.setProjectState(project().id, "running", "human");
     h.host.scripted.prCreate = [{ outcome: "unavailable", message: "The gh CLI is not installed on this machine, or it is not on PATH." }];

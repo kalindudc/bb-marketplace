@@ -3,11 +3,11 @@ import { makeTurnFailedEvent } from "@get-bb/plugin-sdk/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { settleChecks, submit } from "../src/checks";
 import { holdMerge, settleMerges } from "../src/merge";
-import type { SpawnArgs } from "../src/ports";
+import { SpawnRefusedError, type SpawnArgs } from "../src/ports";
 import { approve, settleReviews } from "../src/review";
 import { PAUSE_NOW_REASON } from "../src/states";
 import { editTicket } from "../src/triage";
-import { checkOutHead, makeEngine, reachApproved, reachReview, seedProject, ticketOf, withDocsTicket, workerRows, type Doc } from "./helpers";
+import { checkOutHead, makeEngine, reachApproved, reachReview, seedProject, specToml, ticketOf, withDocsTicket, workerRows, type Doc } from "./helpers";
 
 let h: ReturnType<typeof makeEngine>;
 
@@ -510,6 +510,108 @@ describe("planning conversations", () => {
   });
 });
 
+describe("approve", () => {
+  const proposeV2 = () =>
+    h.projects.propose({
+      toml: specToml((doc) => {
+        withDocsTicket(doc);
+        doc.project.goal = "Let people export their orders as a CSV file, with filters.";
+      }),
+      threadId: "thr_plan",
+      bbProjectId: "proj_1",
+      hostId: "host_1",
+    });
+  const stuck = async () => {
+    await seedProject(h, withDocsTicket);
+    h.bb.spawnError = (args) => (args.metadata.ticket === "CSV-1" ? new SpawnRefusedError(400, "HTTP 400: Provider pi only supports full permission mode.") : null);
+    await h.engine.tick();
+    h.bb.spawnError = null;
+    await h.engine.block("CSV-3", "needs creds", "human");
+    await proposeV2();
+    h.kick.mockClear();
+  };
+
+  it("approving a pending version requeues the tickets whose worker never started, kicks the loop and tells the planner", async () => {
+    await stuck();
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "blocked", failures: 1 });
+    const result = await h.engine.approve("csv", "human", 2);
+    expect(result).toMatchObject({ applied: "pending", version: 2, requeued: ["CSV-1"] });
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", failures: 0, blocked_reason: null });
+    expect(h.store.posts(ticketOf(h, "CSV-1").id).at(-1)).toMatchObject({
+      kind: "reply",
+      author_kind: "loom",
+      body: "Spec v2 is approved, so Loom queued this ticket again: bb never started its worker.",
+    });
+    expect(ticketOf(h, "CSV-3").state).toBe("blocked");
+    expect(h.kick).toHaveBeenCalled();
+    const message = h.bb.sent("thr_plan").at(-1)!;
+    expect(message).toContain("[loom] Spec v2 of csv is approved.");
+    expect(message).toContain("Loom queued CSV-1 again, because bb never started its worker. Its failure count starts over, and a worker picks it up by itself.");
+    expect(message).toContain("Still blocked: CSV-3. Requeue one with loom_requeue when v2 fixes what blocked it.");
+  });
+
+  it("approving a pending version sends a ticket whose reviewer bb refused back to review, in a new round for the same head", async () => {
+    await seedProject(h, withDocsTicket);
+    await reachReview(h);
+    h.bb.spawnError = (args) =>
+      args.metadata.role === "reviewer" || args.metadata.ticket === "CSV-3" ? new SpawnRefusedError(400, "HTTP 400: Unsupported provider claude") : null;
+    await h.engine.tick();
+    h.bb.spawnError = null;
+    const blocked = ticketOf(h, "CSV-1");
+    expect(blocked).toMatchObject({ state: "blocked", blocked_reason: "bb refused to start a reviewer: HTTP 400: Unsupported provider claude", review_round: 1 });
+    expect(ticketOf(h, "CSV-3").state).toBe("blocked");
+    await proposeV2();
+    h.kick.mockClear();
+
+    const result = await h.engine.approve("csv", "human", 2);
+    expect(result).toMatchObject({ applied: "pending", requeued: ["CSV-3"], backToReview: ["CSV-1"] });
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "review", review_round: 2, head_sha: blocked.head_sha, branch: blocked.branch, blocked_reason: null });
+    expect(h.store.ticketEvents(blocked.id, ["ticket.state"]).at(-1)!.data_json).toContain('"from":"blocked","to":"review"');
+    expect(h.store.posts(blocked.id).at(-1)).toMatchObject({
+      kind: "reply",
+      author_kind: "loom",
+      body: "Spec v2 is approved, so Loom sent this ticket back to review: bb refused to start its reviewer, and its work had already passed the checks.",
+    });
+    expect(ticketOf(h, "CSV-3").state).toBe("queued");
+    expect(h.kick).toHaveBeenCalled();
+    const message = h.bb.sent("thr_plan").at(-1)!;
+    expect(message).toContain("Loom queued CSV-3 again, because bb never started its worker.");
+    expect(message).toContain("Loom sent CSV-1 back to review, because bb refused to start its reviewer; new reviewers start for the same commit.");
+    expect(message).not.toContain("Still blocked");
+
+    const before = h.bb.callsTo("spawnThread").length;
+    await h.engine.tick();
+    const reviewers = h.bb.callsTo("spawnThread").slice(before).map(([args]) => (args as SpawnArgs).metadata).filter((metadata) => metadata.role === "reviewer");
+    expect(reviewers).toEqual([expect.objectContaining({ ticket: "CSV-1", round: "2" })]);
+    expect(ticketOf(h, "CSV-1").state).toBe("review");
+  });
+
+  it("leaves a ticket blocked when its reviewers ended without a verdict, even after approving a pending version", async () => {
+    await seedProject(h);
+    await reachReview(h);
+    h.bb.spawnError = (args) => (args.metadata.role === "reviewer" ? new Error("provider is down") : null);
+    for (let pass = 0; pass < 4; pass++) await h.engine.tick();
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "blocked", blocked_reason: "reviewers ended without a verdict" });
+    await proposeV2();
+    expect(await h.engine.approve("csv", "human", 2)).toMatchObject({ requeued: [], backToReview: [] });
+    expect(ticketOf(h, "CSV-1").state).toBe("blocked");
+  });
+
+  it("approving a draft requeues nothing and sends nothing", async () => {
+    await h.projects.propose({ toml: specToml(), threadId: "thr_plan", bbProjectId: "proj_1", hostId: "host_1" });
+    const result = await h.engine.approve("csv", "human");
+    expect(result).toMatchObject({ applied: "draft", requeued: [], backToReview: [] });
+    expect(h.bb.callsTo("send")).toEqual([]);
+  });
+
+  it("still approves when the message to the planner fails", async () => {
+    await stuck();
+    h.bb.sendError = new Error("thread is busy");
+    expect(await h.engine.approve("csv", "human", 2)).toMatchObject({ applied: "pending", requeued: ["CSV-1"] });
+    expect(project()).toMatchObject({ approved_version: 2, pending_version: null });
+  });
+});
+
 describe("human ticket commands", () => {
   it("cancels a ticket in review, ends its worker and archives the thread", async () => {
     await seedProject(h);
@@ -563,6 +665,34 @@ describe("human ticket commands", () => {
     await h.engine.humanPost("CSV-2", "no worker yet", undefined);
     expect(h.bb.callsTo("send").filter(([id]) => id === "thr_w2")).toEqual([]);
     expect(h.store.posts(ticketOf(h, "CSV-2").id).at(-1)!.body).toBe("no worker yet");
+  });
+
+  it("sends a human reply on a blocked ticket to the planner, with the reply as agent-only detail", async () => {
+    await seedProject(h);
+    await h.engine.tick();
+    await h.engine.block("CSV-1", "Needs the API token", "human");
+    const before = h.bb.callsTo("send").length;
+    const post = await h.engine.humanPost("CSV-1", "The token is in the vault under loom/csv", undefined);
+    await h.engine.humanPost("CSV-1", "Use the read-only one", post.id);
+    expect(h.bb.callsTo("send").slice(before)).toEqual([
+      [
+        "thr_plan",
+        {
+          summary: "[loom] The human replied on CSV-1, which is blocked. Read it with loom_ticket and answer with your board tools: loom_post, then loom_requeue, loom_edit_ticket or loom_cancel_ticket if the reply settles it.",
+          detail: "The token is in the vault under loom/csv",
+        },
+      ],
+      ["thr_plan", expect.objectContaining({ detail: `Use the read-only one (answering #${post.id})` })],
+    ]);
+  });
+
+  it("still records a reply on a blocked ticket when the planner cannot be messaged", async () => {
+    await seedProject(h);
+    await h.engine.tick();
+    await h.engine.block("CSV-1", "Needs the API token", "human");
+    h.bb.sendError = new Error("planner is gone");
+    expect((await h.engine.humanPost("CSV-1", "Here it is", undefined)).body).toBe("Here it is");
+    expect(h.bb.callsTo("log").some(([level, text]) => level === "warn" && String(text).includes("planner is gone"))).toBe(true);
   });
 
   it("still records a reply when the worker cannot be messaged", async () => {

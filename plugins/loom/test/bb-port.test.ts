@@ -2,6 +2,7 @@ import type { NewThreadRequest } from "@get-bb/plugin-sdk";
 import { createFakePluginHost, type FakeSdkOverrides } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
 import { createBbPort } from "../src/bb-port";
+import { SpawnRefusedError, type SpawnArgs } from "../src/ports";
 
 const request: NewThreadRequest = {
   projectId: "proj_1",
@@ -29,6 +30,72 @@ describe("spawnPlanner", () => {
     const { input, ...rest } = request;
     expect(args).toMatchObject({ ...rest, title: "Loom plan: Export orders" });
     expect(args.input).toEqual([...input, { type: "text", text: "[loom] Plan this project.", mentions: [], visibility: "agent-only" }]);
+  });
+});
+
+describe("spawnThread", () => {
+  const args: SpawnArgs = { bbProjectId: "proj_1", hostId: "host_1", baseBranch: "main", title: "CSV-1", prompt: "Work.", sectionId: null, metadata: {} };
+  const refusing = (error: unknown) => portWith({ threads: { spawn: async () => Promise.reject(error) } }).port;
+  const httpError = (status: number, text: string) => Object.assign(new Error(`HTTP ${status}: ${text}`), { status });
+
+  it("turns a 4xx refusal into a SpawnRefusedError with bb's status and message", async () => {
+    const error = await refusing(httpError(400, "Provider pi only supports full permission mode.")).spawnThread(args).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(SpawnRefusedError);
+    expect(error).toMatchObject({ status: 400, message: "HTTP 400: Provider pi only supports full permission mode." });
+    await expect(refusing(httpError(404, "Project not found")).spawnThread(args)).rejects.toBeInstanceOf(SpawnRefusedError);
+  });
+
+  it("passes on a timeout, a conflict, a rate limit, a server error and an error without a status, so they are retried", async () => {
+    for (const error of [httpError(408, "timeout"), httpError(409, "machine_maintenance"), httpError(429, "slow down"), httpError(500, "boom"), new Error("socket hang up")]) {
+      const caught = await refusing(error).spawnThread(args).catch((thrown: unknown) => thrown);
+      expect(caught).toBe(error);
+    }
+  });
+});
+
+describe("providerIds", () => {
+  it("lists the ids of the agent providers bb has", async () => {
+    const { port, harness } = portWith({ providers: { list: async () => [{ id: "claude-code" }, { id: "codex" }, { id: "pi" }] as never } });
+    expect(await port.providerIds()).toEqual(["claude-code", "codex", "pi"]);
+    expect(harness.sdk.callsTo("providers.list")).toHaveLength(1);
+  });
+});
+
+describe("waitingOnUser", () => {
+  const rows: Record<string, Array<{ id: string; status: string }>> = {
+    thr_a: [
+      { id: "int_1", status: "resolved" },
+      { id: "int_2", status: "pending" },
+    ],
+    thr_b: [{ id: "int_3", status: "resolved" }],
+  };
+
+  it("returns the threads with a pending interaction and leaves out a thread bb does not know", async () => {
+    const { port, harness } = portWith({
+      threads: {
+        interactions: {
+          list: async ({ threadId }) => {
+            if (threadId === "thr_gone") throw new Error("HTTP 404 not found");
+            return rows[threadId] ?? [];
+          },
+        },
+      },
+    });
+    expect(await port.waitingOnUser(["thr_a", "thr_b", "thr_gone"])).toEqual(["thr_a"]);
+    expect(harness.sdk.callsTo("threads.interactions.list").map(([args]) => (args as { threadId: string }).threadId).sort()).toEqual(["thr_a", "thr_b", "thr_gone"]);
+  });
+
+  it("passes any other error on", async () => {
+    const { port } = portWith({
+      threads: {
+        interactions: {
+          list: async () => {
+            throw new Error("HTTP 500 database is locked");
+          },
+        },
+      },
+    });
+    await expect(port.waitingOnUser(["thr_a"])).rejects.toThrow(/database is locked/);
   });
 });
 

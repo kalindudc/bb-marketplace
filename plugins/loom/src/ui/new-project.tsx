@@ -53,7 +53,7 @@ export function NewProject({ go }: { go(subPath: string): void }) {
     <div className="grid gap-4 p-4 lg:grid-cols-[1.3fr_1fr]">
       <div className="grid content-start gap-3">
         <h2 className="text-sm font-semibold">What should exist when the project is done?</h2>
-        <NewThreadComposer placeholder="Describe the outcome…" layout="document" onSubmit={submit} {...(projectId === null ? {} : { defaultProjectId: projectId })} />
+        <NewThreadComposer placeholder="Describe the outcome…" layout="document" defaultPermissionMode="full" onSubmit={submit} {...(projectId === null ? {} : { defaultProjectId: projectId })} />
         {error !== null && <p role="alert" className="text-xs text-destructive-text">{error}</p>}
         <section className={CARD}>
           <h2 className={HEADING}>Optional: answer up front</h2>

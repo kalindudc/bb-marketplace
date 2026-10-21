@@ -2,10 +2,11 @@ import { makeTurnFailedEvent } from "@get-bb/plugin-sdk/testing";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { PostRow } from "../src/db/store";
 import { renderThread, workerBrief } from "../src/prompts";
-import type { SpawnArgs } from "../src/ports";
+import { SpawnRefusedError, type SpawnArgs } from "../src/ports";
 import { parseSpec } from "../src/spec";
 import {
   blockTicket,
+  blockedAtStart,
   endThread,
   onThreadGone,
   onTurnFailed,
@@ -58,7 +59,7 @@ describe("spawnWorker", () => {
       sectionId: "sec_1",
       providerId: "claude",
       model: "sonnet",
-      permissionMode: "auto",
+      permissionMode: "full",
       metadata: { project: "csv", role: "worker", ticket: "CSV-1", spawnToken: row.spawn_token },
     });
     expect(row).toMatchObject({ state: "active", thread_id: "thr_w1", environment_id: "env_1", clock_at: h.clock.t, idle_count: 0 });
@@ -141,6 +142,33 @@ describe("spawnWorker", () => {
     await startWorker(h).catch(() => undefined);
     expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "blocked", failures: 3, blocked_reason: "could not start a worker 3 times" });
     expect(project().triage_pending).toBe(1);
+    expect(blockedAtStart(h.store, ticketOf(h, "CSV-1"))).toBe(true);
+
+    await requeueTicket(h.ctx, "CSV-1", { note: "", actor: "human", author: "human" });
+    expect(blockedAtStart(h.store, ticketOf(h, "CSV-1"))).toBe(false);
+  });
+
+  it("does not count a queued ticket or one blocked for another reason as blocked at start", async () => {
+    await seedProject(h);
+    expect(blockedAtStart(h.store, ticketOf(h, "CSV-1"))).toBe(false);
+    await blockTicket(h.ctx, ticketOf(h, "CSV-2"), { reason: "Waiting on legal", needs: "", actor: "human" });
+    expect(ticketOf(h, "CSV-2").state).toBe("blocked");
+    expect(blockedAtStart(h.store, ticketOf(h, "CSV-2"))).toBe(false);
+  });
+
+  it("blocks at once with bb's message when bb refuses the spawn", async () => {
+    await seedProject(h);
+    h.bb.spawnError = () => new SpawnRefusedError(400, "HTTP 400: Provider pi only supports full permission mode.");
+    await startWorker(h);
+    expect(ticketOf(h, "CSV-1")).toMatchObject({
+      state: "blocked",
+      failures: 1,
+      worker_thread_id: null,
+      blocked_reason: "bb refused to start a worker: HTTP 400: Provider pi only supports full permission mode.",
+    });
+    expect(h.bb.callsTo("spawnThread")).toHaveLength(1);
+    expect(project().triage_pending).toBe(1);
+    expect(blockedAtStart(h.store, ticketOf(h, "CSV-1"))).toBe(true);
   });
 
   it("clears the branch and counts no failure when a resumed spawn fails", async () => {
@@ -562,6 +590,16 @@ describe("threads that disappear", () => {
     await onThreadGone(h.ctx, "thr_w1");
     await onThreadGone(h.ctx, "thr_unknown");
     expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", failures: 1 });
+  });
+
+  it("numbers each worker row with the ticket's attempt", async () => {
+    const first = await startBoth();
+    expect(first.attempt).toBe(1);
+    await onThreadGone(h.ctx, "thr_w1");
+    expect(h.store.thread(first.id)).toMatchObject({ state: "ended", end_reason: "gone" });
+    const second = await startWorker(h);
+    expect(second.id).not.toBe(first.id);
+    expect(second.attempt).toBe(2);
   });
 });
 

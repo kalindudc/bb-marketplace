@@ -3,8 +3,10 @@
 // left in `merging` by a pause or a restart simply runs again. Merges run in the background, like checks.
 import { delivers, workerOf, type CheckRun } from "./checks";
 import type { ProjectRow, Store, TicketRow } from "./db/store";
+import { plural } from "./format";
 import { afterMergeChangedText, afterMergeFailedText, clip, conflictText, landBody, prBody } from "./prompts";
 import { LoomError } from "./projects";
+import { recordingHost } from "./runs";
 import type { Spec } from "./spec";
 import { LOOM_ACTOR } from "./states";
 import { applyMove, endLiveRows, endThread, pauseProject, released, resolveEnvironment, specOf, toWorking, type EngineCtx } from "./workers";
@@ -132,8 +134,9 @@ export async function mergeTicket(ctx: EngineCtx, project: ProjectRow, spec: Spe
   const ticket = ctx.store.ticket(seen.id);
   if (ticket?.state !== "merging") return;
   try {
-    if (spec.merge.strategy === "integration") await mergeIntoIntegration(ctx, project, spec, ticket);
-    else await openPullRequest(ctx, project, spec, ticket);
+    const recorded: EngineCtx = { ...ctx, host: recordingHost(ctx.store, ctx.host, ticket, "merge") };
+    if (spec.merge.strategy === "integration") await mergeIntoIntegration(recorded, project, spec, ticket);
+    else await openPullRequest(recorded, project, spec, ticket);
   } catch (error) {
     // A host that cannot do its job pauses the project with the reason, instead of retrying every tick. The ticket stays in merging.
     pauseProject(ctx, project.id, error instanceof Unavailable ? error.message : `Merging ${ticket.key} stopped: ${errText(error)}`);
@@ -255,7 +258,7 @@ async function sendBack(ctx: EngineCtx, ticketId: number, a: { post: MergePost; 
   const ticket = store.ticket(ticketId)!;
   const { max_check_failures: limit } = specOf(store, store.project(ticket.project_id)!).budget;
   if (a.countFailure && failures >= limit) {
-    const reason = `checks failed ${failures} times`;
+    const reason = `checks failed ${plural(failures, "time")}`;
     store.tx(() => {
       store.updateTicket(ticketId, { blocked_reason: reason });
       store.addPost({ project_id: ticket.project_id, ticket_id: ticketId, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "block", body: reason, data_json: JSON.stringify({ reason, needs: "" }) });

@@ -3,14 +3,15 @@
 import { resumeCheckingTickets } from "./checks";
 import { finishIfComplete, holdMerge, land, pollPullRequests, runMergeQueue } from "./merge";
 import type { PostRow, ProjectRow, ThreadRow, TicketRow } from "./db/store";
-import { heldCheckResult, resumeText } from "./prompts";
-import { LoomError, type Projects } from "./projects";
-import { failReviewerSpawn, onReviewerGone, onReviewerIdle, onReviewerTurnFailed, spawnReviewers } from "./review";
+import { approvedText, blockedReplyText, heldCheckResult, resumeText, reviewRequeueNote, startRequeueNote } from "./prompts";
+import { LoomError, type ApproveResult, type Projects } from "./projects";
+import { backToReview, blockedAtReview, failReviewerSpawn, onReviewerGone, onReviewerIdle, onReviewerTurnFailed, spawnReviewers } from "./review";
 import { budgetReason, spawnable, toLite } from "./scheduler";
-import { canMoveTicket } from "./states";
+import { LOOM_ACTOR, canMoveTicket } from "./states";
 import { cancelTicket, maybeSendTriage, onPlannerIdle } from "./triage";
 import {
   blockTicket,
+  blockedAtStart,
   endThread,
   failSpawn,
   onThreadGone as endGoneThread,
@@ -29,6 +30,11 @@ const TOKEN_REFRESH_MS = 60_000;
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 export type EngineDeps = Omit<EngineCtx, "kick"> & { projects: Projects };
+
+export interface Approved extends ApproveResult {
+  requeued: string[];
+  backToReview: string[];
+}
 
 export class Engine {
   readonly ctx: EngineCtx;
@@ -239,6 +245,37 @@ export class Engine {
 
   // ---------------------------------------------------------------- the human's lifecycle commands
 
+  /**
+   * Approves the draft or the pending version. A pending version also requeues the tickets whose worker never started,
+   * sends the tickets whose reviewer bb refused back to review, and tells the planner.
+   */
+  async approve(slug: string, actor: string, version?: number): Promise<Approved> {
+    const { store, bb } = this.ctx;
+    const result = await this.projects.approve(slug, actor, version);
+    if (result.applied !== "pending") return { ...result, requeued: [], backToReview: [] };
+    const project = store.projectBySlug(slug)!;
+    const requeued: string[] = [];
+    const sentBack: string[] = [];
+    for (const ticket of store.tickets(project.id, ["blocked"])) {
+      if (blockedAtStart(store, ticket)) {
+        await requeueTicket(this.ctx, ticket.key, { note: startRequeueNote(result.version), actor: LOOM_ACTOR, author: "loom" });
+        requeued.push(ticket.key);
+      } else if (blockedAtReview(ticket)) {
+        backToReview(this.ctx, ticket, reviewRequeueNote(result.version));
+        sentBack.push(ticket.key);
+      }
+    }
+    const stillBlocked = store.tickets(project.id, ["blocked"]).map((ticket) => ticket.key);
+    const planner = store.threads({ projectId: project.id, role: "planner", states: ["active"] })[0];
+    if (planner?.thread_id != null) {
+      await bb
+        .send(planner.thread_id, approvedText({ slug, version: result.version, requeued, backToReview: sentBack, stillBlocked }))
+        .catch((error) => this.warn(`tell ${planner.thread_id} about the approval`, error));
+    }
+    this.kick();
+    return { ...result, requeued, backToReview: sentBack };
+  }
+
   /** Creates the integration branch in the project's checkout, then starts the project. Refused, with nothing changed, when that cannot be done. */
   async start(slug: string, actor: string): Promise<ProjectRow> {
     const project = this.ctx.store.projectBySlug(slug);
@@ -346,15 +383,19 @@ export class Engine {
     return result;
   }
 
-  /** The human's reply on a ticket. A worker that holds the ticket gets it as a message too. */
+  /** The human's reply on a ticket. A worker that holds the ticket gets it as a message too; on a blocked ticket, the planner does. */
   async humanPost(key: string, body: string, parentId?: number): Promise<PostRow> {
     const { store, bb } = this.ctx;
     const post = this.projects.post(key, { body, parentId, author: "human" });
     const ticket = store.ticketByKey(key)!;
+    const where = parentId === undefined ? "" : ` (answering #${parentId})`;
     const worker = ticket.state === "working" && ticket.worker_thread_id !== null ? store.threadByThreadId(ticket.worker_thread_id) : null;
+    // A blocked ticket has no worker, and triage rounds go out only when a ticket blocks, so the planner hears the reply now.
+    const planner = ticket.state === "blocked" ? store.threads({ projectId: ticket.project_id, role: "planner", states: ["active"] })[0] : undefined;
     if (worker?.state === "active" && worker.thread_id !== null) {
-      const where = parentId === undefined ? "" : ` (answering #${parentId})`;
       await bb.send(worker.thread_id, { summary: `[loom] Reply on ${key} from the human`, detail: `${post.body}${where}` }).catch((error) => this.warn(`reply to ${worker.thread_id}`, error));
+    } else if (planner?.thread_id != null) {
+      await bb.send(planner.thread_id, blockedReplyText(key, `${post.body}${where}`)).catch((error) => this.warn(`reply to ${planner.thread_id}`, error));
     }
     this.kick();
     return post;

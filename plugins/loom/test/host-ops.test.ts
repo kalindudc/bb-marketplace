@@ -175,10 +175,11 @@ describe("exec", () => {
     expect(bad.output).toContain("broken");
   });
 
-  it("keeps only the last 16 KB of output", async () => {
-    const big = await exec({ cwd: scratch, command: "head -c 200000 /dev/zero | tr '\\0' 'a'; echo END", timeoutMs: 10_000 });
-    expect(big.output.length).toBeLessThanOrEqual(16 * 1024 + 2);
-    expect(big.output.trimEnd().endsWith("END")).toBe(true);
+  it("keeps the first 16 KB and the last 48 KB, and names the bytes left out", async () => {
+    const big = await exec({ cwd: scratch, command: "head -c 20000 /dev/zero | tr '\\0' 'H'; head -c 148000 /dev/zero | tr '\\0' 'a'", timeoutMs: 10_000 });
+    expect(big.output).toBe(`${"H".repeat(16384)}\n[… 102464 bytes left out …]\n${"a".repeat(49152)}`);
+    const small = await exec({ cwd: scratch, command: "head -c 1000 /dev/zero | tr '\\0' 'b'", timeoutMs: 10_000 });
+    expect(small.output).toBe("b".repeat(1000));
   });
 
   it("times out and kills the whole process group", async () => {

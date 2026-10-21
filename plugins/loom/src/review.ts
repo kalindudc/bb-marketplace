@@ -4,7 +4,9 @@
 import { randomBytes } from "node:crypto";
 import { delivers, workerOf } from "./checks";
 import type { ProjectRow, ReviewRow, Store, ThreadRow, TicketRow } from "./db/store";
+import { plural } from "./format";
 import { changesRequestedText, findingsList, reviewerBrief, reviewerNudgeText } from "./prompts";
+import { SpawnRefusedError } from "./ports";
 import { LoomError } from "./projects";
 import { idleAction } from "./scheduler";
 import type { Spec } from "./spec";
@@ -95,7 +97,7 @@ function changesOutcome(ctx: EngineCtx, ticket: TicketRow, spec: Spec, review: R
 
   const rounds = changesRequestedSinceRequeue(store, ticket.id);
   if (rounds >= spec.review.max_rounds) {
-    const reason = `review requested changes in ${rounds} rounds`;
+    const reason = `review requested changes in ${plural(rounds, "round")}`;
     // Claiming the worker here makes its ending, which carries the ticket's move to blocked, replayable by the tick.
     if (worker.standing === "active" && !store.claimThread(worker.row.id, "blocked")) return { kind: "deferred" };
     store.updateTicket(ticket.id, { blocked_reason: reason });
@@ -184,7 +186,7 @@ export async function spawnReviewers(ctx: EngineCtx, project: ProjectRow, spec: 
       continue;
     }
     if (round.dead >= spec.review.approvals + 2) {
-      await blockForReviewers(ctx, ticket);
+      await blockForReviewers(ctx, ticket, "reviewers ended without a verdict");
       continue;
     }
     spawned += await startReviewers(ctx, project, spec, ticket, spec.review.approvals - round.approved - round.live);
@@ -192,8 +194,27 @@ export async function spawnReviewers(ctx: EngineCtx, project: ProjectRow, spec: 
   return spawned;
 }
 
-async function blockForReviewers(ctx: EngineCtx, ticket: TicketRow): Promise<void> {
-  const reason = "reviewers ended without a verdict";
+export const REVIEWER_REFUSED = "bb refused to start a reviewer";
+
+/** A blocked ticket whose last block was bb refusing its reviewer. Its work passed the checks at its head commit, and no worker has touched it since. */
+export function blockedAtReview(ticket: TicketRow): boolean {
+  return ticket.state === "blocked" && ticket.head_sha !== null && (ticket.blocked_reason?.startsWith(`${REVIEWER_REFUSED}:`) ?? false);
+}
+
+/** Blocked back to review for the same head. The round is new, so the refused reviewer's pending review no longer counts as a reviewer that ended. */
+export function backToReview(ctx: EngineCtx, ticket: TicketRow, note: string): void {
+  const { store } = ctx;
+  const round = ticket.review_round + 1;
+  store.tx(() => {
+    store.setTicketState(ticket.id, "review", LOOM_ACTOR, { head: ticket.head_sha, round, reason: "bb refused its reviewer, and a new spec version is approved" });
+    store.updateTicket(ticket.id, { review_round: round, blocked_reason: null });
+    store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "reply", body: note });
+  });
+  store.changed(ticket.project_id);
+  ctx.kick();
+}
+
+async function blockForReviewers(ctx: EngineCtx, ticket: TicketRow, reason: string): Promise<void> {
   ctx.store.tx(() => {
     ctx.store.updateTicket(ticket.id, { blocked_reason: reason });
     ctx.store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "block", body: reason, data_json: JSON.stringify({ reason, needs: "" }) });
@@ -269,6 +290,7 @@ async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow,
     });
   } catch (error) {
     failReviewerSpawn(ctx, row, errText(error));
+    if (error instanceof SpawnRefusedError) await blockForReviewers(ctx, ticket, `${REVIEWER_REFUSED}: ${errText(error)}`);
     return false;
   }
 

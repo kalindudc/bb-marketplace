@@ -175,6 +175,19 @@ export class FakePort implements BbPort {
     this.addThread(threadId, "active");
     return threadId;
   }
+  /** The provider ids bb has; an Error makes the listing fail. */
+  providers: string[] | Error = ["claude", "codex", "claude-code", "pi"];
+  async providerIds() {
+    this.record("providerIds");
+    if (this.providers instanceof Error) throw this.providers;
+    return [...this.providers];
+  }
+  /** Threads with a pending interaction. */
+  waiting = new Set<string>();
+  async waitingOnUser(threadIds: readonly string[]) {
+    this.record("waitingOnUser", [...threadIds]);
+    return threadIds.filter((id) => this.waiting.has(id));
+  }
   /** Registers a thread bb knows about, such as the planner's. */
   addThread(id: string, status = "idle", environmentId: string | null = null) {
     this.threads.set(id, { id, status, archivedAt: null, deletedAt: null, environmentId });

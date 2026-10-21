@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { HomeProject, HomeView, NeedItem } from "../contract";
-import { formatDuration } from "../format";
+import { formatDuration, plural } from "../format";
 import { ShareBar, Spark, type Swatch } from "./charts";
 import { BUTTON, BUTTON_PRIMARY, CARD, HEADING, StateBadge, countsLabel, mergeLabel, useRemote } from "./common";
 import { Guide } from "./guide";
@@ -35,8 +35,8 @@ function Tiles({ home }: { home: HomeView }) {
   const small = (text: string) => <span className="text-xs font-normal text-muted-foreground">{text}</span>;
   return (
     <div className="grid grid-cols-2 gap-3 px-4 pt-3 lg:grid-cols-5">
-      <Tile id="running" title="Running" value={String(totals.running)} note={`of ${totals.projects} projects · ${totals.paused} paused`} />
-      <Tile id="agents" title="Agents now" value={<>{totals.workers + totals.reviewers} {small(`/ ${totals.slots} slots`)}</>} note={`${totals.workers} workers · ${totals.reviewers} reviewers`} />
+      <Tile id="running" title="Running" value={String(totals.running)} note={`of ${plural(totals.projects, "project")} · ${totals.paused} paused`} />
+      <Tile id="agents" title="Agents now" value={<>{totals.workers + totals.reviewers} {small(`/ ${totals.slots} slots`)}</>} note={`${plural(totals.workers, "worker")} · ${plural(totals.reviewers, "reviewer")}`} />
       <Tile id="done" title="Done, 7 days" value={String(totals.doneLast7)}>
         <Spark values={totals.doneByDay} label="Tickets done per day across projects, last 14 days" />
       </Tile>

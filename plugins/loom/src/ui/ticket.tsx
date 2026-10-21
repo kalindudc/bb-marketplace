@@ -3,6 +3,7 @@ import { useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import type { PostDto, ReviewDto, rpcContract, TicketAction, TicketDetail } from "../contract";
 import { formatDuration } from "../format";
 import { BUTTON, ConfirmButton, FIELD, HEADING, StateBadge, useRemote, useRun } from "./common";
+import { ThreadList, Timeline } from "./timeline";
 
 const INDENT_PX = 16;
 const MAX_DEPTH = 6;
@@ -42,7 +43,7 @@ function Post({ post, open, busy, onToggle, onSend }: { post: PostDto; open: boo
         <span>{formatDuration(Math.max(0, Date.now() - post.at))} ago</span>
         <span>#{post.id}</span>
       </header>
-      <div data-post-body className="mt-1 whitespace-pre-wrap break-words text-sm">{post.body}</div>
+      <div data-post-body className="mt-1 whitespace-pre-wrap text-sm [overflow-wrap:anywhere]">{post.body}</div>
       <button type="button" aria-label={`Reply to #${post.id}`} onClick={onToggle} className={`${LINK} mt-1`}>
         Reply
       </button>
@@ -59,7 +60,7 @@ function Reviews({ reviews }: { reviews: ReviewDto[] }) {
       {reviews.map((review) => (
         <div key={review.id} className="text-sm">
           <p>
-            <span className="font-medium">Round {review.round}</span> · {review.verdict.replace("_", " ")}
+            <span className="font-medium">Round {review.round}</span> · {review.status}
             {review.summary !== null && <span className="text-muted-foreground"> — {review.summary}</span>}
           </p>
           {review.findings.length > 0 && (
@@ -102,7 +103,6 @@ export function TicketView({ slug, ticketKey }: { slug: string; ticketKey: strin
     });
 
   const final = ticket.state === "done" || ticket.state === "cancelled";
-  const live = ticket.threads.filter((thread) => thread.threadId !== null && thread.state !== "ended");
   const meta = [ticket.attempt > 0 ? `attempt ${ticket.attempt}` : null, ticket.reviewRound > 0 ? `review round ${ticket.reviewRound}` : null, ticket.deps.length > 0 ? `after ${ticket.deps.join(", ")}` : null].filter((part) => part !== null);
 
   return (
@@ -115,14 +115,13 @@ export function TicketView({ slug, ticketKey }: { slug: string; ticketKey: strin
           <StateBadge state={ticket.state} />
         </div>
         <p className="text-xs text-muted-foreground">{meta.join(" · ")}</p>
-        {ticket.branch !== null && <p className="font-mono text-xs text-muted-foreground">{ticket.branch}</p>}
+        {ticket.branch !== null && (
+          <p data-ticket-branch className="font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">
+            {ticket.branch}
+          </p>
+        )}
         {ticket.blockedReason !== null && ticket.state === "blocked" && <p className="text-sm text-destructive-text">Blocked: {ticket.blockedReason}</p>}
         <div className="flex flex-wrap gap-3">
-          {live.map((thread) => (
-            <button key={thread.threadId} type="button" aria-label={`Open ${thread.role} thread`} onClick={() => navigate.toThread(thread.threadId!)} className={LINK}>
-              {thread.role} thread
-            </button>
-          ))}
           {ticket.prUrl !== null && (
             <button type="button" aria-label="Open the pull request" onClick={() => navigate.openUrl(ticket.prUrl!)} className={LINK}>
               Pull request
@@ -141,6 +140,8 @@ export function TicketView({ slug, ticketKey }: { slug: string; ticketKey: strin
         )}
       </header>
       {error !== null && <p role="alert" className="text-xs text-destructive-text">{error}</p>}
+      <Timeline entries={ticket.timeline} />
+      <ThreadList threads={ticket.threads} />
       <Reviews reviews={ticket.reviews} />
       <section className="space-y-1">
         <h2 className={HEADING}>Thread</h2>
