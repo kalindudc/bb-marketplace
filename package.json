@@ -5,6 +5,7 @@
   "description": "kalindudc's bb plugin marketplace.",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "check": "node scripts/build.mjs --check"
+    "check": "node scripts/build.mjs --check",
+    "test": "node --test 'scripts/*.test.mjs'"
   }
 }

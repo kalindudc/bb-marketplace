@@ -41,6 +41,7 @@ marketplace.base.json   marketplace name, description and categories
 entries/<id>.json       one store listing per plugin
 plugins/<id>/           plugin source (a plugin can also live in its own repository)
 scripts/build.mjs       checks the entries and writes marketplace.json
+scripts/rules.mjs       the listing rules: bb's schema and stricter marketplaces
 marketplace.json        generated; bb reads this file, so commit it
 ```
 
@@ -48,12 +49,15 @@ marketplace.json        generated; bb reads this file, so commit it
 
 1. Put the plugin in `plugins/<id>/`. Its package name must be
    `bb-plugin-<id>`, and it needs `engines.bb` and a `PLUGIN_OVERVIEW.md`
-   (at most 4000 characters, no `#` title).
+   (at most 4000 characters counting the final newline, no `#` title, no
+   HTML or images, and only `https://` links).
 2. Add `entries/<id>.json` by copying an existing entry. For a plugin in this
    repository, `source.git` uses this repository's URL,
    `"subdir": "plugins/<id>"` and `"tagPrefix": "<id>/"`.
 3. Add a row to the table above.
-4. Run `npm run build` and commit `marketplace.json` with the change.
+4. Run `npm run build` and commit `marketplace.json` with the change. The
+   build stops and lists every problem it finds. CI runs `npm test` and
+   `npm run check` on every push to `main` and every pull request.
 5. Tag the first release (see below). Until a tag exists, the listing shows
    in the store but cannot be installed.
 
