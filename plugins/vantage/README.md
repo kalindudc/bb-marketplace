@@ -36,6 +36,15 @@ banner warns when files are changed in more than one worktree of the same
 project, because those branches may conflict when merged; it opens to list the
 files and the threads.
 
+A thread that works on its base branch, such as one on `main` in the project
+checkout, has nothing ahead of that base, so once it commits its row would show
+no change at all. Its row reads "on base" instead of ↑0 ↓0, and counts the
+commits its threads made there ("3 commits"). Vantage finds those commits in
+the checkout's reflog: each commit that `git commit` made while one of the
+worktree's threads was running a `git commit` command, and that is still on
+the branch. A worktree whose own commits were merged into its base gets the
+same list.
+
 Agents sometimes make their own checkout outside bb and work there, for
 example a clone or `git worktree add` run from a shell, while their bb
 workspace stays untouched. Once a thread has both edited a file in such a checkout and run
@@ -53,8 +62,9 @@ Click a row to open that worktree inside the parent's panel:
 - **Changes** lists the uncommitted files and the files committed on the
   branch, each with its diff, and marks a file that other worktrees also
   changed.
-- **Commits** lists the commits ahead of the base branch. Open one to see its
-  files and their diffs.
+- **Commits** lists the commits ahead of the base branch, or, when none are,
+  the commits its threads made on its base branch. Open one to see its files
+  and their diffs.
 - **Chat** shows the child's conversation in bb's own chat component, so you
   can approve a request or steer the agent from there. The parent's own row has
   no Chat tab.
@@ -74,8 +84,10 @@ Click a row to open that worktree inside the parent's panel:
 A toolbar with a summary ("3 repos · 12 files · +120 −30 · 5 threads"), a scope
 switch, Expand all and Refresh, then one section for each repository. A section
 header has the repository's project name, its branch, a caption, the totals and
-a chip for every thread that touched it. A chip opens that thread in a split;
-an archived thread's chip has an archive mark. Open a file to see its diff in
+a chip for every thread that touched it, and "N commits by its threads on
+main" when a worktree on its base branch has such commits (point at it for
+their subjects). A chip opens that thread in a split; an archived thread's chip
+has an archive mark. Open a file to see its diff in
 bb's own viewer.
 
 | Kind | Caption | Where it is read from |
@@ -250,10 +262,14 @@ repositories or worktrees, for example `Shop · 2 worktrees`.
 `worktrees` prints the columns STATUS, THREAD (cut at 30 characters),
 AHEAD/BEHIND, UNCOMMITTED and BRANCH, then the files changed in more than one
 worktree. The status is `archived`, `unavailable`, `running`, `failed` or the
-thread's own status. `worktree <thread>` reads the whole tree the thread belongs
-to and prints each worktree the thread works in, its own workspace first and
-then any thread checkout: at most 50 uncommitted and 50 committed files, then
-`… N more`, and at most 20 commits.
+thread's own status. A worktree on its base branch reads `on base` under
+AHEAD/BEHIND, and a branch cell such as `main · 3 commits by its threads`
+counts the commits its threads made there. `worktree <thread>` reads the whole
+tree the thread belongs to and prints each worktree the thread works in, its own
+workspace first and then any thread checkout: at most 50 uncommitted and 50
+committed files, then `… N more`, and at most 20 commits. A worktree on its base
+branch prints `on main, its base branch` in its heading, then `Commits its
+threads made on main (N)`, or a line saying none were found.
 
 `worktrees --json` prints `{ threadId, target, windowHours, threads, archivedHidden, worktrees, sharedFiles }`.
 `archivedHidden` is how many archived threads matched and were left out (0 with
@@ -265,16 +281,19 @@ thread's tree). Each thread has a `rootThreadId`, the top of its tree among the
 threads read.
 Each worktree has `key`, `threadIds`, `state` (`ready`, `unavailable`, or `loading` in the instant outline),
 `message`, `branch`, `base`, `kind` (`workspace`, `branch` or `checkout`), `aheadCount`,
-`behindCount`, `uncommitted`, `committed` and `commits`; `sharedFiles` lists
+`behindCount`, `uncommitted`, `committed`, `commits`, `onBase` (its branch is
+its base branch, or that branch on a remote) and `threadCommits` (the commits its
+threads made that are not ahead of the base, newest first); `sharedFiles` lists
 `path` and `worktreeKeys`. `worktree <thread> --json` prints one worktree object:
 the thread's own workspace when it has one. A thread checkout's `ref` is
 `{ "kind": "checkout", …, "worked": true }` in both the worktree and the repository.
 
 The text output of `changes` lists each repository with its kind, branch,
-totals and the titles of the threads that touched it, then at most 50 files and
-a `… N more` line, then other files and warnings. `changes --json` prints the
-overview; the fields agents read are `repos[].label`, `repos[].projectId`, `ref.kind`, `branch`,
-`files`, `otherFiles`, `threadIds` and `state`, plus the `worktrees` and
+totals and the titles of the threads that touched it, then `N commits by its
+threads on main` with up to five of them, then at most 50 files and a `… N more`
+line, then other files and warnings. `changes --json` prints the overview; the
+fields agents read are `repos[].label`, `repos[].projectId`, `ref.kind`, `branch`,
+`files`, `otherFiles`, `threadCommits`, `threadIds` and `state`, plus the `worktrees` and
 `sharedFiles` above. The bundled skill (`skills/vantage`) describes them. All
 the commands keep their output under bb's limit by cutting files from the end.
 
@@ -322,6 +341,18 @@ nothing on disk.
   60-second cache. A checkout only edited by path keeps the cheaper
   uncommitted-only call, and the instant outline shows a thread checkout's row
   when earlier loads already know the edits and the roots.
+- The commits a thread made on its base branch come from its commands and the
+  checkout's reflog. The event index also notes when each `git commit`
+  command started and finished, from the `item/started` and `item/completed`
+  events it reads; one still running lasts
+  until now, and one in a stopped thread until its last event. For a ready
+  workspace or thread checkout with no commits ahead whose threads ran such a
+  command, one `threadCommits` host call reads the HEAD reflog (`git log -g`,
+  the last 5,000 entries), keeps the `commit`, `commit (amend)`, `commit
+  (initial)` and `commit (merge)` entries made within two seconds of one of
+  those spans, and drops any that `merge-base --is-ancestor` says are no longer
+  on HEAD, such as an amended commit. Pulls, merges and rebases are never
+  counted. The result shares the 60-second cache, keyed by the spans.
 - bb's status call can take more than 30 seconds, and time out, on a
   repository that is far behind its base branch. Vantage waits 10 seconds for
   bb's status or Branch-scope diff. When bb has not answered by then, Vantage
@@ -383,6 +414,11 @@ nothing on disk.
   repository the thread never edited is still missed.
 - A thread checkout is compared with `origin/HEAD`; without one it shows its
   uncommitted files only.
+- The commits a thread made on its base branch are matched by time. A commit
+  someone else makes in the same checkout while one of the thread's commit
+  commands runs is counted as the thread's. A commit made by any command other
+  than `git commit`, such as a script or a release tool, is not found. A commit
+  made on another branch, or no longer on HEAD, is not listed.
 - An archived child's branch is read from the project checkout, which is where
   bb's git-worktree provider leaves it. When the project's folder is not a
   repository, or the project has none, it is read in the folder the thread
@@ -394,6 +430,12 @@ nothing on disk.
 
 ## Changes
 
+- **0.5.0**: a worktree on its base branch, such as a thread working on `main`
+  in the project checkout, reads "on base" instead of ↑0 ↓0 and lists the
+  commits its threads made there with `git commit`, found in the checkout's
+  reflog. The worktree's Commits tab, `bb
+  vantage worktree`, `bb vantage worktrees` and the Repositories view show
+  them, and the JSON has `onBase` and `threadCommits`.
 - **0.4.3**: the bundled `vantage` skill loads. The manifest listed the
   skill's own folder, which bb reads as a folder of skills and so found none;
   it now lists `./skills`.

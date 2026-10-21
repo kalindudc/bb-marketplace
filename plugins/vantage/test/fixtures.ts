@@ -67,6 +67,7 @@ const repoBase: Repo = {
   otherFiles: [],
   truncated: false,
   totals: { files: 0, additions: 0, deletions: 0 },
+  threadCommits: [],
 };
 
 export function repo(overrides: Partial<Repo> = {}): Repo {
@@ -81,8 +82,8 @@ export function repo(overrides: Partial<Repo> = {}): Repo {
 
 export function checkoutRepo(overrides: Partial<Repo> = {}): Repo {
   return repo({
-    key: "host_1:/code/cortex", ref: { kind: "checkout", hostId: "host_1", root: "/code/cortex", base: null },
-    label: "cortex", root: "/code/cortex", branch: "main", ...overrides,
+    key: "host_1:/code/commons", ref: { kind: "checkout", hostId: "host_1", root: "/code/commons", base: null },
+    label: "commons", root: "/code/commons", branch: "main", ...overrides,
   });
 }
 
@@ -131,6 +132,8 @@ const worktreeBase: Worktree = {
   uncommitted: [],
   committed: [],
   commits: [],
+  onBase: false,
+  threadCommits: [],
 };
 
 export function worktree(overrides: Partial<Worktree> = {}): Worktree {

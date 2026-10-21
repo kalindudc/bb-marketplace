@@ -1,6 +1,7 @@
 import type { CollectDeps, Environment, RepoPlan } from "./collect";
 import type { RepoRef, SharedFile, Worktree } from "./contract";
 import { mapLimit } from "./limit";
+import { isOnBase } from "./thread-commits";
 import {
   checkoutWorktreeStatus, gitFileChange, hostMessage, loadBranchRange, loadCheckoutStatus, loadWorkspaceStatus, MAX_COMMITS, MAX_FILES,
   unavailableStatus, type WorktreeStatus,
@@ -65,7 +66,7 @@ export async function loadWorktrees(
   deps: CollectDeps, repos: readonly RepoPlan[], environments: ReadonlyMap<string, Environment>,
   hostNames: ReadonlyMap<string, string>, signal?: AbortSignal,
 ): Promise<Worktree[]> {
-  const loaded = await mapLimit(repos.filter(isWorktreePlan), STATUS_CONCURRENCY, async (plan): Promise<Worktree | null> => {
+  const loaded = await mapLimit(repos.filter(isWorktreePlan), STATUS_CONCURRENCY, async (plan): Promise<Omit<Worktree, "onBase" | "threadCommits"> | null> => {
     const identity = identify(plan, environments, hostNames);
     const { ref } = plan;
     const branch = plannedBranch(plan, environments);
@@ -85,7 +86,10 @@ export async function loadWorktrees(
       return { ...identity, ...unavailableStatus(errorMessage(error), branch, ref.base) };
     }
   });
-  return loaded.filter((worktree) => worktree !== null);
+  // The commits its threads made are only known once their edits are, so the overview adds them.
+  return loaded.filter((worktree) => worktree !== null).map((worktree) => ({
+    ...worktree, onBase: worktree.state === "ready" && isOnBase(worktree.branch, worktree.base), threadCommits: [],
+  }));
 }
 
 // The rows the instant outline shows: who, where and on which branch are known; every number waits for git.
@@ -103,6 +107,8 @@ export function loadingWorktrees(
     uncommitted: [],
     committed: [],
     commits: [],
+    onBase: false,
+    threadCommits: [],
   }));
 }
 

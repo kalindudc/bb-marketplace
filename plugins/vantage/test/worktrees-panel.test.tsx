@@ -58,7 +58,7 @@ function sampleOverview(overrides: Partial<Overview> = {}): Overview {
   return makeOverview({
     threads: THREADS, worktrees: WORKTREES,
     sharedFiles: [sharedFile({ path: "README.md", worktreeKeys: ["wt1", "wt2"] })],
-    repos: [checkoutRepo({ label: "cortex", files: [fileChange({ additions: 4, deletions: 1 })], threadIds: ["thr_4"] })],
+    repos: [checkoutRepo({ label: "commons", files: [fileChange({ additions: 4, deletions: 1 })], threadIds: ["thr_4"] })],
     otherFiles: [fileChange({ path: "/tmp/notes.txt" })],
     ...overrides,
   });
@@ -201,11 +201,11 @@ describe("WorktreeList", () => {
   it("links to the repositories view, focused on the row clicked, from the changes made outside worktrees", () => {
     const { slot, onShowRepositories } = mountList();
     expect(slot.container.textContent).toContain("Changed outside worktrees");
-    const cortex = slot.getByRole("button", { name: /cortex/ });
-    expect(cortex.textContent).toContain("1 file");
-    fireEvent.click(cortex);
+    const commons = slot.getByRole("button", { name: /commons/ });
+    expect(commons.textContent).toContain("1 file");
+    fireEvent.click(commons);
     fireEvent.click(slot.getByRole("button", { name: /Other files/ }));
-    expect(onShowRepositories).toHaveBeenNthCalledWith(1, { kind: "repo", key: "host_1:/code/cortex" });
+    expect(onShowRepositories).toHaveBeenNthCalledWith(1, { kind: "repo", key: "host_1:/code/commons" });
     expect(onShowRepositories).toHaveBeenNthCalledWith(2, { kind: "otherFiles" });
   });
 
@@ -222,6 +222,20 @@ describe("WorktreeList", () => {
   it("leaves out the outside section when only worktrees changed", () => {
     const { slot } = mountList({ overview: sampleOverview({ repos: [], otherFiles: [] }) });
     expect(slot.container.textContent).not.toContain("Changed outside worktrees");
+  });
+
+  it("marks a row on its base branch and counts the commits its threads made there, instead of ahead and behind", () => {
+    const onMain = worktree({
+      key: "main", threadIds: ["thr_2"], branch: "main", base: "main", onBase: true,
+      threadCommits: [commit(), commit({ sha: "b".repeat(40), shortSha: "bbbbbbb" })],
+    });
+    const { slot } = mountList({ overview: sampleOverview({ worktrees: [onMain, worktree({ key: "quiet", threadIds: ["thr_3"], branch: "main", base: "main", onBase: true })] }) });
+    expect(row(slot, "main").textContent).toContain("on base");
+    expect(row(slot, "main").textContent).toContain("2 commits");
+    expect(row(slot, "main").textContent).not.toContain("↑0 ↓0");
+    expect(within(row(slot, "main")).getByTitle("Works on main, its base branch, so nothing counts as ahead")).toBeTruthy();
+    expect(row(slot, "quiet").textContent).toContain("on base");
+    expect(row(slot, "quiet").textContent).not.toContain("commit");
   });
 
   it("says so when there is no worktree", () => {
@@ -455,6 +469,29 @@ describe("WorktreeDetail commits", () => {
     fireEvent.click(slot.getByRole("button", { name: "Retry" }));
     await slot.findByText("later.ts");
     expect(commitFiles).toHaveBeenCalledTimes(2);
+  });
+
+  it("lists the commits its threads made on the base branch it works on, and opens their files", async () => {
+    const onMain = worktree({
+      key: "main", threadIds: ["thr_2"], branch: "main", base: "main", onBase: true,
+      threadCommits: [commit({ sha: "f".repeat(40), shortSha: "fffffff", subject: "Add the parser", authoredAt: Date.now() - 5 * 60_000 })],
+    });
+    const { slot, commitFiles } = mountDetail({ tab: "commits", key: "main", overview: sampleOverview({ worktrees: [onMain] }) });
+    expect(slot.container.querySelector("[data-worktree-header]")!.textContent).toContain("on main, its base branch");
+    expect(tab(slot, /Commits/).textContent).toContain("1");
+    expect(slot.container.textContent).toContain("1 commit its threads made on main");
+    fireEvent.click(slot.getByRole("button", { name: /Add the parser/ }));
+    await slot.findByText("in-commit.ts");
+    expect(commitFiles.mock.calls[0]?.[0]).toMatchObject({ sha: "f".repeat(40) });
+  });
+
+  it("explains a worktree on its base branch whose threads made no commits", () => {
+    const quiet = worktree({ key: "main", threadIds: ["thr_2"], branch: "main", base: "main", onBase: true });
+    const overview = sampleOverview({ worktrees: [quiet] });
+    const commits = mountDetail({ tab: "commits", key: "main", overview });
+    expect(commits.slot.container.textContent).toContain("Works on main, its base branch, so nothing counts as ahead. No commits its threads made were found.");
+    const changes = mountDetail({ tab: "changes", key: "main", overview });
+    expect(changes.slot.container.textContent).toContain("Works on main, its base branch, so nothing counts as committed ahead.");
   });
 
   it("says so when there are no commits ahead", () => {
@@ -722,7 +759,7 @@ describe("Vantage panel: the Worktrees view", () => {
     expect(window.localStorage.getItem(VIEW_STORAGE_KEY)).toBe("repositories");
     first.slot.lifecycle.unmount();
     const second = await mountPanel();
-    await second.slot.findByText("cortex");
+    await second.slot.findByText("commons");
     expect(second.slot.getByRole("button", { name: "Repositories" }).getAttribute("aria-pressed")).toBe("true");
     expect(second.slot.container.querySelector("[data-worktree-list]")).toBeNull();
   });
@@ -867,7 +904,7 @@ describe("Vantage panel: the Worktrees view", () => {
   it("switches to the Repositories view from the changes made outside worktrees", async () => {
     const { slot } = await mountPanel();
     await slot.findByText("Changed outside worktrees");
-    fireEvent.click(slot.getByRole("button", { name: /cortex/ }));
+    fireEvent.click(slot.getByRole("button", { name: /commons/ }));
     expect(slot.getByRole("button", { name: "Repositories" }).getAttribute("aria-pressed")).toBe("true");
     expect(slot.container.querySelector("[data-repo]")).not.toBeNull();
     expect(window.localStorage.getItem(VIEW_STORAGE_KEY)).toBe("repositories");
@@ -877,7 +914,7 @@ describe("Vantage panel: the Worktrees view", () => {
     const withWorkspace = () => sampleOverview({
       repos: [
         repo({ key: "wt1", label: "Project", threadIds: ["thr_2"], files: [fileChange({ path: "a.ts", additions: 3, deletions: 1 })] }),
-        checkoutRepo({ label: "cortex", files: [fileChange({ additions: 4, deletions: 1 })], threadIds: ["thr_4"] }),
+        checkoutRepo({ label: "commons", files: [fileChange({ additions: 4, deletions: 1 })], threadIds: ["thr_4"] }),
       ],
     });
     const repoKeys = (slot: Slot) => [...slot.container.querySelectorAll("[data-repo]")].map((node) => node.getAttribute("data-repo"));
@@ -886,10 +923,10 @@ describe("Vantage panel: the Worktrees view", () => {
     it("shows only that repository, says so, and counts only what it shows", async () => {
       const { slot } = await mountPanel({ overview: withWorkspace });
       await slot.findByText("Changed outside worktrees");
-      fireEvent.click(slot.getByRole("button", { name: /cortex/ }));
-      expect(repoKeys(slot)).toEqual(["host_1:/code/cortex"]);
+      fireEvent.click(slot.getByRole("button", { name: /commons/ }));
+      expect(repoKeys(slot)).toEqual(["host_1:/code/commons"]);
       expect(slot.container.querySelector("[data-other-files]")).toBeNull();
-      expect(chip(slot)?.textContent).toContain("Only cortex");
+      expect(chip(slot)?.textContent).toContain("Only commons");
       expect(slot.container.querySelector("[data-repo-summary]")!.textContent).toContain("1 repo · 1 file · +4 −1 · 1 thread");
     });
 
@@ -905,10 +942,10 @@ describe("Vantage panel: the Worktrees view", () => {
     it("shows every repository again when the focus is cleared", async () => {
       const { slot } = await mountPanel({ overview: withWorkspace });
       await slot.findByText("Changed outside worktrees");
-      fireEvent.click(slot.getByRole("button", { name: /cortex/ }));
+      fireEvent.click(slot.getByRole("button", { name: /commons/ }));
       fireEvent.click(slot.getByRole("button", { name: "Show all repositories" }));
       expect(chip(slot)).toBeNull();
-      expect(repoKeys(slot)).toEqual(["wt1", "host_1:/code/cortex"]);
+      expect(repoKeys(slot)).toEqual(["wt1", "host_1:/code/commons"]);
       expect(slot.container.querySelector("[data-other-files]")).not.toBeNull();
     });
 
@@ -924,17 +961,17 @@ describe("Vantage panel: the Worktrees view", () => {
     it("forgets the focus when the view is switched, so the Repositories switch shows everything", async () => {
       const { slot } = await mountPanel({ overview: withWorkspace });
       await slot.findByText("Changed outside worktrees");
-      fireEvent.click(slot.getByRole("button", { name: /cortex/ }));
+      fireEvent.click(slot.getByRole("button", { name: /commons/ }));
       fireEvent.click(slot.getByRole("button", { name: "Worktrees" }));
       fireEvent.click(slot.getByRole("button", { name: "Repositories" }));
       expect(chip(slot)).toBeNull();
-      expect(repoKeys(slot)).toEqual(["wt1", "host_1:/code/cortex"]);
+      expect(repoKeys(slot)).toEqual(["wt1", "host_1:/code/commons"]);
     });
 
     it("offers Collapse all once every file shown is open, whatever the hidden repositories hold", async () => {
       const { slot } = await mountPanel({ overview: withWorkspace });
       await slot.findByText("Changed outside worktrees");
-      fireEvent.click(slot.getByRole("button", { name: /cortex/ }));
+      fireEvent.click(slot.getByRole("button", { name: /commons/ }));
       fireEvent.click(slot.container.querySelector('[data-file-row="src/a.ts"] button')!);
       expect(slot.getByRole("button", { name: "Collapse all" })).toBeTruthy();
     });

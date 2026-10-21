@@ -58,8 +58,8 @@ const branchPlan = (overrides: Partial<RepoPlan> = {}): RepoPlan => ({
   label: "Project", projectId: "proj_1", root: "/code/proj", hostId: "host_1", threadIds: ["thr_9"], touched: new Map(), ...overrides,
 });
 const checkoutPlan: RepoPlan = {
-  key: "host_1:/code/cortex", ref: { kind: "checkout", hostId: "host_1", root: "/code/cortex", base: null }, label: "cortex", projectId: null,
-  root: "/code/cortex", hostId: "host_1", threadIds: ["thr_1"], touched: new Map(),
+  key: "host_1:/code/commons", ref: { kind: "checkout", hostId: "host_1", root: "/code/commons", base: null }, label: "commons", projectId: null,
+  root: "/code/commons", hostId: "host_1", threadIds: ["thr_1"], touched: new Map(),
 };
 const recordedPlan: RepoPlan = {
   key: "recorded:env_9", ref: { kind: "recorded" }, label: "Gone", projectId: "proj_1", root: null, hostId: "host_1", threadIds: ["thr_3"], touched: new Map(),
@@ -107,6 +107,19 @@ describe("loadWorktrees workspaces", () => {
     expect(result?.uncommitted.map((file) => [file.path, file.status])).toEqual([["src/a.ts", "modified"], ["new.txt", "untracked"]]);
     expect(result?.committed.map((file) => [file.path, file.status])).toEqual([["src/b.ts", "added"]]);
     expect(result?.commits.map((entry) => entry.subject)).toEqual(["Commit 2", "Commit 1"]);
+  });
+
+  it("says when a worktree works on its base branch, before any commits its threads made are known", async () => {
+    const onMain = setup({
+      status: () => available({
+        branchName: "main",
+        mergeBase: { aheadCount: 0, behindCount: 0, baseRef: "main", mergeBaseBranch: "main", commits: [], files: [] },
+      }),
+    });
+    const [main] = await loadWorktrees(onMain.deps, [workspacePlan(1, { ref: workspaceRef("env_1", "main") })], environments(environment({ id: "env_1" })), names);
+    expect(main).toMatchObject({ branch: "main", base: "main", onBase: true, threadCommits: [] });
+    const [feature] = await loadWorktrees(setup().deps, [workspacePlan(1)], environments(environment({ id: "env_1" })), names);
+    expect(feature).toMatchObject({ branch: "feature/work", base: "origin/main", onBase: false, threadCommits: [] });
   });
 
   it("asks without a base when the plan has none", async () => {

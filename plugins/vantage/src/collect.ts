@@ -2,12 +2,13 @@ import { archivedLast } from "./archived";
 import { posix } from "node:path";
 import type { PluginBbSdk } from "@get-bb/plugin-sdk";
 import type { EditIndex, EditRecord, ThreadEdits } from "./edits";
-import { collectAll, FETCH_CONCURRENCY, loadEnvironments, summarizeThread, type AllOptions, type Collected } from "./collect-all";
+import { collectAll, FETCH_CONCURRENCY, loadEnvironments, RUNNING, summarizeThread, type AllOptions, type Collected } from "./collect-all";
 import type { FileChange, HostInput, HostMethod, HostOutput, Overview, OverviewTarget, Repo, RepoRef, Scope, ShellInput, ThreadSummary } from "./contract";
 import { mapLimit } from "./limit";
 import { createRepoCache, planCached, type RepoCache } from "./repo-cache";
 import { createRootCache, type RootCache, type RootEntry } from "./root-cache";
 import { loadRepoFiles, loadWorkspaceDiff, loadWorkspaceStatus, recordedFile, recordedLiveFiles, type LiveFiles } from "./sources";
+import { attachThreadCommits } from "./thread-commits";
 import { findSharedFiles, loadingWorktrees, loadWorktrees } from "./worktrees";
 
 export type Environment = Awaited<ReturnType<PluginBbSdk["environments"]["get"]>>;
@@ -328,7 +329,7 @@ function toRepo(plan: RepoPlan, loaded: LiveFiles | { unavailable: string }, hos
   if ("unavailable" in loaded) {
     return {
       ...base, branch: null, base: null, aheadCount: null, state: "unavailable", message: loaded.unavailable.slice(0, MAX_MESSAGE),
-      files: [], otherFiles: [], truncated: false, totals: { files: 0, additions: 0, deletions: 0 },
+      files: [], otherFiles: [], truncated: false, totals: { files: 0, additions: 0, deletions: 0 }, threadCommits: [],
     };
   }
   let files: FileChange[];
@@ -355,7 +356,7 @@ function toRepo(plan: RepoPlan, loaded: LiveFiles | { unavailable: string }, hos
   return {
     ...base, branch: loaded.branch ?? branchFallback, base: loaded.base, aheadCount: loaded.aheadCount, state: "ready", message: null,
     files: files.slice(0, MAX_FILES), otherFiles: others.slice(0, MAX_FILES), truncated: loaded.truncated || files.length > MAX_FILES,
-    totals,
+    totals, threadCommits: [],
   };
 }
 
@@ -364,7 +365,7 @@ function loadingRepo(plan: RepoPlan, environments: ReadonlyMap<string, Environme
   return {
     key: plan.key, ref: plan.ref, label: plan.label, projectId: plan.projectId, root: plan.root, hostId: plan.hostId, hostName,
     branch, base: null, aheadCount: null, threadIds: plan.threadIds, state: "loading", message: null,
-    files: [], otherFiles: [], truncated: false, totals: { files: 0, additions: 0, deletions: 0 },
+    files: [], otherFiles: [], truncated: false, totals: { files: 0, additions: 0, deletions: 0 }, threadCommits: [],
   };
 }
 
@@ -502,10 +503,14 @@ export async function buildOverview(
     plan.ref = { ...plan.ref, root: plan.root, hostId: plan.hostId };
     readWithGit.set(plan.key, plan.ref);
   }
-  const worktrees = loadedWorktrees.map((worktree) => {
+  const running = new Set(tree.threads.filter((thread) => RUNNING.has(thread.status)).map((thread) => thread.id));
+  const attributed = await attachThreadCommits(scoped, loadedWorktrees, { edits: editMap, running, now: Date.now() }, signal);
+  warnings.push(...attributed.warnings);
+  const worktrees = attributed.worktrees.map((worktree) => {
     const ref = readWithGit.get(worktree.key);
     return ref === undefined ? worktree : { ...worktree, ref };
   });
+  const madeIn = new Map(worktrees.map((worktree) => [worktree.key, worktree.threadCommits]));
   const repos = plans.map((plan, index): Repo => {
     const outcome = settled[index]!;
     const name = plan.hostId === null ? null : hostName(plan.hostId);
@@ -515,7 +520,7 @@ export async function buildOverview(
       return toRepo(recorded, recordedLiveFiles(recorded), name, plan.ref.kind === "branch" ? plan.ref.head : null);
     }
     const environment = plan.ref.kind === "workspace" ? tree.environments.get(plan.ref.environmentId) : undefined;
-    return toRepo(plan, outcome.value, name, environment?.branchName ?? null);
+    return { ...toRepo(plan, outcome.value, name, environment?.branchName ?? null), threadCommits: madeIn.get(plan.key) ?? [] };
   });
 
   return {

@@ -27,7 +27,7 @@ const sample = makeOverview({
     repo({ key: "r1", label: "Shop", projectId: "proj_shop", root: "/work/shop-1", files: [fileChange({ path: "src/auth/login.ts" })] }),
     repo({ key: "r2", label: "Docs site", projectId: "proj_docs", root: "/work/docs", files: [fileChange({ path: "README.md" })] }),
     repo({ key: "r3", label: "Shop", projectId: "proj_shop", root: "/work/shop-2", files: [] }),
-    checkoutRepo({ key: "r4", label: "cortex", projectId: "proj_cortex", root: "/code/cortex", files: [], otherFiles: [fileChange({ path: "tasks/todo.md" })] }),
+    checkoutRepo({ key: "r4", label: "commons", projectId: "proj_commons", root: "/code/commons", files: [], otherFiles: [fileChange({ path: "tasks/todo.md" })] }),
     checkoutRepo({ key: "r5", label: "scripts", projectId: null, root: "/code/scripts", files: [fileChange({ path: "run.sh" })] }),
     repo({ key: "r6", label: "Docs site", projectId: "proj_docs", root: "/work/docs-2", state: "unavailable", message: "Folder is gone", files: [] }),
     repo({ key: "r7", label: "Shop", projectId: "proj_shop", root: "/work/shop-3", files: [fileChange({ path: "done.ts", status: "clean", additions: null, deletions: null })] }),
@@ -120,7 +120,7 @@ describe("filterRepos", () => {
   });
 
   it("filters by the project of each repository, a checkout's coming from its source", () => {
-    expect(keys(filterRepos(sample, filter({ projectId: "proj_cortex" })).repos)).toEqual(["r4"]);
+    expect(keys(filterRepos(sample, filter({ projectId: "proj_commons" })).repos)).toEqual(["r4"]);
     expect(keys(filterRepos(sample, filter({ projectId: "proj_shop", changedOnly: false })).repos)).toEqual(["r1", "r3", "r7"]);
   });
 
@@ -175,7 +175,7 @@ describe("focusRepos", () => {
 
 describe("focusLabel", () => {
   it("names the focused repository by its label and branch, or the other files", () => {
-    expect(focusLabel(sample.repos, { kind: "repo", key: "r4" })).toBe("cortex · main");
+    expect(focusLabel(sample.repos, { kind: "repo", key: "r4" })).toBe("commons · main");
     expect(focusLabel([repo({ key: "r8", label: "Shop", branch: null })], { kind: "repo", key: "r8" })).toBe("Shop");
     expect(focusLabel(sample.repos, { kind: "otherFiles" })).toBe("Other files");
   });
@@ -188,7 +188,7 @@ describe("focusLabel", () => {
 describe("projectOptions", () => {
   it("lists each project once, named after its repositories and worktrees and sorted by name", () => {
     expect(projectOptions(sample)).toEqual([
-      { id: "proj_cortex", name: "cortex" },
+      { id: "proj_commons", name: "commons" },
       { id: "proj_docs", name: "Docs site" },
       { id: "proj_shop", name: "Shop" },
     ]);

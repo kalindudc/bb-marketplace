@@ -28,6 +28,8 @@ Vantage shows the worktrees of a thread and all of its descendant threads, and g
 
 `worktrees` prints one row for each workspace in the tree: the columns STATUS, THREAD, AHEAD/BEHIND, UNCOMMITTED and BRANCH, then the files that more than one worktree changed (a merge-conflict risk). STATUS is `archived` (an archived child's kept branch), `unavailable`, `running`, `failed`, or the thread's own status. A branch that no longer exists is not listed. `worktree <thread>` finds the whole tree the thread belongs to and prints each worktree that thread works in, its own workspace first and then any thread checkout: its uncommitted files, its files committed on the branch and its commits (at most 50 files of each kind and 20 commits, then `… N more`). It fails with `worktree_not_found` for a thread without a worktree.
 
+A worktree on its base branch, such as a thread working on `main` in the project checkout, has nothing ahead, so ↑0 ↓0 and "No changes." do not mean the thread did nothing. Its row reads `on base` under AHEAD/BEHIND and its branch cell counts the commits its threads made there (`main · 3 commits by its threads`); `worktree <thread>` prints `on main, its base branch` and `Commits its threads made on main (N)`, or says none were found. These are commits from the checkout's reflog that `git commit` made while one of the worktree's threads was running a `git commit` command, and that are still on HEAD. A worktree whose commits were merged into its base lists them the same way.
+
 ### Worktree JSON fields
 
 `worktrees --json` prints `{ threadId, target, windowHours, threads, archivedHidden, worktrees, sharedFiles }`; `worktree <thread> --json` prints one worktree, the thread's own workspace when it has one. A worktree has:
@@ -37,6 +39,8 @@ Vantage shows the worktrees of a thread and all of its descendant threads, and g
 - `branch`, `base`, `aheadCount` and `behindCount` (commits ahead of and behind the base; null when there is no base).
 - `uncommitted[]` and `committed[]`: `path`, `status`, `additions`, `deletions`, `previousPath`. An archived branch has no uncommitted files.
 - `commits[]`: `sha`, `shortSha`, `subject`, `authorName`, `authoredAt` (milliseconds), newest first.
+- `onBase`: its branch is its base branch, or that branch on a remote (`main` on `origin/main`).
+- `threadCommits[]`: the commits its threads made that are not ahead of the base, in the shape of `commits[]`, newest first. Filled only for a ready workspace or thread checkout with no `commits`.
 - `sharedFiles[]` at the top level: `path`, `projectId` and `worktreeKeys`, for files two or more worktrees of one project changed.
 - `threads[]`: `id`, `title`, `status`, `archived`, `rootThreadId`, to name the threads in `threadIds`.
 
@@ -65,6 +69,7 @@ Read these from `--json` output:
 
 - `repos[].label`, `projectId`, `kind` (inside `ref.kind`), `branch`, `base`, `aheadCount` (commits on an archived branch), `state` (`ready` or `unavailable`) and `message` (why it is unavailable).
 - `partial` and `archivedHidden` (see above).
+- `repos[].threadCommits[]`: the same commits as its worktree's `threadCommits`; the text output prints `N commits by its threads on <branch>` and up to five of them.
 - `repos[].files[]`: `path`, `status`, `additions`, `deletions`, `previousPath` for renames, and `edits.threadIds` for the threads that edited the file.
 - `repos[].otherFiles[]`: changes in a checkout that the agents did not make.
 - `repos[].threadIds` and `threads[]`: which threads touched the repository, with `title`, `archived` and `depth`.
@@ -72,6 +77,7 @@ Read these from `--json` output:
 
 ## Limits
 
+- The commits a thread made on its base branch are matched by time: another commit made in the same checkout while one of the thread's commit commands runs counts as the thread's, and a commit made by any command other than `git commit`, such as a script or a release tool, is not found.
 - At most 500 files per repository or worktree list, 100 commits per worktree, 200 other files and 200 threads. Text output shows 50 files per repository and ends with `… N more`. JSON is cut from the end of each list to stay under bb's output limit.
 - Shell-only work in another repository is found only in a thread checkout: one where the same thread also edited a file and changed into it with an absolute or `~/` folder. Elsewhere it is not found unless an agent also edited a file there.
 - A machine that is offline marks only its own repositories as unavailable.

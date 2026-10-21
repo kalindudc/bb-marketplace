@@ -356,12 +356,12 @@ describe("Vantage page: Repositories", () => {
   });
 
   describe("focused on one row of 'Changed outside worktrees'", () => {
-    const CORTEX = "host_1:/code/cortex";
+    const COMMONS = "host_1:/code/commons";
     const withOutside = () => {
       const base = allOverview();
       return {
         ...base,
-        repos: [...base.repos, checkoutRepo({ key: CORTEX, projectId: null, threadIds: ["thr_docs"], files: [fileChange({ path: "skills/x.md", additions: 4, deletions: 1 })] })],
+        repos: [...base.repos, checkoutRepo({ key: COMMONS, projectId: null, threadIds: ["thr_docs"], files: [fileChange({ path: "skills/x.md", additions: 4, deletions: 1 })] })],
         otherFiles: [fileChange({ path: "/tmp/notes.txt" })],
       };
     };
@@ -371,17 +371,17 @@ describe("Vantage page: Repositories", () => {
     it("goes to the Repositories view focused on the row clicked, keeping the tree", async () => {
       const { slot } = await mount("tree/thr_root", { overview: withOutside });
       await slot.findByText("Changed outside worktrees");
-      fireEvent.click(slot.getByRole("button", { name: /cortex/ }));
+      fireEvent.click(slot.getByRole("button", { name: /commons/ }));
       fireEvent.click(slot.getByRole("button", { name: /Other files/ }));
-      expect(navigations(slot)).toEqual([pushed(`tree/thr_root/repositories/repo/${key(CORTEX)}`), pushed("tree/thr_root/repositories/other-files")]);
+      expect(navigations(slot)).toEqual([pushed(`tree/thr_root/repositories/repo/${key(COMMONS)}`), pushed("tree/thr_root/repositories/other-files")]);
     });
 
     it("shows only the focused repository, says so and counts only it", async () => {
-      const { slot } = await mount(`repositories/repo/${key(CORTEX)}`, { overview: withOutside });
+      const { slot } = await mount(`repositories/repo/${key(COMMONS)}`, { overview: withOutside });
       await loaded(slot);
-      expect(repoKeys(slot)).toEqual([CORTEX]);
+      expect(repoKeys(slot)).toEqual([COMMONS]);
       expect(slot.container.querySelector("[data-other-files]")).toBeNull();
-      expect(chip(slot)?.textContent).toContain("Only cortex");
+      expect(chip(slot)?.textContent).toContain("Only commons");
       expect(summary(slot)).toBe("1 repo · 1 file +4 −1 · 1 project");
     });
 
@@ -393,7 +393,7 @@ describe("Vantage page: Repositories", () => {
     });
 
     it("clears the focus to the plain Repositories address, keeping the tree", async () => {
-      const { slot } = await mount(`tree/thr_root/repositories/repo/${key(CORTEX)}`, { overview: withOutside });
+      const { slot } = await mount(`tree/thr_root/repositories/repo/${key(COMMONS)}`, { overview: withOutside });
       await loaded(slot);
       fireEvent.click(slot.getByRole("button", { name: "Show all repositories" }));
       expect(navigations(slot)).toEqual([pushed("tree/thr_root/repositories")]);
@@ -417,11 +417,11 @@ describe("Vantage page: Repositories", () => {
       const { slot } = await mount("repositories", { overview: withOutside });
       await loaded(slot);
       expect(chip(slot)).toBeNull();
-      expect(repoKeys(slot)).toContain(CORTEX);
+      expect(repoKeys(slot)).toContain(COMMONS);
     });
 
     it("still applies the other filters, and says nothing matches", async () => {
-      const { slot } = await mount(`repositories/repo/${key(CORTEX)}`, { overview: withOutside });
+      const { slot } = await mount(`repositories/repo/${key(COMMONS)}`, { overview: withOutside });
       await loaded(slot);
       fireEvent.change(slot.getByLabelText("Filter by text"), { target: { value: "no such file" } });
       expect(repoKeys(slot)).toEqual([]);

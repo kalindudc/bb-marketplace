@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  EMPTY_TREE, FILE_LIMIT, LOG_FORMAT, PATCH_LIMIT, countDiffLines, isSafeRef, isSafeRelativePath, isSafeSha, parseLog,
-  parseNameStatusZ, parseNumstatZ, parseStatusZ, splitToplevel, statusFromCode, truncatePatch,
+  EMPTY_TREE, FILE_LIMIT, LOG_FORMAT, PATCH_LIMIT, REFLOG_SLACK_MS, commitsInWindows, countDiffLines, isSafeRef, isSafeRelativePath, isSafeSha,
+  parseLog, parseNameStatusZ, parseNumstatZ, parseReflog, parseStatusZ, splitToplevel, statusFromCode, truncatePatch,
 } from "../src/git";
 
 const z = (...parts: string[]) => parts.map((part) => `${part}\0`).join("");
@@ -194,5 +194,50 @@ describe("isSafeSha", () => {
     expect(isSafeSha("ABC1234")).toBe(false);
     expect(isSafeSha("-abc1234")).toBe(false);
     expect(isSafeSha("HEAD~1")).toBe(false);
+  });
+});
+
+describe("parseReflog", () => {
+  const entry = (sha: string, seconds: string, subject: string) => [sha, `HEAD@{${seconds}}`, subject].join("\x1f");
+
+  it("reads each entry's commit, time and action, newest first", () => {
+    const output = [
+      entry("a".repeat(40), "1700000200", "commit (amend): two, amended"),
+      entry("b".repeat(40), "1700000100", "pull --ff-only: Fast-forward"),
+      entry("c".repeat(40), "1700000000", "commit (initial): one"),
+    ].join("\n");
+    expect(parseReflog(output)).toEqual([
+      { sha: "a".repeat(40), at: 1_700_000_200_000, action: "commit (amend)" },
+      { sha: "b".repeat(40), at: 1_700_000_100_000, action: "pull --ff-only" },
+      { sha: "c".repeat(40), at: 1_700_000_000_000, action: "commit (initial)" },
+    ]);
+  });
+
+  it("skips malformed lines and an empty output", () => {
+    const output = ["junk", entry("not-a-sha", "1", "commit: x"), entry("d".repeat(40), "HEAD~1", "commit: x"), entry("e".repeat(40), "5", "commit: ok")].join("\n");
+    expect(parseReflog(output)).toEqual([{ sha: "e".repeat(40), at: 5000, action: "commit" }]);
+    expect(parseReflog("")).toEqual([]);
+  });
+});
+
+describe("commitsInWindows", () => {
+  const at = (sha: string, ms: number, action = "commit") => ({ sha: sha.repeat(40), at: ms, action });
+
+  it("keeps commits git commit made while a window was open, newest first and each once", () => {
+    const entries = [
+      at("a", 50_000), at("b", 40_000, "commit (amend)"), at("c", 30_000, "pull --ff-only"), at("d", 20_000, "checkout"),
+      at("e", 10_000, "commit (merge)"), at("a", 9_000), at("f", 1_000, "commit (initial)"),
+    ];
+    expect(commitsInWindows(entries, [{ start: 9_000, end: 50_000 }])).toEqual(["a".repeat(40), "b".repeat(40), "e".repeat(40)]);
+  });
+
+  it("allows for whole-second reflog times at both edges, and nothing beyond", () => {
+    const windows = [{ start: 100_000, end: 200_000 }];
+    const edges = [at("a", 100_000 - REFLOG_SLACK_MS), at("b", 200_000 + REFLOG_SLACK_MS), at("c", 100_000 - REFLOG_SLACK_MS - 1), at("d", 200_000 + REFLOG_SLACK_MS + 1)];
+    expect(commitsInWindows(edges, windows)).toEqual(["a".repeat(40), "b".repeat(40)]);
+  });
+
+  it("finds nothing without windows", () => {
+    expect(commitsInWindows([at("a", 1_000)], [])).toEqual([]);
   });
 });

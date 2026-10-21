@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { createEditIndex, editsFromRows, findRecordedEdits, MAX_WORK_DIRS, workDirsOf, type EventsSdk } from "../src/edits";
+import { createEditIndex, editsFromRows, findRecordedEdits, isCommitCommand, MAX_COMMIT_RUNS, MAX_WORK_DIRS, workDirsOf, type EventsSdk } from "../src/edits";
 
 type EventRow = Parameters<typeof editsFromRows>[1][number];
 type Change = { path: string; kind: "add" | "delete" | "update"; movePath?: string; diff?: string };
 
-function row(seq: number, item: object, threadId = "thr_1"): EventRow {
-  return { id: `evt_${seq}`, scope: { kind: "thread" }, threadId, seq, createdAt: seq * 1000, type: "item/completed", data: { item } } as unknown as EventRow;
+function row(seq: number, item: object, threadId = "thr_1", type = "item/completed"): EventRow {
+  return { id: `evt_${seq}`, scope: { kind: "thread" }, threadId, seq, createdAt: seq * 1000, type, data: { item } } as unknown as EventRow;
 }
 function fileChange(seq: number, changes: Change[], extra: object = {}, threadId = "thr_1"): EventRow {
   return row(seq, { type: "fileChange", id: `item_${seq}`, status: "completed", approvalStatus: null, changes, ...extra }, threadId);
@@ -13,12 +13,21 @@ function fileChange(seq: number, changes: Change[], extra: object = {}, threadId
 function command(seq: number, cwd: string, text = "ls"): EventRow {
   return row(seq, { type: "commandExecution", id: `item_${seq}`, command: text, cwd, status: "completed", approvalStatus: null });
 }
+// A command's start and end are two events about one item.
+function started(seq: number, id: string, text: string): EventRow {
+  return row(seq, { type: "commandExecution", id, command: text, cwd: "/work/one", status: "pending", approvalStatus: null }, "thr_1", "item/started");
+}
+function finished(seq: number, id: string, text: string): EventRow {
+  return row(seq, { type: "commandExecution", id, command: text, cwd: "/work/one", status: "completed", approvalStatus: null });
+}
 
 function fakeSdk(threads: Record<string, EventRow[]>) {
-  const list = vi.fn(async (args: { threadId: string; afterSeq?: string; limit?: string }) => {
+  const list = vi.fn(async (args: { threadId: string; afterSeq?: string; limit?: string; types?: string[] }) => {
     if (Number(args.limit ?? "0") > 100) throw new Error("HTTP 400: Thread event limit cannot exceed 100");
     const after = args.afterSeq === undefined ? 0 : Number(args.afterSeq);
-    return (threads[args.threadId] ?? []).filter((event) => event.seq > after).slice(0, Number(args.limit ?? "100"));
+    return (threads[args.threadId] ?? [])
+      .filter((event) => event.seq > after && (args.types === undefined || args.types.includes(event.type)))
+      .slice(0, Number(args.limit ?? "100"));
   });
   return { sdk: { threads: { events: { list } } } as unknown as EventsSdk, list };
 }
@@ -46,6 +55,23 @@ describe("workDirsOf", () => {
 
   it("does not take a word that only ends in cd", () => {
     expect(workDirsOf("abcd /code/x; git-C /code/y")).toEqual([]);
+  });
+});
+
+describe("isCommitCommand", () => {
+  it.each([
+    "git commit -m x",
+    "cd /code/a && git add -A && git commit -q -m \"ship it\" && git push",
+    "git -C /code/a commit --amend --no-edit",
+    "git -c user.name=Ada --no-pager commit -m x",
+    "/usr/bin/git commit -m x",
+    "bash -lc 'git commit -m x'",
+  ])("sees a commit in %s", (text) => {
+    expect(isCommitCommand(text)).toBe(true);
+  });
+
+  it.each(["git log --grep commit", "git commit-tree HEAD^{tree}", "git status", "gitcommit", "git -C /code/commit status"])("sees none in %s", (text) => {
+    expect(isCommitCommand(text)).toBe(false);
   });
 });
 
@@ -92,7 +118,7 @@ describe("editsFromRows", () => {
 
   it("takes the working directory of the first command as primaryCwd", () => {
     const result = editsFromRows("thr_1", [command(1, "/work/one"), command(2, "/work/two")]);
-    expect(result).toEqual({ records: [], primaryCwd: "/work/one", workDirs: [], lastSeq: 2 });
+    expect(result).toEqual({ records: [], primaryCwd: "/work/one", workDirs: [], commitRuns: [], lastEventAt: 2000, lastSeq: 2 });
   });
 
   it("lists the folders commands changed into, once each and least recently used first", () => {
@@ -105,7 +131,31 @@ describe("editsFromRows", () => {
   });
 
   it("reports no last sequence for no rows", () => {
-    expect(editsFromRows("thr_1", [])).toEqual({ records: [], primaryCwd: null, workDirs: [], lastSeq: null });
+    expect(editsFromRows("thr_1", [])).toEqual({ records: [], primaryCwd: null, workDirs: [], commitRuns: [], lastEventAt: null, lastSeq: null });
+  });
+
+  it("records when each git commit command started and finished, and leaves a running one open", () => {
+    const result = editsFromRows("thr_1", [
+      started(1, "c1", "git commit -m one"),
+      started(2, "ls", "ls"),
+      finished(3, "ls", "ls"),
+      finished(5, "c1", "git commit -m one"),
+      started(7, "c2", "git add -A && git commit -m two && git push"),
+    ]);
+    expect(result.commitRuns).toEqual([{ id: "c1", startedAt: 1000, endedAt: 5000 }, { id: "c2", startedAt: 7000, endedAt: null }]);
+    expect(result.lastEventAt).toBe(7000);
+  });
+
+  it("starts a commit command with no start event at the event before it", () => {
+    const result = editsFromRows("thr_1", [command(4, "/work/one"), finished(9, "c1", "git commit -m one")]);
+    expect(result.commitRuns).toEqual([{ id: "c1", startedAt: 4000, endedAt: 9000 }]);
+  });
+
+  it("closes a run an earlier read left open, and keeps the earlier runs untouched when nothing is new", () => {
+    const first = editsFromRows("thr_1", [started(1, "c1", "git commit -m one")]);
+    const known = { commitRuns: first.commitRuns, lastEventAt: first.lastEventAt };
+    expect(editsFromRows("thr_1", [finished(4, "c1", "git commit -m one")], known).commitRuns).toEqual([{ id: "c1", startedAt: 1000, endedAt: 4000 }]);
+    expect(editsFromRows("thr_1", [command(5, "/work/one")], known).commitRuns).toBe(first.commitRuns);
   });
 });
 
@@ -120,9 +170,9 @@ describe("createEditIndex", () => {
     const first = await index.get("thr_1");
     expect(first.records).toHaveLength(250);
     expect(list.mock.calls.map(([args]) => args)).toEqual([
-      { threadId: "thr_1", types: ["item/completed"], limit: "100", order: "asc", signal: undefined },
-      { threadId: "thr_1", types: ["item/completed"], limit: "100", order: "asc", afterSeq: "100", signal: undefined },
-      { threadId: "thr_1", types: ["item/completed"], limit: "100", order: "asc", afterSeq: "200", signal: undefined },
+      { threadId: "thr_1", types: ["item/started", "item/completed"], limit: "100", order: "asc", signal: undefined },
+      { threadId: "thr_1", types: ["item/started", "item/completed"], limit: "100", order: "asc", afterSeq: "100", signal: undefined },
+      { threadId: "thr_1", types: ["item/started", "item/completed"], limit: "100", order: "asc", afterSeq: "200", signal: undefined },
     ]);
 
     rows.push(edit(251));
@@ -252,6 +302,38 @@ describe("createEditIndex", () => {
     expect(list).toHaveBeenCalledTimes(1);
   });
 
+  it("closes a commit run on a later read, and gives the last event's time only while one is open", async () => {
+    const rows = [started(1, "c1", "git commit -m one")];
+    const { sdk } = fakeSdk({ thr_1: rows });
+    const index = createEditIndex(sdk);
+    expect(await index.get("thr_1")).toMatchObject({ commitRuns: [{ id: "c1", startedAt: 1000, endedAt: null }], lastEventAt: 1000 });
+    rows.push(command(2, "/work/one"));
+    expect((await index.get("thr_1")).lastEventAt).toBe(2000);
+    rows.push(finished(3, "c1", "git commit -m one"));
+    const later = await index.get("thr_1");
+    expect(later.commitRuns).toEqual([{ id: "c1", startedAt: 1000, endedAt: 3000 }]);
+    expect(later.lastEventAt).toBeNull();
+    rows.push(command(4, "/work/one"));
+    expect(await index.get("thr_1")).toBe(later);
+  });
+
+  it("starts a commit command with no start event at the last event an earlier read saw", async () => {
+    const rows = [command(1, "/work/one")];
+    const { sdk } = fakeSdk({ thr_1: rows });
+    const index = createEditIndex(sdk);
+    await index.get("thr_1");
+    rows.push(finished(6, "c1", "git commit -m one"));
+    expect((await index.get("thr_1")).commitRuns).toEqual([{ id: "c1", startedAt: 1000, endedAt: 6000 }]);
+  });
+
+  it("keeps only the most recent commit runs", async () => {
+    const rows = Array.from({ length: MAX_COMMIT_RUNS + 3 }, (_, i) => finished(i + 1, `c${i}`, "git commit -m x"));
+    const { sdk } = fakeSdk({ thr_1: rows });
+    const { commitRuns } = await createEditIndex(sdk).get("thr_1");
+    expect(commitRuns).toHaveLength(MAX_COMMIT_RUNS);
+    expect(commitRuns[0]?.id).toBe("c3");
+  });
+
   it("does not keep a thread whose read failed", async () => {
     const list = vi.fn()
       .mockRejectedValueOnce(new Error("boom"))
@@ -293,6 +375,12 @@ describe("findRecordedEdits", () => {
     const [edit] = await findRecordedEdits(sdk, ["thr_1"], new Set(["a.ts"]), 50);
     expect(edit?.diff).toHaveLength(60_000);
     expect(edit?.truncated).toBe(true);
+  });
+
+  it("reads completed items only", async () => {
+    const { sdk, list } = fakeSdk({ thr_1: [fileChange(1, [{ path: "a.ts", kind: "update", diff: "+a" }])] });
+    await findRecordedEdits(sdk, ["thr_1"], new Set(["a.ts"]), 50);
+    expect(list.mock.calls[0]?.[0]).toMatchObject({ types: ["item/completed"] });
   });
 
   it("skips failed and denied edits and reads every page", async () => {

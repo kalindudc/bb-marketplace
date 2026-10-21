@@ -6,7 +6,7 @@ import type { Overview, OverviewInput, PatchOutput, PatchRequest, RecordedEditsI
 import { clearFileCache } from "../src/file-row";
 import { VIEW_STORAGE_KEY } from "../src/view-preference";
 import {
-  branchRepo, checkoutRepo, fileChange, overview as makeOverview, recordedRepo, repo, threadSummary,
+  branchRepo, checkoutRepo, commit, fileChange, overview as makeOverview, recordedRepo, repo, threadSummary,
 } from "./fixtures";
 
 type Slot = ReturnType<typeof renderSlot>;
@@ -33,10 +33,10 @@ function sampleOverview(overrides: Partial<Overview> = {}): Overview {
         files: [fileChange({ path: "src/a.ts", additions: 2, deletions: 1 }), fileChange({ path: "docs/new.md", status: "added", additions: 4, deletions: 0 })],
       }),
       checkoutRepo({
-        label: "cortex", threadIds: ["thr_1"],
+        label: "commons", threadIds: ["thr_1"],
         files: [fileChange({
           path: "skills/x.md", additions: 1, deletions: 0,
-          edits: { threadIds: ["thr_1"], rawPaths: ["/code/cortex/skills/x.md"], count: 1 },
+          edits: { threadIds: ["thr_1"], rawPaths: ["/code/commons/skills/x.md"], count: 1 },
         })],
         otherFiles: [fileChange({ path: "unrelated.md", additions: 7, deletions: 7 })],
       }),
@@ -83,7 +83,7 @@ const repoHeader = (slot: Slot, key: string): HTMLButtonElement => slot.containe
 describe("VantagePanel", () => {
   it("summarises the repositories, files, line counts and threads on a line of its own, outside the toolbar", async () => {
     const { slot } = await mount();
-    await slot.findByText("cortex");
+    await slot.findByText("commons");
     const toolbar = slot.container.querySelector("section > div")!;
     expect(toolbar.textContent).not.toContain("3 repos");
     expect(slot.container.querySelector("[data-repo-summary]")!.textContent).toContain("3 repos · 4 files · +12 −1 · 2 threads");
@@ -91,13 +91,13 @@ describe("VantagePanel", () => {
 
   it("lets the toolbar wrap, so the scope switch and the archived toggle are never clipped in a narrow panel", async () => {
     const { slot } = await mount();
-    await slot.findByText("cortex");
+    await slot.findByText("commons");
     expect(slot.container.querySelector("[data-vantage-panel] > div")!.className).toContain("flex-wrap");
   });
 
   it("shows one section for each repository with its label, caption, branch and thread chips", async () => {
     const { slot } = await mount();
-    await slot.findByText("cortex");
+    await slot.findByText("commons");
     const sections = [...slot.container.querySelectorAll("[data-repo]")];
     expect(sections).toHaveLength(3);
     const [workspace, checkout, branch] = sections as HTMLElement[];
@@ -113,9 +113,19 @@ describe("VantagePanel", () => {
     expect(branch!.querySelector("[data-icon='Archive']")).not.toBeNull();
   });
 
+  it("counts the commits its threads made in a repository, with each one in the title", async () => {
+    const made = [commit({ shortSha: "1a2b3c4", subject: "Add the parser" }), commit({ sha: "b".repeat(40), shortSha: "5d6e7f8", subject: "Fix the tests" })];
+    const { slot } = await mount({
+      overview: () => sampleOverview({ repos: [repo({ label: "Project", branch: "main", threadIds: ["thr_1"], threadCommits: made })] }),
+    });
+    await slot.findByText("Project");
+    const note = slot.getByText("2 commits by its threads on main");
+    expect(note.getAttribute("title")).toBe("1a2b3c4 Add the parser\n5d6e7f8 Fix the tests");
+  });
+
   it("marks an archived thread's chip and opens a thread in a split when its chip is clicked", async () => {
     const { slot } = await mount();
-    await slot.findByText("cortex");
+    await slot.findByText("commons");
     for (const chip of slot.getAllByTitle("Open Parent thread")) expect(chip.querySelector("[data-icon='Archive']")).toBeNull();
     const archived = slot.getByTitle("Open Archived child");
     expect(archived.querySelector("[data-icon='Archive']")).not.toBeNull();
@@ -125,7 +135,7 @@ describe("VantagePanel", () => {
 
   it("shows the machine only when the overview spans more than one", async () => {
     const single = await mount();
-    await single.slot.findByText("cortex");
+    await single.slot.findByText("commons");
     expect(single.slot.container.textContent).not.toContain("Laptop");
     single.slot.lifecycle.unmount();
     const { slot } = await mount({
@@ -137,7 +147,7 @@ describe("VantagePanel", () => {
 
   it("loads a file's patch once, on first expand, and renders it in bb's diff viewer", async () => {
     const { slot, patch } = await mount();
-    await slot.findByText("cortex");
+    await slot.findByText("commons");
     expect(diffs(slot)).toEqual([]);
     fireEvent.click(rowButton(slot, "src/a.ts"));
     await waitFor(() => expect(diffs(slot)).toEqual(["+patch for src/a.ts"]));
@@ -182,7 +192,7 @@ describe("VantagePanel", () => {
         })],
       }),
     });
-    await slot.findByText("cortex");
+    await slot.findByText("commons");
     fireEvent.click(rowButton(slot, "new.md"));
     fireEvent.click(rowButton(slot, "b.ts"));
     await waitFor(() => expect(patch).toHaveBeenCalledTimes(2));
@@ -225,7 +235,7 @@ describe("VantagePanel", () => {
         return { patch: "+ok", truncated: false, binary: false };
       },
     });
-    await slot.findByText("cortex");
+    await slot.findByText("commons");
     fireEvent.click(rowButton(slot, "src/a.ts"));
     await waitFor(() => expect(row(slot, "src/a.ts").textContent).toContain("Could not load this diff: git exploded"));
     fireEvent.click(slot.getByRole("button", { name: "Retry" }));
@@ -235,7 +245,7 @@ describe("VantagePanel", () => {
 
   it("folds a checkout's other changes until the row is opened", async () => {
     const { slot } = await mount();
-    await slot.findByText("cortex");
+    await slot.findByText("commons");
     expect(slot.container.querySelector('[data-file-row="unrelated.md"]')).toBeNull();
     fireEvent.click(slot.getByRole("button", { name: "1 other change in this repo" }));
     expect(row(slot, "unrelated.md")).toBeTruthy();
@@ -285,7 +295,7 @@ describe("VantagePanel", () => {
 
   it("marks files that agents edited and links live files to bb's file viewer", async () => {
     const { slot } = await mount();
-    await slot.findByText("cortex");
+    await slot.findByText("commons");
     const edited = row(slot, "skills/x.md");
     expect(edited.querySelector("[data-icon='EditFile']")?.parentElement?.getAttribute("title")).toBe("Edited by Parent thread");
     expect(row(slot, "src/a.ts").querySelector("[data-icon='EditFile']")).toBeNull();
@@ -293,14 +303,14 @@ describe("VantagePanel", () => {
     fireEvent.click(slot.getByRole("link", { name: "Open skills/x.md" }));
     expect(slot.inspection.navigateCalls).toEqual([
       { method: "experimental_openFilePreview", options: { target: { kind: "workspace", environmentId: "env_1", path: "src/a.ts" }, location: null } },
-      { method: "experimental_openFilePreview", options: { target: { kind: "host", hostId: "host_1", path: "/code/cortex/skills/x.md" }, location: null } },
+      { method: "experimental_openFilePreview", options: { target: { kind: "host", hostId: "host_1", path: "/code/commons/skills/x.md" }, location: null } },
     ]);
     expect(slot.queryByRole("link", { name: "Open lib/old.ts" })).toBeNull();
   });
 
   it("collapses and expands a repository from its header", async () => {
     const { slot } = await mount();
-    await slot.findByText("cortex");
+    await slot.findByText("commons");
     expect(slot.container.querySelector('[data-file-row="src/a.ts"]')).toBeTruthy();
     fireEvent.click(repoHeader(slot, "host_1:/work/one"));
     expect(slot.container.querySelector('[data-file-row="src/a.ts"]')).toBeNull();
@@ -311,7 +321,7 @@ describe("VantagePanel", () => {
 
   it("expands every repository and file at once, then collapses them again", async () => {
     const { slot, patch } = await mount();
-    await slot.findByText("cortex");
+    await slot.findByText("commons");
     fireEvent.click(slot.getByRole("button", { name: "Expand all" }));
     await waitFor(() => expect(patch).toHaveBeenCalledTimes(4));
     expect(slot.getByRole("button", { name: "Collapse all" })).toBeTruthy();
@@ -339,7 +349,7 @@ describe("VantagePanel", () => {
 
   it("asks the server to forget its cache when Refresh is pressed", async () => {
     const { slot, overview } = await mount();
-    await slot.findByText("cortex");
+    await slot.findByText("commons");
     fireEvent.click(slot.getByRole("button", { name: "Refresh" }));
     await waitFor(() => expect(overview).toHaveBeenCalledTimes(2));
     expect(overview.mock.calls[1]?.[0]).toEqual({ target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true, refresh: true });
@@ -354,10 +364,10 @@ describe("VantagePanel", () => {
         return calls === 1 ? sampleOverview() : new Promise<Overview>((resolve) => { release = resolve; });
       },
     });
-    await slot.findByText("cortex");
+    await slot.findByText("commons");
     fireEvent.click(slot.getByRole("button", { name: "Refresh" }));
     await slot.findByText("Updating…");
-    expect(slot.getByText("cortex")).toBeTruthy();
+    expect(slot.getByText("commons")).toBeTruthy();
     release(sampleOverview({ warnings: ["done"] }));
     await slot.findByText("done");
     expect(slot.queryByText("Updating…")).toBeNull();
@@ -371,7 +381,7 @@ describe("VantagePanel", () => {
     });
     const message = await slot.findByText("Dev box is not connected");
     expect(message.className).toContain("text-destructive-text");
-    expect(slot.getByText("cortex")).toBeTruthy();
+    expect(slot.getByText("commons")).toBeTruthy();
   });
 
   it("shows warnings, including a cut thread tree", async () => {
@@ -398,14 +408,14 @@ describe("VantagePanel", () => {
     });
     await slot.findByText(/Could not load changes: bb is down/);
     fireEvent.click(slot.getByRole("button", { name: "Retry" }));
-    await slot.findByText("cortex");
+    await slot.findByText("commons");
     expect(overview).toHaveBeenCalledTimes(2);
     expect(overview.mock.calls[1]?.[0]).toMatchObject({ refresh: true });
   });
 
   it("subscribes to realtime events for the thread tree and unsubscribes when it goes away", async () => {
     const { slot, subscribe, unsubscribed } = await mount();
-    await slot.findByText("cortex");
+    await slot.findByText("commons");
     expect(subscribe.mock.calls.map(([args]) => args.event).sort()).toEqual(["environment:changed", "realtime:connection", "thread:changed"]);
     slot.lifecycle.unmount();
     expect(unsubscribed.sort()).toEqual(["environment:changed", "realtime:connection", "thread:changed"]);

@@ -172,8 +172,13 @@ function WorktreeRowView({ worktree, currentThreadId, fallback, sharedCount, sel
       )}
       {!unavailable && !loading && (
         <span className="col-start-3 row-start-2 flex justify-end gap-1.5 whitespace-nowrap text-[11px] text-muted-foreground">
-          {worktree.aheadCount !== null && worktree.behindCount !== null && (
-            <span className="font-mono" title={`Commits ahead of and behind ${worktree.base ?? "the base branch"}`}>↑{worktree.aheadCount} ↓{worktree.behindCount}</span>
+          {worktree.onBase
+            ? <span title={`Works on ${worktree.base}, its base branch, so nothing counts as ahead`}>on base</span>
+            : worktree.aheadCount !== null && worktree.behindCount !== null && (
+              <span className="font-mono" title={`Commits ahead of and behind ${worktree.base ?? "the base branch"}`}>↑{worktree.aheadCount} ↓{worktree.behindCount}</span>
+            )}
+          {worktree.threadCommits.length > 0 && (
+            <span title="Commits its threads made">{plural(worktree.threadCommits.length, "commit")}</span>
           )}
           {worktree.uncommitted.length > 0 ? <span>{worktree.uncommitted.length} uncommitted</span> : <span className="text-subtle-foreground">clean</span>}
         </span>

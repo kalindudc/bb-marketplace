@@ -97,6 +97,17 @@ export const hostContract = defineRpcContract({
       hostUnavailableSchema,
     ]),
   },
+  // The commits on HEAD that `git commit` made while one of the windows was open, from the checkout's reflog.
+  threadCommits: {
+    input: z.object({
+      root: absolutePath,
+      windows: z.array(z.object({ start: count, end: count }).strict()).min(1).max(200),
+    }).strict(),
+    output: z.discriminatedUnion("outcome", [
+      z.object({ outcome: z.literal("available"), commits: z.array(commitSchema).max(100) }).strict(),
+      hostUnavailableSchema,
+    ]),
+  },
   repoPatch: {
     input: z.object({
       root: absolutePath,
@@ -173,6 +184,7 @@ export const repoSchema = z.object({
   otherFiles: z.array(fileChangeSchema),
   truncated: z.boolean(),
   totals: z.object({ files: count, additions: count, deletions: count }).strict(),
+  threadCommits: z.array(commitSchema),
 }).strict();
 export type Repo = z.infer<typeof repoSchema>;
 
@@ -195,6 +207,10 @@ export const worktreeSchema = z.object({
   uncommitted: z.array(fileChangeSchema),
   committed: z.array(fileChangeSchema),
   commits: z.array(commitSchema),
+  // The branch is its base branch, or that branch on a remote, so no commit counts as ahead.
+  onBase: z.boolean(),
+  // Commits its threads made that are not ahead of the base: on the base branch itself, or already merged into it.
+  threadCommits: z.array(commitSchema),
 }).strict();
 export type Worktree = z.infer<typeof worktreeSchema>;
 

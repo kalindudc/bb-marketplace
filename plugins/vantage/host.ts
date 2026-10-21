@@ -6,8 +6,8 @@ import { promisify } from "node:util";
 import { experimental_defineHostEntry } from "@get-bb/plugin-sdk";
 import { hostContract, type GitFile, type HostInput, type HostOutput, type HostTarget, type HostUnavailable } from "./src/contract";
 import {
-  EMPTY_TREE, FILE_LIMIT, LOG_FORMAT, isSafeRef, isSafeRelativePath, isSafeSha, parseLog, parseNameStatusZ, parseNumstatZ,
-  parseStatusZ, splitToplevel, statusFromCode, truncatePatch, type GitEntry, type NumstatEntry,
+  EMPTY_TREE, FILE_LIMIT, LOG_FORMAT, REFLOG_FORMAT, commitsInWindows, isSafeRef, isSafeRelativePath, isSafeSha, parseLog, parseNameStatusZ,
+  parseNumstatZ, parseReflog, parseStatusZ, splitToplevel, statusFromCode, truncatePatch, type GitEntry, type NumstatEntry,
 } from "./src/git";
 import { mapLimit } from "./src/limit";
 
@@ -17,6 +17,7 @@ const GIT_MAX_BUFFER = 32 * 1024 * 1024;
 const UNTRACKED_COUNT_LIMIT = 2 * 1024 * 1024;
 const BINARY_SNIFF_BYTES = 8000;
 const COMMIT_LIMIT = 100;
+const REFLOG_LIMIT = 5000;
 
 class Unavailable extends Error {
   constructor(readonly reason: HostUnavailable["reason"], message: string) {
@@ -288,6 +289,23 @@ async function checkoutStatus(input: HostInput<"checkoutStatus">, signal: AbortS
   });
 }
 
+// A checkout with no reflog, such as one with no commits yet, has no commits to find.
+async function threadCommits(input: HostInput<"threadCommits">, signal: AbortSignal): Promise<HostOutput<"threadCommits">> {
+  return guard(async () => {
+    const { root, windows } = input;
+    await verifyRoot(root, signal);
+    const reflog = await runGit(root, ["log", "-g", "--date=unix", `--format=${REFLOG_FORMAT}`, "-n", String(REFLOG_LIMIT), "HEAD"], signal);
+    if (reflog.code !== 0) return { outcome: "available" as const, commits: [] };
+    const candidates = commitsInWindows(parseReflog(reflog.stdout), windows);
+    // An amended, reset or rebased commit is no longer on the branch, and one made on another branch never was.
+    const onHead = await mapLimit(candidates, 8, async (sha) => (await runGit(root, ["merge-base", "--is-ancestor", sha, "HEAD"], signal)).code === 0);
+    const shas = candidates.filter((_, index) => onHead[index]).slice(0, COMMIT_LIMIT);
+    if (shas.length === 0) return { outcome: "available" as const, commits: [] };
+    const log = await mustGit(root, ["log", "--no-walk=unsorted", `--format=${LOG_FORMAT}`, ...shas], signal);
+    return { outcome: "available" as const, commits: parseLog(log) };
+  });
+}
+
 async function patchArgs(root: string, target: HostTarget, signal: AbortSignal): Promise<string[]> {
   if (target.type === "range") {
     const range = await resolveRange(root, target.base, target.head, signal);
@@ -362,5 +380,6 @@ export default experimental_defineHostEntry({
     repoFiles: (input, { signal }) => repoFiles(input, signal),
     checkoutStatus: (input, { signal }) => checkoutStatus(input, signal),
     repoPatch: (input, { signal }) => repoPatch(input, signal),
+    threadCommits: (input, { signal }) => threadCommits(input, signal),
   },
 });

@@ -62,6 +62,11 @@ function RepoSectionView({
       </button>
       <div className="mb-1 ml-8 mr-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
         <span className="text-foreground/85">{caption(repo)}</span>
+        {repo.threadCommits.length > 0 && (
+          <span title={repo.threadCommits.map((commit) => `${commit.shortSha} ${commit.subject}`).join("\n")}>
+            {`${repo.threadCommits.length} ${repo.threadCommits.length === 1 ? "commit" : "commits"} by its threads${repo.branch === null ? "" : ` on ${repo.branch}`}`}
+          </span>
+        )}
         {showHost && repo.hostName !== null && <span>{repo.hostName}</span>}
         {repo.threadIds.map((id) => {
           const thread = threads.get(id);

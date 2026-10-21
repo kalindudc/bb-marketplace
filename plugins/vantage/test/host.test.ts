@@ -427,6 +427,50 @@ describe("repoPatch", () => {
   });
 });
 
+describe("threadCommits", () => {
+  let mainline: string;
+  const gitAt = (cwd: string, seconds: number, ...args: string[]) =>
+    execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", env: { ...process.env, GIT_COMMITTER_DATE: `@${seconds} +0000` } });
+  const commitAt = (seconds: number, message: string, extra: string[] = []) => {
+    put(mainline, "log.txt", `${message}\n`);
+    git(mainline, "add", "-A");
+    gitAt(mainline, seconds, "commit", "-q", ...extra, "-m", message);
+  };
+  const around = (seconds: number) => ({ start: (seconds - 10) * 1000, end: (seconds + 10) * 1000 });
+  const threadCommits = (root: string, windows: HostInput<"threadCommits">["windows"]) => harness.experimental_call("threadCommits", { root, windows });
+
+  beforeAll(() => {
+    mainline = join(scratch, "mainline");
+    mkdirSync(mainline);
+    git(mainline, "init", "-q", "-b", "main");
+    commitAt(1000, "base");
+    commitAt(2000, "mine 1");
+    commitAt(3000, "theirs");
+    commitAt(4000, "mine 2");
+    commitAt(4005, "mine 2, amended", ["--amend"]);
+    git(mainline, "checkout", "-q", "-b", "side");
+    commitAt(4500, "side work");
+    git(mainline, "checkout", "-q", "main");
+  });
+
+  it("lists the commits made in the windows that are still on the checked-out branch, newest first", async () => {
+    const result = await threadCommits(mainline, [around(2000), around(4000), around(4500)]);
+    if (result.outcome !== "available") throw new Error(result.message);
+    expect(result.commits.map((commit) => commit.subject)).toEqual(["mine 2, amended", "mine 1"]);
+    expect(result.commits[0]).toMatchObject({ authorName: "Test", shortSha: expect.stringMatching(/^[0-9a-f]{7,}$/) });
+  });
+
+  it("leaves out commits made outside every window", async () => {
+    const result = await threadCommits(mainline, [around(2000)]);
+    expect(result.outcome === "available" && result.commits.map((commit) => commit.subject)).toEqual(["mine 1"]);
+  });
+
+  it("finds nothing in a repository with no commits, and refuses a folder that is not one", async () => {
+    expect(await threadCommits(unborn, [around(2000)])).toEqual({ outcome: "available", commits: [] });
+    expect(await threadCommits(plain, [around(2000)])).toMatchObject({ outcome: "unavailable", reason: "not-a-repo" });
+  });
+});
+
 describe("failures", () => {
   it("rejects unsafe paths and refs as invalid input", async () => {
     expect(await repoPatch(work, "../x", { type: "uncommitted" })).toMatchObject({ outcome: "unavailable", reason: "invalid-input" });

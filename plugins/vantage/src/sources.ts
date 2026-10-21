@@ -11,8 +11,10 @@ type CheckoutRef = Extract<RepoRef, { kind: "checkout" }>;
 /** Where a workspace is read with git when bb does not answer in time: its repository root and machine. */
 export type GitAt = { hostId: string; root: string };
 type StatusFile = { path: string; status: string; insertions: number | null; deletions: number | null };
-// What git and bb report about a worktree; a cached entry holds only this, never who works in it.
-export type WorktreeStatus = Omit<Worktree, "key" | "ref" | "label" | "projectId" | "hostId" | "hostName" | "root" | "kind" | "threadIds">;
+// What git and bb report about a worktree; a cached entry holds only this, never who works in it or what they committed.
+export type WorktreeStatus = Omit<
+  Worktree, "key" | "ref" | "label" | "projectId" | "hostId" | "hostName" | "root" | "kind" | "threadIds" | "onBase" | "threadCommits"
+>;
 type HostUnavailableResult = Extract<HostOutput<"repoFiles">, { outcome: "unavailable" }>;
 type DiffTarget = { type: "uncommitted" } | { type: "all"; mergeBaseBranch: string };
 type PatchTarget = DiffTarget | { type: "branch_committed"; mergeBaseBranch: string } | { type: "commit"; sha: string };
@@ -170,6 +172,16 @@ export function loadCheckoutStatus(
 ): Promise<HostOutput<"checkoutStatus">> {
   const read = (own?: AbortSignal) => deps.host("checkoutStatus", { root: ref.root, base: ref.base }, { hostId: ref.hostId, signal: own });
   return shared(deps, `co\0${ref.hostId}\0${ref.root}\0${ref.base ?? ""}`, environmentId, threadIds, read, signal);
+}
+
+// The windows are part of the key: a commit command that starts, or one that is still running, asks git again.
+export function loadThreadCommits(
+  deps: CollectDeps, at: GitAt, windows: readonly { start: number; end: number }[], threadIds: readonly string[],
+  environmentId: string | null, signal?: AbortSignal,
+): Promise<HostOutput<"threadCommits">> {
+  const key = `tc\0${at.hostId}\0${at.root}\0${windows.map((window) => `${window.start}-${window.end}`).join(",")}`;
+  const read = (own?: AbortSignal) => deps.host("threadCommits", { root: at.root, windows: [...windows] }, { hostId: at.hostId, signal: own });
+  return shared(deps, key, environmentId, threadIds, read, signal);
 }
 
 export function checkoutWorktreeStatus(result: HostOutput<"checkoutStatus">, base: string | null): WorktreeStatus {

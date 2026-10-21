@@ -18,7 +18,7 @@ const MAX_TITLE = 500;
 const PAGE_SIZE = 100;
 const MAX_ACTIVE_SCANNED = 1000;
 const MAX_ARCHIVED_SCANNED = 500;
-const RUNNING = new Set(["active", "starting", "pending"]);
+export const RUNNING = new Set(["active", "starting", "pending"]);
 const HOUR_MS = 3_600_000;
 
 export function summarizeThread(thread: ThreadFields, depth: number, rootThreadId: string): ThreadSummary {

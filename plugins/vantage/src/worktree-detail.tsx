@@ -158,7 +158,7 @@ function WorktreeDetailBody(props: BodyProps) {
   const changeCount = worktree.uncommitted.length + worktree.committed.length;
   const tabs: Array<{ id: WorktreeDetailProps["tab"]; label: string; count: number | null }> = [
     { id: "changes", label: "Changes", count: loading ? null : changeCount },
-    { id: "commits", label: "Commits", count: loading ? null : worktree.commits.length },
+    { id: "commits", label: "Commits", count: loading ? null : worktree.commits.length + worktree.threadCommits.length },
     ...(own ? [] : [{ id: "chat" as const, label: "Chat", count: null }]),
   ];
   const shown = tab === "chat" && own ? "changes" : tab;
@@ -182,6 +182,8 @@ function WorktreeDetailBody(props: BodyProps) {
       .catch(() => toast.error("Could not copy"));
   };
 
+  const made = worktree.threadCommits.length;
+  const onBaseNote = `Works on ${worktree.base}, its base branch, so nothing counts as committed ahead.${made === 0 ? "" : ` Its threads made ${plural(made, "commit")}, listed under Commits.`}`;
   const changes = (
     <>
       <Section title="Uncommitted" files={worktree.uncommitted}>
@@ -195,7 +197,7 @@ function WorktreeDetailBody(props: BodyProps) {
       {!(own && worktree.committed.length === 0) && (
         <Section title={worktree.kind === "branch" ? "Committed on the kept branch" : "Committed on this branch"} files={worktree.committed}>
           {worktree.committed.length === 0
-            ? <Empty>{`No commits ahead of ${worktree.base ?? "the base branch"} yet.`}</Empty>
+            ? <Empty>{worktree.onBase ? onBaseNote : `No commits ahead of ${worktree.base ?? "the base branch"} yet.`}</Empty>
             : worktree.committed.map((file) => (
               <FileRow key={file.path} repo={worktree} file={file} scope="uncommitted" patchScope="committed" sharedWith={sharedWith.get(file.path)}
                 threads={threads} expanded={expandedFiles.has(fileKey(worktree, file.path, "committed"))} onToggle={toggle} loaders={loaders} />
@@ -205,33 +207,41 @@ function WorktreeDetailBody(props: BodyProps) {
     </>
   );
 
-  const commits = worktree.commits.length === 0
-    ? <p className="px-3.5 pt-3 text-xs text-muted-foreground">{`No commits ahead of ${worktree.base ?? "the base branch"}.`}</p>
-    : (
-      <>
-        <h3 className="px-3.5 pb-1 pt-3 text-[10.5px] font-semibold uppercase tracking-wider text-subtle-foreground">
-          {`${plural(worktree.aheadCount ?? worktree.commits.length, "commit")} ahead of ${worktree.base ?? "the base branch"}`}
-        </h3>
-        {worktree.commits.map((commit) => {
-          const open = openCommits.has(commit.sha);
-          return (
-            <div key={commit.sha}>
-              <button type="button" aria-expanded={open} onClick={() => toggleCommit(commit.sha)}
-                className="flex w-full min-w-0 cursor-pointer items-center gap-2 py-1 pl-3.5 pr-3 text-left text-xs hover:bg-state-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
-                <Icon name={open ? "ChevronDown" : "ChevronRight"} className="size-3 shrink-0 text-subtle-foreground" aria-hidden />
-                <span className="shrink-0 font-mono text-ring">{commit.shortSha}</span>
-                <span className="min-w-0 flex-1 truncate text-foreground">{commit.subject}</span>
-                <span className="shrink-0 text-muted-foreground">{commit.authorName} · {relativeTime(commit.authoredAt)}</span>
-              </button>
-              {open && (
-                <CommitFiles worktree={worktree} commit={commit} sharedWith={sharedWith} expandedFiles={expandedFiles} onToggleFile={toggle}
-                  threads={threads} loaders={loaders} />
-              )}
-            </div>
-          );
-        })}
-      </>
-    );
+  const commitList = (heading: string, list: readonly Commit[]) => (
+    <>
+      <h3 className="px-3.5 pb-1 pt-3 text-[10.5px] font-semibold uppercase tracking-wider text-subtle-foreground">{heading}</h3>
+      {list.map((commit) => {
+        const open = openCommits.has(commit.sha);
+        return (
+          <div key={commit.sha}>
+            <button type="button" aria-expanded={open} onClick={() => toggleCommit(commit.sha)}
+              className="flex w-full min-w-0 cursor-pointer items-center gap-2 py-1 pl-3.5 pr-3 text-left text-xs hover:bg-state-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
+              <Icon name={open ? "ChevronDown" : "ChevronRight"} className="size-3 shrink-0 text-subtle-foreground" aria-hidden />
+              <span className="shrink-0 font-mono text-ring">{commit.shortSha}</span>
+              <span className="min-w-0 flex-1 truncate text-foreground">{commit.subject}</span>
+              <span className="shrink-0 text-muted-foreground">{commit.authorName} · {relativeTime(commit.authoredAt)}</span>
+            </button>
+            {open && (
+              <CommitFiles worktree={worktree} commit={commit} sharedWith={sharedWith} expandedFiles={expandedFiles} onToggleFile={toggle}
+                threads={threads} loaders={loaders} />
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
+  const madeWhere = worktree.onBase ? ` on ${worktree.branch}` : worktree.base === null ? "" : `, already on ${worktree.base}`;
+  const commits = worktree.commits.length > 0
+    ? commitList(`${plural(worktree.aheadCount ?? worktree.commits.length, "commit")} ahead of ${worktree.base ?? "the base branch"}`, worktree.commits)
+    : made > 0
+      ? commitList(`${plural(made, "commit")} its threads made${madeWhere}`, worktree.threadCommits)
+      : (
+        <p className="px-3.5 pt-3 text-xs text-muted-foreground">
+          {worktree.onBase
+            ? `Works on ${worktree.base}, its base branch, so nothing counts as ahead. No commits its threads made were found.`
+            : `No commits ahead of ${worktree.base ?? "the base branch"}.`}
+        </p>
+      );
 
   const others = worktree.threadIds.filter((id) => id !== currentThreadId);
 
@@ -266,9 +276,11 @@ function WorktreeDetailBody(props: BodyProps) {
               <span className="truncate">{worktree.branch}</span>
             </span>
           )}
-          {worktree.aheadCount !== null && worktree.behindCount !== null && (
-            <span className="font-mono text-[11px]">↑{worktree.aheadCount} ↓{worktree.behindCount}{worktree.base === null ? "" : ` on ${worktree.base}`}</span>
-          )}
+          {worktree.onBase
+            ? <span>on <span className="font-mono text-[11px]">{worktree.base}</span>, its base branch</span>
+            : worktree.aheadCount !== null && worktree.behindCount !== null && (
+              <span className="font-mono text-[11px]">↑{worktree.aheadCount} ↓{worktree.behindCount}{worktree.base === null ? "" : ` on ${worktree.base}`}</span>
+            )}
           <span>{unavailable ? "Unavailable" : live.label}</span>
           <span>{worktree.hostName}</span>
           <PullRequestBadge threadId={primary} />

@@ -1,9 +1,10 @@
 import { PLUGIN_CLI_OUTPUT_MAX_BYTES, PluginCliError, cliCommand, defineCli, type PluginCliRegistration } from "@get-bb/plugin-sdk";
-import type { FileChange, Overview, OverviewTarget, Repo, Scope, ThreadSummary, Worktree } from "./contract";
+import type { Commit, FileChange, Overview, OverviewTarget, Repo, Scope, ThreadSummary, Worktree } from "./contract";
 import { primaryThreadId } from "./worktrees";
 
 const MAX_FILES_PER_REPO = 50;
 const MAX_COMMITS = 20;
+const MAX_REPO_COMMITS = 5;
 const TITLE_WIDTH = 30;
 const JSON_FILE_CAPS = [Infinity, 200, 50, 10, 0];
 const OUTPUT_MARGIN_BYTES = 2048;
@@ -36,6 +37,18 @@ function fileLines(files: readonly FileChange[], limit: number): string[] {
 
 const plural = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? "" : "s"}`;
 
+const commitLine = (commit: Commit): string =>
+  `${commit.shortSha}  ${commit.subject}  (${commit.authorName}, ${new Date(commit.authoredAt).toISOString().slice(0, 10)})`;
+
+function threadCommitLines(repo: Repo): string[] {
+  const made = repo.threadCommits;
+  if (made.length === 0) return [];
+  const lines = [`  ${plural(made.length, "commit")} by its threads${repo.branch === null ? "" : ` on ${repo.branch}`}`];
+  lines.push(...made.slice(0, MAX_REPO_COMMITS).map((commit) => `    ${commit.shortSha}  ${commit.subject}`));
+  if (made.length > MAX_REPO_COMMITS) lines.push(`    … ${made.length - MAX_REPO_COMMITS} more (bb vantage worktree <thread>)`);
+  return lines;
+}
+
 function repoLines(repo: Repo, threadTitles: ReadonlyMap<string, string>, showHost: boolean): string[] {
   const header = [
     repo.label, CAPTION[repo.ref.kind](repo), repo.branch === null ? null : `branch ${repo.branch}`,
@@ -49,6 +62,7 @@ function repoLines(repo: Repo, threadTitles: ReadonlyMap<string, string>, showHo
     lines.push(`  Unavailable: ${repo.message ?? "unknown error"}`);
     return lines;
   }
+  lines.push(...threadCommitLines(repo));
   lines.push(...fileLines(repo.files, MAX_FILES_PER_REPO));
   if (repo.truncated) lines.push("  (the list was cut at the first files)");
   if (repo.otherFiles.length > 0) lines.push(`  + ${repo.otherFiles.length} other changes in this repo that these threads did not edit`);
@@ -120,6 +134,9 @@ function worktreeStatus(worktree: Worktree, thread: ThreadSummary | undefined): 
 
 const behindAhead = (worktree: Worktree): string =>
   worktree.aheadCount === null || worktree.behindCount === null ? "-" : `↑${worktree.aheadCount} ↓${worktree.behindCount}`;
+const aheadCell = (worktree: Worktree): string => (worktree.onBase ? "on base" : behindAhead(worktree));
+const branchCell = (worktree: Worktree): string =>
+  `${worktree.branch ?? "-"}${worktree.threadCommits.length === 0 ? "" : ` · ${plural(worktree.threadCommits.length, "commit")} by its threads`}`;
 
 function uncommittedLabel(worktree: Worktree): string {
   if (worktree.kind === "branch" || worktree.state === "unavailable") return "-";
@@ -145,7 +162,7 @@ export function formatWorktrees(overview: Overview): string {
   };
   const rows = overview.worktrees.map((worktree) => [
     worktreeStatus(worktree, threads.get(primaryThreadId(worktree, overview.threadId))), trimTitle(titleOf(worktree)),
-    behindAhead(worktree), uncommittedLabel(worktree), worktree.branch ?? "-",
+    aheadCell(worktree), uncommittedLabel(worktree), branchCell(worktree),
   ]);
   const printed = table([["STATUS", "THREAD", "AHEAD/BEHIND", "UNCOMMITTED", "BRANCH"], ...rows]);
   const lines = [printed[0]!];
@@ -177,10 +194,17 @@ export function formatWorktree(overview: Overview, threadId: string): string {
   return worktrees.map((worktree) => worktreeBlock(overview, worktree, threadId)).join("\n");
 }
 
+function commitLines(commits: readonly Commit[]): string[] {
+  const lines = commits.slice(0, MAX_COMMITS).map((commit) => `  ${commitLine(commit)}`);
+  if (commits.length > MAX_COMMITS) lines.push(`  … ${commits.length - MAX_COMMITS} more`);
+  return lines;
+}
+
 function worktreeBlock(overview: Overview, worktree: Worktree, threadId: string): string {
   const thread = overview.threads.find((entry) => entry.id === primaryThreadId(worktree, threadId));
-  const counts = worktree.aheadCount === null || worktree.behindCount === null
-    ? null : `${behindAhead(worktree)}${worktree.base === null ? "" : ` on ${worktree.base}`}`;
+  const counts = worktree.onBase
+    ? `on ${worktree.base}, its base branch`
+    : worktree.aheadCount === null || worktree.behindCount === null ? null : `${behindAhead(worktree)}${worktree.base === null ? "" : ` on ${worktree.base}`}`;
   const lines = [
     [thread?.title ?? threadId, worktree.branch, counts, worktreeStatus(worktree, thread)].filter((part) => part !== null).join(" · "),
     worktree.kind === "branch" ? `  kept in: ${worktree.root}` : `  path: ${worktree.root}`,
@@ -196,12 +220,16 @@ function worktreeBlock(overview: Overview, worktree: Worktree, threadId: string)
   }
   if (worktree.commits.length > 0) {
     lines.push("", `Commits (${worktree.commits.length})`);
-    for (const commit of worktree.commits.slice(0, MAX_COMMITS)) {
-      lines.push(`  ${commit.shortSha}  ${commit.subject}  (${commit.authorName}, ${new Date(commit.authoredAt).toISOString().slice(0, 10)})`);
-    }
-    if (worktree.commits.length > MAX_COMMITS) lines.push(`  … ${worktree.commits.length - MAX_COMMITS} more`);
+    lines.push(...commitLines(worktree.commits));
+  }
+  if (worktree.threadCommits.length > 0) {
+    const where = worktree.onBase ? ` on ${worktree.branch}` : worktree.base === null ? "" : `, already on ${worktree.base}`;
+    lines.push("", `Commits its threads made${where} (${worktree.threadCommits.length})`, ...commitLines(worktree.threadCommits));
   }
   if (lines.length === 2) lines.push("", "No changes.");
+  if (worktree.onBase && worktree.threadCommits.length === 0) {
+    lines.push("", `Works on ${worktree.base}, its base branch, so nothing counts as ahead; no commits its threads made were found.`);
+  }
   return `${lines.join("\n")}\n`;
 }
 
@@ -209,6 +237,7 @@ const bytes = (text: string): number => Buffer.byteLength(text);
 
 const capWorktree = (worktree: Worktree, cap: number): Worktree => ({
   ...worktree, uncommitted: worktree.uncommitted.slice(0, cap), committed: worktree.committed.slice(0, cap), commits: worktree.commits.slice(0, cap),
+  threadCommits: worktree.threadCommits.slice(0, cap),
 });
 
 // Prints the largest version of `build(cap)` that fits bb's output limit, trying fewer files each time.
@@ -226,7 +255,7 @@ const formatJson = (overview: Overview): string => fitJson((cap): Overview => ({
   ...overview,
   repos: overview.repos.map((repo) => ({
     ...repo,
-    files: repo.files.slice(0, cap), otherFiles: repo.otherFiles.slice(0, cap),
+    files: repo.files.slice(0, cap), otherFiles: repo.otherFiles.slice(0, cap), threadCommits: repo.threadCommits.slice(0, cap),
     truncated: repo.truncated || repo.files.length > cap || repo.otherFiles.length > cap,
   })),
   worktrees: overview.worktrees.map((worktree) => capWorktree(worktree, cap)),

@@ -175,13 +175,13 @@ describe("server", () => {
     });
     await ready;
     const result = await harness.behavior.callRpc("patch", {
-      ref: { kind: "checkout", hostId: "host_2", root: "/code/cortex", base: null },
+      ref: { kind: "checkout", hostId: "host_2", root: "/code/commons", base: null },
       path: "a.md", previousPath: null, untracked: true, scope: "uncommitted",
     });
     expect(result).toEqual({ patch: "+from host", truncated: false, binary: false });
     expect(harness.experimental_hostRpcCalls.at(-1)).toMatchObject({
       method: "repoPatch", hostId: "host_2",
-      input: { root: "/code/cortex", path: "a.md", untracked: true, target: { type: "uncommitted" } },
+      input: { root: "/code/commons", path: "a.md", untracked: true, target: { type: "uncommitted" } },
     });
   });
 
@@ -481,7 +481,7 @@ describe("server worktrees", () => {
   const SHA = "abc1234def";
   const WORKSPACE = { kind: "workspace", environmentId: "env_1", base: "origin/main" };
   const BRANCH = { kind: "branch", hostId: "host_1", root: "/code/proj", base: "origin/main", head: "feature/old" };
-  const CHECKOUT = { kind: "checkout", hostId: "host_1", root: "/code/cortex", base: null };
+  const CHECKOUT = { kind: "checkout", hostId: "host_1", root: "/code/commons", base: null };
   const patch = (ref: object, extra: object) => ({ ref, path: "src/a.ts", previousPath: null, untracked: false, scope: "uncommitted", ...extra });
 
   it("answers overview with the worktrees and the files they share", async () => {
@@ -508,7 +508,7 @@ describe("server worktrees", () => {
     expect(viaHost).toMatchObject({ files: [{ path: "lib.ts", status: "added" }] });
     expect(harness.experimental_hostRpcCalls.at(-1)).toMatchObject({ method: "repoFiles", hostId: "host_1", input: { root: "/code/proj", target: { type: "commit", sha: SHA } } });
     await harness.behavior.callRpc("commitFiles", { ref: CHECKOUT, sha: SHA });
-    expect(harness.experimental_hostRpcCalls.at(-1)).toMatchObject({ method: "repoFiles", input: { root: "/code/cortex", target: { type: "commit", sha: SHA } } });
+    expect(harness.experimental_hostRpcCalls.at(-1)).toMatchObject({ method: "repoFiles", input: { root: "/code/commons", target: { type: "commit", sha: SHA } } });
     await expect(harness.behavior.callRpc("commitFiles", { ref: WORKSPACE, sha: "zz" })).rejects.toThrow();
   });
 
@@ -535,7 +535,7 @@ describe("server worktrees", () => {
     });
     await ready;
     await harness.behavior.callRpc("patch", patch(CHECKOUT, { scope: "committed" }));
-    expect(harness.experimental_hostRpcCalls.at(-1)).toMatchObject({ method: "repoPatch", input: { root: "/code/cortex", target: { type: "committed", base: null } } });
+    expect(harness.experimental_hostRpcCalls.at(-1)).toMatchObject({ method: "repoPatch", input: { root: "/code/commons", target: { type: "committed", base: null } } });
     await harness.behavior.callRpc("patch", patch(CHECKOUT, { sha: SHA }));
     expect(harness.experimental_hostRpcCalls.at(-1)).toMatchObject({ method: "repoPatch", input: { target: { type: "commit", sha: SHA } } });
   });
@@ -672,6 +672,18 @@ describe("formatWorktrees", () => {
   it("says so when there is no worktree", () => {
     expect(formatWorktrees(overview())).toContain("No worktrees in this thread or its child threads yet.");
   });
+
+  it("marks a worktree on its base branch, and counts the commits its threads made there", () => {
+    const lines = formatWorktrees(overview({
+      threads: [threadSummary({ id: "thr_1", title: "Parser" }), threadSummary({ id: "thr_2", title: "Docs" })],
+      worktrees: [
+        worktree({ branch: "main", base: "main", onBase: true, threadCommits: [commit(), commit({ sha: "b".repeat(40) })] }),
+        worktree({ key: "w2", threadIds: ["thr_2"], branch: "main", base: "main", onBase: true }),
+      ],
+    })).split("\n");
+    expect(lines[1]).toMatch(/^idle\s+Parser\s+on base\s+clean\s+main · 2 commits by its threads$/);
+    expect(lines[2]).toMatch(/^idle\s+Docs\s+on base\s+clean\s+main$/);
+  });
 });
 
 describe("formatWorktree", () => {
@@ -716,6 +728,31 @@ describe("formatWorktree", () => {
     expect(text).toContain("Parent · side-work");
     expect(text).toContain("path: /clones/side");
     expect(text).toContain("Committed on this branch (1 file)");
+  });
+
+  it("lists the commits its threads made on the base branch it works on", () => {
+    const text = formatWorktree(base(worktree({
+      branch: "main", base: "main", onBase: true,
+      threadCommits: [commit({ shortSha: "1a2b3c4", subject: "Add the parser", authorName: "Ada" }), commit({ shortSha: "5d6e7f8", subject: "Fix the tests" })],
+    })), "thr_1");
+    expect(text).toContain("Parent · main · on main, its base branch · idle");
+    expect(text).not.toContain("↑0 ↓0");
+    expect(text).toContain("Commits its threads made on main (2)");
+    expect(text).toContain("  1a2b3c4  Add the parser  (Ada, 2023-11-14)");
+    expect(text).toContain("  5d6e7f8  Fix the tests");
+    expect(text).not.toContain("No changes.");
+  });
+
+  it("says why a worktree on its base branch shows no commits when its threads made none", () => {
+    const text = formatWorktree(base(worktree({ branch: "main", base: "main", onBase: true })), "thr_1");
+    expect(text).toContain("No changes.");
+    expect(text).toContain("Works on main, its base branch, so nothing counts as ahead; no commits its threads made were found.");
+  });
+
+  it("lists the commits its threads made that are already on the base branch", () => {
+    const text = formatWorktree(base(worktree({ threadCommits: [commit({ shortSha: "abc1234", subject: "Merged work" })] })), "thr_1");
+    expect(text).toContain("Commits its threads made, already on origin/main (1)");
+    expect(text).toContain("abc1234  Merged work");
   });
 
   it("explains an unavailable worktree and labels a kept branch", () => {
@@ -779,6 +816,26 @@ describe("bb vantage changes", () => {
   });
 });
 
+describe("formatOverview commits", () => {
+  it("lists up to five commits its threads made in a repository, newest first", () => {
+    const made = Array.from({ length: 7 }, (_, index) => commit({ shortSha: `c${index}`.padEnd(7, "0"), subject: `Commit ${index}` }));
+    const text = formatOverview(overview({
+      threads: [threadSummary({ id: "thr_1", title: "Parser" })],
+      repos: [repo({ branch: "main", threadIds: ["thr_1"], threadCommits: made, files: [fileChange({ path: "README.md", status: "clean", additions: null, deletions: null })] })],
+    }));
+    expect(text).toContain("  7 commits by its threads on main");
+    expect(text).toContain("    c000000  Commit 0");
+    expect(text).toContain("    c400000  Commit 4");
+    expect(text).not.toContain("Commit 5");
+    expect(text).toContain("    … 2 more (bb vantage worktree <thread>)");
+    expect(text.indexOf("commits by its threads")).toBeLessThan(text.indexOf("README.md"));
+  });
+
+  it("prints no commit line for a repository its threads made no commits in", () => {
+    expect(formatOverview(overview({ repos: [repo({ threadIds: ["thr_1"] })] }))).not.toContain("commits by its threads");
+  });
+});
+
 describe("formatOverview", () => {
   it("describes every kind of repository, the threads that touched it and the folded changes", () => {
     const text = formatOverview(overview({
@@ -810,7 +867,7 @@ describe("formatOverview", () => {
     expect(text).toContain("  R  docs/y.md → docs/x.md  +0 −0");
     expect(text).toContain("  A  pic.png  binary");
     expect(text).toContain("  ·  kept.ts  (edited, no change now)");
-    expect(text).toContain("cortex · Edited by path · branch main · 1 file +3 −0 · Laptop");
+    expect(text).toContain("commons · Edited by path · branch main · 1 file +3 −0 · Laptop");
     expect(text).toContain("  ?  a.md  +3 −0");
     expect(text).toContain("+ 2 other changes in this repo that these threads did not edit");
     expect(text).toContain("Project · Archived branch · 3 commits · branch feature/old");

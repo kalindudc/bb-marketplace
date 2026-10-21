@@ -4,8 +4,13 @@ export const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 export const PATCH_LIMIT = 1_048_576;
 export const FILE_LIMIT = 2000;
 export const LOG_FORMAT = "%H%x1f%h%x1f%an%x1f%at%x1f%s";
+export const REFLOG_FORMAT = "%H%x1f%gd%x1f%gs";
+// Reflog times are whole seconds, and bb's clock and the machine's may differ a little.
+export const REFLOG_SLACK_MS = 2000;
 
 export interface GitEntry { path: string; previousPath: string | null; code: string }
+export interface ReflogEntry { sha: string; at: number; action: string }
+export interface TimeWindow { start: number; end: number }
 export interface NumstatEntry { additions: number | null; deletions: number | null; previousPath: string | null }
 
 const fields = (output: string): string[] => {
@@ -106,6 +111,32 @@ export function parseLog(output: string): Commit[] {
     commits.push({ sha, shortSha, subject, authorName, authoredAt });
   }
   return commits;
+}
+
+// `git log -g --date=unix --format=REFLOG_FORMAT`: `sha\x1fHEAD@{seconds}\x1faction: message` per entry, newest first.
+export function parseReflog(output: string): ReflogEntry[] {
+  const entries: ReflogEntry[] = [];
+  for (const line of output.split("\n")) {
+    const [sha = "", selector = "", ...subject] = line.split("\x1f");
+    const seconds = /@\{(\d+)\}$/.exec(selector)?.[1];
+    if (subject.length === 0 || !isSafeSha(sha) || seconds === undefined) continue;
+    const text = subject.join("\x1f");
+    const colon = text.indexOf(":");
+    entries.push({ sha, at: Number(seconds) * 1000, action: colon === -1 ? text : text.slice(0, colon) });
+  }
+  return entries;
+}
+
+const COMMIT_ACTION = /^commit(?: \((?:amend|initial|merge)\))?$/;
+
+// The commits `git commit` made while one of the windows was open, newest first and each once.
+export function commitsInWindows(entries: readonly ReflogEntry[], windows: readonly TimeWindow[]): string[] {
+  const found = new Set<string>();
+  for (const entry of entries) {
+    if (!COMMIT_ACTION.test(entry.action)) continue;
+    if (windows.some((window) => entry.at >= window.start - REFLOG_SLACK_MS && entry.at <= window.end + REFLOG_SLACK_MS)) found.add(entry.sha);
+  }
+  return [...found];
 }
 
 export function isSafeRef(ref: string): boolean {
