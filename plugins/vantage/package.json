@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-vantage",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "private": true,
   "type": "module",
   "engines": {
@@ -17,7 +17,7 @@
     "app": "./app.tsx",
     "host": "./host.ts",
     "skills": [
-      "./skills/vantage"
+      "./skills"
     ]
   },
   "scripts": {

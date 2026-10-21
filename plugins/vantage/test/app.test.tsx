@@ -128,7 +128,7 @@ describe("manifest", () => {
     expect(manifest.name).toBe("bb-plugin-vantage");
     expect(manifest.bb).toMatchObject({
       name: "Vantage", branding: { icon: "FolderGit" }, server: "./server.ts", app: "./app.tsx", host: "./host.ts",
-      skills: ["./skills/vantage"],
+      skills: ["./skills"],
     });
     expect(manifest.bb.branding.experimental_icons).toBeUndefined();
     expect(manifest.engines).toEqual({ bb: ">=0.46", bbPluginSdk: ">=0.6.49" });

@@ -394,6 +394,9 @@ nothing on disk.
 
 ## Changes
 
+- **0.4.3**: the bundled `vantage` skill loads. The manifest listed the
+  skill's own folder, which bb reads as a folder of skills and so found none;
+  it now lists `./skills`.
 - **0.4.1**: an archived thread's branch is read in the folder it ran in when
   its project's folder is not a repository, or the project has none, instead
   of showing as unavailable or as recorded edits only. A workspace that bb's

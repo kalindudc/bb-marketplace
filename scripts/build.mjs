@@ -37,6 +37,16 @@ const plugins = readdirSync(join(root, "entries"))
         fail(`${git.subdir}/package.json is named "${manifest.name}", not "bb-plugin-${entry.id}"`);
       }
       if (git.tagPrefix !== `${entry.id}/`) fail(`${entry.id}: tagPrefix must be "${entry.id}/"`);
+      // bb reads each bb.skills entry as a folder of skill folders; pointing at one skill's own folder loads nothing.
+      for (const skillsRoot of manifest.bb?.skills ?? []) {
+        const dir = join(root, git.subdir, skillsRoot);
+        const skills = existsSync(dir)
+          ? readdirSync(dir, { withFileTypes: true }).filter((item) => item.isDirectory() && existsSync(join(dir, item.name, "SKILL.md")))
+          : [];
+        if (skills.length === 0) {
+          fail(`${entry.id}: bb.skills entry "${skillsRoot}" holds no skill folder with a SKILL.md; list the folder that contains the skill folders, such as "./skills"`);
+        }
+      }
     }
 
     if (entry.overview === undefined) return entry;
