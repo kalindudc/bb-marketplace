@@ -1,4 +1,5 @@
 // Loom's view of bb. bb-port.ts adapts bb.sdk to this; tests fake it.
+import type { NewThreadRequest } from "@get-bb/plugin-sdk";
 import type { HostInput, HostMethod, HostOutput } from "./host-contract";
 
 export class SectionNameConflictError extends Error {
@@ -38,6 +39,10 @@ export interface BbPort {
   /** The newest system/error event of the thread. */
   latestSystemError(threadId: string): Promise<{ code: string | null; message: string } | null>;
   retryTurn(threadId: string, turnRequestId: string, sendAt: number): Promise<void>;
+  /** "personal" is bb's "Don't work in a project"; null when bb does not know the project. */
+  projectKind(bbProjectId: string): Promise<"standard" | "personal" | null>;
+  /** Starts a thread from the page's composer request, `kickoff` appended as agent-only text; returns its id. */
+  spawnPlanner(args: { request: NewThreadRequest; title: string; kickoff: string }): Promise<string>;
 }
 
 export interface SpawnArgs {

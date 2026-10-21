@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { vi, type MockInstance } from "vitest";
 import { stringify } from "smol-toml";
+import type { NewThreadRequest } from "@get-bb/plugin-sdk";
 import { createFakePluginHost, type FakeSdkOverrides } from "@get-bb/plugin-sdk/testing";
 import { createBbPort } from "../src/bb-port";
 import { MIGRATIONS } from "../src/db/schema";
@@ -161,6 +162,18 @@ export class FakePort implements BbPort {
   }
   async retryTurn(threadId: string, turnRequestId: string, sendAt: number) {
     this.record("retryTurn", threadId, turnRequestId, sendAt);
+  }
+  /** A missing id reads as "standard". */
+  projectKinds = new Map<string, "standard" | "personal">();
+  async projectKind(bbProjectId: string): Promise<"standard" | "personal" | null> {
+    this.record("projectKind", bbProjectId);
+    return this.projectKinds.get(bbProjectId) ?? "standard";
+  }
+  async spawnPlanner(args: { request: NewThreadRequest; title: string; kickoff: string }) {
+    this.record("spawnPlanner", args);
+    const threadId = `thr_p${this.nextThread++}`;
+    this.addThread(threadId, "active");
+    return threadId;
   }
   /** Registers a thread bb knows about, such as the planner's. */
   addThread(id: string, status = "idle", environmentId: string | null = null) {

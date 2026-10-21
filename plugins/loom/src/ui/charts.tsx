@@ -94,3 +94,24 @@ export function Spark({ values, label }: { values: number[]; label: string }) {
     </svg>
   );
 }
+
+/** One horizontal bar split into parts by value, with a legend. Plain elements: its aria-label lists the parts' labels. */
+export function ShareBar({ parts, label }: { parts: { label: string; value: number; swatch: Swatch }[]; label: string }) {
+  const total = parts.reduce((sum, part) => sum + part.value, 0);
+  const tint = (swatch: Swatch) => ({ background: swatch.fill, opacity: swatch.opacity ?? 1 });
+  return (
+    <figure className="mt-1.5">
+      <div role="img" aria-label={`${label}: ${parts.map((part) => part.label).join(", ")}`} className="flex h-2 w-full overflow-hidden rounded-full bg-state-hover">
+        {total > 0 && parts.filter((part) => part.value > 0).map((part) => <span key={part.label} title={part.label} className="h-full" style={{ width: `${(part.value / total) * 100}%`, ...tint(part.swatch) }} />)}
+      </div>
+      <figcaption className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+        {parts.map((part) => (
+          <span key={part.label} className="inline-flex items-center gap-1">
+            <span aria-hidden className="size-2 rounded-sm" style={tint(part.swatch)} />
+            {part.label}
+          </span>
+        ))}
+      </figcaption>
+    </figure>
+  );
+}

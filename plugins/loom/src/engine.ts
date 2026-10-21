@@ -178,7 +178,7 @@ export class Engine {
     }
   }
 
-  /** After a restart: adopt or roll back half-made spawns, end rows whose thread is gone, finish endings, check again, and run merges left in merging again. */
+  /** After a restart: adopt or roll back half-made spawns, end rows and planning conversations whose thread is gone, finish endings, check again, and run merges left in merging again. */
   async reconcile(): Promise<{ adopted: number; rolledBack: number; rechecked: number }> {
     const { store, bb } = this.ctx;
     let adopted = 0;
@@ -201,6 +201,10 @@ export class Engine {
       if (thread !== null && thread.archivedAt === null && thread.deletedAt === null) continue;
       if (row.role === "planner") this.projects.threadGone(row.thread_id, "deleted");
       else await endThread(this.ctx, row, "gone", { commit: row.role === "worker", ...(row.role === "worker" ? {} : { move: null }) });
+    }
+    for (const session of store.openPlanning()) {
+      const thread = await bb.getThread(session.thread_id);
+      if (thread === null || thread.archivedAt !== null || thread.deletedAt !== null) this.projects.planningGone(session.thread_id, "gone");
     }
     for (const row of store.threads({ states: ["ending"] })) await resumeEnding(this.ctx, row);
     const rechecked = resumeCheckingTickets(this.ctx);
@@ -373,6 +377,7 @@ export class Engine {
   }
 
   async onThreadGone(threadId: string, why: "archived" | "deleted"): Promise<void> {
+    this.projects.planningGone(threadId, why);
     const row = this.ctx.store.threadByThreadId(threadId);
     if (row === null) return;
     if (row.role === "reviewer") await onReviewerGone(this.ctx, row);

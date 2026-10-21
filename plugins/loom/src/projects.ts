@@ -1,10 +1,12 @@
 // The project service: proposals, approval, lifecycle, the board's posts, and
 // role lookup. Every state change goes through the store, which appends the event.
-import type { PostRow, ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
+import type { NewThreadRequest } from "@get-bb/plugin-sdk";
+import type { PlanningRow, PostRow, ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { StoreError } from "./db/store";
 import { SectionNameConflictError, type BbPort } from "./ports";
+import { planningKickoff, planningTitle } from "./prompts";
 import { numberErrors, parseSpec, specHash, type Spec } from "./spec";
-import { PAUSE_NOW_REASON, TICKET_STATES, type AuthorKind, type ProjectState, type Role, type TicketState } from "./states";
+import { PAUSE_NOW_REASON, TICKET_STATES, type AuthorKind, type MergeChoice, type ProjectState, type Role, type TicketState } from "./states";
 
 export type LoomErrorCode = "loom_not_found" | "loom_invalid_state" | "loom_invalid_spec" | "loom_invalid_input" | "loom_forbidden" | "loom_no_checkout" | "loom_unavailable";
 
@@ -91,6 +93,15 @@ export interface TicketView extends TicketSummary {
   verify: string[];
   scope: string[];
   posts: Array<PostRow & { depth: number }>;
+}
+
+/** A conversation started from the Loom page. `slug` and `projectState` are null until its thread proposes a spec. */
+export interface PlanningSession {
+  threadId: string;
+  title: string;
+  startedAt: number;
+  slug: string | null;
+  projectState: ProjectState | null;
 }
 
 const MAX_POST_LENGTH = 20_000;
@@ -442,6 +453,40 @@ export class Projects {
     if (row?.role === "planner" && row.state !== "ended") {
       this.store.updateThread(row.id, { state: "ended", ended_at: this.now(), end_reason: reason });
     }
+  }
+
+  // ---------------------------------------------------------------- planning conversations
+
+  /** Starts a planner thread from the page's composer request. It is an ordinary thread until its first loom_propose binds it as the planner. */
+  async startPlanning(a: { request: NewThreadRequest; merge: MergeChoice; reviewer: string }): Promise<{ threadId: string }> {
+    const title = planningTitle(a.request.input);
+    if (title === "") throw new LoomError("loom_invalid_input", "Describe what should exist when the project is done.");
+    if ((await this.bb.projectKind(a.request.projectId)) !== "standard") {
+      throw new LoomError("loom_no_checkout", "Loom needs a bb project with a git checkout. Pick a project in the composer.");
+    }
+    const threadId = await this.bb.spawnPlanner({ request: a.request, title: `Loom plan: ${title}`, kickoff: planningKickoff(a) });
+    this.store.addPlanning({ thread_id: threadId, bb_project_id: a.request.projectId, title });
+    return { threadId };
+  }
+
+  /** The open conversations, newest first. */
+  planningSessions(): PlanningSession[] {
+    return this.store.openPlanning().map((row) => this.sessionOf(row));
+  }
+
+  planningSession(threadId: string): PlanningSession | null {
+    const row = this.store.planning(threadId);
+    return row === null ? null : this.sessionOf(row);
+  }
+
+  planningGone(threadId: string, reason: string): void {
+    this.store.endPlanning(threadId, reason);
+  }
+
+  private sessionOf(row: PlanningRow): PlanningSession {
+    const planner = this.store.threadByThreadId(row.thread_id);
+    const project = planner?.role === "planner" ? this.store.project(planner.project_id) : null;
+    return { threadId: row.thread_id, title: row.title, startedAt: row.started_at, slug: project?.slug ?? null, projectState: project?.state ?? null };
   }
 
   // ---------------------------------------------------------------- views

@@ -1,4 +1,4 @@
-import type { BoardCard, FeedRow, ProjectSummary, ProjectView, TicketDetail } from "../src/contract";
+import type { AgentRow, BoardCard, FeedRow, HomeProject, HomeView, ProjectHealth, ProjectSummary, ProjectView, TicketDetail } from "../src/contract";
 import type { ProjectMetrics } from "../src/metrics";
 import { TICKET_STATES, type TicketState } from "../src/states";
 
@@ -24,6 +24,30 @@ export const overview = (over: Partial<ProjectSummary> = {}): ProjectSummary => 
   ticketCounts: { queued: 2, working: 1, done: 1 },
   createdAt: NOW - 3 * 24 * HOUR,
   updatedAt: NOW - HOUR,
+  ...over,
+});
+
+export const homeProject = (over: Partial<HomeProject> = {}): HomeProject => ({
+  ...overview(),
+  progress: { done: 1, total: 4, inFlight: 1, blocked: 0 },
+  agents: 3,
+  throughput: [0, 0, 1, 2, 1, 0, 1, 2, 0, 1, 1, 0, 2, 1],
+  tokens: 12_000,
+  maxTokens: 50_000,
+  lastEventAt: NOW - 2 * 60_000,
+  ...over,
+});
+
+export const homeView = (over: Partial<HomeView> = {}): HomeView => ({
+  totals: { projects: 4, running: 2, paused: 1, workers: 3, reviewers: 2, planners: 1, slots: 8, doneLast7: 14, doneByDay: [0, 1, 2, 1, 3, 0, 2, 4, 1, 2, 3, 2, 4, 3], tokens: 3_100_000, perDoneTicket: 220_000 },
+  needsYou: [
+    { kind: "blocked", slug: "csv", project: "CSV export", key: "CSV-7", text: "needs the staging DB credentials", at: NOW - 5 * 60_000 },
+    { kind: "approve", slug: "audit", project: "Audit log", key: null, text: "has a draft spec v1 with 9 tickets", at: NOW - 12 * 60_000 },
+    { kind: "land", slug: "srch", project: "Search revamp", key: null, text: "finished all 12 tickets; land the integration branch", at: NOW - HOUR },
+    { kind: "paused", slug: "bill", project: "Billing API", key: null, text: "The token budget is used up: 900 of 900 tokens.", at: NOW - 3 * HOUR },
+  ],
+  projects: [homeProject()],
+  now: NOW,
   ...over,
 });
 
@@ -56,7 +80,7 @@ export const metrics = (over: Partial<ProjectMetrics> = {}): ProjectMetrics => (
   checks: { total: 4, failed: 1 },
   blocks: 1,
   humanInterventions: 2,
-  tokens: { total: 12_000, perDoneTicket: 12_000, byRole: { planner: 2000, worker: 8000, reviewer: 2000 } },
+  tokens: { total: 12_000, perDoneTicket: 12_000, byRole: { planner: 2000, worker: 8000, reviewer: 2000 }, unreported: 0 },
   cumulativeFlow: Array.from({ length: 14 }, (_, index) => ({
     day: `2026-01-${String(index + 1).padStart(2, "0")}`,
     ...(Object.fromEntries(TICKET_STATES.map((state) => [state, 0])) as Record<TicketState, number>),
@@ -65,6 +89,44 @@ export const metrics = (over: Partial<ProjectMetrics> = {}): ProjectMetrics => (
     done: Math.floor(index / 10),
   })),
   activeMs: 7 * HOUR,
+  timeInState: { ms: { ...(Object.fromEntries(TICKET_STATES.map((state) => [state, 0])) as Record<TicketState, number>), queued: 2 * HOUR, working: 4 * HOUR, checking: HOUR, review: 3 * HOUR }, flowEfficiency: 0.4, n: 1 },
+  checksByCommand: [
+    { command: "npm test", runs: 3, failed: 1, p50Ms: 100_000 },
+    { command: "npm run lint", runs: 1, failed: 0, p50Ms: 12_000 },
+  ],
+  scopeFlags: { outside: 1, protectedHits: 0 },
+  findings: { total: 3, blocking: 1, shouldFix: 2, rounds: 3, changesRequested: 1 },
+  tokensByTicket: [
+    { key: "CSV-2", tokens: 6000 },
+    { key: "CSV-1", tokens: 2000 },
+  ],
+  reliability: { failedAttempts: 1, rateLimitRetries: 2, timeouts: 1, mergesSentBack: 1 },
+  ...over,
+});
+
+export const health = (over: Partial<ProjectHealth> = {}): ProjectHealth => ({
+  progress: { done: 8, total: 14, inFlight: 3, blocked: 1, queued: 2 },
+  pace: { perDay: 0.5, remaining: 6, etaDays: 12 },
+  budget: { used: 12_000, max: 50_000 },
+  deadline: { date: "2026-01-15", daysLeft: 6 },
+  capacity: { workers: 1, maxWorkers: 2, reviewers: 1, maxReviewers: 2, readyWaiting: 1 },
+  ...over,
+});
+
+export const agent = (over: Partial<AgentRow> = {}): AgentRow => ({
+  threadId: "thr_w1",
+  role: "worker",
+  ticketKey: "CSV-2",
+  ticketTitle: "Export endpoint",
+  state: "active",
+  startedAt: NOW - 5 * HOUR,
+  endedAt: null,
+  endReason: null,
+  tokens: 6000,
+  rateLimitRetries: 1,
+  reviewRound: 0,
+  model: "claude / sonnet",
+  timeoutAt: NOW + HOUR,
   ...over,
 });
 
@@ -72,8 +134,24 @@ export const projectView = (over: Partial<ProjectView> = {}): ProjectView => ({
   overview: overview(),
   board: [card(), card({ key: "CSV-2", title: "Export endpoint", state: "working", stateAt: NOW - 5 * HOUR, attempt: 1, ready: false, threadId: "thr_w1" })],
   metrics: metrics(),
-  spec: { toml: '[project]\nslug = "csv"\n', version: 1, pendingVersion: null, pendingToml: null },
+  spec: {
+    toml: '[project]\nslug = "csv"\n',
+    version: 1,
+    pendingVersion: null,
+    pendingToml: null,
+    summary: {
+      tickets: [
+        { ref: "csv-model", title: "Order rows", dependsOn: [] },
+        { ref: "csv-export", title: "Export endpoint", dependsOn: ["csv-model"] },
+      ],
+      checks: ["npm test"],
+      reviewer: "codex / gpt-5",
+      warnings: ["ticket[0] and ticket[1] have overlapping scope and no dependency between them, so they will run one at a time."],
+    },
+  },
   prUrl: null,
+  health: health(),
+  agents: [agent()],
   now: NOW,
   ...over,
 });

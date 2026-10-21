@@ -1,0 +1,40 @@
+// A project's health strip as one pure function over its rows, its metrics and its approved spec.
+import type { ThreadRow, TicketRow } from "./db/store";
+import type { ProjectMetrics } from "./metrics";
+import { readyTickets, toLite, workerSlots } from "./scheduler";
+import type { Spec } from "./spec";
+
+export interface ProjectHealth {
+  progress: { done: number; total: number; inFlight: number; blocked: number; queued: number };
+  pace: { perDay: number; remaining: number; etaDays: number | null };
+  budget: { used: number; max: number } | null;
+  deadline: { date: string; daysLeft: number } | null;
+  capacity: { workers: number; maxWorkers: number; reviewers: number; maxReviewers: number; readyWaiting: number };
+}
+
+const DAY_MS = 86_400_000;
+
+/** Pace is over the metrics' throughput window. The deadline day counts until it is over, as budgetReason pauses. */
+export function projectHealth(a: { tickets: TicketRow[]; threads: ThreadRow[]; metrics: ProjectMetrics; spec: Spec; now: number }): ProjectHealth {
+  const { tickets, metrics, spec } = a;
+  const count = (state: TicketRow["state"]) => tickets.filter((ticket) => ticket.state === state).length;
+  const done = count("done");
+  const total = tickets.length - count("cancelled");
+  const perDay = metrics.throughput.reduce((sum, day) => sum + day.done, 0) / Math.max(1, metrics.throughput.length);
+  const { max_tokens: maxTokens, deadline } = spec.budget;
+  const { max_workers: maxWorkers, max_reviewers: maxReviewers } = spec.agents;
+  const lites = tickets.map(toLite);
+  return {
+    progress: { done, total, inFlight: metrics.wip, blocked: count("blocked"), queued: count("queued") },
+    pace: { perDay, remaining: total - done, etaDays: perDay === 0 ? null : (total - done) / perDay },
+    budget: maxTokens === undefined ? null : { used: metrics.tokens.total, max: maxTokens },
+    deadline: deadline === undefined ? null : { date: deadline, daysLeft: Math.ceil((Date.parse(`${deadline}T00:00:00Z`) + DAY_MS - a.now) / DAY_MS) },
+    capacity: {
+      workers: count("working") + count("checking"),
+      maxWorkers,
+      reviewers: a.threads.filter((thread) => thread.role === "reviewer" && (thread.state === "spawning" || thread.state === "active")).length,
+      maxReviewers,
+      readyWaiting: Math.max(0, readyTickets(lites).length - workerSlots(maxWorkers, lites)),
+    },
+  };
+}

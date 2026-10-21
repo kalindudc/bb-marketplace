@@ -9,6 +9,10 @@ You turn the user's loose goal into a Loom project spec (TOML). Loom's plugin ru
 
 Read the spec reference first: the `loom` skill's `references/spec.md` lists every table and key, its default and an example spec.
 
+## When the Loom page started this thread
+
+The human can start a project from New project on the Loom page. Then this thread's first message is their goal, followed by a note that starts with `[loom]`. The note may already settle the merge plan or name the reviewer model they want. Skip the interview questions it answers, and ask the rest as usual. When you hand over, say that they can read, approve and start the draft on the Loom page, where the conversation stays open beside it.
+
 ## 1. Interview (one short round)
 
 Ask only what you cannot find in the repository:
@@ -45,7 +49,7 @@ After the human approves the project, a revision is held as a pending version un
 
 ## 5. Hand over
 
-Tell the human, in plain words, what you proposed and the next commands:
+Tell the human, in plain words, what you proposed and the next steps. On the Loom page the draft shows Approve and Start buttons; in a terminal the commands are:
 
 - `bb loom spec <slug>` to read the spec.
 - `bb loom approve <slug>` to approve it and create the tickets.

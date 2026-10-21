@@ -1,3 +1,4 @@
+import type { NewThreadRequest } from "@get-bb/plugin-sdk";
 import { makeTurnFailedEvent } from "@get-bb/plugin-sdk/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { settleChecks, submit } from "../src/checks";
@@ -471,6 +472,41 @@ describe("events", () => {
     expect(h.store.threadByThreadId("thr_plan")?.state).toBe("active");
     await h.engine.onThreadGone("thr_plan", "deleted");
     expect(h.store.threadByThreadId("thr_plan")).toMatchObject({ state: "ended", end_reason: "deleted" });
+  });
+});
+
+describe("planning conversations", () => {
+  const request = (): NewThreadRequest => ({
+    projectId: "proj_1",
+    providerId: "codex",
+    model: "gpt-5",
+    reasoningLevel: "medium",
+    permissionMode: "auto",
+    executionInputSources: {},
+    environment: { type: "project-default" },
+    input: [{ type: "text", text: "Let people export their orders as CSV.", mentions: [] }],
+  });
+  const start = async () => (await h.projects.startPlanning({ request: request(), merge: "ask", reviewer: "" })).threadId;
+  const open = () => h.store.openPlanning().map((row) => row.thread_id);
+
+  it("ends a planning conversation when its thread is archived or deleted", async () => {
+    const archived = await start();
+    const deleted = await start();
+    await h.engine.onThreadGone(archived, "archived");
+    expect(h.store.planning(archived)).toMatchObject({ end_reason: "archived" });
+    await h.engine.onThreadGone(deleted, "deleted");
+    expect(h.store.planning(deleted)).toMatchObject({ end_reason: "deleted" });
+    expect(open()).toEqual([]);
+  });
+
+  it("reconcile ends the conversations whose thread bb no longer lists or lists as archived or deleted, and keeps the live ones", async () => {
+    const [missing, archived, deleted, live] = [await start(), await start(), await start(), await start()];
+    h.bb.threads.delete(missing);
+    h.bb.threads.get(archived)!.archivedAt = 5;
+    h.bb.threads.get(deleted)!.deletedAt = 5;
+    await h.engine.reconcile();
+    expect(open()).toEqual([live]);
+    for (const threadId of [missing, archived, deleted]) expect(h.store.planning(threadId)).toMatchObject({ end_reason: "gone" });
   });
 });
 

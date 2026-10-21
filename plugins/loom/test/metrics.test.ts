@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { EventRow, PostRow, ReviewRow, ThreadRow, TicketRow } from "../src/db/store";
 import { feedText } from "../src/feed-text";
-import { computeMetrics, percentile, type ProjectMetrics } from "../src/metrics";
+import { computeMetrics, percentile, throughputOf, type ProjectMetrics } from "../src/metrics";
 import { TICKET_STATES, type TicketState } from "../src/states";
 
 const DAY = 86_400_000;
@@ -72,9 +72,18 @@ const post = (ticketId: number, kind: PostRow["kind"], data: object = {}): PostR
   at: at(1),
 });
 
-const review = (ticketId: number, round: number, verdict: ReviewRow["verdict"]): ReviewRow => ({ id: id(), ticket_id: ticketId, round, thread_row_id: null, verdict, summary: null, findings_json: "[]", at: at(1) });
+const review = (ticketId: number, round: number, verdict: ReviewRow["verdict"], findings: Array<"blocking" | "should-fix"> = []): ReviewRow => ({
+  id: id(),
+  ticket_id: ticketId,
+  round,
+  thread_row_id: null,
+  verdict,
+  summary: null,
+  findings_json: JSON.stringify(findings.map((severity) => ({ severity, title: "A finding", detail: "Fix it." }))),
+  at: at(1),
+});
 
-const thread = (role: ThreadRow["role"], tokens: number | null): ThreadRow => ({
+const thread = (role: ThreadRow["role"], tokens: number | null, over: Partial<ThreadRow> = {}): ThreadRow => ({
   id: id(),
   thread_id: null,
   spawn_token: null,
@@ -92,6 +101,7 @@ const thread = (role: ThreadRow["role"], tokens: number | null): ThreadRow => ({
   clock_at: null,
   ended_at: null,
   end_reason: null,
+  ...over,
 });
 
 interface Input {
@@ -175,6 +185,14 @@ describe("throughput", () => {
 
   it("honours a shorter window", () => {
     expect(compute({ days: 3 }).throughput.map((row) => row.day)).toEqual(["2026-01-04", "2026-01-05", "2026-01-06"]);
+  });
+
+  it("gives 7 days for a 7-day window, the same days throughputOf counts", () => {
+    const events = [moved(1, at(3, 5), "merging", "done"), moved(2, at(6, 1), "merging", "done"), moved(3, at(6, 2), "review", "approved")];
+    const { throughput } = compute({ events, days: 7 });
+    expect(throughput).toHaveLength(7);
+    expect(throughput.map((row) => [row.day, row.done])).toEqual([["2025-12-31", 0], ["2026-01-01", 0], ["2026-01-02", 0], ["2026-01-03", 1], ["2026-01-04", 0], ["2026-01-05", 0], ["2026-01-06", 1]]);
+    expect(throughputOf(events, at(6, 12), 7)).toEqual(throughput);
   });
 });
 
@@ -262,11 +280,24 @@ describe("tokens", () => {
   it("sums the sampled tokens, by role and per done ticket", () => {
     const threads = [thread("planner", 1000), thread("worker", 4000), thread("worker", null), thread("reviewer", 2000)];
     const tickets = [ticket(1, "done"), ticket(2, "done"), ticket(3, "working")];
-    expect(compute({ threads, tickets }).tokens).toEqual({ total: 7000, perDoneTicket: 3500, byRole: { planner: 1000, worker: 4000, reviewer: 2000 } });
+    expect(compute({ threads, tickets }).tokens).toEqual({ total: 7000, perDoneTicket: 3500, byRole: { planner: 1000, worker: 4000, reviewer: 2000 }, unreported: 1 });
   });
 
   it("has no per-ticket figure before a ticket is done", () => {
     expect(compute({ threads: [thread("worker", 500)] }).tokens).toMatchObject({ total: 500, perDoneTicket: null });
+  });
+
+  it("counts the threads with no tokens that ended or have been live for a minute, as not reported", () => {
+    const now = at(6, 12);
+    const threads = [
+      thread("reviewer", null, { state: "ended", started_at: now - 10_000, ended_at: now }),
+      thread("planner", null, { state: "active", started_at: now - 60_000 }),
+      thread("worker", null, { state: "active", started_at: now - 59_999 }),
+      thread("worker", 0, { state: "ended" }),
+      thread("worker", 300, { state: "active", started_at: now - 5 * 60_000 }),
+    ];
+    expect(compute({ threads, now }).tokens).toMatchObject({ total: 300, unreported: 2 });
+    expect(compute().tokens.unreported).toBe(0);
   });
 });
 
@@ -323,6 +354,114 @@ describe("active time", () => {
 
   it("is zero for a project that never ran", () => {
     expect(compute({ events: [projectMoved(at(1), "draft", "ready")] }).activeMs).toBe(0);
+  });
+});
+
+describe("time in state", () => {
+  it("sums the time each done ticket spent in each state, from its creation to done, and the share spent working", () => {
+    const tickets = [ticket(1, "done"), ticket(2, "working")];
+    const events = [
+      created(1, at(1)),
+      moved(1, at(1, 1), "queued", "working"),
+      moved(1, at(1, 4), "working", "checking"),
+      moved(1, at(1, 5), "checking", "review"),
+      moved(1, at(1, 7), "review", "approved"),
+      moved(1, at(1, 7), "approved", "merging"),
+      moved(1, at(1, 7), "merging", "done"),
+      created(2, at(1)),
+      moved(2, at(2), "queued", "working"),
+    ];
+    const { timeInState } = compute({ tickets, events });
+    expect(timeInState.ms).toEqual({ queued: HOUR, working: 3 * HOUR, checking: HOUR, review: 2 * HOUR, approved: 0, merging: 0, pr_open: 0, done: 0, blocked: 0, cancelled: 0 });
+    expect(timeInState.flowEfficiency).toBeCloseTo(3 / 7);
+    expect(timeInState.n).toBe(1);
+  });
+
+  it("counts a second spell in a state, and has no flow efficiency before a ticket is done", () => {
+    const tickets = [ticket(1, "done")];
+    const events = [created(1, at(1)), moved(1, at(1, 1), "queued", "working"), moved(1, at(1, 2), "working", "blocked"), moved(1, at(1, 6), "blocked", "queued"), moved(1, at(1, 7), "queued", "working"), moved(1, at(1, 9), "merging", "done")];
+    expect(compute({ tickets, events }).timeInState.ms).toMatchObject({ queued: 2 * HOUR, working: 3 * HOUR, blocked: 4 * HOUR });
+    expect(compute({ tickets: [ticket(1, "working")], events: [created(1, at(1))] }).timeInState).toMatchObject({ flowEfficiency: null, n: 0 });
+  });
+});
+
+describe("checks by command and scope flags", () => {
+  const run = (command: string, durationMs: number, exitCode = 0, timedOut = false) => ({ command, exitCode, timedOut, durationMs });
+
+  it("counts each command's runs and failures, with its p50 duration, most runs first", () => {
+    const posts = [
+      post(1, "check", { passed: false, runs: [run("npm test", 1000), run("npm run lint", 300, 1)], outside: ["README.md"], protectedHits: [] }),
+      post(2, "check", { passed: false, runs: [run("npm test", 9000, 0, true)], outside: [], protectedHits: [] }),
+      post(2, "check", { passed: false, runs: [run("scope check", 0, 1)], outside: [], protectedHits: [".github/workflows/ci.yml"] }),
+      post(2, "check", { passed: false, afterMerge: true }),
+      post(1, "note", { runs: [run("npm test", 5)] }),
+    ];
+    const metrics = compute({ posts });
+    expect(metrics.checksByCommand).toEqual([
+      { command: "npm test", runs: 2, failed: 1, p50Ms: 1000 },
+      { command: "npm run lint", runs: 1, failed: 1, p50Ms: 300 },
+      { command: "scope check", runs: 1, failed: 1, p50Ms: 0 },
+    ]);
+    expect(metrics.scopeFlags).toEqual({ outside: 1, protectedHits: 1 });
+  });
+
+  it("is empty before any check ran", () => {
+    expect(compute()).toMatchObject({ checksByCommand: [], scopeFlags: { outside: 0, protectedHits: 0 } });
+  });
+});
+
+describe("review findings", () => {
+  it("counts the findings by severity over the reviews with a verdict, and the rounds that asked for changes", () => {
+    const reviews = [
+      review(1, 1, "changes_requested", ["blocking", "should-fix"]),
+      review(1, 2, "approved"),
+      review(2, 1, "changes_requested", ["should-fix"]),
+      review(2, 2, "pending", ["blocking"]),
+      review(3, 1, "approved"),
+      review(3, 1, "approved"),
+    ];
+    expect(compute({ reviews }).findings).toEqual({ total: 3, blocking: 1, shouldFix: 2, rounds: 4, changesRequested: 2 });
+  });
+});
+
+describe("tokens by ticket", () => {
+  it("keeps the 5 tickets whose threads used the most tokens, and leaves out tickets with none", () => {
+    const tickets = [1, 2, 3, 4, 5, 6, 7].map((n) => ticket(n, "working"));
+    const threads = [
+      thread("worker", 100, { ticket_id: 1 }),
+      thread("reviewer", 250, { ticket_id: 1 }),
+      thread("worker", 500, { ticket_id: 2 }),
+      thread("worker", 200, { ticket_id: 3 }),
+      thread("worker", 50, { ticket_id: 4 }),
+      thread("worker", 400, { ticket_id: 5 }),
+      thread("worker", 10, { ticket_id: 6 }),
+      thread("worker", null, { ticket_id: 7 }),
+      thread("planner", 9000),
+    ];
+    expect(compute({ tickets, threads }).tokensByTicket).toEqual([
+      { key: "CSV-2", tokens: 500 },
+      { key: "CSV-5", tokens: 400 },
+      { key: "CSV-1", tokens: 350 },
+      { key: "CSV-3", tokens: 200 },
+      { key: "CSV-4", tokens: 50 },
+    ]);
+    expect(compute({ tickets: [ticket(1, "queued")], threads: [thread("worker", 0, { ticket_id: 1 })] }).tokensByTicket).toEqual([]);
+  });
+});
+
+describe("reliability", () => {
+  it("counts failed attempts, rate-limit retries, timed-out threads and merges sent back to work", () => {
+    const tickets = [ticket(1, "working", { failures: 2 }), ticket(2, "queued", { failures: 1 })];
+    const events = [
+      event(at(1), "turn.retry", 1, { thread: "thr_1", attempt: 1, sendAt: at(1, 1) }),
+      event(at(2), "turn.retry", 1, { thread: "thr_1", attempt: 2, sendAt: at(2, 1) }),
+      moved(1, at(3), "merging", "working"),
+      moved(2, at(3), "merging", "queued"),
+      moved(2, at(4), "merging", "done"),
+      moved(2, at(4), "working", "queued"),
+    ];
+    const threads = [thread("worker", 1, { end_reason: "timeout" }), thread("worker", 1, { end_reason: "abandoned" }), thread("reviewer", 1, { end_reason: "verdict" })];
+    expect(compute({ tickets, events, threads }).reliability).toEqual({ failedAttempts: 3, rateLimitRetries: 2, timeouts: 1, mergesSentBack: 2 });
   });
 });
 

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createCli, formatMetrics } from "../src/cli";
-import { formatDuration } from "../src/format";
+import { formatDuration, readyToLand } from "../src/format";
 import type { ProjectMetrics } from "../src/metrics";
 import { TICKET_STATES } from "../src/states";
 import { FakePort, makeHost, specToml, type Doc } from "./helpers";
@@ -301,11 +301,39 @@ describe("land", () => {
     expect(errorOf(out.stdout)).toMatchObject({ code: "loom_unavailable", message: "git push to origin failed: rejected" });
   });
 
+  it("show says to land once every ticket is finished, while the project is running or paused", async () => {
+    const land = "Next: Every ticket is finished. Land it with `bb loom land csv`, which pushes the integration branch and opens one pull request.";
+    await running();
+    doneTicket("CSV-1");
+    expect((await run(["show", "csv"])).stdout).toContain("Next: Pause it with `bb loom pause csv`.");
+    host.store.setTicketState(host.store.ticketByKey("CSV-2")!.id, "cancelled", "human");
+    expect((await run(["show", "csv"])).stdout).toContain(land);
+    await run(["pause", "csv"]);
+    expect((await run(["show", "csv"])).stdout).toContain(land);
+  });
+
   it("is refused on the pull request strategy", async () => {
     await propose((doc) => (doc.merge = { strategy: "pr" }));
     await host.projects.approve("csv", "human");
     await run(["start", "csv"]);
     expect(errorOf((await run(["land", "csv", "--json"])).stdout)).toMatchObject({ code: "loom_invalid_state", message: expect.stringContaining("pull request per ticket") });
+  });
+});
+
+describe("readyToLand", () => {
+  const project = (over: Partial<Parameters<typeof readyToLand>[0]> = {}) => ({ state: "running", strategy: "integration", ticketCounts: { done: 2, cancelled: 1 }, ...over });
+
+  it("is true for a running or paused integration project whose tickets are all done or cancelled, with one done", () => {
+    expect(readyToLand(project())).toBe(true);
+    expect(readyToLand(project({ state: "paused", ticketCounts: { done: 1 } }))).toBe(true);
+  });
+
+  it("is false for the pull request strategy, another state, no done ticket or an unfinished ticket", () => {
+    expect(readyToLand(project({ strategy: "pr" }))).toBe(false);
+    for (const state of ["draft", "ready", "done", "archived"]) expect(readyToLand(project({ state })), state).toBe(false);
+    expect(readyToLand(project({ ticketCounts: { cancelled: 2 } }))).toBe(false);
+    expect(readyToLand(project({ ticketCounts: {} }))).toBe(false);
+    for (const state of ["queued", "working", "review", "merging", "blocked"]) expect(readyToLand(project({ ticketCounts: { done: 1, [state]: 1 } })), state).toBe(false);
   });
 });
 
@@ -400,9 +428,21 @@ describe("metrics and feed", () => {
     checks: { total: 6, failed: 2 },
     blocks: 1,
     humanInterventions: 2,
-    tokens: { total: 7000, perDoneTicket: 1750, byRole: { planner: 1000, worker: 4000, reviewer: 2000 } },
+    tokens: { total: 7000, perDoneTicket: 1750, byRole: { planner: 1000, worker: 4000, reviewer: 2000 }, unreported: 0 },
     cumulativeFlow: [],
     activeMs: 7 * HOUR,
+    timeInState: { ms: { ...Object.fromEntries(TICKET_STATES.map((state) => [state, 0])), queued: 2 * HOUR, working: 4 * HOUR, checking: HOUR, review: 3 * HOUR } as ProjectMetrics["counts"], flowEfficiency: 0.4, n: 3 },
+    checksByCommand: [
+      { command: "npm test", runs: 31, failed: 7, p50Ms: 100_000 },
+      { command: "npm run lint", runs: 1, failed: 0, p50Ms: 12_000 },
+    ],
+    scopeFlags: { outside: 3, protectedHits: 0 },
+    findings: { total: 17, blocking: 5, shouldFix: 12, rounds: 12, changesRequested: 4 },
+    tokensByTicket: [
+      { key: "CSV-9", tokens: 310_000 },
+      { key: "CSV-4", tokens: 240_000 },
+    ],
+    reliability: { failedAttempts: 3, rateLimitRetries: 4, timeouts: 2, mergesSentBack: 1 },
     ...over,
   });
 
@@ -432,7 +472,22 @@ describe("metrics and feed", () => {
       "human interventions 2",
       "tokens (sampled) 7000 in all, 1750 per done ticket; planner 1000, worker 4000, reviewer 2000",
       "active time 7h",
+      "time in state (3 done tickets) queued 20%, working 40%, checking 10%, review 30%; flow efficiency 40%",
+      "checks by command npm test 31 runs, 7 failed, p50 1m 40s; npm run lint 1 run, 0 failed, p50 12s",
+      "scope flags 3 outside scope, 0 on protected paths",
+      "review findings 17 in 12 rounds (5 blocking, 12 should-fix), changes requested in 4",
+      "tokens by ticket CSV-9 310000, CSV-4 240000",
+      "reliability 3 failed attempts, 4 rate-limit retries, 2 timeouts, 1 merge sent back",
     ]);
+    const one = formatMetrics(sample({ reliability: { failedAttempts: 1, rateLimitRetries: 1, timeouts: 1, mergesSentBack: 2 } }));
+    expect(one).toContain("reliability 1 failed attempt, 1 rate-limit retry, 1 timeout, 2 merges sent back\n");
+  });
+
+  it("says how many threads report no token usage, when any", () => {
+    const tokens = (unreported: number) => formatMetrics(sample({ tokens: { ...sample().tokens, unreported } }));
+    expect(tokens(1)).toContain("tokens (sampled) 7000 in all, 1750 per done ticket; planner 1000, worker 4000, reviewer 2000; 1 thread reports no token usage\n");
+    expect(tokens(2)).toContain("reviewer 2000; 2 threads report no token usage\n");
+    expect(tokens(0)).toContain("reviewer 2000\n");
   });
 
   it("says so when there is nothing to measure yet", () => {
@@ -446,10 +501,22 @@ describe("metrics and feed", () => {
       firstPassApproval: { rate: null, n: 0 },
       reviewRounds: { mean: null, n: 0 },
       checks: { total: 0, failed: 0 },
-      tokens: { total: 0, perDoneTicket: null, byRole: { planner: 0, worker: 0, reviewer: 0 } },
+      tokens: { total: 0, perDoneTicket: null, byRole: { planner: 0, worker: 0, reviewer: 0 }, unreported: 0 },
       activeMs: 0,
+      timeInState: { ms: Object.fromEntries(TICKET_STATES.map((state) => [state, 0])) as ProjectMetrics["counts"], flowEfficiency: null, n: 0 },
+      checksByCommand: [],
+      scopeFlags: { outside: 0, protectedHits: 0 },
+      findings: { total: 0, blocking: 0, shouldFix: 0, rounds: 0, changesRequested: 0 },
+      tokensByTicket: [],
+      reliability: { failedAttempts: 0, rateLimitRetries: 0, timeouts: 0, mergesSentBack: 0 },
     });
     const text = formatMetrics(empty);
+    expect(text).toContain("time in state none yet\n");
+    expect(text).toContain("checks by command none yet\n");
+    expect(text).toContain("scope flags 0 outside scope, 0 on protected paths\n");
+    expect(text).toContain("review findings none yet\n");
+    expect(text).toContain("tokens by ticket none yet\n");
+    expect(text).toContain("reliability 0 failed attempts, 0 rate-limit retries, 0 timeouts, 0 merges sent back\n");
     expect(text).toContain("tickets none");
     expect(text).toContain("cycle time none yet");
     expect(text).toContain("work item age none in flight");
@@ -470,8 +537,43 @@ describe("metrics and feed", () => {
     expect(metrics.counts.queued).toBe(2);
     expect(metrics.wip).toBe(0);
     expect(metrics.throughput).toHaveLength(14);
-    expect(Object.keys(metrics).sort()).toEqual(["activeMs", "blocks", "checks", "counts", "cumulativeFlow", "cycleTime", "firstPassApproval", "humanInterventions", "leadTime", "reviewRounds", "throughput", "tokens", "wip", "wipAge"]);
+    expect(Object.keys(metrics).sort()).toEqual([
+      "activeMs",
+      "blocks",
+      "checks",
+      "checksByCommand",
+      "counts",
+      "cumulativeFlow",
+      "cycleTime",
+      "findings",
+      "firstPassApproval",
+      "humanInterventions",
+      "leadTime",
+      "reliability",
+      "reviewRounds",
+      "scopeFlags",
+      "throughput",
+      "timeInState",
+      "tokens",
+      "tokensByTicket",
+      "wip",
+      "wipAge",
+    ]);
+    expect(Object.keys(metrics.tokens).sort()).toEqual(["byRole", "perDoneTicket", "total", "unreported"]);
     expect((await run(["metrics", "csv"])).stdout).not.toMatch(/human interventions [1-9]/);
+  });
+
+  it("metrics --days sets the throughput and cumulative flow window, and prints the new sections", async () => {
+    await approved();
+    const lines = (await run(["metrics", "csv", "--days", "7"])).stdout.trimEnd().split("\n");
+    expect(lines).toContain("throughput 0 done in the last 7 days, 0.0 per day");
+    for (const label of ["time in state", "checks by command", "scope flags", "review findings", "tokens by ticket", "reliability"]) expect(lines.some((line) => line.startsWith(`${label} `)), label).toBe(true);
+    const metrics = JSON.parse((await run(["metrics", "csv", "--days", "30", "--json"])).stdout) as ProjectMetrics;
+    expect(metrics.throughput).toHaveLength(30);
+    expect(metrics.cumulativeFlow).toHaveLength(30);
+    expect(metrics.timeInState).toMatchObject({ flowEfficiency: null, n: 0 });
+    expect((await run(["metrics", "csv", "--days", "0"])).exitCode).not.toBe(0);
+    expect((await run(["metrics", "csv", "--days", "91"])).exitCode).not.toBe(0);
   });
 
   it("metrics counts the human's commands as interventions", async () => {

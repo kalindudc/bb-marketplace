@@ -16,7 +16,7 @@ Once a project runs, the plugin starts worker agents by itself, one per ready ti
     bb loom spec <slug> [--version N]             # the spec as TOML (approved version, or the draft)
     bb loom tickets <slug> [--state s,s]          # the board: key, state, priority, title, dependencies
     bb loom ticket <KEY>                          # a ticket and its reply thread, indented by reply depth
-    bb loom metrics <slug>                        # flow and agent metrics, one line each, with units
+    bb loom metrics <slug> [--days N]             # flow and agent metrics, one line each, with units; --days sets the window (default 14)
     bb loom feed <slug> [--after <id>]            # the newest events as sentences, oldest first
     bb loom post <KEY> <text> [--reply-to <id>]   # the human's reply on a ticket; a worker that holds it gets it as a message (human only)
     bb loom block <KEY> <reason>                  # block a ticket; its worker is stopped (human only)
@@ -145,22 +145,24 @@ The planner never starts, pauses or approves a project, and never edits the spec
 
 ## The Loom page
 
-The human watches and steers a project from the Loom entry in bb's left navigation. It lists every project with its state and the reason the plugin paused it. A project has a Board (a lane per ticket state, with each card's age, attempt, review round and thread link, and what a waiting ticket waits on), a Feed of events, Metrics and the Spec with any pending version. A ticket shows its reply thread with a Reply box on every post, and Requeue, Block and Cancel buttons. Start, Pause, Resume, Land and Archive ask twice. The page updates by itself within about a second of an event.
+The human starts, watches and steers projects from the Loom entry in bb's left navigation. A first visit shows a guide to how Loom works, which "How Loom works" opens again at any time. New project shows bb's own new-thread composer; its submit starts a planner thread with the `loom-plan` skill, and the page then shows that planner's chat beside a card for the draft, with Approve and Start. Conversations that have not proposed a spec yet are listed on the home page until their thread is archived. The home page shows tiles across every project, a "Needs you" list (blocked tickets, drafts and pending spec versions to approve, finished integration projects to land, and projects Loom paused by itself), and a table of every project with its state, progress, live agents, throughput, tokens and the reason the plugin paused it. A project with an approved spec shows a health strip (progress, pace, token budget, deadline and capacity) above its tabs: a Board (a lane per ticket state, with each card's age, attempt, review round and thread link, and what a waiting ticket waits on), Agents (every thread with its ticket, model, running time, timeout, tokens and how it ended), a Feed of events, Metrics with a 7, 14 or 30 day window, the Spec with any pending version, and a Planner tab with the planner's chat. A ticket shows its reply thread with a Reply box on every post, and Requeue, Block and Cancel buttons. Start, Pause, Resume, Land and Archive ask twice. The page updates by itself within about a second of an event.
 
 A Loom worker, reviewer or planner thread shows a header chip such as `CSV-3 · review` that opens its ticket on the page. Point the human to the page when they ask where to look. Each button runs the same engine method as the matching command and is logged as the human's action, so it is the same as the command.
 
-NEVER call Loom's RPC (`bb plugin rpc loom ...` or any call to its `control`, `reply` or `ticketAction` methods). bb cannot tell the page from an agent, so these calls change state exactly as the human's buttons do. Tell the human which command or button to use instead.
+NEVER call Loom's RPC (`bb plugin rpc loom ...` or any call to its `control`, `reply`, `ticketAction` or `startPlanning` methods). bb cannot tell the page from an agent, so these calls change state exactly as the human's buttons do. Tell the human which command or button to use instead.
 
 ## Metrics
 
-`bb loom metrics <slug>` prints the project's numbers, and `--json` prints them for you to read. They come from the plugin's append-only event log, so they are exact except for tokens.
+`bb loom metrics <slug>` prints the project's numbers, and `--json` prints them for you to read. They come from the plugin's append-only event log, so they are exact except for tokens. `--days N` (1 to 90) sets the window for throughput and cumulative flow; the other numbers cover the whole project.
 
 - Flow: work in progress (tickets in working, checking, review, approved, merging or pr_open), throughput (tickets done per UTC day over 14 days), cycle time (first move to working until done; p50 and p85), lead time (creation until done) and work item age (time in flight, oldest first).
 - Agents: first-pass approval (of tickets with a verdict, the share approved with no changes requested in the first verdict round), review rounds per done ticket, how many check posts failed, how many times a ticket blocked, and human interventions (commands the human ran, apart from `start` and the approval of a draft).
-- Tokens are sampled about once a minute per live thread and once when it ends, so a thread's last minute can be missing. Report them as approximate.
+- Tokens are sampled about once a minute per live thread and once when it ends, so a thread's last minute can be missing. Report them as approximate. Some providers report no token usage at all: `tokens.unreported` counts those threads, and their tokens are missing from the totals.
 - Cumulative flow is the count of tickets in each state at the end of each of 14 days; a ticket counts as queued from its creation. Active time is how long the project ran, without paused spans.
+- Where the time goes: `timeInState` sums, over done tickets, the time spent in each state from creation until done, and `flowEfficiency` is the share of it spent working. `checksByCommand` lists each check command's runs, failures and p50 duration ("scope check" and "worktree check" are the plugin's own refusals), and `scopeFlags` counts check posts with files outside the scope or on protected paths.
+- Review and cost: `findings` counts review findings by severity over the reviews with a verdict, with the rounds and the rounds that requested changes. `tokensByTicket` is the 5 tickets that used the most sampled tokens. `reliability` counts failed worker attempts, rate-limit retries, worker timeouts and merges sent back to work.
 
-Use the numbers to say where work piles up: a growing queue means too few ready tickets or workers, a growing review lane means reviewers are the limit, and a low first-pass approval or many check failures mean the briefs or acceptance criteria need work.
+Use the numbers to say where work piles up: a growing queue means too few ready tickets or workers, a growing review lane or a large share of time in review means reviewers are the limit, and a low first-pass approval, many blocking findings or one check command that fails often mean the briefs or acceptance criteria need work.
 
 ## Rules for agents
 

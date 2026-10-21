@@ -6,7 +6,8 @@ import { computeMetrics, type ProjectMetrics } from "./metrics";
 
 const FEED_LIMIT = 200;
 
-export function projectMetrics(store: Store, project: ProjectRow, now: number): ProjectMetrics {
+/** `days` is the throughput and cumulative flow window; it defaults to 14. */
+export function projectMetrics(store: Store, project: ProjectRow, now: number, days?: number): ProjectMetrics {
   return computeMetrics({
     tickets: store.tickets(project.id),
     events: store.projectEvents(project.id),
@@ -14,6 +15,7 @@ export function projectMetrics(store: Store, project: ProjectRow, now: number): 
     threads: store.threadsForProject(project.id),
     reviews: store.reviewsForProject(project.id),
     now,
+    days,
   });
 }
 

@@ -19,6 +19,14 @@ export type AuthorKind = (typeof AUTHOR_KINDS)[number];
 export const REVIEW_VERDICTS = ["pending", "approved", "changes_requested"] as const;
 export type ReviewVerdict = (typeof REVIEW_VERDICTS)[number];
 
+/** The New project screen's merge answer: leave it to the planner's interview, or settle it now. */
+export const MERGE_CHOICES = ["ask", "integration", "pr"] as const;
+export type MergeChoice = (typeof MERGE_CHOICES)[number];
+
+/** The Metrics tab's windows, in days, for throughput and cumulative flow. */
+export const WINDOW_DAYS = [7, 14, 30] as const;
+export type WindowDays = (typeof WINDOW_DAYS)[number];
+
 export const HUMAN_ACTOR = "human";
 /** The actor on every change the plugin makes by itself. */
 export const LOOM_ACTOR = "loom";

@@ -118,6 +118,18 @@ export function createBbPort(bb: BbPluginApi): BbPort {
     async retryTurn(threadId, turnRequestId, sendAt) {
       await bb.sdk.threads.retry({ threadId, turnRequestId, sendAt, reason: "Rate limited (Loom retry)" });
     },
+    async projectKind(bbProjectId) {
+      try {
+        return (await bb.sdk.projects.get({ projectId: bbProjectId })).kind;
+      } catch (error) {
+        if (isNotFound(error)) return null;
+        throw error;
+      }
+    },
+    async spawnPlanner({ request, title, kickoff }) {
+      const thread = await bb.sdk.threads.spawn({ ...request, title, input: [...request.input, { type: "text", text: kickoff, mentions: [], visibility: "agent-only" }] });
+      return thread.id;
+    },
   };
 }
 

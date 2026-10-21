@@ -1,7 +1,7 @@
 import { PluginCliError, cliCommand, defineCli, type PluginCliRegistration, type PluginCliResult } from "@get-bb/plugin-sdk";
 import type { Store } from "./db/store";
 import type { Engine } from "./engine";
-import { formatDuration } from "./format";
+import { formatDuration, noTokenUsage, readyToLand } from "./format";
 import type { ProjectMetrics } from "./metrics";
 import { LoomError, type ApproveResult, type ProjectOverview, type Projects, type SpecView, type TicketSummary, type TicketView } from "./projects";
 import { projectFeed, projectMetrics } from "./reports";
@@ -51,6 +51,7 @@ const out = (stdout: string): PluginCliResult => ({ exitCode: 0, stdout });
 
 function nextStep(project: ProjectOverview): string {
   const { slug } = project;
+  if (readyToLand(project)) return `Every ticket is finished. Land it with \`bb loom land ${slug}\`, which pushes the integration branch and opens one pull request.`;
   switch (project.state) {
     case "draft":
       return `Read the spec with \`bb loom spec ${slug}\`, then approve it with \`bb loom approve ${slug}\`.`;
@@ -66,7 +67,7 @@ function nextStep(project: ProjectOverview): string {
 }
 
 function formatList(projects: ProjectOverview[]): string {
-  if (projects.length === 0) return "No Loom projects yet. Ask a thread to plan one; its agent has the loom-plan skill.\n";
+  if (projects.length === 0) return "No Loom projects yet. Open Loom in bb's left navigation and press New project, or ask a thread to plan one.\n";
   const width = Math.max(...projects.map((project) => project.slug.length));
   const rows = projects.map((project) => `${project.slug.padEnd(width)}  ${project.state.padEnd(8)}  ${project.key.padEnd(8)}  ${String(project.ticketCount).padStart(3)} tickets  ${project.name}`);
   return `${rows.join("\n")}\n`;
@@ -140,9 +141,27 @@ export function formatMetrics(m: ProjectMetrics): string {
     m.checks.total === 0 ? "checks none run" : `checks ${m.checks.total} run, ${m.checks.failed} failed (${percent(m.checks.failed / m.checks.total)})`,
     `blocks ${m.blocks}`,
     `human interventions ${m.humanInterventions}`,
-    `tokens (sampled) ${tokens.total} in all${tokens.perDoneTicket === null ? "" : `, ${Math.round(tokens.perDoneTicket)} per done ticket`}; planner ${tokens.byRole.planner}, worker ${tokens.byRole.worker}, reviewer ${tokens.byRole.reviewer}`,
+    `tokens (sampled) ${tokens.total} in all${tokens.perDoneTicket === null ? "" : `, ${Math.round(tokens.perDoneTicket)} per done ticket`}; planner ${tokens.byRole.planner}, worker ${tokens.byRole.worker}, reviewer ${tokens.byRole.reviewer}${tokens.unreported === 0 ? "" : `; ${noTokenUsage(tokens.unreported)}`}`,
     `active time ${formatDuration(m.activeMs)}`,
+    ...newMetricLines(m),
   ].join("\n")}\n`;
+}
+
+function newMetricLines(m: ProjectMetrics): string[] {
+  const { timeInState: time, findings, reliability } = m;
+  const total = TICKET_STATES.reduce((sum, state) => sum + time.ms[state], 0);
+  const shares = TICKET_STATES.filter((state) => time.ms[state] > 0).map((state) => `${state.replace("_", " ")} ${percent(time.ms[state] / total)}`);
+  const checks = m.checksByCommand.map((check) => `${check.command} ${plural(check.runs, "run")}, ${check.failed} failed, p50 ${check.p50Ms === null ? "none" : formatDuration(check.p50Ms)}`);
+  return [
+    time.n === 0 || time.flowEfficiency === null ? "time in state none yet" : `time in state (${plural(time.n, "done ticket")}) ${shares.join(", ")}; flow efficiency ${percent(time.flowEfficiency)}`,
+    `checks by command ${checks.length === 0 ? "none yet" : checks.join("; ")}`,
+    `scope flags ${m.scopeFlags.outside} outside scope, ${m.scopeFlags.protectedHits} on protected paths`,
+    findings.rounds === 0
+      ? "review findings none yet"
+      : `review findings ${findings.total} in ${plural(findings.rounds, "round")} (${findings.blocking} blocking, ${findings.shouldFix} should-fix), changes requested in ${findings.changesRequested}`,
+    `tokens by ticket ${m.tokensByTicket.length === 0 ? "none yet" : m.tokensByTicket.map((entry) => `${entry.key} ${entry.tokens}`).join(", ")}`,
+    `reliability ${plural(reliability.failedAttempts, "failed attempt")}, ${reliability.rateLimitRetries} rate-limit ${reliability.rateLimitRetries === 1 ? "retry" : "retries"}, ${plural(reliability.timeouts, "timeout")}, ${plural(reliability.mergesSentBack, "merge")} sent back`,
+  ];
 }
 
 function formatApprove(result: ApproveResult): string {
@@ -220,10 +239,10 @@ export function createCli(projects: Projects, engine: Engine, store: Store, now:
       metrics: cliCommand({
         summary: "Print a project's flow and agent metrics, computed from its event log",
         positionals: [SLUG],
-        options: { json },
+        options: { days: { type: "integer", min: 1, max: 90, description: "The window for throughput and cumulative flow, in days (default 14)." }, json },
         run: ({ options, positionals }) =>
           guarded(() => {
-            const metrics = projectMetrics(store, projects.require(positionals.slug), now());
+            const metrics = projectMetrics(store, projects.require(positionals.slug), now(), options.days);
             return out(options.json ? toJson(metrics) : formatMetrics(metrics));
           }),
       }),

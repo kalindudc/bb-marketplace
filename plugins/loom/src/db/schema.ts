@@ -122,4 +122,6 @@ export const MIGRATIONS: string[] = [
   `CREATE TRIGGER events_append_only_update BEFORE UPDATE ON events BEGIN SELECT RAISE(ABORT, 'events is append-only'); END`,
   `CREATE TRIGGER events_append_only_delete BEFORE DELETE ON events BEGIN SELECT RAISE(ABORT, 'events is append-only'); END`,
   `ALTER TABLE tickets ADD COLUMN merge_before TEXT`,
+  `CREATE TABLE planning (id INTEGER PRIMARY KEY AUTOINCREMENT, thread_id TEXT NOT NULL UNIQUE, bb_project_id TEXT NOT NULL,
+    title TEXT NOT NULL, started_at INTEGER NOT NULL, ended_at INTEGER, end_reason TEXT)`,
 ];

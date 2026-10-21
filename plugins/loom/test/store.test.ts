@@ -382,7 +382,7 @@ describe("project-wide readers", () => {
 
 describe("setOnEvent", () => {
   it("calls the hook with the project id after each event, outside a transaction", () => {
-    const seen: number[] = [];
+    const seen: Array<number | null> = [];
     store.setOnEvent((projectId) => seen.push(projectId));
     const project = store.createProject(newProject(), "human");
     expect(seen).toEqual([project.id]);
@@ -392,8 +392,8 @@ describe("setOnEvent", () => {
 
   it("holds the calls until the outermost transaction commits, and drops them when it rolls back", () => {
     const project = store.createProject(newProject(), "human");
-    const seen: Array<{ projectId: number; events: number }> = [];
-    store.setOnEvent((projectId) => seen.push({ projectId, events: store.events(projectId).length }));
+    const seen: Array<{ projectId: number | null; events: number }> = [];
+    store.setOnEvent((projectId) => seen.push({ projectId, events: projectId === null ? 0 : store.events(projectId).length }));
     const before = store.events(project.id).length;
 
     store.tx(() => {
@@ -419,7 +419,7 @@ describe("setOnEvent", () => {
 
   it("drops the calls of a nested transaction that rolled back, and keeps the rest, when the outer one commits", () => {
     const project = store.createProject(newProject(), "human");
-    const seen: number[] = [];
+    const seen: Array<number | null> = [];
     store.setOnEvent((projectId) => seen.push(projectId));
     const other = store.createProject(newProject("other"), "human");
     seen.length = 0;
@@ -441,7 +441,7 @@ describe("setOnEvent", () => {
 
   it("drops the calls of a nested transaction that rolled back even when the outer one starts with none", () => {
     const project = store.createProject(newProject(), "human");
-    const seen: number[] = [];
+    const seen: Array<number | null> = [];
     store.setOnEvent((projectId) => seen.push(projectId));
     store.tx(() => {
       try {
@@ -456,7 +456,7 @@ describe("setOnEvent", () => {
   });
 
   it("can be removed", () => {
-    const seen: number[] = [];
+    const seen: Array<number | null> = [];
     store.setOnEvent((projectId) => seen.push(projectId));
     store.setOnEvent(null);
     store.createProject(newProject(), "human");
@@ -464,10 +464,59 @@ describe("setOnEvent", () => {
   });
 });
 
+describe("planning", () => {
+  const session = (thread_id: string) => ({ thread_id, bb_project_id: "proj_1", title: `Plan ${thread_id}` });
+
+  it("the migration creates the planning table", () => {
+    const columns = (db.prepare("PRAGMA table_info(planning)").all() as Array<{ name: string }>).map((column) => column.name);
+    expect(columns).toEqual(["id", "thread_id", "bb_project_id", "title", "started_at", "ended_at", "end_reason"]);
+  });
+
+  it("adds a session, reads it by thread id, and lists the open ones newest first without the ended ones", () => {
+    const first = store.addPlanning(session("thr_p1"));
+    expect(first).toMatchObject({ thread_id: "thr_p1", bb_project_id: "proj_1", title: "Plan thr_p1", started_at: clock.t, ended_at: null, end_reason: null });
+    clock.advance(10);
+    store.addPlanning(session("thr_p2"));
+    store.addPlanning(session("thr_p3"));
+    expect(store.planning("thr_p1")).toEqual(first);
+    expect(store.planning("thr_nope")).toBeNull();
+    expect(store.endPlanning("thr_p2", "archived")).toBe(true);
+    expect(store.openPlanning().map((row) => row.thread_id)).toEqual(["thr_p3", "thr_p1"]);
+    expect(store.planning("thr_p2")).toMatchObject({ ended_at: clock.t, end_reason: "archived" });
+  });
+
+  it("ends a session once: the second end returns false and keeps the first reason", () => {
+    store.addPlanning(session("thr_p1"));
+    expect(store.endPlanning("thr_p1", "archived")).toBe(true);
+    expect(store.endPlanning("thr_p1", "deleted")).toBe(false);
+    expect(store.endPlanning("thr_nope", "deleted")).toBe(false);
+    expect(store.planning("thr_p1")?.end_reason).toBe("archived");
+  });
+
+  it("tells the hook null after adding a session and after an end that ended one, after the outermost commit inside a transaction", () => {
+    const seen: Array<number | null> = [];
+    store.setOnEvent((projectId) => seen.push(projectId));
+    store.addPlanning(session("thr_p1"));
+    expect(seen).toEqual([null]);
+    store.endPlanning("thr_p1", "archived");
+    expect(seen).toEqual([null, null]);
+    store.endPlanning("thr_p1", "archived");
+    expect(seen).toEqual([null, null]);
+
+    seen.length = 0;
+    store.tx(() => {
+      store.addPlanning(session("thr_p2"));
+      store.tx(() => store.endPlanning("thr_p2", "gone"));
+      expect(seen).toEqual([]);
+    });
+    expect(seen).toEqual([null, null]);
+  });
+});
+
 describe("changed", () => {
   it("calls the hook for a row-only change like it does for an event: at once outside a transaction, after the outermost commit inside one", () => {
     const project = store.createProject(newProject(), "human");
-    const seen: number[] = [];
+    const seen: Array<number | null> = [];
     store.setOnEvent((projectId) => seen.push(projectId));
 
     store.changed(project.id);
@@ -483,7 +532,7 @@ describe("changed", () => {
 
   it("is dropped when its transaction rolls back", () => {
     const project = store.createProject(newProject(), "human");
-    const seen: number[] = [];
+    const seen: Array<number | null> = [];
     store.setOnEvent((projectId) => seen.push(projectId));
     expect(() =>
       store.tx(() => {

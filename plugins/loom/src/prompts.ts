@@ -1,9 +1,10 @@
 // The texts agents read. Plain prose; every message the plugin sends starts with "[loom]".
+import type { NewThreadRequest } from "@get-bb/plugin-sdk";
 import type { CheckRun } from "./checks";
 import type { PostRow, ProjectRow, ReviewRow, TicketRow } from "./db/store";
 import type { Finding } from "./review";
 import type { Spec } from "./spec";
-import type { TicketState } from "./states";
+import type { MergeChoice, TicketState } from "./states";
 
 const minute = (at: number) => `${new Date(at).toISOString().slice(0, 16)}Z`;
 
@@ -62,6 +63,28 @@ export function renderThread(posts: PostRow[], maxChars: number): string {
 }
 
 export const THREAD_LIMIT = 30_000;
+
+/** The first non-blank line of the composer's text, which names the planning conversation; "" when there is none. */
+export function planningTitle(input: NewThreadRequest["input"]): string {
+  for (const part of input) {
+    if (part.type !== "text") continue;
+    const line = part.text.split("\n").map((text) => text.trim()).find((text) => text !== "");
+    if (line !== undefined) return clip(line, 80);
+  }
+  return "";
+}
+
+/** The agent-only note after the human's goal in a planner thread started from the Loom page. */
+export function planningKickoff(a: { merge: MergeChoice; reviewer: string }): string {
+  const reviewer = a.reviewer.trim();
+  return [
+    "[loom] The human started this thread from the Loom page to plan a new project, and the goal is the message above.",
+    "Plan it with the loom-plan skill: one round of questions here, then read the code, run the checks, and call loom_propose.",
+    "The human reviews, approves and starts the draft on the Loom page, so point them there when you hand over.",
+    ...(a.merge === "ask" ? [] : [`The merge plan is already chosen: strategy = "${a.merge}" in [merge], so do not ask about it.`]),
+    ...(reviewer === "" ? [] : [`The human asked for this reviewer model: ${JSON.stringify(reviewer)}. Write it into [agents.reviewer] as provider and model; ask only if it is unclear.`]),
+  ].join("\n");
+}
 
 export function workerBrief(a: { project: ProjectRow; spec: Spec; ticket: TicketRow; posts: PostRow[]; resume: boolean }): string {
   const { project, spec, ticket, posts, resume } = a;

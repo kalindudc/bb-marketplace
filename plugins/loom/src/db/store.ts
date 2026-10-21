@@ -132,20 +132,31 @@ export interface EventRow {
   data_json: string;
 }
 
+/** A planning conversation started from the Loom page, before or after its thread proposed a spec. */
+export interface PlanningRow {
+  id: number;
+  thread_id: string;
+  bb_project_id: string;
+  title: string;
+  started_at: number;
+  ended_at: number | null;
+  end_reason: string | null;
+}
+
 export class StoreError extends Error {}
 
 export class Store {
-  private onEvent: ((projectId: number) => void) | null = null;
+  private onEvent: ((projectId: number | null) => void) | null = null;
   private txDepth = 0;
-  private queued: number[] = [];
+  private queued: Array<number | null> = [];
 
   constructor(
     private readonly db: Database.Database,
     private readonly now: () => number,
   ) {}
 
-  /** Calls `fn` with the project id after each event row is committed and after each `changed` call; inside a transaction it waits for the outermost commit and is dropped when the transaction that made it rolls back. */
-  setOnEvent(fn: ((projectId: number) => void) | null): void {
+  /** Calls `fn` with the project id (null for a change outside any project) after each event row is committed and after each `changed` call; inside a transaction it waits for the outermost commit and is dropped when the transaction that made it rolls back. */
+  setOnEvent(fn: ((projectId: number | null) => void) | null): void {
     this.onEvent = fn;
   }
 
@@ -175,7 +186,8 @@ export class Store {
   }
 
   /** Tells the hook that something the page shows changed in the project, for changes that write no event row, such as binding a worker's thread. */
-  changed(projectId: number): void {
+  /** `null` is a change outside any project, such as a planning conversation. */
+  changed(projectId: number | null): void {
     if (this.txDepth > 0) this.queued.push(projectId);
     else this.onEvent?.(projectId);
   }
@@ -427,6 +439,31 @@ export class Store {
 
   updateThread(id: number, patch: Partial<Omit<ThreadRow, "id">>): void {
     this.patch("threads", id, patch, false);
+  }
+
+  // ---- planning conversations
+
+  addPlanning(row: Pick<PlanningRow, "thread_id" | "bb_project_id" | "title">): PlanningRow {
+    const result = this.db.prepare("INSERT INTO planning (thread_id, bb_project_id, title, started_at) VALUES (?, ?, ?, ?)").run(row.thread_id, row.bb_project_id, row.title, this.now());
+    const added = this.db.prepare("SELECT * FROM planning WHERE id = ?").get(Number(result.lastInsertRowid)) as PlanningRow;
+    this.changed(null);
+    return added;
+  }
+
+  planning(threadId: string): PlanningRow | null {
+    return (this.db.prepare("SELECT * FROM planning WHERE thread_id = ?").get(threadId) as PlanningRow | undefined) ?? null;
+  }
+
+  openPlanning(): PlanningRow[] {
+    return this.db.prepare("SELECT * FROM planning WHERE ended_at IS NULL ORDER BY id DESC").all() as PlanningRow[];
+  }
+
+  /** True when this call ended the session; false when it had already ended or never existed. */
+  endPlanning(threadId: string, reason: string): boolean {
+    const result = this.db.prepare("UPDATE planning SET ended_at = ?, end_reason = ? WHERE thread_id = ? AND ended_at IS NULL").run(this.now(), reason, threadId);
+    if (result.changes === 0) return false;
+    this.changed(null);
+    return true;
   }
 
   // ----

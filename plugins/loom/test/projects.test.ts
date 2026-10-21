@@ -1,3 +1,4 @@
+import type { NewThreadRequest } from "@get-bb/plugin-sdk";
 import { beforeEach, describe, expect, it } from "vitest";
 import { Store } from "../src/db/store";
 import { LoomError, Projects } from "../src/projects";
@@ -530,5 +531,80 @@ describe("views", () => {
       [later.id, 1],
       [second.id, 0],
     ]);
+  });
+});
+
+describe("planning", () => {
+  const request = (text = "Let people export their orders as CSV.\nWith a date filter.", projectId = "proj_1"): NewThreadRequest => ({
+    projectId,
+    providerId: "codex",
+    model: "gpt-5",
+    reasoningLevel: "medium",
+    permissionMode: "auto",
+    executionInputSources: {},
+    environment: { type: "project-default" },
+    input: [{ type: "text", text, mentions: [] }],
+  });
+  const spawned = () => bb.callsTo("spawnPlanner").map(([args]) => args as { request: NewThreadRequest; title: string; kickoff: string });
+  const title = "Let people export their orders as CSV.";
+
+  it("startPlanning spawns a planner titled with the goal's first line and the kickoff, records the session, and returns its thread id", async () => {
+    expect(await projects.startPlanning({ request: request(), merge: "integration", reviewer: "codex, gpt-5" })).toEqual({ threadId: "thr_p1" });
+    expect(bb.callsTo("projectKind")).toEqual([["proj_1"]]);
+    expect(spawned()).toHaveLength(1);
+    const { request: forwarded, title: threadTitle, kickoff } = spawned()[0]!;
+    expect(forwarded).toEqual(request());
+    expect(threadTitle).toBe(`Loom plan: ${title}`);
+    expect(kickoff).toMatch(/^\[loom\] /);
+    expect(kickoff).toContain("Loom page");
+    expect(kickoff).toContain("loom-plan");
+    expect(kickoff).toContain("loom_propose");
+    expect(kickoff).toContain('strategy = "integration"');
+    expect(kickoff).toContain("[agents.reviewer]");
+    expect(kickoff).toContain(JSON.stringify("codex, gpt-5"));
+    expect(store.planning("thr_p1")).toMatchObject({ bb_project_id: "proj_1", title, started_at: clock.t, ended_at: null });
+  });
+
+  it("leaves the merge and reviewer sentences out when the merge is ask and the reviewer is empty", async () => {
+    await projects.startPlanning({ request: request(), merge: "ask", reviewer: "  " });
+    const { kickoff } = spawned()[0]!;
+    expect(kickoff).not.toContain("strategy =");
+    expect(kickoff).not.toContain("[agents.reviewer]");
+    await projects.startPlanning({ request: request(), merge: "pr", reviewer: "" });
+    expect(spawned()[1]!.kickoff).toContain('strategy = "pr"');
+  });
+
+  it("refuses blank text with loom_invalid_input, and a personal or unknown project with loom_no_checkout, and spawns none of them", async () => {
+    const blank = await failure(projects.startPlanning({ request: request("  \n "), merge: "ask", reviewer: "" }));
+    expect(blank).toMatchObject({ code: "loom_invalid_input", message: "Describe what should exist when the project is done." });
+    bb.projectKinds.set("proj_personal", "personal");
+    const personal = await failure(projects.startPlanning({ request: request(undefined, "proj_personal"), merge: "ask", reviewer: "" }));
+    expect(personal).toMatchObject({ code: "loom_no_checkout", message: "Loom needs a bb project with a git checkout. Pick a project in the composer." });
+    bb.projectKind = async () => null;
+    expect((await failure(projects.startPlanning({ request: request(), merge: "ask", reviewer: "" }))).code).toBe("loom_no_checkout");
+    expect(spawned()).toEqual([]);
+    expect(store.openPlanning()).toEqual([]);
+  });
+
+  it("lists the open sessions newest first, and a session gets its slug and project state once its thread proposes", async () => {
+    await projects.startPlanning({ request: request(), merge: "ask", reviewer: "" });
+    clock.advance(1000);
+    await projects.startPlanning({ request: request("Write the docs site."), merge: "ask", reviewer: "" });
+    expect(projects.planningSessions()).toEqual([
+      { threadId: "thr_p2", title: "Write the docs site.", startedAt: clock.t, slug: null, projectState: null },
+      { threadId: "thr_p1", title, startedAt: clock.t - 1000, slug: null, projectState: null },
+    ]);
+    await propose(undefined, "thr_p1");
+    expect(projects.planningSession("thr_p1")).toEqual({ threadId: "thr_p1", title, startedAt: clock.t - 1000, slug: "csv", projectState: "draft" });
+    expect(projects.planningSessions().map((session) => session.slug)).toEqual([null, "csv"]);
+    expect(projects.planningSession("thr_nope")).toBeNull();
+  });
+
+  it("planningGone ends the session, so it leaves the list", async () => {
+    await projects.startPlanning({ request: request(), merge: "ask", reviewer: "" });
+    projects.planningGone("thr_p1", "archived");
+    expect(projects.planningSessions()).toEqual([]);
+    expect(store.planning("thr_p1")).toMatchObject({ ended_at: clock.t, end_reason: "archived" });
+    projects.planningGone("thr_unknown", "archived");
   });
 });

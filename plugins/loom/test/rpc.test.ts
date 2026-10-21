@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { BoardCard, FeedRow, ProjectSummary, ProjectView, TicketDetail, ThreadInfo } from "../src/contract";
-import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { boardCards, registerRpc, watchChanges } from "../src/rpc";
+import type { BoardCard, FeedRow, HomeView, PlanningSession, ProjectSummary, ProjectView, TicketDetail, ThreadInfo } from "../src/contract";
+import type { ProjectMetrics } from "../src/metrics";
+import type { BbPluginApi, NewThreadRequest } from "@get-bb/plugin-sdk";
+import { agentRows, boardCards, registerRpc, specSummary, watchChanges } from "../src/rpc";
+import { specOf } from "../src/workers";
 import { FakePort, makeCtx, makeHost, seedProject, specToml, startWorker, type Doc } from "./helpers";
 
 let host: ReturnType<typeof makeHost>;
@@ -170,12 +172,74 @@ describe("reads", () => {
     expect(rows.at(-1)).toMatchObject({ text: "custom by loom." });
   });
 
+  it("project has the health strip once the spec is approved, and none for a draft", async () => {
+    await propose();
+    expect((await call<ProjectView>("project", { slug: "csv" })).health).toBeNull();
+    await host.projects.approve("csv", "human");
+    const { health } = await call<ProjectView>("project", { slug: "csv" });
+    expect(health).toMatchObject({ progress: { done: 0, total: 2, inFlight: 0, blocked: 0, queued: 2 }, budget: null, deadline: null, capacity: { workers: 0, maxWorkers: 2, reviewers: 0, maxReviewers: 2, readyWaiting: 0 } });
+  });
+
+  it("project lists its agents, the live ones first, with the spec's model and the worker's timeout", async () => {
+    await running();
+    await host.engine.tick();
+    const project = host.store.projectBySlug("csv")!;
+    const reviewer = host.store.addThread({ project_id: project.id, role: "reviewer", state: "active", thread_id: "thr_r9", ticket_id: ticketId("CSV-2") });
+    host.store.updateThread(reviewer.id, { state: "ended", ended_at: Date.now(), end_reason: "verdict", tokens: 400, review_round: 1 });
+    const { agents } = await call<ProjectView>("project", { slug: "csv" });
+    const worker = host.store.threadByThreadId("thr_w1")!;
+    expect(agents.map((row) => [row.role, row.threadId, row.state])).toEqual([
+      ["worker", "thr_w1", "active"],
+      ["planner", "thr_plan", "active"],
+      ["reviewer", "thr_r9", "ended"],
+    ]);
+    expect(agents[0]).toMatchObject({ ticketKey: "CSV-1", ticketTitle: "Order rows", model: "claude / sonnet", timeoutAt: worker.clock_at! + 120 * 60_000, endReason: null });
+    expect(agents[1]).toMatchObject({ ticketKey: null, model: null, timeoutAt: null });
+    expect(agents[2]).toMatchObject({ ticketKey: "CSV-2", model: "codex / gpt", endReason: "verdict", tokens: 400, reviewRound: 1, timeoutAt: null });
+  });
+
+  it("metrics returns the project's metrics over a 7, 14 or 30 day window, and refuses any other window", async () => {
+    await approved();
+    expect((await call<ProjectMetrics>("metrics", { slug: "csv", days: 30 })).throughput).toHaveLength(30);
+    expect((await call<ProjectMetrics>("metrics", { slug: "csv", days: 7 })).cumulativeFlow).toHaveLength(7);
+    await expect(call("metrics", { slug: "csv", days: 9 })).rejects.toThrow();
+    await expect(call("metrics", { slug: "csv" })).rejects.toThrow();
+    await expect(call("metrics", { slug: "nope", days: 14 })).rejects.toThrow(/No Loom project/);
+  });
+
+  it("home returns the totals, what needs the human and the project rows", async () => {
+    await propose();
+    const home = await call<HomeView>("home");
+    expect(Object.keys(home).sort()).toEqual(["needsYou", "now", "projects", "totals"]);
+    expect(home.totals).toMatchObject({ projects: 1, running: 0, planners: 1, slots: 0 });
+    expect(home.needsYou).toEqual([expect.objectContaining({ kind: "approve", slug: "csv", text: "has a draft spec v1 with 2 tickets" })]);
+    expect(home.projects).toEqual([expect.objectContaining({ slug: "csv", state: "draft", agents: 0, maxTokens: null })]);
+  });
+
   it("threadInfo names the role, project, ticket and state of a Loom thread, and is null for any other", async () => {
     await running();
     await host.engine.tick();
     expect(await call<ThreadInfo | null>("threadInfo", { threadId: "thr_plan" })).toEqual({ role: "planner", slug: "csv", key: null, state: "running" });
     expect(await call<ThreadInfo | null>("threadInfo", { threadId: "thr_w1" })).toEqual({ role: "worker", slug: "csv", key: "CSV-1", state: "working" });
     expect(await call("threadInfo", { threadId: "thr_unknown" })).toBeNull();
+  });
+});
+
+describe("agentRows", () => {
+  it("shows a timeout only for a worker whose ticket is being worked on, and no model for a part the spec leaves out", async () => {
+    const h = makeCtx();
+    await seedProject(h, (doc) => (doc.agents = { worker: { provider: "claude" }, reviewer: {} }));
+    const row = await startWorker(h);
+    const project = h.store.projectBySlug("csv")!;
+    const spec = specOf(h.store, project);
+    const rows = () => agentRows(h.store.threadsForProject(project.id), h.store.tickets(project.id), spec);
+    const worker = () => rows().find((entry) => entry.role === "worker")!;
+    expect(worker()).toMatchObject({ model: "claude", timeoutAt: h.store.thread(row.id)!.clock_at! + 120 * 60_000 });
+    h.store.setTicketState(row.ticket_id!, "checking", "loom");
+    expect(worker().timeoutAt).toBeNull();
+    h.store.addThread({ project_id: project.id, role: "reviewer", state: "active", thread_id: "thr_r1", ticket_id: row.ticket_id });
+    expect(rows().find((entry) => entry.role === "reviewer")!.model).toBeNull();
+    expect(agentRows(h.store.threadsForProject(project.id), h.store.tickets(project.id), null).every((entry) => entry.model === null && entry.timeoutAt === null)).toBe(true);
   });
 });
 
@@ -276,6 +340,66 @@ describe("changes", () => {
   });
 });
 
+describe("planning", () => {
+  const request = (over: Partial<NewThreadRequest> = {}): NewThreadRequest => ({
+    projectId: "proj_1",
+    providerId: "codex",
+    model: "gpt-5",
+    reasoningLevel: "medium",
+    permissionMode: "auto",
+    executionInputSources: {},
+    environment: { type: "project-default" },
+    input: [{ type: "text", text: "Let people export their orders as CSV.", mentions: [] }],
+    ...over,
+  });
+  const start = (input: Record<string, unknown> = {}, options?: Parameters<typeof call>[2]) => call<{ threadId: string }>("startPlanning", { request: request(), merge: "integration", reviewer: "codex, gpt-5", confirm: true, ...input }, options);
+
+  it("startPlanning starts one planner and returns its thread id, and planning and planningSession return the session", async () => {
+    expect(await start()).toEqual({ threadId: "thr_p1" });
+    expect(fake.callsTo("spawnPlanner")).toHaveLength(1);
+    const session = { threadId: "thr_p1", title: "Let people export their orders as CSV.", startedAt: expect.any(Number), slug: null, projectState: null };
+    expect(await call<PlanningSession[]>("planning", null)).toEqual([session]);
+    expect(await call<PlanningSession | null>("planningSession", { threadId: "thr_p1" })).toEqual(session);
+    expect(await call("planningSession", { threadId: "thr_nope" })).toBeNull();
+  });
+
+  it("startPlanning is refused without confirm, with a request that has no projectId, and from another plugin", async () => {
+    await expect(start({ confirm: undefined })).rejects.toThrow();
+    const { projectId: _, ...noProject } = request();
+    await expect(start({ request: noProject })).rejects.toThrow();
+    await expect(start({ request: "not a request" })).rejects.toThrow();
+    await expect(start({}, { experimental_caller: { kind: "plugin", pluginId: "other" } })).rejects.toThrow(/human/);
+    expect(fake.callsTo("spawnPlanner")).toEqual([]);
+    expect(host.store.openPlanning()).toEqual([]);
+  });
+
+  it("startPlanning passes the service's refusal on with its message", async () => {
+    await expect(start({ request: request({ input: [{ type: "text", text: "  ", mentions: [] }] }) })).rejects.toThrow(/Describe what should exist/);
+  });
+
+  it("project on a draft carries a summary of the spec: tickets, checks, reviewer and warnings", async () => {
+    await propose((doc) => (doc.agents.reviewer = { provider: "claude", model: "sonnet" }));
+    const { spec } = await call<ProjectView>("project", { slug: "csv" });
+    expect(spec.summary).toEqual({
+      tickets: [
+        { ref: "csv-model", title: "Order rows", dependsOn: [] },
+        { ref: "csv-export", title: "Export endpoint", dependsOn: ["csv-model"] },
+      ],
+      checks: ["npm test"],
+      reviewer: "claude / sonnet",
+      warnings: [expect.stringContaining("same provider and model as the worker")],
+    });
+  });
+
+  it("specSummary has no reviewer when neither provider nor model is set, and turns parse errors into warnings", () => {
+    expect(specSummary(specToml((doc) => (doc.agents = {}))).reviewer).toBeNull();
+    expect(specSummary(specToml((doc) => (doc.agents.reviewer = { model: "gpt" }))).reviewer).toBe("gpt");
+    const broken = specSummary("[project");
+    expect(broken).toMatchObject({ tickets: [], checks: [], reviewer: null });
+    expect(broken.warnings[0]).toMatch(/^TOML: /);
+  });
+});
+
 describe("live updates", () => {
   const signals = () => host.harness.realtimeSignals.filter((signal) => signal.channel === "loom:changed");
 
@@ -327,6 +451,17 @@ describe("live updates", () => {
     expect(signals()).toHaveLength(1);
     vi.advanceTimersByTime(1);
     expect(signals()).toHaveLength(2);
+    stop();
+  });
+
+  it("publishes one { slug: null } message for a burst of changes outside any project", () => {
+    vi.useFakeTimers();
+    const stop = watchChanges(host.bb, host.store);
+    host.store.addPlanning({ thread_id: "thr_p1", bb_project_id: "proj_1", title: "Plan" });
+    host.store.endPlanning("thr_p1", "archived");
+    expect(signals()).toEqual([]);
+    vi.advanceTimersByTime(300);
+    expect(signals()).toEqual([{ channel: "loom:changed", payload: { slug: null } }]);
     stop();
   });
 

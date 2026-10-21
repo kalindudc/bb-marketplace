@@ -1,16 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRealtime, useRpc, type PluginRpcClient } from "@get-bb/plugin-sdk/app";
-import type { rpcContract } from "../contract";
+import type { ProjectSummary, rpcContract } from "../contract";
+import { TICKET_STATES } from "../states";
 
 export type Rpc = PluginRpcClient<typeof rpcContract>;
 
 export const BUTTON = "inline-flex h-7 shrink-0 cursor-pointer items-center rounded-md border border-border-seam px-2.5 text-xs text-foreground hover:bg-state-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50";
 export const BUTTON_DANGER = `${BUTTON} text-destructive-text`;
+export const BUTTON_PRIMARY = "inline-flex h-7 shrink-0 cursor-pointer items-center rounded-md bg-primary px-2.5 text-xs text-primary-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50";
+export const CARD = "rounded-md border border-border-seam p-3";
 export const FIELD = "w-full rounded-md border border-border-seam bg-transparent px-2 py-1.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 export const HEADING = "text-[10.5px] font-semibold uppercase tracking-wider text-subtle-foreground";
 
 export const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 export const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+
+export const mergeLabel = (project: Pick<ProjectSummary, "strategy" | "branch">) => (project.strategy === "integration" ? `integration branch ${project.branch}` : "one pull request per ticket");
+export const countsLabel = (counts: ProjectSummary["ticketCounts"]) =>
+  TICKET_STATES.filter((state) => (counts[state] ?? 0) > 0)
+    .map((state) => `${counts[state]} ${state.replace("_", " ")}`)
+    .join(" · ") || "no tickets";
 
 const BADGE_TONES: Record<string, string> = {
   draft: "text-muted-foreground",

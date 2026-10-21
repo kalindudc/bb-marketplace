@@ -1,13 +1,17 @@
 // The page's server side: reads over the store and changes through the same engine methods the CLI calls.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { humanAction } from "./cli";
-import { rpcContract, type BoardCard, type ProjectView, type ThreadInfo, type TicketDetail } from "./contract";
+import { rpcContract, type AgentRow, type BoardCard, type ProjectView, type SpecSummary, type ThreadInfo, type TicketDetail } from "./contract";
 import type { Store, ThreadRow, TicketRow } from "./db/store";
 import type { Engine } from "./engine";
+import { projectHealth } from "./health";
+import { homeView } from "./home";
 import type { Projects } from "./projects";
 import { projectFeed, projectMetrics } from "./reports";
 import { IN_FLIGHT, overlaps, readyTickets, toLite } from "./scheduler";
+import { parseSpec, type Spec } from "./spec";
 import { HUMAN_ACTOR } from "./states";
+import { specOf } from "./workers";
 
 export const CHANGED_CHANNEL = "loom:changed";
 const THROTTLE_MS = 300;
@@ -19,16 +23,16 @@ export interface RpcDeps {
   now: () => number;
 }
 
-/** Publishes `loom:changed` with the project's slug after each committed event or `store.changed` call, at most once per project every 300 ms; a call inside a window goes out when the window ends. This is the only thing that publishes to the page. Returns the stop function. */
+/** Publishes `loom:changed` with the project's slug after each committed event or `store.changed` call, at most once per project every 300 ms; a call inside a window goes out when the window ends. A change outside any project publishes `{ slug: null }`, throttled the same way. This is the only thing that publishes to the page. Returns the stop function. */
 export function watchChanges(bb: BbPluginApi, store: Store): () => void {
-  const timers = new Map<number, ReturnType<typeof setTimeout>>();
+  const timers = new Map<number | null, ReturnType<typeof setTimeout>>();
   store.setOnEvent((projectId) => {
     if (timers.has(projectId)) return;
     timers.set(
       projectId,
       setTimeout(() => {
         timers.delete(projectId);
-        const slug = store.project(projectId)?.slug;
+        const slug = projectId === null ? null : store.project(projectId)?.slug;
         if (slug !== undefined) bb.realtime.publish(CHANGED_CHANNEL, { slug });
       }, THROTTLE_MS),
     );
@@ -38,6 +42,48 @@ export function watchChanges(bb: BbPluginApi, store: Store): () => void {
     for (const timer of timers.values()) clearTimeout(timer);
     timers.clear();
   };
+}
+
+/** The draft card's view of a stored spec. A stored spec always parses; if one ever does not, its errors come back as warnings. */
+export function specSummary(toml: string): SpecSummary {
+  const { spec, errors, warnings } = parseSpec(toml);
+  if (spec === null) return { tickets: [], checks: [], reviewer: null, warnings: [...errors, ...warnings] };
+  return {
+    tickets: spec.ticket.map((ticket) => ({ ref: ticket.ref, title: ticket.title, dependsOn: ticket.depends_on })),
+    checks: spec.checks.commands,
+    reviewer: modelLabel(spec.agents.reviewer),
+    warnings,
+  };
+}
+
+/** "provider / model" with only the parts that are set, or null when neither is. */
+const modelLabel = ({ provider, model }: { provider?: string; model?: string }) => [provider, model].filter((part) => part !== undefined).join(" / ") || null;
+
+/** Every thread row of a project: spawning, active and ending rows first, then the newest. A worker shows when it times out only while its ticket is being worked on, as the engine's timeout rule reads. */
+export function agentRows(threads: ThreadRow[], tickets: TicketRow[], spec: Spec | null): AgentRow[] {
+  const byId = new Map(tickets.map((ticket) => [ticket.id, ticket]));
+  const live = (row: ThreadRow) => Number(row.state !== "ended");
+  return [...threads]
+    .sort((a, b) => live(b) - live(a) || b.started_at - a.started_at || b.id - a.id)
+    .map((row) => {
+      const ticket = row.ticket_id === null ? null : (byId.get(row.ticket_id) ?? null);
+      const timing = spec !== null && row.role === "worker" && row.state === "active" && row.clock_at !== null && ticket?.state === "working" && ticket.worker_thread_id === row.thread_id;
+      return {
+        threadId: row.thread_id,
+        role: row.role,
+        ticketKey: ticket?.key ?? null,
+        ticketTitle: ticket?.title ?? null,
+        state: row.state,
+        startedAt: row.started_at,
+        endedAt: row.ended_at,
+        endReason: row.end_reason,
+        tokens: row.tokens,
+        rateLimitRetries: row.rate_limit_retries,
+        reviewRound: row.review_round,
+        model: spec === null || row.role === "planner" ? null : modelLabel(spec.agents[row.role]),
+        timeoutAt: timing ? row.clock_at! + spec.agents.ticket_timeout_minutes * 60_000 : null,
+      };
+    });
 }
 
 /** One card per ticket. A queued ticket that is not ready says why, from a single readyTickets pass. */
@@ -85,17 +131,22 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
     const threads = store.threadsForProject(project.id);
     const at = now();
     const spec = projects.spec(slug);
+    const metrics = projectMetrics(store, project, at);
+    const approved = project.approved_version === null ? null : specOf(store, project);
     return {
       overview,
       board: boardCards(tickets, threads),
-      metrics: projectMetrics(store, project, at),
+      metrics,
       spec: {
         toml: spec.toml,
         version: spec.version,
+        summary: specSummary(spec.toml),
         pendingVersion: project.pending_version,
         pendingToml: project.pending_version === null ? null : projects.spec(slug, project.pending_version).toml,
       },
       prUrl: project.pr_url,
+      health: approved === null ? null : projectHealth({ tickets, threads, metrics, spec: approved, now: at }),
+      agents: agentRows(threads, tickets, approved),
       now: at,
     };
   };
@@ -128,7 +179,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
     };
   };
 
-  // Every change is the human's: it runs through humanAction, which writes the human.action event, and refuses any other plugin.
+  // Every change is the human's: it runs through humanAction, which writes the human.action event (none for a change outside any project), and refuses any other plugin.
   const act = <T>(ctx: { experimental_caller: { kind: string } }, action: string, data: { slug?: string; key?: string; [extra: string]: unknown }, fn: () => Promise<T> | T): Promise<T> => {
     if (ctx.experimental_caller.kind === "plugin") throw new Error("Loom's controls are for the human: another plugin cannot call them.");
     return humanAction({ projects, store }, {}, action, data, fn);
@@ -136,9 +187,14 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
 
   bb.rpc.register(rpcContract, {
     projects: () => projects.list(),
+    home: () => homeView({ store, projects, now: now() }),
+    metrics: ({ slug, days }) => projectMetrics(store, projects.require(slug), now(), days),
     project: ({ slug }) => projectView(slug),
     ticket: ({ key }) => ticketDetail(key),
     feed: ({ slug, afterId }) => projectFeed(store, projects.require(slug), afterId),
+    planning: () => projects.planningSessions(),
+    planningSession: ({ threadId }) => projects.planningSession(threadId),
+    startPlanning: ({ request, merge, reviewer }, ctx) => act(ctx, "plan", {}, () => projects.startPlanning({ request, merge, reviewer })),
     threadInfo: ({ threadId }): ThreadInfo | null => {
       const row = store.threadByThreadId(threadId);
       const project = row === null ? null : store.project(row.project_id);

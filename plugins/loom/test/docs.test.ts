@@ -42,6 +42,22 @@ describe("the plugin's own documents", () => {
     expect(overview).toContain("gh");
   });
 
+  it("README and the loom skill describe New project on the page, and the loom-plan skill knows a thread can start there", () => {
+    expect(read("README.md")).toContain("New project");
+    expect(read("skills/loom/SKILL.md")).toContain("New project");
+    const plan = read("skills/loom-plan/SKILL.md");
+    expect(plan).toContain("## When the Loom page started this thread");
+    expect(plan).toContain("Loom page");
+    expect(plan.indexOf("## When the Loom page started this thread")).toBeLessThan(plan.indexOf("## 1. Interview"));
+  });
+
+  it("README and the loom skill describe the home overview, the Agents tab and the metrics window", () => {
+    const readme = read("README.md");
+    for (const phrase of ["Needs you", "Agents", "--days", "flow efficiency"]) expect(readme, phrase).toContain(phrase);
+    const skill = read("skills/loom/SKILL.md");
+    for (const field of ["timeInState", "checksByCommand", "scopeFlags", "findings", "tokensByTicket", "reliability", "--days"]) expect(skill, field).toContain(field);
+  });
+
   it("the skill names every command, says what the page and the metrics are, and forbids calling Loom's RPC", () => {
     const skill = read("skills/loom/SKILL.md");
     for (const command of commands) expect(skill, command).toContain(`bb loom ${command}`);
