@@ -12,8 +12,16 @@ Incoming messages, steers and child reports start labeled dividers. The log
 then shows agent replies, thoughts, commands with output, exit codes and
 duration, tool calls, file diffs and subagent steps in bb's timeline order.
 Replies stay visible in full; long outputs show their first and last lines,
-and failures open in full. Filters narrow to Messages, Thinking, Tools or
-Errors. The log follows new output until you scroll up or move to an older
+and failures open in full. Filters narrow to Messages, Thinking, Tools, Hidden
+or Errors.
+
+The log also shows what bb gives the agent but keeps out of the chat: a
+plugin's steer (such as cortex memory), the context a mention resolves to, an
+automatic retry, and tool results delivered with their presentation
+suppressed. Each one sits where the agent received it, with a dashed rail and
+a “Hidden” label: “Hidden steer” and “Hidden message” for whole messages,
+“Hidden context” for the hidden part of a message the chat shows. The Hidden
+chip, or the `showHidden` setting, turns them off. The log follows new output until you scroll up or move to an older
 row with the keyboard; “↓ Latest” or `G` resumes it.
 
 Rows are tinted by type in your bb theme's colors, so they stand apart at a
@@ -55,7 +63,7 @@ Changes reach open panels straight away.
 | `outputTailLines` | 4 | Lines kept from the end of a collapsed row (0 to 50) |
 | `thinkingLines` | 3 | Lines shown for a collapsed thought; 0 shows only its title (0 to 20) |
 | `expandFailures` | true | Failed commands and tools start expanded |
-| `showMessages`, `showThinking`, `showTools` | true | Which rows the filter chips show, until you toggle a chip yourself |
+| `showMessages`, `showThinking`, `showTools`, `showHidden` | true | Which rows the filter chips show, until you toggle a chip yourself |
 | `timeFormat` | `24h` | Row timestamps: `24h` (14:02:31) or `12h` (2:02:31 PM) |
 | `tintRows` | true | Tint agent replies, tool calls, commands, file changes and failures in your theme's colors; icons stay colored either way |
 
@@ -77,7 +85,17 @@ updates into that list. Thread events and reconnects trigger refreshes, at
 most twice per second while activity continues; rewritten history triggers
 a new load. Follow works like bb's own sticky scrollers: only a scroll by the
 reader (a wheel, touch, drag or scroll key within 350 ms) pauses it, and any
-other change in size or position re-pins the newest row. It does not read or change bb's chat markup, send thread data
+other change in size or position re-pins the newest row.
+
+bb's timeline leaves out prompt parts marked `agent-only` and suppressed
+tool-result messages, so the panel also reads the thread's request events
+(`client/turn/requested`, `turn/input/accepted` and `client/turn/rejected`)
+with `threads.events.list`, 100 at a time, on load and with each refresh. A
+hidden steer takes its place from the event that accepted it, as bb places a
+visible steer; anything else takes it from its request. If those events cannot
+be read, the rest of the log still loads and a notice says why.
+
+It does not read or change bb's chat markup, send thread data
 elsewhere, or persist a copy of the log. Only the expanded-view preference
 is kept in this device's local storage. The server only defines the settings
 and tells open panels when they change.
@@ -93,6 +111,9 @@ The icon is “Logs” from [Hugeicons](https://hugeicons.com) core free icons
   Markdown. Titles and plain-text bodies do highlight matches.
 - The whole session loads when the tab opens, so very large threads need
   an initial fetch before search is complete.
+- bb's events do not record which plugin sent a hidden message, so the log
+  labels it by kind (steer, message, retry, tool result) rather than by
+  sender. Hidden images and files appear by path or name.
 
 ## Develop
 

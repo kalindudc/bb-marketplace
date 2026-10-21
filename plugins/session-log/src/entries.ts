@@ -1,12 +1,13 @@
+import type { HiddenMessage, SystemMessageKind } from "./hidden";
 import type { TimelineRow } from "./types";
 
-export type EntryCategory = "message" | "thinking" | "tool";
+export type EntryCategory = "message" | "thinking" | "tool" | "hidden";
 export type EntryStatus = "pending" | "completed" | "error" | "interrupted";
 export type EntryTint = "agent" | "tool" | "command" | "file" | "error";
 
 export interface LogEntry {
   id: string;
-  row: TimelineRow;
+  row: TimelineRow | HiddenMessage;
   depth: 0 | 1;
   category: EntryCategory;
   icon: string;
@@ -45,6 +46,19 @@ interface Description {
 }
 
 const entryCache = new WeakMap<TimelineRow, Map<string, LogEntry>>();
+const hiddenEntryCache = new WeakMap<HiddenMessage, LogEntry>();
+
+const SYSTEM_MESSAGE_LABELS: Record<SystemMessageKind, string> = {
+  "child-completed": "Child finished",
+  "child-failed": "Child failed",
+  "child-interrupted": "Child interrupted",
+  "child-needs-attention": "Child needs attention",
+  "child-outcome-batch": "Child reports",
+  "tool-result-delivered": "Tool result",
+  "ownership-assigned": "Ownership changed",
+  "ownership-removed": "Ownership changed",
+  unlabeled: "System",
+};
 
 function firstLine(value: string): string {
   return value.split(/\r?\n/, 1)[0] ?? "";
@@ -89,18 +103,7 @@ function dividerFor(row: UserRow): NonNullable<LogEntry["divider"]> {
   } else if (row.initiator === "user") {
     label = row.turnRequest.kind === "steer" ? "You · steer" : "You";
   } else if (row.initiator === "system") {
-    const labels: Record<UserRow["systemMessageKind"], string> = {
-      "child-completed": "Child finished",
-      "child-failed": "Child failed",
-      "child-interrupted": "Child interrupted",
-      "child-needs-attention": "Child needs attention",
-      "child-outcome-batch": "Child reports",
-      "tool-result-delivered": "Tool result",
-      "ownership-assigned": "Ownership changed",
-      "ownership-removed": "Ownership changed",
-      unlabeled: "System",
-    };
-    label = labels[row.systemMessageKind];
+    label = SYSTEM_MESSAGE_LABELS[row.systemMessageKind];
   } else {
     label = "Agent";
   }
@@ -112,6 +115,40 @@ function dividerFor(row: UserRow): NonNullable<LogEntry["divider"]> {
     linkThreadId: row.senderThreadId ?? (row.systemMessageSubject?.kind === "thread"
       ? row.systemMessageSubject.threadId : null),
   };
+}
+
+function hiddenDividerFor(message: HiddenMessage): NonNullable<LogEntry["divider"]> {
+  let label = message.suppressedTool !== null ? `Hidden tool result · ${message.suppressedTool}`
+    : message.retry ? "Hidden retry" : message.steer ? "Hidden steer" : "Hidden message";
+  if (message.senderThreadId !== null) {
+    label += " from another thread";
+  } else if (message.suppressedTool === null && message.initiator === "system" && message.systemMessageKind !== "unlabeled") {
+    label += ` · ${SYSTEM_MESSAGE_LABELS[message.systemMessageKind]}`;
+  }
+  if (message.subjectThread) label += ` · ${message.subjectThread.threadName}`;
+  if (message.rejected) label += " · rejected";
+  return { label, linkThreadId: message.senderThreadId ?? message.subjectThread?.threadId ?? null };
+}
+
+function hiddenEntryFor(message: HiddenMessage): LogEntry {
+  const cached = hiddenEntryCache.get(message);
+  if (cached) return cached;
+  const divider = message.alongsideVisible ? null : hiddenDividerFor(message);
+  const title = divider?.label ?? "Hidden context";
+  const body = [message.text, ...message.attachments].filter(Boolean).join("\n\n");
+  const entry: LogEntry = {
+    id: message.id, row: message, depth: 0, category: "hidden", icon: "EyeOff",
+    title, body, bodyFormat: "markdown",
+    status: null, isError: false, tint: null, durationMs: null,
+    startedAt: message.startedAt,
+    turnId: message.turnId,
+    messageSeq: null,
+    divider,
+    searchText: `${title}\n${body}`.toLowerCase(),
+    copyText: body || title,
+  };
+  hiddenEntryCache.set(message, entry);
+  return entry;
 }
 
 function describeWork(row: WorkRow): Description {
@@ -254,12 +291,20 @@ function entryFor(row: TimelineRow, id: string, depth: 0 | 1): LogEntry {
   return entry;
 }
 
-export function toLogEntries(rows: readonly TimelineRow[]): LogEntry[] {
+/**
+ * Flattens timeline rows into log entries. Each hidden message, ordered by seq, goes
+ * before the first top-level row bb's timeline sourced after it.
+ */
+export function toLogEntries(rows: readonly TimelineRow[], hidden: readonly HiddenMessage[] = []): LogEntry[] {
   const entries: LogEntry[] = [];
+  let nextHidden = 0;
   const append = (row: TimelineRow, prefix: string | null, depth: 0 | 1): void => {
     if (row.kind === "turn") {
       for (const child of row.children ?? []) append(child, prefix, depth);
       return;
+    }
+    while (depth === 0 && nextHidden < hidden.length && hidden[nextHidden]!.seq < row.sourceSeqStart) {
+      entries.push(hiddenEntryFor(hidden[nextHidden++]!));
     }
     const id = prefix === null ? row.id : `${prefix}/${row.id}`;
     entries.push(entryFor(row, id, depth));
@@ -268,6 +313,7 @@ export function toLogEntries(rows: readonly TimelineRow[]): LogEntry[] {
     }
   };
   for (const row of rows) append(row, null, 0);
+  while (nextHidden < hidden.length) entries.push(hiddenEntryFor(hidden[nextHidden++]!));
   return entries;
 }
 

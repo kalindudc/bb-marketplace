@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   collectTurnStats, formatDuration, previewLines, summarizeArgs, toLogEntries,
 } from "../src/entries";
+import { applyRequestEvents } from "../src/hidden";
 import type { TimelineRow } from "../src/types";
 import {
-  assistantRow, commandRow, delegationRow, fileChangeRow, reasoningRow, toolRow, turnRow, userRow,
+  acceptedEvent, assistantRow, commandRow, delegationRow, fileChangeRow, reasoningRow, rejectedEvent, requestEvent,
+  toolRow, turnRow, userRow,
 } from "./fixtures";
 
 describe("toLogEntries", () => {
@@ -170,6 +172,93 @@ describe("toLogEntries", () => {
   it("shows the name of an unknown work kind without throwing", () => {
     const future = { ...commandRow("future"), workKind: "future-feature" } as unknown as TimelineRow;
     expect(toLogEntries([future])[0]).toMatchObject({ title: "future-feature", category: "tool" });
+  });
+});
+
+describe("hidden messages", () => {
+  const seqs = (start: number) => ({ sourceSeqStart: start, sourceSeqEnd: start });
+
+  it("puts a hidden steer where bb received it, as a divider the chat never shows", () => {
+    const hidden = applyRequestEvents([], [requestEvent(25), acceptedEvent(27, "creq_25")]);
+    const entries = toLogEntries([
+      userRow("request", seqs(1)),
+      delegationRow("delegate", { ...seqs(20), childRows: [commandRow("child", seqs(30))] }),
+      reasoningRow("thought", seqs(28)),
+    ], hidden);
+    expect(entries.map(({ id }) => id)).toEqual(["request", "delegate", "delegate/child", "hidden:creq_25", "thought"]);
+    expect(entries[3]).toMatchObject({
+      category: "hidden", icon: "EyeOff", title: "Hidden steer", body: "Relevant memory: task 42",
+      bodyFormat: "markdown", messageSeq: null, isError: false, tint: null, startedAt: 2_700, turnId: "turn-1",
+      divider: { label: "Hidden steer", linkThreadId: null },
+    });
+    expect(entries[3]?.searchText).toContain("relevant memory");
+    expect(entries[3]?.copyText).toBe("Relevant memory: task 42");
+  });
+
+  it("follows a message the chat shows in part with its hidden context, and appends late messages", () => {
+    const hidden = applyRequestEvents([], [
+      requestEvent(10, {
+        input: [
+          { type: "text", text: "Look at @notes", mentions: [] },
+          { type: "text", text: "Context for @notes", mentions: [], visibility: "agent-only" },
+          { type: "localFile", path: "/tmp/notes.md", name: "notes.md", visibility: "agent-only" },
+        ],
+        target: { kind: "new-turn" },
+      }),
+      requestEvent(90),
+    ]);
+    const entries = toLogEntries([userRow("request", seqs(10)), assistantRow("reply", seqs(12))], hidden);
+    expect(entries.map(({ id }) => id)).toEqual(["request", "hidden:creq_10", "reply", "hidden:creq_90"]);
+    expect(entries[1]).toMatchObject({
+      title: "Hidden context", divider: null, category: "hidden", body: "Context for @notes\n\nFile: notes.md",
+    });
+  });
+
+  it("labels hidden retries, tool results, messages from other threads, system subjects and rejections", () => {
+    const hidden = applyRequestEvents([], [
+      requestEvent(1, { target: { kind: "new-turn" } }),
+      requestEvent(2, { retryOfRequestId: "creq_1", target: { kind: "new-turn" } }),
+      requestEvent(3, {
+        initiator: "system", systemMessageKind: "tool-result-delivered",
+        systemMessageSubject: { kind: "tool-call", toolName: "wait_for_ci", suppress: true },
+      }),
+      requestEvent(4, { initiator: "agent", senderThreadId: "thr_sender" }),
+      requestEvent(5, {
+        initiator: "system", systemMessageKind: "child-completed",
+        systemMessageSubject: { kind: "thread", threadId: "thr_child", threadName: "Review" },
+      }),
+      requestEvent(6),
+      rejectedEvent(7, "creq_6"),
+    ]);
+    expect(toLogEntries([], hidden).map(({ divider }) => [divider?.label, divider?.linkThreadId])).toEqual([
+      ["Hidden message", null],
+      ["Hidden retry", null],
+      ["Hidden tool result · wait_for_ci", null],
+      ["Hidden steer from another thread", "thr_sender"],
+      ["Hidden steer · Child finished · Review", "thr_child"],
+      ["Hidden steer · rejected", null],
+    ]);
+  });
+
+  it("gives a turn a hidden message starts its totals, but not a turn a hidden steer joins", () => {
+    const hidden = applyRequestEvents([], [
+      requestEvent(15),
+      requestEvent(40, { target: { kind: "new-turn" } }),
+      acceptedEvent(41, "creq_40", "turn-2"),
+    ]);
+    const entries = toLogEntries([
+      userRow("request", seqs(10)),
+      commandRow("first-work", seqs(20)),
+      commandRow("second-work", { ...seqs(50), turnId: "turn-2" }),
+    ], hidden);
+    const stats = collectTurnStats(entries);
+    expect([...stats.keys()]).toEqual(["request", "hidden:creq_40"]);
+    expect(stats.get("hidden:creq_40")?.workCount).toBe(1);
+  });
+
+  it("reuses entry objects for unchanged hidden messages", () => {
+    const hidden = applyRequestEvents([], [requestEvent(25)]);
+    expect(toLogEntries([], hidden)[0]).toBe(toLogEntries([], hidden)[0]);
   });
 });
 

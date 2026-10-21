@@ -12,3 +12,5 @@
 .sl-tinted[data-sl-tint="error"] { background-color: var(--surface-destructive); }
 .sl-tinted:hover, .sl-tinted:focus { background-color: color-mix(in oklab, var(--sl-tint) 11%, transparent); }
 .sl-tinted:focus { outline: 1px solid color-mix(in oklab, var(--ring) 55%, transparent); outline-offset: -1px; }
+/* Input the chat never shows: a dashed rail sets it apart from what the reader saw there. */
+.sl-hidden { border-left: 2px dashed color-mix(in oklab, var(--subtle-foreground) 60%, transparent); }

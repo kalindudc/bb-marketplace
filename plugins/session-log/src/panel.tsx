@@ -16,8 +16,12 @@ import { createSessionLogStore, type SessionLogSnapshot, type SessionLogStore } 
 import { useSessionLogSettings } from "./use-settings";
 
 const EMPTY_SNAPSHOT: SessionLogSnapshot = {
-  status: "loading", rows: [], activeThinking: null, projectId: null, error: null,
+  status: "loading", rows: [], hidden: [], activeThinking: null, projectId: null, error: null, hiddenError: null,
 };
+
+const CHIPS: ReadonlyArray<[EntryCategory, string]> = [
+  ["message", "Messages"], ["thinking", "Thinking"], ["tool", "Tools"], ["hidden", "Hidden"],
+];
 
 // bb's own sticky scrollers use the same threshold and intent window (useStickyBottomScroll).
 const STICKY_BOTTOM_THRESHOLD_PX = 4;
@@ -27,6 +31,16 @@ const SCROLL_KEYS = new Set(["PageUp", "PageDown", "Home", "End", " "]);
 function isDefaultExpanded(entry: LogEntry, expandFailures: boolean): boolean {
   return expandFailures && entry.isError && entry.row.kind === "work" &&
     (entry.row.workKind === "command" || entry.row.workKind === "tool");
+}
+
+function isShown(
+  entry: LogEntry, filters: Record<EntryCategory, boolean>, errorsOnly: boolean, needle: string,
+): boolean {
+  // Errors keeps dividers as context, except hidden ones the reader has filtered out.
+  const context = errorsOnly && entry.divider !== null && entry.category !== "hidden";
+  if (!filters[entry.category] && !context) return false;
+  if (errorsOnly && !entry.isError && !entry.divider) return false;
+  return !needle || entry.searchText.includes(needle);
 }
 
 function chatHref(entry: LogEntry, projectId: string | null, threadId: string): string | null {
@@ -62,8 +76,9 @@ export function SessionLogPanel({ threadId, preference }: PluginThreadPanelProps
 
   // The chips start from the settings; once the reader toggles one, their choice wins.
   const [chosenFilters, setChosenFilters] = useState<Record<EntryCategory, boolean> | null>(null);
-  const filters = useMemo(() => chosenFilters ?? {
+  const filters = useMemo<Record<EntryCategory, boolean>>(() => chosenFilters ?? {
     message: effectiveSettings.showMessages, thinking: effectiveSettings.showThinking, tool: effectiveSettings.showTools,
+    hidden: effectiveSettings.showHidden,
   }, [chosenFilters, effectiveSettings]);
   const [errorsOnly, setErrorsOnly] = useState(false);
   const [rawQuery, setRawQuery] = useState("");
@@ -100,14 +115,13 @@ export function SessionLogPanel({ threadId, preference }: PluginThreadPanelProps
     return unsubscribe;
   }, [threadId]);
 
-  const entries = useMemo(() => toLogEntries(snapshot.rows), [snapshot.rows]);
+  const entries = useMemo(() => toLogEntries(snapshot.rows, snapshot.hidden), [snapshot.rows, snapshot.hidden]);
   const turnStats = useMemo(() => collectTurnStats(entries), [entries]);
   const normalizedQuery = query.toLowerCase();
-  const visible = useMemo(() => entries.filter((entry) => {
-    if (!filters[entry.category] && !(errorsOnly && entry.divider)) return false;
-    if (errorsOnly && !entry.isError && !entry.divider) return false;
-    return !normalizedQuery || entry.searchText.includes(normalizedQuery);
-  }), [entries, errorsOnly, filters, normalizedQuery]);
+  const visible = useMemo(
+    () => entries.filter((entry) => isShown(entry, filters, errorsOnly, normalizedQuery)),
+    [entries, errorsOnly, filters, normalizedQuery],
+  );
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
   const focusedIdRef = useRef(focusedId);
@@ -324,10 +338,7 @@ export function SessionLogPanel({ threadId, preference }: PluginThreadPanelProps
       trackNewestRef.current = false;
       pendingSearchFocusRef.current = null;
       const needle = rawQuery.trim().toLowerCase();
-      const first = entries.find((entry) =>
-        (filters[entry.category] || (errorsOnly && entry.divider)) &&
-        (!errorsOnly || entry.isError || entry.divider) &&
-        (!needle || entry.searchText.includes(needle)));
+      const first = entries.find((entry) => isShown(entry, filters, errorsOnly, needle));
       setQuery(rawQuery.trim());
       if (first) {
         if (visibleRef.current.some((entry) => entry.id === first.id)) focusEntry(first.id);
@@ -350,11 +361,11 @@ export function SessionLogPanel({ threadId, preference }: PluginThreadPanelProps
       className="flex h-full min-h-0 min-w-0 flex-col bg-surface-recessed text-foreground">
       <div className="shrink-0 space-y-2 border-b border-border-seam p-2">
         <div className="flex flex-wrap items-center gap-1">
-          {(["message", "thinking", "tool"] as const).map((category) => (
+          {CHIPS.map(([category, label]) => (
             <button key={category} type="button" aria-pressed={filters[category]}
               className={`rounded px-2 py-1 text-xs ${filters[category] ? "bg-surface-selected text-foreground" : "text-muted-foreground hover:bg-state-hover"}`}
               onClick={() => toggleFilter(category)}>
-              {{ message: "Messages", thinking: "Thinking", tool: "Tools" }[category]}
+              {label}
             </button>
           ))}
           <button type="button" aria-pressed={errorsOnly} onClick={() => setErrorsOnly((active) => !active)}
@@ -384,6 +395,9 @@ export function SessionLogPanel({ threadId, preference }: PluginThreadPanelProps
       )}
       {snapshot.status === "ready" && snapshot.error && (
         <div role="alert" className="border-b border-border-seam p-2 text-xs text-warning-text">Could not refresh: {snapshot.error}</div>
+      )}
+      {snapshot.status === "ready" && snapshot.hiddenError && (
+        <div role="alert" className="border-b border-border-seam p-2 text-xs text-warning-text">Could not load hidden messages: {snapshot.hiddenError}</div>
       )}
       <div ref={listRef} data-session-log-list onScroll={onScroll} onWheel={markScrollIntent}
         onTouchStart={markScrollIntent} onTouchMove={markScrollIntent}

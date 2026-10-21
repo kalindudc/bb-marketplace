@@ -13,6 +13,7 @@ export interface SessionLogSettings {
   showMessages: boolean;
   showThinking: boolean;
   showTools: boolean;
+  showHidden: boolean;
   timeFormat: TimeFormat;
   tintRows: boolean;
 }
@@ -25,6 +26,7 @@ export const DEFAULT_SETTINGS: SessionLogSettings = {
   showMessages: true,
   showThinking: true,
   showTools: true,
+  showHidden: true,
   timeFormat: "24h",
   tintRows: true,
 };
@@ -91,6 +93,12 @@ export const SETTING_DESCRIPTORS = {
     label: "Show tools when the log opens",
     default: DEFAULT_SETTINGS.showTools,
   },
+  showHidden: {
+    type: "boolean",
+    label: "Show hidden messages when the log opens",
+    description: "Input bb gives the agent but leaves out of the chat, such as plugin steers, mention context and retries.",
+    default: DEFAULT_SETTINGS.showHidden,
+  },
   timeFormat: {
     type: "select",
     label: "Time format",
@@ -113,7 +121,7 @@ export function parseSettings(values: Readonly<Record<string, unknown>> | undefi
     const value = read[key];
     return isWholeNumber(value, max) ? value : DEFAULT_SETTINGS[key];
   };
-  const flag = (key: "expandFailures" | "showMessages" | "showThinking" | "showTools" | "tintRows") => {
+  const flag = (key: "expandFailures" | "showMessages" | "showThinking" | "showTools" | "showHidden" | "tintRows") => {
     const value = read[key];
     return typeof value === "boolean" ? value : DEFAULT_SETTINGS[key];
   };
@@ -126,6 +134,7 @@ export function parseSettings(values: Readonly<Record<string, unknown>> | undefi
     showMessages: flag("showMessages"),
     showThinking: flag("showThinking"),
     showTools: flag("showTools"),
+    showHidden: flag("showHidden"),
     timeFormat,
     tintRows: flag("tintRows"),
   };

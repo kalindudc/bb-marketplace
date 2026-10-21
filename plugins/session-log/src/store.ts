@@ -1,13 +1,21 @@
+import { REQUEST_EVENT_TYPES, applyRequestEvents, type HiddenMessage } from "./hidden";
 import { applyDelta, prependOlderRows, spliceLatestWindow } from "./merge";
-import type { ActiveThinking, SessionLogSdk, TimelineResponse, TimelineRow } from "./types";
+import type { ActiveThinking, SessionLogSdk, ThreadEventRow, TimelineResponse, TimelineRow } from "./types";
 
 export interface SessionLogSnapshot {
   status: "loading" | "ready" | "error";
   rows: readonly TimelineRow[];
+  /** Input bb gave the agent but left out of the timeline, ordered by seq. */
+  hidden: readonly HiddenMessage[];
   activeThinking: ActiveThinking | null;
   projectId: string | null;
   error: string | null;
+  /** Why hidden messages could not be read; the rest of the log still works. */
+  hiddenError: string | null;
 }
+
+// The most bb's thread events endpoint returns at once (THREAD_EVENT_LIST_PAGE_SIZE).
+const EVENT_PAGE_SIZE = 100;
 
 export interface SessionLogStore {
   getSnapshot(): SessionLogSnapshot;
@@ -31,9 +39,11 @@ export function createSessionLogStore(options: {
   let snapshot: SessionLogSnapshot = {
     status: "loading",
     rows: [],
+    hidden: [],
     activeThinking: null,
     projectId: null,
     error: null,
+    hiddenError: null,
   };
   let disposed = false;
   let generation = 0;
@@ -44,14 +54,15 @@ export function createSessionLogStore(options: {
   let lastRequestEndedAt = 0;
   let latestMaxSeq: number | null = null;
   let latestWindow: readonly TimelineRow[] | null = null;
+  let requestEventsSeq = 0;
   let projectPromise: Promise<string> | null = null;
 
   const isCurrent = (requestGeneration: number) => !disposed && generation === requestGeneration;
   const publish = (next: SessionLogSnapshot) => {
     if (
-      snapshot.status === next.status && snapshot.rows === next.rows &&
+      snapshot.status === next.status && snapshot.rows === next.rows && snapshot.hidden === next.hidden &&
       snapshot.activeThinking === next.activeThinking && snapshot.projectId === next.projectId &&
-      snapshot.error === next.error
+      snapshot.error === next.error && snapshot.hiddenError === next.hiddenError
     ) return;
     snapshot = next;
     for (const listener of [...listeners]) listener();
@@ -66,6 +77,34 @@ export function createSessionLogStore(options: {
       lastRequestEndedAt = Date.now();
     }
   };
+
+  async function readRequestEvents(afterSeq: number): Promise<{ events: ThreadEventRow[]; lastSeq: number }> {
+    const events: ThreadEventRow[] = [];
+    let lastSeq = afterSeq;
+    for (;;) {
+      const page = await sdk.threads.events.list({
+        threadId,
+        types: REQUEST_EVENT_TYPES,
+        order: "asc",
+        limit: String(EVENT_PAGE_SIZE),
+        afterSeq: String(lastSeq),
+      });
+      events.push(...page);
+      lastSeq = page.at(-1)?.seq ?? lastSeq;
+      if (page.length < EVENT_PAGE_SIZE) return { events, lastSeq };
+    }
+  }
+
+  async function refreshHidden(requestGeneration: number): Promise<void> {
+    try {
+      const { events, lastSeq } = await readRequestEvents(requestEventsSeq);
+      if (!isCurrent(requestGeneration)) return;
+      requestEventsSeq = lastSeq;
+      update({ hidden: applyRequestEvents(snapshot.hidden, events), hiddenError: null });
+    } catch (error) {
+      if (isCurrent(requestGeneration)) update({ hiddenError: errorMessage(error) });
+    }
+  }
 
   async function walkPages(): Promise<{ latest: TimelineResponse; rows: readonly TimelineRow[] }> {
     const latest = await requestTimeline({});
@@ -90,6 +129,10 @@ export function createSessionLogStore(options: {
       const projectId = await projectPromise;
       if (!isCurrent(requestGeneration)) return;
 
+      const requests = readRequestEvents(0).then(
+        (read) => ({ read, error: null }),
+        (error: unknown) => ({ read: null, error: errorMessage(error) }),
+      );
       let result: Awaited<ReturnType<typeof walkPages>>;
       try {
         result = await walkPages();
@@ -97,15 +140,19 @@ export function createSessionLogStore(options: {
         if (!isCurrent(requestGeneration)) return;
         result = await walkPages();
       }
+      const { read, error: hiddenError } = await requests;
       if (!isCurrent(requestGeneration)) return;
       latestWindow = result.latest.rows;
       latestMaxSeq = result.latest.maxSeq;
+      requestEventsSeq = read?.lastSeq ?? 0;
       update({
         status: "ready",
         rows: result.rows,
+        hidden: read ? applyRequestEvents([], read.events) : [],
         activeThinking: result.latest.activeThinking,
         projectId,
         error: null,
+        hiddenError,
       });
     } catch (error) {
       if (isCurrent(requestGeneration)) update({ status: "error", error: errorMessage(error) });
@@ -113,6 +160,12 @@ export function createSessionLogStore(options: {
   }
 
   async function refresh(requestGeneration: number): Promise<void> {
+    const hidden = refreshHidden(requestGeneration);
+    await refreshRows(requestGeneration);
+    await hidden;
+  }
+
+  async function refreshRows(requestGeneration: number): Promise<void> {
     if (latestMaxSeq === null || latestWindow === null) return;
     try {
       let response = await requestTimeline({ afterSequence: String(latestMaxSeq) });

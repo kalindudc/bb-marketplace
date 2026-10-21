@@ -139,6 +139,7 @@ describe("plugin app", () => {
       threads: {
         timeline,
         get: async () => ({ projectId: "proj_personal" }) as Awaited<ReturnType<SessionLogSdk["threads"]["get"]>>,
+        events: { list: async () => [] },
       },
       plugins: { getSettings: async () => ({ ok: true, schema: {}, values: {} }) },
       subscribe: () => () => {},

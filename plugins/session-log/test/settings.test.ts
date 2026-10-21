@@ -28,13 +28,14 @@ describe("settings", () => {
     expect(parseSettings(undefined)).toEqual(DEFAULT_SETTINGS);
     expect(parseSettings({
       outputHeadLines: 2, outputTailLines: 0, thinkingLines: 0, expandFailures: false,
-      showMessages: false, showThinking: false, showTools: false, timeFormat: "12h", tintRows: false,
+      showMessages: false, showThinking: false, showTools: false, showHidden: false, timeFormat: "12h", tintRows: false,
     })).toEqual({
       outputHeadLines: 2, outputTailLines: 0, thinkingLines: 0, expandFailures: false,
-      showMessages: false, showThinking: false, showTools: false, timeFormat: "12h", tintRows: false,
+      showMessages: false, showThinking: false, showTools: false, showHidden: false, timeFormat: "12h", tintRows: false,
     });
     expect(parseSettings({
       outputHeadLines: 3.5, thinkingLines: 99, expandFailures: "yes", timeFormat: "auto", tintRows: "yes",
+      showHidden: "no",
     }))
       .toEqual(DEFAULT_SETTINGS);
   });

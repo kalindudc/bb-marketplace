@@ -95,8 +95,8 @@ function RowBody({ entry, expanded, query, settings, onToggle }: {
   }
   if (entry.bodyFormat === "markdown") {
     if (!body) return null;
-    const clip = row.kind === "conversation" && row.role === "user" && !expanded &&
-      (body.length > 1_200 || body.split("\n").length > 12);
+    const incoming = row.kind === "hidden" || (row.kind === "conversation" && row.role === "user");
+    const clip = incoming && !expanded && (body.length > 1_200 || body.split("\n").length > 12);
     return (
       <>
         <div className={clip ? "max-h-48 overflow-hidden" : ""}>
@@ -155,7 +155,7 @@ export const LogRow = memo(function LogRow({
       className={`min-w-0 border-b border-border-seam px-3 py-2 text-foreground ${
         entry.divider ? "bg-surface-recessed focus:bg-surface-selected"
           : entry.tint && settings.tintRows ? "sl-tinted" : "hover:bg-state-hover focus:bg-surface-selected"
-      } ${entry.depth === 1 ? "ml-4 border-l border-border-seam pl-3" : ""}`}
+      } ${entry.depth === 1 ? "ml-4 border-l border-border-seam pl-3" : ""} ${entry.category === "hidden" ? "sl-hidden" : ""}`}
     >
       <div className="flex min-w-0 items-start gap-2">
         <time className="shrink-0 font-mono text-xs text-subtle-foreground" dateTime={new Date(entry.startedAt).toISOString()}>{time}</time>

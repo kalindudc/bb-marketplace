@@ -8,9 +8,10 @@ import { SessionLogPanel } from "../src/panel";
 import { toLogEntries } from "../src/entries";
 import { EXPANDED_STORAGE_KEY, createPreference } from "../src/preference";
 import { DEFAULT_SETTINGS, SETTINGS_CHANNEL } from "../src/settings";
-import type { SessionLogSdk, TimelineResponse } from "../src/types";
+import type { SessionLogSdk, ThreadEventRow, TimelineResponse } from "../src/types";
 import {
-  FakeResizeObserver, assistantRow, commandRow, fileChangeRow, reasoningRow, timelineResponse, toolRow, userRow,
+  FakeResizeObserver, assistantRow, commandRow, fileChangeRow, reasoningRow, requestEvent, timelineResponse, toolRow,
+  userRow,
 } from "./fixtures";
 
 const mounts: Array<ReturnType<typeof renderSlot>> = [];
@@ -188,13 +189,21 @@ describe("LogRow", () => {
 });
 
 type TimelineArgs = Parameters<SessionLogSdk["threads"]["timeline"]>[0];
+type EventsArgs = Parameters<SessionLogSdk["threads"]["events"]["list"]>[0];
 function panelFake(
   initial: TimelineResponse, refreshed?: TimelineResponse, projectId = "proj_1", settings: Record<string, unknown> = {},
+  requestEvents: readonly ThreadEventRow[] | Error = [],
 ) {
   const callbacks = new Map<string, (event: unknown) => void>();
   const timeline = vi.fn(async (args: TimelineArgs) => args.afterSequence
     ? refreshed ?? timelineResponse([], { maxSeq: initial.maxSeq, delta: { upsertRows: [] } })
     : initial);
+  const events = {
+    list: vi.fn(async (args: EventsArgs) => {
+      if (requestEvents instanceof Error) throw requestEvents;
+      return requestEvents.filter((event) => event.seq > Number(args.afterSeq ?? 0));
+    }),
+  };
   const get = vi.fn(async () => ({ projectId }) as Awaited<ReturnType<SessionLogSdk["threads"]["get"]>>);
   const getSettings = vi.fn(async () => ({ ok: true, schema: {}, values: settings }));
   const subscribe = vi.fn((args: { event: string; callback: (event: unknown) => void }) => {
@@ -202,8 +211,8 @@ function panelFake(
     return () => { callbacks.delete(args.event); };
   });
   return {
-    sdk: { threads: { timeline, get }, plugins: { getSettings }, subscribe } as unknown as SessionLogSdk,
-    timeline, get, getSettings, subscribe,
+    sdk: { threads: { timeline, get, events }, plugins: { getSettings }, subscribe } as unknown as SessionLogSdk,
+    timeline, get, getSettings, subscribe, events,
     emitThread() {
       callbacks.get("thread:changed")?.({ type: "changed", entity: "thread", id: "thr_1", changes: ["events-appended"] });
     },
@@ -290,6 +299,46 @@ describe("SessionLogPanel", () => {
       .toEqual(["request", "failed"]);
     fireEvent.click(within(slot.container).getByRole("button", { name: "Messages" }));
     expect(slot.container.querySelector('[data-entry-id="request"]')).toBeTruthy();
+  });
+
+  it("shows hidden messages in place, and the Hidden chip or its setting turns them off", async () => {
+    const rows = [
+      userRow("request", { sourceSeqStart: 1, sourceSeqEnd: 1 }),
+      commandRow("failed", { sourceSeqStart: 30, sourceSeqEnd: 31, exitCode: 1 }),
+    ];
+    const steer = requestEvent(25, {
+      input: [{ type: "text", text: "Possibly relevant memory", mentions: [], visibility: "agent-only" }],
+    });
+    const slot = renderPanel(panelFake(timelineResponse(rows), undefined, "proj_1", {}, [steer]));
+    const ids = () => [...slot.container.querySelectorAll("[data-entry-id]")].map((node) => node.getAttribute("data-entry-id"));
+    await waitFor(() => expect(ids()).toEqual(["request", "hidden:creq_25", "failed"]));
+    const hiddenRow = slot.container.querySelector('[data-entry-id="hidden:creq_25"]') as HTMLElement;
+    expect(hiddenRow.textContent).toContain("Hidden steer");
+    expect(hiddenRow.textContent).toContain("Possibly relevant memory");
+    expect(hiddenRow.classList.contains("sl-hidden")).toBe(true);
+    expect(within(hiddenRow).queryByRole("link", { name: "Show in chat" })).toBeNull();
+
+    const chip = within(slot.container).getByRole("button", { name: "Hidden" });
+    expect(chip.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(chip);
+    expect(ids()).toEqual(["request", "failed"]);
+    fireEvent.click(within(slot.container).getByRole("button", { name: "Errors" }));
+    expect(ids()).toEqual(["request", "failed"]);
+    fireEvent.click(chip);
+    expect(ids()).toEqual(["request", "hidden:creq_25", "failed"]);
+
+    const off = renderPanel(panelFake(timelineResponse(rows), undefined, "proj_1", { showHidden: false }, [steer]));
+    await waitFor(() => expect(off.container.querySelector('[data-entry-id="failed"]')).toBeTruthy());
+    expect(off.container.querySelector('[data-entry-id="hidden:creq_25"]')).toBeNull();
+    expect(within(off.container).getByRole("button", { name: "Hidden" }).getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("says when hidden messages could not be read and still shows the log", async () => {
+    const slot = renderPanel(panelFake(timelineResponse([userRow("request")]), undefined, "proj_1", {},
+      new Error("events unavailable")));
+    await waitFor(() => expect(slot.container.querySelector('[data-entry-id="request"]')).toBeTruthy());
+    await waitFor(() => expect(within(slot.container).getByRole("alert").textContent)
+      .toBe("Could not load hidden messages: events unavailable"));
   });
 
   it("debounces search, counts matches, highlights plain text and expands them", async () => {

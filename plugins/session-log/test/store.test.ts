@@ -1,10 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSessionLogStore, type SessionLogStore } from "../src/store";
 import { childRowsOf } from "../src/merge";
-import type { SessionLogSdk, TimelineResponse } from "../src/types";
-import { assistantRow, commandRow, timelineResponse, turnRow, userRow } from "./fixtures";
+import type { SessionLogSdk, ThreadEventRow, TimelineResponse } from "../src/types";
+import {
+  acceptedEvent, assistantRow, commandRow, requestEvent, timelineResponse, turnRow, userRow,
+} from "./fixtures";
 
 type TimelineArgs = Parameters<SessionLogSdk["threads"]["timeline"]>[0];
+type EventsArgs = Parameters<SessionLogSdk["threads"]["events"]["list"]>[0];
+type EventsResponder = (args: EventsArgs, call: number) => ThreadEventRow[] | Promise<ThreadEventRow[]>;
 const stores: SessionLogStore[] = [];
 
 afterEach(() => {
@@ -22,8 +26,12 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function fakeSdk(respond: (args: TimelineArgs, call: number) => TimelineResponse | Promise<TimelineResponse>) {
+function fakeSdk(
+  respond: (args: TimelineArgs, call: number) => TimelineResponse | Promise<TimelineResponse>,
+  respondEvents: EventsResponder = () => [],
+) {
   const calls: TimelineArgs[] = [];
+  const eventCalls: EventsArgs[] = [];
   const callbacks = new Map<string, (event: unknown) => void>();
   let getCalls = 0;
   let unsubscribeCount = 0;
@@ -32,6 +40,12 @@ function fakeSdk(respond: (args: TimelineArgs, call: number) => TimelineResponse
       timeline: (args: TimelineArgs) => {
         calls.push(args);
         return Promise.resolve(respond(args, calls.length));
+      },
+      events: {
+        list: (args: EventsArgs) => {
+          eventCalls.push(args);
+          return Promise.resolve().then(() => respondEvents(args, eventCalls.length));
+        },
       },
       get: async () => {
         getCalls++;
@@ -46,6 +60,7 @@ function fakeSdk(respond: (args: TimelineArgs, call: number) => TimelineResponse
   return {
     sdk,
     calls,
+    eventCalls,
     get getCalls() { return getCalls; },
     get unsubscribeCount() { return unsubscribeCount; },
     get subscribed() { return [...callbacks.keys()]; },
@@ -268,6 +283,86 @@ describe("createSessionLogStore", () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(fake.calls).toHaveLength(2);
     expect(store.getSnapshot()).toBe(before);
+  });
+
+  it("reads every page of request events on load and keeps the hidden messages beside the rows", async () => {
+    const page = Array.from({ length: 100 }, (_, index) => acceptedEvent(index + 1, `creq_visible_${index}`));
+    const fake = fakeSdk(
+      () => timelineResponse([userRow("first")], { maxSeq: 300 }),
+      (_args, call) => call === 1 ? page : [requestEvent(250), acceptedEvent(252, "creq_250")],
+    );
+    const store = makeStore(fake.sdk);
+    await settle();
+
+    const query = { threadId: "thr_1", types: ["client/turn/requested", "turn/input/accepted", "client/turn/rejected"], order: "asc", limit: "100" };
+    expect(fake.eventCalls).toEqual([{ ...query, afterSeq: "0" }, { ...query, afterSeq: "100" }]);
+    expect(store.getSnapshot()).toMatchObject({ status: "ready", hiddenError: null });
+    expect(store.getSnapshot().hidden.map(({ id, seq }) => [id, seq])).toEqual([["hidden:creq_250", 252]]);
+  });
+
+  it("reads new request events with each refresh and settles a steer once it is accepted", async () => {
+    vi.useFakeTimers();
+    const fake = fakeSdk(
+      (_args, call) => call === 1
+        ? timelineResponse([userRow("first")], { maxSeq: 20 })
+        : timelineResponse([], { maxSeq: 30, delta: { upsertRows: [] } }),
+      (_args, call) => call === 1 ? [requestEvent(20)] : call === 2 ? [acceptedEvent(22, "creq_20")] : [],
+    );
+    const store = makeStore(fake.sdk);
+    await settle();
+    const pendingSteer = store.getSnapshot().hidden;
+    expect(pendingSteer.map(({ seq }) => seq)).toEqual([20]);
+
+    fake.emitThread(["events-appended"]);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(fake.eventCalls.map((call) => call.afterSeq)).toEqual(["0", "20"]);
+    expect(store.getSnapshot().hidden.map(({ seq }) => seq)).toEqual([22]);
+
+    const settledSteer = store.getSnapshot().hidden;
+    fake.emitThread(["events-appended"]);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(fake.eventCalls.map((call) => call.afterSeq)).toEqual(["0", "20", "22"]);
+    expect(store.getSnapshot().hidden).toBe(settledSteer);
+  });
+
+  it("keeps the log usable when request events fail, then catches up from the same point", async () => {
+    vi.useFakeTimers();
+    const fake = fakeSdk(
+      (_args, call) => call === 1
+        ? timelineResponse([userRow("first")], { maxSeq: 20 })
+        : timelineResponse([], { maxSeq: 30, delta: { upsertRows: [] } }),
+      (_args, call) => {
+        if (call === 1) throw new Error("events unavailable");
+        return [requestEvent(25)];
+      },
+    );
+    const store = makeStore(fake.sdk);
+    await settle();
+    expect(store.getSnapshot()).toMatchObject({
+      status: "ready", error: null, hidden: [], hiddenError: "events unavailable",
+    });
+    expect(store.getSnapshot().rows.map((row) => row.id)).toEqual(["first"]);
+
+    fake.emitThread(["events-appended"]);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(fake.eventCalls.map((call) => call.afterSeq)).toEqual(["0", "0"]);
+    expect(store.getSnapshot()).toMatchObject({ hiddenError: null });
+    expect(store.getSnapshot().hidden.map(({ id }) => id)).toEqual(["hidden:creq_25"]);
+  });
+
+  it("rereads request events from the start when history is rewritten", async () => {
+    vi.useFakeTimers();
+    const fake = fakeSdk(
+      (_args, call) => timelineResponse([userRow(`load-${call}`)], { maxSeq: 20 }),
+      (_args, call) => call === 1 ? [requestEvent(15)] : [],
+    );
+    const store = makeStore(fake.sdk);
+    await settle();
+    expect(store.getSnapshot().hidden).toHaveLength(1);
+    fake.emitThread(["history-rewritten"]);
+    await settle();
+    expect(fake.eventCalls.map((call) => call.afterSeq)).toEqual(["0", "0"]);
+    expect(store.getSnapshot().hidden).toEqual([]);
   });
 
   it("retries a transient project lookup failure instead of caching the rejection", async () => {

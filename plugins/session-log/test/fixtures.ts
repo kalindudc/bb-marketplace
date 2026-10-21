@@ -1,4 +1,4 @@
-import type { TimelineResponse, TimelineRow } from "../src/types";
+import type { ThreadEventRow, TimelineResponse, TimelineRow } from "../src/types";
 
 type UserRow = Extract<TimelineRow, { kind: "conversation"; role: "user" }>;
 type AssistantRow = Extract<TimelineRow, { kind: "conversation"; role: "assistant" }>;
@@ -175,6 +175,62 @@ export function timelineResponse(rows: TimelineRow[] = [], overrides: Partial<Ti
       returnedSegmentCount: 1,
     },
     ...overrides,
+  };
+}
+
+type RequestedEvent = Extract<ThreadEventRow, { type: "client/turn/requested" }>;
+type RequestData = RequestedEvent["data"];
+
+/** A `client/turn/requested` event; the default is a plugin's agent-only steer into turn-1. */
+export function requestEvent(seq: number, overrides: Partial<RequestData> = {}): RequestedEvent {
+  return {
+    id: `evt_${seq}`,
+    scope: { kind: "thread" },
+    threadId: "thr_1",
+    seq,
+    createdAt: seq * 100,
+    type: "client/turn/requested",
+    data: {
+      direction: "outbound",
+      requestId: `creq_${seq}`,
+      source: "tell",
+      initiator: "user",
+      senderThreadId: null,
+      systemMessageKind: "unlabeled",
+      systemMessageSubject: null,
+      input: [{ type: "text", text: "Relevant memory: task 42", mentions: [], visibility: "agent-only" }],
+      target: { kind: "steer", expectedTurnId: "turn-1" },
+      request: { method: "turn/start", params: {} },
+      execution: {
+        model: "model", serviceTier: "default", reasoningLevel: "high", permissionMode: "full",
+        source: "client/turn/requested",
+      },
+      ...overrides,
+    },
+  };
+}
+
+export function acceptedEvent(seq: number, requestId: string, turnId = "turn-1"): ThreadEventRow {
+  return {
+    id: `evt_${seq}`,
+    scope: { kind: "turn", turnId },
+    threadId: "thr_1",
+    seq,
+    createdAt: seq * 100,
+    type: "turn/input/accepted",
+    data: { providerThreadId: "provider-thread", clientRequestId: requestId },
+  };
+}
+
+export function rejectedEvent(seq: number, requestId: string): ThreadEventRow {
+  return {
+    id: `evt_${seq}`,
+    scope: { kind: "thread" },
+    threadId: "thr_1",
+    seq,
+    createdAt: seq * 100,
+    type: "client/turn/rejected",
+    data: { requestId, reason: "turn-ended", message: "The turn ended" },
   };
 }
 
