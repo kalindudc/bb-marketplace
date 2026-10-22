@@ -9,14 +9,15 @@ import type { BbProjectChoice, PlanningSession, ProjectOverview, RepoOverview } 
 import { MAX_PLANNING_REPOS } from "./prompts";
 import type { Finding } from "./review";
 import type { ProjectTimeline, SessionBar, TicketBar } from "./replay";
+import { repoSpecSchema } from "./spec";
 import type { SentNote, SpecVersionView } from "./spec-view";
 import type { ActivityItem, Attempt, ChecksItem, CheckStep, Mark, MergeItem, ReviewItem, TicketActivity } from "./activity";
-import type { ChangedFile, ChangeKind, ChangeSource, ChangesView, FilePatch } from "./changes";
+import type { ChangedFile, ChangeKind, ChangeRepo, ChangeSource, ChangesView, FilePatch } from "./changes";
 import type { AuthorKind, PostKind, ProjectState, ReviewVerdict, Role, ThreadState, TicketState } from "./states";
 import { MERGE_CHOICES } from "./states";
 
 export type ProjectSummary = ProjectOverview;
-export type { ChangedFile, ChangeKind, ChangeSource, ChangesView, FilePatch };
+export type { ChangedFile, ChangeKind, ChangeRepo, ChangeSource, ChangesView, FilePatch };
 export type { ActivityItem, Attempt, BbProjectChoice, ChecksItem, CheckStep, HomeProject, HomeView, Mark, MergeItem, NeedItem, NextStep, PlanningSession, ProjectHealth, ProjectTimeline, RepoOverview, ReviewItem, SentNote, SessionBar, SpecVersionView, TicketActivity, TicketBar };
 
 export interface BoardCard {
@@ -256,7 +257,7 @@ export const rpcContract = defineRpcContract({
   specVersion: { input: z.object({ slug, version: z.number().int().min(1).optional() }).strict(), output: typed<SpecVersionView>() },
   changes: { input: z.object({ slug }).strict(), output: typed<ChangesView>() },
   changePatch: {
-    input: z.object({ slug, path: z.string().min(1).max(4096), base: commitHash.optional(), head: commitHash.optional(), key: key.optional() }).strict(),
+    input: z.object({ slug, path: z.string().min(1).max(4096), base: commitHash.optional(), head: commitHash.optional(), key: key.optional(), repo: repoSpecSchema.shape.name.optional() }).strict(),
     output: typed<FilePatch>(),
   },
 });
