@@ -1,12 +1,12 @@
 // @vitest-environment node
 // The integration merge over the real host operations and a real git repository, with only bb and the workers' side faked.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import * as ops from "../src/host/ops";
-import { runMergeQueue, settleMerges } from "../src/merge";
+import { land, runMergeQueue, settleMerges } from "../src/merge";
 import type { HostPort } from "../src/ports";
 import { specOf } from "../src/workers";
 import { makeCtx, reachApproved, seedProject, seedRepoProject, ticketOf, type Doc, type EngineHarness } from "./helpers";
@@ -51,6 +51,14 @@ function feature(branch: string, path: string, content: string, at = repo, base 
   return sha;
 }
 
+/** A bare clone of `of`, added to it as the remote `name`. */
+function bareRemote(of: string, name: string): string {
+  const bare = join(scratch, `remote-${counter++}.git`);
+  execFileSync("git", ["clone", "-q", "--bare", of, bare]);
+  sh(of, "remote", "add", name, bare);
+  return bare;
+}
+
 function makeRepo(base = "main"): string {
   const made = join(scratch, `repo-${counter++}`);
   mkdirSync(made);
@@ -79,9 +87,11 @@ async function setup(edit: (doc: Doc) => void): Promise<string> {
   return reviewed;
 }
 
-function useRealLoomWorktrees(): void {
+/** `pushFrom` lists the real repositories whose pushes run for real too. */
+function useRealLoomWorktrees(pushFrom: readonly string[] = []): void {
   const fake = h.ctx.host;
-  const real = (method: string, input: Record<string, unknown>) => method === "ensureWorktree" || [input.worktree, input.cwd].some((path) => typeof path === "string" && path.startsWith(dataDir));
+  const real = (method: string, input: Record<string, unknown>) =>
+    method === "ensureWorktree" || (method === "push" && pushFrom.includes(input.repo as string)) || [input.worktree, input.cwd].some((path) => typeof path === "string" && path.startsWith(dataDir));
   const host: HostPort = {
     call: async (hostId, method, input) => {
       if (!real(method, input as Record<string, unknown>)) return fake.call(hostId, method, input);
@@ -194,5 +204,53 @@ describe("the integration merge against a real repository", () => {
     expect(sh(join(dataDir, "worktrees", "csv.web"), "rev-parse", "HEAD")).toBe(sh(web, "rev-parse", "loom/csv"));
     expect(sh(join(dataDir, "worktrees", "csv.api"), "rev-parse", "HEAD")).toBe(sh(api, "rev-parse", "loom/csv"));
     expect(existsSync(join(dataDir, "worktrees", "csv"))).toBe(false);
+  });
+
+  it("lands a multi-repo project directly: each repo's merged work, with its remote base merged in and its after_merge run on the result, reaches that repo's remote base", async () => {
+    const web = makeRepo();
+    const api = makeRepo("trunk");
+    const webRemote = bareRemote(web, "origin");
+    const apiRemote = bareRemote(api, "upstream");
+    const checked = join(scratch, `api-checked-${counter++}`);
+    dataDir = join(scratch, `data-${counter++}`);
+    await ops.ensureBranch({ repo: web, branch: "loom/csv", from: "main" });
+    await ops.ensureBranch({ repo: api, branch: "loom/csv", from: "trunk" });
+    const webReviewed = feature("worker-1", "web.txt", "web\n", web, "main");
+    const apiReviewed = feature("worker-2", "api.txt", "api\n", api, "trunk");
+
+    h = makeCtx();
+    await seedRepoProject(h, (doc) => (doc.repo[1].after_merge = [`test -f api.txt && git rev-parse HEAD >> ${checked}`]));
+    h.bb.checkouts.set("proj_web", { host_1: web });
+    h.bb.checkouts.set("proj_api", { host_1: api });
+    await reachApproved(h, "CSV-1");
+    await reachApproved(h, "CSV-2");
+    h.store.updateTicket(ticketOf(h, "CSV-1").id, { head_sha: webReviewed });
+    h.store.updateTicket(ticketOf(h, "CSV-2").id, { head_sha: apiReviewed });
+    useRealLoomWorktrees([web, api]);
+    await queue();
+    await queue();
+    expect([ticketOf(h, "CSV-1").state, ticketOf(h, "CSV-2").state]).toEqual(["done", "done"]);
+
+    // Someone else lands on the api remote's trunk in the meantime.
+    const moved = feature("elsewhere", "upstream.txt", "upstream\n", api, "trunk");
+    sh(api, "push", "-q", "upstream", `${moved}:refs/heads/trunk`);
+
+    const result = await land(h.ctx, "csv", { actor: "human", ready: false, direct: true });
+    const webHead = sh(web, "rev-parse", "loom/csv");
+    const apiHead = sh(api, "rev-parse", "loom/csv");
+    expect(result).toEqual({
+      repos: [
+        { repo: "web", url: null, pushed: "origin/main", sha: webHead },
+        { repo: "api", url: null, pushed: "upstream/trunk", sha: apiHead },
+      ],
+      unlanded: [],
+      done: true,
+    });
+    expect(sh(webRemote, "rev-parse", "main")).toBe(webHead);
+    expect(sh(webRemote, "ls-tree", "--name-only", "main").split("\n")).toEqual(["README.md", "web.txt"]);
+    expect(sh(apiRemote, "rev-parse", "trunk")).toBe(apiHead);
+    expect(sh(apiRemote, "ls-tree", "--name-only", "trunk").split("\n")).toEqual(["README.md", "api.txt", "upstream.txt"]);
+    expect(sh(api, "rev-parse", "loom/csv^2")).toBe(moved);
+    expect(readFileSync(checked, "utf8").trim().split("\n").at(-1)).toBe(apiHead);
   });
 });

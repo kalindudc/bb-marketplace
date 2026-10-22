@@ -1,5 +1,5 @@
-// Typed repository over the plugin database. Every project, spec, ticket and
-// post change appends an event in the same transaction.
+// Typed repository over the plugin database. Every project, spec, ticket, repo
+// and post change appends an event in the same transaction.
 import type Database from "better-sqlite3";
 import type { Finding } from "../review";
 import { canMoveProject, canMoveTicket, type AuthorKind, type PostKind, type ProjectState, type Role, type ReviewVerdict, type ThreadState, type TicketState } from "../states";
@@ -25,6 +25,17 @@ export interface ProjectRow {
   created_at: number;
   updated_at: number;
 }
+
+/** One [[repo]] of a multi-repo integration project, from its first land on. A single-repo project keeps its pull request in projects.pr_url. */
+export interface ProjectRepoRow {
+  project_id: number;
+  name: string;
+  pr_url: string | null;
+  landed_sha: string | null;
+  landed_at: number | null;
+}
+
+export type ProjectRepoPatch = Partial<Pick<ProjectRepoRow, "pr_url" | "landed_sha" | "landed_at">>;
 
 export type NewProject = Pick<ProjectRow, "slug" | "name" | "key" | "bb_project_id"> & Partial<Pick<ProjectRow, "host_id" | "section_id" | "planner_thread_id">>;
 
@@ -275,6 +286,31 @@ export class Store {
 
   updateProject(id: number, patch: Partial<Omit<ProjectRow, "id">>): void {
     this.patch("projects", id, patch);
+  }
+
+  // ---- a multi-repo project's repos
+
+  /** The project's repo rows by name; a repo that never landed has none. */
+  projectRepos(projectId: number): ProjectRepoRow[] {
+    return this.db.prepare("SELECT * FROM project_repos WHERE project_id = ? ORDER BY name").all(projectId) as ProjectRepoRow[];
+  }
+
+  projectRepo(projectId: number, name: string): ProjectRepoRow | null {
+    return (this.db.prepare("SELECT * FROM project_repos WHERE project_id = ? AND name = ?").get(projectId, name) as ProjectRepoRow | undefined) ?? null;
+  }
+
+  /** Creates or patches one repo's row with a project.landed event naming the repo, in one transaction: a land is the only change to a repo's row. */
+  updateProjectRepo(projectId: number, name: string, patch: ProjectRepoPatch, actor: string, data: object = {}): ProjectRepoRow {
+    return this.tx(() => {
+      this.db.prepare("INSERT INTO project_repos (project_id, name) VALUES (?, ?) ON CONFLICT (project_id, name) DO NOTHING").run(projectId, name);
+      const entries = Object.entries(patch).filter(([, value]) => value !== undefined);
+      if (entries.length > 0) {
+        const sets = entries.map(([column]) => `${column} = ?`).join(", ");
+        this.db.prepare(`UPDATE project_repos SET ${sets} WHERE project_id = ? AND name = ?`).run(...entries.map(([, value]) => value), projectId, name);
+      }
+      this.event(projectId, null, "project.landed", actor, { repo: name, ...data });
+      return this.projectRepo(projectId, name)!;
+    });
   }
 
   // ---- spec versions

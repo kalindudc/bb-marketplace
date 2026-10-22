@@ -330,7 +330,9 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       });
       return ticketDetail(key);
     },
-    control: async ({ slug, action, version }, ctx) => {
+    control: async ({ slug, action, version, repo }, ctx) => {
+      if (repo !== undefined && action !== "land" && action !== "landDirect") throw new LoomError("loom_invalid_input", `A repo goes only with land and landDirect, not with ${action}.`);
+      const which = repo === undefined ? {} : { repo };
       switch (action) {
         case "approve": {
           const project = projects.require(slug);
@@ -351,10 +353,10 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
           await act(ctx, "resume", { slug }, () => engine.resume(slug, HUMAN_ACTOR));
           break;
         case "land":
-          await act(ctx, "land", { slug }, () => engine.land(slug, HUMAN_ACTOR, { ready: false }));
+          await act(ctx, "land", { slug, ...which }, () => engine.land(slug, HUMAN_ACTOR, { ready: false, ...which }));
           break;
         case "landDirect":
-          await act(ctx, "land", { slug, direct: true }, () => engine.land(slug, HUMAN_ACTOR, { ready: false, direct: true }));
+          await act(ctx, "land", { slug, ...which, direct: true }, () => engine.land(slug, HUMAN_ACTOR, { ready: false, direct: true, ...which }));
           break;
         case "archive":
           await act(ctx, "archive", { slug }, () => engine.archive(slug, HUMAN_ACTOR));

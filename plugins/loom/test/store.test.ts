@@ -485,6 +485,58 @@ describe("setOnEvent", () => {
   });
 });
 
+describe("project repos", () => {
+  it("the migration creates the project_repos table, keyed by project and name", () => {
+    const columns = (db.prepare("PRAGMA table_info(project_repos)").all() as Array<{ name: string; pk: number }>).map((column) => [column.name, column.pk]);
+    expect(columns).toEqual([
+      ["project_id", 1],
+      ["name", 2],
+      ["pr_url", 0],
+      ["landed_sha", 0],
+      ["landed_at", 0],
+    ]);
+  });
+
+  it("creates a repo's row on its first update and patches it after, with one project.landed event naming the repo each time", () => {
+    const project = store.createProject(newProject(), "human");
+    const other = store.createProject(newProject("tsv"), "human");
+    expect(store.projectRepos(project.id)).toEqual([]);
+    expect(store.projectRepo(project.id, "web")).toBeNull();
+
+    const first = store.updateProjectRepo(project.id, "web", { pr_url: "https://github.com/acme/web/pull/1", landed_sha: "m1", landed_at: clock.t }, "human", { url: "https://github.com/acme/web/pull/1", sha: "m1", created: true });
+    expect(first).toEqual({ project_id: project.id, name: "web", pr_url: "https://github.com/acme/web/pull/1", landed_sha: "m1", landed_at: clock.t });
+    clock.advance(10);
+    const second = store.updateProjectRepo(project.id, "web", { landed_sha: "m2", landed_at: clock.t }, "human", { url: "https://github.com/acme/web/pull/1", sha: "m2", created: false });
+    expect(second).toEqual({ ...first, landed_sha: "m2", landed_at: clock.t });
+    store.updateProjectRepo(project.id, "api", { landed_sha: "m3", landed_at: clock.t }, "human", { direct: true, pushed: "upstream/trunk", sha: "m3" });
+    store.updateProjectRepo(other.id, "web", { landed_sha: "x1" }, "human");
+
+    expect(store.projectRepos(project.id).map((row) => [row.name, row.landed_sha])).toEqual([
+      ["api", "m3"],
+      ["web", "m2"],
+    ]);
+    expect(store.projectRepo(other.id, "web")).toMatchObject({ landed_sha: "x1", pr_url: null, landed_at: null });
+    const landed = store.eventsOfKind(project.id, "project.landed");
+    expect(landed.map((event) => [event.actor, JSON.parse(event.data_json)])).toEqual([
+      ["human", { repo: "web", url: "https://github.com/acme/web/pull/1", sha: "m1", created: true }],
+      ["human", { repo: "web", url: "https://github.com/acme/web/pull/1", sha: "m2", created: false }],
+      ["human", { repo: "api", direct: true, pushed: "upstream/trunk", sha: "m3" }],
+    ]);
+  });
+
+  it("writes the row and its event in one transaction: a rollback keeps neither", () => {
+    const project = store.createProject(newProject(), "human");
+    expect(() =>
+      store.tx(() => {
+        store.updateProjectRepo(project.id, "web", { landed_sha: "m1" }, "human");
+        throw new Error("boom");
+      }),
+    ).toThrow("boom");
+    expect(store.projectRepos(project.id)).toEqual([]);
+    expect(eventKinds(project.id)).toEqual(["project.created"]);
+  });
+});
+
 describe("planning", () => {
   const session = (thread_id: string) => ({ thread_id, bb_project_id: "proj_1", title: `Plan ${thread_id}` });
 
