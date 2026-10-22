@@ -159,6 +159,7 @@ export function draftCards(spec: Spec, at: number): BoardCard[] {
     seq: index + 1,
     deps: ticket.depends_on.map((ref) => keyOf.get(ref)!),
     scope: ticket.scope,
+    repo: ticket.repo ?? null,
   }));
   const queue = queueOf(lites);
   return lites.map((lite, index) => ({

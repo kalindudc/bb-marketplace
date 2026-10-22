@@ -3,6 +3,7 @@ import type { NewThreadRequest } from "@get-bb/plugin-sdk";
 import type { CheckRun } from "./checks";
 import type { PostRow, ProjectRow, ReviewRow, TicketRow } from "./db/store";
 import { its } from "./format";
+import { isMultiRepo, repoSettings, type RepoSettings } from "./repos";
 import type { Finding } from "./review";
 import type { Spec } from "./spec";
 import type { SpecNote } from "./spec-paths";
@@ -105,12 +106,40 @@ export function notesMessage(a: { slug: string; version: number; status: string;
   ].join("\n");
 }
 
-export function workerBrief(a: { project: ProjectRow; spec: Spec; ticket: TicketRow; posts: PostRow[]; resume: boolean }): string {
+/** The ticket's repo on a multi-repo project: which one it is, and that the scope is relative to its root. */
+function repositorySection(project: ProjectRow, repo: RepoSettings): string[] {
+  return [
+    "## Repository",
+    `This ticket is in the repo ${JSON.stringify(repo.name)}, the bb project ${repo.bbProjectId ?? project.bb_project_id}, and this worktree is a checkout of it. The scope globs and protected paths below are relative to this repo's root.`,
+    "",
+  ];
+}
+
+/** The project's other repos, read only, with their checkout paths on this machine; empty when the ticket's repo is the only one. */
+function otherReposSection(spec: Spec, repo: RepoSettings, checkouts: ReadonlyMap<string, string>): string[] {
+  const others = (spec.repo ?? []).filter((entry) => entry.name !== repo.name);
+  if (others.length === 0) return [];
+  return [
+    "## Other repositories (read only)",
+    "This project also works in these repos. You may read them for context, but never edit them: changes there belong to their own tickets.",
+    ...others.map((entry) => {
+      const path = checkouts.get(entry.name);
+      return `- ${JSON.stringify(entry.name)} (bb project ${entry.project}): ${path === undefined ? "no checkout was found on this machine" : path}`;
+    }),
+    ...(repo.branch === null ? [] : [`This project's merged work in them is on the branch ${JSON.stringify(repo.branch)}. Read a file from it with \`git -C <path> show ${repo.branch}:<file>\`.`]),
+    "",
+  ];
+}
+
+/** `checkouts` holds the checkout path of each other repo on a multi-repo project, by repo name; a repo missing from it is listed without a path. */
+export function workerBrief(a: { project: ProjectRow; spec: Spec; ticket: TicketRow; posts: PostRow[]; resume: boolean; checkouts?: ReadonlyMap<string, string> }): string {
   const { project, spec, ticket, posts, resume } = a;
+  const multi = isMultiRepo(spec);
+  const repo = repoSettings(spec, ticket.repo);
   const acceptance = JSON.parse(ticket.acceptance_json) as string[];
   const scope = JSON.parse(ticket.scope_json) as string[];
   const verify = JSON.parse(ticket.verify_json) as string[];
-  const commands = [...verify, ...spec.checks.commands];
+  const commands = [...verify, ...repo.checks];
   const enforce =
     spec.scope.enforce === "reject"
       ? "A change outside your scope makes loom_submit fail until you undo it."
@@ -125,17 +154,19 @@ export function workerBrief(a: { project: ProjectRow; spec: Spec; ticket: Ticket
     "## Acceptance criteria",
     ...acceptance.map((line, index) => `${index + 1}. ${line}`),
     "",
+    ...(multi ? repositorySection(project, repo) : []),
     "## Scope",
     "You may change files matching:",
     bullets(scope),
     "Protected paths you must never edit:",
-    spec.scope.protected.length > 0 ? bullets(spec.scope.protected) : "- none",
+    repo.protected.length > 0 ? bullets(repo.protected) : "- none",
     enforce,
     "",
     "## Checks the plugin runs when you submit",
     commands.length > 0 ? bullets(commands) : "- none",
     "They run in this worktree, in this order, and stop at the first failure. They must not write tracked files, and you must not edit files while they run.",
     "",
+    ...(multi ? otherReposSection(spec, repo, a.checkouts ?? new Map()) : []),
     "## Rules",
     "- Work only in this worktree. Never push, merge, or edit a protected path.",
     "- Call loom_note({ text }) once for each milestone, so the human can follow along on the ticket.",

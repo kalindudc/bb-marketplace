@@ -9,7 +9,7 @@ import { specToml, type Doc } from "./helpers";
 let seq = 0;
 const ticket = (over: Partial<TicketLite> = {}): TicketLite => {
   seq += 1;
-  return { id: seq, key: `CSV-${seq}`, state: "queued", priority: 2, seq, deps: [], scope: [`area${seq}/**`], ...over };
+  return { id: seq, key: `CSV-${seq}`, state: "queued", priority: 2, seq, deps: [], scope: [`area${seq}/**`], repo: null, ...over };
 };
 const keys = (tickets: TicketLite[]) => tickets.map((t) => t.key);
 
@@ -57,6 +57,20 @@ describe("readyTickets", () => {
     const clear = ticket({ priority: 3, scope: ["docs/**"] });
     expect(keys(readyTickets([held, overlapping, clear]))).toEqual([clear.key]);
   });
+
+  it("lets overlapping tickets in different repos start side by side, and only one of them within a repo", () => {
+    const web = ticket({ repo: "web", scope: ["src/**"], seq: 1 });
+    const api = ticket({ repo: "api", scope: ["src/**"], seq: 2 });
+    const webAgain = ticket({ repo: "web", scope: ["src/a.ts"], seq: 3 });
+    expect(keys(readyTickets([web, api, webAgain]))).toEqual([web.key, api.key]);
+
+    for (const state of IN_FLIGHT) {
+      const held = ticket({ state, repo: "web", scope: ["src/**"] });
+      const sameRepo = ticket({ repo: "web", scope: ["src/a.ts"] });
+      const otherRepo = ticket({ repo: "api", scope: ["src/a.ts"] });
+      expect(keys(readyTickets([held, sameRepo, otherRepo]))).toEqual([otherRepo.key]);
+    }
+  });
 });
 
 describe("workerSlots", () => {
@@ -70,9 +84,10 @@ describe("workerSlots", () => {
 });
 
 describe("toLite", () => {
-  it("parses the dependency and scope lists", () => {
-    const row = { id: 4, key: "CSV-4", state: "queued", priority: 1, seq: 4, deps_json: '["CSV-1"]', scope_json: '["src/**","docs/**"]' } as TicketRow;
-    expect(toLite(row)).toEqual({ id: 4, key: "CSV-4", state: "queued", priority: 1, seq: 4, deps: ["CSV-1"], scope: ["src/**", "docs/**"] });
+  it("parses the dependency and scope lists and keeps the repo", () => {
+    const row = { id: 4, key: "CSV-4", state: "queued", priority: 1, seq: 4, deps_json: '["CSV-1"]', scope_json: '["src/**","docs/**"]', repo: null } as TicketRow;
+    expect(toLite(row)).toEqual({ id: 4, key: "CSV-4", state: "queued", priority: 1, seq: 4, deps: ["CSV-1"], scope: ["src/**", "docs/**"], repo: null });
+    expect(toLite({ ...row, repo: "api" }).repo).toBe("api");
   });
 });
 

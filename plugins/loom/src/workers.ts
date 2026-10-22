@@ -1,11 +1,13 @@
 // The worker lifecycle: spawn a worker for a ticket, nudge or end it when it stalls, block and requeue tickets,
 // and end any worker or reviewer thread in one place (endThread). Every state change goes through the store.
 import { randomBytes } from "node:crypto";
+import { repoCheckout, ticketRepo } from "./checkouts";
 import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { plural } from "./format";
 import { SpawnRefusedError, type EnvironmentInfo, type HostPort } from "./ports";
 import { latestChangesRequested, nudgeText, workerBrief } from "./prompts";
 import { LoomError, type Ctx } from "./projects";
+import { freshBaseOf } from "./repos";
 import { idleAction, spawnable, toLite } from "./scheduler";
 import type { Spec } from "./spec";
 import { HUMAN_ACTOR, LOOM_ACTOR, PAUSE_NOW_REASON, canMoveTicket, type AuthorKind, type TicketState } from "./states";
@@ -28,9 +30,9 @@ export function specOf(store: Store, project: ProjectRow): Spec {
   return JSON.parse(row.spec_json) as Spec;
 }
 
-/** Where a worker's branch starts when no earlier worker left one. */
-export function freshBase(spec: Spec): string {
-  return spec.merge.strategy === "integration" ? spec.merge.branch! : `${spec.merge.remote}/${spec.project.base}`;
+/** Where a worker's branch starts in `repo`, the Loom project's own repository for null, when no earlier worker left one. */
+export function freshBase(spec: Spec, repo: string | null = null): string {
+  return freshBaseOf(spec, repo);
 }
 
 // ---------------------------------------------------------------- ticket moves
@@ -132,30 +134,31 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
   }
 
   const agent = spec.agents.worker;
-  const brief = workerBrief({ project, spec, ticket: store.ticket(ticket.id)!, posts: store.posts(ticket.id), resume });
-  const spawn = (baseBranch: string) =>
-    ctx.bb.spawnThread({
-      bbProjectId: project.bb_project_id,
-      hostId: project.host_id!,
-      baseBranch,
-      title: `${ticket.key} · ${ticket.title}`,
-      prompt: brief,
-      sectionId: project.section_id,
-      metadata: { project: project.slug, role: "worker", ticket: ticket.key, spawnToken: token },
-      providerId: agent.provider,
-      model: agent.model,
-      reasoningLevel: agent.reasoning,
-      permissionMode: agent.permission_mode,
-    });
-
   let spawned;
   try {
-    const base = ticket.branch ?? freshBase(spec);
+    const repo = ticketRepo(spec, ticket);
+    const checkouts = await otherCheckouts(ctx, project, spec, ticket);
+    const brief = workerBrief({ project, spec, ticket: store.ticket(ticket.id)!, posts: store.posts(ticket.id), resume, checkouts });
+    const spawn = (baseBranch: string) =>
+      ctx.bb.spawnThread({
+        bbProjectId: repo.bbProjectId ?? project.bb_project_id,
+        hostId: project.host_id!,
+        baseBranch,
+        title: `${ticket.key} · ${ticket.title}`,
+        prompt: brief,
+        sectionId: project.section_id,
+        metadata: { project: project.slug, role: "worker", ticket: ticket.key, spawnToken: token },
+        providerId: agent.provider,
+        model: agent.model,
+        reasoningLevel: agent.reasoning,
+        permissionMode: agent.permission_mode,
+      });
+    const base = ticket.branch ?? freshBase(spec, ticket.repo);
     try {
       spawned = await spawn(base);
     } catch (error) {
       if (fromBranch || spec.merge.strategy !== "pr" || !isRefError(error)) throw error;
-      spawned = await spawn(spec.project.base);
+      spawned = await spawn(repo.base);
     }
   } catch (error) {
     await failSpawn(ctx, row, errText(error), { refused: error instanceof SpawnRefusedError });
@@ -178,6 +181,22 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
   } else if (now.project.state === "paused" && now.project.system_reason === PAUSE_NOW_REASON) {
     await ctx.bb.stop(spawned.threadId).catch((error) => ctx.bb.log("warn", `Could not stop ${spawned.threadId} after pause --now: ${errText(error)}`));
   }
+}
+
+/** The checkout path of each other repo of the project on its machine, by repo name. A repo without a checkout is left out, so the brief lists it without a path. */
+async function otherCheckouts(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow): Promise<Map<string, string>> {
+  const others = (spec.repo ?? []).filter((repo) => repo.name !== ticket.repo);
+  const found = await Promise.all(
+    others.map(async ({ name }) => {
+      try {
+        return [name, (await repoCheckout(ctx, project, spec, name)).path] as const;
+      } catch (error) {
+        ctx.bb.log("warn", `${ticket.key}'s brief lists the repo "${name}" without a checkout path: ${errText(error)}`);
+        return null;
+      }
+    }),
+  );
+  return new Map(found.filter((entry) => entry !== null));
 }
 
 /**
