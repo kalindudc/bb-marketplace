@@ -1,5 +1,5 @@
 import { makeTurnFailedEvent } from "@get-bb/plugin-sdk/testing";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PostRow } from "../src/db/store";
 import { renderThread, workerBrief } from "../src/prompts";
 import { SpawnRefusedError, type SpawnArgs } from "../src/ports";
@@ -81,6 +81,51 @@ describe("spawnWorker", () => {
     expect(prompt).toContain('- "npm run lint"\n- "npm test"');
     expect(prompt).toContain("loom_submit");
     expect(prompt).not.toContain("Earlier work");
+  });
+
+  it("gives a single-repo worker the spawn arguments and brief it always had, without looking up any checkout", async () => {
+    await seedProject(h);
+    const row = await startWorker(h);
+    expect(spawnArgs()).toEqual({
+      bbProjectId: "proj_1",
+      hostId: "host_1",
+      baseBranch: "loom/csv",
+      title: "CSV-1 \u00b7 Order rows",
+      prompt: [
+        'You are a Loom worker on CSV-1 in the project "CSV export" (csv). Loom is a plugin that runs this project with agents: you do this one ticket in this worktree, and the plugin decides when it is done.',
+        "",
+        "## Ticket",
+        'CSV-1 \u00b7 "Order rows"',
+        "Build the row mapper.",
+        "",
+        "## Acceptance criteria",
+        "1. WHEN an order is mapped THE SYSTEM SHALL return one row",
+        "",
+        "## Scope",
+        "You may change files matching:",
+        '- "src/model/**"',
+        "Protected paths you must never edit:",
+        "- none",
+        "A change outside your scope does not stop your submit, but it is flagged to the reviewer, so keep to the scope.",
+        "",
+        "## Checks the plugin runs when you submit",
+        '- "npm test"',
+        "They run in this worktree, in this order, and stop at the first failure. They must not write tracked files, and you must not edit files while they run.",
+        "",
+        "## Rules",
+        "- Work only in this worktree. Never push, merge, or edit a protected path.",
+        "- Call loom_note({ text }) once for each milestone, so the human can follow along on the ticket.",
+        "- Call loom_submit({ summary }) when every acceptance criterion holds, then end your turn. The plugin commits your work and runs the checks; you get the result as a message.",
+        "- Call loom_block({ reason, needs }) when you cannot continue without something from the human or the planner: say what is wrong and exactly what you need. Then end your turn.",
+        "- Do not commit yourself; the plugin does it. Do not run bb loom commands.",
+      ].join("\n"),
+      sectionId: "sec_1",
+      metadata: { project: "csv", role: "worker", ticket: "CSV-1", spawnToken: row.spawn_token },
+      providerId: "claude",
+      model: "sonnet",
+      permissionMode: "full",
+    });
+    expect(h.bb.callsTo("projectCheckout")).toEqual([]);
   });
 
   it("keeps a thread id that the configure hook bound through the spawn token", async () => {
@@ -213,6 +258,127 @@ describe("spawnWorker eligibility", () => {
     });
     await startWorker(h, "CSV-1");
     await refuses("CSV-2");
+  });
+});
+
+describe("spawnWorker on a multi-repo project", () => {
+  const seedRepos = (edit?: (doc: Doc) => void) => {
+    h.bb.addBbProject("proj_web", { host_1: "/src/web" });
+    h.bb.addBbProject("proj_api", { host_1: "/src/api" });
+    h.bb.addBbProject("proj_docs", { host_1: "/src/docs" });
+    return seedProject(h, (doc) => {
+      doc.scope = { protected: ["db/**"] };
+      doc.repo = [
+        { name: "web", project: "proj_web", checks: ["npm run web-test"], protected: ["web.lock"] },
+        { name: "api", project: "proj_api", base: "trunk", remote: "upstream" },
+        { name: "docs", project: "proj_docs" },
+      ];
+      doc.ticket[0].repo = "web";
+      doc.ticket[0].verify = ["npm run lint"];
+      doc.ticket[1].repo = "api";
+      doc.ticket[1].depends_on = [];
+      edit?.(doc);
+    });
+  };
+  const otherRepos = (...lines: string[]) => ["## Other repositories (read only)", "This project also works in these repos. You may read them for context, but never edit them: changes there belong to their own tickets.", ...lines].join("\n");
+
+  it("spawns the worker in its repo's bb project on the project's machine, from the integration branch", async () => {
+    await seedRepos();
+    await startWorker(h, "CSV-2");
+    expect(spawnArgs()).toMatchObject({ bbProjectId: "proj_api", hostId: "host_1", baseBranch: "loom/csv" });
+    expect(ticketOf(h, "CSV-2")).toMatchObject({ state: "working", worker_thread_id: "thr_w1" });
+  });
+
+  it("starts from the repo's remote base on the pr strategy, and falls back to the repo's base on a ref error", async () => {
+    await seedRepos((doc) => (doc.merge = { strategy: "pr" }));
+    h.bb.spawnError = (args) => (args.baseBranch === "upstream/trunk" ? new Error("fatal: invalid reference: upstream/trunk") : null);
+    await startWorker(h, "CSV-2");
+    expect(h.bb.callsTo("spawnThread").map(([args]) => [(args as SpawnArgs).bbProjectId, (args as SpawnArgs).baseBranch])).toEqual([
+      ["proj_api", "upstream/trunk"],
+      ["proj_api", "trunk"],
+    ]);
+    expect(ticketOf(h, "CSV-2")).toMatchObject({ state: "working", failures: 0 });
+  });
+
+  it("names the repo in the brief with its checks and protected paths, and lists the other repos read only with their checkout paths", async () => {
+    await seedRepos();
+    await startWorker(h);
+    const prompt = spawnArgs().prompt;
+    expect(prompt).toContain(
+      "## Repository\nThis ticket is in the repo \"web\", the bb project proj_web, and this worktree is a checkout of it. The scope globs and protected paths below are relative to this repo's root.\n\n## Scope",
+    );
+    expect(prompt).toContain('Protected paths you must never edit:\n- "db/**"\n- "web.lock"\n');
+    expect(prompt).toContain('## Checks the plugin runs when you submit\n- "npm run lint"\n- "npm run web-test"\nThey run');
+    expect(prompt).not.toContain('"npm test"');
+    expect(prompt).toContain(
+      otherRepos(
+        '- "api" (bb project proj_api): /src/api',
+        '- "docs" (bb project proj_docs): /src/docs',
+        'This project\'s merged work in them is on the branch "loom/csv". Read a file from it with `git -C <path> show loom/csv:<file>`.',
+        "",
+        "## Rules",
+      ),
+    );
+    expect(h.bb.callsTo("projectCheckout")).toEqual([
+      ["proj_api", "host_1"],
+      ["proj_docs", "host_1"],
+    ]);
+  });
+
+  it("uses the top-level checks and protected paths for a repo that sets none, and names no integration branch on the pr strategy", async () => {
+    await seedRepos((doc) => (doc.merge = { strategy: "pr" }));
+    await startWorker(h, "CSV-2");
+    const prompt = spawnArgs().prompt;
+    expect(prompt).toContain('This ticket is in the repo "api", the bb project proj_api,');
+    expect(prompt).toContain('Protected paths you must never edit:\n- "db/**"\nA change');
+    expect(prompt).toContain('## Checks the plugin runs when you submit\n- "npm test"\nThey run');
+    expect(prompt).toContain(otherRepos('- "web" (bb project proj_web): /src/web', '- "docs" (bb project proj_docs): /src/docs', "", "## Rules"));
+    expect(prompt).not.toContain("merged work");
+  });
+
+  it("still starts the worker when another repo's checkout cannot be found, and lists that repo without a path", async () => {
+    await seedRepos();
+    h.bb.checkouts.set("proj_docs", {});
+    await startWorker(h);
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "working", worker_thread_id: "thr_w1", failures: 0 });
+    expect(spawnArgs().prompt).toContain('- "api" (bb project proj_api): /src/api\n- "docs" (bb project proj_docs): no checkout was found on this machine\n');
+    expect(h.bb.callsTo("log")).toContainEqual(["warn", expect.stringContaining(`CSV-1's brief lists the repo "docs" without a checkout path: Repo "docs" (bb project proj_docs) has no checkout on the machine host_1`)]);
+  });
+
+  it("still starts the worker when bb cannot look up the checkouts", async () => {
+    await seedRepos();
+    vi.spyOn(h.bb, "projectCheckout").mockRejectedValue(new Error("bb is restarting"));
+    await startWorker(h);
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "working", worker_thread_id: "thr_w1" });
+    expect(spawnArgs().prompt).toContain('- "api" (bb project proj_api): no checkout was found on this machine\n- "docs" (bb project proj_docs): no checkout was found on this machine\n');
+  });
+
+  it("counts a failed start when the ticket names a repo the spec does not list", async () => {
+    await seedRepos();
+    h.store.updateTicket(ticketOf(h, "CSV-1").id, { repo: "gone" });
+    await startWorker(h);
+    expect(h.bb.callsTo("spawnThread")).toEqual([]);
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", failures: 1, worker_thread_id: null });
+    expect(h.store.posts(ticketOf(h, "CSV-1").id).at(-1)!.body).toContain('This spec has no repo "gone"');
+  });
+
+  it("starts two tickets with overlapping scopes in different repos side by side", async () => {
+    await seedRepos((doc) => (doc.ticket[1].scope = ["src/model/**"]));
+    await startWorker(h, "CSV-1");
+    await startWorker(h, "CSV-2");
+    expect([ticketOf(h, "CSV-1").state, ticketOf(h, "CSV-2").state]).toEqual(["working", "working"]);
+    expect(h.bb.callsTo("spawnThread").map(([args]) => (args as SpawnArgs).bbProjectId)).toEqual(["proj_web", "proj_api"]);
+  });
+
+  it("starts only one of two tickets with overlapping scopes in the same repo", async () => {
+    await seedRepos((doc) => {
+      doc.ticket[1].repo = "web";
+      doc.ticket[1].scope = ["src/model/**"];
+    });
+    await startWorker(h, "CSV-1");
+    await spawnWorker(h.ctx, project(), specOf(h.store, project()), ticketOf(h, "CSV-2"));
+    expect([ticketOf(h, "CSV-1").state, ticketOf(h, "CSV-2").state]).toEqual(["working", "queued"]);
+    expect(h.bb.callsTo("spawnThread")).toHaveLength(1);
   });
 });
 
