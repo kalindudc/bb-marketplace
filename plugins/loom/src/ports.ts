@@ -49,12 +49,22 @@ export interface BbPort {
   retryTurn(threadId: string, turnRequestId: string, sendAt: number): Promise<void>;
   /** "personal" is bb's "Don't work in a project"; null when bb does not know the project. */
   projectKind(bbProjectId: string): Promise<"standard" | "personal" | null>;
+  /** Every bb project, personal ones included, with its checkouts on every machine. */
+  listProjects(): Promise<BbProjectInfo[]>;
   /** Starts a thread from the page's composer request, `kickoff` appended as agent-only text; returns its id. */
   spawnPlanner(args: { request: NewThreadRequest; title: string; kickoff: string }): Promise<string>;
   /** The ids of the agent providers bb has, such as claude-code, codex and pi. */
   providerIds(): Promise<string[]>;
   /** The ids among `threadIds` with a pending interaction (a question or an approval); unknown threads are left out. */
   waitingOnUser(threadIds: readonly string[]): Promise<string[]>;
+}
+
+export interface BbProjectInfo {
+  id: string;
+  name: string;
+  kind: "standard" | "personal";
+  gitRemoteUrl: string | null;
+  sources: Array<{ hostId: string; path: string; isDefault: boolean }>;
 }
 
 export interface SpawnArgs {

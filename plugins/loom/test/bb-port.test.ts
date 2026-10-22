@@ -99,6 +99,46 @@ describe("waitingOnUser", () => {
   });
 });
 
+describe("listProjects", () => {
+  const source = (projectId: string, hostId: string, path: string, isDefault: boolean) => ({ id: `src_${hostId}`, projectId, hostId, path, isDefault, type: "local_path" as const, createdAt: 0, updatedAt: 0 });
+
+  it("lists every bb project, personal ones included, with its id, name, kind, remote and checkouts", async () => {
+    const { port, harness } = portWith({
+      projects: {
+        list: async () => [
+          { id: "proj_web", name: "web", kind: "standard", gitRemoteUrl: "git@github.com:acme/web.git", createdAt: 0, updatedAt: 0, sources: [source("proj_web", "host_1", "/src/web", true), source("proj_web", "host_2", "/w", false)] },
+          { id: "proj_personal", name: "Personal", kind: "personal", gitRemoteUrl: null, createdAt: 0, updatedAt: 0, sources: [] },
+        ],
+      },
+    });
+    expect(await port.listProjects()).toEqual([
+      {
+        id: "proj_web",
+        name: "web",
+        kind: "standard",
+        gitRemoteUrl: "git@github.com:acme/web.git",
+        sources: [
+          { hostId: "host_1", path: "/src/web", isDefault: true },
+          { hostId: "host_2", path: "/w", isDefault: false },
+        ],
+      },
+      { id: "proj_personal", name: "Personal", kind: "personal", gitRemoteUrl: null, sources: [] },
+    ]);
+    expect(harness.sdk.callsTo("projects.list")).toEqual([[{ includePersonal: true }]]);
+  });
+
+  it("passes an error on", async () => {
+    const { port } = portWith({
+      projects: {
+        list: async () => {
+          throw new Error("HTTP 503 bb is restarting");
+        },
+      },
+    });
+    await expect(port.listProjects()).rejects.toThrow(/bb is restarting/);
+  });
+});
+
 describe("projectKind", () => {
   it("returns the kind bb gives the project", async () => {
     const { port } = portWith({ projects: { get: async ({ projectId }) => ({ id: projectId, kind: projectId === "proj_personal" ? "personal" : "standard" }) } });

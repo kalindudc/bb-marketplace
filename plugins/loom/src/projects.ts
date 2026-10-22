@@ -3,8 +3,9 @@
 import type { NewThreadRequest } from "@get-bb/plugin-sdk";
 import type { PlanningRow, PostRow, ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { StoreError } from "./db/store";
-import { SectionNameConflictError, type BbPort } from "./ports";
+import { SectionNameConflictError, type BbPort, type BbProjectInfo } from "./ports";
 import { notesMessage, planningKickoff, planningTitle } from "./prompts";
+import { repoSettings } from "./repos";
 import { numberErrors, parseSpec, specHash, type Spec } from "./spec";
 import type { SpecNote } from "./spec-paths";
 import { PAUSE_NOW_REASON, TICKET_STATES, type AuthorKind, type MergeChoice, type ProjectState, type Role, type TicketState } from "./states";
@@ -106,6 +107,7 @@ export interface PlanningSession {
 }
 
 const MAX_POST_LENGTH = 20_000;
+const MAX_LISTED_PROJECTS = 20;
 
 /** The text of a ticket's first post: its body and the numbered acceptance criteria. */
 export function briefBody(ticket: { body: string; acceptance: readonly string[] }): string {
@@ -132,7 +134,7 @@ export class Projects {
   async propose(args: { toml: string; threadId: string; bbProjectId: string; hostId: string | null }): Promise<ProposeResult> {
     const parsed = parseSpec(args.toml);
     if (!parsed.ok || parsed.spec === null) throw rejected(parsed.errors);
-    const errors = [...this.proposalErrors(args.threadId, parsed.spec), ...(await this.providerErrors(parsed.spec))];
+    const errors = [...this.proposalErrors(args.threadId, parsed.spec), ...(await this.providerErrors(parsed.spec)), ...(await this.repoErrors(parsed.spec, args.hostId))];
     if (errors.length > 0) throw rejected(errors);
     const existing = this.store.projectBySlug(parsed.spec.project.slug);
     return existing === null ? await this.createDraft(args, parsed.spec, parsed.warnings) : await this.revise(existing, args, parsed.spec, parsed.warnings);
@@ -178,6 +180,38 @@ export class Projects {
       .map(({ role, provider }) => `agents.${role}.provider: bb has no provider "${provider}". Use one of: ${known.join(", ")}.`);
   }
 
+  /** Every [[repo]] must be a standard bb project with a checkout on the proposer's machine, where the project's workers run. Unlike providers, a list bb cannot read refuses the spec: the project could not start without its checkouts. */
+  private async repoErrors(spec: Spec, hostId: string | null): Promise<string[]> {
+    const repos = spec.repo ?? [];
+    if (repos.length === 0) return [];
+    if (hostId === null) {
+      return ["repo: bb did not say which machine this thread runs on, so Loom cannot check that every repo has a checkout there. Call loom_propose again in a moment."];
+    }
+    let known: BbProjectInfo[];
+    try {
+      known = await this.bb.listProjects();
+    } catch (error) {
+      return [
+        `repo: Loom could not read bb's projects to check the [[repo]] tables (${error instanceof Error ? error.message : String(error)}), and the project could not start without a checkout of every repo. Call loom_propose again in a moment.`,
+      ];
+    }
+    const standard = known.filter((project) => project.kind === "standard");
+    const listed =
+      standard.length === 0
+        ? "bb lists no standard projects. Add the repository to bb as a project first."
+        : `Use the id of one of bb's projects: ${standard.slice(0, MAX_LISTED_PROJECTS).map((project) => `${project.name} (${project.id})`).join(", ")}${standard.length > MAX_LISTED_PROJECTS ? `, and ${standard.length - MAX_LISTED_PROJECTS} more` : ""}.`;
+    return repos.flatMap((repo, index) => {
+      const at = `repo[${index}].project`;
+      const project = known.find((entry) => entry.id === repo.project);
+      if (project === undefined) return [`${at}: bb has no project "${repo.project}". ${listed}`];
+      if (project.kind !== "standard") return [`${at}: "${repo.project}" is bb's personal project, which has no git checkout. ${listed}`];
+      if (project.sources.some((source) => source.hostId === hostId)) return [];
+      return [
+        `${at}: bb project ${project.name} (${project.id}) has no checkout on this machine (${hostId}), where the project's workers run. Clone it here with \`bb project source add ${project.id} --clone --machine ${hostId}\`, then call loom_propose again.`,
+      ];
+    });
+  }
+
   private lockedFieldErrors(project: ProjectRow, spec: Spec): string[] {
     const approved = this.specOf(project.id, project.approved_version!);
     const errors: string[] = [];
@@ -190,6 +224,7 @@ export class Projects {
     if (approved.merge.branch !== spec.merge.branch) {
       errors.push(`merge.branch: cannot change from "${approved.merge.branch ?? "(none)"}" to "${spec.merge.branch ?? "(none)"}" after approval, because the integration branch and its worktree may already exist. Keep the branch, or archive this project and propose a new one.`);
     }
+    errors.push(...lockedRepoErrors(approved, spec));
     return errors;
   }
 
@@ -312,6 +347,7 @@ export class Projects {
           scope_json: JSON.stringify(ticket.scope),
           deps_json: JSON.stringify(ticket.depends_on.map((ref) => keyOf.get(ref)!)),
           priority: ticket.priority,
+          repo: ticket.repo ?? null,
         },
         actor,
       );
@@ -671,6 +707,44 @@ export class Projects {
       this.bb.log("warn", `Could not ${what}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
+}
+
+/** A revision after approval may add repos, but every approved repo keeps its name, bb project, base and remote: its tickets, branches and worktrees already use them. */
+function lockedRepoErrors(approved: Spec, spec: Spec): string[] {
+  const before = approved.repo ?? [];
+  const after = spec.repo ?? [];
+  if (before.length === 0) {
+    if (after.length === 0) return [];
+    return [
+      "repo: cannot add [[repo]] tables after approval to a project approved without them, because its tickets, branches and worktrees already use the project's own repository. Remove the [[repo]] tables, or archive this project and propose a new one with them.",
+    ];
+  }
+  const errors: string[] = [];
+  for (const repo of before) {
+    const index = after.findIndex((entry) => entry.name === repo.name);
+    if (index < 0) {
+      const renamed = after.findIndex((entry) => entry.project === repo.project && !before.some((other) => other.name === entry.name));
+      errors.push(
+        renamed < 0
+          ? `repo: cannot remove repo "${repo.name}" after approval, because its tickets, branches and worktrees already use it. Keep its [[repo]] table; to stop work in it, cancel its tickets with the planner's board tools.`
+          : `repo[${renamed}].name: cannot change from "${repo.name}" to "${after[renamed]!.name}" after approval, because its tickets, branches and worktrees already use the name. Keep the name "${repo.name}".`,
+      );
+      continue;
+    }
+    const was = repoSettings(approved, repo.name);
+    const next = repoSettings(spec, repo.name);
+    const why = "after approval, because its tickets, branches and worktrees already use it";
+    if (was.bbProjectId !== next.bbProjectId) {
+      errors.push(`repo[${index}].project: repo "${repo.name}" cannot change from "${was.bbProjectId}" to "${next.bbProjectId}" ${why}. Keep the project; for work in another repository, add a new [[repo]] table.`);
+    }
+    if (was.base !== next.base) {
+      errors.push(`repo[${index}].base: repo "${repo.name}" cannot change from "${was.base}" to "${next.base}" ${why}. Set repo[${index}].base = "${was.base}" to keep it, or archive this project and propose a new one.`);
+    }
+    if (was.remote !== next.remote) {
+      errors.push(`repo[${index}].remote: repo "${repo.name}" cannot change from "${was.remote}" to "${next.remote}" ${why}. Set repo[${index}].remote = "${was.remote}" to keep it, or archive this project and propose a new one.`);
+    }
+  }
+  return errors;
 }
 
 function summaryOf(ticket: TicketRow): TicketSummary {

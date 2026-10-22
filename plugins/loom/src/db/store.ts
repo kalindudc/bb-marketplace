@@ -64,13 +64,15 @@ export interface TicketRow {
   pr_url: string | null;
   pr_checked_at: number | null;
   blocked_reason: string | null;
+  /** The ticket's [[repo]] name; null for the Loom project's own repository, as in every row from before repos existed. */
+  repo: string | null;
   created_by: string;
   created_at: number;
   updated_at: number;
   state_at: number;
 }
 
-export type NewTicket = Pick<TicketRow, "project_id" | "seq" | "key" | "ref" | "title" | "body" | "acceptance_json" | "verify_json" | "scope_json" | "deps_json" | "priority">;
+export type NewTicket = Pick<TicketRow, "project_id" | "seq" | "key" | "ref" | "title" | "body" | "acceptance_json" | "verify_json" | "scope_json" | "deps_json" | "priority"> & Partial<Pick<TicketRow, "repo">>;
 
 export interface PostRow {
   id: number;
@@ -302,10 +304,10 @@ export class Store {
       const now = this.now();
       const result = this.db
         .prepare(
-          `INSERT INTO tickets (project_id, seq, key, ref, title, body, acceptance_json, verify_json, scope_json, deps_json, priority, state, created_by, created_at, updated_at, state_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
+          `INSERT INTO tickets (project_id, seq, key, ref, title, body, acceptance_json, verify_json, scope_json, deps_json, priority, repo, state, created_by, created_at, updated_at, state_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
         )
-        .run(row.project_id, row.seq, row.key, row.ref, row.title, row.body, row.acceptance_json, row.verify_json, row.scope_json, row.deps_json, row.priority, actor, now, now, now);
+        .run(row.project_id, row.seq, row.key, row.ref, row.title, row.body, row.acceptance_json, row.verify_json, row.scope_json, row.deps_json, row.priority, row.repo ?? null, actor, now, now, now);
       const ticket = this.requireTicket(Number(result.lastInsertRowid));
       this.event(ticket.project_id, ticket.id, "ticket.created", actor, { key: ticket.key, ref: ticket.ref });
       return ticket;

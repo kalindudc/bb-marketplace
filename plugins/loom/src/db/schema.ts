@@ -130,4 +130,5 @@ export const MIGRATIONS: string[] = [
     timed_out INTEGER NOT NULL DEFAULT 0, output TEXT NOT NULL DEFAULT '')`,
   `CREATE INDEX runs_ticket ON runs (ticket_id, id)`,
   `ALTER TABLE threads ADD COLUMN attempt INTEGER`,
+  `ALTER TABLE tickets ADD COLUMN repo TEXT`,
 ];

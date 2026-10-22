@@ -1,5 +1,6 @@
-import type Database from "better-sqlite3";
+import Database from "better-sqlite3";
 import { beforeEach, describe, expect, it } from "vitest";
+import { MIGRATIONS } from "../src/db/schema";
 import { Store, type NewTicket } from "../src/db/store";
 import { AUTHOR_KINDS, POST_KINDS, PROJECT_STATES, REVIEW_VERDICTS, ROLES, THREAD_STATES, TICKET_STATES, canMoveProject, canMoveTicket } from "../src/states";
 import { Clock, makeDb } from "./helpers";
@@ -204,6 +205,26 @@ describe("tickets", () => {
     expect(store.tickets(project.id).map((ticket) => ticket.key)).toEqual(["CSV-1", "CSV-2"]);
     expect(store.tickets(project.id, ["queued"]).map((ticket) => ticket.key)).toEqual(["CSV-2"]);
     expect(store.tickets(project.id, ["queued", "cancelled"])).toHaveLength(2);
+  });
+
+  it("stores the ticket's repo, and null when the ticket names none", () => {
+    const project = store.createProject(newProject(), "human");
+    const web = store.createTicket(newTicket(project.id, 1, { repo: "web" }), "human");
+    const own = store.createTicket(newTicket(project.id, 2), "human");
+    const explicit = store.createTicket(newTicket(project.id, 3, { repo: null }), "human");
+    expect(store.ticket(web.id)?.repo).toBe("web");
+    expect(own.repo).toBeNull();
+    expect(explicit.repo).toBeNull();
+  });
+
+  it("reads a ticket saved before the repo column existed as null, the project's own repo", () => {
+    const old = new Database(":memory:");
+    const added = MIGRATIONS.indexOf("ALTER TABLE tickets ADD COLUMN repo TEXT");
+    expect(added).toBeGreaterThan(0);
+    for (const sql of MIGRATIONS.slice(0, added)) old.exec(sql);
+    old.prepare("INSERT INTO tickets (project_id, seq, key, ref, title, body, state, created_by, created_at, updated_at, state_at) VALUES (1, 1, 'CSV-1', 'one', 't', 'b', 'queued', 'x', 0, 0, 0)").run();
+    for (const sql of MIGRATIONS.slice(added)) old.exec(sql);
+    expect(new Store(old, clock.now).ticketByKey("CSV-1")).toMatchObject({ key: "CSV-1", repo: null });
   });
 
   it("updateTicket patches columns without an event", () => {

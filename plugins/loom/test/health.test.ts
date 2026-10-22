@@ -32,6 +32,7 @@ const ticket = (n: number, state: TicketState, over: Partial<TicketRow> = {}): T
   pr_url: null,
   pr_checked_at: null,
   blocked_reason: null,
+  repo: null,
   created_by: "human",
   created_at: NOW,
   updated_at: NOW,
