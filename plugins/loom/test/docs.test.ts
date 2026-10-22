@@ -161,6 +161,16 @@ describe("the plugin's own documents", () => {
     expect(read("PLUGIN_OVERVIEW.md")).toContain("[[repo]]");
   });
 
+  it("README and the loom skill describe the Changes tab's per-repo sections and the multi-repo done hook", () => {
+    for (const path of ["README.md", "skills/loom/SKILL.md"]) {
+      const text = read(path).replace(/\s+/g, " ");
+      for (const phrase of ["one section per repo", "that repo's remote base", "lands that repo alone", "LOOM_PROJECT_URLS", "one per line"]) expect(text, `${path}: ${phrase}`).toContain(phrase);
+    }
+    const readme = read("README.md");
+    const hook = readme.slice(readme.indexOf("## When a project finishes"), readme.indexOf("## Safety"));
+    expect(hook).toContain("LOOM_PROJECT_URLS");
+  });
+
   it("the README's safety rules name the default permission mode", () => {
     expect(read("README.md")).toMatch(/## Safety[\s\S]*full permission mode[\s\S]*## How it works/);
   });

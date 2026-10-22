@@ -19,7 +19,7 @@ span several, with each ticket in one of them.
 5. Check: the plugin commits the worktree and runs the ticket's and the project's check commands. A failure goes back to the worker.
 6. Review: reviewer threads read the diff and call `loom_approve` or `loom_request_changes`. Requested changes go back to the worker as numbered findings.
 7. Merge: the plugin merges exactly the commit that was reviewed, one ticket at a time, into the integration branch and runs the `after_merge` checks on the result. On the pull request strategy it opens one pull request per ticket and follows it.
-8. Land: on the integration strategy the human reads what lands on the project's Changes tab, then runs `bb loom land` to push the branch and open one pull request upstream, or `bb loom land --direct` to merge the remote's base branch in when it moved, run the `after_merge` checks on the result, and push straight to the base branch. A multi-repo project lands each repo, or one with `--repo`.
+8. Land: on the integration strategy the human reads what lands on the project's Changes tab, then runs `bb loom land` to push the branch and open one pull request upstream, or `bb loom land --direct` to merge the remote's base branch in when it moved, run the `after_merge` checks on the result, and push straight to the base branch. A multi-repo project lands each repo, or one with `--repo` or from that repo's section of the Changes tab.
 
 A ticket that gets stuck is blocked. The planner hears about blocked tickets in a
 triage round and answers with its board tools (`loom_board`, `loom_ticket`,
@@ -79,6 +79,16 @@ per repo, linked with `depends_on`.
   before it stay landed and the error says what to run next. The project is done
   when every ticket is done or cancelled and every repo with merged work has
   landed.
+- Changes tab: one section per repo, in the spec's order. Each section has the
+  repo's integration branch compared with that repo's remote base branch, what
+  each of its merges added, and its tickets not merged yet; on the pull request
+  strategy, its tickets compared with that repo's remote base. The panel on a
+  repo's branch lands that repo alone. A repo that cannot be read, such as one
+  with no checkout on the project's machine, says why in its own section.
+- Done hook: the hook also gets `LOOM_PROJECT_URLS`, every repo's pull request
+  one per line in the spec's order, and `LOOM_PROJECT_URL` is the first of them,
+  the first repo's pull request when it has one. The record lists each repo and its outcome: the pull request it landed as or
+  the base it was pushed to, merged work not landed yet, or no merged work.
 - `bb loom show` lists each repo with its bb project, base, integration branch,
   pull request and land, and `bb loom tickets` adds a repo column.
 - After approval, a new spec version may add repos but cannot remove or rename
@@ -201,12 +211,13 @@ each repo's base" when the bases differ). A tab that needs you
 carries a badge until the thing is resolved: the Board tab counts the blocked
 tickets, the Spec tab shows one while a draft waits for review or a newer
 spec version waits for approval, and the Changes tab counts the files of a
-project ready to land that you have not marked viewed. Open a project for these views:
+project ready to land that you have not marked viewed (on a multi-repo project,
+the files of every repo's branch). Open a project for these views:
 
 - Board: one lane per ticket state, with each card's age in its state, its attempt and review round, a link to the thread working on it, and a Changes link that opens the ticket's changes. Queued tickets are split into Ready and Waiting, and a waiting ticket names what it waits on. Before approval, the draft's tickets show as dashed cards in Ready and Waiting, with the keys approval will give them.
 - Agents: every planner, worker and reviewer thread. The workers and reviewers working now come first, with their ticket, configured model, running time, timeout, tokens and rate-limit retries, and a Thread button. The planner has its own section, on call for triage rounds, with its tokens and Thread button. Below them are the tokens by role, how threads ended (idle twice, gave a verdict, timed out and so on) and the ended threads. A thread whose provider reports no token usage shows "not reported", and the tokens by role say how many such threads there are.
 - Ticket: a header with the state, a one-line summary, a stage tracker from Queued to Done, and chips for the attempts, review rounds, total time, dependencies, the branch (with a copy button) and the pull request. A blocked ticket shows its reason, a link to the post that blocked it, an answer box and Requeue; Block and Cancel ticket sit in the header's ⋯ menu, and each needs a reason. The Activity tab shows one card per worker attempt, newest first (Oldest first switches the order), the newest open and older ones folded to one line. Inside an attempt, posts are cards with their replies under them, each check lists its commands with their result, time and exit code and the failed command's output, each review shows its verdict, findings and the reviewer's notes, and each merge its git steps. The Brief tab shows the brief as Markdown. A side column, or a Details tab on a narrow page, lists the acceptance criteria, the files in scope, the verify command and every worker and reviewer thread with how it ended. The reply box says who gets your reply now.
-- Changes: what the project changed, from the start of the work until after it lands. On the integration strategy the list on the left starts with the integration branch compared with the remote's base branch (`origin/main`), which is what Land pushes, then each merged ticket with what its merge commit added to the branch, then the tickets not merged yet: the commit in review, the one that passed the checks and that the reviewers read, compared with the integration branch, and a working ticket's worktree as it is now, uncommitted and untracked files included, read again every 10 seconds while it shows. On the pull request strategy each ticket is compared with the remote's base branch, and a merged one with the base as it was before its merge. Each file shows its status, its added and removed lines and, on the branch, the tickets whose merges changed it; a click opens its patch in bb's own diff viewer, unified or split. Viewed marks stay in your browser and clear by themselves when a file changes again. On the branch, a panel carries Land and "Land to <base>" with what each pushes. A done or archived project shows what it merged, from before its first merge to its last, from the merge commits Loom recorded, so it still works after the branch landed. Work whose commits are no longer in the repository, such as an abandoned ticket whose worktree was cleaned up, is left out and counted. The tab shows once a project has started, and not while the page is rewound.
+- Changes: what the project changed, from the start of the work until after it lands. On the integration strategy the list on the left starts with the integration branch compared with the remote's base branch (`origin/main`), which is what Land pushes, then each merged ticket with what its merge commit added to the branch, then the tickets not merged yet: the commit in review, the one that passed the checks and that the reviewers read, compared with the integration branch, and a working ticket's worktree as it is now, uncommitted and untracked files included, read again every 10 seconds while it shows. On the pull request strategy each ticket is compared with the remote's base branch, and a merged one with the base as it was before its merge. Each file shows its status, its added and removed lines and, on the branch, the tickets whose merges changed it; a click opens its patch in bb's own diff viewer, unified or split. Viewed marks stay in your browser and clear by themselves when a file changes again. On the branch, a panel carries Land and "Land to <base>" with what each pushes. A done or archived project shows what it merged, from before its first merge to its last, from the merge commits Loom recorded, so it still works after the branch landed. Work whose commits are no longer in the repository, such as an abandoned ticket whose worktree was cleaned up, is left out and counted. On a multi-repo project the list has one section per repo, in the spec's order and headed by its repo chip, and each section has that repo's integration branch compared with that repo's remote base branch (`<remote>/<base>`), its merges and its tickets not merged yet, or on the pull request strategy its tickets compared with that repo's remote base. The panel on a repo's branch lands that repo alone, with "Land <repo>" and "Land <repo> to <base>", and the other repos do not land. A repo that cannot be read, such as one with no checkout on the project's machine, says why in its section while the other repos still show. Review changes opens the first repo with work to land, and a Viewed mark holds the repo as well as the file. The tab shows once a project has started, and not while the page is rewound.
 - Feed: the project's events, newest first.
 - Metrics: the numbers below, with charts, and a 7, 14 or 30 day window for throughput and cumulative flow.
 - Spec: the spec as a dashboard, with a summary strip and four tabs. Tickets shows the dependency waves from top to bottom, each a wrapping grid of cards that say what they wait for; selecting a ticket lights up everything it waits for and everything it unblocks, says so in a sentence, and dims the rest until you click it again or press Show all. Files starts with Shared files, one row per path that two or more tickets may change, naming the tickets and whether they run in order or one at a time; then every path grouped by folder, with an "All files" or "Shared only" filter and the selected ticket's paths highlighted; then the protected paths. Checks & review and Project & limits show the rest of the spec. Under the tabs a wide card shows the selected ticket: its brief for the worker on the left, cut short with "Show the whole brief" when it is long, and its facts on the right (priority and wave, what it waits for and unblocks, the acceptance criteria, the paths it may change and its verify commands). The dashboard also has a version switcher that marks what each version changed, "Read the raw spec", "+ note" on every ticket card and every part (faint until you hover it, always shown on a touch screen) with a tray beside the tabs, which stays in view as you scroll, that sends the notes to the planner, and Approve for a pending version.
@@ -287,8 +298,12 @@ whole project.
 board with no agent: the goal, where the code landed, and for each ticket its
 acceptance criteria, its submit summaries, its reviews, its merge, its blocks,
 and the planner's and the human's replies. Worker notes and check output are
-left out. It works for a project in any state, and `--json` prints
-`{ slug, markdown }`.
+left out. On a multi-repo project the record lists each repo with its bb
+project, base and integration branch, gives one outcome line per repo (the pull
+request it landed as or the base it was pushed to, the merged work it has not
+landed yet, or no merged work; on the pull request strategy, its tickets' merged
+pull requests and the ones still open), and names each ticket's repo. It works
+for a project in any state, and `--json` prints `{ slug, markdown }`.
 
 Loom's settings have a done hook, so the record can go to wherever you keep
 notes. Set them in bb's settings for Loom, or from a terminal:
@@ -301,10 +316,16 @@ bb plugin config loom set doneRecord summary   # or full
 - `doneHook` is a shell command that Loom runs once when a project moves to
   done. It runs in the project's checkout on the project's machine, with a
   2-minute limit. Empty, the default, turns the hook off.
-- The command reads the record on standard input and gets five variables:
+- The command reads the record on standard input and gets six variables:
   `LOOM_PROJECT_SLUG`, `LOOM_PROJECT_NAME`, `LOOM_PROJECT_KEY`,
-  `LOOM_PROJECT_URL` (the landed pull request, or empty) and `LOOM_RECORD`
-  (`summary` or `full`).
+  `LOOM_PROJECT_URL` (the landed pull request, or empty), `LOOM_PROJECT_URLS`
+  and `LOOM_RECORD` (`summary` or `full`). On a single-repo project
+  `LOOM_PROJECT_URLS` holds the same pull request as `LOOM_PROJECT_URL`. On a
+  multi-repo project it holds every repo's landed pull request, one per line in
+  the spec's order, and `LOOM_PROJECT_URL` is its first line: the first repo's
+  pull request, or the next repo's that has one when the first has none. A repo
+  that never opened a pull request, such as one landed only with `--direct`,
+  has no line.
 - `doneRecord` chooses what it reads. With `summary`, the default, Loom starts
   one agent on the project's reviewer model that reads the full record and
   writes a short summary (goal, outcome, what was built, decisions, problems
