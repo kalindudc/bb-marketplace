@@ -187,8 +187,8 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek }: { slug: string; tab: Tab
     setChosenChange(id);
     onTab("changes");
   };
-  const control = (action: ControlAction, version?: number) =>
-    run(async () => remote.set(await rpc.call("control", { slug, action, ...(version === undefined ? {} : { version }), confirm: true })));
+  const control = (action: ControlAction, version?: number, repo?: string) =>
+    run(async () => remote.set(await rpc.call("control", { slug, action, ...(version === undefined ? {} : { version }), ...(repo === undefined ? {} : { repo }), confirm: true })));
 
   return (
     <div className="flex min-h-full flex-col">
@@ -212,6 +212,7 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek }: { slug: string; tab: Tab
       ) : (
         view.next !== null && (
           <div className="px-4 pt-3">
+            {/* On a multi-repo project "branch" opens the first repo with work to land, as pickSource reads it. */}
             <NextStepBar next={view.next} busy={busy} repos={overview.repos} onAct={(action, version) => void control(action, version)} onReviewChanges={changesTab ? () => openChanges("branch") : undefined} />
           </div>
         )
@@ -273,7 +274,7 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek }: { slug: string; tab: Tab
         {shownTab === "spec" && <SpecTab view={view} busy={busy} rewound={rewound} onApprove={(version) => void control("approve", version)} />}
         {shownTab === "planner" && overview.plannerThreadId !== null && <PlannerChat threadId={overview.plannerThreadId} />}
         {shownTab === "changes" && (
-          <ChangesTab changes={changes.data} error={changes.error} view={view} busy={busy} chosen={chosenChange} onChoose={setChosenChange} onControl={(action) => void control(action)} onReload={changes.reload} />
+          <ChangesTab changes={changes.data} error={changes.error} view={view} busy={busy} chosen={chosenChange} onChoose={setChosenChange} onControl={(action, repo) => void control(action, undefined, repo)} onReload={changes.reload} />
         )}
       </div>
     </div>

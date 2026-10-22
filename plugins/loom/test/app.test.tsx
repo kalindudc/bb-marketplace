@@ -6,7 +6,7 @@ import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-libra
 import { loadPluginApp, mountPluginContentScripts, renderSlot, type PluginRpcTestHandlers, type PluginSdkTestFakes, type RenderSlotOptions } from "@get-bb/plugin-sdk/testing/app";
 import { useState } from "react";
 import { useComposers, type NewThreadRequest, type PluginNavPanelProps, type PluginSidebarThread, type PluginThreadHeaderActionProps } from "@get-bb/plugin-sdk/app";
-import type { Attempt, BbProjectChoice, ChangedFile, ChangeSource, ChangesView, ChecksItem, HomeProject, NextStep, PlanningSession, ProjectSummary, ProjectView, SentNote, SpecVersionView, ThreadInfo, rpcContract } from "../src/contract";
+import type { Attempt, BbProjectChoice, ChangedFile, ChangeSource, ChangesView, ChecksItem, HomeProject, NextStep, PlanningSession, ProjectSummary, ProjectView, RepoOverview, SentNote, SpecVersionView, ThreadInfo, rpcContract } from "../src/contract";
 import type { TicketRow } from "../src/db/store";
 import { repoOverviews } from "../src/projects";
 import { notesMessage } from "../src/prompts";
@@ -14,7 +14,7 @@ import { parseSpec } from "../src/spec";
 import { ConfirmButton, MoreMenu } from "../src/ui/common";
 import { repoLand } from "../src/ui/next-step-bar";
 import { questionsOf } from "../src/ui/questions";
-import { HOUR, NOW, agent, attempt, card, feedRow, health, homeProject, homeView, metrics, overview, projectView, repoOverview, specVersionView, ticketDetail, timeline, withRepos } from "./fixtures";
+import { HOUR, NOW, agent, attempt, card, changeRepo, feedRow, health, homeProject, homeView, metrics, overview, projectView, repoOverview, specVersionView, ticketDetail, timeline, withRepos } from "./fixtures";
 import { specToml } from "./helpers";
 
 type Handlers = PluginRpcTestHandlers<typeof rpcContract>;
@@ -1885,6 +1885,17 @@ describe("changes tab", () => {
     expect(slot.container.querySelector("[data-land-panel]")!.textContent).toContain("Land pushes loom/csv at ccccccc");
     expect(slot.container.querySelector("[data-land-panel]")!.textContent).not.toContain("This is what lands.");
     expect(slot.getByText("Viewed 0 of 2", { exact: false })).toBeTruthy();
+    expect(slot.container.querySelector("[data-change-repo], [data-repo-chip]")).toBeNull();
+    expect([...slot.container.querySelectorAll("[data-change-sources] h3")].map((heading) => heading.textContent)).toEqual(["On the integration branch", "Not merged yet"]);
+  });
+
+  it("keeps the Viewed marks a single-repo project saved before projects had repos", async () => {
+    localStorage.setItem("loom.viewed.csv", JSON.stringify(["src/b.ts\u0000blob-src/b.ts"]));
+    const slot = await mountChanges();
+    await openTab(slot);
+    expect(fileRow(slot, "src/b.ts").hasAttribute("data-viewed")).toBe(true);
+    expect(fileRow(slot, "src/a.ts").hasAttribute("data-viewed")).toBe(false);
+    expect(slot.getByText("Viewed 1 of 2", { exact: false })).toBeTruthy();
   });
 
   it("shows a file's diff with bb's viewer between the listing's commits, in split view when asked", async () => {
@@ -2003,6 +2014,241 @@ describe("changes tab", () => {
     const rewound = await mountChanges({}, projectView({ board, at: 12 }));
     expect(rewound.queryByRole("tab", { name: "Changes" })).toBeNull();
     expect(rewound.queryByRole("button", { name: "Show the changes of CSV-1" })).toBeNull();
+  });
+
+  describe("on a multi-repo project", () => {
+    // web landed before and has nothing new; api has merged work to land, onto its own base and remote.
+    const web = (over: Partial<RepoOverview> = {}) => repoOverview({ toLand: false, landedAt: NOW - HOUR, ...over });
+    const api = (over: Partial<RepoOverview> = {}) => repoOverview({ name: "api", bbProjectId: "proj_api", base: "trunk", ...over });
+    const multiChanges = (over: Partial<ChangesView> = {}): ChangesView =>
+      changesView({
+        repos: [changeRepo(), changeRepo({ name: "api", base: "trunk", remoteBase: "upstream/trunk" })],
+        sources: [
+          source({ id: "branch:web", repo: "web", files: [changed("src/a.ts", { tickets: ["CSV-1"] })] }),
+          source({ id: "branch:api", repo: "api", against: "upstream/trunk", files: [changed("src/a.ts", { tickets: ["CSV-2"] }), changed("src/api.ts", { status: "added", tickets: ["CSV-2"] })] }),
+          source({ id: "merge:CSV-1", kind: "merge", repo: "web", key: "CSV-1", title: "Order rows", state: "done", base: A, head: B, against: "loom/csv", at: NOW - 2 * HOUR, files: [changed("src/a.ts")] }),
+          source({ id: "merge:CSV-2", kind: "merge", repo: "api", key: "CSV-2", title: "Export endpoint", state: "done", base: B, head: C, against: "loom/csv", at: NOW - HOUR, files: [changed("src/a.ts"), changed("src/api.ts", { status: "added" })] }),
+          source({ id: "commit:CSV-3", kind: "commit", repo: "web", key: "CSV-3", title: "Docs", state: "queued", base: null, head: null, against: "loom/csv", files: [], note: "No changes yet." }),
+          source({ id: "live:CSV-4", kind: "live", repo: "api", key: "CSV-4", title: "Rate limits", state: "working", base: null, head: null, against: "loom/csv", attempt: 1, files: [changed("src/limits.ts", { status: "added", untracked: true, fingerprint: "live:added:3:1" })] }),
+        ],
+        ...over,
+      });
+    const multiBoard = [
+      card({ key: "CSV-1", repo: "web", state: "done", ready: false, hasChanges: true }),
+      card({ key: "CSV-2", title: "Export endpoint", repo: "api", state: "done", ready: false, hasChanges: true }),
+      card({ key: "CSV-3", title: "Docs", repo: "web" }),
+      card({ key: "CSV-4", title: "Rate limits", repo: "api", state: "working", ready: false, threadId: "thr_w4", hasChanges: true }),
+    ];
+    const running = (repos = [web(), api()]) => projectView({ overview: overview({ repos, ticketCounts: { done: 2, queued: 1, working: 1 } }), board: multiBoard });
+    // Every ticket done: the board and the Changes view hold only the branches and the merges.
+    const landingChanges = () => multiChanges({ sources: multiChanges().sources.filter((entry) => entry.kind === "branch" || entry.kind === "merge") });
+    const landingView = (repos = [web(), api()]) =>
+      projectView({
+        overview: overview({ repos, ticketCounts: { done: 2 } }),
+        board: multiBoard.slice(0, 2),
+        next: { stage: 5, tone: "normal", title: "Next: land the project.", text: "Every ticket is finished.", action: { control: "land", label: "Land · 1 repo", confirm: "Click again to land" } },
+      });
+    const shown = (slot: Slot) => slot.container.querySelector("[data-change-source]")?.getAttribute("data-change-source") ?? null;
+    const pick = (slot: Slot, id: string) => fireEvent.click(slot.container.querySelector<HTMLElement>(`[data-source="${id}"]`)!);
+    const sectionOf = (slot: Slot, name: string) => slot.container.querySelector<HTMLElement>(`[data-change-repo="${name}"]`)!;
+
+    it("shows one section per repo, headed by its chip, with its branch and merges and then its tickets not merged, and opens the first repo with work to land", async () => {
+      const slot = await mountChanges({ changes: () => multiChanges() }, running());
+      await openTab(slot);
+      const sections = [...slot.container.querySelectorAll<HTMLElement>("[data-change-repo]")].map((section) => [
+        section.getAttribute("data-change-repo"),
+        section.querySelector("h3 [data-repo-chip]")!.textContent,
+        [...section.querySelectorAll("h4")].map((heading) => heading.textContent),
+        [...section.querySelectorAll("[data-source]")].map((row) => row.getAttribute("data-source")),
+      ]);
+      expect(sections).toEqual([
+        ["web", "web", ["On the integration branch", "Not merged yet"], ["branch:web", "merge:CSV-1", "commit:CSV-3"]],
+        ["api", "api", ["On the integration branch", "Not merged yet"], ["branch:api", "merge:CSV-2", "live:CSV-4"]],
+      ]);
+      expect(sectionOf(slot, "api").querySelector('[data-source="branch:api"]')!.textContent).toBe("loom/csvvs upstream/trunk · 2 files+6 −2");
+
+      expect(shown(slot)).toBe("branch:api");
+      const intro = slot.container.querySelector<HTMLElement>("[data-change-source]")!;
+      expect(intro.querySelector("h2")!.textContent).toBe("apiloom/csv compared with upstream/trunk");
+      expect(intro.querySelector("h2 [data-repo-chip]")!.textContent).toBe("api");
+      expect(intro.textContent).toContain("Everything merged so far: 1 ticket, 2 files");
+
+      pick(slot, "merge:CSV-1");
+      expect(shown(slot)).toBe("merge:CSV-1");
+      expect(slot.container.querySelector("[data-change-source] [data-repo-chip]")!.textContent).toBe("web");
+    });
+
+    it("says in its section why a repo cannot be read, and opens a repo that can", async () => {
+      const message = 'The repo "api" has no checkout on the machine host_1, so its changes cannot be read. Clone it there with bb.';
+      const unread = multiChanges({
+        repos: [changeRepo(), changeRepo({ name: "api", base: "trunk", remoteBase: "upstream/trunk", unavailable: message })],
+        sources: multiChanges().sources.map((entry) => (entry.repo === "api" ? { ...entry, base: null, head: null, files: null, note: message } : entry)),
+      });
+      const slot = await mountChanges({ changes: () => unread }, running());
+      await openTab(slot);
+      expect(sectionOf(slot, "api").querySelector("[data-repo-unavailable]")!.textContent).toBe(message);
+      expect(sectionOf(slot, "api").querySelector("[data-source]")).toBeNull();
+      expect([...sectionOf(slot, "web").querySelectorAll("[data-source]")].map((row) => row.getAttribute("data-source"))).toEqual(["branch:web", "merge:CSV-1", "commit:CSV-3"]);
+      expect(shown(slot)).toBe("branch:web");
+    });
+
+    it("keeps every repo's section when no source can be shown, and says why beside them", async () => {
+      const apiMessage = 'The repo "api" has no checkout on the machine host_1, so its changes cannot be read. Clone it there with bb.';
+      const webMessage = 'The repo "web" has no checkout on the machine host_1, so its changes cannot be read. Clone it there with bb.';
+      const empty = (slot: Slot) => waitFor(() => slot.container.querySelector<HTMLElement>("[data-changes-empty]")!.textContent);
+      // web's commits are gone and api has no checkout: nothing can be shown, and both repos still say what happened.
+      const goneAndUnread = multiChanges({
+        repos: [changeRepo(), changeRepo({ name: "api", base: "trunk", remoteBase: "upstream/trunk", unavailable: apiMessage })],
+        sources: multiChanges().sources.flatMap((entry): ChangeSource[] =>
+          entry.repo === "api" ? [{ ...entry, base: null, head: null, files: null, note: apiMessage }] : entry.kind === "commit" ? [] : [{ ...entry, files: null, note: "Its commits are no longer in the repository.", gone: true }],
+        ),
+      });
+      const slot = await mountChanges({ changes: () => goneAndUnread }, running());
+      fireEvent.click(slot.getByRole("tab", { name: "Changes" }));
+      expect(await empty(slot)).toBe("The changes of the repos that can be read are no longer in their repositories. A repo that cannot be read says why in its section.");
+      expect([...slot.container.querySelectorAll("[data-change-repo]")].map((section) => section.getAttribute("data-change-repo"))).toEqual(["web", "api"]);
+      expect(sectionOf(slot, "web").textContent).toBe("webIts changes are no longer in the repository.");
+      expect(sectionOf(slot, "api").querySelector("[data-repo-unavailable]")!.textContent).toBe(apiMessage);
+      expect(slot.container.querySelector("[data-source]")).toBeNull();
+      expect(slot.container.querySelector("[data-gone]")!.textContent).toBe("2 parts of this project are no longer in the repository, so they are left out.");
+      expect(shown(slot)).toBeNull();
+      slot.lifecycle.unmount();
+
+      const unread = multiChanges({
+        repos: [changeRepo({ unavailable: webMessage }), changeRepo({ name: "api", base: "trunk", remoteBase: "upstream/trunk", unavailable: apiMessage })],
+        sources: [],
+        unavailable: `None of the project's repos can be read. ${webMessage} ${apiMessage}`,
+      });
+      const none = await mountChanges({ changes: () => unread }, running());
+      fireEvent.click(none.getByRole("tab", { name: "Changes" }));
+      expect(await empty(none)).toBe("None of the project's repos can be read; each repo's section says why.");
+      expect(sectionOf(none, "web").querySelector("[data-repo-unavailable]")!.textContent).toBe(webMessage);
+      expect(sectionOf(none, "api").querySelector("[data-repo-unavailable]")!.textContent).toBe(apiMessage);
+      expect(none.container.querySelector("[data-changes-unavailable]")).toBeNull();
+      none.lifecycle.unmount();
+
+      // A single-repo project still shows only the one sentence.
+      const allGone = changesView({ sources: changesView().sources.map((entry) => ({ ...entry, files: null, gone: true })) });
+      const single = await mountChanges({ changes: () => allGone });
+      fireEvent.click(single.getByRole("tab", { name: "Changes" }));
+      expect(await single.findByText("This project's changes are no longer in the repository.")).toBeTruthy();
+      expect(single.container.querySelector("[data-changes], [data-change-sources], [data-change-repo]")).toBeNull();
+    });
+
+    it("reads a file's patch in the repo of the source it is in", async () => {
+      const slot = await mountChanges({ changes: () => multiChanges() }, running());
+      await openTab(slot);
+      fireEvent.click(slot.getByRole("button", { name: "Show src/a.ts" }));
+      await slot.findByTestId("bb-diff");
+      pick(slot, "branch:web");
+      fireEvent.click(slot.getByRole("button", { name: "Show src/a.ts" }));
+      await waitFor(() => expect(calls(slot, "changePatch")).toHaveLength(2));
+      pick(slot, "live:CSV-4");
+      fireEvent.click(await slot.findByRole("button", { name: "Show src/limits.ts" }));
+      await waitFor(() => expect(calls(slot, "changePatch")).toHaveLength(3));
+      expect(calls(slot, "changePatch").map((call) => call.input)).toEqual([
+        { slug: "csv", path: "src/a.ts", base: A, head: C, repo: "api" },
+        { slug: "csv", path: "src/a.ts", base: A, head: C, repo: "web" },
+        { slug: "csv", path: "src/limits.ts", key: "CSV-4", repo: "api" },
+      ]);
+    });
+
+    it("lands only the repo of the branch shown, onto that repo's base", async () => {
+      const slot = await mountChanges({ changes: () => landingChanges(), control: () => landingView() }, landingView());
+      fireEvent.click(slot.getByRole("tab", { name: "Changes" }));
+      await slot.findByText("This is what lands in api.", { exact: false });
+      const panel = () => slot.container.querySelector<HTMLElement>("[data-land-panel]")!;
+      expect(panel().textContent).toContain("Land api pushes loom/csv in api at ccccccc and opens one pull request into trunk, or updates the one already open. Land api to trunk merges upstream/trunk in");
+      expect(panel().textContent).toContain("The other repos do not land.");
+      fireEvent.click(within(panel()).getByRole("button", { name: "Land api" }));
+      fireEvent.click(within(panel()).getByRole("button", { name: "Click again to land api" }));
+      await waitFor(() => expect(within(panel()).getByRole<HTMLButtonElement>("button", { name: "Land api to trunk" }).disabled).toBe(false));
+      fireEvent.click(within(panel()).getByRole("button", { name: "Land api to trunk" }));
+      fireEvent.click(within(panel()).getByRole("button", { name: "Click again to land api to trunk" }));
+      await waitFor(() =>
+        expect(calls(slot, "control").map((call) => call.input)).toEqual([
+          { slug: "csv", action: "land", repo: "api", confirm: true },
+          { slug: "csv", action: "landDirect", repo: "api", confirm: true },
+        ]),
+      );
+
+      pick(slot, "branch:web");
+      expect(panel().textContent).toContain("Land web pushes loom/csv in web at ccccccc and opens one pull request into main");
+      expect(panel().textContent).not.toContain("This is what lands in api.");
+      expect(within(panel()).getAllByRole("button").map((button) => button.textContent)).toEqual(["Land web", "Land web to main"]);
+    });
+
+    it("disarms a Land armed for one repo when another repo's branch shows, so landing that repo takes two fresh clicks", async () => {
+      const slot = await mountChanges({ changes: () => landingChanges(), control: () => landingView() }, landingView());
+      fireEvent.click(slot.getByRole("tab", { name: "Changes" }));
+      await slot.findByText("This is what lands in api.", { exact: false });
+      const panel = () => slot.container.querySelector<HTMLElement>("[data-land-panel]")!;
+      const buttons = () => within(panel()).getAllByRole("button").map((button) => button.textContent);
+      fireEvent.click(within(panel()).getByRole("button", { name: "Land api to trunk" }));
+      expect(buttons()).toEqual(["Land api", "Click again to land api to trunk", "Cancel"]);
+      pick(slot, "branch:web");
+      expect(buttons()).toEqual(["Land web", "Land web to main"]);
+      fireEvent.click(within(panel()).getByRole("button", { name: "Land web to main" }));
+      expect(buttons()).toEqual(["Land web", "Click again to land web to main", "Cancel"]);
+
+      pick(slot, "branch:api");
+      expect(buttons()).toEqual(["Land api", "Land api to trunk"]);
+      fireEvent.click(within(panel()).getByRole("button", { name: "Land api" }));
+      expect(buttons()).toEqual(["Click again to land api", "Cancel", "Land api to trunk"]);
+      pick(slot, "branch:web");
+      expect(buttons()).toEqual(["Land web", "Land web to main"]);
+      expect(calls(slot, "control")).toEqual([]);
+
+      fireEvent.click(within(panel()).getByRole("button", { name: "Land web" }));
+      expect(calls(slot, "control")).toEqual([]);
+      fireEvent.click(within(panel()).getByRole("button", { name: "Click again to land web" }));
+      await waitFor(() => expect(calls(slot, "control").map((call) => call.input)).toEqual([{ slug: "csv", action: "land", repo: "web", confirm: true }]));
+    });
+
+    it("keeps a Viewed mark for each repo the same path changed in, and counts the files not viewed across every repo on the tab's badge", async () => {
+      const slot = await mountChanges({ changes: () => landingChanges() }, landingView());
+      const badge = () => slot.container.querySelector('[data-tab-badge="changes"]')?.textContent ?? null;
+      await waitFor(() => expect(badge()).toBe("3"));
+      fireEvent.click(slot.getByRole("tab", { name: "Changes" }));
+      await waitFor(() => expect(shown(slot)).toBe("branch:api"));
+      fireEvent.click(within(fileRow(slot, "src/a.ts")).getByRole("button", { name: "Viewed" }));
+      expect(badge()).toBe("2");
+      expect(JSON.parse(localStorage.getItem("loom.viewed.csv")!)).toEqual(["api\u0000src/a.ts\u0000blob-src/a.ts"]);
+
+      pick(slot, "branch:web");
+      expect(fileRow(slot, "src/a.ts").hasAttribute("data-viewed")).toBe(false);
+      expect(slot.getByText("Viewed 0 of 1", { exact: false })).toBeTruthy();
+      fireEvent.click(within(fileRow(slot, "src/a.ts")).getByRole("button", { name: "Viewed" }));
+      expect(badge()).toBe("1");
+      pick(slot, "merge:CSV-2");
+      expect(fileRow(slot, "src/a.ts").hasAttribute("data-viewed")).toBe(true);
+      expect(fileRow(slot, "src/api.ts").hasAttribute("data-viewed")).toBe(false);
+    });
+
+    it("opens the first repo with work to land from the bar's Review changes, else the first repo's branch, and a ticket from its board card", async () => {
+      const slot = await mountChanges({ changes: () => landingChanges() }, landingView());
+      fireEvent.click(slot.getByRole("button", { name: "Review changes" }));
+      await waitFor(() => expect(shown(slot)).toBe("branch:api"));
+      fireEvent.click(slot.getByRole("tab", { name: "Board" }));
+      fireEvent.click(slot.getByRole("button", { name: "Show the changes of CSV-1" }));
+      await waitFor(() => expect(shown(slot)).toBe("merge:CSV-1"));
+      slot.lifecycle.unmount();
+
+      const landed = await mountChanges({ changes: () => landingChanges() }, landingView([web(), api({ toLand: false, landedAt: NOW - HOUR })]));
+      fireEvent.click(landed.getByRole("button", { name: "Review changes" }));
+      await waitFor(() => expect(shown(landed)).toBe("branch:web"));
+      landed.lifecycle.unmount();
+
+      // Nothing has merged yet: the first repo's empty branch shows, with nothing to land.
+      const fresh = multiChanges({
+        sources: multiChanges().sources.flatMap((entry) => (entry.kind === "merge" ? [] : entry.kind === "branch" ? [{ ...entry, base: null, head: null, files: [], note: "Nothing merged yet." }] : [entry])),
+      });
+      const before = await mountChanges({ changes: () => fresh }, projectView({ overview: overview({ repos: [web({ landedAt: null }), api({ toLand: false })], ticketCounts: { queued: 1, working: 1 } }), board: multiBoard.slice(2) }));
+      await openTab(before);
+      expect(shown(before)).toBe("branch:web");
+      expect(before.getByText("Nothing merged yet.")).toBeTruthy();
+      expect(before.container.querySelector("[data-land-panel]")).toBeNull();
+    });
   });
 });
 

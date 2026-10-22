@@ -118,15 +118,17 @@ describe("nextStepOf", () => {
 
     const two = nextStepOf(finished([repo("web", true), repo("docs", false), repo("api", true)]))!;
     expect(two).toMatchObject({ stage: 5, tone: "normal", title: "Next: land the project." });
-    expect(two.text).toBe('Every ticket is finished, and the repos "web" and "api" have merged work that is not landed yet. Landing pushes each one\'s integration branch and opens its pull request, or updates the one already open.');
+    expect(two.text).toBe(
+      'Every ticket is finished, and the repos "web" and "api" have merged work that is not landed yet. Read what lands on the Changes tab; landing pushes each one\'s integration branch and opens its pull request, or updates the one already open.',
+    );
     expect(two.action).toEqual({ control: "land", label: "Land · 2 repos", confirm: "Click again to land" });
 
     const one = nextStepOf(finished([repo("web", false), repo("api", true)]))!;
-    expect(one.text).toBe('Every ticket is finished, and the repo "api" has merged work that is not landed yet. Landing pushes its integration branch and opens its pull request, or updates the one already open.');
+    expect(one.text).toBe('Every ticket is finished, and the repo "api" has merged work that is not landed yet. Read what lands on the Changes tab; landing pushes its integration branch and opens its pull request, or updates the one already open.');
     expect(one.action).toMatchObject({ label: "Land · 1 repo" });
 
     const none = nextStepOf(finished([repo("web", false), repo("api", false)]))!;
-    expect(none).toMatchObject({ stage: 5, text: "Every ticket is finished, and every repo with merged work is landed. Landing again finishes the project." });
+    expect(none).toMatchObject({ stage: 5, text: "Every ticket is finished, and every repo with merged work is landed. Read what lands on the Changes tab; landing again finishes the project." });
     expect(none.action).toEqual({ control: "land", label: "Land · finish the project", confirm: "Click again to land" });
 
     const working = nextStepOf(input({ state: "running", ticketCounts: { done: 1, working: 1 }, repos: [repo("web", true), repo("api", false)] }, [card({ key: "CSV-2", state: "working", ready: false })]))!;
