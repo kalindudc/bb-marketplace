@@ -3,7 +3,7 @@ import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import type { BoardCard } from "../contract";
 import { formatDuration } from "../format";
 import type { TicketState } from "../states";
-import { HEADING, plural } from "./common";
+import { HEADING, RepoChip, plural } from "./common";
 
 interface Lane {
   id: TicketState;
@@ -30,6 +30,7 @@ function DraftCard({ card }: { card: BoardCard }) {
   return (
     <div data-card={card.key} data-draft className="rounded-md border border-dashed border-border-seam p-2.5">
       <span className="text-xs font-medium text-muted-foreground">{card.key} · draft</span>
+      {card.repo !== null && <RepoChip name={card.repo} className="ml-1.5" />}
       <span className="mt-0.5 block text-sm">{card.title}</span>
       {!card.ready && card.waitingOn.length > 0 && <p className="mt-1 text-xs text-muted-foreground">Waits on {card.waitingOn.join(", ")}</p>}
     </div>
@@ -44,6 +45,7 @@ function Card({ slug, card, now, draft }: { slug: string; card: BoardCard; now: 
     <div data-card={card.key} className="rounded-md border border-border-seam p-2.5">
       <button type="button" data-open-ticket onClick={() => navigate.toPluginPanel("loom", { subPath: `${slug}/${card.key}` })} className="block w-full cursor-pointer text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
         <span className="text-xs font-medium text-muted-foreground">{card.key}</span>
+        {card.repo !== null && <RepoChip name={card.repo} className="ml-1.5" />}
         <span className="mt-0.5 block text-sm">{card.title}</span>
       </button>
       <p className="mt-1 text-xs text-muted-foreground">{detail.join(" · ")}</p>

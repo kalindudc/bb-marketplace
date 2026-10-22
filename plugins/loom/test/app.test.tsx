@@ -5,11 +5,16 @@ import { join } from "node:path";
 import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, mountPluginContentScripts, renderSlot, type PluginRpcTestHandlers, type PluginSdkTestFakes, type RenderSlotOptions } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginNavPanelProps, PluginSidebarThread, PluginThreadHeaderActionProps } from "@get-bb/plugin-sdk/app";
-import type { Attempt, ChecksItem, HomeProject, NextStep, PlanningSession, ProjectSummary, SentNote, ThreadInfo, rpcContract } from "../src/contract";
+import type { Attempt, ChecksItem, HomeProject, NextStep, PlanningSession, ProjectSummary, ProjectView, SentNote, SpecVersionView, ThreadInfo, rpcContract } from "../src/contract";
+import type { TicketRow } from "../src/db/store";
+import { repoOverviews } from "../src/projects";
 import { notesMessage } from "../src/prompts";
+import { parseSpec } from "../src/spec";
 import { ConfirmButton, MoreMenu } from "../src/ui/common";
+import { repoLand } from "../src/ui/next-step-bar";
 import { questionsOf } from "../src/ui/questions";
-import { HOUR, NOW, agent, attempt, card, feedRow, health, homeProject, homeView, metrics, overview, projectView, specVersionView, ticketDetail, timeline } from "./fixtures";
+import { HOUR, NOW, agent, attempt, card, feedRow, health, homeProject, homeView, metrics, overview, projectView, repoOverview, specVersionView, ticketDetail, timeline, withRepos } from "./fixtures";
+import { specToml } from "./helpers";
 
 type Handlers = PluginRpcTestHandlers<typeof rpcContract>;
 const unexpected = (): never => {
@@ -2735,5 +2740,255 @@ describe("timeline", () => {
     expect(slot.container.querySelector("[data-spec-rewound]")!.textContent).toBe("At this moment, version 1 was the spec in force.");
     expect(slot.queryAllByRole("button", { name: /^Add a note on/ })).toEqual([]);
     expect(slot.container.querySelector("[data-spec-pending]")).toBeNull();
+  });
+});
+
+describe("repos", () => {
+  beforeEach(() => localStorage.clear());
+  const repos = () => [repoOverview(), repoOverview({ name: "api", bbProjectId: "proj_api", bbProjectName: null, base: "trunk" })];
+  const multi = (over: Partial<ProjectView> = {}) =>
+    projectView({
+      overview: overview({ repos: repos() }),
+      board: [card({ key: "CSV-1", repo: "web" }), card({ key: "CSV-2", title: "Export endpoint", state: "working", repo: "api", threadId: "thr_w1" })],
+      ...over,
+    });
+  const chipsIn = (root: ParentNode) => [...root.querySelectorAll("[data-repo-chip]")].map((chip) => chip.textContent);
+  const dashboard = (slot: Slot) => slot.container.querySelector<HTMLElement>("[data-spec-dashboard]")!;
+  const pane = (slot: Slot) => dashboard(slot).querySelector<HTMLElement>("[role=tabpanel]")!;
+  const inPane = (slot: Slot, path: string) => pane(slot).querySelector<HTMLElement>(`[data-note-target="${path}"]`);
+  const openTab = (slot: Slot, name: string) => fireEvent.click(within(dashboard(slot)).getByRole("tab", { name }));
+  const openSpec = async (view: ProjectView, spec: SpecVersionView) => {
+    const { slot } = await mountPage("csv", { project: () => view, specVersion: () => spec });
+    fireEvent.click(await slot.findByRole("tab", { name: "Spec" }));
+    await waitFor(() => expect(slot.container.querySelector("[data-spec-tile]")).not.toBeNull());
+    return slot;
+  };
+  const landing = (label = "Land · 2 repos"): NextStep => ({ stage: 5, tone: "normal", title: "Next: land the project.", text: "Every ticket is finished.", action: { control: "land", label, confirm: "Click again to land" } });
+
+  it("shows each card's repo as a chip on the board and on a draft's dashed cards", async () => {
+    const { slot } = await mountPage("csv", { project: () => multi() });
+    await slot.findByRole("tab", { name: "Board" });
+    expect(chipsIn(slot.container.querySelector('[data-card="CSV-1"]')!)).toEqual(["web"]);
+    expect(chipsIn(slot.container.querySelector('[data-card="CSV-2"]')!)).toEqual(["api"]);
+
+    const draft = multi({ overview: overview({ state: "draft", approvedVersion: null, ticketCount: 0, ticketCounts: {}, repos: repos() }) });
+    const { slot: dashed } = await mountPage("csv", { project: () => draft });
+    await dashed.findByRole("tab", { name: "Board" });
+    expect(chipsIn(dashed.container.querySelector('[data-card="CSV-1"][data-draft]')!)).toEqual(["web"]);
+  });
+
+  it("shows the ticket's repo in the ticket page's header", async () => {
+    const { slot } = await mountPage("csv/CSV-2", { ticket: () => ticketDetail({ repo: "api" }) });
+    await slot.findByRole("heading", { name: /Export endpoint/ });
+    expect(chipsIn(slot.container.querySelector("[data-ticket-header]")!)).toEqual(["api"]);
+  });
+
+  it("lists the repos on the Project tab with their settings, and takes a note on each repo's path", async () => {
+    const slot = await openSpec(multi(), specVersionView({}, withRepos));
+    openTab(slot, "Project & limits");
+    const web = inPane(slot, "repo[0]")!;
+    expect(web.closest("[data-repo]")!.getAttribute("data-repo")).toBe("web");
+    expect(chipsIn(web)).toEqual(["web"]);
+    expect(web.querySelector("[data-repo-project]")!.textContent).toBe("bb project shop-web");
+    expect(web.textContent).toContain("base main");
+    expect(web.textContent).toContain("its own checks: npm run web-test");
+    expect(web.textContent).toContain("its own after-merge checks: npm run web-e2e");
+    expect(web.textContent).toContain("also protected:web.lock");
+    const api = inPane(slot, "repo[1]")!;
+    expect(api.querySelector("[data-repo-project]")!.textContent).toBe("bb project proj_api");
+    expect(api.textContent).toContain("base trunk");
+    expect(api.textContent).toContain("remote upstream");
+    expect(api.textContent).not.toContain("its own");
+    expect(api.textContent).not.toContain("protected");
+    expect(inPane(slot, "merge")!.textContent).toContain("you land it as one pull request per repo with bb loom land, one repo with bb loom land --repo, or straight onto each base with bb loom land --direct.");
+
+    fireEvent.click(slot.getByRole("button", { name: "Add a note on repo api" }));
+    expect(dashboard(slot).textContent).toContain("Note on repo api");
+    fireEvent.change(slot.getByRole("textbox", { name: "Note text" }), { target: { value: "Land api first." } });
+    fireEvent.click(slot.getByRole("button", { name: "Add note" }));
+    expect(JSON.parse(localStorage.getItem("loom.notes.csv")!)).toEqual([{ version: 2, paths: ["repo[1]"], label: "repo api", body: "Land api first." }]);
+    expect(inPane(slot, "repo[1]")!.hasAttribute("data-noted")).toBe(true);
+  });
+
+  it("shows each repo's checks on the Checks tab, and which checks a ticket without verify commands runs", async () => {
+    const slot = await openSpec(multi(), specVersionView({}, withRepos));
+    openTab(slot, "Checks & review");
+    expect(inPane(slot, "checks.timeout_minutes")!.textContent).toContain("Run on every submitted ticket in a repo without checks of its own");
+    const checksOf = (name: string) => pane(slot).querySelector<HTMLElement>(`[data-repo-checks="${name}"]`)!;
+    expect(checksOf("web").querySelector("[data-note-target]")!.getAttribute("data-note-target")).toBe("repo[0].checks");
+    expect(checksOf("web").textContent).toContain("npm run web-test");
+    expect(checksOf("web").textContent).toContain("after each merge: npm run web-e2e");
+    expect(checksOf("api").textContent).toContain("the project checks");
+    expect(checksOf("api").textContent).toContain("after each merge: nothing");
+    expect(inPane(slot, "ticket[csv-model].verify")!.textContent).toContain("none: only the web checks run");
+    expect(inPane(slot, "ticket[csv-export].verify")!.textContent).toContain("none: only the project checks run");
+
+    openTab(slot, "Tickets");
+    expect(chipsIn(pane(slot).querySelector('[data-spec-card="csv-model"]')!)).toEqual(["web"]);
+    const inspector = slot.container.querySelector<HTMLElement>("[data-spec-inspector]")!;
+    expect(inspector.textContent).toContain("repo web");
+    expect(inspector.textContent).toContain("No command of its own; only npm run web-test runs.");
+  });
+
+  it("groups the ticket scopes by repo on the Files tab, where the same path in two repos is not shared", async () => {
+    const spec = specVersionView({ overlaps: [{ a: "csv-model", b: "csv-docs", paths: ["src/shared/types.ts"] }] }, (doc) => {
+      withRepos(doc);
+      doc.ticket[0].scope = ["src/model/**", "src/shared/types.ts"];
+      doc.ticket[1].scope = ["src/export/**", "src/shared/types.ts"];
+      doc.ticket.push({ ref: "csv-docs", title: "Export docs", body: "Document the types.", acceptance: ["WHEN the docs are read THE SYSTEM SHALL name every type"], scope: ["src/shared/types.ts"], repo: "web" });
+    });
+    const slot = await openSpec(multi(), spec);
+    openTab(slot, "Files");
+    const groups = () =>
+      [...pane(slot).querySelectorAll("[data-repo-files]")].map((group) => [
+        group.getAttribute("data-repo-files"),
+        [...group.querySelectorAll("[data-folder]")].map((folder) => [folder.getAttribute("data-folder"), [...folder.querySelectorAll("[data-file]")].map((row) => row.getAttribute("data-file"))]),
+      ]);
+    expect(groups()).toEqual([
+      ["web", [["src/model", ["src/model/**"]], ["src/shared", ["src/shared/types.ts"]]]],
+      ["api", [["src/export", ["src/export/**"]], ["src/shared", ["src/shared/types.ts"]]]],
+    ]);
+    expect(pane(slot).textContent).toContain("All files by repo and folder · 4 paths");
+    const group = (name: string) => pane(slot).querySelector<HTMLElement>(`[data-repo-files="${name}"]`)!;
+    expect(group("web").querySelector("h5")!.textContent).toBe("web2 paths");
+    const types = (name: string) => group(name).querySelector<HTMLElement>('[data-file="src/shared/types.ts"]')!;
+    expect([...types("web").querySelectorAll("[data-ticket-chip]")].map((chip) => chip.textContent)).toEqual(["csv-model", "csv-docs"]);
+    expect(types("web").textContent).toContain("shared");
+    expect([...types("api").querySelectorAll("[data-ticket-chip]")].map((chip) => chip.textContent)).toEqual(["csv-export"]);
+    expect(types("api").textContent).not.toContain("shared");
+
+    const shared = [...pane(slot).querySelectorAll("[data-shared]")].map((row) => [row.getAttribute("data-repo"), row.getAttribute("data-shared"), chipsIn(row)]);
+    expect(shared).toEqual([["web", "src/shared/types.ts", ["web"]]]);
+    expect(slot.getByRole("button", { name: "Add a note on shared path src/shared/types.ts in web" })).toBeTruthy();
+
+    fireEvent.click(within(within(pane(slot)).getByRole("group", { name: "Which files" })).getByRole("button", { name: "Shared only" }));
+    expect(groups()).toEqual([["web", [["src/shared", ["src/shared/types.ts"]]]]]);
+  });
+
+  it("lists the repos on the draft card, by bb's name for each bb project or its id", async () => {
+    const summary = { ...projectView().spec.summary, repos: [{ name: "web", bbProjectId: "proj_web", bbProjectName: "shop-web" }, { name: "api", bbProjectId: "proj_api", bbProjectName: null }] };
+    const draft = multi({ overview: overview({ state: "draft", approvedVersion: null, ticketCount: 0, ticketCounts: {}, repos: repos() }), board: [], spec: { ...projectView().spec, summary } });
+    const session: PlanningSession = { threadId: "thr_p1", title: "Export orders as CSV", startedAt: Date.now(), slug: "csv", projectState: "draft" };
+    const { slot } = await mountPage("_plan/thr_p1", { planningSession: () => session, project: () => draft, specVersion: () => specVersionView({}, withRepos) });
+    await waitFor(() => expect(slot.container.querySelector("[data-draft-card]")).not.toBeNull());
+    const card = slot.container.querySelector<HTMLElement>("[data-draft-card]")!;
+    expect(card.textContent).toContain("2 tickets · 2 repos · checks: npm test · reviewer codex / gpt-5");
+    expect([...card.querySelectorAll("[data-draft-repo]")].map((row) => row.textContent)).toEqual(["webshop-web", "apiproj_api"]);
+
+    await waitFor(() => expect(slot.container.querySelector("[data-spec-tile]")).not.toBeNull());
+    openTab(slot, "Project & limits");
+    expect(inPane(slot, "repo[0]")!.querySelector("[data-repo-project]")!.textContent).toBe("bb project shop-web");
+  });
+
+  it("labels the land control for the pull requests of several repos, and names the repos to land in its confirm", async () => {
+    const control = vi.fn(() => multi({ overview: overview({ state: "done", repos: repos() }), next: null }));
+    const view = multi({ overview: overview({ repos: repos(), ticketCounts: { done: 2 } }), next: landing() });
+    const { slot } = await mountPage("csv", { project: () => view, control });
+    await slot.findByRole("heading", { name: "CSV export" });
+    expect([...slot.container.querySelectorAll("[data-controls] button")].map((button) => button.textContent)).toEqual(["Pause", "Pause now", "Land to each repo's base", "⋯"]);
+    const bar = () => slot.container.querySelector<HTMLElement>("[data-next-step]")!;
+    fireEvent.click(within(bar()).getByRole("button", { name: "Land · open the pull requests" }));
+    fireEvent.click(within(bar()).getByRole("button", { name: "Click again to land web and api" }));
+    await waitFor(() => expect(control).toHaveBeenCalledWith({ slug: "csv", action: "land", confirm: true }));
+  });
+
+  it("names every repo the land pushes in its confirm, a repo landed before included, even when it lands onto each base instead", async () => {
+    const control = vi.fn(() => multi({ next: null }));
+    // web opened its pull request before api had merged work; a land without a repo pushes both again.
+    const partly = [repoOverview({ prUrl: "https://github.com/acme/web/pull/4", landedAt: NOW - HOUR, toLand: false }), repoOverview({ name: "api", bbProjectId: "proj_api", base: "trunk" })];
+    const { slot } = await mountPage("csv", { project: () => multi({ overview: overview({ repos: partly, ticketCounts: { done: 2 } }), next: null }), control });
+    await slot.findByRole("heading", { name: "CSV export" });
+    expect([...slot.container.querySelectorAll("[data-controls] button")].map((button) => button.textContent)).toEqual(["Pause", "Pause now", "Land · open the pull requests", "Land to each repo's base", "⋯"]);
+    fireEvent.click(slot.getByRole("button", { name: "Land · open the pull requests" }));
+    expect(slot.getByRole("button", { name: "Click again to land web and api" })).toBeTruthy();
+    fireEvent.click(slot.getByRole("button", { name: "Land to each repo's base" }));
+    fireEvent.click(slot.getByRole("button", { name: "Click again to land web and api to their bases" }));
+    await waitFor(() => expect(control).toHaveBeenCalledWith({ slug: "csv", action: "landDirect", confirm: true }));
+
+    const { slot: bar } = await mountPage("csv", { project: () => multi({ overview: overview({ repos: partly, ticketCounts: { done: 2 } }), next: landing("Land · 1 repo") }) });
+    await bar.findByRole("heading", { name: "CSV export" });
+    const step = bar.container.querySelector<HTMLElement>("[data-next-step]")!;
+    fireEvent.click(within(step).getByRole("button", { name: "Land · open the pull requests" }));
+    expect(within(step).getByRole("button", { name: "Click again to land web and api" })).toBeTruthy();
+  });
+
+  it("leaves out a repo with no done ticket, and keeps the bar's label when every repo is landed", async () => {
+    const apiOnly = [repoOverview({ toLand: false }), repoOverview({ name: "api", bbProjectId: "proj_api", base: "trunk" })];
+    const { slot } = await mountPage("csv", { project: () => multi({ overview: overview({ repos: apiOnly, ticketCounts: { done: 1 } }), next: null }) });
+    await slot.findByRole("heading", { name: "CSV export" });
+    fireEvent.click(slot.getByRole("button", { name: "Land · open the pull requests" }));
+    expect(slot.getByRole("button", { name: "Click again to land api" })).toBeTruthy();
+    fireEvent.click(slot.getByRole("button", { name: "Land to each repo's base" }));
+    expect(slot.getByRole("button", { name: "Click again to land api to their bases" })).toBeTruthy();
+
+    const landed = repos().map((repo) => ({ ...repo, landedAt: NOW - HOUR, toLand: false }));
+    const { slot: done } = await mountPage("csv", { project: () => multi({ overview: overview({ repos: landed, ticketCounts: { done: 2 } }), next: landing("Land · finish the project") }) });
+    await done.findByRole("heading", { name: "CSV export" });
+    const step = done.container.querySelector<HTMLElement>("[data-next-step]")!;
+    fireEvent.click(within(step).getByRole("button", { name: "Land · finish the project" }));
+    expect(within(step).getByRole("button", { name: "Click again to land web and api" })).toBeTruthy();
+  });
+
+  it("names exactly the repos the engine lands: those with a done ticket, from the server's repo overviews", () => {
+    const spec = parseSpec(
+      specToml((doc) => {
+        withRepos(doc);
+        doc.repo.push({ name: "docs", project: "proj_docs" });
+        doc.ticket.push({ ref: "csv-docs", title: "Export docs", body: "Document the export.", acceptance: ["WHEN the docs are read THE SYSTEM SHALL name every column"], scope: ["docs/**"], repo: "docs" });
+      }),
+    ).spec!;
+    const row = (repo: string, state: TicketRow["state"], at: number) => ({ repo, state, state_at: at }) as TicketRow;
+    const tickets = [row("web", "done", NOW - 2 * HOUR), row("api", "done", NOW - HOUR), row("docs", "queued", NOW - HOUR)];
+    // web landed after its merge, api never landed, docs has nothing done.
+    const lands = new Map([["web", { prUrl: "https://github.com/acme/web/pull/4", landedAt: NOW - HOUR }]]);
+    const overviews = repoOverviews({ bb_project_id: "proj_1" }, spec, tickets, lands);
+    expect(overviews.map((repo) => [repo.name, repo.toLand])).toEqual([
+      ["web", false],
+      ["api", true],
+      ["docs", false],
+    ]);
+    // landRepos in merge.ts: every repo with a done ticket, in the spec's order.
+    const withDone = new Set(tickets.filter((ticket) => ticket.state === "done").map((ticket) => ticket.repo));
+    const landedByEngine = spec.repo!.map((repo) => repo.name).filter((name) => withDone.has(name));
+    expect(repoLand(overviews)!.names).toEqual(landedByEngine);
+    expect(repoLand(overviews)!.confirm).toBe("Click again to land web and api");
+  });
+
+  it("opens each repo's pull request from under the header", async () => {
+    const landed = [repoOverview({ prUrl: "https://github.com/acme/web/pull/4", toLand: false }), repoOverview({ name: "api", bbProjectId: "proj_api", prUrl: null, toLand: false })];
+    const { slot } = await mountPage("csv", { project: () => multi({ overview: overview({ repos: landed }) }) });
+    await slot.findByRole("heading", { name: "CSV export" });
+    expect(chipsIn(slot.container.querySelector("[data-repo-prs]")!)).toEqual(["web"]);
+    fireEvent.click(slot.getByRole("button", { name: "Open the pull request in web" }));
+    expect(slot.inspection.navigateCalls).toEqual([{ method: "openUrl", url: "https://github.com/acme/web/pull/4" }]);
+  });
+
+  it("shows no repo chip and no repo section on a single-repo project", async () => {
+    const { slot } = await mountPage("csv", { project: () => projectView({ next: landing("Land · open the pull request") }), specVersion: () => specVersionView() });
+    await slot.findByRole("tab", { name: "Board" });
+    expect(slot.container.querySelector("[data-repo-chip]")).toBeNull();
+    expect(slot.container.querySelector("[data-repo-prs]")).toBeNull();
+    const bar = slot.container.querySelector<HTMLElement>("[data-next-step]")!;
+    fireEvent.click(within(bar).getByRole("button", { name: "Land · open the pull request" }));
+    expect(within(bar).getByRole("button", { name: "Click again to land" })).toBeTruthy();
+
+    fireEvent.click(slot.getByRole("tab", { name: "Spec" }));
+    await waitFor(() => expect(slot.container.querySelector("[data-spec-tile]")).not.toBeNull());
+    for (const tab of ["Tickets", "Files", "Checks & review", "Project & limits"]) {
+      openTab(slot, tab);
+      expect(dashboard(slot).querySelector("[data-repo-chip], [data-repo], [data-repo-files], [data-repo-checks]")).toBeNull();
+      expect(pane(slot).textContent).not.toMatch(/\brepos?\b/i);
+    }
+
+    const { slot: ticket } = await mountPage("csv/CSV-2", { ticket: () => ticketDetail() });
+    await ticket.findByRole("heading", { name: /Export endpoint/ });
+    expect(ticket.container.querySelector("[data-ticket-header] [data-repo-chip]")).toBeNull();
+
+    const session: PlanningSession = { threadId: "thr_p1", title: "Export orders as CSV", startedAt: Date.now(), slug: "csv", projectState: "draft" };
+    const draft = projectView({ overview: overview({ state: "draft", approvedVersion: null, ticketCount: 0, ticketCounts: {} }), board: [] });
+    const { slot: planning } = await mountPage("_plan/thr_p1", { planningSession: () => session, project: () => draft, specVersion: () => specVersionView() });
+    await waitFor(() => expect(planning.container.querySelector("[data-draft-card]")).not.toBeNull());
+    expect(planning.container.querySelector("[data-draft-repos]")).toBeNull();
+    expect(planning.container.querySelector("[data-draft-card]")!.textContent).not.toContain("repo");
   });
 });

@@ -3,7 +3,7 @@ import { experimental_copyToClipboard, experimental_Icon as Icon, useBbNavigate 
 import type { MergeItem, TicketAction, TicketDetail } from "../contract";
 import { formatDuration, plural } from "../format";
 import type { TicketState } from "../states";
-import { BUTTON, BUTTON_PRIMARY, ConfirmButton, FIELD, MoreMenu } from "./common";
+import { BUTTON, BUTTON_PRIMARY, ConfirmButton, FIELD, MoreMenu, RepoChip } from "./common";
 import { ago, GHOST } from "./ticket-cards";
 
 const STAGES = [
@@ -143,6 +143,7 @@ export function TicketHeader({ ticket, now, busy, onAction, onJump }: { ticket: 
           {PULSING.includes(ticket.state) && <span aria-hidden className="size-1.5 animate-pulse rounded-full bg-current" />}
           {ticket.state.replace("_", " ")}
         </span>
+        {ticket.repo !== null && <RepoChip name={ticket.repo} />}
         <span className="flex-1" />
         {worker !== undefined && (
           <button type="button" onClick={() => navigate.toThread(worker.threadId!)} className={BUTTON_PRIMARY}>

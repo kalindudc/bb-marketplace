@@ -1,15 +1,14 @@
 import { Fragment, useContext, useState } from "react";
 import { Markdown } from "@get-bb/plugin-sdk/app";
 import type { SpecVersionView } from "../contract";
+import { repoSettings } from "../repos";
 import type { TicketSpec } from "../spec";
 import { changedAt, dependencyChain, wavesOf } from "../spec-paths";
-import { BUTTON, CARD, HEADING, plural } from "./common";
+import { BUTTON, CARD, CHIP, HEADING, RepoChip, listText, plural } from "./common";
 import { MarksContext, Noteable, notesUnder } from "./spec-marks";
 
-export const CHIP = "rounded-full border border-border-seam px-1.5 text-[10.5px] leading-4";
 const BRIEF_LIMIT = 1200;
 const criteria = (count: number) => `${count} ${count === 1 ? "criterion" : "criteria"}`;
-const listText = (items: readonly string[]) => (items.length <= 1 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`);
 
 /** "document-sheet waits for fonts and paper-tokens, and unblocks editor-mono." */
 function chainSentence(ref: string, { up, down }: { up: string[]; down: string[] }): string {
@@ -87,6 +86,7 @@ export function TicketsPane({ view, selected, highlighted, onPick, onClear }: { 
                   <span className="block text-sm font-medium">{ticket.title}</span>
                   {after.length > 0 && <span className="block text-[11px] text-muted-foreground [overflow-wrap:anywhere]">after {after.join(", ")}</span>}
                   <span className="mt-1.5 flex flex-wrap gap-1 text-muted-foreground">
+                    {ticket.repo !== undefined && <RepoChip name={ticket.repo} />}
                     <span className={CHIP}>P{ticket.priority}</span>
                     <span className={CHIP}>{criteria(ticket.acceptance.length)}</span>
                     <span className={CHIP}>{plural(ticket.scope.length, "path")}</span>
@@ -146,6 +146,7 @@ export function Inspector({ view, selected, onPick }: { view: SpecVersionView; s
   const base = `ticket[${ticket.ref}]`;
   const wave = wavesOf(spec.ticket)[ticket.ref]! + 1;
   const dependents = spec.ticket.filter((entry) => entry.depends_on.includes(ticket.ref)).map((entry) => entry.ref);
+  const checks = repoSettings(spec, ticket.repo ?? null).checks;
   const refButtons = (refs: readonly string[]) =>
     refs.map((ref, index) => (
       <Fragment key={ref}>
@@ -170,6 +171,7 @@ export function Inspector({ view, selected, onPick }: { view: SpecVersionView; s
           <Noteable paths={[base]} label={`${ticket.ref} (whole ticket)`}>
             <p className="text-xs text-muted-foreground">
               <span className="font-mono text-foreground [overflow-wrap:anywhere]">{ticket.ref}</span> · P{ticket.priority} · wave {wave}
+              {ticket.repo !== undefined && <> · repo {ticket.repo}</>}
             </p>
           </Noteable>
           <Noteable paths={[`${base}.depends_on`]} label={`${ticket.ref} › waits for`}>
@@ -199,7 +201,7 @@ export function Inspector({ view, selected, onPick }: { view: SpecVersionView; s
           <h4 className={`${HEADING} pt-1`}>Verify</h4>
           {ticket.verify.length === 0 ? (
             <Noteable paths={[`${base}.verify`]} label={`${ticket.ref} › verify`}>
-              <span className="text-muted-foreground">No command of its own; only {listText(spec.checks.commands)} {spec.checks.commands.length === 1 ? "runs" : "run"}.</span>
+              <span className="text-muted-foreground">No command of its own; only {listText(checks)} {checks.length === 1 ? "runs" : "run"}.</span>
             </Noteable>
           ) : (
             ticket.verify.map((command, index) => (

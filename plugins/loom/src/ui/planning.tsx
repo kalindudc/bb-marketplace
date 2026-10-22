@@ -1,10 +1,10 @@
 import type { ReactNode } from "react";
 import { ThreadChat, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import type { ControlAction, NextStep, ProjectView, rpcContract } from "../contract";
-import { BUTTON, CARD, StateBadge, mergeLabel, plural, useRemote, useRun } from "./common";
+import { BUTTON, CARD, HEADING, RepoChip, StateBadge, mergeLabel, plural, useRemote, useRun } from "./common";
 import { NextStepBar } from "./next-step-bar";
 import { PlannerQuestions } from "./questions";
-import { SpecDashboard } from "./spec-dashboard";
+import { SpecDashboard, bbProjectNamesOf } from "./spec-dashboard";
 
 const SHOWN_TICKETS = 5;
 const PLANNING: NextStep = { stage: 0, tone: "normal", title: "Next: answer the planner.", text: "It asks about the goal in the chat, then proposes a draft here.", action: null };
@@ -48,7 +48,6 @@ export function PlanningView({ threadId, go }: { threadId: string; go(subPath: s
       ) : (
         <Drafted slug={session.slug} threadId={threadId} go={go} />
       )}
-      {session.slug !== null && <SpecDashboard slug={session.slug} />}
     </div>
   );
 }
@@ -62,7 +61,7 @@ function Columns({ threadId, side }: { threadId: string; side: ReactNode }) {
   );
 }
 
-/** A conversation that proposed: the next-step bar carries Approve and then Start, over the chat and the draft card. */
+/** A conversation that proposed: the next-step bar carries Approve and then Start, over the chat and the draft card, then the spec's dashboard. */
 function Drafted({ slug, threadId, go }: { slug: string; threadId: string; go(subPath: string): void }) {
   const rpc = useRpc<typeof rpcContract>();
   const remote = useRemote((client) => client.call("project", { slug }), `project:${slug}`, slug);
@@ -80,8 +79,9 @@ function Drafted({ slug, threadId, go }: { slug: string; threadId: string; go(su
     );
   return (
     <>
-      {view?.next != null && <NextStepBar next={view.next} busy={busy} onAct={control} />}
+      {view?.next != null && <NextStepBar next={view.next} busy={busy} repos={view.overview.repos} onAct={control} />}
       <Columns threadId={threadId} side={side} />
+      <SpecDashboard slug={slug} bbProjectNames={bbProjectNamesOf(view)} />
     </>
   );
 }
@@ -89,7 +89,7 @@ function Drafted({ slug, threadId, go }: { slug: string; threadId: string; go(su
 function DraftCard({ view, error, go }: { view: ProjectView; error: string | null; go(subPath: string): void }) {
   const { overview, spec } = view;
   const { summary } = spec;
-  const facts = [plural(summary.tickets.length, "ticket"), summary.checks.length === 0 ? "no checks" : `checks: ${summary.checks.join(", ")}`, ...(summary.reviewer === null ? [] : [`reviewer ${summary.reviewer}`])];
+  const facts = [plural(summary.tickets.length, "ticket"), ...(summary.repos.length === 0 ? [] : [plural(summary.repos.length, "repo")]), summary.checks.length === 0 ? "no checks" : `checks: ${summary.checks.join(", ")}`, ...(summary.reviewer === null ? [] : [`reviewer ${summary.reviewer}`])];
 
   return (
     <section data-draft-card className={`${CARD} space-y-3`}>
@@ -100,6 +100,19 @@ function DraftCard({ view, error, go }: { view: ProjectView; error: string | nul
         <span className="text-xs text-muted-foreground">{mergeLabel(overview)}</span>
       </div>
       <p className="text-xs text-muted-foreground">{facts.join(" · ")}</p>
+      {summary.repos.length > 0 && (
+        <div data-draft-repos className="space-y-1">
+          <h3 className={HEADING}>Repos</h3>
+          <ul className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+            {summary.repos.map((repo) => (
+              <li key={repo.name} data-draft-repo={repo.name} className="inline-flex min-w-0 items-center gap-1">
+                <RepoChip name={repo.name} />
+                <span className={repo.bbProjectName === null ? "font-mono [overflow-wrap:anywhere]" : ""}>{repo.bbProjectName ?? repo.bbProjectId}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <table className="w-full text-sm">
         <tbody>
           {summary.tickets.slice(0, SHOWN_TICKETS).map((ticket) => (
