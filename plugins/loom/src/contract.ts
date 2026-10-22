@@ -5,7 +5,7 @@ import type { ProjectHealth } from "./health";
 import type { HomeProject, HomeView, NeedItem } from "./home";
 import type { ProjectMetrics } from "./metrics";
 import type { NextStep } from "./next-step";
-import type { PlanningSession, ProjectOverview } from "./projects";
+import type { PlanningSession, ProjectOverview, RepoOverview } from "./projects";
 import type { Finding } from "./review";
 import type { ProjectTimeline, SessionBar, TicketBar } from "./replay";
 import type { SentNote, SpecVersionView } from "./spec-view";
@@ -14,13 +14,15 @@ import type { AuthorKind, PostKind, ProjectState, ReviewVerdict, Role, ThreadSta
 import { MERGE_CHOICES } from "./states";
 
 export type ProjectSummary = ProjectOverview;
-export type { ActivityItem, Attempt, ChecksItem, CheckStep, HomeProject, HomeView, Mark, MergeItem, NeedItem, NextStep, PlanningSession, ProjectHealth, ProjectTimeline, ReviewItem, SentNote, SessionBar, SpecVersionView, TicketActivity, TicketBar };
+export type { ActivityItem, Attempt, ChecksItem, CheckStep, HomeProject, HomeView, Mark, MergeItem, NeedItem, NextStep, PlanningSession, ProjectHealth, ProjectTimeline, RepoOverview, ReviewItem, SentNote, SessionBar, SpecVersionView, TicketActivity, TicketBar };
 
 export interface BoardCard {
   key: string;
   title: string;
   state: TicketState;
   stateAt: number;
+  /** The ticket's [[repo]] name; null on a single-repo project. */
+  repo: string | null;
   priority: number;
   attempt: number;
   reviewRound: number;
@@ -38,6 +40,8 @@ export interface BoardCard {
 /** What the draft card shows before a project has tickets on the board. */
 export interface SpecSummary {
   tickets: Array<{ ref: string; title: string; dependsOn: string[] }>;
+  /** The spec's [[repo]] tables; empty on a single-repo spec. `bbProjectName` is null when bb cannot tell. */
+  repos: Array<{ name: string; bbProjectId: string; bbProjectName: string | null }>;
   checks: string[];
   /** "provider / model", or null when the spec sets neither. */
   reviewer: string | null;
@@ -131,6 +135,8 @@ export interface TicketDetail {
   title: string;
   state: TicketState;
   stateAt: number;
+  /** The ticket's [[repo]] name; null on a single-repo project. */
+  repo: string | null;
   priority: number;
   attempt: number;
   reviewRound: number;

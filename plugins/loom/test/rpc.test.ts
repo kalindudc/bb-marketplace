@@ -497,6 +497,104 @@ describe("changes", () => {
   });
 });
 
+describe("repos", () => {
+  const PR = (n: number) => `https://github.com/acme/shop/pull/${n}`;
+  const withRepos = (doc: Doc) => {
+    doc.repo = [
+      { name: "web", project: "proj_web" },
+      { name: "api", project: "proj_api", base: "trunk", remote: "upstream" },
+    ];
+    doc.ticket[0].repo = "web";
+    doc.ticket[1].repo = "api";
+    doc.ticket[1].depends_on = [];
+  };
+  const addProjects = () => {
+    fake.addBbProject("proj_web", { host_env: "/src/web" }, { name: "shop-web" });
+    fake.addBbProject("proj_api", { host_env: "/src/api" }, { name: "shop-api" });
+  };
+  const toDone = (key: string) => {
+    for (const state of ["working", "checking", "review", "approved", "merging", "done"] as const) host.store.setTicketState(ticketId(key), state, "loom");
+  };
+  const names = (repos: Array<{ bbProjectId: string; bbProjectName: string | null }>) => repos.map((repo) => [repo.bbProjectId, repo.bbProjectName]);
+
+  it("project names each repo's bb project, and every card and ticket carries its repo", async () => {
+    addProjects();
+    await running(withRepos);
+    const view = await call<ProjectView>("project", { slug: "csv" });
+    expect(view.overview.repos).toEqual([
+      { name: "web", bbProjectId: "proj_web", bbProjectName: "shop-web", base: "main", branch: "loom/csv", prUrl: null, landedAt: null, toLand: false },
+      { name: "api", bbProjectId: "proj_api", bbProjectName: "shop-api", base: "trunk", branch: "loom/csv", prUrl: null, landedAt: null, toLand: false },
+    ]);
+    expect(view.spec.summary.repos).toEqual([
+      { name: "web", bbProjectId: "proj_web", bbProjectName: "shop-web" },
+      { name: "api", bbProjectId: "proj_api", bbProjectName: "shop-api" },
+    ]);
+    expect(view.board.map((card) => [card.key, card.repo])).toEqual([
+      ["CSV-1", "web"],
+      ["CSV-2", "api"],
+    ]);
+    expect((await call<TicketDetail>("ticket", { key: "CSV-2" })).repo).toBe("api");
+
+    toDone("CSV-1");
+    toDone("CSV-2");
+    expect((await call<ProjectView>("project", { slug: "csv" })).next).toMatchObject({ stage: 5, text: expect.stringContaining('the repos "web" and "api" have merged work that is not landed yet') });
+    const landed = await call<ProjectView>("control", { slug: "csv", action: "land", repo: "web", confirm: true });
+    expect(landed.overview.repos.map((repo) => [repo.name, repo.prUrl, repo.toLand, repo.bbProjectName])).toEqual([
+      ["web", PR(1), false, "shop-web"],
+      ["api", null, true, "shop-api"],
+    ]);
+    expect(landed.next).toMatchObject({ text: expect.stringContaining('the repo "api" has merged work that is not landed yet'), action: { control: "land", label: "Land · 1 repo" } });
+  });
+
+  it("a single-repo project has one repo in the Loom project's bb project, and its cards and tickets none", async () => {
+    await approved();
+    const view = await call<ProjectView>("project", { slug: "csv" });
+    expect(view.overview.repos).toEqual([{ name: null, bbProjectId: "proj_1", bbProjectName: "shop", base: "main", branch: "loom/csv", prUrl: null, landedAt: null, toLand: false }]);
+    expect(view.spec.summary.repos).toEqual([]);
+    expect(view.board.map((card) => card.repo)).toEqual([null, null]);
+    expect((await call<TicketDetail>("ticket", { key: "CSV-1" })).repo).toBeNull();
+  });
+
+  it("a draft's summary and cards carry the repos before approval", async () => {
+    addProjects();
+    await propose(withRepos);
+    const view = await call<ProjectView>("project", { slug: "csv" });
+    expect(names(view.spec.summary.repos)).toEqual([
+      ["proj_web", "shop-web"],
+      ["proj_api", "shop-api"],
+    ]);
+    expect(view.board.map((card) => [card.key, card.repo])).toEqual([
+      ["CSV-1", "web"],
+      ["CSV-2", "api"],
+    ]);
+    expect(names(view.overview.repos)).toEqual(names(view.spec.summary.repos));
+  });
+
+  it("projects and home name the repos' bb projects too, and every view leaves a name null when bb cannot list its projects", async () => {
+    addProjects();
+    await running(withRepos);
+    expect(names((await call<ProjectSummary[]>("projects"))[0]!.repos)).toEqual([
+      ["proj_web", "shop-web"],
+      ["proj_api", "shop-api"],
+    ]);
+    expect(names((await call<HomeView>("home")).projects[0]!.repos)).toEqual([
+      ["proj_web", "shop-web"],
+      ["proj_api", "shop-api"],
+    ]);
+
+    fake.bbProjects = new Error("bb is restarting");
+    const unnamed = [
+      ["proj_web", null],
+      ["proj_api", null],
+    ];
+    const view = await call<ProjectView>("project", { slug: "csv" });
+    expect(names(view.overview.repos)).toEqual(unnamed);
+    expect(names(view.spec.summary.repos)).toEqual(unnamed);
+    expect(names((await call<ProjectSummary[]>("projects"))[0]!.repos)).toEqual(unnamed);
+    expect(names((await call<HomeView>("home")).projects[0]!.repos)).toEqual(unnamed);
+  });
+});
+
 describe("planning", () => {
   const request = (over: Partial<NewThreadRequest> = {}): NewThreadRequest => ({
     projectId: "proj_1",
@@ -553,6 +651,7 @@ describe("planning", () => {
         { ref: "csv-model", title: "Order rows", dependsOn: [] },
         { ref: "csv-export", title: "Export endpoint", dependsOn: ["csv-model"] },
       ],
+      repos: [],
       checks: ["npm test"],
       reviewer: "claude / sonnet",
       warnings: [expect.stringContaining("same provider and model as the worker")],
@@ -876,6 +975,38 @@ describe("rewind", () => {
     expect(ids.at(-1)).toBe(newest().id);
     expect(timeline.tickets.map((bar) => bar.key)).toEqual(["CSV-1"]);
     expect(timeline.marks.map((mark) => mark.action)).toEqual(["start"]);
+  });
+
+  it("project at an event shows each repo's land as it was then", async () => {
+    fake.addBbProject("proj_web", { host_env: "/src/web" }, { name: "shop-web" });
+    fake.addBbProject("proj_api", { host_env: "/src/api" });
+    await running((doc) => {
+      doc.repo = [
+        { name: "web", project: "proj_web" },
+        { name: "api", project: "proj_api" },
+      ];
+      doc.ticket[0].repo = "web";
+      doc.ticket[1].repo = "api";
+      doc.ticket[1].depends_on = [];
+    });
+    later();
+    for (const state of ["working", "checking", "review", "approved", "merging", "done"] as const) host.store.setTicketState(ticketId("CSV-1"), state, "loom");
+    const merged = newest();
+    later();
+    await call("control", { slug: "csv", action: "land", confirm: true });
+    const landedAt = Date.now();
+
+    const past = await call<ProjectView>("project", { slug: "csv", at: merged.id });
+    expect(past.overview.repos.map((repo) => [repo.name, repo.bbProjectName, repo.prUrl, repo.landedAt, repo.toLand])).toEqual([
+      ["web", "shop-web", null, null, true],
+      ["api", "api", null, null, false],
+    ]);
+    expect(past.next).toMatchObject({ title: "Running." });
+    const live = await call<ProjectView>("project", { slug: "csv" });
+    expect(live.overview.repos.map((repo) => [repo.name, repo.prUrl, repo.landedAt, repo.toLand])).toEqual([
+      ["web", "https://github.com/acme/shop/pull/1", landedAt, false],
+      ["api", null, null, false],
+    ]);
   });
 
   it("refuses a moment before the project's first event", async () => {

@@ -1,7 +1,7 @@
 // The one thing to do next on a project, worked out on the server so the page only draws it. The app imports STAGES,
 // so this file imports nothing that pulls zod or smol-toml into the app's bundle.
 import type { BoardCard, ControlAction } from "./contract";
-import { its, plural, readyToLand } from "./format";
+import { isMultiRepoProject, its, plural, readyToLand, reposHave } from "./format";
 import type { ProjectOverview } from "./projects";
 import { PAUSE_NOW_REASON } from "./states";
 
@@ -52,6 +52,29 @@ function blockedText(cards: BoardCard[], input: NextStepInput): string {
     input.triage ? `Loom tells the planner in a triage round; it can requeue, change or split ${cards.length === 1 ? "the ticket" : "them"}.` : "Triage is off, so open a ticket to requeue or cancel it.",
     ...(moves.length > 0 ? [`If the planner proposes a fixed spec, approving it ${moves.join(" and ")}.`] : []),
   ].join(" ");
+}
+
+/** A multi-repo project names the repos with merged work that is not landed yet; landing with none left finishes the project. */
+function landStep(overview: ProjectOverview): NextStep {
+  const step = { stage: 5, tone: "normal" as const, title: "Next: land the project." };
+  const confirm = "Click again to land";
+  if (!isMultiRepoProject(overview)) {
+    return {
+      ...step,
+      text: "Every ticket is finished. Landing pushes the integration branch and opens its pull request, or updates the one already open.",
+      action: { control: "land", label: "Land · open the pull request", confirm },
+    };
+  }
+  const toLand = overview.repos.flatMap((repo) => (repo.toLand ? [repo.name!] : []));
+  if (toLand.length === 0) {
+    return { ...step, text: "Every ticket is finished, and every repo with merged work is landed. Landing again finishes the project.", action: { control: "land", label: "Land · finish the project", confirm } };
+  }
+  const pushes = toLand.length === 1 ? "its integration branch" : "each one's integration branch";
+  return {
+    ...step,
+    text: `Every ticket is finished, and ${reposHave(toLand)} merged work that is not landed yet. Landing pushes ${pushes} and opens its pull request, or updates the one already open.`,
+    action: { control: "land", label: `Land · ${plural(toLand.length, "repo")}`, confirm },
+  };
 }
 
 export function nextStepOf(input: NextStepInput): NextStep | null {
@@ -119,15 +142,7 @@ export function nextStepOf(input: NextStepInput): NextStep | null {
     };
   }
 
-  if (readyToLand(overview)) {
-    return {
-      stage: 5,
-      tone: "normal",
-      title: "Next: land the project.",
-      text: "Every ticket is finished. Landing pushes the integration branch and opens its pull request, or updates the one already open.",
-      action: { control: "land", label: "Land · open the pull request", confirm: "Click again to land" },
-    };
-  }
+  if (readyToLand(overview)) return landStep(overview);
 
   if (state === "running") {
     const working = board.filter((card) => card.state === "working").map((card) => card.key);

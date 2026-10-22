@@ -9,7 +9,7 @@ import { projectHealth } from "./health";
 import { homeView } from "./home";
 import { computeMetrics } from "./metrics";
 import { nextStepOf } from "./next-step";
-import { LoomError, type Projects } from "./projects";
+import { LoomError, landsOf, namedRepos, repoOverviews, withRepoNames, type Projects } from "./projects";
 import { overviewAt, projectTimeline, rewind, rowsOf } from "./replay";
 import { projectFeed, projectMetrics } from "./reports";
 import { blockedAtReview } from "./review";
@@ -53,9 +53,10 @@ export function watchChanges(bb: BbPluginApi, store: Store): () => void {
 /** The draft card's view of a stored spec. A stored spec always parses; if one ever does not, its errors come back as warnings. */
 export function specSummary(toml: string): SpecSummary {
   const { spec, errors, warnings } = parseSpec(toml);
-  if (spec === null) return { tickets: [], checks: [], reviewer: null, warnings: [...errors, ...warnings] };
+  if (spec === null) return { tickets: [], repos: [], checks: [], reviewer: null, warnings: [...errors, ...warnings] };
   return {
     tickets: spec.ticket.map((ticket) => ({ ref: ticket.ref, title: ticket.title, dependsOn: ticket.depends_on })),
+    repos: (spec.repo ?? []).map((repo) => ({ name: repo.name, bbProjectId: repo.project, bbProjectName: null })),
     checks: spec.checks.commands,
     reviewer: modelLabel(spec.agents.reviewer),
     warnings,
@@ -136,6 +137,7 @@ export function boardCards(tickets: TicketRow[], threads: ThreadRow[]): BoardCar
       title: ticket.title,
       state: ticket.state,
       stateAt: ticket.state_at,
+      repo: ticket.repo,
       priority: ticket.priority,
       attempt: ticket.attempt,
       reviewRound: ticket.review_round,
@@ -167,6 +169,7 @@ export function draftCards(spec: Spec, at: number): BoardCard[] {
     title: spec.ticket[index]!.title,
     state: "queued",
     stateAt: at,
+    repo: lite.repo,
     priority: lite.priority,
     attempt: 0,
     reviewRound: 0,
@@ -182,19 +185,26 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
   const { projects, engine, store, now } = deps;
 
   /** With `eventId`, the project as it was at that event; it never writes. */
-  const projectView = (slug: string, eventId?: number): ProjectView => {
+  const projectView = async (slug: string, eventId?: number): Promise<ProjectView> => {
+    // Every read after the names comes in one synchronous pass, so the view is of one moment.
+    const names = await projects.bbProjectNames();
     const live = projects.require(slug);
     const past = eventId === undefined ? null : rewind(rowsOf(store, live), eventId);
     const spec = projects.spec(slug, past?.specVersion);
-    const overview = past === null ? projects.overview(slug) : { ...projects.overview(slug), ...overviewAt(past, JSON.parse(store.specVersion(live.id, spec.version)!.spec_json) as Spec) };
+    const inForce = JSON.parse(store.specVersion(live.id, spec.version)!.spec_json) as Spec;
+    const overview = withRepoNames(
+      past === null ? projects.overview(slug) : { ...projects.overview(slug), ...overviewAt(past, inForce), repos: repoOverviews(past.project, inForce, past.tickets, landsOf(past.events)) },
+      names,
+    );
     const project = past?.project ?? live;
     const tickets = past?.tickets ?? store.tickets(project.id);
     const threads = past?.threads ?? store.threadsForProject(project.id);
     const at = past?.at ?? now();
     const metrics = past === null ? projectMetrics(store, project, at) : computeMetrics({ ...past, now: at });
     const approved = project.approved_version === null ? null : specOf(store, project);
-    const current = approved ?? (JSON.parse(store.specVersion(project.id, spec.version)!.spec_json) as Spec);
+    const current = approved ?? inForce;
     const board = project.state === "draft" ? draftCards(current, at) : boardCards(tickets, threads);
+    const summary = specSummary(spec.toml);
     return {
       overview,
       board,
@@ -202,7 +212,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       spec: {
         toml: spec.toml,
         version: spec.version,
-        summary: specSummary(spec.toml),
+        summary: { ...summary, repos: namedRepos(summary.repos, names) },
         pendingVersion: project.pending_version,
       },
       prUrl: project.pr_url,
@@ -247,6 +257,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       title: ticket.title,
       state: ticket.state,
       stateAt: ticket.state_at,
+      repo: ticket.repo,
       priority: ticket.priority,
       attempt: ticket.attempt,
       reviewRound: ticket.review_round,
@@ -286,8 +297,12 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
   };
 
   bb.rpc.register(rpcContract, {
-    projects: () => projects.list(),
-    home: () => homeView({ store, projects, now: now() }),
+    projects: () => projects.namedList(),
+    home: async () => {
+      const names = await projects.bbProjectNames();
+      const view = homeView({ store, projects, now: now() });
+      return { ...view, projects: view.projects.map((row) => withRepoNames(row, names)) };
+    },
     metrics: ({ slug, days, at }) => {
       const project = projects.require(slug);
       if (at === undefined) return projectMetrics(store, project, now(), days);

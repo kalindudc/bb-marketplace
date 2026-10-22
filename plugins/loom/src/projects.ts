@@ -1,11 +1,11 @@
 // The project service: proposals, approval, lifecycle, the board's posts, and
 // role lookup. Every state change goes through the store, which appends the event.
 import type { NewThreadRequest } from "@get-bb/plugin-sdk";
-import type { PlanningRow, PostRow, ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
+import type { EventRow, PlanningRow, PostRow, ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { StoreError } from "./db/store";
 import { SectionNameConflictError, type BbPort, type BbProjectInfo } from "./ports";
 import { notesMessage, planningKickoff, planningTitle } from "./prompts";
-import { repoSettings } from "./repos";
+import { isMultiRepo, repoSettings } from "./repos";
 import { numberErrors, parseSpec, specHash, type Spec } from "./spec";
 import type { SpecNote } from "./spec-paths";
 import { PAUSE_NOW_REASON, TICKET_STATES, type AuthorKind, type MergeChoice, type ProjectState, type Role, type TicketState } from "./states";
@@ -63,8 +63,33 @@ export interface ProjectOverview {
   reason: string | null;
   ticketCount: number;
   ticketCounts: Partial<Record<TicketState, number>>;
+  /** One entry per repo, in the spec's order; a single-repo project has one, named null. */
+  repos: RepoOverview[];
   createdAt: number;
   updatedAt: number;
+}
+
+/** One repository of a project, as `bb loom show` and the page list it. */
+export interface RepoOverview {
+  /** The [[repo]] name; null for a single-repo project's own repository. */
+  name: string | null;
+  bbProjectId: string;
+  /** bb's name for the bb project; null when bb cannot tell, and in a view that has not asked bb yet. */
+  bbProjectName: string | null;
+  base: string;
+  /** The integration branch; null on the pull request strategy. */
+  branch: string | null;
+  /** The pull request a land opened; a direct land opens none and keeps an earlier one. */
+  prUrl: string | null;
+  landedAt: number | null;
+  /** A ticket in the repo merged after its last land, so landing pushes new work. Always false on the pull request strategy. */
+  toLand: boolean;
+}
+
+/** A repo's last land. */
+export interface RepoLand {
+  prUrl: string | null;
+  landedAt: number | null;
 }
 
 export interface SpecView {
@@ -82,6 +107,8 @@ export interface TicketSummary {
   ref: string;
   title: string;
   state: TicketState;
+  /** The ticket's [[repo]] name; null on a single-repo project. */
+  repo: string | null;
   priority: number;
   deps: string[];
   attempt: number;
@@ -578,6 +605,27 @@ export class Projects {
     return this.overviewOf(this.require(slug));
   }
 
+  /** The overview with bb's name for each repo's bb project. */
+  async namedOverview(slug: string): Promise<ProjectOverview> {
+    const overview = this.overview(slug);
+    return withRepoNames(overview, await this.bbProjectNames());
+  }
+
+  async namedList(): Promise<ProjectOverview[]> {
+    const names = await this.bbProjectNames();
+    return this.list().map((overview) => withRepoNames(overview, names));
+  }
+
+  /** bb's project names by id. When bb cannot list its projects there are none, and the views show the ids instead. */
+  async bbProjectNames(): Promise<ReadonlyMap<string, string>> {
+    try {
+      return new Map((await this.bb.listProjects()).map((project) => [project.id, project.name]));
+    } catch (error) {
+      this.bb.log("warn", `Could not read bb's projects, so repos show their bb project id: ${error instanceof Error ? error.message : String(error)}`);
+      return new Map();
+    }
+  }
+
   spec(slug: string, version?: number): SpecView {
     const project = this.require(slug);
     const row = version === undefined ? this.store.specVersion(project.id, project.approved_version ?? this.store.latestSpecVersion(project.id)!.version) : this.store.specVersion(project.id, version);
@@ -632,6 +680,10 @@ export class Projects {
     const tickets = this.store.tickets(project.id);
     const ticketCounts: Partial<Record<TicketState, number>> = {};
     for (const ticket of tickets) ticketCounts[ticket.state] = (ticketCounts[ticket.state] ?? 0) + 1;
+    // A single-repo project keeps its land in projects.pr_url and the project.landed events, with no project_repos row.
+    const lands = isMultiRepo(spec)
+      ? new Map(this.store.projectRepos(project.id).map((row): [string, RepoLand] => [row.name, { prUrl: row.pr_url, landedAt: row.landed_at }]))
+      : landsOf(this.store.eventsOfKind(project.id, "project.landed"));
     return {
       slug: project.slug,
       name: project.name,
@@ -649,6 +701,7 @@ export class Projects {
       reason: project.system_reason,
       ticketCount: tickets.length,
       ticketCounts,
+      repos: repoOverviews(project, spec, tickets, lands),
       createdAt: project.created_at,
       updatedAt: project.updated_at,
     };
@@ -747,12 +800,46 @@ function lockedRepoErrors(approved: Spec, spec: Spec): string[] {
   return errors;
 }
 
+/** One entry per repo of `spec`, in its order. `lands` holds each repo's last land by [[repo]] name, or by null for a single-repo project's own repository. */
+export function repoOverviews(project: Pick<ProjectRow, "bb_project_id">, spec: Spec, tickets: readonly TicketRow[], lands: ReadonlyMap<string | null, RepoLand>): RepoOverview[] {
+  const names = isMultiRepo(spec) ? spec.repo!.map((repo) => repo.name) : [null];
+  return names.map((name) => {
+    const settings = repoSettings(spec, name);
+    const land = lands.get(name);
+    const landedAt = land?.landedAt ?? null;
+    // The rule of unlandedRepos in merge.ts, which imports this file.
+    const toLand = settings.branch !== null && tickets.some((ticket) => ticket.repo === name && ticket.state === "done" && (landedAt ?? -1) < ticket.state_at);
+    return { name, bbProjectId: settings.bbProjectId ?? project.bb_project_id, bbProjectName: null, base: settings.base, branch: settings.branch, prUrl: land?.prUrl ?? null, landedAt, toLand };
+  });
+}
+
+/** Each repo's last land from the project.landed events, keyed by the repo an event names, or null for none. */
+export function landsOf(events: readonly EventRow[]): Map<string | null, RepoLand> {
+  const lands = new Map<string | null, RepoLand>();
+  for (const event of events) {
+    if (event.kind !== "project.landed") continue;
+    const data = JSON.parse(event.data_json) as { repo?: unknown; url?: unknown };
+    const name = typeof data.repo === "string" ? data.repo : null;
+    lands.set(name, { prUrl: typeof data.url === "string" ? data.url : (lands.get(name)?.prUrl ?? null), landedAt: event.at });
+  }
+  return lands;
+}
+
+export function namedRepos<T extends { bbProjectId: string; bbProjectName: string | null }>(repos: readonly T[], names: ReadonlyMap<string, string>): T[] {
+  return repos.map((repo) => ({ ...repo, bbProjectName: names.get(repo.bbProjectId) ?? null }));
+}
+
+export function withRepoNames<T extends { repos: RepoOverview[] }>(overview: T, names: ReadonlyMap<string, string>): T {
+  return { ...overview, repos: namedRepos(overview.repos, names) };
+}
+
 function summaryOf(ticket: TicketRow): TicketSummary {
   return {
     key: ticket.key,
     ref: ticket.ref,
     title: ticket.title,
     state: ticket.state,
+    repo: ticket.repo,
     priority: ticket.priority,
     deps: parseList(ticket.deps_json),
     attempt: ticket.attempt,

@@ -742,6 +742,109 @@ describe("views", () => {
   });
 });
 
+describe("repos in the views", () => {
+  const toDone = (key: string) => {
+    for (const state of ["working", "checking", "review", "approved", "merging", "done"] as const) store.setTicketState(store.ticketByKey(key)!.id, state, "loom");
+  };
+  const withRepos = (doc: Doc) => {
+    doc.repo = [
+      { name: "web", project: "proj_web" },
+      { name: "api", project: "proj_api", base: "trunk", remote: "upstream" },
+    ];
+    doc.ticket[0].repo = "web";
+    doc.ticket[1].repo = "api";
+    doc.ticket[1].depends_on = [];
+  };
+  async function multiRepo() {
+    bb.addBbProject("proj_web", { host_local: "/src/web" }, { name: "Shop web" });
+    bb.addBbProject("proj_api", { host_local: "/src/api" }, { name: "Shop API" });
+    await propose(withRepos);
+    await projects.approve("csv", "human");
+    const project = store.projectBySlug("csv")!;
+    store.setProjectState(project.id, "running", "human");
+    return project;
+  }
+  const repo = (over: Record<string, unknown>) => ({ bbProjectName: null, branch: "loom/csv", prUrl: null, landedAt: null, toLand: false, ...over });
+
+  it("a single-repo project has one repo, named null, in the Loom project's bb project, with its last land from the events", async () => {
+    await propose();
+    await projects.approve("csv", "human");
+    const project = store.projectBySlug("csv")!;
+    store.setProjectState(project.id, "running", "human");
+    expect(projects.overview("csv").repos).toEqual([repo({ name: null, bbProjectId: "proj_1", base: "main" })]);
+    expect(projects.tickets("csv").map((ticket) => ticket.repo)).toEqual([null, null]);
+    expect(projects.ticketView("CSV-1").repo).toBeNull();
+
+    clock.advance(1000);
+    toDone("CSV-1");
+    expect(projects.overview("csv").repos[0]).toMatchObject({ landedAt: null, toLand: true });
+    clock.advance(1000);
+    const url = "https://github.com/acme/shop/pull/1";
+    store.updateProject(project.id, { pr_url: url });
+    store.event(project.id, null, "project.landed", "human", { url, sha: "abc", created: true });
+    const landedAt = clock.now();
+    expect(projects.overview("csv").repos[0]).toMatchObject({ prUrl: url, landedAt, toLand: false });
+
+    clock.advance(1000);
+    store.event(project.id, null, "project.landed", "human", { direct: true, pushed: "origin/main", sha: "def" });
+    expect(projects.overview("csv").repos[0]).toMatchObject({ prUrl: url, landedAt: clock.now() });
+  });
+
+  it("a multi-repo project has one repo per [[repo]] table, in the spec's order, with its bb project, base and last land", async () => {
+    const project = await multiRepo();
+    expect(projects.overview("csv").repos).toEqual([repo({ name: "web", bbProjectId: "proj_web", base: "main" }), repo({ name: "api", bbProjectId: "proj_api", base: "trunk" })]);
+    expect(projects.tickets("csv").map((ticket) => [ticket.key, ticket.repo])).toEqual([
+      ["CSV-1", "web"],
+      ["CSV-2", "api"],
+    ]);
+    expect(projects.ticketView("CSV-2")).toMatchObject({ key: "CSV-2", repo: "api" });
+
+    clock.advance(1000);
+    toDone("CSV-1");
+    toDone("CSV-2");
+    expect(projects.overview("csv").repos.map((entry) => entry.toLand)).toEqual([true, true]);
+    clock.advance(1000);
+    const url = "https://github.com/acme/web/pull/1";
+    store.updateProjectRepo(project.id, "web", { pr_url: url, landed_sha: "abc", landed_at: clock.now() }, "human", { url, sha: "abc", created: true });
+    const [web, api] = projects.overview("csv").repos;
+    expect(web).toEqual(repo({ name: "web", bbProjectId: "proj_web", base: "main", prUrl: url, landedAt: clock.now() }));
+    expect(api).toMatchObject({ name: "api", prUrl: null, landedAt: null, toLand: true });
+  });
+
+  it("a pull request strategy project has no integration branch and nothing to land", async () => {
+    bb.addBbProject("proj_web", { host_local: "/src/web" });
+    bb.addBbProject("proj_api", { host_local: "/src/api" });
+    await propose((doc) => {
+      withRepos(doc);
+      doc.merge = { strategy: "pr" };
+    });
+    await projects.approve("csv", "human");
+    toDone("CSV-1");
+    expect(projects.overview("csv").repos.map((entry) => [entry.name, entry.branch, entry.toLand])).toEqual([
+      ["web", null, false],
+      ["api", null, false],
+    ]);
+  });
+
+  it("namedOverview and namedList name each repo's bb project, and leave the name null when bb cannot list its projects", async () => {
+    await multiRepo();
+    expect((await projects.namedOverview("csv")).repos.map((entry) => [entry.bbProjectId, entry.bbProjectName])).toEqual([
+      ["proj_web", "Shop web"],
+      ["proj_api", "Shop API"],
+    ]);
+    expect((await projects.namedList())[0]!.repos.map((entry) => entry.bbProjectName)).toEqual(["Shop web", "Shop API"]);
+    expect(bb.callsTo("listProjects").length).toBeGreaterThan(0);
+
+    bb.bbProjects = new Error("bb is restarting");
+    expect((await projects.namedOverview("csv")).repos.map((entry) => [entry.bbProjectId, entry.bbProjectName])).toEqual([
+      ["proj_web", null],
+      ["proj_api", null],
+    ]);
+    expect(bb.callsTo("log").at(-1)).toEqual(["warn", "Could not read bb's projects, so repos show their bb project id: bb is restarting"]);
+    await expect(projects.namedOverview("nope")).rejects.toThrow(/No Loom project/);
+  });
+});
+
 describe("planning", () => {
   const request = (text = "Let people export their orders as CSV.\nWith a date filter.", projectId = "proj_1"): NewThreadRequest => ({
     projectId,
