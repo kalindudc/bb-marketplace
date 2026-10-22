@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { createCli } from "../src/cli";
+import { parseSpec } from "../src/spec";
 import { ORDINARY_TOOLS, PLANNER_TOOLS, REVIEWER_TOOLS, SKILLS, WORKER_TOOLS } from "../src/tools";
 import { makeHost } from "./helpers";
 
@@ -108,6 +109,37 @@ describe("the plugin's own documents", () => {
   it("README and the loom skill describe the Timeline and Back to now, and the overview the timeline", () => {
     for (const path of ["README.md", "skills/loom/SKILL.md"]) for (const phrase of ["Timeline", "Back to now"]) expect(read(path), `${path}: ${phrase}`).toContain(phrase);
     expect(read("PLUGIN_OVERVIEW.md")).toContain("A timeline on every project");
+  });
+
+  it("the spec reference documents [[repo]], ticket.repo and the repo errors, and every example spec parses", () => {
+    const spec = read("skills/loom/references/spec.md");
+    const table = spec.slice(spec.indexOf("### [[repo]]"), spec.indexOf("### [[ticket]]"));
+    expect(table).toContain("### [[repo]]");
+    for (const key of ["name", "project", "base", "remote", "checks", "after_merge", "protected"]) expect(table, key).toContain(`| \`${key}\` |`);
+    expect(spec).toMatch(/^\| `repo` \| string \|/m);
+    for (const phrase of ["the same `name`", "has no `repo`", "bb project source add <id> --clone --machine <host>", "removes or renames an approved repo"]) expect(spec, phrase).toContain(phrase);
+
+    const examples = [...spec.matchAll(/```toml\n([\s\S]*?)```/g)].map((match) => parseSpec(match[1]!));
+    expect(examples.length).toBeGreaterThanOrEqual(2);
+    for (const example of examples) expect(example.errors).toEqual([]);
+    const multi = examples.find((example) => (example.spec?.repo?.length ?? 0) >= 2)!.spec!;
+    const repoOf = new Map(multi.ticket.map((ticket) => [ticket.ref, ticket.repo]));
+    expect(multi.ticket.some((ticket) => ticket.depends_on.some((ref) => repoOf.get(ref) !== ticket.repo))).toBe(true);
+  });
+
+  it("the loom-plan skill says how to find repos, offers to clone a missing checkout, and splits cross-repo work per repo", () => {
+    const plan = read("skills/loom-plan/SKILL.md");
+    for (const phrase of ["bb project list", "bb project discover", "--clone", "bb project create --root <path> --machine <host>", "only after they agree", "one ticket per repo", "starting point, not a limit"]) {
+      expect(plan, phrase).toContain(phrase);
+    }
+  });
+
+  it("README and the loom skill describe multi-repo projects, landing one repo with --repo and the repo picker", () => {
+    for (const path of ["README.md", "skills/loom/SKILL.md"]) {
+      const text = read(path).replace(/\s+/g, " ");
+      for (const phrase of ["## Multi-repo projects", "--repo", "one merge at a time per project", "repo picker", "every repo with merged work has landed"]) expect(text, `${path}: ${phrase}`).toContain(phrase);
+    }
+    expect(read("PLUGIN_OVERVIEW.md")).toContain("[[repo]]");
   });
 
   it("the README's safety rules name the default permission mode", () => {
