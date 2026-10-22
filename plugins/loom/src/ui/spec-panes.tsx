@@ -320,7 +320,7 @@ export function ProjectPane({ view }: { view: SpecVersionView }) {
       <Noteable paths={["merge", "project.base"]} label="merge">
         {merge.strategy === "integration" ? (
           <>
-            Approved work merges into <Code>{merge.branch}</Code> from <Code>{project.base}</Code>; you land it as one pull request with <Code>bb loom land</Code>.
+            Approved work merges into <Code>{merge.branch}</Code> from <Code>{project.base}</Code>; you land it as one pull request with <Code>bb loom land</Code>, or straight onto {project.base} with <Code>bb loom land --direct</Code>.
           </>
         ) : (
           <>

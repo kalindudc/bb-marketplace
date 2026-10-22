@@ -163,7 +163,7 @@ export interface ThreadInfo {
 }
 
 export const TICKET_ACTIONS = ["requeue", "block", "cancel"] as const;
-export const CONTROL_ACTIONS = ["approve", "start", "pause", "pauseNow", "resume", "land", "archive"] as const;
+export const CONTROL_ACTIONS = ["approve", "start", "pause", "pauseNow", "resume", "land", "landDirect", "archive"] as const;
 export type TicketAction = (typeof TICKET_ACTIONS)[number];
 export type ControlAction = (typeof CONTROL_ACTIONS)[number];
 

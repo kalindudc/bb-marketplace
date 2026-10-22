@@ -26,6 +26,11 @@ export function holdMerge(ctx: { store: Store }, projectId: number): (() => void
   return () => void held.delete(projectId);
 }
 
+/** Whether a merge, a land or a human block or cancel holds the project's merge guard now. */
+export function mergeHeld(ctx: { store: Store }, projectId: number): boolean {
+  return guards.get(ctx.store)?.has(projectId) === true;
+}
+
 const runs = new WeakMap<Store, Set<Promise<void>>>();
 const runsOf = (store: Store) => runs.get(store) ?? runs.set(store, new Set()).get(store)!;
 
@@ -370,9 +375,12 @@ const unavailable = (message: string) => new LoomError("loom_unavailable", messa
 /**
  * The human's step on the integration strategy: push the integration branch and open one pull request to the base
  * branch, or push the new commits to the one already open. It holds the merge guard throughout, so no merge can move
- * the branch between reading its sha and pushing exactly that sha.
+ * the branch between reading its sha and pushing exactly that sha. With `direct`, it pushes to the base branch instead
+ * and opens no pull request.
  */
-export async function land(ctx: EngineCtx, slug: string, a: { actor: string; title?: string; ready: boolean }): Promise<{ url: string; done: boolean }> {
+export type LandResult = { url: string; done: boolean } | { url: null; pushed: string; sha: string; done: boolean };
+
+export async function land(ctx: EngineCtx, slug: string, a: { actor: string; title?: string; ready: boolean; direct?: boolean }): Promise<LandResult> {
   const { store } = ctx;
   const seen = store.projectBySlug(slug);
   if (seen === null) throw new LoomError("loom_not_found", `No Loom project named "${slug}".`, "Run `bb loom list` to see the projects.");
@@ -389,6 +397,14 @@ export async function land(ctx: EngineCtx, slug: string, a: { actor: string; tit
     if (done.length === 0) throw new LoomError("loom_invalid_state", "Cannot land: no ticket is done yet, so the integration branch has nothing to land.");
 
     const project = store.project(seen.id)!;
+    if (a.direct === true) {
+      const pushed = `${spec.merge.remote}/${spec.project.base}`;
+      const sha = await guarded(() => pushToBase(ctx, project, spec));
+      store.event(project.id, null, "project.landed", a.actor, { direct: true, pushed, sha });
+      completeProject(ctx, project.id);
+      store.changed(project.id);
+      return { url: null, pushed, sha, done: store.project(project.id)!.state === "done" };
+    }
     const sha = await guarded(async () => {
       const { hostId, repo, worktree } = await loomWorktree(ctx, project, spec).catch((error) => {
         throw error instanceof Unavailable ? unavailable(error.message) : error;
@@ -420,6 +436,45 @@ export async function land(ctx: EngineCtx, slug: string, a: { actor: string; tit
   } finally {
     release();
   }
+}
+
+/**
+ * The direct land: fetch the base branch into the Loom worktree, merge it in when it moved, run after_merge on exactly
+ * what will be pushed, and push that to the base branch without force. A failed check resets the merge. Returns the pushed sha.
+ */
+async function pushToBase(ctx: EngineCtx, project: ProjectRow, spec: Spec): Promise<string> {
+  const { remote } = spec.merge;
+  const base = spec.project.base;
+  const branch = spec.merge.branch!;
+  const target = `${remote}/${base}`;
+  const { hostId, repo, worktree } = await loomWorktree(ctx, project, spec).catch((error) => {
+    throw error instanceof Unavailable ? unavailable(error.message) : error;
+  });
+  if (await provisioning(ctx, project.id)) throw new LoomError("loom_invalid_state", `Cannot land yet: a worker's worktree is still being created from ${branch}; try again in a moment.`);
+
+  const fetched = await ctx.host.call(hostId, "fetchBranch", { worktree, remote, branch: base });
+  if (fetched.outcome === "unavailable") throw unavailable(fetched.message);
+  const merged = await ctx.host.call(hostId, "merge", { worktree, ref: fetched.sha, message: `Merge ${target} into ${branch} (Loom)` });
+  if (merged.outcome === "conflict") {
+    throw new LoomError("loom_invalid_state", `Cannot land on ${target}: it conflicts with ${branch} in ${merged.files.join(", ")}.`, `Land it as a pull request with \`bb loom land ${project.slug}\` and resolve the conflict there.`);
+  }
+
+  for (const command of spec.checks.after_merge) {
+    const result = await ctx.host.call(hostId, "exec", { cwd: worktree, command, timeoutMs: spec.checks.timeout_minutes * 60_000 });
+    let how: string | null = result.timedOut ? "timed out" : result.exitCode !== 0 ? `failed (exit ${result.exitCode})` : null;
+    if (how === null) {
+      const after = await ctx.host.call(hostId, "worktreeState", { worktree, base, trackedOnly: true });
+      if (after.head !== merged.sha || after.dirty) how = "changed the branch (moved HEAD or left tracked files modified)";
+    }
+    if (how === null) continue;
+    await ctx.host.call(hostId, "resetHard", { worktree, sha: merged.before });
+    const output = result.output.trim() === "" ? "" : `\n\n${clip(result.output.slice(-2000), 2000)}`;
+    throw new LoomError("loom_invalid_state", `Cannot land on ${target}: ${command} ${how}. Nothing was pushed, and ${branch} is back at ${merged.before.slice(0, 12)}.${output}`);
+  }
+
+  const pushed = await ctx.host.call(hostId, "push", { repo, remote, src: merged.sha, branch: base });
+  if (pushed.outcome === "unavailable") throw unavailable(pushed.message);
+  return merged.sha;
 }
 
 // A host call that throws (a disconnected machine) reaches the human as an unavailable error with its message.

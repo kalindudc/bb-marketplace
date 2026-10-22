@@ -43,6 +43,7 @@ export function parseRoute(subPath: string): Route {
 function Controls({ view, busy, primary, onControl }: { view: ProjectView; busy: boolean; primary: ControlAction | null; onControl(action: ControlAction, version?: number): void }) {
   const { overview } = view;
   const live = overview.state === "running" || overview.state === "paused" || overview.state === "done";
+  const landable = overview.strategy === "integration" && live && (overview.ticketCounts.done ?? 0) > 0;
   const act = (label: string, action: ControlAction, version?: number) =>
     action === primary ? null : <ConfirmButton key={label} label={label} disabled={busy} onConfirm={() => onControl(action, version)} />;
   return (
@@ -53,7 +54,8 @@ function Controls({ view, busy, primary, onControl }: { view: ProjectView; busy:
       {overview.state === "running" && act("Pause", "pause")}
       {overview.state === "running" && act("Pause now", "pauseNow")}
       {overview.state === "paused" && act("Resume", "resume")}
-      {overview.strategy === "integration" && live && (overview.ticketCounts.done ?? 0) > 0 && act("Land", "land")}
+      {landable && act("Land", "land")}
+      {landable && act(`Land to ${overview.base}`, "landDirect")}
       {overview.state !== "archived" && (
         <MoreMenu>
           <ConfirmButton label="Archive project" danger disabled={busy} onConfirm={() => onControl("archive")} />

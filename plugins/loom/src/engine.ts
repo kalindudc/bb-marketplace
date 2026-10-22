@@ -1,7 +1,7 @@
 // The engine: a control loop that works every running project, the human's commands on the engine's state, and
 // the handlers for bb's thread events. Behavior lives in workers.ts, checks.ts and triage.ts; this wires it together.
 import { resumeCheckingTickets } from "./checks";
-import { finishIfComplete, holdMerge, land, pollPullRequests, runMergeQueue } from "./merge";
+import { finishIfComplete, holdMerge, land, mergeHeld, pollPullRequests, runMergeQueue, type LandResult } from "./merge";
 import type { PostRow, ProjectRow, ThreadRow, TicketRow } from "./db/store";
 import { approvedText, blockedReplyText, heldCheckResult, resumeText, reviewRequeueNote, startRequeueNote } from "./prompts";
 import { LoomError, type ApproveResult, type Projects } from "./projects";
@@ -165,8 +165,8 @@ export class Engine {
       const project = store.project(projectId);
       if (project?.state !== "running" || (project.hold_until !== null && project.hold_until > now())) return null;
       const spec = specOf(store, project);
-      // A worker's worktree branches from the integration branch's tip, so none starts while a merge there has not passed its checks.
-      if (spec.merge.strategy === "integration" && store.tickets(projectId, ["merging"]).length > 0) return null;
+      // A worker's worktree branches from the integration branch's tip, so none starts while a merge or a direct land there has not passed its checks.
+      if (spec.merge.strategy === "integration" && (store.tickets(projectId, ["merging"]).length > 0 || mergeHeld(this.ctx, projectId))) return null;
       const lite = spawnable(spec.agents.max_workers, store.tickets(projectId).map(toLite)).find((candidate) => !tried.has(candidate.id));
       return lite === undefined ? null : { project, spec, ticket: store.ticket(lite.id)! };
     };
@@ -376,8 +376,8 @@ export class Engine {
     return ticket;
   }
 
-  /** The human's land: push the integration branch and open or update its one pull request. */
-  async land(slug: string, actor: string, opts: { title?: string; ready: boolean }): Promise<{ url: string; done: boolean }> {
+  /** The human's land: push the integration branch and open or update its one pull request, or with `direct` push it to the base branch. */
+  async land(slug: string, actor: string, opts: { title?: string; ready: boolean; direct?: boolean }): Promise<LandResult> {
     const result = await land(this.ctx, slug, { actor, ...opts });
     this.kick();
     return result;

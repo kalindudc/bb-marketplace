@@ -408,6 +408,7 @@ describe("changes", () => {
     await approved();
     await expect(call("control", { slug: "csv", action: "pause", confirm: true })).rejects.toThrow(/needs a running project/);
     await expect(call("control", { slug: "csv", action: "land", confirm: true })).rejects.toThrow(/can be landed/);
+    await expect(call("control", { slug: "csv", action: "landDirect", confirm: true })).rejects.toThrow(/can be landed/);
     expect(humanEvents()).toEqual([]);
   });
 

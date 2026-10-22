@@ -880,6 +880,22 @@ describe("tick: review and merge", () => {
     expect(roles()).toContain("worker:CSV-3");
   });
 
+  it("starts no worker while a direct land holds the merge guard on the integration strategy, and starts it once the land is over", async () => {
+    await seedProject(h, withDocsTicket);
+    await reachApproved(h, "CSV-1");
+    const release = holdMerge(h.ctx, h.store.projectBySlug("csv")!.id)!;
+
+    await h.engine.tick();
+    await h.engine.tick();
+    expect(roles().filter((role) => role.startsWith("worker"))).toEqual(["worker:CSV-1"]);
+
+    release();
+    await h.engine.tick();
+    await settleMerges(h.ctx);
+    await h.engine.tick();
+    expect(roles()).toContain("worker:CSV-3");
+  });
+
   it("keeps spawning workers while a pull request ticket is merging", async () => {
     await seedProject(h, prProject);
     await reachApproved(h, "CSV-1");

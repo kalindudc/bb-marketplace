@@ -684,4 +684,102 @@ describe("land", () => {
     expect(project().pr_url).toBeNull();
     expect(holdMerge(h.ctx, project().id)).not.toBeNull();
   });
+
+  describe("--direct", () => {
+    const direct = { ...landArgs, direct: true };
+    const landed = () => h.store.events(project().id).filter((event) => event.kind === "project.landed").map((event) => JSON.parse(event.data_json));
+    const guardFree = () => {
+      const release = holdMerge(h.ctx, project().id);
+      release?.();
+      return release !== null;
+    };
+
+    it("fetches the base branch, runs after_merge and pushes the integration branch's head to the base branch, with no pull request", async () => {
+      await seedProject(h, withAfterMerge);
+      await mergeOne("CSV-1");
+      const mark = h.host.calls.length;
+      const result = await land(h.ctx, "csv", direct);
+
+      expect(result).toEqual({ url: null, pushed: "origin/main", sha: "m1", done: false });
+      expect(hostCallsSince(mark).map((call) => call.method)).toEqual(["ensureWorktree", "fetchBranch", "merge", "exec", "worktreeState", "push"]);
+      expect(h.host.callsTo("fetchBranch")).toEqual([{ worktree: WORKTREE, remote: "origin", branch: "main" }]);
+      expect(h.host.callsTo("exec").at(-1)).toMatchObject({ cwd: WORKTREE, command: "npm run e2e" });
+      expect(h.host.callsTo("worktreeState").at(-1)).toEqual({ worktree: WORKTREE, base: "main", trackedOnly: true });
+      expect(h.host.callsTo("push")).toEqual([{ repo: "/repo", remote: "origin", src: "m1", branch: "main" }]);
+      expect(h.host.callsTo("prCreate")).toEqual([]);
+      expect(project().pr_url).toBeNull();
+      expect(landed()).toEqual([{ direct: true, pushed: "origin/main", sha: "m1" }]);
+      expect(guardFree()).toBe(true);
+    });
+
+    it("merges a base branch that moved, checks the merge and pushes it, and finishes a project whose tickets are all done or cancelled", async () => {
+      await seedProject(h, withAfterMerge);
+      await mergeOne("CSV-1");
+      h.store.setTicketState(ticketOf(h, "CSV-2").id, "cancelled", "human");
+      h.host.remoteBase = "up1";
+      const mark = h.host.calls.length;
+      const result = await land(h.ctx, "csv", direct);
+
+      expect(result).toEqual({ url: null, pushed: "origin/main", sha: "m2", done: true });
+      expect(hostCallsSince(mark).find((call) => call.method === "merge")!.input).toEqual({ worktree: WORKTREE, ref: "up1", message: "Merge origin/main into loom/csv (Loom)" });
+      expect(hostCallsSince(mark).map((call) => call.method)).toEqual(["ensureWorktree", "fetchBranch", "merge", "exec", "worktreeState", "push"]);
+      expect(h.host.callsTo("push").at(-1)).toMatchObject({ src: "m2", branch: "main" });
+      expect(project().state).toBe("done");
+    });
+
+    it("waits while a worker's worktree is still being created from the integration branch", async () => {
+      await seedProject(h, withDocsTicket);
+      await mergeOne("CSV-1");
+      h.store.addThread({ project_id: project().id, ticket_id: ticketOf(h, "CSV-3").id, role: "worker", state: "spawning", spawn_token: "tok" });
+      const merges = h.host.callsTo("merge").length;
+      await expect(land(h.ctx, "csv", direct)).rejects.toThrow("Cannot land yet: a worker's worktree is still being created from loom/csv; try again in a moment.");
+      expect(h.host.callsTo("merge")).toHaveLength(merges);
+      expect(h.host.callsTo("push")).toEqual([]);
+      expect(guardFree()).toBe(true);
+    });
+
+    it("refuses a base branch that conflicts, naming the files", async () => {
+      await seedProject(h, withAfterMerge);
+      await mergeOne("CSV-1");
+      h.host.scripted.merge = [{ outcome: "conflict", files: ["src/a.ts"] }];
+      await expect(land(h.ctx, "csv", direct)).rejects.toThrow("Cannot land on origin/main: it conflicts with loom/csv in src/a.ts.");
+      expect(h.host.callsTo("push")).toEqual([]);
+      expect(landed()).toEqual([]);
+      expect(guardFree()).toBe(true);
+    });
+
+    it("refuses when an after_merge check fails on the merge, and resets the integration branch", async () => {
+      await seedProject(h, withAfterMerge);
+      await mergeOne("CSV-1");
+      h.host.remoteBase = "up1";
+      h.host.execResults = [{ exitCode: 1, output: "1 test failed" }];
+      const refused = land(h.ctx, "csv", direct);
+      await expect(refused).rejects.toThrow("Cannot land on origin/main: npm run e2e failed (exit 1). Nothing was pushed, and loom/csv is back at m1.");
+      await expect(refused).rejects.toThrow("1 test failed");
+      expect(h.host.callsTo("resetHard").at(-1)).toEqual({ worktree: WORKTREE, sha: "m1" });
+      expect(h.host.worktree(WORKTREE).head).toBe("m1");
+      expect(h.host.callsTo("push")).toEqual([]);
+      expect(landed()).toEqual([]);
+      expect(guardFree()).toBe(true);
+    });
+
+    it("refuses when a check that passed moved the integration branch", async () => {
+      await seedProject(h, withAfterMerge);
+      await mergeOne("CSV-1");
+      h.host.onExec = (_input, worktree) => void (worktree.head = "x9");
+      await expect(land(h.ctx, "csv", direct)).rejects.toThrow("npm run e2e changed the branch (moved HEAD or left tracked files modified)");
+      expect(h.host.callsTo("push")).toEqual([]);
+    });
+
+    it("reports the host's message when the fetch or the push is unavailable", async () => {
+      await seedProject(h);
+      await mergeOne("CSV-1");
+      h.host.scripted.fetchBranch = [{ outcome: "unavailable", message: "git fetch from origin failed: no route" }];
+      await expect(land(h.ctx, "csv", direct)).rejects.toThrow("git fetch from origin failed: no route");
+      h.host.scripted.push = [{ outcome: "unavailable", message: "git push to origin failed: ! [rejected] (fetch first)" }];
+      await expect(land(h.ctx, "csv", direct)).rejects.toThrow("git push to origin failed: ! [rejected] (fetch first)");
+      expect(landed()).toEqual([]);
+      expect(guardFree()).toBe(true);
+    });
+  });
 });

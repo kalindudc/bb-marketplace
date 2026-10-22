@@ -97,6 +97,14 @@ describe("the plugin's own documents", () => {
     for (const path of ["README.md", "skills/loom/SKILL.md"]) expect(read(path), path).toContain("timeline");
   });
 
+  it("README, the loom skill and the overview describe the direct land, and README and the skill the home page's search and switch", () => {
+    for (const path of ["README.md", "skills/loom/SKILL.md"]) {
+      expect(read(path), path).toContain("bb loom land <slug> --direct");
+      expect(read(path), path).toContain("Hide done and archived");
+    }
+    expect(read("PLUGIN_OVERVIEW.md")).toContain("--direct");
+  });
+
   it("the README's safety rules name the default permission mode", () => {
     expect(read("README.md")).toMatch(/## Safety[\s\S]*full permission mode[\s\S]*## How it works/);
   });

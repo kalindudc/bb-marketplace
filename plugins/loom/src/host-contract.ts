@@ -56,6 +56,11 @@ export const hostContract = defineRpcContract({
     input: z.object({ worktree: absPath, sha: commit }).strict(),
     output: z.object({ sha }).strict(),
   },
+  // git fetch <remote> refs/heads/<branch> in the Loom worktree, whose FETCH_HEAD is its own; sha is the fetched tip.
+  fetchBranch: {
+    input: z.object({ worktree: absPath, remote: ref, branch: ref }).strict(),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), sha }).strict(), z.object({ outcome: z.literal("unavailable"), message: z.string() }).strict()]),
+  },
   push: {
     input: z.object({ repo: absPath, remote: ref, src: ref, branch: ref }).strict(),
     output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok") }).strict(), z.object({ outcome: z.literal("unavailable"), message: z.string() }).strict()]),

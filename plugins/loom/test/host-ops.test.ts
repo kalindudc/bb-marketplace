@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import hostEntry from "../host";
-import { commitAll, diff, ensureBranch, ensureWorktree, exec, git, merge, parseRemoteUrl, prCreate, prState, push, resetHard, worktreeState } from "../src/host/ops";
+import { commitAll, diff, ensureBranch, ensureWorktree, exec, fetchBranch, git, merge, parseRemoteUrl, prCreate, prState, push, resetHard, worktreeState } from "../src/host/ops";
 
 const ENV: Record<string, string> = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
 const AUTHOR_VARS = ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"];
@@ -460,6 +460,33 @@ describe("push", () => {
   });
 });
 
+describe("fetchBranch", () => {
+  it("fetches the remote's branch tip in a worktree, without writing the repository's own FETCH_HEAD", async () => {
+    const repo = makeRepo();
+    const remote = join(scratch, `remote-${counter++}.git`);
+    execFileSync("git", ["init", "-q", "--bare", remote]);
+    sh(repo, "remote", "add", "origin", remote);
+    sh(repo, "push", "-q", "origin", "main");
+    const worktree = addWorktree(repo, "loom/fetch");
+    const clone = join(scratch, `clone-${counter++}`);
+    execFileSync("git", ["clone", "-q", "-b", "main", remote, clone]);
+    sh(clone, "config", "user.email", "dev@example.com");
+    sh(clone, "config", "user.name", "Dev");
+    const upstream = commitFile(clone, "up.txt", "up");
+    sh(clone, "push", "-q", "origin", "HEAD:main");
+
+    expect(await fetchBranch({ worktree, remote: "origin", branch: "main" })).toEqual({ outcome: "ok", sha: upstream });
+    expect(existsSync(join(repo, ".git", "FETCH_HEAD"))).toBe(false);
+  });
+
+  it("is unavailable, with git's message, when the remote is missing", async () => {
+    const repo = makeRepo();
+    const result = await fetchBranch({ worktree: repo, remote: "origin", branch: "main" });
+    expect(result.outcome).toBe("unavailable");
+    expect(result.outcome === "unavailable" && result.message).toMatch(/^git fetch from origin failed/);
+  });
+});
+
 describe("gh", () => {
   let bin: string;
   let savedPath: string | undefined;
@@ -618,5 +645,6 @@ describe("host entry", () => {
     await expect(harness.experimental_call("ensureBranch", { repo: scratch, branch: "--force", from: "main" })).rejects.toThrow();
     await expect(harness.experimental_call("ensureBranch", { repo: scratch, branch: "a..b", from: "main" })).rejects.toThrow();
     await expect(harness.experimental_call("ensureBranch", { repo: scratch, branch: "a b", from: "main" })).rejects.toThrow();
+    await expect(harness.experimental_call("fetchBranch", { worktree: scratch, remote: "--upload-pack=x", branch: "main" })).rejects.toThrow();
   });
 });

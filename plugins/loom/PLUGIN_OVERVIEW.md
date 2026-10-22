@@ -3,7 +3,7 @@ Run a software project with agents: a planner turns a goal into a validated spec
 ## What you get
 
 - A planner skill (`loom-plan`): any thread can propose a project as a TOML spec with tickets, acceptance criteria, checks, a review policy and a merge strategy. The plugin validates it with numbered errors you can act on, and you approve it before anything runs.
-- Start a project from the page: New project opens bb's own new-thread composer, and the planner's questions, its draft and the Approve and Start buttons stay on the page. A first visit shows a short guide to how Loom works.
+- Start a project from the page: New project opens bb's own new-thread composer, and the planner's questions, its draft and the Approve and Start buttons stay on the page. A first visit shows a short guide.
 - Review a spec without reading TOML: a dashboard with the tickets in dependency waves, shared files, the checks and the limits. Press "+ note" on any part to send the planner your notes in one message, and compare its versions with what each one changed.
 - Workers that start by themselves: one thread per ready ticket, in its own worktree, only when its dependencies are done and its files do not overlap work in flight. The plugin, not the agent, commits, runs your check commands, and decides whether the work passed.
 - Reviewers on their own model: each ticket is read by fresh reviewer threads that approve or send findings back to the worker. A ticket merges only after the review you asked for and the `after_merge` checks on the merged result.
@@ -12,11 +12,11 @@ Run a software project with agents: a planner turns a goal into a validated spec
 - A header chip such as `CSV-3 · review` on worker, reviewer and planner threads that opens the ticket on the page, and a Planning chip on a planning conversation that opens it there.
 - Questions the planner asks with Ask User Question appear above its chat on the page, where you answer them, and the Loom icon in the navigation rail counts what needs you.
 - A timeline on every ticket: each check command with its output, each git step of the merge, each verdict, and every thread, ended ones included.
-- `bb loom metrics <slug>` and `bb loom feed <slug>` print the same numbers and events, and `--json` is there for scripts and agents.
+- `bb loom metrics` and `bb loom feed` print the same numbers and events, with `--json` for scripts and agents.
 
 ## How it works
 
-Every change to a project or ticket goes through one store method that appends an event in the same transaction, and the event table refuses edits. The metrics are computed from that log, so they are exact and can be recomputed. Agents get narrow tools for their role and never merge or push. On the integration strategy the branch stays local until you run `bb loom land`, which opens one pull request upstream. A blocked ticket reaches the planner in a triage round, and so does your reply on it.
+Every change to a project or ticket goes through one store method that appends an event in the same transaction, and the event table refuses edits. The metrics are computed from that log, so they are exact and can be recomputed. Agents get narrow tools for their role and never merge or push. On the integration strategy the branch stays local until you run `bb loom land`: one pull request upstream, or with `--direct` a push to the base branch. A blocked ticket reaches the planner in a triage round, and so does your reply on it.
 
 ## Requirements
 

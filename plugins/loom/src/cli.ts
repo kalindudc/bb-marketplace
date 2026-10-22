@@ -303,18 +303,24 @@ export function createCli(projects: Projects, engine: Engine, store: Store, now:
           }),
       }),
       land: cliCommand({
-        summary: "Land the integration branch: push it and open one pull request to the base branch, or push the new commits to the open one (human only)",
+        summary: "Land the integration branch: push it and open one pull request to the base branch, or push the new commits to the open one; --direct pushes it to the base branch instead (human only)",
         positionals: [SLUG],
         options: {
           title: { type: "string", description: "The pull request's title; the project's name by default. Used when the pull request is opened." },
           ready: { type: "boolean", description: "Open a ready pull request instead of a draft. Used when the pull request is opened." },
+          direct: { type: "boolean", description: "Push to the base branch on the merge remote with no pull request: merges the remote's base branch in when it moved, and runs the after_merge checks on the result first." },
           json,
         },
         run: ({ options, positionals }, ctx) =>
           guarded(async () => {
-            const data = options.ready ? { slug: positionals.slug, ready: true } : { slug: positionals.slug };
-            const result = await humanAction(deps, ctx, "land", data, () => engine.land(positionals.slug, HUMAN_ACTOR, { title: options.title, ready: options.ready === true }));
-            return out(options.json ? toJson(result) : `Landed ${positionals.slug}: ${result.url}\n${result.done ? "Every ticket is done or cancelled, so the project is done.\n" : "Run `bb loom land` again after more tickets merge to push them to the same pull request.\n"}`);
+            const direct = options.direct === true;
+            if (direct && (options.title !== undefined || options.ready === true)) throw new LoomError("loom_invalid_input", "--title and --ready shape the pull request, so they do not go with --direct.", "Leave them out, or land without --direct.");
+            const data = { slug: positionals.slug, ...(options.ready ? { ready: true } : {}), ...(direct ? { direct: true } : {}) };
+            const result = await humanAction(deps, ctx, "land", data, () => engine.land(positionals.slug, HUMAN_ACTOR, { title: options.title, ready: options.ready === true, direct }));
+            const finished = "Every ticket is done or cancelled, so the project is done.\n";
+            if (options.json) return out(toJson(result));
+            if (result.url === null) return out(`Landed ${positionals.slug} on ${result.pushed} at ${result.sha.slice(0, 12)}.\n${result.done ? finished : "Run `bb loom land --direct` again after more tickets merge to push them too.\n"}`);
+            return out(`Landed ${positionals.slug}: ${result.url}\n${result.done ? finished : "Run `bb loom land` again after more tickets merge to push them to the same pull request.\n"}`);
           }),
       }),
       approve: cliCommand({

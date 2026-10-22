@@ -177,6 +177,13 @@ export async function push(input: HostInput<"push">, signal?: AbortSignal): Prom
   return pushed.code === 0 ? { outcome: "ok" } : { outcome: "unavailable", message: `git push to ${remote} failed: ${tail(pushed.stderr || pushed.stdout)}` };
 }
 
+export async function fetchBranch(input: HostInput<"fetchBranch">, signal?: AbortSignal): Promise<HostOutput<"fetchBranch">> {
+  const { worktree, remote, branch } = input;
+  const fetched = await run(worktree, ["fetch", "--no-tags", remote, `refs/heads/${branch}`], signal, NETWORK_TIMEOUT_MS);
+  if (fetched.code !== 0) return { outcome: "unavailable", message: `git fetch from ${remote} failed: ${tail(fetched.stderr || fetched.stdout)}` };
+  return { outcome: "ok", sha: await git(worktree, ["rev-parse", "--verify", "FETCH_HEAD^{commit}"], { signal }) };
+}
+
 /** `host/owner/repo` from an https, scp-style ssh or ssh:// remote URL, else null. */
 export function parseRemoteUrl(url: string): string | null {
   const match =

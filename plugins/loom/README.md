@@ -18,7 +18,7 @@ agents get narrow tools for their role.
 5. Check: the plugin commits the worktree and runs the ticket's and the project's check commands. A failure goes back to the worker.
 6. Review: reviewer threads read the diff and call `loom_approve` or `loom_request_changes`. Requested changes go back to the worker as numbered findings.
 7. Merge: the plugin merges exactly the commit that was reviewed, one ticket at a time, into the integration branch and runs the `after_merge` checks on the result. On the pull request strategy it opens one pull request per ticket and follows it.
-8. Land: on the integration strategy the human runs `bb loom land` to push the branch and open one pull request upstream.
+8. Land: on the integration strategy the human runs `bb loom land` to push the branch and open one pull request upstream, or `bb loom land --direct` to merge the remote's base branch in when it moved, run the `after_merge` checks on the result, and push straight to the base branch.
 
 A ticket that gets stuck is blocked. The planner hears about blocked tickets in a
 triage round and answers with its board tools (`loom_board`, `loom_ticket`,
@@ -64,6 +64,7 @@ bb loom block CSV-1 "reason"
 bb loom requeue CSV-1 --note "answer"        # a blocked ticket back to the queue
 bb loom cancel CSV-1 "reason"
 bb loom land <slug> [--title t] [--ready]    # integration strategy: push the branch, open one pull request
+bb loom land <slug> --direct                 # integration strategy: merge in the remote's base, check, push to it, no pull request
 bb loom archive <slug>
 ```
 
@@ -117,7 +118,9 @@ button that opens its ticket or project. The project table shows each project's
 state, strategy, ticket counts and the reason the plugin paused it, with a
 progress bar, its workers and reviewers at work (not the planner, which stays on
 call for triage rounds), a 14-day throughput sparkline, its tokens against the
-spec's budget and the time of its last event.
+spec's budget and the time of its last event. A search box above the table
+filters it by name, key or slug as you type, and "Hide done and archived" leaves
+finished projects out; the page remembers that switch.
 
 A project with an approved spec shows a health strip above its tabs: progress,
 pace over the last 14 days and the days left at that pace, the token budget and
@@ -128,7 +131,8 @@ sentence on what happens next, and one button such as "Approve v1 · create 7
 tickets" or "Start project · 2 workers". The bar turns yellow when tickets are
 blocked or Loom paused the project, and names the reason and what Loom is doing
 about it. When every ticket of an integration project is done or cancelled, the
-bar offers Land, as does the next step in `bb loom show`. Open a project for
+bar offers Land, as does the next step in `bb loom show`. The header's "Land to
+<base>" button, beside Land, lands with `--direct` instead. Open a project for
 these views:
 
 - Board: one lane per ticket state, with each card's age in its state, its attempt and review round, and a link to the thread working on it. Queued tickets are split into Ready and Waiting, and a waiting ticket names what it waits on. Before approval, the draft's tickets show as dashed cards in Ready and Waiting, with the keys approval will give them.
@@ -187,7 +191,7 @@ whole project.
 ## Safety
 
 - Only plugin code moves a ticket, runs checks, merges or decides that work is done. A thread's role comes from the plugin's own table, never from thread metadata.
-- Agents never merge or push. On the integration strategy nothing is pushed until the human runs `bb loom land`.
+- Agents never merge or push. On the integration strategy nothing is pushed until the human runs `bb loom land`, and only `bb loom land --direct` pushes to the base branch, never with force and only after the `after_merge` checks pass on what it pushes.
 - Workers and reviewers run in bb's full permission mode unless the spec sets `permission_mode`, because some providers, such as pi, accept no other mode. An approved spec keeps the mode it was approved with.
 - The human's controls (`approve`, `start`, `pause`, `resume`, `archive`, `post`, `block`, `requeue`, `cancel`, `land`) refuse Loom's own planner, worker and reviewer threads with the code `loom_human_only`.
 - The page's RPC changes state, and starts a planner thread, only when the call carries `confirm: true`, and it refuses calls from other plugins. bb cannot tell the page from an agent running `bb plugin rpc`, so the skill tells agents never to call Loom's RPC.

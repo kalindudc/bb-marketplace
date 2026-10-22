@@ -14,6 +14,7 @@ export default experimental_defineHostEntry({
     ensureWorktree: (input, { signal, experimental_paths }) => ops.ensureWorktree(input, experimental_paths.dataDir, signal),
     merge: (input, { signal }) => ops.merge(input, signal),
     resetHard: (input, { signal }) => ops.resetHard(input, signal),
+    fetchBranch: (input, { signal }) => ops.fetchBranch(input, signal),
     push: (input, { signal }) => ops.push(input, signal),
     prCreate: (input, { signal }) => ops.prCreate(input, signal),
     prState: (input, { signal }) => ops.prState(input, signal),

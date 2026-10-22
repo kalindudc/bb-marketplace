@@ -298,6 +298,35 @@ describe("land", () => {
     expect((await run(["land", "csv"])).stdout).toContain("done");
   });
 
+  it("--direct pushes to the base branch with no pull request, and --json prints where and at which commit", async () => {
+    await running();
+    doneTicket("CSV-1");
+    const text = await run(["land", "csv", "--direct"]);
+    expect(text).toMatchObject({ exitCode: 0 });
+    expect(text.stdout).toContain("Landed csv on origin/main at ");
+    expect(text.stdout).toContain("bb loom land --direct");
+    const json = await run(["land", "csv", "--direct", "--json"]);
+    expect(JSON.parse(json.stdout)).toMatchObject({ url: null, pushed: "origin/main", done: false });
+    expect(host.hostPort.callsTo("prCreate")).toEqual([]);
+    expect(host.hostPort.callsTo("push").map((push) => push.branch)).toEqual(["main", "main"]);
+    expect(humanEvents().filter((event) => event.action === "land")).toEqual([
+      { action: "land", slug: "csv", direct: true },
+      { action: "land", slug: "csv", direct: true },
+    ]);
+  });
+
+  it("refuses --title and --ready with --direct, and writes no event", async () => {
+    await running();
+    doneTicket("CSV-1");
+    for (const extra of [["--ready"], ["--title", "Export orders"]]) {
+      const out = await run(["land", "csv", "--direct", ...extra, "--json"]);
+      expect(out.exitCode).toBe(1);
+      expect(errorOf(out.stdout)).toMatchObject({ code: "loom_invalid_input", message: expect.stringContaining("do not go with --direct") });
+    }
+    expect(humanEvents().filter((event) => event.action === "land")).toEqual([]);
+    expect(host.hostPort.callsTo("push")).toEqual([]);
+  });
+
   it("writes one human.action event, and none for a refusal", async () => {
     await running();
     const refused = await run(["land", "csv", "--json"]);

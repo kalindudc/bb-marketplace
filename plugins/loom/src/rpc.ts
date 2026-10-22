@@ -314,6 +314,9 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
         case "land":
           await act(ctx, "land", { slug }, () => engine.land(slug, HUMAN_ACTOR, { ready: false }));
           break;
+        case "landDirect":
+          await act(ctx, "land", { slug, direct: true }, () => engine.land(slug, HUMAN_ACTOR, { ready: false, direct: true }));
+          break;
         case "archive":
           await act(ctx, "archive", { slug }, () => engine.archive(slug, HUMAN_ACTOR));
           break;

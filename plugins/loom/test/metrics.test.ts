@@ -498,6 +498,7 @@ describe("feedText", () => {
     expect(text(event(at(1), "ticket.edited", 2, { fields: ["title", "scope"] }, "thr_1"))).toBe("CSV-2 was edited: title, scope.");
     expect(text(event(at(1), "turn.retry", 1, { thread: "thr_9", attempt: 2, sendAt: at(1, 1) }))).toBe("CSV-1's worker hit a rate limit; retry 2 is scheduled.");
     expect(text(event(at(1), "project.landed", null, { url: "https://github.com/a/b/pull/1", sha: "abc", created: true }, "human"))).toBe("The integration branch was landed: https://github.com/a/b/pull/1.");
+    expect(text(event(at(1), "project.landed", null, { direct: true, pushed: "origin/main", sha: "0123456789abcdef" }, "human"))).toBe("The integration branch was pushed to origin/main at 0123456789ab.");
   });
 
   it("names an event kind it does not know", () => {

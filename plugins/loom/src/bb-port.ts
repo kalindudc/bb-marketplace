@@ -158,9 +158,9 @@ export function createBbPort(bb: BbPluginApi): BbPort {
 
 const HOST_CALL_MS = 30_000;
 const NETWORK_CALL_MS = 150_000;
-const NETWORK_METHODS: readonly HostMethod[] = ["push", "prCreate", "prState", "ensureWorktree"];
+const NETWORK_METHODS: readonly HostMethod[] = ["fetchBranch", "push", "prCreate", "prState", "ensureWorktree"];
 
-/** The host entry client. Git calls get 30 s; push, gh and ensureWorktree (a first checkout) get 150 s; exec gets its own timeout plus 30 s, under the 30-minute host call cap. */
+/** The host entry client. Git calls get 30 s; fetches, pushes, gh and ensureWorktree (a first checkout) get 150 s; exec gets its own timeout plus 30 s, under the 30-minute host call cap. */
 export function createHostPort(bb: BbPluginApi): HostPort {
   const client = bb.hosts.experimental_client({ contract: hostContract });
   return {

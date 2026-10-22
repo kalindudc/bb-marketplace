@@ -1,8 +1,8 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type { HomeProject, HomeView, NeedItem } from "../contract";
 import { formatDuration, plural } from "../format";
 import { ShareBar, Spark, type Swatch } from "./charts";
-import { BUTTON, BUTTON_PRIMARY, CARD, HEADING, StateBadge, countsLabel, mergeLabel, useRemote } from "./common";
+import { BUTTON, BUTTON_PRIMARY, CARD, FIELD, HEADING, StateBadge, countsLabel, mergeLabel, useRemote } from "./common";
 import { Guide } from "./guide";
 
 const DONE: Swatch = { fill: "var(--success, currentColor)" };
@@ -120,10 +120,39 @@ function ProjectRow({ project, now, go }: { project: HomeProject; now: number; g
   );
 }
 
+const HIDE_KEY = "loom.home.hideFinished";
+
+// Storage can be unavailable: then the switch starts off and is not remembered.
+function savedHideFinished(): boolean {
+  try {
+    return localStorage.getItem(HIDE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function saveHideFinished(hide: boolean): void {
+  try {
+    localStorage.setItem(HIDE_KEY, String(hide));
+  } catch {}
+}
+
+/** The projects the table shows: done and archived ones left out when `hideFinished`, and those whose name, key or slug contains the query. */
+function visibleProjects(projects: HomeProject[], hideFinished: boolean, query: string): HomeProject[] {
+  const needle = query.trim().toLowerCase();
+  return projects.filter(
+    (project) =>
+      !(hideFinished && (project.state === "done" || project.state === "archived")) &&
+      (needle === "" || [project.name, project.key, project.slug].some((text) => text.toLowerCase().includes(needle))),
+  );
+}
+
 /** The Loom page's start: the guide while there is nothing yet, else the overview, the planning conversations and the projects. */
 export function Home({ go }: { go(subPath: string): void }) {
   const home = useRemote((rpc) => rpc.call("home"), "home", null);
   const planning = useRemote((rpc) => rpc.call("planning"), "planning", null);
+  const [hideFinished, setHideFinished] = useState(savedHideFinished);
+  const [query, setQuery] = useState("");
   const error = home.error ?? planning.error;
   if (home.data === null || planning.data === null) {
     return error === null ? <p role="status" className="p-4 text-sm text-muted-foreground">Loading projects…</p> : <p role="alert" className="p-4 text-sm text-destructive-text">Could not load the projects: {error}</p>;
@@ -131,6 +160,7 @@ export function Home({ go }: { go(subPath: string): void }) {
   // A conversation whose thread proposed already shows as its draft project.
   const sessions = planning.data.filter((session) => session.slug === null);
   if (home.data.projects.length === 0 && sessions.length === 0) return <Guide onStart={() => go("_new")} />;
+  const shown = visibleProjects(home.data.projects, hideFinished, query);
 
   return (
     <div className="pb-4">
@@ -161,6 +191,20 @@ export function Home({ go }: { go(subPath: string): void }) {
         </section>
       )}
       <section aria-label="Projects" className={`${CARD} mx-4 mt-3 overflow-x-auto p-0`}>
+        <div className="flex flex-wrap items-center gap-3 border-b border-border-seam px-3 py-2">
+          <input type="search" aria-label="Search projects" placeholder="Search projects" value={query} onChange={(event) => setQuery(event.target.value)} className={`${FIELD} max-w-64`} />
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={hideFinished}
+              onChange={(event) => {
+                setHideFinished(event.target.checked);
+                saveHideFinished(event.target.checked);
+              }}
+            />
+            Hide done and archived
+          </label>
+        </div>
         <table className="w-full min-w-[720px] text-left text-sm">
           <thead className="text-xs text-muted-foreground">
             <tr>
@@ -170,7 +214,14 @@ export function Home({ go }: { go(subPath: string): void }) {
             </tr>
           </thead>
           <tbody>
-            {home.data.projects.map((project) => (
+            {home.data.projects.length > 0 && shown.length === 0 && (
+              <tr>
+                <td colSpan={7} data-projects-empty className={`${CELL} text-xs text-muted-foreground`}>
+                  {query.trim() === "" ? "Every project is done or archived." : `No project matches "${query.trim()}".`}
+                </td>
+              </tr>
+            )}
+            {shown.map((project) => (
               <ProjectRow key={project.slug} project={project} now={home.data!.now} go={go} />
             ))}
           </tbody>

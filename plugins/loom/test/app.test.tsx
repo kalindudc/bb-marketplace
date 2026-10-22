@@ -307,6 +307,7 @@ const calls = (slot: Slot, method: string) => slot.inspection.rpcCalls.filter((c
 const pushed = (subPath: string) => ({ method: "toPluginPanel", path: "loom", options: { subPath } });
 
 describe("project list", () => {
+  afterEach(() => localStorage.clear());
   const two: HomeProject[] = [homeProject(), homeProject({ slug: "docs", name: "Docs site", key: "DOC", state: "paused", reason: "The token budget is used up: 900 of 900 tokens.", strategy: "pr", branch: null, ticketCount: 3, ticketCounts: { queued: 3 } })];
   const home = () => homeView({ projects: two });
 
@@ -340,6 +341,50 @@ describe("project list", () => {
     const { slot } = await mountPage("", { home });
     fireEvent.click(await slot.findByRole("button", { name: /Docs site/ }));
     expect(slot.inspection.navigateCalls).toEqual([pushed("docs")]);
+  });
+
+  describe("search and the finished switch", () => {
+    const three = () => homeView({ projects: [homeProject(), homeProject({ slug: "docs", name: "Docs site", key: "DOC", state: "done" }), homeProject({ slug: "old", name: "Old importer", key: "LEGACY", state: "archived" })] });
+    const slugs = (slot: Slot) => [...slot.container.querySelectorAll("[data-project-row]")].map((row) => row.getAttribute("data-project-row"));
+    const toggle = (slot: Slot) => slot.getByRole("checkbox", { name: "Hide done and archived" }) as HTMLInputElement;
+
+    it("hides done and archived projects with a switch it remembers", async () => {
+      const { slot } = await mountPage("", { home: three });
+      await slot.findByText("CSV export");
+      expect(slugs(slot)).toEqual(["csv", "docs", "old"]);
+      fireEvent.click(toggle(slot));
+      expect(slugs(slot)).toEqual(["csv"]);
+      expect(localStorage.getItem("loom.home.hideFinished")).toBe("true");
+      slot.lifecycle.unmount();
+
+      const { slot: again } = await mountPage("", { home: three });
+      await again.findByText("CSV export");
+      expect(slugs(again)).toEqual(["csv"]);
+      expect(toggle(again).checked).toBe(true);
+      fireEvent.click(toggle(again));
+      expect(slugs(again)).toEqual(["csv", "docs", "old"]);
+      expect(localStorage.getItem("loom.home.hideFinished")).toBe("false");
+    });
+
+    it("filters the table by name, key or slug as the human types", async () => {
+      const { slot } = await mountPage("", { home: three });
+      await slot.findByText("CSV export");
+      const search = slot.getByRole("searchbox", { name: "Search projects" });
+      for (const [query, shown] of [["importer", ["old"]], ["legacy", ["old"]], ["docs", ["docs"]], ["  CSV ", ["csv"]]] as const) {
+        fireEvent.change(search, { target: { value: query } });
+        expect(slugs(slot), query).toEqual(shown);
+      }
+      fireEvent.change(search, { target: { value: "zzz" } });
+      expect(slugs(slot)).toEqual([]);
+      expect(slot.container.querySelector("[data-projects-empty]")!.textContent).toBe('No project matches "zzz".');
+    });
+
+    it("says so when the switch hides every project", async () => {
+      const { slot } = await mountPage("", { home: () => homeView({ projects: [homeProject({ state: "done" })] }) });
+      await slot.findByText("CSV export");
+      fireEvent.click(toggle(slot));
+      expect(slot.container.querySelector("[data-projects-empty]")!.textContent).toBe("Every project is done or archived.");
+    });
   });
 
   it("reads the list again when any project changes", async () => {
@@ -437,6 +482,7 @@ describe("home", () => {
     const { slot } = await mountPage("", { home: () => homeView({ projects: [], needsYou: [] }), planning: () => [session()] });
     await slot.findByText("Rate limits for the public API");
     expect(slot.container.querySelector("[data-guide]")).toBeNull();
+    expect(slot.container.querySelector("[data-projects-empty]")).toBeNull();
   });
 
   it("opens the guide from How Loom works and New project from its button, and _guide shows the guide", async () => {
@@ -966,7 +1012,7 @@ describe("spec dashboard", () => {
     const { slot } = await mountDashboard({ specVersion: () => view });
     openTab(slot, "Project & limits");
     expect(inPane(slot, "project.goal")!.textContent).toContain("Let people export their orders as a CSV file from the admin page.");
-    expect(inPane(slot, "merge")!.textContent).toContain("Approved work merges into loom/csv from main; you land it as one pull request with bb loom land.");
+    expect(inPane(slot, "merge")!.textContent).toContain("Approved work merges into loom/csv from main; you land it as one pull request with bb loom land, or straight onto main with bb loom land --direct.");
     expect(inPane(slot, "agents.worker")!.textContent).toContain("Workers: claude / sonnet, up to 2 at a time, 120 minutes per ticket");
     expect(inPane(slot, "agents.reviewer")!.textContent).toContain("Reviewers: codex / gpt, up to 2 at a time");
     expect(inPane(slot, "budget.max_attempts")!.textContent).toContain("A ticket blocks after 3 failed attempts or 5 failed check runs");
@@ -1241,9 +1287,18 @@ describe("project controls", () => {
   });
 
   it("offers Land on an integration project with a done ticket, and Approve for a pending spec version", async () => {
-    expect(await labels(bare("running", { ticketCounts: { done: 1 } }))).toEqual(["Pause", "Pause now", "Land", "⋯"]);
+    expect(await labels(bare("running", { ticketCounts: { done: 1 } }))).toEqual(["Pause", "Pause now", "Land", "Land to main", "⋯"]);
     expect(await labels(bare("running", { strategy: "pr", ticketCounts: { done: 1 } }))).toEqual(["Pause", "Pause now", "⋯"]);
     expect(await labels(bare("paused", { pendingVersion: 2, ticketCounts: {} }))).toEqual(["Approve v2", "Resume", "⋯"]);
+  });
+
+  it("lands to the base branch from the header after a second click", async () => {
+    const control = vi.fn(() => bare("done", { ticketCounts: { done: 1 } }));
+    const { slot } = await mountPage("csv", { project: () => bare("running", { ticketCounts: { done: 1 } }), control });
+    fireEvent.click(await slot.findByRole("button", { name: "Land to main" }));
+    expect(control).not.toHaveBeenCalled();
+    fireEvent.click(slot.getByRole("button", { name: "Click again to land to main" }));
+    await waitFor(() => expect(control).toHaveBeenCalledWith({ slug: "csv", action: "landDirect", confirm: true }));
   });
 
   it("leaves the next step's action out of the header", async () => {

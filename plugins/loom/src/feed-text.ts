@@ -34,7 +34,7 @@ export function feedText(event: EventRow, keys: Map<number, string>): string {
       return `The project moved from ${data.from} to ${data.to}${reason === null ? "." : `: ${reason}`}`;
     }
     case "project.landed":
-      return `The integration branch was landed: ${data.url}.`;
+      return data.direct === true ? `The integration branch was pushed to ${data.pushed} at ${String(data.sha).slice(0, 12)}.` : `The integration branch was landed: ${data.url}.`;
     case "spec.proposed":
       return `Spec version ${data.version} was proposed.`;
     case "spec.revised":

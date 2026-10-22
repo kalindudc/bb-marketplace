@@ -216,6 +216,8 @@ export class FakeHost implements HostPort {
   /** The merges made in each worktree, oldest first: what `merge` reports as already merged, and what `resetHard` undoes. */
   merges = new Map<string, Array<{ ref: string; before: string; sha: string }>>();
   prStates = new Map<string, "OPEN" | "MERGED" | "CLOSED">();
+  /** The tip fetchBranch reports for the remote's base branch. Every integration branch starts at base000, so base000 means it has not moved. */
+  remoteBase = "base000";
   private commits = 0;
   private merged = 0;
   private prs = 0;
@@ -288,7 +290,7 @@ export class FakeHost implements HostPort {
         const list = this.merges.get(worktree) ?? [];
         this.merges.set(worktree, list);
         const earlier = list.find((entry) => entry.ref === ref);
-        if (earlier !== undefined) return { outcome: "merged", sha: state.head, before: before ?? state.head, already: true };
+        if (earlier !== undefined || ref === "base000") return { outcome: "merged", sha: state.head, before: before ?? state.head, already: true };
         const entry = { ref, before: state.head, sha: `m${++this.merged}` };
         list.push(entry);
         state.head = entry.sha;
@@ -304,6 +306,8 @@ export class FakeHost implements HostPort {
         if (index >= 0) list.splice(index);
         return { sha };
       }
+      case "fetchBranch":
+        return { outcome: "ok", sha: this.remoteBase };
       case "push":
         return { outcome: "ok" };
       case "prCreate": {
