@@ -4,8 +4,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, mountPluginContentScripts, renderSlot, type PluginRpcTestHandlers, type PluginSdkTestFakes, type RenderSlotOptions } from "@get-bb/plugin-sdk/testing/app";
-import type { PluginNavPanelProps, PluginSidebarThread, PluginThreadHeaderActionProps } from "@get-bb/plugin-sdk/app";
-import type { Attempt, ChecksItem, HomeProject, NextStep, PlanningSession, ProjectSummary, ProjectView, SentNote, SpecVersionView, ThreadInfo, rpcContract } from "../src/contract";
+import { useState } from "react";
+import { useComposers, type NewThreadRequest, type PluginNavPanelProps, type PluginSidebarThread, type PluginThreadHeaderActionProps } from "@get-bb/plugin-sdk/app";
+import type { Attempt, BbProjectChoice, ChecksItem, HomeProject, NextStep, PlanningSession, ProjectSummary, ProjectView, SentNote, SpecVersionView, ThreadInfo, rpcContract } from "../src/contract";
 import type { TicketRow } from "../src/db/store";
 import { repoOverviews } from "../src/projects";
 import { notesMessage } from "../src/prompts";
@@ -34,6 +35,7 @@ const handlers = (over: Partial<Handlers> = {}): Handlers => ({
   ticketAction: unexpected,
   control: unexpected,
   startPlanning: unexpected,
+  bbProjects: () => [],
   planning: () => [],
   planningSession: () => null,
   specVersion: unexpected,
@@ -513,9 +515,13 @@ describe("home", () => {
 
 describe("new project", () => {
   const SAVED = "loom.newProject.projectId";
+  const runtime = () => (globalThis as unknown as { __bbPluginRuntime: { pluginSdkApp: Record<string, unknown> } }).__bbPluginRuntime;
+  let restoreComposer: (() => void) | null = null;
   afterEach(() => {
     vi.restoreAllMocks();
     localStorage.clear();
+    restoreComposer?.();
+    restoreComposer = null;
   });
   const typeGoal = (slot: Slot, text: string) => fireEvent.change(slot.getByTestId("bb-new-thread-composer-input"), { target: { value: text } });
   const seed = (slot: Slot) => slot.getByTestId("bb-new-thread-composer").getAttribute("data-default-project-id");
@@ -536,7 +542,7 @@ describe("new project", () => {
     fireEvent.click(slot.getByTestId("bb-new-thread-composer-submit"));
     await waitFor(() => expect(slot.inspection.navigateCalls).toEqual([pushed("_plan/thr_p7")]));
     expect(startPlanning).toHaveBeenCalledTimes(1);
-    expect(startPlanning).toHaveBeenCalledWith({ request: request("Let people export their orders as CSV."), merge: "integration", reviewer: "codex, gpt-5", confirm: true });
+    expect(startPlanning).toHaveBeenCalledWith({ request: request("Let people export their orders as CSV."), merge: "integration", reviewer: "codex, gpt-5", repos: [], confirm: true });
   });
 
   it("asks the planner about the merge by default, and shows a refusal without leaving the page", async () => {
@@ -549,7 +555,7 @@ describe("new project", () => {
     typeGoal(slot, "Write the docs site.");
     fireEvent.click(slot.getByTestId("bb-new-thread-composer-submit"));
     expect((await slot.findByRole("alert")).textContent).toContain("git checkout");
-    expect(startPlanning).toHaveBeenCalledWith({ request: request("Write the docs site."), merge: "ask", reviewer: "", confirm: true });
+    expect(startPlanning).toHaveBeenCalledWith({ request: request("Write the docs site."), merge: "ask", reviewer: "", repos: [], confirm: true });
     expect(slot.inspection.navigateCalls).toEqual([]);
     expect(localStorage.getItem(SAVED)).toBeNull();
   });
@@ -570,7 +576,158 @@ describe("new project", () => {
     expect(seed(slot)).toBe("proj_shop");
     typeGoal(slot, "Write the docs site.");
     fireEvent.click(slot.getByTestId("bb-new-thread-composer-submit"));
-    await waitFor(() => expect(startPlanning).toHaveBeenCalledWith({ request: request("Write the docs site.", "proj_shop"), merge: "ask", reviewer: "", confirm: true }));
+    await waitFor(() => expect(startPlanning).toHaveBeenCalledWith({ request: request("Write the docs site.", "proj_shop"), merge: "ask", reviewer: "", repos: [], confirm: true }));
+  });
+
+  const choices = (): BbProjectChoice[] => [
+    { id: "proj_docs", name: "docs", hostIds: [] },
+    { id: "proj_shop", name: "shop", hostIds: ["host_1"] },
+    { id: "proj_api", name: "shop-api", hostIds: ["host_1"] },
+    { id: "project-test", name: "test", hostIds: ["host_1", "host_2"] },
+  ];
+  const repoRows = (slot: Slot) => [...slot.getByRole("group", { name: "Repos" }).querySelectorAll("[data-repo-choice]")].map((row) => row.getAttribute("data-repo-choice"));
+  const repoBox = (slot: Slot, name: string) => within(slot.getByRole("group", { name: "Repos" })).getByRole("checkbox", { name: new RegExp(`^${name}(?: no checkout)?$`) }) as HTMLInputElement;
+
+  // Uncontrolled like bb's composer: it submits the project bb reports for it, which setComposerScope changes as the human's pick in its project picker would.
+  function SwitchingComposer({ onSubmit }: { onSubmit(request: NewThreadRequest): void | Promise<void> }) {
+    const scope = useComposers()[0]!.scope;
+    const [text, setText] = useState("");
+    const projectId = scope.kind === "new-thread" ? (scope.projectId ?? "") : "";
+    return (
+      <div>
+        <textarea data-testid="bb-new-thread-composer-input" value={text} onChange={(event) => setText(event.target.value)} />
+        <button type="button" data-testid="bb-new-thread-composer-submit" onClick={() => void onSubmit(request(text, projectId) as NewThreadRequest)}>
+          Start thread
+        </button>
+      </div>
+    );
+  }
+  const mountSwitching = async (rpc: Partial<Handlers>, projectId: string) => {
+    const app = await loadPluginApp(() => import("../app"));
+    // renderSlot installs the test runtime again, so the stub goes on the runtime's own object rather than a copy.
+    const sdk = runtime().pluginSdkApp;
+    const original = sdk.experimental_NewThreadComposer;
+    sdk.experimental_NewThreadComposer = SwitchingComposer;
+    restoreComposer = () => {
+      sdk.experimental_NewThreadComposer = original;
+    };
+    const slot = renderSlot<PluginNavPanelProps, typeof rpcContract>(app.navPanels[0]!, { subPath: "_new" }, { pluginId: "loom", rpc: handlers(rpc), composer: { scope: { kind: "new-thread", projectId } } });
+    mounts.push(slot);
+    return slot;
+  };
+
+  it("follows the composer's project: switched from shop to shop-api, it offers shop, hides shop-api, and sends shop as a repo", async () => {
+    localStorage.setItem(SAVED, "proj_shop");
+    const startPlanning = vi.fn(() => ({ threadId: "thr_p7" }));
+    const slot = await mountSwitching({ startPlanning, bbProjects: choices }, "proj_shop");
+    await waitFor(() => expect(repoRows(slot)).toEqual(["proj_docs", "proj_api", "project-test"]));
+    fireEvent.click(repoBox(slot, "shop-api"));
+    expect(slot.getByRole("group", { name: "Repos" }).textContent).toContain("1 of up to 10 picked");
+
+    await slot.setComposerScope({ kind: "new-thread", projectId: "proj_api" });
+    expect(repoRows(slot)).toEqual(["proj_docs", "proj_shop", "project-test"]);
+    expect(slot.getByRole("group", { name: "Repos" }).textContent).toContain("0 of up to 10 picked");
+    fireEvent.click(repoBox(slot, "shop"));
+
+    typeGoal(slot, "Write the docs site.");
+    fireEvent.click(slot.getByTestId("bb-new-thread-composer-submit"));
+    await waitFor(() => expect(slot.inspection.navigateCalls).toEqual([pushed("_plan/thr_p7")]));
+    expect(startPlanning).toHaveBeenCalledWith({ request: request("Write the docs site.", "proj_api"), merge: "ask", reviewer: "", repos: ["proj_shop"], confirm: true });
+  });
+
+  it("keeps a pick hidden while it is the composer's project, and shows it picked again when the composer moves off it", async () => {
+    const startPlanning = vi.fn(() => ({ threadId: "thr_p7" }));
+    const slot = await mountSwitching({ startPlanning, bbProjects: choices }, "proj_shop");
+    await waitFor(() => expect(repoRows(slot)).toHaveLength(3));
+    fireEvent.click(repoBox(slot, "docs"));
+    await slot.setComposerScope({ kind: "new-thread", projectId: "proj_docs" });
+    expect(repoRows(slot)).toEqual(["proj_shop", "proj_api", "project-test"]);
+    await slot.setComposerScope({ kind: "new-thread", projectId: "proj_shop" });
+    expect(repoBox(slot, "docs").checked).toBe(true);
+    typeGoal(slot, "Write the docs site.");
+    fireEvent.click(slot.getByTestId("bb-new-thread-composer-submit"));
+    await waitFor(() => expect(startPlanning).toHaveBeenCalledWith(expect.objectContaining({ request: request("Write the docs site.", "proj_shop"), repos: ["proj_docs"] })));
+  });
+
+  it("offers bb's other standard projects as repos, filterable by name, marks one with no checkout, and passes the picked ids to startPlanning", async () => {
+    localStorage.setItem(SAVED, "proj_shop");
+    const startPlanning = vi.fn(() => ({ threadId: "thr_p7" }));
+    const { slot } = await mountPage("_new", { startPlanning, bbProjects: choices });
+    await waitFor(() => expect(repoRows(slot)).toEqual(["proj_docs", "proj_api", "project-test"]));
+    expect(calls(slot, "bbProjects")).toEqual([{ method: "bbProjects", input: null }]);
+    const group = slot.getByRole("group", { name: "Repos" });
+    expect([...group.querySelectorAll("[data-no-checkout]")].map((mark) => mark.closest("[data-repo-choice]")!.getAttribute("data-repo-choice"))).toEqual(["proj_docs"]);
+    expect(group.querySelector("[data-no-checkout]")!.textContent).toBe("no checkout");
+
+    const filter = within(group).getByRole("searchbox", { name: "Filter repos" });
+    fireEvent.change(filter, { target: { value: " API " } });
+    expect(repoRows(slot)).toEqual(["proj_api"]);
+    fireEvent.click(repoBox(slot, "shop-api"));
+    fireEvent.change(filter, { target: { value: "docs" } });
+    expect(repoRows(slot)).toEqual(["proj_docs", "proj_api"]);
+    expect(repoBox(slot, "shop-api").checked).toBe(true);
+    fireEvent.click(repoBox(slot, "docs"));
+    fireEvent.change(filter, { target: { value: "nothing like it" } });
+    expect(repoRows(slot)).toEqual(["proj_docs", "proj_api"]);
+    fireEvent.change(filter, { target: { value: "" } });
+    expect(group.textContent).toContain("2 of up to 10 picked");
+
+    typeGoal(slot, "Write the docs site.");
+    fireEvent.click(slot.getByTestId("bb-new-thread-composer-submit"));
+    await waitFor(() => expect(slot.inspection.navigateCalls).toEqual([pushed("_plan/thr_p7")]));
+    expect(startPlanning).toHaveBeenCalledWith({ request: request("Write the docs site.", "proj_shop"), merge: "ask", reviewer: "", repos: ["proj_api", "proj_docs"], confirm: true });
+  });
+
+  it("says when no repo matches the filter, and unpicks a repo when its box is cleared", async () => {
+    const startPlanning = vi.fn(() => ({ threadId: "thr_p7" }));
+    const { slot } = await mountPage("_new", { startPlanning, bbProjects: choices });
+    await waitFor(() => expect(repoRows(slot)).toHaveLength(4));
+    fireEvent.click(repoBox(slot, "docs"));
+    fireEvent.click(repoBox(slot, "docs"));
+    fireEvent.change(within(slot.getByRole("group", { name: "Repos" })).getByRole("searchbox"), { target: { value: "zzz" } });
+    expect(repoRows(slot)).toEqual([]);
+    expect(slot.getByRole("group", { name: "Repos" }).textContent).toContain('No repo matches "zzz".');
+    typeGoal(slot, "Write the docs site.");
+    fireEvent.click(slot.getByTestId("bb-new-thread-composer-submit"));
+    await waitFor(() => expect(startPlanning).toHaveBeenCalledWith(expect.objectContaining({ repos: [] })));
+  });
+
+  it("leaves out a picked repo that the composer submits as its own project", async () => {
+    const startPlanning = vi.fn(() => ({ threadId: "thr_p7" }));
+    const { slot } = await mountPage("_new", { startPlanning, bbProjects: choices });
+    await waitFor(() => expect(repoRows(slot)).toEqual(["proj_docs", "proj_shop", "proj_api", "project-test"]));
+    fireEvent.click(repoBox(slot, "test"));
+    fireEvent.click(repoBox(slot, "shop-api"));
+    typeGoal(slot, "Write the docs site.");
+    fireEvent.click(slot.getByTestId("bb-new-thread-composer-submit"));
+    await waitFor(() => expect(startPlanning).toHaveBeenCalledTimes(1));
+    expect(startPlanning).toHaveBeenCalledWith({ request: request("Write the docs site."), merge: "ask", reviewer: "", repos: ["proj_api"], confirm: true });
+  });
+
+  it("lets the human pick at most 10 repos", async () => {
+    const many = Array.from({ length: 11 }, (_, n): BbProjectChoice => ({ id: `proj_${n}`, name: `repo-${String(n).padStart(2, "0")}`, hostIds: ["host_1"] }));
+    const { slot } = await mountPage("_new", { bbProjects: () => many });
+    await waitFor(() => expect(repoRows(slot)).toHaveLength(11));
+    for (const choice of many.slice(0, 10)) fireEvent.click(repoBox(slot, choice.name));
+    expect(repoBox(slot, "repo-10").disabled).toBe(true);
+    expect(repoBox(slot, "repo-00").disabled).toBe(false);
+    fireEvent.click(repoBox(slot, "repo-00"));
+    expect(repoBox(slot, "repo-10").disabled).toBe(false);
+  });
+
+  it("says when bb cannot list its projects, and still starts planning without repos", async () => {
+    const startPlanning = vi.fn(() => ({ threadId: "thr_p7" }));
+    const { slot } = await mountPage("_new", {
+      startPlanning,
+      bbProjects: () => {
+        throw new Error("bb is restarting");
+      },
+    });
+    await waitFor(() => expect(slot.getByRole("group", { name: "Repos" }).textContent).toContain("Could not list bb's projects: bb is restarting"));
+    typeGoal(slot, "Write the docs site.");
+    fireEvent.click(slot.getByTestId("bb-new-thread-composer-submit"));
+    await waitFor(() => expect(slot.inspection.navigateCalls).toEqual([pushed("_plan/thr_p7")]));
+    expect(startPlanning).toHaveBeenCalledWith(expect.objectContaining({ repos: [] }));
   });
 
   it("still starts planning when storage is unavailable", async () => {

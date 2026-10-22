@@ -4,7 +4,7 @@ import type { NewThreadRequest } from "@get-bb/plugin-sdk";
 import type { EventRow, PlanningRow, PostRow, ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { StoreError } from "./db/store";
 import { SectionNameConflictError, type BbPort, type BbProjectInfo } from "./ports";
-import { notesMessage, planningKickoff, planningTitle } from "./prompts";
+import { MAX_PLANNING_REPOS, notesMessage, planningKickoff, planningTitle, type PickedRepo } from "./prompts";
 import { isMultiRepo, repoSettings } from "./repos";
 import { numberErrors, parseSpec, specHash, type Spec } from "./spec";
 import type { SpecNote } from "./spec-paths";
@@ -131,6 +131,14 @@ export interface PlanningSession {
   startedAt: number;
   slug: string | null;
   projectState: ProjectState | null;
+}
+
+/** A standard bb project the New project composer offers as a repo. */
+export interface BbProjectChoice {
+  id: string;
+  name: string;
+  /** The machines with a checkout of it, by host id; empty when no machine has one. */
+  hostIds: string[];
 }
 
 const MAX_POST_LENGTH = 20_000;
@@ -564,15 +572,48 @@ export class Projects {
   // ---------------------------------------------------------------- planning conversations
 
   /** Starts a planner thread from the page's composer request. It is an ordinary thread until its first loom_propose binds it as the planner. */
-  async startPlanning(a: { request: NewThreadRequest; merge: MergeChoice; reviewer: string }): Promise<{ threadId: string }> {
+  async startPlanning(a: { request: NewThreadRequest; merge: MergeChoice; reviewer: string; repos?: readonly string[] }): Promise<{ threadId: string }> {
     const title = planningTitle(a.request.input);
     if (title === "") throw new LoomError("loom_invalid_input", "Describe what should exist when the project is done.");
     if ((await this.bb.projectKind(a.request.projectId)) !== "standard") {
       throw new LoomError("loom_no_checkout", "Loom needs a bb project with a git checkout. Pick a project in the composer.");
     }
-    const threadId = await this.bb.spawnPlanner({ request: a.request, title: `Loom plan: ${title}`, kickoff: planningKickoff(a) });
+    const repos = await this.pickedRepos(a.request.projectId, a.repos ?? []);
+    const threadId = await this.bb.spawnPlanner({ request: a.request, title: `Loom plan: ${title}`, kickoff: planningKickoff({ merge: a.merge, reviewer: a.reviewer, repos }) });
     this.store.addPlanning({ thread_id: threadId, bb_project_id: a.request.projectId, title });
     return { threadId };
+  }
+
+  /** The picked repos with bb's names, in the order picked, leaving out repeats and the composer's own project. Each must be a standard bb project. */
+  private async pickedRepos(ownProjectId: string, ids: readonly string[]): Promise<PickedRepo[]> {
+    if (ids.length > MAX_PLANNING_REPOS) throw new LoomError("loom_invalid_input", `Pick at most ${MAX_PLANNING_REPOS} repos; ${ids.length} were picked.`);
+    const wanted = [...new Set(ids)].filter((id) => id !== ownProjectId);
+    if (wanted.length === 0) return [];
+    const known = await this.readBbProjects("check the picked repos");
+    const found = wanted.map((id) => ({ id, project: known.find((entry) => entry.id === id) }));
+    const problems = found.flatMap(({ id, project }) => {
+      if (project === undefined) return [`bb has no project "${id}".`];
+      return project.kind === "standard" ? [] : [`"${id}" is bb's personal project, which has no git checkout.`];
+    });
+    if (problems.length > 0) throw new LoomError("loom_invalid_input", `${problems.join(" ")} Pick the repos from bb's standard projects.`);
+    return found.map(({ id, project }) => ({ id, name: project!.name }));
+  }
+
+  /** bb's standard projects by name, each with the machines that have a checkout of it, for the New project composer's repo picker. */
+  async bbProjectChoices(): Promise<BbProjectChoice[]> {
+    const known = await this.readBbProjects("list the repos");
+    return known
+      .filter((project) => project.kind === "standard")
+      .map((project) => ({ id: project.id, name: project.name, hostIds: [...new Set(project.sources.map((source) => source.hostId))] }))
+      .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+  }
+
+  private async readBbProjects(why: string): Promise<BbProjectInfo[]> {
+    try {
+      return await this.bb.listProjects();
+    } catch (error) {
+      throw new LoomError("loom_unavailable", `Loom could not read bb's projects to ${why}: ${error instanceof Error ? error.message : String(error)}. Try again in a moment.`);
+    }
   }
 
   /** The open conversations, newest first. */

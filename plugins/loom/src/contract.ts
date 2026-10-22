@@ -5,7 +5,8 @@ import type { ProjectHealth } from "./health";
 import type { HomeProject, HomeView, NeedItem } from "./home";
 import type { ProjectMetrics } from "./metrics";
 import type { NextStep } from "./next-step";
-import type { PlanningSession, ProjectOverview, RepoOverview } from "./projects";
+import type { BbProjectChoice, PlanningSession, ProjectOverview, RepoOverview } from "./projects";
+import { MAX_PLANNING_REPOS } from "./prompts";
 import type { Finding } from "./review";
 import type { ProjectTimeline, SessionBar, TicketBar } from "./replay";
 import type { SentNote, SpecVersionView } from "./spec-view";
@@ -14,7 +15,7 @@ import type { AuthorKind, PostKind, ProjectState, ReviewVerdict, Role, ThreadSta
 import { MERGE_CHOICES } from "./states";
 
 export type ProjectSummary = ProjectOverview;
-export type { ActivityItem, Attempt, ChecksItem, CheckStep, HomeProject, HomeView, Mark, MergeItem, NeedItem, NextStep, PlanningSession, ProjectHealth, ProjectTimeline, RepoOverview, ReviewItem, SentNote, SessionBar, SpecVersionView, TicketActivity, TicketBar };
+export type { ActivityItem, Attempt, BbProjectChoice, ChecksItem, CheckStep, HomeProject, HomeView, Mark, MergeItem, NeedItem, NextStep, PlanningSession, ProjectHealth, ProjectTimeline, RepoOverview, ReviewItem, SentNote, SessionBar, SpecVersionView, TicketActivity, TicketBar };
 
 export interface BoardCard {
   key: string;
@@ -234,8 +235,17 @@ export const rpcContract = defineRpcContract({
   },
   planning: { input: z.null(), output: typed<PlanningSession[]>() },
   planningSession: { input: z.object({ threadId: z.string().min(1).max(200) }).strict(), output: typed<PlanningSession | null>() },
+  bbProjects: { input: z.null(), output: typed<BbProjectChoice[]>() },
   startPlanning: {
-    input: z.object({ request: z.custom<NewThreadRequest>(isComposerRequest), merge: z.enum(MERGE_CHOICES), reviewer: z.string().max(200), confirm }).strict(),
+    input: z
+      .object({
+        request: z.custom<NewThreadRequest>(isComposerRequest),
+        merge: z.enum(MERGE_CHOICES),
+        reviewer: z.string().max(200),
+        repos: z.array(z.string().min(1).max(100)).max(MAX_PLANNING_REPOS).optional(),
+        confirm,
+      })
+      .strict(),
     output: typed<{ threadId: string }>(),
   },
   specVersion: { input: z.object({ slug, version: z.number().int().min(1).optional() }).strict(), output: typed<SpecVersionView>() },
