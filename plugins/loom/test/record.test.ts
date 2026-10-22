@@ -4,7 +4,7 @@ import { SpawnRefusedError, type SpawnArgs } from "../src/ports";
 import { recordPrompt } from "../src/prompts";
 import { HOOK_TIMEOUT_MS, NO_HOOK, RECORD_MAX, SUMMARY_TIMEOUT_MS, projectRecord, sendRecords, settleRecords, type DoneSettings } from "../src/record";
 import { specOf } from "../src/workers";
-import { makeCtx, reachApproved, seedProject, ticketOf, type Doc, type EngineHarness } from "./helpers";
+import { makeCtx, reachApproved, seedProject, seedRepoProject, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;
 
@@ -24,6 +24,24 @@ const send = async (settings: DoneSettings) => {
   await settleRecords(h.ctx);
 };
 const pr = (doc: Doc) => (doc.merge = { strategy: "pr" });
+const PR = (n: number) => `https://github.com/acme/shop/pull/${n}`;
+const minute = (at: number) => `${new Date(at).toISOString().slice(0, 16).replace("T", " ")}Z`;
+const recordSpawns = () => h.bb.callsTo("spawnThread").map(([args]) => args as SpawnArgs).filter((args) => args.metadata.role === "record");
+
+/** Approves and merges one ticket into its repo's integration branch. */
+async function mergeOne(key: string): Promise<void> {
+  await reachApproved(h, key);
+  await runMergeQueue(h.ctx, project(), specOf(h.store, project()));
+  await settleMerges(h.ctx);
+  expect(ticketOf(h, key).state).toBe("done");
+}
+
+/** seedRepoProject's project, CSV-1 merged in web and CSV-2 in api, and docs with no work. */
+async function mergedRepoProject(edit?: (doc: Doc) => void): Promise<void> {
+  await seedRepoProject(h, edit);
+  await mergeOne("CSV-1");
+  await mergeOne("CSV-2");
+}
 
 /** A pull request project whose tickets are all cancelled, finished by finishIfComplete. */
 async function finishedProject(): Promise<void> {
@@ -84,6 +102,15 @@ describe("projectRecord", () => {
     expect(projectRecord(h.store, project())).toContain("One pull request per ticket");
   });
 
+  it("has no Repos section and no Repo line on a single-repo project", async () => {
+    await builtProject();
+    const record = projectRecord(h.store, project());
+    expect(record).toContain("Loom project CSV, running, base branch main. 2 tickets: 1 done, 1 queued.");
+    expect(record).toContain("## Outcome\n\nNot landed yet: the work is on the integration branch loom/csv.\n");
+    expect(record).toContain("### CSV-1 · Order rows (done)\n\nBuild the row mapper.");
+    for (const left of ["## Repos", "Repo: "]) expect(record).not.toContain(left);
+  });
+
   it("is clipped to RECORD_MAX characters", async () => {
     await finishedProject();
     const ticket = ticketOf(h, "CSV-1");
@@ -131,11 +158,21 @@ describe("sendRecords", () => {
         command: HOOK,
         timeoutMs: HOOK_TIMEOUT_MS,
         stdin: projectRecord(h.store, project()),
-        env: { LOOM_PROJECT_SLUG: "csv", LOOM_PROJECT_NAME: "CSV export", LOOM_PROJECT_KEY: "CSV", LOOM_PROJECT_URL: "", LOOM_RECORD: "full" },
+        env: { LOOM_PROJECT_SLUG: "csv", LOOM_PROJECT_NAME: "CSV export", LOOM_PROJECT_KEY: "CSV", LOOM_PROJECT_URL: "", LOOM_PROJECT_URLS: "", LOOM_RECORD: "full" },
       },
     ]);
     expect(row()?.state).toBe("sent");
     expect(eventsOf("record.sent")).toEqual([{ kind: "full" }]);
+  });
+
+  it("gives a single-repo project's landed pull request as both LOOM_PROJECT_URL and LOOM_PROJECT_URLS", async () => {
+    await builtProject();
+    h.store.setTicketState(ticketOf(h, "CSV-2").id, "cancelled", "human");
+    await land(h.ctx, "csv", { actor: "human", ready: false });
+    expect(project()).toMatchObject({ state: "done", pr_url: PR(1) });
+    await send(FULL);
+    expect(hookRuns()).toHaveLength(1);
+    expect(hookRuns()[0]).toMatchObject({ cwd: "/repo", env: { LOOM_PROJECT_SLUG: "csv", LOOM_PROJECT_NAME: "CSV export", LOOM_PROJECT_KEY: "CSV", LOOM_PROJECT_URL: PR(1), LOOM_PROJECT_URLS: PR(1), LOOM_RECORD: "full" } });
   });
 
   it("fails on a non-zero exit, a timeout and a host error, with one record.failed event each", async () => {
@@ -157,6 +194,9 @@ describe("sendRecords", () => {
     const threadId = await summarizing();
     const args = h.bb.callsTo("spawnThread").at(-1)![0] as SpawnArgs;
     expect(args).toMatchObject({
+      bbProjectId: "proj_1",
+      hostId: "host_1",
+      baseBranch: "origin/main",
       title: "CSV · record",
       prompt: recordPrompt(project()),
       detail: projectRecord(h.store, project()),
@@ -256,5 +296,116 @@ describe("sendRecords", () => {
     sendRecords(h.ctx, FULL);
     await settleRecords(h.ctx);
     expect(hookRuns()).toHaveLength(1);
+  });
+});
+
+describe("a multi-repo project", () => {
+  const human = { actor: "human", ready: false };
+
+  it("lists the repos after the goal, gives each repo's outcome, and names each ticket's repo", async () => {
+    await mergedRepoProject();
+    let record = projectRecord(h.store, project());
+    expect(record).toContain("Loom project CSV, running, in 3 repos. 2 tickets: 2 done.");
+    expect(record).toContain(
+      [
+        "## Goal\n\nLet people export their orders as a CSV file from the admin page.\n",
+        "## Repos\n",
+        "- web: bb project proj_web, base main, integration branch loom/csv.",
+        "- api: bb project proj_api, base trunk, integration branch loom/csv.",
+        "- docs: bb project proj_docs, base main, integration branch loom/csv.\n",
+        "## Outcome\n",
+        "- web: not landed yet; its merged work is on the integration branch loom/csv.",
+        "- api: not landed yet; its merged work is on the integration branch loom/csv.",
+        "- docs: no merged work.\n",
+        "## Tickets\n",
+      ].join("\n"),
+    );
+    expect(record).toContain("### CSV-1 · Order rows (done)\n\nRepo: web\n\nBuild the row mapper.\n");
+    expect(record).toContain("### CSV-2 · Export endpoint (done)\n\nRepo: api\n\nServe the file.\n");
+
+    await land(h.ctx, "csv", { ...human, repo: "web" });
+    const webAt = h.clock.t;
+    h.clock.advance(5 * 60_000);
+    await land(h.ctx, "csv", { ...human, repo: "api", direct: true });
+    expect(project().state).toBe("done");
+    record = projectRecord(h.store, project());
+    expect(record).toContain("Loom project CSV, done, in 3 repos.");
+    expect(record).toContain(
+      ["## Outcome\n", `- web: landed as ${PR(1)}, ${minute(webAt)}.`, `- api: pushed to upstream/trunk at m2, ${minute(h.clock.t)}.`, "- docs: no merged work.\n"].join("\n"),
+    );
+  });
+
+  it("says a repo's newer merged work is not landed yet, and names its earlier land", async () => {
+    await seedRepoProject(h, (doc) => doc.ticket.push({ ref: "web-docs", title: "Web docs", body: "Write the docs.", acceptance: ["WHEN the docs are built THE SYSTEM SHALL list the export"], scope: ["docs/**"], repo: "web" }));
+    await mergeOne("CSV-1");
+    await land(h.ctx, "csv", human);
+    const landedAt = h.clock.t;
+    h.clock.advance(60_000);
+    await mergeOne("CSV-3");
+    expect(projectRecord(h.store, project())).toContain(
+      ["## Outcome\n", `- web: not landed yet; its merged work is on the integration branch loom/csv (before that, landed as ${PR(1)}, ${minute(landedAt)}).`, "- api: no merged work.", "- docs: no merged work.\n"].join("\n"),
+    );
+  });
+
+  it("on the pull request strategy lists each repo's bb project and base, and says each ticket has its own pull request", async () => {
+    await seedRepoProject(h, pr);
+    const record = projectRecord(h.store, project());
+    expect(record).toContain("## Repos\n\n- web: bb project proj_web, base main.\n- api: bb project proj_api, base trunk.\n- docs: bb project proj_docs, base main.\n\n## Outcome\n\nOne pull request per ticket");
+    expect(record).toContain("### CSV-2 · Export endpoint (queued)\n\nRepo: api\n");
+  });
+
+  it("starts the summary agent in the first repo's bb project from that repo's fresh base", async () => {
+    await mergedRepoProject();
+    await land(h.ctx, "csv", human);
+    await send(SUMMARY);
+    expect(recordSpawns()).toHaveLength(1);
+    expect(recordSpawns()[0]).toMatchObject({ bbProjectId: "proj_web", hostId: "host_1", baseBranch: "loom/csv", title: "CSV · record", detail: projectRecord(h.store, project()) });
+    expect(row()?.state).toBe("summarizing");
+
+    // On the pull request strategy the fresh base is the repo's remote base branch, so api's first place shows.
+    h = makeCtx();
+    await seedRepoProject(h, (doc) => {
+      pr(doc);
+      doc.repo = [doc.repo[1], doc.repo[0], doc.repo[2]];
+    });
+    for (const key of ["CSV-1", "CSV-2"]) h.store.setTicketState(ticketOf(h, key).id, "cancelled", "human");
+    expect(finishIfComplete(h.ctx, project())).toBe(true);
+    await send(SUMMARY);
+    expect(recordSpawns()[0]).toMatchObject({ bbProjectId: "proj_api", baseBranch: "upstream/trunk" });
+  });
+
+  it("gives the hook the first repo's pull request in [[repo]] order and every repo's, one per line, in the Loom project's checkout", async () => {
+    await mergedRepoProject();
+    await land(h.ctx, "csv", { ...human, repo: "api" });
+    await land(h.ctx, "csv", { ...human, repo: "web" });
+    expect(h.store.projectRepos(project().id).map((repo) => [repo.name, repo.pr_url])).toEqual([
+      ["api", PR(1)],
+      ["web", PR(2)],
+    ]);
+    await send(FULL);
+    expect(hookRuns()).toEqual([
+      {
+        cwd: "/repo",
+        command: HOOK,
+        timeoutMs: HOOK_TIMEOUT_MS,
+        stdin: projectRecord(h.store, project()),
+        env: { LOOM_PROJECT_SLUG: "csv", LOOM_PROJECT_NAME: "CSV export", LOOM_PROJECT_KEY: "CSV", LOOM_PROJECT_URL: PR(2), LOOM_PROJECT_URLS: `${PR(2)}\n${PR(1)}`, LOOM_RECORD: "full" },
+      },
+    ]);
+    expect(row()?.state).toBe("sent");
+  });
+
+  it("skips a repo with no pull request, such as one landed directly, and leaves both variables empty when none has one", async () => {
+    await mergedRepoProject();
+    await land(h.ctx, "csv", { ...human, repo: "api" });
+    await land(h.ctx, "csv", { ...human, repo: "web", direct: true });
+    await send(FULL);
+    expect(hookRuns()[0]?.env).toMatchObject({ LOOM_PROJECT_URL: PR(1), LOOM_PROJECT_URLS: PR(1) });
+
+    h = makeCtx();
+    await mergedRepoProject();
+    await land(h.ctx, "csv", { ...human, direct: true });
+    await send(FULL);
+    expect(hookRuns()[0]?.env).toMatchObject({ LOOM_PROJECT_URL: "", LOOM_PROJECT_URLS: "" });
   });
 });

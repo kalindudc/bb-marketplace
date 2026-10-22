@@ -2,21 +2,23 @@
 // Loom only runs the user's command; what the command does with the record is the user's choice.
 import type { PluginSettingDescriptors } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import type { PostRow, ProjectRow, RecordRow, Store, TicketRow } from "./db/store";
+import type { EventRow, PostRow, ProjectRow, RecordRow, Store, TicketRow } from "./db/store";
+import { plural } from "./format";
 import { checkoutOf } from "./merge";
 import { SpawnRefusedError, type ThreadInfo } from "./ports";
 import { clip, recordPrompt } from "./prompts";
-import { LoomError } from "./projects";
+import { LoomError, landsOf, repoOverviews, type RepoOverview } from "./projects";
+import { freshBaseOf, isMultiRepo, repoSettings } from "./repos";
 import type { Spec } from "./spec";
 import { LOOM_ACTOR } from "./states";
-import { freshBase, specOf, type EngineCtx } from "./workers";
+import { specOf, type EngineCtx } from "./workers";
 
 export const SETTINGS = {
   doneHook: {
     type: "string",
     label: "Done hook",
     description:
-      "A shell command Loom runs once when a project finishes, in the project's checkout on its machine, with a 2-minute limit. It reads the project's record (or its summary) on standard input and gets LOOM_PROJECT_SLUG, LOOM_PROJECT_NAME, LOOM_PROJECT_KEY, LOOM_PROJECT_URL and LOOM_RECORD (summary or full). Empty turns it off. `bb loom report <slug> --send` runs it again for a finished project.",
+      "A shell command Loom runs once when a project finishes, in the project's checkout on its machine, with a 2-minute limit. It reads the project's record (or its summary) on standard input and gets LOOM_PROJECT_SLUG, LOOM_PROJECT_NAME, LOOM_PROJECT_KEY, LOOM_PROJECT_URL (its pull request; on a multi-repo project, the first repo's that has one), LOOM_PROJECT_URLS (every repo's pull request, one per line) and LOOM_RECORD (summary or full). Empty turns it off. `bb loom report <slug> --send` runs it again for a finished project.",
     default: "",
     experimental_schema: z.string().max(4000),
   },
@@ -52,17 +54,46 @@ function specFor(store: Store, project: ProjectRow): Spec {
   return JSON.parse(row.spec_json) as Spec;
 }
 
-function outcome(store: Store, project: ProjectRow, spec: Spec): string {
-  if (spec.merge.strategy === "pr") return "One pull request per ticket; each ticket below names its own.";
-  const landed = store.eventsOfKind(project.id, "project.landed").at(-1);
-  if (landed === undefined) return `Not landed yet: the work is on the integration branch ${spec.merge.branch}.`;
-  const data = JSON.parse(landed.data_json) as { direct?: boolean; pushed?: string; sha?: string; url?: string };
-  return data.direct === true ? `Pushed to ${data.pushed} at ${String(data.sha).slice(0, 12)}, ${minute(landed.at)}.` : `Landed as ${data.url}, ${minute(landed.at)}.`;
+type Landed = { repo?: string; direct?: boolean; pushed?: string; sha?: string; url?: string };
+
+/** Where one project.landed event put the work, in lower case and with no full stop. */
+function landing(event: EventRow): string {
+  const data = JSON.parse(event.data_json) as Landed;
+  return data.direct === true ? `pushed to ${data.pushed} at ${String(data.sha).slice(0, 12)}, ${minute(event.at)}` : `landed as ${data.url}, ${minute(event.at)}`;
 }
 
-function ticketSection(store: Store, ticket: TicketRow): string[] {
+const PER_TICKET = "One pull request per ticket; each ticket below names its own.";
+
+function outcome(store: Store, project: ProjectRow, spec: Spec): string {
+  if (spec.merge.strategy === "pr") return PER_TICKET;
+  const landed = store.eventsOfKind(project.id, "project.landed").at(-1);
+  if (landed === undefined) return `Not landed yet: the work is on the integration branch ${spec.merge.branch}.`;
+  const text = landing(landed);
+  return `${text[0]!.toUpperCase()}${text.slice(1)}.`;
+}
+
+const repoLine = (repo: RepoOverview) => `- ${repo.name}: bb project ${repo.bbProjectId}, base ${repo.base}${repo.branch === null ? "" : `, integration branch ${repo.branch}`}.`;
+
+/** One line per repo of a multi-repo project, in [[repo]] order: its last land, the merged work it has not landed, or none. */
+function repoOutcomes(spec: Spec, repos: readonly RepoOverview[], events: readonly EventRow[]): string[] {
+  if (spec.merge.strategy === "pr") return [PER_TICKET];
+  const last = new Map<string, EventRow>();
+  for (const event of events) {
+    const name = (JSON.parse(event.data_json) as Landed).repo;
+    if (typeof name === "string") last.set(name, event);
+  }
+  return repos.map((repo) => {
+    const landed = last.get(repo.name!);
+    if (repo.toLand) return `- ${repo.name}: not landed yet; its merged work is on the integration branch ${repo.branch}${landed === undefined ? "" : ` (before that, ${landing(landed)})`}.`;
+    return landed === undefined ? `- ${repo.name}: no merged work.` : `- ${repo.name}: ${landing(landed)}.`;
+  });
+}
+
+function ticketSection(store: Store, ticket: TicketRow, multi: boolean): string[] {
   const acceptance = JSON.parse(ticket.acceptance_json) as string[];
-  const lines = [`### ${ticket.key} · ${ticket.title} (${ticket.state})`, "", ticket.body, ""];
+  const lines = [`### ${ticket.key} · ${ticket.title} (${ticket.state})`, ""];
+  if (multi && ticket.repo !== null) lines.push(`Repo: ${ticket.repo}`, "");
+  lines.push(ticket.body, "");
   if (ticket.pr_url !== null) lines.push(`Pull request: ${ticket.pr_url}`, "");
   if (acceptance.length > 0) lines.push("Acceptance criteria:", ...acceptance.map((line, index) => `${index + 1}. ${line}`), "");
   for (const post of store.posts(ticket.id).filter(keep)) lines.push(`#### ${post.kind} · ${post.author_kind} · ${minute(post.at)}`, "", post.body.trim(), "");
@@ -72,26 +103,32 @@ function ticketSection(store: Store, ticket: TicketRow): string[] {
 /** The project's record as Markdown, from its spec, tickets, posts and events; it works in any project state. */
 export function projectRecord(store: Store, project: ProjectRow): string {
   const spec = specFor(store, project);
+  const multi = isMultiRepo(spec);
   const tickets = store.tickets(project.id);
   const counts = new Map<string, number>();
   for (const ticket of tickets) counts.set(ticket.state, (counts.get(ticket.state) ?? 0) + 1);
   const tally = [...counts].map(([state, count]) => `${count} ${state}`).join(", ");
+  const events = multi ? store.eventsOfKind(project.id, "project.landed") : [];
+  const repos = multi ? repoOverviews(project, spec, tickets, landsOf(events)) : [];
+  // A multi-repo project's top-level base is only a default its repos may override, so the Repos section names each one's.
+  const where = multi ? `in ${plural(repos.length, "repo")}` : `base branch ${spec.project.base}`;
   const lines = [
     `# ${project.name} (${project.slug})`,
     "",
-    `Loom project ${project.key}, ${project.state}, base branch ${spec.project.base}. ${tickets.length} ${tickets.length === 1 ? "ticket" : "tickets"}${tally === "" ? "" : `: ${tally}`}.`,
+    `Loom project ${project.key}, ${project.state}, ${where}. ${tickets.length} ${tickets.length === 1 ? "ticket" : "tickets"}${tally === "" ? "" : `: ${tally}`}.`,
     "",
     "## Goal",
     "",
     spec.project.goal,
     "",
+    ...(multi ? ["## Repos", "", ...repos.map(repoLine), ""] : []),
     "## Outcome",
     "",
-    outcome(store, project, spec),
+    ...(multi ? repoOutcomes(spec, repos, events) : [outcome(store, project, spec)]),
     "",
     "## Tickets",
     "",
-    ...tickets.flatMap((ticket) => ticketSection(store, ticket)),
+    ...tickets.flatMap((ticket) => ticketSection(store, ticket, multi)),
   ];
   return clip(`${lines.join("\n").trimEnd()}\n`, RECORD_MAX);
 }
@@ -146,12 +183,14 @@ async function startSummary(ctx: EngineCtx, row: RecordRow, project: ProjectRow,
   store.updateRecord(row.id, { state: "summarizing", started_at: ctx.now() });
   const agent = spec.agents.reviewer;
   const hostId = project.host_id;
+  // A multi-repo project's agent starts in its first repo; it only reads the record, so any of them would do.
+  const repo = isMultiRepo(spec) ? spec.repo![0]!.name : null;
   const spawn = async (sectionId: string | null) => {
     if (hostId === null) throw new Error("the project has no machine");
     return ctx.bb.spawnThread({
-      bbProjectId: project.bb_project_id,
+      bbProjectId: repoSettings(spec, repo).bbProjectId ?? project.bb_project_id,
       hostId,
-      baseBranch: freshBase(spec),
+      baseBranch: freshBaseOf(spec, repo),
       title: `${project.key} · record`,
       prompt: recordPrompt(project),
       detail: projectRecord(store, project),
@@ -219,9 +258,10 @@ async function runHook(ctx: EngineCtx, rowId: number, project: ProjectRow, setti
   const command = settings.doneHook.trim();
   store.updateRecord(rowId, { state: "sending" });
   store.changed(project.id);
-  const env = { LOOM_PROJECT_SLUG: project.slug, LOOM_PROJECT_NAME: project.name, LOOM_PROJECT_KEY: project.key, LOOM_PROJECT_URL: project.pr_url ?? "", LOOM_RECORD: kind };
   let reason: string | null;
   try {
+    const urls = pullRequests(store, project);
+    const env = { LOOM_PROJECT_SLUG: project.slug, LOOM_PROJECT_NAME: project.name, LOOM_PROJECT_KEY: project.key, LOOM_PROJECT_URL: urls[0] ?? "", LOOM_PROJECT_URLS: urls.join("\n"), LOOM_RECORD: kind };
     const { hostId, repo } = await checkoutOf(ctx, project);
     const result = await ctx.host.call(hostId, "exec", { cwd: repo, command, timeoutMs: HOOK_TIMEOUT_MS, stdin: clip(text, RECORD_MAX), env });
     const output = result.output.trim() === "" ? "" : `: ${clip(result.output.trim().slice(-300), 300)}`;
@@ -230,6 +270,14 @@ async function runHook(ctx: EngineCtx, rowId: number, project: ProjectRow, setti
     reason = errText(error);
   }
   settle(ctx, rowId, project, reason === null ? { kind, fallback } : { kind, reason });
+}
+
+/** The project's landed pull requests: a single-repo project's one, or each repo's in [[repo]] order on a multi-repo project. */
+function pullRequests(store: Store, project: ProjectRow): string[] {
+  const spec = specFor(store, project);
+  if (!isMultiRepo(spec)) return project.pr_url === null ? [] : [project.pr_url];
+  const byName = new Map(store.projectRepos(project.id).map((row) => [row.name, row.pr_url]));
+  return spec.repo!.flatMap((repo) => byName.get(repo.name) ?? []);
 }
 
 function settle(ctx: EngineCtx, rowId: number, project: ProjectRow, result: { kind: string; fallback?: string; reason?: string }): void {
