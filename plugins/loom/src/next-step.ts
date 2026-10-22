@@ -67,12 +67,12 @@ function landStep(overview: ProjectOverview): NextStep {
   }
   const toLand = overview.repos.flatMap((repo) => (repo.toLand ? [repo.name!] : []));
   if (toLand.length === 0) {
-    return { ...step, text: "Every ticket is finished, and every repo with merged work is landed. Landing again finishes the project.", action: { control: "land", label: "Land · finish the project", confirm } };
+    return { ...step, text: "Every ticket is finished, and every repo with merged work is landed. Read what lands on the Changes tab; landing again finishes the project.", action: { control: "land", label: "Land · finish the project", confirm } };
   }
   const pushes = toLand.length === 1 ? "its integration branch" : "each one's integration branch";
   return {
     ...step,
-    text: `Every ticket is finished, and ${reposHave(toLand)} merged work that is not landed yet. Landing pushes ${pushes} and opens its pull request, or updates the one already open.`,
+    text: `Every ticket is finished, and ${reposHave(toLand)} merged work that is not landed yet. Read what lands on the Changes tab; landing pushes ${pushes} and opens its pull request, or updates the one already open.`,
     action: { control: "land", label: `Land · ${plural(toLand.length, "repo")}`, confirm },
   };
 }

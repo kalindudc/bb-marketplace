@@ -1,8 +1,8 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { experimental_Diff as Diff, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
-import type { ChangedFile, ChangeSource, ChangesView, ControlAction, FilePatch, ProjectView, rpcContract } from "../contract";
-import { formatDuration, readyToLand } from "../format";
-import { BUTTON, ConfirmButton, HEADING, StateBadge, messageOf, plural } from "./common";
+import type { ChangedFile, ChangeSource, ChangesView, ControlAction, FilePatch, ProjectView, RepoOverview, rpcContract } from "../contract";
+import { formatDuration, isMultiRepoProject, readyToLand } from "../format";
+import { BUTTON, ConfirmButton, HEADING, RepoChip, StateBadge, messageOf, plural } from "./common";
 
 const LIVE_REFRESH_MS = 10_000;
 const VIEWED_LIMIT = 5000;
@@ -23,12 +23,19 @@ function Counts({ files }: { files: readonly ChangedFile[] }) {
 
 // ---------------------------------------------------------------- viewed marks
 
-// A mark holds a file's path and fingerprint, so it clears by itself when the file changes again. Marks live in local
-// storage, read again when it changes; when storage is unavailable they last as long as the page.
+/** A changed file and the repo it changed in, null on a single-repo project: what a Viewed mark is kept for. */
+export interface RepoFile {
+  repo: string | null;
+  file: ChangedFile;
+}
+
+// A mark holds a file's path and fingerprint, so it clears by itself when the file changes again; on a multi-repo project
+// it holds the repo first, and a single-repo project's marks keep the form they had before projects had repos. Marks live
+// in local storage, read again when it changes; when storage is unavailable they last as long as the page.
 const remembered = new Map<string, { raw: string | null; marks: Set<string> }>();
 const listeners = new Set<() => void>();
 const keyOf = (slug: string) => `loom.viewed.${slug}`;
-const markOf = (file: ChangedFile) => `${file.path}\u0000${file.fingerprint}`;
+const markOf = ({ repo, file }: RepoFile) => `${repo === null ? "" : `${repo}\u0000`}${file.path}\u0000${file.fingerprint}`;
 const NO_MARKS = new Set<string>();
 
 function parseMarks(raw: string | null): Set<string> {
@@ -54,7 +61,7 @@ function marksOf(slug: string): Set<string> {
   return marks;
 }
 
-function setMark(slug: string, file: ChangedFile, viewed: boolean): void {
+function setMark(slug: string, file: RepoFile, viewed: boolean): void {
   const next = new Set(marksOf(slug));
   next.delete(markOf(file));
   if (viewed) next.add(markOf(file));
@@ -76,15 +83,18 @@ export function useViewed(slug: string) {
     () => marksOf(slug),
   );
   return {
-    has: (file: ChangedFile) => current.has(markOf(file)),
-    set: (file: ChangedFile, viewed: boolean) => setMark(slug, file, viewed),
-    unviewed: (files: readonly ChangedFile[]) => files.filter((file) => !current.has(markOf(file))).length,
+    has: (file: RepoFile) => current.has(markOf(file)),
+    set: (file: RepoFile, viewed: boolean) => setMark(slug, file, viewed),
+    unviewed: (files: readonly RepoFile[]) => files.filter((file) => !current.has(markOf(file))).length,
   };
 }
 
-/** What Land would push: the integration branch's files, or null when there is nothing to count. */
-export function landingFiles(changes: ChangesView | null): ChangedFile[] | null {
-  return changes?.sources.find((source) => source.kind === "branch" && !source.gone)?.files ?? null;
+const filesOf = (source: ChangeSource): RepoFile[] => (source.files ?? []).map((file) => ({ repo: source.repo, file }));
+
+/** What Land would push: the files of every repo's integration branch, or null when there is nothing to count. */
+export function landingFiles(changes: ChangesView | null): RepoFile[] | null {
+  const branches = (changes?.sources ?? []).filter((source) => source.kind === "branch" && !source.gone && source.files !== null);
+  return branches.length === 0 ? null : branches.flatMap(filesOf);
 }
 
 // ---------------------------------------------------------------- the source list
@@ -120,27 +130,53 @@ function SourceRow({ source, selected, now, branch, onSelect }: { source: Change
   );
 }
 
+const onBranch = (source: ChangeSource) => source.kind === "branch" || source.kind === "merge";
+
+/** On a multi-repo project, one section per repo in [[repo]] order, headed by its chip; a repo that cannot be read says why in its section. */
 function SourceList({ changes, selected, now, onSelect }: { changes: ChangesView; selected: ChangeSource | null; now: number; onSelect(id: string): void }) {
   const shown = changes.sources.filter((source) => !source.gone);
   const gone = changes.sources.length - shown.length;
   const row = (source: ChangeSource) => <SourceRow key={source.id} source={source} selected={source.id === selected?.id} now={now} branch={changes.branch} onSelect={() => onSelect(source.id)} />;
-  const groups: Array<[string, ChangeSource[]]> =
-    changes.strategy === "pr"
-      ? [["Tickets", shown]]
-      : [
-          [changes.finished ? "What merged" : "On the integration branch", shown.filter((source) => source.kind === "branch" || source.kind === "merge")],
-          [changes.finished ? "Not merged" : "Not merged yet", shown.filter((source) => source.kind !== "branch" && source.kind !== "merge")],
-        ];
+  const groups = (sources: ChangeSource[], Heading: "h3" | "h4") => {
+    const titled: Array<[string, ChangeSource[]]> =
+      changes.strategy === "pr"
+        ? [["Tickets", sources]]
+        : [
+            [changes.finished ? "What merged" : "On the integration branch", sources.filter(onBranch)],
+            [changes.finished ? "Not merged" : "Not merged yet", sources.filter((source) => !onBranch(source))],
+          ];
+    return titled
+      .filter(([, entries]) => entries.length > 0)
+      .map(([title, entries]) => (
+        <div key={title} className="space-y-0.5">
+          <Heading className={`${HEADING} px-2`}>{title}</Heading>
+          {entries.map(row)}
+        </div>
+      ));
+  };
   return (
     <nav aria-label="Change sources" data-change-sources className="w-full shrink-0 space-y-3 border-b border-border-seam p-2 md:w-64 md:border-r md:border-b-0">
-      {groups
-        .filter(([, sources]) => sources.length > 0)
-        .map(([title, sources]) => (
-          <div key={title} className="space-y-0.5">
-            <h3 className={`${HEADING} px-2`}>{title}</h3>
-            {sources.map(row)}
-          </div>
-        ))}
+      {isMultiRepoProject(changes)
+        ? changes.repos.map((repo) => {
+            const own = shown.filter((source) => source.repo === repo.name);
+            return (
+              <section key={repo.name} data-change-repo={repo.name} aria-label={`repo ${repo.name}`} className="space-y-2">
+                <h3 className="px-2">
+                  <RepoChip name={repo.name!} />
+                </h3>
+                {repo.unavailable !== null ? (
+                  <p data-repo-unavailable className="px-2 text-xs text-muted-foreground">
+                    {repo.unavailable}
+                  </p>
+                ) : own.length === 0 ? (
+                  <p className="px-2 text-xs text-muted-foreground">No changes yet.</p>
+                ) : (
+                  groups(own, "h4")
+                )}
+              </section>
+            );
+          })
+        : groups(shown, "h3")}
       {gone > 0 && (
         <p data-gone className="px-2 text-xs text-muted-foreground">
           {gone === 1 ? "1 part of this project is" : `${gone} parts of this project are`} no longer in the repository, so {gone === 1 ? "it is" : "they are"} left out.
@@ -158,7 +194,8 @@ function FileDiff({ slug, source, file, view }: { slug: string; source: ChangeSo
   const live = source.kind === "live";
   useEffect(() => {
     let current = true;
-    const input = live ? { slug, path: file.path, key: source.key! } : { slug, path: file.path, base: source.base!, head: source.head! };
+    const repo = source.repo === null ? {} : { repo: source.repo };
+    const input = live ? { slug, path: file.path, key: source.key!, ...repo } : { slug, path: file.path, base: source.base!, head: source.head!, ...repo };
     rpc.call("changePatch", input).then(
       (patch) => current && setState({ patch, error: null }),
       (error) => current && setState({ patch: null, error: messageOf(error) }),
@@ -166,7 +203,7 @@ function FileDiff({ slug, source, file, view }: { slug: string; source: ChangeSo
     return () => {
       current = false;
     };
-  }, [rpc, slug, live, source.key, source.base, source.head, file.path, file.fingerprint]);
+  }, [rpc, slug, live, source.repo, source.key, source.base, source.head, file.path, file.fingerprint]);
 
   if (file.binary) return <p className="px-3 py-2 text-xs text-muted-foreground">Binary file, not shown.</p>;
   if (state.error !== null) return <p role="alert" className="px-3 py-2 text-xs text-destructive-text">Could not load the patch: {state.error}</p>;
@@ -216,7 +253,7 @@ function FileRow(props: { slug: string; source: ChangeSource; file: ChangedFile;
 
 // ---------------------------------------------------------------- the selected source
 
-function SourceIntro({ changes, source, view, busy, onControl }: { changes: ChangesView; source: ChangeSource; view: ProjectView; busy: boolean; onControl(action: ControlAction): void }) {
+function SourceIntro({ changes, source, view, busy, onControl }: { changes: ChangesView; source: ChangeSource; view: ProjectView; busy: boolean; onControl(action: ControlAction, repo?: string): void }) {
   const navigate = useBbNavigate();
   const { overview } = view;
   const files = source.files ?? [];
@@ -233,18 +270,27 @@ function SourceIntro({ changes, source, view, busy, onControl }: { changes: Chan
   );
 
   if (source.kind === "branch") {
-    const landable = changes.strategy === "integration" && (overview.state === "running" || overview.state === "paused") && (overview.ticketCounts.done ?? 0) > 0;
-    const merged = changes.sources.filter((entry) => entry.kind === "merge").length;
+    // A multi-repo project's branch source is one repo's: it lands that repo alone, onto that repo's base.
+    const repo = source.repo === null ? null : changes.repos.find((entry) => entry.name === source.repo)!;
+    const name = repo?.name ?? null;
+    const branch = repo?.branch ?? changes.branch;
+    const base = repo?.base ?? changes.base;
+    const own = overview.repos.find((entry) => entry.name === name);
+    // A repo has a done ticket exactly when it has work to land or was landed, as repoLand in next-step-bar.tsx counts it.
+    const hasDone = name === null ? (overview.ticketCounts.done ?? 0) > 0 : own !== undefined && (own.toLand || own.landedAt !== null);
+    const landable = changes.strategy === "integration" && (overview.state === "running" || overview.state === "paused") && hasDone;
+    const merged = changes.sources.filter((entry) => entry.kind === "merge" && entry.repo === source.repo).length;
     return (
       <div className="space-y-3">
         <h2 className="text-sm font-semibold">
+          {name !== null && <RepoChip name={name} className="mr-1.5 align-middle" />}
           {changes.finished ? (
             <>
-              What <span className="font-mono">{changes.branch}</span> merged
+              What <span className="font-mono">{branch}</span> merged
             </>
           ) : (
             <>
-              <span className="font-mono">{changes.branch}</span> compared with <span className="font-mono">{source.against}</span>
+              <span className="font-mono">{branch}</span> compared with <span className="font-mono">{source.against}</span>
             </>
           )}
         </h2>
@@ -255,13 +301,30 @@ function SourceIntro({ changes, source, view, busy, onControl }: { changes: Chan
         </p>
         {landable && (
           <div data-land-panel className="flex flex-wrap items-center gap-3 rounded-md border border-border-seam px-3 py-2.5">
-            <p className="min-w-0 flex-1 text-xs">
-              {readyToLand(overview) && <b>This is what lands. </b>}
-              Land pushes <span className="font-mono">{changes.branch}</span> at <span className="font-mono">{short(source.head)}</span> and opens one pull request into {changes.base}, or updates the one already open. Land to {changes.base} merges{" "}
-              <span className="font-mono">{changes.remoteBase}</span> in, runs the after_merge checks and pushes straight to {changes.base}.
-            </p>
-            <ConfirmButton label="Land" confirmLabel="Click again to land" disabled={busy} onConfirm={() => onControl("land")} />
-            <ConfirmButton label={`Land to ${changes.base}`} disabled={busy} onConfirm={() => onControl("landDirect")} />
+            {name === null ? (
+              <p className="min-w-0 flex-1 text-xs">
+                {readyToLand(overview) && <b>This is what lands. </b>}
+                Land pushes <span className="font-mono">{changes.branch}</span> at <span className="font-mono">{short(source.head)}</span> and opens one pull request into {changes.base}, or updates the one already open. Land to {changes.base} merges{" "}
+                <span className="font-mono">{changes.remoteBase}</span> in, runs the after_merge checks and pushes straight to {changes.base}.
+              </p>
+            ) : (
+              <p className="min-w-0 flex-1 text-xs">
+                {readyToLand(overview) && <b>This is what lands in {name}. </b>}
+                Land {name} pushes <span className="font-mono">{branch}</span> in {name} at <span className="font-mono">{short(source.head)}</span> and opens one pull request into {base}, or updates the one already open. Land {name} to {base} merges{" "}
+                <span className="font-mono">{repo!.remoteBase}</span> in, runs the after_merge checks and pushes straight to {base}. The other repos do not land.
+              </p>
+            )}
+            {name === null ? (
+              <>
+                <ConfirmButton label="Land" confirmLabel="Click again to land" disabled={busy} onConfirm={() => onControl("land")} />
+                <ConfirmButton label={`Land to ${changes.base}`} disabled={busy} onConfirm={() => onControl("landDirect")} />
+              </>
+            ) : (
+              <>
+                <ConfirmButton label={`Land ${name}`} confirmLabel={`Click again to land ${name}`} disabled={busy} onConfirm={() => onControl("land", name)} />
+                <ConfirmButton label={`Land ${name} to ${base}`} confirmLabel={`Click again to land ${name} to ${base}`} disabled={busy} onConfirm={() => onControl("landDirect", name)} />
+              </>
+            )}
           </div>
         )}
       </div>
@@ -274,6 +337,7 @@ function SourceIntro({ changes, source, view, busy, onControl }: { changes: Chan
         {source.key} · {source.title}
       </h2>
       <StateBadge state={source.kind === "merge" ? "merged" : source.state!} />
+      {source.repo !== null && <RepoChip name={source.repo} />}
       {openTicket}
       {card?.prUrl != null && (
         <button type="button" className={BUTTON} onClick={() => navigate.openUrl(card.prUrl!)}>
@@ -324,21 +388,29 @@ function SourceIntro({ changes, source, view, busy, onControl }: { changes: Chan
   );
 }
 
-/** The source to show: the one chosen (by id, or a ticket's key), else the whole branch, else the first with changes. */
-export function pickSource(changes: ChangesView, chosen: string | null): ChangeSource | null {
+/**
+ * The source to show: the one chosen (by id, or a ticket's key), else the whole branch, else the first with changes. On a multi-repo project
+ * the whole branch is that of the first repo, in [[repo]] order, with work to land by `repos`, else of the first repo, and "branch" chooses it;
+ * a repo that cannot be read is passed over.
+ */
+export function pickSource(changes: ChangesView, chosen: string | null, repos: readonly RepoOverview[] = []): ChangeSource | null {
   const shown = changes.sources.filter((source) => !source.gone);
   const picked = chosen === null ? undefined : shown.find((source) => source.id === chosen || source.key === chosen);
   if (picked !== undefined && (picked.files === null || picked.files.length > 0 || picked.kind === "branch")) return picked;
-  return shown.find((source) => source.files === null || source.files.length > 0) ?? shown[0] ?? null;
+  if (!isMultiRepoProject(changes)) return shown.find((source) => source.files === null || source.files.length > 0) ?? shown[0] ?? null;
+  const readable = changes.repos.filter((repo) => repo.unavailable === null);
+  const landing = readable.find((repo) => repos.some((entry) => entry.name === repo.name && entry.toLand)) ?? readable[0];
+  const listed = shown.filter((source) => readable.some((repo) => repo.name === source.repo));
+  return listed.find((source) => source.kind === "branch" && source.repo === landing?.name) ?? listed.find((source) => source.files === null || source.files.length > 0) ?? listed[0] ?? null;
 }
 
-export function ChangesTab(props: { changes: ChangesView | null; error: string | null; view: ProjectView; busy: boolean; chosen: string | null; onChoose(id: string): void; onControl(action: ControlAction): void; onReload(): void }) {
+export function ChangesTab(props: { changes: ChangesView | null; error: string | null; view: ProjectView; busy: boolean; chosen: string | null; onChoose(id: string): void; onControl(action: ControlAction, repo?: string): void; onReload(): void }) {
   const { changes, view, chosen } = props;
   const slug = view.overview.slug;
   const viewed = useViewed(slug);
   const [mode, setMode] = useState<"unified" | "split">("unified");
   const [open, setOpen] = useState<Set<string>>(new Set());
-  const source = changes === null ? null : pickSource(changes, chosen);
+  const source = changes === null ? null : pickSource(changes, chosen, view.overview.repos);
   const live = source?.kind === "live";
   const { onReload } = props;
   useEffect(() => {
@@ -346,7 +418,12 @@ export function ChangesTab(props: { changes: ChangesView | null; error: string |
     const timer = setInterval(onReload, LIVE_REFRESH_MS);
     return () => clearInterval(timer);
   }, [live, onReload]);
-  useEffect(() => setOpen(new Set()), [source?.id]);
+  // Reset while rendering, not in an effect, so a path open in one source never opens, and reads, the same path in the next one.
+  const [openIn, setOpenIn] = useState(source?.id);
+  if (openIn !== source?.id) {
+    setOpenIn(source?.id);
+    setOpen(new Set());
+  }
 
   if (changes === null) {
     return props.error === null ? <p role="status" className="p-4 text-sm text-muted-foreground">Loading…</p> : <p role="alert" className="p-4 text-sm text-destructive-text">Could not load the changes: {props.error}</p>;
@@ -355,7 +432,7 @@ export function ChangesTab(props: { changes: ChangesView | null; error: string |
   if (source === null) return <p className="p-4 text-sm text-muted-foreground">{changes.sources.length > 0 ? "This project's changes are no longer in the repository." : "No changes yet."}</p>;
 
   const files = source.files ?? [];
-  const seen = files.length - viewed.unviewed(files);
+  const seen = files.length - viewed.unviewed(filesOf(source));
   const toggle = (path: string) => setOpen((before) => {
     const next = new Set(before);
     if (!next.delete(path)) next.add(path);
@@ -402,11 +479,11 @@ export function ChangesTab(props: { changes: ChangesView | null; error: string |
                   source={source}
                   file={file}
                   open={open.has(file.path)}
-                  viewed={viewed.has(file)}
+                  viewed={viewed.has({ repo: source.repo, file })}
                   view={mode}
                   onToggle={() => toggle(file.path)}
                   onViewed={(next) => {
-                    viewed.set(file, next);
+                    viewed.set({ repo: source.repo, file }, next);
                     if (next) setOpen((before) => new Set([...before].filter((path) => path !== file.path)));
                   }}
                   onTicket={props.onChoose}

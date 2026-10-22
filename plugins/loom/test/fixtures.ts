@@ -1,4 +1,4 @@
-import type { AgentRow, Attempt, BoardCard, FeedRow, HomeProject, HomeView, ProjectHealth, ProjectSummary, ProjectTimeline, ProjectView, RepoOverview, SpecVersionView, TicketDetail } from "../src/contract";
+import type { AgentRow, Attempt, BoardCard, ChangeRepo, FeedRow, HomeProject, HomeView, ProjectHealth, ProjectSummary, ProjectTimeline, ProjectView, RepoOverview, SpecVersionView, TicketDetail } from "../src/contract";
 import type { ProjectMetrics } from "../src/metrics";
 import { parseSpec } from "../src/spec";
 import { TICKET_STATES, type TicketState } from "../src/states";
@@ -32,6 +32,9 @@ export const overview = (over: Partial<ProjectSummary> = {}): ProjectSummary => 
 
 /** One repo of a multi-repo project's overview: web by default, with merged work to land. */
 export const repoOverview = (over: Partial<RepoOverview> = {}): RepoOverview => ({ name: "web", bbProjectId: "proj_web", bbProjectName: "shop-web", base: "main", branch: "loom/csv", prUrl: null, landedAt: null, toLand: true, ...over });
+
+/** One repo of a multi-repo project's Changes view: web by default, read in its checkout. */
+export const changeRepo = (over: Partial<ChangeRepo> = {}): ChangeRepo => ({ name: "web", base: "main", remoteBase: "origin/main", branch: "loom/csv", unavailable: null, ...over });
 
 /** The helpers' base spec over two repos: web (its own checks, after-merge checks and a protected path) holds csv-model, and api (another base and remote, bb's name for it unknown) holds csv-export. */
 export function withRepos(doc: Doc): void {
