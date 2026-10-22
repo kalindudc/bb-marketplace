@@ -314,6 +314,17 @@ describe("worker and planner tools", () => {
     await expect(call("loom_edit_ticket", { key: "CSV-2", patch: { priority: 9 } }, "thr_plan")).rejects.toThrow();
   });
 
+  it("refuses a repo on a single-repo project in loom_add_tickets and loom_edit_ticket", async () => {
+    const docs = { ref: "docs", title: "Docs", body: "Write them.", acceptance: ["WHEN built THE SYSTEM SHALL list it"], scope: ["docs/**"], repo: "web" };
+    const added = await call("loom_add_tickets", { tickets: [docs] }, "thr_plan");
+    expect(isError(added)).toBe(true);
+    expect(text(added)).toContain('tickets[0].repo: "web" names a repo, but this project has no [[repo]] table');
+    const edited = await call("loom_edit_ticket", { key: "CSV-2", patch: { repo: "web" } }, "thr_plan");
+    expect(isError(edited)).toBe(true);
+    expect(text(edited)).toContain('patch.repo: "web" names a repo');
+    expect(ticketNamed("CSV-2").repo).toBeNull();
+  });
+
   it("loom_cancel_ticket cancels, ending a live worker", async () => {
     const workerId = await startWorkerFor("CSV-1");
     expect(text(await call("loom_cancel_ticket", { key: "CSV-1", reason: "No longer needed" }, "thr_plan"))).toContain("CSV-1 is cancelled");
@@ -421,6 +432,53 @@ describe("worker and planner tools", () => {
     await call("loom_add_tickets", { tickets: long.slice(0, 50) }, "thr_plan");
     await call("loom_add_tickets", { tickets: long.slice(50, 100).map((t, i) => ({ ...t, ref: `u${i}` })) }, "thr_plan");
     expect(text(await call("loom_board", {}, "thr_plan")).length).toBeLessThanOrEqual(12_000);
+  });
+});
+
+describe("the board tools on a multi-repo project", () => {
+  const call = (name: string, input: unknown) => host.harness.callAgentTool(name, input, { threadId: "thr_plan", projectId: "proj_1" });
+  const docs = { title: "Docs", body: "Write them.", acceptance: ["WHEN built THE SYSTEM SHALL list it"], scope: ["docs/**"] };
+
+  beforeEach(async () => {
+    const fake = new FakePort();
+    fake.addThread("thr_plan", "idle");
+    fake.addBbProject("proj_web", { host_1: "/src/web" });
+    fake.addBbProject("proj_api", { host_1: "/src/api" });
+    host = makeHost({ port: fake });
+    registerTools(host.bb, host.projects, host.engine);
+    const hh: EngineHarness = { ctx: host.engine.ctx, store: host.store, bb: fake, host: host.hostPort, projects: host.projects, clock: new Clock(), kicks: { count: 0 } };
+    await seedProject(hh, (doc: Doc) => {
+      doc.repo = [
+        { name: "web", project: "proj_web" },
+        { name: "api", project: "proj_api" },
+      ];
+      doc.ticket[0].repo = "web";
+      doc.ticket[1].repo = "api";
+    });
+  });
+
+  it("loom_add_tickets stores the repo, and refuses a ticket without one while listing the repos", async () => {
+    expect(text(await call("loom_add_tickets", { tickets: [{ ...docs, ref: "docs", repo: "web" }] }))).toContain("Added CSV-3");
+    expect(host.store.ticketByKey("CSV-3")?.repo).toBe("web");
+    const refused = await call("loom_add_tickets", { tickets: [{ ...docs, ref: "more" }] });
+    expect(isError(refused)).toBe(true);
+    expect(text(refused)).toContain("tickets[0].repo: is required, because this project lists [[repo]] tables. Set it to one of: web, api.");
+  });
+
+  it("loom_edit_ticket moves a queued ticket to another repo, and loom_board shows each ticket's repo", async () => {
+    expect(text(await call("loom_edit_ticket", { key: "CSV-2", patch: { repo: "web" } }))).toContain("CSV-2 changed: repo");
+    expect(host.store.ticketByKey("CSV-2")?.repo).toBe("web");
+    const board = text(await call("loom_board", {}));
+    expect(board).toContain("Board for csv (repos web, api): 2 tickets");
+    expect(board).toContain("CSV-1  queued     P2  repo web  Order rows");
+    expect(board).toContain("CSV-2  queued     P2  repo web  Export endpoint");
+  });
+
+  it("names repo in the loom_add_tickets and loom_edit_ticket descriptions", () => {
+    const description = (name: string) => host.harness.registrations.agentTools.find((tool) => tool.name === name)!.description;
+    expect(description("loom_add_tickets")).toContain("every ticket sets repo to one of those repo names");
+    expect(description("loom_edit_ticket")).toContain("priority, repo.");
+    expect(description("loom_edit_ticket")).toContain("cancel the ticket and add a new one in the other repo");
   });
 });
 

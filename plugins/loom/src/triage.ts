@@ -3,6 +3,7 @@
 import type { PostRow, ProjectRow, ThreadRow, TicketRow } from "./db/store";
 import { briefBody, LoomError } from "./projects";
 import { clip, triageDigest } from "./prompts";
+import { isMultiRepo, repoSettings } from "./repos";
 import { dependencyCycle, fallsUnder, numberErrors, type Spec, type TicketPatch, type TicketSpec } from "./spec";
 import { HUMAN_ACTOR, TICKET_STATES, canMoveTicket, type TicketState } from "./states";
 import { endLiveRows, specOf, type EngineCtx } from "./workers";
@@ -45,14 +46,32 @@ export function onPlannerIdle(ctx: EngineCtx, row: ThreadRow): void {
 
 // ---------------------------------------------------------------- the planner's board tools
 
-const problemsOf = (spec: Spec, label: string, scope: readonly string[], verify: readonly string[]): string[] => {
-  const problems: string[] = [];
-  for (const glob of scope) {
-    const guard = spec.scope.protected.find((protectedGlob) => fallsUnder(glob, protectedGlob));
-    if (guard !== undefined) problems.push(`${label}.scope: "${glob}" falls under the protected path "${guard}". Take it out of the scope.`);
+/** Why a ticket cannot run in `repo` on this project, or null when it can. */
+const repoError = (spec: Spec, label: string, repo: string | null): string | null => {
+  const names = (spec.repo ?? []).map((entry) => entry.name);
+  if (names.length === 0) {
+    return repo === null ? null : `${label}.repo: "${repo}" names a repo, but this project has no [[repo]] table, so every ticket runs in the project's own repository. Remove repo from the ticket.`;
   }
-  if (verify.length === 0 && spec.checks.commands.length === 0) {
-    problems.push(`${label}.verify: nothing would check this ticket, because it has no verify commands and checks.commands is empty. Add a verify command.`);
+  if (repo === null) return `${label}.repo: is required, because this project lists [[repo]] tables. Set it to one of: ${names.join(", ")}.`;
+  return names.includes(repo) ? null : `${label}.repo: "${repo}" is not one of this project's repos. Use one of: ${names.join(", ")}.`;
+};
+
+const problemsOf = (spec: Spec, label: string, scope: readonly string[], verify: readonly string[], repo: string | null): string[] => {
+  const problems: string[] = [];
+  const wrongRepo = repoError(spec, label, repo);
+  if (wrongRepo !== null) problems.push(wrongRepo);
+  // A ticket whose repo is wrong is still checked against the top-level settings, as parseSpec does.
+  const settings = wrongRepo === null ? repoSettings(spec, repo) : null;
+  for (const glob of scope) {
+    const guard = (settings?.protected ?? spec.scope.protected).find((protectedGlob) => fallsUnder(glob, protectedGlob));
+    if (guard === undefined) continue;
+    const owner = spec.scope.protected.includes(guard) ? "" : ` of repo "${repo}"`;
+    problems.push(`${label}.scope: "${glob}" falls under the protected path "${guard}"${owner}. Take it out of the scope.`);
+  }
+  if (verify.length === 0 && (settings?.checks ?? spec.checks.commands).length === 0) {
+    const ownChecks = spec.repo?.find((entry) => entry.name === repo)?.checks !== undefined;
+    const empty = ownChecks ? `the checks of repo "${repo}", which replace checks.commands, are empty` : "checks.commands is empty";
+    problems.push(`${label}.verify: nothing would check this ticket, because it has no verify commands and ${empty}. Add a verify command.`);
   }
   return problems;
 };
@@ -84,7 +103,7 @@ export function addTickets(ctx: EngineCtx, projectId: number, tickets: TicketSpe
     for (const dep of ticket.depends_on) {
       if (!keyOf.has(dep) && !known.has(dep)) errors.push(`${label}.depends_on: "${dep}" is not a ref in this batch or a ticket on this board.`);
     }
-    errors.push(...problemsOf(spec, label, ticket.scope, ticket.verify));
+    errors.push(...problemsOf(spec, label, ticket.scope, ticket.verify, ticket.repo ?? null));
   });
   const cycle = dependencyCycle(tickets);
   if (cycle !== null) errors.push(`tickets: dependency cycle ${cycle.join(" -> ")}. Remove one depends_on entry.`);
@@ -105,6 +124,7 @@ export function addTickets(ctx: EngineCtx, projectId: number, tickets: TicketSpe
           scope_json: JSON.stringify(ticket.scope),
           deps_json: JSON.stringify(ticket.depends_on.map((dep) => keyOf.get(dep) ?? known.get(dep)!)),
           priority: ticket.priority,
+          repo: ticket.repo ?? null,
         },
         actor,
       );
@@ -117,14 +137,24 @@ export function addTickets(ctx: EngineCtx, projectId: number, tickets: TicketSpe
   return created;
 }
 
-/** Changes a queued or blocked ticket. Only the fields in the patch change. */
+const repoLocked = (key: string, why: string, repo: string) =>
+  new LoomError(
+    "loom_invalid_state",
+    `${key} ${why}; its repo can change only while it is queued or blocked and has no branch, because a branch lives in one repository. Cancel ${key} with loom_cancel_ticket and add a new ticket in repo "${repo}" with loom_add_tickets.`,
+  );
+
+/** Changes a queued or blocked ticket. Only the fields in the patch change; the repo changes only while the ticket has no branch. */
 export function editTicket(ctx: EngineCtx, key: string, patch: TicketPatch, actor: string): TicketRow {
   const { store } = ctx;
   const ticket = requireTicket(ctx, key);
+  const movesRepo = patch.repo !== undefined && patch.repo !== ticket.repo;
   if (ticket.state !== "queued" && ticket.state !== "blocked") {
+    if (movesRepo) throw repoLocked(key, `is ${ticket.state}`, patch.repo!);
     throw new LoomError("loom_invalid_state", `${key} is ${ticket.state}; only a queued or blocked ticket can be edited.`, "A ticket a worker holds changes through a reply on the ticket, or cancel it and add a new one.");
   }
   const spec = specOf(store, store.project(ticket.project_id)!);
+  const repo = patch.repo ?? ticket.repo;
+  if (movesRepo && ticket.branch !== null && repoError(spec, "patch", repo) === null) throw repoLocked(key, `has the branch ${ticket.branch}`, repo!);
   const board = store.tickets(ticket.project_id);
   const known = new Map(board.flatMap((other) => [[other.key, other.key] as const, [other.ref, other.key] as const]));
   const errors: string[] = [];
@@ -143,7 +173,8 @@ export function editTicket(ctx: EngineCtx, key: string, patch: TicketPatch, acto
   }
   const scope = patch.scope ?? (JSON.parse(ticket.scope_json) as string[]);
   const verify = patch.verify ?? (JSON.parse(ticket.verify_json) as string[]);
-  if (patch.scope !== undefined || patch.verify !== undefined) errors.push(...problemsOf(spec, "patch", patch.scope === undefined ? [] : scope, verify));
+  // Moving to another repo checks the whole ticket against that repo's protected paths and checks.
+  if (movesRepo || patch.scope !== undefined || patch.verify !== undefined) errors.push(...problemsOf(spec, "patch", movesRepo || patch.scope !== undefined ? scope : [], verify, repo));
   if (errors.length > 0) throw refused(errors, `${key} not changed. Fix these and call loom_edit_ticket again`);
 
   const fields = (Object.keys(patch) as Array<keyof TicketPatch>).filter((field) => patch[field] !== undefined);
@@ -155,6 +186,7 @@ export function editTicket(ctx: EngineCtx, key: string, patch: TicketPatch, acto
     ...(patch.scope === undefined ? {} : { scope_json: JSON.stringify(patch.scope) }),
     ...(patch.depends_on === undefined ? {} : { deps_json: JSON.stringify(deps) }),
     ...(patch.priority === undefined ? {} : { priority: patch.priority }),
+    ...(patch.repo === undefined ? {} : { repo: patch.repo }),
   };
   // The old values let a rewind show the ticket as it was before the edit.
   const before = Object.fromEntries(Object.keys(changes).map((column) => [column, ticket[column as keyof TicketRow]]));
@@ -182,15 +214,21 @@ export async function cancelTicket(ctx: EngineCtx, key: string, reason: string, 
   return store.ticket(ticket.id)!;
 }
 
-/** The board as compact text for the planner: key, state, priority, title, dependencies and time in state. */
+/** The board as compact text for the planner: key, state, priority, repo on a multi-repo project, title, dependencies and time in state. */
 export function boardText(ctx: EngineCtx, projectId: number, states?: readonly TicketState[]): string {
   const project = ctx.store.project(projectId);
   const tickets = ctx.store.tickets(projectId, states);
   if (tickets.length === 0) return `No tickets${states === undefined ? "" : ` in ${states.join(", ")}`}.`;
+  const spec = project?.approved_version == null ? null : specOf(ctx.store, project);
+  const repos = spec !== null && isMultiRepo(spec) ? spec.repo!.map((repo) => repo.name) : null;
+  const repoOf = (ticket: TicketRow) => `repo ${ticket.repo ?? "-"}`;
+  const repoWidth = repos === null ? 0 : Math.max(...tickets.map((ticket) => repoOf(ticket).length));
   const rows = tickets.map((ticket) => {
     const deps = JSON.parse(ticket.deps_json) as string[];
     const age = Math.max(0, Math.round((ctx.now() - ticket.state_at) / 60_000));
-    return `${ticket.key}  ${ticket.state.padEnd(9)}  P${ticket.priority}  ${clip(ticket.title, 80)}${deps.length > 0 ? `  (after ${deps.join(", ")})` : ""}  ${age}m in state`;
+    const repo = repos === null ? "" : `${repoOf(ticket).padEnd(repoWidth)}  `;
+    return `${ticket.key}  ${ticket.state.padEnd(9)}  P${ticket.priority}  ${repo}${clip(ticket.title, 80)}${deps.length > 0 ? `  (after ${deps.join(", ")})` : ""}  ${age}m in state`;
   });
-  return [`Board for ${project?.slug ?? projectId}: ${tickets.length} ${tickets.length === 1 ? "ticket" : "tickets"}`, ...rows].join("\n");
+  const header = `Board for ${project?.slug ?? projectId}${repos === null ? "" : ` (repos ${repos.join(", ")})`}: ${tickets.length} ${tickets.length === 1 ? "ticket" : "tickets"}`;
+  return [header, ...rows].join("\n");
 }

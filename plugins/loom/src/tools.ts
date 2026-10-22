@@ -100,7 +100,7 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
 
   bb.agents.registerTool({
     name: "loom_board",
-    description: "The project's board: every ticket with its state, priority, dependencies and how long it has been in that state. Optionally only the tickets in one state.",
+    description: "The project's board: every ticket with its state, priority, repo on a project with [[repo]] tables, dependencies and how long it has been in that state. Optionally only the tickets in one state.",
     presentation: { label: { pending: "Reading the Loom board", completed: "Read the Loom board" } },
     parameters: z.object({ state: z.enum(TICKET_STATES).optional().describe("Only tickets in this state.") }),
     execute: ({ state }, tool) => run(() => boardText(ctx, planner(tool.threadId).projectId, state === undefined ? undefined : [state])),
@@ -134,7 +134,7 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
   bb.agents.registerTool({
     name: "loom_add_tickets",
     description:
-      "Add tickets to the board, for example to split a blocked ticket or add a missing dependency. Same fields as the spec's [[ticket]] tables. depends_on may name refs in this batch or tickets already on the board (key or ref); the cycle check covers the batch. Nothing is added when any ticket is refused.",
+      "Add tickets to the board, for example to split a blocked ticket or add a missing dependency. Same fields as the spec's [[ticket]] tables. On a project whose spec has [[repo]] tables, every ticket sets repo to one of those repo names, and its scope and verify are checked against that repo's protected paths and checks; on a single-repo project, leave repo out. depends_on may name refs in this batch or tickets already on the board (key or ref); the cycle check covers the batch. Nothing is added when any ticket is refused.",
     presentation: { label: { pending: "Adding Loom tickets", completed: "Added Loom tickets" } },
     parameters: z.object({ tickets: z.array(ticketSpecSchema).min(1).max(50) }),
     execute: ({ tickets }, tool) =>
@@ -147,7 +147,8 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
 
   bb.agents.registerTool({
     name: "loom_edit_ticket",
-    description: "Change a queued or blocked ticket. Only the fields in the patch change: title, body, acceptance, verify, scope, depends_on, priority. A ticket a worker holds cannot be edited; cancel it or reply on it.",
+    description:
+      "Change a queued or blocked ticket. Only the fields in the patch change: title, body, acceptance, verify, scope, depends_on, priority, repo. repo moves the ticket to another of the spec's [[repo]] tables, and only while it has no branch, because a branch lives in one repository; otherwise cancel the ticket and add a new one in the other repo. A ticket a worker holds cannot be edited; cancel it or reply on it.",
     presentation: { label: { pending: "Editing a Loom ticket", completed: "Edited a Loom ticket" } },
     parameters: z.object({ key: z.string().min(1).max(40), patch: ticketPatchSchema }),
     execute: ({ key, patch }, tool) =>
