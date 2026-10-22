@@ -39,15 +39,25 @@ Thinking and incoming messages stay neutral.
 | j / ↓, k / ↑ | Move between visible rows |
 | Enter / o | Expand or collapse the focused row (buttons keep Enter) |
 | x | Toggle the expanded view; the choice persists on this device |
-| n / N | Next / previous agent reply |
+| n / N | Next / previous agent reply; while a search is active, next / previous match |
 | e / E | Next / previous error |
 | g / G | First / latest row; G resumes live follow |
 | / | Focus search |
 | c | Copy the focused row |
 | s | Show the focused message in bb's chat |
 | ? | Show or hide keyboard help |
-| Enter in search | Focus the first matching row |
+| Enter / Shift+Enter in search | Next / previous match; focus stays in the search box |
+| ↓ in search | Move into the log at the current match, keeping the search |
 | Escape in search | Clear the query; when empty, return to the log |
+
+Search filters the log to the rows that match and paints every match in
+amber, inside rendered Markdown too. The match you are on is orange and
+underlined, and its row gets an orange frame. A counter beside the search box
+says which match you are on (“3 of 17”), and its arrows, Enter and Shift+Enter,
+or `n` and `N` in the log step through them, wrapping at either end. With no
+current match, stepping starts from the row you moved to, or from the first or
+last match while the log follows the newest row. Stepping to a match scrolls it
+to the middle of the log and pauses follow.
 
 Use the row's “Open thread” action to open a child or sender thread in a
 split. “Show in chat” links user and agent messages to their message anchors.
@@ -107,8 +117,12 @@ The icon is “Logs” from [Hugeicons](https://hugeicons.com) core free icons
 
 - bb shortens output above 32,000 characters and appends its truncation note;
   the log displays that note rather than fetching beyond the limit.
-- Search includes message text, but does not highlight matches inside rendered
-  Markdown. Titles and plain-text bodies do highlight matches.
+- Matches are painted with the browser's CSS Custom Highlight API. bb's
+  diff viewer draws expanded file changes in its own shadow DOM, which plugin
+  styles cannot reach, so a match there is not painted; stepping still lands
+  on its row and frames it. Search also stops at the row: a match in text the
+  row does not show, such as a collapsed command's later lines, frames the row
+  the same way.
 - The whole session loads when the tab opens, so very large threads need
   an initial fetch before search is complete.
 - bb's events do not record which plugin sent a hidden message, so the log

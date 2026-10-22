@@ -1,4 +1,4 @@
-import { memo, type CSSProperties, type ReactNode } from "react";
+import { memo, type CSSProperties } from "react";
 import {
   Markdown, UrlLink, experimental_Diff as Diff, experimental_Icon as Icon,
 } from "@get-bb/plugin-sdk/app";
@@ -9,7 +9,7 @@ export interface LogRowProps {
   entry: LogEntry;
   expanded: boolean;
   focused: boolean;
-  query: string;
+  searchCurrent: boolean;
   turnStats: TurnStats | undefined;
   chatHref: string | null;
   settings: SessionLogSettings;
@@ -18,23 +18,6 @@ export interface LogRowProps {
   onCopy(entry: LogEntry): void;
   onOpenThread(threadId: string): void;
   registerElement(id: string, element: HTMLElement | null): void;
-}
-
-export function highlight(text: string, query: string): ReactNode {
-  const needle = query.trim().toLowerCase();
-  if (!needle) return text;
-  const parts: ReactNode[] = [];
-  const lowercase = text.toLowerCase();
-  let start = 0;
-  let match = lowercase.indexOf(needle);
-  while (match >= 0) {
-    if (match > start) parts.push(text.slice(start, match));
-    parts.push(<mark key={match} className="bg-surface-selected text-foreground">{text.slice(match, match + needle.length)}</mark>);
-    start = match + needle.length;
-    match = lowercase.indexOf(needle, start);
-  }
-  if (start < text.length) parts.push(text.slice(start));
-  return parts;
 }
 
 function badgeFor(entry: LogEntry): string | null {
@@ -64,7 +47,7 @@ const clampLines = (lines: number): CSSProperties => ({
   display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: lines, overflow: "hidden",
 });
 
-function PatchPreview({ text, query }: { text: string; query: string }) {
+function PatchPreview({ text }: { text: string }) {
   return (
     <div className="font-mono text-xs whitespace-pre-wrap break-words text-muted-foreground">
       {previewLines(text, 8, 0).text.split("\n").map((line, index) => (
@@ -72,17 +55,16 @@ function PatchPreview({ text, query }: { text: string; query: string }) {
           key={index}
           className={line.startsWith("+") ? "text-diff-added" : line.startsWith("-") ? "text-diff-removed" : ""}
         >
-          {highlight(line, query)}
+          {line}
         </div>
       ))}
     </div>
   );
 }
 
-function RowBody({ entry, expanded, query, settings, onToggle }: {
+function RowBody({ entry, expanded, settings, onToggle }: {
   entry: LogEntry;
   expanded: boolean;
-  query: string;
   settings: SessionLogSettings;
   onToggle(id: string): void;
 }) {
@@ -91,7 +73,7 @@ function RowBody({ entry, expanded, query, settings, onToggle }: {
     if (!body) return null;
     return expanded && row.kind === "work" && row.workKind === "file-change"
       ? <Diff patch={body} path={row.change.path} className="min-w-0" />
-      : <PatchPreview text={body} query={query} />;
+      : <PatchPreview text={body} />;
   }
   if (entry.bodyFormat === "markdown") {
     if (!body) return null;
@@ -102,7 +84,7 @@ function RowBody({ entry, expanded, query, settings, onToggle }: {
         <div className={clip ? "max-h-48 overflow-hidden" : ""}>
           <Markdown content={body} className="text-sm break-words" />
         </div>
-        {clip && <button type="button" className="text-xs text-foreground hover:underline" onClick={() => onToggle(entry.id)}>Show more</button>}
+        {clip && <button type="button" data-sl-nosearch="" className="text-xs text-foreground hover:underline" onClick={() => onToggle(entry.id)}>Show more</button>}
       </>
     );
   }
@@ -111,7 +93,7 @@ function RowBody({ entry, expanded, query, settings, onToggle }: {
     if (!body || settings.thinkingLines === 0) return null;
     return (
       <pre className="text-xs whitespace-pre-wrap break-words text-muted-foreground" style={clampLines(settings.thinkingLines)}>
-        {highlight(body, query)}
+        {body}
       </pre>
     );
   }
@@ -125,11 +107,11 @@ function RowBody({ entry, expanded, query, settings, onToggle }: {
   if (!output && !args && !fullCommand) return null;
   return (
     <div className="space-y-1">
-      {fullCommand && <pre className="font-mono text-xs whitespace-pre-wrap break-words text-muted-foreground">{highlight(fullCommand, query)}</pre>}
-      {args && <pre className="font-mono text-xs whitespace-pre-wrap break-words text-muted-foreground">{highlight(args, query)}</pre>}
+      {fullCommand && <pre className="font-mono text-xs whitespace-pre-wrap break-words text-muted-foreground">{fullCommand}</pre>}
+      {args && <pre className="font-mono text-xs whitespace-pre-wrap break-words text-muted-foreground">{args}</pre>}
       {output && (
         <pre className={`text-xs whitespace-pre-wrap break-words ${isToolOutput ? "font-mono" : ""} text-muted-foreground`}>
-          {highlight(output, query)}
+          {output}
         </pre>
       )}
     </div>
@@ -137,7 +119,7 @@ function RowBody({ entry, expanded, query, settings, onToggle }: {
 }
 
 export const LogRow = memo(function LogRow({
-  entry, expanded, focused, query, turnStats, chatHref, settings,
+  entry, expanded, focused, searchCurrent, turnStats, chatHref, settings,
   onToggle, onFocusRow, onCopy, onOpenThread, registerElement,
 }: LogRowProps) {
   const badge = badgeFor(entry);
@@ -155,10 +137,11 @@ export const LogRow = memo(function LogRow({
       className={`min-w-0 border-b border-border-seam px-3 py-2 text-foreground ${
         entry.divider ? "bg-surface-recessed focus:bg-surface-selected"
           : entry.tint && settings.tintRows ? "sl-tinted" : "hover:bg-state-hover focus:bg-surface-selected"
-      } ${entry.depth === 1 ? "ml-4 border-l border-border-seam pl-3" : ""} ${entry.category === "hidden" ? "sl-hidden" : ""}`}
+      } ${entry.depth === 1 ? "ml-4 border-l border-border-seam pl-3" : ""} ${entry.category === "hidden" ? "sl-hidden" : ""} ${
+        searchCurrent ? "sl-search-current" : ""}`}
     >
       <div className="flex min-w-0 items-start gap-2">
-        <time className="shrink-0 font-mono text-xs text-subtle-foreground" dateTime={new Date(entry.startedAt).toISOString()}>{time}</time>
+        <time data-sl-nosearch="" className="shrink-0 font-mono text-xs text-subtle-foreground" dateTime={new Date(entry.startedAt).toISOString()}>{time}</time>
         <button
           type="button"
           aria-expanded={expanded}
@@ -166,16 +149,16 @@ export const LogRow = memo(function LogRow({
           onClick={() => onToggle(entry.id)}
         >
           <Icon name={entry.icon} className={`size-4 shrink-0 ${entry.tint ? "sl-tint-icon" : ""}`} aria-hidden />
-          <span className={`min-w-0 break-words ${expanded ? "" : "line-clamp-2"}`}>{highlight(entry.title, query)}</span>
+          <span className={`min-w-0 break-words ${expanded ? "" : "line-clamp-2"}`}>{entry.title}</span>
         </button>
-        {badge && <span className={`shrink-0 text-xs ${entry.isError ? "text-destructive-text" : statusColor(entry.status)}`}>{badge}</span>}
-        {entry.durationMs !== null && entry.category !== "thinking" && <span className="shrink-0 font-mono text-xs text-subtle-foreground">{formatDuration(entry.durationMs)}</span>}
+        {badge && <span data-sl-nosearch="" className={`shrink-0 text-xs ${entry.isError ? "text-destructive-text" : statusColor(entry.status)}`}>{badge}</span>}
+        {entry.durationMs !== null && entry.category !== "thinking" && <span data-sl-nosearch="" className="shrink-0 font-mono text-xs text-subtle-foreground">{formatDuration(entry.durationMs)}</span>}
         <button type="button" aria-label="Copy row" title="Copy row" className="shrink-0 text-muted-foreground hover:text-foreground" onClick={() => onCopy(entry)}>
           <Icon name="Copy" className="size-4" aria-hidden />
         </button>
       </div>
       {entry.divider && (
-        <div className="mt-1 flex flex-wrap gap-x-2 text-xs text-muted-foreground">
+        <div data-sl-nosearch="" className="mt-1 flex flex-wrap gap-x-2 text-xs text-muted-foreground">
           <span>{new Date(entry.startedAt).toLocaleDateString()}</span>
           {turnStats && (
             <span>
@@ -187,9 +170,9 @@ export const LogRow = memo(function LogRow({
         </div>
       )}
       <div className="min-w-0 pl-2 pt-1">
-        <RowBody entry={entry} expanded={expanded} query={query} settings={settings} onToggle={onToggle} />
+        <RowBody entry={entry} expanded={expanded} settings={settings} onToggle={onToggle} />
         {(chatHref || threadId) && (
-          <div className="mt-1 flex gap-3 text-xs">
+          <div data-sl-nosearch="" className="mt-1 flex gap-3 text-xs">
             {chatHref && <UrlLink data-chat-link href={chatHref} className="text-muted-foreground hover:text-foreground hover:underline">Show in chat</UrlLink>}
             {threadId && <button type="button" className="text-muted-foreground hover:text-foreground hover:underline" onClick={() => onOpenThread(threadId)}>Open thread</button>}
           </div>

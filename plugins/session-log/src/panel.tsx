@@ -11,6 +11,9 @@ import { consumePanelFocus, onPanelFocusRequest } from "./commands";
 import { collectTurnStats, previewLines, toLogEntries, type EntryCategory, type LogEntry } from "./entries";
 import { LogRow } from "./log-row";
 import type { ExpandedPreference } from "./preference";
+import {
+  findMatches, indexOfMatch, positionOf, publishHighlights, type MatchPosition, type SearchMatch,
+} from "./search";
 import { DEFAULT_SETTINGS } from "./settings";
 import { createSessionLogStore, type SessionLogSnapshot, type SessionLogStore } from "./store";
 import { useSessionLogSettings } from "./use-settings";
@@ -27,6 +30,44 @@ const CHIPS: ReadonlyArray<[EntryCategory, string]> = [
 const STICKY_BOTTOM_THRESHOLD_PX = 4;
 const USER_SCROLL_INTENT_MS = 350;
 const SCROLL_KEYS = new Set(["PageUp", "PageDown", "Home", "End", " "]);
+const NO_MATCH = { count: 0, index: null, entryId: null } as const;
+
+interface MatchState {
+  count: number;
+  index: number | null;
+  entryId: string | null;
+}
+
+function matchLabel({ count, index }: MatchState): string {
+  if (count === 0) return "No matches";
+  return index === null ? `${count} ${count === 1 ? "match" : "matches"}` : `${index + 1} of ${count}`;
+}
+
+const isReply = (entry: LogEntry) => entry.row.kind === "conversation" && entry.row.role === "assistant";
+
+// Without a current match, search runs from the row the reader moved to, wrapping at the ends;
+// while the cursor follows the newest row, it starts from the first or last match.
+function firstMatchFrom(
+  matches: readonly SearchMatch[], rowOf: (match: SearchMatch) => number, cursor: number | undefined, direction: 1 | -1,
+): number {
+  const last = matches.length - 1;
+  if (cursor !== undefined) {
+    for (let step = 0; step <= last; step++) {
+      const index = direction > 0 ? step : last - step;
+      const row = rowOf(matches[index]!);
+      if (direction > 0 ? row >= cursor : row <= cursor) return index;
+    }
+  }
+  return direction > 0 ? 0 : last;
+}
+
+// Centers a match in the list, or shows the top of one taller than the list.
+function centerInList(list: HTMLElement, target: DOMRect): void {
+  const view = list.getBoundingClientRect();
+  const margin = target.height > list.clientHeight ? 8 : (list.clientHeight - target.height) / 2;
+  const delta = target.top - view.top - margin;
+  if (Math.abs(delta) >= 1) list.scrollTop += delta;
+}
 
 function isDefaultExpanded(entry: LogEntry, expandFailures: boolean): boolean {
   return expandFailures && entry.isError && entry.row.kind === "work" &&
@@ -84,6 +125,8 @@ export function SessionLogPanel({ threadId, preference }: PluginThreadPanelProps
   const [rawQuery, setRawQuery] = useState("");
   const [query, setQuery] = useState("");
   const [helpVisible, setHelpVisible] = useState(false);
+  const [matchState, setMatchState] = useState<MatchState>(NO_MATCH);
+  const [highlightOwner] = useState(() => ({}));
   const [overrides, setOverrides] = useState<Map<string, boolean>>(() => new Map());
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [following, setFollowing] = useState(true);
@@ -95,7 +138,9 @@ export function SessionLogPanel({ threadId, preference }: PluginThreadPanelProps
   const listRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const pendingSearchFocusRef = useRef<string | null>(null);
+  const matchesRef = useRef<SearchMatch[]>([]);
+  const currentMatchRef = useRef<MatchPosition | null>(null);
+  const pendingMatchStepRef = useRef<1 | -1 | null>(null);
   const elementsRef = useRef(new Map<string, HTMLElement>());
   const pointerScrollRef = useRef(false);
   const scrollIntentUntilRef = useRef(0);
@@ -221,13 +266,68 @@ export function SessionLogPanel({ threadId, preference }: PluginThreadPanelProps
     element?.focus();
     element?.scrollIntoView({ block: "nearest" });
   }, [pauseFollow]);
-  useLayoutEffect(() => {
-    const id = pendingSearchFocusRef.current;
-    if (id && visible.some((entry) => entry.id === id)) {
-      pendingSearchFocusRef.current = null;
-      focusEntry(id);
+  const showMatches = useCallback((matches: SearchMatch[], index: number | null) => {
+    matchesRef.current = matches;
+    currentMatchRef.current = index === null ? null : positionOf(matches, index);
+    publishHighlights(highlightOwner, matches, index === null ? null : matches[index]!.range);
+    const entryId = index === null ? null : matches[index]!.entryId;
+    setMatchState((shown) => shown.count === matches.length && shown.index === index && shown.entryId === entryId
+      ? shown : { count: matches.length, index, entryId });
+  }, [highlightOwner]);
+  const refreshMatches = useCallback(() => {
+    const needle = queryRef.current.toLowerCase();
+    const matches = needle && contentRef.current ? findMatches(contentRef.current, needle) : [];
+    showMatches(matches, indexOfMatch(matches, currentMatchRef.current));
+  }, [showMatches]);
+  const scrollToMatch = useCallback((match: SearchMatch) => {
+    const list = listRef.current;
+    const row = elementsRef.current.get(match.entryId);
+    if (!list || !row) return;
+    const place = () => centerInList(list, (match.range ?? row).getBoundingClientRect());
+    place();
+    // Rows that scroll into view grow from their placeholder height, which can move the match.
+    window.requestAnimationFrame(place);
+  }, []);
+  const goToMatch = useCallback((direction: 1 | -1, focusRow: boolean): boolean => {
+    const matches = matchesRef.current;
+    if (matches.length === 0) return false;
+    const current = indexOfMatch(matches, currentMatchRef.current);
+    let target: number;
+    if (current !== null && matches[current]!.entryId === focusedIdRef.current) {
+      target = (current + direction + matches.length) % matches.length;
+    } else {
+      const rows = new Map(visibleRef.current.map((entry, index) => [entry.id, index]));
+      const cursor = trackNewestRef.current ? undefined : rows.get(focusedIdRef.current ?? "");
+      target = firstMatchFrom(matches, (match) => rows.get(match.entryId) ?? -1, cursor, direction);
     }
-  }, [visible, focusEntry]);
+    const match = matches[target]!;
+    showMatches(matches, target);
+    trackNewestRef.current = false;
+    pauseFollow();
+    focusedIdRef.current = match.entryId;
+    setFocusedId(match.entryId);
+    if (focusRow) elementsRef.current.get(match.entryId)?.focus({ preventScroll: true });
+    scrollToMatch(match);
+    return true;
+  }, [pauseFollow, scrollToMatch, showMatches]);
+  useLayoutEffect(() => {
+    currentMatchRef.current = null;
+    refreshMatches();
+    const step = pendingMatchStepRef.current;
+    pendingMatchStepRef.current = null;
+    if (step) goToMatch(step, false);
+  }, [query, refreshMatches, goToMatch]);
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content) return;
+    // Markdown, diffs and streamed output change the text after React commits, so matches follow the DOM.
+    const observer = new MutationObserver(() => { if (queryRef.current) refreshMatches(); });
+    observer.observe(content, { childList: true, subtree: true, characterData: true });
+    return () => {
+      observer.disconnect();
+      publishHighlights(highlightOwner, [], null);
+    };
+  }, [highlightOwner, refreshMatches]);
   const toggleRow = useCallback((id: string) => {
     const entry = visibleRef.current.find((item) => item.id === id);
     if (!entry) return;
@@ -315,8 +415,8 @@ export function SessionLogPanel({ threadId, preference }: PluginThreadPanelProps
         if (handled) toggleRow(focused!.id);
         break;
       case "x": toggleExpanded(); break;
-      case "n": handled = seek(1, (entry) => entry.row.kind === "conversation" && entry.row.role === "assistant"); break;
-      case "N": handled = seek(-1, (entry) => entry.row.kind === "conversation" && entry.row.role === "assistant"); break;
+      case "n": handled = queryRef.current ? goToMatch(1, true) : seek(1, isReply); break;
+      case "N": handled = queryRef.current ? goToMatch(-1, true) : seek(-1, isReply); break;
       case "e": handled = seek(1, (entry) => entry.isError); break;
       case "E": handled = seek(-1, (entry) => entry.isError); break;
       case "g": handled = focusEdge(false); break;
@@ -332,26 +432,28 @@ export function SessionLogPanel({ threadId, preference }: PluginThreadPanelProps
       default: handled = false;
     }
     if (handled) { event.preventDefault(); event.stopPropagation(); }
-  }, [focusEdge, markScrollIntent, move, onCopy, seek, toggleExpanded, toggleRow]);
+  }, [focusEdge, goToMatch, markScrollIntent, move, onCopy, seek, toggleExpanded, toggleRow]);
   const onSearchKeyDown = useCallback((event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Enter") {
-      trackNewestRef.current = false;
-      pendingSearchFocusRef.current = null;
-      const needle = rawQuery.trim().toLowerCase();
-      const first = entries.find((entry) => isShown(entry, filters, errorsOnly, needle));
-      setQuery(rawQuery.trim());
-      if (first) {
-        if (visibleRef.current.some((entry) => entry.id === first.id)) focusEntry(first.id);
-        else pendingSearchFocusRef.current = first.id;
-      }
+      const direction = event.shiftKey ? -1 : 1;
+      const typed = rawQuery.trim();
+      // Enter can beat the search debounce; the step then waits for the new query's matches.
+      if (typed !== queryRef.current) { pendingMatchStepRef.current = direction; setQuery(typed); }
+      else goToMatch(direction, false);
+    } else if (event.key === "ArrowDown") {
+      // Enter stays in the box, so ArrowDown is the way into the log without clearing the search.
+      const id = focusedIdRef.current;
+      if (!id) return;
+      if (currentMatchRef.current?.entryId === id) elementsRef.current.get(id)?.focus({ preventScroll: true });
+      else focusEntry(id);
     } else if (event.key === "Escape") {
-      pendingSearchFocusRef.current = null;
+      pendingMatchStepRef.current = null;
       if (rawQuery) { setRawQuery(""); setQuery(""); }
       else rootRef.current?.focus();
     } else return;
     event.preventDefault();
     event.stopPropagation();
-  }, [entries, errorsOnly, filters, focusEntry, rawQuery]);
+  }, [focusEntry, goToMatch, rawQuery]);
   const toggleFilter = useCallback((category: EntryCategory) => {
     setChosenFilters({ ...filters, [category]: !filters[category] });
   }, [filters]);
@@ -379,13 +481,28 @@ export function SessionLogPanel({ threadId, preference }: PluginThreadPanelProps
           <input ref={searchRef} type="search" aria-label="Search session log" value={rawQuery}
             onChange={(event) => setRawQuery(event.target.value)} onKeyDown={onSearchKeyDown}
             placeholder="Search the whole session" className="min-w-0 flex-1 rounded border border-border-seam bg-surface-recessed px-2 py-1 text-sm text-foreground" />
+          {query && (
+            <div className="flex shrink-0 items-center gap-0.5">
+              <span aria-live="polite" className="mr-1 text-xs tabular-nums text-muted-foreground">{matchLabel(matchState)}</span>
+              {([[-1, "Previous match", "ChevronUp", "Shift+Enter"], [1, "Next match", "ChevronDown", "Enter"]] as const)
+                .map(([direction, label, icon, key]) => (
+                  <button key={label} type="button" aria-label={label} title={`${label} (${key}, or ${direction > 0 ? "n" : "N"} in the log)`}
+                    disabled={matchState.count === 0}
+                    // Keeps focus in the search box, so Enter keeps stepping after a click.
+                    onMouseDown={(event) => event.preventDefault()} onClick={() => goToMatch(direction, false)}
+                    className="rounded p-0.5 text-muted-foreground hover:bg-state-hover hover:text-foreground disabled:opacity-40">
+                    <Icon name={icon} className="size-4" aria-hidden />
+                  </button>
+                ))}
+            </div>
+          )}
           <span aria-live="polite" className="shrink-0 text-xs text-muted-foreground">
             {visible.length === entries.length ? `${entries.length} rows` : `${visible.length} of ${entries.length} rows`}
           </span>
           <button type="button" aria-label="Keyboard help" aria-expanded={helpVisible}
             onClick={() => setHelpVisible((shown) => !shown)} className="text-muted-foreground hover:text-foreground">?</button>
         </div>
-        {helpVisible && <div className="text-xs text-muted-foreground">j/k move · n/N replies · e/E errors · g/G ends · Enter/o expand · x expand all · / search · c copy · s show in chat · ? help</div>}
+        {helpVisible && <div className="text-xs text-muted-foreground">j/k move · n/N replies, or matches while searching · e/E errors · g/G ends · Enter/o expand · x expand all · / search, then Enter/Shift+Enter next/previous match and ↓ back to the log · c copy · s show in chat · ? help</div>}
       </div>
       {snapshot.status === "error" && (
         <div role="alert" className="border-b border-border-seam p-2 text-sm text-destructive-text">
@@ -415,7 +532,7 @@ export function SessionLogPanel({ threadId, preference }: PluginThreadPanelProps
           )}
           <div role="list" aria-label="Session log entries">
             {settings !== null && visible.map((entry) => (
-              <LogRow key={entry.id} entry={entry} focused={entry.id === focusedId} query={query}
+              <LogRow key={entry.id} entry={entry} focused={entry.id === focusedId} searchCurrent={entry.id === matchState.entryId}
                 expanded={overrides.get(entry.id) ?? (expandedView || !!query || isDefaultExpanded(entry, effectiveSettings.expandFailures))}
                 turnStats={entry.divider ? turnStats.get(entry.id) : undefined}
                 chatHref={chatHref(entry, snapshot.projectId, threadId)} settings={effectiveSettings}

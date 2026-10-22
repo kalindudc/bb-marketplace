@@ -14,3 +14,21 @@
 .sl-tinted:focus { outline: 1px solid color-mix(in oklab, var(--ring) 55%, transparent); outline-offset: -1px; }
 /* Input the chat never shows: a dashed rail sets it apart from what the reader saw there. */
 .sl-hidden { border-left: 2px dashed color-mix(in oklab, var(--subtle-foreground) 60%, transparent); }
+/* Search paints matches with the CSS Custom Highlight API, so they show inside rendered Markdown too:
+   every match in amber, the current one in orange like a browser's find bar, both with the theme's dark
+   end (ink in a light theme, canvas in a dark one) as text so they read on either. */
+::highlight(sl-search-match) {
+  background-color: color-mix(in oklab, var(--attention) 70%, transparent);
+  color: light-dark(var(--ink), var(--canvas));
+}
+::highlight(sl-search-current) {
+  background-color: var(--warning);
+  color: light-dark(var(--ink), var(--canvas));
+  text-decoration: underline 2px;
+}
+/* The row holding the current match keeps its frame while focused, so n and N show where they landed. */
+.sl-search-current, .sl-search-current:focus {
+  box-shadow: inset 3px 0 0 var(--warning);
+  outline: 1px solid color-mix(in oklab, var(--warning) 70%, transparent);
+  outline-offset: -1px;
+}

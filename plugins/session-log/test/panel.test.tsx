@@ -14,10 +14,20 @@ import {
   userRow,
 } from "./fixtures";
 
+class FakeHighlight extends Set<Range> {}
+const highlights = new Map<string, FakeHighlight>();
+const painted = (name: string) => [...highlights.get(name) ?? []].map((range) => range.toString());
+const rangeTop = vi.fn(() => 0);
+
 const mounts: Array<ReturnType<typeof renderSlot>> = [];
 beforeEach(() => {
   Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+  Object.defineProperty(Range.prototype, "getBoundingClientRect", {
+    configurable: true, value: () => ({ top: rangeTop(), height: 10 }) as DOMRect,
+  });
   vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+  vi.stubGlobal("Highlight", FakeHighlight);
+  vi.stubGlobal("CSS", { highlights });
 });
 afterEach(() => {
   for (const slot of mounts.splice(0)) slot.lifecycle.unmount();
@@ -26,11 +36,14 @@ afterEach(() => {
   document.body.replaceChildren();
   window.localStorage.clear();
   delete (Element.prototype as unknown as { scrollIntoView?: () => void }).scrollIntoView;
+  delete (Range.prototype as unknown as { getBoundingClientRect?: () => DOMRect }).getBoundingClientRect;
+  highlights.clear();
+  rangeTop.mockReset().mockReturnValue(0);
 });
 
 function rowProps(entry: LogRowProps["entry"], overrides: Partial<LogRowProps> = {}): LogRowProps {
   return {
-    entry, expanded: false, focused: true, query: "", turnStats: undefined, chatHref: null, settings: DEFAULT_SETTINGS,
+    entry, expanded: false, focused: true, searchCurrent: false, turnStats: undefined, chatHref: null, settings: DEFAULT_SETTINGS,
     onToggle: vi.fn(), onFocusRow: vi.fn(), onCopy: vi.fn(), onOpenThread: vi.fn(),
     registerElement: vi.fn(),
     ...overrides,
@@ -169,16 +182,20 @@ describe("LogRow", () => {
     expect(expanded.container.textContent).toContain("+new");
   });
 
-  it("highlights plain-text matches, links messages, and exposes copy/open controls", () => {
+  it("marks the current search row, keeps search off its time, badges and actions, and exposes copy/open controls", () => {
     const tool = toLogEntries([toolRow("tool", { output: "Matching output", toolName: "match" })])[0]!;
-    const text = renderRow(rowProps(tool, { query: "match" }));
-    expect(text.container.querySelectorAll("mark")).toHaveLength(2);
+    const plain = renderRow(rowProps(tool));
+    expect(plain.container.querySelector("[data-entry-id]")?.classList.contains("sl-search-current")).toBe(false);
+    const current = renderRow(rowProps(tool, { searchCurrent: true }));
+    const row = current.container.querySelector("[data-entry-id]") as HTMLElement;
+    expect(row.classList.contains("sl-search-current")).toBe(true);
+    expect(row.querySelector("time")?.hasAttribute("data-sl-nosearch")).toBe(true);
+    expect(within(row).getByText("✓").hasAttribute("data-sl-nosearch")).toBe(true);
+    expect(row.querySelector("mark")).toBeNull();
     const message = toLogEntries([userRow("other", { senderThreadId: "thr_sender", text: "Matching message" })])[0]!;
-    const props = rowProps(message, {
-      query: "match", chatHref: "/projects/proj_1/threads/thr_1#msg=10",
-    });
+    const props = rowProps(message, { chatHref: "/projects/proj_1/threads/thr_1#msg=10" });
     const slot = renderRow(props);
-    expect(slot.container.querySelectorAll("mark")).toHaveLength(0);
+    expect(within(slot.container).getByRole("link", { name: "Show in chat" }).closest("[data-sl-nosearch]")).toBeTruthy();
     expect(within(slot.container).getByRole("link", { name: "Show in chat" }).getAttribute("href"))
       .toBe("/projects/proj_1/threads/thr_1#msg=10");
     fireEvent.click(within(slot.container).getByRole("button", { name: "Copy row" }));
@@ -341,19 +358,140 @@ describe("SessionLogPanel", () => {
       .toBe("Could not load hidden messages: events unavailable"));
   });
 
-  it("debounces search, counts matches, highlights plain text and expands them", async () => {
+  it("debounces search, filters rows, paints every match, Markdown included, and expands them", async () => {
     const slot = renderPanel(panelFake(timelineResponse([
       userRow("request", { text: "Needle in Markdown" }),
-      commandRow("command", { output: "Needle in output", command: "run checks" }),
+      commandRow("command", { output: "Needle in output, needle again", command: "run checks" }),
       assistantRow("reply", { text: "No match here" }),
     ])));
     await waitFor(() => expect(slot.container.querySelectorAll("[data-entry-id]")).toHaveLength(3));
+    expect(within(slot.container).queryByRole("button", { name: "Next match" })).toBeNull();
     fireEvent.change(within(slot.container).getByRole("searchbox"), { target: { value: "NEEDLE" } });
     await waitFor(() => expect(slot.container.querySelectorAll("[data-entry-id]")).toHaveLength(2));
     expect(slot.container.textContent).toContain("2 of 3 rows");
-    expect(slot.container.querySelector('[data-entry-id="command"] mark')?.textContent).toBe("Needle");
-    expect(slot.container.querySelector('[data-entry-id="request"] mark')).toBeNull();
+    expect(slot.container.textContent).toContain("3 matches");
+    expect(painted("sl-search-match")).toEqual(["Needle", "Needle", "needle"]);
+    expect(painted("sl-search-current")).toEqual([]);
     expect(slot.container.querySelector('[data-entry-id="command"] button[aria-expanded]')?.getAttribute("aria-expanded")).toBe("true");
+
+    fireEvent.change(within(slot.container).getByRole("searchbox"), { target: { value: "nothing like it" } });
+    await waitFor(() => expect(slot.container.textContent).toContain("No matches"));
+    expect(highlights.has("sl-search-match")).toBe(false);
+    expect((within(slot.container).getByRole("button", { name: "Next match" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("steps through matches with Enter, Shift+Enter and the buttons, wrapping, while focus stays in search", async () => {
+    const slot = renderPanel(panelFake(timelineResponse([
+      userRow("request", { text: "one marker" }),
+      commandRow("command", { command: "run", output: "marker and marker" }),
+      assistantRow("reply", { text: "unrelated" }),
+    ])));
+    await waitFor(() => expect(slot.container.querySelectorAll("[data-entry-id]")).toHaveLength(3));
+    const search = within(slot.container).getByRole("searchbox") as HTMLInputElement;
+    search.focus();
+    fireEvent.change(search, { target: { value: "marker" } });
+    await waitFor(() => expect(slot.container.textContent).toContain("3 matches"));
+    const currentRow = () => slot.container.querySelector(".sl-search-current")?.getAttribute("data-entry-id");
+
+    fireEvent.keyDown(search, { key: "Enter" });
+    expect(slot.container.textContent).toContain("1 of 3");
+    expect(currentRow()).toBe("request");
+    expect(cursorId(slot.container)).toBe("request");
+    expect(document.activeElement).toBe(search);
+    expect(painted("sl-search-current")).toEqual(["marker"]);
+    expect(painted("sl-search-match")).toHaveLength(2);
+
+    fireEvent.keyDown(search, { key: "Enter" });
+    fireEvent.keyDown(search, { key: "Enter" });
+    expect(slot.container.textContent).toContain("3 of 3");
+    expect(currentRow()).toBe("command");
+    fireEvent.keyDown(search, { key: "Enter" });
+    expect(slot.container.textContent).toContain("1 of 3");
+    fireEvent.keyDown(search, { key: "Enter", shiftKey: true });
+    expect(slot.container.textContent).toContain("3 of 3");
+
+    const previous = within(slot.container).getByRole("button", { name: "Previous match" });
+    expect(fireEvent.mouseDown(previous)).toBe(false);
+    fireEvent.click(previous);
+    expect(slot.container.textContent).toContain("2 of 3");
+    fireEvent.click(within(slot.container).getByRole("button", { name: "Next match" }));
+    expect(slot.container.textContent).toContain("3 of 3");
+    expect(document.activeElement).toBe(search);
+  });
+
+  it("scrolls the list to center a match and pauses follow", async () => {
+    const slot = renderPanel(panelFake(timelineResponse([
+      userRow("request", { text: "marker" }), assistantRow("reply", { text: "done" }),
+    ])));
+    await waitFor(() => expect(slot.container.querySelectorAll("[data-entry-id]")).toHaveLength(2));
+    const list = slot.container.querySelector("[data-session-log-list]") as HTMLElement;
+    let top = 400;
+    Object.defineProperties(list, {
+      scrollHeight: { configurable: true, get: () => 1_000 },
+      clientHeight: { configurable: true, get: () => 100 },
+      scrollTop: { configurable: true, get: () => top, set: (value: number) => { top = Math.min(900, Math.max(0, value)); } },
+    });
+    const search = within(slot.container).getByRole("searchbox");
+    fireEvent.change(search, { target: { value: "marker" } });
+    await waitFor(() => expect(slot.container.textContent).toContain("1 match"));
+    rangeTop.mockReturnValue(-200);
+    const before = top;
+    fireEvent.keyDown(search, { key: "Enter" });
+    expect(top).toBe(before - 200 - 45);
+    expect(within(slot.container).getByRole("button", { name: /Latest/ })).toBeTruthy();
+  });
+
+  it("uses n/N for matches while searching and for replies otherwise, starting from the reader's row", async () => {
+    const slot = renderPanel(panelFake(timelineResponse([
+      userRow("request", { text: "marker first" }), assistantRow("reply-a", { text: "a reply" }),
+      commandRow("middle", { command: "echo marker" }), assistantRow("reply-b", { text: "marker reply" }),
+    ])));
+    await waitFor(() => expect(slot.container.querySelectorAll("[data-entry-id]")).toHaveLength(4));
+    const root = slot.container.querySelector("[data-session-log-panel]") as HTMLElement;
+    fireEvent.keyDown(root, { key: "G" });
+    fireEvent.keyDown(document.activeElement!, { key: "N" });
+    expect((document.activeElement as HTMLElement).dataset.entryId).toBe("reply-a");
+
+    fireEvent.change(within(slot.container).getByRole("searchbox"), { target: { value: "marker" } });
+    await waitFor(() => expect(slot.container.textContent).toContain("3 matches"));
+    (slot.container.querySelector('[data-entry-id="middle"]') as HTMLElement).focus();
+    fireEvent.keyDown(document.activeElement!, { key: "n" });
+    expect((document.activeElement as HTMLElement).dataset.entryId).toBe("middle");
+    expect(slot.container.textContent).toContain("2 of 3");
+    fireEvent.keyDown(document.activeElement!, { key: "n" });
+    expect((document.activeElement as HTMLElement).dataset.entryId).toBe("reply-b");
+    fireEvent.keyDown(document.activeElement!, { key: "n" });
+    expect((document.activeElement as HTMLElement).dataset.entryId).toBe("request");
+    fireEvent.keyDown(document.activeElement!, { key: "N" });
+    expect((document.activeElement as HTMLElement).dataset.entryId).toBe("reply-b");
+    expect(painted("sl-search-current")).toEqual(["marker"]);
+  });
+
+  it("keeps the current match as new rows stream in, and clears highlights on unmount", async () => {
+    const initial = timelineResponse([userRow("first", { text: "marker one" })], { maxSeq: 10 });
+    const fake = panelFake(initial);
+    fake.timeline.mockResolvedValueOnce(initial);
+    fake.timeline.mockResolvedValueOnce(timelineResponse([], {
+      maxSeq: 11,
+      delta: {
+        upsertRows: [assistantRow("second", { text: "marker two", sourceSeqStart: 11, sourceSeqEnd: 11 })],
+        rowOrder: ["first", "second"],
+      },
+    }));
+    const slot = renderPanel(fake);
+    await waitFor(() => expect(slot.container.querySelector('[data-entry-id="first"]')).toBeTruthy());
+    const search = within(slot.container).getByRole("searchbox");
+    fireEvent.change(search, { target: { value: "marker" } });
+    await waitFor(() => expect(slot.container.textContent).toContain("1 match"));
+    fireEvent.keyDown(search, { key: "Enter" });
+    expect(slot.container.textContent).toContain("1 of 1");
+    fake.emitThread();
+    await waitFor(() => expect(slot.container.textContent).toContain("1 of 2"), { timeout: 2_000 });
+    expect(painted("sl-search-match")).toEqual(["marker"]);
+    expect(painted("sl-search-current")).toEqual(["marker"]);
+    slot.lifecycle.unmount();
+    mounts.splice(mounts.indexOf(slot), 1);
+    expect(highlights.size).toBe(0);
   });
 
   it("starts roving focus at newest, moves with k/j, Enter, n, e and G, and handles / and Escape", async () => {
@@ -551,19 +689,25 @@ describe("SessionLogPanel", () => {
     expect(slot.container.querySelector('[data-entry-id="cmd"]')?.textContent).toContain("line 5");
   });
 
-  it("moves Enter from search to its first match and Escape clears or exits it", async () => {
+  it("moves the cursor to the first match on Enter in search, and Escape clears or exits it", async () => {
     const slot = renderPanel(panelFake(timelineResponse([
       userRow("request", { text: "First" }), commandRow("match", { command: "find marker" }),
     ])));
     await waitFor(() => expect(slot.container.querySelectorAll("[data-entry-id]")).toHaveLength(2));
     const search = within(slot.container).getByRole("searchbox") as HTMLInputElement;
+    search.focus();
     fireEvent.change(search, { target: { value: "marker" } });
     await waitFor(() => expect(slot.container.querySelectorAll("[data-entry-id]")).toHaveLength(1));
     fireEvent.keyDown(search, { key: "Enter" });
+    expect(cursorId(slot.container)).toBe("match");
+    expect(document.activeElement).toBe(search);
+    fireEvent.keyDown(search, { key: "ArrowDown" });
     expect((document.activeElement as HTMLElement).dataset.entryId).toBe("match");
+    expect(search.value).toBe("marker");
     search.focus();
     fireEvent.keyDown(search, { key: "Escape" });
     expect(search.value).toBe("");
+    expect(highlights.size).toBe(0);
     await waitFor(() => expect(slot.container.querySelectorAll("[data-entry-id]")).toHaveLength(2));
     fireEvent.keyDown(search, { key: "Escape" });
     expect(document.activeElement).toBe(slot.container.querySelector("[data-session-log-panel]"));
@@ -674,7 +818,7 @@ describe("SessionLogPanel", () => {
     expect(fake.timeline).toHaveBeenCalledTimes(3);
   });
 
-  it("focuses the newly typed match when Enter beats the search debounce", async () => {
+  it("goes to the newly typed match when Enter beats the search debounce", async () => {
     const slot = renderPanel(panelFake(timelineResponse([
       userRow("first", { text: "unrelated" }), commandRow("match", { command: "find needle" }),
     ])));
@@ -682,12 +826,13 @@ describe("SessionLogPanel", () => {
     const search = within(slot.container).getByRole("searchbox") as HTMLInputElement;
     fireEvent.change(search, { target: { value: "needle" } });
     fireEvent.keyDown(search, { key: "Enter" });
-    await waitFor(() => expect((document.activeElement as HTMLElement).dataset.entryId).toBe("match"));
+    await waitFor(() => expect(cursorId(slot.container)).toBe("match"));
     expect(slot.container.querySelectorAll("[data-entry-id]")).toHaveLength(1);
-    search.focus();
+    expect(slot.container.textContent).toContain("1 of 1");
     fireEvent.change(search, { target: { value: "unrelated" } });
-    fireEvent.keyDown(search, { key: "Enter" });
-    await waitFor(() => expect((document.activeElement as HTMLElement).dataset.entryId).toBe("first"));
+    fireEvent.keyDown(search, { key: "Enter", shiftKey: true });
+    await waitFor(() => expect(cursorId(slot.container)).toBe("first"));
     expect(slot.container.querySelectorAll("[data-entry-id]")).toHaveLength(1);
+    expect(painted("sl-search-current")).toEqual(["unrelated"]);
   });
 });
