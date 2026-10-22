@@ -1,0 +1,21 @@
+{
+  "id": "retitle",
+  "displayName": "Retitle",
+  "description": "Gives a thread a title when bb's automatic title fails or times out, using the same Shopify AI model. `bb retitle <thread>` titles any thread again, and `bb retitle --untitled` backfills threads bb left untitled.",
+  "icon": "Edit",
+  "tags": ["ai", "titles", "threads", "shopify-ai", "cli", "automation"],
+  "author": {
+    "name": "Kalindu De Costa",
+    "github": "kalindudc"
+  },
+  "category": "thread-content",
+  "overview": "./plugins/retitle/PLUGIN_OVERVIEW.md",
+  "source": {
+    "git": {
+      "url": "https://github.com/kalindudc/bb-marketplace.git",
+      "subdir": "plugins/retitle",
+      "range": ">=0.1.0 <1.0.0",
+      "tagPrefix": "retitle/"
+    }
+  }
+}

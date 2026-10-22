@@ -5,7 +5,7 @@ const STEPS: ReadonlyArray<[string, string]> = [
   ["Approve.", "You read the spec here and approve it. The tickets appear on the board. Nothing runs before this."],
   ["Start.", "Workers pick up ready tickets, each in its own git worktree, only when dependencies are done and files do not overlap."],
   ["Check and review.", "Loom runs your check commands. Separate reviewer agents approve or send numbered findings back."],
-  ["Merge and land.", "Approved work merges into one integration branch (you land it as one pull request, or straight onto the base branch) or opens one pull request per ticket."],
+  ["Merge and land.", "Approved work merges into one integration branch (you read it on the Changes tab, then land it as one pull request or straight onto the base branch) or opens one pull request per ticket."],
 ];
 
 const ROLES: ReadonlyArray<[string, string]> = [

@@ -1,7 +1,7 @@
 import type { ControlAction, NextStep, RepoOverview } from "../contract";
 import { isMultiRepoProject } from "../format";
 import { STAGES } from "../next-step";
-import { ConfirmButton, listText } from "./common";
+import { BUTTON, ConfirmButton, listText } from "./common";
 
 const STAGE_TONES = { done: "text-muted-foreground", current: "font-semibold text-foreground", todo: "text-subtle-foreground" } as const;
 
@@ -18,7 +18,7 @@ export function repoLand(repos: readonly RepoOverview[]): { names: string[]; lab
 }
 
 /** The stages with the current one marked, one sentence on what happens next, and at most one button. `repos` gives a multi-repo land its own label. */
-export function NextStepBar({ next, busy, onAct, repos = [] }: { next: NextStep; busy: boolean; onAct(action: ControlAction, version?: number): void; repos?: readonly RepoOverview[] }) {
+export function NextStepBar({ next, busy, onAct, onReviewChanges, repos = [] }: { next: NextStep; busy: boolean; onAct(action: ControlAction, version?: number): void; onReviewChanges?: () => void; repos?: readonly RepoOverview[] }) {
   const warning = next.tone === "warning";
   const land = next.action?.control === "land" ? repoLand(repos) : null;
   const action = next.action === null || land === null ? next.action : { ...next.action, label: land.label ?? next.action.label, confirm: land.confirm };
@@ -38,6 +38,11 @@ export function NextStepBar({ next, busy, onAct, repos = [] }: { next: NextStep;
         <p className={`min-w-0 flex-1 text-sm ${warning ? "text-warning-text" : ""}`}>
           <b>{next.title}</b> {next.text}
         </p>
+        {action?.control === "land" && onReviewChanges !== undefined && (
+          <button type="button" className={BUTTON} onClick={onReviewChanges}>
+            Review changes
+          </button>
+        )}
         {action !== null && <ConfirmButton key={action.label} primary label={action.label} confirmLabel={action.confirm} disabled={busy} onConfirm={() => onAct(action.control, action.version)} />}
       </div>
     </section>

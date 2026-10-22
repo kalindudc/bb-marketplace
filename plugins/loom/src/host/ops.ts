@@ -102,6 +102,64 @@ export async function diff(input: HostInput<"diff">, signal?: AbortSignal): Prom
   return { stat, patch: patch.subarray(0, maxBytes).toString("utf8"), truncated };
 }
 
+// ---------------------------------------------------------------- the Changes tab
+
+// Between two commits, so the user's diff drivers, text conversions and rename detection do not change what the page shows.
+const PLAIN_DIFF = ["--no-color", "--no-ext-diff", "--no-textconv", "--no-renames"] as const;
+const NO_BLOB = /^0+$/u;
+type ChangedFile = Extract<HostOutput<"changedFiles">, { outcome: "ok" }>["files"][number];
+const STATUS_OF: Record<string, ChangedFile["status"]> = { A: "added", D: "deleted", T: "type_changed" };
+
+const commitOf = (repo: string, ref: string, signal?: AbortSignal) => tryGit(repo, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], signal);
+const missing = (message: string) => ({ outcome: "missing" as const, message });
+
+/** With `landed`, a head that base already contains is compared with base as it was before the merge that brought it in, on base's first-parent line. */
+async function compareFrom(repo: string, target: string, head: string, landed: boolean, signal?: AbortSignal): Promise<string | null> {
+  const base = await tryGit(repo, ["merge-base", target, head], signal);
+  if (base === null || !landed || base !== head) return base;
+  const merge = (await git(repo, ["rev-list", "--first-parent", "--ancestry-path", `${head}..${target}`], { signal })).split("\n").filter((line) => line !== "").at(-1);
+  const before = merge === undefined ? null : await commitOf(repo, `${merge}^1`, signal);
+  return (before === null ? null : await tryGit(repo, ["merge-base", before, head], signal)) ?? base;
+}
+
+export async function changedFiles(input: HostInput<"changedFiles">, signal?: AbortSignal): Promise<HostOutput<"changedFiles">> {
+  const { repo, maxFiles } = input;
+  const head = await commitOf(repo, input.head, signal);
+  if (head === null) return missing(`${input.head} is not in the repository.`);
+  const target = await commitOf(repo, input.base, signal);
+  if (target === null) return missing(`${input.base} is not in the repository.`);
+  const base = input.mergeBase ? await compareFrom(repo, target, head, input.landed === true, signal) : target;
+  if (base === null) return missing(`${input.head} and ${input.base} share no history.`);
+
+  const counts = new Map<string, { additions: number; deletions: number; binary: boolean }>();
+  for (const entry of (await git(repo, ["diff", "--numstat", "-z", ...PLAIN_DIFF, base, head, "--"], { raw: true, signal })).split("\0")) {
+    const match = /^(-|\d+)\t(-|\d+)\t(.*)$/su.exec(entry);
+    if (match === null) continue;
+    const binary = match[1] === "-";
+    counts.set(match[3]!, { additions: binary ? 0 : Number(match[1]), deletions: binary ? 0 : Number(match[2]), binary });
+  }
+  const parts = (await git(repo, ["diff", "--raw", "-z", "--no-abbrev", ...PLAIN_DIFF, base, head, "--"], { raw: true, signal })).split("\0");
+  const files: ChangedFile[] = [];
+  for (let index = 0; index + 1 < parts.length; index += 2) {
+    const meta = parts[index]!;
+    const path = parts[index + 1]!;
+    if (!meta.startsWith(":")) continue;
+    const [, , , blob = "", letter = "M"] = meta.slice(1).split(" ");
+    const count = counts.get(path) ?? { additions: 0, deletions: 0, binary: false };
+    files.push({ path, status: STATUS_OF[letter[0]!] ?? "modified", ...count, blob: NO_BLOB.test(blob) ? null : blob });
+  }
+  files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return { outcome: "ok", base, head, files: files.slice(0, maxFiles), truncated: files.length > maxFiles };
+}
+
+export async function filePatch(input: HostInput<"filePatch">, signal?: AbortSignal): Promise<HostOutput<"filePatch">> {
+  const { repo, base, head, path, maxBytes } = input;
+  for (const ref of [base, head]) if ((await commitOf(repo, ref, signal)) === null) return missing(`${ref} is not in the repository.`);
+  const args = ["--literal-pathspecs", "diff", ...PLAIN_DIFF, "--src-prefix=a/", "--dst-prefix=b/", base, head, "--", path];
+  const patch = Buffer.from(await git(repo, args, { raw: true, signal }));
+  return { outcome: "ok", patch: patch.subarray(0, maxBytes).toString("utf8"), truncated: patch.length > maxBytes };
+}
+
 const checkedOutElsewhere = /is already (?:used by worktree|checked out) at/u;
 
 // The repository a checkout or a linked worktree belongs to: the same for the main checkout and every worktree of it.
@@ -303,7 +361,17 @@ export function spawnCommand(input: HostInput<"exec">, signal?: AbortSignal): Pr
   const started = Date.now();
   return new Promise((resolve, reject) => {
     if (signal?.aborted === true) return reject(new Error("aborted before start"));
-    const child = spawn("/bin/sh", ["-c", input.command], { cwd: input.cwd, env: process.env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    const options = { cwd: input.cwd, env: { ...process.env, ...input.env }, detached: true };
+    // Checks keep an ignored stdin: a piped one changes tools like rg, which search stdin when it is a pipe.
+    const child =
+      input.stdin === undefined
+        ? spawn("/bin/sh", ["-c", input.command], { ...options, stdio: ["ignore", "pipe", "pipe"] })
+        : spawn("/bin/sh", ["-c", input.command], { ...options, stdio: ["pipe", "pipe", "pipe"] });
+    if (input.stdin !== undefined) {
+      // A hook that exits without reading its input closes the pipe; that EPIPE is not its failure.
+      child.stdin?.on("error", () => undefined);
+      child.stdin?.end(input.stdin);
+    }
     const output = new HeadTail(OUTPUT_HEAD_BYTES, OUTPUT_TAIL_BYTES);
     let timedOut = false;
     const kill = () => {

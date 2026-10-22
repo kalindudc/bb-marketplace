@@ -4,6 +4,7 @@ import { humanAction } from "./cli";
 import { rpcContract, type AgentRow, type BoardCard, type ProjectView, type SpecSummary, type ThreadInfo, type TicketDetail } from "./contract";
 import type { EventRow, ReviewRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { stripAnsi, ticketActivity } from "./activity";
+import { Changes } from "./changes";
 import { replyRecipient, type Engine } from "./engine";
 import { projectHealth } from "./health";
 import { homeView } from "./home";
@@ -146,6 +147,7 @@ export function boardCards(tickets: TicketRow[], threads: ThreadRow[]): BoardCar
       threadId: live[0]?.thread_id ?? null,
       prUrl: ticket.pr_url,
       blockedReason: ticket.blocked_reason,
+      hasChanges: ticket.head_sha !== null || ((ticket.state === "working" || ticket.state === "checking") && ticket.environment_id !== null),
     };
   });
 }
@@ -178,11 +180,13 @@ export function draftCards(spec: Spec, at: number): BoardCard[] {
     threadId: null,
     prUrl: null,
     blockedReason: null,
+    hasChanges: false,
   }));
 }
 
 export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
   const { projects, engine, store, now } = deps;
+  const changes = new Changes({ store, bb: engine.ctx.bb, host: engine.ctx.host });
 
   /** With `eventId`, the project as it was at that event; it never writes. */
   const projectView = async (slug: string, eventId?: number): Promise<ProjectView> => {
@@ -321,6 +325,8 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
     planningSession: ({ threadId }) => projects.planningSession(threadId),
     specVersion: ({ slug, version }) => specVersionView({ store, projects }, slug, version),
     bbProjects: () => projects.bbProjectChoices(),
+    changes: ({ slug }) => changes.view(slug),
+    changePatch: (input) => changes.patch(input),
     startPlanning: ({ request, merge, reviewer, repos }, ctx) => act(ctx, "plan", {}, () => projects.startPlanning({ request, merge, reviewer, repos: repos ?? [] })),
     sendNotes: async ({ slug, notes, includeOlder }, ctx) => {
       await act(ctx, "notes", { slug, notes }, () => projects.sendNotes(slug, notes, includeOlder === true));

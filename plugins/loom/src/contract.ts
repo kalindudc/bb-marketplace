@@ -11,10 +11,12 @@ import type { Finding } from "./review";
 import type { ProjectTimeline, SessionBar, TicketBar } from "./replay";
 import type { SentNote, SpecVersionView } from "./spec-view";
 import type { ActivityItem, Attempt, ChecksItem, CheckStep, Mark, MergeItem, ReviewItem, TicketActivity } from "./activity";
+import type { ChangedFile, ChangeKind, ChangeSource, ChangesView, FilePatch } from "./changes";
 import type { AuthorKind, PostKind, ProjectState, ReviewVerdict, Role, ThreadState, TicketState } from "./states";
 import { MERGE_CHOICES } from "./states";
 
 export type ProjectSummary = ProjectOverview;
+export type { ChangedFile, ChangeKind, ChangeSource, ChangesView, FilePatch };
 export type { ActivityItem, Attempt, BbProjectChoice, ChecksItem, CheckStep, HomeProject, HomeView, Mark, MergeItem, NeedItem, NextStep, PlanningSession, ProjectHealth, ProjectTimeline, RepoOverview, ReviewItem, SentNote, SessionBar, SpecVersionView, TicketActivity, TicketBar };
 
 export interface BoardCard {
@@ -36,6 +38,8 @@ export interface BoardCard {
   threadId: string | null;
   prUrl: string | null;
   blockedReason: string | null;
+  /** It has a commit, or a worker's worktree at work, for the Changes tab to show. */
+  hasChanges: boolean;
 }
 
 /** What the draft card shows before a project has tickets on the board. */
@@ -191,6 +195,7 @@ export type ControlAction = (typeof CONTROL_ACTIONS)[number];
 const slug = z.string().min(1).max(100);
 const key = z.string().min(1).max(100);
 const eventId = z.number().int().min(1);
+const commitHash = z.string().regex(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/, "must be a full commit hash");
 // bb's RPC cannot tell the page from an agent that calls `bb plugin rpc`, so every change needs an explicit confirmation.
 const confirm = z.literal(true);
 const typed = <T>() => z.custom<T>();
@@ -249,4 +254,9 @@ export const rpcContract = defineRpcContract({
     output: typed<{ threadId: string }>(),
   },
   specVersion: { input: z.object({ slug, version: z.number().int().min(1).optional() }).strict(), output: typed<SpecVersionView>() },
+  changes: { input: z.object({ slug }).strict(), output: typed<ChangesView>() },
+  changePatch: {
+    input: z.object({ slug, path: z.string().min(1).max(4096), base: commitHash.optional(), head: commitHash.optional(), key: key.optional() }).strict(),
+    output: typed<FilePatch>(),
+  },
 });

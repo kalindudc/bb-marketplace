@@ -49,6 +49,7 @@ const BADGE_TONES: Record<string, string> = {
   merging: "text-success",
   pr_open: "text-success",
   done: "text-success",
+  merged: "text-success",
   paused: "text-warning-text",
   blocked: "text-destructive-text",
   cancelled: "text-subtle-foreground",
@@ -133,8 +134,8 @@ export function MoreMenu({ children }: { children: ReactNode | ((close: () => vo
   );
 }
 
-/** Loads a view through the RPC and loads it again when the project it belongs to changes (`slug` null: any project). With `keep`, the last data stays while a new id loads, so a scrubbed view does not flash "Loading…". */
-export function useRemote<T>(fetcher: (rpc: Rpc) => Promise<T>, id: string, slug: string | null, keep = false) {
+/** Loads a view through the RPC and loads it again when the project it belongs to changes (`slug` null: any project). With `keep`, the last data stays while a new id loads, so a scrubbed view does not flash "Loading…". Until `enabled`, it loads nothing. */
+export function useRemote<T>(fetcher: (rpc: Rpc) => Promise<T>, id: string, slug: string | null, keep = false, enabled = true) {
   const rpc = useRpc<typeof rpcContract>();
   const latest = useRef({ rpc, fetcher });
   latest.current = { rpc, fetcher };
@@ -142,13 +143,14 @@ export function useRemote<T>(fetcher: (rpc: Rpc) => Promise<T>, id: string, slug
   const [state, setState] = useState<{ id: string; data: T | null; error: string | null }>({ id, data: null, error: null });
 
   const load = useCallback(() => {
+    if (!enabled) return;
     seq.current += 1;
     const mine = seq.current;
     latest.current.fetcher(latest.current.rpc).then(
       (data) => mine === seq.current && setState({ id, data, error: null }),
       (error) => mine === seq.current && setState((before) => ({ id, data: before.id === id ? before.data : null, error: messageOf(error) })),
     );
-  }, [id]);
+  }, [id, enabled]);
   useEffect(() => {
     load();
     return () => {

@@ -6,7 +6,7 @@ import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-libra
 import { loadPluginApp, mountPluginContentScripts, renderSlot, type PluginRpcTestHandlers, type PluginSdkTestFakes, type RenderSlotOptions } from "@get-bb/plugin-sdk/testing/app";
 import { useState } from "react";
 import { useComposers, type NewThreadRequest, type PluginNavPanelProps, type PluginSidebarThread, type PluginThreadHeaderActionProps } from "@get-bb/plugin-sdk/app";
-import type { Attempt, BbProjectChoice, ChecksItem, HomeProject, NextStep, PlanningSession, ProjectSummary, ProjectView, SentNote, SpecVersionView, ThreadInfo, rpcContract } from "../src/contract";
+import type { Attempt, BbProjectChoice, ChangedFile, ChangeSource, ChangesView, ChecksItem, HomeProject, NextStep, PlanningSession, ProjectSummary, ProjectView, SentNote, SpecVersionView, ThreadInfo, rpcContract } from "../src/contract";
 import type { TicketRow } from "../src/db/store";
 import { repoOverviews } from "../src/projects";
 import { notesMessage } from "../src/prompts";
@@ -40,6 +40,8 @@ const handlers = (over: Partial<Handlers> = {}): Handlers => ({
   planningSession: () => null,
   specVersion: unexpected,
   sendNotes: unexpected,
+  changes: unexpected,
+  changePatch: unexpected,
   ...over,
 });
 
@@ -351,27 +353,37 @@ describe("project list", () => {
     expect(slot.inspection.navigateCalls).toEqual([pushed("docs")]);
   });
 
-  describe("search and the finished switch", () => {
+  describe("search and the Finished group", () => {
     const three = () => homeView({ projects: [homeProject(), homeProject({ slug: "docs", name: "Docs site", key: "DOC", state: "done" }), homeProject({ slug: "old", name: "Old importer", key: "LEGACY", state: "archived" })] });
     const slugs = (slot: Slot) => [...slot.container.querySelectorAll("[data-project-row]")].map((row) => row.getAttribute("data-project-row"));
-    const toggle = (slot: Slot) => slot.getByRole("checkbox", { name: "Hide done and archived" }) as HTMLInputElement;
+    const finished = (slot: Slot) => within(slot.container.querySelector<HTMLElement>("[data-finished]")!).getByRole("button", { name: /Finished · 2/ });
 
-    it("hides done and archived projects with a switch it remembers", async () => {
+    it("folds done and archived projects into a Finished group it remembers opening", async () => {
       const { slot } = await mountPage("", { home: three });
       await slot.findByText("CSV export");
-      expect(slugs(slot)).toEqual(["csv", "docs", "old"]);
-      fireEvent.click(toggle(slot));
       expect(slugs(slot)).toEqual(["csv"]);
-      expect(localStorage.getItem("loom.home.hideFinished")).toBe("true");
+      expect(finished(slot).getAttribute("aria-expanded")).toBe("false");
+      fireEvent.click(finished(slot));
+      expect(slugs(slot)).toEqual(["csv", "docs", "old"]);
+      expect(localStorage.getItem("loom.home.showFinished")).toBe("true");
       slot.lifecycle.unmount();
 
       const { slot: again } = await mountPage("", { home: three });
       await again.findByText("CSV export");
-      expect(slugs(again)).toEqual(["csv"]);
-      expect(toggle(again).checked).toBe(true);
-      fireEvent.click(toggle(again));
       expect(slugs(again)).toEqual(["csv", "docs", "old"]);
-      expect(localStorage.getItem("loom.home.hideFinished")).toBe("false");
+      expect(finished(again).getAttribute("aria-expanded")).toBe("true");
+      fireEvent.click(finished(again));
+      expect(slugs(again)).toEqual(["csv"]);
+      expect(localStorage.getItem("loom.home.showFinished")).toBe("false");
+      expect(again.queryByRole("checkbox")).toBeNull();
+    });
+
+    it("keeps a finished project that still needs you among the active rows", async () => {
+      const needsYou = [{ kind: "land" as const, slug: "docs", project: "Docs site", key: null, text: "finished all 3 tickets; land the integration branch", at: NOW }];
+      const { slot } = await mountPage("", { home: () => ({ ...three(), needsYou }) });
+      await slot.findByText("Docs site");
+      expect(slugs(slot)).toEqual(["docs", "csv"]);
+      expect(within(slot.container.querySelector<HTMLElement>("[data-finished]")!).getByRole("button", { name: /Finished · 1/ })).toBeTruthy();
     });
 
     it("filters the table by name, key or slug as the human types", async () => {
@@ -387,11 +399,13 @@ describe("project list", () => {
       expect(slot.container.querySelector("[data-projects-empty]")!.textContent).toBe('No project matches "zzz".');
     });
 
-    it("says so when the switch hides every project", async () => {
-      const { slot } = await mountPage("", { home: () => homeView({ projects: [homeProject({ state: "done" })] }) });
+    it("opens the Finished group and says so when every project is done or archived", async () => {
+      const { slot } = await mountPage("", { home: () => homeView({ projects: [homeProject({ state: "done" })], needsYou: [] }) });
       await slot.findByText("CSV export");
-      fireEvent.click(toggle(slot));
       expect(slot.container.querySelector("[data-projects-empty]")!.textContent).toBe("Every project is done or archived.");
+      expect(slugs(slot)).toEqual(["csv"]);
+      expect(within(slot.container.querySelector<HTMLElement>("[data-finished]")!).queryByRole("button", { name: /Finished/ })).toBeNull();
+      expect(slot.container.querySelector("[data-finished]")!.textContent).toContain("Finished · 1");
     });
   });
 
@@ -436,17 +450,79 @@ describe("home", () => {
     expect(homeTile(one, "agents").textContent).toContain("1 worker · 1 reviewer");
   });
 
-  it("lists what needs you in order, each with one button that opens its ticket or project", async () => {
-    const needsYou = [...homeView().needsYou.slice(0, 2), { kind: "pending" as const, slug: "csv", project: "CSV export", key: null, text: "spec v2 waits for your approval", at: NOW - 20 * 60_000 }, ...homeView().needsYou.slice(2)];
-    const { slot } = await mountPage("", { home: () => homeView({ needsYou, projects: [homeProject({ pendingVersion: 2 })] }) });
-    await waitFor(() => expect(slot.container.querySelectorAll("[data-need]")).toHaveLength(5));
-    const items = [...slot.container.querySelectorAll<HTMLElement>("[data-need]")];
-    expect(items.map((item) => item.getAttribute("data-need"))).toEqual(["blocked", "approve", "pending", "land", "paused"]);
-    expect(items[0]!.textContent).toContain("CSV-7 is blocked · CSV export · needs the staging DB credentials");
-    expect(items[1]!.textContent).toContain("Audit log has a draft spec v1 with 9 tickets");
-    expect(items.map((item) => item.querySelector("button")!.textContent)).toEqual(["Open ticket", "Review and approve", "Approve v2", "Land", "Open"]);
-    for (const item of items) fireEvent.click(item.querySelector("button")!);
-    expect(slot.inspection.navigateCalls).toEqual([pushed("csv/CSV-7"), pushed("audit"), pushed("csv"), pushed("srch"), pushed("bill")]);
+  describe("what needs you, in each project's row", () => {
+    const pending = { kind: "pending" as const, slug: "csv", project: "CSV export", key: null, text: "spec v2 waits for your approval", at: NOW - 2 * 60_000 };
+    // The server sends needs newest first, so the pending version comes before the blocked ticket.
+    const needsYou = [pending, ...homeView().needsYou];
+    const projects = [
+      homeProject({ slug: "calm", name: "Calm one", key: "CALM" }),
+      homeProject({ slug: "srch", name: "Search revamp", key: "SRCH" }),
+      homeProject({ pendingVersion: 2 }),
+      homeProject({ slug: "audit", name: "Audit log", key: "AUD", state: "draft" }),
+      homeProject({ slug: "bill", name: "Billing API", key: "BILL", state: "paused" }),
+    ];
+    const rows = (slot: Slot) => [...slot.container.querySelectorAll<HTMLElement>("[data-project-row]")];
+    const chips = (row: HTMLElement) => [...row.querySelectorAll<HTMLElement>("[data-project-needs] button")];
+
+    it("puts rows that need you first, most urgent first, each with its chips and a coloured edge", async () => {
+      const { slot } = await mountPage("", { home: () => homeView({ needsYou, projects }) });
+      await slot.findByText("Calm one");
+      expect(rows(slot).map((row) => [row.getAttribute("data-project-row"), row.getAttribute("data-attention")])).toEqual([
+        ["csv", "blocked"],
+        ["bill", "paused"],
+        ["audit", "approve"],
+        ["srch", "land"],
+        ["calm", null],
+      ]);
+      const [csv, bill, audit, srch, calm] = rows(slot);
+      expect(chips(csv!).map((chip) => [chip.getAttribute("data-need"), chip.textContent])).toEqual([
+        ["blocked", "!CSV-7 blocked"],
+        ["pending", "✎Approve v2"],
+      ]);
+      expect(chips(csv!)[0]!.getAttribute("title")).toBe("CSV-7 is blocked: needs the staging DB credentials");
+      expect(chips(bill!).map((chip) => chip.textContent)).toEqual(["⏸Paused by Loom"]);
+      expect(chips(bill!)[0]!.getAttribute("title")).toBe("The token budget is used up: 900 of 900 tokens.");
+      expect(chips(audit!).map((chip) => chip.textContent)).toEqual(["✎Review draft"]);
+      expect(chips(srch!).map((chip) => chip.textContent)).toEqual(["↑Ready to land"]);
+      expect(calm!.querySelector("[data-project-needs]")!.textContent).toBe("—");
+      expect(csv!.querySelector("td")!.className).toContain("border-l-destructive");
+      expect(srch!.querySelector("td")!.className).toContain("border-l-success");
+      expect(audit!.querySelector("td")!.className).toContain("border-l-warning");
+      expect(calm!.querySelector("td")!.className).toContain("border-l-transparent");
+      expect(slot.queryByRole("region", { name: "Needs you" })).toBeNull();
+    });
+
+    it("opens a chip's ticket or project, and only that", async () => {
+      const { slot } = await mountPage("", { home: () => homeView({ needsYou, projects }) });
+      await slot.findByText("Calm one");
+      for (const row of rows(slot)) for (const chip of chips(row)) fireEvent.click(chip);
+      expect(slot.inspection.navigateCalls).toEqual([pushed("csv/CSV-7"), pushed("csv"), pushed("bill"), pushed("audit"), pushed("srch")]);
+    });
+
+    it("shows three chips and a +N more that opens the project", async () => {
+      const blocked = [7, 8, 9, 10].map((n) => ({ kind: "blocked" as const, slug: "csv", project: "CSV export", key: `CSV-${n}`, text: "stuck", at: NOW - n }));
+      const { slot } = await mountPage("", { home: () => homeView({ needsYou: [pending, ...blocked] }) });
+      await slot.findByText("CSV export");
+      expect(chips(rows(slot)[0]!).map((chip) => chip.textContent)).toEqual(["!CSV-7 blocked", "!CSV-8 blocked", "!CSV-9 blocked", "+2 more"]);
+      fireEvent.click(slot.getByRole("button", { name: "+2 more" }));
+      expect(slot.inspection.navigateCalls).toEqual([pushed("csv")]);
+    });
+
+    it("says on the tile how many projects need you and how many tickets are blocked", async () => {
+      const { slot } = await mountPage("", { home: () => homeView({ needsYou, projects }) });
+      await slot.findByText("Calm one");
+      const tile = slot.container.querySelector<HTMLElement>('[data-home-tile="needs"]')!;
+      expect(tile.querySelector("[data-tile-value]")!.textContent).toBe("5");
+      expect(tile.textContent).toContain("across 4 projects · 1 blocked");
+      expect(tile.className).toContain("border-warning");
+
+      slot.lifecycle.unmount();
+      const { slot: none } = await mountPage("", { home: () => homeView({ needsYou: [] }) });
+      await none.findByText("CSV export");
+      const calm = none.container.querySelector<HTMLElement>('[data-home-tile="needs"]')!;
+      expect(calm.textContent).toBe("Needs you0");
+      expect(calm.className).not.toContain("border-warning");
+    });
   });
 
   it("shows each project's progress, live agents, 14-day throughput, tokens against its budget and its last event", async () => {
@@ -481,9 +557,20 @@ describe("home", () => {
     const rows = [...slot.container.querySelectorAll("[data-planning-row]")];
     expect(rows.map((row) => row.getAttribute("data-planning-row"))).toEqual(["thr_p1"]);
     expect(rows[0]!.textContent).toContain("planner is asking questions · started 4m");
+    expect(rows[0]!.getAttribute("data-attention")).toBe("planning");
+    expect(rows[0]!.querySelector("[data-state-badge]")!.textContent).toBe("planning");
     expect(slot.container.querySelector("[data-guide]")).toBeNull();
-    fireEvent.click(slot.getByRole("button", { name: "Continue" }));
+    expect(slot.queryByRole("region", { name: "Planning" })).toBeNull();
+    fireEvent.click(slot.getByRole("button", { name: "Continue planning" }));
     expect(slot.inspection.navigateCalls).toEqual([pushed("_plan/thr_p1")]);
+    fireEvent.click(rows[0]!);
+    expect(slot.inspection.navigateCalls).toEqual([pushed("_plan/thr_p1"), pushed("_plan/thr_p1")]);
+
+    fireEvent.change(slot.getByRole("searchbox", { name: "Search projects" }), { target: { value: "csv" } });
+    expect(slot.container.querySelector("[data-planning-row]")).toBeNull();
+    fireEvent.change(slot.getByRole("searchbox", { name: "Search projects" }), { target: { value: "rate limits" } });
+    expect([...slot.container.querySelectorAll("[data-planning-row]")]).toHaveLength(1);
+    expect(slot.container.querySelector("[data-project-row]")).toBeNull();
   });
 
   it("shows a conversation instead of the guide when it is the only thing there is", async () => {
@@ -813,7 +900,7 @@ describe("planning conversation", () => {
   it("gives a project with a planner thread a Planner tab with its chat, and a project without one no such tab", async () => {
     const { slot } = await mountPage("csv", { project: () => projectView() });
     await slot.findByRole("tab", { name: "Board" });
-    expect([...slot.container.querySelectorAll("[role=tab]")].map((tab) => tab.textContent)).toEqual(["Board", "Agents", "Feed", "Metrics", "Spec", "Planner"]);
+    expect([...slot.container.querySelectorAll("[role=tab]")].map((tab) => tab.textContent)).toEqual(["Board", "Agents", "Feed", "Metrics", "Spec", "Planner", "Changes"]);
     fireEvent.click(slot.getByRole("tab", { name: "Planner" }));
     expect(chat(slot).getAttribute("data-thread-id")).toBe("thr_plan");
     slot.lifecycle.unmount();
@@ -825,6 +912,14 @@ describe("planning conversation", () => {
 });
 
 describe("spec dashboard", () => {
+  const scroll = vi.fn();
+  beforeEach(() => {
+    scroll.mockClear();
+    Element.prototype.scrollIntoView = scroll;
+  });
+  afterEach(() => {
+    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  });
   const session = (over: Partial<PlanningSession> = {}): PlanningSession => ({ threadId: "thr_p1", title: "Export orders as CSV", startedAt: Date.now(), slug: "csv", projectState: "draft", ...over });
   const draft = () => projectView({ overview: overview({ state: "draft", approvedVersion: null, ticketCount: 0, ticketCounts: {} }), board: [] });
   const dashboard = (slot: Slot) => slot.container.querySelector<HTMLElement>("[data-spec-dashboard]")!;
@@ -1192,9 +1287,39 @@ describe("spec dashboard", () => {
     expect(inPane(slot, "budget.deadline")!.textContent).toContain("2026-11-15");
   });
 
+  it("brings the selected ticket's card into view when a ticket card selects it, not when the second click clears it", async () => {
+    const { slot } = await mountDashboard();
+    fireEvent.click(card(slot, "csv-export"));
+    expect(scroll).toHaveBeenCalledTimes(1);
+    expect(scroll).toHaveBeenCalledWith({ block: "nearest", behavior: "smooth" });
+    expect(scroll.mock.contexts[0]).toBe(inspector(slot).parentElement);
+    fireEvent.click(card(slot, "csv-export"));
+    expect(scroll).toHaveBeenCalledTimes(1);
+    fireEvent.click(card(slot, "csv-model"));
+    expect(scroll).toHaveBeenCalledTimes(2);
+  });
+
   describe("notes", () => {
     beforeEach(() => localStorage.clear());
     const tray = (slot: Slot) => slot.container.querySelector<HTMLElement>("[data-notes-tray]")!;
+
+    it("takes a note on a whole ticket from its card, and says where the note buttons are", async () => {
+      const { slot } = await mountDashboard();
+      expect(tray(slot).textContent).toContain('Press "+ note" on a ticket card, or on any line of the selected ticket and the other tabs.');
+      const button = slot.getByRole("button", { name: "Add a note on ticket csv-model" });
+      expect(button.className).toContain("[@media(hover:none)]:opacity-100");
+      expect(button.className).not.toContain("opacity-0");
+      expect(slot.container.querySelector<HTMLElement>("[data-note-target] button")!.className).toContain("[@media(hover:none)]:opacity-100");
+      fireEvent.click(button);
+      expect(scroll).not.toHaveBeenCalled();
+      expect(card(slot, "csv-model").getAttribute("aria-pressed")).toBe("true");
+      expect(dashboard(slot).textContent).toContain("Note on csv-model (whole ticket)");
+      fireEvent.change(slot.getByRole("textbox", { name: "Note text" }), { target: { value: "Split the model from the migration." } });
+      fireEvent.click(slot.getByRole("button", { name: "Add note" }));
+      expect(JSON.parse(localStorage.getItem("loom.notes.csv")!)).toEqual([{ version: 2, paths: ["ticket[csv-model]"], label: "csv-model (whole ticket)", body: "Split the model from the migration." }]);
+      expect(card(slot, "csv-model").textContent).toContain("1 note");
+      expect(slot.container.querySelector("[data-notes-column]")!.className).toContain("lg:sticky");
+    });
     const note = { version: 2, paths: ["ticket[csv-export].acceptance[1]"], body: "Say what the header row holds." };
     const stored = { ...note, label: "csv-export › criterion 2" };
 
@@ -1664,12 +1789,219 @@ describe("spec tab", () => {
     await waitFor(() => expect(control).toHaveBeenCalledWith({ slug: "csv", action: "approve", version: 2, confirm: true }));
   });
 
+  describe("tab badges", () => {
+    const badge = (slot: Slot, tab: string) => slot.container.querySelector<HTMLElement>(`[data-tab-badge="${tab}"]`);
+
+    it("counts the blocked tickets on the Board tab, and shows none without one", async () => {
+      const blocked = projectView({ board: [card(), card({ key: "CSV-2", state: "blocked", blockedReason: "Needs a decision." }), card({ key: "CSV-3", state: "blocked" })] });
+      const { slot } = await mountPage("csv", { project: () => blocked });
+      const board = await slot.findByRole("tab", { name: "Board" });
+      expect(badge(slot, "board")!.textContent).toBe("2");
+      expect(badge(slot, "board")!.getAttribute("aria-hidden")).toBe("true");
+      expect(badge(slot, "board")!.className).toContain("bg-destructive");
+      expect(board.getAttribute("title")).toBe("2 tickets are blocked");
+      expect(board.getAttribute("aria-description")).toBe("2 tickets are blocked");
+      expect(badge(slot, "spec")).toBeNull();
+
+      slot.lifecycle.unmount();
+      const { slot: calm } = await mountPage("csv", { project: () => projectView() });
+      expect((await calm.findByRole("tab", { name: "Board" })).getAttribute("title")).toBeNull();
+      expect(calm.container.querySelector("[data-tab-badge]")).toBeNull();
+    });
+
+    it("marks the Spec tab while a draft or a pending version waits for you, but not on an archived project", async () => {
+      const pending = projectView({ overview: overview({ pendingVersion: 2 }) });
+      const { slot } = await mountPage("csv", { project: () => pending });
+      const spec = await slot.findByRole("tab", { name: "Spec" });
+      expect(badge(slot, "spec")!.textContent).toBe("1");
+      expect(badge(slot, "spec")!.className).toContain("bg-warning");
+      expect(spec.getAttribute("title")).toBe("Spec v2 waits for your approval");
+
+      const draft = projectView({ overview: overview({ state: "draft", approvedVersion: null }), spec: { ...projectView().spec, version: 3 } });
+      slot.lifecycle.unmount();
+      const { slot: drafted } = await mountPage("csv", { project: () => draft });
+      expect((await drafted.findByRole("tab", { name: "Spec" })).getAttribute("title")).toBe("Draft v3 waits for your review");
+
+      const archived = projectView({ overview: overview({ state: "archived", pendingVersion: 2 }) });
+      drafted.lifecycle.unmount();
+      const { slot: gone } = await mountPage("csv", { project: () => archived });
+      await gone.findByRole("tab", { name: "Spec" });
+      expect(badge(gone, "spec")).toBeNull();
+    });
+  });
+
   it("keeps the chosen tab across a change of the project", async () => {
     const { slot } = await mountPage("csv", { project: () => projectView(), specVersion: () => specVersionView() });
     fireEvent.click(await slot.findByRole("tab", { name: "Spec" }));
     await slot.emitRealtime("loom:changed", { slug: "csv" });
     await waitFor(() => expect(calls(slot, "project")).toHaveLength(2));
     expect(slot.getByRole("tab", { name: "Spec" }).getAttribute("aria-selected")).toBe("true");
+  });
+});
+
+describe("changes tab", () => {
+  afterEach(() => localStorage.clear());
+  const [A, B, C] = ["a".repeat(40), "b".repeat(40), "c".repeat(40)];
+  const changed = (path: string, over: Partial<ChangedFile> = {}): ChangedFile => ({ path, previousPath: null, status: "modified", additions: 3, deletions: 1, binary: false, untracked: false, fingerprint: `blob-${path}`, tickets: [], ...over });
+  const source = (over: Partial<ChangeSource>): ChangeSource => ({ id: "branch", kind: "branch", key: null, title: null, state: null, base: A, head: C, against: "origin/main", at: null, attempt: 0, reviewRound: 0, files: [], truncated: false, note: null, gone: false, ...over });
+  const changesView = (over: Partial<ChangesView> = {}): ChangesView => ({
+    slug: "csv",
+    strategy: "integration",
+    base: "main",
+    remoteBase: "origin/main",
+    branch: "loom/csv",
+    finished: false,
+    unavailable: null,
+    sources: [
+      source({ files: [changed("src/a.ts", { tickets: ["CSV-1"] }), changed("src/b.ts", { status: "added", tickets: ["CSV-1"] })] }),
+      source({ id: "merge:CSV-1", kind: "merge", key: "CSV-1", title: "Order rows", state: "done", base: A, head: B, against: "loom/csv", at: NOW - 2 * HOUR, files: [changed("src/a.ts"), changed("src/b.ts", { status: "added" })] }),
+      source({ id: "live:CSV-2", kind: "live", key: "CSV-2", title: "Export endpoint", state: "working", base: null, head: null, against: "loom/csv", attempt: 1, files: [changed("src/export.ts", { status: "added", untracked: true, fingerprint: "live:added:3:1" })] }),
+      source({ id: "commit:CSV-3", kind: "commit", key: "CSV-3", title: "Docs", state: "queued", base: null, head: null, against: "loom/csv", files: [], note: "No changes yet." }),
+    ],
+    ...over,
+  });
+  const board = [card({ key: "CSV-1", state: "done", ready: false, hasChanges: true }), card({ key: "CSV-2", title: "Export endpoint", state: "working", ready: false, threadId: "thr_w1", hasChanges: true }), card({ key: "CSV-3", title: "Docs" })];
+  const landing = () => projectView({ overview: overview({ ticketCounts: { done: 3 } }), board: board.map((entry) => ({ ...entry, state: "done" })), next: { stage: 5, tone: "normal", title: "Next: land the project.", text: "Every ticket is finished.", action: { control: "land", label: "Land · open the pull request", confirm: "Click again to land" } } });
+  const mountChanges = async (rpc: Partial<Handlers> = {}, view = projectView({ board })) => {
+    const mounted = await mountPage("csv", { project: () => view, changes: () => changesView(), changePatch: ({ path }) => ({ patch: `diff --git a/${path} b/${path}\n+x\n`, truncated: false }), ...rpc });
+    await mounted.slot.findByRole("tab", { name: "Board" });
+    return mounted.slot;
+  };
+  const openTab = async (slot: Slot) => {
+    fireEvent.click(slot.getByRole("tab", { name: "Changes" }));
+    return slot.findByText("compared with", { exact: false });
+  };
+  const fileRow = (slot: Slot, path: string) => slot.container.querySelector<HTMLElement>(`[data-file="${path}"]`)!;
+
+  it("lists the branch, each merge and the unmerged tickets, and reads nothing until it opens", async () => {
+    const slot = await mountChanges();
+    expect(calls(slot, "changes")).toEqual([]);
+    await openTab(slot);
+    expect(calls(slot, "changes")).toEqual([{ method: "changes", input: { slug: "csv" } }]);
+    expect([...slot.container.querySelectorAll("[data-source]")].map((node) => node.getAttribute("data-source"))).toEqual(["branch", "merge:CSV-1", "live:CSV-2", "commit:CSV-3"]);
+    expect(slot.container.querySelector<HTMLButtonElement>('[data-source="commit:CSV-3"]')!.disabled).toBe(true);
+    expect(slot.container.querySelector("[data-change-source]")!.getAttribute("data-change-source")).toBe("branch");
+    expect(slot.container.querySelector("[data-land-panel]")!.textContent).toContain("Land pushes loom/csv at ccccccc");
+    expect(slot.container.querySelector("[data-land-panel]")!.textContent).not.toContain("This is what lands.");
+    expect(slot.getByText("Viewed 0 of 2", { exact: false })).toBeTruthy();
+  });
+
+  it("shows a file's diff with bb's viewer between the listing's commits, in split view when asked", async () => {
+    const slot = await mountChanges();
+    await openTab(slot);
+    fireEvent.click(slot.getByRole("button", { name: "Show src/a.ts" }));
+    const diff = await slot.findByTestId("bb-diff");
+    expect(diff.getAttribute("data-path")).toBe("src/a.ts");
+    expect(diff.getAttribute("data-view")).toBe("unified");
+    expect(calls(slot, "changePatch")).toEqual([{ method: "changePatch", input: { slug: "csv", path: "src/a.ts", base: A, head: C } }]);
+    fireEvent.click(slot.getByRole("button", { name: "split" }));
+    expect(slot.getByTestId("bb-diff").getAttribute("data-view")).toBe("split");
+    fireEvent.click(slot.getByRole("button", { name: "Expand all" }));
+    await waitFor(() => expect(slot.getAllByTestId("bb-diff")).toHaveLength(2));
+  });
+
+  it("opens a ticket's changes from a file's ticket chip and from a board card's Changes link", async () => {
+    const slot = await mountChanges();
+    fireEvent.click(slot.getByRole("button", { name: "Show the changes of CSV-2" }));
+    expect(await slot.findByText("Live.", { exact: false })).toBeTruthy();
+    expect(slot.container.querySelector("[data-change-source]")!.getAttribute("data-change-source")).toBe("live:CSV-2");
+    expect(slot.queryByRole("button", { name: "Show the changes of CSV-3" })).toBeNull();
+    fireEvent.click(slot.container.querySelector<HTMLElement>('[data-source="branch"]')!);
+    fireEvent.click(fileRow(slot, "src/a.ts").querySelector<HTMLElement>('[data-file-ticket="CSV-1"]')!);
+    expect(slot.container.querySelector("[data-change-source]")!.getAttribute("data-change-source")).toBe("merge:CSV-1");
+    expect(slot.container.querySelector("[data-change-source]")!.textContent).toContain("What its merge bbbbbbb added to loom/csv, 2h ago");
+  });
+
+  it("reads a live worktree's patch by the ticket's key and marks a file git does not track yet", async () => {
+    const slot = await mountChanges();
+    fireEvent.click(slot.getByRole("button", { name: "Show the changes of CSV-2" }));
+    await slot.findByText("Live.", { exact: false });
+    expect(fileRow(slot, "src/export.ts").textContent).toContain("new, not committed");
+    fireEvent.click(slot.getByRole("button", { name: "Open worker thread" }));
+    expect(slot.inspection.navigateCalls.at(-1)).toMatchObject({ method: "toThread" });
+    fireEvent.click(slot.getByRole("button", { name: "Show src/export.ts" }));
+    await slot.findByTestId("bb-diff");
+    expect(calls(slot, "changePatch")).toEqual([{ method: "changePatch", input: { slug: "csv", path: "src/export.ts", key: "CSV-2" } }]);
+  });
+
+  it("reads a live worktree again every 10 seconds while it shows, and stops when another source shows", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      const slot = await mountChanges();
+      fireEvent.click(slot.getByRole("button", { name: "Show the changes of CSV-2" }));
+      await slot.findByText("Live.", { exact: false });
+      const before = calls(slot, "changes").length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+      expect(calls(slot, "changes").length).toBe(before + 1);
+      fireEvent.click(slot.container.querySelector<HTMLElement>('[data-source="branch"]')!);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      expect(calls(slot, "changes").length).toBe(before + 1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps Viewed marks across visits, folds a viewed file, and clears a mark when the file changes again", async () => {
+    let view = changesView();
+    const slot = await mountChanges({ changes: () => view });
+    await openTab(slot);
+    fireEvent.click(slot.getByRole("button", { name: "Show src/a.ts" }));
+    await slot.findByTestId("bb-diff");
+    fireEvent.click(within(fileRow(slot, "src/a.ts")).getByRole("button", { name: "Viewed" }));
+    expect(slot.queryByTestId("bb-diff")).toBeNull();
+    expect(fileRow(slot, "src/a.ts").hasAttribute("data-viewed")).toBe(true);
+    expect(slot.getByText("Viewed 1 of 2", { exact: false })).toBeTruthy();
+    expect(JSON.parse(localStorage.getItem("loom.viewed.csv")!)).toEqual(["src/a.ts\u0000blob-src/a.ts"]);
+
+    view = changesView({ sources: [source({ files: [changed("src/a.ts", { fingerprint: "blob-new" }), changed("src/b.ts")] })] });
+    await slot.emitRealtime("loom:changed", { slug: "csv" });
+    await waitFor(() => expect(slot.getByText("Viewed 0 of 2", { exact: false })).toBeTruthy());
+  });
+
+  it("when the project is ready to land, the bar's Review changes opens the branch, the tab counts the files not viewed, and the panel lands", async () => {
+    const slot = await mountChanges({ control: () => landing() }, landing());
+    const badge = await waitFor(() => {
+      const found = slot.container.querySelector('[data-tab-badge="changes"]');
+      if (found === null) throw new Error("no badge yet");
+      return found;
+    });
+    expect(badge.textContent).toBe("2");
+    fireEvent.click(slot.getByRole("button", { name: "Review changes" }));
+    await slot.findByText("This is what lands.", { exact: false });
+    fireEvent.click(within(fileRow(slot, "src/b.ts")).getByRole("button", { name: "Viewed" }));
+    expect(slot.container.querySelector('[data-tab-badge="changes"]')!.textContent).toBe("1");
+    const panel = slot.container.querySelector<HTMLElement>("[data-land-panel]")!;
+    fireEvent.click(within(panel).getByRole("button", { name: "Land" }));
+    fireEvent.click(within(panel).getByRole("button", { name: "Click again to land" }));
+    await waitFor(() => expect(calls(slot, "control")).toEqual([{ method: "control", input: { slug: "csv", action: "land", confirm: true } }]));
+  });
+
+  it("leaves out work whose commits are gone, says why nothing can be read, and shows a finished project's merges", async () => {
+    const gone = changesView({ finished: true, sources: [changesView().sources[0]!, { ...changesView().sources[1]!, gone: true, files: null, note: "Its commits are no longer in the repository." }] });
+    const slot = await mountChanges({ changes: () => gone }, projectView({ overview: overview({ state: "done", ticketCounts: { done: 1 } }), board, next: null }));
+    fireEvent.click(slot.getByRole("tab", { name: "Changes" }));
+    await waitFor(() => expect(slot.container.querySelector("[data-change-source]")!.textContent).toContain("What loom/csv merged"));
+    expect(slot.container.querySelector("[data-land-panel]")).toBeNull();
+    expect([...slot.container.querySelectorAll("[data-source]")].map((node) => node.getAttribute("data-source"))).toEqual(["branch"]);
+    expect(slot.container.querySelector("[data-gone]")!.textContent).toBe("1 part of this project is no longer in the repository, so it is left out.");
+    slot.lifecycle.unmount();
+
+    const none = await mountChanges({ changes: () => changesView({ sources: [], unavailable: "The bb project has no checkout on the machine host_1, so its changes cannot be read." }) });
+    fireEvent.click(none.getByRole("tab", { name: "Changes" }));
+    expect(await none.findByText("The bb project has no checkout on the machine host_1, so its changes cannot be read.")).toBeTruthy();
+  });
+
+  it("has no Changes tab before the project starts, nor while it is rewound", async () => {
+    const ready = await mountChanges({}, projectView({ overview: overview({ state: "ready", ticketCounts: { queued: 2 } }) }));
+    expect(ready.queryByRole("tab", { name: "Changes" })).toBeNull();
+    ready.lifecycle.unmount();
+    const rewound = await mountChanges({}, projectView({ board, at: 12 }));
+    expect(rewound.queryByRole("tab", { name: "Changes" })).toBeNull();
+    expect(rewound.queryByRole("button", { name: "Show the changes of CSV-1" })).toBeNull();
   });
 });
 
@@ -2488,7 +2820,7 @@ describe("health strip", () => {
     expect(part(slot, "progress")!.textContent).toContain("3 in flight");
     expect(part(slot, "progress")!.querySelector("[role=img]")!.getAttribute("aria-label")).toBe("Progress: 8 done, 3 in flight, 1 blocked, 2 queued");
     expect(part(slot, "pace")!.textContent).toContain("0.5/day");
-    expect(part(slot, "pace")!.textContent).toContain("6 left: about 12 days at this pace");
+    expect(part(slot, "pace")!.textContent).toContain("6 left: about 12d of running at this pace");
     expect(part(slot, "budget")!.textContent).toContain("24%");
     expect(part(slot, "budget")!.textContent).toContain("12,000 of 50,000 (sampled)");
     expect(part(slot, "deadline")!.textContent).toContain("6 days");
@@ -2500,7 +2832,7 @@ describe("health strip", () => {
   });
 
   it("hides the budget and the deadline when the spec sets neither, and says when nothing was done to pace by", async () => {
-    const view = projectView({ health: health({ budget: null, deadline: null, pace: { perDay: 0, remaining: 6, etaDays: null } }) });
+    const view = projectView({ health: health({ budget: null, deadline: null, pace: { perHour: 0, remaining: 6, etaMs: null } }) });
     const { slot } = await mountPage("csv", { project: () => view });
     await slot.findByRole("tab", { name: "Board" });
     expect(part(slot, "progress")).not.toBeNull();
@@ -2508,6 +2840,20 @@ describe("health strip", () => {
     expect(part(slot, "deadline")).toBeNull();
     expect(part(slot, "pace")!.textContent).toContain("6 left; none done in the last 14 days");
     expect(slot.container.textContent).not.toContain("NaN");
+  });
+
+  it("shows a fast pace per hour and the running time left in minutes", async () => {
+    const { slot } = await mountPage("csv", { project: () => projectView({ health: health({ pace: { perHour: 3.85, remaining: 3, etaMs: 46.8 * 60_000 } }) }) });
+    await slot.findByRole("tab", { name: "Board" });
+    expect(part(slot, "pace")!.textContent).toContain("3.9/hour");
+    expect(part(slot, "pace")!.textContent).toContain("3 left: about 47m of running at this pace");
+  });
+
+  it("says when the project did not run in the window to pace by", async () => {
+    const { slot } = await mountPage("csv", { project: () => projectView({ health: health({ pace: { perHour: null, remaining: 2, etaMs: null } }) }) });
+    await slot.findByRole("tab", { name: "Board" });
+    expect(part(slot, "pace")!.textContent).toContain("none yet");
+    expect(part(slot, "pace")!.textContent).toContain("2 left; not run in the last 14 days");
   });
 
   it("is not shown for a draft", async () => {
@@ -2886,11 +3232,14 @@ describe("timeline", () => {
     expect(slot.getByRole("textbox", { name: "New reply" })).toBeTruthy();
   });
 
-  it("hides the Planner tab while rewound, and shows the spec in force with no notes", async () => {
-    const { slot } = await mountPage("csv", { project, specVersion: () => specVersionView({ version: 1, status: "approved", changes: null }) });
+  it("hides the Planner tab and the tab badges while rewound, and shows the spec in force with no notes", async () => {
+    const pending = (input: { slug: string; at?: number }) => ({ ...project(input), overview: overview({ pendingVersion: 2 }) });
+    const { slot } = await mountPage("csv", { project: pending, specVersion: () => specVersionView({ version: 1, status: "approved", changes: null }) });
     expect(await slot.findByRole("tab", { name: "Planner" })).toBeTruthy();
+    expect(slot.container.querySelector('[data-tab-badge="spec"]')).not.toBeNull();
     await rewind(slot);
     expect(slot.queryByRole("tab", { name: "Planner" })).toBeNull();
+    expect(slot.container.querySelector("[data-tab-badge]")).toBeNull();
     fireEvent.click(slot.getByRole("tab", { name: "Spec" }));
     await waitFor(() => expect(slot.container.querySelector("[data-spec-dashboard]")).not.toBeNull());
     expect(calls(slot, "specVersion").at(-1)!.input).toEqual({ slug: "csv", version: 1 });

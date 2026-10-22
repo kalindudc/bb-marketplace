@@ -1073,6 +1073,33 @@ describe("tick: review and merge", () => {
     for (const key of ["CSV-1", "CSV-2"]) h.store.setTicketState(ticketOf(h, key).id, "cancelled", "human");
     await h.engine.tick();
     expect(project().state).toBe("done");
+    expect(h.bb.callsTo("deleteSection")).toEqual([["sec_1"]]);
+    expect(project().section_id).toBeNull();
+  });
+
+  it("removes a done project's section on the next pass, and a running project's never", async () => {
+    await seedProject(h);
+    await h.engine.tick();
+    expect(h.bb.callsTo("deleteSection")).toEqual([]);
+    h.store.setProjectState(project().id, "done", "loom");
+    await h.engine.tick();
+    expect(h.bb.callsTo("deleteSection")).toEqual([["sec_1"]]);
+    expect(project().section_id).toBeNull();
+    await h.engine.tick();
+    expect(h.bb.callsTo("deleteSection")).toHaveLength(1);
+  });
+
+  it("tries a refused section deletion again on the next pass", async () => {
+    await seedProject(h);
+    h.store.setProjectState(project().id, "done", "loom");
+    h.bb.deleteSectionError = new Error("bb is down");
+    await h.engine.tick();
+    expect(project().section_id).toBe("sec_1");
+    expect(h.bb.callsTo("log").some(([level, text]) => level === "warn" && String(text).includes("Could not delete the project's section"))).toBe(true);
+    h.bb.deleteSectionError = null;
+    await h.engine.tick();
+    expect(project().section_id).toBeNull();
+    expect(h.bb.sections.has("sec_1")).toBe(false);
   });
 });
 

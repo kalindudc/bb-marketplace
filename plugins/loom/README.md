@@ -19,7 +19,7 @@ span several, with each ticket in one of them.
 5. Check: the plugin commits the worktree and runs the ticket's and the project's check commands. A failure goes back to the worker.
 6. Review: reviewer threads read the diff and call `loom_approve` or `loom_request_changes`. Requested changes go back to the worker as numbered findings.
 7. Merge: the plugin merges exactly the commit that was reviewed, one ticket at a time, into the integration branch and runs the `after_merge` checks on the result. On the pull request strategy it opens one pull request per ticket and follows it.
-8. Land: on the integration strategy the human runs `bb loom land` to push the branch and open one pull request upstream, or `bb loom land --direct` to merge the remote's base branch in when it moved, run the `after_merge` checks on the result, and push straight to the base branch. A multi-repo project lands each repo, or one with `--repo`.
+8. Land: on the integration strategy the human reads what lands on the project's Changes tab, then runs `bb loom land` to push the branch and open one pull request upstream, or `bb loom land --direct` to merge the remote's base branch in when it moved, run the `after_merge` checks on the result, and push straight to the base branch. A multi-repo project lands each repo, or one with `--repo`.
 
 A ticket that gets stuck is blocked. The planner hears about blocked tickets in a
 triage round and answers with its board tools (`loom_board`, `loom_ticket`,
@@ -94,6 +94,7 @@ bb loom tickets <slug> [--state s,s]         # the board
 bb loom ticket CSV-1                         # a ticket and its reply thread
 bb loom metrics <slug> [--days N] [--json]   # flow and agent metrics, one line each; --days sets the window (default 14)
 bb loom feed <slug> [--after <id>] [--json]  # the newest events as sentences
+bb loom report <slug> [--send]               # the project's record as Markdown; --send runs the done hook again
 bb loom approve <slug> [--version N]         # approve a draft (creates the tickets) or a pending version
 bb loom start <slug>                         # workers start by themselves
 bb loom pause <slug> [--now]                 # --now also stops the worker threads
@@ -110,6 +111,10 @@ bb loom archive <slug>
 
 Every command takes `--json`. Each project gets a sidebar section named
 `Loom · <name> (<slug>)`; the planner, workers and reviewers move into it.
+When the project is done or archived, Loom deletes its sidebar section, and its
+threads go back to the ungrouped list. If the section is deleted while a project
+is ready or paused, starting or resuming it makes the section again and moves
+the planner back into it.
 
 ## Agent tools
 
@@ -147,7 +152,8 @@ Once the planner proposes, the conversation also shows the spec dashboard under
 the chat and the draft card, with the warnings and the raw spec, the same one as
 the project's Spec tab below. Every proposal before
 approval is kept as its own version, and older drafts read as superseded. Press
-"+ note" on any part of the spec to leave a note for the planner. Notes stay in
+"+ note" on a ticket card or on any part of the spec to leave a note for the
+planner. Notes stay in
 your browser until you send them, and the planner gets them in one message that
 names each part, such as `ticket[csv-export].acceptance[1]`. A sent note then
 shows whether the planner's next version changed that part.
@@ -156,39 +162,54 @@ The home page opens with five tiles across every project that is not archived:
 projects running, agents working against the worker and reviewer slots of the
 running and paused projects (a paused project's workers and reviewers finish
 their turn), tickets done in the last 7 days, how many things need you, and
-the sampled tokens. Under them, "Needs you" lists each blocked ticket, draft to
-approve, pending spec version, finished integration project to land, and project
-that Loom paused by itself (a budget or a deadline), newest first, each with a
-button that opens its ticket or project. The project table shows each project's
-state, strategy, ticket counts and the reason the plugin paused it, with a
-progress bar, its workers and reviewers at work (not the planner, which stays on
-call for triage rounds), a 14-day throughput sparkline, its tokens against the
-spec's budget and the time of its last event. A search box above the table
-filters it by name, key or slug as you type, and "Hide done and archived" leaves
-finished projects out; the page remembers that switch.
+the sampled tokens; the "Needs you" tile also says how many projects that is
+and how many tickets are blocked. Under them, one table lists every project and
+every planning conversation. Its "Needs you" column has a button for each
+blocked ticket, draft to review, pending spec version, finished integration
+project to land, and project that Loom paused by itself (a budget or a
+deadline); each opens its ticket or project, and a row shows three and then
+"+N more". Rows that need you come first, most urgent first, with a coloured
+edge: red for a blocked ticket, green for a project ready to land, amber for the
+rest. A planning conversation is a row with "Continue planning". The table also
+shows each project's state, strategy, ticket counts and the reason the plugin
+paused it, with a progress bar, its workers and reviewers at work (not the
+planner, which stays on call for triage rounds), a 14-day throughput sparkline,
+its tokens against the spec's budget and the time of its last event. A search
+box above the table filters it by name, key, slug or title as you type. Done and
+archived projects that need nothing fold into a "Finished" group at the bottom,
+which the page remembers opening; it opens by itself while you search or when
+nothing else is active.
 
 A project with an approved spec shows a health strip above its tabs: progress,
-pace over the last 14 days and the days left at that pace, the token budget and
-the deadline (each only when the spec sets it), and worker and reviewer capacity
-with the ready tickets that wait for a slot. Every project shows a next-step bar
+pace (the tickets done in the last 14 days over the time the project ran in
+them, so a new or paused project is not paced by days it did not run) and the
+running time left at that pace, the token budget and the deadline (each only
+when the spec sets it), and worker and reviewer capacity with the ready tickets
+that wait for a slot. Every project shows a next-step bar
 under its header: the stages from Plan to Land with the current one marked, one
 sentence on what happens next, and one button such as "Approve v1 · create 7
 tickets" or "Start project · 2 workers". The bar turns yellow when tickets are
 blocked or Loom paused the project, and names the reason and what Loom is doing
 about it. When every ticket of an integration project is done or cancelled, the
-bar offers Land, as does the next step in `bb loom show`. The header's "Land to
-<base>" button, beside Land, lands with `--direct` instead. On a multi-repo project, a repo chip marks each ticket's repo on the board, the
-ticket page and the spec dashboard, the Files tab groups paths by repo, the
-header links each repo's pull request, and the land buttons name the repos
-they land ("Land to each repo's base" when the bases differ). Open a project for
-these views:
+bar offers Land, as does the next step in `bb loom show`, beside Review changes,
+which opens the Changes tab on the integration branch. The header's "Land to
+<base>" button, beside Land, lands with `--direct` instead. On a multi-repo
+project, a repo chip marks each ticket's repo on the board, the ticket page and
+the spec dashboard, the Files tab groups paths by repo, the header links each
+repo's pull request, and the land buttons name the repos they land ("Land to
+each repo's base" when the bases differ). A tab that needs you
+carries a badge until the thing is resolved: the Board tab counts the blocked
+tickets, the Spec tab shows one while a draft waits for review or a newer
+spec version waits for approval, and the Changes tab counts the files of a
+project ready to land that you have not marked viewed. Open a project for these views:
 
-- Board: one lane per ticket state, with each card's age in its state, its attempt and review round, and a link to the thread working on it. Queued tickets are split into Ready and Waiting, and a waiting ticket names what it waits on. Before approval, the draft's tickets show as dashed cards in Ready and Waiting, with the keys approval will give them.
+- Board: one lane per ticket state, with each card's age in its state, its attempt and review round, a link to the thread working on it, and a Changes link that opens the ticket's changes. Queued tickets are split into Ready and Waiting, and a waiting ticket names what it waits on. Before approval, the draft's tickets show as dashed cards in Ready and Waiting, with the keys approval will give them.
 - Agents: every planner, worker and reviewer thread. The workers and reviewers working now come first, with their ticket, configured model, running time, timeout, tokens and rate-limit retries, and a Thread button. The planner has its own section, on call for triage rounds, with its tokens and Thread button. Below them are the tokens by role, how threads ended (idle twice, gave a verdict, timed out and so on) and the ended threads. A thread whose provider reports no token usage shows "not reported", and the tokens by role say how many such threads there are.
 - Ticket: a header with the state, a one-line summary, a stage tracker from Queued to Done, and chips for the attempts, review rounds, total time, dependencies, the branch (with a copy button) and the pull request. A blocked ticket shows its reason, a link to the post that blocked it, an answer box and Requeue; Block and Cancel ticket sit in the header's ⋯ menu, and each needs a reason. The Activity tab shows one card per worker attempt, newest first (Oldest first switches the order), the newest open and older ones folded to one line. Inside an attempt, posts are cards with their replies under them, each check lists its commands with their result, time and exit code and the failed command's output, each review shows its verdict, findings and the reviewer's notes, and each merge its git steps. The Brief tab shows the brief as Markdown. A side column, or a Details tab on a narrow page, lists the acceptance criteria, the files in scope, the verify command and every worker and reviewer thread with how it ended. The reply box says who gets your reply now.
+- Changes: what the project changed, from the start of the work until after it lands. On the integration strategy the list on the left starts with the integration branch compared with the remote's base branch (`origin/main`), which is what Land pushes, then each merged ticket with what its merge commit added to the branch, then the tickets not merged yet: the commit in review, the one that passed the checks and that the reviewers read, compared with the integration branch, and a working ticket's worktree as it is now, uncommitted and untracked files included, read again every 10 seconds while it shows. On the pull request strategy each ticket is compared with the remote's base branch, and a merged one with the base as it was before its merge. Each file shows its status, its added and removed lines and, on the branch, the tickets whose merges changed it; a click opens its patch in bb's own diff viewer, unified or split. Viewed marks stay in your browser and clear by themselves when a file changes again. On the branch, a panel carries Land and "Land to <base>" with what each pushes. A done or archived project shows what it merged, from before its first merge to its last, from the merge commits Loom recorded, so it still works after the branch landed. Work whose commits are no longer in the repository, such as an abandoned ticket whose worktree was cleaned up, is left out and counted. The tab shows once a project has started, and not while the page is rewound.
 - Feed: the project's events, newest first.
 - Metrics: the numbers below, with charts, and a 7, 14 or 30 day window for throughput and cumulative flow.
-- Spec: the spec as a dashboard, with a summary strip and four tabs. Tickets shows the dependency waves from top to bottom, each a wrapping grid of cards that say what they wait for; selecting a ticket lights up everything it waits for and everything it unblocks, says so in a sentence, and dims the rest until you click it again or press Show all. Files starts with Shared files, one row per path that two or more tickets may change, naming the tickets and whether they run in order or one at a time; then every path grouped by folder, with an "All files" or "Shared only" filter and the selected ticket's paths highlighted; then the protected paths. Checks & review and Project & limits show the rest of the spec. Under the tabs a wide card shows the selected ticket: its brief for the worker on the left, cut short with "Show the whole brief" when it is long, and its facts on the right (priority and wave, what it waits for and unblocks, the acceptance criteria, the paths it may change and its verify commands). The dashboard also has a version switcher that marks what each version changed, "Read the raw spec", "+ note" on every part with a tray beside the tabs that sends the notes to the planner, and Approve for a pending version.
+- Spec: the spec as a dashboard, with a summary strip and four tabs. Tickets shows the dependency waves from top to bottom, each a wrapping grid of cards that say what they wait for; selecting a ticket lights up everything it waits for and everything it unblocks, says so in a sentence, and dims the rest until you click it again or press Show all. Files starts with Shared files, one row per path that two or more tickets may change, naming the tickets and whether they run in order or one at a time; then every path grouped by folder, with an "All files" or "Shared only" filter and the selected ticket's paths highlighted; then the protected paths. Checks & review and Project & limits show the rest of the spec. Under the tabs a wide card shows the selected ticket: its brief for the worker on the left, cut short with "Show the whole brief" when it is long, and its facts on the right (priority and wave, what it waits for and unblocks, the acceptance criteria, the paths it may change and its verify commands). The dashboard also has a version switcher that marks what each version changed, "Read the raw spec", "+ note" on every ticket card and every part (faint until you hover it, always shown on a touch screen) with a tray beside the tabs, which stays in view as you scroll, that sends the notes to the planner, and Approve for a pending version.
 - Planner: the planner thread's chat, embedded in the page, with its open questions above it.
 
 Under the health strip, every project has a Timeline section. Collapsed, it is
@@ -252,7 +273,7 @@ whole project.
 | human interventions | Commands the human ran, apart from `start` and the approval of a draft. |
 | tokens (sampled) | Tokens used by the project's threads in total, by role and per done ticket. They are sampled, not exact: the plugin reads each live thread about once a minute and once when it ends it. Some providers report no token usage; the threads that ended, or have run for a minute, with no sample are counted as not reporting (`tokens.unreported` in `--json`). |
 | cumulative flow | Tickets in each state at the end of each of 14 days (or `--days`). A ticket counts as queued from its creation. |
-| active time | Time the project ran, without the paused spans. |
+| active time | Time the project ran, without the paused spans. `windowActiveMs` in `--json` is the part of it in the last 14 days (or `--days`). |
 | time in state and flow efficiency | Over done tickets, the time spent in each state from creation (as queued) until done. Flow efficiency is the share of that time spent working. |
 | checks by command | For each check command, its runs, failed runs (a non-zero exit or a timeout) and p50 duration. The plugin's own refusals count under "scope check" and "worktree check". |
 | scope flags | Check posts that found files outside the ticket's scope, and check posts that found protected paths. |
@@ -260,12 +281,59 @@ whole project.
 | tokens by ticket | The 5 tickets whose threads used the most sampled tokens. |
 | reliability | Failed worker attempts, rate-limit retries, worker threads that timed out, and merges sent back to work (a merge conflict or a failed `after_merge` check). |
 
+## When a project finishes
+
+`bb loom report <slug>` prints a project's record as Markdown, built from its
+board with no agent: the goal, where the code landed, and for each ticket its
+acceptance criteria, its submit summaries, its reviews, its merge, its blocks,
+and the planner's and the human's replies. Worker notes and check output are
+left out. It works for a project in any state, and `--json` prints
+`{ slug, markdown }`.
+
+Loom's settings have a done hook, so the record can go to wherever you keep
+notes. Set them in bb's settings for Loom, or from a terminal:
+
+```sh
+bb plugin config loom set doneHook '<a shell command>'
+bb plugin config loom set doneRecord summary   # or full
+```
+
+- `doneHook` is a shell command that Loom runs once when a project moves to
+  done. It runs in the project's checkout on the project's machine, with a
+  2-minute limit. Empty, the default, turns the hook off.
+- The command reads the record on standard input and gets five variables:
+  `LOOM_PROJECT_SLUG`, `LOOM_PROJECT_NAME`, `LOOM_PROJECT_KEY`,
+  `LOOM_PROJECT_URL` (the landed pull request, or empty) and `LOOM_RECORD`
+  (`summary` or `full`).
+- `doneRecord` chooses what it reads. With `summary`, the default, Loom starts
+  one agent on the project's reviewer model that reads the full record and
+  writes a short summary (goal, outcome, what was built, decisions, problems
+  and fixes, follow-ups and files). The agent starts only when a hook is set.
+  When it cannot start, fails or takes longer than 30 minutes, the hook reads
+  the full record instead. With `full`, no agent runs.
+- The feed says when the record was sent, or why the hook failed. A project
+  finished before the hook was set is not sent; `bb loom report <slug> --send`
+  sends a finished project's record, for a backfill or after a failure
+  (human only).
+- The hook runs with the PATH of bb's host process. When a tool is not found,
+  give its absolute path.
+
+Examples:
+
+```sh
+# Append every record to one file.
+bb plugin config loom set doneHook 'cat >> "$HOME/notes/loom-$LOOM_PROJECT_SLUG.md"'
+
+# Save it as a done Cortex task in the repository's lane.
+bb plugin config loom set doneHook 'cortex add "Loom: $LOOM_PROJECT_NAME" --lane "$(cortex memory lane)" --status done -t loom --as "loom-$LOOM_PROJECT_SLUG" --body-file -'
+```
+
 ## Safety
 
 - Only plugin code moves a ticket, runs checks, merges or decides that work is done. A thread's role comes from the plugin's own table, never from thread metadata.
 - Agents never merge or push. On the integration strategy nothing is pushed until the human runs `bb loom land`, and only `bb loom land --direct` pushes to the base branch, never with force and only after the `after_merge` checks pass on what it pushes.
 - Workers and reviewers run in bb's full permission mode unless the spec sets `permission_mode`, because some providers, such as pi, accept no other mode. An approved spec keeps the mode it was approved with.
-- The human's controls (`approve`, `start`, `pause`, `resume`, `archive`, `post`, `block`, `requeue`, `cancel`, `land`) refuse Loom's own planner, worker and reviewer threads with the code `loom_human_only`.
+- The human's controls (`approve`, `start`, `pause`, `resume`, `archive`, `post`, `block`, `requeue`, `cancel`, `land`, `report --send`) refuse Loom's own planner, worker and reviewer threads with the code `loom_human_only`.
 - The page's RPC changes state, and starts a planner thread, only when the call carries `confirm: true`, and it refuses calls from other plugins. bb cannot tell the page from an agent running `bb plugin rpc`, so the skill tells agents never to call Loom's RPC.
 
 ## How it works

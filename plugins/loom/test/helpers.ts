@@ -11,8 +11,9 @@ import { settleChecks, submit } from "../src/checks";
 import { Engine } from "../src/engine";
 import { approve, settleReviews, spawnReviewers } from "../src/review";
 import { Projects } from "../src/projects";
+import type { DoneSettings } from "../src/record";
 import { specOf, spawnWorker, type EngineCtx } from "../src/workers";
-import { SectionNameConflictError, type BbPort, type BbProjectInfo, type EnvironmentInfo, type HostPort, type SpawnArgs, type ThreadInfo } from "../src/ports";
+import { SectionNameConflictError, type BbPort, type BbProjectInfo, type EnvironmentFile, type EnvironmentFiles, type EnvironmentInfo, type EnvironmentPatch, type HostPort, type SpawnArgs, type ThreadInfo } from "../src/ports";
 
 export function makeDb(): Database.Database {
   const db = new Database(":memory:");
@@ -64,8 +65,10 @@ export class FakePort implements BbPort {
     this.record("renameSection", sectionId, name);
     this.sections.set(sectionId, name);
   }
+  deleteSectionError: Error | null = null;
   async deleteSection(sectionId: string) {
     this.record("deleteSection", sectionId);
+    if (this.deleteSectionError !== null) throw this.deleteSectionError;
     this.sections.delete(sectionId);
   }
   async moveThread(threadId: string, sectionId: string | null) {
@@ -216,6 +219,24 @@ export class FakePort implements BbPort {
     this.record("waitingOnUser", [...threadIds]);
     return threadIds.filter((id) => this.waiting.has(id));
   }
+  /** Each thread's final output. */
+  outputs = new Map<string, string>();
+  async threadOutput(threadId: string) {
+    this.record("threadOutput", threadId);
+    return this.outputs.get(threadId) ?? null;
+  }
+  /** Each environment's live changes; an environment without an entry is unavailable. */
+  environmentChanges = new Map<string, { files: EnvironmentFile[]; patches: Record<string, string> }>();
+  async environmentFiles(environmentId: string, base: string): Promise<EnvironmentFiles> {
+    this.record("environmentFiles", environmentId, base);
+    const changes = this.environmentChanges.get(environmentId);
+    return changes === undefined ? { outcome: "unavailable", message: `environment ${environmentId} is gone` } : { outcome: "ok", files: changes.files, truncated: false };
+  }
+  async environmentPatch(environmentId: string, base: string, path: string): Promise<EnvironmentPatch> {
+    this.record("environmentPatch", environmentId, base, path);
+    const changes = this.environmentChanges.get(environmentId);
+    return changes === undefined ? { outcome: "unavailable", message: `environment ${environmentId} is gone` } : { outcome: "ok", patch: changes.patches[path] ?? "", truncated: false };
+  }
   /** Registers a thread bb knows about, such as the planner's. */
   addThread(id: string, status = "idle", environmentId: string | null = null) {
     this.threads.set(id, { id, status, archivedAt: null, deletedAt: null, environmentId });
@@ -244,6 +265,8 @@ export class FakeHost implements HostPort {
   /** The merges made in each worktree, oldest first: what `merge` reports as already merged, and what `resetHard` undoes. */
   merges = new Map<string, Array<{ ref: string; before: string; sha: string }>>();
   prStates = new Map<string, "OPEN" | "MERGED" | "CLOSED">();
+  /** What changedFiles lists, by "base..head"; a missing entry lists no files. */
+  listings = new Map<string, HostOutput<"changedFiles">>();
   /** The tip fetchBranch reports for the remote's base branch. Every integration branch starts at base000, so base000 means it has not moved. */
   remoteBase = "base000";
   private commits = 0;
@@ -345,6 +368,14 @@ export class FakeHost implements HostPort {
       }
       case "prState":
         return { outcome: "ok", state: this.prStates.get((input as HostInput<"prState">).url) ?? "OPEN" };
+      case "changedFiles": {
+        const { base, head } = input as HostInput<"changedFiles">;
+        return this.listings.get(`${base}..${head}`) ?? { outcome: "ok", base, head, files: [], truncated: false };
+      }
+      case "filePatch": {
+        const { path } = input as HostInput<"filePatch">;
+        return { outcome: "ok", patch: `diff --git a/${path} b/${path}\n+changed\n`, truncated: false };
+      }
     }
   }
 }
@@ -409,7 +440,7 @@ export function sdkStubs(state: SdkState): FakeSdkOverrides {
  * A fake bb host, with the real adapter over stubbed sdk calls unless a port is given; tests register the tools or CLI they exercise.
  * The engine runs over a FakeHost, and its kick is a no-op so nothing runs in the background.
  */
-export function makeHost(opts: { port?: BbPort } = {}) {
+export function makeHost(opts: { port?: BbPort; settings?: () => DoneSettings } = {}) {
   const state: SdkState = { sections: [], takenNames: new Set(), environmentId: "env_1", environmentHost: "host_env", primaryHostId: "host_primary" };
   const { bb, harness } = createFakePluginHost({ pluginId: "loom", agentSkillIds: ["loom-plan", "loom"], sdk: sdkStubs(state) });
   const db = bb.storage.database();
@@ -418,7 +449,7 @@ export function makeHost(opts: { port?: BbPort } = {}) {
   const port = opts.port ?? createBbPort(bb);
   const projects = new Projects({ store, bb: port, now: Date.now });
   const hostPort = new FakeHost();
-  const engine = new Engine({ store, bb: port, now: Date.now, host: hostPort, projects });
+  const engine = new Engine({ store, bb: port, now: Date.now, host: hostPort, projects, settings: opts.settings });
   vi.spyOn(engine, "kick").mockImplementation(() => undefined);
   return { bb, harness, state, store, projects, engine, hostPort };
 }

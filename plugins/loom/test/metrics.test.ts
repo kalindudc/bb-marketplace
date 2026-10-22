@@ -357,6 +357,19 @@ describe("active time", () => {
   it("is zero for a project that never ran", () => {
     expect(compute({ events: [projectMoved(at(1), "draft", "ready")] }).activeMs).toBe(0);
   });
+
+  it("counts the running time inside the throughput window apart, cutting a span that starts before it", () => {
+    const events = [
+      projectMoved(at(1, 1), "ready", "running"),
+      projectMoved(at(1, 5), "running", "paused"),
+      projectMoved(at(4, 20), "paused", "running"),
+      projectMoved(at(5, 3), "running", "paused"),
+      projectMoved(at(6, 9), "paused", "running"),
+    ];
+    const metrics = compute({ events, now: at(6, 12), days: 2 });
+    expect(metrics.activeMs).toBe(4 * HOUR + 7 * HOUR + 3 * HOUR);
+    expect(metrics.windowActiveMs).toBe(3 * HOUR + 3 * HOUR);
+  });
 });
 
 describe("time in state", () => {
@@ -500,6 +513,9 @@ describe("feedText", () => {
     expect(text(event(at(1), "turn.retry", 1, { thread: "thr_9", attempt: 2, sendAt: at(1, 1) }))).toBe("CSV-1's worker hit a rate limit; retry 2 is scheduled.");
     expect(text(event(at(1), "project.landed", null, { url: "https://github.com/a/b/pull/1", sha: "abc", created: true }, "human"))).toBe("The integration branch was landed: https://github.com/a/b/pull/1.");
     expect(text(event(at(1), "project.landed", null, { direct: true, pushed: "origin/main", sha: "0123456789abcdef" }, "human"))).toBe("The integration branch was pushed to origin/main at 0123456789ab.");
+    expect(text(event(at(1), "record.sent", null, { kind: "summary" }, "loom"))).toBe("The project's summary was sent to the done hook.");
+    expect(text(event(at(1), "record.sent", null, { kind: "full", fallback: "the summary agent failed" }, "loom"))).toBe("The project's full record was sent to the done hook, because the summary agent failed.");
+    expect(text(event(at(1), "record.failed", null, { kind: "full", reason: "it exited with 1" }, "loom"))).toBe("The done hook failed: it exited with 1.");
   });
 
   it("names an event kind it does not know", () => {

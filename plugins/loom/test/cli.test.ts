@@ -621,6 +621,54 @@ describe("repos in show, tickets and ticket", () => {
   });
 });
 
+describe("report", () => {
+  let hook = "";
+  const finished = async () => {
+    await approved();
+    await run(["start", "csv"]);
+    for (const state of ["working", "checking", "review", "approved", "merging", "done"] as const) host.store.setTicketState(host.store.ticketByKey("CSV-1")!.id, state, "loom");
+    host.store.setTicketState(host.store.ticketByKey("CSV-2")!.id, "cancelled", "human");
+    expect(JSON.parse((await run(["land", "csv", "--direct", "--json"])).stdout)).toMatchObject({ done: true });
+  };
+  const record = () => host.store.record(host.store.projectBySlug("csv")!.id);
+
+  beforeEach(() => {
+    hook = "";
+    host = makeHost({ port: fake, settings: () => ({ doneHook: hook, doneRecord: "full" }) });
+    host.bb.cli.register(createCli(host.projects, host.engine, host.store, Date.now));
+  });
+
+  it("prints the project's record as Markdown, and --json prints { slug, markdown }", async () => {
+    await approved();
+    const text = await run(["report", "csv"]);
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain("# CSV export (csv)");
+    expect(text.stdout).toContain("### CSV-1 · Order rows (queued)");
+    expect(JSON.parse((await run(["report", "csv", "--json"])).stdout)).toEqual({ slug: "csv", markdown: text.stdout });
+  });
+
+  it("--send is refused on a project that is not done and when no hook is set", async () => {
+    await approved();
+    hook = "save-note";
+    expect(errorOf((await run(["report", "csv", "--send", "--json"])).stdout)).toMatchObject({ code: "loom_invalid_state", message: expect.stringContaining("only a finished project") });
+    host.store.setProjectState(host.store.projectBySlug("csv")!.id, "running", "human");
+    host.store.setProjectState(host.store.projectBySlug("csv")!.id, "done", "loom");
+    hook = " ";
+    expect(errorOf((await run(["report", "csv", "--send", "--json"])).stdout)).toMatchObject({ code: "loom_invalid_state", hint: expect.stringContaining("doneHook") });
+    expect(humanEvents().filter((event) => event.action === "report")).toEqual([]);
+  });
+
+  it("--send queues a finished project's record again and logs one human action", async () => {
+    await finished();
+    host.store.updateRecord(record()!.id, { state: "sent" });
+    hook = "save-note";
+    const out = await run(["report", "csv", "--send"]);
+    expect(out).toMatchObject({ exitCode: 0, stdout: expect.stringContaining("Queued the record of csv") });
+    expect(record()?.state).toBe("pending");
+    expect(humanEvents().filter((event) => event.action === "report")).toEqual([{ action: "report", slug: "csv", send: true }]);
+  });
+});
+
 describe("readyToLand", () => {
   const project = (over: Partial<Parameters<typeof readyToLand>[0]> = {}) => ({ state: "running", strategy: "integration", ticketCounts: { done: 2, cancelled: 1 }, ...over });
 
@@ -664,6 +712,7 @@ describe("loom_human_only", () => {
     ["requeue", "CSV-1"],
     ["cancel", "CSV-1", "why"],
     ["land", "csv"],
+    ["report", "csv", "--send"],
   ];
 
   it("refuses every state-changing command from a planner, worker or reviewer thread", async () => {
@@ -739,6 +788,7 @@ describe("metrics and feed", () => {
     tokens: { total: 7000, perDoneTicket: 1750, byRole: { planner: 1000, worker: 4000, reviewer: 2000 }, unreported: 0 },
     cumulativeFlow: [],
     activeMs: 7 * HOUR,
+    windowActiveMs: 7 * HOUR,
     timeInState: { ms: { ...Object.fromEntries(TICKET_STATES.map((state) => [state, 0])), queued: 2 * HOUR, working: 4 * HOUR, checking: HOUR, review: 3 * HOUR } as ProjectMetrics["counts"], flowEfficiency: 0.4, n: 3 },
     checksByCommand: [
       { command: "npm test", runs: 31, failed: 7, p50Ms: 100_000 },
@@ -811,6 +861,7 @@ describe("metrics and feed", () => {
       checks: { total: 0, failed: 0 },
       tokens: { total: 0, perDoneTicket: null, byRole: { planner: 0, worker: 0, reviewer: 0 }, unreported: 0 },
       activeMs: 0,
+      windowActiveMs: 0,
       timeInState: { ms: Object.fromEntries(TICKET_STATES.map((state) => [state, 0])) as ProjectMetrics["counts"], flowEfficiency: null, n: 0 },
       checksByCommand: [],
       scopeFlags: { outside: 0, protectedHits: 0 },
@@ -864,6 +915,7 @@ describe("metrics and feed", () => {
       "timeInState",
       "tokens",
       "tokensByTicket",
+      "windowActiveMs",
       "wip",
       "wipAge",
     ]);

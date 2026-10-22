@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { BoardCard, FeedRow, HomeView, PlanningSession, ProjectSummary, ProjectTimeline, ProjectView, TicketDetail, ThreadInfo } from "../src/contract";
+import type { BoardCard, ChangesView, FeedRow, HomeView, PlanningSession, ProjectSummary, ProjectTimeline, ProjectView, TicketDetail, ThreadInfo } from "../src/contract";
 import type { ProjectMetrics } from "../src/metrics";
 import type { SpecVersionView } from "../src/spec-view";
 import type { BbPluginApi, NewThreadRequest } from "@get-bb/plugin-sdk";
@@ -50,6 +50,17 @@ const board = (doc: Doc) => {
 };
 
 describe("reads", () => {
+  it("changes and changePatch read a project's changes from its host, and validate the commits", async () => {
+    await approved();
+    const view = await call<ChangesView>("changes", { slug: "csv" });
+    expect(view).toMatchObject({ slug: "csv", branch: "loom/csv", unavailable: null });
+    expect(view.sources.map((source) => source.id)).toEqual(["branch", "commit:CSV-1", "commit:CSV-2"]);
+    const [base, head] = ["a".repeat(40), "b".repeat(40)];
+    expect(await call("changePatch", { slug: "csv", path: "src/a.ts", base, head })).toMatchObject({ truncated: false });
+    expect(host.hostPort.callsTo("filePatch")).toEqual([{ repo: "/repo", base, head, path: "src/a.ts", maxBytes: 400_000 }]);
+    await expect(call("changePatch", { slug: "csv", path: "src/a.ts", base: "main", head })).rejects.toThrow();
+  });
+
   it("projects lists the project summaries", async () => {
     expect(await call("projects")).toEqual([]);
     await approved();

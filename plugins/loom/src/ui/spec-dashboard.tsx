@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { ProjectView, SpecVersionView } from "../contract";
 import { wavesOf, type SpecChanges } from "../spec-paths";
 import { BUTTON, plural, useRemote } from "./common";
@@ -38,6 +38,7 @@ function Dashboard({ slug, pinned, readOnly, bbProjectNames }: { slug: string; p
   const [lit, setLit] = useState(false);
   const [target, setTarget] = useState<NoteTarget | null>(null);
   const tray = useNoteTray(slug);
+  const inspector = useRef<HTMLDivElement>(null);
   const view = remote.data;
   if (view === null) {
     return remote.error === null ? <p role="status" className="text-sm text-muted-foreground">Loading the spec…</p> : <p role="alert" className="text-sm text-destructive-text">Could not load the spec: {remote.error}</p>;
@@ -93,15 +94,30 @@ function Dashboard({ slug, pinned, readOnly, bbProjectNames }: { slug: string; p
               ))}
             </div>
             <div role="tabpanel" className="min-w-0">
-              {tab === "tickets" && <TicketsPane view={view} selected={selected} highlighted={highlighted} onPick={pick} onClear={() => setLit(false)} />}
+              {tab === "tickets" && (
+                <TicketsPane
+                  view={view}
+                  selected={selected}
+                  highlighted={highlighted}
+                  onPick={(ref) => {
+                    // Selecting a card brings its details into view; the second click only clears the highlight.
+                    if (ref !== highlighted) inspector.current!.scrollIntoView({ block: "nearest", behavior: "smooth" });
+                    pick(ref);
+                  }}
+                  onClear={() => setLit(false)}
+                />
+              )}
               {tab === "files" && <FilesPane view={view} highlighted={highlighted} onPick={pick} onClear={() => setLit(false)} />}
               {tab === "checks" && <ChecksPane view={view} />}
               {tab === "project" && <ProjectPane view={view} bbProjectNames={bbProjectNames} />}
             </div>
-            <Inspector view={view} selected={selected} onPick={pick} />
+            <div ref={inspector}>
+              <Inspector view={view} selected={selected} onPick={pick} />
+            </div>
           </div>
+          {/* Sticky, so a note started far down the waves opens beside it instead of scrolling the page back up. */}
           {!readOnly && (
-            <aside className="min-w-0 space-y-3">
+            <aside data-notes-column className="min-w-0 space-y-3 lg:sticky lg:top-3 lg:max-h-[calc(100dvh-8rem)] lg:self-start lg:overflow-y-auto">
               {target !== null && (
                 <NoteComposer
                   key={`${target.paths[0]} ${target.label}`}

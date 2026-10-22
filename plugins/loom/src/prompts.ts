@@ -465,3 +465,15 @@ export function landBody(a: { project: ProjectRow; spec: Spec; done: TicketRow[]
       : [`This pull request lands the project's work in the repo ${JSON.stringify(repo)}. The project also changes the ${others.length === 1 ? "repo" : "repos"} ${andList(others.map((name) => JSON.stringify(name)))}, which ${others.length === 1 ? "lands" : "land"} on ${others.length === 1 ? "its" : "their"} own.`, ""];
   return [spec.project.goal, "", ...across, "Merged tickets:", ...done.map((ticket) => `- ${ticket.key} ${ticket.title}`), "", `Opened by Loom (project ${project.slug}).`].join("\n");
 }
+
+/** The visible prompt of the agent that summarizes a finished project's record; the record follows as agent-only text. */
+export function recordPrompt(project: ProjectRow): string {
+  return [
+    `[loom] Write the record of the finished Loom project ${project.name} (${project.slug}). Its full record follows as hidden text.`,
+    "Reply with only the summary in Markdown, no preamble, about 800 words at most, with these sections in order:",
+    "## Goal (one or two sentences), ## Outcome (where the code landed; tickets done and cancelled), ## What was built (one or two sentences per ticket, by key),",
+    "## Decisions (choices made while building and why, including the planner's and the human's replies), ## Problems and fixes (review findings, blocks and merge trouble that changed the work),",
+    "## Follow-ups (work left, known gaps, risks), ## Files (the main files as backticked repo-relative paths named in the record).",
+    "Keep exact names, numbers, commit hashes and links. Do not run tools, change files or ask questions: your reply is passed to a command exactly as written.",
+  ].join("\n");
+}

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { ProjectHealth } from "../contract";
 import { ShareBar, type Swatch } from "./charts";
+import { formatDuration } from "../format";
 import { CARD, HEADING, plural } from "./common";
 
 const DONE: Swatch = { fill: "var(--success, currentColor)" };
@@ -9,6 +10,14 @@ const BLOCKED: Swatch = { fill: "var(--destructive, currentColor)" };
 const WAITING: Swatch = { fill: "var(--muted-foreground, currentColor)", opacity: 0.35 };
 const USED: Swatch = { fill: "var(--warning, currentColor)" };
 const count = (value: number) => value.toLocaleString("en-US");
+const MINUTE = 60_000;
+
+function paceNote({ perHour, remaining, etaMs }: ProjectHealth["pace"]): string {
+  if (remaining === 0) return "nothing left";
+  if (perHour === null) return `${remaining} left; not run in the last 14 days`;
+  if (etaMs === null) return `${remaining} left; none done in the last 14 days`;
+  return `${remaining} left: about ${formatDuration(Math.ceil(etaMs / MINUTE) * MINUTE)} of running at this pace`;
+}
 
 function Part({ id, title, value, note, children }: { id: string; title: string; value: ReactNode; note?: string; children?: ReactNode }) {
   return (
@@ -21,7 +30,7 @@ function Part({ id, title, value, note, children }: { id: string; title: string;
   );
 }
 
-/** The project's health above its tabs. Pace is over the last 14 days; the budget and deadline show only when the spec sets them. */
+/** The project's health above its tabs. Pace is over the time the project ran in the last 14 days; the budget and deadline show only when the spec sets them. */
 export function HealthStrip({ health }: { health: ProjectHealth }) {
   const { progress, pace, budget, deadline, capacity } = health;
   const small = (text: string) => <span className="text-xs font-normal text-muted-foreground">{text}</span>;
@@ -41,8 +50,8 @@ export function HealthStrip({ health }: { health: ProjectHealth }) {
       <Part
         id="pace"
         title="Pace"
-        value={<>{pace.perDay.toFixed(1)}{small("/day")}</>}
-        note={pace.remaining === 0 ? "nothing left" : pace.etaDays === null ? `${pace.remaining} left; none done in the last 14 days` : `${pace.remaining} left: about ${plural(Math.ceil(pace.etaDays), "day")} at this pace`}
+        value={pace.perHour === null ? "none yet" : pace.perHour >= 1 ? <>{pace.perHour.toFixed(1)}{small("/hour")}</> : <>{(pace.perHour * 24).toFixed(1)}{small("/day")}</>}
+        note={paceNote(pace)}
       />
       {budget !== null && (
         <Part id="budget" title="Token budget" value={`${Math.round((budget.used / budget.max) * 100)}%`} note={`${count(budget.used)} of ${count(budget.max)} (sampled)`}>

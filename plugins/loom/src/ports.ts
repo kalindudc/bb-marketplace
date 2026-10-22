@@ -1,6 +1,8 @@
 // Loom's view of bb. bb-port.ts adapts bb.sdk to this; tests fake it.
 import type { NewThreadRequest } from "@get-bb/plugin-sdk";
-import type { HostInput, HostMethod, HostOutput } from "./host-contract";
+import type { FILE_STATUSES, HostInput, HostMethod, HostOutput } from "./host-contract";
+
+export type FileStatus = (typeof FILE_STATUSES)[number];
 
 export class SectionNameConflictError extends Error {
   constructor(readonly sectionName: string) {
@@ -57,6 +59,12 @@ export interface BbPort {
   providerIds(): Promise<string[]>;
   /** The ids among `threadIds` with a pending interaction (a question or an approval); unknown threads are left out. */
   waitingOnUser(threadIds: readonly string[]): Promise<string[]>;
+  /** The thread's final output, as GET /threads/:id/output assembles it; null before it has one. */
+  threadOutput(threadId: string): Promise<string | null>;
+  /** A worker's worktree now, uncommitted and untracked files included, against its merge base with `base`, as bb's own diff reads it. */
+  environmentFiles(environmentId: string, base: string): Promise<EnvironmentFiles>;
+  /** One file's patch in that same comparison. */
+  environmentPatch(environmentId: string, base: string, path: string): Promise<EnvironmentPatch>;
 }
 
 export interface BbProjectInfo {
@@ -66,6 +74,19 @@ export interface BbProjectInfo {
   gitRemoteUrl: string | null;
   sources: Array<{ hostId: string; path: string; isDefault: boolean }>;
 }
+
+export interface EnvironmentFile {
+  path: string;
+  previousPath: string | null;
+  status: FileStatus;
+  additions: number;
+  deletions: number;
+  binary: boolean;
+  untracked: boolean;
+}
+
+export type EnvironmentFiles = { outcome: "ok"; files: EnvironmentFile[]; truncated: boolean } | { outcome: "unavailable"; message: string };
+export type EnvironmentPatch = { outcome: "ok"; patch: string; truncated: boolean } | { outcome: "unavailable"; message: string };
 
 export interface SpawnArgs {
   bbProjectId: string;
@@ -79,6 +100,8 @@ export interface SpawnArgs {
   model?: string;
   reasoningLevel?: string;
   permissionMode?: "accept-edits" | "auto" | "full";
+  /** Text only the agent reads, after the prompt. */
+  detail?: string;
 }
 
 export interface ThreadInfo {
