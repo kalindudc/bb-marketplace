@@ -6,10 +6,15 @@ import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-libra
 import { loadPluginApp, mountPluginContentScripts, renderSlot, type PluginRpcTestHandlers, type PluginSdkTestFakes, type RenderSlotOptions } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginNavPanelProps, PluginSidebarThread, PluginThreadHeaderActionProps } from "@get-bb/plugin-sdk/app";
 import type { Attempt, ChecksItem, HomeProject, NextStep, PlanningSession, ProjectSummary, ProjectView, SentNote, SpecVersionView, ThreadInfo, rpcContract } from "../src/contract";
+import type { TicketRow } from "../src/db/store";
+import { repoOverviews } from "../src/projects";
 import { notesMessage } from "../src/prompts";
+import { parseSpec } from "../src/spec";
 import { ConfirmButton, MoreMenu } from "../src/ui/common";
+import { repoLand } from "../src/ui/next-step-bar";
 import { questionsOf } from "../src/ui/questions";
 import { HOUR, NOW, agent, attempt, card, feedRow, health, homeProject, homeView, metrics, overview, projectView, repoOverview, specVersionView, ticketDetail, timeline, withRepos } from "./fixtures";
+import { specToml } from "./helpers";
 
 type Handlers = PluginRpcTestHandlers<typeof rpcContract>;
 const unexpected = (): never => {
@@ -2887,22 +2892,66 @@ describe("repos", () => {
     await waitFor(() => expect(control).toHaveBeenCalledWith({ slug: "csv", action: "land", confirm: true }));
   });
 
-  it("names only the repos with work to land, lands each onto its own base from the header, and keeps the bar's label when none is left", async () => {
+  it("names every repo the land pushes in its confirm, a repo landed before included, even when it lands onto each base instead", async () => {
     const control = vi.fn(() => multi({ next: null }));
-    const one = [repoOverview({ toLand: false }), repoOverview({ name: "api", bbProjectId: "proj_api", base: "trunk" })];
-    const { slot } = await mountPage("csv", { project: () => multi({ overview: overview({ repos: one, ticketCounts: { done: 2 } }), next: null }), control });
+    // web opened its pull request before api had merged work; a land without a repo pushes both again.
+    const partly = [repoOverview({ prUrl: "https://github.com/acme/web/pull/4", landedAt: NOW - HOUR, toLand: false }), repoOverview({ name: "api", bbProjectId: "proj_api", base: "trunk" })];
+    const { slot } = await mountPage("csv", { project: () => multi({ overview: overview({ repos: partly, ticketCounts: { done: 2 } }), next: null }), control });
     await slot.findByRole("heading", { name: "CSV export" });
     expect([...slot.container.querySelectorAll("[data-controls] button")].map((button) => button.textContent)).toEqual(["Pause", "Pause now", "Land · open the pull requests", "Land to each repo's base", "⋯"]);
     fireEvent.click(slot.getByRole("button", { name: "Land · open the pull requests" }));
-    expect(slot.getByRole("button", { name: "Click again to land api" })).toBeTruthy();
+    expect(slot.getByRole("button", { name: "Click again to land web and api" })).toBeTruthy();
     fireEvent.click(slot.getByRole("button", { name: "Land to each repo's base" }));
-    fireEvent.click(slot.getByRole("button", { name: "Click again to land api to their bases" }));
+    fireEvent.click(slot.getByRole("button", { name: "Click again to land web and api to their bases" }));
     await waitFor(() => expect(control).toHaveBeenCalledWith({ slug: "csv", action: "landDirect", confirm: true }));
 
-    const none = repos().map((repo) => ({ ...repo, toLand: false }));
-    const { slot: done } = await mountPage("csv", { project: () => multi({ overview: overview({ repos: none, ticketCounts: { done: 2 } }), next: landing("Land · finish the project") }) });
+    const { slot: bar } = await mountPage("csv", { project: () => multi({ overview: overview({ repos: partly, ticketCounts: { done: 2 } }), next: landing("Land · 1 repo") }) });
+    await bar.findByRole("heading", { name: "CSV export" });
+    const step = bar.container.querySelector<HTMLElement>("[data-next-step]")!;
+    fireEvent.click(within(step).getByRole("button", { name: "Land · open the pull requests" }));
+    expect(within(step).getByRole("button", { name: "Click again to land web and api" })).toBeTruthy();
+  });
+
+  it("leaves out a repo with no done ticket, and keeps the bar's label when every repo is landed", async () => {
+    const apiOnly = [repoOverview({ toLand: false }), repoOverview({ name: "api", bbProjectId: "proj_api", base: "trunk" })];
+    const { slot } = await mountPage("csv", { project: () => multi({ overview: overview({ repos: apiOnly, ticketCounts: { done: 1 } }), next: null }) });
+    await slot.findByRole("heading", { name: "CSV export" });
+    fireEvent.click(slot.getByRole("button", { name: "Land · open the pull requests" }));
+    expect(slot.getByRole("button", { name: "Click again to land api" })).toBeTruthy();
+    fireEvent.click(slot.getByRole("button", { name: "Land to each repo's base" }));
+    expect(slot.getByRole("button", { name: "Click again to land api to their bases" })).toBeTruthy();
+
+    const landed = repos().map((repo) => ({ ...repo, landedAt: NOW - HOUR, toLand: false }));
+    const { slot: done } = await mountPage("csv", { project: () => multi({ overview: overview({ repos: landed, ticketCounts: { done: 2 } }), next: landing("Land · finish the project") }) });
     await done.findByRole("heading", { name: "CSV export" });
-    expect(within(done.container.querySelector<HTMLElement>("[data-next-step]")!).getByRole("button", { name: "Land · finish the project" })).toBeTruthy();
+    const step = done.container.querySelector<HTMLElement>("[data-next-step]")!;
+    fireEvent.click(within(step).getByRole("button", { name: "Land · finish the project" }));
+    expect(within(step).getByRole("button", { name: "Click again to land web and api" })).toBeTruthy();
+  });
+
+  it("names exactly the repos the engine lands: those with a done ticket, from the server's repo overviews", () => {
+    const spec = parseSpec(
+      specToml((doc) => {
+        withRepos(doc);
+        doc.repo.push({ name: "docs", project: "proj_docs" });
+        doc.ticket.push({ ref: "csv-docs", title: "Export docs", body: "Document the export.", acceptance: ["WHEN the docs are read THE SYSTEM SHALL name every column"], scope: ["docs/**"], repo: "docs" });
+      }),
+    ).spec!;
+    const row = (repo: string, state: TicketRow["state"], at: number) => ({ repo, state, state_at: at }) as TicketRow;
+    const tickets = [row("web", "done", NOW - 2 * HOUR), row("api", "done", NOW - HOUR), row("docs", "queued", NOW - HOUR)];
+    // web landed after its merge, api never landed, docs has nothing done.
+    const lands = new Map([["web", { prUrl: "https://github.com/acme/web/pull/4", landedAt: NOW - HOUR }]]);
+    const overviews = repoOverviews({ bb_project_id: "proj_1" }, spec, tickets, lands);
+    expect(overviews.map((repo) => [repo.name, repo.toLand])).toEqual([
+      ["web", false],
+      ["api", true],
+      ["docs", false],
+    ]);
+    // landRepos in merge.ts: every repo with a done ticket, in the spec's order.
+    const withDone = new Set(tickets.filter((ticket) => ticket.state === "done").map((ticket) => ticket.repo));
+    const landedByEngine = spec.repo!.map((repo) => repo.name).filter((name) => withDone.has(name));
+    expect(repoLand(overviews)!.names).toEqual(landedByEngine);
+    expect(repoLand(overviews)!.confirm).toBe("Click again to land web and api");
   });
 
   it("opens each repo's pull request from under the header", async () => {
