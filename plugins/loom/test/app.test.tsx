@@ -344,27 +344,37 @@ describe("project list", () => {
     expect(slot.inspection.navigateCalls).toEqual([pushed("docs")]);
   });
 
-  describe("search and the finished switch", () => {
+  describe("search and the Finished group", () => {
     const three = () => homeView({ projects: [homeProject(), homeProject({ slug: "docs", name: "Docs site", key: "DOC", state: "done" }), homeProject({ slug: "old", name: "Old importer", key: "LEGACY", state: "archived" })] });
     const slugs = (slot: Slot) => [...slot.container.querySelectorAll("[data-project-row]")].map((row) => row.getAttribute("data-project-row"));
-    const toggle = (slot: Slot) => slot.getByRole("checkbox", { name: "Hide done and archived" }) as HTMLInputElement;
+    const finished = (slot: Slot) => within(slot.container.querySelector<HTMLElement>("[data-finished]")!).getByRole("button", { name: /Finished · 2/ });
 
-    it("hides done and archived projects with a switch it remembers", async () => {
+    it("folds done and archived projects into a Finished group it remembers opening", async () => {
       const { slot } = await mountPage("", { home: three });
       await slot.findByText("CSV export");
-      expect(slugs(slot)).toEqual(["csv", "docs", "old"]);
-      fireEvent.click(toggle(slot));
       expect(slugs(slot)).toEqual(["csv"]);
-      expect(localStorage.getItem("loom.home.hideFinished")).toBe("true");
+      expect(finished(slot).getAttribute("aria-expanded")).toBe("false");
+      fireEvent.click(finished(slot));
+      expect(slugs(slot)).toEqual(["csv", "docs", "old"]);
+      expect(localStorage.getItem("loom.home.showFinished")).toBe("true");
       slot.lifecycle.unmount();
 
       const { slot: again } = await mountPage("", { home: three });
       await again.findByText("CSV export");
-      expect(slugs(again)).toEqual(["csv"]);
-      expect(toggle(again).checked).toBe(true);
-      fireEvent.click(toggle(again));
       expect(slugs(again)).toEqual(["csv", "docs", "old"]);
-      expect(localStorage.getItem("loom.home.hideFinished")).toBe("false");
+      expect(finished(again).getAttribute("aria-expanded")).toBe("true");
+      fireEvent.click(finished(again));
+      expect(slugs(again)).toEqual(["csv"]);
+      expect(localStorage.getItem("loom.home.showFinished")).toBe("false");
+      expect(again.queryByRole("checkbox")).toBeNull();
+    });
+
+    it("keeps a finished project that still needs you among the active rows", async () => {
+      const needsYou = [{ kind: "land" as const, slug: "docs", project: "Docs site", key: null, text: "finished all 3 tickets; land the integration branch", at: NOW }];
+      const { slot } = await mountPage("", { home: () => ({ ...three(), needsYou }) });
+      await slot.findByText("Docs site");
+      expect(slugs(slot)).toEqual(["docs", "csv"]);
+      expect(within(slot.container.querySelector<HTMLElement>("[data-finished]")!).getByRole("button", { name: /Finished · 1/ })).toBeTruthy();
     });
 
     it("filters the table by name, key or slug as the human types", async () => {
@@ -380,11 +390,13 @@ describe("project list", () => {
       expect(slot.container.querySelector("[data-projects-empty]")!.textContent).toBe('No project matches "zzz".');
     });
 
-    it("says so when the switch hides every project", async () => {
-      const { slot } = await mountPage("", { home: () => homeView({ projects: [homeProject({ state: "done" })] }) });
+    it("opens the Finished group and says so when every project is done or archived", async () => {
+      const { slot } = await mountPage("", { home: () => homeView({ projects: [homeProject({ state: "done" })], needsYou: [] }) });
       await slot.findByText("CSV export");
-      fireEvent.click(toggle(slot));
       expect(slot.container.querySelector("[data-projects-empty]")!.textContent).toBe("Every project is done or archived.");
+      expect(slugs(slot)).toEqual(["csv"]);
+      expect(within(slot.container.querySelector<HTMLElement>("[data-finished]")!).queryByRole("button", { name: /Finished/ })).toBeNull();
+      expect(slot.container.querySelector("[data-finished]")!.textContent).toContain("Finished · 1");
     });
   });
 
@@ -429,17 +441,79 @@ describe("home", () => {
     expect(homeTile(one, "agents").textContent).toContain("1 worker · 1 reviewer");
   });
 
-  it("lists what needs you in order, each with one button that opens its ticket or project", async () => {
-    const needsYou = [...homeView().needsYou.slice(0, 2), { kind: "pending" as const, slug: "csv", project: "CSV export", key: null, text: "spec v2 waits for your approval", at: NOW - 20 * 60_000 }, ...homeView().needsYou.slice(2)];
-    const { slot } = await mountPage("", { home: () => homeView({ needsYou, projects: [homeProject({ pendingVersion: 2 })] }) });
-    await waitFor(() => expect(slot.container.querySelectorAll("[data-need]")).toHaveLength(5));
-    const items = [...slot.container.querySelectorAll<HTMLElement>("[data-need]")];
-    expect(items.map((item) => item.getAttribute("data-need"))).toEqual(["blocked", "approve", "pending", "land", "paused"]);
-    expect(items[0]!.textContent).toContain("CSV-7 is blocked · CSV export · needs the staging DB credentials");
-    expect(items[1]!.textContent).toContain("Audit log has a draft spec v1 with 9 tickets");
-    expect(items.map((item) => item.querySelector("button")!.textContent)).toEqual(["Open ticket", "Review and approve", "Approve v2", "Land", "Open"]);
-    for (const item of items) fireEvent.click(item.querySelector("button")!);
-    expect(slot.inspection.navigateCalls).toEqual([pushed("csv/CSV-7"), pushed("audit"), pushed("csv"), pushed("srch"), pushed("bill")]);
+  describe("what needs you, in each project's row", () => {
+    const pending = { kind: "pending" as const, slug: "csv", project: "CSV export", key: null, text: "spec v2 waits for your approval", at: NOW - 2 * 60_000 };
+    // The server sends needs newest first, so the pending version comes before the blocked ticket.
+    const needsYou = [pending, ...homeView().needsYou];
+    const projects = [
+      homeProject({ slug: "calm", name: "Calm one", key: "CALM" }),
+      homeProject({ slug: "srch", name: "Search revamp", key: "SRCH" }),
+      homeProject({ pendingVersion: 2 }),
+      homeProject({ slug: "audit", name: "Audit log", key: "AUD", state: "draft" }),
+      homeProject({ slug: "bill", name: "Billing API", key: "BILL", state: "paused" }),
+    ];
+    const rows = (slot: Slot) => [...slot.container.querySelectorAll<HTMLElement>("[data-project-row]")];
+    const chips = (row: HTMLElement) => [...row.querySelectorAll<HTMLElement>("[data-project-needs] button")];
+
+    it("puts rows that need you first, most urgent first, each with its chips and a coloured edge", async () => {
+      const { slot } = await mountPage("", { home: () => homeView({ needsYou, projects }) });
+      await slot.findByText("Calm one");
+      expect(rows(slot).map((row) => [row.getAttribute("data-project-row"), row.getAttribute("data-attention")])).toEqual([
+        ["csv", "blocked"],
+        ["bill", "paused"],
+        ["audit", "approve"],
+        ["srch", "land"],
+        ["calm", null],
+      ]);
+      const [csv, bill, audit, srch, calm] = rows(slot);
+      expect(chips(csv!).map((chip) => [chip.getAttribute("data-need"), chip.textContent])).toEqual([
+        ["blocked", "!CSV-7 blocked"],
+        ["pending", "✎Approve v2"],
+      ]);
+      expect(chips(csv!)[0]!.getAttribute("title")).toBe("CSV-7 is blocked: needs the staging DB credentials");
+      expect(chips(bill!).map((chip) => chip.textContent)).toEqual(["⏸Paused by Loom"]);
+      expect(chips(bill!)[0]!.getAttribute("title")).toBe("The token budget is used up: 900 of 900 tokens.");
+      expect(chips(audit!).map((chip) => chip.textContent)).toEqual(["✎Review draft"]);
+      expect(chips(srch!).map((chip) => chip.textContent)).toEqual(["↑Ready to land"]);
+      expect(calm!.querySelector("[data-project-needs]")!.textContent).toBe("—");
+      expect(csv!.querySelector("td")!.className).toContain("border-l-destructive");
+      expect(srch!.querySelector("td")!.className).toContain("border-l-success");
+      expect(audit!.querySelector("td")!.className).toContain("border-l-warning");
+      expect(calm!.querySelector("td")!.className).toContain("border-l-transparent");
+      expect(slot.queryByRole("region", { name: "Needs you" })).toBeNull();
+    });
+
+    it("opens a chip's ticket or project, and only that", async () => {
+      const { slot } = await mountPage("", { home: () => homeView({ needsYou, projects }) });
+      await slot.findByText("Calm one");
+      for (const row of rows(slot)) for (const chip of chips(row)) fireEvent.click(chip);
+      expect(slot.inspection.navigateCalls).toEqual([pushed("csv/CSV-7"), pushed("csv"), pushed("bill"), pushed("audit"), pushed("srch")]);
+    });
+
+    it("shows three chips and a +N more that opens the project", async () => {
+      const blocked = [7, 8, 9, 10].map((n) => ({ kind: "blocked" as const, slug: "csv", project: "CSV export", key: `CSV-${n}`, text: "stuck", at: NOW - n }));
+      const { slot } = await mountPage("", { home: () => homeView({ needsYou: [pending, ...blocked] }) });
+      await slot.findByText("CSV export");
+      expect(chips(rows(slot)[0]!).map((chip) => chip.textContent)).toEqual(["!CSV-7 blocked", "!CSV-8 blocked", "!CSV-9 blocked", "+2 more"]);
+      fireEvent.click(slot.getByRole("button", { name: "+2 more" }));
+      expect(slot.inspection.navigateCalls).toEqual([pushed("csv")]);
+    });
+
+    it("says on the tile how many projects need you and how many tickets are blocked", async () => {
+      const { slot } = await mountPage("", { home: () => homeView({ needsYou, projects }) });
+      await slot.findByText("Calm one");
+      const tile = slot.container.querySelector<HTMLElement>('[data-home-tile="needs"]')!;
+      expect(tile.querySelector("[data-tile-value]")!.textContent).toBe("5");
+      expect(tile.textContent).toContain("across 4 projects · 1 blocked");
+      expect(tile.className).toContain("border-warning");
+
+      slot.lifecycle.unmount();
+      const { slot: none } = await mountPage("", { home: () => homeView({ needsYou: [] }) });
+      await none.findByText("CSV export");
+      const calm = none.container.querySelector<HTMLElement>('[data-home-tile="needs"]')!;
+      expect(calm.textContent).toBe("Needs you0");
+      expect(calm.className).not.toContain("border-warning");
+    });
   });
 
   it("shows each project's progress, live agents, 14-day throughput, tokens against its budget and its last event", async () => {
@@ -474,9 +548,20 @@ describe("home", () => {
     const rows = [...slot.container.querySelectorAll("[data-planning-row]")];
     expect(rows.map((row) => row.getAttribute("data-planning-row"))).toEqual(["thr_p1"]);
     expect(rows[0]!.textContent).toContain("planner is asking questions · started 4m");
+    expect(rows[0]!.getAttribute("data-attention")).toBe("planning");
+    expect(rows[0]!.querySelector("[data-state-badge]")!.textContent).toBe("planning");
     expect(slot.container.querySelector("[data-guide]")).toBeNull();
-    fireEvent.click(slot.getByRole("button", { name: "Continue" }));
+    expect(slot.queryByRole("region", { name: "Planning" })).toBeNull();
+    fireEvent.click(slot.getByRole("button", { name: "Continue planning" }));
     expect(slot.inspection.navigateCalls).toEqual([pushed("_plan/thr_p1")]);
+    fireEvent.click(rows[0]!);
+    expect(slot.inspection.navigateCalls).toEqual([pushed("_plan/thr_p1"), pushed("_plan/thr_p1")]);
+
+    fireEvent.change(slot.getByRole("searchbox", { name: "Search projects" }), { target: { value: "csv" } });
+    expect(slot.container.querySelector("[data-planning-row]")).toBeNull();
+    fireEvent.change(slot.getByRole("searchbox", { name: "Search projects" }), { target: { value: "rate limits" } });
+    expect([...slot.container.querySelectorAll("[data-planning-row]")]).toHaveLength(1);
+    expect(slot.container.querySelector("[data-project-row]")).toBeNull();
   });
 
   it("shows a conversation instead of the guide when it is the only thing there is", async () => {
@@ -663,6 +748,14 @@ describe("planning conversation", () => {
 });
 
 describe("spec dashboard", () => {
+  const scroll = vi.fn();
+  beforeEach(() => {
+    scroll.mockClear();
+    Element.prototype.scrollIntoView = scroll;
+  });
+  afterEach(() => {
+    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  });
   const session = (over: Partial<PlanningSession> = {}): PlanningSession => ({ threadId: "thr_p1", title: "Export orders as CSV", startedAt: Date.now(), slug: "csv", projectState: "draft", ...over });
   const draft = () => projectView({ overview: overview({ state: "draft", approvedVersion: null, ticketCount: 0, ticketCounts: {} }), board: [] });
   const dashboard = (slot: Slot) => slot.container.querySelector<HTMLElement>("[data-spec-dashboard]")!;
@@ -1030,9 +1123,39 @@ describe("spec dashboard", () => {
     expect(inPane(slot, "budget.deadline")!.textContent).toContain("2026-11-15");
   });
 
+  it("brings the selected ticket's card into view when a ticket card selects it, not when the second click clears it", async () => {
+    const { slot } = await mountDashboard();
+    fireEvent.click(card(slot, "csv-export"));
+    expect(scroll).toHaveBeenCalledTimes(1);
+    expect(scroll).toHaveBeenCalledWith({ block: "nearest", behavior: "smooth" });
+    expect(scroll.mock.contexts[0]).toBe(inspector(slot).parentElement);
+    fireEvent.click(card(slot, "csv-export"));
+    expect(scroll).toHaveBeenCalledTimes(1);
+    fireEvent.click(card(slot, "csv-model"));
+    expect(scroll).toHaveBeenCalledTimes(2);
+  });
+
   describe("notes", () => {
     beforeEach(() => localStorage.clear());
     const tray = (slot: Slot) => slot.container.querySelector<HTMLElement>("[data-notes-tray]")!;
+
+    it("takes a note on a whole ticket from its card, and says where the note buttons are", async () => {
+      const { slot } = await mountDashboard();
+      expect(tray(slot).textContent).toContain('Press "+ note" on a ticket card, or on any line of the selected ticket and the other tabs.');
+      const button = slot.getByRole("button", { name: "Add a note on ticket csv-model" });
+      expect(button.className).toContain("[@media(hover:none)]:opacity-100");
+      expect(button.className).not.toContain("opacity-0");
+      expect(slot.container.querySelector<HTMLElement>("[data-note-target] button")!.className).toContain("[@media(hover:none)]:opacity-100");
+      fireEvent.click(button);
+      expect(scroll).not.toHaveBeenCalled();
+      expect(card(slot, "csv-model").getAttribute("aria-pressed")).toBe("true");
+      expect(dashboard(slot).textContent).toContain("Note on csv-model (whole ticket)");
+      fireEvent.change(slot.getByRole("textbox", { name: "Note text" }), { target: { value: "Split the model from the migration." } });
+      fireEvent.click(slot.getByRole("button", { name: "Add note" }));
+      expect(JSON.parse(localStorage.getItem("loom.notes.csv")!)).toEqual([{ version: 2, paths: ["ticket[csv-model]"], label: "csv-model (whole ticket)", body: "Split the model from the migration." }]);
+      expect(card(slot, "csv-model").textContent).toContain("1 note");
+      expect(slot.container.querySelector("[data-notes-column]")!.className).toContain("lg:sticky");
+    });
     const note = { version: 2, paths: ["ticket[csv-export].acceptance[1]"], body: "Say what the header row holds." };
     const stored = { ...note, label: "csv-export › criterion 2" };
 
@@ -1500,6 +1623,47 @@ describe("spec tab", () => {
     fireEvent.click(within(slot.container.querySelector<HTMLElement>("[data-next-step]")!).getByRole("button", { name: "Approve v2" }));
     fireEvent.click(slot.getByRole("button", { name: "Click again to approve v2" }));
     await waitFor(() => expect(control).toHaveBeenCalledWith({ slug: "csv", action: "approve", version: 2, confirm: true }));
+  });
+
+  describe("tab badges", () => {
+    const badge = (slot: Slot, tab: string) => slot.container.querySelector<HTMLElement>(`[data-tab-badge="${tab}"]`);
+
+    it("counts the blocked tickets on the Board tab, and shows none without one", async () => {
+      const blocked = projectView({ board: [card(), card({ key: "CSV-2", state: "blocked", blockedReason: "Needs a decision." }), card({ key: "CSV-3", state: "blocked" })] });
+      const { slot } = await mountPage("csv", { project: () => blocked });
+      const board = await slot.findByRole("tab", { name: "Board" });
+      expect(badge(slot, "board")!.textContent).toBe("2");
+      expect(badge(slot, "board")!.getAttribute("aria-hidden")).toBe("true");
+      expect(badge(slot, "board")!.className).toContain("bg-destructive");
+      expect(board.getAttribute("title")).toBe("2 tickets are blocked");
+      expect(board.getAttribute("aria-description")).toBe("2 tickets are blocked");
+      expect(badge(slot, "spec")).toBeNull();
+
+      slot.lifecycle.unmount();
+      const { slot: calm } = await mountPage("csv", { project: () => projectView() });
+      expect((await calm.findByRole("tab", { name: "Board" })).getAttribute("title")).toBeNull();
+      expect(calm.container.querySelector("[data-tab-badge]")).toBeNull();
+    });
+
+    it("marks the Spec tab while a draft or a pending version waits for you, but not on an archived project", async () => {
+      const pending = projectView({ overview: overview({ pendingVersion: 2 }) });
+      const { slot } = await mountPage("csv", { project: () => pending });
+      const spec = await slot.findByRole("tab", { name: "Spec" });
+      expect(badge(slot, "spec")!.textContent).toBe("1");
+      expect(badge(slot, "spec")!.className).toContain("bg-warning");
+      expect(spec.getAttribute("title")).toBe("Spec v2 waits for your approval");
+
+      const draft = projectView({ overview: overview({ state: "draft", approvedVersion: null }), spec: { ...projectView().spec, version: 3 } });
+      slot.lifecycle.unmount();
+      const { slot: drafted } = await mountPage("csv", { project: () => draft });
+      expect((await drafted.findByRole("tab", { name: "Spec" })).getAttribute("title")).toBe("Draft v3 waits for your review");
+
+      const archived = projectView({ overview: overview({ state: "archived", pendingVersion: 2 }) });
+      drafted.lifecycle.unmount();
+      const { slot: gone } = await mountPage("csv", { project: () => archived });
+      await gone.findByRole("tab", { name: "Spec" });
+      expect(badge(gone, "spec")).toBeNull();
+    });
   });
 
   it("keeps the chosen tab across a change of the project", async () => {
@@ -2724,11 +2888,14 @@ describe("timeline", () => {
     expect(slot.getByRole("textbox", { name: "New reply" })).toBeTruthy();
   });
 
-  it("hides the Planner tab while rewound, and shows the spec in force with no notes", async () => {
-    const { slot } = await mountPage("csv", { project, specVersion: () => specVersionView({ version: 1, status: "approved", changes: null }) });
+  it("hides the Planner tab and the tab badges while rewound, and shows the spec in force with no notes", async () => {
+    const pending = (input: { slug: string; at?: number }) => ({ ...project(input), overview: overview({ pendingVersion: 2 }) });
+    const { slot } = await mountPage("csv", { project: pending, specVersion: () => specVersionView({ version: 1, status: "approved", changes: null }) });
     expect(await slot.findByRole("tab", { name: "Planner" })).toBeTruthy();
+    expect(slot.container.querySelector('[data-tab-badge="spec"]')).not.toBeNull();
     await rewind(slot);
     expect(slot.queryByRole("tab", { name: "Planner" })).toBeNull();
+    expect(slot.container.querySelector("[data-tab-badge]")).toBeNull();
     fireEvent.click(slot.getByRole("tab", { name: "Spec" }));
     await waitFor(() => expect(slot.container.querySelector("[data-spec-dashboard]")).not.toBeNull());
     expect(calls(slot, "specVersion").at(-1)!.input).toEqual({ slug: "csv", version: 1 });

@@ -4,7 +4,7 @@ import type { SpecVersionView } from "../contract";
 import type { TicketSpec } from "../spec";
 import { changedAt, dependencyChain, wavesOf } from "../spec-paths";
 import { BUTTON, CARD, HEADING, plural } from "./common";
-import { MarksContext, Noteable, notesUnder } from "./spec-marks";
+import { MarksContext, NOTE_BUTTON, Noteable, notesUnder } from "./spec-marks";
 
 export const CHIP = "rounded-full border border-border-seam px-1.5 text-[10.5px] leading-4";
 const BRIEF_LIMIT = 1200;
@@ -73,29 +73,35 @@ export function TicketsPane({ view, selected, highlighted, onPick, onClear }: { 
               const dimmed = chain !== null && role === undefined;
               const border = role === "self" ? "border-primary bg-surface-selected ring-1 ring-primary" : `bg-surface-recessed ${ticket.ref === selected || role !== undefined ? "border-primary" : "border-border-seam"}`;
               return (
-                <button
-                  key={ticket.ref}
-                  type="button"
-                  data-spec-card={ticket.ref}
-                  data-chain={role}
-                  data-dimmed={dimmed || undefined}
-                  aria-pressed={ticket.ref === selected}
-                  onClick={() => onPick(ticket.ref)}
-                  className={`block w-full min-w-0 cursor-pointer rounded-md border p-2 text-left transition-opacity hover:bg-state-hover ${border} ${dimmed ? "opacity-40" : ""}`}
-                >
-                  <span className="block text-[11px] text-muted-foreground [overflow-wrap:anywhere]">{ticket.ref}</span>
-                  <span className="block text-sm font-medium">{ticket.title}</span>
-                  {after.length > 0 && <span className="block text-[11px] text-muted-foreground [overflow-wrap:anywhere]">after {after.join(", ")}</span>}
-                  <span className="mt-1.5 flex flex-wrap gap-1 text-muted-foreground">
-                    <span className={CHIP}>P{ticket.priority}</span>
-                    <span className={CHIP}>{criteria(ticket.acceptance.length)}</span>
-                    <span className={CHIP}>{plural(ticket.scope.length, "path")}</span>
-                    <span className={CHIP}>{ticket.verify.length > 0 ? "own verify" : "checks only"}</span>
-                    {overlapping.has(ticket.ref) && <span className={`${CHIP} text-warning-text`}>overlap</span>}
-                    {changed && <span className={`${CHIP} text-primary`}>changed</span>}
-                    {notes > 0 && <span className={`${CHIP} text-warning-text`}>{plural(notes, "note")}</span>}
-                  </span>
-                </button>
+                <div key={ticket.ref} className={`group relative min-w-0 transition-opacity ${dimmed ? "opacity-40" : ""}`}>
+                  <button
+                    type="button"
+                    data-spec-card={ticket.ref}
+                    data-chain={role}
+                    data-dimmed={dimmed || undefined}
+                    aria-pressed={ticket.ref === selected}
+                    onClick={() => onPick(ticket.ref)}
+                    className={`block w-full min-w-0 cursor-pointer rounded-md border p-2 text-left hover:bg-state-hover ${border}`}
+                  >
+                    <span className="block pr-14 text-[11px] text-muted-foreground [overflow-wrap:anywhere]">{ticket.ref}</span>
+                    <span className="block text-sm font-medium">{ticket.title}</span>
+                    {after.length > 0 && <span className="block text-[11px] text-muted-foreground [overflow-wrap:anywhere]">after {after.join(", ")}</span>}
+                    <span className="mt-1.5 flex flex-wrap gap-1 text-muted-foreground">
+                      <span className={CHIP}>P{ticket.priority}</span>
+                      <span className={CHIP}>{criteria(ticket.acceptance.length)}</span>
+                      <span className={CHIP}>{plural(ticket.scope.length, "path")}</span>
+                      <span className={CHIP}>{ticket.verify.length > 0 ? "own verify" : "checks only"}</span>
+                      {overlapping.has(ticket.ref) && <span className={`${CHIP} text-warning-text`}>overlap</span>}
+                      {changed && <span className={`${CHIP} text-primary`}>changed</span>}
+                      {notes > 0 && <span className={`${CHIP} text-warning-text`}>{plural(notes, "note")}</span>}
+                    </span>
+                  </button>
+                  {marks?.onNote !== undefined && (
+                    <button type="button" aria-label={`Add a note on ticket ${ticket.ref}`} className={`${NOTE_BUTTON} absolute top-1.5 right-1.5`} onClick={() => marks.onNote?.({ paths: [`ticket[${ticket.ref}]`], label: `${ticket.ref} (whole ticket)` })}>
+                      + note
+                    </button>
+                  )}
+                </div>
               );
             })}
           </div>

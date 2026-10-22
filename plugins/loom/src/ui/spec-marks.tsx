@@ -17,6 +17,10 @@ export interface Marks {
 
 export const MarksContext = createContext<Marks | null>(null);
 
+// Faint until its part is hovered, and always solid where nothing can hover (Tailwind's hover variants need hover).
+export const NOTE_BUTTON =
+  "cursor-pointer rounded border border-border-seam bg-card px-1.5 text-[11px] leading-[18px] text-muted-foreground opacity-60 group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring [@media(hover:none)]:opacity-100";
+
 /** "provider / model" with only the parts that are set. */
 export const modelLabel = ({ provider, model }: { provider?: string; model?: string }) => [provider, model].filter((part) => part !== undefined).join(" / ") || "the default model";
 
@@ -41,7 +45,7 @@ export function Noteable({ paths, label, children }: { paths: string[]; label: s
         <button
           type="button"
           aria-label={`Add a note on ${label}`}
-          className="absolute top-1 right-1 cursor-pointer rounded px-1.5 text-[11px] text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          className={`${NOTE_BUTTON} absolute top-1 right-1`}
           onClick={() => marks.onNote?.({ paths, label })}
         >
           + note

@@ -107,7 +107,8 @@ Once the planner proposes, the conversation also shows the spec dashboard under
 the chat and the draft card, with the warnings and the raw spec, the same one as
 the project's Spec tab below. Every proposal before
 approval is kept as its own version, and older drafts read as superseded. Press
-"+ note" on any part of the spec to leave a note for the planner. Notes stay in
+"+ note" on a ticket card or on any part of the spec to leave a note for the
+planner. Notes stay in
 your browser until you send them, and the planner gets them in one message that
 names each part, such as `ticket[csv-export].acceptance[1]`. A sent note then
 shows whether the planner's next version changed that part.
@@ -116,16 +117,23 @@ The home page opens with five tiles across every project that is not archived:
 projects running, agents working against the worker and reviewer slots of the
 running and paused projects (a paused project's workers and reviewers finish
 their turn), tickets done in the last 7 days, how many things need you, and
-the sampled tokens. Under them, "Needs you" lists each blocked ticket, draft to
-approve, pending spec version, finished integration project to land, and project
-that Loom paused by itself (a budget or a deadline), newest first, each with a
-button that opens its ticket or project. The project table shows each project's
-state, strategy, ticket counts and the reason the plugin paused it, with a
-progress bar, its workers and reviewers at work (not the planner, which stays on
-call for triage rounds), a 14-day throughput sparkline, its tokens against the
-spec's budget and the time of its last event. A search box above the table
-filters it by name, key or slug as you type, and "Hide done and archived" leaves
-finished projects out; the page remembers that switch.
+the sampled tokens; the "Needs you" tile also says how many projects that is
+and how many tickets are blocked. Under them, one table lists every project and
+every planning conversation. Its "Needs you" column has a button for each
+blocked ticket, draft to review, pending spec version, finished integration
+project to land, and project that Loom paused by itself (a budget or a
+deadline); each opens its ticket or project, and a row shows three and then
+"+N more". Rows that need you come first, most urgent first, with a coloured
+edge: red for a blocked ticket, green for a project ready to land, amber for the
+rest. A planning conversation is a row with "Continue planning". The table also
+shows each project's state, strategy, ticket counts and the reason the plugin
+paused it, with a progress bar, its workers and reviewers at work (not the
+planner, which stays on call for triage rounds), a 14-day throughput sparkline,
+its tokens against the spec's budget and the time of its last event. A search
+box above the table filters it by name, key, slug or title as you type. Done and
+archived projects that need nothing fold into a "Finished" group at the bottom,
+which the page remembers opening; it opens by itself while you search or when
+nothing else is active.
 
 A project with an approved spec shows a health strip above its tabs: progress,
 pace over the last 14 days and the days left at that pace, the token budget and
@@ -137,15 +145,17 @@ tickets" or "Start project · 2 workers". The bar turns yellow when tickets are
 blocked or Loom paused the project, and names the reason and what Loom is doing
 about it. When every ticket of an integration project is done or cancelled, the
 bar offers Land, as does the next step in `bb loom show`. The header's "Land to
-<base>" button, beside Land, lands with `--direct` instead. Open a project for
-these views:
+<base>" button, beside Land, lands with `--direct` instead. A tab that needs you
+carries a badge until the thing is resolved: the Board tab counts the blocked
+tickets, and the Spec tab shows one while a draft waits for review or a newer
+spec version waits for approval. Open a project for these views:
 
 - Board: one lane per ticket state, with each card's age in its state, its attempt and review round, and a link to the thread working on it. Queued tickets are split into Ready and Waiting, and a waiting ticket names what it waits on. Before approval, the draft's tickets show as dashed cards in Ready and Waiting, with the keys approval will give them.
 - Agents: every planner, worker and reviewer thread. The workers and reviewers working now come first, with their ticket, configured model, running time, timeout, tokens and rate-limit retries, and a Thread button. The planner has its own section, on call for triage rounds, with its tokens and Thread button. Below them are the tokens by role, how threads ended (idle twice, gave a verdict, timed out and so on) and the ended threads. A thread whose provider reports no token usage shows "not reported", and the tokens by role say how many such threads there are.
 - Ticket: a header with the state, a one-line summary, a stage tracker from Queued to Done, and chips for the attempts, review rounds, total time, dependencies, the branch (with a copy button) and the pull request. A blocked ticket shows its reason, a link to the post that blocked it, an answer box and Requeue; Block and Cancel ticket sit in the header's ⋯ menu, and each needs a reason. The Activity tab shows one card per worker attempt, newest first (Oldest first switches the order), the newest open and older ones folded to one line. Inside an attempt, posts are cards with their replies under them, each check lists its commands with their result, time and exit code and the failed command's output, each review shows its verdict, findings and the reviewer's notes, and each merge its git steps. The Brief tab shows the brief as Markdown. A side column, or a Details tab on a narrow page, lists the acceptance criteria, the files in scope, the verify command and every worker and reviewer thread with how it ended. The reply box says who gets your reply now.
 - Feed: the project's events, newest first.
 - Metrics: the numbers below, with charts, and a 7, 14 or 30 day window for throughput and cumulative flow.
-- Spec: the spec as a dashboard, with a summary strip and four tabs. Tickets shows the dependency waves from top to bottom, each a wrapping grid of cards that say what they wait for; selecting a ticket lights up everything it waits for and everything it unblocks, says so in a sentence, and dims the rest until you click it again or press Show all. Files starts with Shared files, one row per path that two or more tickets may change, naming the tickets and whether they run in order or one at a time; then every path grouped by folder, with an "All files" or "Shared only" filter and the selected ticket's paths highlighted; then the protected paths. Checks & review and Project & limits show the rest of the spec. Under the tabs a wide card shows the selected ticket: its brief for the worker on the left, cut short with "Show the whole brief" when it is long, and its facts on the right (priority and wave, what it waits for and unblocks, the acceptance criteria, the paths it may change and its verify commands). The dashboard also has a version switcher that marks what each version changed, "Read the raw spec", "+ note" on every part with a tray beside the tabs that sends the notes to the planner, and Approve for a pending version.
+- Spec: the spec as a dashboard, with a summary strip and four tabs. Tickets shows the dependency waves from top to bottom, each a wrapping grid of cards that say what they wait for; selecting a ticket lights up everything it waits for and everything it unblocks, says so in a sentence, and dims the rest until you click it again or press Show all. Files starts with Shared files, one row per path that two or more tickets may change, naming the tickets and whether they run in order or one at a time; then every path grouped by folder, with an "All files" or "Shared only" filter and the selected ticket's paths highlighted; then the protected paths. Checks & review and Project & limits show the rest of the spec. Under the tabs a wide card shows the selected ticket: its brief for the worker on the left, cut short with "Show the whole brief" when it is long, and its facts on the right (priority and wave, what it waits for and unblocks, the acceptance criteria, the paths it may change and its verify commands). The dashboard also has a version switcher that marks what each version changed, "Read the raw spec", "+ note" on every ticket card and every part (faint until you hover it, always shown on a touch screen) with a tray beside the tabs, which stays in view as you scroll, that sends the notes to the planner, and Approve for a pending version.
 - Planner: the planner thread's chat, embedded in the page, with its open questions above it.
 
 Under the health strip, every project has a Timeline section. Collapsed, it is

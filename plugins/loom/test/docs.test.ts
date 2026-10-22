@@ -116,10 +116,10 @@ describe("the plugin's own documents", () => {
     for (const path of ["README.md", "skills/loom/SKILL.md"]) for (const phrase of ["stage tracker", "Oldest first", "Brief tab"]) expect(read(path), `${path}: ${phrase}`).toContain(phrase);
   });
 
-  it("README, the loom skill and the overview describe the direct land, and README and the skill the home page's search and switch", () => {
+  it("README, the loom skill and the overview describe the direct land, and README and the skill the home page's search and Finished group", () => {
     for (const path of ["README.md", "skills/loom/SKILL.md"]) {
       expect(read(path), path).toContain("bb loom land <slug> --direct");
-      expect(read(path), path).toContain("Hide done and archived");
+      expect(read(path), path).toContain("Finished");
     }
     expect(read("PLUGIN_OVERVIEW.md")).toContain("--direct");
   });

@@ -91,7 +91,7 @@ export function NoteTray({ view, notes, onRemove, onSent }: { view: SpecVersionV
       <h3 className="flex items-center gap-2 text-sm font-semibold">
         Notes for the planner <span className="text-xs font-normal text-muted-foreground">{notes.length} to send</span>
       </h3>
-      {notes.length === 0 && <p className="text-xs text-muted-foreground">Hover any part of the spec and press "+ note". Notes stay here until you send them together.</p>}
+      {notes.length === 0 && <p className="text-xs text-muted-foreground">Press "+ note" on a ticket card, or on any line of the selected ticket and the other tabs. Notes stay here until you send them together.</p>}
       {notes.map((note, index) => (
         <div key={index} data-draft-note className="space-y-0.5 rounded-md border border-border-seam p-2">
           <div className="flex items-start gap-2">

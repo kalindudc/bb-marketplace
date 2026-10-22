@@ -6,7 +6,7 @@ import { STAGES } from "../next-step";
 import type { WindowDays } from "../states";
 import { AgentsView } from "./agents";
 import { Board } from "./board";
-import { BUTTON_PRIMARY, ConfirmButton, HEADING, MoreMenu, StateBadge, countsLabel, mergeLabel, momentLabel, useRemote, useRun } from "./common";
+import { BUTTON_PRIMARY, ConfirmButton, HEADING, MoreMenu, StateBadge, countsLabel, mergeLabel, momentLabel, plural, useRemote, useRun } from "./common";
 import { Feed } from "./feed";
 import { Guide } from "./guide";
 import { HealthStrip } from "./health";
@@ -28,6 +28,24 @@ const TABS: ReadonlyArray<{ tab: Tab; label: string }> = [
   { tab: "spec", label: "Spec" },
   { tab: "planner", label: "Planner" },
 ];
+
+interface TabBadge {
+  text: string;
+  label: string;
+  tone: "destructive" | "warning";
+}
+const BADGE_TONES = { destructive: "bg-destructive text-destructive-foreground", warning: "bg-warning text-black" };
+
+/** What waits for the human on each tab. A badge is a state, not unread news, so it stays until the thing is resolved. */
+export function tabBadges(view: ProjectView): Partial<Record<Tab, TabBadge>> {
+  const { overview, spec } = view;
+  const badges: Partial<Record<Tab, TabBadge>> = {};
+  const blocked = view.board.filter((card) => card.state === "blocked").length;
+  if (blocked > 0) badges.board = { text: String(blocked), label: `${plural(blocked, "ticket")} ${blocked === 1 ? "is" : "are"} blocked`, tone: "destructive" };
+  if (overview.state === "draft") badges.spec = { text: "1", label: `Draft v${spec.version} waits for your review`, tone: "warning" };
+  else if (overview.state !== "archived" && overview.pendingVersion !== null) badges.spec = { text: "1", label: `Spec v${overview.pendingVersion} waits for your approval`, tone: "warning" };
+  return badges;
+}
 
 export type Route = { view: "home" } | { view: "guide" } | { view: "new" } | { view: "plan"; threadId: string } | { view: "project"; slug: string } | { view: "ticket"; slug: string; key: string };
 
@@ -145,6 +163,7 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek }: { slug: string; tab: Tab
   // Either side counts: the shown view can still be the past one while the live view loads.
   const rewound = at !== null || view.at !== null;
   const shownTab = rewound && tab === "planner" ? "board" : tab;
+  const badges = rewound ? {} : tabBadges(view);
   const control = (action: ControlAction, version?: number) =>
     run(async () => remote.set(await rpc.call("control", { slug, action, ...(version === undefined ? {} : { version }), confirm: true })));
 
@@ -183,11 +202,28 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek }: { slug: string; tab: Tab
       {view.health !== null && <HealthStrip health={view.health} />}
       <TimelineStrip slug={slug} at={at} onSeek={onSeek} />
       <div role="tablist" aria-label="Project" className="flex shrink-0 gap-1 border-b border-border-seam px-3 pt-1.5">
-        {TABS.filter((entry) => entry.tab !== "planner" || (overview.plannerThreadId !== null && !rewound)).map((entry) => (
-          <button key={entry.tab} type="button" role="tab" aria-selected={shownTab === entry.tab} onClick={() => onTab(entry.tab)} className={`cursor-pointer rounded-t-md px-3 py-1.5 text-xs ${shownTab === entry.tab ? "bg-surface-selected text-foreground" : "text-muted-foreground hover:bg-state-hover"}`}>
-            {entry.label}
-          </button>
-        ))}
+        {TABS.filter((entry) => entry.tab !== "planner" || (overview.plannerThreadId !== null && !rewound)).map((entry) => {
+          const badge = badges[entry.tab];
+          return (
+            <button
+              key={entry.tab}
+              type="button"
+              role="tab"
+              aria-selected={shownTab === entry.tab}
+              aria-description={badge?.label}
+              title={badge?.label}
+              onClick={() => onTab(entry.tab)}
+              className={`inline-flex cursor-pointer items-center gap-1.5 rounded-t-md px-3 py-1.5 text-xs ${shownTab === entry.tab ? "bg-surface-selected text-foreground" : "text-muted-foreground hover:bg-state-hover"}`}
+            >
+              {entry.label}
+              {badge !== undefined && (
+                <span data-tab-badge={entry.tab} aria-hidden className={`inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-none font-semibold ${BADGE_TONES[badge.tone]}`}>
+                  {badge.text}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
       <div role="tabpanel" className="min-h-0 flex-1">
         {shownTab === "board" && <Board slug={slug} cards={view.board} strategy={overview.strategy} now={view.now} draftVersion={overview.state === "draft" ? view.spec.version : null} />}
