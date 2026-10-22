@@ -1,5 +1,6 @@
 // The submit pipeline: the worker hands in, the plugin commits, checks scope and runs the commands, and only a
 // pass moves the ticket on. Runs are keyed by ticket, so a ticket is never checked twice at once.
+import { ticketRepo } from "./checkouts";
 import type { Store, ThreadRow, TicketRow } from "./db/store";
 import { plural } from "./format";
 import { checkFailedText, clip } from "./prompts";
@@ -127,9 +128,10 @@ async function runPipeline(ctx: EngineCtx, ticket: TicketRow, spec: Spec, worker
 
   const commit = await ctx.host.call(hostId, "commitAll", { worktree, message: `${ticket.key}: ${ticket.title}` });
   await recordBranch(ctx, worker);
-  const base = freshBase(spec);
+  const repo = ticketRepo(spec, ticket);
+  const base = freshBase(spec, ticket.repo);
   const state = await ctx.host.call(hostId, "worktreeState", { worktree, base });
-  const report = scopeReport(state.changed, JSON.parse(ticket.scope_json) as string[], spec.scope.protected);
+  const report = scopeReport(state.changed, JSON.parse(ticket.scope_json) as string[], repo.protected);
   const outcome: Outcome = { commitSha: commit.sha, runs: [], failure: null, outside: report.outside, protectedHits: report.protectedHits };
   const refuse = (command: string, output: string) => {
     outcome.failure = { command, exitCode: 1, timedOut: false, durationMs: 0, output };
@@ -144,7 +146,7 @@ async function runPipeline(ctx: EngineCtx, ticket: TicketRow, spec: Spec, worker
     return refuse("scope check", `These files are outside the ticket's scope, and scope.enforce is "reject": ${report.outside.join(", ")}. Revert them, or call loom_block if the ticket needs a wider scope.`);
   }
 
-  for (const command of [...(JSON.parse(ticket.verify_json) as string[]), ...spec.checks.commands]) {
+  for (const command of [...(JSON.parse(ticket.verify_json) as string[]), ...repo.checks]) {
     const result = await ctx.host.call(hostId, "exec", { cwd: worktree, command, timeoutMs: spec.checks.timeout_minutes * 60_000 });
     const run: CheckRun = { command, exitCode: result.exitCode, timedOut: result.timedOut, durationMs: result.durationMs, output: result.output };
     outcome.runs.push(run);

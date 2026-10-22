@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { resumeCheckingTickets, runChecks, settleChecks, submit } from "../src/checks";
 import { PAUSE_NOW_REASON } from "../src/states";
 import { blockTicket, endThread, resumeEnding } from "../src/workers";
-import { makeCtx, seedProject, startLateWorker, startWorker, ticketOf, type Doc, type EngineHarness } from "./helpers";
+import { makeCtx, seedProject, seedRepoProject, startLateWorker, startWorker, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;
 
@@ -13,9 +13,9 @@ beforeEach(() => {
 const WORKTREE = "/wt/env_1";
 const project = () => h.store.projectBySlug("csv")!;
 const posts = (key = "CSV-1") => h.store.posts(ticketOf(h, key).id);
-const lastCheck = () => posts().filter((post) => post.kind === "check").at(-1)!;
+const lastCheck = (key = "CSV-1") => posts(key).filter((post) => post.kind === "check").at(-1)!;
 const runs = (key = "CSV-1") => h.store.runs(ticketOf(h, key).id);
-const checkData = () => JSON.parse(lastCheck().data_json) as { passed: boolean; runs: Array<{ command: string; exitCode: number | null }>; outside: string[]; protectedHits: string[] };
+const checkData = (key = "CSV-1") => JSON.parse(lastCheck(key).data_json) as { passed: boolean; runs: Array<{ command: string; exitCode: number | null }>; outside: string[]; protectedHits: string[] };
 
 /** A started worker that changed `changed` and called loom_submit; the checks have finished. */
 async function submitted(edit?: (doc: Doc) => void, changed = ["src/model/a.ts"]) {
@@ -210,6 +210,60 @@ describe("a failing submit", () => {
     expect(h.bb.callsTo("archive")).toEqual([["thr_w1"]]);
     expect(project().triage_pending).toBe(1);
     expect(posts().at(-1)).toMatchObject({ kind: "block", author_kind: "loom" });
+  });
+});
+
+describe("a ticket in one repo of a multi-repo project", () => {
+  /** A started worker on `key` that changed `changed` and called loom_submit; the checks have finished. */
+  async function submittedIn(key: string, changed: string[], edit?: (doc: Doc) => void) {
+    await seedRepoProject(h, edit);
+    const row = await startWorker(h, key);
+    const worktree = h.host.worktree(`/wt/${row.environment_id}`);
+    worktree.dirty = true;
+    worktree.changed = changed;
+    submit(h.ctx, row.thread_id!, "Done");
+    await settleChecks(h.ctx);
+    return row;
+  }
+
+  it("runs the ticket's verify commands and then its repo's checks, and no other repo's, in the worker's worktree against the integration branch", async () => {
+    await submittedIn("CSV-1", ["src/model/a.ts"], (doc) => (doc.ticket[0].verify = ["npm run lint"]));
+    expect(h.host.callsTo("exec")).toEqual([
+      { cwd: WORKTREE, command: "npm run lint", timeoutMs: 15 * 60_000 },
+      { cwd: WORKTREE, command: "npm run web-test", timeoutMs: 15 * 60_000 },
+    ]);
+    expect(h.host.callsTo("worktreeState")[0]).toEqual({ worktree: WORKTREE, base: "loom/csv" });
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "review", head_sha: "c1" });
+    expect(checkData().runs.map((run) => run.command)).toEqual(["npm run lint", "npm run web-test"]);
+  });
+
+  it("runs the top-level checks for a repo that sets none, and compares against that repo's remote base on the pr strategy", async () => {
+    await submittedIn("CSV-2", ["src/export/a.ts"], (doc) => (doc.merge = { strategy: "pr" }));
+    expect(h.host.callsTo("exec").map((call) => call.command)).toEqual(["npm test"]);
+    expect(h.host.callsTo("worktreeState")[0]).toEqual({ worktree: WORKTREE, base: "upstream/trunk" });
+    expect(ticketOf(h, "CSV-2").state).toBe("review");
+  });
+
+  it("fails the scope check, without running a command, on a path that only the ticket's repo protects", async () => {
+    await submittedIn("CSV-1", ["src/model/a.ts", "web.lock"]);
+    expect(h.host.callsTo("exec")).toEqual([]);
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "working", check_failures: 1 });
+    expect(checkData()).toMatchObject({ passed: false, protectedHits: ["web.lock"] });
+    expect(h.bb.sent("thr_w1").at(-1)).toContain("web.lock");
+  });
+
+  it("still fails a top-level protected path in a repo that adds none, and lets a path another repo protects through as outside the scope", async () => {
+    await submittedIn("CSV-2", ["src/export/a.ts", "web.lock"]);
+    expect(ticketOf(h, "CSV-2").state).toBe("review");
+    expect(checkData("CSV-2")).toMatchObject({ passed: true, outside: ["web.lock"], protectedHits: [] });
+
+    h.store.setTicketState(ticketOf(h, "CSV-2").id, "working", "loom");
+    h.host.worktree(WORKTREE).dirty = true;
+    h.host.worktree(WORKTREE).changed = ["src/export/a.ts", "db/001.sql"];
+    submit(h.ctx, "thr_w1", "again");
+    await settleChecks(h.ctx);
+    expect(ticketOf(h, "CSV-2")).toMatchObject({ state: "working", check_failures: 1 });
+    expect(checkData("CSV-2")).toMatchObject({ passed: false, protectedHits: ["db/001.sql"] });
   });
 });
 

@@ -5,7 +5,7 @@ import { SpawnRefusedError, type SpawnArgs } from "../src/ports";
 import { afterMergeFailedText, changesRequestedText, conflictText, heldCheckResult, landBody, prBody, reviewerBrief, reviewerNudgeText } from "../src/prompts";
 import { approve, onReviewerGone, onReviewerIdle, requestChanges, settleReviews, spawnReviewers, type Finding } from "../src/review";
 import { endThread, requeueTicket, specOf } from "../src/workers";
-import { checkOutHead, makeCtx, reachReview, seedProject, startWorker, ticketOf, withDocsTicket, type Doc, type EngineHarness } from "./helpers";
+import { checkOutHead, makeCtx, reachReview, seedProject, seedRepoProject, startWorker, ticketOf, withDocsTicket, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;
 
@@ -81,6 +81,32 @@ describe("reviewerBrief", () => {
     expect(brief).toContain("Round 1 · changes requested: Needs a fix");
     expect(brief).toContain("1. [blocking] Off by one (src/model/a.ts:12)");
     expect(brief).toContain("Round 1 · approved: Looks fine");
+  });
+
+  it("names the ticket's repo, its bb project and that repo's checks on a multi-repo project", async () => {
+    const project = await seedRepoProject(h);
+    const spec = specOf(h.store, project);
+    const brief = (key: string) => reviewerBrief({ project, spec, ticket: ticketOf(h, key), round: 1, diff: { stat: "", patch: "", truncated: false }, checkPost: null, earlierReviews: [] });
+    expect(brief("CSV-1")).toContain(
+      [
+        "## Repository",
+        'This ticket is in the repo "web", the bb project proj_web, and this worktree is a checkout of it. The changes, the scope report and the check results below are about this repo only.',
+        "The checks of this repo, which ran after the ticket's verify commands:",
+        '- "npm run web-test"',
+        "",
+        "## Rubric",
+      ].join("\n"),
+    );
+    expect(brief("CSV-1")).not.toContain('"npm test"');
+    expect(brief("CSV-2")).toContain('This ticket is in the repo "api", the bb project proj_api,');
+    expect(brief("CSV-2")).toContain("which ran after the ticket's verify commands:\n- \"npm test\"\n");
+  });
+
+  it("has no repository section on a single-repo project", async () => {
+    const { project, spec, ticket } = await readyTicket();
+    const brief = reviewerBrief({ project, spec, ticket, round: 1, diff: { stat: "", patch: "", truncated: false }, checkPost: null, earlierReviews: [] });
+    expect(brief).not.toContain("## Repository");
+    expect(brief).toContain("1. WHEN an order is mapped THE SYSTEM SHALL return one row\n\n## Rubric");
   });
 });
 
@@ -274,6 +300,28 @@ describe("spawnReviewers", () => {
     expect(reviewers()).toHaveLength(0);
   });
 
+  it("pauses the project, naming its repository and the command that clones it, when the bb project has no checkout on the machine", async () => {
+    await seedProject(h);
+    await reachReview(h);
+    h.bb.checkout = null;
+    expect(await spawn()).toBe(0);
+    expect(project()).toMatchObject({
+      state: "paused",
+      system_reason:
+        "Could not read the diff of CSV-1 for review: The project's repository (bb project proj_1) has no checkout on the machine host_1 that this Loom project uses. Clone it there with `bb project source add proj_1 --clone --machine host_1`, then resume.",
+    });
+    expect(h.host.callsTo("diff")).toEqual([]);
+  });
+
+  it("reads the diff against the remote base, and starts a reviewer without a branch from it, on the pr strategy", async () => {
+    await seedProject(h, (doc) => (doc.merge = { strategy: "pr" }));
+    await reachReview(h);
+    h.store.updateTicket(ticketOf(h, "CSV-1").id, { branch: null });
+    expect(await spawn()).toBe(1);
+    expect(h.host.callsTo("diff")).toEqual([{ repo: "/repo", base: "origin/main", head: "c1", maxBytes: 60_000 }]);
+    expect(spawnArgs(1)).toMatchObject({ bbProjectId: "proj_1", hostId: "host_1", baseBranch: "origin/main" });
+  });
+
   it("ends active reviewers of a round that is over, and starts reviewers for the new round", async () => {
     await seedProject(h, (doc) => (doc.review = { approvals: 2 }));
     const worker = await reachReview(h);
@@ -289,6 +337,47 @@ describe("spawnReviewers", () => {
     expect(reviewsOf("CSV-1", 2)).toHaveLength(2);
     expect(reviewsOf("CSV-1", 1).every((review) => review.verdict === "pending")).toBe(true);
     expect(spawnArgs(3).metadata.round).toBe("2");
+  });
+});
+
+describe("reviewers on a multi-repo project", () => {
+  it("reads the diff from the ticket's repo checkout and starts the reviewers in that repo's bb project, from the ticket's branch", async () => {
+    await seedRepoProject(h);
+    await reachReview(h, "CSV-1");
+    expect(await spawn()).toBe(1);
+    expect(h.bb.callsTo("projectCheckout").at(-1)).toEqual(["proj_web", "host_1"]);
+    expect(h.host.calls.filter((call) => call.method === "diff")).toEqual([{ hostId: "host_1", method: "diff", input: { repo: "/src/web", base: "loom/csv", head: "c1", maxBytes: 60_000 } }]);
+    expect(spawnArgs(1)).toMatchObject({ bbProjectId: "proj_web", hostId: "host_1", baseBranch: ticketOf(h, "CSV-1").branch, metadata: { role: "reviewer", ticket: "CSV-1" } });
+    expect(spawnArgs(1).prompt).toContain('This ticket is in the repo "web", the bb project proj_web,');
+  });
+
+  it("uses the repo's remote base for the diff, for a reviewer without a branch and for the verdict's worktree check, on the pr strategy", async () => {
+    await seedRepoProject(h, (doc) => (doc.merge = { strategy: "pr" }));
+    await reachReview(h, "CSV-2");
+    h.store.updateTicket(ticketOf(h, "CSV-2").id, { branch: null });
+    expect(await spawn()).toBe(1);
+    expect(h.host.callsTo("diff")).toEqual([{ repo: "/src/api", base: "upstream/trunk", head: "c1", maxBytes: 60_000 }]);
+    expect(spawnArgs(1)).toMatchObject({ bbProjectId: "proj_api", hostId: "host_1", baseBranch: "upstream/trunk" });
+
+    const reviewer = reviewers("CSV-2")[0]!;
+    checkOutHead(h, reviewer);
+    await approve(h.ctx, reviewer.thread_id!, "ok");
+    expect(h.host.callsTo("worktreeState").at(-1)).toEqual({ worktree: `/wt/${reviewer.environment_id}`, base: "upstream/trunk" });
+    expect(reviewsOf("CSV-2")[0]!.verdict).toBe("approved");
+  });
+
+  it("pauses the project, naming the repo and the command that clones it, when the ticket's repo has no checkout on the project's machine", async () => {
+    await seedRepoProject(h);
+    await reachReview(h, "CSV-1");
+    h.bb.checkouts.set("proj_web", {});
+    expect(await spawn()).toBe(0);
+    expect(project()).toMatchObject({
+      state: "paused",
+      system_reason:
+        'Could not read the diff of CSV-1 for review: Repo "web" (bb project proj_web) has no checkout on the machine host_1 that this Loom project uses. Clone it there with `bb project source add proj_web --clone --machine host_1`, then resume.',
+    });
+    expect(h.host.callsTo("diff")).toEqual([]);
+    expect(reviewers()).toHaveLength(0);
   });
 });
 

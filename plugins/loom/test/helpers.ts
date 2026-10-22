@@ -457,6 +457,28 @@ export async function seedProject(h: EngineHarness, edit?: (doc: Doc) => void, s
   return h.store.projectBySlug("csv")!;
 }
 
+/**
+ * A running project over three repos, each its own bb project with a checkout on host_1: web (its own checks and a protected path),
+ * api (another base and remote, the top-level checks) and docs (its own checks). CSV-1 is in web and CSV-2 in api, with no dependency.
+ */
+export async function seedRepoProject(h: EngineHarness, edit?: (doc: Doc) => void): Promise<ProjectRow> {
+  h.bb.addBbProject("proj_web", { host_1: "/src/web" });
+  h.bb.addBbProject("proj_api", { host_1: "/src/api" });
+  h.bb.addBbProject("proj_docs", { host_1: "/src/docs" });
+  return seedProject(h, (doc) => {
+    doc.scope = { protected: ["db/**"] };
+    doc.repo = [
+      { name: "web", project: "proj_web", checks: ["npm run web-test"], protected: ["web.lock"] },
+      { name: "api", project: "proj_api", base: "trunk", remote: "upstream" },
+      { name: "docs", project: "proj_docs", checks: ["npm run docs-test"] },
+    ];
+    doc.ticket[0].repo = "web";
+    doc.ticket[1].repo = "api";
+    doc.ticket[1].depends_on = [];
+    edit?.(doc);
+  });
+}
+
 export const ticketOf = (h: EngineHarness, key: string): TicketRow => h.store.ticketByKey(key)!;
 export const workerRows = (h: EngineHarness, key: string): ThreadRow[] => h.store.threads({ ticketId: ticketOf(h, key).id, role: "worker" });
 

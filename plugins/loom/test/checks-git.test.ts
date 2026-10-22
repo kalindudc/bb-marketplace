@@ -8,7 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { settleChecks, submit } from "../src/checks";
 import type { HostPort } from "../src/ports";
 import * as ops from "../src/host/ops";
-import { makeCtx, seedProject, startWorker, ticketOf, type Doc, type EngineHarness } from "./helpers";
+import { makeCtx, seedProject, seedRepoProject, startWorker, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 const saved: Record<string, string | undefined> = {};
 const sh = (cwd: string, ...args: string[]) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
@@ -39,7 +39,8 @@ afterAll(() => {
   rmSync(scratch, { recursive: true, force: true });
 });
 
-async function worker(edit?: (doc: Doc) => void) {
+/** CSV-1's worker in a fresh repository; with `repos`, the project is seedRepoProject's and CSV-1 is in its repo web. */
+async function worker(edit?: (doc: Doc) => void, opts: { repos?: boolean } = {}) {
   const repo = join(scratch, `repo-${counter++}`);
   mkdirSync(repo);
   sh(repo, "init", "-q", "-b", "main");
@@ -54,7 +55,7 @@ async function worker(edit?: (doc: Doc) => void) {
 
   h = makeCtx();
   h.ctx.host = realHost;
-  await seedProject(h, edit);
+  await (opts.repos === true ? seedRepoProject : seedProject)(h, edit);
   await startWorker(h);
   h.bb.environments.get("env_1")!.path = worktree;
   h.bb.environments.get("env_1")!.branchName = "wt-feature";
@@ -98,6 +99,30 @@ describe("submit against a real repository", () => {
     await settleChecks(h.ctx);
     expect(ticketOf(h, "CSV-1").state).toBe("working");
     expect(lastCheck().data).toMatchObject({ passed: false, protectedHits: ["db/schema.sql"] });
+  });
+
+  it("runs only the ticket's repo's checks and fails a path only that repo protects, on a multi-repo project", async () => {
+    await worker(
+      (doc) => {
+        doc.checks = { commands: ["echo top-level ran; exit 9"] };
+        doc.repo[0].checks = ["test -f src/model/a.ts && echo web checks ran"];
+        doc.repo[2].checks = ["echo docs ran; exit 8"];
+      },
+      { repos: true },
+    );
+    put(worktree, "src/model/a.ts", "x");
+    submit(h.ctx, "thr_w1", "one");
+    await settleChecks(h.ctx);
+    expect(ticketOf(h, "CSV-1").state).toBe("review");
+    expect(lastCheck().body).toContain("pass test -f src/model/a.ts && echo web checks ran");
+    expect(lastCheck().body).not.toContain("ran; exit");
+
+    h.store.setTicketState(ticketOf(h, "CSV-1").id, "working", "loom");
+    put(worktree, "web.lock", "z");
+    submit(h.ctx, "thr_w1", "two");
+    await settleChecks(h.ctx);
+    expect(ticketOf(h, "CSV-1").state).toBe("working");
+    expect(lastCheck().data).toMatchObject({ passed: false, protectedHits: ["web.lock"] });
   });
 
   it("fails the run when a check command writes a tracked file, and reports the failing command's output", async () => {
