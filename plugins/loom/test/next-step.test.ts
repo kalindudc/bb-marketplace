@@ -108,7 +108,7 @@ describe("nextStepOf", () => {
   it("offers Land once every ticket of an integration project is finished", () => {
     const step = nextStepOf(input({ state: "running", ticketCounts: { done: 2, cancelled: 1 } }, [card({ state: "done", ready: false })]))!;
     expect(step).toMatchObject({ stage: 5, tone: "normal", title: "Next: land the project." });
-    expect(step.text).toBe("Every ticket is finished. Landing pushes the integration branch and opens its pull request, or updates the one already open.");
+    expect(step.text).toBe("Every ticket is finished. Read what lands on the Changes tab; landing pushes the integration branch and opens its pull request, or updates the one already open.");
     expect(step.action).toEqual({ control: "land", label: "Land · open the pull request", confirm: "Click again to land" });
   });
 

@@ -11,6 +11,8 @@ export default experimental_defineHostEntry({
     commitAll: (input, { signal }) => ops.commitAll(input, signal),
     exec: (input, { signal }) => ops.exec(input, signal),
     diff: (input, { signal }) => ops.diff(input, signal),
+    changedFiles: (input, { signal }) => ops.changedFiles(input, signal),
+    filePatch: (input, { signal }) => ops.filePatch(input, signal),
     ensureWorktree: (input, { signal, experimental_paths }) => ops.ensureWorktree(input, experimental_paths.dataDir, signal),
     merge: (input, { signal }) => ops.merge(input, signal),
     resetHard: (input, { signal }) => ops.resetHard(input, signal),

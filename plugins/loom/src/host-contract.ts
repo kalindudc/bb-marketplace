@@ -14,6 +14,20 @@ const ref = z
 const sha = z.string().min(1).max(64);
 const commit = z.string().regex(/^[0-9a-fA-F]{4,64}$/, "must be a commit hash");
 const slug = z.string().regex(/^[a-z][a-z0-9-]{1,39}$/, "must be a project slug");
+const missing = z.object({ outcome: z.literal("missing"), message: z.string() }).strict();
+
+export const FILE_STATUSES = ["added", "modified", "deleted", "renamed", "copied", "type_changed"] as const;
+const changedFile = z
+  .object({
+    path: z.string(),
+    status: z.enum(FILE_STATUSES),
+    additions: z.number().int(),
+    deletions: z.number().int(),
+    binary: z.boolean(),
+    /** The file's blob after the change; null when it was deleted. */
+    blob: z.string().nullable(),
+  })
+  .strict();
 
 export const hostContract = defineRpcContract({
   ensureBranch: {
@@ -44,6 +58,16 @@ export const hostContract = defineRpcContract({
   diff: {
     input: z.object({ repo: absPath, base: ref, head: commit, maxBytes: z.number().int().min(1000).max(200_000) }).strict(),
     output: z.object({ stat: z.string(), patch: z.string(), truncated: z.boolean() }).strict(),
+  },
+  // The files that differ from base to head. mergeBase compares head with its merge base with base, as base...head does; landed,
+  // for a head that base already contains, compares it with base as it was before the merge that brought it in.
+  changedFiles: {
+    input: z.object({ repo: absPath, base: ref, head: ref, mergeBase: z.boolean(), landed: z.boolean().optional(), maxFiles: z.number().int().min(1).max(5000) }).strict(),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), base: sha, head: sha, files: z.array(changedFile), truncated: z.boolean() }).strict(), missing]),
+  },
+  filePatch: {
+    input: z.object({ repo: absPath, base: commit, head: commit, path: z.string().min(1).max(4096), maxBytes: z.number().int().min(1000).max(400_000) }).strict(),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), patch: z.string(), truncated: z.boolean() }).strict(), missing]),
   },
   ensureWorktree: {
     input: z.object({ repo: absPath, key: slug, branch: ref }).strict(),

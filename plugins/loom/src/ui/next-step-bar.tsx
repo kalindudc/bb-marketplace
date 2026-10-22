@@ -1,11 +1,11 @@
 import type { ControlAction, NextStep } from "../contract";
 import { STAGES } from "../next-step";
-import { ConfirmButton } from "./common";
+import { BUTTON, ConfirmButton } from "./common";
 
 const STAGE_TONES = { done: "text-muted-foreground", current: "font-semibold text-foreground", todo: "text-subtle-foreground" } as const;
 
 /** The stages with the current one marked, one sentence on what happens next, and at most one button. */
-export function NextStepBar({ next, busy, onAct }: { next: NextStep; busy: boolean; onAct(action: ControlAction, version?: number): void }) {
+export function NextStepBar({ next, busy, onAct, onReviewChanges }: { next: NextStep; busy: boolean; onAct(action: ControlAction, version?: number): void; onReviewChanges?: () => void }) {
   const warning = next.tone === "warning";
   const { action } = next;
   return (
@@ -24,6 +24,11 @@ export function NextStepBar({ next, busy, onAct }: { next: NextStep; busy: boole
         <p className={`min-w-0 flex-1 text-sm ${warning ? "text-warning-text" : ""}`}>
           <b>{next.title}</b> {next.text}
         </p>
+        {action?.control === "land" && onReviewChanges !== undefined && (
+          <button type="button" className={BUTTON} onClick={onReviewChanges}>
+            Review changes
+          </button>
+        )}
         {action !== null && <ConfirmButton key={action.label} primary label={action.label} confirmLabel={action.confirm} disabled={busy} onConfirm={() => onAct(action.control, action.version)} />}
       </div>
     </section>

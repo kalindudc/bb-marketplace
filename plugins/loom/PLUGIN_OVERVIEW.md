@@ -4,20 +4,21 @@ Run a software project with agents: a planner turns a goal into a validated spec
 
 - A planner skill (`loom-plan`): any thread can propose a project as a TOML spec with tickets, acceptance criteria, checks, a review policy and a merge strategy. The plugin validates it with numbered errors you can act on, and you approve it before anything runs.
 - Start a project from the page: New project opens bb's own new-thread composer, and the planner's questions, its draft and the Approve and Start buttons stay on the page.
-- Review a spec without reading TOML: a dashboard with the tickets in dependency waves, shared files, the checks and the limits. Press "+ note" on any part to send the planner your notes in one message, and compare its versions with what each one changed.
+- Review a spec without reading TOML: a dashboard with the tickets in dependency waves, shared files, the checks and the limits. Press "+ note" on any part to send the planner your notes in one message, and compare its versions.
 - Workers that start by themselves: one thread per ready ticket, in its own worktree, only when its dependencies are done and its files do not overlap work in flight. The plugin, not the agent, commits, runs your check commands, and decides whether the work passed.
 - Reviewers on their own model: each ticket is read by fresh reviewer threads that approve or send findings back to the worker. A ticket merges only after the review you asked for and the `after_merge` checks on the merged result.
 - A Loom page: a home table that puts what needs you in each project's row, a health strip per project, a board with a lane per ticket state, an Agents tab with every thread, a live feed, and flow and agent metrics over 7, 14 or 30 days.
+- A Changes tab to see what lands before you land: the integration branch against the base, each merge, the commit in review and a working ticket's live worktree. A finished or archived project still shows what it merged.
 - A timeline on every project: rewind the whole page to any moment, or play it back, to see the board, agents and metrics as they were.
-- Controls with a second click: a next-step bar on every project says what happens next and carries the one button you need now; start, pause, resume, land and archive a project; requeue, block or cancel a ticket; reply to a worker. Each is logged as your action. Approving the planner's fixed spec requeues the tickets whose worker or reviewer bb could not start.
-- A header chip such as `CSV-3 · review` on worker, reviewer and planner threads that opens the ticket on the page, and a Planning chip on a planning conversation that opens it there.
+- Controls with a second click: a next-step bar on every project says what happens next and carries the one button you need now; start, pause, resume, land and archive a project; requeue, block or cancel a ticket; reply to a worker. Each is logged as your action.
+- A header chip such as `CSV-3 · review` on Loom's threads, and a Planning chip on a planning conversation, that open them on the page.
 - Questions the planner asks with Ask User Question appear above its chat on the page, where you answer them, and the Loom icon in the navigation rail counts what needs you.
 - A ticket page that reads at a glance: its stage and a summary, each attempt as a card with its checks, review findings and merge, and its brief.
 - `bb loom metrics`, `feed` and `report` print the numbers, the events and a finished project's record. A done hook in Loom's settings sends that record, or an agent's summary of it, to a command you choose.
 
 ## How it works
 
-Every change to a project or ticket goes through one store method that appends an event in the same transaction, and the event table refuses edits. The metrics are computed from that log, so they are exact and can be recomputed. Agents get narrow tools for their role and never merge or push. On the integration strategy the branch stays local until you run `bb loom land`: one pull request upstream, or with `--direct` a push to the base branch. A blocked ticket reaches the planner in a triage round, and so does your reply on it.
+Every change to a project or ticket goes through one store method that appends an event in the same transaction. The metrics are computed from that log, so they are exact and can be recomputed. Agents get narrow tools for their role and never merge or push. On the integration strategy the branch stays local until you run `bb loom land`: one pull request upstream, or with `--direct` a push to the base branch. A blocked ticket reaches the planner in a triage round, and so does your reply on it.
 
 ## Requirements
 

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, mountPluginContentScripts, renderSlot, type PluginRpcTestHandlers, type PluginSdkTestFakes, type RenderSlotOptions } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginNavPanelProps, PluginSidebarThread, PluginThreadHeaderActionProps } from "@get-bb/plugin-sdk/app";
-import type { Attempt, ChecksItem, HomeProject, NextStep, PlanningSession, ProjectSummary, SentNote, ThreadInfo, rpcContract } from "../src/contract";
+import type { Attempt, ChangedFile, ChangeSource, ChangesView, ChecksItem, HomeProject, NextStep, PlanningSession, ProjectSummary, SentNote, ThreadInfo, rpcContract } from "../src/contract";
 import { notesMessage } from "../src/prompts";
 import { ConfirmButton, MoreMenu } from "../src/ui/common";
 import { questionsOf } from "../src/ui/questions";
@@ -33,6 +33,8 @@ const handlers = (over: Partial<Handlers> = {}): Handlers => ({
   planningSession: () => null,
   specVersion: unexpected,
   sendNotes: unexpected,
+  changes: unexpected,
+  changePatch: unexpected,
   ...over,
 });
 
@@ -736,7 +738,7 @@ describe("planning conversation", () => {
   it("gives a project with a planner thread a Planner tab with its chat, and a project without one no such tab", async () => {
     const { slot } = await mountPage("csv", { project: () => projectView() });
     await slot.findByRole("tab", { name: "Board" });
-    expect([...slot.container.querySelectorAll("[role=tab]")].map((tab) => tab.textContent)).toEqual(["Board", "Agents", "Feed", "Metrics", "Spec", "Planner"]);
+    expect([...slot.container.querySelectorAll("[role=tab]")].map((tab) => tab.textContent)).toEqual(["Board", "Agents", "Feed", "Metrics", "Spec", "Planner", "Changes"]);
     fireEvent.click(slot.getByRole("tab", { name: "Planner" }));
     expect(chat(slot).getAttribute("data-thread-id")).toBe("thr_plan");
     slot.lifecycle.unmount();
@@ -1672,6 +1674,172 @@ describe("spec tab", () => {
     await slot.emitRealtime("loom:changed", { slug: "csv" });
     await waitFor(() => expect(calls(slot, "project")).toHaveLength(2));
     expect(slot.getByRole("tab", { name: "Spec" }).getAttribute("aria-selected")).toBe("true");
+  });
+});
+
+describe("changes tab", () => {
+  afterEach(() => localStorage.clear());
+  const [A, B, C] = ["a".repeat(40), "b".repeat(40), "c".repeat(40)];
+  const changed = (path: string, over: Partial<ChangedFile> = {}): ChangedFile => ({ path, previousPath: null, status: "modified", additions: 3, deletions: 1, binary: false, untracked: false, fingerprint: `blob-${path}`, tickets: [], ...over });
+  const source = (over: Partial<ChangeSource>): ChangeSource => ({ id: "branch", kind: "branch", key: null, title: null, state: null, base: A, head: C, against: "origin/main", at: null, attempt: 0, reviewRound: 0, files: [], truncated: false, note: null, gone: false, ...over });
+  const changesView = (over: Partial<ChangesView> = {}): ChangesView => ({
+    slug: "csv",
+    strategy: "integration",
+    base: "main",
+    remoteBase: "origin/main",
+    branch: "loom/csv",
+    finished: false,
+    unavailable: null,
+    sources: [
+      source({ files: [changed("src/a.ts", { tickets: ["CSV-1"] }), changed("src/b.ts", { status: "added", tickets: ["CSV-1"] })] }),
+      source({ id: "merge:CSV-1", kind: "merge", key: "CSV-1", title: "Order rows", state: "done", base: A, head: B, against: "loom/csv", at: NOW - 2 * HOUR, files: [changed("src/a.ts"), changed("src/b.ts", { status: "added" })] }),
+      source({ id: "live:CSV-2", kind: "live", key: "CSV-2", title: "Export endpoint", state: "working", base: null, head: null, against: "loom/csv", attempt: 1, files: [changed("src/export.ts", { status: "added", untracked: true, fingerprint: "live:added:3:1" })] }),
+      source({ id: "commit:CSV-3", kind: "commit", key: "CSV-3", title: "Docs", state: "queued", base: null, head: null, against: "loom/csv", files: [], note: "No changes yet." }),
+    ],
+    ...over,
+  });
+  const board = [card({ key: "CSV-1", state: "done", ready: false, hasChanges: true }), card({ key: "CSV-2", title: "Export endpoint", state: "working", ready: false, threadId: "thr_w1", hasChanges: true }), card({ key: "CSV-3", title: "Docs" })];
+  const landing = () => projectView({ overview: overview({ ticketCounts: { done: 3 } }), board: board.map((entry) => ({ ...entry, state: "done" })), next: { stage: 5, tone: "normal", title: "Next: land the project.", text: "Every ticket is finished.", action: { control: "land", label: "Land · open the pull request", confirm: "Click again to land" } } });
+  const mountChanges = async (rpc: Partial<Handlers> = {}, view = projectView({ board })) => {
+    const mounted = await mountPage("csv", { project: () => view, changes: () => changesView(), changePatch: ({ path }) => ({ patch: `diff --git a/${path} b/${path}\n+x\n`, truncated: false }), ...rpc });
+    await mounted.slot.findByRole("tab", { name: "Board" });
+    return mounted.slot;
+  };
+  const openTab = async (slot: Slot) => {
+    fireEvent.click(slot.getByRole("tab", { name: "Changes" }));
+    return slot.findByText("compared with", { exact: false });
+  };
+  const fileRow = (slot: Slot, path: string) => slot.container.querySelector<HTMLElement>(`[data-file="${path}"]`)!;
+
+  it("lists the branch, each merge and the unmerged tickets, and reads nothing until it opens", async () => {
+    const slot = await mountChanges();
+    expect(calls(slot, "changes")).toEqual([]);
+    await openTab(slot);
+    expect(calls(slot, "changes")).toEqual([{ method: "changes", input: { slug: "csv" } }]);
+    expect([...slot.container.querySelectorAll("[data-source]")].map((node) => node.getAttribute("data-source"))).toEqual(["branch", "merge:CSV-1", "live:CSV-2", "commit:CSV-3"]);
+    expect(slot.container.querySelector<HTMLButtonElement>('[data-source="commit:CSV-3"]')!.disabled).toBe(true);
+    expect(slot.container.querySelector("[data-change-source]")!.getAttribute("data-change-source")).toBe("branch");
+    expect(slot.container.querySelector("[data-land-panel]")!.textContent).toContain("Land pushes loom/csv at ccccccc");
+    expect(slot.container.querySelector("[data-land-panel]")!.textContent).not.toContain("This is what lands.");
+    expect(slot.getByText("Viewed 0 of 2", { exact: false })).toBeTruthy();
+  });
+
+  it("shows a file's diff with bb's viewer between the listing's commits, in split view when asked", async () => {
+    const slot = await mountChanges();
+    await openTab(slot);
+    fireEvent.click(slot.getByRole("button", { name: "Show src/a.ts" }));
+    const diff = await slot.findByTestId("bb-diff");
+    expect(diff.getAttribute("data-path")).toBe("src/a.ts");
+    expect(diff.getAttribute("data-view")).toBe("unified");
+    expect(calls(slot, "changePatch")).toEqual([{ method: "changePatch", input: { slug: "csv", path: "src/a.ts", base: A, head: C } }]);
+    fireEvent.click(slot.getByRole("button", { name: "split" }));
+    expect(slot.getByTestId("bb-diff").getAttribute("data-view")).toBe("split");
+    fireEvent.click(slot.getByRole("button", { name: "Expand all" }));
+    await waitFor(() => expect(slot.getAllByTestId("bb-diff")).toHaveLength(2));
+  });
+
+  it("opens a ticket's changes from a file's ticket chip and from a board card's Changes link", async () => {
+    const slot = await mountChanges();
+    fireEvent.click(slot.getByRole("button", { name: "Show the changes of CSV-2" }));
+    expect(await slot.findByText("Live.", { exact: false })).toBeTruthy();
+    expect(slot.container.querySelector("[data-change-source]")!.getAttribute("data-change-source")).toBe("live:CSV-2");
+    expect(slot.queryByRole("button", { name: "Show the changes of CSV-3" })).toBeNull();
+    fireEvent.click(slot.container.querySelector<HTMLElement>('[data-source="branch"]')!);
+    fireEvent.click(fileRow(slot, "src/a.ts").querySelector<HTMLElement>('[data-file-ticket="CSV-1"]')!);
+    expect(slot.container.querySelector("[data-change-source]")!.getAttribute("data-change-source")).toBe("merge:CSV-1");
+    expect(slot.container.querySelector("[data-change-source]")!.textContent).toContain("What its merge bbbbbbb added to loom/csv, 2h ago");
+  });
+
+  it("reads a live worktree's patch by the ticket's key and marks a file git does not track yet", async () => {
+    const slot = await mountChanges();
+    fireEvent.click(slot.getByRole("button", { name: "Show the changes of CSV-2" }));
+    await slot.findByText("Live.", { exact: false });
+    expect(fileRow(slot, "src/export.ts").textContent).toContain("new, not committed");
+    fireEvent.click(slot.getByRole("button", { name: "Open worker thread" }));
+    expect(slot.inspection.navigateCalls.at(-1)).toMatchObject({ method: "toThread" });
+    fireEvent.click(slot.getByRole("button", { name: "Show src/export.ts" }));
+    await slot.findByTestId("bb-diff");
+    expect(calls(slot, "changePatch")).toEqual([{ method: "changePatch", input: { slug: "csv", path: "src/export.ts", key: "CSV-2" } }]);
+  });
+
+  it("reads a live worktree again every 10 seconds while it shows, and stops when another source shows", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      const slot = await mountChanges();
+      fireEvent.click(slot.getByRole("button", { name: "Show the changes of CSV-2" }));
+      await slot.findByText("Live.", { exact: false });
+      const before = calls(slot, "changes").length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+      expect(calls(slot, "changes").length).toBe(before + 1);
+      fireEvent.click(slot.container.querySelector<HTMLElement>('[data-source="branch"]')!);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      expect(calls(slot, "changes").length).toBe(before + 1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps Viewed marks across visits, folds a viewed file, and clears a mark when the file changes again", async () => {
+    let view = changesView();
+    const slot = await mountChanges({ changes: () => view });
+    await openTab(slot);
+    fireEvent.click(slot.getByRole("button", { name: "Show src/a.ts" }));
+    await slot.findByTestId("bb-diff");
+    fireEvent.click(within(fileRow(slot, "src/a.ts")).getByRole("button", { name: "Viewed" }));
+    expect(slot.queryByTestId("bb-diff")).toBeNull();
+    expect(fileRow(slot, "src/a.ts").hasAttribute("data-viewed")).toBe(true);
+    expect(slot.getByText("Viewed 1 of 2", { exact: false })).toBeTruthy();
+    expect(JSON.parse(localStorage.getItem("loom.viewed.csv")!)).toEqual(["src/a.ts\u0000blob-src/a.ts"]);
+
+    view = changesView({ sources: [source({ files: [changed("src/a.ts", { fingerprint: "blob-new" }), changed("src/b.ts")] })] });
+    await slot.emitRealtime("loom:changed", { slug: "csv" });
+    await waitFor(() => expect(slot.getByText("Viewed 0 of 2", { exact: false })).toBeTruthy());
+  });
+
+  it("when the project is ready to land, the bar's Review changes opens the branch, the tab counts the files not viewed, and the panel lands", async () => {
+    const slot = await mountChanges({ control: () => landing() }, landing());
+    const badge = await waitFor(() => {
+      const found = slot.container.querySelector('[data-tab-badge="changes"]');
+      if (found === null) throw new Error("no badge yet");
+      return found;
+    });
+    expect(badge.textContent).toBe("2");
+    fireEvent.click(slot.getByRole("button", { name: "Review changes" }));
+    await slot.findByText("This is what lands.", { exact: false });
+    fireEvent.click(within(fileRow(slot, "src/b.ts")).getByRole("button", { name: "Viewed" }));
+    expect(slot.container.querySelector('[data-tab-badge="changes"]')!.textContent).toBe("1");
+    const panel = slot.container.querySelector<HTMLElement>("[data-land-panel]")!;
+    fireEvent.click(within(panel).getByRole("button", { name: "Land" }));
+    fireEvent.click(within(panel).getByRole("button", { name: "Click again to land" }));
+    await waitFor(() => expect(calls(slot, "control")).toEqual([{ method: "control", input: { slug: "csv", action: "land", confirm: true } }]));
+  });
+
+  it("leaves out work whose commits are gone, says why nothing can be read, and shows a finished project's merges", async () => {
+    const gone = changesView({ finished: true, sources: [changesView().sources[0]!, { ...changesView().sources[1]!, gone: true, files: null, note: "Its commits are no longer in the repository." }] });
+    const slot = await mountChanges({ changes: () => gone }, projectView({ overview: overview({ state: "done", ticketCounts: { done: 1 } }), board, next: null }));
+    fireEvent.click(slot.getByRole("tab", { name: "Changes" }));
+    await waitFor(() => expect(slot.container.querySelector("[data-change-source]")!.textContent).toContain("What loom/csv merged"));
+    expect(slot.container.querySelector("[data-land-panel]")).toBeNull();
+    expect([...slot.container.querySelectorAll("[data-source]")].map((node) => node.getAttribute("data-source"))).toEqual(["branch"]);
+    expect(slot.container.querySelector("[data-gone]")!.textContent).toBe("1 part of this project is no longer in the repository, so it is left out.");
+    slot.lifecycle.unmount();
+
+    const none = await mountChanges({ changes: () => changesView({ sources: [], unavailable: "The bb project has no checkout on the machine host_1, so its changes cannot be read." }) });
+    fireEvent.click(none.getByRole("tab", { name: "Changes" }));
+    expect(await none.findByText("The bb project has no checkout on the machine host_1, so its changes cannot be read.")).toBeTruthy();
+  });
+
+  it("has no Changes tab before the project starts, nor while it is rewound", async () => {
+    const ready = await mountChanges({}, projectView({ overview: overview({ state: "ready", ticketCounts: { queued: 2 } }) }));
+    expect(ready.queryByRole("tab", { name: "Changes" })).toBeNull();
+    ready.lifecycle.unmount();
+    const rewound = await mountChanges({}, projectView({ board, at: 12 }));
+    expect(rewound.queryByRole("tab", { name: "Changes" })).toBeNull();
+    expect(rewound.queryByRole("button", { name: "Show the changes of CSV-1" })).toBeNull();
   });
 });
 

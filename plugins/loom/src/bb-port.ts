@@ -158,6 +158,36 @@ export function createBbPort(bb: BbPluginApi): BbPort {
     async threadOutput(threadId) {
       return (await bb.sdk.threads.output({ threadId })).output;
     },
+    async environmentFiles(environmentId, base) {
+      try {
+        const result = await bb.sdk.environments.diffFiles({ environmentId, target: "all", mergeBaseBranch: base });
+        if (result.outcome === "not_applicable") return { outcome: "unavailable", message: result.message };
+        if (result.outcome === "unavailable") return { outcome: "unavailable", message: result.failure.message };
+        const files = result.files.map((file) => ({
+          path: file.path,
+          previousPath: file.previousPath,
+          status: file.changeKind,
+          additions: file.additions,
+          deletions: file.deletions,
+          binary: file.binary,
+          untracked: file.origin === "untracked",
+        }));
+        return { outcome: "ok", files, truncated: result.truncated };
+      } catch (error) {
+        return { outcome: "unavailable", message: message(error) };
+      }
+    },
+    async environmentPatch(environmentId, base, path) {
+      try {
+        const result = await bb.sdk.environments.diffPatch({ environmentId, paths: [path], target: { type: "all", mergeBaseBranch: base } });
+        if (result.outcome === "not_applicable") return { outcome: "unavailable", message: result.message };
+        if (result.outcome === "unavailable") return { outcome: "unavailable", message: result.failure.message };
+        const patch = result.patches.find((entry) => entry.path === path) ?? result.patches[0];
+        return { outcome: "ok", patch: patch?.patch ?? "", truncated: patch?.truncated ?? false };
+      } catch (error) {
+        return { outcome: "unavailable", message: message(error) };
+      }
+    },
   };
 }
 

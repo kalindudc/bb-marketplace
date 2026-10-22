@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import hostEntry from "../host";
-import { commitAll, diff, ensureBranch, ensureWorktree, exec, fetchBranch, git, merge, parseRemoteUrl, prCreate, prState, push, resetHard, worktreeState } from "../src/host/ops";
+import { changedFiles, commitAll, diff, ensureBranch, ensureWorktree, exec, fetchBranch, filePatch, git, merge, parseRemoteUrl, prCreate, prState, push, resetHard, worktreeState } from "../src/host/ops";
 
 const ENV: Record<string, string> = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
 const AUTHOR_VARS = ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"];
@@ -258,6 +258,93 @@ describe("diff", () => {
     expect(result.truncated).toBe(true);
     expect(result.patch.length).toBeLessThanOrEqual(1000);
     expect(result.stat).toContain("big.txt");
+  });
+});
+
+describe("changedFiles and filePatch", () => {
+  const okFiles = async (input: Parameters<typeof changedFiles>[0]) => {
+    const result = await changedFiles(input);
+    if (result.outcome !== "ok") throw new Error(result.message);
+    return result;
+  };
+
+  it("lists each file with its status, line counts and blob, against the merge base when asked", async () => {
+    const repo = makeRepo();
+    commitFile(repo, "gone.txt", "bye\n");
+    const worktree = addWorktree(repo, "feature-files");
+    put(worktree, "src/new.ts", "export const a = 1;\nexport const b = 2;\n");
+    put(worktree, "README.md", "hello there\n");
+    put(worktree, "logo.png", Buffer.from([0, 1, 2, 3, 0, 255]).toString("latin1"));
+    sh(worktree, "rm", "-q", "gone.txt");
+    const head = commitFile(worktree, "src/new.ts", "export const a = 1;\nexport const b = 2;\n", "feature");
+    commitFile(repo, "other.txt", "main moved on\n");
+
+    const result = await okFiles({ repo, base: "main", head: "feature-files", mergeBase: true, maxFiles: 100 });
+    expect(result.head).toBe(head);
+    expect(result.base).toBe(sh(repo, "merge-base", "main", head));
+    expect(result.truncated).toBe(false);
+    expect(result.files.map((file) => [file.path, file.status, file.additions, file.deletions, file.binary])).toEqual([
+      ["README.md", "modified", 1, 1, false],
+      ["gone.txt", "deleted", 0, 1, false],
+      ["logo.png", "added", 0, 0, true],
+      ["src/new.ts", "added", 2, 0, false],
+    ]);
+    expect(result.files.find((file) => file.path === "src/new.ts")!.blob).toBe(sh(repo, "rev-parse", `${head}:src/new.ts`));
+    expect(result.files.find((file) => file.path === "gone.txt")!.blob).toBeNull();
+
+    const direct = await okFiles({ repo, base: "main", head, mergeBase: false, maxFiles: 100 });
+    expect(direct.files.map((file) => file.path)).toContain("other.txt");
+    expect((await okFiles({ repo, base: "main", head, mergeBase: true, maxFiles: 2 })).truncated).toBe(true);
+  });
+
+  it("with landed, compares a head main already merged with main as it was before that merge", async () => {
+    const repo = makeRepo();
+    const worktree = addWorktree(repo, "feature-landed");
+    commitFile(worktree, "one.txt", "1\n");
+    const head = commitFile(worktree, "two.txt", "2\n");
+    commitFile(repo, "main.txt", "main\n");
+    sh(repo, "merge", "-q", "--no-ff", "-m", "Merge feature", "feature-landed");
+    commitFile(repo, "after.txt", "after\n");
+
+    expect((await okFiles({ repo, base: "main", head, mergeBase: true, maxFiles: 100 })).files).toEqual([]);
+    const landed = await okFiles({ repo, base: "main", head, mergeBase: true, landed: true, maxFiles: 100 });
+    expect(landed.files.map((file) => file.path)).toEqual(["one.txt", "two.txt"]);
+    // A head main has not merged is unaffected by landed.
+    const open = featureCommit(repo, "feature-open", "three.txt", "3\n");
+    expect((await okFiles({ repo, base: "main", head: open, mergeBase: true, landed: true, maxFiles: 100 })).files.map((file) => file.path)).toEqual(["three.txt"]);
+  });
+
+  it("says a commit or a ref is missing instead of throwing", async () => {
+    const repo = makeRepo();
+    const gone = "0123456789abcdef0123456789abcdef01234567";
+    expect(await changedFiles({ repo, base: "main", head: gone, mergeBase: true, maxFiles: 10 })).toMatchObject({ outcome: "missing", message: expect.stringContaining(gone) });
+    expect(await changedFiles({ repo, base: "origin/main", head: "main", mergeBase: true, maxFiles: 10 })).toMatchObject({ outcome: "missing", message: expect.stringContaining("origin/main") });
+    const head = sh(repo, "rev-parse", "HEAD");
+    expect(await filePatch({ repo, base: gone, head, path: "README.md", maxBytes: 1000 })).toMatchObject({ outcome: "missing" });
+  });
+
+  it("returns one file's patch with standard prefixes, whatever the user's diff settings, and clips it", async () => {
+    const repo = makeRepo();
+    sh(repo, "config", "diff.noprefix", "true");
+    const base = sh(repo, "rev-parse", "HEAD");
+    put(repo, "a.txt", "a\n");
+    put(repo, "b.txt", "b\n");
+    put(repo, "[b].txt", `${"line\n".repeat(1000)}`);
+    const head = commitFile(repo, "README.md", "hello again\n");
+
+    const one = await filePatch({ repo, base, head, path: "README.md", maxBytes: 10_000 });
+    expect(one).toMatchObject({ outcome: "ok", truncated: false });
+    if (one.outcome !== "ok") throw new Error("expected ok");
+    expect(one.patch).toContain("diff --git a/README.md b/README.md");
+    expect(one.patch).toContain("+hello again");
+    expect(one.patch).not.toContain("a.txt");
+    // The path is literal, not a glob that would also match b.txt.
+    const literal = await filePatch({ repo, base, head, path: "[b].txt", maxBytes: 1000 });
+    expect(literal).toMatchObject({ outcome: "ok", truncated: true });
+    if (literal.outcome !== "ok") throw new Error("expected ok");
+    expect(literal.patch.length).toBeLessThanOrEqual(1000);
+    expect(literal.patch).toContain("a/[b].txt");
+    expect(literal.patch).not.toContain("a/b.txt");
   });
 });
 
@@ -647,6 +734,8 @@ describe("host entry", () => {
     const repo = makeRepo();
     const feature = featureCommit(repo, "feature-entry", "src/e.ts", "e\n");
     expect(await harness.experimental_call("diff", { repo, base: "main", head: feature, maxBytes: 10_000 })).toMatchObject({ truncated: false });
+    expect(await harness.experimental_call("changedFiles", { repo, base: "main", head: feature, mergeBase: true, maxFiles: 10 })).toMatchObject({ outcome: "ok", files: [{ path: "src/e.ts", status: "added" }] });
+    expect(await harness.experimental_call("filePatch", { repo, base: sh(repo, "rev-parse", "main"), head: feature, path: "src/e.ts", maxBytes: 10_000 })).toMatchObject({ outcome: "ok" });
     await harness.experimental_call("ensureBranch", { repo, branch: "loom/entry", from: "main" });
     const slug = `entry-${counter++}`;
     const ready = await harness.experimental_call("ensureWorktree", { repo, key: slug, branch: "loom/entry" });

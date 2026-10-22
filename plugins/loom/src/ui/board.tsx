@@ -36,7 +36,7 @@ function DraftCard({ card }: { card: BoardCard }) {
   );
 }
 
-function Card({ slug, card, now, draft }: { slug: string; card: BoardCard; now: number; draft: boolean }) {
+function Card({ slug, card, now, draft, onChanges }: { slug: string; card: BoardCard; now: number; draft: boolean; onChanges?: (key: string) => void }) {
   const navigate = useBbNavigate();
   if (draft) return <DraftCard card={card} />;
   const detail = [`${formatDuration(Math.max(0, now - card.stateAt))} in ${card.state.replace("_", " ")}`, card.attempt > 0 ? `attempt ${card.attempt}` : null, card.reviewRound > 0 ? `round ${card.reviewRound}` : null].filter((part) => part !== null);
@@ -55,6 +55,11 @@ function Card({ slug, card, now, draft }: { slug: string; card: BoardCard; now: 
             Thread
           </button>
         )}
+        {card.hasChanges && onChanges !== undefined && (
+          <button type="button" aria-label={`Show the changes of ${card.key}`} onClick={() => onChanges(card.key)} className={LINK}>
+            Changes
+          </button>
+        )}
         {card.prUrl !== null && (
           <button type="button" aria-label={`Open the pull request for ${card.key}`} onClick={() => navigate.openUrl(card.prUrl!)} className={LINK}>
             Pull request
@@ -65,19 +70,21 @@ function Card({ slug, card, now, draft }: { slug: string; card: BoardCard; now: 
   );
 }
 
-function QueueGroup({ id, title, cards, slug, now, draft }: { id: string; title: string; cards: BoardCard[]; slug: string; now: number; draft: boolean }) {
+type CardProps = { slug: string; now: number; draft: boolean; onChanges?: (key: string) => void };
+
+function QueueGroup({ id, title, cards, ...rest }: { id: string; title: string; cards: BoardCard[] } & CardProps) {
   if (cards.length === 0) return null;
   return (
     <div data-queue-group={id} className="space-y-2">
       <h4 className={HEADING}>{title}</h4>
       {cards.map((card) => (
-        <Card key={card.key} slug={slug} card={card} now={now} draft={draft} />
+        <Card key={card.key} card={card} {...rest} />
       ))}
     </div>
   );
 }
 
-function LaneColumn({ lane, cards, slug, now, draft }: { lane: Lane; cards: BoardCard[]; slug: string; now: number; draft: boolean }) {
+function LaneColumn({ lane, cards, ...rest }: { lane: Lane; cards: BoardCard[] } & CardProps) {
   const [open, setOpen] = useState(lane.collapsed !== true);
   return (
     <section data-lane={lane.id} className="flex w-64 shrink-0 flex-col gap-2">
@@ -89,14 +96,14 @@ function LaneColumn({ lane, cards, slug, now, draft }: { lane: Lane; cards: Boar
       </h3>
       {open && lane.id === "queued" && (
         <div className="space-y-3">
-          <QueueGroup id="ready" title="Ready" cards={cards.filter((card) => card.ready)} slug={slug} now={now} draft={draft} />
-          <QueueGroup id="waiting" title="Waiting" cards={cards.filter((card) => !card.ready)} slug={slug} now={now} draft={draft} />
+          <QueueGroup id="ready" title="Ready" cards={cards.filter((card) => card.ready)} {...rest} />
+          <QueueGroup id="waiting" title="Waiting" cards={cards.filter((card) => !card.ready)} {...rest} />
         </div>
       )}
       {open && lane.id !== "queued" && (
         <div className="space-y-2">
           {cards.map((card) => (
-            <Card key={card.key} slug={slug} card={card} now={now} draft={draft} />
+            <Card key={card.key} card={card} {...rest} />
           ))}
         </div>
       )}
@@ -105,7 +112,7 @@ function LaneColumn({ lane, cards, slug, now, draft }: { lane: Lane; cards: Boar
 }
 
 /** `draftVersion` is set before approval: the cards are the draft's tickets, not yet on the board. */
-export function Board({ slug, cards, strategy, now, draftVersion }: { slug: string; cards: BoardCard[]; strategy: "integration" | "pr"; now: number; draftVersion: number | null }) {
+export function Board({ slug, cards, strategy, now, draftVersion, onChanges }: { slug: string; cards: BoardCard[]; strategy: "integration" | "pr"; now: number; draftVersion: number | null; onChanges?: (key: string) => void }) {
   const draft = draftVersion !== null;
   return (
     <div>
@@ -116,7 +123,7 @@ export function Board({ slug, cards, strategy, now, draftVersion }: { slug: stri
       )}
       <div data-board={slug} className="flex items-start gap-3 overflow-x-auto p-4">
         {LANES.filter((lane) => lane.id !== "pr_open" || strategy === "pr").map((lane) => (
-          <LaneColumn key={lane.id} lane={lane} cards={cards.filter((card) => lane.states.includes(card.state))} slug={slug} now={now} draft={draft} />
+          <LaneColumn key={lane.id} lane={lane} cards={cards.filter((card) => lane.states.includes(card.state))} slug={slug} now={now} draft={draft} onChanges={onChanges} />
         ))}
       </div>
     </div>

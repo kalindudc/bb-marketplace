@@ -84,6 +84,34 @@ describe("threadOutput", () => {
   });
 });
 
+describe("environmentFiles and environmentPatch", () => {
+  it("reads bb's diff of the whole worktree against the base, and maps its files", async () => {
+    const file = { path: "src/a.ts", previousPath: null, changeKind: "added", additions: 3, deletions: 0, binary: false, origin: "untracked", loadMode: "auto" };
+    const { port, harness } = portWith({
+      environments: {
+        diffFiles: async () => ({ outcome: "available", files: [file], initialPatches: [], mergeBaseRef: "abc", shortstat: "", truncated: false }),
+        diffPatch: async () => ({ outcome: "available", patches: [{ path: "src/a.ts", patch: "@@ -0,0 +1 @@\n+a\n", truncated: false }] }),
+      } as never,
+    });
+    expect(await port.environmentFiles("env_1", "loom/csv")).toEqual({ outcome: "ok", truncated: false, files: [{ path: "src/a.ts", previousPath: null, status: "added", additions: 3, deletions: 0, binary: false, untracked: true }] });
+    expect(harness.sdk.callsTo("environments.diffFiles")[0]![0]).toEqual({ environmentId: "env_1", target: "all", mergeBaseBranch: "loom/csv" });
+    expect(await port.environmentPatch("env_1", "loom/csv", "src/a.ts")).toEqual({ outcome: "ok", patch: "@@ -0,0 +1 @@\n+a\n", truncated: false });
+    expect(harness.sdk.callsTo("environments.diffPatch")[0]![0]).toEqual({ environmentId: "env_1", paths: ["src/a.ts"], target: { type: "all", mergeBaseBranch: "loom/csv" } });
+  });
+
+  it("reports a worktree bb cannot read, or an environment that is gone, as unavailable", async () => {
+    const failure = { code: "path_not_found", message: "The worktree is gone.", workspacePath: "/wt/1" };
+    const { port } = portWith({
+      environments: {
+        diffFiles: async () => ({ outcome: "unavailable", failure }),
+        diffPatch: async () => Promise.reject(new Error("HTTP 404: environment not found")),
+      } as never,
+    });
+    expect(await port.environmentFiles("env_1", "main")).toEqual({ outcome: "unavailable", message: "The worktree is gone." });
+    expect(await port.environmentPatch("env_1", "main", "a")).toEqual({ outcome: "unavailable", message: "HTTP 404: environment not found" });
+  });
+});
+
 describe("waitingOnUser", () => {
   const rows: Record<string, Array<{ id: string; status: string }>> = {
     thr_a: [

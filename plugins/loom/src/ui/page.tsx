@@ -2,10 +2,12 @@ import { useState } from "react";
 import { experimental_Icon as Icon, useBbNavigate, useRpc, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import type { ControlAction, ProjectView, rpcContract } from "../contract";
 import type { ProjectMetrics } from "../metrics";
+import { readyToLand } from "../format";
 import { STAGES } from "../next-step";
 import type { WindowDays } from "../states";
 import { AgentsView } from "./agents";
 import { Board } from "./board";
+import { ChangesTab, landingFiles, useViewed } from "./changes";
 import { BUTTON_PRIMARY, ConfirmButton, HEADING, MoreMenu, StateBadge, countsLabel, mergeLabel, momentLabel, plural, useRemote, useRun } from "./common";
 import { Feed } from "./feed";
 import { Guide } from "./guide";
@@ -19,7 +21,7 @@ import { SpecDashboard } from "./spec-dashboard";
 import { TicketView } from "./ticket";
 import { TimelineStrip } from "./timeline-strip";
 
-type Tab = "board" | "agents" | "feed" | "metrics" | "spec" | "planner";
+type Tab = "board" | "agents" | "feed" | "metrics" | "spec" | "planner" | "changes";
 const TABS: ReadonlyArray<{ tab: Tab; label: string }> = [
   { tab: "board", label: "Board" },
   { tab: "agents", label: "Agents" },
@@ -27,7 +29,11 @@ const TABS: ReadonlyArray<{ tab: Tab; label: string }> = [
   { tab: "metrics", label: "Metrics" },
   { tab: "spec", label: "Spec" },
   { tab: "planner", label: "Planner" },
+  { tab: "changes", label: "Changes" },
 ];
+
+/** A project shows its changes once it has started: before that no worker has changed anything. */
+const hasChangesTab = (state: ProjectView["overview"]["state"]) => state !== "draft" && state !== "ready";
 
 interface TabBadge {
   text: string;
@@ -36,14 +42,15 @@ interface TabBadge {
 }
 const BADGE_TONES = { destructive: "bg-destructive text-destructive-foreground", warning: "bg-warning text-black" };
 
-/** What waits for the human on each tab. A badge is a state, not unread news, so it stays until the thing is resolved. */
-export function tabBadges(view: ProjectView): Partial<Record<Tab, TabBadge>> {
+/** What waits for the human on each tab. A badge is a state, not unread news, so it stays until the thing is resolved. `unviewed` counts the files of a project ready to land that the human has not marked viewed. */
+export function tabBadges(view: ProjectView, unviewed: number | null = null): Partial<Record<Tab, TabBadge>> {
   const { overview, spec } = view;
   const badges: Partial<Record<Tab, TabBadge>> = {};
   const blocked = view.board.filter((card) => card.state === "blocked").length;
   if (blocked > 0) badges.board = { text: String(blocked), label: `${plural(blocked, "ticket")} ${blocked === 1 ? "is" : "are"} blocked`, tone: "destructive" };
   if (overview.state === "draft") badges.spec = { text: "1", label: `Draft v${spec.version} waits for your review`, tone: "warning" };
   else if (overview.state !== "archived" && overview.pendingVersion !== null) badges.spec = { text: "1", label: `Spec v${overview.pendingVersion} waits for your approval`, tone: "warning" };
+  if (unviewed !== null && unviewed > 0 && readyToLand(overview)) badges.changes = { text: String(unviewed), label: `${plural(unviewed, "file")} to land you have not marked viewed`, tone: "warning" };
   return badges;
 }
 
@@ -155,6 +162,11 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek }: { slug: string; tab: Tab
   const navigate = useBbNavigate();
   const remote = useRemote((client) => client.call("project", at === null ? { slug } : { slug, at }), at === null ? `project:${slug}` : `project:${slug}@${at}`, slug, true);
   const { busy, error, run } = useRun();
+  const [chosenChange, setChosenChange] = useState<string | null>(null);
+  const loaded = remote.data;
+  const wantChanges = loaded !== null && at === null && loaded.at === null && hasChangesTab(loaded.overview.state) && (tab === "changes" || readyToLand(loaded.overview));
+  const changes = useRemote((client) => client.call("changes", { slug }), `changes:${slug}`, slug, true, wantChanges);
+  const viewed = useViewed(slug);
   const view = remote.data;
   if (view === null) {
     return remote.error === null ? <p role="status" className="p-4 text-sm text-muted-foreground">Loading…</p> : <p role="alert" className="p-4 text-sm text-destructive-text">Could not load {slug}: {remote.error}</p>;
@@ -162,8 +174,14 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek }: { slug: string; tab: Tab
   const { overview } = view;
   // Either side counts: the shown view can still be the past one while the live view loads.
   const rewound = at !== null || view.at !== null;
-  const shownTab = rewound && tab === "planner" ? "board" : tab;
-  const badges = rewound ? {} : tabBadges(view);
+  const changesTab = !rewound && hasChangesTab(overview.state);
+  const shownTab = (rewound && tab === "planner") || (!changesTab && tab === "changes") ? "board" : tab;
+  const landing = landingFiles(changes.data);
+  const badges = rewound ? {} : tabBadges(view, landing === null ? null : viewed.unviewed(landing));
+  const openChanges = (id: string | null) => {
+    setChosenChange(id);
+    onTab("changes");
+  };
   const control = (action: ControlAction, version?: number) =>
     run(async () => remote.set(await rpc.call("control", { slug, action, ...(version === undefined ? {} : { version }), confirm: true })));
 
@@ -189,7 +207,7 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek }: { slug: string; tab: Tab
       ) : (
         view.next !== null && (
           <div className="px-4 pt-3">
-            <NextStepBar next={view.next} busy={busy} onAct={(action, version) => void control(action, version)} />
+            <NextStepBar next={view.next} busy={busy} onAct={(action, version) => void control(action, version)} onReviewChanges={changesTab ? () => openChanges("branch") : undefined} />
           </div>
         )
       )}
@@ -202,7 +220,7 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek }: { slug: string; tab: Tab
       {view.health !== null && <HealthStrip health={view.health} />}
       <TimelineStrip slug={slug} at={at} onSeek={onSeek} />
       <div role="tablist" aria-label="Project" className="flex shrink-0 gap-1 border-b border-border-seam px-3 pt-1.5">
-        {TABS.filter((entry) => entry.tab !== "planner" || (overview.plannerThreadId !== null && !rewound)).map((entry) => {
+        {TABS.filter((entry) => (entry.tab !== "planner" || (overview.plannerThreadId !== null && !rewound)) && (entry.tab !== "changes" || changesTab)).map((entry) => {
           const badge = badges[entry.tab];
           return (
             <button
@@ -226,12 +244,15 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek }: { slug: string; tab: Tab
         })}
       </div>
       <div role="tabpanel" className="min-h-0 flex-1">
-        {shownTab === "board" && <Board slug={slug} cards={view.board} strategy={overview.strategy} now={view.now} draftVersion={overview.state === "draft" ? view.spec.version : null} />}
+        {shownTab === "board" && <Board slug={slug} cards={view.board} strategy={overview.strategy} now={view.now} draftVersion={overview.state === "draft" ? view.spec.version : null} onChanges={changesTab ? openChanges : undefined} />}
         {shownTab === "agents" && <AgentsView agents={view.agents} byRole={view.metrics.tokens.byRole} unreported={view.metrics.tokens.unreported} now={view.now} />}
         {shownTab === "feed" && <Feed slug={slug} at={at} />}
         {shownTab === "metrics" && <MetricsTab slug={slug} metrics={view.metrics} at={at} />}
         {shownTab === "spec" && <SpecTab view={view} busy={busy} rewound={rewound} onApprove={(version) => void control("approve", version)} />}
         {shownTab === "planner" && overview.plannerThreadId !== null && <PlannerChat threadId={overview.plannerThreadId} />}
+        {shownTab === "changes" && (
+          <ChangesTab changes={changes.data} error={changes.error} view={view} busy={busy} chosen={chosenChange} onChoose={setChosenChange} onControl={(action) => void control(action)} onReload={changes.reload} />
+        )}
       </div>
     </div>
   );

@@ -124,7 +124,7 @@ export function nextStepOf(input: NextStepInput): NextStep | null {
       stage: 5,
       tone: "normal",
       title: "Next: land the project.",
-      text: "Every ticket is finished. Landing pushes the integration branch and opens its pull request, or updates the one already open.",
+      text: "Every ticket is finished. Read what lands on the Changes tab; landing pushes the integration branch and opens its pull request, or updates the one already open.",
       action: { control: "land", label: "Land · open the pull request", confirm: "Click again to land" },
     };
   }
