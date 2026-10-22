@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from "react";
+import { memo, useCallback, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { experimental_NewThreadComposer as NewThreadComposer, useComposers, useRpc, type NewThreadRequest, type PluginComposerApi } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "../contract";
 import { MAX_PLANNING_REPOS } from "../prompts";
@@ -82,6 +82,13 @@ function RepoPicker({ exclude, picked, onChange }: { exclude: string | null; pic
   );
 }
 
+type Submit = (request: NewThreadRequest) => Promise<void>;
+
+// bb's composer registers a fresh API for useComposers each time it renders, and that registration re-renders NewProject: re-rendering the composer from there loops until React gives up (minified error #185).
+const PlannerComposer = memo(function PlannerComposer({ projectId, onSubmit }: { projectId: string | null; onSubmit: Submit }) {
+  return <NewThreadComposer placeholder="Describe the outcome…" layout="document" defaultPermissionMode="full" onSubmit={onSubmit} {...(projectId === null ? {} : { defaultProjectId: projectId })} />;
+});
+
 /** bb's own new-thread composer, whose submit starts a Loom planner with the answers given up front. */
 export function NewProject({ go }: { go(subPath: string): void }) {
   const rpc = useRpc<typeof rpcContract>();
@@ -96,7 +103,7 @@ export function NewProject({ go }: { go(subPath: string): void }) {
   const picked = repos.filter((id) => id !== composerProject);
 
   // Not async: the composer keeps the draft only when the promise it gets rejects, and an async wrapper would leave a second rejection that nothing handles.
-  const submit = (request: NewThreadRequest) => {
+  const submit: Submit = (request) => {
     setError(null);
     const extra = picked.filter((id) => id !== request.projectId);
     const attempt = rpc.call("startPlanning", { request, merge, reviewer, repos: extra, confirm: true }).then(
@@ -112,12 +119,17 @@ export function NewProject({ go }: { go(subPath: string): void }) {
     attempt.catch(() => {});
     return attempt;
   };
+  const latestSubmit = useRef(submit);
+  useLayoutEffect(() => {
+    latestSubmit.current = submit;
+  });
+  const onSubmit = useCallback<Submit>((request) => latestSubmit.current(request), []);
 
   return (
     <div className="grid gap-4 p-4 lg:grid-cols-[1.3fr_1fr]">
       <div className="grid content-start gap-3">
         <h2 className="text-sm font-semibold">What should exist when the project is done?</h2>
-        <NewThreadComposer placeholder="Describe the outcome…" layout="document" defaultPermissionMode="full" onSubmit={submit} {...(projectId === null ? {} : { defaultProjectId: projectId })} />
+        <PlannerComposer projectId={projectId} onSubmit={onSubmit} />
         {error !== null && <p role="alert" className="text-xs text-destructive-text">{error}</p>}
         <section className={CARD}>
           <h2 className={HEADING}>Optional: answer up front</h2>

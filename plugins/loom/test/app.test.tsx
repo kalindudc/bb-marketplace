@@ -4,8 +4,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, mountPluginContentScripts, renderSlot, type PluginRpcTestHandlers, type PluginSdkTestFakes, type RenderSlotOptions } from "@get-bb/plugin-sdk/testing/app";
-import { useState } from "react";
-import { useComposers, type NewThreadRequest, type PluginNavPanelProps, type PluginSidebarThread, type PluginThreadHeaderActionProps } from "@get-bb/plugin-sdk/app";
+import { useLayoutEffect, useState, useSyncExternalStore } from "react";
+import { useComposers, type NewThreadRequest, type PluginComposerApi, type PluginNavPanelProps, type PluginSidebarThread, type PluginThreadHeaderActionProps } from "@get-bb/plugin-sdk/app";
 import type { Attempt, BbProjectChoice, ChangedFile, ChangeSource, ChangesView, ChecksItem, HomeProject, NextStep, PlanningSession, ProjectSummary, ProjectView, RepoOverview, SentNote, SpecVersionView, ThreadInfo, rpcContract } from "../src/contract";
 import type { TicketRow } from "../src/db/store";
 import { repoOverviews } from "../src/projects";
@@ -719,6 +719,48 @@ describe("new project", () => {
     mounts.push(slot);
     return slot;
   };
+
+  // As bb's composer does: each render registers a fresh API for useComposers in a layout effect, which re-renders every reader at once.
+  const mountRegistering = async (rpc: Partial<Handlers>, projectId: string) => {
+    const app = await loadPluginApp(() => import("../app"));
+    const sdk = runtime().pluginSdkApp;
+    const listeners = new Set<() => void>();
+    let composers: readonly PluginComposerApi[] = [];
+    let version = 0;
+    function RegisteringComposer() {
+      useLayoutEffect(() => {
+        composers = [{ scope: { kind: "new-thread", projectId } } as PluginComposerApi];
+        version += 1;
+        for (const listener of [...listeners]) listener();
+      });
+      return <div data-testid="bb-new-thread-composer" />;
+    }
+    const subscribe = (listener: () => void) => {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    };
+    function useRegisteredComposers() {
+      useSyncExternalStore(subscribe, () => version);
+      return composers;
+    }
+    const original = { composer: sdk.experimental_NewThreadComposer, useComposers: sdk.useComposers };
+    sdk.experimental_NewThreadComposer = RegisteringComposer;
+    sdk.useComposers = useRegisteredComposers;
+    restoreComposer = () => {
+      sdk.experimental_NewThreadComposer = original.composer;
+      sdk.useComposers = original.useComposers;
+    };
+    const slot = renderSlot<PluginNavPanelProps, typeof rpcContract>(app.navPanels[0]!, { subPath: "_new" }, { pluginId: "loom", rpc: handlers(rpc) });
+    mounts.push(slot);
+    return slot;
+  };
+
+  it("renders bb's composer once per registration, so the page does not loop on the composer's own updates", async () => {
+    const slot = await mountRegistering({ bbProjects: choices }, "proj_shop");
+    expect(await slot.findByRole("heading", { name: "What should exist when the project is done?" })).toBeTruthy();
+    await waitFor(() => expect(repoRows(slot)).toEqual(["proj_docs", "proj_api", "project-test"]));
+    expect(slot.getAllByTestId("bb-new-thread-composer")).toHaveLength(1);
+  });
 
   it("follows the composer's project: switched from shop to shop-api, it offers shop, hides shop-api, and sends shop as a repo", async () => {
     localStorage.setItem(SAVED, "proj_shop");
