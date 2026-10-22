@@ -2092,6 +2092,49 @@ describe("changes tab", () => {
       expect(shown(slot)).toBe("branch:web");
     });
 
+    it("keeps every repo's section when no source can be shown, and says why beside them", async () => {
+      const apiMessage = 'The repo "api" has no checkout on the machine host_1, so its changes cannot be read. Clone it there with bb.';
+      const webMessage = 'The repo "web" has no checkout on the machine host_1, so its changes cannot be read. Clone it there with bb.';
+      const empty = (slot: Slot) => waitFor(() => slot.container.querySelector<HTMLElement>("[data-changes-empty]")!.textContent);
+      // web's commits are gone and api has no checkout: nothing can be shown, and both repos still say what happened.
+      const goneAndUnread = multiChanges({
+        repos: [changeRepo(), changeRepo({ name: "api", base: "trunk", remoteBase: "upstream/trunk", unavailable: apiMessage })],
+        sources: multiChanges().sources.flatMap((entry): ChangeSource[] =>
+          entry.repo === "api" ? [{ ...entry, base: null, head: null, files: null, note: apiMessage }] : entry.kind === "commit" ? [] : [{ ...entry, files: null, note: "Its commits are no longer in the repository.", gone: true }],
+        ),
+      });
+      const slot = await mountChanges({ changes: () => goneAndUnread }, running());
+      fireEvent.click(slot.getByRole("tab", { name: "Changes" }));
+      expect(await empty(slot)).toBe("The changes of the repos that can be read are no longer in their repositories. A repo that cannot be read says why in its section.");
+      expect([...slot.container.querySelectorAll("[data-change-repo]")].map((section) => section.getAttribute("data-change-repo"))).toEqual(["web", "api"]);
+      expect(sectionOf(slot, "web").textContent).toBe("webIts changes are no longer in the repository.");
+      expect(sectionOf(slot, "api").querySelector("[data-repo-unavailable]")!.textContent).toBe(apiMessage);
+      expect(slot.container.querySelector("[data-source]")).toBeNull();
+      expect(slot.container.querySelector("[data-gone]")!.textContent).toBe("2 parts of this project are no longer in the repository, so they are left out.");
+      expect(shown(slot)).toBeNull();
+      slot.lifecycle.unmount();
+
+      const unread = multiChanges({
+        repos: [changeRepo({ unavailable: webMessage }), changeRepo({ name: "api", base: "trunk", remoteBase: "upstream/trunk", unavailable: apiMessage })],
+        sources: [],
+        unavailable: `None of the project's repos can be read. ${webMessage} ${apiMessage}`,
+      });
+      const none = await mountChanges({ changes: () => unread }, running());
+      fireEvent.click(none.getByRole("tab", { name: "Changes" }));
+      expect(await empty(none)).toBe("None of the project's repos can be read; each repo's section says why.");
+      expect(sectionOf(none, "web").querySelector("[data-repo-unavailable]")!.textContent).toBe(webMessage);
+      expect(sectionOf(none, "api").querySelector("[data-repo-unavailable]")!.textContent).toBe(apiMessage);
+      expect(none.container.querySelector("[data-changes-unavailable]")).toBeNull();
+      none.lifecycle.unmount();
+
+      // A single-repo project still shows only the one sentence.
+      const allGone = changesView({ sources: changesView().sources.map((entry) => ({ ...entry, files: null, gone: true })) });
+      const single = await mountChanges({ changes: () => allGone });
+      fireEvent.click(single.getByRole("tab", { name: "Changes" }));
+      expect(await single.findByText("This project's changes are no longer in the repository.")).toBeTruthy();
+      expect(single.container.querySelector("[data-changes], [data-change-sources], [data-change-repo]")).toBeNull();
+    });
+
     it("reads a file's patch in the repo of the source it is in", async () => {
       const slot = await mountChanges({ changes: () => multiChanges() }, running());
       await openTab(slot);
@@ -2133,6 +2176,33 @@ describe("changes tab", () => {
       expect(panel().textContent).toContain("Land web pushes loom/csv in web at ccccccc and opens one pull request into main");
       expect(panel().textContent).not.toContain("This is what lands in api.");
       expect(within(panel()).getAllByRole("button").map((button) => button.textContent)).toEqual(["Land web", "Land web to main"]);
+    });
+
+    it("disarms a Land armed for one repo when another repo's branch shows, so landing that repo takes two fresh clicks", async () => {
+      const slot = await mountChanges({ changes: () => landingChanges(), control: () => landingView() }, landingView());
+      fireEvent.click(slot.getByRole("tab", { name: "Changes" }));
+      await slot.findByText("This is what lands in api.", { exact: false });
+      const panel = () => slot.container.querySelector<HTMLElement>("[data-land-panel]")!;
+      const buttons = () => within(panel()).getAllByRole("button").map((button) => button.textContent);
+      fireEvent.click(within(panel()).getByRole("button", { name: "Land api to trunk" }));
+      expect(buttons()).toEqual(["Land api", "Click again to land api to trunk", "Cancel"]);
+      pick(slot, "branch:web");
+      expect(buttons()).toEqual(["Land web", "Land web to main"]);
+      fireEvent.click(within(panel()).getByRole("button", { name: "Land web to main" }));
+      expect(buttons()).toEqual(["Land web", "Click again to land web to main", "Cancel"]);
+
+      pick(slot, "branch:api");
+      expect(buttons()).toEqual(["Land api", "Land api to trunk"]);
+      fireEvent.click(within(panel()).getByRole("button", { name: "Land api" }));
+      expect(buttons()).toEqual(["Click again to land api", "Cancel", "Land api to trunk"]);
+      pick(slot, "branch:web");
+      expect(buttons()).toEqual(["Land web", "Land web to main"]);
+      expect(calls(slot, "control")).toEqual([]);
+
+      fireEvent.click(within(panel()).getByRole("button", { name: "Land web" }));
+      expect(calls(slot, "control")).toEqual([]);
+      fireEvent.click(within(panel()).getByRole("button", { name: "Click again to land web" }));
+      await waitFor(() => expect(calls(slot, "control").map((call) => call.input)).toEqual([{ slug: "csv", action: "land", repo: "web", confirm: true }]));
     });
 
     it("keeps a Viewed mark for each repo the same path changed in, and counts the files not viewed across every repo on the tab's badge", async () => {

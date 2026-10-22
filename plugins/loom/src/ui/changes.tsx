@@ -169,7 +169,7 @@ function SourceList({ changes, selected, now, onSelect }: { changes: ChangesView
                     {repo.unavailable}
                   </p>
                 ) : own.length === 0 ? (
-                  <p className="px-2 text-xs text-muted-foreground">No changes yet.</p>
+                  <p className="px-2 text-xs text-muted-foreground">{changes.sources.some((source) => source.repo === repo.name) ? "Its changes are no longer in the repository." : "No changes yet."}</p>
                 ) : (
                   groups(own, "h4")
                 )}
@@ -428,8 +428,24 @@ export function ChangesTab(props: { changes: ChangesView | null; error: string |
   if (changes === null) {
     return props.error === null ? <p role="status" className="p-4 text-sm text-muted-foreground">Loading…</p> : <p role="alert" className="p-4 text-sm text-destructive-text">Could not load the changes: {props.error}</p>;
   }
-  if (changes.unavailable !== null) return <p data-changes-unavailable className="p-4 text-sm text-muted-foreground">{changes.unavailable}</p>;
-  if (source === null) return <p className="p-4 text-sm text-muted-foreground">{changes.sources.length > 0 ? "This project's changes are no longer in the repository." : "No changes yet."}</p>;
+  // A multi-repo project keeps its repo sections whatever happens, so each repo that cannot be read still says why and how to fix it.
+  const multi = isMultiRepoProject(changes);
+  if (!multi && changes.unavailable !== null) return <p data-changes-unavailable className="p-4 text-sm text-muted-foreground">{changes.unavailable}</p>;
+  if (source === null) {
+    const nothing = changes.sources.length > 0 ? "This project's changes are no longer in the repository." : "No changes yet.";
+    if (!multi) return <p className="p-4 text-sm text-muted-foreground">{nothing}</p>;
+    const unreadable = changes.repos.some((repo) => repo.unavailable !== null);
+    return (
+      <div data-changes className="flex min-h-0 flex-col md:flex-row">
+        <SourceList changes={changes} selected={null} now={view.now} onSelect={props.onChoose} />
+        <p data-changes-empty className="min-w-0 flex-1 p-4 text-sm text-muted-foreground">
+          {changes.unavailable !== null
+            ? "None of the project's repos can be read; each repo's section says why."
+            : `${changes.sources.some((entry) => entry.gone) ? "The changes of the repos that can be read are no longer in their repositories." : "No changes yet."}${unreadable ? " A repo that cannot be read says why in its section." : ""}`}
+        </p>
+      </div>
+    );
+  }
 
   const files = source.files ?? [];
   const seen = files.length - viewed.unviewed(filesOf(source));
@@ -442,7 +458,8 @@ export function ChangesTab(props: { changes: ChangesView | null; error: string |
     <div data-changes className="flex min-h-0 flex-col md:flex-row">
       <SourceList changes={changes} selected={source} now={view.now} onSelect={props.onChoose} />
       <div data-change-source={source.id} className="min-w-0 flex-1 space-y-3 p-4">
-        <SourceIntro changes={changes} source={source} view={view} busy={props.busy} onControl={props.onControl} />
+        {/* Keyed by source, so a Land armed for one repo is disarmed when another repo shows. */}
+        <SourceIntro key={source.id} changes={changes} source={source} view={view} busy={props.busy} onControl={props.onControl} />
         {source.files === null ? (
           <p role="alert" className="text-xs text-destructive-text">{source.note}</p>
         ) : files.length === 0 ? (
