@@ -3,6 +3,7 @@
 // applies the round outcome, so a crash cannot leave a verdict without one. The tick replays what a crash cut short.
 import { randomBytes } from "node:crypto";
 import { delivers, workerOf } from "./checks";
+import { repoCheckout, ticketRepo } from "./checkouts";
 import type { ProjectRow, ReviewRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { plural } from "./format";
 import { changesRequestedText, findingsList, reviewerBrief, reviewerNudgeText } from "./prompts";
@@ -240,9 +241,8 @@ async function startReviewers(ctx: EngineCtx, project: ProjectRow, spec: Spec, t
 // A project that cannot show the reviewers their diff pauses with the reason instead of retrying every tick.
 async function readDiff(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow): Promise<Diff | null> {
   try {
-    const checkout = project.host_id === null ? null : await ctx.bb.projectCheckout(project.bb_project_id, project.host_id);
-    if (project.host_id === null || checkout === null) throw new Error(`the bb project has no checkout on the machine ${project.host_id ?? "(unknown)"}`);
-    return await ctx.host.call(project.host_id, "diff", { repo: checkout, base: freshBase(spec), head: ticket.head_sha!, maxBytes: PATCH_BYTES });
+    const checkout = await repoCheckout(ctx, project, spec, ticket.repo);
+    return await ctx.host.call(checkout.hostId, "diff", { repo: checkout.path, base: freshBase(spec, ticket.repo), head: ticket.head_sha!, maxBytes: PATCH_BYTES });
   } catch (error) {
     pauseProject(ctx, project.id, `Could not read the diff of ${ticket.key} for review: ${errText(error)}`);
     return null;
@@ -276,9 +276,9 @@ async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow,
   let spawned;
   try {
     spawned = await ctx.bb.spawnThread({
-      bbProjectId: project.bb_project_id,
+      bbProjectId: ticketRepo(spec, ticket).bbProjectId ?? project.bb_project_id,
       hostId: project.host_id!,
-      baseBranch: ticket.branch ?? freshBase(spec),
+      baseBranch: ticket.branch ?? freshBase(spec, ticket.repo),
       title: `Review ${ticket.key} · round ${round}`,
       prompt: brief,
       sectionId: project.section_id,
@@ -388,7 +388,7 @@ async function requireHeadCheckedOut(ctx: EngineCtx, row: ThreadRow, ticket: Tic
     throw new LoomError("loom_unavailable", `Could not find your worktree: ${errText(error)}`);
   });
   if (environment?.path == null) throw new LoomError("loom_invalid_state", "Your worktree is not available yet. Try again in a moment.");
-  const state = await ctx.host.call(environment.hostId, "worktreeState", { worktree: environment.path, base: freshBase(spec) }).catch((error) => {
+  const state = await ctx.host.call(environment.hostId, "worktreeState", { worktree: environment.path, base: freshBase(spec, ticket.repo) }).catch((error) => {
     throw new LoomError("loom_unavailable", `Could not read your worktree: ${errText(error)}`);
   });
   if (state.head !== ticket.head_sha) throw new LoomError("loom_invalid_state", `Check out ${ticket.head_sha} first, then review again.`);

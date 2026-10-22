@@ -305,6 +305,17 @@ export function findingsList(findings: readonly Finding[]): string {
   return findings.map((finding, index) => `${index + 1}. [${finding.severity}] ${finding.title}${where(finding)}\n${finding.detail.split("\n").map((line) => `   ${line}`).join("\n")}`).join("\n");
 }
 
+/** The ticket's repo on a multi-repo project, for its reviewer: which one it is, and the repo's own checks. */
+function reviewerRepositorySection(project: ProjectRow, repo: RepoSettings): string[] {
+  return [
+    "## Repository",
+    `This ticket is in the repo ${JSON.stringify(repo.name)}, the bb project ${repo.bbProjectId ?? project.bb_project_id}, and this worktree is a checkout of it. The changes, the scope report and the check results below are about this repo only.`,
+    "The checks of this repo, which ran after the ticket's verify commands:",
+    repo.checks.length > 0 ? bullets(repo.checks) : "- none",
+    "",
+  ];
+}
+
 export function reviewerBrief(a: {
   project: ProjectRow;
   spec: Spec;
@@ -315,6 +326,7 @@ export function reviewerBrief(a: {
   earlierReviews: ReviewRow[];
 }): string {
   const { project, spec, ticket, round, diff, checkPost, earlierReviews } = a;
+  const repo = repoSettings(spec, ticket.repo);
   const acceptance = JSON.parse(ticket.acceptance_json) as string[];
   const scope = checkPost === null ? null : (JSON.parse(checkPost.data_json) as { outside?: string[]; protectedHits?: string[] });
   const outside = scope?.outside ?? [];
@@ -332,6 +344,7 @@ export function reviewerBrief(a: {
     "## Acceptance criteria",
     ...acceptance.map((line, index) => `${index + 1}. ${line}`),
     "",
+    ...(isMultiRepo(spec) ? reviewerRepositorySection(project, repo) : []),
     "## Rubric",
     spec.review.rubric.length > 0 ? bullets(spec.review.rubric) : "- none; the acceptance criteria are the whole standard",
     "",
