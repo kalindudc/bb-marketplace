@@ -67,6 +67,19 @@ export const ticketSpecSchema = z
     scope: z.array(glob).min(1).max(50),
     depends_on: z.array(z.string().min(1).max(40)).max(20).default([]),
     priority: z.number().int().min(0).max(3).default(2),
+    repo: z.string().min(1).max(24).optional(),
+  })
+  .strict();
+
+export const repoSpecSchema = z
+  .object({
+    name: z.string().regex(/^[a-z][a-z0-9-]{0,23}$/, "must be 1-24 lowercase letters, digits or dashes, starting with a letter (for example web)"),
+    project: z.string().min(1).max(100),
+    base: gitName.optional(),
+    remote: remoteName.optional(),
+    checks: z.array(command).max(10).optional(),
+    after_merge: z.array(command).max(10).optional(),
+    protected: z.array(glob).max(100).optional(),
   })
   .strict();
 
@@ -80,6 +93,7 @@ export const ticketPatchSchema = z
     scope: ticketSpecSchema.shape.scope.optional(),
     depends_on: ticketSpecSchema.shape.depends_on.unwrap().optional(),
     priority: ticketSpecSchema.shape.priority.unwrap().optional(),
+    repo: ticketSpecSchema.shape.repo,
   })
   .strict();
 
@@ -147,6 +161,8 @@ export const specSchema = z
       })
       .strict()
       .prefault({}),
+    // No default: a spec without [[repo]] must parse, and hash, exactly as it did before repos existed.
+    repo: z.array(repoSpecSchema).max(10).optional(),
     ticket: z.array(ticketSpecSchema).min(1).max(200),
   })
   .strict();
@@ -154,6 +170,7 @@ export const specSchema = z
 export type Spec = z.output<typeof specSchema>;
 export type TicketSpec = z.output<typeof ticketSpecSchema>;
 export type TicketPatch = z.output<typeof ticketPatchSchema>;
+export type RepoSpec = z.output<typeof repoSpecSchema>;
 
 export interface SpecResult {
   ok: boolean;
@@ -311,19 +328,58 @@ export function validateSemantics(spec: Spec, rawToml: string): { errors: string
     errors.push(`ticket[${indexOfRef.get(cycle[0]!)}].depends_on: dependency cycle ${cycle.join(" -> ")}. Remove one depends_on entry to break the cycle.`);
   }
 
+  const repos = spec.repo ?? [];
+  const repoIndex = new Map<string, number>();
+  const projectIndex = new Map<string, number>();
+  repos.forEach((repo, index) => {
+    const sameName = repoIndex.get(repo.name);
+    if (sameName === undefined) repoIndex.set(repo.name, index);
+    else errors.push(`repo[${index}].name: "${repo.name}" is also the name of repo[${sameName}]. Give every repo a unique name.`);
+    const sameProject = projectIndex.get(repo.project);
+    if (sameProject === undefined) projectIndex.set(repo.project, index);
+    else errors.push(`repo[${index}].project: "${repo.project}" is also the project of repo[${sameProject}]. List each bb project in one [[repo]] table only.`);
+  });
+  const repoNames = [...repoIndex.keys()].join(", ");
+
   spec.ticket.forEach((ticket, index) => {
+    if (repos.length === 0) {
+      if (ticket.repo !== undefined) errors.push(`ticket[${index}].repo: "${ticket.repo}" names a repo, but the spec has no [[repo]] table, so every ticket runs in the project's own repository. Add a [[repo]] table named "${ticket.repo}", or remove repo from the ticket.`);
+    } else if (ticket.repo === undefined) {
+      errors.push(`ticket[${index}].repo: is required, because the spec lists [[repo]] tables. Set it to one of: ${repoNames}.`);
+    } else if (!repoIndex.has(ticket.repo)) {
+      errors.push(`ticket[${index}].repo: "${ticket.repo}" is not the name of a [[repo]] table. Use one of: ${repoNames}.`);
+    }
+  });
+
+  spec.ticket.forEach((ticket, index) => {
+    // A ticket whose repo is unknown has an error above; it is still checked against the top-level settings.
+    const at = ticket.repo === undefined ? undefined : repoIndex.get(ticket.repo);
+    const repo = at === undefined ? undefined : repos[at]!;
     for (const scope of ticket.scope) {
       const guard = spec.scope.protected.find((protectedGlob) => fallsUnder(scope, protectedGlob));
-      if (guard !== undefined) errors.push(`ticket[${index}].scope: "${scope}" falls under the protected path "${guard}". Remove it from the ticket, or take the path out of scope.protected.`);
+      if (guard !== undefined) {
+        errors.push(`ticket[${index}].scope: "${scope}" falls under the protected path "${guard}". Remove it from the ticket, or take the path out of scope.protected.`);
+        continue;
+      }
+      const repoGuard = repo?.protected?.find((protectedGlob) => fallsUnder(scope, protectedGlob));
+      if (repoGuard !== undefined) errors.push(`ticket[${index}].scope: "${scope}" falls under the protected path "${repoGuard}" of repo "${repo!.name}". Remove it from the ticket, or take the path out of repo[${at}].protected.`);
     }
-    if (ticket.verify.length === 0 && spec.checks.commands.length === 0) {
-      errors.push(`ticket[${index}].verify: nothing would check this ticket, because it has no verify commands and checks.commands is empty. Add a verify command to the ticket or a command to [checks].`);
+    if (ticket.verify.length > 0) return;
+    if (repo?.checks === undefined) {
+      if (spec.checks.commands.length === 0) errors.push(`ticket[${index}].verify: nothing would check this ticket, because it has no verify commands and checks.commands is empty. Add a verify command to the ticket or a command to [checks].`);
+    } else if (repo.checks.length === 0) {
+      errors.push(`ticket[${index}].verify: nothing would check this ticket, because it has no verify commands and repo[${at}].checks, which replaces checks.commands for repo "${repo.name}", is empty. Add a verify command to the ticket or a command to repo[${at}].checks.`);
     }
   });
 
   if (spec.merge.strategy === "pr" && spec.checks.after_merge.length > 0) {
     errors.push('checks.after_merge: these run on the merged integration branch, but merge.strategy is "pr". Remove after_merge, or use merge.strategy = "integration".');
   }
+  repos.forEach((repo, index) => {
+    if (spec.merge.strategy === "pr" && (repo.after_merge?.length ?? 0) > 0) {
+      errors.push(`repo[${index}].after_merge: these run on the merged integration branch, but merge.strategy is "pr". Remove after_merge, or use merge.strategy = "integration".`);
+    }
+  });
 
   const { worker, reviewer } = spec.agents;
   if (worker.provider === reviewer.provider && worker.model === reviewer.model) {
@@ -340,7 +396,7 @@ export interface ScopeOverlap {
   paths: string[];
 }
 
-/** Every pair of tickets, by index, whose scopes overlap with no dependency path between them, and the globs of either one that overlap the other's. */
+/** Every pair of tickets in the same repo, by index, whose scopes overlap with no dependency path between them, and the globs of either one that overlap the other's. */
 export function scopeOverlaps(tickets: readonly TicketSpec[]): ScopeOverlap[] {
   const indexOfRef = new Map<string, number>();
   tickets.forEach((ticket, index) => {
@@ -365,6 +421,7 @@ export function scopeOverlaps(tickets: readonly TicketSpec[]): ScopeOverlap[] {
     for (let j = i + 1; j < tickets.length; j++) {
       const a = tickets[i]!;
       const b = tickets[j]!;
+      if (a.repo !== b.repo) continue;
       const paths = [...a.scope.filter((left) => b.scope.some((right) => globsOverlap(left, right))), ...b.scope.filter((right) => a.scope.some((left) => globsOverlap(left, right)))];
       if (paths.length === 0) continue;
       if (reaches(a, b.ref) || reaches(b, a.ref)) continue;
