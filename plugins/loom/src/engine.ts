@@ -410,8 +410,8 @@ export class Engine {
     return ticket;
   }
 
-  /** The human's land: push the integration branch and open or update its one pull request, or with `direct` push it to the base branch. */
-  async land(slug: string, actor: string, opts: { title?: string; ready: boolean; direct?: boolean }): Promise<LandResult> {
+  /** The human's land: push the integration branch and open or update its one pull request, or with `direct` push it to the base branch. A multi-repo project lands every repo with merged work, or only `repo`. */
+  async land(slug: string, actor: string, opts: { title?: string; ready: boolean; direct?: boolean; repo?: string }): Promise<LandResult> {
     const result = await land(this.ctx, slug, { actor, ...opts });
     this.kick();
     return result;

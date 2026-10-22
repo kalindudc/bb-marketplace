@@ -209,7 +209,7 @@ export const rpcContract = defineRpcContract({
     output: typed<TicketDetail>(),
   },
   control: {
-    input: z.object({ slug, action: z.enum(CONTROL_ACTIONS), version: z.number().int().min(1).optional(), confirm }).strict(),
+    input: z.object({ slug, action: z.enum(CONTROL_ACTIONS), version: z.number().int().min(1).optional(), repo: z.string().min(1).max(100).optional(), confirm }).strict(),
     output: typed<ProjectView>(),
   },
   sendNotes: {

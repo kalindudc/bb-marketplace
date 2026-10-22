@@ -790,7 +790,7 @@ describe("land", () => {
 
     await mergeOne("CSV-3");
     const again = await land(h.ctx, "csv", landArgs);
-    expect(again.url).toBe("https://github.com/acme/shop/pull/1");
+    expect(again).toMatchObject({ url: "https://github.com/acme/shop/pull/1" });
     expect(h.host.callsTo("prCreate")).toHaveLength(1);
     expect(h.host.callsTo("push").map((call) => call.src)).toEqual(["m1", "m2"]);
   });
@@ -943,5 +943,348 @@ describe("land", () => {
       expect(landed()).toEqual([]);
       expect(guardFree()).toBe(true);
     });
+  });
+});
+
+describe("land on a multi-repo project", () => {
+  const WEB = "/data/worktrees/csv.web";
+  const API = "/data/worktrees/csv.api";
+  const PR = (n: number) => `https://github.com/acme/shop/pull/${n}`;
+  const landArgs = { actor: "human", ready: false };
+  const direct = { ...landArgs, direct: true };
+  const acceptance = ["WHEN the guide is built THE SYSTEM SHALL list the export"];
+  const withWebDocsTicket = (doc: Doc) => doc.ticket.push({ ref: "web-docs", title: "Web docs", body: "Write the docs.", acceptance, scope: ["docs/**"], repo: "web" });
+  const withApiDocsTicket = (doc: Doc) => doc.ticket.push({ ref: "api-docs", title: "API docs", body: "Write the docs.", acceptance, scope: ["docs/**"], repo: "api" });
+  const withGuideTicket = (doc: Doc) => doc.ticket.push({ ref: "guide", title: "Guide", body: "Write the guide.", acceptance, scope: ["guide/**"], repo: "docs" });
+  const mergeOne = async (key: string) => {
+    await reachApproved(h, key);
+    await queue();
+    expect(ticketOf(h, key).state).toBe("done");
+  };
+  const repoRows = () => Object.fromEntries(h.store.projectRepos(project().id).map((row) => [row.name, row]));
+  const landed = () => h.store.eventsOfKind(project().id, "project.landed").map((event) => JSON.parse(event.data_json));
+  const guardFree = () => {
+    const release = holdMerge(h.ctx, project().id);
+    release?.();
+    return release !== null;
+  };
+  const failure = async (promise: Promise<unknown>) => {
+    const error = await promise.then(
+      () => null,
+      (thrown: unknown) => thrown as { code: string; message: string; hint?: string },
+    );
+    expect(error).not.toBeNull();
+    return { code: error!.code, message: error!.message, hint: error!.hint };
+  };
+
+  it("pushes each repo with merged work in the spec's order and opens one pull request per repo, whose body lists only that repo's tickets", async () => {
+    await seedRepoProject(h, withWebDocsTicket);
+    await mergeOne("CSV-2");
+    await mergeOne("CSV-1");
+    const mark = h.host.calls.length;
+    const result = await land(h.ctx, "csv", landArgs);
+
+    expect(result).toEqual({
+      repos: [
+        { repo: "web", url: PR(1), sha: "m2" },
+        { repo: "api", url: PR(2), sha: "m1" },
+      ],
+      unlanded: [],
+      done: false,
+    });
+    const calls = hostCallsSince(mark).map((call) => [call.method, call.input]);
+    expect(calls.map(([method, input]) => (method === "prCreate" ? [method, { ...(input as object), body: "…" }] : [method, input]))).toEqual([
+      ["ensureWorktree", { repo: "/src/web", key: "csv.web", branch: "loom/csv" }],
+      ["worktreeState", { worktree: WEB, base: "main" }],
+      ["push", { repo: "/src/web", remote: "origin", src: "m2", branch: "loom/csv" }],
+      ["prCreate", { repo: "/src/web", remote: "origin", base: "main", head: "loom/csv", title: "CSV export", body: "…", draft: true }],
+      ["ensureWorktree", { repo: "/src/api", key: "csv.api", branch: "loom/csv" }],
+      ["worktreeState", { worktree: API, base: "trunk" }],
+      ["push", { repo: "/src/api", remote: "upstream", src: "m1", branch: "loom/csv" }],
+      ["prCreate", { repo: "/src/api", remote: "upstream", base: "trunk", head: "loom/csv", title: "CSV export", body: "…", draft: true }],
+    ]);
+
+    const [web, api] = h.host.callsTo("prCreate").map((call) => call.body);
+    expect(web).toContain("Let people export their orders as a CSV file");
+    expect(web).toContain("- CSV-1 Order rows");
+    expect(web).not.toContain("CSV-2");
+    expect(web).not.toContain("CSV-3");
+    expect(web).toContain('This pull request lands the project\'s work in the repo "web". The project also changes the repos "api" and "docs", which land on their own.');
+    expect(api).toContain("- CSV-2 Export endpoint");
+    expect(api).not.toContain("CSV-1");
+    expect(api).toContain('the repo "api". The project also changes the repos "web" and "docs"');
+
+    expect(project().pr_url).toBeNull();
+    expect(repoRows()).toEqual({
+      api: { project_id: project().id, name: "api", pr_url: PR(2), landed_sha: "m1", landed_at: h.clock.t },
+      web: { project_id: project().id, name: "web", pr_url: PR(1), landed_sha: "m2", landed_at: h.clock.t },
+    });
+    expect(landed()).toEqual([
+      { repo: "web", url: PR(1), sha: "m2", created: true },
+      { repo: "api", url: PR(2), sha: "m1", created: true },
+    ]);
+    expect(guardFree()).toBe(true);
+  });
+
+  it("pushes later merges to each repo's pull request, opening no new one, and honours --title and --ready on the first land", async () => {
+    await seedRepoProject(h, withWebDocsTicket);
+    await mergeOne("CSV-1");
+    await mergeOne("CSV-2");
+    await land(h.ctx, "csv", { actor: "human", ready: true, title: "Export orders as CSV" });
+    expect(h.host.callsTo("prCreate").map((call) => [call.repo, call.title, call.draft])).toEqual([
+      ["/src/web", "Export orders as CSV", false],
+      ["/src/api", "Export orders as CSV", false],
+    ]);
+
+    h.clock.advance(1000);
+    await mergeOne("CSV-3");
+    const again = await land(h.ctx, "csv", landArgs);
+    expect(again).toEqual({
+      repos: [
+        { repo: "web", url: PR(1), sha: "m3" },
+        { repo: "api", url: PR(2), sha: "m2" },
+      ],
+      unlanded: [],
+      done: true,
+    });
+    expect(h.host.callsTo("prCreate")).toHaveLength(2);
+    expect(h.host.callsTo("push").map((call) => [call.repo, call.src])).toEqual([
+      ["/src/web", "m1"],
+      ["/src/api", "m2"],
+      ["/src/web", "m3"],
+      ["/src/api", "m2"],
+    ]);
+    expect(repoRows().web).toMatchObject({ pr_url: PR(1), landed_sha: "m3", landed_at: h.clock.t });
+    expect(landed().slice(2)).toEqual([
+      { repo: "web", url: PR(1), sha: "m3", created: false },
+      { repo: "api", url: PR(2), sha: "m2", created: false },
+    ]);
+  });
+
+  it("holds the merge guard through every repo's push", async () => {
+    await seedRepoProject(h);
+    await mergeOne("CSV-1");
+    await mergeOne("CSV-2");
+    const held: boolean[] = [];
+    const call = h.host.call.bind(h.host);
+    h.host.call = (async (hostId: string, method: string, input: unknown) => {
+      if (method === "push" || method === "prCreate") held.push(holdMerge(h.ctx, project().id) === null);
+      return call(hostId, method as never, input as never);
+    }) as typeof h.host.call;
+    await land(h.ctx, "csv", landArgs);
+    expect(held).toEqual([true, true, true, true]);
+    expect(guardFree()).toBe(true);
+  });
+
+  it("lands only the repo --repo names, and names the repos still to land", async () => {
+    await seedRepoProject(h);
+    await mergeOne("CSV-1");
+    await mergeOne("CSV-2");
+    const result = await land(h.ctx, "csv", { ...landArgs, repo: "api" });
+    expect(result).toEqual({ repos: [{ repo: "api", url: PR(1), sha: "m2" }], unlanded: ["web"], done: false });
+    expect(h.host.callsTo("push")).toEqual([{ repo: "/src/api", remote: "upstream", src: "m2", branch: "loom/csv" }]);
+    expect(Object.keys(repoRows())).toEqual(["api"]);
+    expect(project().state).toBe("running");
+
+    expect(await land(h.ctx, "csv", { ...landArgs, repo: "web" })).toEqual({ repos: [{ repo: "web", url: PR(2), sha: "m1" }], unlanded: [], done: true });
+    expect(project().state).toBe("done");
+  });
+
+  it("refuses an unknown repo with the list of repos, a repo with no done ticket, and --repo on a single-repo project", async () => {
+    await seedRepoProject(h);
+    await mergeOne("CSV-1");
+    expect(await failure(land(h.ctx, "csv", { ...landArgs, repo: "mobile" }))).toMatchObject({ code: "loom_invalid_input", message: 'Project csv has no repo "mobile"; its repos are web, api, docs.' });
+    expect(await failure(land(h.ctx, "csv", { ...landArgs, repo: "docs" }))).toMatchObject({
+      code: "loom_invalid_state",
+      message: 'Cannot land the repo "docs": none of its tickets is done yet, so its integration branch has nothing to land.',
+    });
+    expect(h.host.callsTo("push")).toEqual([]);
+    expect(guardFree()).toBe(true);
+
+    const single = makeCtx();
+    await seedProject(single);
+    expect(await failure(land(single.ctx, "csv", { ...landArgs, repo: "web" }))).toMatchObject({
+      code: "loom_invalid_input",
+      message: "Cannot land one repo: csv has no [[repo]] tables, so it lands as one repository.",
+      hint: "Run `bb loom land csv` without --repo.",
+    });
+  });
+
+  it("with --direct, merges each repo's remote base in, runs that repo's after_merge and pushes to that repo's remote base", async () => {
+    await seedRepoProject(h, (doc) => {
+      doc.checks.after_merge = ["npm run e2e"];
+      doc.repo[0].after_merge = ["npm run web-e2e"];
+    });
+    await mergeOne("CSV-1");
+    await mergeOne("CSV-2");
+    h.host.remoteBase = "up1";
+    const mark = h.host.calls.length;
+    const result = await land(h.ctx, "csv", direct);
+
+    expect(result).toEqual({
+      repos: [
+        { repo: "web", url: null, pushed: "origin/main", sha: "m3" },
+        { repo: "api", url: null, pushed: "upstream/trunk", sha: "m4" },
+      ],
+      unlanded: [],
+      done: true,
+    });
+    expect(hostCallsSince(mark).map((call) => [call.method, call.input])).toEqual([
+      ["ensureWorktree", { repo: "/src/web", key: "csv.web", branch: "loom/csv" }],
+      ["fetchBranch", { worktree: WEB, remote: "origin", branch: "main" }],
+      ["merge", { worktree: WEB, ref: "up1", message: "Merge origin/main into loom/csv (Loom)" }],
+      ["exec", { cwd: WEB, command: "npm run web-e2e", timeoutMs: 15 * 60_000 }],
+      ["worktreeState", { worktree: WEB, base: "main", trackedOnly: true }],
+      ["push", { repo: "/src/web", remote: "origin", src: "m3", branch: "main" }],
+      ["ensureWorktree", { repo: "/src/api", key: "csv.api", branch: "loom/csv" }],
+      ["fetchBranch", { worktree: API, remote: "upstream", branch: "trunk" }],
+      ["merge", { worktree: API, ref: "up1", message: "Merge upstream/trunk into loom/csv (Loom)" }],
+      ["exec", { cwd: API, command: "npm run e2e", timeoutMs: 15 * 60_000 }],
+      ["worktreeState", { worktree: API, base: "trunk", trackedOnly: true }],
+      ["push", { repo: "/src/api", remote: "upstream", src: "m4", branch: "trunk" }],
+    ]);
+    expect(h.host.callsTo("prCreate")).toEqual([]);
+    expect(repoRows()).toMatchObject({ web: { pr_url: null, landed_sha: "m3" }, api: { pr_url: null, landed_sha: "m4" } });
+    expect(landed()).toEqual([
+      { repo: "web", direct: true, pushed: "origin/main", sha: "m3" },
+      { repo: "api", direct: true, pushed: "upstream/trunk", sha: "m4" },
+    ]);
+    expect(project().state).toBe("done");
+  });
+
+  it("stops at the repo that fails, keeps the repos landed before it, and lands the rest on the next run", async () => {
+    await seedRepoProject(h, withGuideTicket);
+    for (const key of ["CSV-1", "CSV-2", "CSV-3"]) await mergeOne(key);
+    h.host.scripted.push = [{ outcome: "ok" }, { outcome: "unavailable", message: "git push to upstream failed: rejected" }];
+    expect(await failure(land(h.ctx, "csv", landArgs))).toEqual({
+      code: "loom_unavailable",
+      message: `Landed web (${PR(1)}); api and docs did not land. The repo "api" failed: git push to upstream failed: rejected`,
+      hint: "Fix that, then run `bb loom land csv` again to land every repo with merged work.",
+    });
+    expect(h.host.callsTo("push").map((call) => call.repo)).toEqual(["/src/web", "/src/api"]);
+    expect(Object.keys(repoRows())).toEqual(["web"]);
+    expect(repoRows().web).toMatchObject({ pr_url: PR(1), landed_sha: "m1" });
+    expect(landed()).toEqual([{ repo: "web", url: PR(1), sha: "m1", created: true }]);
+    expect(project().state).toBe("running");
+    expect(guardFree()).toBe(true);
+
+    expect(await land(h.ctx, "csv", landArgs)).toEqual({
+      repos: [
+        { repo: "web", url: PR(1), sha: "m1" },
+        { repo: "api", url: PR(2), sha: "m2" },
+        { repo: "docs", url: PR(3), sha: "m3" },
+      ],
+      unlanded: [],
+      done: true,
+    });
+  });
+
+  it("reports a failure with nothing landed, and the one repo --repo named", async () => {
+    await seedRepoProject(h);
+    await mergeOne("CSV-1");
+    await mergeOne("CSV-2");
+    h.host.scripted.push = [{ outcome: "unavailable", message: "git push to origin failed: rejected" }];
+    expect(await failure(land(h.ctx, "csv", landArgs))).toMatchObject({ message: 'No repo landed; web and api did not land. The repo "web" failed: git push to origin failed: rejected' });
+    h.host.scripted.prCreate = [{ outcome: "unavailable", message: "The gh CLI is not installed on this machine, or it is not on PATH." }];
+    expect(await failure(land(h.ctx, "csv", { ...landArgs, repo: "web" }))).toEqual({
+      code: "loom_unavailable",
+      message: 'The repo "web" did not land: The gh CLI is not installed on this machine, or it is not on PATH.',
+      hint: "Fix that, then run `bb loom land csv --repo web`.",
+    });
+    expect(repoRows()).toEqual({});
+    expect(landed()).toEqual([]);
+  });
+
+  it("with --direct, lands the repos before one whose worker's worktree is still being created, and names that repo", async () => {
+    await seedRepoProject(h, withApiDocsTicket);
+    await mergeOne("CSV-1");
+    await mergeOne("CSV-2");
+    h.store.addThread({ project_id: project().id, ticket_id: ticketOf(h, "CSV-3").id, role: "worker", state: "spawning", spawn_token: "tok" });
+    expect(await failure(land(h.ctx, "csv", direct))).toEqual({
+      code: "loom_invalid_state",
+      message: 'Landed web (origin/main at m1); api did not land. The repo "api" failed: Cannot land yet: a worker\'s worktree is still being created from loom/csv; try again in a moment.',
+      hint: "Fix that, then run `bb loom land csv --direct --repo api`.",
+    });
+    expect(h.host.callsTo("push")).toEqual([{ repo: "/src/web", remote: "origin", src: "m1", branch: "main" }]);
+    expect(h.host.callsTo("fetchBranch")).toEqual([{ worktree: WEB, remote: "origin", branch: "main" }]);
+    expect(Object.keys(repoRows())).toEqual(["web"]);
+    expect(guardFree()).toBe(true);
+  });
+
+  it("with --direct, resets only the repo whose after_merge fails, and keeps the repo pushed before it", async () => {
+    await seedRepoProject(h, (doc) => (doc.repo[1].after_merge = ["npm run api-e2e"]));
+    await mergeOne("CSV-1");
+    await mergeOne("CSV-2");
+    h.host.remoteBase = "up1";
+    h.host.execResults = [{ exitCode: 1, output: "1 api test failed" }];
+    const error = await failure(land(h.ctx, "csv", direct));
+    expect(error.code).toBe("loom_invalid_state");
+    expect(error.message).toContain('Landed web (origin/main at m3); api did not land. The repo "api" failed: Cannot land on upstream/trunk: npm run api-e2e failed (exit 1). Nothing was pushed, and loom/csv is back at m2.');
+    expect(error.message).toContain("1 api test failed");
+    expect(h.host.callsTo("resetHard")).toEqual([{ worktree: API, sha: "m2" }]);
+    expect(h.host.callsTo("push")).toEqual([{ repo: "/src/web", remote: "origin", src: "m3", branch: "main" }]);
+    expect(repoRows()).toMatchObject({ web: { landed_sha: "m3" } });
+    expect(repoRows().api).toBeUndefined();
+  });
+
+  it("names the repo in a direct land that conflicts, with a hint to land that repo as a pull request", async () => {
+    await seedRepoProject(h);
+    await mergeOne("CSV-1");
+    h.host.scripted.merge = [{ outcome: "conflict", files: ["src/model/a.ts"] }];
+    expect(await failure(land(h.ctx, "csv", direct))).toEqual({
+      code: "loom_invalid_state",
+      message: 'The repo "web" did not land: Cannot land on origin/main: it conflicts with loom/csv in src/model/a.ts.',
+      hint: "Land it as a pull request with `bb loom land csv --repo web` and resolve the conflict there.",
+    });
+  });
+
+  it("finishes the project only when every repo with merged work has landed since its newest merge", async () => {
+    await seedRepoProject(h, withWebDocsTicket);
+    await mergeOne("CSV-1");
+    await mergeOne("CSV-2");
+    expect(await land(h.ctx, "csv", landArgs)).toMatchObject({ unlanded: [], done: false });
+
+    h.clock.advance(1000);
+    await mergeOne("CSV-3");
+    expect(await land(h.ctx, "csv", { ...landArgs, repo: "api" })).toMatchObject({ unlanded: ["web"], done: false });
+    expect(project().state).toBe("running");
+    expect(await land(h.ctx, "csv", { ...landArgs, repo: "web" })).toMatchObject({ unlanded: [], done: true });
+    expect(project().state).toBe("done");
+  });
+
+  it("finishes a project whose tickets were all cancelled with no push, and still refuses one with work left and none merged", async () => {
+    await seedRepoProject(h);
+    const nothingDone = { code: "loom_invalid_state", message: "Cannot land: no ticket is done yet, so the integration branch has nothing to land." };
+    h.store.setTicketState(ticketOf(h, "CSV-1").id, "cancelled", "human");
+    expect(await failure(land(h.ctx, "csv", landArgs))).toMatchObject(nothingDone);
+    expect(project().state).toBe("running");
+
+    h.store.setTicketState(ticketOf(h, "CSV-2").id, "cancelled", "human");
+    h.store.setProjectState(project().id, "paused", "human");
+    expect(await failure(land(h.ctx, "csv", { ...landArgs, repo: "web" }))).toMatchObject(nothingDone);
+    const release = holdMerge(h.ctx, project().id)!;
+    expect(await failure(land(h.ctx, "csv", landArgs))).toMatchObject({ message: "Cannot land: a merge is running; try again in a moment." });
+    release();
+    const mark = h.host.calls.length;
+    expect(await land(h.ctx, "csv", landArgs)).toEqual({ repos: [], unlanded: [], done: true });
+    expect(hostCallsSince(mark)).toEqual([]);
+    expect(project().state).toBe("done");
+    expect(landed()).toEqual([]);
+    expect(guardFree()).toBe(true);
+    expect(await land(h.ctx, "csv", direct)).toEqual({ repos: [], unlanded: [], done: true });
+
+    const single = makeCtx();
+    await seedProject(single);
+    for (const key of ["CSV-1", "CSV-2"]) single.store.setTicketState(ticketOf(single, key).id, "cancelled", "human");
+    expect(await failure(land(single.ctx, "csv", landArgs))).toMatchObject(nothingDone);
+    expect(single.store.projectBySlug("csv")!.state).toBe("running");
+  });
+
+  it("does not wait on a repo whose tickets were all cancelled", async () => {
+    await seedRepoProject(h);
+    await mergeOne("CSV-1");
+    h.store.setTicketState(ticketOf(h, "CSV-2").id, "cancelled", "human");
+    expect(await land(h.ctx, "csv", landArgs)).toEqual({ repos: [{ repo: "web", url: PR(1), sha: "m1" }], unlanded: [], done: true });
+    expect(project().state).toBe("done");
   });
 });

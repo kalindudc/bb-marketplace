@@ -431,7 +431,17 @@ export function prBody(a: { ticket: TicketRow; approvals: ReviewRow[] }): string
   ].join("\n");
 }
 
-export function landBody(a: { project: ProjectRow; spec: Spec; done: TicketRow[] }): string {
-  const { project, spec, done } = a;
-  return [spec.project.goal, "", "Merged tickets:", ...done.map((ticket) => `- ${ticket.key} ${ticket.title}`), "", `Opened by Loom (project ${project.slug}).`].join("\n");
+/** "a", "a and b", "a, b and c". */
+export const andList = (items: readonly string[]) => (items.length <= 1 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`);
+
+/** On a multi-repo project `repo` is the repo the pull request is in: the body lists only its merged tickets and names the project's other repos. */
+export function landBody(a: { project: ProjectRow; spec: Spec; done: TicketRow[]; repo?: string }): string {
+  const { project, spec, repo } = a;
+  const done = repo === undefined ? a.done : a.done.filter((ticket) => ticket.repo === repo);
+  const others = repo === undefined ? [] : (spec.repo ?? []).map((entry) => entry.name).filter((name) => name !== repo);
+  const across =
+    others.length === 0
+      ? []
+      : [`This pull request lands the project's work in the repo ${JSON.stringify(repo)}. The project also changes the ${others.length === 1 ? "repo" : "repos"} ${andList(others.map((name) => JSON.stringify(name)))}, which ${others.length === 1 ? "lands" : "land"} on ${others.length === 1 ? "its" : "their"} own.`, ""];
+  return [spec.project.goal, "", ...across, "Merged tickets:", ...done.map((ticket) => `- ${ticket.key} ${ticket.title}`), "", `Opened by Loom (project ${project.slug}).`].join("\n");
 }

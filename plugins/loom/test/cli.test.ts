@@ -370,6 +370,122 @@ describe("land", () => {
   });
 });
 
+describe("land on a multi-repo project", () => {
+  const PR = (n: number) => `https://github.com/acme/shop/pull/${n}`;
+  const doneTicket = (key: string) => {
+    for (const state of ["working", "checking", "review", "approved", "merging", "done"] as const) host.store.setTicketState(host.store.ticketByKey(key)!.id, state, "loom");
+  };
+  const withRepos = (doc: Doc) => {
+    doc.repo = [
+      { name: "web", project: "proj_web" },
+      { name: "api", project: "proj_api", base: "trunk", remote: "upstream" },
+    ];
+    doc.ticket[0].repo = "web";
+    doc.ticket[1].repo = "api";
+    doc.ticket[1].depends_on = [];
+  };
+  const landEvents = () => humanEvents().filter((event) => event.action === "land");
+
+  async function running() {
+    fake.addBbProject("proj_web", { host_env: "/src/web" });
+    fake.addBbProject("proj_api", { host_env: "/src/api" });
+    await propose(withRepos);
+    await host.projects.approve("csv", "human");
+    await run(["start", "csv"]);
+  }
+
+  it("prints one line per repo landed, and --json has one entry per repo", async () => {
+    await running();
+    doneTicket("CSV-1");
+    const text = await run(["land", "csv"]);
+    expect(text).toMatchObject({ exitCode: 0, stdout: `Landed the repo "web": ${PR(1)}\nRun \`bb loom land csv\` again after more tickets merge to push them too.\n` });
+
+    doneTicket("CSV-2");
+    const json = await run(["land", "csv", "--json"]);
+    expect(JSON.parse(json.stdout)).toEqual({
+      repos: [
+        { repo: "web", url: PR(1), sha: "base000" },
+        { repo: "api", url: PR(2), sha: "base000" },
+      ],
+      unlanded: [],
+      done: true,
+    });
+    expect(host.hostPort.callsTo("push").map((push) => [push.repo, push.remote])).toEqual([
+      ["/src/web", "origin"],
+      ["/src/web", "origin"],
+      ["/src/api", "upstream"],
+    ]);
+    expect(host.store.projectBySlug("csv")?.state).toBe("done");
+    expect((await run(["land", "csv"])).stdout).toBe(`Landed the repo "web": ${PR(1)}\nLanded the repo "api": ${PR(2)}\nEvery ticket is done or cancelled and every repo with merged work is landed, so the project is done.\n`);
+  });
+
+  it("--repo lands only that repo, records it on the human.action event, and names the repos still to land", async () => {
+    await running();
+    doneTicket("CSV-1");
+    doneTicket("CSV-2");
+    const text = await run(["land", "csv", "--repo", "web"]);
+    expect(text.stdout).toBe(`Landed the repo "web": ${PR(1)}\nStill to land: the repo "api" has merged work that is not landed yet. Run \`bb loom land csv\` to land every repo with merged work.\n`);
+    expect(host.hostPort.callsTo("push").map((push) => push.repo)).toEqual(["/src/web"]);
+    expect(landEvents()).toEqual([{ action: "land", slug: "csv", repo: "web" }]);
+    expect(host.store.projectBySlug("csv")?.state).toBe("running");
+  });
+
+  it("--direct prints where each repo was pushed", async () => {
+    await running();
+    doneTicket("CSV-1");
+    doneTicket("CSV-2");
+    const text = await run(["land", "csv", "--direct"]);
+    expect(text.stdout).toBe(
+      'Landed the repo "web" on origin/main at base000.\nLanded the repo "api" on upstream/trunk at base000.\nEvery ticket is done or cancelled and every repo with merged work is landed, so the project is done.\n',
+    );
+    expect(host.hostPort.callsTo("push").map((push) => [push.repo, push.remote, push.branch])).toEqual([
+      ["/src/web", "origin", "main"],
+      ["/src/api", "upstream", "trunk"],
+    ]);
+    expect(landEvents()).toEqual([{ action: "land", slug: "csv", direct: true }]);
+  });
+
+  it("refuses an unknown repo with the list of repos, and --repo on a single-repo project, with no event", async () => {
+    await running();
+    doneTicket("CSV-1");
+    const unknown = await run(["land", "csv", "--repo", "mobile", "--json"]);
+    expect(unknown.exitCode).toBe(1);
+    expect(errorOf(unknown.stdout)).toEqual({ code: "loom_invalid_input", message: 'Project csv has no repo "mobile"; its repos are web, api.' });
+    expect(landEvents()).toEqual([]);
+    expect(host.hostPort.callsTo("push")).toEqual([]);
+
+    host = makeHost({ port: (fake = new FakePort()) });
+    host.bb.cli.register(createCli(host.projects, host.engine, host.store, Date.now));
+    await approved();
+    await run(["start", "csv"]);
+    doneTicket("CSV-1");
+    expect(errorOf((await run(["land", "csv", "--repo", "web", "--json"])).stdout)).toMatchObject({ code: "loom_invalid_input", message: expect.stringContaining("has no [[repo]] tables") });
+  });
+
+  it("finishes a project whose tickets were all cancelled, with nothing to push", async () => {
+    await running();
+    for (const key of ["CSV-1", "CSV-2"]) host.store.setTicketState(host.store.ticketByKey(key)!.id, "cancelled", "human");
+    const text = await run(["land", "csv"]);
+    expect(text).toMatchObject({ exitCode: 0, stdout: "Every ticket is done or cancelled and every repo with merged work is landed, so the project is done.\n" });
+    expect(host.hostPort.callsTo("push")).toEqual([]);
+    expect(host.store.projectBySlug("csv")?.state).toBe("done");
+  });
+
+  it("reports the repos that landed and the ones that did not when one fails", async () => {
+    await running();
+    doneTicket("CSV-1");
+    doneTicket("CSV-2");
+    host.hostPort.scripted.push = [{ outcome: "ok" }, { outcome: "unavailable", message: "git push to upstream failed: rejected" }];
+    const out = await run(["land", "csv", "--json"]);
+    expect(out.exitCode).toBe(1);
+    expect(errorOf(out.stdout)).toEqual({
+      code: "loom_unavailable",
+      message: `Landed web (${PR(1)}); api did not land. The repo "api" failed: git push to upstream failed: rejected`,
+      hint: "Fix that, then run `bb loom land csv --repo api`.",
+    });
+  });
+});
+
 describe("readyToLand", () => {
   const project = (over: Partial<Parameters<typeof readyToLand>[0]> = {}) => ({ state: "running", strategy: "integration", ticketCounts: { done: 2, cancelled: 1 }, ...over });
 

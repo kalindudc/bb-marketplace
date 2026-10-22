@@ -462,6 +462,39 @@ describe("changes", () => {
     expect(humanEvents().at(-1)).toEqual({ actor: "human", action: "post", slug: "csv", key: "CSV-1" });
     await expect(call("reply", { key: "CSV-1", body: "x", parentId: 9999, confirm: true })).rejects.toThrow(/another ticket or does not exist/);
   });
+
+  it("control land and landDirect take a repo on a multi-repo project, and refuse an unknown one or a repo with another action", async () => {
+    fake.addBbProject("proj_web", { host_env: "/src/web" });
+    fake.addBbProject("proj_api", { host_env: "/src/api" });
+    await running((doc) => {
+      doc.repo = [
+        { name: "web", project: "proj_web" },
+        { name: "api", project: "proj_api", base: "trunk", remote: "upstream" },
+      ];
+      doc.ticket[0].repo = "web";
+      doc.ticket[1].repo = "api";
+      doc.ticket[1].depends_on = [];
+    });
+    for (const key of ["CSV-1", "CSV-2"]) for (const state of ["working", "checking", "review", "approved", "merging", "done"] as const) host.store.setTicketState(ticketId(key), state, "loom");
+
+    await expect(call("control", { slug: "csv", action: "land", repo: "mobile", confirm: true })).rejects.toThrow('Project csv has no repo "mobile"; its repos are web, api.');
+    await expect(call("control", { slug: "csv", action: "pause", repo: "web", confirm: true })).rejects.toThrow("A repo goes only with land and landDirect, not with pause.");
+    await expect(call("control", { slug: "csv", action: "land", repo: "", confirm: true })).rejects.toThrow();
+    expect(host.hostPort.callsTo("push")).toEqual([]);
+
+    const view = await call<ProjectView>("control", { slug: "csv", action: "land", repo: "api", confirm: true });
+    expect(view.overview.state).toBe("running");
+    expect(host.hostPort.callsTo("push")).toEqual([{ repo: "/src/api", remote: "upstream", src: "base000", branch: "loom/csv" }]);
+    expect(host.store.projectRepos(host.store.projectBySlug("csv")!.id).map((row) => row.name)).toEqual(["api"]);
+
+    await call("control", { slug: "csv", action: "landDirect", repo: "web", confirm: true });
+    expect(host.hostPort.callsTo("push").at(-1)).toEqual({ repo: "/src/web", remote: "origin", src: "base000", branch: "main" });
+    expect(host.store.projectBySlug("csv")!.state).toBe("done");
+    expect(humanEvents().filter((event) => event.action === "land")).toEqual([
+      { actor: "human", action: "land", slug: "csv", repo: "api" },
+      { actor: "human", action: "land", slug: "csv", repo: "web", direct: true },
+    ]);
+  });
 });
 
 describe("planning", () => {

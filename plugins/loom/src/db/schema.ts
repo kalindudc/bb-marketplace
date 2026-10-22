@@ -131,4 +131,5 @@ export const MIGRATIONS: string[] = [
   `CREATE INDEX runs_ticket ON runs (ticket_id, id)`,
   `ALTER TABLE threads ADD COLUMN attempt INTEGER`,
   `ALTER TABLE tickets ADD COLUMN repo TEXT`,
+  `CREATE TABLE project_repos (project_id INTEGER NOT NULL, name TEXT NOT NULL, pr_url TEXT, landed_sha TEXT, landed_at INTEGER, PRIMARY KEY (project_id, name))`,
 ];
