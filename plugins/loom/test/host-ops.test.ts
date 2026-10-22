@@ -639,6 +639,19 @@ describe("host entry", () => {
     sh(repo, "worktree", "remove", "--force", ready.path);
   });
 
+  it("adds a repo's Loom worktree under the key <slug>.<name>, and refuses any looser key", async () => {
+    const repo = makeRepo();
+    await harness.experimental_call("ensureBranch", { repo, branch: "loom/multi", from: "main" });
+    const key = `multi-${counter++}.web-app`;
+    const ready = await harness.experimental_call("ensureWorktree", { repo, key, branch: "loom/multi" });
+    expect(ready).toEqual({ outcome: "ok", path: join(tmpdir(), "loom-host-entry-data", "worktrees", key) });
+    if (ready.outcome === "ok") sh(repo, "worktree", "remove", "--force", ready.path);
+
+    for (const loose of ["multi.", ".web", "multi..web", "multi.web.api", "multi/web", "../multi", "multi.Web", "multi.9web", "multi.-web", `multi.${"w".repeat(25)}`, "m.web", "Multi.web"]) {
+      await expect(harness.experimental_call("ensureWorktree", { repo, key: loose, branch: "loom/multi" }), loose).rejects.toThrow();
+    }
+  });
+
   it("refuses a relative path, an option-like ref and a timeout outside the range", async () => {
     await expect(harness.experimental_call("exec", { cwd: "relative", command: "ls", timeoutMs: 5000 })).rejects.toThrow();
     await expect(harness.experimental_call("exec", { cwd: scratch, command: "ls", timeoutMs: 10 })).rejects.toThrow();

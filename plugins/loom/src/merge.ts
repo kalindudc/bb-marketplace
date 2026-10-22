@@ -2,10 +2,12 @@
 // after_merge checks run on the merged result) or as one pull request each. Every host step is idempotent, so a ticket
 // left in `merging` by a pause or a restart simply runs again. Merges run in the background, like checks.
 import { delivers, workerOf, type CheckRun } from "./checks";
-import type { ProjectRow, Store, TicketRow } from "./db/store";
+import { repoCheckout, type RepoCheckout } from "./checkouts";
+import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { plural } from "./format";
 import { afterMergeChangedText, afterMergeFailedText, clip, conflictText, landBody, prBody } from "./prompts";
 import { LoomError } from "./projects";
+import type { RepoSettings } from "./repos";
 import { recordingHost } from "./runs";
 import type { Spec } from "./spec";
 import { LOOM_ACTOR } from "./states";
@@ -92,15 +94,18 @@ async function launch(ctx: EngineCtx, projectId: number, spec: Spec): Promise<vo
   );
 }
 
-// The ticket to merge: the one left in merging, else the oldest approved one, moved to merging.
+// The ticket to merge: the one left in merging, else the oldest approved one whose repo has no worker worktree being created, moved to merging.
 async function begin(ctx: EngineCtx, projectId: number, spec: Spec): Promise<TicketRow | null> {
   const { store } = ctx;
   if (store.project(projectId)?.state !== "running") return null;
   const left = store.tickets(projectId, ["merging"])[0];
   if (left !== undefined) return left;
   if (store.tickets(projectId, ["approved"]).length === 0) return null;
-  if (spec.merge.strategy === "integration" && (await provisioning(ctx, projectId))) return null;
-  const next = [...store.tickets(projectId, ["approved"])].sort((a, b) => a.state_at - b.state_at || a.seq - b.seq)[0];
+  const waiting = spec.merge.strategy === "integration" ? await provisioningRepos(ctx, projectId) : new Set<string | null>();
+  const next = store
+    .tickets(projectId, ["approved"])
+    .filter((ticket) => !waiting.has(ticket.repo))
+    .sort((a, b) => a.state_at - b.state_at || a.seq - b.seq)[0];
   if (next === undefined || store.project(projectId)?.state !== "running") return null;
   store.tx(() => {
     store.setTicketState(next.id, "merging", LOOM_ACTOR, { head: next.head_sha });
@@ -109,15 +114,25 @@ async function begin(ctx: EngineCtx, projectId: number, spec: Spec): Promise<Tic
   return store.ticket(next.id)!;
 }
 
-// bb creates a worker's worktree after `spawn` returns, branched from the integration branch's tip at that moment, so a merge waits for it.
-async function provisioning(ctx: EngineCtx, projectId: number): Promise<boolean> {
+// bb creates a worker's worktree after `spawn` returns, branched from its repo's integration branch tip at that moment, so a merge into that repo waits for it.
+async function provisioningRepos(ctx: EngineCtx, projectId: number): Promise<Set<string | null>> {
+  const repos = new Set<string | null>();
   for (const row of ctx.store.threads({ projectId, role: "worker", states: ["spawning", "active"] })) {
-    if (row.state === "spawning") return true;
-    const environment = await resolveEnvironment(ctx, row);
-    if (ctx.store.thread(row.id)!.environment_id === null) return true;
-    if (environment?.status === "creating" || environment?.status === "provisioning") return true;
+    const repo = row.ticket_id === null ? null : (ctx.store.ticket(row.ticket_id)?.repo ?? null);
+    if (!repos.has(repo) && (await worktreeCreating(ctx, row))) repos.add(repo);
   }
-  return false;
+  return repos;
+}
+
+async function worktreeCreating(ctx: EngineCtx, row: ThreadRow): Promise<boolean> {
+  if (row.state === "spawning") return true;
+  const environment = await resolveEnvironment(ctx, row);
+  if (ctx.store.thread(row.id)!.environment_id === null) return true;
+  return environment?.status === "creating" || environment?.status === "provisioning";
+}
+
+async function provisioning(ctx: EngineCtx, projectId: number): Promise<boolean> {
+  return (await provisioningRepos(ctx, projectId)).size > 0;
 }
 
 /** Ends the worker and reviewer threads of a ticket that is done, or blocked because its pull request closed. Replays what a crash after the ticket's move left undone. */
@@ -148,66 +163,78 @@ export async function mergeTicket(ctx: EngineCtx, project: ProjectRow, spec: Spe
   }
 }
 
-async function checkoutOf(ctx: EngineCtx, project: ProjectRow): Promise<{ hostId: string; repo: string }> {
-  const repo = project.host_id === null ? null : await ctx.bb.projectCheckout(project.bb_project_id, project.host_id);
-  if (project.host_id === null || repo === null) throw new Unavailable(`The bb project has no checkout on the machine ${project.host_id ?? "(unknown)"}; add the repository there and resume.`);
-  return { hostId: project.host_id, repo };
+// A repo without a checkout pauses the project with repoCheckout's message, which gives the clone command.
+async function checkoutIn(ctx: EngineCtx, project: ProjectRow, spec: Spec, name: string | null): Promise<RepoCheckout> {
+  try {
+    return await repoCheckout(ctx, project, spec, name);
+  } catch (error) {
+    throw error instanceof LoomError ? new Unavailable(error.message) : error;
+  }
 }
 
-async function loomWorktree(ctx: EngineCtx, project: ProjectRow, spec: Spec): Promise<{ hostId: string; repo: string; worktree: string }> {
-  const { hostId, repo } = await checkoutOf(ctx, project);
-  const branch = spec.merge.branch!;
-  const ready = await ctx.host.call(hostId, "ensureWorktree", { repo, key: project.slug, branch });
-  if (ready.outcome === "ok") return { hostId, repo, worktree: ready.path };
-  throw new Unavailable(ready.reason === "branch_checked_out" ? `${branch} is checked out elsewhere; switch that checkout off it and resume` : ready.message);
+// The integration branch as the human reads it: on a multi-repo project, with the repo it is in.
+const branchIn = (settings: RepoSettings) => (settings.name === null ? settings.branch! : `${settings.branch!} in the repo "${settings.name}"`);
+
+/** The plugin's worktree of a repo's integration branch: keyed by the slug for the project's own repository, by `<slug>.<name>` for a named repo. */
+async function loomWorktree(ctx: EngineCtx, project: ProjectRow, spec: Spec, name: string | null = null): Promise<{ hostId: string; repo: string; worktree: string; settings: RepoSettings }> {
+  const { hostId, path: repo, settings } = await checkoutIn(ctx, project, spec, name);
+  const key = name === null ? project.slug : `${project.slug}.${name}`;
+  const ready = await ctx.host.call(hostId, "ensureWorktree", { repo, key, branch: settings.branch! });
+  if (ready.outcome === "ok") return { hostId, repo, worktree: ready.path, settings };
+  throw new Unavailable(ready.reason === "branch_checked_out" ? `${branchIn(settings)} is checked out elsewhere; switch that checkout off it and resume` : ready.message);
+}
+
+// A message to the worker about its merge, which names the repo on a multi-repo project.
+function inRepo(text: { summary: string; detail: string }, settings: RepoSettings): { summary: string; detail: string } {
+  return settings.name === null ? text : { ...text, detail: `${text.detail}\n\nThis was the integration branch of the repo "${settings.name}", which your worktree is a checkout of.` };
 }
 
 async function mergeIntoIntegration(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow): Promise<void> {
-  const branch = spec.merge.branch!;
-  const { hostId, worktree } = await loomWorktree(ctx, project, spec);
-  const before = await rollbackPoint(ctx, hostId, worktree, spec, ticket);
+  const { hostId, worktree, settings } = await loomWorktree(ctx, project, spec, ticket.repo);
+  const branch = settings.branch!;
+  const target = branchIn(settings);
+  const before = await rollbackPoint(ctx, hostId, worktree, settings, ticket);
   const merged = await ctx.host.call(hostId, "merge", { worktree, ref: ticket.head_sha!, message: `${ticket.key}: ${clip(ticket.title, 200)} (Loom)`, before });
 
   if (merged.outcome === "conflict") {
-    const text = conflictText(ticket.key, branch, merged.files);
     await sendBack(ctx, ticket.id, {
-      post: { kind: "merge", body: `Merging into ${branch} conflicted in: ${merged.files.join(", ")}.`, data: { outcome: "conflict", files: merged.files } },
-      text,
+      post: { kind: "merge", body: `Merging into ${target} conflicted in: ${merged.files.join(", ")}.`, data: { outcome: "conflict", files: merged.files } },
+      text: inRepo(conflictText(ticket.key, branch, merged.files), settings),
       countFailure: false,
       reason: "the merge conflicted",
     });
     return;
   }
 
-  for (const command of spec.checks.after_merge) {
+  for (const command of settings.afterMerge) {
     const result = await ctx.host.call(hostId, "exec", { cwd: worktree, command, timeoutMs: spec.checks.timeout_minutes * 60_000 });
     const run: CheckRun = { command, exitCode: result.exitCode, timedOut: result.timedOut, durationMs: result.durationMs, output: result.output };
-    const failure = result.exitCode === 0 && !result.timedOut ? await changedBranch(ctx, hostId, worktree, spec, merged.sha, run, ticket.key) : { post: afterMergePost(run, branch), text: afterMergeFailedText(ticket.key, run) };
+    const failure = result.exitCode === 0 && !result.timedOut ? await changedBranch(ctx, hostId, worktree, settings, merged.sha, run, ticket.key) : { post: afterMergePost(run, target), text: inRepo(afterMergeFailedText(ticket.key, run), settings) };
     if (failure === null) continue;
     await ctx.host.call(hostId, "resetHard", { worktree, sha: merged.before });
     await sendBack(ctx, ticket.id, { ...failure, countFailure: true, reason: "the after_merge checks failed" });
     return;
   }
 
-  complete(ctx, ticket.id, { kind: "merge", body: `Merged ${merged.sha.slice(0, 12)} into ${branch}${merged.already ? " (already merged)" : ""}.`, data: { outcome: "merged", sha: merged.sha, before: merged.before, already: merged.already, branch } });
+  complete(ctx, ticket.id, { kind: "merge", body: `Merged ${merged.sha.slice(0, 12)} into ${target}${merged.already ? " (already merged)" : ""}.`, data: { outcome: "merged", sha: merged.sha, before: merged.before, already: merged.already, branch } });
   await endFinishedThreads(ctx, project.id);
 }
 
 // The point to roll the merge back to, persisted before the merge so that a rerun after a crash has it: the history cannot tell whose merge is at HEAD.
-async function rollbackPoint(ctx: EngineCtx, hostId: string, worktree: string, spec: Spec, ticket: TicketRow): Promise<string> {
+async function rollbackPoint(ctx: EngineCtx, hostId: string, worktree: string, settings: RepoSettings, ticket: TicketRow): Promise<string> {
   if (ticket.merge_before !== null) return ticket.merge_before;
-  const { head } = await ctx.host.call(hostId, "worktreeState", { worktree, base: spec.project.base });
+  const { head } = await ctx.host.call(hostId, "worktreeState", { worktree, base: settings.base });
   ctx.store.updateTicket(ticket.id, { merge_before: head });
   return head;
 }
 
 // A check that passed must still have left the integration branch at the merge that was reviewed, with no tracked file edited.
-async function changedBranch(ctx: EngineCtx, hostId: string, worktree: string, spec: Spec, merged: string, run: CheckRun, key: string): Promise<{ post: MergePost; text: { summary: string; detail: string } } | null> {
-  const after = await ctx.host.call(hostId, "worktreeState", { worktree, base: spec.project.base, trackedOnly: true });
+async function changedBranch(ctx: EngineCtx, hostId: string, worktree: string, settings: RepoSettings, merged: string, run: CheckRun, key: string): Promise<{ post: MergePost; text: { summary: string; detail: string } } | null> {
+  const after = await ctx.host.call(hostId, "worktreeState", { worktree, base: settings.base, trackedOnly: true });
   const changes = [...(after.head === merged ? [] : [`moved HEAD from ${merged.slice(0, 12)} to ${after.head.slice(0, 12)}`]), ...(after.dirty ? ["left tracked files modified"] : [])];
   if (changes.length === 0) return null;
   const changed = changes.join(" and ");
-  return { post: afterMergePost(run, spec.merge.branch!, changed), text: afterMergeChangedText(key, run, changed) };
+  return { post: afterMergePost(run, branchIn(settings), changed), text: inRepo(afterMergeChangedText(key, run, changed), settings) };
 }
 
 function afterMergePost(run: CheckRun, branch: string, changed?: string): { kind: "check"; body: string; data: object } {
@@ -279,16 +306,16 @@ async function sendBack(ctx: EngineCtx, ticketId: number, a: { post: MergePost; 
 
 async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow): Promise<void> {
   const { store } = ctx;
-  const { hostId, repo } = await checkoutOf(ctx, project);
+  const { hostId, path: repo, settings } = await checkoutIn(ctx, project, spec, ticket.repo);
   if (ticket.branch === null) throw new Unavailable(`${ticket.key} has no branch recorded, so a pull request cannot be opened. Requeue it.`);
-  const { remote } = spec.merge;
+  const { remote, base } = settings;
   const pushed = await ctx.host.call(hostId, "push", { repo, remote, src: ticket.head_sha!, branch: ticket.branch });
   if (pushed.outcome === "unavailable") throw new Unavailable(pushed.message);
   const approvals = store.reviews(ticket.id, ticket.review_round).filter((review) => review.verdict === "approved");
   const created = await ctx.host.call(hostId, "prCreate", {
     repo,
     remote,
-    base: spec.project.base,
+    base,
     head: ticket.branch,
     title: clip(`${ticket.key}: ${ticket.title}`, 256),
     body: prBody({ ticket, approvals }),
@@ -310,20 +337,28 @@ export async function pollPullRequests(ctx: EngineCtx, project: ProjectRow): Pro
   const { store } = ctx;
   const due = store.tickets(project.id, ["pr_open"]).filter((ticket) => ticket.pr_url !== null && (ticket.pr_checked_at === null || ctx.now() - ticket.pr_checked_at >= POLL_MS));
   if (due.length === 0) return;
-  let checkout: { hostId: string; repo: string };
-  try {
-    checkout = await checkoutOf(ctx, project);
-  } catch (error) {
-    pauseProject(ctx, project.id, errText(error));
-    return;
-  }
+  const spec = specOf(store, project);
+  // Each repo's checkout is read once per poll; a repo without one pauses the project and leaves its pull requests for the next poll.
+  const checkouts = new Map<string | null, RepoCheckout | null>();
+  const checkoutOfRepo = async (name: string | null): Promise<RepoCheckout | null> => {
+    const cached = checkouts.get(name);
+    if (cached !== undefined) return cached;
+    const checkout = await repoCheckout(ctx, project, spec, name).catch((error: unknown) => {
+      pauseProject(ctx, project.id, errText(error));
+      return null;
+    });
+    checkouts.set(name, checkout);
+    return checkout;
+  };
   for (const seen of due) {
     const ticket = store.ticket(seen.id);
     if (ticket?.state !== "pr_open" || ticket.pr_url === null) continue;
+    const checkout = await checkoutOfRepo(ticket.repo);
+    if (checkout === null) continue;
     store.updateTicket(ticket.id, { pr_checked_at: ctx.now() });
     let state;
     try {
-      state = await ctx.host.call(checkout.hostId, "prState", { repo: checkout.repo, url: ticket.pr_url });
+      state = await ctx.host.call(checkout.hostId, "prState", { repo: checkout.path, url: ticket.pr_url });
     } catch (error) {
       pauseProject(ctx, project.id, `Reading the pull request of ${ticket.key} stopped: ${errText(error)}`);
       continue;

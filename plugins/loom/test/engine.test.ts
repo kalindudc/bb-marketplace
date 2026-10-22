@@ -7,7 +7,7 @@ import { SpawnRefusedError, type SpawnArgs } from "../src/ports";
 import { approve, settleReviews } from "../src/review";
 import { PAUSE_NOW_REASON } from "../src/states";
 import { editTicket } from "../src/triage";
-import { checkOutHead, makeEngine, reachApproved, reachReview, seedProject, specToml, ticketOf, withDocsTicket, workerRows, type Doc } from "./helpers";
+import { checkOutHead, makeEngine, reachApproved, reachReview, seedProject, seedRepoProject, specToml, ticketOf, withDocsTicket, workerRows, type Doc } from "./helpers";
 
 let h: ReturnType<typeof makeEngine>;
 
@@ -38,9 +38,64 @@ describe("start", () => {
   it("is refused with loom_no_checkout when the bb project has no checkout on the host, and the project stays ready", async () => {
     await seedProject(h, undefined, "ready");
     h.bb.checkout = null;
-    await expect(h.engine.start("csv", "human")).rejects.toMatchObject({ code: "loom_no_checkout" });
+    await expect(h.engine.start("csv", "human")).rejects.toMatchObject({
+      code: "loom_no_checkout",
+      message: "The project's repository (bb project proj_1) has no checkout on the machine host_1 that this Loom project uses. Clone it there with `bb project source add proj_1 --clone --machine host_1`, then start the project again.",
+    });
     expect(project().state).toBe("ready");
     expect(h.host.calls).toEqual([]);
+  });
+
+  it("creates the integration branch in every repo of a multi-repo project, from that repo's base, on the project's machine", async () => {
+    await seedRepoProject(h, undefined, "ready");
+    const started = await h.engine.start("csv", "human");
+    expect(started.state).toBe("running");
+    expect(h.host.calls.map((call) => [call.hostId, call.method, call.input])).toEqual([
+      ["host_1", "ensureBranch", { repo: "/src/web", branch: "loom/csv", from: "main" }],
+      ["host_1", "ensureBranch", { repo: "/src/api", branch: "loom/csv", from: "trunk" }],
+      ["host_1", "ensureBranch", { repo: "/src/docs", branch: "loom/csv", from: "main" }],
+    ]);
+    expect(h.host.branches).toEqual(new Set(["/src/web#loom/csv", "/src/api#loom/csv", "/src/docs#loom/csv"]));
+  });
+
+  it("refuses to start a multi-repo project while a repo has no checkout, naming the repo and its clone command, and creates no branch", async () => {
+    await seedRepoProject(h, undefined, "ready");
+    h.bb.checkouts.set("proj_api", {});
+    await expect(h.engine.start("csv", "human")).rejects.toMatchObject({
+      code: "loom_no_checkout",
+      message: 'Repo "api" (bb project proj_api) has no checkout on the machine host_1 that this Loom project uses. Clone it there with `bb project source add proj_api --clone --machine host_1`, then start the project again.',
+    });
+    expect(project().state).toBe("ready");
+    expect(h.host.calls).toEqual([]);
+
+    h.bb.checkouts.set("proj_docs", {});
+    const both = await h.engine.start("csv", "human").catch((error: Error) => error.message);
+    expect(String(both).split("\n")).toEqual([expect.stringContaining('Repo "api"'), expect.stringContaining('Repo "docs"')]);
+    expect(project().state).toBe("ready");
+
+    h.bb.checkouts.set("proj_api", { host_1: "/src/api" });
+    h.bb.checkouts.set("proj_docs", { host_1: "/src/docs" });
+    expect((await h.engine.start("csv", "human")).state).toBe("running");
+  });
+
+  it("refuses to start, naming the repo, when its integration branch cannot be created", async () => {
+    await seedRepoProject(h, undefined, "ready");
+    h.host.scripted.ensureBranch = [{ sha: "base000", created: true }, new Error("git rev-parse failed: trunk")];
+    await expect(h.engine.start("csv", "human")).rejects.toMatchObject({
+      code: "loom_invalid_state",
+      message: 'Could not create the integration branch loom/csv in the repo "api" from trunk: git rev-parse failed: trunk',
+      hint: "Check that trunk exists in /src/api.",
+    });
+    expect(project().state).toBe("ready");
+  });
+
+  it("checks every repo's checkout on the pr strategy but creates no branch", async () => {
+    await seedRepoProject(h, (doc) => (doc.merge = { strategy: "pr" }), "ready");
+    h.bb.checkouts.set("proj_web", {});
+    await expect(h.engine.start("csv", "human")).rejects.toMatchObject({ code: "loom_no_checkout", message: expect.stringContaining('Repo "web"') });
+    h.bb.checkouts.set("proj_web", { host_1: "/src/web" });
+    expect((await h.engine.start("csv", "human")).state).toBe("running");
+    expect(h.host.callsTo("ensureBranch")).toEqual([]);
   });
 
   it("is refused, with the project left ready, when the branch cannot be created", async () => {
@@ -878,6 +933,43 @@ describe("tick: review and merge", () => {
     expect(ticketOf(h, "CSV-1").state).toBe("done");
     await h.engine.tick();
     expect(roles()).toContain("worker:CSV-3");
+  });
+
+  it("starts workers in other repos while a ticket of one repo is merging, and holds back the workers of that repo until the merge is over", async () => {
+    await seedRepoProject(h, (doc) => doc.ticket.push({ ref: "web-docs", title: "Web docs", body: "Write the docs.", acceptance: ["WHEN the docs are built THE SYSTEM SHALL list the export"], scope: ["docs/**"], repo: "web" }));
+    await reachApproved(h, "CSV-1");
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const call = h.host.call.bind(h.host);
+    h.host.call = (async (hostId: string, method: string, input: unknown) => {
+      if (method === "merge") await gate;
+      return call(hostId, method as never, input as never);
+    }) as typeof h.host.call;
+    const workers = () => roles().filter((role) => role.startsWith("worker"));
+
+    await h.engine.tick();
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "merging", repo: "web" });
+    expect(workers()).toEqual(["worker:CSV-1", "worker:CSV-2"]);
+    expect(ticketOf(h, "CSV-2")).toMatchObject({ state: "working", repo: "api" });
+    await h.engine.tick();
+    expect(ticketOf(h, "CSV-3")).toMatchObject({ state: "queued", repo: "web" });
+    expect(workers()).toEqual(["worker:CSV-1", "worker:CSV-2"]);
+
+    release();
+    await settleMerges(h.ctx);
+    expect(ticketOf(h, "CSV-1").state).toBe("done");
+    await h.engine.tick();
+    expect(workers()).toEqual(["worker:CSV-1", "worker:CSV-2", "worker:CSV-3"]);
+  });
+
+  it("starts no worker in any repo while the merge guard is held with no ticket merging", async () => {
+    await seedRepoProject(h);
+    const release = holdMerge(h.ctx, project().id)!;
+    await h.engine.tick();
+    expect(roles()).toEqual([]);
+    release();
+    await h.engine.tick();
+    expect(roles()).toEqual(["worker:CSV-1", "worker:CSV-2"]);
   });
 
   it("starts no worker while a direct land holds the merge guard on the integration strategy, and starts it once the land is over", async () => {

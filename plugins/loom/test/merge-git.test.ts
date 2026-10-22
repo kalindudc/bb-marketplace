@@ -9,7 +9,7 @@ import * as ops from "../src/host/ops";
 import { runMergeQueue, settleMerges } from "../src/merge";
 import type { HostPort } from "../src/ports";
 import { specOf } from "../src/workers";
-import { makeCtx, reachApproved, seedProject, ticketOf, type Doc, type EngineHarness } from "./helpers";
+import { makeCtx, reachApproved, seedProject, seedRepoProject, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 const saved: Record<string, string | undefined> = {};
 const sh = (cwd: string, ...args: string[]) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
@@ -40,28 +40,33 @@ beforeEach(() => {
   failExecOnce = false;
 });
 
-// A commit on its own branch, off main, the way a reviewed worker leaves one.
-function feature(branch: string, path: string, content: string): string {
-  sh(repo, "checkout", "-q", "-b", branch, "main");
-  writeFileSync(join(repo, path), content);
-  sh(repo, "add", "-A");
-  sh(repo, "commit", "-q", "-m", `${branch}: ${path}`);
-  const sha = sh(repo, "rev-parse", "HEAD");
-  sh(repo, "checkout", "-q", "main");
+// A commit on its own branch, off `base`, the way a reviewed worker leaves one.
+function feature(branch: string, path: string, content: string, at = repo, base = "main"): string {
+  sh(at, "checkout", "-q", "-b", branch, base);
+  writeFileSync(join(at, path), content);
+  sh(at, "add", "-A");
+  sh(at, "commit", "-q", "-m", `${branch}: ${path}`);
+  const sha = sh(at, "rev-parse", "HEAD");
+  sh(at, "checkout", "-q", base);
   return sha;
+}
+
+function makeRepo(base = "main"): string {
+  const made = join(scratch, `repo-${counter++}`);
+  mkdirSync(made);
+  sh(made, "init", "-q", "-b", base);
+  sh(made, "config", "user.email", "dev@example.com");
+  sh(made, "config", "user.name", "Dev");
+  writeFileSync(join(made, "README.md"), "hello\n");
+  sh(made, "add", "-A");
+  sh(made, "commit", "-q", "-m", "init");
+  return made;
 }
 
 /** The workers and reviewers run over the fake host; only the Loom worktree, where the merge happens, is real. */
 async function setup(edit: (doc: Doc) => void): Promise<string> {
-  repo = join(scratch, `repo-${counter++}`);
+  repo = makeRepo();
   dataDir = join(scratch, `data-${counter++}`);
-  mkdirSync(repo);
-  sh(repo, "init", "-q", "-b", "main");
-  sh(repo, "config", "user.email", "dev@example.com");
-  sh(repo, "config", "user.name", "Dev");
-  writeFileSync(join(repo, "README.md"), "hello\n");
-  sh(repo, "add", "-A");
-  sh(repo, "commit", "-q", "-m", "init");
   await ops.ensureBranch({ repo, branch: "loom/csv", from: "main" });
   const reviewed = feature("worker-1", "feature", "reviewed\n");
 
@@ -70,6 +75,11 @@ async function setup(edit: (doc: Doc) => void): Promise<string> {
   await reachApproved(h);
   h.store.updateTicket(ticketOf(h, "CSV-1").id, { head_sha: reviewed });
   h.bb.checkout = repo;
+  useRealLoomWorktrees();
+  return reviewed;
+}
+
+function useRealLoomWorktrees(): void {
   const fake = h.ctx.host;
   const real = (method: string, input: Record<string, unknown>) => method === "ensureWorktree" || [input.worktree, input.cwd].some((path) => typeof path === "string" && path.startsWith(dataDir));
   const host: HostPort = {
@@ -84,7 +94,6 @@ async function setup(edit: (doc: Doc) => void): Promise<string> {
     },
   };
   h.ctx.host = host;
-  return reviewed;
 }
 
 const queue = async () => {
@@ -155,5 +164,35 @@ describe("the integration merge against a real repository", () => {
     expect(ticketOf(h, "CSV-2").state).toBe("working");
     expect(sh(repo, "rev-parse", "loom/csv")).toBe(merged);
     expect(existsSync(join(dataDir, "worktrees", "csv", "feature"))).toBe(true);
+  });
+
+  it("merges each ticket of a multi-repo project into its own repo's integration branch, each in its own Loom worktree", async () => {
+    const web = makeRepo();
+    const api = makeRepo("trunk");
+    dataDir = join(scratch, `data-${counter++}`);
+    await ops.ensureBranch({ repo: web, branch: "loom/csv", from: "main" });
+    await ops.ensureBranch({ repo: api, branch: "loom/csv", from: "trunk" });
+    const webReviewed = feature("worker-1", "web.txt", "web\n", web, "main");
+    const apiReviewed = feature("worker-2", "api.txt", "api\n", api, "trunk");
+
+    h = makeCtx();
+    await seedRepoProject(h, (doc) => (doc.repo[1].after_merge = ["test -f api.txt"]));
+    h.bb.checkouts.set("proj_web", { host_1: web });
+    h.bb.checkouts.set("proj_api", { host_1: api });
+    await reachApproved(h, "CSV-1");
+    await reachApproved(h, "CSV-2");
+    h.store.updateTicket(ticketOf(h, "CSV-1").id, { head_sha: webReviewed });
+    h.store.updateTicket(ticketOf(h, "CSV-2").id, { head_sha: apiReviewed });
+    useRealLoomWorktrees();
+    await queue();
+    await queue();
+
+    expect([ticketOf(h, "CSV-1").state, ticketOf(h, "CSV-2").state]).toEqual(["done", "done"]);
+    expect(sh(web, "rev-parse", "loom/csv^2")).toBe(webReviewed);
+    expect(sh(api, "rev-parse", "loom/csv^2")).toBe(apiReviewed);
+    expect(sh(web, "ls-tree", "--name-only", "loom/csv")).not.toContain("api.txt");
+    expect(sh(join(dataDir, "worktrees", "csv.web"), "rev-parse", "HEAD")).toBe(sh(web, "rev-parse", "loom/csv"));
+    expect(sh(join(dataDir, "worktrees", "csv.api"), "rev-parse", "HEAD")).toBe(sh(api, "rev-parse", "loom/csv"));
+    expect(existsSync(join(dataDir, "worktrees", "csv"))).toBe(false);
   });
 });

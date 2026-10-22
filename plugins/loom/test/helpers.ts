@@ -461,7 +461,7 @@ export async function seedProject(h: EngineHarness, edit?: (doc: Doc) => void, s
  * A running project over three repos, each its own bb project with a checkout on host_1: web (its own checks and a protected path),
  * api (another base and remote, the top-level checks) and docs (its own checks). CSV-1 is in web and CSV-2 in api, with no dependency.
  */
-export async function seedRepoProject(h: EngineHarness, edit?: (doc: Doc) => void): Promise<ProjectRow> {
+export async function seedRepoProject(h: EngineHarness, edit?: (doc: Doc) => void, state: "ready" | "running" | "paused" = "running"): Promise<ProjectRow> {
   h.bb.addBbProject("proj_web", { host_1: "/src/web" });
   h.bb.addBbProject("proj_api", { host_1: "/src/api" });
   h.bb.addBbProject("proj_docs", { host_1: "/src/docs" });
@@ -476,7 +476,7 @@ export async function seedRepoProject(h: EngineHarness, edit?: (doc: Doc) => voi
     doc.ticket[1].repo = "api";
     doc.ticket[1].depends_on = [];
     edit?.(doc);
-  });
+  }, state);
 }
 
 export const ticketOf = (h: EngineHarness, key: string): TicketRow => h.store.ticketByKey(key)!;

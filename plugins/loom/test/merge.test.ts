@@ -4,7 +4,7 @@ import { finishIfComplete, holdMerge, land, mergeTicket, pollPullRequests, runMe
 import { readyTickets, toLite } from "../src/scheduler";
 import type { HostOutput } from "../src/host-contract";
 import { blockTicket, endThread, requeueTicket, specOf } from "../src/workers";
-import { makeCtx, reachApproved, seedProject, startWorker, ticketOf, withDocsTicket, type Doc, type EngineHarness } from "./helpers";
+import { makeCtx, reachApproved, seedProject, seedRepoProject, startWorker, ticketOf, withDocsTicket, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;
 
@@ -366,6 +366,116 @@ describe("the integration merge", () => {
   });
 });
 
+describe("the integration merge on a multi-repo project", () => {
+  const WEB = "/data/worktrees/csv.web";
+  const API = "/data/worktrees/csv.api";
+  const withRepoAfterMerge = (doc: Doc) => {
+    doc.checks.after_merge = ["npm run e2e"];
+    doc.repo[0].after_merge = ["npm run web-e2e"];
+  };
+  const withWebDocsTicket = (doc: Doc) =>
+    doc.ticket.push({ ref: "web-docs", title: "Web docs", body: "Write the docs.", acceptance: ["WHEN the docs are built THE SYSTEM SHALL list the export"], scope: ["docs/**"], repo: "web" });
+
+  it("merges each ticket into its own repo's integration branch, in the Loom worktree keyed <slug>.<name>, and runs that repo's after_merge", async () => {
+    await seedRepoProject(h, withRepoAfterMerge);
+    await reachApproved(h, "CSV-1");
+    let mark = h.host.calls.length;
+    await queue();
+
+    expect(hostCallsSince(mark).map((call) => [call.hostId, call.method, call.input])).toEqual([
+      ["host_1", "ensureWorktree", { repo: "/src/web", key: "csv.web", branch: "loom/csv" }],
+      ["host_1", "worktreeState", { worktree: WEB, base: "main" }],
+      ["host_1", "merge", { worktree: WEB, ref: ticketOf(h, "CSV-1").head_sha, message: "CSV-1: Order rows (Loom)", before: "base000" }],
+      ["host_1", "exec", { cwd: WEB, command: "npm run web-e2e", timeoutMs: 15 * 60_000 }],
+      ["host_1", "worktreeState", { worktree: WEB, base: "main", trackedOnly: true }],
+    ]);
+    expect(ticketOf(h, "CSV-1").state).toBe("done");
+    expect(lastPost("merge").body).toBe('Merged m1 into loom/csv in the repo "web".');
+
+    await reachApproved(h, "CSV-2");
+    mark = h.host.calls.length;
+    await queue();
+    expect(hostCallsSince(mark).map((call) => [call.method, call.input])).toEqual([
+      ["ensureWorktree", { repo: "/src/api", key: "csv.api", branch: "loom/csv" }],
+      ["worktreeState", { worktree: API, base: "trunk" }],
+      ["merge", { worktree: API, ref: ticketOf(h, "CSV-2").head_sha, message: "CSV-2: Export endpoint (Loom)", before: "base000" }],
+      ["exec", { cwd: API, command: "npm run e2e", timeoutMs: 15 * 60_000 }],
+      ["worktreeState", { worktree: API, base: "trunk", trackedOnly: true }],
+    ]);
+    expect(ticketOf(h, "CSV-2").state).toBe("done");
+    expect(h.host.worktree(WEB).head).toBe("m1");
+    expect(h.host.worktree(API).head).toBe("m2");
+  });
+
+  it("names the repo when the merge conflicts", async () => {
+    await seedRepoProject(h);
+    const worker = await reachApproved(h, "CSV-1");
+    h.host.scripted.merge = [{ outcome: "conflict", files: ["src/model/a.ts"] }];
+    await queue();
+    expect(ticketOf(h, "CSV-1").state).toBe("working");
+    expect(lastPost("merge").body).toBe('Merging into loom/csv in the repo "web" conflicted in: src/model/a.ts.');
+    const sent = h.bb.sent(worker.thread_id!).at(-1)!;
+    expect(sent).toContain("git merge loom/csv`");
+    expect(sent).toContain('the repo "web"');
+  });
+
+  it("names the repo when its after_merge check fails or changes the branch, and rolls back that repo's worktree", async () => {
+    await seedRepoProject(h, withRepoAfterMerge);
+    const worker = await reachApproved(h, "CSV-1");
+    h.host.execResults = [{ exitCode: 1, output: "FAILED web-e2e" }];
+    await queue();
+    expect(h.host.callsTo("resetHard")).toEqual([{ worktree: WEB, sha: "base000" }]);
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "working", check_failures: 1 });
+    expect(lastPost("check").body).toContain('Checks after merging into loom/csv in the repo "web" failed.');
+    expect(h.bb.sent(worker.thread_id!).at(-1)).toContain('the repo "web"');
+
+    await reachApproved(h, "CSV-2");
+    h.host.onExec = (_input, worktree) => void (worktree.head = "x1");
+    await queue();
+    expect(h.host.callsTo("resetHard").at(-1)).toEqual({ worktree: API, sha: "base000" });
+    expect(lastPost("check", "CSV-2").body).toContain('Checks after merging into loom/csv in the repo "api" failed.');
+    expect(lastPost("check", "CSV-2").body).toContain("changed the branch");
+  });
+
+  it("names the repo whose integration branch is checked out elsewhere, and pauses with the clone command for a repo without a checkout", async () => {
+    await seedRepoProject(h);
+    await reachApproved(h, "CSV-2");
+    h.host.scripted.ensureWorktree = [{ outcome: "unavailable", reason: "branch_checked_out", message: "fatal: 'loom/csv' is already used by worktree at '/src/api'" }];
+    await queue();
+    expect(project()).toMatchObject({ state: "paused", system_reason: 'loom/csv in the repo "api" is checked out elsewhere; switch that checkout off it and resume' });
+
+    h.store.setProjectState(project().id, "running", "human");
+    h.bb.checkouts.set("proj_api", {});
+    await queue();
+    expect(project().state).toBe("paused");
+    expect(project().system_reason).toBe(
+      'Repo "api" (bb project proj_api) has no checkout on the machine host_1 that this Loom project uses. Clone it there with `bb project source add proj_api --clone --machine host_1`, then resume.',
+    );
+    expect(ticketOf(h, "CSV-2").state).toBe("merging");
+  });
+
+  it("merges an approved ticket of another repo while a worker's worktree in one repo is still being created", async () => {
+    await seedRepoProject(h, withWebDocsTicket);
+    await reachApproved(h, "CSV-1");
+    h.clock.advance(1000);
+    await reachApproved(h, "CSV-2");
+    h.bb.provisionEnvironment = false;
+    const late = await startWorker(h, "CSV-3");
+    expect(ticketOf(h, "CSV-3").repo).toBe("web");
+
+    await queue();
+    expect([ticketOf(h, "CSV-1").state, ticketOf(h, "CSV-2").state]).toEqual(["approved", "done"]);
+    await queue();
+    expect(ticketOf(h, "CSV-1").state).toBe("approved");
+
+    h.bb.threads.get(late.thread_id!)!.environmentId = "env_slow";
+    h.bb.environments.set("env_slow", { path: "/wt/slow", branchName: "slow", hostId: "host_1", status: "ready" });
+    await queue();
+    expect(ticketOf(h, "CSV-1").state).toBe("done");
+    expect(h.host.callsTo("merge").map((call) => call.worktree)).toEqual([API, WEB]);
+  });
+});
+
 describe("the pull request strategy", () => {
   const pr = (edit?: (doc: Doc) => void) => (doc: Doc) => {
     doc.merge = { strategy: "pr" };
@@ -395,6 +505,58 @@ describe("the pull request strategy", () => {
       ["gh pr create", 1],
     ]);
     expect(h.store.runOutput(mergeRuns()[1]!.id)).toBe("Opened https://github.com/acme/shop/pull/1.");
+  });
+
+  it("pushes, opens and polls each ticket's pull request in that ticket's repo, with its remote and base", async () => {
+    await seedRepoProject(h, pr());
+    await reachApproved(h, "CSV-2");
+    await queue();
+    const apiBranch = ticketOf(h, "CSV-2").branch;
+    expect(h.host.callsTo("push")).toEqual([{ repo: "/src/api", remote: "upstream", src: ticketOf(h, "CSV-2").head_sha, branch: apiBranch }]);
+    expect(h.host.callsTo("prCreate")[0]).toMatchObject({ repo: "/src/api", remote: "upstream", base: "trunk", head: apiBranch, title: "CSV-2: Export endpoint" });
+    expect(ticketOf(h, "CSV-2")).toMatchObject({ state: "pr_open", pr_url: "https://github.com/acme/shop/pull/1" });
+
+    await reachApproved(h, "CSV-1");
+    await queue();
+    expect(h.host.callsTo("push")[1]).toMatchObject({ repo: "/src/web", remote: "origin", branch: ticketOf(h, "CSV-1").branch });
+    expect(h.host.callsTo("prCreate")[1]).toMatchObject({ repo: "/src/web", remote: "origin", base: "main" });
+
+    h.clock.advance(5 * 60_000);
+    await pollPullRequests(h.ctx, project());
+    expect(h.host.callsTo("prState")).toEqual([
+      { repo: "/src/web", url: "https://github.com/acme/shop/pull/2" },
+      { repo: "/src/api", url: "https://github.com/acme/shop/pull/1" },
+    ]);
+    expect(h.host.calls.filter((call) => call.method === "prState").every((call) => call.hostId === "host_1")).toBe(true);
+  });
+
+  it("pauses when a ticket's repo has no checkout, and still polls the pull requests of the other repos", async () => {
+    await seedRepoProject(h, pr());
+    await reachApproved(h, "CSV-1");
+    await reachApproved(h, "CSV-2");
+    await queue();
+    await queue();
+    expect([ticketOf(h, "CSV-1").state, ticketOf(h, "CSV-2").state]).toEqual(["pr_open", "pr_open"]);
+    h.host.prStates.set(ticketOf(h, "CSV-2").pr_url!, "MERGED");
+    h.bb.checkouts.set("proj_web", {});
+    h.clock.advance(5 * 60_000);
+    const checked = ticketOf(h, "CSV-1").pr_checked_at;
+    await pollPullRequests(h.ctx, project());
+
+    expect(project()).toMatchObject({ state: "paused", system_reason: expect.stringContaining('Repo "web" (bb project proj_web) has no checkout') });
+    expect(h.host.callsTo("prState")).toEqual([{ repo: "/src/api", url: ticketOf(h, "CSV-2").pr_url }]);
+    expect(ticketOf(h, "CSV-2").state).toBe("done");
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "pr_open", pr_checked_at: checked });
+  });
+
+  it("pauses with the clone command when the ticket's repo has no checkout to push from", async () => {
+    await seedRepoProject(h, pr());
+    await reachApproved(h, "CSV-2");
+    h.bb.checkouts.set("proj_api", {});
+    await queue();
+    expect(project()).toMatchObject({ state: "paused", system_reason: expect.stringContaining("`bb project source add proj_api --clone --machine host_1`") });
+    expect(ticketOf(h, "CSV-2").state).toBe("merging");
+    expect(h.host.callsTo("push")).toEqual([]);
   });
 
   it("opens a ready pull request when merge.draft is false", async () => {
