@@ -5,11 +5,11 @@ import { join } from "node:path";
 import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, mountPluginContentScripts, renderSlot, type PluginRpcTestHandlers, type PluginSdkTestFakes, type RenderSlotOptions } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginNavPanelProps, PluginSidebarThread, PluginThreadHeaderActionProps } from "@get-bb/plugin-sdk/app";
-import type { HomeProject, NextStep, PlanningSession, ProjectSummary, SentNote, ThreadInfo, TimelineEntry, TimelineRun, rpcContract } from "../src/contract";
+import type { Attempt, ChecksItem, HomeProject, NextStep, PlanningSession, ProjectSummary, SentNote, ThreadInfo, rpcContract } from "../src/contract";
 import { notesMessage } from "../src/prompts";
 import { ConfirmButton, MoreMenu } from "../src/ui/common";
 import { questionsOf } from "../src/ui/questions";
-import { HOUR, NOW, agent, card, feedRow, health, homeProject, homeView, metrics, overview, projectView, specVersionView, ticketDetail } from "./fixtures";
+import { HOUR, NOW, agent, attempt, card, feedRow, health, homeProject, homeView, metrics, overview, projectView, specVersionView, ticketDetail } from "./fixtures";
 
 type Handlers = PluginRpcTestHandlers<typeof rpcContract>;
 const unexpected = (): never => {
@@ -1614,39 +1614,53 @@ describe("board", () => {
 });
 
 describe("ticket", () => {
+  type CheckStep = ChecksItem["steps"][number];
+  type Item = Attempt["items"][number];
   const posts = [
     { id: 1, parentId: null, depth: 0, authorKind: "planner" as const, authorThreadId: "thr_plan", kind: "brief" as const, body: "Serve the file.\n\nAcceptance criteria:\n1. Streams a CSV", at: 1 },
     { id: 2, parentId: 1, depth: 1, authorKind: "human" as const, authorThreadId: null, kind: "reply" as const, body: "Use the v2 API", at: 2 },
     { id: 3, parentId: 2, depth: 2, authorKind: "worker" as const, authorThreadId: "thr_w1", kind: "note" as const, body: "On it.", at: 3 },
-    { id: 4, parentId: null, depth: 0, authorKind: "loom" as const, authorThreadId: null, kind: "claim" as const, body: "Worker attempt 1 is starting.", at: 4 },
     { id: 5, parentId: 3, depth: 9, authorKind: "human" as const, authorThreadId: null, kind: "reply" as const, body: "Deep", at: 5 },
+    { id: 4, parentId: null, depth: 0, authorKind: "loom" as const, authorThreadId: null, kind: "claim" as const, body: "Worker attempt 1 is starting.", at: 4 },
   ];
+  const brief = { postId: 1, at: 1, edits: 0, fields: [] };
+  const withItems = (items: Item[], over: Partial<Attempt> = {}) => ({ brief, before: [], attempts: [attempt({ claimPostId: 4, items, ...over })] });
   const mountTicket = async (over: Parameters<typeof ticketDetail>[0] = {}, rpc: Partial<Handlers> = {}) => {
-    const view = ticketDetail({ posts, ...over });
+    const view = ticketDetail({ posts, activity: withItems([]), ...over });
     const { slot } = await mountPage("csv/CSV-2", { ticket: () => view, ...rpc });
     await slot.findByRole("heading", { name: /Export endpoint/ });
     return slot;
   };
   const post = (slot: Slot, id: number) => slot.container.querySelector<HTMLElement>(`[data-post="${id}"]`)!;
+  const step = (over: Partial<CheckStep> = {}): CheckStep => ({ label: "npm test", kind: "command", ok: true, exitCode: 0, timedOut: false, durationMs: 1200, running: false, runId: null, outputChars: 0, output: null, startedAt: null, ...over });
+  const checks = (over: Partial<ChecksItem> = {}): ChecksItem => ({ type: "checks", postId: null, at: Date.now() - HOUR, afterMerge: false, status: "passed", steps: [step()], outside: [], changed: null, ...over });
+  const stepOf = (slot: Slot, label: string) => [...slot.container.querySelectorAll<HTMLElement>("[data-check-step]")].find((node) => node.textContent!.includes(label))!;
+  // An unfinished pipeline, a failed one and a running one, oldest first.
+  const pipelines = (): Item[] => [
+    checks({ status: "unfinished", steps: [step({ label: "npm run e2e", ok: null, exitCode: null, durationMs: null, runId: 3, outputChars: 41 })] }),
+    checks({ status: "failed", steps: [step({ label: "git commit", kind: "git", exitCode: null, durationMs: 40, runId: 4 }), step({ label: "npm test", ok: false, exitCode: 2, durationMs: 300, runId: 1, outputChars: 10 })] }),
+    checks({ status: "running", steps: [step({ label: "npm run lint", ok: null, exitCode: null, durationMs: null, running: true, runId: 2, startedAt: Date.now() - 40_000 })] }),
+  ];
 
   it("wraps a long branch name and a long step title on the ticket page", async () => {
-    const slot = await mountTicket({ branch: `loom/${"a-very-long-branch-name-".repeat(8)}`, timeline: [{ at: NOW, stage: "checks", kind: "run", title: `npm test -- ${"src/".repeat(40)}`, detail: null, ok: true, threadId: null, run: { id: 1, kind: "command", exitCode: 0, timedOut: false, durationMs: 10, running: false, outputChars: 0 } }] });
+    const slot = await mountTicket({ branch: `loom/${"a-very-long-branch-name-".repeat(8)}`, activity: withItems([checks({ status: "failed", steps: [step({ label: `npm test -- ${"src/".repeat(40)}` })] })]) });
     expect(slot.container.querySelector("[data-ticket-branch]")!.className).toContain("[overflow-wrap:anywhere]");
-    expect(slot.container.querySelector("[data-timeline-entry] .font-mono")!.className).toContain("[overflow-wrap:anywhere]");
+    expect(slot.container.querySelector("[data-check-step] .font-mono")!.className).toContain("[overflow-wrap:anywhere]");
   });
 
   it("shows the ticket's key, title, state, attempt, branch, acceptance criteria, pull request and thread", async () => {
     const slot = await mountTicket({ reviewRound: 2, prUrl: "https://github.com/acme/shop/pull/2" });
-    const header = slot.container.querySelector("[data-ticket-header]")!;
+    const header = slot.container.querySelector<HTMLElement>("[data-ticket-header]")!;
     expect(header.textContent).toContain("CSV-2");
-    expect(header.textContent).toContain("Export endpoint");
+    expect(slot.getByRole("heading", { level: 1 }).textContent).toBe("Export endpoint");
     expect(header.querySelector("[data-state-badge]")!.textContent).toBe("working");
-    expect(header.textContent).toContain("attempt 1");
-    expect(header.textContent).toContain("review round 2");
-    expect(header.textContent).toContain("loom/csv-2");
-    expect(header.textContent).toContain("after CSV-1");
-    expect(slot.getByText("WHEN the endpoint is called THE SYSTEM SHALL stream a CSV")).toBeTruthy();
-    fireEvent.click(slot.getByRole("button", { name: "Open worker thread (attempt 1)" }));
+    expect(header.textContent).toContain("1 attempt");
+    expect(header.textContent).toContain("2 review rounds");
+    expect(header.querySelector("[data-ticket-branch]")!.textContent).toContain("loom/csv-2");
+    expect(within(header).getByRole("button", { name: "CSV-1" })).toBeTruthy();
+    expect([...header.querySelectorAll("[data-stage]")].map((node) => node.getAttribute("data-mark"))).toEqual(["done", "now", "todo", "todo", "todo", "todo"]);
+    expect(slot.container.querySelector("[data-ticket-side] [data-ac]")!.textContent).toContain("WHEN the endpoint is called THE SYSTEM SHALL stream a CSV");
+    fireEvent.click(within(header).getByRole("button", { name: "Open worker thread" }));
     fireEvent.click(slot.getByRole("button", { name: "Open the pull request" }));
     expect(slot.inspection.navigateCalls).toEqual([{ method: "toThread", threadId: "thr_w1" }, { method: "openUrl", url: "https://github.com/acme/shop/pull/2" }]);
   });
@@ -1656,46 +1670,55 @@ describe("ticket", () => {
       threads: [
         { threadId: "thr_old", role: "worker", attempt: null, reviewRound: 0, state: "ended", startedAt: 1_000, endedAt: 61_000, endReason: "abandoned" },
         { threadId: "thr_w1", role: "worker", attempt: 2, reviewRound: 0, state: "active", startedAt: Date.now() - 5 * 60_000, endedAt: null, endReason: null },
+        { threadId: null, role: "reviewer", attempt: null, reviewRound: 1, state: "ended", startedAt: 0, endedAt: 0, endReason: "failed" },
         { threadId: "thr_r2", role: "reviewer", attempt: null, reviewRound: 2, state: "ended", startedAt: 0, endedAt: 90_000, endReason: "verdict" },
+        { threadId: "thr_r3", role: "reviewer", attempt: null, reviewRound: 2, state: "ended", startedAt: 0, endedAt: 30_000, endReason: "superseded" },
       ],
+      reviews: [{ id: 7, round: 2, verdict: "approved", status: "approved", summary: "Fine", findings: [], threadId: "thr_r2", at: 1 }],
     });
-    const row = (id: string) => slot.container.querySelector<HTMLElement>(`[data-ticket-threads] [data-thread-row="${id}"]`)!;
-    expect(row("thr_old").textContent).toContain("—");
+    const row = (id: string) => slot.container.querySelector<HTMLElement>(`[data-ticket-side] [data-ticket-threads] [data-thread-row="${id}"]`)!;
+    expect(row("thr_old").textContent).toContain("Worker · attempt 1");
     expect(row("thr_old").textContent).toContain("idle twice");
     expect(row("thr_old").textContent).toContain("1m");
-    expect(row("thr_w1").textContent).toContain("attempt 2");
+    expect(row("thr_w1").textContent).toContain("Worker · attempt 2");
     expect(row("thr_w1").textContent).toContain("working");
     expect(row("thr_w1").textContent).toContain("5m");
-    expect(row("thr_r2").textContent).toContain("round 2");
-    expect(row("thr_r2").textContent).toContain("gave a verdict");
-    fireEvent.click(slot.getByRole("button", { name: "Open reviewer thread (round 2)" }));
-    fireEvent.click(slot.getByRole("button", { name: "Open worker thread" }));
+    expect(row("reviewer").textContent).toContain("Reviewer · round 1");
+    expect(row("reviewer").textContent).toContain("could not start");
+    expect(row("reviewer").textContent).not.toContain("0s");
+    expect(row("thr_r2").textContent).toContain("Reviewer · round 2");
+    expect(row("thr_r2").textContent).toContain("approved");
+    expect(row("thr_r3").textContent).toContain("superseded by a newer round");
+    expect(within(row("reviewer")).queryByRole("button")).toBeNull();
+    fireEvent.click(within(row("thr_r2")).getByRole("button", { name: "Open reviewer thread (round 2)" }));
+    fireEvent.click(slot.getByRole("button", { name: "Open worker thread (attempt 1)" }));
     expect(slot.inspection.navigateCalls).toEqual([
       { method: "toThread", threadId: "thr_r2" },
       { method: "toThread", threadId: "thr_old" },
     ]);
-    expect(slot.container.querySelector("[data-ticket-header] button[aria-label^='Open worker']")).toBeNull();
   });
 
   it("indents each reply by its depth, 16px a level and no deeper than six levels", async () => {
     const slot = await mountTicket();
+    expect([...slot.container.querySelectorAll("[data-post]")].map((node) => node.getAttribute("data-post"))).toEqual(["1", "2", "3", "5"]);
     expect(post(slot, 1).style.marginLeft).toBe("0px");
     expect(post(slot, 2).style.marginLeft).toBe("16px");
     expect(post(slot, 3).style.marginLeft).toBe("32px");
     expect(post(slot, 5).style.marginLeft).toBe("96px");
-    expect([...slot.container.querySelectorAll("[data-post]")].map((node) => node.getAttribute("data-post"))).toEqual(["1", "2", "3", "4", "5"]);
-    expect(post(slot, 2).textContent).toContain("human");
-    expect(post(slot, 2).textContent).toContain("reply");
-    expect(post(slot, 3).textContent).toContain("worker");
+    expect(post(slot, 2).textContent).toContain("You");
+    expect(post(slot, 3).textContent).toContain("Worker · attempt 1");
     expect(post(slot, 3).textContent).toContain("note");
-    expect(post(slot, 1).querySelector("[data-post-body]")!.className).toContain("whitespace-pre-wrap");
-    expect(post(slot, 1).querySelector("[data-post-body]")!.textContent).toContain("Acceptance criteria:\n1. Streams a CSV");
+    const body = post(slot, 2).querySelector<HTMLElement>("[data-post-body]")!;
+    expect(within(body).getByTestId("bb-markdown").textContent).toBe("Use the v2 API");
+    expect(within(body).getByTestId("bb-markdown").className).toContain("[overflow-wrap:anywhere]");
   });
 
   it("sends a reply to a post with its parentId and shows the refreshed thread", async () => {
-    const reply = vi.fn(() => ticketDetail({ posts: [...posts, { id: 6, parentId: 3, depth: 3, authorKind: "human", authorThreadId: null, kind: "reply", body: "Thanks", at: 6 }] }));
+    const refreshed = [...posts.slice(0, 4), { id: 6, parentId: 3, depth: 3, authorKind: "human" as const, authorThreadId: null, kind: "reply" as const, body: "Thanks", at: 6 }, posts[4]!];
+    const reply = vi.fn(() => ticketDetail({ posts: refreshed, activity: withItems([]) }));
     const slot = await mountTicket({}, { reply });
     fireEvent.click(slot.getByRole("button", { name: "Reply to #3" }));
+    expect(post(slot, 3).querySelector("[data-reply-hint]")!.textContent).toBe("The worker gets this now.");
     fireEvent.change(slot.getByRole("textbox", { name: "Reply text for #3" }), { target: { value: "Thanks" } });
     fireEvent.click(slot.getByRole("button", { name: "Send reply to #3" }));
     await waitFor(() => expect(reply).toHaveBeenCalledWith({ key: "CSV-2", body: "Thanks", parentId: 3, confirm: true }));
@@ -1706,8 +1729,11 @@ describe("ticket", () => {
   it("sends a new top-level reply from the box at the end, and not an empty one", async () => {
     const reply = vi.fn(() => ticketDetail({ posts }));
     const slot = await mountTicket({}, { reply });
+    const box = slot.getByRole("textbox", { name: "New reply" }) as HTMLTextAreaElement;
+    expect(box.placeholder).toBe("Write on CSV-2…");
+    expect(slot.container.querySelector("[data-reply-hint]")!.textContent).toBe("The worker gets this now.");
     expect((slot.getByRole("button", { name: "Send reply" }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.change(slot.getByRole("textbox", { name: "New reply" }), { target: { value: "  Please add a test.  " } });
+    fireEvent.change(box, { target: { value: "  Please add a test.  " } });
     fireEvent.click(slot.getByRole("button", { name: "Send reply" }));
     await waitFor(() => expect(reply).toHaveBeenCalledWith({ key: "CSV-2", body: "Please add a test.", confirm: true }));
     await waitFor(() => expect((slot.getByRole("textbox", { name: "New reply" }) as HTMLTextAreaElement).value).toBe(""));
@@ -1716,43 +1742,81 @@ describe("ticket", () => {
   it("shows Requeue only for a blocked ticket, and sends the action with the note after a second click", async () => {
     const working = await mountTicket();
     expect(working.queryByRole("button", { name: "Requeue" })).toBeNull();
-    expect(working.getByRole("button", { name: "Block" })).toBeTruthy();
-    expect(working.getByRole("button", { name: "Cancel ticket" })).toBeTruthy();
+    expect(working.container.querySelector("[data-blocked-callout]")).toBeNull();
     working.lifecycle.unmount();
 
+    const block = { id: 6, parentId: null, depth: 0, authorKind: "worker" as const, authorThreadId: "thr_w1", kind: "block" as const, body: "Needs a decision. Which API?", at: 6 };
     const ticketAction = vi.fn(() => ticketDetail({ state: "queued", posts }));
-    const slot = await mountTicket({ state: "blocked", blockedReason: "Needs a decision." }, { ticketAction });
-    expect(slot.getByText(/Needs a decision\./)).toBeTruthy();
-    expect((slot.getByRole("button", { name: "Requeue" }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.change(slot.getByRole("textbox", { name: "Note" }), { target: { value: "Use the v2 API" } });
-    fireEvent.click(slot.getByRole("button", { name: "Requeue" }));
+    const blocked = { state: "blocked" as const, blockedReason: "Needs a decision. Which API?", replyTo: "planner" as const, stoppedFrom: "working" as const, posts: [...posts, block] };
+    const slot = await mountTicket({ ...blocked, activity: withItems([{ type: "post", postId: 6 }], { outcome: "blocked", endedAt: Date.now() }) }, { ticketAction });
+    const callout = slot.container.querySelector<HTMLElement>("[data-blocked-callout]")!;
+    expect(callout.hasAttribute("data-ticket-actions")).toBe(true);
+    expect(callout.textContent).toContain("Blocked: the worker needs an answer");
+    expect(callout.textContent).toContain("Needs a decision. Which API?");
+    expect(callout.textContent).toContain("Or reply on the post: the planner gets it now and can requeue the ticket itself.");
+    expect((within(callout).getByRole("textbox", { name: "Note" }) as HTMLTextAreaElement).placeholder).toBe("Your answer for the next worker (required)");
+    expect((within(callout).getByRole("button", { name: "Requeue" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(slot.getByRole("button", { name: "More actions" }));
+    expect(slot.queryByRole("button", { name: "Block" })).toBeNull();
+    expect(slot.getByRole("button", { name: "Cancel ticket" })).toBeTruthy();
+    fireEvent.change(within(callout).getByRole("textbox", { name: "Note" }), { target: { value: "Use the v2 API" } });
+    fireEvent.click(within(callout).getByRole("button", { name: "Requeue" }));
     expect(ticketAction).not.toHaveBeenCalled();
-    fireEvent.click(slot.getByRole("button", { name: "Click again to requeue" }));
+    fireEvent.click(within(callout).getByRole("button", { name: "Click again to requeue" }));
     await waitFor(() => expect(ticketAction).toHaveBeenCalledWith({ key: "CSV-2", action: "requeue", note: "Use the v2 API", confirm: true }));
     await waitFor(() => expect(slot.container.querySelector("[data-ticket-header] [data-state-badge]")!.textContent).toBe("queued"));
+    slot.lifecycle.unmount();
+
+    const refused = await mountTicket({ ...blocked, posts, replyTo: null, blockedReason: "bb refused to start a worker: HTTP 400" });
+    const plain = refused.container.querySelector<HTMLElement>("[data-blocked-callout]")!;
+    expect(plain.textContent).toContain("Blocked");
+    expect(plain.textContent).not.toContain("the worker needs an answer");
+    expect(plain.textContent).not.toContain("Or reply on the post");
+    expect(within(plain).queryByRole("button", { name: "Read the post that blocked it" })).toBeNull();
   });
 
-  it("sends Block and Cancel with the note, and offers neither on a finished ticket", async () => {
+  it("sends Block and Cancel with the reason from the ⋯ menu, and offers neither on a finished ticket", async () => {
     const ticketAction = vi.fn(() => ticketDetail({ posts }));
     const slot = await mountTicket({}, { ticketAction });
-    const note = () => slot.getByRole("textbox", { name: "Note" }) as HTMLTextAreaElement;
+    fireEvent.click(slot.getByRole("button", { name: "More actions" }));
+    const reason = () => slot.getByRole("textbox", { name: "Reason" }) as HTMLTextAreaElement;
+    expect(reason().placeholder).toBe("Why (required)");
+    expect(slot.container.querySelector("[data-more-menu]")!.textContent).toContain("Each needs a reason and a second click.");
     expect((slot.getByRole("button", { name: "Block" }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.change(note(), { target: { value: "Wrong approach" } });
+    expect((slot.getByRole("button", { name: "Cancel ticket" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(reason(), { target: { value: "Wrong approach" } });
     fireEvent.click(slot.getByRole("button", { name: "Block" }));
     fireEvent.click(slot.getByRole("button", { name: "Click again to block" }));
     await waitFor(() => expect(ticketAction).toHaveBeenLastCalledWith({ key: "CSV-2", action: "block", note: "Wrong approach", confirm: true }));
-    await waitFor(() => expect(note().value).toBe(""));
-    fireEvent.change(note(), { target: { value: "Not needed" } });
+    await waitFor(() => expect(slot.container.querySelector("[data-more-menu]")).toBeNull());
+    fireEvent.click(slot.getByRole("button", { name: "More actions" }));
+    expect(reason().value).toBe("");
+    fireEvent.change(reason(), { target: { value: "Not needed" } });
     fireEvent.click(slot.getByRole("button", { name: "Cancel ticket" }));
     fireEvent.click(slot.getByRole("button", { name: "Click again to cancel ticket" }));
     await waitFor(() => expect(ticketAction).toHaveBeenLastCalledWith({ key: "CSV-2", action: "cancel", note: "Not needed", confirm: true }));
+    await waitFor(() => expect(slot.container.querySelector("[data-more-menu]")).toBeNull());
     slot.lifecycle.unmount();
+
+    const refused = await mountTicket({}, {
+      ticketAction: () => {
+        throw new Error("The ticket is checking.");
+      },
+    });
+    fireEvent.click(refused.getByRole("button", { name: "More actions" }));
+    fireEvent.change(refused.getByRole("textbox", { name: "Reason" }), { target: { value: "Wrong approach" } });
+    fireEvent.click(refused.getByRole("button", { name: "Block" }));
+    fireEvent.click(refused.getByRole("button", { name: "Click again to block" }));
+    expect((await refused.findByRole("alert")).textContent).toContain("The ticket is checking.");
+    expect((refused.getByRole("textbox", { name: "Reason" }) as HTMLTextAreaElement).value).toBe("Wrong approach");
+    refused.lifecycle.unmount();
 
     for (const state of ["done", "cancelled"] as const) {
       const finished = await mountTicket({ state });
+      expect(finished.queryByRole("button", { name: "More actions" })).toBeNull();
       expect(finished.queryByRole("button", { name: "Block" })).toBeNull();
       expect(finished.queryByRole("button", { name: "Cancel ticket" })).toBeNull();
-      expect(finished.queryByRole("textbox", { name: "Note" })).toBeNull();
+      expect(finished.queryByRole("textbox", { name: "Reason" })).toBeNull();
       finished.lifecycle.unmount();
     }
   });
@@ -1764,50 +1828,62 @@ describe("ticket", () => {
     const slot = await mountTicket({}, { reply });
     fireEvent.change(slot.getByRole("textbox", { name: "New reply" }), { target: { value: "x" } });
     fireEvent.click(slot.getByRole("button", { name: "Send reply" }));
-    expect((await slot.findByRole("alert")).textContent).toContain("another ticket");
+    const alert = await slot.findByRole("alert");
+    expect(alert.textContent).toContain("another ticket");
+    expect(slot.container.querySelector("[data-ticket-header]")!.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("lists the reviews with their findings", async () => {
+    const note = { id: 7, parentId: null, depth: 0, authorKind: "reviewer" as const, authorThreadId: "thr_r2", kind: "note" as const, body: "Ran the export tests.", at: 7 };
+    const review = { id: 8, parentId: null, depth: 0, authorKind: "reviewer" as const, authorThreadId: "thr_r2", kind: "review" as const, body: "Changes requested (round 2): Needs a fix", at: 8 };
     const slot = await mountTicket({
       state: "done",
+      posts: [...posts, note, review],
       reviews: [
-        { id: 1, round: 1, verdict: "pending", status: "reviewer could not start", summary: null, findings: [], at: 1 },
-        { id: 2, round: 2, verdict: "changes_requested", status: "changes requested", summary: "Needs a fix", findings: [{ severity: "blocking", title: "Off by one", detail: "The loop skips the last order.", file: "src/a.ts", line: 12 }], at: 1 },
+        { id: 1, round: 1, verdict: "pending", status: "reviewer could not start", summary: null, findings: [], threadId: null, at: 1 },
+        { id: 2, round: 2, verdict: "changes_requested", status: "changes requested", summary: "Needs a fix", findings: [{ severity: "blocking", title: "Off by one", detail: "The loop skips the last order.", file: "src/a.ts", line: 12 }], threadId: "thr_r2", at: 1 },
       ],
+      threads: [
+        { threadId: "thr_w1", role: "worker", attempt: 1, reviewRound: 0, state: "ended", startedAt: NOW - 5 * HOUR, endedAt: NOW - HOUR, endReason: "merged" },
+        { threadId: "thr_r2", role: "reviewer", attempt: null, reviewRound: 2, state: "ended", startedAt: NOW - 3 * HOUR, endedAt: NOW - 3 * HOUR + 71_000, endReason: "verdict" },
+      ],
+      activity: withItems([{ type: "review", postId: 8, reviewId: 2, notePostIds: [7] }], { outcome: "ended", endedAt: NOW - HOUR }),
     });
-    const reviews = slot.container.querySelector("[data-reviews]")!;
-    expect(reviews.textContent).toContain("Round 1 · reviewer could not start");
-    expect(reviews.textContent).not.toContain("pending");
-    expect(reviews.textContent).toContain("Round 2 · changes requested");
-    expect(reviews.textContent).toContain("Needs a fix");
-    expect(reviews.textContent).toContain("Off by one");
-    expect(reviews.textContent).toContain("src/a.ts:12");
+    const card = slot.container.querySelector<HTMLElement>('[data-review-card="2"]')!;
+    expect(card.textContent).toContain("Reviewer · round 2");
+    expect(card.textContent).toContain("Changes requested");
+    expect(card.textContent).toContain("took 1m 11s");
+    expect(within(card).getAllByTestId("bb-markdown")[0]!.textContent).toBe("Needs a fix");
+    const finding = card.querySelector("[data-finding]")!;
+    expect(finding.textContent).toContain("blocking");
+    expect(finding.textContent).toContain("Off by one");
+    expect(finding.textContent).toContain("src/a.ts:12");
+    expect(finding.textContent).toContain("The loop skips the last order.");
+    expect(card.querySelector("details")!.textContent).toContain("The reviewer's notes");
+    expect(card.querySelector('details [data-post="7"]')).toBeTruthy();
+    expect(slot.container.querySelectorAll('[data-post="7"]')).toHaveLength(1);
+    expect(within(card).getByRole("button", { name: "Reply to #8" })).toBeTruthy();
+    fireEvent.click(within(card).getByRole("button", { name: "Open the thread of reviewer round 2" }));
+    expect(slot.inspection.navigateCalls).toEqual([{ method: "toThread", threadId: "thr_r2" }]);
   });
 
-  const step = (over: Partial<TimelineEntry> = {}): TimelineEntry => ({ at: NOW - HOUR, stage: "work", kind: "worker", title: "Worker, attempt 1", detail: "working", ok: null, threadId: "thr_w1", run: null, ...over });
-  const run = (id: number, title: string, over: Partial<TimelineRun> = {}, entry: Partial<TimelineEntry> = {}): TimelineEntry =>
-    step({ stage: "checks", kind: "run", title, detail: null, threadId: null, ok: true, run: { id, kind: "command", exitCode: 0, timedOut: false, durationMs: 1200, running: false, outputChars: 10, ...over }, ...entry });
-  const timeline = () => [
-    step(),
-    run(1, "npm test", { exitCode: 2, durationMs: 300 }, { ok: false }),
-    run(2, "npm run lint", { exitCode: null, durationMs: null, running: true, outputChars: 0 }, { ok: null, at: Date.now() - 40_000 }),
-    run(3, "npm run e2e", { exitCode: null, durationMs: null, outputChars: 41 }, { ok: null }),
-    step({ stage: "merge", kind: "merge", title: "Merged m1 into loom/csv.", detail: null, ok: true, threadId: null }),
-  ];
-  const entryOf = (slot: Slot, title: string) => [...slot.container.querySelectorAll<HTMLElement>("[data-timeline-entry]")].find((node) => node.textContent!.includes(title))!;
-
-  it("shows the timeline by stage, with each step's result and a button to its thread", async () => {
-    const slot = await mountTicket({ timeline: timeline() });
-    expect([...slot.container.querySelectorAll("[data-timeline-stage]")].map((node) => node.textContent)).toEqual(["Work", "Checks", "Merge"]);
-    expect(entryOf(slot, "npm test").textContent).toContain("exit 2 · 0.3s");
-    expect(entryOf(slot, "npm test").getAttribute("data-ok")).toBe("fail");
-    expect(entryOf(slot, "npm run lint").textContent).toContain("running, started 40s ago");
-    expect(entryOf(slot, "npm run lint").textContent).toContain("The output appears when the command ends.");
-    expect(entryOf(slot, "npm run e2e").textContent).toContain("did not finish");
-    expect(entryOf(slot, "npm run e2e").getAttribute("data-ok")).toBe("none");
-    expect(entryOf(slot, "Merged m1").getAttribute("data-ok")).toBe("pass");
+  it("shows the newest attempt open with its start, each check step's result and the live row", async () => {
+    const runOutput = vi.fn(() => ({ output: "1 failing" }));
+    const slot = await mountTicket({ activity: withItems(pipelines(), { startedAt: Date.now() - 7 * 60_000 }) }, { runOutput });
+    const card = slot.container.querySelector<HTMLElement>('[data-attempt="1"]')!;
+    expect(card.getAttribute("data-open")).toBe("true");
+    expect(card.textContent).toContain("Worker attempt 1 started");
+    expect([...card.querySelectorAll("[data-checks-card]")].map((node) => node.getAttribute("data-status"))).toEqual(["unfinished", "failed", "running"]);
+    expect(stepOf(slot, "npm test").textContent).toContain("exit 2 · 0.3s");
+    expect(stepOf(slot, "npm test").getAttribute("data-ok")).toBe("fail");
+    expect(stepOf(slot, "git commit").getAttribute("data-ok")).toBe("pass");
+    expect(stepOf(slot, "npm run lint").textContent).toContain("running, started 40s ago");
+    expect(stepOf(slot, "npm run e2e").textContent).toContain("did not finish");
+    expect(stepOf(slot, "npm run e2e").getAttribute("data-ok")).toBe("none");
     expect(slot.queryByRole("button", { name: "Show the output of npm run lint" })).toBeNull();
-    fireEvent.click(slot.getByRole("button", { name: "Open the thread of Worker, attempt 1" }));
+    expect(card.querySelector("[data-live-row]")!.textContent).toContain("The worker is working · for 7m");
+    expect(within(card.querySelector<HTMLElement>("[data-live-row]")!).queryByRole("button")).toBeNull();
+    fireEvent.click(slot.getByRole("button", { name: "Open the thread of attempt 1" }));
     expect(slot.inspection.navigateCalls).toEqual([{ method: "toThread", threadId: "thr_w1" }]);
   });
 
@@ -1816,38 +1892,420 @@ describe("ticket", () => {
       if (id === 3) throw new Error("The database is busy.");
       return { output: "1 failing\n  expected 2 to be 3" };
     });
-    const slot = await mountTicket({ timeline: timeline() }, { runOutput });
-    const show = slot.getByRole("button", { name: "Show the output of npm test" });
-    expect(show.getAttribute("aria-expanded")).toBe("false");
-    fireEvent.click(show);
+    const slot = await mountTicket({ activity: withItems(pipelines()) }, { runOutput });
     await waitFor(() => expect(slot.container.querySelector("[data-run-output]")?.textContent).toBe("1 failing\n  expected 2 to be 3"));
     expect(runOutput).toHaveBeenCalledWith({ id: 1 });
-    expect(slot.getByRole("button", { name: "Hide the output of npm test" }).getAttribute("aria-expanded")).toBe("true");
+    const hide = slot.getByRole("button", { name: "Hide the output of npm test" });
+    expect(hide.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(hide);
+    expect(slot.getByRole("button", { name: "Show the output of npm test" }).getAttribute("aria-expanded")).toBe("false");
+    expect(slot.container.querySelector("[data-run-output]")).toBeNull();
     fireEvent.click(slot.getByRole("button", { name: "Show the output of npm run e2e" }));
-    expect((await within(entryOf(slot, "npm run e2e")).findByRole("alert")).textContent).toContain("The database is busy.");
+    expect((await within(stepOf(slot, "npm run e2e")).findByRole("alert")).textContent).toContain("The database is busy.");
   });
 
-  it("shows the timeline and every thread above the post thread, with the actions and their second click below", async () => {
-    const ticketAction = vi.fn(() => ticketDetail({ state: "queued", posts }));
-    const threads = [
-      { threadId: null, role: "worker" as const, attempt: 1, reviewRound: 0, state: "ended" as const, startedAt: NOW - HOUR, endedAt: NOW - HOUR, endReason: "failed" },
-      { threadId: "thr_w2", role: "worker" as const, attempt: 2, reviewRound: 0, state: "ended" as const, startedAt: NOW - HOUR, endedAt: NOW, endReason: "gone" },
+  it("shows the criteria, files, verify command and agents beside the stream, and the brief in its own tab", async () => {
+    const slot = await mountTicket({
+      acceptance: ["WHEN the endpoint is called THE SYSTEM SHALL stream a CSV", "IF there are no orders THEN THE SYSTEM SHALL return a header row"],
+      scope: ["src/export/**", "README.md"],
+      verify: ["npm test -- export"],
+      reviewRound: 2,
+      reviews: [{ id: 2, round: 2, verdict: "approved", status: "approved", summary: "Fine", findings: [], threadId: "thr_r2", at: 1 }],
+      body: "Serve the file.\n\n## Notes\nStream it.",
+    });
+    const side = slot.container.querySelector<HTMLElement>("[data-ticket-side]")!;
+    const ac = side.querySelector<HTMLElement>("[data-ac]")!;
+    expect([...ac.querySelectorAll("[data-ears]")].map((node) => node.textContent)).toEqual(["WHEN", "THE SYSTEM SHALL", "IF", "THEN", "THE SYSTEM SHALL"]);
+    expect(ac.querySelector("[data-ears]")!.className).toContain("tracking-wider");
+    expect(ac.querySelectorAll("li")[1]!.textContent).toBe("IF there are no orders THEN THE SYSTEM SHALL return a header row");
+    expect(ac.textContent).toContain("approved, round 2");
+    expect([...side.querySelectorAll("[data-scope-file]")].map((node) => node.textContent)).toEqual(["src/export/**", "README.md"]);
+    expect(side.querySelector("[data-scope-file] .font-semibold")!.textContent).toBe("**");
+    const verify = side.querySelector<HTMLElement>("[data-verify]")!;
+    expect(verify.textContent).toContain("npm test -- export");
+    fireEvent.click(within(verify).getByRole("button", { name: "Copy the verify command" }));
+    await waitFor(() => expect(slot.inspection.experimental_clipboardWrites).toEqual([{ text: "npm test -- export" }]));
+    expect(side.querySelector("[data-ticket-threads]")).toBeTruthy();
+
+    expect(slot.getByRole("tab", { name: /Activity/ }).getAttribute("aria-selected")).toBe("true");
+    expect(slot.container.querySelector("[data-ticket-details]")).toBeNull();
+    fireEvent.click(slot.getByRole("tab", { name: "Details" }));
+    expect(slot.getByRole("tab", { name: "Details" }).getAttribute("aria-selected")).toBe("true");
+    expect(slot.container.querySelector("[data-ticket-details] [data-ac]")).toBeTruthy();
+    expect(slot.container.querySelector("[data-ticket-details]")!.className).toContain("@4xl:hidden");
+    fireEvent.click(slot.getByRole("tab", { name: "Brief" }));
+    const pane = slot.container.querySelector<HTMLElement>("[data-ticket-brief]")!;
+    expect(within(pane).getByTestId("bb-markdown").textContent).toBe("Serve the file.\n\n## Notes\nStream it.");
+    expect(pane.textContent).toContain("This is the brief the next worker reads.");
+    expect(slot.container.querySelector("[data-attempt]")).toBeNull();
+  });
+
+  it("shows the planning row and the reply box for a ticket with no attempt yet", async () => {
+    const slot = await mountTicket({ state: "queued", attempt: 0, threads: [], replyTo: null, posts: [posts[0]!], activity: { brief: { ...brief, edits: 2, fields: ["scope", "body"] }, before: [], attempts: [] } });
+    expect(slot.container.querySelector("[data-stream-toolbar]")!.textContent).toContain("No attempts yet");
+    expect(slot.container.querySelector("[data-ticket-summary]")!.textContent).toBe("Waiting for a worker.");
+    const planning = slot.container.querySelector<HTMLElement>("[data-planning]")!;
+    expect(planning.textContent).toContain("The planner wrote the brief");
+    expect(planning.textContent).toContain("edited 2 times since (scope, body)");
+    expect(slot.getByRole("textbox", { name: "New reply" })).toBeTruthy();
+    expect(slot.container.querySelector("[data-reply-hint]")!.textContent).toBe("It stays on the ticket for anyone who reads it.");
+    expect(slot.container.querySelector("[data-ticket-side] [data-verify]")!.textContent).toContain("No command of its own; only the project's checks run.");
+    fireEvent.click(within(planning).getByRole("button", { name: "Read the brief" }));
+    expect(slot.getByRole("tab", { name: "Brief" }).getAttribute("aria-selected")).toBe("true");
+    expect(slot.container.querySelector("[data-ticket-brief]")!.textContent).toContain("Written by the planner, edited 2 times since (scope, body).");
+  });
+
+  it("says in the header what the ticket is doing", async () => {
+    const now = Date.now();
+    const marks = (slot: Slot) => [...slot.container.querySelectorAll("[data-stage]")].map((node) => [node.getAttribute("data-stage"), node.getAttribute("data-mark")]);
+    const summary = (slot: Slot) => slot.container.querySelector("[data-ticket-summary]")?.textContent ?? null;
+    const merge = { type: "merge" as const, postId: 9, at: now - 2 * HOUR, outcome: "merged" as const, into: "loom/csv", running: false, steps: [] };
+    const done = await mountTicket({
+      state: "done",
+      posts: [...posts, { id: 9, parentId: null, depth: 0, authorKind: "loom", authorThreadId: null, kind: "merge", body: "Merged m1 into loom/csv.", at: now - 2 * HOUR }],
+      stateAt: now - 2 * HOUR,
+      attempt: 3,
+      reviewRound: 2,
+      deps: ["CSV-1", "CSV-3"],
+      depsDone: ["CSV-1"],
+      activity: {
+        brief,
+        before: [],
+        attempts: [attempt({ n: 1, claimPostId: 4, startedAt: now - 3 * HOUR, outcome: "blocked" }), attempt({ n: 2, claimPostId: 10, outcome: "blocked" }), attempt({ n: 3, claimPostId: 11, outcome: "merged", items: [merge] })],
+      },
+    });
+    expect(summary(done)).toBe("Merged into loom/csv 2h ago, after 3 attempts and 2 review rounds.");
+    expect(marks(done).every(([, mark]) => mark === "done")).toBe(true);
+    const header = done.container.querySelector<HTMLElement>("[data-ticket-header]")!;
+    expect(header.textContent).toContain("3 attempts");
+    expect(header.textContent).toContain("2 review rounds");
+    expect(header.querySelector("[data-fact='time']")!.textContent).toBe("1h");
+    expect(within(header).getByRole("button", { name: "CSV-1" }).parentElement!.textContent).toContain("✓");
+    expect(within(header).queryByRole("button", { name: "Open worker thread" })).toBeNull();
+    fireEvent.click(within(header).getByRole("button", { name: "CSV-3" }));
+    expect(done.inspection.navigateCalls).toEqual([{ method: "toPluginPanel", path: "loom", options: { subPath: "csv/CSV-3" } }]);
+    fireEvent.click(within(header).getByRole("button", { name: "Copy the branch name" }));
+    await waitFor(() => expect(done.inspection.experimental_clipboardWrites).toEqual([{ text: "loom/csv-2" }]));
+    done.lifecycle.unmount();
+
+    const working = await mountTicket({ activity: withItems([], { startedAt: now - 7 * 60_000 }) });
+    expect(summary(working)).toBe("Worker attempt 1 is working for 7m.");
+    expect(marks(working)).toEqual([
+      ["queued", "done"],
+      ["working", "now"],
+      ["checking", "todo"],
+      ["review", "todo"],
+      ["merging", "todo"],
+      ["done", "todo"],
+    ]);
+    expect(working.container.querySelector("[data-state-badge] .animate-pulse")).toBeTruthy();
+    working.lifecycle.unmount();
+
+    const blocked = await mountTicket({ state: "blocked", stoppedFrom: "working", blockedReason: "Needs a key.", activity: withItems([], { outcome: "blocked", endedAt: now }) });
+    expect(summary(blocked)).toBeNull();
+    expect(marks(blocked).map(([, mark]) => mark)).toEqual(["done", "stop", "todo", "todo", "todo", "todo"]);
+    expect(blocked.container.querySelector("[data-stage='working']")!.textContent).toContain("Blocked");
+    blocked.lifecycle.unmount();
+
+    const open = await mountTicket({ state: "pr_open", prUrl: "https://github.com/acme/shop/pull/2" });
+    expect(open.container.querySelector("[data-state-badge]")!.textContent).toBe("pr open");
+    expect(summary(open)).toBe("The pull request is open; the ticket is done when it merges.");
+    expect(marks(open).map(([, mark]) => mark)).toEqual(["done", "done", "done", "done", "now", "todo"]);
+  });
+
+  it("jumps from the blocked callout to the post that blocked it", async () => {
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    try {
+      const block = { id: 9, parentId: null, depth: 0, authorKind: "worker" as const, authorThreadId: "thr_w1", kind: "block" as const, body: "Which API? The v1 one is gone.", at: 9 };
+      const claim = { id: 10, parentId: null, depth: 0, authorKind: "loom" as const, authorThreadId: null, kind: "claim" as const, body: "Worker attempt 2 is starting.", at: 10 };
+      const slot = await mountTicket({
+        state: "blocked",
+        stoppedFrom: "working",
+        blockedReason: "Which API? The v1 one is gone.",
+        posts: [...posts, block, claim],
+        activity: {
+          brief,
+          before: [],
+          attempts: [
+            attempt({ n: 1, claimPostId: 4, outcome: "blocked", endedAt: Date.now(), line: "Asked the planner: Which API?", items: [{ type: "post", postId: 9 }] }),
+            attempt({ n: 2, claimPostId: 10, threadId: null, outcome: "blocked", endedAt: Date.now(), line: "The worker could not start." }),
+          ],
+        },
+      });
+      expect(slot.container.querySelector('[data-attempt="1"]')!.getAttribute("data-open")).toBe("false");
+      expect(post(slot, 9)).toBeNull();
+      fireEvent.click(slot.getByRole("tab", { name: "Brief" }));
+      fireEvent.click(slot.getByRole("button", { name: "Read the post that blocked it" }));
+      await waitFor(() => expect(scroll).toHaveBeenCalledWith({ block: "center" }));
+      expect(slot.getByRole("tab", { name: /Activity/ }).getAttribute("aria-selected")).toBe("true");
+      expect(slot.container.querySelector('[data-attempt="1"]')!.getAttribute("data-open")).toBe("true");
+      expect(scroll.mock.contexts[0]).toBe(post(slot, 9));
+    } finally {
+      delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    }
+  });
+
+  it("folds older attempts to one line, newest first, and switches order and expands all", async () => {
+    const claim = { id: 10, parentId: null, depth: 0, authorKind: "loom" as const, authorThreadId: null, kind: "claim" as const, body: "Worker attempt 2 is starting.", at: 10 };
+    const slot = await mountTicket({
+      attempt: 2,
+      posts: [...posts, claim],
+      activity: {
+        brief,
+        before: [],
+        attempts: [
+          attempt({ n: 1, claimPostId: 4, outcome: "blocked", endedAt: Date.now(), line: "Asked the planner: Which API?", pipeline: { work: "fail", checks: [], review: [], merge: [] } }),
+          attempt({ n: 2, claimPostId: 10, outcome: "in_progress", pipeline: { work: "pass", checks: ["fail", "pass"], review: ["running"], merge: [] } }),
+        ],
+      },
+    });
+    const order = () => [...slot.container.querySelectorAll("[data-attempt]")].map((node) => node.getAttribute("data-attempt"));
+    const card = (n: number) => slot.container.querySelector<HTMLElement>(`[data-attempt="${n}"]`)!;
+    const planning = () => slot.container.querySelector("[data-planning]")!;
+    expect(slot.container.querySelector("[data-stream-toolbar]")!.textContent).toContain("2 attempts · 6 posts");
+    expect(slot.getByRole("tab", { name: /Activity/ }).textContent).toContain("2 attempts");
+    expect(order()).toEqual(["2", "1"]);
+    expect(card(1).compareDocumentPosition(planning()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(card(2).getAttribute("data-open")).toBe("true");
+    expect(card(1).getAttribute("data-open")).toBe("false");
+    expect(card(1).querySelector("[data-attempt-line]")!.textContent).toBe("Asked the planner: Which API?");
+    expect(card(2).querySelector("[data-attempt-line]")).toBeNull();
+    expect(card(2).querySelector("[data-pipeline]")!.textContent).toBe("Work ✓ → Checks ✗✓ → Review ●");
+    expect(card(1).querySelector("[data-pipeline]")!.textContent).toBe("Work ✗");
+    expect(card(1).textContent).toContain("Blocked");
+    expect(card(2).textContent).toContain("In progress");
+
+    const toggle = (n: number) => card(n).querySelector<HTMLButtonElement>("button[aria-expanded]")!;
+    fireEvent.click(toggle(1));
+    expect(card(1).getAttribute("data-open")).toBe("true");
+    expect(toggle(1).getAttribute("aria-expanded")).toBe("true");
+    expect(card(1).querySelector("[data-attempt-line]")).toBeNull();
+    fireEvent.click(toggle(1));
+    fireEvent.click(toggle(2));
+    expect([card(1).getAttribute("data-open"), card(2).getAttribute("data-open")]).toEqual(["false", "false"]);
+
+    expect(slot.getByRole("button", { name: "Newest first" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(slot.getByRole("button", { name: "Oldest first" }));
+    expect(slot.getByRole("button", { name: "Oldest first" }).getAttribute("aria-pressed")).toBe("true");
+    expect(order()).toEqual(["1", "2"]);
+    expect(planning().compareDocumentPosition(card(1)) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(slot.getByRole("button", { name: "Expand all" }));
+    expect([card(1).getAttribute("data-open"), card(2).getAttribute("data-open")]).toEqual(["true", "true"]);
+  });
+
+  it("lists a check's commands, an old check's failed output inline, and why an after-merge check failed", async () => {
+    const runOutput = vi.fn(() => ({ output: "unused" }));
+    const items: Item[] = [
+      checks({ steps: [step({ label: "git commit", kind: "git", exitCode: null, durationMs: 40 }), step({ label: "npm run lint", durationMs: 1200 }), step({ label: "npm test", durationMs: 131_800 })] }),
+      checks({ afterMerge: true, status: "failed", changed: "moved HEAD from aaa to bbb", steps: [step({ label: "npm run e2e", durationMs: 500 })] }),
+      checks({ status: "failed", steps: [step({ label: "npm run lint" }), step({ label: "npm test", ok: false, exitCode: 1, durationMs: 300, output: "1 failing" })] }),
     ];
-    const slot = await mountTicket({ state: "blocked", blockedReason: "bb refused to start a worker: HTTP 400: Provider pi only supports full permission mode.", timeline: timeline(), threads }, { ticketAction });
-    const order = ["[data-timeline]", "[data-ticket-threads]", "[data-post]", "[data-ticket-actions]"].map((selector) => slot.container.querySelector(selector)!);
-    for (const [index, node] of order.entries()) if (index > 0) expect(order[index - 1]!.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(slot.container.querySelector('[data-thread-row="worker"]')!.textContent).toContain("failed");
-    expect(slot.getByRole("button", { name: "Open worker thread (attempt 2)" })).toBeTruthy();
-    fireEvent.change(slot.getByRole("textbox", { name: "Note" }), { target: { value: "Fixed in v2" } });
-    fireEvent.click(slot.getByRole("button", { name: "Requeue" }));
-    expect(within(slot.container.querySelector<HTMLElement>("[data-ticket-actions]")!).getByRole("button", { name: "Cancel" })).toBeTruthy();
-    fireEvent.click(slot.getByRole("button", { name: "Click again to requeue" }));
-    await waitFor(() => expect(ticketAction).toHaveBeenCalledWith({ key: "CSV-2", action: "requeue", note: "Fixed in v2", confirm: true }));
+    const slot = await mountTicket({ activity: withItems(items) }, { runOutput });
+    const cards = [...slot.container.querySelectorAll<HTMLElement>("[data-checks-card]")];
+    expect(cards.map((node) => node.getAttribute("data-status"))).toEqual(["passed", "failed", "failed"]);
+
+    expect(cards[0]!.textContent).toContain("Checks passed");
+    expect(cards[0]!.textContent).toContain("2 commands · 2m 13s");
+    expect(cards[0]!.querySelector("[data-check-step]")).toBeNull();
+    const show = within(cards[0]!).getByRole("button", { name: "Show commands" });
+    expect(show.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(show);
+    expect([...cards[0]!.querySelectorAll("[data-check-step]")].map((node) => node.getAttribute("data-ok"))).toEqual(["pass", "pass", "pass"]);
+    expect(cards[0]!.querySelector("[data-check-step] .font-mono")!.className).toContain("text-subtle-foreground");
+    expect(within(cards[0]!).getByRole("button", { name: "Hide commands" }).getAttribute("aria-expanded")).toBe("true");
+
+    expect(cards[1]!.textContent).toContain("Checks after the merge failed");
+    const changed = cards[1]!.querySelector("[data-changed]")!;
+    expect(changed.textContent).toBe("The command passed but changed the branch: moved HEAD from aaa to bbb.");
+    expect(changed.className).toContain("text-destructive-text");
+
+    expect(cards[2]!.textContent).toContain("Checks failed");
+    expect(cards[2]!.textContent).toContain("1 of 2 passed · npm test failed");
+    const failed = within(cards[2]!).getAllByRole("listitem").find((node) => node.textContent!.includes("npm test"))!;
+    expect(failed.getAttribute("data-ok")).toBe("fail");
+    expect(failed.textContent).toContain("exit 1 · 0.3s");
+    expect(failed.textContent).toContain("Output (last part)");
+    expect(failed.querySelector("[data-step-output]")!.textContent).toBe("1 failing");
+    expect(runOutput).not.toHaveBeenCalled();
   });
 
-  it("shows no timeline when there is nothing on it", async () => {
-    const slot = await mountTicket({ timeline: [] });
-    expect(slot.container.querySelector("[data-timeline]")).toBeNull();
+  it("clamps a long post with Show all, and says who gets a reply", async () => {
+    const long = { id: 6, parentId: null, depth: 0, authorKind: "worker" as const, authorThreadId: "thr_w1", kind: "note" as const, body: "word ".repeat(100).trim(), at: 6 };
+    const slot = await mountTicket({ posts: [...posts, long], activity: withItems([{ type: "post", postId: 6 }]) });
+    const body = () => post(slot, 6).querySelector<HTMLElement>("[data-post-body]")!;
+    expect(body().className).toContain("max-h-[7.5em]");
+    fireEvent.click(within(post(slot, 6)).getByRole("button", { name: "Show all" }));
+    expect(body().className).not.toContain("max-h-[7.5em]");
+    fireEvent.click(within(post(slot, 6)).getByRole("button", { name: "Show less" }));
+    expect(body().className).toContain("max-h-[7.5em]");
+    expect(post(slot, 2).querySelector("[data-post-body]")!.className).not.toContain("max-h-[7.5em]");
+    expect(within(post(slot, 2)).queryByRole("button", { name: "Show all" })).toBeNull();
+    slot.lifecycle.unmount();
+
+    for (const [replyTo, hint] of [
+      ["worker", "The worker gets this now."],
+      ["planner", "The planner gets this now."],
+      [null, "It stays on the ticket for anyone who reads it."],
+    ] as const) {
+      const one = await mountTicket({ replyTo });
+      expect(one.container.querySelector("[data-reply-hint]")!.textContent).toBe(hint);
+      one.lifecycle.unmount();
+    }
+  });
+
+  it("totals a passed check's commands with a decimal under a minute", async () => {
+    const items: Item[] = [
+      checks({ steps: [step({ label: "git commit", kind: "git", exitCode: null, durationMs: 268 }), step({ durationMs: 191 }), step({ label: "npm run lint", durationMs: 170 })] }),
+      checks({ steps: [step({ durationMs: 12_700 })] }),
+    ];
+    const slot = await mountTicket({ activity: withItems(items) });
+    const cards = [...slot.container.querySelectorAll<HTMLElement>("[data-checks-card]")];
+    expect(cards[0]!.textContent).toContain("2 commands · 0.4s");
+    expect(cards[1]!.textContent).toContain("1 command · 12.7s");
+  });
+
+  it("draws the ⋯ menu above the stage tracker's circles", async () => {
+    const slot = await mountTicket();
+    fireEvent.click(slot.getByRole("button", { name: "More actions" }));
+    const z = (node: Element) => Number(/(?:^|\s)z-(\d+)(?=\s|$)/.exec(node.className)?.[1] ?? 0);
+    const circles = [...slot.container.querySelectorAll("[data-stage] > span[aria-hidden]")];
+    expect(circles).toHaveLength(6);
+    expect(z(slot.container.querySelector("[data-more-menu]")!)).toBeGreaterThan(Math.max(...circles.map(z)));
+  });
+
+  it("writes success text in the success foreground colour, which keeps its contrast on a pale tint in light themes", async () => {
+    const review = { id: 8, parentId: null, depth: 0, authorKind: "reviewer" as const, authorThreadId: "thr_r1", kind: "review" as const, body: "Approved (round 1): Fine", at: 8 };
+    const merged = { id: 9, parentId: null, depth: 0, authorKind: "loom" as const, authorThreadId: null, kind: "merge" as const, body: "Merged m1 into loom/csv.", at: 9 };
+    const slot = await mountTicket({
+      state: "done",
+      reviewRound: 1,
+      depsDone: ["CSV-1"],
+      posts: [...posts, review, merged],
+      reviews: [{ id: 2, round: 1, verdict: "approved", status: "approved", summary: "Fine", findings: [], threadId: "thr_r1", at: 8 }],
+      threads: [
+        { threadId: "thr_w1", role: "worker", attempt: 1, reviewRound: 0, state: "ended", startedAt: NOW - 2 * HOUR, endedAt: NOW - HOUR, endReason: "merged" },
+        { threadId: "thr_r1", role: "reviewer", attempt: null, reviewRound: 1, state: "ended", startedAt: NOW - 2 * HOUR, endedAt: NOW - HOUR, endReason: "verdict" },
+      ],
+      activity: withItems([checks(), { type: "review", postId: 8, reviewId: 2, notePostIds: [] }, { type: "merge", postId: 9, at: NOW - HOUR, outcome: "merged", into: "loom/csv", running: false, steps: [] }], {
+        outcome: "merged",
+        endedAt: NOW - HOUR,
+        pipeline: { work: "pass", checks: ["pass"], review: ["pass"], merge: ["pass"] },
+      }),
+    });
+    const checksCard = slot.container.querySelector<HTMLElement>("[data-checks-card]")!;
+    fireEvent.click(within(checksCard).getByRole("button", { name: "Show commands" }));
+    const page = slot.container.querySelector<HTMLElement>("[data-ticket]")!;
+    const toned = (node: Element) => node.classList.contains("text-success-foreground");
+    expect(page.querySelectorAll(".text-success")).toHaveLength(0);
+    expect(toned(page.querySelector("[data-state-badge]")!)).toBe(true);
+    expect(toned(within(page).getByText("Merged"))).toBe(true);
+    expect(toned(within(page).getByText("Approved"))).toBe(true);
+    expect(toned(within(checksCard).getByText("Checks passed"))).toBe(true);
+    expect(toned(within(page.querySelector<HTMLElement>("[data-ac]")!).getByText(/approved, round 1/))).toBe(true);
+    const agents = page.querySelector<HTMLElement>("[data-ticket-side] [data-ticket-threads]")!;
+    expect(toned(within(agents).getByText("merged"))).toBe(true);
+    expect(toned(within(agents).getByText("approved"))).toBe(true);
+    expect(page.querySelectorAll("[data-pipeline] .text-success-foreground")).toHaveLength(4);
+    expect(checksCard.querySelectorAll("[data-check-step] .text-success-foreground")).toHaveLength(1);
+    expect(toned(within(page).getByRole("button", { name: "CSV-1" }).nextElementSibling!)).toBe(true);
+  });
+
+  it("caps the side column 16px above the bottom of the window, under its sticky top, once the page is laid out", async () => {
+    const plain = await mountTicket();
+    const plainSide = plain.container.querySelector<HTMLElement>("[data-ticket-side]")!;
+    expect(plainSide.style.maxHeight).toBe("");
+    expect(plainSide.className).toContain("@4xl:max-h-[calc(100dvh-6rem)]");
+    plain.lifecycle.unmount();
+
+    const height = Object.getOwnPropertyDescriptor(window, "innerHeight")!;
+    const rect = (top: number, bottom: number) => ({ top, bottom, height: bottom - top, left: 0, right: 0, width: 0, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
+    const boxes = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+      return this.hasAttribute("data-loom-scroll") ? rect(48, 1000) : rect(0, 0);
+    });
+    const added = vi.spyOn(window, "addEventListener");
+    const removed = vi.spyOn(window, "removeEventListener");
+    try {
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 1000 });
+      const slot = await mountTicket();
+      const side = slot.container.querySelector<HTMLElement>("[data-ticket-side]")!;
+      expect(side.style.maxHeight).toBe("936px");
+      side.style.top = "16px";
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 900 });
+      act(() => {
+        window.dispatchEvent(new Event("resize"));
+      });
+      expect(side.style.maxHeight).toBe("820px");
+      const listener = added.mock.calls.find(([type]) => type === "resize")![1];
+      slot.lifecycle.unmount();
+      expect(removed).toHaveBeenCalledWith("resize", listener);
+    } finally {
+      Object.defineProperty(window, "innerHeight", height);
+      boxes.mockRestore();
+      added.mockRestore();
+      removed.mockRestore();
+    }
+  });
+
+  it("drops the clamp and Show all from a long post or review that fits once laid out", async () => {
+    const note = (id: number, word: string) => ({ id, parentId: null, depth: 0, authorKind: "worker" as const, authorThreadId: "thr_w1", kind: "note" as const, body: `${word} `.repeat(100).trim(), at: id });
+    const review = { id: 8, parentId: null, depth: 0, authorKind: "reviewer" as const, authorThreadId: "thr_r1", kind: "review" as const, body: "Approved (round 1)", at: 8 };
+    const clamped = (node: Element) => node.className.includes("max-h-[7.5em]");
+    const scroll = Object.getOwnPropertyDescriptor(Element.prototype, "scrollHeight")!;
+    const client = Object.getOwnPropertyDescriptor(Element.prototype, "clientHeight")!;
+    Object.defineProperty(Element.prototype, "scrollHeight", {
+      configurable: true,
+      get(this: Element) {
+        return clamped(this) ? (this.textContent!.includes("fits") ? 120 : 300) : 0;
+      },
+    });
+    Object.defineProperty(Element.prototype, "clientHeight", {
+      configurable: true,
+      get(this: Element) {
+        return clamped(this) ? 120 : 0;
+      },
+    });
+    try {
+      const slot = await mountTicket({
+        posts: [...posts, note(6, "fits"), note(7, "spills"), review],
+        reviews: [{ id: 2, round: 1, verdict: "approved", status: "approved", summary: "fits ".repeat(100).trim(), findings: [], threadId: "thr_r1", at: 8 }],
+        activity: withItems([
+          { type: "post", postId: 6 },
+          { type: "post", postId: 7 },
+          { type: "review", postId: 8, reviewId: 2, notePostIds: [] },
+        ]),
+      });
+      const body = (id: number) => post(slot, id).querySelector<HTMLElement>("[data-post-body]")!;
+      expect(clamped(body(6))).toBe(false);
+      expect(body(6).className).not.toContain("mask-image");
+      expect(within(post(slot, 6)).queryByRole("button", { name: "Show all" })).toBeNull();
+      expect(clamped(body(7))).toBe(true);
+      expect(within(post(slot, 7)).getByRole("button", { name: "Show all" })).toBeTruthy();
+      const card = slot.container.querySelector<HTMLElement>('[data-review-card="2"]')!;
+      expect(card.querySelector(".max-h-\\[7\\.5em\\]")).toBeNull();
+      expect(within(card).queryByRole("button", { name: "Show all" })).toBeNull();
+    } finally {
+      Object.defineProperty(Element.prototype, "scrollHeight", scroll);
+      Object.defineProperty(Element.prototype, "clientHeight", client);
+    }
+  });
+
+  it("says a worker that bb never started could not start, with no thread button and no running time", async () => {
+    const refused = { id: 6, parentId: null, depth: 0, authorKind: "loom" as const, authorThreadId: null, kind: "system" as const, body: "Could not start a worker: HTTP 400", at: 6 };
+    const slot = await mountTicket({
+      state: "queued",
+      posts: [...posts, refused],
+      threads: [{ threadId: null, role: "worker", attempt: 1, reviewRound: 0, state: "ended", startedAt: NOW - HOUR, endedAt: NOW - HOUR + 300, endReason: "failed" }],
+      activity: withItems([{ type: "post", postId: 6 }], { threadId: null, outcome: "ended", endedAt: NOW - HOUR + 300, line: "The worker could not start.", pipeline: { work: "fail", checks: [], review: [], merge: [] } }),
+    });
+    const card = slot.container.querySelector<HTMLElement>('[data-attempt="1"]')!;
+    expect(card.getAttribute("data-open")).toBe("true");
+    expect(card.textContent).toContain("Worker attempt 1 could not start");
+    expect(card.textContent).not.toContain("Worker attempt 1 started");
+    expect(within(card).queryByRole("button", { name: "Open the thread of attempt 1" })).toBeNull();
+    expect(card.querySelector("[data-attempt-time]")!.textContent).toMatch(/^[^·]+ ago$/);
+    const row = slot.container.querySelector<HTMLElement>('[data-ticket-side] [data-thread-row="worker"]')!;
+    expect(row.textContent).toBe("WWorker · attempt 1could not start");
   });
 
   it("asks for the ticket again when its project changes", async () => {

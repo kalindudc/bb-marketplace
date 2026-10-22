@@ -92,8 +92,8 @@ export function ConfirmButton({ label, confirmLabel, onConfirm, disabled = false
   );
 }
 
-/** A "⋯" button that shows the actions it holds below it; a mousedown anywhere else closes it. */
-export function MoreMenu({ children }: { children: ReactNode }) {
+/** A "⋯" button that shows the actions it holds below it; a mousedown anywhere else closes it, as does the `close` that function children get. */
+export function MoreMenu({ children }: { children: ReactNode | ((close: () => void) => ReactNode) }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLSpanElement>(null);
   useEffect(() => {
@@ -110,8 +110,8 @@ export function MoreMenu({ children }: { children: ReactNode }) {
         ⋯
       </button>
       {open && (
-        <div data-more-menu className="absolute right-0 top-8 z-10 flex min-w-48 flex-col gap-1 rounded-md border border-border-seam bg-popover p-1 text-popover-foreground shadow-md">
-          {children}
+        <div data-more-menu className="absolute right-0 top-8 z-30 flex min-w-48 flex-col gap-1 rounded-md border border-border-seam bg-popover p-1 text-popover-foreground shadow-md">
+          {typeof children === "function" ? children(() => setOpen(false)) : children}
         </div>
       )}
     </span>

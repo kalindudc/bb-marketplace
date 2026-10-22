@@ -8,12 +8,12 @@ import type { NextStep } from "./next-step";
 import type { PlanningSession, ProjectOverview } from "./projects";
 import type { Finding } from "./review";
 import type { SentNote, SpecVersionView } from "./spec-view";
-import type { TimelineEntry, TimelineRun, TimelineStage } from "./timeline";
+import type { ActivityItem, Attempt, ChecksItem, CheckStep, Mark, MergeItem, ReviewItem, TicketActivity } from "./activity";
 import type { AuthorKind, PostKind, ProjectState, ReviewVerdict, Role, ThreadState, TicketState } from "./states";
 import { MERGE_CHOICES } from "./states";
 
 export type ProjectSummary = ProjectOverview;
-export type { HomeProject, HomeView, NeedItem, NextStep, PlanningSession, ProjectHealth, SentNote, SpecVersionView, TimelineEntry, TimelineRun, TimelineStage };
+export type { ActivityItem, Attempt, ChecksItem, CheckStep, HomeProject, HomeView, Mark, MergeItem, NeedItem, NextStep, PlanningSession, ProjectHealth, ReviewItem, SentNote, SpecVersionView, TicketActivity };
 
 export interface BoardCard {
   key: string;
@@ -104,6 +104,8 @@ export interface ReviewDto {
   status: string;
   summary: string | null;
   findings: Finding[];
+  /** The reviewer's thread; null when it never started. */
+  threadId: string | null;
   at: number;
 }
 
@@ -130,6 +132,8 @@ export interface TicketDetail {
   attempt: number;
   reviewRound: number;
   deps: string[];
+  /** The dependencies whose ticket is done. */
+  depsDone: string[];
   blockedReason: string | null;
   branch: string | null;
   prUrl: string | null;
@@ -140,7 +144,11 @@ export interface TicketDetail {
   posts: PostDto[];
   reviews: ReviewDto[];
   threads: ThreadDto[];
-  timeline: TimelineEntry[];
+  /** Who hears a reply now, by the rule Engine.humanPost delivers with. */
+  replyTo: "worker" | "planner" | null;
+  /** The state a blocked or cancelled ticket left; null otherwise. */
+  stoppedFrom: TicketState | null;
+  activity: TicketActivity;
 }
 
 export interface FeedRow {

@@ -3,7 +3,8 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { humanAction } from "./cli";
 import { rpcContract, type AgentRow, type BoardCard, type ProjectView, type SpecSummary, type ThreadInfo, type TicketDetail } from "./contract";
 import type { ReviewRow, Store, ThreadRow, TicketRow } from "./db/store";
-import type { Engine } from "./engine";
+import { stripAnsi, ticketActivity } from "./activity";
+import { replyRecipient, type Engine } from "./engine";
 import { projectHealth } from "./health";
 import { homeView } from "./home";
 import { nextStepOf } from "./next-step";
@@ -13,8 +14,7 @@ import { blockedAtReview } from "./review";
 import { IN_FLIGHT, overlaps, readyTickets, toLite, type TicketLite } from "./scheduler";
 import { parseSpec, type Spec } from "./spec";
 import { specVersionView } from "./spec-view";
-import { HUMAN_ACTOR } from "./states";
-import { ticketTimeline } from "./timeline";
+import { HUMAN_ACTOR, type TicketState } from "./states";
 import { blockedAtStart, specOf } from "./workers";
 
 export const CHANGED_CHANNEL = "loom:changed";
@@ -95,6 +95,13 @@ function reviewStatus(review: ReviewRow, reviewer: ThreadRow | null): string {
   if (review.verdict !== "pending") return review.verdict.replace("_", " ");
   if (reviewer?.state !== "ended") return "pending";
   return reviewer.thread_id === null ? "reviewer could not start" : "ended without a verdict";
+}
+
+/** The state a blocked or cancelled ticket was in when it stopped: the `from` of its last state event; null for any other state. */
+function stoppedFrom(store: Store, ticket: TicketRow): TicketState | null {
+  if (ticket.state !== "blocked" && ticket.state !== "cancelled") return null;
+  const last = store.ticketEvents(ticket.id, ["ticket.state"]).at(-1);
+  return last === undefined ? null : (JSON.parse(last.data_json) as { from: TicketState }).from;
 }
 
 /** Whether a ticket is ready and, when it waits, on what. */
@@ -224,6 +231,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       attempt: ticket.attempt,
       reviewRound: ticket.review_round,
       deps: view.deps,
+      depsDone: view.deps.filter((dep) => store.ticketByKey(dep)?.state === "done"),
       blockedReason: ticket.blocked_reason,
       branch: ticket.branch,
       prUrl: ticket.pr_url,
@@ -237,12 +245,15 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
         round: review.round,
         verdict: review.verdict,
         status: reviewStatus(review, threads.find((row) => row.id === review.thread_row_id) ?? null),
+        threadId: threads.find((row) => row.id === review.thread_row_id)?.thread_id ?? null,
         summary: review.summary,
         findings: JSON.parse(review.findings_json),
         at: review.at,
       })),
       threads: threads.map((row) => ({ threadId: row.thread_id, role: row.role, attempt: row.attempt, reviewRound: row.review_round, state: row.state, startedAt: row.started_at, endedAt: row.ended_at, endReason: row.end_reason })),
-      timeline: ticketTimeline({ posts: store.posts(ticket.id), threads, runs: store.runs(ticket.id) }),
+      replyTo: replyRecipient(store, ticket)?.role ?? null,
+      stoppedFrom: stoppedFrom(store, ticket),
+      activity: ticketActivity({ state: ticket.state, posts: store.posts(ticket.id), threads, runs: store.runs(ticket.id) }),
     };
   };
 
@@ -260,7 +271,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
     ticket: ({ key }) => ticketDetail(key),
     runOutput: ({ id }) => {
       const output = store.runOutput(id);
-      return output === null ? null : { output };
+      return output === null ? null : { output: stripAnsi(output) };
     },
     feed: ({ slug, afterId }) => projectFeed(store, projects.require(slug), afterId),
     planning: () => projects.planningSessions(),

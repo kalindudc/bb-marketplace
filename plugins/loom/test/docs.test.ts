@@ -93,8 +93,8 @@ describe("the plugin's own documents", () => {
     expect(read("PLUGIN_OVERVIEW.md")).toContain("+ note");
   });
 
-  it("README and the loom skill describe the ticket's timeline", () => {
-    for (const path of ["README.md", "skills/loom/SKILL.md"]) expect(read(path), path).toContain("timeline");
+  it("README and the loom skill describe the ticket page's stage tracker, attempts and Brief tab", () => {
+    for (const path of ["README.md", "skills/loom/SKILL.md"]) for (const phrase of ["stage tracker", "Oldest first", "Brief tab"]) expect(read(path), `${path}: ${phrase}`).toContain(phrase);
   });
 
   it("README, the loom skill and the overview describe the direct land, and README and the skill the home page's search and switch", () => {

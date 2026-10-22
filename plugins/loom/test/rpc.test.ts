@@ -191,7 +191,8 @@ describe("reads", () => {
       ["claim", 0, null],
     ]);
     expect(ticket.threads).toEqual([expect.objectContaining({ threadId: "thr_w1", role: "worker", attempt: 1, reviewRound: 0, state: "active" })]);
-    expect(ticket.timeline[0]).toMatchObject({ kind: "worker", title: "Worker, attempt 1", threadId: "thr_w1" });
+    expect(ticket).toMatchObject({ depsDone: [], replyTo: "worker", stoppedFrom: null });
+    expect(ticket.activity).toMatchObject({ brief: { postId: brief.id }, before: [], attempts: [{ n: 1, threadId: "thr_w1", outcome: "in_progress", endedAt: null }] });
     await expect(call("ticket", { key: "CSV-99" })).rejects.toThrow(/No ticket/);
   });
 
@@ -214,20 +215,32 @@ describe("reads", () => {
       ["pending", "pending"],
       ["changes_requested", "changes requested"],
     ]);
+    expect(detail.reviews.map((review) => review.threadId)).toEqual([null, "thr_r2", "thr_r3", "thr_r4"]);
   });
 
-  it("ticket lists a recorded run on its timeline with the size of its output", async () => {
+  it("ticket puts a recorded run into its check card with the size of its output", async () => {
     await running();
+    await host.engine.tick();
     const ticket = host.store.ticketByKey("CSV-1")!;
+    host.store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "worker", author_thread_id: "thr_w1", kind: "submit", body: "Done" });
     const id = host.store.startRun({ project_id: ticket.project_id, ticket_id: ticket.id, stage: "check", kind: "command", label: "npm test" });
     host.store.finishRun(id, { ok: false, output: "1 failing", exitCode: 1, durationMs: 300 });
     const detail = await call<TicketDetail>("ticket", { key: "CSV-1" });
-    expect(detail.timeline.find((entry) => entry.kind === "run")).toMatchObject({
-      stage: "checks",
-      title: "npm test",
-      ok: false,
-      run: { id, kind: "command", exitCode: 1, timedOut: false, durationMs: 300, running: false, outputChars: 9 },
+    expect(detail.activity.attempts[0]!.items[1]).toMatchObject({
+      type: "checks",
+      postId: null,
+      status: "unfinished",
+      steps: [{ label: "npm test", runId: id, ok: false, exitCode: 1, durationMs: 300, outputChars: 9 }],
     });
+  });
+
+  it("ticket says who hears a reply, and where a blocked ticket stopped", async () => {
+    await running();
+    await host.engine.tick();
+    const blocked = await call<TicketDetail>("ticketAction", { key: "CSV-1", action: "block", note: "Wrong approach", confirm: true });
+    expect(blocked).toMatchObject({ state: "blocked", replyTo: "planner", stoppedFrom: "working" });
+    const queued = await call<TicketDetail>("ticket", { key: "CSV-2" });
+    expect(queued).toMatchObject({ state: "queued", deps: ["CSV-1"], depsDone: [], replyTo: null, stoppedFrom: null });
   });
 
   it("runOutput returns a run's output, and null for an unknown id", async () => {
@@ -236,6 +249,9 @@ describe("reads", () => {
     const id = host.store.startRun({ project_id: ticket.project_id, ticket_id: ticket.id, stage: "merge", kind: "git", label: "git merge" });
     host.store.finishRun(id, { ok: true, output: "Merged as m1; the branch was at base000." });
     expect(await call("runOutput", { id })).toEqual({ output: "Merged as m1; the branch was at base000." });
+    const coloured = host.store.startRun({ project_id: ticket.project_id, ticket_id: ticket.id, stage: "check", kind: "command", label: "npm test" });
+    host.store.finishRun(coloured, { ok: false, output: "\u001b[31m1 failing\u001b[39m", exitCode: 1 });
+    expect(await call("runOutput", { id: coloured })).toEqual({ output: "1 failing" });
     expect(await call("runOutput", { id: 999 })).toBeNull();
   });
 

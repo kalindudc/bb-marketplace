@@ -1,91 +1,58 @@
-import { useState } from "react";
-import { useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
-import type { PostDto, ReviewDto, rpcContract, TicketAction, TicketDetail } from "../contract";
-import { formatDuration } from "../format";
-import { BUTTON, ConfirmButton, FIELD, HEADING, StateBadge, useRemote, useRun } from "./common";
-import { ThreadList, Timeline } from "./timeline";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Markdown, useRpc } from "@get-bb/plugin-sdk/app";
+import type { rpcContract, TicketAction, TicketDetail } from "../contract";
+import { plural } from "../format";
+import { useRemote, useRun } from "./common";
+import { TicketHeader } from "./ticket-header";
+import { SideCards } from "./ticket-side";
+import { ReplyBox, replyHint, Stream } from "./ticket-stream";
 
-const INDENT_PX = 16;
-const MAX_DEPTH = 6;
-const LINK = "cursor-pointer rounded text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+type Tab = "activity" | "brief" | "details";
 
-function ReplyBox({ textLabel, sendLabel, busy, onSend, onCancel }: { textLabel: string; sendLabel: string; busy: boolean; onSend(body: string): Promise<boolean>; onCancel?(): void }) {
-  const [text, setText] = useState("");
-  return (
-    <div className="mt-2 space-y-2">
-      <textarea aria-label={textLabel} value={text} rows={3} onChange={(event) => setText(event.target.value)} className={FIELD} />
-      <div className="flex gap-2">
-        <button
-          type="button"
-          aria-label={sendLabel}
-          disabled={busy || text.trim() === ""}
-          onClick={() => void onSend(text.trim()).then((sent) => sent && setText(""))}
-          className={BUTTON}
-        >
-          Send reply
-        </button>
-        {onCancel !== undefined && (
-          <button type="button" onClick={onCancel} className={BUTTON}>
-            Cancel
-          </button>
-        )}
-      </div>
-    </div>
-  );
+const TAB = "cursor-pointer border-b-2 px-3 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+const TAB_ON = "border-foreground font-semibold text-foreground";
+const TAB_OFF = "border-transparent text-muted-foreground hover:text-foreground";
+
+/** The time, again every `ms`, so ages and "for 7m" stay current between refreshes. */
+function useNow(ms: number): number {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), ms);
+    return () => clearInterval(timer);
+  }, [ms]);
+  return now;
 }
 
-function Post({ post, open, busy, onToggle, onSend }: { post: PostDto; open: boolean; busy: boolean; onToggle(): void; onSend(body: string): Promise<boolean> }) {
+/** The sticky side column. Its height cap is measured, 16 px above the bottom of the page's scroller or of the window, whichever comes first; the CSS cap stays where nothing is laid out. */
+function SideColumn({ children }: { children: ReactNode }) {
+  const root = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const side = root.current!;
+    const scroller = side.closest("[data-loom-scroll]");
+    if (scroller === null) return;
+    const fit = () => {
+      const box = scroller.getBoundingClientRect();
+      const top = parseFloat(getComputedStyle(side).top);
+      side.style.maxHeight = box.height > 0 ? `${Math.min(window.innerHeight, box.bottom) - box.top - (Number.isNaN(top) ? 0 : top) - 16}px` : "";
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, []);
   return (
-    <article data-post={post.id} style={{ marginLeft: `${Math.min(post.depth, MAX_DEPTH) * INDENT_PX}px` }} className="border-l border-border-seam py-2 pl-3">
-      <header className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
-        <span className="font-medium text-foreground">{post.authorKind}</span>
-        <span>{post.kind}</span>
-        <span>{formatDuration(Math.max(0, Date.now() - post.at))} ago</span>
-        <span>#{post.id}</span>
-      </header>
-      <div data-post-body className="mt-1 whitespace-pre-wrap text-sm [overflow-wrap:anywhere]">{post.body}</div>
-      <button type="button" aria-label={`Reply to #${post.id}`} onClick={onToggle} className={`${LINK} mt-1`}>
-        Reply
-      </button>
-      {open && <ReplyBox textLabel={`Reply text for #${post.id}`} sendLabel={`Send reply to #${post.id}`} busy={busy} onSend={onSend} onCancel={onToggle} />}
-    </article>
-  );
-}
-
-function Reviews({ reviews }: { reviews: ReviewDto[] }) {
-  if (reviews.length === 0) return null;
-  return (
-    <section data-reviews className="space-y-2">
-      <h2 className={HEADING}>Reviews</h2>
-      {reviews.map((review) => (
-        <div key={review.id} className="text-sm">
-          <p>
-            <span className="font-medium">Round {review.round}</span> · {review.status}
-            {review.summary !== null && <span className="text-muted-foreground"> — {review.summary}</span>}
-          </p>
-          {review.findings.length > 0 && (
-            <ul className="ml-4 list-disc text-xs text-muted-foreground">
-              {review.findings.map((finding, index) => (
-                <li key={index}>
-                  {finding.severity}: {finding.title}
-                  {finding.file !== undefined && ` (${finding.file}${finding.line === undefined ? "" : `:${finding.line}`})`}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      ))}
-    </section>
+    <aside ref={root} data-ticket-side className="hidden flex-col gap-3 @4xl:sticky @4xl:top-4 @4xl:flex @4xl:max-h-[calc(100dvh-6rem)] @4xl:self-start @4xl:overflow-y-auto">
+      {children}
+    </aside>
   );
 }
 
 export function TicketView({ slug, ticketKey }: { slug: string; ticketKey: string }) {
   const rpc = useRpc<typeof rpcContract>();
-  const navigate = useBbNavigate();
   const remote = useRemote((client) => client.call("ticket", { key: ticketKey }), `ticket:${ticketKey}`, slug);
   const { busy, error, run } = useRun();
-  const [note, setNote] = useState("");
-  const [replyTo, setReplyTo] = useState<number | null>(null);
+  const now = useNow(30_000);
+  const [tab, setTab] = useState<Tab>("activity");
+  const [jumpTo, setJumpTo] = useState<{ postId: number; seq: number } | null>(null);
   const ticket: TicketDetail | null = remote.data;
 
   if (ticket === null) {
@@ -94,73 +61,68 @@ export function TicketView({ slug, ticketKey }: { slug: string; ticketKey: strin
   const reply = (body: string, parentId?: number) =>
     run(async () => {
       remote.set(await rpc.call("reply", { key: ticketKey, body, ...(parentId === undefined ? {} : { parentId }), confirm: true }));
-      setReplyTo(null);
     });
-  const act = (action: TicketAction) =>
+  const act = (action: TicketAction, note: string) =>
     run(async () => {
-      remote.set(await rpc.call("ticketAction", { key: ticketKey, action, note: note.trim(), confirm: true }));
-      setNote("");
+      remote.set(await rpc.call("ticketAction", { key: ticketKey, action, note, confirm: true }));
     });
-
-  const final = ticket.state === "done" || ticket.state === "cancelled";
-  const meta = [ticket.attempt > 0 ? `attempt ${ticket.attempt}` : null, ticket.reviewRound > 0 ? `review round ${ticket.reviewRound}` : null, ticket.deps.length > 0 ? `after ${ticket.deps.join(", ")}` : null].filter((part) => part !== null);
+  const choose = (next: Tab) => {
+    setTab(next);
+    setJumpTo(null);
+  };
+  const jump = (postId: number) => {
+    setTab("activity");
+    setJumpTo((before) => ({ postId, seq: (before?.seq ?? 0) + 1 }));
+  };
+  const { brief } = ticket.activity;
+  // While Details is chosen, a wide page shows the stream with Activity marked, so widening the page shows the stream once.
+  const activityTone = tab === "activity" ? TAB_ON : tab === "details" ? `${TAB_OFF} @4xl:border-foreground @4xl:font-semibold @4xl:text-foreground` : TAB_OFF;
 
   return (
-    <div data-ticket={ticket.key} className="mx-auto w-full max-w-3xl space-y-5 p-4">
-      <header data-ticket-header className="space-y-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-base font-semibold">
-            {ticket.key} · {ticket.title}
-          </h1>
-          <StateBadge state={ticket.state} />
-        </div>
-        <p className="text-xs text-muted-foreground">{meta.join(" · ")}</p>
-        {ticket.branch !== null && (
-          <p data-ticket-branch className="font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">
-            {ticket.branch}
+    <div data-ticket={ticket.key} className="@container mx-auto w-full max-w-6xl space-y-4 p-4">
+      <div className="grid gap-4 @4xl:grid-cols-[minmax(0,1fr)_300px]">
+        <TicketHeader ticket={ticket} now={now} busy={busy} onAction={act} onJump={jump} />
+        {error !== null && (
+          <p role="alert" className="text-xs text-destructive-text @4xl:col-span-2">
+            {error}
           </p>
         )}
-        {ticket.blockedReason !== null && ticket.state === "blocked" && <p className="text-sm text-destructive-text">Blocked: {ticket.blockedReason}</p>}
-        <div className="flex flex-wrap gap-3">
-          {ticket.prUrl !== null && (
-            <button type="button" aria-label="Open the pull request" onClick={() => navigate.openUrl(ticket.prUrl!)} className={LINK}>
-              Pull request
+        <div className="min-w-0 space-y-3">
+          <div data-ticket-tabs role="tablist" className="flex border-b border-border-seam">
+            <button type="button" role="tab" aria-selected={tab === "activity"} onClick={() => choose("activity")} className={`${TAB} ${activityTone}`}>
+              Activity <span className="text-xs font-normal text-subtle-foreground">{plural(ticket.activity.attempts.length, "attempt")}</span>
             </button>
+            <button type="button" role="tab" aria-selected={tab === "brief"} onClick={() => choose("brief")} className={`${TAB} ${tab === "brief" ? TAB_ON : TAB_OFF}`}>
+              Brief
+            </button>
+            <button type="button" role="tab" aria-selected={tab === "details"} onClick={() => choose("details")} className={`${TAB} @4xl:hidden ${tab === "details" ? TAB_ON : TAB_OFF}`}>
+              Details
+            </button>
+          </div>
+          {tab !== "brief" && (
+            <div className={`space-y-3 ${tab === "details" ? "hidden @4xl:block" : ""}`}>
+              <Stream ticket={ticket} now={now} busy={busy} onReply={reply} onBrief={() => choose("brief")} jumpTo={jumpTo} />
+              <ReplyBox textLabel="New reply" sendLabel="Send reply" busy={busy} hint={replyHint(ticket.replyTo)} placeholder={`Write on ${ticket.key}…`} onSend={(body) => reply(body)} />
+            </div>
+          )}
+          {tab === "details" && (
+            <div data-ticket-details className="space-y-3 @4xl:hidden">
+              <SideCards ticket={ticket} now={now} />
+            </div>
+          )}
+          {tab === "brief" && (
+            <section data-ticket-brief className="space-y-3 rounded-lg border border-border-seam bg-card p-4">
+              <p className="text-xs text-muted-foreground">
+                Written by the planner{brief !== null && brief.edits > 0 && `, edited ${plural(brief.edits, "time")} since (${brief.fields.join(", ")})`}. This is the brief the next worker reads.
+              </p>
+              <Markdown content={ticket.body} className="text-sm [overflow-wrap:anywhere] [&_pre]:whitespace-pre-wrap" />
+            </section>
           )}
         </div>
-        {ticket.acceptance.length > 0 && (
-          <section>
-            <h2 className={HEADING}>Acceptance criteria</h2>
-            <ol className="ml-5 mt-1 list-decimal space-y-1 text-sm">
-              {ticket.acceptance.map((line) => (
-                <li key={line}>{line}</li>
-              ))}
-            </ol>
-          </section>
-        )}
-      </header>
-      {error !== null && <p role="alert" className="text-xs text-destructive-text">{error}</p>}
-      <Timeline entries={ticket.timeline} />
-      <ThreadList threads={ticket.threads} />
-      <Reviews reviews={ticket.reviews} />
-      <section className="space-y-1">
-        <h2 className={HEADING}>Thread</h2>
-        {ticket.posts.map((post) => (
-          <Post key={post.id} post={post} open={replyTo === post.id} busy={busy} onToggle={() => setReplyTo(replyTo === post.id ? null : post.id)} onSend={(body) => reply(body, post.id)} />
-        ))}
-        <ReplyBox textLabel="New reply" sendLabel="Send reply" busy={busy} onSend={(body) => reply(body)} />
-      </section>
-      {!final && (
-        <section data-ticket-actions className="space-y-2">
-          <h2 className={HEADING}>Steer</h2>
-          <textarea aria-label="Note" value={note} rows={2} placeholder={ticket.state === "blocked" ? "Your answer for the next worker (required)" : "Why (required)"} onChange={(event) => setNote(event.target.value)} className={FIELD} />
-          <div className="flex flex-wrap gap-2">
-            {ticket.state === "blocked" && <ConfirmButton label="Requeue" disabled={busy || note.trim() === ""} onConfirm={() => void act("requeue")} />}
-            {ticket.state !== "blocked" && <ConfirmButton label="Block" disabled={busy || note.trim() === ""} onConfirm={() => void act("block")} />}
-            <ConfirmButton label="Cancel ticket" danger disabled={busy || note.trim() === ""} onConfirm={() => void act("cancel")} />
-          </div>
-        </section>
-      )}
+        <SideColumn>
+          <SideCards ticket={ticket} now={now} />
+        </SideColumn>
+      </div>
     </div>
   );
 }

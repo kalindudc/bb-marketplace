@@ -1,4 +1,4 @@
-// Loom's own record of each call it makes to the machine for a ticket's checks and merge, shown on the ticket's timeline.
+// Loom's own record of each call it makes to the machine for a ticket's checks and merge, shown in the ticket page's check and merge cards.
 import type { Store, TicketRow } from "./db/store";
 import type { HostInput, HostMethod, HostOutput } from "./host-contract";
 import type { HostPort } from "./ports";

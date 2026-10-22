@@ -2,7 +2,7 @@
 // the handlers for bb's thread events. Behavior lives in workers.ts, checks.ts and triage.ts; this wires it together.
 import { resumeCheckingTickets } from "./checks";
 import { finishIfComplete, holdMerge, land, mergeHeld, pollPullRequests, runMergeQueue, type LandResult } from "./merge";
-import type { PostRow, ProjectRow, ThreadRow, TicketRow } from "./db/store";
+import type { PostRow, ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { approvedText, blockedReplyText, heldCheckResult, resumeText, reviewRequeueNote, startRequeueNote } from "./prompts";
 import { LoomError, type ApproveResult, type Projects } from "./projects";
 import { backToReview, blockedAtReview, failReviewerSpawn, onReviewerGone, onReviewerIdle, onReviewerTurnFailed, spawnReviewers } from "./review";
@@ -34,6 +34,16 @@ export type EngineDeps = Omit<EngineCtx, "kick"> & { projects: Projects };
 export interface Approved extends ApproveResult {
   requeued: string[];
   backToReview: string[];
+}
+
+/** Who hears the human's reply on a ticket at once: the active worker holding a working ticket, or the project's active planner when it is blocked. */
+export function replyRecipient(store: Store, ticket: TicketRow): { role: "worker" | "planner"; threadId: string } | null {
+  const worker = ticket.state === "working" && ticket.worker_thread_id !== null ? store.threadByThreadId(ticket.worker_thread_id) : null;
+  // A blocked ticket has no worker, and triage rounds go out only when a ticket blocks, so the planner hears the reply now.
+  const planner = ticket.state === "blocked" ? store.threads({ projectId: ticket.project_id, role: "planner", states: ["active"] })[0] : undefined;
+  if (worker?.state === "active" && worker.thread_id !== null) return { role: "worker", threadId: worker.thread_id };
+  if (planner?.thread_id != null) return { role: "planner", threadId: planner.thread_id };
+  return null;
 }
 
 export class Engine {
@@ -389,13 +399,11 @@ export class Engine {
     const post = this.projects.post(key, { body, parentId, author: "human" });
     const ticket = store.ticketByKey(key)!;
     const where = parentId === undefined ? "" : ` (answering #${parentId})`;
-    const worker = ticket.state === "working" && ticket.worker_thread_id !== null ? store.threadByThreadId(ticket.worker_thread_id) : null;
-    // A blocked ticket has no worker, and triage rounds go out only when a ticket blocks, so the planner hears the reply now.
-    const planner = ticket.state === "blocked" ? store.threads({ projectId: ticket.project_id, role: "planner", states: ["active"] })[0] : undefined;
-    if (worker?.state === "active" && worker.thread_id !== null) {
-      await bb.send(worker.thread_id, { summary: `[loom] Reply on ${key} from the human`, detail: `${post.body}${where}` }).catch((error) => this.warn(`reply to ${worker.thread_id}`, error));
-    } else if (planner?.thread_id != null) {
-      await bb.send(planner.thread_id, blockedReplyText(key, `${post.body}${where}`)).catch((error) => this.warn(`reply to ${planner.thread_id}`, error));
+    const to = replyRecipient(store, ticket);
+    if (to?.role === "worker") {
+      await bb.send(to.threadId, { summary: `[loom] Reply on ${key} from the human`, detail: `${post.body}${where}` }).catch((error) => this.warn(`reply to ${to.threadId}`, error));
+    } else if (to?.role === "planner") {
+      await bb.send(to.threadId, blockedReplyText(key, `${post.body}${where}`)).catch((error) => this.warn(`reply to ${to.threadId}`, error));
     }
     this.kick();
     return post;

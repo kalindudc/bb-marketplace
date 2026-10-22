@@ -187,7 +187,7 @@ export function LoomPage({ subPath }: PluginNavPanelProps) {
           </span>
         ))}
       </nav>
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div data-loom-scroll className="min-h-0 flex-1 overflow-y-auto">
         {route.view === "home" && <Home go={go} />}
         {route.view === "guide" && <Guide onStart={() => go("_new")} />}
         {route.view === "new" && <NewProject go={go} />}

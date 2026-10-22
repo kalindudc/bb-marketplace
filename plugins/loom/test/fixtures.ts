@@ -1,4 +1,4 @@
-import type { AgentRow, BoardCard, FeedRow, HomeProject, HomeView, ProjectHealth, ProjectSummary, ProjectView, SpecVersionView, TicketDetail } from "../src/contract";
+import type { AgentRow, Attempt, BoardCard, FeedRow, HomeProject, HomeView, ProjectHealth, ProjectSummary, ProjectView, SpecVersionView, TicketDetail } from "../src/contract";
 import type { ProjectMetrics } from "../src/metrics";
 import { parseSpec } from "../src/spec";
 import { TICKET_STATES, type TicketState } from "../src/states";
@@ -158,6 +158,19 @@ export const projectView = (over: Partial<ProjectView> = {}): ProjectView => ({
   ...over,
 });
 
+export const attempt = (over: Partial<Attempt> = {}): Attempt => ({
+  n: 1,
+  claimPostId: 2,
+  threadId: "thr_w1",
+  startedAt: NOW - 5 * HOUR,
+  endedAt: null,
+  outcome: "in_progress",
+  line: null,
+  pipeline: { work: "running", checks: [], review: [], merge: [] },
+  items: [],
+  ...over,
+});
+
 export const ticketDetail = (over: Partial<TicketDetail> = {}): TicketDetail => ({
   slug: "csv",
   projectState: "running",
@@ -179,7 +192,10 @@ export const ticketDetail = (over: Partial<TicketDetail> = {}): TicketDetail => 
   posts: [{ id: 1, parentId: null, depth: 0, authorKind: "planner", authorThreadId: "thr_plan", kind: "brief", body: "Serve the file.", at: NOW - 6 * HOUR }],
   reviews: [],
   threads: [{ threadId: "thr_w1", role: "worker", attempt: 1, reviewRound: 0, state: "active", startedAt: NOW - 5 * HOUR, endedAt: null, endReason: null }],
-  timeline: [],
+  depsDone: [],
+  replyTo: "worker",
+  stoppedFrom: null,
+  activity: { brief: { postId: 1, at: NOW - 6 * HOUR, edits: 0, fields: [] }, before: [], attempts: [attempt()] },
   ...over,
 });
 

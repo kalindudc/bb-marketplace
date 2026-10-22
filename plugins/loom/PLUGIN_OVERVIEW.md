@@ -11,7 +11,7 @@ Run a software project with agents: a planner turns a goal into a validated spec
 - Controls with a second click: a next-step bar on every project says what happens next and carries the one button you need now; start, pause, resume, land and archive a project; requeue, block or cancel a ticket; reply to a worker. Each is logged as your action. Approving the planner's fixed spec requeues the tickets whose worker or reviewer bb could not start.
 - A header chip such as `CSV-3 · review` on worker, reviewer and planner threads that opens the ticket on the page, and a Planning chip on a planning conversation that opens it there.
 - Questions the planner asks with Ask User Question appear above its chat on the page, where you answer them, and the Loom icon in the navigation rail counts what needs you.
-- A timeline on every ticket: each check command with its output, each git step of the merge, each verdict, and every thread, ended ones included.
+- A ticket page that reads at a glance: its stage and a summary, each attempt as a card with its checks, review findings and merge, and its brief.
 - `bb loom metrics` and `bb loom feed` print the same numbers and events, with `--json` for scripts and agents.
 
 ## How it works
