@@ -1843,7 +1843,7 @@ describe("changes tab", () => {
   afterEach(() => localStorage.clear());
   const [A, B, C] = ["a".repeat(40), "b".repeat(40), "c".repeat(40)];
   const changed = (path: string, over: Partial<ChangedFile> = {}): ChangedFile => ({ path, previousPath: null, status: "modified", additions: 3, deletions: 1, binary: false, untracked: false, fingerprint: `blob-${path}`, tickets: [], ...over });
-  const source = (over: Partial<ChangeSource>): ChangeSource => ({ id: "branch", kind: "branch", key: null, title: null, state: null, base: A, head: C, against: "origin/main", at: null, attempt: 0, reviewRound: 0, files: [], truncated: false, note: null, gone: false, ...over });
+  const source = (over: Partial<ChangeSource>): ChangeSource => ({ id: "branch", kind: "branch", repo: null, key: null, title: null, state: null, base: A, head: C, against: "origin/main", at: null, attempt: 0, reviewRound: 0, files: [], truncated: false, note: null, gone: false, ...over });
   const changesView = (over: Partial<ChangesView> = {}): ChangesView => ({
     slug: "csv",
     strategy: "integration",
@@ -1851,6 +1851,7 @@ describe("changes tab", () => {
     remoteBase: "origin/main",
     branch: "loom/csv",
     finished: false,
+    repos: [{ name: null, base: "main", remoteBase: "origin/main", branch: "loom/csv", unavailable: null }],
     unavailable: null,
     sources: [
       source({ files: [changed("src/a.ts", { tickets: ["CSV-1"] }), changed("src/b.ts", { status: "added", tickets: ["CSV-1"] })] }),

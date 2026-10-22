@@ -6,6 +6,7 @@ import type { BbPluginApi, NewThreadRequest } from "@get-bb/plugin-sdk";
 import { notesMessage } from "../src/prompts";
 import { agentRows, boardCards, registerRpc, specSummary, watchChanges } from "../src/rpc";
 import { START_FAILED, specOf } from "../src/workers";
+import { withRepos } from "./fixtures";
 import { FakePort, makeCtx, makeHost, seedProject, specToml, startWorker, type Doc } from "./helpers";
 
 let host: ReturnType<typeof makeHost>;
@@ -59,6 +60,32 @@ describe("reads", () => {
     expect(await call("changePatch", { slug: "csv", path: "src/a.ts", base, head })).toMatchObject({ truncated: false });
     expect(host.hostPort.callsTo("filePatch")).toEqual([{ repo: "/repo", base, head, path: "src/a.ts", maxBytes: 400_000 }]);
     await expect(call("changePatch", { slug: "csv", path: "src/a.ts", base: "main", head })).rejects.toThrow();
+  });
+
+  it("changes and changePatch read each repo of a multi-repo project in its own checkout, and changePatch takes the repo", async () => {
+    fake.addBbProject("proj_web", { host_env: "/src/web" });
+    fake.addBbProject("proj_api", { host_env: "/src/api" });
+    await approved(withRepos);
+    const view = await call<ChangesView>("changes", { slug: "csv" });
+    expect(view.repos.map((repo) => [repo.name, repo.remoteBase, repo.unavailable])).toEqual([
+      ["web", "origin/main", null],
+      ["api", "upstream/trunk", null],
+    ]);
+    expect(view.sources.map((source) => [source.id, source.repo])).toEqual([
+      ["branch:web", "web"],
+      ["branch:api", "api"],
+      ["commit:CSV-1", "web"],
+      ["commit:CSV-2", "api"],
+    ]);
+    const [base, head] = ["a".repeat(40), "b".repeat(40)];
+    expect(await call("changePatch", { slug: "csv", path: "src/a.ts", base, head, repo: "api" })).toMatchObject({ truncated: false });
+    expect(host.hostPort.callsTo("filePatch")).toEqual([{ repo: "/src/api", base, head, path: "src/a.ts", maxBytes: 400_000 }]);
+    await expect(call("changePatch", { slug: "csv", path: "src/a.ts", base, head })).rejects.toThrow("needs the repo it is read in: one of web, api");
+    await expect(call("changePatch", { slug: "csv", path: "src/a.ts", base, head, repo: "ios" })).rejects.toThrow('has no repo "ios"; its repos are web, api.');
+    // A working ticket's patch ignores the repo, so only the contract refuses a name that is not a [[repo]] name.
+    expect(await call("changePatch", { slug: "csv", path: "src/a.ts", key: "CSV-1", repo: "web" })).toEqual({ patch: null, message: "CSV-1 has no worktree now." });
+    await expect(call("changePatch", { slug: "csv", path: "src/a.ts", key: "CSV-1", repo: "Web App" })).rejects.toThrow();
+    expect(host.hostPort.callsTo("filePatch")).toHaveLength(1);
   });
 
   it("projects lists the project summaries", async () => {

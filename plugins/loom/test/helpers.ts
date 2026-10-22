@@ -265,7 +265,7 @@ export class FakeHost implements HostPort {
   /** The merges made in each worktree, oldest first: what `merge` reports as already merged, and what `resetHard` undoes. */
   merges = new Map<string, Array<{ ref: string; before: string; sha: string }>>();
   prStates = new Map<string, "OPEN" | "MERGED" | "CLOSED">();
-  /** What changedFiles lists, by "base..head"; a missing entry lists no files. */
+  /** What changedFiles lists, by "<repo>:base..head" for one checkout or "base..head" for any; a missing entry lists no files. */
   listings = new Map<string, HostOutput<"changedFiles">>();
   /** The tip fetchBranch reports for the remote's base branch. Every integration branch starts at base000, so base000 means it has not moved. */
   remoteBase = "base000";
@@ -369,8 +369,8 @@ export class FakeHost implements HostPort {
       case "prState":
         return { outcome: "ok", state: this.prStates.get((input as HostInput<"prState">).url) ?? "OPEN" };
       case "changedFiles": {
-        const { base, head } = input as HostInput<"changedFiles">;
-        return this.listings.get(`${base}..${head}`) ?? { outcome: "ok", base, head, files: [], truncated: false };
+        const { repo, base, head } = input as HostInput<"changedFiles">;
+        return this.listings.get(`${repo}:${base}..${head}`) ?? this.listings.get(`${base}..${head}`) ?? { outcome: "ok", base, head, files: [], truncated: false };
       }
       case "filePatch": {
         const { path } = input as HostInput<"filePatch">;
