@@ -1,0 +1,236 @@
+// A project's record, built from its board, and its delivery to the done hook the user sets in Loom's settings.
+// Loom only runs the user's command; what the command does with the record is the user's choice.
+import type { PluginSettingDescriptors } from "@get-bb/plugin-sdk";
+import { z } from "zod";
+import type { PostRow, ProjectRow, RecordRow, Store, TicketRow } from "./db/store";
+import { checkoutOf } from "./merge";
+import type { ThreadInfo } from "./ports";
+import { clip, recordPrompt } from "./prompts";
+import { LoomError } from "./projects";
+import type { Spec } from "./spec";
+import { LOOM_ACTOR } from "./states";
+import { freshBase, specOf, type EngineCtx } from "./workers";
+
+export const SETTINGS = {
+  doneHook: {
+    type: "string",
+    label: "Done hook",
+    description:
+      "A shell command Loom runs once when a project finishes, in the project's checkout on its machine, with a 2-minute limit. It reads the project's record (or its summary) on standard input and gets LOOM_PROJECT_SLUG, LOOM_PROJECT_NAME, LOOM_PROJECT_KEY, LOOM_PROJECT_URL and LOOM_RECORD (summary or full). Empty turns it off. `bb loom report <slug> --send` runs it again for a finished project.",
+    default: "",
+    experimental_schema: z.string().max(4000),
+  },
+  doneRecord: {
+    type: "select",
+    label: "What the done hook reads",
+    description:
+      "A summary starts one agent on the project's reviewer model, only when a done hook is set; if it cannot finish in 30 minutes, the hook reads the full record instead.",
+    options: ["summary", "full"],
+    default: "summary",
+    experimental_optionLabels: { summary: "A summary an agent writes from the record", full: "The full record" },
+  },
+} satisfies PluginSettingDescriptors;
+
+export type DoneSettings = { doneHook: string; doneRecord: string };
+export const NO_HOOK: DoneSettings = { doneHook: "", doneRecord: "summary" };
+
+export const RECORD_MAX = 300_000;
+export const HOOK_TIMEOUT_MS = 120_000;
+export const SUMMARY_TIMEOUT_MS = 30 * 60_000;
+
+const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
+const minute = (at: number) => `${new Date(at).toISOString().slice(0, 16).replace("T", " ")}Z`;
+/** The posts a person needs later: what was handed in, judged and merged, what blocked it, and what the planner and the human said. */
+const KEPT: ReadonlySet<PostRow["kind"]> = new Set(["submit", "review", "merge", "block"]);
+const keep = (post: PostRow) => KEPT.has(post.kind) || ((post.kind === "reply" || post.kind === "system") && (post.author_kind === "human" || post.author_kind === "planner"));
+
+/** The spec in force, or the latest proposal of a project not yet approved. */
+function specFor(store: Store, project: ProjectRow): Spec {
+  const version = project.approved_version ?? store.latestSpecVersion(project.id)?.version ?? null;
+  const row = version === null ? null : store.specVersion(project.id, version);
+  if (row === null) throw new LoomError("loom_invalid_state", `Project ${project.slug} has no spec.`);
+  return JSON.parse(row.spec_json) as Spec;
+}
+
+function outcome(store: Store, project: ProjectRow, spec: Spec): string {
+  if (spec.merge.strategy === "pr") return "One pull request per ticket; each ticket below names its own.";
+  const landed = store.eventsOfKind(project.id, "project.landed").at(-1);
+  if (landed === undefined) return `Not landed yet: the work is on the integration branch ${spec.merge.branch}.`;
+  const data = JSON.parse(landed.data_json) as { direct?: boolean; pushed?: string; sha?: string; url?: string };
+  return data.direct === true ? `Pushed to ${data.pushed} at ${String(data.sha).slice(0, 12)}, ${minute(landed.at)}.` : `Landed as ${data.url}, ${minute(landed.at)}.`;
+}
+
+function ticketSection(store: Store, ticket: TicketRow): string[] {
+  const acceptance = JSON.parse(ticket.acceptance_json) as string[];
+  const lines = [`### ${ticket.key} · ${ticket.title} (${ticket.state})`, "", ticket.body, ""];
+  if (ticket.pr_url !== null) lines.push(`Pull request: ${ticket.pr_url}`, "");
+  if (acceptance.length > 0) lines.push("Acceptance criteria:", ...acceptance.map((line, index) => `${index + 1}. ${line}`), "");
+  for (const post of store.posts(ticket.id).filter(keep)) lines.push(`#### ${post.kind} · ${post.author_kind} · ${minute(post.at)}`, "", post.body.trim(), "");
+  return lines;
+}
+
+/** The project's record as Markdown, from its spec, tickets, posts and events; it works in any project state. */
+export function projectRecord(store: Store, project: ProjectRow): string {
+  const spec = specFor(store, project);
+  const tickets = store.tickets(project.id);
+  const counts = new Map<string, number>();
+  for (const ticket of tickets) counts.set(ticket.state, (counts.get(ticket.state) ?? 0) + 1);
+  const tally = [...counts].map(([state, count]) => `${count} ${state}`).join(", ");
+  const lines = [
+    `# ${project.name} (${project.slug})`,
+    "",
+    `Loom project ${project.key}, ${project.state}, base branch ${spec.project.base}. ${tickets.length} ${tickets.length === 1 ? "ticket" : "tickets"}${tally === "" ? "" : `: ${tally}`}.`,
+    "",
+    "## Goal",
+    "",
+    spec.project.goal,
+    "",
+    "## Outcome",
+    "",
+    outcome(store, project, spec),
+    "",
+    "## Tickets",
+    "",
+    ...tickets.flatMap((ticket) => ticketSection(store, ticket)),
+  ];
+  return clip(`${lines.join("\n").trimEnd()}\n`, RECORD_MAX);
+}
+
+// ---------------------------------------------------------------- delivery
+
+const inflightByStore = new WeakMap<Store, Map<number, Promise<void>>>();
+const inflightOf = (store: Store) => inflightByStore.get(store) ?? inflightByStore.set(store, new Map()).get(store)!;
+
+/** Waits for every delivery in flight. For tests. */
+export async function settleRecords(ctx: EngineCtx): Promise<void> {
+  const running = inflightOf(ctx.store);
+  while (running.size > 0) await Promise.all([...running.values()]);
+}
+
+/** Moves each open record one step on, without waiting: a slow hook or summary never holds up the engine's pass. */
+export function sendRecords(ctx: EngineCtx, settings: DoneSettings): void {
+  const running = inflightOf(ctx.store);
+  for (const row of ctx.store.openRecords()) {
+    if (running.has(row.project_id)) continue;
+    const run = deliver(ctx, row, settings)
+      .catch((error) => ctx.bb.log("error", `The record of project ${row.project_id} failed: ${errText(error)}`))
+      .finally(() => running.delete(row.project_id));
+    running.set(row.project_id, run);
+  }
+}
+
+async function deliver(ctx: EngineCtx, row: RecordRow, settings: DoneSettings): Promise<void> {
+  const { store } = ctx;
+  const project = store.project(row.project_id)!;
+  if (row.state === "sending") {
+    // Nothing in this process is sending it, so an earlier process was, and its hook may or may not have finished.
+    return settle(ctx, row.id, project, { kind: "unknown", reason: `Loom restarted while the done hook ran, so it may not have finished; run \`bb loom report ${project.slug} --send\` to send it again` });
+  }
+  if (settings.doneHook.trim() === "") {
+    if (row.thread_id !== null) await endAgent(ctx, await ctx.bb.getThread(row.thread_id));
+    store.updateRecord(row.id, { state: "skipped" });
+    store.changed(project.id);
+    return;
+  }
+  if (row.state === "pending") {
+    if (settings.doneRecord === "full") return runHook(ctx, row.id, project, settings, "full", projectRecord(store, project));
+    return startSummary(ctx, row, project, settings);
+  }
+  return pollSummary(ctx, row, project, settings);
+}
+
+async function startSummary(ctx: EngineCtx, row: RecordRow, project: ProjectRow, settings: DoneSettings): Promise<void> {
+  const { store } = ctx;
+  const spec = specOf(store, project);
+  // Marked before the spawn, so a restart during it sends the full record instead of starting a second agent.
+  store.updateRecord(row.id, { state: "summarizing", started_at: ctx.now() });
+  const agent = spec.agents.reviewer;
+  let threadId: string;
+  try {
+    if (project.host_id === null) throw new Error("the project has no machine");
+    ({ threadId } = await ctx.bb.spawnThread({
+      bbProjectId: project.bb_project_id,
+      hostId: project.host_id,
+      baseBranch: freshBase(spec),
+      title: `${project.key} · record`,
+      prompt: recordPrompt(project),
+      detail: projectRecord(store, project),
+      sectionId: project.section_id,
+      metadata: { project: project.slug, role: "record" },
+      providerId: agent.provider,
+      model: agent.model,
+      reasoningLevel: agent.reasoning,
+      permissionMode: agent.permission_mode,
+    }));
+  } catch (error) {
+    return fullRecord(ctx, row.id, project, settings, `the summary agent could not start: ${errText(error)}`);
+  }
+  store.updateRecord(row.id, { thread_id: threadId });
+  store.changed(project.id);
+}
+
+async function pollSummary(ctx: EngineCtx, row: RecordRow, project: ProjectRow, settings: DoneSettings): Promise<void> {
+  if (row.thread_id === null) return fullRecord(ctx, row.id, project, settings, "Loom restarted before the summary agent started");
+  const thread = await ctx.bb.getThread(row.thread_id);
+  if (thread === null || thread.archivedAt !== null || thread.deletedAt !== null) return fullRecord(ctx, row.id, project, settings, "the summary agent's thread is gone");
+  if (thread.status === "error") {
+    await endAgent(ctx, thread);
+    return fullRecord(ctx, row.id, project, settings, "the summary agent failed");
+  }
+  if (thread.status === "idle") {
+    const summary = ((await ctx.bb.threadOutput(thread.id)) ?? "").trim();
+    if (summary !== "") {
+      await endAgent(ctx, thread);
+      return runHook(ctx, row.id, project, settings, "summary", summary);
+    }
+  }
+  if (ctx.now() - (row.started_at ?? 0) > SUMMARY_TIMEOUT_MS) {
+    await endAgent(ctx, thread);
+    return fullRecord(ctx, row.id, project, settings, "the summary agent took longer than 30 minutes");
+  }
+}
+
+/** Stops a live summary agent and archives it, so none keeps running after its record is sent. Cleanup never blocks the send. */
+async function endAgent(ctx: EngineCtx, thread: ThreadInfo | null): Promise<void> {
+  if (thread === null || thread.archivedAt !== null || thread.deletedAt !== null) return;
+  try {
+    if (thread.status !== "idle" && thread.status !== "error") await ctx.bb.stop(thread.id);
+    await ctx.bb.archive(thread.id);
+  } catch (error) {
+    ctx.bb.log("warn", `Could not end the summary agent ${thread.id}: ${errText(error)}`);
+  }
+}
+
+const fullRecord = (ctx: EngineCtx, rowId: number, project: ProjectRow, settings: DoneSettings, why: string) =>
+  runHook(ctx, rowId, project, settings, "full", projectRecord(ctx.store, project), why);
+
+async function runHook(ctx: EngineCtx, rowId: number, project: ProjectRow, settings: DoneSettings, kind: "summary" | "full", text: string, fallback?: string): Promise<void> {
+  const { store } = ctx;
+  const command = settings.doneHook.trim();
+  store.updateRecord(rowId, { state: "sending" });
+  store.changed(project.id);
+  const env = { LOOM_PROJECT_SLUG: project.slug, LOOM_PROJECT_NAME: project.name, LOOM_PROJECT_KEY: project.key, LOOM_PROJECT_URL: project.pr_url ?? "", LOOM_RECORD: kind };
+  let reason: string | null;
+  try {
+    const { hostId, repo } = await checkoutOf(ctx, project);
+    const result = await ctx.host.call(hostId, "exec", { cwd: repo, command, timeoutMs: HOOK_TIMEOUT_MS, stdin: clip(text, RECORD_MAX), env });
+    const output = result.output.trim() === "" ? "" : `: ${clip(result.output.trim().slice(-300), 300)}`;
+    reason = result.timedOut ? "it timed out after 2 minutes" : result.exitCode === 0 ? null : result.exitCode === null ? `it was killed${output}` : `it exited with ${result.exitCode}${output}`;
+  } catch (error) {
+    reason = errText(error);
+  }
+  settle(ctx, rowId, project, reason === null ? { kind, fallback } : { kind, reason });
+}
+
+function settle(ctx: EngineCtx, rowId: number, project: ProjectRow, result: { kind: string; fallback?: string; reason?: string }): void {
+  const { store } = ctx;
+  store.tx(() => {
+    if (result.reason === undefined) {
+      store.updateRecord(rowId, { state: "sent" });
+      store.event(project.id, null, "record.sent", LOOM_ACTOR, { kind: result.kind, ...(result.fallback === undefined ? {} : { fallback: result.fallback }) });
+    } else {
+      store.updateRecord(rowId, { state: "failed" });
+      store.event(project.id, null, "record.failed", LOOM_ACTOR, { kind: result.kind, reason: result.reason });
+    }
+  });
+}

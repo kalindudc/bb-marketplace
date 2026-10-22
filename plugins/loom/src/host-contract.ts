@@ -30,7 +30,15 @@ export const hostContract = defineRpcContract({
     output: z.object({ sha, committed: z.boolean() }).strict(),
   },
   exec: {
-    input: z.object({ cwd: absPath, command: z.string().min(1).max(4096), timeoutMs: z.number().int().min(1000).max(1_770_000) }).strict(),
+    input: z
+      .object({
+        cwd: absPath,
+        command: z.string().min(1).max(4096),
+        timeoutMs: z.number().int().min(1000).max(1_770_000),
+        stdin: z.string().max(400_000).optional(),
+        env: z.record(z.string().regex(/^LOOM_[A-Z_]{1,40}$/), z.string().max(2000)).optional(),
+      })
+      .strict(),
     output: z.object({ exitCode: z.number().int().nullable(), timedOut: z.boolean(), durationMs: z.number(), output: z.string() }).strict(),
   },
   diff: {

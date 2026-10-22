@@ -34,6 +34,25 @@ describe("the plugin's own documents", () => {
     expect(readme).not.toMatch(/last step|third of four|comes in the last/);
   });
 
+  it("README and the loom skill describe the report and the done hook", () => {
+    for (const path of ["README.md", "skills/loom/SKILL.md"]) {
+      const text = read(path);
+      for (const phrase of ["bb loom report", "done hook"]) expect(text, `${path}: ${phrase}`).toContain(phrase);
+    }
+    const readme = read("README.md");
+    for (const phrase of ["doneHook", "doneRecord", "LOOM_PROJECT_SLUG", "LOOM_PROJECT_NAME", "LOOM_PROJECT_KEY", "LOOM_PROJECT_URL", "LOOM_RECORD"]) expect(readme, phrase).toContain(phrase);
+  });
+
+  it("names no notes tool outside the README: the done hook is the user's command", () => {
+    const sources = readdirSync(new URL("../src/", import.meta.url), { recursive: true, encoding: "utf8" })
+      .filter((path) => /\.tsx?$/.test(path))
+      .map((path) => `src/${path}`);
+    const skills = readdirSync(new URL("../skills/", import.meta.url), { recursive: true, encoding: "utf8" })
+      .filter((path) => path.endsWith(".md"))
+      .map((path) => `skills/${path}`);
+    for (const path of [...sources, ...skills, "server.ts", "host.ts", "app.tsx"]) expect(read(path), path).not.toMatch(/cortex/i);
+  });
+
   it("PLUGIN_OVERVIEW is under 4000 characters and has no title", () => {
     const overview = read("PLUGIN_OVERVIEW.md");
     expect(overview.length).toBeLessThan(4000);

@@ -11,6 +11,7 @@ import { settleChecks, submit } from "../src/checks";
 import { Engine } from "../src/engine";
 import { approve, settleReviews, spawnReviewers } from "../src/review";
 import { Projects } from "../src/projects";
+import type { DoneSettings } from "../src/record";
 import { specOf, spawnWorker, type EngineCtx } from "../src/workers";
 import { SectionNameConflictError, type BbPort, type EnvironmentInfo, type HostPort, type SpawnArgs, type ThreadInfo } from "../src/ports";
 
@@ -187,6 +188,12 @@ export class FakePort implements BbPort {
   async waitingOnUser(threadIds: readonly string[]) {
     this.record("waitingOnUser", [...threadIds]);
     return threadIds.filter((id) => this.waiting.has(id));
+  }
+  /** Each thread's final output. */
+  outputs = new Map<string, string>();
+  async threadOutput(threadId: string) {
+    this.record("threadOutput", threadId);
+    return this.outputs.get(threadId) ?? null;
   }
   /** Registers a thread bb knows about, such as the planner's. */
   addThread(id: string, status = "idle", environmentId: string | null = null) {
@@ -381,7 +388,7 @@ export function sdkStubs(state: SdkState): FakeSdkOverrides {
  * A fake bb host, with the real adapter over stubbed sdk calls unless a port is given; tests register the tools or CLI they exercise.
  * The engine runs over a FakeHost, and its kick is a no-op so nothing runs in the background.
  */
-export function makeHost(opts: { port?: BbPort } = {}) {
+export function makeHost(opts: { port?: BbPort; settings?: () => DoneSettings } = {}) {
   const state: SdkState = { sections: [], takenNames: new Set(), environmentId: "env_1", environmentHost: "host_env", primaryHostId: "host_primary" };
   const { bb, harness } = createFakePluginHost({ pluginId: "loom", agentSkillIds: ["loom-plan", "loom"], sdk: sdkStubs(state) });
   const db = bb.storage.database();
@@ -390,7 +397,7 @@ export function makeHost(opts: { port?: BbPort } = {}) {
   const port = opts.port ?? createBbPort(bb);
   const projects = new Projects({ store, bb: port, now: Date.now });
   const hostPort = new FakeHost();
-  const engine = new Engine({ store, bb: port, now: Date.now, host: hostPort, projects });
+  const engine = new Engine({ store, bb: port, now: Date.now, host: hostPort, projects, settings: opts.settings });
   vi.spyOn(engine, "kick").mockImplementation(() => undefined);
   return { bb, harness, state, store, projects, engine, hostPort };
 }

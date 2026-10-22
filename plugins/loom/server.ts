@@ -8,6 +8,7 @@ import { Store } from "./src/db/store";
 import { Engine } from "./src/engine";
 import type { BbPort, HostPort } from "./src/ports";
 import { Projects } from "./src/projects";
+import { SETTINGS } from "./src/record";
 import { registerRpc, watchChanges } from "./src/rpc";
 import { registerTools } from "./src/tools";
 
@@ -31,8 +32,13 @@ export function createLoomPlugin(deps: PluginDeps = {}) {
     // Nothing in this process has started a run yet, so every open run belongs to an earlier one.
     store.endOpenRuns("Loom restarted before this step finished.");
     const port = deps.port ? deps.port(bb) : createBbPort(bb);
+    const settings = bb.settings.define(SETTINGS);
+    let done = await settings.get();
+    settings.onChange((next) => {
+      done = next;
+    });
     const projects = new Projects({ store, bb: port, now });
-    const engine = new Engine({ store, bb: port, now, host: deps.host ? deps.host(bb) : createHostPort(bb), projects });
+    const engine = new Engine({ store, bb: port, now, host: deps.host ? deps.host(bb) : createHostPort(bb), projects, settings: () => done });
     let disposed = false;
     const stopWatching = watchChanges(bb, store);
     bb.onDispose(async () => {

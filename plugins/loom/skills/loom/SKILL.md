@@ -18,6 +18,7 @@ Once a project runs, the plugin starts worker agents by itself, one per ready ti
     bb loom ticket <KEY>                          # a ticket and its reply thread, indented by reply depth
     bb loom metrics <slug> [--days N]             # flow and agent metrics, one line each, with units; --days sets the window (default 14)
     bb loom feed <slug> [--after <id>]            # the newest events as sentences, oldest first
+    bb loom report <slug> [--send]                # the project's record as Markdown; --send runs the done hook again (human only)
     bb loom post <KEY> <text> [--reply-to <id>]   # the human's reply on a ticket; a worker that holds it gets it as a message, or the planner when it is blocked (human only)
     bb loom block <KEY> <reason>                  # block a ticket; its worker is stopped (human only)
     bb loom requeue <KEY> [--note <text>]         # send a blocked ticket back to the queue (human only)
@@ -117,7 +118,7 @@ Under both strategies a ticket that depends on another starts only after it is d
 
 ## Landing
 
-`bb loom land <slug>` is the human's step on the integration strategy. It pushes the integration branch and opens one pull request to the base branch, with the project's goal and the merged tickets in its description (a draft unless `--ready`, titled with `--title` or the project name). Running it again pushes the new commits to the same pull request. It refuses while a ticket is merging or when no ticket is done yet. When every ticket is done or cancelled the project is done. `bb loom land <slug> --direct` lands with no pull request instead: it waits while a worker's worktree is still being created, fetches the base branch from the merge remote into Loom's own worktree, merges it into the integration branch when it moved (refusing on a conflict, with the files), runs the `after_merge` checks on the result (refusing and resetting the branch when one fails, with its output), and pushes to the base branch without force. No new worker starts while it runs, and block and cancel wait for it. `--title` and `--ready` do not go with `--direct`. On the page, "Land to <base>" beside Land does the same. The plugin pushes to the base branch only when the human lands with `--direct`, and nothing is pushed on the integration strategy until the human lands. Agents never push, merge or land: tell the human to run `bb loom land`.
+`bb loom land <slug>` is the human's step on the integration strategy. It pushes the integration branch and opens one pull request to the base branch, with the project's goal and the merged tickets in its description (a draft unless `--ready`, titled with `--title` or the project name). Running it again pushes the new commits to the same pull request. It refuses while a ticket is merging or when no ticket is done yet. When every ticket is done or cancelled the project is done. `bb loom land <slug> --direct` lands with no pull request instead: it waits while a worker's worktree is still being created, fetches the base branch from the merge remote into Loom's own worktree, merges it into the integration branch when it moved (refusing on a conflict, with the files), runs the `after_merge` checks on the result (refusing and resetting the branch when one fails, with its output), and pushes to the base branch without force. No new worker starts while it runs, and block and cancel wait for it. `--title` and `--ready` do not go with `--direct`. On the page, "Land to <base>" beside Land does the same. The plugin pushes to the base branch only when the human lands with `--direct`, and nothing is pushed on the integration strategy until the human lands. Agents never push, merge or land: tell the human to run `bb loom land`. When a project finishes, Loom sends its record, or an agent's summary of it, to the done hook the human set in Loom's settings; agents never run `bb loom report --send`.
 
 ## Blocked tickets
 
@@ -173,6 +174,6 @@ Use the numbers to say where work piles up: a growing queue means too few ready 
 
 - NEVER run `post`, `block`, `requeue`, `cancel`, `approve`, `start`, `pause`, `resume`, `archive` or `land` from a Loom planner, worker or reviewer thread. They are refused with `loom_human_only`. When the human needs to act, say which command.
 - A worker works only in its worktree, never pushes or merges, never edits a protected path, and never runs `bb loom` commands other than the read commands. A reviewer changes nothing and commits nothing.
-- Read commands (`list`, `show`, `spec`, `tickets`, `ticket`, `metrics`, `feed`) are fine for everyone.
+- Read commands (`list`, `show`, `spec`, `tickets`, `ticket`, `metrics`, `feed`, and `report` without `--send`) are fine for everyone.
 - Do not edit the plugin's database or work around a refusal. If a state looks wrong, tell the human.
 - The spec format, defaults and the list of errors and warnings are in `references/spec.md`.

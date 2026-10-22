@@ -60,6 +60,12 @@ export function feedText(event: EventRow, keys: Map<number, string>): string {
       const target = text(data.key);
       return `The human ran ${data.action}${target === null ? "" : ` on ${target}`}.`;
     }
+    case "record.sent": {
+      const why = text(data.fallback);
+      return `The project's ${data.kind === "summary" ? "summary" : "full record"} was sent to the done hook${why === null ? "." : `, because ${why}.`}`;
+    }
+    case "record.failed":
+      return `The done hook failed: ${data.reason}.`;
     default:
       return `${event.kind} by ${event.actor}.`;
   }

@@ -4,6 +4,7 @@ import type { Approved, Engine } from "./engine";
 import { formatDuration, its, noTokenUsage, plural, readyToLand } from "./format";
 import type { ProjectMetrics } from "./metrics";
 import { LoomError, type ProjectOverview, type Projects, type SpecView, type TicketSummary, type TicketView } from "./projects";
+import { projectRecord } from "./record";
 import { projectFeed, projectMetrics } from "./reports";
 import { HUMAN_ACTOR, TICKET_STATES } from "./states";
 
@@ -256,6 +257,21 @@ export function createCli(projects: Projects, engine: Engine, store: Store, now:
             const feed = projectFeed(store, projects.require(positionals.slug), options.after);
             if (options.json) return out(toJson(feed));
             return out(feed.rows.length === 0 ? "No events.\n" : `${feed.rows.map((row) => `${minute(row.at)}  ${row.text}`).join("\n")}\n`);
+          }),
+      }),
+      report: cliCommand({
+        summary: "Print a project's record as Markdown: goal, outcome, and each ticket's submits, reviews, merges, blocks and replies; --send runs Loom's done hook with it again (human only)",
+        positionals: [SLUG],
+        options: { send: { type: "boolean", description: "Queue a finished project's record for the done hook in Loom's settings, as when it finished." }, json },
+        run: ({ options, positionals }, ctx) =>
+          guarded(async () => {
+            const { slug } = positionals;
+            if (options.send !== true) {
+              const markdown = projectRecord(store, projects.require(slug));
+              return out(options.json ? toJson({ slug, markdown }) : markdown);
+            }
+            await humanAction(deps, ctx, "report", { slug, send: true }, () => engine.sendRecord(slug));
+            return out(options.json ? toJson({ slug, queued: true }) : `Queued the record of ${slug} for the done hook. The feed says when it is sent.\n`);
           }),
       }),
       post: cliCommand({
