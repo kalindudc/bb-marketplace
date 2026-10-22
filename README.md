@@ -33,6 +33,7 @@ plugin store.
 | [Vantage](plugins/vantage) | `vantage` | Adds a thread side-panel tab for parallel agents: every child worktree with status, branch and changes, a drill-in with diffs, commits, chat and a terminal, and a by-repository view of everything the thread tree changed. `bb vantage` prints the same for agents. A full-screen page in the left navigation covers every recent thread. |
 | [LAN Connect](plugins/lan-connect) | `lan-connect` | Opens this bb to phones and laptops on your home network: pair a device once with a code or QR code, then use bb in its browser at `<computer>.local`, its LAN IP or your own name. No bb account needed. |
 | [Loom](plugins/loom) | `loom` | Run a software project with agents: a planner turns a goal into a validated spec and tickets, workers pick up tickets in their own worktrees, separate reviewers approve or request changes, and approved work merges into an integration branch or opens a pull request. |
+| [Retitle](plugins/retitle) | `retitle` | Titles threads that bb's automatic titling left untitled (it gives up after 8 seconds), using the Shopify AI proxy and only the text you typed, so `!plan` threads get a title for the work. `bb retitle` titles any thread again or backfills untitled ones. |
 
 ## Layout
 

@@ -1,0 +1,37 @@
+{
+  "name": "bb-plugin-retitle",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "bb": ">=0.46",
+    "bbPluginSdk": ">=0.6.49"
+  },
+  "bb": {
+    "name": "Retitle",
+    "description": "Titles threads that bb's automatic titling leaves untitled, using the Shopify AI proxy, and adds `bb retitle` to title any thread again or backfill untitled ones.",
+    "branding": {
+      "icon": "Edit"
+    },
+    "server": "./server.ts",
+    "skills": [
+      "./skills"
+    ]
+  },
+  "scripts": {
+    "build": "bb plugin build",
+    "test": "vitest run",
+    "typecheck": "tsc"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.6.49",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.3.0",
+    "better-sqlite3": "^12.10.0",
+    "cron-parser": "^5.10.2",
+    "hono": "^4.13.13",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.12"
+  }
+}
