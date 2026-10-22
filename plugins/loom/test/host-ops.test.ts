@@ -201,6 +201,27 @@ describe("exec", () => {
     expect(result.timedOut).toBe(false);
     expect(result.exitCode).not.toBe(0);
   });
+
+  it("passes the given stdin to the command", async () => {
+    const result = await exec({ cwd: scratch, command: "cat", timeoutMs: 5000, stdin: "the record\n" });
+    expect(result).toMatchObject({ exitCode: 0, output: "the record\n" });
+  });
+
+  it("adds the given LOOM_ variables to the environment", async () => {
+    const result = await exec({ cwd: scratch, command: 'echo "$LOOM_PROJECT_SLUG"', timeoutMs: 5000, env: { LOOM_PROJECT_SLUG: "paper-look" } });
+    expect(result.output).toBe("paper-look\n");
+  });
+
+  it("passes when the command exits without reading a large stdin", async () => {
+    const result = await exec({ cwd: scratch, command: "true", timeoutMs: 5000, stdin: "r".repeat(300_000) });
+    expect(result.exitCode).toBe(0);
+  });
+
+  it("keeps stdin ignored without stdin, so checks behave as before", async () => {
+    const command = "test -c /dev/stdin && echo ignored || echo piped";
+    expect((await exec({ cwd: scratch, command, timeoutMs: 5000 })).output).toBe("ignored\n");
+    expect((await exec({ cwd: scratch, command, timeoutMs: 5000, stdin: "" })).output).toBe("piped\n");
+  });
 });
 
 // ---------------------------------------------------------------- review and merge

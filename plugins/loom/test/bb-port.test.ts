@@ -45,6 +45,20 @@ describe("spawnThread", () => {
     await expect(refusing(httpError(404, "Project not found")).spawnThread(args)).rejects.toBeInstanceOf(SpawnRefusedError);
   });
 
+  it("sends a prompt alone without detail, and the detail as agent-only input after the prompt with it", async () => {
+    const { port, harness } = portWith({ threads: { spawn: async () => ({ id: "thr_r1", environmentId: null }) } });
+    await port.spawnThread(args);
+    await port.spawnThread({ ...args, detail: "The record." });
+    const [plain, detailed] = harness.sdk.callsTo("threads.spawn").map((call) => call[0] as Record<string, unknown>);
+    expect(plain).toMatchObject({ prompt: "Work." });
+    expect(plain).not.toHaveProperty("input");
+    expect(detailed).not.toHaveProperty("prompt");
+    expect(detailed!.input).toEqual([
+      { type: "text", text: "Work.", mentions: [] },
+      { type: "text", text: "The record.", mentions: [], visibility: "agent-only" },
+    ]);
+  });
+
   it("passes on a timeout, a conflict, a rate limit, a server error and an error without a status, so they are retried", async () => {
     for (const error of [httpError(408, "timeout"), httpError(409, "machine_maintenance"), httpError(429, "slow down"), httpError(500, "boom"), new Error("socket hang up")]) {
       const caught = await refusing(error).spawnThread(args).catch((thrown: unknown) => thrown);
@@ -58,6 +72,15 @@ describe("providerIds", () => {
     const { port, harness } = portWith({ providers: { list: async () => [{ id: "claude-code" }, { id: "codex" }, { id: "pi" }] as never } });
     expect(await port.providerIds()).toEqual(["claude-code", "codex", "pi"]);
     expect(harness.sdk.callsTo("providers.list")).toHaveLength(1);
+  });
+});
+
+describe("threadOutput", () => {
+  it("returns the thread's final output, or null before it has one", async () => {
+    const outputs: Record<string, string | null> = { thr_a: "## Goal\nDone.", thr_b: null };
+    const { port } = portWith({ threads: { output: async ({ threadId }: { threadId: string }) => ({ output: outputs[threadId] ?? null }) } });
+    expect(await port.threadOutput("thr_a")).toBe("## Goal\nDone.");
+    expect(await port.threadOutput("thr_b")).toBeNull();
   });
 });
 

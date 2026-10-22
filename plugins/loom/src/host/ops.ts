@@ -303,7 +303,17 @@ export function spawnCommand(input: HostInput<"exec">, signal?: AbortSignal): Pr
   const started = Date.now();
   return new Promise((resolve, reject) => {
     if (signal?.aborted === true) return reject(new Error("aborted before start"));
-    const child = spawn("/bin/sh", ["-c", input.command], { cwd: input.cwd, env: process.env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    const options = { cwd: input.cwd, env: { ...process.env, ...input.env }, detached: true };
+    // Checks keep an ignored stdin: a piped one changes tools like rg, which search stdin when it is a pipe.
+    const child =
+      input.stdin === undefined
+        ? spawn("/bin/sh", ["-c", input.command], { ...options, stdio: ["ignore", "pipe", "pipe"] })
+        : spawn("/bin/sh", ["-c", input.command], { ...options, stdio: ["pipe", "pipe", "pipe"] });
+    if (input.stdin !== undefined) {
+      // A hook that exits without reading its input closes the pipe; that EPIPE is not its failure.
+      child.stdin?.on("error", () => undefined);
+      child.stdin?.end(input.stdin);
+    }
     const output = new HeadTail(OUTPUT_HEAD_BYTES, OUTPUT_TAIL_BYTES);
     let timedOut = false;
     const kill = () => {

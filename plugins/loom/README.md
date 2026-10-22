@@ -55,6 +55,7 @@ bb loom tickets <slug> [--state s,s]         # the board
 bb loom ticket CSV-1                         # a ticket and its reply thread
 bb loom metrics <slug> [--days N] [--json]   # flow and agent metrics, one line each; --days sets the window (default 14)
 bb loom feed <slug> [--after <id>] [--json]  # the newest events as sentences
+bb loom report <slug> [--send]               # the project's record as Markdown; --send runs the done hook again
 bb loom approve <slug> [--version N]         # approve a draft (creates the tickets) or a pending version
 bb loom start <slug>                         # workers start by themselves
 bb loom pause <slug> [--now]                 # --now also stops the worker threads
@@ -212,12 +213,59 @@ whole project.
 | tokens by ticket | The 5 tickets whose threads used the most sampled tokens. |
 | reliability | Failed worker attempts, rate-limit retries, worker threads that timed out, and merges sent back to work (a merge conflict or a failed `after_merge` check). |
 
+## When a project finishes
+
+`bb loom report <slug>` prints a project's record as Markdown, built from its
+board with no agent: the goal, where the code landed, and for each ticket its
+acceptance criteria, its submit summaries, its reviews, its merge, its blocks,
+and the planner's and the human's replies. Worker notes and check output are
+left out. It works for a project in any state, and `--json` prints
+`{ slug, markdown }`.
+
+Loom's settings have a done hook, so the record can go to wherever you keep
+notes. Set them in bb's settings for Loom, or from a terminal:
+
+```sh
+bb plugin config loom set doneHook '<a shell command>'
+bb plugin config loom set doneRecord summary   # or full
+```
+
+- `doneHook` is a shell command that Loom runs once when a project moves to
+  done. It runs in the project's checkout on the project's machine, with a
+  2-minute limit. Empty, the default, turns the hook off.
+- The command reads the record on standard input and gets five variables:
+  `LOOM_PROJECT_SLUG`, `LOOM_PROJECT_NAME`, `LOOM_PROJECT_KEY`,
+  `LOOM_PROJECT_URL` (the landed pull request, or empty) and `LOOM_RECORD`
+  (`summary` or `full`).
+- `doneRecord` chooses what it reads. With `summary`, the default, Loom starts
+  one agent on the project's reviewer model that reads the full record and
+  writes a short summary (goal, outcome, what was built, decisions, problems
+  and fixes, follow-ups and files). The agent starts only when a hook is set.
+  When it cannot start, fails or takes longer than 30 minutes, the hook reads
+  the full record instead. With `full`, no agent runs.
+- The feed says when the record was sent, or why the hook failed. A project
+  finished before the hook was set is not sent; `bb loom report <slug> --send`
+  sends a finished project's record, for a backfill or after a failure
+  (human only).
+- The hook runs with the PATH of bb's host process. When a tool is not found,
+  give its absolute path.
+
+Examples:
+
+```sh
+# Append every record to one file.
+bb plugin config loom set doneHook 'cat >> "$HOME/notes/loom-$LOOM_PROJECT_SLUG.md"'
+
+# Save it as a done Cortex task in the repository's lane.
+bb plugin config loom set doneHook 'cortex add "Loom: $LOOM_PROJECT_NAME" --lane "$(cortex memory lane)" --status done -t loom --as "loom-$LOOM_PROJECT_SLUG" --body-file -'
+```
+
 ## Safety
 
 - Only plugin code moves a ticket, runs checks, merges or decides that work is done. A thread's role comes from the plugin's own table, never from thread metadata.
 - Agents never merge or push. On the integration strategy nothing is pushed until the human runs `bb loom land`, and only `bb loom land --direct` pushes to the base branch, never with force and only after the `after_merge` checks pass on what it pushes.
 - Workers and reviewers run in bb's full permission mode unless the spec sets `permission_mode`, because some providers, such as pi, accept no other mode. An approved spec keeps the mode it was approved with.
-- The human's controls (`approve`, `start`, `pause`, `resume`, `archive`, `post`, `block`, `requeue`, `cancel`, `land`) refuse Loom's own planner, worker and reviewer threads with the code `loom_human_only`.
+- The human's controls (`approve`, `start`, `pause`, `resume`, `archive`, `post`, `block`, `requeue`, `cancel`, `land`, `report --send`) refuse Loom's own planner, worker and reviewer threads with the code `loom_human_only`.
 - The page's RPC changes state, and starts a planner thread, only when the call carries `confirm: true`, and it refuses calls from other plugins. bb cannot tell the page from an agent running `bb plugin rpc`, so the skill tells agents never to call Loom's RPC.
 
 ## How it works

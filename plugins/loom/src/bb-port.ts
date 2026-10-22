@@ -57,7 +57,9 @@ export function createBbPort(bb: BbPluginApi): BbPort {
       const thread = await bb.sdk.threads.spawn({
         projectId: args.bbProjectId,
         environment: { type: "host", hostId: args.hostId, workspace: { type: "managed-worktree", baseBranch: { kind: "named", name: args.baseBranch } } },
-        prompt: args.prompt,
+        ...(args.detail === undefined
+          ? { prompt: args.prompt }
+          : { input: [{ type: "text" as const, text: args.prompt, mentions: [] }, { type: "text" as const, text: args.detail, mentions: [], visibility: "agent-only" as const }] }),
         title: args.title,
         ...(args.sectionId === null ? {} : { sectionId: args.sectionId }),
         pluginMetadata: { ...args.metadata },
@@ -152,6 +154,9 @@ export function createBbPort(bb: BbPluginApi): BbPort {
         }),
       );
       return threadIds.filter((_, index) => waiting[index]);
+    },
+    async threadOutput(threadId) {
+      return (await bb.sdk.threads.output({ threadId })).output;
     },
   };
 }

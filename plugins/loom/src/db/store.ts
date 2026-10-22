@@ -162,6 +162,21 @@ export interface RunRow {
   output_chars: number;
 }
 
+export type RecordState = "pending" | "summarizing" | "sending" | "sent" | "failed" | "skipped";
+
+/** Whether a finished project's record reached the done hook; one row per project. */
+export interface RecordRow {
+  id: number;
+  project_id: number;
+  state: RecordState;
+  /** The summary agent's thread, once bb started it. */
+  thread_id: string | null;
+  /** When the summary agent was asked for, for its time limit. */
+  started_at: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
 export class StoreError extends Error {}
 
 export class Store {
@@ -512,6 +527,32 @@ export class Store {
     return this.db.prepare("UPDATE runs SET ended_at = ?, output = ? WHERE ended_at IS NULL").run(this.now(), note).changes;
   }
 
+  // ---- records
+
+  /** Queues the project's record for the done hook, replacing an earlier row. */
+  queueRecord(projectId: number): void {
+    const now = this.now();
+    this.db
+      .prepare(
+        "INSERT INTO records (project_id, state, created_at, updated_at) VALUES (?, 'pending', ?, ?) ON CONFLICT (project_id) DO UPDATE SET state = 'pending', thread_id = NULL, started_at = NULL, updated_at = excluded.updated_at",
+      )
+      .run(projectId, now, now);
+    this.changed(projectId);
+  }
+
+  record(projectId: number): RecordRow | null {
+    return (this.db.prepare("SELECT * FROM records WHERE project_id = ?").get(projectId) as RecordRow | undefined) ?? null;
+  }
+
+  /** Rows still on their way (pending, summarizing, sending), oldest first. */
+  openRecords(): RecordRow[] {
+    return this.db.prepare("SELECT * FROM records WHERE state IN ('pending', 'summarizing', 'sending') ORDER BY id").all() as RecordRow[];
+  }
+
+  updateRecord(id: number, patch: Partial<Pick<RecordRow, "state" | "thread_id" | "started_at">>): void {
+    this.patch("records", id, patch);
+  }
+
   // ----
 
   private requireProject(id: number): ProjectRow {
@@ -526,7 +567,7 @@ export class Store {
     return ticket;
   }
 
-  private patch(table: "projects" | "tickets" | "threads", id: number, patch: Record<string, unknown>, touch = true): void {
+  private patch(table: "projects" | "tickets" | "threads" | "records", id: number, patch: Record<string, unknown>, touch = true): void {
     const entries = Object.entries(patch).filter(([, value]) => value !== undefined);
     if (touch) entries.push(["updated_at", this.now()]);
     if (entries.length === 0) return;

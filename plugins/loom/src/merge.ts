@@ -148,7 +148,7 @@ export async function mergeTicket(ctx: EngineCtx, project: ProjectRow, spec: Spe
   }
 }
 
-async function checkoutOf(ctx: EngineCtx, project: ProjectRow): Promise<{ hostId: string; repo: string }> {
+export async function checkoutOf(ctx: EngineCtx, project: ProjectRow): Promise<{ hostId: string; repo: string }> {
   const repo = project.host_id === null ? null : await ctx.bb.projectCheckout(project.bb_project_id, project.host_id);
   if (project.host_id === null || repo === null) throw new Unavailable(`The bb project has no checkout on the machine ${project.host_id ?? "(unknown)"}; add the repository there and resume.`);
   return { hostId: project.host_id, repo };
@@ -363,7 +363,11 @@ function completeProject(ctx: EngineCtx, projectId: number): boolean {
   if (project === null || (project.state !== "running" && project.state !== "paused")) return false;
   const tickets = store.tickets(projectId);
   if (tickets.length === 0 || !tickets.every((ticket) => ticket.state === "done" || ticket.state === "cancelled")) return false;
-  store.setProjectState(projectId, "done", LOOM_ACTOR);
+  // Queued with the move, so no restart can finish a project without a record.
+  store.tx(() => {
+    store.setProjectState(projectId, "done", LOOM_ACTOR);
+    store.queueRecord(projectId);
+  });
   store.changed(project.id);
   return true;
 }

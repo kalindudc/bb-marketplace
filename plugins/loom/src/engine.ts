@@ -5,6 +5,7 @@ import { finishIfComplete, holdMerge, land, mergeHeld, pollPullRequests, runMerg
 import type { PostRow, ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { approvedText, blockedReplyText, heldCheckResult, resumeText, reviewRequeueNote, startRequeueNote } from "./prompts";
 import { LoomError, type ApproveResult, type Projects } from "./projects";
+import { NO_HOOK, sendRecords, type DoneSettings } from "./record";
 import { backToReview, blockedAtReview, failReviewerSpawn, onReviewerGone, onReviewerIdle, onReviewerTurnFailed, spawnReviewers } from "./review";
 import { budgetReason, spawnable, toLite } from "./scheduler";
 import { LOOM_ACTOR, canMoveTicket } from "./states";
@@ -29,7 +30,7 @@ import {
 const TOKEN_REFRESH_MS = 60_000;
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-export type EngineDeps = Omit<EngineCtx, "kick"> & { projects: Projects };
+export type EngineDeps = Omit<EngineCtx, "kick"> & { projects: Projects; settings?: () => DoneSettings };
 
 export interface Approved extends ApproveResult {
   requeued: string[];
@@ -53,8 +54,11 @@ export class Engine {
   private currentTick: Promise<void> | null = null;
   private tickAgain = false;
 
+  private readonly settings: () => DoneSettings;
+
   constructor(deps: EngineDeps) {
     this.projects = deps.projects;
+    this.settings = deps.settings ?? (() => NO_HOOK);
     this.ctx = { store: deps.store, bb: deps.bb, now: deps.now, host: deps.host, kick: () => this.kick() };
   }
 
@@ -105,6 +109,7 @@ export class Engine {
         this.warn(`project ${project.slug}`, error);
       }
     }
+    sendRecords(this.ctx, this.settings());
   }
 
   // A paused project starts no worker, reviewer or merge; it still follows its open pull requests and finishes when the last one is done.
@@ -391,6 +396,20 @@ export class Engine {
     const result = await land(this.ctx, slug, { actor, ...opts });
     this.kick();
     return result;
+  }
+
+  /** The human's `report --send`: queues a finished project's record for the done hook again. */
+  sendRecord(slug: string): ProjectRow {
+    const project = this.projects.require(slug);
+    if (project.state !== "done") throw new LoomError("loom_invalid_state", `Project ${slug} is ${project.state}; only a finished project's record goes to the done hook.`, `Print the record with \`bb loom report ${slug}\`.`);
+    if (this.settings().doneHook.trim() === "") {
+      throw new LoomError("loom_invalid_state", "No done hook is set, so there is nowhere to send the record.", "Set one in Loom's settings, or with `bb plugin config loom set doneHook '<command>'`.");
+    }
+    const row = this.ctx.store.record(project.id);
+    if (row?.state === "summarizing" || row?.state === "sending") throw new LoomError("loom_invalid_state", `The record of ${slug} is being sent now; the feed says when it is done.`);
+    this.ctx.store.queueRecord(project.id);
+    this.kick();
+    return project;
   }
 
   /** The human's reply on a ticket. A worker that holds the ticket gets it as a message too; on a blocked ticket, the planner does. */

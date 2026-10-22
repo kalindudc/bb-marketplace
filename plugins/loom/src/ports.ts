@@ -55,6 +55,8 @@ export interface BbPort {
   providerIds(): Promise<string[]>;
   /** The ids among `threadIds` with a pending interaction (a question or an approval); unknown threads are left out. */
   waitingOnUser(threadIds: readonly string[]): Promise<string[]>;
+  /** The thread's final output, as GET /threads/:id/output assembles it; null before it has one. */
+  threadOutput(threadId: string): Promise<string | null>;
 }
 
 export interface SpawnArgs {
@@ -69,6 +71,8 @@ export interface SpawnArgs {
   model?: string;
   reasoningLevel?: string;
   permissionMode?: "accept-edits" | "auto" | "full";
+  /** Text only the agent reads, after the prompt. */
+  detail?: string;
 }
 
 export interface ThreadInfo {
