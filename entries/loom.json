@@ -2,7 +2,7 @@
   "id": "loom",
   "displayName": "Loom",
   "description": "Run a software project with agents: a planner turns a goal into a validated spec and tickets, workers pick up tickets in their own worktrees, separate reviewers approve or request changes, and approved work merges into an integration branch or opens a pull request.",
-  "icon": "Layers",
+  "icon": { "url": "plugins/loom/icons/loom.svg" },
   "tags": [
     "parallel-agents",
     "orchestration",

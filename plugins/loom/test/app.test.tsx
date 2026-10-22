@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, mountPluginContentScripts, renderSlot, type PluginRpcTestHandlers, type PluginSdkTestFakes, type RenderSlotOptions } from "@get-bb/plugin-sdk/testing/app";
@@ -54,9 +54,9 @@ afterEach(() => {
 });
 
 describe("registration", () => {
-  it("lists Loom in the left navigation with the Layers icon", async () => {
+  it("lists Loom in the left navigation with its spool icon", async () => {
     const app = await loadPluginApp(() => import("../app"));
-    expect(app.navPanels.map(({ id, title, icon, path }) => ({ id, title, icon, path }))).toEqual([{ id: "loom", title: "Loom", icon: "Layers", path: "loom" }]);
+    expect(app.navPanels.map(({ id, title, icon, path }) => ({ id, title, icon, path }))).toEqual([{ id: "loom", title: "Loom", icon: "loom/loom", path: "loom" }]);
     expect(app.threadHeaderActions.map(({ id, title }) => ({ id, title }))).toEqual([{ id: "ticket", title: "Loom" }]);
     expect(app.contentScripts.map(({ id }) => id)).toEqual(["rail-badge"]);
   });
@@ -64,6 +64,23 @@ describe("registration", () => {
   it("is declared as the plugin's app entry", () => {
     const manifest = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf8"));
     expect(manifest.bb).toMatchObject({ server: "./server.ts", app: "./app.tsx", host: "./host.ts" });
+  });
+
+  it("brands the plugin with the spool and declares it for the page, the chip and the marketplace", () => {
+    const root = join(__dirname, "..");
+    const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+    expect(manifest.bb.branding).toEqual({ icon: "./icons/loom.svg", experimental_icons: { loom: "./icons/loom.svg" } });
+    const entry = JSON.parse(readFileSync(join(root, "../../entries/loom.json"), "utf8"));
+    expect(entry.icon).toEqual({ url: "plugins/loom/icons/loom.svg" });
+  });
+
+  it("ships a monochrome 24px SVG that bb's icon validator accepts", () => {
+    const path = join(__dirname, "..", "icons/loom.svg");
+    expect(existsSync(path)).toBe(true);
+    const svg = readFileSync(path, "utf8");
+    expect(svg).toMatch(/^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" viewBox="0 0 24 24"/);
+    expect(svg).not.toMatch(/<!DOCTYPE|<\?xml|<(script|style|image|foreignObject|a)\b|\son[a-z]+=|url\(|href=|fill="#|stroke="#/i);
+    expect(Buffer.byteLength(svg)).toBeLessThan(32 * 1024);
   });
 });
 

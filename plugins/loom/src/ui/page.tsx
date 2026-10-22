@@ -313,7 +313,7 @@ export function LoomPage({ subPath }: PluginNavPanelProps) {
   return (
     <section data-loom-page className="flex h-full min-h-0 min-w-0 flex-col bg-surface-recessed text-foreground">
       <nav aria-label="Loom" className="flex shrink-0 items-center gap-1.5 border-b border-border-seam px-4 py-2 text-xs text-muted-foreground">
-        <Icon name="Layers" className="size-3.5" aria-hidden />
+        <Icon name="loom/loom" className="size-3.5" aria-hidden />
         <button type="button" className={crumb} onClick={() => go("")}>Loom</button>
         {trail.map((step) => (
           <span key={step.label} className="flex items-center gap-1.5">

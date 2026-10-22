@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-loom",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "private": true,
   "type": "module",
   "engines": {
@@ -11,7 +11,10 @@
     "name": "Loom",
     "description": "Run a software project with agents: a planner turns a goal into a validated spec and tickets, workers pick up tickets in their own worktrees, separate reviewers approve or request changes, and approved work merges into an integration branch or opens a pull request.",
     "branding": {
-      "icon": "Layers"
+      "icon": "./icons/loom.svg",
+      "experimental_icons": {
+        "loom": "./icons/loom.svg"
+      }
     },
     "server": "./server.ts",
     "app": "./app.tsx",

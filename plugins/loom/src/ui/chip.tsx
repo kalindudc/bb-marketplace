@@ -47,7 +47,7 @@ export function TicketChip({ threadId, isCompactViewport }: PluginThreadHeaderAc
       onClick={() => navigate.toPluginPanel("loom", { subPath })}
       className="inline-flex h-7 shrink-0 cursor-pointer items-center gap-1 rounded-md px-2 text-xs text-muted-foreground hover:bg-state-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
     >
-      <Icon name="Layers" className="size-3.5" aria-hidden />
+      <Icon name="loom/loom" className="size-3.5" aria-hidden />
       {label}
     </button>
   );
