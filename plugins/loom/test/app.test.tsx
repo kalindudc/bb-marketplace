@@ -4,7 +4,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, mountPluginContentScripts, renderSlot, type PluginRpcTestHandlers, type PluginSdkTestFakes, type RenderSlotOptions } from "@get-bb/plugin-sdk/testing/app";
-import type { PluginNavPanelProps, PluginSidebarThread, PluginThreadHeaderActionProps } from "@get-bb/plugin-sdk/app";
+import { useState } from "react";
+import { useComposers, type NewThreadRequest, type PluginNavPanelProps, type PluginSidebarThread, type PluginThreadHeaderActionProps } from "@get-bb/plugin-sdk/app";
 import type { Attempt, BbProjectChoice, ChecksItem, HomeProject, NextStep, PlanningSession, ProjectSummary, ProjectView, SentNote, SpecVersionView, ThreadInfo, rpcContract } from "../src/contract";
 import type { TicketRow } from "../src/db/store";
 import { repoOverviews } from "../src/projects";
@@ -514,9 +515,13 @@ describe("home", () => {
 
 describe("new project", () => {
   const SAVED = "loom.newProject.projectId";
+  const runtime = () => (globalThis as unknown as { __bbPluginRuntime: { pluginSdkApp: Record<string, unknown> } }).__bbPluginRuntime;
+  let restoreComposer: (() => void) | null = null;
   afterEach(() => {
     vi.restoreAllMocks();
     localStorage.clear();
+    restoreComposer?.();
+    restoreComposer = null;
   });
   const typeGoal = (slot: Slot, text: string) => fireEvent.change(slot.getByTestId("bb-new-thread-composer-input"), { target: { value: text } });
   const seed = (slot: Slot) => slot.getByTestId("bb-new-thread-composer").getAttribute("data-default-project-id");
@@ -582,6 +587,67 @@ describe("new project", () => {
   ];
   const repoRows = (slot: Slot) => [...slot.getByRole("group", { name: "Repos" }).querySelectorAll("[data-repo-choice]")].map((row) => row.getAttribute("data-repo-choice"));
   const repoBox = (slot: Slot, name: string) => within(slot.getByRole("group", { name: "Repos" })).getByRole("checkbox", { name: new RegExp(`^${name}(?: no checkout)?$`) }) as HTMLInputElement;
+
+  // Uncontrolled like bb's composer: it submits the project bb reports for it, which setComposerScope changes as the human's pick in its project picker would.
+  function SwitchingComposer({ onSubmit }: { onSubmit(request: NewThreadRequest): void | Promise<void> }) {
+    const scope = useComposers()[0]!.scope;
+    const [text, setText] = useState("");
+    const projectId = scope.kind === "new-thread" ? (scope.projectId ?? "") : "";
+    return (
+      <div>
+        <textarea data-testid="bb-new-thread-composer-input" value={text} onChange={(event) => setText(event.target.value)} />
+        <button type="button" data-testid="bb-new-thread-composer-submit" onClick={() => void onSubmit(request(text, projectId) as NewThreadRequest)}>
+          Start thread
+        </button>
+      </div>
+    );
+  }
+  const mountSwitching = async (rpc: Partial<Handlers>, projectId: string) => {
+    const app = await loadPluginApp(() => import("../app"));
+    // renderSlot installs the test runtime again, so the stub goes on the runtime's own object rather than a copy.
+    const sdk = runtime().pluginSdkApp;
+    const original = sdk.experimental_NewThreadComposer;
+    sdk.experimental_NewThreadComposer = SwitchingComposer;
+    restoreComposer = () => {
+      sdk.experimental_NewThreadComposer = original;
+    };
+    const slot = renderSlot<PluginNavPanelProps, typeof rpcContract>(app.navPanels[0]!, { subPath: "_new" }, { pluginId: "loom", rpc: handlers(rpc), composer: { scope: { kind: "new-thread", projectId } } });
+    mounts.push(slot);
+    return slot;
+  };
+
+  it("follows the composer's project: switched from shop to shop-api, it offers shop, hides shop-api, and sends shop as a repo", async () => {
+    localStorage.setItem(SAVED, "proj_shop");
+    const startPlanning = vi.fn(() => ({ threadId: "thr_p7" }));
+    const slot = await mountSwitching({ startPlanning, bbProjects: choices }, "proj_shop");
+    await waitFor(() => expect(repoRows(slot)).toEqual(["proj_docs", "proj_api", "project-test"]));
+    fireEvent.click(repoBox(slot, "shop-api"));
+    expect(slot.getByRole("group", { name: "Repos" }).textContent).toContain("1 of up to 10 picked");
+
+    await slot.setComposerScope({ kind: "new-thread", projectId: "proj_api" });
+    expect(repoRows(slot)).toEqual(["proj_docs", "proj_shop", "project-test"]);
+    expect(slot.getByRole("group", { name: "Repos" }).textContent).toContain("0 of up to 10 picked");
+    fireEvent.click(repoBox(slot, "shop"));
+
+    typeGoal(slot, "Write the docs site.");
+    fireEvent.click(slot.getByTestId("bb-new-thread-composer-submit"));
+    await waitFor(() => expect(slot.inspection.navigateCalls).toEqual([pushed("_plan/thr_p7")]));
+    expect(startPlanning).toHaveBeenCalledWith({ request: request("Write the docs site.", "proj_api"), merge: "ask", reviewer: "", repos: ["proj_shop"], confirm: true });
+  });
+
+  it("keeps a pick hidden while it is the composer's project, and shows it picked again when the composer moves off it", async () => {
+    const startPlanning = vi.fn(() => ({ threadId: "thr_p7" }));
+    const slot = await mountSwitching({ startPlanning, bbProjects: choices }, "proj_shop");
+    await waitFor(() => expect(repoRows(slot)).toHaveLength(3));
+    fireEvent.click(repoBox(slot, "docs"));
+    await slot.setComposerScope({ kind: "new-thread", projectId: "proj_docs" });
+    expect(repoRows(slot)).toEqual(["proj_shop", "proj_api", "project-test"]);
+    await slot.setComposerScope({ kind: "new-thread", projectId: "proj_shop" });
+    expect(repoBox(slot, "docs").checked).toBe(true);
+    typeGoal(slot, "Write the docs site.");
+    fireEvent.click(slot.getByTestId("bb-new-thread-composer-submit"));
+    await waitFor(() => expect(startPlanning).toHaveBeenCalledWith(expect.objectContaining({ request: request("Write the docs site.", "proj_shop"), repos: ["proj_docs"] })));
+  });
 
   it("offers bb's other standard projects as repos, filterable by name, marks one with no checkout, and passes the picked ids to startPlanning", async () => {
     localStorage.setItem(SAVED, "proj_shop");

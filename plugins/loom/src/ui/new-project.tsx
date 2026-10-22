@@ -1,5 +1,5 @@
 import { useId, useState, type ReactNode } from "react";
-import { experimental_NewThreadComposer as NewThreadComposer, useRpc, type NewThreadRequest } from "@get-bb/plugin-sdk/app";
+import { experimental_NewThreadComposer as NewThreadComposer, useComposers, useRpc, type NewThreadRequest, type PluginComposerApi } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "../contract";
 import { MAX_PLANNING_REPOS } from "../prompts";
 import { MERGE_CHOICES, type MergeChoice } from "../states";
@@ -22,6 +22,14 @@ function saveProjectId(projectId: string): void {
   try {
     localStorage.setItem(PROJECT_KEY, projectId);
   } catch {}
+}
+
+/** The project of the newest new-thread composer on screen, which on this page is its own; bb updates it as the human picks another. Null when bb lists none or has not resolved its project. */
+function composerProjectOf(composers: readonly PluginComposerApi[]): string | null {
+  for (const composer of [...composers].reverse()) {
+    if (composer.scope.kind === "new-thread") return composer.scope.projectId;
+  }
+  return null;
 }
 
 /** bb's standard projects except `exclude`, filterable by name. A picked repo stays listed under any filter, so it can be unpicked. */
@@ -83,12 +91,14 @@ export function NewProject({ go }: { go(subPath: string): void }) {
   const [repos, setRepos] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [projectId] = useState(savedProjectId);
+  // Until bb reports the composer's project, it is the one the composer was seeded with.
+  const composerProject = composerProjectOf(useComposers()) ?? projectId;
+  const picked = repos.filter((id) => id !== composerProject);
 
   // Not async: the composer keeps the draft only when the promise it gets rejects, and an async wrapper would leave a second rejection that nothing handles.
   const submit = (request: NewThreadRequest) => {
     setError(null);
-    // The composer reports its project only now, so a repo the human picked and then made the composer's project is dropped here.
-    const extra = repos.filter((id) => id !== request.projectId);
+    const extra = picked.filter((id) => id !== request.projectId);
     const attempt = rpc.call("startPlanning", { request, merge, reviewer, repos: extra, confirm: true }).then(
       ({ threadId }) => {
         saveProjectId(request.projectId);
@@ -126,7 +136,7 @@ export function NewProject({ go }: { go(subPath: string): void }) {
               <label htmlFor={reviewerId} className="shrink-0">Reviewer model</label>
               <input id={reviewerId} type="text" value={reviewer} maxLength={200} placeholder="for example: codex, gpt-5" onChange={(event) => setReviewer(event.target.value)} className={FIELD} />
             </div>
-            <RepoPicker exclude={projectId} picked={repos} onChange={setRepos} />
+            <RepoPicker exclude={composerProject} picked={picked} onChange={setRepos} />
           </div>
           <p className="mt-2 text-xs text-muted-foreground">These go to the planner with your goal, so it asks fewer questions. It still asks about checks, scope and anything it cannot find in the code. The repos are a starting point: the planner can add others the work changes.</p>
         </section>
