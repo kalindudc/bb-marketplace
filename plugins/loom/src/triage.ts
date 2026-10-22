@@ -147,17 +147,20 @@ export function editTicket(ctx: EngineCtx, key: string, patch: TicketPatch, acto
   if (errors.length > 0) throw refused(errors, `${key} not changed. Fix these and call loom_edit_ticket again`);
 
   const fields = (Object.keys(patch) as Array<keyof TicketPatch>).filter((field) => patch[field] !== undefined);
+  const changes: Partial<TicketRow> = {
+    ...(patch.title === undefined ? {} : { title: patch.title }),
+    ...(patch.body === undefined ? {} : { body: patch.body }),
+    ...(patch.acceptance === undefined ? {} : { acceptance_json: JSON.stringify(patch.acceptance) }),
+    ...(patch.verify === undefined ? {} : { verify_json: JSON.stringify(patch.verify) }),
+    ...(patch.scope === undefined ? {} : { scope_json: JSON.stringify(patch.scope) }),
+    ...(patch.depends_on === undefined ? {} : { deps_json: JSON.stringify(deps) }),
+    ...(patch.priority === undefined ? {} : { priority: patch.priority }),
+  };
+  // The old values let a rewind show the ticket as it was before the edit.
+  const before = Object.fromEntries(Object.keys(changes).map((column) => [column, ticket[column as keyof TicketRow]]));
   store.tx(() => {
-    store.updateTicket(ticket.id, {
-      ...(patch.title === undefined ? {} : { title: patch.title }),
-      ...(patch.body === undefined ? {} : { body: patch.body }),
-      ...(patch.acceptance === undefined ? {} : { acceptance_json: JSON.stringify(patch.acceptance) }),
-      ...(patch.verify === undefined ? {} : { verify_json: JSON.stringify(patch.verify) }),
-      ...(patch.scope === undefined ? {} : { scope_json: JSON.stringify(patch.scope) }),
-      ...(patch.depends_on === undefined ? {} : { deps_json: JSON.stringify(deps) }),
-      ...(patch.priority === undefined ? {} : { priority: patch.priority }),
-    });
-    store.event(ticket.project_id, ticket.id, "ticket.edited", actor, { fields });
+    store.updateTicket(ticket.id, changes);
+    store.event(ticket.project_id, ticket.id, "ticket.edited", actor, { fields, before });
     store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "planner", author_thread_id: actor, kind: "system", body: `The planner edited this ticket: ${fields.join(", ")}.`, data_json: JSON.stringify({ patch }) });
   });
   store.changed(ticket.project_id);

@@ -15,14 +15,14 @@ const TABS: ReadonlyArray<{ tab: Tab; label: string }> = [
   { tab: "project", label: "Project & limits" },
 ];
 
-/** A spec as a dashboard: its versions, a summary strip, four views of it and notes for the planner. */
-export function SpecDashboard({ slug }: { slug: string }) {
-  return <Dashboard key={slug} slug={slug} />;
+/** A spec as a dashboard: its versions, a summary strip, four views of it and notes for the planner. `readOnly` opens at `version` and takes no notes: the dashboard of a rewound page. */
+export function SpecDashboard({ slug, version, readOnly = false }: { slug: string; version?: number; readOnly?: boolean }) {
+  return <Dashboard key={`${slug} ${version ?? "latest"} ${readOnly}`} slug={slug} pinned={version ?? null} readOnly={readOnly} />;
 }
 
-function Dashboard({ slug }: { slug: string }) {
+function Dashboard({ slug, pinned, readOnly }: { slug: string; pinned: number | null; readOnly: boolean }) {
   // null follows the newest version as the planner proposes.
-  const [version, setVersion] = useState<number | null>(null);
+  const [version, setVersion] = useState<number | null>(pinned);
   const remote = useRemote((rpc) => rpc.call("specVersion", version === null ? { slug } : { slug, version }), `spec:${slug}:${version ?? "latest"}`, slug);
   const [tab, setTab] = useState<Tab>("tickets");
   const [raw, setRaw] = useState(false);
@@ -44,7 +44,7 @@ function Dashboard({ slug }: { slug: string }) {
     setChosen(ref);
     setLit(true);
   };
-  const marks: Marks = { version: view.version, changes: view.changes, notePaths: tray.notes.map((note) => note.paths[0]!), onNote: setTarget };
+  const marks: Marks = { version: view.version, changes: view.changes, notePaths: tray.notes.map((note) => note.paths[0]!), onNote: readOnly ? undefined : setTarget };
   const sent = (next: SpecVersionView) => {
     tray.clear();
     if (version === null) remote.set(next);
@@ -76,7 +76,7 @@ function Dashboard({ slug }: { slug: string }) {
         {raw && <pre data-spec-raw className="overflow-x-auto rounded-md border border-border-seam p-3 text-xs leading-relaxed">{view.toml}</pre>}
         <Banner view={view} newest={newest} onNewest={() => setVersion(null)} />
         <Strip view={view} />
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <div className={`grid gap-4 ${readOnly ? "" : "lg:grid-cols-[minmax(0,1fr)_22rem]"}`}>
           <div data-spec-main className="min-w-0 space-y-3">
             <div role="tablist" aria-label="Spec" className="flex gap-1 border-b border-border-seam">
               {TABS.map((entry) => (
@@ -93,20 +93,22 @@ function Dashboard({ slug }: { slug: string }) {
             </div>
             <Inspector view={view} selected={selected} onPick={pick} />
           </div>
-          <aside className="min-w-0 space-y-3">
-            {target !== null && (
-              <NoteComposer
-                key={`${target.paths[0]} ${target.label}`}
-                target={target}
-                onCancel={() => setTarget(null)}
-                onAdd={(body) => {
-                  tray.add({ version: view.version, paths: target.paths, label: target.label, body });
-                  setTarget(null);
-                }}
-              />
-            )}
-            <NoteTray view={view} notes={tray.notes} onRemove={tray.remove} onSent={sent} />
-          </aside>
+          {!readOnly && (
+            <aside className="min-w-0 space-y-3">
+              {target !== null && (
+                <NoteComposer
+                  key={`${target.paths[0]} ${target.label}`}
+                  target={target}
+                  onCancel={() => setTarget(null)}
+                  onAdd={(body) => {
+                    tray.add({ version: view.version, paths: target.paths, label: target.label, body });
+                    setTarget(null);
+                  }}
+                />
+              )}
+              <NoteTray view={view} notes={tray.notes} onRemove={tray.remove} onSent={sent} />
+            </aside>
+          )}
         </div>
       </section>
     </MarksContext.Provider>

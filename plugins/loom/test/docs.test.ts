@@ -105,6 +105,11 @@ describe("the plugin's own documents", () => {
     expect(read("PLUGIN_OVERVIEW.md")).toContain("--direct");
   });
 
+  it("README and the loom skill describe the Timeline and Back to now, and the overview the timeline", () => {
+    for (const path of ["README.md", "skills/loom/SKILL.md"]) for (const phrase of ["Timeline", "Back to now"]) expect(read(path), `${path}: ${phrase}`).toContain(phrase);
+    expect(read("PLUGIN_OVERVIEW.md")).toContain("A timeline on every project");
+  });
+
   it("the README's safety rules name the default permission mode", () => {
     expect(read("README.md")).toMatch(/## Safety[\s\S]*full permission mode[\s\S]*## How it works/);
   });

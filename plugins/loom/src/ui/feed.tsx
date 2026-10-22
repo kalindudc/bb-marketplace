@@ -6,8 +6,8 @@ import { messageOf } from "./common";
 const KEEP = 500;
 const when = (at: number) => new Date(at).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
-/** The project's events, newest first. A change reads only the events after the last one shown. */
-export function Feed({ slug }: { slug: string }) {
+/** The project's events, newest first. A change reads only the events after the last one shown. `at` shows the events up to that id and takes no live updates. */
+export function Feed({ slug, at = null }: { slug: string; at?: number | null }) {
   const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
   const latest = useRef(rpc);
@@ -20,7 +20,7 @@ export function Feed({ slug }: { slug: string }) {
   const load = useCallback(() => {
     const mine = generation.current;
     const after = lastId.current;
-    latest.current.call("feed", after === undefined ? { slug } : { slug, afterId: after }).then(
+    latest.current.call("feed", { slug, ...(after === undefined ? {} : { afterId: after }), ...(at === null ? {} : { at }) }).then(
       (result) => {
         if (mine !== generation.current) return;
         lastId.current = Math.max(lastId.current ?? 0, result.lastId);
@@ -34,7 +34,7 @@ export function Feed({ slug }: { slug: string }) {
         if (mine === generation.current) setError(messageOf(failure));
       },
     );
-  }, [slug]);
+  }, [slug, at]);
   useEffect(() => {
     generation.current += 1;
     lastId.current = undefined;
@@ -46,7 +46,7 @@ export function Feed({ slug }: { slug: string }) {
     };
   }, [load]);
   useRealtime("loom:changed", (payload) => {
-    if ((payload as { slug?: string } | null)?.slug === slug) load();
+    if (at === null && (payload as { slug?: string } | null)?.slug === slug) load();
   });
 
   if (error !== null) return <p role="alert" className="p-4 text-sm text-destructive-text">Could not read the feed: {error}</p>;

@@ -11,7 +11,8 @@ export interface Marks {
   version: number;
   changes: SpecChanges | null;
   notePaths: readonly string[];
-  onNote(target: NoteTarget): void;
+  /** Absent on a rewound page, which takes no notes. */
+  onNote?(target: NoteTarget): void;
 }
 
 export const MarksContext = createContext<Marks | null>(null);
@@ -36,14 +37,16 @@ export function Noteable({ paths, label, children }: { paths: string[]; label: s
       {children}
       {changed && <span className="ml-2 text-[11px] text-primary">changed in v{marks!.version}</span>}
       {noted && <span className="ml-2 text-[11px] text-warning-text">has your note</span>}
-      <button
-        type="button"
-        aria-label={`Add a note on ${label}`}
-        className="absolute top-1 right-1 cursor-pointer rounded px-1.5 text-[11px] text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-        onClick={() => marks?.onNote({ paths, label })}
-      >
-        + note
-      </button>
+      {marks?.onNote !== undefined && (
+        <button
+          type="button"
+          aria-label={`Add a note on ${label}`}
+          className="absolute top-1 right-1 cursor-pointer rounded px-1.5 text-[11px] text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          onClick={() => marks.onNote?.({ paths, label })}
+        >
+          + note
+        </button>
+      )}
     </div>
   );
 }

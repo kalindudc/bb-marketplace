@@ -15,6 +15,8 @@ export const FIELD = "w-full rounded-md border border-border-seam bg-transparent
 export const HEADING = "text-[10.5px] font-semibold uppercase tracking-wider text-subtle-foreground";
 
 export const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
+/** "Tue, Jan 6, 14:05": the moment a rewound page shows. */
+export const momentLabel = (at: number) => new Date(at).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 export { plural } from "../format";
 
 export const mergeLabel = (project: Pick<ProjectSummary, "strategy" | "branch">) => (project.strategy === "integration" ? `integration branch ${project.branch}` : "one pull request per ticket");
@@ -39,6 +41,7 @@ const BADGE_TONES: Record<string, string> = {
   blocked: "text-destructive-text",
   cancelled: "text-subtle-foreground",
   archived: "text-subtle-foreground",
+  rewound: "text-warning-text",
 };
 
 export function StateBadge({ state }: { state: string }) {
@@ -118,8 +121,8 @@ export function MoreMenu({ children }: { children: ReactNode | ((close: () => vo
   );
 }
 
-/** Loads a view through the RPC and loads it again when the project it belongs to changes (`slug` null: any project). */
-export function useRemote<T>(fetcher: (rpc: Rpc) => Promise<T>, id: string, slug: string | null) {
+/** Loads a view through the RPC and loads it again when the project it belongs to changes (`slug` null: any project). With `keep`, the last data stays while a new id loads, so a scrubbed view does not flash "Loading…". */
+export function useRemote<T>(fetcher: (rpc: Rpc) => Promise<T>, id: string, slug: string | null, keep = false) {
   const rpc = useRpc<typeof rpcContract>();
   const latest = useRef({ rpc, fetcher });
   latest.current = { rpc, fetcher };
@@ -151,7 +154,7 @@ export function useRemote<T>(fetcher: (rpc: Rpc) => Promise<T>, id: string, slug
     },
     [id],
   );
-  const current = state.id === id;
+  const current = state.id === id || (keep && state.data !== null);
   return { data: current ? state.data : null, error: current ? state.error : null, reload: load, set };
 }
 

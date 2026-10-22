@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { BoardCard, FeedRow, HomeView, PlanningSession, ProjectSummary, ProjectView, TicketDetail, ThreadInfo } from "../src/contract";
+import type { BoardCard, FeedRow, HomeView, PlanningSession, ProjectSummary, ProjectTimeline, ProjectView, TicketDetail, ThreadInfo } from "../src/contract";
 import type { ProjectMetrics } from "../src/metrics";
 import type { SpecVersionView } from "../src/spec-view";
 import type { BbPluginApi, NewThreadRequest } from "@get-bb/plugin-sdk";
@@ -739,5 +739,117 @@ describe("live updates", () => {
     host.store.event(project.id, null, "a", "human");
     vi.advanceTimersByTime(1000);
     expect(signals()).toEqual([]);
+  });
+});
+
+describe("rewind", () => {
+  // makeHost hands the store Date.now when it runs, so the clock is faked before the host is built.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    fake = new FakePort();
+    host = makeHost({ port: fake });
+    registerRpc(host.bb, { projects: host.projects, engine: host.engine, store: host.store, now: Date.now });
+  });
+  const later = () => vi.setSystemTime(Date.now() + 1000);
+  const newest = () => host.store.projectEvents(host.store.projectBySlug("csv")!.id).at(-1)!;
+
+  it("project at an event shows the board as it was then, and the live view and controls stay as they are", async () => {
+    await approved();
+    later();
+    await call("control", { slug: "csv", action: "start", confirm: true });
+    const before = newest();
+    later();
+    await host.engine.tick();
+
+    const past = await call<ProjectView>("project", { slug: "csv", at: before.id });
+    expect(past.board.find((card) => card.key === "CSV-1")).toMatchObject({ state: "queued", attempt: 0, threadId: null });
+    expect(past.overview).toMatchObject({ state: "running", ticketCounts: { queued: 2 }, goal: "Let people export their orders as a CSV file from the admin page." });
+    expect(past).toMatchObject({ at: before.id, now: before.at });
+
+    const live = await call<ProjectView>("project", { slug: "csv" });
+    expect(live.at).toBeNull();
+    expect(live.board.find((card) => card.key === "CSV-1")).toMatchObject({ state: "working", attempt: 1 });
+    expect(live.board.map((card) => card.state)).toEqual(host.store.tickets(host.store.projectBySlug("csv")!.id).map((ticket) => ticket.state));
+    const paused = await call<ProjectView>("control", { slug: "csv", action: "pause", confirm: true });
+    expect(paused).toMatchObject({ at: null, overview: { state: "paused" } });
+  });
+
+  it("project before the start shows a ready project with only the planner's thread", async () => {
+    await approved();
+    const ready = newest().id;
+    later();
+    await call("control", { slug: "csv", action: "start", confirm: true });
+    later();
+    await host.engine.tick();
+
+    const past = await call<ProjectView>("project", { slug: "csv", at: ready });
+    expect(past.overview.state).toBe("ready");
+    expect(past.agents.map((row) => row.role)).toEqual(["planner"]);
+    expect((await call<ProjectView>("project", { slug: "csv" })).agents.map((row) => row.role)).toEqual(["worker", "planner"]);
+  });
+
+  it("ticket at an event leaves out the posts after it and takes no reply, and refuses a ticket that did not exist yet", async () => {
+    await propose();
+    const drafted = newest().id;
+    later();
+    await host.projects.approve("csv", "human");
+    later();
+    await call("control", { slug: "csv", action: "start", confirm: true });
+    later();
+    await host.engine.tick();
+    const moment = newest();
+    later();
+    host.projects.post("CSV-1", { body: "Use the v2 API", author: "human" });
+
+    const past = await call<TicketDetail>("ticket", { key: "CSV-1", at: moment.id });
+    expect(past.posts.map((post) => post.kind)).toEqual(["brief", "claim"]);
+    expect(past).toMatchObject({ state: "working", attempt: 1, replyTo: null, at: moment.id, now: moment.at });
+    const live = await call<TicketDetail>("ticket", { key: "CSV-1" });
+    expect(live.at).toBeNull();
+    expect(live.replyTo).toBe("worker");
+    expect(live.posts.map((post) => post.body)).toContain("Use the v2 API");
+    await expect(call("ticket", { key: "CSV-1", at: drafted })).rejects.toThrow("CSV-1 did not exist yet at that moment.");
+  });
+
+  it("feed and metrics at an event read only what happened up to it", async () => {
+    await running();
+    const moment = newest().id;
+    later();
+    for (const to of ["working", "checking", "review", "approved", "merging", "done"] as const) host.store.setTicketState(ticketId("CSV-1"), to, "loom");
+
+    const feed = await call<{ rows: FeedRow[]; lastId: number }>("feed", { slug: "csv", at: moment });
+    expect(feed.rows.length).toBeGreaterThan(0);
+    expect(feed.rows.every((row) => row.id <= moment)).toBe(true);
+    expect(feed.lastId).toBe(moment);
+    expect((await call<{ lastId: number }>("feed", { slug: "csv" })).lastId).toBeGreaterThan(moment);
+
+    const past = await call<ProjectMetrics>("metrics", { slug: "csv", days: 7, at: moment });
+    expect(past.counts.done).toBe(0);
+    expect(past.throughput).toHaveLength(7);
+    expect(past.throughput.reduce((sum, day) => sum + day.done, 0)).toBe(0);
+    expect((await call<ProjectMetrics>("metrics", { slug: "csv", days: 7 })).counts.done).toBe(1);
+  });
+
+  it("timeline lists the events in order, a bar for a started ticket and the human's start", async () => {
+    await approved();
+    later();
+    await call("control", { slug: "csv", action: "start", confirm: true });
+    later();
+    await host.engine.tick();
+
+    const timeline = await call<ProjectTimeline>("timeline", { slug: "csv" });
+    const ids = timeline.events.map(([id]) => id);
+    expect(ids).toEqual([...ids].sort((a, b) => a - b));
+    expect(ids.at(-1)).toBe(newest().id);
+    expect(timeline.tickets.map((bar) => bar.key)).toEqual(["CSV-1"]);
+    expect(timeline.marks.map((mark) => mark.action)).toEqual(["start"]);
+  });
+
+  it("refuses a moment before the project's first event", async () => {
+    host.store.createProject({ slug: "other", name: "Other", key: "OTH", bb_project_id: "p" }, "human");
+    const other = host.store.projectEvents(host.store.projectBySlug("other")!.id)[0]!.id;
+    later();
+    await approved();
+    await expect(call("project", { slug: "csv", at: other })).rejects.toThrow(`Event ${other} is before csv started.`);
   });
 });

@@ -2,13 +2,15 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { humanAction } from "./cli";
 import { rpcContract, type AgentRow, type BoardCard, type ProjectView, type SpecSummary, type ThreadInfo, type TicketDetail } from "./contract";
-import type { ReviewRow, Store, ThreadRow, TicketRow } from "./db/store";
+import type { EventRow, ReviewRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { stripAnsi, ticketActivity } from "./activity";
 import { replyRecipient, type Engine } from "./engine";
 import { projectHealth } from "./health";
 import { homeView } from "./home";
+import { computeMetrics } from "./metrics";
 import { nextStepOf } from "./next-step";
-import type { Projects } from "./projects";
+import { LoomError, type Projects } from "./projects";
+import { overviewAt, projectTimeline, rewind, rowsOf } from "./replay";
 import { projectFeed, projectMetrics } from "./reports";
 import { blockedAtReview } from "./review";
 import { IN_FLIGHT, overlaps, readyTickets, toLite, type TicketLite } from "./scheduler";
@@ -97,10 +99,10 @@ function reviewStatus(review: ReviewRow, reviewer: ThreadRow | null): string {
   return reviewer.thread_id === null ? "reviewer could not start" : "ended without a verdict";
 }
 
-/** The state a blocked or cancelled ticket was in when it stopped: the `from` of its last state event; null for any other state. */
-function stoppedFrom(store: Store, ticket: TicketRow): TicketState | null {
+/** The state a blocked or cancelled ticket was in when it stopped: the `from` of its last state event; null for any other state. `moves` are the ticket's `ticket.state` events. */
+function stoppedFrom(ticket: TicketRow, moves: EventRow[]): TicketState | null {
   if (ticket.state !== "blocked" && ticket.state !== "cancelled") return null;
-  const last = store.ticketEvents(ticket.id, ["ticket.state"]).at(-1);
+  const last = moves.at(-1);
   return last === undefined ? null : (JSON.parse(last.data_json) as { from: TicketState }).from;
 }
 
@@ -178,16 +180,19 @@ export function draftCards(spec: Spec, at: number): BoardCard[] {
 export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
   const { projects, engine, store, now } = deps;
 
-  const projectView = (slug: string): ProjectView => {
-    const overview = projects.overview(slug);
-    const project = projects.require(slug);
-    const tickets = store.tickets(project.id);
-    const threads = store.threadsForProject(project.id);
-    const at = now();
-    const spec = projects.spec(slug);
-    const metrics = projectMetrics(store, project, at);
+  /** With `eventId`, the project as it was at that event; it never writes. */
+  const projectView = (slug: string, eventId?: number): ProjectView => {
+    const live = projects.require(slug);
+    const past = eventId === undefined ? null : rewind(rowsOf(store, live), eventId);
+    const spec = projects.spec(slug, past?.specVersion);
+    const overview = past === null ? projects.overview(slug) : { ...projects.overview(slug), ...overviewAt(past, JSON.parse(store.specVersion(live.id, spec.version)!.spec_json) as Spec) };
+    const project = past?.project ?? live;
+    const tickets = past?.tickets ?? store.tickets(project.id);
+    const threads = past?.threads ?? store.threadsForProject(project.id);
+    const at = past?.at ?? now();
+    const metrics = past === null ? projectMetrics(store, project, at) : computeMetrics({ ...past, now: at });
     const approved = project.approved_version === null ? null : specOf(store, project);
-    const current = approved ?? (JSON.parse(store.latestSpecVersion(project.id)!.spec_json) as Spec);
+    const current = approved ?? (JSON.parse(store.specVersion(project.id, spec.version)!.spec_json) as Spec);
     const board = project.state === "draft" ? draftCards(current, at) : boardCards(tickets, threads);
     return {
       overview,
@@ -206,20 +211,34 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
         version: spec.version,
         maxWorkers: current.agents.max_workers,
         triage: current.agents.triage,
-        startFailed: tickets.filter((ticket) => blockedAtStart(store, ticket)).map((ticket) => ticket.key),
+        startFailed: past === null ? tickets.filter((ticket) => blockedAtStart(store, ticket)).map((ticket) => ticket.key) : [],
         reviewRefused: tickets.filter(blockedAtReview).map((ticket) => ticket.key),
       }),
       health: approved === null ? null : projectHealth({ tickets, threads, metrics, spec: approved, now: at }),
       agents: agentRows(threads, tickets, approved),
       now: at,
+      at: past?.eventId ?? null,
     };
   };
 
-  const ticketDetail = (key: string): TicketDetail => {
+  /** With `eventId`, the ticket as it was at that event: no reply goes anywhere from there. */
+  const ticketDetail = (key: string, eventId?: number): TicketDetail => {
     const view = projects.ticketView(key);
-    const ticket = store.ticketByKey(key)!;
-    const project = store.project(ticket.project_id)!;
-    const threads = store.threadsForTicket(ticket.id);
+    const live = store.ticketByKey(key)!;
+    const liveProject = store.project(live.project_id)!;
+    const past = eventId === undefined ? null : rewind(rowsOf(store, liveProject), eventId);
+    const ticket = past === null ? live : past.tickets.find((row) => row.id === live.id);
+    if (ticket === undefined) throw new LoomError("loom_not_found", `${key} did not exist yet at that moment.`);
+    const project = past?.project ?? liveProject;
+    const own = <T extends { ticket_id: number | null }>(rows: T[]) => rows.filter((row) => row.ticket_id === ticket.id);
+    const threads = past === null ? store.threadsForTicket(ticket.id) : own(past.threads);
+    const posts = past === null ? store.posts(ticket.id) : own(past.posts);
+    const runs = past === null ? store.runs(ticket.id) : own(past.runs);
+    const reviews = past === null ? store.reviews(ticket.id) : own(past.reviews);
+    const moves = past === null ? store.ticketEvents(ticket.id, ["ticket.state"]) : own(past.events).filter((event) => event.kind === "ticket.state");
+    const kept = new Set(posts.map((post) => post.id));
+    const deps = JSON.parse(ticket.deps_json) as string[];
+    const stateOf = (dep: string) => (past === null ? store.ticketByKey(dep) : past.tickets.find((row) => row.key === dep))?.state;
     return {
       slug: project.slug,
       projectState: project.state,
@@ -230,17 +249,17 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       priority: ticket.priority,
       attempt: ticket.attempt,
       reviewRound: ticket.review_round,
-      deps: view.deps,
-      depsDone: view.deps.filter((dep) => store.ticketByKey(dep)?.state === "done"),
+      deps,
+      depsDone: deps.filter((dep) => stateOf(dep) === "done"),
       blockedReason: ticket.blocked_reason,
       branch: ticket.branch,
       prUrl: ticket.pr_url,
       body: ticket.body,
-      acceptance: view.acceptance,
-      verify: view.verify,
-      scope: view.scope,
-      posts: view.posts.map((post) => ({ id: post.id, parentId: post.parent_id, depth: post.depth, authorKind: post.author_kind, authorThreadId: post.author_thread_id, kind: post.kind, body: post.body, at: post.at })),
-      reviews: store.reviews(ticket.id).map((review) => ({
+      acceptance: JSON.parse(ticket.acceptance_json) as string[],
+      verify: JSON.parse(ticket.verify_json) as string[],
+      scope: JSON.parse(ticket.scope_json) as string[],
+      posts: view.posts.filter((post) => kept.has(post.id)).map((post) => ({ id: post.id, parentId: post.parent_id, depth: post.depth, authorKind: post.author_kind, authorThreadId: post.author_thread_id, kind: post.kind, body: post.body, at: post.at })),
+      reviews: reviews.map((review) => ({
         id: review.id,
         round: review.round,
         verdict: review.verdict,
@@ -251,9 +270,11 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
         at: review.at,
       })),
       threads: threads.map((row) => ({ threadId: row.thread_id, role: row.role, attempt: row.attempt, reviewRound: row.review_round, state: row.state, startedAt: row.started_at, endedAt: row.ended_at, endReason: row.end_reason })),
-      replyTo: replyRecipient(store, ticket)?.role ?? null,
-      stoppedFrom: stoppedFrom(store, ticket),
-      activity: ticketActivity({ state: ticket.state, posts: store.posts(ticket.id), threads, runs: store.runs(ticket.id) }),
+      replyTo: past === null ? (replyRecipient(store, ticket)?.role ?? null) : null,
+      stoppedFrom: stoppedFrom(ticket, moves),
+      activity: ticketActivity({ state: ticket.state, posts, threads, runs }),
+      at: past?.eventId ?? null,
+      now: past?.at ?? now(),
     };
   };
 
@@ -266,14 +287,20 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
   bb.rpc.register(rpcContract, {
     projects: () => projects.list(),
     home: () => homeView({ store, projects, now: now() }),
-    metrics: ({ slug, days }) => projectMetrics(store, projects.require(slug), now(), days),
-    project: ({ slug }) => projectView(slug),
-    ticket: ({ key }) => ticketDetail(key),
+    metrics: ({ slug, days, at }) => {
+      const project = projects.require(slug);
+      if (at === undefined) return projectMetrics(store, project, now(), days);
+      const past = rewind(rowsOf(store, project), at);
+      return computeMetrics({ ...past, now: past.at, days });
+    },
+    project: ({ slug, at }) => projectView(slug, at),
+    ticket: ({ key, at }) => ticketDetail(key, at),
     runOutput: ({ id }) => {
       const output = store.runOutput(id);
       return output === null ? null : { output: stripAnsi(output) };
     },
-    feed: ({ slug, afterId }) => projectFeed(store, projects.require(slug), afterId),
+    feed: ({ slug, afterId, at }) => projectFeed(store, projects.require(slug), afterId, at),
+    timeline: ({ slug }) => projectTimeline(rowsOf(store, projects.require(slug)), now()),
     planning: () => projects.planningSessions(),
     planningSession: ({ threadId }) => projects.planningSession(threadId),
     specVersion: ({ slug, version }) => specVersionView({ store, projects }, slug, version),

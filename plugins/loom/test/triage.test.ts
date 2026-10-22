@@ -189,6 +189,14 @@ describe("editTicket", () => {
     expect(editTicket(h.ctx, "CSV-2", { depends_on: [], scope: ["src/other/**"] }, "thr_plan")).toMatchObject({ deps_json: "[]", scope_json: '["src/other/**"]', state: "blocked" });
   });
 
+  it("keeps the old values of the edited fields on the event, so a rewind can show the ticket as it was", async () => {
+    await seedProject(h);
+    const before = ticketOf(h, "CSV-2");
+    editTicket(h.ctx, "CSV-2", { title: "Export endpoint v2", scope: ["src/other/**"] }, "thr_plan");
+    const event = h.store.events(project().id).filter((row) => row.kind === "ticket.edited").at(-1)!;
+    expect(JSON.parse(event.data_json)).toEqual({ fields: ["title", "scope"], before: { title: before.title, scope_json: before.scope_json } });
+  });
+
   it("refuses a ticket that is working, checking, in review or finished", async () => {
     await seedProject(h);
     await startWorker(h);

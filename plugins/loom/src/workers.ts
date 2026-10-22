@@ -79,7 +79,7 @@ export function applyMove(ctx: EngineCtx, ticket: TicketRow, move: TicketMove, a
   return ctx.store.tx(() => {
     const current = ctx.store.ticket(ticket.id);
     if (current === null || !canMoveTicket(current.state, move.to)) return false;
-    ctx.store.setTicketState(current.id, move.to, actor, data);
+    ctx.store.setTicketState(current.id, move.to, actor, move.patch.failures === undefined ? data : { ...data, failures: move.patch.failures });
     ctx.store.updateTicket(current.id, move.patch);
     if (move.to === "blocked") ctx.store.updateProject(current.project_id, { triage_pending: 1 });
     return true;
@@ -456,7 +456,7 @@ export async function requeueTicket(ctx: EngineCtx, key: string, a: { note: stri
   if (ticket.state !== "blocked") throw new LoomError("loom_invalid_state", `${key} is ${ticket.state}; only a blocked ticket can be requeued.`);
   const note = a.note.trim();
   ctx.store.tx(() => {
-    ctx.store.setTicketState(ticket.id, "queued", a.actor, { requeued: true });
+    ctx.store.setTicketState(ticket.id, "queued", a.actor, { requeued: true, failures: 0 });
     ctx.store.updateTicket(ticket.id, { failures: 0, check_failures: 0, blocked_reason: null, ...released });
     if (note !== "") {
       ctx.store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: a.author, author_thread_id: a.threadId ?? null, kind: "reply", body: note });

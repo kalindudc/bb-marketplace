@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Markdown, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract, TicketAction, TicketDetail } from "../contract";
 import { plural } from "../format";
-import { useRemote, useRun } from "./common";
+import { BUTTON, momentLabel, useRemote, useRun } from "./common";
 import { TicketHeader } from "./ticket-header";
 import { SideCards } from "./ticket-side";
 import { ReplyBox, replyHint, Stream } from "./ticket-stream";
@@ -46,9 +46,10 @@ function SideColumn({ children }: { children: ReactNode }) {
   );
 }
 
-export function TicketView({ slug, ticketKey }: { slug: string; ticketKey: string }) {
+/** With `at`, the ticket as it was at that event, with every control disabled. */
+export function TicketView({ slug, ticketKey, at = null, onNow }: { slug: string; ticketKey: string; at?: number | null; onNow?(): void }) {
   const rpc = useRpc<typeof rpcContract>();
-  const remote = useRemote((client) => client.call("ticket", { key: ticketKey }), `ticket:${ticketKey}`, slug);
+  const remote = useRemote((client) => client.call("ticket", at === null ? { key: ticketKey } : { key: ticketKey, at }), at === null ? `ticket:${ticketKey}` : `ticket:${ticketKey}@${at}`, slug);
   const { busy, error, run } = useRun();
   const now = useNow(30_000);
   const [tab, setTab] = useState<Tab>("activity");
@@ -58,6 +59,9 @@ export function TicketView({ slug, ticketKey }: { slug: string; ticketKey: strin
   if (ticket === null) {
     return remote.error === null ? <p role="status" className="p-4 text-sm text-muted-foreground">Loading…</p> : <p role="alert" className="p-4 text-sm text-destructive-text">Could not load {ticketKey}: {remote.error}</p>;
   }
+  const past = ticket.at !== null;
+  const shown = past ? ticket.now : now;
+  const locked = busy || past;
   const reply = (body: string, parentId?: number) =>
     run(async () => {
       remote.set(await rpc.call("reply", { key: ticketKey, body, ...(parentId === undefined ? {} : { parentId }), confirm: true }));
@@ -80,8 +84,18 @@ export function TicketView({ slug, ticketKey }: { slug: string; ticketKey: strin
 
   return (
     <div data-ticket={ticket.key} className="@container mx-auto w-full max-w-6xl space-y-4 p-4">
+      {past && (
+        <p data-ticket-rewound className="flex flex-wrap items-center gap-3 rounded-md border border-warning bg-warning/10 px-4 py-2 text-sm text-warning-text">
+          <span className="min-w-0 flex-1">
+            Rewound to {momentLabel(ticket.now)}. This is {ticket.key} as it was then.
+          </span>
+          <button type="button" className={BUTTON} onClick={onNow}>
+            Back to now
+          </button>
+        </p>
+      )}
       <div className="grid gap-4 @4xl:grid-cols-[minmax(0,1fr)_300px]">
-        <TicketHeader ticket={ticket} now={now} busy={busy} onAction={act} onJump={jump} />
+        <TicketHeader ticket={ticket} now={shown} busy={locked} onAction={act} onJump={jump} />
         {error !== null && (
           <p role="alert" className="text-xs text-destructive-text @4xl:col-span-2">
             {error}
@@ -101,13 +115,13 @@ export function TicketView({ slug, ticketKey }: { slug: string; ticketKey: strin
           </div>
           {tab !== "brief" && (
             <div className={`space-y-3 ${tab === "details" ? "hidden @4xl:block" : ""}`}>
-              <Stream ticket={ticket} now={now} busy={busy} onReply={reply} onBrief={() => choose("brief")} jumpTo={jumpTo} />
-              <ReplyBox textLabel="New reply" sendLabel="Send reply" busy={busy} hint={replyHint(ticket.replyTo)} placeholder={`Write on ${ticket.key}…`} onSend={(body) => reply(body)} />
+              <Stream ticket={ticket} now={shown} busy={locked} onReply={reply} onBrief={() => choose("brief")} jumpTo={jumpTo} />
+              {!past && <ReplyBox textLabel="New reply" sendLabel="Send reply" busy={busy} hint={replyHint(ticket.replyTo)} placeholder={`Write on ${ticket.key}…`} onSend={(body) => reply(body)} />}
             </div>
           )}
           {tab === "details" && (
             <div data-ticket-details className="space-y-3 @4xl:hidden">
-              <SideCards ticket={ticket} now={now} />
+              <SideCards ticket={ticket} now={shown} />
             </div>
           )}
           {tab === "brief" && (
@@ -120,7 +134,7 @@ export function TicketView({ slug, ticketKey }: { slug: string; ticketKey: strin
           )}
         </div>
         <SideColumn>
-          <SideCards ticket={ticket} now={now} />
+          <SideCards ticket={ticket} now={shown} />
         </SideColumn>
       </div>
     </div>

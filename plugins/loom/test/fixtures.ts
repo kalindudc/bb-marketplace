@@ -1,4 +1,4 @@
-import type { AgentRow, Attempt, BoardCard, FeedRow, HomeProject, HomeView, ProjectHealth, ProjectSummary, ProjectView, SpecVersionView, TicketDetail } from "../src/contract";
+import type { AgentRow, Attempt, BoardCard, FeedRow, HomeProject, HomeView, ProjectHealth, ProjectSummary, ProjectTimeline, ProjectView, SpecVersionView, TicketDetail } from "../src/contract";
 import type { ProjectMetrics } from "../src/metrics";
 import { parseSpec } from "../src/spec";
 import { TICKET_STATES, type TicketState } from "../src/states";
@@ -155,6 +155,7 @@ export const projectView = (over: Partial<ProjectView> = {}): ProjectView => ({
   health: health(),
   agents: [agent()],
   now: NOW,
+  at: null,
   ...over,
 });
 
@@ -196,6 +197,8 @@ export const ticketDetail = (over: Partial<TicketDetail> = {}): TicketDetail => 
   replyTo: "worker",
   stoppedFrom: null,
   activity: { brief: { postId: 1, at: NOW - 6 * HOUR, edits: 0, fields: [] }, before: [], attempts: [attempt()] },
+  at: null,
+  now: NOW,
   ...over,
 });
 
@@ -218,3 +221,33 @@ export const specVersionView = (over: Partial<SpecVersionView> = {}, edit?: (doc
 });
 
 export const feedRow = (over: Partial<FeedRow> = {}): FeedRow => ({ id: 1, at: NOW - HOUR, kind: "ticket.created", actor: "human", ticketKey: "CSV-1", text: "CSV-1 was created.", ...over });
+
+const MINUTE = 60_000;
+
+/** Three events five minutes apart, two overlapping ticket bars (CSV-2 in trouble), one worker session and the human's start. */
+export const timeline = (over: Partial<ProjectTimeline> = {}): ProjectTimeline => ({
+  start: NOW - 20 * MINUTE,
+  end: NOW,
+  events: [
+    [11, NOW - 20 * MINUTE],
+    [12, NOW - 15 * MINUTE],
+    [13, NOW - 10 * MINUTE],
+  ],
+  project: [
+    { from: NOW - 20 * MINUTE, to: NOW - 15 * MINUTE, state: "ready" },
+    { from: NOW - 15 * MINUTE, to: NOW, state: "running" },
+  ],
+  flow: [
+    { at: NOW - 20 * MINUTE, counts: { queued: 2 } },
+    { at: NOW - 15 * MINUTE, counts: { queued: 1, working: 1 } },
+    { at: NOW - 10 * MINUTE, counts: { working: 1, review: 1 } },
+  ],
+  tickets: [
+    { key: "CSV-1", title: "Order rows", from: NOW - 15 * MINUTE, to: NOW, parts: [{ from: NOW - 15 * MINUTE, to: NOW - 10 * MINUTE, state: "working" }, { from: NOW - 10 * MINUTE, to: NOW, state: "review" }] },
+    { key: "CSV-2", title: "Export endpoint", from: NOW - 10 * MINUTE, to: NOW, parts: [{ from: NOW - 10 * MINUTE, to: NOW, state: "working" }] },
+  ],
+  sessions: [{ key: "CSV-1", role: "worker", label: "attempt 1", from: NOW - 15 * MINUTE, to: NOW, endReason: null }],
+  marks: [{ id: 12, at: NOW - 15 * MINUTE, action: "start", key: null }],
+  trouble: ["CSV-2"],
+  ...over,
+});

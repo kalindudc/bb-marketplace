@@ -7,13 +7,14 @@ import type { ProjectMetrics } from "./metrics";
 import type { NextStep } from "./next-step";
 import type { PlanningSession, ProjectOverview } from "./projects";
 import type { Finding } from "./review";
+import type { ProjectTimeline, SessionBar, TicketBar } from "./replay";
 import type { SentNote, SpecVersionView } from "./spec-view";
 import type { ActivityItem, Attempt, ChecksItem, CheckStep, Mark, MergeItem, ReviewItem, TicketActivity } from "./activity";
 import type { AuthorKind, PostKind, ProjectState, ReviewVerdict, Role, ThreadState, TicketState } from "./states";
 import { MERGE_CHOICES } from "./states";
 
 export type ProjectSummary = ProjectOverview;
-export type { ActivityItem, Attempt, ChecksItem, CheckStep, HomeProject, HomeView, Mark, MergeItem, NeedItem, NextStep, PlanningSession, ProjectHealth, ReviewItem, SentNote, SpecVersionView, TicketActivity };
+export type { ActivityItem, Attempt, ChecksItem, CheckStep, HomeProject, HomeView, Mark, MergeItem, NeedItem, NextStep, PlanningSession, ProjectHealth, ProjectTimeline, ReviewItem, SentNote, SessionBar, SpecVersionView, TicketActivity, TicketBar };
 
 export interface BoardCard {
   key: string;
@@ -83,6 +84,8 @@ export interface ProjectView {
   /** Live rows first, then the newest. */
   agents: AgentRow[];
   now: number;
+  /** The event the view was rewound to; null for the live view. */
+  at: number | null;
 }
 
 export interface PostDto {
@@ -149,6 +152,9 @@ export interface TicketDetail {
   /** The state a blocked or cancelled ticket left; null otherwise. */
   stoppedFrom: TicketState | null;
   activity: TicketActivity;
+  /** The event the ticket was rewound to, and the time it shows; `at` is null for the live ticket. */
+  at: number | null;
+  now: number;
 }
 
 export interface FeedRow {
@@ -177,6 +183,7 @@ export type ControlAction = (typeof CONTROL_ACTIONS)[number];
 
 const slug = z.string().min(1).max(100);
 const key = z.string().min(1).max(100);
+const eventId = z.number().int().min(1);
 // bb's RPC cannot tell the page from an agent that calls `bb plugin rpc`, so every change needs an explicit confirmation.
 const confirm = z.literal(true);
 const typed = <T>() => z.custom<T>();
@@ -186,11 +193,12 @@ const isComposerRequest = (value: unknown) => typeof value === "object" && value
 export const rpcContract = defineRpcContract({
   projects: { input: z.null(), output: typed<ProjectSummary[]>() },
   home: { input: z.null(), output: typed<HomeView>() },
-  metrics: { input: z.object({ slug, days: z.union([z.literal(7), z.literal(14), z.literal(30)]) }).strict(), output: typed<ProjectMetrics>() },
-  project: { input: z.object({ slug }).strict(), output: typed<ProjectView>() },
-  ticket: { input: z.object({ key }).strict(), output: typed<TicketDetail>() },
+  metrics: { input: z.object({ slug, days: z.union([z.literal(7), z.literal(14), z.literal(30)]), at: eventId.optional() }).strict(), output: typed<ProjectMetrics>() },
+  project: { input: z.object({ slug, at: eventId.optional() }).strict(), output: typed<ProjectView>() },
+  ticket: { input: z.object({ key, at: eventId.optional() }).strict(), output: typed<TicketDetail>() },
   runOutput: { input: z.object({ id: z.number().int().min(1) }).strict(), output: typed<{ output: string } | null>() },
-  feed: { input: z.object({ slug, afterId: z.number().int().min(0).optional() }).strict(), output: typed<{ rows: FeedRow[]; lastId: number }>() },
+  feed: { input: z.object({ slug, afterId: z.number().int().min(0).optional(), at: eventId.optional() }).strict(), output: typed<{ rows: FeedRow[]; lastId: number }>() },
+  timeline: { input: z.object({ slug }).strict(), output: typed<ProjectTimeline>() },
   threadInfo: { input: z.object({ threadId: z.string().min(1).max(200) }).strict(), output: typed<ThreadInfo | null>() },
   reply: {
     input: z.object({ key, body: z.string().min(1).max(20_000), parentId: z.number().int().min(1).optional(), confirm }).strict(),

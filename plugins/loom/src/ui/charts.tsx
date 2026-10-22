@@ -1,8 +1,24 @@
 // Small SVG charts, drawn here so no chart library is bundled. Colours come from the theme's CSS variables.
+import type { TicketState } from "../states";
+
 export interface Swatch {
   fill: string;
   opacity?: number;
 }
+
+/** One colour per ticket state, shared by the cumulative flow and the timeline. bb's app defines no --chart-* variables, so these use the theme's named colours. */
+export const STATE_COLORS: Record<TicketState, Swatch> = {
+  done: { fill: "var(--success, currentColor)" },
+  pr_open: { fill: "var(--success, currentColor)", opacity: 0.35 },
+  merging: { fill: "var(--success, currentColor)", opacity: 0.5 },
+  approved: { fill: "var(--success, currentColor)", opacity: 0.7 },
+  review: { fill: "var(--warning, currentColor)" },
+  checking: { fill: "var(--primary, currentColor)", opacity: 0.6 },
+  working: { fill: "var(--primary, currentColor)" },
+  queued: { fill: "var(--muted-foreground, currentColor)", opacity: 0.5 },
+  blocked: { fill: "var(--destructive, currentColor)" },
+  cancelled: { fill: "var(--subtle-foreground, currentColor)", opacity: 0.5 },
+};
 
 const MUTED = "var(--muted-foreground, currentColor)";
 const PRIMARY = "var(--primary, currentColor)";

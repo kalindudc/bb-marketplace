@@ -2,24 +2,12 @@ import type { ReactNode } from "react";
 import { formatDuration, noTokenUsage } from "../format";
 import type { ProjectMetrics, Pct } from "../metrics";
 import { TICKET_STATES, WINDOW_DAYS, type TicketState, type WindowDays } from "../states";
-import { BarChart, ShareBar, Spark, StackedArea, type Swatch } from "./charts";
+import { BarChart, ShareBar, Spark, StackedArea, STATE_COLORS as FLOW_COLORS } from "./charts";
 import { BUTTON, CARD, HEADING, plural } from "./common";
 
 const IN_FLIGHT: readonly TicketState[] = ["working", "checking", "review", "approved", "merging", "pr_open"];
 // The first key is drawn at the bottom of the cumulative flow, so finished work sits under the queue.
 const FLOW_KEYS: TicketState[] = ["done", "pr_open", "merging", "approved", "review", "checking", "working", "queued", "blocked", "cancelled"];
-const FLOW_COLORS: Record<TicketState, Swatch> = {
-  done: { fill: "var(--success, currentColor)" },
-  pr_open: { fill: "var(--success, currentColor)", opacity: 0.35 },
-  merging: { fill: "var(--success, currentColor)", opacity: 0.5 },
-  approved: { fill: "var(--success, currentColor)", opacity: 0.7 },
-  review: { fill: "var(--warning, currentColor)" },
-  checking: { fill: "var(--primary, currentColor)", opacity: 0.6 },
-  working: { fill: "var(--primary, currentColor)" },
-  queued: { fill: "var(--muted-foreground, currentColor)", opacity: 0.5 },
-  blocked: { fill: "var(--destructive, currentColor)" },
-  cancelled: { fill: "var(--subtle-foreground, currentColor)", opacity: 0.5 },
-};
 const count = (value: number) => value.toLocaleString("en-US");
 const percent = (fraction: number) => `${Math.round(fraction * 100)}%`;
 const EMPTY = "mt-1 text-sm text-muted-foreground";

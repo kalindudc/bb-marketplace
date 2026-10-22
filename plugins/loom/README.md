@@ -143,6 +143,30 @@ these views:
 - Spec: the spec as a dashboard, with a summary strip and four tabs. Tickets shows the dependency waves from top to bottom, each a wrapping grid of cards that say what they wait for; selecting a ticket lights up everything it waits for and everything it unblocks, says so in a sentence, and dims the rest until you click it again or press Show all. Files starts with Shared files, one row per path that two or more tickets may change, naming the tickets and whether they run in order or one at a time; then every path grouped by folder, with an "All files" or "Shared only" filter and the selected ticket's paths highlighted; then the protected paths. Checks & review and Project & limits show the rest of the spec. Under the tabs a wide card shows the selected ticket: its brief for the worker on the left, cut short with "Show the whole brief" when it is long, and its facts on the right (priority and wave, what it waits for and unblocks, the acceptance criteria, the paths it may change and its verify commands). The dashboard also has a version switcher that marks what each version changed, "Read the raw spec", "+ note" on every part with a tray beside the tabs that sends the notes to the planner, and Approve for a pending version.
 - Planner: the planner thread's chat, embedded in the page, with its open questions above it.
 
+Under the health strip, every project has a Timeline section. Collapsed, it is
+one thin strip: the share of tickets in each state over time, with a playhead,
+the moment shown ("Now" or the rewound time) and a Play button. Click or drag
+the strip, press Play, or open the section and step with First event, Previous
+event, Next event and Now to rewind the whole page to that moment; while the
+section has focus, the arrow keys step one event and Space plays or pauses.
+Rewound, the header shows "rewound" in place of its controls, a "Rewound to …"
+bar replaces the next-step bar, and the health strip, Board, Agents, Feed,
+Metrics and Spec show the project as it was then. The Spec tab shows the version
+in force then, read-only, and the Planner tab is hidden. A ticket opened while
+rewound shows its state, posts, checks, reviews and threads as they were, with
+every control disabled. Back to now returns the live page; nothing on a rewound
+page can change the project. Open, the section plays at 1, 5 or 20 minutes per
+second, marks your own actions as diamonds that seek to them, zooms to the whole
+project or to 2 hours or 30 minutes around the playhead, and draws a bar per
+ticket while it is in flight, or per agent session, packed into shared rows, so
+the lanes stay short however many tickets the project has. Trouble only keeps
+the tickets that blocked or were sent back to work. Stretches of 15 minutes or
+more with no event fold to a narrow band marked ≈. The server rebuilds the past
+from the event log and runs the live page's own views on it, so the board's
+waits, the health strip and the metrics are the real ones. History from before
+Loom 0.7.0 does not keep a ticket's old text or its failure count on each move,
+so a moment from then shows today's ticket text and counts no failed attempts.
+
 Every button that changes something asks twice: the first click turns it amber
 with "Click again to ..." and a bar that drains over five seconds, beside a
 Cancel button. Archive sits in the ⋯ menu. Each button calls the
@@ -218,7 +242,9 @@ whole project.
   git through argv, `gh` for pull requests, and check commands in their own
   process group.
 - `src/metrics.ts` and `src/feed-text.ts` are pure; `src/reports.ts` reads them
-  for the CLI and the page. `src/rpc.ts` serves the page and publishes
+  for the CLI and the page. `src/replay.ts` is pure too: it rewinds a project's
+  rows to one event, for a rewound page, and builds the Timeline.
+  `src/rpc.ts` serves the page and publishes
   `loom:changed` after a project's events and after any change that writes no
   event (`Store.changed`), at most once every 300 ms per project. A change
   outside any project, such as a new planning conversation, publishes

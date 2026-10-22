@@ -9,7 +9,7 @@ import type { Attempt, ChecksItem, HomeProject, NextStep, PlanningSession, Proje
 import { notesMessage } from "../src/prompts";
 import { ConfirmButton, MoreMenu } from "../src/ui/common";
 import { questionsOf } from "../src/ui/questions";
-import { HOUR, NOW, agent, attempt, card, feedRow, health, homeProject, homeView, metrics, overview, projectView, specVersionView, ticketDetail } from "./fixtures";
+import { HOUR, NOW, agent, attempt, card, feedRow, health, homeProject, homeView, metrics, overview, projectView, specVersionView, ticketDetail, timeline } from "./fixtures";
 
 type Handlers = PluginRpcTestHandlers<typeof rpcContract>;
 const unexpected = (): never => {
@@ -23,6 +23,7 @@ const handlers = (over: Partial<Handlers> = {}): Handlers => ({
   ticket: unexpected,
   runOutput: unexpected,
   feed: unexpected,
+  timeline: () => timeline(),
   threadInfo: () => null,
   reply: unexpected,
   ticketAction: unexpected,
@@ -2508,7 +2509,7 @@ describe("metrics tab", () => {
 
   it("draws the throughput bars, the cumulative flow and the WIP trend as labelled svg with a text table on hover", async () => {
     const slot = await openMetrics();
-    const charts = [...slot.container.querySelectorAll("svg[aria-label]")];
+    const charts = [...slot.container.querySelector('[role="tabpanel"]')!.querySelectorAll("svg[aria-label]")];
     expect(charts.map((chart) => chart.getAttribute("aria-label"))).toEqual(["Work in progress over the last 14 days", "Throughput: tickets done per day, last 14 days", "Cumulative flow: tickets in each state at the end of each day"]);
     const bars = slot.container.querySelectorAll('svg[aria-label^="Throughput"] rect');
     expect(bars).toHaveLength(14);
@@ -2627,5 +2628,112 @@ describe("feed tab", () => {
     const { slot } = await mountPage("csv", { project: () => projectView(), feed: () => Promise.reject(new Error("db is closed")) });
     fireEvent.click(await slot.findByRole("tab", { name: "Feed" }));
     expect((await slot.findByRole("alert")).textContent).toContain("db is closed");
+  });
+});
+
+describe("timeline", () => {
+  afterEach(() => localStorage.clear());
+  const PAST = NOW - 15 * 60_000;
+  const project = (input: { slug: string; at?: number }) => (input.at === undefined ? projectView() : projectView({ at: input.at, now: PAST }));
+  const open = async (slot: Slot) => {
+    fireEvent.click(await slot.findByRole("button", { name: "Timeline" }));
+    await waitFor(() => expect(slot.container.querySelector("[data-timeline-open]")).not.toBeNull());
+  };
+  const rewind = async (slot: Slot) => {
+    await open(slot);
+    fireEvent.click(slot.getByRole("button", { name: "Previous event" }));
+    await slot.findByRole("button", { name: "Back to now" });
+  };
+
+  it("starts collapsed as a strip with a Play button", async () => {
+    const { slot } = await mountPage("csv", { project });
+    const toggle = await slot.findByRole("button", { name: "Timeline" });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(slot.container.querySelector("[data-timeline-mini]")).not.toBeNull();
+    expect(slot.container.querySelector("[data-timeline-open]")).toBeNull();
+    expect(slot.getByRole("button", { name: "Play" })).toBeTruthy();
+    expect(calls(slot, "timeline")[0]!.input).toEqual({ slug: "csv" });
+  });
+
+  it("opens, and stays open across a remount", async () => {
+    const first = await mountPage("csv", { project });
+    await open(first.slot);
+    expect(first.slot.getByRole("button", { name: "Timeline" }).getAttribute("aria-expanded")).toBe("true");
+    expect(localStorage.getItem("loom.timeline.open")).toBe("true");
+    expect(first.slot.container.querySelector("[data-timeline-overview]")).not.toBeNull();
+    expect(first.slot.container.querySelector("[data-timeline-lanes]")).not.toBeNull();
+    expect(first.slot.getByText("event 3 of 3")).toBeTruthy();
+    first.slot.lifecycle.unmount();
+    const again = await mountPage("csv", { project });
+    await waitFor(() => expect(again.slot.container.querySelector("[data-timeline-open]")).not.toBeNull());
+  });
+
+  it("rewinds the page to the previous event, with no controls, and Back to now returns it", async () => {
+    const { slot } = await mountPage("csv", { project });
+    await slot.findByRole("button", { name: "Pause" });
+    await rewind(slot);
+    expect(calls(slot, "project").at(-1)!.input).toEqual({ slug: "csv", at: 12 });
+    expect([...slot.container.querySelectorAll("[data-state-badge]")].map((badge) => badge.textContent)).toContain("rewound");
+    expect(slot.container.querySelector("[data-rewind-bar]")!.textContent).toContain("nothing here can change it");
+    expect(slot.container.querySelector("[data-next-step]")).toBeNull();
+    expect(slot.queryByRole("button", { name: "Pause" })).toBeNull();
+    expect(slot.queryByRole("button", { name: "More actions" })).toBeNull();
+    expect(slot.getByText("event 2 of 3")).toBeTruthy();
+
+    fireEvent.click(slot.getByRole("button", { name: "Back to now" }));
+    await slot.findByRole("button", { name: "Pause" });
+    expect(calls(slot, "project").at(-1)!.input).toEqual({ slug: "csv" });
+    expect(slot.getByRole("button", { name: "More actions" })).toBeTruthy();
+    expect(slot.container.querySelector("[data-rewind-bar]")).toBeNull();
+  });
+
+  it("seeks to the moment of one of your actions", async () => {
+    const { slot } = await mountPage("csv", { project });
+    await open(slot);
+    fireEvent.click(slot.getByRole("button", { name: "You ran start" }));
+    await waitFor(() => expect(calls(slot, "project").at(-1)!.input).toEqual({ slug: "csv", at: 12 }));
+  });
+
+  it("packs the bars into rows, and packs again for Trouble only and for agent sessions", async () => {
+    const { slot } = await mountPage("csv", { project });
+    await open(slot);
+    const note = () => slot.container.querySelector("[data-timeline-note]")!.textContent;
+    expect(note()).toBe("2 tickets in 2 rows");
+    expect(slot.container.querySelectorAll("[data-timeline-bar]")).toHaveLength(2);
+    fireEvent.click(slot.getByRole("checkbox", { name: "Trouble only" }));
+    expect(note()).toBe("1 ticket in 1 row");
+    expect([...slot.container.querySelectorAll("[data-timeline-bar]")].map((bar) => bar.getAttribute("data-timeline-bar"))).toEqual(["CSV-2"]);
+    fireEvent.click(slot.getByRole("checkbox", { name: "Trouble only" }));
+    fireEvent.click(slot.getByRole("button", { name: "Agent sessions" }));
+    expect(note()).toBe("1 session in 1 row");
+  });
+
+  it("opens a ticket as it was at the rewound moment, with no reply box", async () => {
+    const ticket = vi.fn((input: { key: string; at?: number }) => ticketDetail({ key: input.key, at: input.at ?? null, now: input.at === undefined ? NOW : PAST, replyTo: null }));
+    const { slot, goTo } = await mountPage("csv", { project, ticket });
+    await rewind(slot);
+    goTo("csv/CSV-2");
+    await waitFor(() => expect(slot.container.querySelector("[data-ticket-rewound]")).not.toBeNull());
+    expect(ticket).toHaveBeenCalledWith({ key: "CSV-2", at: 12 });
+    expect(slot.container.querySelector("[data-ticket-rewound]")!.textContent).toContain("This is CSV-2 as it was then.");
+    expect(slot.queryByRole("textbox", { name: "New reply" })).toBeNull();
+
+    fireEvent.click(within(slot.container.querySelector<HTMLElement>("[data-ticket-rewound]")!).getByRole("button", { name: "Back to now" }));
+    await waitFor(() => expect(slot.container.querySelector("[data-ticket-rewound]")).toBeNull());
+    expect(ticket).toHaveBeenLastCalledWith({ key: "CSV-2" });
+    expect(slot.getByRole("textbox", { name: "New reply" })).toBeTruthy();
+  });
+
+  it("hides the Planner tab while rewound, and shows the spec in force with no notes", async () => {
+    const { slot } = await mountPage("csv", { project, specVersion: () => specVersionView({ version: 1, status: "approved", changes: null }) });
+    expect(await slot.findByRole("tab", { name: "Planner" })).toBeTruthy();
+    await rewind(slot);
+    expect(slot.queryByRole("tab", { name: "Planner" })).toBeNull();
+    fireEvent.click(slot.getByRole("tab", { name: "Spec" }));
+    await waitFor(() => expect(slot.container.querySelector("[data-spec-dashboard]")).not.toBeNull());
+    expect(calls(slot, "specVersion").at(-1)!.input).toEqual({ slug: "csv", version: 1 });
+    expect(slot.container.querySelector("[data-spec-rewound]")!.textContent).toBe("At this moment, version 1 was the spec in force.");
+    expect(slot.queryAllByRole("button", { name: /^Add a note on/ })).toEqual([]);
+    expect(slot.container.querySelector("[data-spec-pending]")).toBeNull();
   });
 });
