@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { dependencyCycle, globsOverlap, numberErrors, parseSpec, scopeOverlaps, specHash } from "../src/spec";
+import { dependencyCycle, globsOverlap, numberErrors, parseSpec, scopeOverlaps, specHash, ticketPatchSchema } from "../src/spec";
 import { specToml, type Doc } from "./helpers";
 
 function run(edit?: (doc: Doc) => void) {
@@ -312,6 +312,146 @@ describe("specHash", () => {
     expect(specHash(first)).toMatch(/^[0-9a-f]{64}$/);
     const changed = run((doc) => (doc.ticket[0].title = "Row mapper")).spec!;
     expect(specHash(changed)).not.toBe(specHash(first));
+  });
+});
+
+describe("[[repo]]", () => {
+  const twoRepos = (doc: Doc) => {
+    doc.repo = [
+      { name: "web", project: "proj_web" },
+      { name: "api", project: "proj_api", base: "trunk", remote: "upstream", checks: ["make test"], protected: ["vendor/**"] },
+    ];
+    doc.ticket[0].repo = "web";
+    doc.ticket[1].repo = "api";
+  };
+  const multi = (edit?: (doc: Doc) => void) =>
+    run((doc) => {
+      twoRepos(doc);
+      edit?.(doc);
+    });
+
+  it("parses a spec without [[repo]] to the object and the hash it had before repos existed", () => {
+    const spec = run().spec!;
+    expect(Object.keys(spec)).not.toContain("repo");
+    for (const ticket of spec.ticket) expect(Object.keys(ticket)).not.toContain("repo");
+    // Computed by the spec.ts that came before [[repo]]; it changes only if the base spec or the schema's output does.
+    expect(specHash(spec)).toBe("975e726bf34c40a6b5becf170f1eb25e6dc3f7a8e6818724e1ea96d69bf2808f");
+  });
+
+  it("accepts repos that every ticket names, keeps each ticket's repo and fills in nothing", () => {
+    const result = multi();
+    expect(result.errors).toEqual([]);
+    expect(result.warnings).toEqual([]);
+    expect(result.spec?.repo).toStrictEqual([
+      { name: "web", project: "proj_web" },
+      { name: "api", project: "proj_api", base: "trunk", remote: "upstream", checks: ["make test"], protected: ["vendor/**"] },
+    ]);
+    expect(result.spec?.ticket.map((ticket) => ticket.repo)).toEqual(["web", "api"]);
+  });
+
+  it("names the TOML path of a bad repo entry or ticket repo", () => {
+    const result = multi((doc) => {
+      doc.repo[0].name = "Web";
+      doc.repo[1].project = "";
+      doc.repo[1].base = "a..b";
+      doc.repo[1].colour = "red";
+      doc.ticket[0].repo = "a".repeat(25);
+    });
+    const text = result.errors.join("\n");
+    expect(text).toContain("repo[0].name: must be 1-24 lowercase letters, digits or dashes, starting with a letter (for example web).");
+    expect(text).toContain("repo[1].project:");
+    expect(text).toContain("repo[1].base:");
+    expect(text).toContain('repo[1]: unknown key "colour".');
+    expect(text).toContain("ticket[0].repo:");
+    expect(multi((doc) => (doc.repo[0].name = "w".repeat(24))).errors.join("\n")).not.toContain("repo[0].name:");
+    expect(multi((doc) => delete doc.repo[1].project).errors).toContain("repo[1].project: is required. Add it.");
+  });
+
+  it("refuses more than 10 repos", () => {
+    const result = multi((doc) => (doc.repo = Array.from({ length: 11 }, (_, index) => ({ name: `r${index}`, project: `proj_${index}` }))));
+    expect(result.errors.join("\n")).toContain("repo: Too big");
+  });
+
+  it("refuses two repos with the same name or the same project", () => {
+    const result = multi((doc) => doc.repo.push({ name: "web", project: "proj_api" }));
+    expect(result.errors).toEqual([
+      'repo[2].name: "web" is also the name of repo[0]. Give every repo a unique name.',
+      'repo[2].project: "proj_api" is also the project of repo[1]. List each bb project in one [[repo]] table only.',
+    ]);
+  });
+
+  it("refuses a ticket of a multi-repo spec that names no repo or an unknown one, and lists the names", () => {
+    const result = multi((doc) => {
+      delete doc.ticket[0].repo;
+      doc.ticket[1].repo = "docs";
+    });
+    expect(result.errors).toEqual(["ticket[0].repo: is required, because the spec lists [[repo]] tables. Set it to one of: web, api.", 'ticket[1].repo: "docs" is not the name of a [[repo]] table. Use one of: web, api.']);
+  });
+
+  it("refuses a ticket that sets repo when the spec has no [[repo]]", () => {
+    const result = run((doc) => (doc.ticket[1].repo = "api"));
+    expect(result.errors).toEqual(['ticket[1].repo: "api" names a repo, but the spec has no [[repo]] table, so every ticket runs in the project\'s own repository. Add a [[repo]] table named "api", or remove repo from the ticket.']);
+  });
+
+  it("refuses a repo's after_merge with the pr strategy, and accepts it with integration", () => {
+    const result = multi((doc) => {
+      doc.merge = { strategy: "pr" };
+      doc.repo[1].after_merge = ["make build"];
+    });
+    expect(result.errors).toEqual(['repo[1].after_merge: these run on the merged integration branch, but merge.strategy is "pr". Remove after_merge, or use merge.strategy = "integration".']);
+    expect(multi((doc) => (doc.repo[1].after_merge = ["make build"])).errors).toEqual([]);
+  });
+
+  it("refuses a scope under its own repo's protected globs, and accepts one under another repo's only", () => {
+    const own = multi((doc) => (doc.ticket[1].scope = ["vendor/lib/**"]));
+    expect(own.errors).toEqual(['ticket[1].scope: "vendor/lib/**" falls under the protected path "vendor/**" of repo "api". Remove it from the ticket, or take the path out of repo[1].protected.']);
+    const other = multi((doc) => (doc.ticket[0].scope = ["vendor/lib/**"]));
+    expect(other.errors).toEqual([]);
+  });
+
+  it("still refuses a scope under the top-level protected globs in every repo", () => {
+    const result = multi((doc) => {
+      doc.scope = { protected: ["src/model/**"] };
+      doc.ticket[1].scope = ["src/model/x.ts"];
+    });
+    expect(result.errors).toEqual([
+      'ticket[0].scope: "src/model/**" falls under the protected path "src/model/**". Remove it from the ticket, or take the path out of scope.protected.',
+      'ticket[1].scope: "src/model/x.ts" falls under the protected path "src/model/**". Remove it from the ticket, or take the path out of scope.protected.',
+    ]);
+  });
+
+  it("judges whether anything checks a ticket by its repo's effective checks", () => {
+    const replaced = multi((doc) => (doc.checks = { commands: [] }));
+    expect(replaced.errors).toEqual([
+      "ticket[0].verify: nothing would check this ticket, because it has no verify commands and checks.commands is empty. Add a verify command to the ticket or a command to [checks].",
+    ]);
+    const emptied = multi((doc) => (doc.repo[1].checks = []));
+    expect(emptied.errors).toEqual([
+      'ticket[1].verify: nothing would check this ticket, because it has no verify commands and repo[1].checks, which replaces checks.commands for repo "api", is empty. Add a verify command to the ticket or a command to repo[1].checks.',
+    ]);
+    expect(multi((doc) => ((doc.repo[1].checks = []), (doc.ticket[1].verify = ["make lint"]))).errors).toEqual([]);
+  });
+
+  it("reports no overlap between tickets in different repos with the same scope", () => {
+    const result = multi((doc) => {
+      doc.ticket[1].scope = ["src/model/**"];
+      delete doc.ticket[1].depends_on;
+    });
+    expect(result.errors).toEqual([]);
+    expect(result.warnings).toEqual([]);
+    expect(scopeOverlaps(result.spec!.ticket)).toEqual([]);
+    const sameRepo = multi((doc) => {
+      doc.ticket[1].repo = "web";
+      doc.ticket[1].scope = ["src/model/**"];
+      delete doc.ticket[1].depends_on;
+    });
+    expect(scopeOverlaps(sameRepo.spec!.ticket)).toEqual([{ i: 0, j: 1, paths: ["src/model/**"] }]);
+  });
+
+  it("lets a ticket patch set repo, and leaves it out of a patch that does not", () => {
+    expect(ticketPatchSchema.parse({ repo: "api" })).toStrictEqual({ repo: "api" });
+    expect(ticketPatchSchema.parse({ title: "New" })).toStrictEqual({ title: "New" });
+    expect(ticketPatchSchema.safeParse({ repo: "" }).success).toBe(false);
   });
 });
 
