@@ -13,11 +13,23 @@ const BUTTON_ARMED = "relative inline-flex shrink-0 cursor-pointer items-center 
 export const CARD = "rounded-md border border-border-seam p-3";
 export const FIELD = "w-full rounded-md border border-border-seam bg-transparent px-2 py-1.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 export const HEADING = "text-[10.5px] font-semibold uppercase tracking-wider text-subtle-foreground";
+export const CHIP = "rounded-full border border-border-seam px-1.5 text-[10.5px] leading-4";
 
 export const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 /** "Tue, Jan 6, 14:05": the moment a rewound page shows. */
 export const momentLabel = (at: number) => new Date(at).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 export { plural } from "../format";
+/** "a", "a and b", "a, b and c". */
+export const listText = (items: readonly string[]) => (items.length <= 1 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`);
+
+/** The repo a ticket runs in, on a multi-repo project. */
+export function RepoChip({ name, className = "" }: { name: string; className?: string }) {
+  return (
+    <span data-repo-chip={name} title={`repo ${name}`} className={`${CHIP} inline-block font-mono text-muted-foreground [overflow-wrap:anywhere] ${className}`}>
+      {name}
+    </span>
+  );
+}
 
 export const mergeLabel = (project: Pick<ProjectSummary, "strategy" | "branch">) => (project.strategy === "integration" ? `integration branch ${project.branch}` : "one pull request per ticket");
 export const countsLabel = (counts: ProjectSummary["ticketCounts"]) =>

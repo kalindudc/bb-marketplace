@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { SpecVersionView } from "../contract";
+import type { ProjectView, SpecVersionView } from "../contract";
 import { wavesOf, type SpecChanges } from "../spec-paths";
 import { BUTTON, plural, useRemote } from "./common";
 import { MarksContext, modelLabel, type Marks, type NoteTarget } from "./spec-marks";
@@ -15,12 +15,19 @@ const TABS: ReadonlyArray<{ tab: Tab; label: string }> = [
   { tab: "project", label: "Project & limits" },
 ];
 
-/** A spec as a dashboard: its versions, a summary strip, four views of it and notes for the planner. `readOnly` opens at `version` and takes no notes: the dashboard of a rewound page. */
-export function SpecDashboard({ slug, version, readOnly = false }: { slug: string; version?: number; readOnly?: boolean }) {
-  return <Dashboard key={`${slug} ${version ?? "latest"} ${readOnly}`} slug={slug} pinned={version ?? null} readOnly={readOnly} />;
+/** bb's name for each bb project id a project view's repos name; the spec versions carry only the ids. */
+export function bbProjectNamesOf(view: ProjectView | null): Record<string, string> {
+  if (view === null) return {};
+  const repos = [...view.overview.repos, ...view.spec.summary.repos];
+  return Object.fromEntries(repos.flatMap((repo) => (repo.bbProjectName === null ? [] : [[repo.bbProjectId, repo.bbProjectName]])));
 }
 
-function Dashboard({ slug, pinned, readOnly }: { slug: string; pinned: number | null; readOnly: boolean }) {
+/** A spec as a dashboard: its versions, a summary strip, four views of it and notes for the planner. `readOnly` opens at `version` and takes no notes: the dashboard of a rewound page. */
+export function SpecDashboard({ slug, version, readOnly = false, bbProjectNames = {} }: { slug: string; version?: number; readOnly?: boolean; bbProjectNames?: Readonly<Record<string, string>> }) {
+  return <Dashboard key={`${slug} ${version ?? "latest"} ${readOnly}`} slug={slug} pinned={version ?? null} readOnly={readOnly} bbProjectNames={bbProjectNames} />;
+}
+
+function Dashboard({ slug, pinned, readOnly, bbProjectNames }: { slug: string; pinned: number | null; readOnly: boolean; bbProjectNames: Readonly<Record<string, string>> }) {
   // null follows the newest version as the planner proposes.
   const [version, setVersion] = useState<number | null>(pinned);
   const remote = useRemote((rpc) => rpc.call("specVersion", version === null ? { slug } : { slug, version }), `spec:${slug}:${version ?? "latest"}`, slug);
@@ -89,7 +96,7 @@ function Dashboard({ slug, pinned, readOnly }: { slug: string; pinned: number | 
               {tab === "tickets" && <TicketsPane view={view} selected={selected} highlighted={highlighted} onPick={pick} onClear={() => setLit(false)} />}
               {tab === "files" && <FilesPane view={view} highlighted={highlighted} onPick={pick} onClear={() => setLit(false)} />}
               {tab === "checks" && <ChecksPane view={view} />}
-              {tab === "project" && <ProjectPane view={view} />}
+              {tab === "project" && <ProjectPane view={view} bbProjectNames={bbProjectNames} />}
             </div>
             <Inspector view={view} selected={selected} onPick={pick} />
           </div>

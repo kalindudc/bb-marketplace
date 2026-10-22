@@ -1,4 +1,4 @@
-import type { AgentRow, Attempt, BoardCard, FeedRow, HomeProject, HomeView, ProjectHealth, ProjectSummary, ProjectTimeline, ProjectView, SpecVersionView, TicketDetail } from "../src/contract";
+import type { AgentRow, Attempt, BoardCard, FeedRow, HomeProject, HomeView, ProjectHealth, ProjectSummary, ProjectTimeline, ProjectView, RepoOverview, SpecVersionView, TicketDetail } from "../src/contract";
 import type { ProjectMetrics } from "../src/metrics";
 import { parseSpec } from "../src/spec";
 import { TICKET_STATES, type TicketState } from "../src/states";
@@ -29,6 +29,20 @@ export const overview = (over: Partial<ProjectSummary> = {}): ProjectSummary => 
   updatedAt: NOW - HOUR,
   ...over,
 });
+
+/** One repo of a multi-repo project's overview: web by default, with merged work to land. */
+export const repoOverview = (over: Partial<RepoOverview> = {}): RepoOverview => ({ name: "web", bbProjectId: "proj_web", bbProjectName: "shop-web", base: "main", branch: "loom/csv", prUrl: null, landedAt: null, toLand: true, ...over });
+
+/** The helpers' base spec over two repos: web (its own checks, after-merge checks and a protected path) holds csv-model, and api (another base and remote, bb's name for it unknown) holds csv-export. */
+export function withRepos(doc: Doc): void {
+  doc.scope = { protected: ["db/**"] };
+  doc.repo = [
+    { name: "web", project: "proj_web", checks: ["npm run web-test"], after_merge: ["npm run web-e2e"], protected: ["web.lock"] },
+    { name: "api", project: "proj_api", base: "trunk", remote: "upstream" },
+  ];
+  doc.ticket[0].repo = "web";
+  doc.ticket[1].repo = "api";
+}
 
 export const homeProject = (over: Partial<HomeProject> = {}): HomeProject => ({
   ...overview(),

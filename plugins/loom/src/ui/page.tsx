@@ -1,21 +1,22 @@
 import { useState } from "react";
 import { experimental_Icon as Icon, useBbNavigate, useRpc, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import type { ControlAction, ProjectView, rpcContract } from "../contract";
+import { isMultiRepoProject } from "../format";
 import type { ProjectMetrics } from "../metrics";
 import { STAGES } from "../next-step";
 import type { WindowDays } from "../states";
 import { AgentsView } from "./agents";
 import { Board } from "./board";
-import { BUTTON_PRIMARY, ConfirmButton, HEADING, MoreMenu, StateBadge, countsLabel, mergeLabel, momentLabel, useRemote, useRun } from "./common";
+import { BUTTON_PRIMARY, ConfirmButton, HEADING, MoreMenu, RepoChip, StateBadge, countsLabel, listText, mergeLabel, momentLabel, useRemote, useRun } from "./common";
 import { Feed } from "./feed";
 import { Guide } from "./guide";
 import { HealthStrip } from "./health";
 import { Home } from "./home";
 import { MetricsView } from "./metrics-view";
 import { NewProject } from "./new-project";
-import { NextStepBar } from "./next-step-bar";
+import { NextStepBar, repoLand } from "./next-step-bar";
 import { PlannerChat, PlanningView } from "./planning";
-import { SpecDashboard } from "./spec-dashboard";
+import { SpecDashboard, bbProjectNamesOf } from "./spec-dashboard";
 import { TicketView } from "./ticket";
 import { TimelineStrip } from "./timeline-strip";
 
@@ -46,8 +47,12 @@ function Controls({ view, busy, primary, onControl }: { view: ProjectView; busy:
   const { overview } = view;
   const live = overview.state === "running" || overview.state === "paused" || overview.state === "done";
   const landable = overview.strategy === "integration" && live && (overview.ticketCounts.done ?? 0) > 0;
-  const act = (label: string, action: ControlAction, version?: number) =>
-    action === primary ? null : <ConfirmButton key={label} label={label} disabled={busy} onConfirm={() => onControl(action, version)} />;
+  const land = repoLand(overview.repos);
+  // A multi-repo project lands each repo onto its own base.
+  const bases = [...new Set(overview.repos.map((repo) => repo.base))];
+  const base = !isMultiRepoProject(overview) ? overview.base : bases.length === 1 ? bases[0]! : null;
+  const act = (label: string, action: ControlAction, version?: number, confirm?: string) =>
+    action === primary ? null : <ConfirmButton key={label} label={label} confirmLabel={confirm} disabled={busy} onConfirm={() => onControl(action, version)} />;
   return (
     <span data-controls className="ml-auto flex flex-wrap items-center gap-2">
       {overview.state === "draft" && act("Approve", "approve")}
@@ -56,8 +61,8 @@ function Controls({ view, busy, primary, onControl }: { view: ProjectView; busy:
       {overview.state === "running" && act("Pause", "pause")}
       {overview.state === "running" && act("Pause now", "pauseNow")}
       {overview.state === "paused" && act("Resume", "resume")}
-      {landable && act("Land", "land")}
-      {landable && act(`Land to ${overview.base}`, "landDirect")}
+      {landable && act(land?.label ?? "Land", "land", undefined, land?.confirm)}
+      {landable && act(base === null ? "Land to each repo's base" : `Land to ${base}`, "landDirect", undefined, land === null ? undefined : `Click again to land ${listText(land.names)} to ${base ?? "their bases"}`)}
       {overview.state !== "archived" && (
         <MoreMenu>
           <ConfirmButton label="Archive project" danger disabled={busy} onConfirm={() => onControl("archive")} />
@@ -77,7 +82,7 @@ function SpecTab({ view, busy, rewound, onApprove }: { view: ProjectView; busy: 
         <p data-spec-rewound className="text-xs text-muted-foreground">
           At this moment, version {spec.version} was the spec in force.
         </p>
-        <SpecDashboard slug={overview.slug} version={spec.version} readOnly />
+        <SpecDashboard slug={overview.slug} version={spec.version} readOnly bbProjectNames={bbProjectNamesOf(view)} />
       </div>
     );
   }
@@ -92,7 +97,7 @@ function SpecTab({ view, busy, rewound, onApprove }: { view: ProjectView; busy: 
           </div>
         </section>
       )}
-      <SpecDashboard slug={overview.slug} />
+      <SpecDashboard slug={overview.slug} bbProjectNames={bbProjectNamesOf(view)} />
     </div>
   );
 }
@@ -170,13 +175,30 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek }: { slug: string; tab: Tab
       ) : (
         view.next !== null && (
           <div className="px-4 pt-3">
-            <NextStepBar next={view.next} busy={busy} onAct={(action, version) => void control(action, version)} />
+            <NextStepBar next={view.next} busy={busy} repos={overview.repos} onAct={(action, version) => void control(action, version)} />
           </div>
         )
       )}
       {view.prUrl !== null && (
         <p className="border-b border-border-seam px-4 py-2 text-xs text-muted-foreground">
           Pull request <button type="button" className="underline" onClick={() => navigate.openUrl(view.prUrl!)}>{view.prUrl}</button>
+        </p>
+      )}
+      {isMultiRepoProject(overview) && overview.repos.some((repo) => repo.prUrl !== null) && (
+        <p data-repo-prs className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border-seam px-4 py-2 text-xs text-muted-foreground">
+          Pull requests
+          {overview.repos.flatMap((repo) =>
+            repo.prUrl === null
+              ? []
+              : [
+                  <span key={repo.name} className="inline-flex min-w-0 items-center gap-1">
+                    <RepoChip name={repo.name!} />
+                    <button type="button" aria-label={`Open the pull request in ${repo.name}`} className="underline [overflow-wrap:anywhere]" onClick={() => navigate.openUrl(repo.prUrl!)}>
+                      {repo.prUrl}
+                    </button>
+                  </span>,
+                ],
+          )}
         </p>
       )}
       {error !== null && <p role="alert" className="border-b border-border-seam px-4 py-2 text-xs text-destructive-text">{error}</p>}
