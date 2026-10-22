@@ -72,7 +72,7 @@ export class Engine {
     void this.tick().catch((error) => this.warn("tick", error));
   }
 
-  /** One pass over every running project. Concurrent callers share a pass; a kick during a pass makes another one. */
+  /** One pass over every project: works the running and paused ones and removes a done or archived one's section. Concurrent callers share a pass; a kick during a pass makes another one. */
   tick(): Promise<void> {
     if (this.disposed) return Promise.resolve();
     if (this.currentTick !== null) {
@@ -101,10 +101,11 @@ export class Engine {
     resumeCheckingTickets(this.ctx);
     for (const project of store.projects()) {
       if (this.disposed) return;
-      if (project.state !== "running" && project.state !== "paused") continue;
       try {
         if (project.state === "running") await this.tickProject(project.id);
-        else await this.tickPaused(project.id);
+        else if (project.state === "paused") await this.tickPaused(project.id);
+        // Read again: the tick may have finished it, and a land or an archive may have moved it since the list was read.
+        await this.projects.removeFinishedSection(store.project(project.id)!);
       } catch (error) {
         this.warn(`project ${project.slug}`, error);
       }

@@ -331,7 +331,9 @@ export class Projects {
 
   async start(slug: string, actor: string): Promise<ProjectRow> {
     const project = this.expectState(slug, "start", "ready", { draft: `Run \`bb loom approve ${slug}\` first.`, paused: `Run \`bb loom resume ${slug}\` instead.` });
-    return this.moveProject(project, "running", actor);
+    const started = this.moveProject(project, "running", actor);
+    await this.ensureProjectSection(started);
+    return this.store.project(started.id)!;
   }
 
   async pause(slug: string, actor: string, opts: { now?: boolean } = {}): Promise<ProjectRow> {
@@ -341,7 +343,9 @@ export class Projects {
 
   async resume(slug: string, actor: string): Promise<ProjectRow> {
     const project = this.expectState(slug, "resume", "paused", { ready: `Run \`bb loom start ${slug}\` instead.` });
-    return this.moveProject(project, "running", actor);
+    const resumed = this.moveProject(project, "running", actor);
+    await this.ensureProjectSection(resumed);
+    return this.store.project(resumed.id)!;
   }
 
   async archive(slug: string, actor: string): Promise<ProjectRow> {
@@ -353,13 +357,7 @@ export class Projects {
       }
       return this.store.setProjectState(project.id, "archived", actor);
     });
-    if (project.section_id !== null) {
-      const sectionId = project.section_id;
-      await this.tolerate("delete the project's section", async () => {
-        await this.bb.deleteSection(sectionId);
-        this.store.updateProject(project.id, { section_id: null });
-      });
-    }
+    await this.removeFinishedSection(archived);
     this.store.changed(project.id);
     return this.store.project(archived.id)!;
   }
@@ -640,9 +638,9 @@ export class Projects {
     return this.store.project(ticket.project_id)!.slug;
   }
 
-  /** Makes sure the project's sidebar section exists. Recreates a deleted one, stores its new id and moves the planner thread into it. Returns the stored id when bb refuses. */
+  /** Makes sure the project's sidebar section exists. Recreates a deleted one, stores its new id and moves the planner thread into it. Returns the stored id when bb refuses, and gives a done or archived project none. */
   async ensureProjectSection(project: ProjectRow): Promise<string | null> {
-    if (project.state === "archived") return project.section_id;
+    if (project.state === "done" || project.state === "archived") return project.section_id;
     let sectionId = project.section_id;
     await this.tolerate("repair the project's section", async () => {
       sectionId = await this.bb.ensureSection(project.section_id, sectionNameOf(project.name, project.slug));
@@ -655,6 +653,17 @@ export class Projects {
     if (planner !== null) await this.tolerate("move the planner thread into its new section", () => this.bb.moveThread(planner, repaired));
     this.store.changed(project.id);
     return repaired;
+  }
+
+  /** A done or archived project keeps no sidebar section; bb unassigns its threads. A refused delete keeps the id, so the next engine pass tries again. */
+  async removeFinishedSection(project: ProjectRow): Promise<void> {
+    if ((project.state !== "done" && project.state !== "archived") || project.section_id === null) return;
+    const sectionId = project.section_id;
+    await this.tolerate("delete the project's section", async () => {
+      await this.bb.deleteSection(sectionId);
+      this.store.updateProject(project.id, { section_id: null });
+      this.store.changed(project.id);
+    });
   }
 
   private async renameSection(project: ProjectRow, name: string): Promise<void> {

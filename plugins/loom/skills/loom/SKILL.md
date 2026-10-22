@@ -37,8 +37,8 @@ Every command accepts `--json`. Failures carry a code: `loom_not_found`, `loom_i
 
 - `draft`: proposed, not approved. The planner can revise it; each revision is a new version, older drafts read as superseded, and approving takes the newest.
 - `ready`: approved; its tickets exist. A revision now waits as a pending version until the human approves it.
-- `running`, `paused`: started, and paused again. Moves: ready to running (start), running to paused (pause), paused to running (resume). Pausing stops new work; workers already running keep going unless the human used `--now`. A check result that finishes while the project is paused is kept on the ticket, and a failed one reaches the worker when the project resumes. The plugin also pauses a running project when its token budget is used up or its deadline has passed, and says why in `bb loom show`.
-- `done`: every ticket is done or cancelled. On the pull request strategy the plugin moves the project to done by itself; on the integration strategy `bb loom land` does.
+- `running`, `paused`: started, and paused again. Moves: ready to running (start), running to paused (pause), paused to running (resume). Starting or resuming makes the project's sidebar section again if it was deleted, and moves the planner thread back into it. Pausing stops new work; workers already running keep going unless the human used `--now`. A check result that finishes while the project is paused is kept on the ticket, and a failed one reaches the worker when the project resumes. The plugin also pauses a running project when its token budget is used up or its deadline has passed, and says why in `bb loom show`.
+- `done`: every ticket is done or cancelled. On the pull request strategy the plugin moves the project to done by itself; on the integration strategy `bb loom land` does. The plugin then deletes the project's sidebar section, and its threads go back to the ungrouped list.
 - `archived`: reachable from any state; archiving stops the workers, cancels open tickets and removes the sidebar section.
 
 ## Ticket states

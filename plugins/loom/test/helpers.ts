@@ -65,8 +65,10 @@ export class FakePort implements BbPort {
     this.record("renameSection", sectionId, name);
     this.sections.set(sectionId, name);
   }
+  deleteSectionError: Error | null = null;
   async deleteSection(sectionId: string) {
     this.record("deleteSection", sectionId);
+    if (this.deleteSectionError !== null) throw this.deleteSectionError;
     this.sections.delete(sectionId);
   }
   async moveThread(threadId: string, sectionId: string | null) {

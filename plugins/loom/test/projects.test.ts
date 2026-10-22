@@ -292,6 +292,51 @@ describe("ensureProjectSection", () => {
     expect(await projects.ensureProjectSection(store.projectBySlug("csv")!)).toBeNull();
     expect(bb.callsTo("ensureSection")).toHaveLength(calls);
   });
+
+  const finish = async () => {
+    await propose();
+    await projects.approve("csv", "human");
+    await projects.start("csv", "human");
+    store.setProjectState(store.projectBySlug("csv")!.id, "done", "loom");
+    return store.projectBySlug("csv")!;
+  };
+
+  it("removes a done project's section once", async () => {
+    await projects.removeFinishedSection(await finish());
+    expect(bb.callsTo("deleteSection")).toEqual([["sec_1"]]);
+    expect(store.projectBySlug("csv")?.section_id).toBeNull();
+    expect(bb.sections.has("sec_1")).toBe(false);
+    const calls = bb.calls.length;
+    await projects.removeFinishedSection(store.projectBySlug("csv")!);
+    expect(bb.calls).toHaveLength(calls);
+  });
+
+  it("leaves a running project's section alone", async () => {
+    await propose();
+    await projects.approve("csv", "human");
+    await projects.start("csv", "human");
+    const calls = bb.calls.length;
+    await projects.removeFinishedSection(store.projectBySlug("csv")!);
+    expect(bb.calls).toHaveLength(calls);
+    expect(store.projectBySlug("csv")?.section_id).toBe("sec_1");
+  });
+
+  it("keeps the section id and logs a warning when bb refuses the deletion", async () => {
+    const done = await finish();
+    bb.deleteSectionError = new Error("bb is down");
+    await projects.removeFinishedSection(done);
+    expect(store.projectBySlug("csv")?.section_id).toBe("sec_1");
+    expect(bb.callsTo("log").some(([level, text]) => level === "warn" && String(text).includes("Could not delete the project's section"))).toBe(true);
+  });
+
+  it("does not give a done project a new section", async () => {
+    await projects.removeFinishedSection(await finish());
+    const calls = bb.callsTo("ensureSection").length;
+    await propose();
+    expect(bb.callsTo("ensureSection")).toHaveLength(calls);
+    expect(store.projectBySlug("csv")?.section_id).toBeNull();
+    expect(await projects.ensureProjectSection(store.projectBySlug("csv")!)).toBeNull();
+  });
 });
 
 describe("approve", () => {
@@ -366,6 +411,27 @@ describe("lifecycle", () => {
     expect(store.project(project.id)?.state).toBe("running");
     const moves = store.events(project.id).filter((event) => event.kind === "project.state").map((event) => JSON.parse(event.data_json));
     expect(moves.map((move) => `${move.from}>${move.to}`)).toEqual(["draft>ready", "ready>running", "running>paused", "paused>running"]);
+  });
+
+  it("start and resume make a missing section again and move the planner into it", async () => {
+    await propose();
+    await projects.approve("csv", "human");
+    bb.sections.delete("sec_1");
+    expect(await projects.start("csv", "human")).toMatchObject({ state: "running", section_id: "sec_2" });
+    expect(store.projectBySlug("csv")?.section_id).toBe("sec_2");
+    expect(bb.callsTo("moveThread").at(-1)).toEqual(["thr_plan", "sec_2"]);
+    await projects.pause("csv", "human");
+    bb.sections.delete("sec_2");
+    expect(await projects.resume("csv", "human")).toMatchObject({ state: "running", section_id: "sec_3" });
+    expect(bb.callsTo("moveThread").at(-1)).toEqual(["thr_plan", "sec_3"]);
+  });
+
+  it("start leaves a section that still exists alone", async () => {
+    await propose();
+    await projects.approve("csv", "human");
+    const moves = bb.callsTo("moveThread").length;
+    expect(await projects.start("csv", "human")).toMatchObject({ section_id: "sec_1" });
+    expect(bb.callsTo("moveThread")).toHaveLength(moves);
   });
 
   it("records pause --now in the event", async () => {

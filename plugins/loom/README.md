@@ -71,6 +71,10 @@ bb loom archive <slug>
 
 Every command takes `--json`. Each project gets a sidebar section named
 `Loom · <name> (<slug>)`; the planner, workers and reviewers move into it.
+When the project is done or archived, Loom deletes its sidebar section, and its
+threads go back to the ungrouped list. If the section is deleted while a project
+is ready or paused, starting or resuming it makes the section again and moves
+the planner back into it.
 
 ## Agent tools
 
