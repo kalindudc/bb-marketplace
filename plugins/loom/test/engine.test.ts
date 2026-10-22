@@ -962,6 +962,30 @@ describe("tick: review and merge", () => {
     expect(workers()).toEqual(["worker:CSV-1", "worker:CSV-2", "worker:CSV-3"]);
   });
 
+  it("gives a free worker slot to a ticket of another repo when a ticket of the merging repo ranks ahead of it", async () => {
+    await seedRepoProject(h, (doc) => {
+      doc.agents.max_workers = 1;
+      doc.ticket.push({ ref: "web-docs", title: "Web docs", body: "Write the docs.", acceptance: ["WHEN the docs are built THE SYSTEM SHALL list the export"], scope: ["docs/**"], repo: "web" });
+    });
+    await reachApproved(h, "CSV-1");
+    h.store.updateTicket(ticketOf(h, "CSV-3").id, { priority: 1 });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const call = h.host.call.bind(h.host);
+    h.host.call = (async (hostId: string, method: string, input: unknown) => {
+      if (method === "merge") await gate;
+      return call(hostId, method as never, input as never);
+    }) as typeof h.host.call;
+
+    await h.engine.tick();
+    expect(ticketOf(h, "CSV-1").state).toBe("merging");
+    expect(ticketOf(h, "CSV-3")).toMatchObject({ state: "queued", repo: "web", priority: 1 });
+    expect(ticketOf(h, "CSV-2")).toMatchObject({ state: "working", repo: "api" });
+    expect(roles().filter((role) => role.startsWith("worker"))).toEqual(["worker:CSV-1", "worker:CSV-2"]);
+    release();
+    await settleMerges(h.ctx);
+  });
+
   it("starts no worker in any repo while the merge guard is held with no ticket merging", async () => {
     await seedRepoProject(h);
     const release = holdMerge(h.ctx, project().id)!;

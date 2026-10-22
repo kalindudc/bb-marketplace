@@ -8,7 +8,7 @@ import { approvedText, blockedReplyText, heldCheckResult, resumeText, reviewRequ
 import { LoomError, type ApproveResult, type Projects } from "./projects";
 import { isMultiRepo } from "./repos";
 import { backToReview, blockedAtReview, failReviewerSpawn, onReviewerGone, onReviewerIdle, onReviewerTurnFailed, spawnReviewers } from "./review";
-import { budgetReason, spawnable, toLite } from "./scheduler";
+import { budgetReason, spawnable, toLite, type TicketLite } from "./scheduler";
 import { LOOM_ACTOR, canMoveTicket } from "./states";
 import { cancelTicket, maybeSendTriage, onPlannerIdle } from "./triage";
 import {
@@ -177,10 +177,9 @@ export class Engine {
       const project = store.project(projectId);
       if (project?.state !== "running" || (project.hold_until !== null && project.hold_until > now())) return null;
       const spec = specOf(store, project);
-      const tickets = store.tickets(projectId);
-      const waits = (repo: string | null) => spec.merge.strategy === "integration" && this.integrationMoving(projectId, tickets, repo);
-      const lite = spawnable(spec.agents.max_workers, tickets.map(toLite)).find((candidate) => !tried.has(candidate.id) && !waits(candidate.repo));
-      return lite === undefined ? null : { project, spec, ticket: store.ticket(lite.id)! };
+      const waiting = (ticket: TicketLite) => spec.merge.strategy === "integration" && this.integrationMoving(projectId, ticket.repo);
+      const lite = spawnable(spec.agents.max_workers, store.tickets(projectId).map(toLite), waiting).find((candidate) => !tried.has(candidate.id));
+      return lite === undefined ? null : { project, spec, ticket: store.ticket(lite.id)!, waiting };
     };
 
     const tried = new Set<number>();
@@ -192,7 +191,7 @@ export class Engine {
       const pick = next(tried);
       if (pick === null) return;
       tried.add(pick.ticket.id);
-      await spawnWorker(this.ctx, pick.project, pick.spec, pick.ticket);
+      await spawnWorker(this.ctx, pick.project, pick.spec, pick.ticket, pick.waiting);
     }
   }
 
@@ -201,8 +200,8 @@ export class Engine {
    * ticket's repo. The merge guard held with no ticket merging is a direct land, a human block or cancel, or a merge about
    * to begin or just done, so every repo waits.
    */
-  private integrationMoving(projectId: number, tickets: readonly TicketRow[], repo: string | null): boolean {
-    const merging = tickets.filter((ticket) => ticket.state === "merging");
+  private integrationMoving(projectId: number, repo: string | null): boolean {
+    const merging = this.ctx.store.tickets(projectId, ["merging"]);
     return merging.some((ticket) => ticket.repo === repo) || (merging.length === 0 && mergeHeld(this.ctx, projectId));
   }
 

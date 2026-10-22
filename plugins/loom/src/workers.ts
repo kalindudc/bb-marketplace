@@ -8,7 +8,7 @@ import { SpawnRefusedError, type EnvironmentInfo, type HostPort } from "./ports"
 import { latestChangesRequested, nudgeText, workerBrief } from "./prompts";
 import { LoomError, type Ctx } from "./projects";
 import { freshBaseOf } from "./repos";
-import { idleAction, spawnable, toLite } from "./scheduler";
+import { idleAction, spawnable, toLite, type TicketLite } from "./scheduler";
 import type { Spec } from "./spec";
 import { HUMAN_ACTOR, LOOM_ACTOR, PAUSE_NOW_REASON, canMoveTicket, type AuthorKind, type TicketState } from "./states";
 
@@ -100,7 +100,8 @@ export function toWorking(ctx: EngineCtx, ticket: TicketRow, row: ThreadRow | nu
 
 const isRefError = (error: unknown) => /\bref(erence)?s?\b|revision|not a valid object|unknown branch/iu.test(errText(error));
 
-export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow): Promise<void> {
+/** `waiting` holds back tickets that may not start now, as it did when the caller picked this one. */
+export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow, waiting?: (ticket: TicketLite) => boolean): Promise<void> {
   const { store } = ctx;
   const token = randomBytes(12).toString("hex");
   const fromBranch = ticket.branch !== null;
@@ -113,7 +114,7 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
     const fresh = store.project(project.id);
     if (fresh === null) return null;
     const tickets = store.tickets(project.id).map(toLite);
-    if (!spawnable(specOf(store, fresh).agents.max_workers, tickets).some((lite) => lite.id === ticket.id)) return null;
+    if (!spawnable(specOf(store, fresh).agents.max_workers, tickets, waiting).some((lite) => lite.id === ticket.id)) return null;
     const attempt = current.attempt + 1;
     const created = store.addThread({ project_id: project.id, ticket_id: ticket.id, role: "worker", state: "spawning", spawn_token: token });
     store.updateThread(created.id, { clock_at: ctx.now(), attempt });
