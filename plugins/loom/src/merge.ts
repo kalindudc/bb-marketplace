@@ -439,9 +439,15 @@ export async function land(ctx: EngineCtx, slug: string, a: LandArgs): Promise<L
     const tickets = store.tickets(seen.id);
     if (tickets.some((ticket) => ticket.state === "merging")) throw new LoomError("loom_invalid_state", "Cannot land: a ticket is merging; try again when the merge finishes.");
     const done = tickets.filter((ticket) => ticket.state === "done");
+    const project = store.project(seen.id)!;
+    // Every ticket cancelled leaves no repo with work to land, so the land only finishes the project.
+    if (multi && a.repo === undefined && tickets.length > 0 && tickets.every((ticket) => ticket.state === "cancelled")) {
+      completeProject(ctx, project.id);
+      store.changed(project.id);
+      return { repos: [], unlanded: [], done: store.project(project.id)!.state === "done" };
+    }
     if (done.length === 0) throw new LoomError("loom_invalid_state", "Cannot land: no ticket is done yet, so the integration branch has nothing to land.");
 
-    const project = store.project(seen.id)!;
     if (multi) return await landRepos(ctx, project, spec, done, a);
     if (a.direct === true) {
       const pushed = `${spec.merge.remote}/${spec.project.base}`;

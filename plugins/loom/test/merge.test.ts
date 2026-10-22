@@ -1252,6 +1252,34 @@ describe("land on a multi-repo project", () => {
     expect(project().state).toBe("done");
   });
 
+  it("finishes a project whose tickets were all cancelled with no push, and still refuses one with work left and none merged", async () => {
+    await seedRepoProject(h);
+    const nothingDone = { code: "loom_invalid_state", message: "Cannot land: no ticket is done yet, so the integration branch has nothing to land." };
+    h.store.setTicketState(ticketOf(h, "CSV-1").id, "cancelled", "human");
+    expect(await failure(land(h.ctx, "csv", landArgs))).toMatchObject(nothingDone);
+    expect(project().state).toBe("running");
+
+    h.store.setTicketState(ticketOf(h, "CSV-2").id, "cancelled", "human");
+    h.store.setProjectState(project().id, "paused", "human");
+    expect(await failure(land(h.ctx, "csv", { ...landArgs, repo: "web" }))).toMatchObject(nothingDone);
+    const release = holdMerge(h.ctx, project().id)!;
+    expect(await failure(land(h.ctx, "csv", landArgs))).toMatchObject({ message: "Cannot land: a merge is running; try again in a moment." });
+    release();
+    const mark = h.host.calls.length;
+    expect(await land(h.ctx, "csv", landArgs)).toEqual({ repos: [], unlanded: [], done: true });
+    expect(hostCallsSince(mark)).toEqual([]);
+    expect(project().state).toBe("done");
+    expect(landed()).toEqual([]);
+    expect(guardFree()).toBe(true);
+    expect(await land(h.ctx, "csv", direct)).toEqual({ repos: [], unlanded: [], done: true });
+
+    const single = makeCtx();
+    await seedProject(single);
+    for (const key of ["CSV-1", "CSV-2"]) single.store.setTicketState(ticketOf(single, key).id, "cancelled", "human");
+    expect(await failure(land(single.ctx, "csv", landArgs))).toMatchObject(nothingDone);
+    expect(single.store.projectBySlug("csv")!.state).toBe("running");
+  });
+
   it("does not wait on a repo whose tickets were all cancelled", async () => {
     await seedRepoProject(h);
     await mergeOne("CSV-1");

@@ -462,6 +462,15 @@ describe("land on a multi-repo project", () => {
     expect(errorOf((await run(["land", "csv", "--repo", "web", "--json"])).stdout)).toMatchObject({ code: "loom_invalid_input", message: expect.stringContaining("has no [[repo]] tables") });
   });
 
+  it("finishes a project whose tickets were all cancelled, with nothing to push", async () => {
+    await running();
+    for (const key of ["CSV-1", "CSV-2"]) host.store.setTicketState(host.store.ticketByKey(key)!.id, "cancelled", "human");
+    const text = await run(["land", "csv"]);
+    expect(text).toMatchObject({ exitCode: 0, stdout: "Every ticket is done or cancelled and every repo with merged work is landed, so the project is done.\n" });
+    expect(host.hostPort.callsTo("push")).toEqual([]);
+    expect(host.store.projectBySlug("csv")?.state).toBe("done");
+  });
+
   it("reports the repos that landed and the ones that did not when one fails", async () => {
     await running();
     doneTicket("CSV-1");
