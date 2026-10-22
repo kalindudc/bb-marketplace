@@ -218,6 +218,183 @@ describe("propose", () => {
   });
 });
 
+describe("repos", () => {
+  const withRepos = (doc: Doc) => {
+    doc.repo = [
+      { name: "web", project: "proj_web" },
+      { name: "api", project: "proj_api", base: "trunk" },
+    ];
+    doc.ticket[0].repo = "web";
+    doc.ticket[1].repo = "api";
+  };
+  const multi = (edit?: (doc: Doc) => void) =>
+    propose((doc) => {
+      withRepos(doc);
+      edit?.(doc);
+    });
+  const ticketRepos = () => store.tickets(store.projectBySlug("csv")!.id).map((ticket) => [ticket.key, ticket.repo]);
+
+  beforeEach(() => {
+    bb.addBbProject("proj_web", { host_local: "/src/web" });
+    bb.addBbProject("proj_api", { host_local: "/src/api", host_other: "/elsewhere/api" });
+  });
+
+  it("accepts repos that are standard bb projects checked out on the proposer's machine, reading bb's projects once, and stores each ticket's repo", async () => {
+    expect(await multi()).toMatchObject({ slug: "csv", version: 1, state: "draft", change: "created" });
+    expect(bb.callsTo("listProjects")).toHaveLength(1);
+    await projects.approve("csv", "human");
+    expect(ticketRepos()).toEqual([
+      ["CSV-1", "web"],
+      ["CSV-2", "api"],
+    ]);
+  });
+
+  it("makes no listProjects call for a single-repo spec, and stores null for each of its tickets", async () => {
+    await propose();
+    await propose((doc) => (doc.project.goal = "Export orders as CSV, with a delimiter the person can choose."));
+    await projects.approve("csv", "human");
+    await propose((doc) => (doc.project.goal = "Export orders as CSV, with a delimiter and a date range filter."));
+    expect(bb.callsTo("listProjects")).toEqual([]);
+    expect(ticketRepos()).toEqual([
+      ["CSV-1", null],
+      ["CSV-2", null],
+    ]);
+  });
+
+  it("refuses a bb project bb does not know and lists the standard projects as name (id), leaving the personal one out", async () => {
+    bb.addBbProject("proj_personal", {}, { name: "Personal", kind: "personal" });
+    const error = await failure(multi((doc) => (doc.repo[1].project = "proj_nope")));
+    expect(error.code).toBe("loom_invalid_spec");
+    expect(error.message).toContain(`\n1. repo[1].project: bb has no project "proj_nope". Use the id of one of bb's projects: shop (proj_1), web (proj_web), api (proj_api).`);
+    expect(error.message).not.toContain("proj_personal");
+    expect(error.message).not.toMatch(/\n2\. /);
+    expect(store.projects()).toEqual([]);
+  });
+
+  it("lists at most 20 known projects", async () => {
+    for (let n = 1; n <= 25; n += 1) bb.addBbProject(`proj_x${n}`, { host_local: `/src/x${n}` });
+    const error = await failure(multi((doc) => (doc.repo[0].project = "proj_nope")));
+    const listed = error.message.match(/Use the id of one of bb's projects: (.*)\.$/m)![1]!;
+    expect(listed.split(", ").filter((entry) => / \(proj_\w+\)$/.test(entry))).toHaveLength(20);
+    expect(listed).toMatch(/^shop \(proj_1\), web \(proj_web\), api \(proj_api\), x1 \(proj_x1\), /);
+    expect(listed).toContain("x17 (proj_x17), and 8 more");
+    expect(listed).not.toContain("proj_x18");
+  });
+
+  it("refuses bb's personal project", async () => {
+    bb.addBbProject("proj_personal", {}, { name: "Personal", kind: "personal" });
+    const error = await failure(multi((doc) => (doc.repo[0].project = "proj_personal")));
+    expect(error.message).toContain(`1. repo[0].project: "proj_personal" is bb's personal project, which has no git checkout. Use the id of one of bb's projects: shop (proj_1), web (proj_web), api (proj_api).`);
+  });
+
+  it("refuses a bb project with no checkout on the proposer's machine and gives the command that clones it there", async () => {
+    bb.addBbProject("proj_docs", { host_other: "/src/docs" });
+    const error = await failure(
+      multi((doc) => {
+        doc.repo.push({ name: "docs", project: "proj_docs" });
+        doc.ticket[1].repo = "docs";
+      }),
+    );
+    expect(error.message).toContain("1. repo[2].project: bb project docs (proj_docs) has no checkout on this machine (host_local), where the project's workers run. Clone it here with `bb project source add proj_docs --clone --machine host_local`, then call loom_propose again.");
+    expect(error.message).not.toMatch(/\n2\. /);
+    expect(store.projects()).toEqual([]);
+  });
+
+  it("refuses the spec and says to try again when bb's projects cannot be read", async () => {
+    bb.bbProjects = new Error("bb is restarting");
+    const error = await failure(multi());
+    expect(error.code).toBe("loom_invalid_spec");
+    expect(error.message).toContain("1. repo: Loom could not read bb's projects to check the [[repo]] tables (bb is restarting), and the project could not start without a checkout of every repo. Call loom_propose again in a moment.");
+    expect(store.projects()).toEqual([]);
+    expect(bb.callsTo("ensureSection")).toEqual([]);
+  });
+
+  it("refuses a multi-repo spec when bb cannot say which machine the proposer runs on", async () => {
+    const error = await failure(projects.propose({ toml: specToml(withRepos), threadId: "thr_plan", bbProjectId: "proj_1", hostId: null }));
+    expect(error.message).toContain("1. repo: bb did not say which machine this thread runs on");
+    expect(bb.callsTo("listProjects")).toEqual([]);
+    expect(await projects.propose({ toml: specToml(), threadId: "thr_plan", bbProjectId: "proj_1", hostId: null })).toMatchObject({ change: "created" });
+  });
+
+  describe("after approval", () => {
+    beforeEach(async () => {
+      await multi();
+      await projects.approve("csv", "human");
+    });
+    const pendingVersion = () => store.projectBySlug("csv")!.pending_version;
+
+    it("saves a revision that only adds a repo as a pending version", async () => {
+      bb.addBbProject("proj_docs", { host_local: "/src/docs" });
+      const result = await multi((doc) => doc.repo.push({ name: "docs", project: "proj_docs" }));
+      expect(result).toMatchObject({ version: 2, pending: true, change: "pending" });
+      expect(pendingVersion()).toBe(2);
+    });
+
+    it("still checks an added repo against bb", async () => {
+      const error = await failure(multi((doc) => doc.repo.push({ name: "docs", project: "proj_nope" })));
+      expect(error.message).toContain('repo[2].project: bb has no project "proj_nope".');
+      expect(pendingVersion()).toBeNull();
+    });
+
+    it("refuses to remove a repo", async () => {
+      const error = await failure(
+        multi((doc) => {
+          doc.repo.pop();
+          doc.ticket[1].repo = "web";
+        }),
+      );
+      expect(error.message).toContain('1. repo: cannot remove repo "api" after approval, because its tickets, branches and worktrees already use it. Keep its [[repo]] table;');
+      expect(pendingVersion()).toBeNull();
+    });
+
+    it("refuses to rename a repo", async () => {
+      const error = await failure(
+        multi((doc) => {
+          doc.repo[1].name = "backend";
+          doc.ticket[1].repo = "backend";
+        }),
+      );
+      expect(error.message).toContain('1. repo[1].name: cannot change from "api" to "backend" after approval, because its tickets, branches and worktrees already use the name. Keep the name "api".');
+      expect(error.message).not.toMatch(/\n2\. /);
+      expect(pendingVersion()).toBeNull();
+    });
+
+    it("refuses to change a repo's project, base or remote", async () => {
+      bb.addBbProject("proj_site", { host_local: "/src/site" });
+      const project = await failure(multi((doc) => (doc.repo[0].project = "proj_site")));
+      expect(project.message).toContain('1. repo[0].project: repo "web" cannot change from "proj_web" to "proj_site" after approval, because its tickets, branches and worktrees already use it. Keep the project; for work in another repository, add a new [[repo]] table.');
+
+      const base = await failure(multi((doc) => (doc.repo[1].base = "main")));
+      expect(base.message).toContain('1. repo[1].base: repo "api" cannot change from "trunk" to "main" after approval, because its tickets, branches and worktrees already use it. Set repo[1].base = "trunk" to keep it, or archive this project and propose a new one.');
+
+      const inherited = await failure(multi((doc) => (doc.project.base = "develop")));
+      expect(inherited.message).toContain('1. repo[0].base: repo "web" cannot change from "main" to "develop"');
+      expect(inherited.message).not.toMatch(/\n2\. /);
+
+      const remote = await failure(multi((doc) => (doc.repo[1].remote = "upstream")));
+      expect(remote.message).toContain('1. repo[1].remote: repo "api" cannot change from "origin" to "upstream" after approval, because its tickets, branches and worktrees already use it. Set repo[1].remote = "origin" to keep it, or archive this project and propose a new one.');
+      expect(pendingVersion()).toBeNull();
+    });
+
+    it("accepts a repo that keeps its settings by naming them where it inherited them", async () => {
+      const result = await multi((doc) => {
+        doc.project.base = "develop";
+        doc.repo[0].base = "main";
+      });
+      expect(result).toMatchObject({ pending: true, change: "pending" });
+    });
+  });
+
+  it("refuses to add [[repo]] to a project approved without it", async () => {
+    await propose();
+    await projects.approve("csv", "human");
+    const error = await failure(multi());
+    expect(error.message).toContain("1. repo: cannot add [[repo]] tables after approval to a project approved without them, because its tickets, branches and worktrees already use the project's own repository. Remove the [[repo]] tables, or archive this project and propose a new one with them.");
+    expect(error.message).not.toMatch(/\n2\. /);
+    expect(store.projectBySlug("csv")!.pending_version).toBeNull();
+  });
+});
+
 describe("ensureProjectSection", () => {
   const expectRepaired = (expectedId: string) => {
     const project = store.projectBySlug("csv")!;

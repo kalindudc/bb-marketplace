@@ -12,7 +12,7 @@ import { Engine } from "../src/engine";
 import { approve, settleReviews, spawnReviewers } from "../src/review";
 import { Projects } from "../src/projects";
 import { specOf, spawnWorker, type EngineCtx } from "../src/workers";
-import { SectionNameConflictError, type BbPort, type EnvironmentInfo, type HostPort, type SpawnArgs, type ThreadInfo } from "../src/ports";
+import { SectionNameConflictError, type BbPort, type BbProjectInfo, type EnvironmentInfo, type HostPort, type SpawnArgs, type ThreadInfo } from "../src/ports";
 
 export function makeDb(): Database.Database {
   const db = new Database(":memory:");
@@ -94,9 +94,37 @@ export class FakePort implements BbPort {
   afterSpawn: ((threadId: string, args: SpawnArgs) => void) | null = null;
   private nextThread = 1;
 
+  /** Checkout paths by bb project id, then host id. A project missing here has `checkout` on every host. */
+  checkouts = new Map<string, Record<string, string>>();
   async projectCheckout(bbProjectId: string, hostId: string) {
     this.record("projectCheckout", bbProjectId, hostId);
-    return this.checkout;
+    const byHost = this.checkouts.get(bbProjectId);
+    return byHost === undefined ? this.checkout : (byHost[hostId] ?? null);
+  }
+  /** The projects bb lists; an Error makes the listing fail. The default is the project every test proposes from, with a checkout on both test hosts. */
+  bbProjects: BbProjectInfo[] | Error = [
+    {
+      id: "proj_1",
+      name: "shop",
+      kind: "standard",
+      gitRemoteUrl: "git@github.com:acme/shop.git",
+      sources: [
+        { hostId: "host_local", path: "/repo", isDefault: true },
+        { hostId: "host_1", path: "/repo", isDefault: true },
+      ],
+    },
+  ];
+  async listProjects() {
+    this.record("listProjects");
+    if (this.bbProjects instanceof Error) throw this.bbProjects;
+    return this.bbProjects.map((project) => ({ ...project, sources: project.sources.map((source) => ({ ...source })) }));
+  }
+  /** Adds a standard bb project to the list with a checkout at each `paths` host, and the same checkouts for projectCheckout. */
+  addBbProject(id: string, paths: Record<string, string>, over: Partial<BbProjectInfo> = {}) {
+    if (this.bbProjects instanceof Error) this.bbProjects = [];
+    const sources = Object.entries(paths).map(([hostId, path]) => ({ hostId, path, isDefault: true }));
+    this.bbProjects.push({ id, name: id.replace(/^proj_/, ""), kind: "standard", gitRemoteUrl: `git@github.com:acme/${id}.git`, sources, ...over });
+    this.checkouts.set(id, { ...paths });
   }
   async spawnThread(args: SpawnArgs) {
     this.record("spawnThread", args);

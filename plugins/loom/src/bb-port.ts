@@ -133,6 +133,16 @@ export function createBbPort(bb: BbPluginApi): BbPort {
         throw error;
       }
     },
+    async listProjects() {
+      const projects = await bb.sdk.projects.list({ includePersonal: true });
+      return projects.map((project) => ({
+        id: project.id,
+        name: project.name,
+        kind: project.kind,
+        gitRemoteUrl: project.gitRemoteUrl,
+        sources: project.sources.map((source) => ({ hostId: source.hostId, path: source.path, isDefault: source.isDefault })),
+      }));
+    },
     async spawnPlanner({ request, title, kickoff }) {
       const thread = await bb.sdk.threads.spawn({ ...request, title, input: [...request.input, { type: "text", text: kickoff, mentions: [], visibility: "agent-only" }] });
       return thread.id;
