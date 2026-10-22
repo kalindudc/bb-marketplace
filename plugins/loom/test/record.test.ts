@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { finishIfComplete, land, runMergeQueue, settleMerges } from "../src/merge";
+import { finishIfComplete, land, pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
 import { SpawnRefusedError, type SpawnArgs } from "../src/ports";
 import { recordPrompt } from "../src/prompts";
 import { HOOK_TIMEOUT_MS, NO_HOOK, RECORD_MAX, SUMMARY_TIMEOUT_MS, projectRecord, sendRecords, settleRecords, type DoneSettings } from "../src/record";
@@ -28,11 +28,15 @@ const PR = (n: number) => `https://github.com/acme/shop/pull/${n}`;
 const minute = (at: number) => `${new Date(at).toISOString().slice(0, 16).replace("T", " ")}Z`;
 const recordSpawns = () => h.bb.callsTo("spawnThread").map(([args]) => args as SpawnArgs).filter((args) => args.metadata.role === "record");
 
-/** Approves and merges one ticket into its repo's integration branch. */
-async function mergeOne(key: string): Promise<void> {
+/** Approves one ticket and runs the merge queue: it merges into its repo's integration branch, or opens its pull request on the pr strategy. */
+async function queueOne(key: string): Promise<void> {
   await reachApproved(h, key);
   await runMergeQueue(h.ctx, project(), specOf(h.store, project()));
   await settleMerges(h.ctx);
+}
+
+async function mergeOne(key: string): Promise<void> {
+  await queueOne(key);
   expect(ticketOf(h, key).state).toBe("done");
 }
 
@@ -347,11 +351,37 @@ describe("a multi-repo project", () => {
     );
   });
 
-  it("on the pull request strategy lists each repo's bb project and base, and says each ticket has its own pull request", async () => {
-    await seedRepoProject(h, pr);
+  it("on the pull request strategy lists each repo's bb project and base, and gives each repo its tickets' merged and open pull requests, or no merged work", async () => {
+    await seedRepoProject(h, (doc) => {
+      pr(doc);
+      doc.ticket.push({ ref: "web-docs", title: "Web docs", body: "Write the docs.", acceptance: ["WHEN the docs are built THE SYSTEM SHALL list the export"], scope: ["docs/**"], repo: "web" });
+    });
+    const outcomeOf = () => {
+      const record = projectRecord(h.store, project());
+      return record.slice(record.indexOf("## Outcome"), record.indexOf("## Tickets"));
+    };
+    expect(outcomeOf()).toBe("## Outcome\n\n- web: no merged work.\n- api: no merged work.\n- docs: no merged work.\n\n");
+
+    await queueOne("CSV-2");
+    await queueOne("CSV-1");
+    await queueOne("CSV-3");
+    expect(["CSV-2", "CSV-1", "CSV-3"].map((key) => [ticketOf(h, key).state, ticketOf(h, key).pr_url])).toEqual([
+      ["pr_open", PR(1)],
+      ["pr_open", PR(2)],
+      ["pr_open", PR(3)],
+    ]);
+    expect(outcomeOf()).toBe(`## Outcome\n\n- web: no merged work; ${PR(2)} (CSV-1) and ${PR(3)} (CSV-3) are still open.\n- api: no merged work; ${PR(1)} (CSV-2) is still open.\n- docs: no merged work.\n\n`);
+
+    h.host.prStates.set(PR(1), "MERGED");
+    h.host.prStates.set(PR(2), "MERGED");
+    h.clock.advance(5 * 60_000);
+    await pollPullRequests(h.ctx, project());
+    const at = minute(h.clock.t);
     const record = projectRecord(h.store, project());
-    expect(record).toContain("## Repos\n\n- web: bb project proj_web, base main.\n- api: bb project proj_api, base trunk.\n- docs: bb project proj_docs, base main.\n\n## Outcome\n\nOne pull request per ticket");
-    expect(record).toContain("### CSV-2 · Export endpoint (queued)\n\nRepo: api\n");
+    expect(record).toContain("## Repos\n\n- web: bb project proj_web, base main.\n- api: bb project proj_api, base trunk.\n- docs: bb project proj_docs, base main.\n\n## Outcome");
+    expect(outcomeOf()).toBe(`## Outcome\n\n- web: merged as ${PR(2)} (CSV-1, ${at}); ${PR(3)} (CSV-3) is still open.\n- api: merged as ${PR(1)} (CSV-2, ${at}).\n- docs: no merged work.\n\n`);
+    expect(record).not.toContain("One pull request per ticket");
+    expect(record).toContain(`### CSV-2 · Export endpoint (done)\n\nRepo: api\n\nServe the file.\n\nPull request: ${PR(1)}\n`);
   });
 
   it("starts the summary agent in the first repo's bb project from that repo's fresh base", async () => {

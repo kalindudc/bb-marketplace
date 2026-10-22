@@ -6,7 +6,7 @@ import type { EventRow, PostRow, ProjectRow, RecordRow, Store, TicketRow } from 
 import { plural } from "./format";
 import { checkoutOf } from "./merge";
 import { SpawnRefusedError, type ThreadInfo } from "./ports";
-import { clip, recordPrompt } from "./prompts";
+import { andList, clip, recordPrompt } from "./prompts";
 import { LoomError, landsOf, repoOverviews, type RepoOverview } from "./projects";
 import { freshBaseOf, isMultiRepo, repoSettings } from "./repos";
 import type { Spec } from "./spec";
@@ -74,9 +74,20 @@ function outcome(store: Store, project: ProjectRow, spec: Spec): string {
 
 const repoLine = (repo: RepoOverview) => `- ${repo.name}: bb project ${repo.bbProjectId}, base ${repo.base}${repo.branch === null ? "" : `, integration branch ${repo.branch}`}.`;
 
+/** One line per repo of a multi-repo pull request project, in [[repo]] order: its tickets' merged pull requests, the ones still open, or none. */
+function prOutcomes(repos: readonly RepoOverview[], tickets: readonly TicketRow[]): string[] {
+  return repos.map((repo) => {
+    const own = tickets.filter((ticket) => ticket.repo === repo.name && ticket.pr_url !== null);
+    const merged = own.filter((ticket) => ticket.state === "done").map((ticket) => `${ticket.pr_url} (${ticket.key}, ${minute(ticket.state_at)})`);
+    const open = own.filter((ticket) => ticket.state === "pr_open").map((ticket) => `${ticket.pr_url} (${ticket.key})`);
+    const done = merged.length === 0 ? "no merged work" : `merged as ${andList(merged)}`;
+    return `- ${repo.name}: ${done}${open.length === 0 ? "" : `; ${andList(open)} ${open.length === 1 ? "is" : "are"} still open`}.`;
+  });
+}
+
 /** One line per repo of a multi-repo project, in [[repo]] order: its last land, the merged work it has not landed, or none. */
-function repoOutcomes(spec: Spec, repos: readonly RepoOverview[], events: readonly EventRow[]): string[] {
-  if (spec.merge.strategy === "pr") return [PER_TICKET];
+function repoOutcomes(spec: Spec, repos: readonly RepoOverview[], events: readonly EventRow[], tickets: readonly TicketRow[]): string[] {
+  if (spec.merge.strategy === "pr") return prOutcomes(repos, tickets);
   const last = new Map<string, EventRow>();
   for (const event of events) {
     const name = (JSON.parse(event.data_json) as Landed).repo;
@@ -124,7 +135,7 @@ export function projectRecord(store: Store, project: ProjectRow): string {
     ...(multi ? ["## Repos", "", ...repos.map(repoLine), ""] : []),
     "## Outcome",
     "",
-    ...(multi ? repoOutcomes(spec, repos, events) : [outcome(store, project, spec)]),
+    ...(multi ? repoOutcomes(spec, repos, events, tickets) : [outcome(store, project, spec)]),
     "",
     "## Tickets",
     "",
