@@ -274,3 +274,159 @@ describe("boardText", () => {
     expect(boardText(h.ctx, project().id, ["done"])).toContain("No tickets");
   });
 });
+
+describe("repos on the board tools", () => {
+  const withRepos = (doc: Doc) => {
+    doc.repo = [
+      { name: "web", project: "proj_web", protected: ["config/**"] },
+      { name: "api", project: "proj_api", checks: [] },
+    ];
+    doc.ticket[0].repo = "web";
+    doc.ticket[1].repo = "api";
+    doc.ticket[1].verify = ["npm run api-test"];
+  };
+  const seedMulti = (edit?: (doc: Doc) => void) =>
+    seedProject(h, (doc) => {
+      withRepos(doc);
+      edit?.(doc);
+    });
+  const add = (tickets: TicketSpec[]) => () => addTickets(h.ctx, project().id, tickets, "thr_plan");
+  const failure = (fn: () => unknown): Error => {
+    try {
+      fn();
+    } catch (error) {
+      return error as Error;
+    }
+    throw new Error("expected a refusal");
+  };
+
+  beforeEach(() => {
+    h.bb.addBbProject("proj_web", { host_1: "/src/web" });
+    h.bb.addBbProject("proj_api", { host_1: "/src/api" });
+  });
+
+  describe("addTickets", () => {
+    it("stores each new ticket's repo on a multi-repo project, and null on a single-repo one", async () => {
+      await seedMulti();
+      const created = addTickets(h.ctx, project().id, [newTicket({ repo: "web" }), newTicket({ ref: "api-docs", repo: "api", verify: ["npm run api-test"] })], "thr_plan");
+      expect(created.map((ticket) => [ticket.key, ticket.repo])).toEqual([
+        ["CSV-3", "web"],
+        ["CSV-4", "api"],
+      ]);
+
+      h = makeCtx();
+      await seedProject(h);
+      expect(addTickets(h.ctx, project().id, [newTicket()], "thr_plan")[0]!.repo).toBeNull();
+    });
+
+    it("refuses the whole batch when a ticket on a multi-repo project has no repo or one the spec does not list, and lists the repos", async () => {
+      await seedMulti();
+      const error = failure(add([newTicket({ ref: "a", repo: "web" }), newTicket({ ref: "b" }), newTicket({ ref: "c", repo: "docs" })]));
+      expect(error.message).toContain("1. tickets[1].repo: is required, because this project lists [[repo]] tables. Set it to one of: web, api.");
+      expect(error.message).toContain('2. tickets[2].repo: "docs" is not one of this project\'s repos. Use one of: web, api.');
+      expect(h.store.tickets(project().id)).toHaveLength(2);
+    });
+
+    it("refuses a ticket that names a repo on a single-repo project", async () => {
+      await seedProject(h);
+      const error = failure(add([newTicket({ repo: "web" })]));
+      expect(error.message).toContain('1. tickets[0].repo: "web" names a repo, but this project has no [[repo]] table, so every ticket runs in the project\'s own repository. Remove repo from the ticket.');
+      expect(h.store.tickets(project().id)).toHaveLength(2);
+    });
+
+    it("refuses a scope under its repo's protected globs or under [scope].protected, and allows the same scope in another repo", async () => {
+      await seedMulti((doc) => (doc.scope = { protected: ["db/**"] }));
+      expect(failure(add([newTicket({ scope: ["config/app.ts"], repo: "web" })])).message).toContain('1. tickets[0].scope: "config/app.ts" falls under the protected path "config/**" of repo "web". Take it out of the scope.');
+      expect(failure(add([newTicket({ scope: ["db/x.sql"], repo: "web" })])).message).toContain('1. tickets[0].scope: "db/x.sql" falls under the protected path "db/**". Take it out of the scope.');
+      expect(failure(add([newTicket({ scope: ["db/x.sql"], repo: "api", verify: ["x"] })])).message).toContain('"db/x.sql" falls under the protected path "db/**".');
+      expect(add([newTicket({ scope: ["config/app.ts"], repo: "api", verify: ["x"] })])()[0]!.repo).toBe("api");
+    });
+
+    it("uses the repo's own checks: a ticket with no verify commands is refused in a repo whose checks are empty, and accepted in one that inherits checks.commands", async () => {
+      await seedMulti();
+      expect(failure(add([newTicket({ repo: "api" })])).message).toContain('1. tickets[0].verify: nothing would check this ticket, because it has no verify commands and the checks of repo "api", which replace checks.commands, are empty. Add a verify command.');
+      expect(add([newTicket({ repo: "web" })])()[0]!.repo).toBe("web");
+    });
+  });
+
+  describe("editTicket", () => {
+    it("moves a queued or a blocked ticket with no branch to another repo, records the old repo, and keeps it when the patch names the same repo", async () => {
+      await seedMulti((doc) => (doc.ticket[0].verify = ["npm test"]));
+      expect(editTicket(h.ctx, "CSV-1", { repo: "api" }, "thr_plan")).toMatchObject({ repo: "api", state: "queued" });
+      const event = h.store.events(project().id).filter((row) => row.kind === "ticket.edited").at(-1)!;
+      expect(JSON.parse(event.data_json)).toEqual({ fields: ["repo"], before: { repo: "web" } });
+      expect(h.store.posts(ticketOf(h, "CSV-1").id).at(-1)!.body).toBe("The planner edited this ticket: repo.");
+
+      await block("CSV-2", "stuck");
+      expect(ticketOf(h, "CSV-2").branch).toBeNull();
+      expect(editTicket(h.ctx, "CSV-2", { repo: "web" }, "thr_plan")).toMatchObject({ repo: "web", state: "blocked" });
+      expect(editTicket(h.ctx, "CSV-2", { repo: "web", title: "Renamed" }, "thr_plan")).toMatchObject({ repo: "web", title: "Renamed" });
+    });
+
+    it("refuses to move a ticket that has a branch or is in another state, and says to cancel it and add a new ticket in the other repo", async () => {
+      await seedMulti();
+      await startWorker(h, "CSV-1");
+      const working = failure(() => editTicket(h.ctx, "CSV-1", { repo: "api" }, "thr_plan"));
+      expect(working).toMatchObject({ code: "loom_invalid_state" });
+      expect(working.message).toBe(
+        'CSV-1 is working; its repo can change only while it is queued or blocked and has no branch, because a branch lives in one repository. Cancel CSV-1 with loom_cancel_ticket and add a new ticket in repo "api" with loom_add_tickets.',
+      );
+
+      await block("CSV-1", "stuck");
+      const branch = ticketOf(h, "CSV-1").branch;
+      expect(branch).not.toBeNull();
+      const blocked = failure(() => editTicket(h.ctx, "CSV-1", { repo: "api", title: "x" }, "thr_plan"));
+      expect(blocked.message).toContain(`CSV-1 has the branch ${branch}; its repo can change only while it is queued or blocked and has no branch`);
+      expect(blocked.message).toContain('Cancel CSV-1 with loom_cancel_ticket and add a new ticket in repo "api"');
+      expect(ticketOf(h, "CSV-1")).toMatchObject({ repo: "web", title: "Order rows" });
+      expect(editTicket(h.ctx, "CSV-1", { repo: "web", title: "Same repo" }, "thr_plan").title).toBe("Same repo");
+    });
+
+    it("validates the new repo like addTickets does", async () => {
+      await seedMulti();
+      expect(failure(() => editTicket(h.ctx, "CSV-1", { repo: "docs" }, "thr_plan")).message).toContain('1. patch.repo: "docs" is not one of this project\'s repos. Use one of: web, api.');
+
+      h = makeCtx();
+      await seedProject(h);
+      await startWorker(h, "CSV-1");
+      await block("CSV-1", "stuck");
+      const single = failure(() => editTicket(h.ctx, "CSV-1", { repo: "web" }, "thr_plan"));
+      expect(single.message).toContain('1. patch.repo: "web" names a repo, but this project has no [[repo]] table');
+      expect(ticketOf(h, "CSV-1").repo).toBeNull();
+    });
+
+    it("checks the whole scope and the verify commands again against the new repo", async () => {
+      await seedMulti((doc) => {
+        doc.repo[1].protected = ["src/model/**"];
+        doc.repo[1].checks = ["npm run api-test"];
+      });
+      expect(failure(() => editTicket(h.ctx, "CSV-1", { repo: "api" }, "thr_plan")).message).toContain('1. patch.scope: "src/model/**" falls under the protected path "src/model/**" of repo "api".');
+      expect(failure(() => editTicket(h.ctx, "CSV-2", { repo: "web", scope: ["config/x.ts"] }, "thr_plan")).message).toContain('"config/x.ts" falls under the protected path "config/**" of repo "web"');
+
+      h = makeCtx();
+      h.bb.addBbProject("proj_web", { host_1: "/src/web" });
+      h.bb.addBbProject("proj_api", { host_1: "/src/api" });
+      await seedMulti();
+      expect(failure(() => editTicket(h.ctx, "CSV-1", { repo: "api" }, "thr_plan")).message).toContain('1. patch.verify: nothing would check this ticket, because it has no verify commands and the checks of repo "api", which replace checks.commands, are empty.');
+      expect(editTicket(h.ctx, "CSV-1", { repo: "api", verify: ["npm run api-test"] }, "thr_plan")).toMatchObject({ repo: "api", verify_json: '["npm run api-test"]' });
+    });
+  });
+
+  describe("boardText", () => {
+    it("shows each ticket's repo and lists the repos on a multi-repo project", async () => {
+      await seedMulti();
+      const board = boardText(h.ctx, project().id);
+      expect(board).toContain("Board for csv (repos web, api): 2 tickets");
+      expect(board).toContain("CSV-1  queued     P2  repo web  Order rows");
+      expect(board).toContain("CSV-2  queued     P2  repo api  Export endpoint  (after CSV-1)");
+    });
+
+    it("shows no repo on a single-repo project", async () => {
+      await seedProject(h);
+      const board = boardText(h.ctx, project().id);
+      expect(board).toContain("Board for csv: 2 tickets");
+      expect(board).toContain("CSV-1  queued     P2  Order rows");
+      expect(board).not.toContain("repo");
+    });
+  });
+});
