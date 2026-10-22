@@ -320,7 +320,8 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
     planning: () => projects.planningSessions(),
     planningSession: ({ threadId }) => projects.planningSession(threadId),
     specVersion: ({ slug, version }) => specVersionView({ store, projects }, slug, version),
-    startPlanning: ({ request, merge, reviewer }, ctx) => act(ctx, "plan", {}, () => projects.startPlanning({ request, merge, reviewer })),
+    bbProjects: () => projects.bbProjectChoices(),
+    startPlanning: ({ request, merge, reviewer, repos }, ctx) => act(ctx, "plan", {}, () => projects.startPlanning({ request, merge, reviewer, repos: repos ?? [] })),
     sendNotes: async ({ slug, notes, includeOlder }, ctx) => {
       await act(ctx, "notes", { slug, notes }, () => projects.sendNotes(slug, notes, includeOlder === true));
       return specVersionView({ store, projects }, slug);

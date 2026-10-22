@@ -643,6 +643,34 @@ describe("planning", () => {
     await expect(start({ request: request({ input: [{ type: "text", text: "  ", mentions: [] }] }) })).rejects.toThrow(/Describe what should exist/);
   });
 
+  it("bbProjects lists bb's standard projects for the repo picker, with the machines that have a checkout", async () => {
+    fake.addBbProject("proj_api", {}, { name: "shop-api" });
+    fake.addBbProject("proj_personal", {}, { name: "Personal", kind: "personal" });
+    expect(await call("bbProjects", null)).toEqual([
+      { id: "proj_1", name: "shop", hostIds: ["host_local", "host_1"] },
+      { id: "proj_api", name: "shop-api", hostIds: [] },
+    ]);
+    fake.bbProjects = new Error("bb is restarting");
+    await expect(call("bbProjects", null)).rejects.toThrow(/could not read bb's projects to list the repos: bb is restarting/);
+  });
+
+  it("startPlanning lists the picked repos in the kickoff, refuses an unknown or personal one naming it, and takes at most 10", async () => {
+    fake.addBbProject("proj_api", { host_local: "/api" }, { name: "shop-api" });
+    fake.addBbProject("proj_personal", {}, { name: "Personal", kind: "personal" });
+    const kickoffs = () => fake.callsTo("spawnPlanner").map(([args]) => (args as { kickoff: string }).kickoff);
+    await start({ repos: ["proj_api"] });
+    expect(kickoffs()[0]).toContain("besides this thread's own project: shop-api (proj_api).");
+
+    await expect(start({ repos: ["proj_gone"] })).rejects.toThrow(/bb has no project "proj_gone"/);
+    await expect(start({ repos: ["proj_personal"] })).rejects.toThrow(/"proj_personal" is bb's personal project/);
+    await expect(start({ repos: Array.from({ length: 11 }, (_, n) => `proj_${n}`) })).rejects.toThrow();
+    await expect(start({ repos: [""] })).rejects.toThrow();
+    expect(kickoffs()).toHaveLength(1);
+
+    await start();
+    expect(kickoffs()[1]).not.toContain("picked");
+  });
+
   it("project on a draft carries a summary of the spec: tickets, checks, reviewer and warnings", async () => {
     await propose((doc) => (doc.agents.reviewer = { provider: "claude", model: "sonnet" }));
     const { spec } = await call<ProjectView>("project", { slug: "csv" });

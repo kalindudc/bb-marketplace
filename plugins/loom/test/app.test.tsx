@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, mountPluginContentScripts, renderSlot, type PluginRpcTestHandlers, type PluginSdkTestFakes, type RenderSlotOptions } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginNavPanelProps, PluginSidebarThread, PluginThreadHeaderActionProps } from "@get-bb/plugin-sdk/app";
-import type { Attempt, ChecksItem, HomeProject, NextStep, PlanningSession, ProjectSummary, ProjectView, SentNote, SpecVersionView, ThreadInfo, rpcContract } from "../src/contract";
+import type { Attempt, BbProjectChoice, ChecksItem, HomeProject, NextStep, PlanningSession, ProjectSummary, ProjectView, SentNote, SpecVersionView, ThreadInfo, rpcContract } from "../src/contract";
 import type { TicketRow } from "../src/db/store";
 import { repoOverviews } from "../src/projects";
 import { notesMessage } from "../src/prompts";
@@ -34,6 +34,7 @@ const handlers = (over: Partial<Handlers> = {}): Handlers => ({
   ticketAction: unexpected,
   control: unexpected,
   startPlanning: unexpected,
+  bbProjects: () => [],
   planning: () => [],
   planningSession: () => null,
   specVersion: unexpected,
@@ -536,7 +537,7 @@ describe("new project", () => {
     fireEvent.click(slot.getByTestId("bb-new-thread-composer-submit"));
     await waitFor(() => expect(slot.inspection.navigateCalls).toEqual([pushed("_plan/thr_p7")]));
     expect(startPlanning).toHaveBeenCalledTimes(1);
-    expect(startPlanning).toHaveBeenCalledWith({ request: request("Let people export their orders as CSV."), merge: "integration", reviewer: "codex, gpt-5", confirm: true });
+    expect(startPlanning).toHaveBeenCalledWith({ request: request("Let people export their orders as CSV."), merge: "integration", reviewer: "codex, gpt-5", repos: [], confirm: true });
   });
 
   it("asks the planner about the merge by default, and shows a refusal without leaving the page", async () => {
@@ -549,7 +550,7 @@ describe("new project", () => {
     typeGoal(slot, "Write the docs site.");
     fireEvent.click(slot.getByTestId("bb-new-thread-composer-submit"));
     expect((await slot.findByRole("alert")).textContent).toContain("git checkout");
-    expect(startPlanning).toHaveBeenCalledWith({ request: request("Write the docs site."), merge: "ask", reviewer: "", confirm: true });
+    expect(startPlanning).toHaveBeenCalledWith({ request: request("Write the docs site."), merge: "ask", reviewer: "", repos: [], confirm: true });
     expect(slot.inspection.navigateCalls).toEqual([]);
     expect(localStorage.getItem(SAVED)).toBeNull();
   });
@@ -570,7 +571,97 @@ describe("new project", () => {
     expect(seed(slot)).toBe("proj_shop");
     typeGoal(slot, "Write the docs site.");
     fireEvent.click(slot.getByTestId("bb-new-thread-composer-submit"));
-    await waitFor(() => expect(startPlanning).toHaveBeenCalledWith({ request: request("Write the docs site.", "proj_shop"), merge: "ask", reviewer: "", confirm: true }));
+    await waitFor(() => expect(startPlanning).toHaveBeenCalledWith({ request: request("Write the docs site.", "proj_shop"), merge: "ask", reviewer: "", repos: [], confirm: true }));
+  });
+
+  const choices = (): BbProjectChoice[] => [
+    { id: "proj_docs", name: "docs", hostIds: [] },
+    { id: "proj_shop", name: "shop", hostIds: ["host_1"] },
+    { id: "proj_api", name: "shop-api", hostIds: ["host_1"] },
+    { id: "project-test", name: "test", hostIds: ["host_1", "host_2"] },
+  ];
+  const repoRows = (slot: Slot) => [...slot.getByRole("group", { name: "Repos" }).querySelectorAll("[data-repo-choice]")].map((row) => row.getAttribute("data-repo-choice"));
+  const repoBox = (slot: Slot, name: string) => within(slot.getByRole("group", { name: "Repos" })).getByRole("checkbox", { name: new RegExp(`^${name}(?: no checkout)?$`) }) as HTMLInputElement;
+
+  it("offers bb's other standard projects as repos, filterable by name, marks one with no checkout, and passes the picked ids to startPlanning", async () => {
+    localStorage.setItem(SAVED, "proj_shop");
+    const startPlanning = vi.fn(() => ({ threadId: "thr_p7" }));
+    const { slot } = await mountPage("_new", { startPlanning, bbProjects: choices });
+    await waitFor(() => expect(repoRows(slot)).toEqual(["proj_docs", "proj_api", "project-test"]));
+    expect(calls(slot, "bbProjects")).toEqual([{ method: "bbProjects", input: null }]);
+    const group = slot.getByRole("group", { name: "Repos" });
+    expect([...group.querySelectorAll("[data-no-checkout]")].map((mark) => mark.closest("[data-repo-choice]")!.getAttribute("data-repo-choice"))).toEqual(["proj_docs"]);
+    expect(group.querySelector("[data-no-checkout]")!.textContent).toBe("no checkout");
+
+    const filter = within(group).getByRole("searchbox", { name: "Filter repos" });
+    fireEvent.change(filter, { target: { value: " API " } });
+    expect(repoRows(slot)).toEqual(["proj_api"]);
+    fireEvent.click(repoBox(slot, "shop-api"));
+    fireEvent.change(filter, { target: { value: "docs" } });
+    expect(repoRows(slot)).toEqual(["proj_docs", "proj_api"]);
+    expect(repoBox(slot, "shop-api").checked).toBe(true);
+    fireEvent.click(repoBox(slot, "docs"));
+    fireEvent.change(filter, { target: { value: "nothing like it" } });
+    expect(repoRows(slot)).toEqual(["proj_docs", "proj_api"]);
+    fireEvent.change(filter, { target: { value: "" } });
+    expect(group.textContent).toContain("2 of up to 10 picked");
+
+    typeGoal(slot, "Write the docs site.");
+    fireEvent.click(slot.getByTestId("bb-new-thread-composer-submit"));
+    await waitFor(() => expect(slot.inspection.navigateCalls).toEqual([pushed("_plan/thr_p7")]));
+    expect(startPlanning).toHaveBeenCalledWith({ request: request("Write the docs site.", "proj_shop"), merge: "ask", reviewer: "", repos: ["proj_api", "proj_docs"], confirm: true });
+  });
+
+  it("says when no repo matches the filter, and unpicks a repo when its box is cleared", async () => {
+    const startPlanning = vi.fn(() => ({ threadId: "thr_p7" }));
+    const { slot } = await mountPage("_new", { startPlanning, bbProjects: choices });
+    await waitFor(() => expect(repoRows(slot)).toHaveLength(4));
+    fireEvent.click(repoBox(slot, "docs"));
+    fireEvent.click(repoBox(slot, "docs"));
+    fireEvent.change(within(slot.getByRole("group", { name: "Repos" })).getByRole("searchbox"), { target: { value: "zzz" } });
+    expect(repoRows(slot)).toEqual([]);
+    expect(slot.getByRole("group", { name: "Repos" }).textContent).toContain('No repo matches "zzz".');
+    typeGoal(slot, "Write the docs site.");
+    fireEvent.click(slot.getByTestId("bb-new-thread-composer-submit"));
+    await waitFor(() => expect(startPlanning).toHaveBeenCalledWith(expect.objectContaining({ repos: [] })));
+  });
+
+  it("leaves out a picked repo that the composer submits as its own project", async () => {
+    const startPlanning = vi.fn(() => ({ threadId: "thr_p7" }));
+    const { slot } = await mountPage("_new", { startPlanning, bbProjects: choices });
+    await waitFor(() => expect(repoRows(slot)).toEqual(["proj_docs", "proj_shop", "proj_api", "project-test"]));
+    fireEvent.click(repoBox(slot, "test"));
+    fireEvent.click(repoBox(slot, "shop-api"));
+    typeGoal(slot, "Write the docs site.");
+    fireEvent.click(slot.getByTestId("bb-new-thread-composer-submit"));
+    await waitFor(() => expect(startPlanning).toHaveBeenCalledTimes(1));
+    expect(startPlanning).toHaveBeenCalledWith({ request: request("Write the docs site."), merge: "ask", reviewer: "", repos: ["proj_api"], confirm: true });
+  });
+
+  it("lets the human pick at most 10 repos", async () => {
+    const many = Array.from({ length: 11 }, (_, n): BbProjectChoice => ({ id: `proj_${n}`, name: `repo-${String(n).padStart(2, "0")}`, hostIds: ["host_1"] }));
+    const { slot } = await mountPage("_new", { bbProjects: () => many });
+    await waitFor(() => expect(repoRows(slot)).toHaveLength(11));
+    for (const choice of many.slice(0, 10)) fireEvent.click(repoBox(slot, choice.name));
+    expect(repoBox(slot, "repo-10").disabled).toBe(true);
+    expect(repoBox(slot, "repo-00").disabled).toBe(false);
+    fireEvent.click(repoBox(slot, "repo-00"));
+    expect(repoBox(slot, "repo-10").disabled).toBe(false);
+  });
+
+  it("says when bb cannot list its projects, and still starts planning without repos", async () => {
+    const startPlanning = vi.fn(() => ({ threadId: "thr_p7" }));
+    const { slot } = await mountPage("_new", {
+      startPlanning,
+      bbProjects: () => {
+        throw new Error("bb is restarting");
+      },
+    });
+    await waitFor(() => expect(slot.getByRole("group", { name: "Repos" }).textContent).toContain("Could not list bb's projects: bb is restarting"));
+    typeGoal(slot, "Write the docs site.");
+    fireEvent.click(slot.getByTestId("bb-new-thread-composer-submit"));
+    await waitFor(() => expect(slot.inspection.navigateCalls).toEqual([pushed("_plan/thr_p7")]));
+    expect(startPlanning).toHaveBeenCalledWith(expect.objectContaining({ repos: [] }));
   });
 
   it("still starts planning when storage is unavailable", async () => {

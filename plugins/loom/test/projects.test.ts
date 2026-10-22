@@ -1,6 +1,7 @@
 import type { NewThreadRequest } from "@get-bb/plugin-sdk";
 import { beforeEach, describe, expect, it } from "vitest";
 import { Store } from "../src/db/store";
+import type { BbProjectInfo } from "../src/ports";
 import { LoomError, Projects } from "../src/projects";
 import { Clock, FakePort, makeDb, specToml, type Doc } from "./helpers";
 
@@ -895,6 +896,84 @@ describe("planning", () => {
     expect((await failure(projects.startPlanning({ request: request(), merge: "ask", reviewer: "" }))).code).toBe("loom_no_checkout");
     expect(spawned()).toEqual([]);
     expect(store.openPlanning()).toEqual([]);
+  });
+
+  const KICKOFF = [
+    "[loom] The human started this thread from the Loom page to plan a new project, and the goal is the message above.",
+    "Plan it with the loom-plan skill: one round of questions here, then read the code, run the checks, and call loom_propose.",
+    "The human reviews, approves and starts the draft on the Loom page, so point them there when you hand over.",
+  ];
+  const withRepos = () => {
+    bb.addBbProject("proj_api", { host_local: "/api" }, { name: "shop-api" });
+    bb.addBbProject("proj_docs", {}, { name: "docs" });
+    bb.addBbProject("proj_personal", {}, { name: "Personal", kind: "personal" });
+  };
+
+  it("sends the same kickoff as before when no repos are picked, or only the composer's own project, and does not ask bb for its projects", async () => {
+    await projects.startPlanning({ request: request(), merge: "ask", reviewer: "" });
+    await projects.startPlanning({ request: request(), merge: "ask", reviewer: "", repos: [] });
+    await projects.startPlanning({ request: request(), merge: "ask", reviewer: "", repos: ["proj_1"] });
+    expect(spawned().map((args) => args.kickoff)).toEqual([KICKOFF.join("\n"), KICKOFF.join("\n"), KICKOFF.join("\n")]);
+    await projects.startPlanning({ request: request(), merge: "integration", reviewer: "codex, gpt-5", repos: [] });
+    expect(spawned()[3]!.kickoff).toBe(
+      [
+        ...KICKOFF,
+        'The merge plan is already chosen: strategy = "integration" in [merge], so do not ask about it.',
+        'The human asked for this reviewer model: "codex, gpt-5". Write it into [agents.reviewer] as provider and model; ask only if it is unclear.',
+      ].join("\n"),
+    );
+    expect(bb.callsTo("listProjects")).toEqual([]);
+  });
+
+  it("lists the picked repos by name and id in the order picked, without repeats or the composer's project, and tells the planner what to do with them", async () => {
+    withRepos();
+    await projects.startPlanning({ request: request(), merge: "pr", reviewer: "", repos: ["proj_docs", "proj_api", "proj_1", "proj_docs"] });
+    const lines = spawned()[0]!.kickoff.split("\n");
+    expect(lines.slice(0, 4)).toEqual([...KICKOFF, 'The merge plan is already chosen: strategy = "pr" in [merge], so do not ask about it.']);
+    expect(lines.slice(4)).toEqual([
+      "The human picked these repos for the work, besides this thread's own project: docs (proj_docs), shop-api (proj_api).",
+      "List each repo the work changes in its own [[repo]] table, with its bb project id as project, and include this thread's own project when the work changes it too.",
+      "Every repo needs a checkout on this machine, where the workers run: `bb project list --json` shows each project's checkouts by machine, and `bb status` names this machine. For a repo with no checkout here, offer to clone it with `bb project source add <id> --clone --machine <this machine>`, and run that once the human agrees.",
+      "The picked repos are a starting point, not a limit: you may find other repos with `bb project list` and `bb project discover`, and add any the work also changes.",
+    ]);
+    expect(spawned()[0]!.request).toEqual(request());
+    expect(store.planning("thr_p1")).toMatchObject({ bb_project_id: "proj_1" });
+
+    await projects.startPlanning({ request: request(), merge: "ask", reviewer: "", repos: ["proj_api"] });
+    expect(spawned()[1]!.kickoff.split("\n")[3]).toBe("The human picked this repo for the work, besides this thread's own project: shop-api (proj_api).");
+  });
+
+  it("refuses an unknown or personal picked repo with loom_invalid_input naming each, more than 10 repos, and a list bb cannot read, and spawns none of them", async () => {
+    withRepos();
+    const unknown = await failure(projects.startPlanning({ request: request(), merge: "ask", reviewer: "", repos: ["proj_api", "proj_gone"] }));
+    expect(unknown).toMatchObject({ code: "loom_invalid_input", message: 'bb has no project "proj_gone". Pick the repos from bb\'s standard projects.' });
+    const personal = await failure(projects.startPlanning({ request: request(), merge: "ask", reviewer: "", repos: ["proj_personal"] }));
+    expect(personal).toMatchObject({ code: "loom_invalid_input", message: '"proj_personal" is bb\'s personal project, which has no git checkout. Pick the repos from bb\'s standard projects.' });
+    const both = await failure(projects.startPlanning({ request: request(), merge: "ask", reviewer: "", repos: ["proj_gone", "proj_personal"] }));
+    expect(both.message).toMatch(/^bb has no project "proj_gone"\. "proj_personal" is bb's personal project/);
+
+    const many = await failure(projects.startPlanning({ request: request(), merge: "ask", reviewer: "", repos: Array.from({ length: 11 }, (_, n) => `proj_${n}`) }));
+    expect(many).toMatchObject({ code: "loom_invalid_input", message: "Pick at most 10 repos; 11 were picked." });
+
+    bb.bbProjects = new Error("bb is restarting");
+    const unread = await failure(projects.startPlanning({ request: request(), merge: "ask", reviewer: "", repos: ["proj_api"] }));
+    expect(unread).toMatchObject({ code: "loom_unavailable", message: "Loom could not read bb's projects to check the picked repos: bb is restarting. Try again in a moment." });
+    expect(spawned()).toEqual([]);
+    expect(store.openPlanning()).toEqual([]);
+  });
+
+  it("bbProjectChoices lists bb's standard projects by name with the machines that have a checkout, and says when bb cannot list them", async () => {
+    withRepos();
+    bb.addBbProject("proj_web", { host_local: "/web", host_1: "/web" }, { name: "Shop-web" });
+    (bb.bbProjects as BbProjectInfo[]).find((project) => project.id === "proj_web")!.sources.push({ hostId: "host_1", path: "/web-2", isDefault: false });
+    expect(await projects.bbProjectChoices()).toEqual([
+      { id: "proj_docs", name: "docs", hostIds: [] },
+      { id: "proj_1", name: "shop", hostIds: ["host_local", "host_1"] },
+      { id: "proj_api", name: "shop-api", hostIds: ["host_local"] },
+      { id: "proj_web", name: "Shop-web", hostIds: ["host_local", "host_1"] },
+    ]);
+    bb.bbProjects = new Error("bb is restarting");
+    expect(await failure(projects.bbProjectChoices())).toMatchObject({ code: "loom_unavailable", message: "Loom could not read bb's projects to list the repos: bb is restarting. Try again in a moment." });
   });
 
   it("lists the open sessions newest first, and a session gets its slug and project state once its thread proposes", async () => {

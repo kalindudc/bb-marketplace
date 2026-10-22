@@ -77,15 +77,35 @@ export function planningTitle(input: NewThreadRequest["input"]): string {
   return "";
 }
 
-/** The agent-only note after the human's goal in a planner thread started from the Loom page. */
-export function planningKickoff(a: { merge: MergeChoice; reviewer: string }): string {
+/** How many repos the human can pick for a new project, besides the composer's own. */
+export const MAX_PLANNING_REPOS = 10;
+
+/** A bb project the human picked in the New project composer. */
+export interface PickedRepo {
+  id: string;
+  name: string;
+}
+
+function pickedReposLines(repos: readonly PickedRepo[]): string[] {
+  return [
+    `The human picked ${repos.length === 1 ? "this repo" : "these repos"} for the work, besides this thread's own project: ${repos.map((repo) => `${repo.name} (${repo.id})`).join(", ")}.`,
+    "List each repo the work changes in its own [[repo]] table, with its bb project id as project, and include this thread's own project when the work changes it too.",
+    "Every repo needs a checkout on this machine, where the workers run: `bb project list --json` shows each project's checkouts by machine, and `bb status` names this machine. For a repo with no checkout here, offer to clone it with `bb project source add <id> --clone --machine <this machine>`, and run that once the human agrees.",
+    "The picked repos are a starting point, not a limit: you may find other repos with `bb project list` and `bb project discover`, and add any the work also changes.",
+  ];
+}
+
+/** The agent-only note after the human's goal in a planner thread started from the Loom page. With no `repos` it says nothing about repos. */
+export function planningKickoff(a: { merge: MergeChoice; reviewer: string; repos?: readonly PickedRepo[] }): string {
   const reviewer = a.reviewer.trim();
+  const repos = a.repos ?? [];
   return [
     "[loom] The human started this thread from the Loom page to plan a new project, and the goal is the message above.",
     "Plan it with the loom-plan skill: one round of questions here, then read the code, run the checks, and call loom_propose.",
     "The human reviews, approves and starts the draft on the Loom page, so point them there when you hand over.",
     ...(a.merge === "ask" ? [] : [`The merge plan is already chosen: strategy = "${a.merge}" in [merge], so do not ask about it.`]),
     ...(reviewer === "" ? [] : [`The human asked for this reviewer model: ${JSON.stringify(reviewer)}. Write it into [agents.reviewer] as provider and model; ask only if it is unclear.`]),
+    ...(repos.length === 0 ? [] : pickedReposLines(repos)),
   ].join("\n");
 }
 
