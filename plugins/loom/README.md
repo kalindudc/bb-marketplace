@@ -7,7 +7,8 @@ You approve the spec and start the project. Worker agents then take the tickets
 one by one, each in its own git worktree. Separate reviewer agents approve their
 work or ask for changes, and approved work merges into an integration branch or
 opens as pull requests. The plugin, not an agent, owns every state change;
-agents get narrow tools for their role.
+agents get narrow tools for their role. A project can stay in one repository or
+span several, with each ticket in one of them.
 
 ## How a project runs
 
@@ -18,7 +19,7 @@ agents get narrow tools for their role.
 5. Check: the plugin commits the worktree and runs the ticket's and the project's check commands. A failure goes back to the worker.
 6. Review: reviewer threads read the diff and call `loom_approve` or `loom_request_changes`. Requested changes go back to the worker as numbered findings.
 7. Merge: the plugin merges exactly the commit that was reviewed, one ticket at a time, into the integration branch and runs the `after_merge` checks on the result. On the pull request strategy it opens one pull request per ticket and follows it.
-8. Land: on the integration strategy the human runs `bb loom land` to push the branch and open one pull request upstream, or `bb loom land --direct` to merge the remote's base branch in when it moved, run the `after_merge` checks on the result, and push straight to the base branch.
+8. Land: on the integration strategy the human runs `bb loom land` to push the branch and open one pull request upstream, or `bb loom land --direct` to merge the remote's base branch in when it moved, run the `after_merge` checks on the result, and push straight to the base branch. A multi-repo project lands each repo, or one with `--repo`.
 
 A ticket that gets stuck is blocked. The planner hears about blocked tickets in a
 triage round and answers with its board tools (`loom_board`, `loom_ticket`,
@@ -45,6 +46,44 @@ unchecked.
 
 `skills/loom/references/spec.md` lists every key of the spec with its default.
 
+## Multi-repo projects
+
+A spec with `[[repo]]` tables spans several repositories. Each `[[repo]]` names
+a bb project, which needs a checkout on the machine the planner runs on, where
+the workers run too. It can set its own base, remote, checks, `after_merge`
+checks and protected paths; what it leaves out comes from the top-level
+settings. Every ticket names its repo and changes only that repo, and its scope
+is relative to that repo's root. Work that spans repos is split into one ticket
+per repo, linked with `depends_on`.
+
+- Planning: the planner asks which repos the work spans, finds them with
+  `bb project list --json` and `bb project discover`, and offers to clone a repo
+  that has no checkout on this machine with
+  `bb project source add <id> --clone --machine <host>`. It runs that only after
+  you agree. `loom_propose` refuses a repo without a checkout and names the same
+  command.
+- Workers: one worker per ticket, in a worktree of its ticket's repo. Its brief
+  names the repo and lists the other repos' checkout paths, to read but never
+  edit. Scopes collide only within one repo, so tickets in different repos run
+  side by side.
+- Checks and review run in the ticket's repo, with the repo's own checks and
+  protected paths.
+- Merging: `bb loom start` creates an integration branch of the same name in
+  every repo, from each repo's base, and the plugin keeps a Loom worktree per
+  repo. The merge queue still runs one merge at a time per project, across
+  every repo. On the pull request strategy each pull request opens in its
+  ticket's repo, on that repo's remote and base.
+- Landing: `bb loom land <slug>` lands every repo with merged work, each with
+  its own pull request, `bb loom land <slug> --repo <name>` lands one repo, and
+  `--direct` pushes each repo to its own base. When one repo fails, the repos
+  before it stay landed and the error says what to run next. The project is done
+  when every ticket is done or cancelled and every repo with merged work has
+  landed.
+- `bb loom show` lists each repo with its bb project, base, integration branch,
+  pull request and land, and `bb loom tickets` adds a repo column.
+- After approval, a new spec version may add repos but cannot remove or rename
+  one, or change its bb project, base or remote.
+
 ## Commands
 
 ```sh
@@ -65,6 +104,7 @@ bb loom requeue CSV-1 --note "answer"        # a blocked ticket back to the queu
 bb loom cancel CSV-1 "reason"
 bb loom land <slug> [--title t] [--ready]    # integration strategy: push the branch, open one pull request
 bb loom land <slug> --direct                 # integration strategy: merge in the remote's base, check, push to it, no pull request
+bb loom land <slug> --repo <name>            # multi-repo project: land only this repo, with or without --direct
 bb loom archive <slug>
 ```
 
@@ -88,11 +128,16 @@ a ticket's life. "How Loom works" opens the same guide at any time.
 
 New project shows bb's own new-thread composer, with its project, worktree,
 branch, model and permission pickers; the permission picker starts on full. You
-can also settle the merge plan and name a reviewer model up front. Submitting
+can also settle the merge plan and name a reviewer model up front, and pick the
+repos the work spans: the repo picker lists bb's standard projects besides the
+composer's own, filters them by name, takes up to 10 and marks a project with no
+checkout on any machine as "no checkout". The picked repos are a starting point,
+not a limit: the planner can add others and offers to clone a repo with no
+checkout. Submitting
 starts an ordinary bb thread as the planner, with the `loom-plan` skill, and
 opens the conversation on the page: the planner's chat beside a card for the
-draft. When the planner proposes, the card fills in with the tickets, checks and
-reviewer, and the next-step bar above the planner's chat offers Approve and then
+draft. When the planner proposes, the card fills in with the tickets, checks,
+reviewer and repos, and the next-step bar above the planner's chat offers Approve and then
 Start. Conversations that have not proposed yet are listed on the home page
 until their thread is archived. "Don't work in a project" is refused, because
 Loom needs a git checkout. The composer starts on the project of the last
@@ -132,7 +177,10 @@ tickets" or "Start project · 2 workers". The bar turns yellow when tickets are
 blocked or Loom paused the project, and names the reason and what Loom is doing
 about it. When every ticket of an integration project is done or cancelled, the
 bar offers Land, as does the next step in `bb loom show`. The header's "Land to
-<base>" button, beside Land, lands with `--direct` instead. Open a project for
+<base>" button, beside Land, lands with `--direct` instead. On a multi-repo project, a repo chip marks each ticket's repo on the board, the
+ticket page and the spec dashboard, the Files tab groups paths by repo, the
+header links each repo's pull request, and the land buttons name the repos
+they land ("Land to each repo's base" when the bases differ). Open a project for
 these views:
 
 - Board: one lane per ticket state, with each card's age in its state, its attempt and review round, and a link to the thread working on it. Queued tickets are split into Ready and Waiting, and a waiting ticket names what it waits on. Before approval, the draft's tickets show as dashed cards in Ready and Waiting, with the keys approval will give them.
@@ -227,7 +275,9 @@ whole project.
   single transaction (`src/db/store.ts`). The `events` table refuses UPDATE and
   DELETE with triggers (`src/db/schema.ts`).
 - `src/spec.ts` parses the spec with `smol-toml`, checks it with strict zod
-  schemas, then applies the cross-field rules.
+  schemas, then applies the cross-field rules. `src/repos.ts` gives each repo
+  its settings, filled in from the top level, and `src/checkouts.ts` finds each
+  repo's checkout on the project's machine.
 - `src/projects.ts` is the service: proposals, approval, lifecycle, the board's
   posts and the role lookup.
 - `src/tools.ts` registers the agent tools and picks tools per role;

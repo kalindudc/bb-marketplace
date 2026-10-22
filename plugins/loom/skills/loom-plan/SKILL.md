@@ -11,7 +11,7 @@ Read the spec reference first: the `loom` skill's `references/spec.md` lists eve
 
 ## When the Loom page started this thread
 
-The human can start a project from New project on the Loom page. Then this thread's first message is their goal, followed by a note that starts with `[loom]`. The note may already settle the merge plan or name the reviewer model they want. Skip the interview questions it answers, and ask the rest as usual. When you hand over, say that they can read, approve and start the draft on the Loom page, where the conversation stays open beside it.
+The human can start a project from New project on the Loom page. Then this thread's first message is their goal, followed by a note that starts with `[loom]`. The note may already settle the merge plan, name the reviewer model they want, or list the repos they picked in the composer's repo picker. Skip the interview questions it answers, and ask the rest as usual. Picked repos are a starting point, not a limit: step 2 still applies to them, and you may add other repos the work changes. When you hand over, say that they can read, approve and start the draft on the Loom page, where the conversation stays open beside it.
 
 ## 1. Interview (one short round)
 
@@ -19,29 +19,55 @@ Ask only what you cannot find in the repository:
 
 - Outcome: what should exist when the project is done, and how the human will tell.
 - Non-goals: what is explicitly out of scope.
-- Base branch: where work starts (default `main`).
+- Repos: which repositories the work spans. Most projects change one repository, this thread's own. When the work also changes other repositories, step 2 finds them.
+- Base branch: where work starts (default `main`), and whether a repo uses another base.
 - Merge plan: an integration branch that collects all approved tickets (`strategy = "integration"`), or one pull request per ticket (`strategy = "pr"`).
-- Check commands: the commands that must pass on every submitted ticket (tests, type checks, lint).
+- Check commands: the commands that must pass on every submitted ticket (tests, type checks, lint), per repo when the repos use different toolchains.
 - Models: ask for a reviewer model that differs from the worker's, so the reviewer does not share the worker's blind spots. `provider` in `[agents.worker]` and `[agents.reviewer]` is a bb provider id, such as `claude-code`, `codex` or `pi`, not a model name such as `claude`; `loom_propose` refuses a provider bb does not have and lists the ids it has.
 - Protected paths: files no ticket may change, such as lockfiles, CI config or generated code.
 
 Anything the human cannot answer yet goes in `project.open_questions`; Loom refuses a spec while that list is not empty, so settle every question before you propose.
 
-## 2. Read the code and run the checks once
+## 2. Find the repos and their checkouts
 
-Read the parts of the repository the goal touches. Run each check command once and note whether it passes on the base branch. A check that already fails will fail every ticket; tell the human before you propose.
+Skip this step when the work stays in this thread's own repository: leave `[[repo]]` out of the spec, and every ticket runs there.
 
-## 3. Write the tickets
+For work across repositories, each repository is a bb project, listed in its own `[[repo]]` table with its bb project id as `project`. The loom skill's `references/spec.md` has every `[[repo]]` key and an example spec with two repos.
+
+- Find this machine with `bb status --json`: `thread.environment.hostId` is the machine this thread runs on, and the project's workers run there too. The commands below call it `<host>`.
+- Find bb's projects with `bb project list --json`: each has an `id`, a `name`, a `gitRemoteUrl` and `sources`, one per checkout, each with the `hostId` of its machine and its `path`. A project has a checkout here when one of its sources has this machine's `hostId`.
+- Find git repositories used recently on this machine with `bb project discover --machine <host> --json`: each has a `path`, an `originUrl` and a `projectId`, which is null for a repository that is not a bb project yet.
+- List every repo the work changes, this thread's own project included when the work changes it. A repo the work only reads needs no table; name the files to read, with their path on this machine, in the ticket bodies.
+
+Every repo needs a checkout on this machine; `loom_propose` refuses a repo without one and names the clone command. When a repo has none, offer the human the fix and run it only after they agree:
+
+- A bb project with no checkout here: clone it with `bb project source add <id> --clone --machine <host>`.
+- A repository that is not a bb project yet: when `bb project discover` found it on this machine, register that path with `bb project create --root <path> --machine <host>`; otherwise clone it first (`git clone <url> <path>`), then register it the same way. Use the new project's id as `project`.
+
+## 3. Read the code and run the checks once
+
+Read the parts of each repository the goal touches. Run each check command once and note whether it passes on the base branch. A check that already fails will fail every ticket; tell the human before you propose.
+
+When the repos use different toolchains, give each `[[repo]]` its own `checks` (and `after_merge` on the integration strategy), which replace the top-level ones for that repo's tickets. Run each repo's checks once, in that repo's checkout, and note whether they pass on its base branch.
+
+## 4. Write the tickets
 
 - One ticket fits one worker's context window: a change a person could review in one sitting.
 - Acceptance criteria are testable statements, preferably in EARS form: "WHEN <event> THE SYSTEM SHALL <response>". Every ticket needs at least one.
 - Scope lists the exact files or directories the ticket may change, as globs. A ticket outside its scope is flagged.
 - Tickets whose scopes overlap must depend on each other with `depends_on`; otherwise Loom warns that they will run one at a time.
-- `verify` lists commands that check this ticket alone. A ticket with no `verify` needs commands in `[checks]`.
+- `verify` lists commands that check this ticket alone. A ticket with no `verify` needs commands in `[checks]`, or in its repo's `checks`.
 - Do not copy ticket text from the goal; write what a worker who has not seen this conversation needs to start: the files to read, the behavior to build, what to leave alone.
 - Never write `[NEEDS CLARIFICATION]` markers. Ask the human instead.
 
-## 4. Propose
+On a project with `[[repo]]` tables:
+
+- One ticket changes one repo, and every ticket sets `repo` to one of the `[[repo]]` names. A worker has a checkout of its ticket's repo only; it can read the other repos but not change them.
+- Split cross-repo work into one ticket per repo, linked with `depends_on`: for example the API ticket first, then the web ticket that `depends_on` it. A ticket starts only when the tickets it depends on are done, that is merged in their own repos.
+- Scopes, `verify` commands and protected paths are relative to the ticket's repo. Write `src/**`, not the repo's checkout path. Scopes in different repos never overlap.
+- In the body of a dependent ticket, say which files of the other repo to read, such as an API schema. Its brief gives the other repos' checkout paths, and on the integration strategy it can read their merged work from the integration branch.
+
+## 5. Propose
 
 Call `loom_propose` with the whole spec. Fix every numbered error it returns and call it again; a refused spec creates nothing. Calling it again from this thread with the same slug revises the draft. Read any warnings and fix the ones that matter.
 
@@ -49,9 +75,9 @@ The human can review the draft on the Loom page and send you notes. They arrive 
 
 After the human approves the project, a revision is held as a pending version until they approve it, and its ticket list is ignored.
 
-## 5. Hand over
+## 6. Hand over
 
-Tell the human, in plain words, what you proposed and the next steps. On the Loom page the draft shows Approve and Start buttons; in a terminal the commands are:
+Tell the human, in plain words, what you proposed and the next steps. On a project with `[[repo]]` tables, name the repos; landing opens one pull request in each repo with merged work, and `bb loom land <slug> --repo <name>` lands one. On the Loom page the draft shows Approve and Start buttons; in a terminal the commands are:
 
 - `bb loom spec <slug>` to read the spec.
 - `bb loom approve <slug>` to approve it and create the tickets.
