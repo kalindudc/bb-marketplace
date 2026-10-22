@@ -486,8 +486,150 @@ describe("land on a multi-repo project", () => {
   });
 });
 
+describe("repos in show, tickets and ticket", () => {
+  const PR = (n: number) => `https://github.com/acme/shop/pull/${n}`;
+  const minute = (at: number) => `${new Date(at).toISOString().slice(0, 16)}Z`;
+  const doneTicket = (key: string) => {
+    for (const state of ["working", "checking", "review", "approved", "merging", "done"] as const) host.store.setTicketState(host.store.ticketByKey(key)!.id, state, "loom");
+  };
+  const withRepos = (doc: Doc) => {
+    doc.repo = [
+      { name: "web", project: "proj_web" },
+      { name: "api", project: "proj_api", base: "trunk", remote: "upstream" },
+    ];
+    doc.ticket[0].repo = "web";
+    doc.ticket[1].repo = "api";
+    doc.ticket[1].depends_on = [];
+  };
+  async function running() {
+    fake.addBbProject("proj_web", { host_env: "/src/web" }, { name: "shop-web" });
+    fake.addBbProject("proj_api", { host_env: "/src/api" }, { name: "shop-api" });
+    await propose(withRepos);
+    await host.projects.approve("csv", "human");
+    await run(["start", "csv"]);
+  }
+  const showLines = async () => (await run(["show", "csv"])).stdout.split("\n");
+  const repoBlock = async () => {
+    const lines = await showLines();
+    const start = lines.indexOf("Repos:");
+    return lines.slice(start, start + 3);
+  };
+
+  it("a single-repo project prints show, tickets and ticket with no repo", async () => {
+    await approved();
+    await run(["start", "csv"]);
+    host.projects.block("CSV-2", "waiting", "human");
+    expect((await run(["show", "csv"])).stdout).toBe(
+      [
+        "CSV export (csv) · running",
+        "Goal: Let people export their orders as a CSV file from the admin page.",
+        "Key CSV · base main · integration branch loom/csv",
+        "Spec: approved v1.",
+        "Tickets: 2 (queued 1, blocked 1)",
+        "Planner thread: thr_plan",
+        "Next: Pause it with `bb loom pause csv`.",
+        "",
+      ].join("\n"),
+    );
+    expect((await run(["tickets", "csv"])).stdout).toBe("CSV-1  queued     P2  Order rows\nCSV-2  blocked    P2  Export endpoint  (after CSV-1)\n");
+    const ticket = (await run(["ticket", "CSV-2"])).stdout.split("\n");
+    expect(ticket.slice(0, 3)).toEqual(["CSV-2 · blocked · Export endpoint", "Blocked: waiting", ""]);
+    expect(ticket.join("\n")).not.toContain("Repo");
+  });
+
+  it("show lists each repo of a multi-repo project with its bb project, base, integration branch and landed pull request", async () => {
+    await running();
+    const lines = await showLines();
+    expect(lines.slice(0, 6)).toEqual([
+      "CSV export (csv) · running",
+      "Goal: Let people export their orders as a CSV file from the admin page.",
+      "Key CSV · base main · integration branch loom/csv",
+      "Repos:",
+      "  web · bb project shop-web (proj_web) · base main · integration branch loom/csv · not landed yet",
+      "  api · bb project shop-api (proj_api) · base trunk · integration branch loom/csv · not landed yet",
+    ]);
+    expect(lines[6]).toBe("Spec: approved v1.");
+
+    doneTicket("CSV-1");
+    doneTicket("CSV-2");
+    expect((await showLines()).find((line) => line.startsWith("Next:"))).toBe(
+      'Next: Every ticket is finished, and the repos "web" and "api" have merged work that is not landed yet. Land them with `bb loom land csv`, which pushes each repo\'s integration branch and opens its pull request.',
+    );
+    await run(["land", "csv", "--repo", "web"]);
+    const landedAt = host.store.projectRepo(host.store.projectBySlug("csv")!.id, "web")!.landed_at!;
+    expect(await repoBlock()).toEqual([
+      "Repos:",
+      `  web · bb project shop-web (proj_web) · base main · integration branch loom/csv · pull request ${PR(1)} · landed ${minute(landedAt)}`,
+      "  api · bb project shop-api (proj_api) · base trunk · integration branch loom/csv · not landed yet · merged work to land",
+    ]);
+    expect((await showLines()).find((line) => line.startsWith("Next:"))).toBe(
+      'Next: Every ticket is finished, and the repo "api" has merged work that is not landed yet. Land it with `bb loom land csv`, which pushes each repo\'s integration branch and opens its pull request.',
+    );
+
+    const json = JSON.parse((await run(["show", "csv", "--json"])).stdout) as { repos: unknown[] };
+    expect(json.repos).toEqual([
+      { name: "web", bbProjectId: "proj_web", bbProjectName: "shop-web", base: "main", branch: "loom/csv", prUrl: PR(1), landedAt, toLand: false },
+      { name: "api", bbProjectId: "proj_api", bbProjectName: "shop-api", base: "trunk", branch: "loom/csv", prUrl: null, landedAt: null, toLand: true },
+    ]);
+    expect(JSON.parse((await run(["list", "--json"])).stdout)[0].repos).toEqual(json.repos);
+  });
+
+  it("show prints a repo's bb project id when bb cannot name it, and --json leaves the name null", async () => {
+    await running();
+    fake.bbProjects = new Error("bb is restarting");
+    expect((await repoBlock()).slice(1)).toEqual([
+      "  web · bb project proj_web · base main · integration branch loom/csv · not landed yet",
+      "  api · bb project proj_api · base trunk · integration branch loom/csv · not landed yet",
+    ]);
+    const json = JSON.parse((await run(["show", "csv", "--json"])).stdout) as { repos: Array<{ bbProjectName: string | null }> };
+    expect(json.repos.map((entry) => entry.bbProjectName)).toEqual([null, null]);
+
+    fake.bbProjects = [];
+    fake.addBbProject("proj_web", { host_env: "/src/web" }, { name: "shop-web" });
+    expect((await repoBlock())[2]).toBe("  api · bb project proj_api · base trunk · integration branch loom/csv · not landed yet");
+  });
+
+  it("show on the pull request strategy lists each repo's bb project and base only", async () => {
+    fake.addBbProject("proj_web", { host_env: "/src/web" }, { name: "shop-web" });
+    fake.addBbProject("proj_api", { host_env: "/src/api" }, { name: "shop-api" });
+    await propose((doc) => {
+      withRepos(doc);
+      doc.merge = { strategy: "pr" };
+    });
+    expect(await repoBlock()).toEqual(["Repos:", "  web · bb project shop-web (proj_web) · base main", "  api · bb project shop-api (proj_api) · base trunk"]);
+  });
+
+  it("says landing finishes the project when every ticket is finished and every repo with merged work is landed", async () => {
+    await running();
+    doneTicket("CSV-1");
+    await run(["land", "csv"]);
+    host.store.setTicketState(host.store.ticketByKey("CSV-2")!.id, "cancelled", "human");
+    expect((await showLines()).find((line) => line.startsWith("Next:"))).toBe("Next: Every ticket is finished, and every repo with merged work is landed. Run `bb loom land csv` to finish the project.");
+    await run(["land", "csv"]);
+    expect(host.store.projectBySlug("csv")!.state).toBe("done");
+  });
+
+  it("tickets and ticket show each ticket's repo on a multi-repo project, and --json carries it", async () => {
+    await running();
+    expect((await run(["tickets", "csv"])).stdout).toBe("CSV-1  queued     web  P2  Order rows\nCSV-2  queued     api  P2  Export endpoint\n");
+    expect(JSON.parse((await run(["tickets", "csv", "--json"])).stdout).map((ticket: { key: string; repo: string }) => [ticket.key, ticket.repo])).toEqual([
+      ["CSV-1", "web"],
+      ["CSV-2", "api"],
+    ]);
+    expect((await run(["ticket", "CSV-2"])).stdout.split("\n").slice(0, 2)).toEqual(["CSV-2 · queued · Export endpoint", "Repo: api"]);
+    expect(JSON.parse((await run(["ticket", "CSV-2", "--json"])).stdout)).toMatchObject({ key: "CSV-2", repo: "api" });
+  });
+});
+
 describe("readyToLand", () => {
   const project = (over: Partial<Parameters<typeof readyToLand>[0]> = {}) => ({ state: "running", strategy: "integration", ticketCounts: { done: 2, cancelled: 1 }, ...over });
+
+  it("counts a multi-repo project whose tickets are all finished and which still has a repo to land", () => {
+    const repo = (name: string, toLand: boolean) => ({ name, bbProjectId: `proj_${name}`, bbProjectName: null, base: "main", branch: "loom/csv", prUrl: null, landedAt: toLand ? null : 1, toLand });
+    const multi = { ...project({ ticketCounts: { done: 2 } }), repos: [repo("web", false), repo("api", true)] };
+    expect(readyToLand(multi)).toBe(true);
+    expect(readyToLand({ ...multi, ticketCounts: { done: 1, working: 1 } })).toBe(false);
+  });
 
   it("is true for a running or paused integration project whose tickets are all done or cancelled, with one done", () => {
     expect(readyToLand(project())).toBe(true);

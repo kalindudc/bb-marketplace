@@ -33,5 +33,15 @@ export function readyToLand(p: { state: string; strategy: string; ticketCounts: 
   return Object.entries(p.ticketCounts).every(([state, count]) => state === "done" || state === "cancelled" || !count);
 }
 
+/** A single-repo project's one repo has no name. */
+export const isMultiRepoProject = (p: { repos: ReadonlyArray<{ name: string | null }> }) => p.repos.some((repo) => repo.name !== null);
+
+/** `the repo "api" has` for one name, `the repos "web" and "api" have` for more. */
+export function reposHave(names: readonly string[]): string {
+  const quoted = names.map((name) => `"${name}"`);
+  const list = quoted.length <= 1 ? quoted.join("") : `${quoted.slice(0, -1).join(", ")} and ${quoted.at(-1)}`;
+  return names.length === 1 ? `the repo ${list} has` : `the repos ${list} have`;
+}
+
 export const END_LABELS: Record<string, string> = { abandoned: "idle twice", verdict: "gave a verdict", merged: "merged", superseded: "superseded by a newer round", gone: "thread gone" };
 export const endLabel = (reason: string | null) => (reason === null ? "ended" : (END_LABELS[reason] ?? reason));

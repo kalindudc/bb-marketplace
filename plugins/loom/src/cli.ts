@@ -1,11 +1,10 @@
 import { PluginCliError, cliCommand, defineCli, type PluginCliRegistration, type PluginCliResult } from "@get-bb/plugin-sdk";
 import type { Store } from "./db/store";
 import type { Approved, Engine } from "./engine";
-import { formatDuration, its, noTokenUsage, plural, readyToLand } from "./format";
+import { formatDuration, isMultiRepoProject, its, noTokenUsage, plural, readyToLand, reposHave } from "./format";
 import type { ProjectMetrics } from "./metrics";
-import { LoomError, type ProjectOverview, type Projects, type SpecView, type TicketSummary, type TicketView } from "./projects";
+import { LoomError, type ProjectOverview, type Projects, type RepoOverview, type SpecView, type TicketSummary, type TicketView } from "./projects";
 import type { LandResult } from "./merge";
-import { andList } from "./prompts";
 import { projectFeed, projectMetrics } from "./reports";
 import { HUMAN_ACTOR, TICKET_STATES } from "./states";
 
@@ -51,9 +50,17 @@ async function guarded(fn: () => Promise<PluginCliResult> | PluginCliResult): Pr
 
 const out = (stdout: string): PluginCliResult => ({ exitCode: 0, stdout });
 
+function landStep(project: ProjectOverview): string {
+  const { slug } = project;
+  if (!isMultiRepoProject(project)) return `Every ticket is finished. Land it with \`bb loom land ${slug}\`, which pushes the integration branch and opens one pull request.`;
+  const toLand = project.repos.flatMap((repo) => (repo.toLand ? [repo.name!] : []));
+  if (toLand.length === 0) return `Every ticket is finished, and every repo with merged work is landed. Run \`bb loom land ${slug}\` to finish the project.`;
+  return `Every ticket is finished, and ${reposHave(toLand)} merged work that is not landed yet. Land ${toLand.length === 1 ? "it" : "them"} with \`bb loom land ${slug}\`, which pushes each repo's integration branch and opens its pull request.`;
+}
+
 function nextStep(project: ProjectOverview): string {
   const { slug } = project;
-  if (readyToLand(project)) return `Every ticket is finished. Land it with \`bb loom land ${slug}\`, which pushes the integration branch and opens one pull request.`;
+  if (readyToLand(project)) return landStep(project);
   switch (project.state) {
     case "draft":
       return `Read the spec with \`bb loom spec ${slug}\`, then approve it with \`bb loom approve ${slug}\`.`;
@@ -75,6 +82,19 @@ function formatList(projects: ProjectOverview[]): string {
   return `${rows.join("\n")}\n`;
 }
 
+const bbProjectOf = (repo: RepoOverview) => (repo.bbProjectName === null ? repo.bbProjectId : `${repo.bbProjectName} (${repo.bbProjectId})`);
+
+function repoLine(repo: RepoOverview): string {
+  const parts = [repo.name!, `bb project ${bbProjectOf(repo)}`, `base ${repo.base}`];
+  if (repo.branch !== null) {
+    parts.push(`integration branch ${repo.branch}`);
+    if (repo.prUrl !== null) parts.push(`pull request ${repo.prUrl}`);
+    parts.push(repo.landedAt === null ? "not landed yet" : `landed ${minute(repo.landedAt)}`);
+    if (repo.toLand) parts.push("merged work to land");
+  }
+  return `  ${parts.join(" · ")}`;
+}
+
 function formatShow(project: ProjectOverview): string {
   const merge = project.strategy === "integration" ? `integration branch ${project.branch}` : "one pull request per ticket";
   const counts = Object.entries(project.ticketCounts).map(([state, count]) => `${state} ${count}`);
@@ -86,6 +106,7 @@ function formatShow(project: ProjectOverview): string {
     `${project.name} (${project.slug}) · ${project.state}`,
     `Goal: ${project.goal}`,
     `Key ${project.key} · base ${project.base} · ${merge}`,
+    ...(isMultiRepoProject(project) ? ["Repos:", ...project.repos.map(repoLine)] : []),
     specLine,
     `Tickets: ${project.ticketCount}${counts.length > 0 ? ` (${counts.join(", ")})` : ""}`,
   ];
@@ -102,15 +123,19 @@ function formatSpec(spec: SpecView): string {
 
 function formatTickets(tickets: TicketSummary[]): string {
   if (tickets.length === 0) return "No tickets.\n";
+  // Only a multi-repo project's tickets name a repo, so a single-repo list has no repo column.
+  const width = Math.max(...tickets.map((ticket) => ticket.repo?.length ?? 0));
   const rows = tickets.map((ticket) => {
     const after = ticket.deps.length > 0 ? `  (after ${ticket.deps.join(", ")})` : "";
-    return `${ticket.key}  ${ticket.state.padEnd(9)}  P${ticket.priority}  ${ticket.title}${after}`;
+    const repo = width === 0 ? "" : `${(ticket.repo ?? "").padEnd(width)}  `;
+    return `${ticket.key}  ${ticket.state.padEnd(9)}  ${repo}P${ticket.priority}  ${ticket.title}${after}`;
   });
   return `${rows.join("\n")}\n`;
 }
 
 export function formatTicket(ticket: TicketView): string {
   const lines = [`${ticket.key} · ${ticket.state} · ${ticket.title}`];
+  if (ticket.repo !== null) lines.push(`Repo: ${ticket.repo}`);
   if (ticket.blockedReason !== null) lines.push(`Blocked: ${ticket.blockedReason}`);
   for (const post of ticket.posts) {
     const indent = "  ".repeat(post.depth);
@@ -170,10 +195,8 @@ function formatRepoLand(slug: string, result: Extract<LandResult, { repos: unkno
   const again = `bb loom land ${slug}${direct ? " --direct" : ""}`;
   const lines = result.repos.map((entry) => (entry.url === null ? `Landed the repo "${entry.repo}" on ${entry.pushed} at ${entry.sha.slice(0, 12)}.` : `Landed the repo "${entry.repo}": ${entry.url}`));
   const { unlanded } = result;
-  const repos = andList(unlanded.map((name) => `"${name}"`));
-  const left = unlanded.length === 1 ? `the repo ${repos} has` : `the repos ${repos} have`;
   if (result.done) lines.push("Every ticket is done or cancelled and every repo with merged work is landed, so the project is done.");
-  else if (unlanded.length > 0) lines.push(`Still to land: ${left} merged work that is not landed yet. Run \`${again}\` to land every repo with merged work.`);
+  else if (unlanded.length > 0) lines.push(`Still to land: ${reposHave(unlanded)} merged work that is not landed yet. Run \`${again}\` to land every repo with merged work.`);
   else lines.push(`Run \`${again}\` again after more tickets merge to push them too.`);
   return `${lines.join("\n")}\n`;
 }
@@ -196,7 +219,7 @@ export function createCli(projects: Projects, engine: Engine, store: Store, now:
       run: ({ options, positionals }, ctx) =>
         guarded(async () => {
           await humanAction(deps, ctx, action, { slug: positionals.slug }, () => run(positionals.slug, HUMAN_ACTOR));
-          return out(options.json ? toJson(projects.overview(positionals.slug)) : `${say(positionals.slug)}\n`);
+          return out(options.json ? toJson(await projects.namedOverview(positionals.slug)) : `${say(positionals.slug)}\n`);
         }),
     });
 
@@ -207,15 +230,15 @@ export function createCli(projects: Projects, engine: Engine, store: Store, now:
       list: cliCommand({
         summary: "List Loom projects with their state and ticket count",
         options: { json },
-        run: ({ options }) => guarded(() => out(options.json ? toJson(projects.list()) : formatList(projects.list()))),
+        run: ({ options }) => guarded(async () => out(options.json ? toJson(await projects.namedList()) : formatList(projects.list()))),
       }),
       show: cliCommand({
         summary: "Show a project: state, goal, merge setup, spec versions, ticket counts and the next step",
         positionals: [SLUG],
         options: { json },
         run: ({ options, positionals }) =>
-          guarded(() => {
-            const project = projects.overview(positionals.slug);
+          guarded(async () => {
+            const project = await projects.namedOverview(positionals.slug);
             return out(options.json ? toJson(project) : formatShow(project));
           }),
       }),
@@ -362,7 +385,7 @@ export function createCli(projects: Projects, engine: Engine, store: Store, now:
           guarded(async () => {
             const data = options.now ? { slug: positionals.slug, now: true } : { slug: positionals.slug };
             await humanAction(deps, ctx, "pause", data, () => engine.pause(positionals.slug, HUMAN_ACTOR, options.now === true));
-            return out(options.json ? toJson(projects.overview(positionals.slug)) : `${positionals.slug} is paused.\n`);
+            return out(options.json ? toJson(await projects.namedOverview(positionals.slug)) : `${positionals.slug} is paused.\n`);
           }),
       }),
       resume: lifecycle("Resume a paused project and continue its stopped workers (human only)", (slug, actor) => engine.resume(slug, actor), "resume", (slug) => `${slug} is running.`),

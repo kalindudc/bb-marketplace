@@ -112,6 +112,27 @@ describe("nextStepOf", () => {
     expect(step.action).toEqual({ control: "land", label: "Land · open the pull request", confirm: "Click again to land" });
   });
 
+  it("names the repos of a multi-repo project whose merged work is not landed yet in the land step", () => {
+    const repo = (name: string, toLand: boolean) => ({ name, bbProjectId: `proj_${name}`, bbProjectName: null, base: "main", branch: "loom/csv", prUrl: null, landedAt: null, toLand });
+    const finished = (repos: ReturnType<typeof repo>[]) => input({ state: "running", ticketCounts: { done: 2, cancelled: 1 }, repos }, [card({ state: "done", ready: false })]);
+
+    const two = nextStepOf(finished([repo("web", true), repo("docs", false), repo("api", true)]))!;
+    expect(two).toMatchObject({ stage: 5, tone: "normal", title: "Next: land the project." });
+    expect(two.text).toBe('Every ticket is finished, and the repos "web" and "api" have merged work that is not landed yet. Landing pushes each one\'s integration branch and opens its pull request, or updates the one already open.');
+    expect(two.action).toEqual({ control: "land", label: "Land · 2 repos", confirm: "Click again to land" });
+
+    const one = nextStepOf(finished([repo("web", false), repo("api", true)]))!;
+    expect(one.text).toBe('Every ticket is finished, and the repo "api" has merged work that is not landed yet. Landing pushes its integration branch and opens its pull request, or updates the one already open.');
+    expect(one.action).toMatchObject({ label: "Land · 1 repo" });
+
+    const none = nextStepOf(finished([repo("web", false), repo("api", false)]))!;
+    expect(none).toMatchObject({ stage: 5, text: "Every ticket is finished, and every repo with merged work is landed. Landing again finishes the project." });
+    expect(none.action).toEqual({ control: "land", label: "Land · finish the project", confirm: "Click again to land" });
+
+    const working = nextStepOf(input({ state: "running", ticketCounts: { done: 1, working: 1 }, repos: [repo("web", true), repo("api", false)] }, [card({ key: "CSV-2", state: "working", ready: false })]))!;
+    expect(working.title).toBe("Running.");
+  });
+
   it("says what runs while nothing needs the human", () => {
     const board = [card({ key: "CSV-2", state: "working", ready: false }), card({ key: "CSV-3", state: "working", ready: false }), queued("CSV-4", false)];
     const step = nextStepOf(input({ state: "running" }, board))!;
