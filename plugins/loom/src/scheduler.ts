@@ -43,9 +43,11 @@ export function readyTickets(tickets: readonly TicketLite[]): TicketLite[] {
   return picked;
 }
 
-/** The tickets a spawn may claim now: the ready ones that fit in the free worker slots, in pick order. */
-export function spawnable(maxWorkers: number, tickets: readonly TicketLite[]): TicketLite[] {
-  return readyTickets(tickets).slice(0, workerSlots(maxWorkers, tickets));
+/** The tickets a spawn may claim now: the ready ones, less those `waiting` holds back, that fit in the free worker slots, in pick order. */
+export function spawnable(maxWorkers: number, tickets: readonly TicketLite[], waiting: (ticket: TicketLite) => boolean = () => false): TicketLite[] {
+  return readyTickets(tickets)
+    .filter((ticket) => !waiting(ticket))
+    .slice(0, workerSlots(maxWorkers, tickets));
 }
 
 /** Workers waiting in review hold a worktree but no slot. */

@@ -13,7 +13,8 @@ const ref = z
 
 const sha = z.string().min(1).max(64);
 const commit = z.string().regex(/^[0-9a-fA-F]{4,64}$/, "must be a commit hash");
-const slug = z.string().regex(/^[a-z][a-z0-9-]{1,39}$/, "must be a project slug");
+// A Loom worktree's key: the project slug, or the slug and a [[repo]] name joined by a dot. It names a directory, so nothing looser.
+const worktreeKey = z.string().regex(/^[a-z][a-z0-9-]{1,39}(?:\.[a-z][a-z0-9-]{0,23})?$/, "must be a project slug, or a project slug and a repo name joined by a dot");
 
 export const hostContract = defineRpcContract({
   ensureBranch: {
@@ -38,7 +39,7 @@ export const hostContract = defineRpcContract({
     output: z.object({ stat: z.string(), patch: z.string(), truncated: z.boolean() }).strict(),
   },
   ensureWorktree: {
-    input: z.object({ repo: absPath, key: slug, branch: ref }).strict(),
+    input: z.object({ repo: absPath, key: worktreeKey, branch: ref }).strict(),
     output: z.discriminatedUnion("outcome", [
       z.object({ outcome: z.literal("ok"), path: z.string() }).strict(),
       z.object({ outcome: z.literal("unavailable"), reason: z.enum(["branch_checked_out", "git"]), message: z.string() }).strict(),

@@ -1,12 +1,14 @@
 // The engine: a control loop that works every running project, the human's commands on the engine's state, and
 // the handlers for bb's thread events. Behavior lives in workers.ts, checks.ts and triage.ts; this wires it together.
 import { resumeCheckingTickets } from "./checks";
+import { repoCheckout, type RepoCheckout } from "./checkouts";
 import { finishIfComplete, holdMerge, land, mergeHeld, pollPullRequests, runMergeQueue, type LandResult } from "./merge";
 import type { PostRow, ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { approvedText, blockedReplyText, heldCheckResult, resumeText, reviewRequeueNote, startRequeueNote } from "./prompts";
 import { LoomError, type ApproveResult, type Projects } from "./projects";
+import { isMultiRepo } from "./repos";
 import { backToReview, blockedAtReview, failReviewerSpawn, onReviewerGone, onReviewerIdle, onReviewerTurnFailed, spawnReviewers } from "./review";
-import { budgetReason, spawnable, toLite } from "./scheduler";
+import { budgetReason, spawnable, toLite, type TicketLite } from "./scheduler";
 import { LOOM_ACTOR, canMoveTicket } from "./states";
 import { cancelTicket, maybeSendTriage, onPlannerIdle } from "./triage";
 import {
@@ -175,10 +177,9 @@ export class Engine {
       const project = store.project(projectId);
       if (project?.state !== "running" || (project.hold_until !== null && project.hold_until > now())) return null;
       const spec = specOf(store, project);
-      // A worker's worktree branches from the integration branch's tip, so none starts while a merge or a direct land there has not passed its checks.
-      if (spec.merge.strategy === "integration" && (store.tickets(projectId, ["merging"]).length > 0 || mergeHeld(this.ctx, projectId))) return null;
-      const lite = spawnable(spec.agents.max_workers, store.tickets(projectId).map(toLite)).find((candidate) => !tried.has(candidate.id));
-      return lite === undefined ? null : { project, spec, ticket: store.ticket(lite.id)! };
+      const waiting = (ticket: TicketLite) => spec.merge.strategy === "integration" && this.integrationMoving(projectId, ticket.repo);
+      const lite = spawnable(spec.agents.max_workers, store.tickets(projectId).map(toLite), waiting).find((candidate) => !tried.has(candidate.id));
+      return lite === undefined ? null : { project, spec, ticket: store.ticket(lite.id)!, waiting };
     };
 
     const tried = new Set<number>();
@@ -190,8 +191,18 @@ export class Engine {
       const pick = next(tried);
       if (pick === null) return;
       tried.add(pick.ticket.id);
-      await spawnWorker(this.ctx, pick.project, pick.spec, pick.ticket);
+      await spawnWorker(this.ctx, pick.project, pick.spec, pick.ticket, pick.waiting);
     }
+  }
+
+  /**
+   * Whether a repo's integration branch may move before a worker's worktree branches from its tip. A merge moves only its
+   * ticket's repo. The merge guard held with no ticket merging is a direct land, a human block or cancel, or a merge about
+   * to begin or just done, so every repo waits.
+   */
+  private integrationMoving(projectId: number, repo: string | null): boolean {
+    const merging = this.ctx.store.tickets(projectId, ["merging"]);
+    return merging.some((ticket) => ticket.repo === repo) || (merging.length === 0 && mergeHeld(this.ctx, projectId));
   }
 
   /** After a restart: adopt or roll back half-made spawns, end rows and planning conversations whose thread is gone, finish endings, check again, and run merges left in merging again. */
@@ -286,7 +297,7 @@ export class Engine {
     return { ...result, requeued, backToReview: sentBack };
   }
 
-  /** Creates the integration branch in the project's checkout, then starts the project. Refused, with nothing changed, when that cannot be done. */
+  /** Creates the integration branch in every repo's checkout, then starts the project. Refused, with the project left ready, when that cannot be done. */
   async start(slug: string, actor: string): Promise<ProjectRow> {
     const project = this.ctx.store.projectBySlug(slug);
     if (project?.state === "ready") await this.prepare(project);
@@ -295,18 +306,31 @@ export class Engine {
     return started;
   }
 
+  // Every checkout is found before any branch is made, so a missing one leaves every repo as it was.
   private async prepare(project: ProjectRow): Promise<void> {
     const spec = specOf(this.ctx.store, project);
-    const checkout = project.host_id === null ? null : await this.ctx.bb.projectCheckout(project.bb_project_id, project.host_id);
-    if (project.host_id === null || checkout === null) {
-      throw new LoomError("loom_no_checkout", `The bb project has no checkout on the machine ${project.host_id ?? "(unknown)"} that this Loom project uses.`, "Add the repository to the bb project on that machine, then start again.");
+    const names = isMultiRepo(spec) ? spec.repo!.map((repo) => repo.name) : [null];
+    const checkouts: RepoCheckout[] = [];
+    const missing: string[] = [];
+    for (const name of names) {
+      try {
+        checkouts.push(await repoCheckout(this.ctx, project, spec, name));
+      } catch (error) {
+        if (!(error instanceof LoomError)) throw error;
+        // repoCheckout's advice is for a running project; a ready one is started again, not resumed.
+        missing.push(error.message.replace(/then resume\.$/u, "then start the project again."));
+      }
     }
+    if (missing.length > 0) throw new LoomError("loom_no_checkout", missing.join("\n"));
     if (spec.merge.strategy !== "integration") return;
-    const branch = spec.merge.branch!;
-    try {
-      await this.ctx.host.call(project.host_id, "ensureBranch", { repo: checkout, branch, from: spec.project.base });
-    } catch (error) {
-      throw new LoomError("loom_invalid_state", `Could not create the integration branch ${branch} from ${spec.project.base}: ${errText(error)}`, `Check that ${spec.project.base} exists in ${checkout}.`);
+    for (const checkout of checkouts) {
+      const { name, branch, base } = checkout.settings;
+      try {
+        await this.ctx.host.call(checkout.hostId, "ensureBranch", { repo: checkout.path, branch: branch!, from: base });
+      } catch (error) {
+        const where = name === null ? "" : ` in the repo "${name}"`;
+        throw new LoomError("loom_invalid_state", `Could not create the integration branch ${branch!}${where} from ${base}: ${errText(error)}`, `Check that ${base} exists in ${checkout.path}.`);
+      }
     }
   }
 
