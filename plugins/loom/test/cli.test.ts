@@ -530,6 +530,7 @@ describe("metrics and feed", () => {
     tokens: { total: 7000, perDoneTicket: 1750, byRole: { planner: 1000, worker: 4000, reviewer: 2000 }, unreported: 0 },
     cumulativeFlow: [],
     activeMs: 7 * HOUR,
+    windowActiveMs: 7 * HOUR,
     timeInState: { ms: { ...Object.fromEntries(TICKET_STATES.map((state) => [state, 0])), queued: 2 * HOUR, working: 4 * HOUR, checking: HOUR, review: 3 * HOUR } as ProjectMetrics["counts"], flowEfficiency: 0.4, n: 3 },
     checksByCommand: [
       { command: "npm test", runs: 31, failed: 7, p50Ms: 100_000 },
@@ -602,6 +603,7 @@ describe("metrics and feed", () => {
       checks: { total: 0, failed: 0 },
       tokens: { total: 0, perDoneTicket: null, byRole: { planner: 0, worker: 0, reviewer: 0 }, unreported: 0 },
       activeMs: 0,
+      windowActiveMs: 0,
       timeInState: { ms: Object.fromEntries(TICKET_STATES.map((state) => [state, 0])) as ProjectMetrics["counts"], flowEfficiency: null, n: 0 },
       checksByCommand: [],
       scopeFlags: { outside: 0, protectedHits: 0 },
@@ -655,6 +657,7 @@ describe("metrics and feed", () => {
       "timeInState",
       "tokens",
       "tokensByTicket",
+      "windowActiveMs",
       "wip",
       "wipAge",
     ]);

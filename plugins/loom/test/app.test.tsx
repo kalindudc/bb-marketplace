@@ -2490,7 +2490,7 @@ describe("health strip", () => {
     expect(part(slot, "progress")!.textContent).toContain("3 in flight");
     expect(part(slot, "progress")!.querySelector("[role=img]")!.getAttribute("aria-label")).toBe("Progress: 8 done, 3 in flight, 1 blocked, 2 queued");
     expect(part(slot, "pace")!.textContent).toContain("0.5/day");
-    expect(part(slot, "pace")!.textContent).toContain("6 left: about 12 days at this pace");
+    expect(part(slot, "pace")!.textContent).toContain("6 left: about 12d of running at this pace");
     expect(part(slot, "budget")!.textContent).toContain("24%");
     expect(part(slot, "budget")!.textContent).toContain("12,000 of 50,000 (sampled)");
     expect(part(slot, "deadline")!.textContent).toContain("6 days");
@@ -2502,7 +2502,7 @@ describe("health strip", () => {
   });
 
   it("hides the budget and the deadline when the spec sets neither, and says when nothing was done to pace by", async () => {
-    const view = projectView({ health: health({ budget: null, deadline: null, pace: { perDay: 0, remaining: 6, etaDays: null } }) });
+    const view = projectView({ health: health({ budget: null, deadline: null, pace: { perHour: 0, remaining: 6, etaMs: null } }) });
     const { slot } = await mountPage("csv", { project: () => view });
     await slot.findByRole("tab", { name: "Board" });
     expect(part(slot, "progress")).not.toBeNull();
@@ -2510,6 +2510,20 @@ describe("health strip", () => {
     expect(part(slot, "deadline")).toBeNull();
     expect(part(slot, "pace")!.textContent).toContain("6 left; none done in the last 14 days");
     expect(slot.container.textContent).not.toContain("NaN");
+  });
+
+  it("shows a fast pace per hour and the running time left in minutes", async () => {
+    const { slot } = await mountPage("csv", { project: () => projectView({ health: health({ pace: { perHour: 3.85, remaining: 3, etaMs: 46.8 * 60_000 } }) }) });
+    await slot.findByRole("tab", { name: "Board" });
+    expect(part(slot, "pace")!.textContent).toContain("3.9/hour");
+    expect(part(slot, "pace")!.textContent).toContain("3 left: about 47m of running at this pace");
+  });
+
+  it("says when the project did not run in the window to pace by", async () => {
+    const { slot } = await mountPage("csv", { project: () => projectView({ health: health({ pace: { perHour: null, remaining: 2, etaMs: null } }) }) });
+    await slot.findByRole("tab", { name: "Board" });
+    expect(part(slot, "pace")!.textContent).toContain("none yet");
+    expect(part(slot, "pace")!.textContent).toContain("2 left; not run in the last 14 days");
   });
 
   it("is not shown for a draft", async () => {

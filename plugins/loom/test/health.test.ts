@@ -3,8 +3,11 @@ import type { ThreadRow, TicketRow } from "../src/db/store";
 import { projectHealth } from "../src/health";
 import { parseSpec, type Spec } from "../src/spec";
 import type { TicketState } from "../src/states";
-import { NOW, metrics } from "./fixtures";
+import { HOUR, NOW, metrics } from "./fixtures";
 import { specToml, type Doc } from "./helpers";
+
+const MINUTE = 60_000;
+const DAY = 24 * HOUR;
 
 const ticket = (n: number, state: TicketState, over: Partial<TicketRow> = {}): TicketRow => ({
   id: n,
@@ -65,7 +68,7 @@ const throughput = (doneByDay: number[]) => doneByDay.map((done, index) => ({ da
 const states = (entries: Array<[TicketState, number]>) => entries.flatMap(([state, count]) => Array.from({ length: count }, () => state)).map((state, index) => ticket(index + 1, state));
 
 describe("projectHealth", () => {
-  it("counts progress without the cancelled tickets, and the pace and days left over the 14-day window", () => {
+  it("counts progress without the cancelled tickets, and the pace and time left over the running time in the 14-day window", () => {
     const tickets = states([
       ["done", 8],
       ["working", 2],
@@ -74,14 +77,31 @@ describe("projectHealth", () => {
       ["queued", 2],
       ["cancelled", 1],
     ]);
-    const health = projectHealth({ tickets, threads: [], metrics: metrics({ wip: 3, throughput: throughput([0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1]) }), spec: specWith(), now: NOW });
+    const health = projectHealth({ tickets, threads: [], metrics: metrics({ wip: 3, throughput: throughput([0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1]), windowActiveMs: 14 * DAY }), spec: specWith(), now: NOW });
     expect(health.progress).toEqual({ done: 8, total: 14, inFlight: 3, blocked: 1, queued: 2 });
-    expect(health.pace).toEqual({ perDay: 0.5, remaining: 6, etaDays: 12 });
+    expect(health.pace.remaining).toBe(6);
+    expect(health.pace.perHour! * 24).toBeCloseTo(0.5);
+    expect(health.pace.etaMs).toBeCloseTo(12 * DAY);
   });
 
-  it("has no days left at a pace of zero", () => {
-    const health = projectHealth({ tickets: states([["queued", 2]]), threads: [], metrics: metrics({ throughput: throughput(Array(14).fill(0)) }), spec: specWith(), now: NOW });
-    expect(health.pace).toEqual({ perDay: 0, remaining: 2, etaDays: null });
+  it("paces a project that started today by the hours it ran, not by the 14 days of the window", () => {
+    const tickets = states([
+      ["done", 8],
+      ["working", 1],
+      ["queued", 2],
+    ]);
+    const health = projectHealth({ tickets, threads: [], metrics: metrics({ throughput: throughput([...Array(13).fill(0), 8]), windowActiveMs: 2 * HOUR }), spec: specWith(), now: NOW });
+    expect(health.pace).toEqual({ perHour: 4, remaining: 3, etaMs: 45 * MINUTE });
+  });
+
+  it("has no time left at a pace of zero", () => {
+    const health = projectHealth({ tickets: states([["queued", 2]]), threads: [], metrics: metrics({ throughput: throughput(Array(14).fill(0)), windowActiveMs: 7 * HOUR }), spec: specWith(), now: NOW });
+    expect(health.pace).toEqual({ perHour: 0, remaining: 2, etaMs: null });
+  });
+
+  it("has no pace when the project did not run in the window, even if a ticket finished while it was paused", () => {
+    const health = projectHealth({ tickets: states([["done", 1], ["queued", 2]]), threads: [], metrics: metrics({ throughput: throughput([...Array(13).fill(0), 1]), windowActiveMs: 0 }), spec: specWith(), now: NOW });
+    expect(health.pace).toEqual({ perHour: null, remaining: 2, etaMs: null });
   });
 
   it("has no budget and no deadline when the spec sets neither", () => {

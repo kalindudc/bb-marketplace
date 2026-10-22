@@ -26,6 +26,8 @@ export interface ProjectMetrics {
   tokens: { total: number; perDoneTicket: number | null; byRole: Record<Role, number>; unreported: number };
   cumulativeFlow: Array<{ day: string } & Record<TicketState, number>>;
   activeMs: number;
+  /** The part of activeMs inside the throughput window. */
+  windowActiveMs: number;
   timeInState: { ms: Record<TicketState, number>; flowEfficiency: number | null; n: number };
   checksByCommand: Array<{ command: string; runs: number; failed: number; p50Ms: number | null }>;
   scopeFlags: { outside: number; protectedHits: number };
@@ -142,6 +144,7 @@ export function computeMetrics(a: { tickets: TicketRow[]; events: EventRow[]; po
     tokens: { total: tokenTotal, perDoneTicket: done.length === 0 ? null : tokenTotal / done.length, byRole: tokens, unreported },
     cumulativeFlow: cumulativeFlow(a.tickets, events, createdAt, window),
     activeMs: activeMs(events, a.now),
+    windowActiveMs: activeMs(events, a.now, window[0]!),
     timeInState: timeInState(done, events, createdAt, doneAt),
     checksByCommand: checksByCommand(checkData),
     scopeFlags: { outside: checkData.filter((data) => nonEmpty(data.outside)).length, protectedHits: checkData.filter((data) => nonEmpty(data.protectedHits)).length },
@@ -225,13 +228,15 @@ function cumulativeFlow(tickets: TicketRow[], events: Parsed[], createdAt: Map<n
   });
 }
 
-function activeMs(events: Parsed[], now: number): number {
+// Running spans are cut at `from`, so a span that began before it counts only its part after it.
+function activeMs(events: Parsed[], now: number, from = -Infinity): number {
   let total = 0;
   let since: number | null = null;
+  const span = (end: number) => Math.max(0, end - Math.max(since!, from));
   for (const event of events) {
     if (event.row.kind !== "project.state") continue;
-    if (since !== null) total += event.row.at - since;
+    if (since !== null) total += span(event.row.at);
     since = event.data.to === "running" ? event.row.at : null;
   }
-  return since === null ? total : total + (now - since);
+  return since === null ? total : total + span(now);
 }

@@ -356,6 +356,19 @@ describe("active time", () => {
   it("is zero for a project that never ran", () => {
     expect(compute({ events: [projectMoved(at(1), "draft", "ready")] }).activeMs).toBe(0);
   });
+
+  it("counts the running time inside the throughput window apart, cutting a span that starts before it", () => {
+    const events = [
+      projectMoved(at(1, 1), "ready", "running"),
+      projectMoved(at(1, 5), "running", "paused"),
+      projectMoved(at(4, 20), "paused", "running"),
+      projectMoved(at(5, 3), "running", "paused"),
+      projectMoved(at(6, 9), "paused", "running"),
+    ];
+    const metrics = compute({ events, now: at(6, 12), days: 2 });
+    expect(metrics.activeMs).toBe(4 * HOUR + 7 * HOUR + 3 * HOUR);
+    expect(metrics.windowActiveMs).toBe(3 * HOUR + 3 * HOUR);
+  });
 });
 
 describe("time in state", () => {

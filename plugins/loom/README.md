@@ -136,9 +136,11 @@ which the page remembers opening; it opens by itself while you search or when
 nothing else is active.
 
 A project with an approved spec shows a health strip above its tabs: progress,
-pace over the last 14 days and the days left at that pace, the token budget and
-the deadline (each only when the spec sets it), and worker and reviewer capacity
-with the ready tickets that wait for a slot. Every project shows a next-step bar
+pace (the tickets done in the last 14 days over the time the project ran in
+them, so a new or paused project is not paced by days it did not run) and the
+running time left at that pace, the token budget and the deadline (each only
+when the spec sets it), and worker and reviewer capacity with the ready tickets
+that wait for a slot. Every project shows a next-step bar
 under its header: the stages from Plan to Land with the current one marked, one
 sentence on what happens next, and one button such as "Approve v1 · create 7
 tickets" or "Start project · 2 workers". The bar turns yellow when tickets are
@@ -219,7 +221,7 @@ whole project.
 | human interventions | Commands the human ran, apart from `start` and the approval of a draft. |
 | tokens (sampled) | Tokens used by the project's threads in total, by role and per done ticket. They are sampled, not exact: the plugin reads each live thread about once a minute and once when it ends it. Some providers report no token usage; the threads that ended, or have run for a minute, with no sample are counted as not reporting (`tokens.unreported` in `--json`). |
 | cumulative flow | Tickets in each state at the end of each of 14 days (or `--days`). A ticket counts as queued from its creation. |
-| active time | Time the project ran, without the paused spans. |
+| active time | Time the project ran, without the paused spans. `windowActiveMs` in `--json` is the part of it in the last 14 days (or `--days`). |
 | time in state and flow efficiency | Over done tickets, the time spent in each state from creation (as queued) until done. Flow efficiency is the share of that time spent working. |
 | checks by command | For each check command, its runs, failed runs (a non-zero exit or a timeout) and p50 duration. The plugin's own refusals count under "scope check" and "worktree check". |
 | scope flags | Check posts that found files outside the ticket's scope, and check posts that found protected paths. |

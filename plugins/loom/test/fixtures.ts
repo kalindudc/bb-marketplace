@@ -91,6 +91,7 @@ export const metrics = (over: Partial<ProjectMetrics> = {}): ProjectMetrics => (
     done: Math.floor(index / 10),
   })),
   activeMs: 7 * HOUR,
+  windowActiveMs: 7 * HOUR,
   timeInState: { ms: { ...(Object.fromEntries(TICKET_STATES.map((state) => [state, 0])) as Record<TicketState, number>), queued: 2 * HOUR, working: 4 * HOUR, checking: HOUR, review: 3 * HOUR }, flowEfficiency: 0.4, n: 1 },
   checksByCommand: [
     { command: "npm test", runs: 3, failed: 1, p50Ms: 100_000 },
@@ -108,7 +109,7 @@ export const metrics = (over: Partial<ProjectMetrics> = {}): ProjectMetrics => (
 
 export const health = (over: Partial<ProjectHealth> = {}): ProjectHealth => ({
   progress: { done: 8, total: 14, inFlight: 3, blocked: 1, queued: 2 },
-  pace: { perDay: 0.5, remaining: 6, etaDays: 12 },
+  pace: { perHour: 0.5 / 24, remaining: 6, etaMs: 12 * 24 * HOUR },
   budget: { used: 12_000, max: 50_000 },
   deadline: { date: "2026-01-15", daysLeft: 6 },
   capacity: { workers: 1, maxWorkers: 2, reviewers: 1, maxReviewers: 2, readyWaiting: 1 },
