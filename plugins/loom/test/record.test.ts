@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { finishIfComplete, land, runMergeQueue, settleMerges } from "../src/merge";
-import type { SpawnArgs } from "../src/ports";
+import { SpawnRefusedError, type SpawnArgs } from "../src/ports";
 import { recordPrompt } from "../src/prompts";
 import { HOOK_TIMEOUT_MS, NO_HOOK, RECORD_MAX, SUMMARY_TIMEOUT_MS, projectRecord, sendRecords, settleRecords, type DoneSettings } from "../src/record";
 import { specOf } from "../src/workers";
@@ -167,6 +167,15 @@ describe("sendRecords", () => {
     });
     expect(threadId).toMatch(/^thr_w/);
     expect(hookRuns()).toHaveLength(0);
+  });
+
+  it("starts the agent with no section when bb refuses the project's section, as a finished project's often is deleted", async () => {
+    await finishedProject();
+    h.store.updateProject(project().id, { section_id: "sec_gone" });
+    h.bb.spawnError = (args) => (args.sectionId === null ? null : new SpawnRefusedError(404, "HTTP 404: Section not found"));
+    await send(SUMMARY);
+    expect(h.bb.callsTo("spawnThread").map(([args]) => (args as SpawnArgs).sectionId)).toEqual(["sec_gone", null]);
+    expect(row()).toMatchObject({ state: "summarizing", thread_id: expect.stringMatching(/^thr_w/) });
   });
 
   it("waits while the agent works or is idle with no output, then sends its output as the summary and archives it", async () => {

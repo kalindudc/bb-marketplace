@@ -4,7 +4,7 @@ import type { PluginSettingDescriptors } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import type { PostRow, ProjectRow, RecordRow, Store, TicketRow } from "./db/store";
 import { checkoutOf } from "./merge";
-import type { ThreadInfo } from "./ports";
+import { SpawnRefusedError, type ThreadInfo } from "./ports";
 import { clip, recordPrompt } from "./prompts";
 import { LoomError } from "./projects";
 import type { Spec } from "./spec";
@@ -145,23 +145,33 @@ async function startSummary(ctx: EngineCtx, row: RecordRow, project: ProjectRow,
   // Marked before the spawn, so a restart during it sends the full record instead of starting a second agent.
   store.updateRecord(row.id, { state: "summarizing", started_at: ctx.now() });
   const agent = spec.agents.reviewer;
-  let threadId: string;
-  try {
-    if (project.host_id === null) throw new Error("the project has no machine");
-    ({ threadId } = await ctx.bb.spawnThread({
+  const hostId = project.host_id;
+  const spawn = async (sectionId: string | null) => {
+    if (hostId === null) throw new Error("the project has no machine");
+    return ctx.bb.spawnThread({
       bbProjectId: project.bb_project_id,
-      hostId: project.host_id,
+      hostId,
       baseBranch: freshBase(spec),
       title: `${project.key} · record`,
       prompt: recordPrompt(project),
       detail: projectRecord(store, project),
-      sectionId: project.section_id,
+      sectionId,
       metadata: { project: project.slug, role: "record" },
       providerId: agent.provider,
       model: agent.model,
       reasoningLevel: agent.reasoning,
       permissionMode: agent.permission_mode,
-    }));
+    });
+  };
+  let threadId: string;
+  try {
+    try {
+      ({ threadId } = await spawn(project.section_id));
+    } catch (error) {
+      // A finished project's sidebar section is often deleted, and bb refuses a spawn into it; the agent does not need it.
+      if (project.section_id === null || !(error instanceof SpawnRefusedError)) throw error;
+      ({ threadId } = await spawn(null));
+    }
   } catch (error) {
     return fullRecord(ctx, row.id, project, settings, `the summary agent could not start: ${errText(error)}`);
   }
