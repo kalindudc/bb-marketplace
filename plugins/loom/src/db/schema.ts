@@ -150,4 +150,7 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE tickets ADD COLUMN pr_deliver_json TEXT`,
   // A pull request opened before these columns existed was pushed from the ticket's branch at its head.
   `UPDATE tickets SET pr_branch = branch, pushed_sha = head_sha WHERE pr_url IS NOT NULL`,
+  `CREATE TABLE planner_log (id INTEGER PRIMARY KEY AUTOINCREMENT, thread_id TEXT NOT NULL, at INTEGER NOT NULL,
+    author TEXT NOT NULL CHECK (author IN ('planner', 'human')), text TEXT NOT NULL)`,
+  `CREATE INDEX planner_log_thread ON planner_log (thread_id, id)`,
 ];

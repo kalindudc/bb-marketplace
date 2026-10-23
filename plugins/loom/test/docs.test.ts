@@ -111,11 +111,13 @@ describe("the plugin's own documents", () => {
     for (const path of ["skills/loom/references/spec.md", "skills/loom-plan/SKILL.md"]) expect(read(path), path).toContain("claude-code");
   });
 
-  it("README and the skills describe the spec dashboard, its versions and notes for the planner", () => {
+  it("README and the skills describe the spec page's files and versions, the Planner page and the planner's asks", () => {
     const readme = read("README.md");
-    for (const phrase of ["Files", "Shared files", "+ note", "superseded"]) expect(readme, phrase).toContain(phrase);
+    for (const phrase of ["Files", "Shared files", "+ note", "superseded", "What happened", "loom_ask_human", "R1, R2"]) expect(readme, phrase).toContain(phrase);
     const skill = read("skills/loom/SKILL.md");
-    for (const phrase of ["Files", "Shared files", "superseded"]) expect(skill, phrase).toContain(phrase);
+    for (const phrase of ["Files", "Shared files", "superseded", "What happened", "loom_ask_human", "R1, R2"]) expect(skill, phrase).toContain(phrase);
+    for (const text of [readme, skill, read("PLUGIN_OVERVIEW.md")]) expect(text).not.toContain("dashboard");
+    expect(read("skills/loom-plan/SKILL.md")).toContain("loom_ask_human");
     for (const text of [readme, skill]) expect(text).not.toContain("Scope map");
     expect(read("skills/loom/references/spec.md")).toContain("older drafts are kept as superseded");
     expect(read("skills/loom-plan/SKILL.md")).toContain("[loom] The human reviewed spec");

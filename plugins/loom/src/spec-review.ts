@@ -1,6 +1,7 @@
-// The spec review: a fresh reviewer agent judges each draft spec version against the human's request and for work the
-// goal does not need, before the human is asked to approve it. Its row lives in spec_reviews, not in threads, so the
-// worker and ticket reviewer machinery never sees it. Drafts are not ticked, so bb's thread events and loom_propose drive it.
+// The spec review: a fresh reviewer agent judges each version the planner proposes, a draft or a version pending on an
+// approved project, against the human's request and for work the goal does not need, before the human is asked to approve
+// it. Its row lives in spec_reviews, not in threads, so the worker and ticket reviewer machinery never sees it. bb's thread
+// events and loom_propose drive it, not the tick.
 import { randomBytes } from "node:crypto";
 import type { ProjectRow, SpecReviewRow, Store } from "./db/store";
 import { spawnEnvironment, threadBranch } from "./environments";
@@ -29,15 +30,29 @@ const errText = (error: unknown) => (error instanceof Error ? error.message : St
 const findingsOf = (row: SpecReviewRow) => JSON.parse(row.findings_json) as SpecFinding[];
 const roundsWithFindings = (rows: readonly SpecReviewRow[]) => rows.filter((row) => row.state === "changes_requested");
 
+/** The version that waits for the human's approval, which the review is for: the newest draft, or an approved project's pending version. */
+export function reviewedVersion(project: ProjectRow): number | "draft" | null {
+  if (project.state === "draft") return "draft";
+  if (project.state === "archived" || project.pending_version === null) return null;
+  return project.pending_version;
+}
+
+/** The reviews of the versions proposed since the last approval: every row of a draft, or the rows after the version in force. */
+export function cycleReviews(store: Store, project: ProjectRow): SpecReviewRow[] {
+  const after = project.approved_version ?? 0;
+  return store.specReviews(project.id).filter((row) => row.version > after);
+}
+
 /**
- * Where the newest draft version's review stands. A project with no review rows has nothing to wait for: its draft is
- * from before spec reviews, or was proposed without the tool. Otherwise the newest row for the newest version decides.
+ * Where the review of the version waiting for approval stands. A cycle with no review rows has nothing to wait for: its
+ * version is from before spec reviews, or was proposed without the tool. Otherwise the newest row for that version decides.
  */
 export function specReviewStatus(store: Store, project: ProjectRow): SpecReviewStatus {
-  if (project.state !== "draft") return { kind: "none" };
-  const rows = store.specReviews(project.id);
+  const target = reviewedVersion(project);
+  if (target === null) return { kind: "none" };
+  const rows = cycleReviews(store, project);
   if (rows.length === 0) return { kind: "none" };
-  const version = store.latestSpecVersion(project.id)!.version;
+  const version = target === "draft" ? store.latestSpecVersion(project.id)!.version : target;
   const changes = roundsWithFindings(rows);
   const atLimit = changes.length >= SPEC_REVIEW_ROUNDS;
   const own = rows.filter((row) => row.version === version && row.state !== "superseded").at(-1);
@@ -57,10 +72,14 @@ export function specReviewStatus(store: Store, project: ProjectRow): SpecReviewS
   }
 }
 
-/** Why a draft cannot be approved yet, or null when it can: the kinds specReviewBlocks names. */
-export function approvalRefusal(slug: string, status: SpecReviewStatus): LoomError | null {
+/** Why the version waiting for approval cannot be approved yet, or null when it can: the kinds specReviewBlocks names. */
+export function approvalRefusal(slug: string, status: SpecReviewStatus, pending = false): LoomError | null {
   const refuse = (version: number, why: string) =>
-    new LoomError("loom_invalid_state", `Draft v${version} of ${slug} ${why}.`, `Wait for the planner to hand it over, or approve it anyway with \`bb loom approve ${slug} --skip-review\`.`);
+    new LoomError(
+      "loom_invalid_state",
+      `${pending ? "Pending" : "Draft"} v${version} of ${slug} ${why}.`,
+      `Wait for the planner to hand it over, or approve it anyway with \`bb loom approve ${slug}${pending ? ` --version ${version}` : ""} --skip-review\`.`,
+    );
   switch (status.kind) {
     case "reviewing":
       return refuse(status.version, `is still in its spec review (round ${status.round} of ${SPEC_REVIEW_ROUNDS})`);
@@ -90,14 +109,17 @@ export function specReviewerOf(store: Store, threadId: string, metadata: Readonl
 // ---------------------------------------------------------------- starting
 
 /**
- * Runs after every successful loom_propose on a draft. Reviews of older versions are superseded; the newest version keeps
- * a review that is running, passed, has findings or reached the round limit, and gets a new one when it has none or it failed.
+ * Runs after every successful loom_propose of a draft or a pending version. Reviews of older versions are superseded; the
+ * newest version keeps a review that is running, passed, has findings or reached the round limit, and gets a new one when
+ * it has none or it failed.
  */
 export async function ensureSpecReview(ctx: EngineCtx, slug: string): Promise<SpecReviewStatus> {
   const { store } = ctx;
   const project = store.projectBySlug(slug);
-  if (project === null || project.state !== "draft") return { kind: "none" };
+  if (project === null || reviewedVersion(project) === null) return { kind: "none" };
   const latest = store.latestSpecVersion(project.id)!;
+  // A pending version is always the newest one: a revision of an approved project replaces the version waiting.
+  if (project.state !== "draft" && project.pending_version !== latest.version) return { kind: "none" };
   for (const row of store.specReviews(project.id)) {
     if (row.state === "reviewing" && row.version < latest.version) await supersede(ctx, row);
   }
@@ -108,7 +130,8 @@ export async function ensureSpecReview(ctx: EngineCtx, slug: string): Promise<Sp
 
 async function startReview(ctx: EngineCtx, project: ProjectRow, version: number, toml: string, spec: Spec): Promise<SpecReviewStatus> {
   const { store } = ctx;
-  const earlier = store.specReviews(project.id);
+  const earlier = cycleReviews(store, project);
+  const inForce = project.approved_version === null ? null : { version: project.approved_version, spec: JSON.parse(store.specVersion(project.id, project.approved_version)!.spec_json) as Spec };
   const round = roundsWithFindings(earlier).length + 1;
   const token = randomBytes(12).toString("hex");
   // Reserved before the spawn, so a restart mid-spawn leaves a row that reconcile can fail.
@@ -124,7 +147,7 @@ async function startReview(ctx: EngineCtx, project: ProjectRow, version: number,
       baseBranch: `${settings.remote}/${settings.base}`,
       environment: spawnEnvironment(settings, { branch: threadBranch(project.slug, "spec", `review-${version}-${round}`), base: `${settings.remote}/${settings.base}` }),
       title: `${project.key} · spec review v${version}`,
-      prompt: specReviewerBrief({ project, spec, toml, version, round, earlier }),
+      prompt: specReviewerBrief({ project, spec, toml, version, round, earlier, inForce }),
       sectionId: project.section_id,
       metadata: { project: project.slug, role: "spec-review", version: String(version), spawnToken: token },
       providerId: agent.provider,
@@ -157,7 +180,7 @@ export async function specVerdict(ctx: EngineCtx, threadId: string, findings: Sp
     throw new LoomError("loom_invalid_state", "This review is over, so there is nothing to decide. End your turn.");
   }
   const project = store.project(row.project_id)!;
-  await tellPlanner(ctx, project, specReviewVerdictText({ slug: project.slug, version: row.version, round: row.round, summary: text, findings }));
+  await tellPlanner(ctx, project, specReviewVerdictText({ slug: project.slug, version: row.version, round: row.round, summary: text, findings, pending: project.approved_version !== null }));
   // The reviewer's own thread is busy running this call; its next idle archives it.
   return `Your verdict on spec v${row.version} is recorded and goes to the planner. End your turn.`;
 }
@@ -191,10 +214,13 @@ export async function onSpecReviewerTurnFailed(ctx: EngineCtx, row: SpecReviewRo
   await onSpecReviewerIdle(ctx, row);
 }
 
-/** Supersedes every running review of the project and ends its thread: the project was approved or archived. */
-export async function endSpecReviews(ctx: EngineCtx, projectId: number): Promise<void> {
+/**
+ * Supersedes the running reviews of the project and ends their threads: of every version when it is archived, or of the
+ * versions up to `upTo` when that version was approved, so a newer version proposed meanwhile keeps its review.
+ */
+export async function endSpecReviews(ctx: EngineCtx, projectId: number, upTo = Number.POSITIVE_INFINITY): Promise<void> {
   for (const row of ctx.store.specReviews(projectId)) {
-    if (row.state === "reviewing") await supersede(ctx, row);
+    if (row.state === "reviewing" && row.version <= upTo) await supersede(ctx, row);
   }
 }
 

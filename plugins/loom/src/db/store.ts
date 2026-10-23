@@ -175,6 +175,15 @@ export interface PlanningRow {
   end_reason: string | null;
 }
 
+/** A message in a planner's conversation that Loom keeps for the Planner page: the planner's last words in a turn, or the human's message from the page. */
+export interface PlannerLogRow {
+  id: number;
+  thread_id: string;
+  at: number;
+  author: "planner" | "human";
+  text: string;
+}
+
 /** One call Loom made to the machine for a ticket's checks or merge. `output_chars` measures the output, which `runs` leaves out. */
 export interface RunRow {
   id: number;
@@ -570,6 +579,17 @@ export class Store {
     if (result.changes === 0) return false;
     this.changed(null);
     return true;
+  }
+
+  // ---- the planner's conversation, as the Planner page tells it
+
+  addPlannerLog(row: Pick<PlannerLogRow, "thread_id" | "author" | "text">, projectId: number | null): void {
+    this.db.prepare("INSERT INTO planner_log (thread_id, at, author, text) VALUES (?, ?, ?, ?)").run(row.thread_id, this.now(), row.author, row.text);
+    this.changed(projectId);
+  }
+
+  plannerLog(threadId: string): PlannerLogRow[] {
+    return this.db.prepare("SELECT * FROM planner_log WHERE thread_id = ? ORDER BY id").all(threadId) as PlannerLogRow[];
   }
 
   // ---- runs

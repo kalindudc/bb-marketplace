@@ -3,6 +3,7 @@
 // Thread metadata never grants a role: any client can write it.
 import type { BbPluginApi, PluginAgentToolResult } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { ASK_ACTIONS, recordAsk } from "./asks";
 import { submit } from "./checks";
 import { formatTicket } from "./cli";
 import { StoreError, type ThreadRow, type TicketRow } from "./db/store";
@@ -18,7 +19,7 @@ import { SPEC_REVIEW_ROUNDS, TICKET_STATES } from "./states";
 import { addTickets, boardText, editTicket } from "./triage";
 import { blockTicket, requeueTicket } from "./workers";
 
-export const PLANNER_TOOLS = ["loom_propose", "loom_discover", "loom_board", "loom_ticket", "loom_requeue", "loom_add_tickets", "loom_edit_ticket", "loom_cancel_ticket", "loom_post"] as const;
+export const PLANNER_TOOLS = ["loom_propose", "loom_discover", "loom_board", "loom_ticket", "loom_requeue", "loom_add_tickets", "loom_edit_ticket", "loom_cancel_ticket", "loom_post", "loom_ask_human"] as const;
 export const WORKER_TOOLS = ["loom_note", "loom_submit", "loom_block", "loom_pr"] as const;
 export const REVIEWER_TOOLS = ["loom_note", "loom_approve", "loom_request_changes"] as const;
 export const ORDINARY_TOOLS = ["loom_propose", "loom_discover"] as const;
@@ -39,6 +40,13 @@ const specFindingSchema = z.object({
   path: z.string().min(1).max(200).optional().describe("The part of the spec, such as ticket[csv-export] or ticket[csv-export].acceptance[1]: tickets by ref, list items counted from 0."),
   title: z.string().min(1).max(200),
   detail: z.string().min(1).max(2000).describe("What is wrong, and the smaller or right alternative."),
+});
+
+const askStepSchema = z.object({
+  action: z.enum(ASK_ACTIONS).describe("approve a spec version, requeue or reply on a ticket, start, resume or land the project, or other for anything else."),
+  version: z.number().int().positive().optional().describe("For approve: the version that waits for approval."),
+  key: z.string().min(1).max(40).optional().describe("For requeue and reply: the ticket key, such as CSV-1."),
+  text: z.string().min(1).max(500).describe("One sentence the human reads: what to do and why."),
 });
 
 const clip = (text: string, max: number) => (text.length <= max ? text : `${text.slice(0, Math.max(0, max - 1))}…`);
@@ -79,7 +87,8 @@ function proposeReport(result: ProposeResult, review: SpecReviewStatus | null): 
   else lines.push(`No change: spec v${version} of \`${slug}\` is already saved${result.pending ? " and pending" : ""}.`);
   if (result.warnings.length > 0) lines.push("Warnings:", ...result.warnings.map((warning) => `- ${warning}`));
   if (result.pending) {
-    lines.push(`Needs you (human): read it with \`bb loom spec ${slug} --version ${version}\`, then apply it with \`bb loom approve ${slug} --version ${version}\`.`);
+    lines.push(...reviewLines(version, review));
+    if (!specReviewBlocks(review)) lines.push(`Needs you (human): read it with \`bb loom spec ${slug} --version ${version}\`, then apply it with \`bb loom approve ${slug} --version ${version}\`. Record what else the human should do after approving, such as requeue tickets, with loom_ask_human.`);
   } else if (result.state === "draft") {
     lines.push(...reviewLines(version, review));
     if (!specReviewBlocks(review)) lines.push(`Needs you (human): read the spec with \`bb loom spec ${slug}\`, approve it with \`bb loom approve ${slug}\`, then start the project with \`bb loom start ${slug}\`. You never approve, start or pause a project.`);
@@ -123,7 +132,7 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
       run(async () => {
         const hostId = await projects.hostOf(tool.threadId);
         const result = await projects.propose({ toml: spec_toml, threadId: tool.threadId, bbProjectId: tool.projectId, hostId });
-        return proposeReport(result, result.state === "draft" ? await ensureSpecReview(ctx, result.slug) : null);
+        return proposeReport(result, result.state === "draft" || result.pending ? await ensureSpecReview(ctx, result.slug) : null);
       }),
   });
 
@@ -239,6 +248,23 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
         planner(tool.threadId, key);
         const post = projects.post(key, { body: text, parentId: reply_to, author: "planner", threadId: tool.threadId });
         return `Posted #${post.id} on ${key}.`;
+      }),
+  });
+
+  bb.agents.registerTool({
+    name: "loom_ask_human",
+    description:
+      "Tell the human what you need them to do, as steps the Loom page shows under Needs you with a button for each: approve a spec version, requeue or reply on a ticket, start, resume or land the project, or other for anything else. Each call replaces your earlier asks; call it with no steps once nothing is needed. Say the same in your reply too: the human may read the chat instead.",
+    presentation: { label: { pending: "Asking the human", completed: "Asked the human" } },
+    parameters: z.object({
+      why: z.string().max(2000).describe("One or two sentences: why you need this, for example what blocks the tickets."),
+      steps: z.array(askStepSchema).max(10).describe("In the order the human should take them; empty clears your asks."),
+    }),
+    execute: ({ why, steps }, tool) =>
+      run(() => {
+        const { projectId } = planner(tool.threadId);
+        recordAsk(store, store.project(projectId)!, tool.threadId, { why, steps });
+        return steps.length === 0 ? "Your asks are cleared." : `The Loom page now asks the human to: ${steps.map((step) => step.text.trim()).join(" ")}`;
       }),
   });
 
@@ -370,7 +396,7 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
       return {
         tools: [...PLANNER_TOOLS],
         skills: [SKILLS.plan, SKILLS.usage],
-        instructions: `This is the planning thread for Loom project ${JSON.stringify(slug)}. Revise its spec with loom_propose, keeping that slug; you never start, pause or approve the project, because those are the human's. After approval, change the board only through the board tools, and answer a triage round only through the tools. Hand a draft over to the human only after Loom's spec review of it passes, or after Loom says it stopped reviewing.`,
+        instructions: `This is the planning thread for Loom project ${JSON.stringify(slug)}. Revise its spec with loom_propose, keeping that slug; you never start, pause or approve the project, because those are the human's. After approval, change the board only through the board tools, and answer a triage round only through the tools. Hand a version over to the human only after Loom's spec review of it passes, or after Loom says it stopped reviewing. When the human has to act, such as approve a version and then requeue tickets, record the steps with loom_ask_human as well as in your reply.`,
       };
     }
     if (row.role === "worker") {

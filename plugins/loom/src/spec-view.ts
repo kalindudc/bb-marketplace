@@ -1,8 +1,9 @@
-// One spec version as the page's dashboard reads it: the parsed spec, what it changed, and the notes the human sent on it.
+// One spec version as the Spec page reads it: the parsed spec, what it changed, the notes the human sent on it and Loom's reviews.
 import type { Store } from "./db/store";
 import { LoomError, type Projects, type SpecView } from "./projects";
 import { scopeOverlaps, validateSemantics, type Spec } from "./spec";
 import { changedAt, specChanges, type SpecChanges, type SpecNote } from "./spec-paths";
+import type { SpecFinding } from "./spec-review";
 
 export interface SentNote extends SpecNote {
   sentAt: number;
@@ -30,6 +31,20 @@ export interface SpecVersionView {
   versions: Array<{ version: number; status: SpecView["status"] }>;
   /** Newest batch first, in the order sent within a batch. */
   notes: SentNote[];
+  /** Loom's spec reviews of this version and the ones before it, oldest first, leaving out the ones a newer version or an approval replaced. */
+  reviews: SpecReviewRound[];
+}
+
+/** One round of Loom's spec review of a version. */
+export interface SpecReviewRound {
+  version: number;
+  round: number;
+  state: "reviewing" | "approved" | "changes_requested" | "failed";
+  summary: string | null;
+  findings: SpecFinding[];
+  reason: string | null;
+  startedAt: number;
+  endedAt: number | null;
 }
 
 export function specVersionView(deps: { store: Store; projects: Projects }, slug: string, version?: number, base?: number): SpecVersionView {
@@ -71,5 +86,18 @@ export function specVersionView(deps: { store: Store; projects: Projects }, slug
     compared: comparedWith === null ? null : { version: comparedWith, status: projects.specStatus(project, comparedWith), spec: specAt(comparedWith) },
     versions: Array.from({ length: newest }, (_, index) => ({ version: index + 1, status: projects.specStatus(project, index + 1) })),
     notes,
+    reviews: store
+      .specReviews(project.id)
+      .filter((row) => row.state !== "superseded" && row.version <= view.version)
+      .map((row) => ({
+        version: row.version,
+        round: row.round,
+        state: row.state as SpecReviewRound["state"],
+        summary: row.summary,
+        findings: JSON.parse(row.findings_json) as SpecFinding[],
+        reason: row.reason,
+        startedAt: row.started_at,
+        endedAt: row.ended_at,
+      })),
   };
 }

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { experimental_Icon as Icon, useBbNavigate, useRpc, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import type { ControlAction, ProjectView, rpcContract } from "../contract";
 import { isMultiRepoProject } from "../format";
@@ -17,9 +17,10 @@ import { Home } from "./home";
 import { MetricsView } from "./metrics-view";
 import { NewProject } from "./new-project";
 import { NextStepBar, repoLand } from "./next-step-bar";
-import { PlannerChat, PlanningView } from "./planning";
-import { bbProjectNamesOf } from "./spec-dashboard";
-import { SpecPage } from "./spec-page";
+import { PlannerPage } from "./planner-page";
+import { PlanningView } from "./planning";
+import { useWaiting } from "./questions";
+import { SpecPage, bbProjectNamesOf } from "./spec-page";
 import { TicketView } from "./ticket";
 import { TimelineStrip } from "./timeline-strip";
 
@@ -44,14 +45,20 @@ interface TabBadge {
 }
 const BADGE_TONES = { destructive: "bg-destructive text-destructive-foreground", warning: "bg-warning text-black" };
 
-/** What waits for the human on each tab. A badge is a state, not unread news, so it stays until the thing is resolved. `unviewed` counts the files of a project ready to land that the human has not marked viewed. */
-export function tabBadges(view: ProjectView, unviewed: number | null = null): Partial<Record<Tab, TabBadge>> {
+/**
+ * What waits for the human on each tab. A badge is a state, not unread news, so it stays until the thing is resolved.
+ * `unviewed` counts the files of a project ready to land that the human has not marked viewed; `plannerWaiting` is bb's
+ * word that the planner's thread waits on a question.
+ */
+export function tabBadges(view: ProjectView, unviewed: number | null = null, plannerWaiting = false): Partial<Record<Tab, TabBadge>> {
   const { overview, spec } = view;
   const badges: Partial<Record<Tab, TabBadge>> = {};
   const blocked = view.board.filter((card) => card.state === "blocked").length;
   if (blocked > 0) badges.board = { text: String(blocked), label: `${plural(blocked, "ticket")} ${blocked === 1 ? "is" : "are"} blocked`, tone: "destructive" };
   if (overview.state === "draft") badges.spec = { text: "1", label: `Draft v${spec.version} waits for your review`, tone: "warning" };
   else if (overview.state !== "archived" && overview.pendingVersion !== null) badges.spec = { text: "1", label: `Spec v${overview.pendingVersion} waits for your approval`, tone: "warning" };
+  if (plannerWaiting) badges.planner = { text: "?", label: "The planner asks you a question", tone: "warning" };
+  else if (view.openAsks > 0) badges.planner = { text: String(view.openAsks), label: `The planner asks you to do ${plural(view.openAsks, "thing")}`, tone: "warning" };
   if (unviewed !== null && unviewed > 0 && readyToLand(overview)) badges.changes = { text: String(unviewed), label: `${plural(unviewed, "file")} to land you have not marked viewed`, tone: "warning" };
   return badges;
 }
@@ -82,7 +89,7 @@ function Controls({ view, busy, primary, onControl }: { view: ProjectView; busy:
   return (
     <span data-controls className="ml-auto flex flex-wrap items-center gap-2">
       {overview.state === "draft" && !specReviewBlocks(view.specReview) && act("Approve", "approve")}
-      {overview.state !== "draft" && overview.state !== "archived" && overview.pendingVersion !== null && act(`Approve v${overview.pendingVersion}`, "approve", overview.pendingVersion)}
+      {overview.state !== "draft" && overview.state !== "archived" && overview.pendingVersion !== null && !specReviewBlocks(view.specReview) && act(`Approve v${overview.pendingVersion}`, "approve", overview.pendingVersion)}
       {overview.state === "ready" && act("Start", "start")}
       {overview.state === "running" && act("Pause", "pause")}
       {overview.state === "running" && act("Pause now", "pauseNow")}
@@ -102,10 +109,10 @@ function Controls({ view, busy, primary, onControl }: { view: ProjectView; busy:
  * The spec page for the version waiting for the human, or the newest one. Its review panel offers Approve only when the
  * next-step bar does not carry it. Rewound, it shows the version in force then and takes no comments.
  */
-function SpecTab({ view, busy, rewound, onApprove }: { view: ProjectView; busy: boolean; rewound: boolean; onApprove(version: number): void }) {
+function SpecTab({ view, busy, rewound, requested, onApprove }: { view: ProjectView; busy: boolean; rewound: boolean; requested: number | null; onApprove(version: number): void }) {
   const { spec, overview } = view;
   const barApproves = view.next?.action?.control === "approve";
-  const waiting = overview.state === "draft" ? (specReviewBlocks(view.specReview) ? null : spec.version) : overview.state === "archived" ? null : spec.pendingVersion;
+  const waiting = specReviewBlocks(view.specReview) ? null : overview.state === "draft" ? spec.version : overview.state === "archived" ? null : spec.pendingVersion;
   const approve = rewound || barApproves || waiting === null ? null : { version: waiting, label: `Approve v${waiting}`, busy, onApprove: () => onApprove(waiting) };
   return (
     <div className="space-y-3 p-4">
@@ -119,7 +126,7 @@ function SpecTab({ view, busy, rewound, onApprove }: { view: ProjectView; busy: 
           v{spec.pendingVersion} waits for your approval; until then the project runs on v{spec.version} and its tickets stay as they are.
         </p>
       )}
-      <SpecPage slug={overview.slug} version={rewound ? spec.version : undefined} readOnly={rewound} bbProjectNames={bbProjectNamesOf(view)} specReview={view.specReview} approve={approve} />
+      <SpecPage slug={overview.slug} version={rewound ? spec.version : (requested ?? undefined)} readOnly={rewound} bbProjectNames={bbProjectNamesOf(view)} specReview={view.specReview} approve={approve} />
     </div>
   );
 }
@@ -159,12 +166,15 @@ function RewindBar({ now, stage, onNow }: { now: number; stage: number | null; o
   );
 }
 
-function ProjectPanel({ slug, tab, onTab, at, onSeek }: { slug: string; tab: Tab; onTab(tab: Tab): void; at: number | null; onSeek(at: number | null): void }) {
+function ProjectPanel({ slug, tab, onTab, at, onSeek, go }: { slug: string; tab: Tab; onTab(tab: Tab): void; at: number | null; onSeek(at: number | null): void; go(subPath: string): void }) {
   const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
   const remote = useRemote((client) => client.call("project", at === null ? { slug } : { slug, at }), at === null ? `project:${slug}` : `project:${slug}@${at}`, slug, true);
   const { busy, error, run } = useRun();
   const [chosenChange, setChosenChange] = useState<string | null>(null);
+  // The spec version the Planner page asked to open; a tab change by the human opens the spec's own default again.
+  const [specVersion, setSpecVersion] = useState<number | null>(null);
+  const plannerWaiting = useWaiting(remote.data?.overview.plannerThreadId ?? "");
   const loaded = remote.data;
   const wantChanges = loaded !== null && at === null && loaded.at === null && hasChangesTab(loaded.overview.state) && (tab === "changes" || readyToLand(loaded.overview));
   const changes = useRemote((client) => client.call("changes", { slug }), `changes:${slug}`, slug, true, wantChanges);
@@ -179,7 +189,7 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek }: { slug: string; tab: Tab
   const changesTab = !rewound && hasChangesTab(overview.state);
   const shownTab = (rewound && tab === "planner") || (!changesTab && tab === "changes") ? "board" : tab;
   const landing = landingFiles(changes.data);
-  const badges = rewound ? {} : tabBadges(view, landing === null ? null : viewed.unviewed(landing));
+  const badges = rewound ? {} : tabBadges(view, landing === null ? null : viewed.unviewed(landing), plannerWaiting);
   const openChanges = (id: string | null) => {
     setChosenChange(id);
     onTab("changes");
@@ -250,7 +260,10 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek }: { slug: string; tab: Tab
               aria-selected={shownTab === entry.tab}
               aria-description={badge?.label}
               title={badge?.label}
-              onClick={() => onTab(entry.tab)}
+              onClick={() => {
+                setSpecVersion(null);
+                onTab(entry.tab);
+              }}
               className={`inline-flex cursor-pointer items-center gap-1.5 rounded-t-md px-3 py-1.5 text-xs ${shownTab === entry.tab ? "bg-surface-selected text-foreground" : "text-muted-foreground hover:bg-state-hover"}`}
             >
               {entry.label}
@@ -268,8 +281,20 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek }: { slug: string; tab: Tab
         {shownTab === "agents" && <AgentsView agents={view.agents} byRole={view.metrics.tokens.byRole} unreported={view.metrics.tokens.unreported} now={view.now} />}
         {shownTab === "feed" && <Feed slug={slug} at={at} />}
         {shownTab === "metrics" && <MetricsTab slug={slug} metrics={view.metrics} at={at} />}
-        {shownTab === "spec" && <SpecTab view={view} busy={busy} rewound={rewound} onApprove={(version) => void control("approve", version)} />}
-        {shownTab === "planner" && overview.plannerThreadId !== null && <PlannerChat threadId={overview.plannerThreadId} />}
+        {shownTab === "spec" && <SpecTab view={view} busy={busy} rewound={rewound} requested={specVersion} onApprove={(version) => void control("approve", version)} />}
+        {shownTab === "planner" && overview.plannerThreadId !== null && (
+          <PlannerPage
+            threadId={overview.plannerThreadId}
+            project={view}
+            busy={busy}
+            onControl={(action, version) => void control(action, version)}
+            onSpec={(version) => {
+              setSpecVersion(version);
+              onTab("spec");
+            }}
+            onTicket={(key) => go(`${slug}/${key}`)}
+          />
+        )}
         {shownTab === "changes" && (
           <ChangesTab changes={changes.data} error={changes.error} view={view} busy={busy} chosen={chosenChange} onChoose={setChosenChange} onControl={(action, repo) => void control(action, undefined, repo)} onReload={changes.reload} />
         )}
@@ -281,11 +306,20 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek }: { slug: string; tab: Tab
 export function LoomPage({ subPath }: PluginNavPanelProps) {
   const route = parseRoute(subPath);
   const navigate = useBbNavigate();
-  const go = (next: string) => navigate.toPluginPanel("loom", { subPath: next });
+  const go = useCallback((next: string) => navigate.toPluginPanel("loom", { subPath: next }), [navigate]);
   // The tab belongs to the project it was chosen in, so opening another project starts on the board.
   const [chosen, setChosen] = useState<{ slug: string | null; tab: Tab }>({ slug: null, tab: "board" });
   const slug = route.view === "project" || route.view === "ticket" ? route.slug : null;
   const tab = chosen.slug === slug ? chosen.tab : "board";
+  // A planning conversation that proposed is its project's Planner tab from then on; the redirect replaces the
+  // conversation's address, so Back does not land on it and bounce forward again.
+  const openPlanner = useCallback(
+    (next: string) => {
+      setChosen({ slug: next, tab: "planner" });
+      navigate.toPluginPanel("loom", { subPath: next, replace: true });
+    },
+    [navigate],
+  );
   // The ticket route reads the rewind too, so it lives here, with the project it belongs to.
   const [rewind, setRewind] = useState<{ slug: string; at: number } | null>(null);
   const at = rewind !== null && rewind.slug === slug ? rewind.at : null;
@@ -323,8 +357,8 @@ export function LoomPage({ subPath }: PluginNavPanelProps) {
         {route.view === "home" && <Home go={go} />}
         {route.view === "guide" && <Guide onStart={() => go("_new")} />}
         {route.view === "new" && <NewProject go={go} />}
-        {route.view === "plan" && <PlanningView threadId={route.threadId} go={go} />}
-        {route.view === "project" && <ProjectPanel key={route.slug} slug={route.slug} tab={tab} onTab={(next) => setChosen({ slug: route.slug, tab: next })} at={at} onSeek={seek} />}
+        {route.view === "plan" && <PlanningView threadId={route.threadId} openProject={openPlanner} />}
+        {route.view === "project" && <ProjectPanel key={route.slug} slug={route.slug} tab={tab} onTab={(next) => setChosen({ slug: route.slug, tab: next })} at={at} onSeek={seek} go={go} />}
         {route.view === "ticket" && <TicketView slug={route.slug} ticketKey={route.key} at={at} onNow={() => seek(null)} />}
       </div>
     </section>

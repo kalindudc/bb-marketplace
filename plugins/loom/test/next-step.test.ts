@@ -90,6 +90,17 @@ describe("nextStepOf", () => {
     expect(nextStepOf(input({ state: "done", pendingVersion: 2 }, []))!.stage).toBe(STAGES.length);
   });
 
+  it("waits for a pending version's spec review with no button, in the project's stage, and notes a passed review", () => {
+    const pending = (specReview: NextStepInput["specReview"]) => nextStepOf(input({ state: "running", pendingVersion: 2 }, [], { specReview }))!;
+    const reviewing = pending({ kind: "reviewing", version: 2, round: 1 });
+    expect(reviewing).toMatchObject({ stage: 4, title: "Loom is reviewing v2.", action: null });
+    expect(reviewing.text).toContain("bb loom approve csv --version 2 --skip-review");
+    expect(pending({ kind: "changes", version: 2, round: 1, findings: [{ title: "Too wide", detail: "d" }] })).toMatchObject({ stage: 4, title: "The spec review found 1 problem in v2.", action: null });
+    const passed = pending({ kind: "approved", version: 2, round: 1, summary: "Holds." });
+    expect(passed.text).toContain("Loom's spec review passed it.");
+    expect(passed.action).toMatchObject({ control: "approve", version: 2 });
+  });
+
   it("says who paused the project and offers Resume", () => {
     const human = nextStepOf(input({ state: "paused" }, [queued("CSV-1", true)]))!;
     expect(human).toMatchObject({ stage: 4, tone: "normal", title: "Paused.", text: "You paused the project: running workers finish their turn and no new one starts." });

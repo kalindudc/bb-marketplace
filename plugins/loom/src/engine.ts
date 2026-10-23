@@ -13,6 +13,7 @@ import { approvalRefusal, endSpecReviews, onSpecReviewerGone, onSpecReviewerIdle
 import { budgetReason, spawnable, toLite, type TicketLite } from "./scheduler";
 import { LOOM_ACTOR, canMoveTicket } from "./states";
 import { askForPrTexts, deliverFixRounds, humanFixRound, onPrWriterIdle, resumePrAsks } from "./pull-requests";
+import { recordPlannerTurn } from "./planner-view";
 import { cancelTicket, maybeSendTriage, onPlannerIdle } from "./triage";
 import {
   blockTicket,
@@ -287,17 +288,15 @@ export class Engine {
    */
   async approve(slug: string, actor: string, version?: number, opts: { skipReview?: boolean } = {}): Promise<Approved> {
     const { store, bb } = this.ctx;
-    const draft = store.projectBySlug(slug);
-    if (draft?.state === "draft" && opts.skipReview !== true) {
-      const refusal = approvalRefusal(slug, specReviewStatus(store, draft));
+    const waiting = store.projectBySlug(slug);
+    if (waiting !== null && opts.skipReview !== true) {
+      const refusal = approvalRefusal(slug, specReviewStatus(store, waiting), waiting.state !== "draft");
       if (refusal !== null) throw refusal;
     }
     const result = await this.projects.approve(slug, actor, version);
-    if (result.applied !== "pending") {
-      await endSpecReviews(this.ctx, store.projectBySlug(slug)!.id);
-      return { ...result, requeued: [], backToReview: [] };
-    }
     const project = store.projectBySlug(slug)!;
+    await endSpecReviews(this.ctx, project.id, result.version);
+    if (result.applied !== "pending") return { ...result, requeued: [], backToReview: [] };
     const requeued: string[] = [];
     const sentBack: string[] = [];
     for (const ticket of store.tickets(project.id, ["blocked"])) {
@@ -473,12 +472,29 @@ export class Engine {
     return post;
   }
 
+  /** The human's message to a planner from the Loom page: sent to its thread as their own words, and kept for the Planner page. */
+  async messagePlanner(threadId: string, text: string): Promise<void> {
+    const { store, bb } = this.ctx;
+    const row = store.threadByThreadId(threadId);
+    const planning = store.planning(threadId);
+    const live = (row?.role === "planner" && row.state === "active") || (row === null && planning !== null && planning.ended_at === null);
+    if (!live) throw new LoomError("loom_invalid_state", "This thread is not a live Loom planner, so there is no one to message.");
+    const body = text.trim();
+    if (body === "") throw new LoomError("loom_invalid_input", "The message is empty.");
+    await bb.send(threadId, body);
+    store.addPlannerLog({ thread_id: threadId, author: "human", text: body }, row?.project_id ?? null);
+  }
+
   // ---------------------------------------------------------------- bb's events
 
-  async onThreadIdle(threadId: string): Promise<void> {
-    const row = this.ctx.store.threadByThreadId(threadId);
-    const review = row === null ? this.ctx.store.specReviewByThreadId(threadId) : null;
+  /** `lastText` is the turn's last assistant text, which the Planner page shows for a planner thread. */
+  async onThreadIdle(threadId: string, lastText: string | null = null): Promise<void> {
+    const { store } = this.ctx;
+    const row = store.threadByThreadId(threadId);
+    const review = row === null ? store.specReviewByThreadId(threadId) : null;
     if (review !== null) return onSpecReviewerIdle(this.ctx, review);
+    const planning = row === null ? store.planning(threadId) : null;
+    if ((row?.role === "planner" && row.state === "active") || (planning !== null && planning.ended_at === null)) recordPlannerTurn(store, threadId, row?.project_id ?? null, lastText);
     if (row === null || row.state !== "active") return;
     if (row.role === "planner") onPlannerIdle(this.ctx, row);
     else if (row.role === "worker") {

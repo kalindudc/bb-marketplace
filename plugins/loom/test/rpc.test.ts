@@ -758,6 +758,43 @@ describe("spec versions", () => {
     await expect(call("specVersion", { slug: "csv", version: 9 })).rejects.toThrow(/no spec version 9/);
   });
 
+  it("specVersion lists Loom's reviews of this version and the ones before, leaving out replaced ones", async () => {
+    await propose();
+    const id = host.store.projectBySlug("csv")!.id;
+    const first = host.store.addSpecReview({ project_id: id, version: 1, round: 1, spawn_token: "t1" });
+    host.store.endSpecReview(first.id, "changes_requested", { summary: "Too wide.", findings: [{ path: "ticket[csv-export]", title: "Split it", detail: "Two changes." }] });
+    await revise();
+    const replaced = host.store.addSpecReview({ project_id: id, version: 2, round: 2, spawn_token: "t2" });
+    host.store.endSpecReview(replaced.id, "superseded", { reason: "replaced" });
+    host.store.addSpecReview({ project_id: id, version: 2, round: 2, spawn_token: "t3" });
+
+    const view = await call<SpecVersionView>("specVersion", { slug: "csv" });
+    expect(view.reviews).toMatchObject([
+      { version: 1, round: 1, state: "changes_requested", summary: "Too wide.", findings: [{ path: "ticket[csv-export]", title: "Split it", detail: "Two changes." }] },
+      { version: 2, round: 2, state: "reviewing", findings: [], endedAt: null },
+    ]);
+    expect((await call<SpecVersionView>("specVersion", { slug: "csv", version: 1 })).reviews.map((row) => row.version)).toEqual([1]);
+  });
+
+  it("plannerView, messagePlanner and dismissAsk read the planner's work, message it as the human, and set its asks aside", async () => {
+    await approved();
+    await expect(call("plannerView", { threadId: "thr_nobody" })).resolves.toBeNull();
+    const view = await call<{ steps: Array<{ kind: string }>; ask: unknown }>("plannerView", { threadId: "thr_plan" });
+    expect(view.steps.map((step) => step.kind)).toEqual(["started", "turn"]);
+
+    const messaged = await call<{ steps: Array<{ kind: string; text?: string }> }>("messagePlanner", { threadId: "thr_plan", text: "Is CSV-2 still needed?", confirm: true });
+    expect(messaged.steps.at(-1)).toMatchObject({ kind: "message", text: "Is CSV-2 still needed?" });
+    expect(fake.sent("thr_plan").at(-1)).toBe("Is CSV-2 still needed?");
+    await expect(call("messagePlanner", { threadId: "thr_plan", text: "x", confirm: true }, { experimental_caller: { kind: "plugin", pluginId: "other" } })).rejects.toThrow("for the human");
+
+    const project = host.store.projectBySlug("csv")!;
+    host.store.event(project.id, null, "planner.asked", "thr_plan", { why: "", steps: [{ action: "other", text: "Check the alert." }] });
+    const ask = host.store.eventsOfKind(project.id, "planner.asked")[0]!.id;
+    expect((await call<{ ask: unknown }>("plannerView", { threadId: "thr_plan" })).ask).toMatchObject({ id: ask, open: true });
+    expect((await call<{ ask: unknown }>("dismissAsk", { slug: "csv", ask, confirm: true })).ask).toBeNull();
+    expect(humanEvents().at(-1)).toEqual({ actor: "human", action: "dismissAsk", slug: "csv", ask });
+  });
+
   it("specVersion compares a draft with the version before, or with the base it is given", async () => {
     await propose();
     await revise();

@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { SpecVersionView } from "../contract";
+import type { ProjectView, SpecReviewRound, SpecVersionView } from "../contract";
 import { sectionOf, specDiff, touches, type SpecChange, type SpecSection } from "../spec-diff";
 import { WHOLE_SPEC, isUnder, specChanges } from "../spec-paths";
-import type { SpecReviewStatus } from "../spec-review";
+import type { SpecFinding, SpecReviewStatus } from "../spec-review";
 import { SPEC_REVIEW_ROUNDS } from "../states";
 import { BUTTON, HEADING, plural, useRemote } from "./common";
 import { CommentBox, ReviewPanel } from "./spec-comments";
 import { GuardrailsSection } from "./spec-guardrails";
 import { MarksContext, type Marks } from "./spec-marks";
 import { useNoteTray, type DraftNote } from "./spec-notes";
-import { ReviewContext, changeText, formatValue, labelOf, type CommentTarget, type Review } from "./spec-review-kit";
+import { ReviewContext, changeText, formatValue, labelOf, type CommentTarget, type Review, type ReviewFinding } from "./spec-review-kit";
 import { SettingsSection } from "./spec-settings";
 import { REMOVED, TicketsSection, type TicketLayout } from "./spec-ticket-view";
 
@@ -65,34 +65,71 @@ function elementFor(root: HTMLElement, path: string): HTMLElement | null {
   return [...root.querySelectorAll<HTMLElement>("[data-anchor]")].find((element) => element.dataset.anchor!.split(" ").some((one) => touches({ path }, one))) ?? null;
 }
 
-function ReviewStatus({ status, version }: { status: SpecReviewStatus | null | undefined; version: number }) {
-  if (status === null || status === undefined || status.kind === "none" || status.version !== version) return null;
-  const line = (tone: string, text: ReactNode, findings?: ReadonlyArray<{ path?: string; title: string }>) => (
-    <div data-spec-review-status={status.kind} className={`rounded-md border px-3 py-2 text-xs ${tone}`}>
-      <p>{text}</p>
-      {findings !== undefined && findings.length > 0 && (
-        <ul className="mt-1 list-disc space-y-0.5 pl-4 text-muted-foreground">
-          {findings.map((finding, index) => (
-            <li key={index}>
-              {finding.path !== undefined && <code className="mr-1 font-mono text-[11px]">{finding.path}</code>}
-              {finding.title}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+/**
+ * Loom's spec review of the version on screen: each finding with the part it is about, pinned there as R1, R2…, and a
+ * jump to it. It stays after approval, so a version keeps its review. `status` covers a version no review ran for.
+ */
+function LoomReview({ rounds, status, version, labelFor, onGo }: { rounds: readonly SpecReviewRound[]; status: SpecReviewStatus | null; version: number; labelFor(path: string): string; onGo(path: string): void }) {
+  const latest = rounds.at(-1);
+  const stopped = status?.kind === "limit" && status.version === version;
+  const box = (tone: string, children: ReactNode) => (
+    <section data-spec-review-status={latest?.state ?? status?.kind} aria-label="Loom's spec review" className={`space-y-1.5 rounded-md border px-3 py-2 text-xs ${tone}`}>
+      {children}
+    </section>
   );
-  switch (status.kind) {
+  const list = (findings: readonly SpecFinding[]) => (
+    <ol data-spec-findings className="space-y-1">
+      {findings.map((finding, index) => (
+        <li key={index} data-finding={index + 1} className="grid grid-cols-[2rem_minmax(0,1fr)_auto] items-baseline gap-2">
+          <span className="inline-flex h-4 items-center justify-center rounded-full border border-attention bg-attention/15 text-[10px] font-semibold">R{index + 1}</span>
+          <details className="min-w-0">
+            <summary className="cursor-pointer text-sm [overflow-wrap:anywhere]">
+              {finding.path !== undefined && <span className="mr-1 text-xs text-muted-foreground">{labelFor(finding.path)}:</span>}
+              {finding.title}
+            </summary>
+            <p className="mt-1 text-xs whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]">{finding.detail}</p>
+          </details>
+          {finding.path !== undefined && (
+            <button type="button" className={BUTTON} onClick={() => onGo(finding.path!)}>
+              Go to it
+            </button>
+          )}
+        </li>
+      ))}
+    </ol>
+  );
+  if (latest === undefined) {
+    if (status?.kind === "failed" && status.version === version) return box("border-destructive-text/40 bg-destructive-text/5", <p><b>Loom's spec review of v{version} did not finish:</b> {status.reason}.</p>);
+    if (stopped) return box("border-warning/50 bg-warning/10", <><p><b>Loom stopped reviewing after {SPEC_REVIEW_ROUNDS} rounds</b>; these findings of the last round are still open.</p>{list(status.findings)}</>);
+    return null;
+  }
+  const earlier = rounds.length > 1 ? <p className="text-subtle-foreground">Earlier rounds of v{version}: {rounds.slice(0, -1).map((round) => `round ${round.round} ${round.state === "approved" ? "passed" : round.state === "changes_requested" ? `found ${plural(round.findings.length, "problem")}` : "did not finish"}`).join(", ")}.</p> : null;
+  const summary = latest.summary !== null && latest.summary !== "" ? (
+    <details>
+      <summary className="cursor-pointer text-muted-foreground">The reviewer's summary</summary>
+      <p className="mt-1 whitespace-pre-wrap [overflow-wrap:anywhere]">{latest.summary}</p>
+    </details>
+  ) : null;
+  switch (latest.state) {
     case "reviewing":
-      return line("border-primary/40 bg-primary/5", <><b>Loom is reviewing v{version}</b> (round {status.round} of {SPEC_REVIEW_ROUNDS}). The planner revises it for each finding before it asks you.</>);
+      return box("border-primary/40 bg-primary/5", <p><b>Loom is reviewing v{version}</b> (round {latest.round} of {SPEC_REVIEW_ROUNDS}). The planner revises it for each finding before it asks you.</p>);
     case "approved":
-      return line("border-border-seam bg-card", <><b className="text-success">✓ Loom's spec review passed v{version}</b> · round {status.round} of {SPEC_REVIEW_ROUNDS}{status.summary !== "" && <> · “{status.summary}”</>}</>);
-    case "changes":
-      return line("border-warning/50 bg-warning/10", <><b>Loom's spec review found {plural(status.findings.length, "problem")} in v{version}</b>; the planner is revising it.</>, status.findings);
+      return box("border-border-seam bg-card", <><p><b className="text-success">✓ Loom's spec review passed v{version}</b> · round {latest.round} of {SPEC_REVIEW_ROUNDS}</p>{summary}{earlier}</>);
+    case "changes_requested":
+      return box(
+        "border-attention/50 bg-attention/5",
+        <>
+          <p>
+            <b>Loom's spec review found {plural(latest.findings.length, "problem")} in v{version}</b> · round {latest.round} of {SPEC_REVIEW_ROUNDS}.{" "}
+            {stopped ? "It stopped reviewing after this round, so they stay open; the planner's chat says which it left open and why." : "The planner revises the spec for them; each is pinned on its part."}
+          </p>
+          {list(latest.findings)}
+          {summary}
+          {earlier}
+        </>,
+      );
     case "failed":
-      return line("border-destructive-text/40 bg-destructive-text/5", <><b>Loom's spec review of v{version} did not finish:</b> {status.reason}.</>);
-    case "limit":
-      return line("border-warning/50 bg-warning/10", <><b>Loom stopped reviewing after {SPEC_REVIEW_ROUNDS} rounds</b>; these findings are still open.</>, status.findings);
+      return box("border-destructive-text/40 bg-destructive-text/5", <><p><b>Loom's spec review of v{version} did not finish:</b> {latest.reason ?? "no reason recorded"}.</p>{earlier}</>);
   }
 }
 
@@ -106,6 +143,13 @@ function ChangeLine({ change }: { change: SpecChange }) {
     );
   }
   return <>{changeText(change)}</>;
+}
+
+/** bb's name for each bb project id a project view's repos name; the spec versions carry only the ids. */
+export function bbProjectNamesOf(view: ProjectView | null): Record<string, string> {
+  if (view === null) return {};
+  const repos = [...view.overview.repos, ...view.spec.summary.repos];
+  return Object.fromEntries(repos.flatMap((repo) => (repo.bbProjectName === null ? [] : [[repo.bbProjectId, repo.bbProjectName]])));
 }
 
 /** The Approve the review panel offers, for one version. */
@@ -207,6 +251,9 @@ function Loaded({
   const [edit, setEdit] = useState<{ index: number; anchor: HTMLElement } | null>(null);
   const repoNames = (view.spec.repo ?? []).map((repo) => repo.name);
   const labelFor = (path: string) => labelOf(path, repoNames);
+  const ownRounds = view.reviews.filter((round) => round.version === view.version);
+  const lastRound = ownRounds.at(-1);
+  const findings: ReviewFinding[] = lastRound?.state === "changes_requested" ? lastRound.findings.map((finding, index) => ({ n: index + 1, path: finding.path ?? null, title: finding.title, detail: finding.detail })) : [];
 
   // Set by the panel's Edit just before it opens the box on the note's part.
   const editing = useRef<number | null>(null);
@@ -225,7 +272,7 @@ function Loaded({
     setBox(null);
     if (anchor?.isConnected === true) anchor.focus({ preventScroll: true });
   }, []);
-  const sectionReview = (section: SpecSection): Review => ({ version: view.version, changes, only: only && !shown.has(section), notes: tray.notes, onComment: readOnly ? undefined : openComment });
+  const sectionReview = (section: SpecSection): Review => ({ version: view.version, changes, only: only && !shown.has(section), notes: tray.notes, findings, onComment: readOnly ? undefined : openComment });
   const filesMarks: Marks = {
     version: view.version,
     changes: comparedChanges,
@@ -298,6 +345,9 @@ function Loaded({
     return index === -1 ? tray.add(note) : tray.replace(index, note);
   };
   const answered = view.notes.filter((note) => note.answeredIn === view.version && note.changed);
+  // Findings the versions since the compared one had: a change on their part most likely answers them.
+  const earlierFindings = view.reviews.filter((round) => round.state === "changes_requested" && view.compared !== null && round.version >= view.compared.version && round.version < view.version).flatMap((round) => round.findings);
+  const answersFinding = (change: SpecChange) => earlierFindings.filter((finding) => finding.path !== undefined && touches(change, finding.path));
   const answers = (change: SpecChange) => answered.filter((note) => note.paths.some((path) => touches(change, path)) || (change.kind === "ticket-added" && change.from.some((ref) => note.paths.some((path) => touches({ path: `ticket[${ref}]` }, path)))));
   const waiting = view.notes.filter((note) => note.answeredIn === null && note.version === newest.version);
   const seenCount = changes.filter((change) => marks.seen.has(changeKey(change))).length;
@@ -343,7 +393,7 @@ function Loaded({
             </button>
           </p>
         )}
-        <ReviewStatus status={specReview} version={view.version} />
+        <LoomReview rounds={ownRounds} status={specReview} version={view.version} labelFor={labelFor} onGo={show} />
         {waiting.length > 0 && (
           <p data-spec-waiting className="rounded-md border border-primary/40 bg-primary/5 px-3 py-2 text-xs">
             <b>You sent {plural(waiting.length, "comment")} on v{newest.version}.</b> The planner is drafting v{newest.version + 1}; this page shows what changed when it arrives.
@@ -461,6 +511,11 @@ function Loaded({
                                 </span>
                               )}
                               {why.length === 0 && answered.length > 0 && <span className="shrink-0 text-[11px] text-subtle-foreground">not from your comments</span>}
+                              {answersFinding(change).length > 0 && (
+                                <span className="shrink-0 text-[11px] text-foreground" title={answersFinding(change).map((finding) => finding.title).join("\n")}>
+                                  answers Loom's review
+                                </span>
+                              )}
                               <button type="button" aria-label={seen ? `Mark ${labelFor(change.path)} not seen` : `Mark ${labelFor(change.path)} seen`} aria-pressed={seen} className={`inline-flex size-4.5 shrink-0 cursor-pointer items-center justify-center rounded-full border text-[10px] ${seen ? "border-success bg-success text-success-foreground" : "border-border-seam text-transparent hover:text-muted-foreground"}`} onClick={() => (seen ? marks.unsee(changeKey(change)) : marks.see([changeKey(change)]))}>
                                 ✓
                               </button>

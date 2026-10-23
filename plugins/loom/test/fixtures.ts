@@ -1,4 +1,4 @@
-import type { AgentRow, Attempt, BoardCard, ChangeRepo, FeedRow, HomeProject, HomeView, ProjectHealth, ProjectSummary, ProjectTimeline, ProjectView, RepoOverview, SpecVersionView, TicketDetail } from "../src/contract";
+import type { AgentRow, Attempt, BoardCard, ChangeRepo, FeedRow, HomeProject, HomeView, PlannerView, ProjectHealth, ProjectSummary, ProjectTimeline, ProjectView, RepoOverview, SpecVersionView, TicketDetail } from "../src/contract";
 import type { ProjectMetrics } from "../src/metrics";
 import { parseSpec } from "../src/spec";
 import { TICKET_STATES, type TicketState } from "../src/states";
@@ -179,6 +179,7 @@ export const projectView = (over: Partial<ProjectView> = {}): ProjectView => ({
   now: NOW,
   at: null,
   specReview: null,
+  openAsks: 0,
   ...over,
 });
 
@@ -253,6 +254,7 @@ export const specVersionView = (over: Partial<SpecVersionView> = {}, edit?: (doc
     { version: 2, status: "draft" },
   ],
   notes: [],
+  reviews: [],
   ...over,
 });
 
@@ -285,5 +287,27 @@ export const timeline = (over: Partial<ProjectTimeline> = {}): ProjectTimeline =
   sessions: [{ key: "CSV-1", role: "worker", label: "attempt 1", from: NOW - 15 * MINUTE, to: NOW, endReason: null }],
   marks: [{ id: 12, at: NOW - 15 * MINUTE, action: "start", key: null }],
   trouble: ["CSV-2"],
+  ...over,
+});
+
+/** The planner view of csv's draft v1: started from the page, one turn that proposed v1, and a passed spec review. */
+export const plannerViewOf = (over: Partial<PlannerView> = {}): PlannerView => ({
+  threadId: "thr_plan",
+  title: "Export orders as CSV",
+  startedAt: NOW - 3 * HOUR,
+  slug: "csv",
+  projectState: "draft",
+  approvedVersion: null,
+  pendingVersion: null,
+  steps: [
+    { kind: "started", at: NOW - 3 * HOUR, text: "Export orders as CSV" },
+    { kind: "turn", at: NOW - 2 * HOUR, text: "I proposed v1 of csv. Loom's spec review is running.", actions: [{ kind: "proposed", version: 1, tickets: 2, change: null }] },
+    { kind: "review", at: NOW - HOUR, version: 1, round: 1, state: "approved", summary: "Both tickets serve the request.", findings: [], reason: null, startedAt: NOW - 2 * HOUR, endedAt: NOW - HOUR },
+  ],
+  ask: null,
+  versions: [{ version: 1, status: "draft", createdAt: NOW - 2 * HOUR, tickets: 2, change: null, review: { state: "approved", round: 1, findings: 0 } }],
+  review: { kind: "approved", version: 1, round: 1, summary: "Both tickets serve the request." },
+  triageRounds: 0,
+  now: NOW,
   ...over,
 });

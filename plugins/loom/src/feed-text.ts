@@ -58,6 +58,7 @@ export function feedText(event: EventRow, keys: Map<number, string>): string {
     case "human.action": {
       if (data.action === "notes") return `The human sent ${notesLabel(data.notes)} on the spec to the planner.`;
       if (data.action === "approve" && data.skipReview === true) return "The human approved the spec without a passed spec review.";
+      if (data.action === "dismissAsk") return "The human set the planner's asks aside.";
       const target = text(data.key);
       return `The human ran ${data.action}${target === null ? "" : ` on ${target}`}.`;
     }
@@ -67,6 +68,14 @@ export function feedText(event: EventRow, keys: Map<number, string>): string {
     }
     case "record.failed":
       return `The done hook failed: ${data.reason}.`;
+    case "triage.sent": {
+      const n = Array.isArray(data.blocked) ? data.blocked.length : 0;
+      return `Loom sent the planner triage round ${data.round}: ${n === 1 ? "1 ticket is" : `${n} tickets are`} blocked.`;
+    }
+    case "planner.asked": {
+      const steps = Array.isArray(data.steps) ? (data.steps as Array<{ text?: unknown }>) : [];
+      return steps.length === 0 ? "The planner cleared its asks." : `The planner asked the human to: ${steps.map((step) => String(step.text ?? "")).join(" ")}`;
+    }
     case "spec.review.started":
       return `A spec reviewer started on spec version ${data.version} (round ${data.round}).`;
     case "spec.review.ended": {

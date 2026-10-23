@@ -13,7 +13,7 @@ span several, with each ticket in one of them.
 ## How a project runs
 
 1. Plan: press New project on the Loom page and describe the goal, or ask any thread to plan it; every thread has the `loom-plan` skill. The planner asks a round of questions and calls `loom_propose` with a TOML spec. The plugin validates it and saves a draft, then starts a spec reviewer: a fresh agent that checks the spec against the human's request and for work the goal does not need, and sends any findings back to the planner, for up to three rounds.
-2. Approve: once the spec review passes, the human reads the spec and approves it. The tickets appear on the board. `bb loom approve <slug> --skip-review` approves a draft whose review has not passed.
+2. Approve: once the spec review passes, the human reads the spec and approves it. The tickets appear on the board. `bb loom approve <slug> --skip-review` approves a draft whose review has not passed, and `--version N --skip-review` a pending version.
 3. Start: the human starts the project. The plugin picks ready tickets (dependencies done, no scope overlap with work in flight) and starts a worker thread for each.
 4. Work: a worker calls `loom_note` as it goes, then `loom_submit`, or `loom_block` when it needs help.
 5. Check: the plugin commits the worktree and runs the ticket's and the project's check commands. A failure goes back to the worker.
@@ -26,7 +26,12 @@ triage round and answers with its board tools (`loom_board`, `loom_ticket`,
 `loom_post`, `loom_requeue`, `loom_edit_ticket`, `loom_add_tickets` and
 `loom_cancel_ticket`), or the human answers on the ticket. The human's reply on a
 blocked ticket goes to the planner at once, as a message that names the ticket,
-so the planner can answer with the same board tools.
+so the planner can answer with the same board tools. A spec version the planner
+proposes after approval waits for the human's approval, and Loom's spec review
+checks it first, as a change to the version in force. When the human has to act,
+such as approve that version and then requeue the tickets it unblocks, the
+planner records the steps with `loom_ask_human`, and the Planner tab lists them
+under Needs you with a button for each.
 
 When bb refuses to start a worker or a reviewer with a client error (an HTTP 4xx
 status other than 408, 409 and 429), the ticket blocks at once with bb's message
@@ -131,7 +136,7 @@ the planner back into it.
 | Role | Tools |
 |---|---|
 | Any other thread | `loom_discover`, `loom_propose` |
-| Planner | `loom_discover`, `loom_propose`, `loom_board`, `loom_ticket`, `loom_post`, `loom_requeue`, `loom_edit_ticket`, `loom_add_tickets`, `loom_cancel_ticket` |
+| Planner | `loom_discover`, `loom_propose`, `loom_board`, `loom_ticket`, `loom_post`, `loom_requeue`, `loom_edit_ticket`, `loom_add_tickets`, `loom_cancel_ticket`, `loom_ask_human` |
 | Worker | `loom_note`, `loom_submit`, `loom_block`, `loom_pr` |
 | Reviewer | `loom_note`, `loom_approve`, `loom_request_changes` |
 | Spec reviewer | `loom_spec_approve`, `loom_spec_request_changes` |
@@ -151,22 +156,19 @@ checkout on any machine as "no checkout". The picked repos are a starting point,
 not a limit: the planner can add others and offers to clone a repo with no
 checkout. Submitting
 starts an ordinary bb thread as the planner, with the `loom-plan` skill, and
-opens the conversation on the page: the planner's chat beside a card for the
-draft. When the planner proposes, the card fills in with the tickets, checks,
-reviewer and repos, and the next-step bar above the planner's chat offers Approve and then
-Start. Conversations that have not proposed yet are listed on the home page
+opens its Planner page under the Plan stage of the next-step bar. When the
+planner proposes, the conversation becomes the project's Planner tab, and the
+next-step bar offers Approve and then Start. Conversations that have not
+proposed yet are listed on the home page
 until their thread is archived. "Don't work in a project" is refused, because
 Loom needs a git checkout. The composer starts on the project of the last
 planning conversation you started from it.
 
-Once the planner proposes, the conversation also shows the spec dashboard under
-the chat and the draft card, with the warnings and the raw spec. Every proposal before
-approval is kept as its own version, and older drafts read as superseded. Press
-"+ note" on a ticket card or on any part of the spec to leave a note for the
-planner. Notes stay in
-your browser until you send them, and the planner gets them in one message that
-names each part, such as `ticket[csv-export].acceptance[1]`. A sent note then
-shows whether the planner's next version changed that part.
+Every proposal before approval is kept as its own version, and older drafts
+read as superseded. You review a version on the Spec tab, and the comments you
+send there reach the planner in one message that names each part, such as
+`ticket[csv-export].acceptance[1]`. A sent comment then shows whether the
+planner's next version changed that part.
 
 The home page opens with five tiles across every project that is not archived:
 projects running, agents working against the worker and reviewer slots of the
@@ -205,12 +207,14 @@ bar offers Land, as does the next step in `bb loom show`, beside Review changes,
 which opens the Changes tab on the integration branch. The header's "Land to
 <base>" button, beside Land, lands with `--direct` instead. On a multi-repo
 project, a repo chip marks each ticket's repo on the board, the ticket page and
-the spec dashboard, the Files tab groups paths by repo, the header links each
+the Spec tab, whose Files view groups paths by repo, the header links each
 repo's pull request, and the land buttons name the repos they land ("Land to
 each repo's base" when the bases differ). A tab that needs you
 carries a badge until the thing is resolved: the Board tab counts the blocked
 tickets, the Spec tab shows one while a draft waits for review or a newer
-spec version waits for approval, and the Changes tab counts the files of a
+spec version waits for approval, the Planner tab shows "?" while the planner
+waits on a question and otherwise counts the steps it asked you to take that are
+not done, and the Changes tab counts the files of a
 project ready to land that you have not marked viewed (on a multi-repo project,
 the files of every repo's branch). Open a project for these views:
 
@@ -220,8 +224,8 @@ the files of every repo's branch). Open a project for these views:
 - Changes: what the project changed, from the start of the work until after it lands. On the integration strategy the list on the left starts with the integration branch compared with the remote's base branch (`origin/main`), which is what Land pushes, then each merged ticket with what its merge commit added to the branch, then the tickets not merged yet: the commit in review, the one that passed the checks and that the reviewers read, compared with the integration branch, and a working ticket's worktree as it is now, uncommitted and untracked files included, read again every 10 seconds while it shows. On the pull request strategy each ticket is compared with the remote's base branch, and a merged one with the base as it was before its merge. Each file shows its status, its added and removed lines and, on the branch, the tickets whose merges changed it; a click opens its patch in bb's own diff viewer, unified or split. Viewed marks stay in your browser and clear by themselves when a file changes again. On the branch, a panel carries Land and "Land to <base>" with what each pushes. A done or archived project shows what it merged, from before its first merge to its last, from the merge commits Loom recorded, so it still works after the branch landed. Work whose commits are no longer in the repository, such as an abandoned ticket whose worktree was cleaned up, is left out and counted. On a multi-repo project the list has one section per repo, in the spec's order and headed by its repo chip, and each section has that repo's integration branch compared with that repo's remote base branch (`<remote>/<base>`), its merges and its tickets not merged yet, or on the pull request strategy its tickets compared with that repo's remote base. The panel on a repo's branch lands that repo alone, with "Land <repo>" and "Land <repo> to <base>", and the other repos do not land. A repo that cannot be read, such as one with no checkout on the project's machine, says why in its section while the other repos still show. Review changes opens the first repo with work to land, and a Viewed mark holds the repo as well as the file. The tab shows once a project has started, and not while the page is rewound.
 - Feed: the project's events, newest first.
 - Metrics: the numbers below, with charts, and a 7, 14 or 30 day window for throughput and cumulative flow.
-- Spec: the spec as one page in three sections, read in order. How it runs shows the settings as cards: merging (the strategy, the integration branch and the base), workers and reviewers (model, how many run at a time, time per ticket, approvals and review rounds), the checks as numbered steps before review and after each merge, the scope guard and its protected paths, each repo of a multi-repo project, and the limits and triage. Tickets lists the tickets by wave beside the picked ticket (List + detail), with its brief, its criteria, the files it may change, its verify commands, what it waits for and unblocks, its priority, and any files it shares with a ticket nothing orders it against; Map draws the waves from left to right with an arrow to each ticket that waits, lighting up what a hovered ticket waits for and unblocks; Files lists the Shared files and every path by folder, as the planning view's dashboard does. Goal & guardrails shows the goal, the non-goals, the reviewer rubric, the open questions and the raw TOML. A version that has one before it opens on "Only what changed since vN": settings, tickets and parts that did not change are hidden or faded, changed values say what they were, added items are outlined in green, removed ones struck through, a rewritten brief or goal shows word by word, and a removed ticket shows what it had; "The entire spec" and "View the entire spec" (in the section bar, which stays at the top as you scroll) show everything. A pending version compares with the version in force, and "compared with" picks another older version. "What changed" lists every change by section, says which ones answer the comments you sent, and jumps to each one; a change you jumped to counts as seen, j and k step through them, and each section can be marked reviewed, all kept in this browser. Click any part to comment on it: a choice, a number or a switch can also take a suggested value, which the planner gets as TOML (`Suggested value: "pr" (now "integration")`), and quick picks such as "Split it in two" or "Not testable" start the text. Comments collect, numbered, in a review panel beside the page (docked at the bottom of a narrow one) with a note on the whole spec, a preview of the message and one Send; with none, the panel offers Approve when the next-step bar does not. Sent comments wait for the planner's next version, then say whether it changed their part. The version switcher reads any version, older drafts as superseded, and Loom's spec review of the version shows above it.
-- Planner: the planner thread's chat, embedded in the page, with its open questions above it.
+- Spec: the spec as one page in three sections, read in order. How it runs shows the settings as cards: merging (the strategy, the integration branch and the base), workers and reviewers (model, how many run at a time, time per ticket, approvals and review rounds), the checks as numbered steps before review and after each merge, the scope guard and its protected paths, each repo of a multi-repo project, and the limits and triage. Tickets lists the tickets by wave beside the picked ticket (List + detail), with its brief, its criteria, the files it may change, its verify commands, what it waits for and unblocks, its priority, and any files it shares with a ticket nothing orders it against; Map draws the waves from left to right with an arrow to each ticket that waits, lighting up what a hovered ticket waits for and unblocks; Files lists the Shared files and every path by folder, each with "+ note". Goal & guardrails shows the goal, the non-goals, the reviewer rubric, the open questions and the raw TOML. A version that has one before it opens on "Only what changed since vN": settings, tickets and parts that did not change are hidden or faded, changed values say what they were, added items are outlined in green, removed ones struck through, a rewritten brief or goal shows word by word, and a removed ticket shows what it had; "The entire spec" and "View the entire spec" (in the section bar, which stays at the top as you scroll) show everything. A pending version compares with the version in force, and "compared with" picks another older version. "What changed" lists every change by section, says which ones answer the comments you sent, and jumps to each one; a change you jumped to counts as seen, j and k step through them, and each section can be marked reviewed, all kept in this browser. Click any part to comment on it: a choice, a number or a switch can also take a suggested value, which the planner gets as TOML (`Suggested value: "pr" (now "integration")`), and quick picks such as "Split it in two" or "Not testable" start the text. Comments collect, numbered, in a review panel beside the page (docked at the bottom of a narrow one) with a note on the whole spec, a preview of the message and one Send; with none, the panel offers Approve when the next-step bar does not. Sent comments wait for the planner's next version, then say whether it changed their part. The version switcher reads any version, older drafts as superseded. Loom's spec review of the version shows above it and stays after approval: its verdict, the reviewer's summary, and each finding with the part it names, pinned there as R1, R2… and kept in view while only what changed is shown, with Go to it; "What changed" marks the changes that answer an earlier version's findings.
+- Planner: the planner's work as a page, with its chat one click away. A strip shows whether it is working (and on what: your comments, a triage round, the review's findings), waits on you or is idle, when its last turn ended, and before approval where planning stands: goal and code, questions, the draft, Loom's spec review and your review. Needs you holds what it waits for: its Ask User Question rounds one question at a time with "Use the recommended answers for the rest" and a review before Send, the steps it asked for with `loom_ask_human` (Approve, Requeue, Start and the like, each checked off when done, and Set aside to hide them), or a version ready for you with its review, what changed and the comments it answers, and the way to the Spec tab. What happened tells its work as steps in chapters, one per draft version and one for the running project, newest first or oldest first, filtered to your input, spec versions or triage: your request and answers, each turn's proposals and board changes with the planner's last words, your comments, Loom's reviews with their findings, your approvals, and each triage round with the blocked tickets and what the planner did. A side column has a box to message the planner, your answers to its questions, every spec version (each opening the Spec tab on it) and facts about it. Conversation shows bb's chat with the planner.
 
 Under the health strip, every project has a Timeline section. Collapsed, it is
 one thin strip: the share of tickets in each state over time, with a playhead,
@@ -254,11 +258,13 @@ same engine method as the matching command, and each is logged as a
 `human.action` event. The page updates within about a second of an event, without
 a reload. Addresses work after a reload: `/plugins/loom/loom/<slug>` opens a
 project, `/plugins/loom/loom/<slug>/<KEY>` a ticket and
-`/plugins/loom/loom/_plan/<threadId>` a planning conversation. A worker, reviewer or
+`/plugins/loom/loom/_plan/<threadId>` a planning conversation, which opens its
+project's Planner tab once the planner proposed. A worker, reviewer or
 planner thread shows a small header chip such as `CSV-3 · review` that opens
 its ticket; a planning conversation shows "Planning", which opens it on the page.
 The chip is hidden on phone-sized screens. A question the planner asks with
-Ask User Question appears above its chat on the page, where you can answer it.
+Ask User Question appears under Needs you on its Planner page, where you can
+answer it.
 The Loom icon in the left navigation rail counts what needs you: the "Needs you"
 items and Loom threads waiting on a question or an approval.
 

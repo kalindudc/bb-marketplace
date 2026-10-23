@@ -6,7 +6,7 @@ import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-libra
 import { loadPluginApp, mountPluginContentScripts, renderSlot, type PluginRpcTestHandlers, type PluginSdkTestFakes, type RenderSlotOptions } from "@get-bb/plugin-sdk/testing/app";
 import { useLayoutEffect, useState, useSyncExternalStore } from "react";
 import { useComposers, type NewThreadRequest, type PluginComposerApi, type PluginNavPanelProps, type PluginSidebarThread, type PluginThreadHeaderActionProps } from "@get-bb/plugin-sdk/app";
-import type { Attempt, BbProjectChoice, ChangedFile, ChangeSource, ChangesView, ChecksItem, HomeProject, NextStep, PlanningSession, ProjectSummary, ProjectView, RepoOverview, SentNote, SpecVersionView, ThreadInfo, TicketDetail, rpcContract } from "../src/contract";
+import type { Attempt, BbProjectChoice, ChangedFile, ChangeSource, ChangesView, ChecksItem, HomeProject, NextStep, PlannerView, PlanningSession, ProjectSummary, ProjectView, RepoOverview, SentNote, SpecVersionView, ThreadInfo, TicketDetail, rpcContract } from "../src/contract";
 import type { TicketRow } from "../src/db/store";
 import { repoOverviews } from "../src/projects";
 import { notesMessage } from "../src/prompts";
@@ -14,7 +14,7 @@ import { parseSpec } from "../src/spec";
 import { ConfirmButton, MoreMenu } from "../src/ui/common";
 import { repoLand } from "../src/ui/next-step-bar";
 import { questionsOf } from "../src/ui/questions";
-import { HOUR, NOW, agent, attempt, card, changeRepo, feedRow, health, homeProject, homeView, metrics, overview, projectView, repoOverview, specV1, specVersionView, ticketDetail, timeline, withRepos } from "./fixtures";
+import { HOUR, NOW, agent, attempt, card, changeRepo, feedRow, health, homeProject, homeView, metrics, overview, plannerViewOf, projectView, repoOverview, specV1, specVersionView, ticketDetail, timeline, withRepos } from "./fixtures";
 import { specToml } from "./helpers";
 
 type Handlers = PluginRpcTestHandlers<typeof rpcContract>;
@@ -38,6 +38,9 @@ const handlers = (over: Partial<Handlers> = {}): Handlers => ({
   bbProjects: () => [],
   planning: () => [],
   planningSession: () => null,
+  plannerView: () => null,
+  messagePlanner: unexpected,
+  dismissAsk: unexpected,
   specVersion: unexpected,
   sendNotes: unexpected,
   changes: unexpected,
@@ -894,60 +897,45 @@ describe("new project", () => {
 
 describe("planning conversation", () => {
   const session = (over: Partial<PlanningSession> = {}): PlanningSession => ({ threadId: "thr_p1", title: "Export orders as CSV", startedAt: Date.now(), slug: null, projectState: null, ...over });
-  const chat = (slot: Slot) => slot.getByTestId("bb-thread-chat");
+  const early = () => plannerViewOf({ threadId: "thr_p1", slug: null, projectState: null, steps: [{ kind: "started", at: NOW - HOUR, text: "Export orders as CSV" }], versions: [], review: { kind: "none" } });
 
-  it("shows the planner's chat, and says there is no draft yet while the thread has not proposed", async () => {
-    const { slot } = await mountPage("_plan/thr_p1", { planningSession: () => session() });
-    expect(await slot.findByText(/No draft yet/)).toBeTruthy();
+  it("shows the Planner page under the Plan stage while the thread has not proposed, with its chat one click away", async () => {
+    const { slot } = await mountPage("_plan/thr_p1", { planningSession: () => session(), plannerView: () => early() });
+    await waitFor(() => expect(slot.container.querySelector("[data-planner-page]")).not.toBeNull());
     expect(slot.getByRole("heading", { name: "Export orders as CSV" })).toBeTruthy();
-    expect(chat(slot).getAttribute("data-thread-id")).toBe("thr_p1");
-    expect(chat(slot).getAttribute("data-variant")).toBe("compact");
-    expect(chat(slot).getAttribute("data-layout")).toBe("contained");
-    expect(calls(slot, "planningSession")[0]!.input).toEqual({ threadId: "thr_p1" });
+    expect(calls(slot, "plannerView")[0]!.input).toEqual({ threadId: "thr_p1" });
     expect(slot.getByRole("navigation", { name: "Loom" }).textContent).toContain("Planning");
     const bar = slot.container.querySelector<HTMLElement>("[data-next-step]")!;
     expect(bar.textContent).toContain("Next: answer the planner.");
     expect(bar.querySelector('[aria-current="step"]')!.getAttribute("data-stage")).toBe("Plan");
+    expect(slot.container.querySelector('[data-planning-step="current"]')!.textContent).toContain("Goal and code");
+    expect(slot.container.querySelector("[data-nothing-needed]")).not.toBeNull();
+    expect(slot.container.querySelector("[data-planner-story]")!.textContent).toContain("You started planning");
+    expect(slot.container.querySelector("[data-versions]")!.textContent).toContain("No draft yet");
     expect(calls(slot, "project")).toEqual([]);
     fireEvent.click(slot.getByRole("button", { name: "Open as thread" }));
     expect(slot.inspection.navigateCalls).toEqual([{ method: "toThread", threadId: "thr_p1" }]);
+
+    fireEvent.click(slot.getByRole("tab", { name: "Conversation" }));
+    const chat = slot.getByTestId("bb-thread-chat");
+    expect(chat.getAttribute("data-thread-id")).toBe("thr_p1");
+    expect(chat.getAttribute("data-variant")).toBe("compact");
+    expect(chat.getAttribute("data-layout")).toBe("contained");
+    expect(slot.container.querySelector("[data-planner-story]")).toBeNull();
   });
 
-  it("fills in the draft card once the planner proposes, approves it from the bar after a second click, and opens the project", async () => {
+  it("opens the project's Planner tab once the planner proposed", async () => {
     let current = session();
-    const approveStep: NextStep = { stage: 1, tone: "normal", title: "Next: review draft v1.", text: "Approving creates 2 tickets on the board.", action: { control: "approve", version: 1, label: "Approve v1 · create 2 tickets", confirm: "Click again to approve v1" } };
-    const startStep: NextStep = { stage: 3, tone: "normal", title: "Next: start the project.", text: "Loom starts 1 worker right away, on CSV-1.", action: { control: "start", label: "Start project · 1 worker", confirm: "Click again to start 1 worker" } };
-    const draft = projectView({ overview: overview({ state: "draft", approvedVersion: null, ticketCount: 0, ticketCounts: {} }), board: [], next: approveStep });
-    const control = vi.fn(() => projectView({ overview: overview({ state: "ready" }), next: startStep }));
-    const { slot } = await mountPage("_plan/thr_p1", { planningSession: () => current, project: () => draft, control });
-    await slot.findByText(/No draft yet/);
+    const draft = projectView({ overview: overview({ state: "draft", approvedVersion: null, ticketCount: 0, ticketCounts: {} }), board: [] });
+    const { slot, goTo } = await mountPage("_plan/thr_p1", { planningSession: () => current, plannerView: () => plannerViewOf(), project: () => draft, specVersion: () => specVersionView() });
+    await waitFor(() => expect(slot.container.querySelector("[data-planner-page]")).not.toBeNull());
     current = session({ slug: "csv", projectState: "draft" });
     await slot.emitRealtime("loom:changed", { slug: null });
-    await waitFor(() => expect(slot.container.querySelector("[data-draft-card]")).not.toBeNull());
-    const card = () => slot.container.querySelector<HTMLElement>("[data-draft-card]")!;
-    await waitFor(() => expect(card().textContent).toContain("CSV export"));
-    expect(calls(slot, "project")[0]!.input).toEqual({ slug: "csv" });
-    expect(card().querySelector("[data-state-badge]")!.textContent).toBe("draft");
-    expect(card().textContent).toContain("2 tickets · checks: npm test · reviewer codex / gpt-5");
-    expect([...card().querySelectorAll("[data-draft-ticket]")].map((row) => row.textContent)).toEqual(["csv-modelOrder rows", "csv-exportExport endpointafter csv-model"]);
-    expect(slot.queryByText(/No draft yet/)).toBeNull();
-    expect(within(card()).queryByRole("button", { name: /Approve|Start/ })).toBeNull();
-    fireEvent.click(slot.getByRole("button", { name: "Approve v1 · create 2 tickets" }));
-    expect(control).not.toHaveBeenCalled();
-    fireEvent.click(slot.getByRole("button", { name: "Click again to approve v1" }));
-    await waitFor(() => expect(control).toHaveBeenCalledWith({ slug: "csv", action: "approve", version: 1, confirm: true }));
-    expect(await slot.findByRole("button", { name: "Start project · 1 worker" })).toBeTruthy();
-    expect(within(card()).queryByRole("button", { name: /Start/ })).toBeNull();
-    fireEvent.click(slot.getByRole("button", { name: "Open project" }));
-    expect(slot.inspection.navigateCalls).toEqual([pushed("csv")]);
-  });
-
-  it("shows only the first five tickets of a long draft", async () => {
-    const tickets = Array.from({ length: 7 }, (_, index) => ({ ref: `t-${index + 1}`, title: `Ticket ${index + 1}`, dependsOn: [] }));
-    const draft = projectView({ overview: overview({ state: "draft" }), spec: { ...projectView().spec, summary: { ...projectView().spec.summary, tickets } } });
-    const { slot } = await mountPage("_plan/thr_p1", { planningSession: () => session({ slug: "csv", projectState: "draft" }), project: () => draft });
-    await waitFor(() => expect(slot.container.querySelectorAll("[data-draft-ticket]")).toHaveLength(5));
-    expect(slot.container.querySelector("[data-draft-card]")!.textContent).toContain("+2 more");
+    await waitFor(() => expect(slot.inspection.navigateCalls).toContainEqual({ method: "toPluginPanel", path: "loom", options: { subPath: "csv", replace: true } }));
+    goTo("csv");
+    await waitFor(() => expect(slot.getByRole("tab", { name: "Planner" }).getAttribute("aria-selected")).toBe("true"));
+    await waitFor(() => expect(slot.container.querySelector("[data-planner-page]")).not.toBeNull());
+    expect(slot.container.querySelector("[data-spec-dashboard]")).toBeNull();
   });
 
   it("says so when the thread is not a Loom planning thread", async () => {
@@ -956,12 +944,14 @@ describe("planning conversation", () => {
     expect(slot.queryByTestId("bb-thread-chat")).toBeNull();
   });
 
-  it("gives a project with a planner thread a Planner tab with its chat, and a project without one no such tab", async () => {
-    const { slot } = await mountPage("csv", { project: () => projectView() });
+  it("gives a project with a planner thread a Planner tab, and a project without one no such tab", async () => {
+    const { slot } = await mountPage("csv", { project: () => projectView(), plannerView: () => plannerViewOf({ projectState: "running", approvedVersion: 1 }) });
     await slot.findByRole("tab", { name: "Board" });
     expect([...slot.container.querySelectorAll("[role=tab]")].map((tab) => tab.textContent)).toEqual(["Board", "Agents", "Feed", "Metrics", "Spec", "Planner", "Changes"]);
     fireEvent.click(slot.getByRole("tab", { name: "Planner" }));
-    expect(chat(slot).getAttribute("data-thread-id")).toBe("thr_plan");
+    await waitFor(() => expect(slot.container.querySelector("[data-planner-page]")).not.toBeNull());
+    expect(calls(slot, "plannerView")[0]!.input).toEqual({ threadId: "thr_plan" });
+    expect(slot.container.querySelector("[data-planning-step]")).toBeNull();
     slot.lifecycle.unmount();
 
     const none = await mountPage("csv", { project: () => projectView({ overview: overview({ plannerThreadId: null }) }) });
@@ -970,504 +960,257 @@ describe("planning conversation", () => {
   });
 });
 
-describe("spec dashboard", () => {
+describe("planner page", () => {
   const scroll = vi.fn();
   beforeEach(() => {
+    localStorage.clear();
     scroll.mockClear();
     Element.prototype.scrollIntoView = scroll;
   });
   afterEach(() => {
     delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
   });
-  const session = (over: Partial<PlanningSession> = {}): PlanningSession => ({ threadId: "thr_p1", title: "Export orders as CSV", startedAt: Date.now(), slug: "csv", projectState: "draft", ...over });
-  const draft = () => projectView({ overview: overview({ state: "draft", approvedVersion: null, ticketCount: 0, ticketCounts: {} }), board: [] });
-  const dashboard = (slot: Slot) => slot.container.querySelector<HTMLElement>("[data-spec-dashboard]")!;
-  const mountDashboard = async (rpc: Partial<Handlers> = {}) => {
-    const mounted = await mountPage("_plan/thr_p1", { planningSession: () => session(), project: () => draft(), specVersion: () => specVersionView(), ...rpc });
-    await waitFor(() => expect(mounted.slot.container.querySelector("[data-spec-tile]")).not.toBeNull());
-    return mounted;
+  const sidebar = (status: string, hasPendingInteraction = false) => ({ threads: [{ id: "thr_plan", status, hasPendingInteraction } as unknown as PluginSidebarThread] });
+  const approveStep: NextStep = { stage: 1, tone: "normal", title: "Next: review draft v2.", text: "Loom's spec review passed it.", action: { control: "approve", version: 2, label: "Approve v2 · create 2 tickets", confirm: "Click again to approve v2" } };
+  const draft = () => projectView({ overview: overview({ state: "draft", approvedVersion: null, ticketCount: 0, ticketCounts: {} }), board: [], next: approveStep });
+  const page = (slot: Slot) => slot.container.querySelector<HTMLElement>("[data-planner-page]")!;
+  const openPlanner = async (rpc: Partial<Handlers> = {}, view: ProjectView = projectView(), options: Pick<RenderSlotOptions<typeof rpcContract>, "sdk" | "sidebarThreads"> = {}) => {
+    const { slot } = await mountPage("csv", { project: () => view, plannerView: () => plannerViewOf(), specVersion: () => specVersionView(), ...rpc }, options);
+    fireEvent.click(await slot.findByRole("tab", { name: "Planner" }));
+    await waitFor(() => expect(slot.container.querySelector("[data-planner-page]")).not.toBeNull());
+    return slot;
   };
-
-  it("shows the versions, what the newest one changed, the summary strip and the raw spec under the planner's chat", async () => {
-    const { slot } = await mountDashboard();
-    const versions = slot.getByRole("group", { name: "Spec versions" });
-    expect(within(versions).getByRole("button", { name: "v1 superseded" }).getAttribute("aria-pressed")).toBe("false");
-    expect(within(versions).getByRole("button", { name: "v2 draft" }).getAttribute("aria-pressed")).toBe("true");
-    expect(dashboard(slot).textContent).toContain("v2 changes 1 ticket and 1 setting from v1");
-    const tiles = [...slot.container.querySelectorAll("[data-spec-tile]")].map((tile) => [tile.querySelector("dt")!.textContent, tile.querySelector("dd")!.textContent]);
-    expect(tiles).toEqual([
-      ["Tickets", "2"],
-      ["Waves", "2"],
-      ["Checks", "1"],
-      ["Own verify", "0/2"],
-      ["Review", "codex / gpt"],
-      ["Warnings", "0"],
-    ]);
-    expect([...within(dashboard(slot)).getAllByRole("tab")].map((tab) => tab.textContent)).toEqual(["Tickets", "Files", "Checks & review", "Project & limits"]);
-    expect(slot.container.querySelector("[data-spec-raw]")).toBeNull();
-    fireEvent.click(slot.getByRole("button", { name: "Read the raw spec" }));
-    expect(slot.container.querySelector("[data-spec-raw]")!.textContent).toContain('slug = "csv"');
-    expect(calls(slot, "specVersion")[0]!.input).toEqual({ slug: "csv" });
-    expect(slot.container.querySelector("[data-draft-card]")).not.toBeNull();
-  });
-
-  it("leaves the raw spec, the warnings and Approve to the dashboard and the bar, so each shows once", async () => {
-    const warnings = [draft().spec.summary.warnings[0]!];
-    const approve: NextStep = { stage: 1, tone: "normal", title: "Next: review draft v2.", text: "Approving creates 2 tickets on the board.", action: { control: "approve", version: 2, label: "Approve v2 · create 2 tickets", confirm: "Click again to approve v2" } };
-    const { slot } = await mountDashboard({ project: () => ({ ...draft(), next: approve }), specVersion: () => specVersionView({ warnings }) });
-    await waitFor(() => expect(slot.container.querySelector("[data-draft-card]")).not.toBeNull());
-    expect(slot.queryAllByText(/^Read the (raw )?spec$/)).toHaveLength(1);
-    expect(slot.queryAllByText(warnings[0]!)).toHaveLength(1);
-    expect(slot.container.querySelector("[data-spec-warnings]")!.textContent).toContain(warnings[0]);
-    expect(slot.getAllByRole("button", { name: /^Approve/ }).map((button) => button.textContent)).toEqual(["Approve v2 · create 2 tickets"]);
-  });
-
-  it("reads an older version from the switcher, says what each later version changed, and Back reads the newest again", async () => {
-    const versions = [
-      { version: 1, status: "superseded" as const },
-      { version: 2, status: "superseded" as const },
-      { version: 3, status: "draft" as const },
-    ];
-    const specVersion = ({ version }: { slug: string; version?: number }) =>
-      version === 1
-        ? specVersionView({ version: 1, status: "superseded", changes: null, versions })
-        : version === 2
-          ? specVersionView({ status: "superseded", changes: { changed: ["project.goal"], removed: ["csv-docs"] }, versions })
-          : specVersionView({ version: 3, changes: { changed: [], removed: ["csv-docs"] }, versions });
-    const { slot } = await mountDashboard({ specVersion });
-    fireEvent.click(slot.getByRole("button", { name: "v1 superseded" }));
-    await waitFor(() => expect(dashboard(slot).textContent).toContain("You are reading v1 (superseded)"));
-    expect(calls(slot, "specVersion").at(-1)!.input).toEqual({ slug: "csv", version: 1 });
-    expect(slot.getByRole("button", { name: "v1 superseded" }).getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(slot.getByRole("button", { name: "Back to v3" }));
-    await waitFor(() => expect(dashboard(slot).textContent).toContain("v3 removes csv-docs from v2."));
-    expect(calls(slot, "specVersion").at(-1)!.input).toEqual({ slug: "csv" });
-    fireEvent.click(slot.getByRole("button", { name: "v2 superseded" }));
-    await waitFor(() => expect(dashboard(slot).textContent).toContain("You are reading v2 (superseded)"));
-    expect(dashboard(slot).textContent).toContain("v2 changes 1 setting from v1, and removes csv-docs.");
-  });
-
-  const card = (slot: Slot, ref: string) => slot.container.querySelector<HTMLElement>(`[data-spec-card="${ref}"]`)!;
-  const target = (slot: Slot, path: string) => slot.container.querySelector<HTMLElement>(`[data-note-target="${path}"]`);
-  const inspector = (slot: Slot) => slot.container.querySelector<HTMLElement>("[data-spec-inspector]")!;
-  const waveList = (slot: Slot) => [...slot.container.querySelectorAll("[data-spec-wave]")].map((wave) => [wave.querySelector("h4")!.textContent, [...wave.querySelectorAll("[data-spec-card]")].map((entry) => entry.getAttribute("data-spec-card"))]);
-  const chain = () =>
-    specVersionView({}, (doc) => {
-      doc.ticket.push(
-        { ref: "csv-docs", title: "Export docs", body: "Document the export.", acceptance: ["WHEN the docs are read THE SYSTEM SHALL name every column"], scope: ["docs/export.md"], depends_on: ["csv-export"] },
-        { ref: "csv-icons", title: "Export icon", body: "Draw the icon.", acceptance: ["WHEN the admin page loads THE SYSTEM SHALL show the export icon"], scope: ["assets/export.svg"] },
-      );
+  const v2 = { version: 2, status: "draft" as const, createdAt: NOW - HOUR, tickets: 2, change: { added: [], removed: ["csv-docs"], changed: [], settings: 0, guardrails: 0 }, review: { state: "approved" as const, round: 1, findings: 0 } };
+  const revised = () =>
+    plannerViewOf({
+      steps: [
+        { kind: "started", at: NOW - 5 * HOUR, text: "Export orders as CSV" },
+        { kind: "turn", at: NOW - 4 * HOUR, text: "I proposed v1.", actions: [{ kind: "proposed", version: 1, tickets: 3, change: null }] },
+        { kind: "notes", at: NOW - 3 * HOUR, version: 1, notes: [{ version: 1, paths: ["ticket[csv-docs]"], body: "We do not need docs." }] },
+        { kind: "turn", at: NOW - 2 * HOUR, text: "I took out csv-docs.", actions: [{ kind: "proposed", version: 2, tickets: 2, change: v2.change }] },
+        { kind: "review", at: NOW - HOUR, version: 2, round: 1, state: "approved", summary: "Fits.", findings: [], reason: null, startedAt: NOW - 2 * HOUR, endedAt: NOW - HOUR },
+      ],
+      versions: [{ version: 1, status: "superseded", createdAt: NOW - 4 * HOUR, tickets: 3, change: null, review: null }, v2],
+      review: { kind: "approved", version: 2, round: 1, summary: "Fits." },
     });
 
-  it("lays the waves out top to bottom with what each ticket waits for, and marks a changed ticket and one with only the checks", async () => {
-    const { slot } = await mountDashboard();
-    expect(waveList(slot)).toEqual([
-      ["Wave 1 · starts right away", ["csv-model"]],
-      ["Wave 2 · after wave 1", ["csv-export"]],
-    ]);
-    expect(dashboard(slot).textContent).toContain("2 tickets in 2 waves. Up to 2 workers run at a time; a ticket starts when everything it waits for is done.");
-    expect(slot.container.querySelector("[data-edge]")).toBeNull();
-    expect(slot.container.querySelector("[data-spec-dashboard] [role=tabpanel] svg")).toBeNull();
-    expect(slot.container.querySelector("[data-spec-dashboard] [role=tabpanel] .overflow-x-auto")).toBeNull();
-    expect(card(slot, "csv-export").textContent).toContain("after csv-model");
-    expect(card(slot, "csv-model").textContent).not.toContain("after");
-    expect(card(slot, "csv-export").textContent).toContain("checks only");
-    expect(card(slot, "csv-export").textContent).toContain("changed");
-    expect(card(slot, "csv-model").textContent).not.toContain("changed");
-    expect(card(slot, "csv-model").textContent).not.toContain("overlap");
-    expect(dashboard(slot).textContent).toContain("No warnings in v2.");
+  it("hands a ready draft over with Loom's review, what changed and the comments it answers, and opens the Spec tab on it", async () => {
+    const slot = await openPlanner({ plannerView: () => revised() }, { ...draft(), spec: { ...draft().spec, version: 2 } });
+    const card = page(slot).querySelector<HTMLElement>('[data-version-card="2"]')!;
+    expect(card.textContent).toContain("Draft v2 is ready for your review");
+    expect(card.textContent).toContain("Passed Loom's spec review in round 1.");
+    expect(card.textContent).toContain("Since v1: 2 tickets, −1.");
+    expect(card.textContent).toContain("You sent 1 comment on v1; the Spec tab shows what v2 did with each.");
+    expect(card.textContent).toContain("approve it with the button in the bar above");
+    expect(within(card).queryByRole("button", { name: /Approve/ })).toBeNull();
+    expect(page(slot).querySelector("[data-needs-you] h2")!.textContent).toBe("Needs you1");
+    expect(page(slot).querySelector('[data-planning-step="current"]')!.textContent).toContain("Your review");
+    expect(page(slot).querySelector("[data-planner-status]")!.textContent).toBe("Idle · v2 is with you");
 
-    const { slot: own } = await mountDashboard({ specVersion: () => specVersionView({}, (doc) => (doc.ticket[0].verify = ["npm run lint"])) });
-    expect(card(own, "csv-model").textContent).toContain("own verify");
-    const ownVerify = [...own.container.querySelectorAll("[data-spec-tile]")].find((tile) => tile.querySelector("dt")!.textContent === "Own verify")!;
-    expect(ownVerify.textContent).toContain("1 relies on the checks only");
+    fireEvent.click(within(card).getByRole("button", { name: "Review v2 on the Spec tab" }));
+    await waitFor(() => expect(slot.container.querySelector("[data-spec-page]")).not.toBeNull());
+    expect(slot.getByRole("tab", { name: "Spec" }).getAttribute("aria-selected")).toBe("true");
+    expect(calls(slot, "specVersion").at(-1)!.input).toEqual({ slug: "csv", version: 2 });
   });
 
-  it("highlights what a selected ticket waits for and unblocks, all the way, and a second click or Show all clears it", async () => {
-    const { slot } = await mountDashboard({ specVersion: chain });
-    expect(waveList(slot)).toEqual([
-      ["Wave 1 · starts right away", ["csv-model", "csv-icons"]],
-      ["Wave 2 · after wave 1", ["csv-export"]],
-      ["Wave 3 · after wave 2", ["csv-docs"]],
-    ]);
-    expect(dashboard(slot).textContent).toContain("4 tickets in 3 waves.");
-    expect(card(slot, "csv-docs").textContent).toContain("after csv-export");
-    const marks = () => Object.fromEntries([...slot.container.querySelectorAll("[data-spec-card]")].map((entry) => [entry.getAttribute("data-spec-card"), entry.getAttribute("data-chain") ?? (entry.hasAttribute("data-dimmed") ? "dimmed" : "")]));
-    const focus = () => slot.container.querySelector("[data-spec-focus]")?.textContent ?? null;
-    expect(marks()).toEqual({ "csv-model": "", "csv-icons": "", "csv-export": "", "csv-docs": "" });
-    expect(focus()).toBeNull();
-
-    fireEvent.click(card(slot, "csv-export"));
-    expect(marks()).toEqual({ "csv-model": "up", "csv-icons": "dimmed", "csv-export": "self", "csv-docs": "down" });
-    expect(focus()).toContain("csv-export waits for csv-model, and unblocks csv-docs.");
-    expect(inspector(slot).textContent).toContain("Export endpoint");
-
-    fireEvent.click(card(slot, "csv-docs"));
-    expect(marks()).toEqual({ "csv-model": "up", "csv-icons": "dimmed", "csv-export": "up", "csv-docs": "self" });
-    expect(focus()).toContain("csv-docs waits for csv-model and csv-export, and unblocks nothing.");
-
-    fireEvent.click(card(slot, "csv-docs"));
-    expect(marks()).toEqual({ "csv-model": "", "csv-icons": "", "csv-export": "", "csv-docs": "" });
-    expect(focus()).toBeNull();
-    expect(card(slot, "csv-docs").getAttribute("aria-pressed")).toBe("true");
-    expect(inspector(slot).textContent).toContain("Export docs");
-
-    fireEvent.click(card(slot, "csv-model"));
-    expect(focus()).toContain("csv-model starts right away and unblocks csv-export and csv-docs.");
-    expect(marks()).toEqual({ "csv-model": "self", "csv-icons": "dimmed", "csv-export": "down", "csv-docs": "down" });
-    fireEvent.click(slot.getByRole("button", { name: "Show all" }));
-    expect(focus()).toBeNull();
-    expect(slot.container.querySelector("[data-spec-card][data-dimmed]")).toBeNull();
-  });
-
-  it("marks both tickets of an overlap and lists the warnings", async () => {
-    const warnings = ["ticket[0] and ticket[1] have overlapping scope and no dependency between them, so they will run one at a time."];
-    const { slot } = await mountDashboard({ specVersion: () => specVersionView({ overlaps: [{ a: "csv-model", b: "csv-export", paths: ["src/model/**"] }], warnings }) });
-    expect(card(slot, "csv-model").textContent).toContain("overlap");
-    expect(card(slot, "csv-export").textContent).toContain("overlap");
-    expect(slot.container.querySelector("[data-spec-warnings]")!.textContent).toContain(warnings[0]);
-  });
-
-  it("inspects the first ticket, and selects another from the inspector", async () => {
-    const { slot } = await mountDashboard();
-    expect(inspector(slot).textContent).toContain("Order rows");
-    expect(card(slot, "csv-model").getAttribute("aria-pressed")).toBe("true");
-    expect(target(slot, "ticket[csv-model].depends_on")!.textContent).toContain("Waits for");
-    expect(target(slot, "ticket[csv-model].depends_on")!.textContent).toContain("none");
-    expect(inspector(slot).querySelector("[data-spec-unblocks]")!.textContent).toContain("csv-export");
-
-    const main = slot.container.querySelector<HTMLElement>("[data-spec-main]")!;
-    expect(main.contains(inspector(slot))).toBe(true);
-    expect(main.contains(pane(slot))).toBe(true);
-    expect(pane(slot).compareDocumentPosition(inspector(slot)) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    const aside = slot.container.querySelector<HTMLElement>("[data-spec-dashboard] aside")!;
-    expect(aside.contains(inspector(slot))).toBe(false);
-    expect(aside.querySelector("[data-notes-tray]")).not.toBeNull();
-    expect(within(target(slot, "ticket[csv-model].body")!).getByTestId("bb-markdown").textContent).toBe("Build the row mapper.");
-
-    fireEvent.click(within(inspector(slot)).getByRole("button", { name: "csv-export" }));
-    expect(card(slot, "csv-export").getAttribute("aria-pressed")).toBe("true");
-    expect(card(slot, "csv-model").getAttribute("aria-pressed")).toBe("false");
-    expect(inspector(slot).textContent).toContain("Export endpoint");
-    const criteria = [...inspector(slot).querySelectorAll('[data-note-target^="ticket[csv-export].acceptance["]')].map((entry) => entry.textContent!.slice(0, 3));
-    expect(criteria).toEqual(["1. ", "2. "]);
-    expect(target(slot, "ticket[csv-export].scope[0]")!.textContent).toContain("src/export/**");
-    expect(target(slot, "ticket[csv-export].verify")!.textContent).toContain("No command of its own; only npm test runs.");
-    expect(target(slot, "ticket[csv-export].acceptance[1]")!.hasAttribute("data-changed")).toBe(true);
-    expect(target(slot, "ticket[csv-export].acceptance[0]")!.hasAttribute("data-changed")).toBe(false);
-    fireEvent.click(within(target(slot, "ticket[csv-export].depends_on")!).getByRole("button", { name: "csv-model" }));
-    expect(card(slot, "csv-model").getAttribute("aria-pressed")).toBe("true");
-  });
-
-  it("shows the first part of a long brief, with Show the whole brief and Show less", async () => {
-    const parts = ["First part.", "Second part.", "Third part."].map((lead) => `${lead} ${"Keep the rows in order. ".repeat(20)}`.trim());
-    const whole = parts.join("\n\n");
-    const { slot } = await mountDashboard({ specVersion: () => specVersionView({}, (doc) => (doc.ticket[0].body = whole)) });
-    const brief = () => within(inspector(slot)).getByTestId("bb-markdown").textContent!;
-    expect(whole.length).toBeGreaterThan(1200);
-    expect(brief()).toBe(parts.slice(0, 2).join("\n\n"));
-    fireEvent.click(within(inspector(slot)).getByRole("button", { name: "Show the whole brief" }));
-    expect(brief()).toBe(whole);
-    fireEvent.click(within(inspector(slot)).getByRole("button", { name: "Show less" }));
-    expect(brief()).not.toContain("Third part.");
-    fireEvent.click(card(slot, "csv-export"));
-    expect(brief()).toBe("Serve the file.");
-    expect(within(inspector(slot)).queryByRole("button", { name: "Show the whole brief" })).toBeNull();
-  });
-
-  it("wraps long URLs and paths in the brief and in every code chip, so nothing runs past the ticket card", async () => {
-    const long = `https://example.com/${"orders/".repeat(30)}export.csv`;
-    const { slot } = await mountDashboard({
-      specVersion: () =>
-        specVersionView({}, (doc) => {
-          doc.ticket[0].body = `Read ${long} first.\n\n\`\`\`\n${long}\n\`\`\``;
-          doc.ticket[0].scope = [`src/${"very-long-folder-name/".repeat(6)}**`];
-          doc.ticket[0].verify = [`npm test -- ${long}`];
-        }),
+  it("tells the story in chapters, one per draft and one for the running project, newest first, with filters", async () => {
+    const view = plannerViewOf({
+      projectState: "running",
+      approvedVersion: 2,
+      triageRounds: 1,
+      steps: [
+        ...revised().steps,
+        { kind: "control", at: NOW - 50 * 60_000, action: "approve", version: 2, pending: false, skipReview: false },
+        {
+          kind: "triage",
+          at: NOW - 30 * 60_000,
+          round: 1,
+          blocked: [{ key: "CSV-1", title: "Order rows", reason: "The check crashes without a locale." }],
+          response: {
+            kind: "turn",
+            at: NOW - 25 * 60_000,
+            text: "I fixed the check in v3 and requeued CSV-1.",
+            actions: [
+              { kind: "post", key: "CSV-1", postId: 12, text: "Try again with the fixed check.", reply: true },
+              { kind: "requeue", key: "CSV-1" },
+              { kind: "ask", why: "", steps: [{ action: "other", text: "Watch CSV-1 in the next hour." }] },
+            ],
+          },
+        },
+      ],
+      versions: [{ version: 1, status: "superseded", createdAt: NOW - 4 * HOUR, tickets: 3, change: null, review: null }, { ...v2, status: "approved" }],
+      review: { kind: "none" },
     });
-    const brief = within(inspector(slot)).getByTestId("bb-markdown");
-    expect(brief.className).toContain("[overflow-wrap:anywhere]");
-    expect(brief.className).toContain("[&_pre]:whitespace-pre-wrap");
-    const codes = [...slot.container.querySelectorAll("[data-spec-dashboard] code")];
-    expect(codes.length).toBeGreaterThan(1);
-    for (const code of codes) expect(code.className).toContain("[overflow-wrap:anywhere]");
+    const slot = await openPlanner({ plannerView: () => view, ticket: () => ticketDetail() });
+    const story = () => page(slot).querySelector<HTMLElement>("[data-planner-story]")!;
+    const chapters = () => [...story().querySelectorAll("[data-chapter]")].map((chapter) => chapter.getAttribute("data-chapter"));
+    expect(chapters()).toEqual(["Running on v2", "Draft v2", "Draft v1"]);
+    const running = story().querySelector<HTMLElement>('[data-chapter="Running on v2"]')!;
+    expect(running.textContent).toContain("Triage round 1: 1 ticket blocked");
+    expect(running.textContent).toContain("The check crashes without a locale.");
+    expect(running.textContent).toContain("Replied on CSV-1 (#12): “Try again with the fixed check.”");
+    expect(running.textContent).toContain("Requeued CSV-1.");
+    expect(running.textContent).toContain("Asked you to: Watch CSV-1 in the next hour.");
+    expect(running.textContent).toContain("You approved v2");
+    const draftOne = () => story().querySelector<HTMLElement>('[data-chapter="Draft v1"]')!;
+    expect(draftOne().textContent).toContain("3 tickets.");
+    expect(draftOne().querySelector("[data-story-step]")).toBeNull();
+    fireEvent.click(within(draftOne()).getByRole("button", { expanded: false }));
+    expect(draftOne().textContent).toContain("You started planning");
+    expect(draftOne().textContent).toContain("Proposed v1");
+
+    fireEvent.click(within(story()).getByRole("button", { name: "Triage" }));
+    expect(chapters()).toEqual(["Running on v2"]);
+    expect(story().querySelector('[data-chapter="Running on v2"] button')!.textContent).toContain("1 of 2 steps");
+    fireEvent.click(within(story()).getByRole("button", { name: "Everything" }));
+    fireEvent.click(within(story()).getByRole("button", { name: "Oldest first" }));
+    expect(chapters()).toEqual(["Draft v1", "Draft v2", "Running on v2"]);
+
+    fireEvent.click(within(running).getAllByRole("button", { name: "CSV-1" })[0]!);
+    expect(slot.inspection.navigateCalls).toContainEqual(pushed("csv/CSV-1"));
   });
 
-  const pane = (slot: Slot) => slot.container.querySelector<HTMLElement>("[data-spec-dashboard] [role=tabpanel]")!;
-  const inPane = (slot: Slot, path: string) => pane(slot).querySelector<HTMLElement>(`[data-note-target="${path}"]`);
-  const openTab = (slot: Slot, name: string) => fireEvent.click(within(dashboard(slot)).getByRole("tab", { name }));
-  const guarded = () =>
-    specVersionView({ overlaps: [{ a: "csv-model", b: "csv-export", paths: ["src/model/**", "src/model/export.ts"] }] }, (doc) => {
-      doc.scope = { protected: ["package-lock.json"] };
-      doc.ticket[1].scope = ["src/export/**", "src/model/export.ts"];
-    });
-
-  const sharing = () =>
-    specVersionView({ overlaps: [{ a: "csv-model", b: "csv-docs", paths: ["src/model/**", "src/model/README.md"] }], changes: { changed: ["ticket[csv-export].scope[1]"], removed: [] } }, (doc) => {
-      doc.scope = { protected: ["package-lock.json", ".github/**"] };
-      doc.ticket[0].scope = ["src/model/**", "src/shared/types.ts"];
-      doc.ticket[1].scope = ["src/export/**", "src/shared/types.ts", "package.json"];
-      doc.ticket.push({ ref: "csv-docs", title: "Export docs", body: "Document the export.", acceptance: ["WHEN the docs are read THE SYSTEM SHALL name every column"], scope: ["src/model/README.md", "docs/export.md"] });
-    });
-  const folders = (slot: Slot) => [...pane(slot).querySelectorAll("[data-folder]")].map((folder) => [folder.getAttribute("data-folder"), [...folder.querySelectorAll("[data-file]")].map((row) => row.getAttribute("data-file"))]);
-  const chips = (row: Element) => [...row.querySelectorAll("[data-ticket-chip]")].map((chip) => chip.textContent);
-
-  it("lists the shared files first, with their tickets and whether they run in order, and needs no sideways scrolling", async () => {
-    const { slot } = await mountDashboard({ specVersion: sharing });
-    openTab(slot, "Files");
-    expect(pane(slot).querySelector("[data-scope-map], table, .overflow-x-auto, .whitespace-nowrap")).toBeNull();
-    const shared = [...pane(slot).querySelectorAll("[data-shared]")].map((row) => {
-      const order = row.querySelector("[data-order]")!;
-      return [row.getAttribute("data-shared"), chips(row), order.textContent, order.hasAttribute("data-unordered")];
-    });
-    expect(shared).toEqual([
-      ["src/model/**", ["csv-model", "csv-docs"], "no order between them, so they run one at a time", true],
-      ["src/model/README.md", ["csv-model", "csv-docs"], "no order between them, so they run one at a time", true],
-      ["src/shared/types.ts", ["csv-model", "csv-export"], "in order: csv-model, then csv-export", false],
-    ]);
-    const types = inPane(slot, "ticket[csv-model].scope[1]")!;
-    expect(types.closest("[data-shared]")!.getAttribute("data-shared")).toBe("src/shared/types.ts");
-    expect(types.hasAttribute("data-changed")).toBe(true);
-    expect(inPane(slot, "ticket[csv-model].scope[0]")!.closest("[data-shared]")!.getAttribute("data-shared")).toBe("src/model/**");
-    fireEvent.click(slot.getByRole("button", { name: "Add a note on shared path src/shared/types.ts" }));
-    expect(dashboard(slot).textContent).toContain("Note on shared path src/shared/types.ts");
-
-    fireEvent.click(within(pane(slot).querySelector('[data-shared="src/shared/types.ts"]')!).getByRole("button", { name: "csv-export" }));
-    expect(inspector(slot).textContent).toContain("Export endpoint");
-
-    const mixed = (extra: string[]) =>
-      specVersionView({}, (doc) => {
-        doc.ticket[0].scope = ["src/shared/types.ts"];
-        doc.ticket[1].scope = ["src/shared/types.ts"];
-        for (const ref of extra) doc.ticket.push({ ref, title: ref, body: "Use the shared types.", acceptance: ["WHEN the types load THE SYSTEM SHALL compile"], scope: ["src/shared/types.ts"] });
+  it("lists the planner's asks with a button for each step, takes them in order, and sets them aside", async () => {
+    const asked = (approved: boolean): PlannerView =>
+      plannerViewOf({
+        projectState: "running",
+        approvedVersion: approved ? 2 : 1,
+        pendingVersion: approved ? null : 2,
+        review: approved ? { kind: "none" } : { kind: "approved", version: 2, round: 1, summary: "Holds." },
+        ask: {
+          id: 7,
+          at: NOW - 10 * 60_000,
+          why: "Both tickets fail the same check.",
+          open: true,
+          steps: [
+            { action: "approve", version: 2, text: "Approve v2: it runs the check with a UTF-8 locale.", done: approved },
+            { action: "requeue", key: "CSV-1", text: "Then requeue CSV-1.", done: false },
+            { action: "other", text: "Check the alert in Observe.", done: false },
+          ],
+        },
       });
-    const orderOf = async (extra: string[]) => {
-      const { slot: one } = await mountDashboard({ specVersion: () => mixed(extra) });
-      openTab(one, "Files");
-      return one.container.querySelector('[data-shared="src/shared/types.ts"] [data-order]')!.textContent;
-    };
-    expect(await orderOf(["csv-docs"])).toBe("no order between csv-model and csv-docs, or csv-docs and csv-export, so those run one at a time");
-    expect(await orderOf(["csv-docs", "csv-icons"])).toBe("5 pairs have no order between them, such as csv-model and csv-docs, so those run one at a time");
-
-    const { slot: alone } = await mountDashboard();
-    openTab(alone, "Files");
-    expect(alone.container.querySelector("[data-shared]")).toBeNull();
-    expect(pane(alone).textContent).toContain("No two tickets share a path, so none of them waits for another to finish with a file.");
-  });
-
-  it("groups every path by folder with its tickets, filters to the shared ones and highlights a selected ticket's rows", async () => {
-    const { slot } = await mountDashboard({ specVersion: sharing });
-    openTab(slot, "Files");
-    expect(folders(slot)).toEqual([
-      ["", ["package.json"]],
-      ["docs", ["docs/export.md"]],
-      ["src/export", ["src/export/**"]],
-      ["src/model", ["src/model/**", "src/model/README.md"]],
-      ["src/shared", ["src/shared/types.ts"]],
-    ]);
-    const folder = (path: string) => pane(slot).querySelector<HTMLElement>(`[data-folder="${path}"]`)!;
-    expect(folder("src/model").querySelector("h5")!.textContent).toBe("src/model · 2");
-    expect(folder("").querySelector("h5")!.textContent).toBe("Top level · 1");
-    const row = (path: string) => pane(slot).querySelector<HTMLElement>(`[data-file="${path}"]`)!;
-    expect(row("src/shared/types.ts").textContent).toContain("types.ts");
-    expect(chips(row("src/shared/types.ts"))).toEqual(["csv-model", "csv-export"]);
-    expect(chips(row("src/model/README.md"))).toEqual(["csv-docs"]);
-    expect(inPane(slot, "ticket[csv-export].scope")!.textContent).toContain("3 paths");
-
-    const filter = within(pane(slot)).getByRole("group", { name: "Which files" });
-    expect(within(filter).getByRole("button", { name: "All files" }).getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(within(filter).getByRole("button", { name: "Shared only" }));
-    expect(within(filter).getByRole("button", { name: "Shared only" }).getAttribute("aria-pressed")).toBe("true");
-    expect(folders(slot)).toEqual([
-      ["src/model", ["src/model/**", "src/model/README.md"]],
-      ["src/shared", ["src/shared/types.ts"]],
-    ]);
-    fireEvent.click(within(filter).getByRole("button", { name: "All files" }));
-
-    const highlighted = () => [...pane(slot).querySelectorAll("[data-file][data-highlighted]")].map((entry) => entry.getAttribute("data-file"));
-    expect(highlighted()).toEqual([]);
-    fireEvent.click(within(row("docs/export.md")).getByRole("button", { name: "csv-docs" }));
-    expect(highlighted()).toEqual(["docs/export.md", "src/model/README.md"]);
-    expect(inspector(slot).textContent).toContain("Export docs");
-    fireEvent.click(slot.getByRole("button", { name: "Show all" }));
-    expect(highlighted()).toEqual([]);
-
-    openTab(slot, "Tickets");
-    fireEvent.click(card(slot, "csv-export"));
-    openTab(slot, "Files");
-    expect(highlighted()).toEqual(["package.json", "src/export/**", "src/shared/types.ts"]);
-  });
-
-  it("shows the protected paths with the enforce setting, each with its note", async () => {
-    const { slot } = await mountDashboard({ specVersion: sharing });
-    openTab(slot, "Files");
-    expect(inPane(slot, "scope.enforce")!.textContent).toContain("enforce: warn");
-    expect(inPane(slot, "scope.protected[0]")!.textContent).toContain("package-lock.json");
-    expect(inPane(slot, "scope.protected[1]")!.textContent).toContain(".github/**");
-    expect(inPane(slot, "ticket[csv-model].scope")).not.toBeNull();
-    expect(inPane(slot, "ticket[csv-docs].scope")).not.toBeNull();
-
-    const { slot: open } = await mountDashboard({ specVersion: guarded });
-    openTab(open, "Files");
-    expect(inPane(open, "scope.protected[0]")!.textContent).toContain("package-lock.json");
-  });
-
-  it("lists the checks, each ticket's own verify commands and the review rules", async () => {
-    const { slot } = await mountDashboard();
-    openTab(slot, "Checks & review");
-    expect(inPane(slot, "checks.commands[0]")!.textContent).toContain("npm test");
-    expect(inPane(slot, "checks.timeout_minutes")!.textContent).toContain("15 minutes");
-    expect(inPane(slot, "checks.after_merge[0]")).toBeNull();
-    expect(inPane(slot, "ticket[csv-model].verify")!.textContent).toContain("none: only the project checks run");
-    expect(inPane(slot, "ticket[csv-export].verify")!.textContent).toContain("none: only the project checks run");
-    expect(inPane(slot, "review.approvals")!.textContent).toContain("1 approval needed, up to 3 rounds, reviewer codex / gpt");
-    expect(inPane(slot, "checks.commands[0]")!.hasAttribute("data-changed")).toBe(true);
-  });
-
-  it("shows the goal, the merge plan, the agents and the limits", async () => {
-    let view = specVersionView();
-    const { slot } = await mountDashboard({ specVersion: () => view });
-    openTab(slot, "Project & limits");
-    expect(inPane(slot, "project.goal")!.textContent).toContain("Let people export their orders as a CSV file from the admin page.");
-    expect(inPane(slot, "merge")!.textContent).toContain("Approved work merges into loom/csv from main; you land it as one pull request with bb loom land, or straight onto main with bb loom land --direct.");
-    expect(inPane(slot, "agents.worker")!.textContent).toContain("Workers: claude / sonnet, up to 2 at a time, 120 minutes per ticket");
-    expect(inPane(slot, "agents.reviewer")!.textContent).toContain("Reviewers: codex / gpt, up to 2 at a time");
-    expect(inPane(slot, "budget.max_attempts")!.textContent).toContain("A ticket blocks after 3 failed attempts or 5 failed check runs");
-    expect(inPane(slot, "budget.max_tokens")).toBeNull();
-    expect(inPane(slot, "budget.deadline")).toBeNull();
-
-    view = specVersionView({}, (doc) => {
-      doc.merge = { strategy: "pr" };
-      doc.budget = { max_tokens: 4_000_000, deadline: "2026-11-15" };
+    let current = asked(false);
+    const running = projectView({ overview: overview({ pendingVersion: 2 }), board: [card({ key: "CSV-1", state: "blocked" })], openAsks: 3 });
+    const control = vi.fn(() => {
+      current = asked(true);
+      return running;
     });
+    const ticketAction = vi.fn(() => ticketDetail());
+    const dismissAsk = vi.fn(() => plannerViewOf({ ask: null }));
+    const slot = await openPlanner({ plannerView: () => current, control, ticketAction, dismissAsk }, running);
+    expect(slot.container.querySelector('[data-tab-badge="planner"]')!.textContent).toBe("3");
+    const asks = () => page(slot).querySelector<HTMLElement>("[data-planner-asks]")!;
+    expect(asks().textContent).toContain("Both tickets fail the same check.");
+    expect([...asks().querySelectorAll("[data-ask-step]")].map((step) => step.getAttribute("data-ask-step"))).toEqual(["approve", "requeue", "other"]);
+    const requeue = () => within(asks().querySelector<HTMLElement>('[data-ask-step="requeue"]')!).getByRole("button", { name: /Requeue/ }) as HTMLButtonElement;
+    expect(requeue().disabled).toBe(true);
+    expect(requeue().title).toBe("Approve v2 first");
+    expect(page(slot).querySelector("[data-version-card]")).toBeNull();
+
+    fireEvent.click(within(asks()).getByRole("button", { name: "Approve v2" }));
+    fireEvent.click(within(asks()).getByRole("button", { name: "Click again to approve v2" }));
+    await waitFor(() => expect(control).toHaveBeenCalledWith({ slug: "csv", action: "approve", version: 2, confirm: true }));
     await slot.emitRealtime("loom:changed", { slug: "csv" });
-    await waitFor(() => expect(inPane(slot, "merge")!.textContent).toContain("Each approved ticket opens its own pull request against main."));
-    expect(inPane(slot, "budget.max_tokens")!.textContent).toContain("4,000,000");
-    expect(inPane(slot, "budget.deadline")!.textContent).toContain("2026-11-15");
+    await waitFor(() => expect(asks().querySelector('[data-ask-step="approve"]')!.hasAttribute("data-done")).toBe(true));
+    expect(requeue().disabled).toBe(false);
+    fireEvent.click(requeue());
+    fireEvent.click(within(asks()).getByRole("button", { name: "Click again to requeue CSV-1" }));
+    await waitFor(() => expect(ticketAction).toHaveBeenCalledWith({ key: "CSV-1", action: "requeue", note: "Requeued as the planner asked: Then requeue CSV-1.", confirm: true }));
+
+    fireEvent.click(within(asks()).getByRole("button", { name: "Set aside" }));
+    await waitFor(() => expect(dismissAsk).toHaveBeenCalledWith({ slug: "csv", ask: 7, confirm: true }));
+    await waitFor(() => expect(page(slot).querySelector("[data-planner-asks]")).toBeNull());
   });
 
-  it("brings the selected ticket's card into view when a ticket card selects it, not when the second click clears it", async () => {
-    const { slot } = await mountDashboard();
-    fireEvent.click(card(slot, "csv-export"));
-    expect(scroll).toHaveBeenCalledTimes(1);
-    expect(scroll).toHaveBeenCalledWith({ block: "nearest", behavior: "smooth" });
-    expect(scroll.mock.contexts[0]).toBe(inspector(slot).parentElement);
-    fireEvent.click(card(slot, "csv-export"));
-    expect(scroll).toHaveBeenCalledTimes(1);
-    fireEvent.click(card(slot, "csv-model"));
-    expect(scroll).toHaveBeenCalledTimes(2);
+  it("sends the human's message to the planner and shows it in the story", async () => {
+    const messagePlanner = vi.fn(() => plannerViewOf({ steps: [...plannerViewOf().steps, { kind: "message", at: NOW, text: "Keep it to one ticket." }] }));
+    const slot = await openPlanner({ messagePlanner }, { ...draft(), spec: { ...draft().spec, version: 1 } });
+    const box = within(page(slot).querySelector<HTMLElement>("[data-message-planner]")!);
+    expect((box.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(box.getByRole("textbox", { name: "Message to the planner" }), { target: { value: "  Keep it to one ticket. " } });
+    fireEvent.click(box.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(messagePlanner).toHaveBeenCalledWith({ threadId: "thr_plan", text: "Keep it to one ticket.", confirm: true }));
+    expect(await box.findByRole("status")).toBeTruthy();
+    expect(page(slot).querySelector("[data-planner-story]")!.textContent).toContain("You wrote to the planner");
   });
 
-  describe("notes", () => {
-    beforeEach(() => localStorage.clear());
-    const tray = (slot: Slot) => slot.container.querySelector<HTMLElement>("[data-notes-tray]")!;
+  it("marks the Planner tab while the planner waits on you, and says what a working planner is on", async () => {
+    const waiting = await openPlanner({}, draft(), { sidebarThreads: sidebar("idle", true) });
+    expect(waiting.container.querySelector('[data-tab-badge="planner"]')!.textContent).toBe("?");
+    expect(page(waiting).querySelector("[data-planner-status]")!.textContent).toBe("Waiting on you");
+    waiting.lifecycle.unmount();
 
-    it("takes a note on a whole ticket from its card, and says where the note buttons are", async () => {
-      const { slot } = await mountDashboard();
-      expect(tray(slot).textContent).toContain('Press "+ note" on a ticket card, or on any line of the selected ticket and the other tabs.');
-      const button = slot.getByRole("button", { name: "Add a note on ticket csv-model" });
-      expect(button.className).toContain("[@media(hover:none)]:opacity-100");
-      expect(button.className).not.toContain("opacity-0");
-      expect(slot.container.querySelector<HTMLElement>("[data-note-target] button")!.className).toContain("[@media(hover:none)]:opacity-100");
-      fireEvent.click(button);
-      expect(scroll).not.toHaveBeenCalled();
-      expect(card(slot, "csv-model").getAttribute("aria-pressed")).toBe("true");
-      expect(dashboard(slot).textContent).toContain("Note on csv-model (whole ticket)");
-      fireEvent.change(slot.getByRole("textbox", { name: "Note text" }), { target: { value: "Split the model from the migration." } });
-      fireEvent.click(slot.getByRole("button", { name: "Add note" }));
-      expect(JSON.parse(localStorage.getItem("loom.notes.csv")!)).toEqual([{ version: 2, paths: ["ticket[csv-model]"], label: "csv-model (whole ticket)", body: "Split the model from the migration." }]);
-      expect(card(slot, "csv-model").textContent).toContain("1 note");
-      expect(slot.container.querySelector("[data-notes-column]")!.className).toContain("lg:sticky");
-    });
-    const note = { version: 2, paths: ["ticket[csv-export].acceptance[1]"], body: "Say what the header row holds." };
-    const stored = { ...note, label: "csv-export › criterion 2" };
+    const notes = plannerViewOf({ steps: [...plannerViewOf().steps, { kind: "notes", at: NOW - 60_000, version: 1, notes: [{ version: 1, paths: ["ticket[csv-model]"], body: "Name the rows." }] }] });
+    const working = await openPlanner({ plannerView: () => notes }, draft(), { sidebarThreads: sidebar("active") });
+    expect(working.container.querySelector('[data-tab-badge="planner"]')).toBeNull();
+    expect(page(working).querySelector("[data-planner-status]")!.textContent).toBe("Working");
+    expect(page(working).querySelector("[data-planner-strip]")!.textContent).toContain("on your comment on v1");
+    expect(page(working).querySelector("[data-nothing-needed]")!.textContent).toContain("The planner is working on your comment on v1.");
+    expect(page(working).querySelector("[data-planner-story]")!.textContent).toContain("Working on your comment on v1");
+  });
+});
 
-    it("collects a note on one part, keeps it across a remount, previews the message and removes it", async () => {
-      const { slot } = await mountDashboard();
-      expect(tray(slot).textContent).toContain("0 to send");
-      fireEvent.click(within(inspector(slot)).getByRole("button", { name: "csv-export" }));
-      fireEvent.click(slot.getByRole("button", { name: "Add a note on csv-export › criterion 2" }));
-      expect(dashboard(slot).textContent).toContain("Note on csv-export › criterion 2");
-      expect(slot.getByRole("button", { name: "Add note" }).hasAttribute("disabled")).toBe(true);
-      fireEvent.change(slot.getByRole("textbox", { name: "Note text" }), { target: { value: "  Say what the header row holds. " } });
-      fireEvent.click(slot.getByRole("button", { name: "Add note" }));
-      expect(slot.queryByRole("textbox", { name: "Note text" })).toBeNull();
-      expect(tray(slot).textContent).toContain("1 to send");
-      expect(tray(slot).textContent).toContain("csv-export › criterion 2");
-      expect(JSON.parse(localStorage.getItem("loom.notes.csv")!)).toEqual([stored]);
-      expect(card(slot, "csv-export").textContent).toContain("1 note");
-      expect(target(slot, "ticket[csv-export].acceptance[1]")!.hasAttribute("data-noted")).toBe(true);
-      fireEvent.click(slot.getByRole("button", { name: "Preview message" }));
-      expect(slot.container.querySelector("[data-notes-preview]")!.textContent).toBe(notesMessage({ slug: "csv", version: 2, status: "draft", notes: [note] }));
+describe("planner page states", () => {
+  const sidebar = (status: string) => ({ threads: [{ id: "thr_plan", status, hasPendingInteraction: false } as unknown as PluginSidebarThread] });
+  const draft = () => projectView({ overview: overview({ state: "draft", approvedVersion: null, ticketCount: 0, ticketCounts: {} }), board: [], next: null });
+  const open = async (view: PlannerView, options: Pick<RenderSlotOptions<typeof rpcContract>, "sdk" | "sidebarThreads"> = {}) => {
+    const { slot } = await mountPage("csv", { project: () => draft(), plannerView: () => view, specVersion: () => specVersionView() }, options);
+    fireEvent.click(await slot.findByRole("tab", { name: "Planner" }));
+    await waitFor(() => expect(slot.container.querySelector("[data-planner-page]")).not.toBeNull());
+    return slot;
+  };
+  afterEach(() => vi.unstubAllGlobals());
 
-      slot.lifecycle.unmount();
-      const again = await mountDashboard();
-      expect(tray(again.slot).textContent).toContain("1 to send");
-      fireEvent.click(again.slot.getByRole("button", { name: "Remove the note on csv-export › criterion 2" }));
-      expect(tray(again.slot).textContent).toContain("0 to send");
-      expect(localStorage.getItem("loom.notes.csv")).toBeNull();
-    });
-
-    it("sends the notes to the planner and empties the tray, and keeps them when the send is refused", async () => {
-      localStorage.setItem("loom.notes.csv", JSON.stringify([stored]));
-      let refuse = true;
-      const sendNotes = () => {
-        if (refuse) throw new Error("Project csv has no planner thread to send notes to.");
-        return specVersionView({ notes: [{ ...note, sentAt: NOW, answeredIn: null, changed: false }] });
-      };
-      const { slot } = await mountDashboard({ sendNotes });
-      fireEvent.click(slot.getByRole("button", { name: "Send 1 note to the planner" }));
-      expect((await within(tray(slot)).findByRole("alert")).textContent).toContain("no planner thread");
-      expect(tray(slot).textContent).toContain("1 to send");
-      expect(localStorage.getItem("loom.notes.csv")).not.toBeNull();
-
-      refuse = false;
-      fireEvent.click(slot.getByRole("button", { name: "Send 1 note to the planner" }));
-      await waitFor(() => expect(tray(slot).textContent).toContain("0 to send"));
-      expect(calls(slot, "sendNotes").at(-1)!.input).toEqual({ slug: "csv", notes: [note], confirm: true });
-      expect(localStorage.getItem("loom.notes.csv")).toBeNull();
-      expect(tray(slot).querySelector("[data-sent-note]")!.textContent).toContain("Waiting for the planner's next version");
-    });
-
-    it("says what the planner's next version did with each sent note", async () => {
-      const sent = (over: Partial<SentNote>): SentNote => ({ version: 2, paths: ["project.goal"], body: "Shorter.", sentAt: NOW, answeredIn: null, changed: false, ...over });
-      const view = specVersionView({ notes: [sent({}), sent({ version: 1, answeredIn: 2, changed: true }), sent({ version: 1, answeredIn: 2, paths: ["checks.commands[0]"] })] });
-      const { slot } = await mountDashboard({ specVersion: () => view });
-      const rows = [...tray(slot).querySelectorAll("[data-sent-note]")].map((row) => row.textContent);
-      expect(rows).toHaveLength(3);
-      expect(rows[0]).toContain("Waiting for the planner's next version");
-      expect(rows[1]).toContain("v2 changes this");
-      expect(rows[2]).toContain("checks.commands[0]");
-      expect(rows[2]).toContain("v2 leaves this as it was; the planner may have answered in its chat");
-    });
-
-    it("asks a second time before it sends notes written on a version older than the newest", async () => {
-      localStorage.setItem("loom.notes.csv", JSON.stringify([stored]));
-      let view = specVersionView();
-      const sendNotes = vi.fn(() => view);
-      const { slot } = await mountDashboard({ specVersion: () => view, sendNotes });
-      expect(tray(slot).textContent).not.toContain("is newer");
-      view = specVersionView({ version: 3, versions: [{ version: 1, status: "superseded" }, { version: 2, status: "superseded" }, { version: 3, status: "draft" }] });
-      await slot.emitRealtime("loom:changed", { slug: "csv" });
-      await waitFor(() => expect(tray(slot).textContent).toContain("Written on v2; v3 is newer"));
-      fireEvent.click(slot.getByRole("button", { name: "Send 1 note to the planner" }));
-      expect(sendNotes).not.toHaveBeenCalled();
-      fireEvent.click(slot.getByRole("button", { name: "Click again to send 1 note to the planner" }));
-      await waitFor(() => expect(sendNotes).toHaveBeenCalled());
-      expect(calls(slot, "sendNotes")[0]!.input).toEqual({ slug: "csv", notes: [note], includeOlder: true, confirm: true });
-    });
+  it("says a spec review that did not finish blocks the draft, and how to go on", async () => {
+    const slot = await open(plannerViewOf({ review: { kind: "failed", version: 1, round: 1, reason: "the reviewer ended its turn twice without a verdict" } }), { sidebarThreads: sidebar("idle") });
+    const card = slot.container.querySelector<HTMLElement>('[data-version-card="1"]')!;
+    expect(card.querySelector("h3")!.textContent).toBe("Loom's spec review of v1 did not finish");
+    expect(card.textContent).toContain("the reviewer ended its turn twice without a verdict");
+    expect(card.querySelector("code")!.textContent).toBe("bb loom approve csv --skip-review");
+    expect(card.textContent).not.toContain("`");
+    expect(slot.container.querySelector("[data-planner-status]")!.textContent).toBe("Idle · Loom's spec review did not finish");
+    expect(slot.container.querySelector('[data-planning-step="current"]')!.textContent).toContain("Loom's spec review");
+    expect(slot.container.querySelector("[data-nothing-needed]")).toBeNull();
   });
 
-  it("is not shown while the conversation has no draft", async () => {
-    const { slot } = await mountPage("_plan/thr_p1", { planningSession: () => session({ slug: null, projectState: null }) });
-    await slot.findByText(/No draft yet/);
-    expect(slot.container.querySelector("[data-spec-dashboard]")).toBeNull();
-    expect(calls(slot, "specVersion")).toEqual([]);
+  it("says the planner has your comments once you sent them on the newest version", async () => {
+    const view = plannerViewOf({ steps: [...plannerViewOf().steps, { kind: "notes", at: NOW - 60_000, version: 1, notes: [{ version: 1, paths: ["ticket[csv-model]"], body: "Name the rows." }] }] });
+    const slot = await open(view, { sidebarThreads: sidebar("idle") });
+    expect(slot.container.querySelector("[data-planner-status]")!.textContent).toBe("Idle · it has your comments on v1");
+    expect(slot.container.querySelector('[data-planning-step="current"]')!.textContent).toContain("Draft · v2");
+    expect(slot.container.querySelector("[data-version-card]")).toBeNull();
+  });
+
+  it("reads the column order as it shows: one column on a narrow page, the side column beside the story on a wide one", async () => {
+    const order = (slot: Slot) => [...slot.container.querySelectorAll("[data-needs-you], [data-message-planner], [data-planner-story], [data-decisions]")].map((element) => [...element.attributes].find((attribute) => attribute.name.startsWith("data-"))!.name);
+    const narrow = await open(plannerViewOf());
+    expect(narrow.container.querySelector("[data-planner-layout]")!.getAttribute("data-planner-layout")).toBe("narrow");
+    expect(order(narrow)).toEqual(["data-needs-you", "data-message-planner", "data-planner-story", "data-decisions"]);
+    narrow.lifecycle.unmount();
+
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const width = Object.getOwnPropertyDescriptor(Element.prototype, "clientWidth")!;
+    Object.defineProperty(Element.prototype, "clientWidth", { configurable: true, get: () => 1300 });
+    try {
+      const wide = await open(plannerViewOf());
+      await waitFor(() => expect(wide.container.querySelector("[data-planner-layout]")!.getAttribute("data-planner-layout")).toBe("wide"));
+      expect(order(wide)).toEqual(["data-needs-you", "data-planner-story", "data-message-planner", "data-decisions"]);
+      expect(wide.container.querySelectorAll("textarea")).toHaveLength(1);
+    } finally {
+      Object.defineProperty(Element.prototype, "clientWidth", width);
+    }
   });
 });
 
 describe("planner questions", () => {
   const session = (): PlanningSession => ({ threadId: "thr_p1", title: "Export orders as CSV", startedAt: Date.now(), slug: null, projectState: null });
+  const early = () => plannerViewOf({ threadId: "thr_p1", slug: null, projectState: null, steps: [{ kind: "started", at: NOW - HOUR, text: "Export orders as CSV" }], versions: [], review: { kind: "none" } });
   const sidebar = (threadId: string, hasPendingInteraction: boolean) => ({ threads: [{ id: threadId, hasPendingInteraction } as PluginSidebarThread] });
   const pending = { threadId: "thr_p1", turnId: null, expiresAt: null, status: "pending", statusReason: null, resolution: null, resolvedAt: null };
   const asked = (id: string, over: Record<string, unknown> = {}) => ({
@@ -1475,9 +1218,10 @@ describe("planner questions", () => {
     id,
     createdAt: 1,
     origin: { kind: "plugin", pluginId: "better-ask", rendererId: "ask-user-question" },
-    payload: { kind: "plugin", title: "The planner asks", data: { questions: [singleSelect, multiSelect] } },
+    payload: { kind: "plugin", title: "2 questions", data: { questions: [singleSelect, multiSelect] } },
     ...over,
   });
+  const single = (id: string, over: Record<string, unknown> = {}) => asked(id, { payload: { kind: "plugin", title: "Merge plan", data: { questions: [singleSelect] } }, ...over });
   const providerApproval = {
     ...pending,
     id: "int_provider",
@@ -1485,56 +1229,74 @@ describe("planner questions", () => {
     origin: { kind: "provider", providerId: "codex", providerRequestId: "req_1", providerThreadId: "pt_1" },
     payload: { kind: "approval", availableDecisions: ["allow_once", "deny"], reason: null, subject: { kind: "command", command: "rm -rf dist" } },
   };
-  const mountQuestions = async (rows: () => unknown[], respond: (args: unknown) => Promise<unknown> = async () => ({}), waiting = true) => {
+  const mountQuestions = async (rows: () => unknown[], respond: (args: unknown) => Promise<unknown> = async () => ({}), waiting = true, events: () => unknown[] = () => []) => {
     const list = vi.fn(async () => rows());
     const answer = vi.fn(respond);
-    const sdk = { threads: { interactions: { list, respond: answer } } } as unknown as PluginSdkTestFakes;
-    const { slot } = await mountPage("_plan/thr_p1", { planningSession: () => session() }, { sdk, sidebarThreads: sidebar("thr_p1", waiting) });
-    await slot.findByText(/No draft yet/);
-    return { slot, list, answer };
+    const eventList = vi.fn(async () => events());
+    const sdk = { threads: { interactions: { list, respond: answer }, events: { list: eventList } } } as unknown as PluginSdkTestFakes;
+    const { slot } = await mountPage("_plan/thr_p1", { planningSession: () => session(), plannerView: () => early() }, { sdk, sidebarThreads: sidebar("thr_p1", waiting) });
+    await waitFor(() => expect(slot.container.querySelector("[data-planner-page]")).not.toBeNull());
+    return { slot, list, answer, eventList };
   };
   const card = (slot: Slot, id = "int_1") => slot.container.querySelector<HTMLElement>(`[data-question-card="${id}"]`);
 
-  it("shows the planner's questions above its chat, and sends the answers as the question plugin's own form does", async () => {
+  it("asks the planner's questions one at a time under Needs you, and sends the answers as the question plugin's own form does", async () => {
     let rows = [asked("int_1")];
     const { slot, list, answer } = await mountQuestions(() => rows);
     await waitFor(() => expect(card(slot)).not.toBeNull());
+    expect(card(slot)!.closest("[data-needs-you]")).not.toBeNull();
     const form = within(card(slot)!);
-    expect(form.getByText("The planner asks")).toBeTruthy();
+    expect(form.getByText("The planner asks 2 questions")).toBeTruthy();
+    expect(form.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["1Merge plan", "2Checks", "Review"]);
     expect(form.getByText("How should finished tickets merge?")).toBeTruthy();
-    expect(form.getByText("Which checks must pass?")).toBeTruthy();
-    expect(form.getByText("Each runs in the ticket's worktree.")).toBeTruthy();
     expect(form.getByText("One branch, landed at the end")).toBeTruthy();
-    expect(form.getByRole("button", { name: /npm run typecheck/ }).textContent).toContain("Recommended");
-    expect(form.getAllByRole("textbox", { name: "Or type your own answer" })).toHaveLength(1);
-    expect(card(slot)!.compareDocumentPosition(slot.getByTestId("bb-thread-chat")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-
-    const send = form.getByRole("button", { name: "Send answer" }) as HTMLButtonElement;
+    expect(form.queryByText("Which checks must pass?")).toBeNull();
     const option = (name: RegExp) => form.getByRole("button", { name });
-    expect(send.disabled).toBe(true);
     fireEvent.click(option(/PR per ticket/));
     fireEvent.click(option(/Integration branch/));
     expect(option(/Integration branch/).getAttribute("aria-pressed")).toBe("true");
     expect(option(/PR per ticket/).getAttribute("aria-pressed")).toBe("false");
-    expect(send.disabled).toBe(true);
+    expect(form.getByText("1 of 2 answered")).toBeTruthy();
+
+    fireEvent.click(form.getByRole("button", { name: "Next" }));
+    expect(form.getByText("Which checks must pass?")).toBeTruthy();
+    expect(form.getByText("Pick any that apply")).toBeTruthy();
+    expect(form.getByText("Each runs in the ticket's worktree.")).toBeTruthy();
+    expect(option(/npm run typecheck/).textContent).toContain("Recommended");
     fireEvent.click(option(/npm run typecheck/));
     fireEvent.click(option(/npm run build/));
     fireEvent.change(form.getByRole("textbox", { name: "Or type your own answer" }), { target: { value: "  and docs " } });
-    expect(send.disabled).toBe(false);
+    fireEvent.click(form.getByRole("button", { name: "Review answers" }));
+    expect([...card(slot)!.querySelectorAll("[data-question-review] > div")].map((row) => row.textContent)).toEqual(["Merge planIntegration branchChange", "Checksnpm run typecheck, npm run build, “and docs”Change"]);
 
     rows = [];
-    fireEvent.click(send);
+    fireEvent.click(form.getByRole("button", { name: "Send 2 answers" }));
     await waitFor(() => expect(answer).toHaveBeenCalledWith({ threadId: "thr_p1", interactionId: "int_1", value: { answers: { q1: { selected: ["o1"] }, q2: { selected: ["o2", "o3"], freeText: "and docs" } } } }));
     await waitFor(() => expect(card(slot)).toBeNull());
     expect(list).toHaveBeenCalledTimes(2);
     expect(list).toHaveBeenLastCalledWith({ threadId: "thr_p1" });
   });
 
+  it("fills the questions not answered yet with the planner's recommendations, and sends only once each has an answer", async () => {
+    const { slot } = await mountQuestions(() => [asked("int_1")]);
+    await waitFor(() => expect(card(slot)).not.toBeNull());
+    const form = within(card(slot)!);
+    fireEvent.click(form.getByRole("button", { name: "Use the recommended answers for the rest" }));
+    const rows = () => [...card(slot)!.querySelectorAll("[data-question-review] > div")].map((row) => row.textContent);
+    expect(rows()).toEqual(["Merge planNot answered yetChange", "Checksnpm run typecheckChange"]);
+    expect((form.getByRole("button", { name: /^Send/ }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(form.getAllByRole("button", { name: "Change" })[0]!);
+    fireEvent.click(form.getByRole("button", { name: /PR per ticket/ }));
+    fireEvent.click(form.getByRole("tab", { name: "Review" }));
+    expect(rows()[0]).toBe("Merge planPR per ticketChange");
+    expect((form.getByRole("button", { name: "Send 2 answers" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("shows why an answer failed, and sends a question it cannot draw to the thread", async () => {
     const other = asked("int_2", { createdAt: 0, origin: { kind: "plugin", pluginId: "colors", rendererId: "color-picker" }, payload: { kind: "plugin", title: "Pick a color", data: { questions: [singleSelect] } } });
     const unreadable = asked("int_3", { createdAt: 2, payload: { kind: "plugin", title: "A newer question form", data: { questions: "?" } } });
     const { slot } = await mountQuestions(
-      () => [unreadable, asked("int_1"), other],
+      () => [unreadable, single("int_1"), other],
       async () => {
         throw new Error("The question was already answered.");
       },
@@ -1543,8 +1305,9 @@ describe("planner questions", () => {
     expect([...slot.container.querySelectorAll("[data-question-card]")].map((entry) => entry.getAttribute("data-question-card"))).toEqual(["int_2", "int_1", "int_3"]);
 
     const form = within(card(slot)!);
+    expect(form.getByText("The planner asks a question")).toBeTruthy();
+    expect(form.queryByRole("tab")).toBeNull();
     fireEvent.click(form.getByRole("button", { name: /PR per ticket/ }));
-    fireEvent.click(form.getByRole("button", { name: /npm test/ }));
     fireEvent.click(form.getByRole("button", { name: "Send answer" }));
     expect((await form.findByRole("alert")).textContent).toBe("The question was already answered.");
     expect((form.getByRole("button", { name: "Send answer" }) as HTMLButtonElement).disabled).toBe(false);
@@ -1566,11 +1329,65 @@ describe("planner questions", () => {
     expect(idle.list).not.toHaveBeenCalled();
   });
 
-  it("shows the questions on the project's Planner tab too", async () => {
+  it("tells the answered rounds from bb's thread events in the story and under What you decided", async () => {
+    const lifecycle = (status: string, at: number, resolution: unknown = null) => ({
+      id: `evt_${at}`,
+      threadId: "thr_p1",
+      seq: at,
+      createdAt: NOW - HOUR + at,
+      type: "system/interaction/lifecycle",
+      data: { interaction: { id: "pint_1", status, origin: { kind: "plugin", pluginId: "better-ask", rendererId: "ask-user-question" }, payload: { kind: "plugin", title: "2 questions" }, resolution } },
+    });
+    const resolved = {
+      kind: "plugin_submitted",
+      description: {
+        title: "Answered 2 of 2 questions",
+        payload: {
+          questions: [
+            { question: "How should finished tickets merge?", header: "Merge plan" },
+            { question: "Which checks must pass?", header: "Checks" },
+          ],
+          answers: { "How should finished tickets merge?": "Integration branch", "Which checks must pass?": "npm test" },
+        },
+      },
+    };
+    const other = { ...lifecycle("resolved", 3), data: { interaction: { id: "pint_2", status: "resolved", origin: { kind: "provider" }, payload: {}, resolution: null } } };
+    const { slot, eventList } = await mountQuestions(() => [], undefined, false, () => [lifecycle("pending", 1), lifecycle("resolved", 2, resolved), other]);
+    await waitFor(() => expect(slot.container.querySelector("[data-planner-story]")!.textContent).toContain("You answered 2 questions"));
+    expect(eventList).toHaveBeenCalledWith({ threadId: "thr_p1", types: ["system/interaction/lifecycle"], limit: "100", order: "asc" });
+    const story = slot.container.querySelector<HTMLElement>("[data-planner-story]")!;
+    expect(story.textContent).toContain("Merge planIntegration branch");
+    expect([...slot.container.querySelectorAll("[data-decision]")].map((row) => row.textContent)).toEqual(["Merge planIntegration branch", "Checksnpm test"]);
+    expect(slot.container.querySelector("[data-about-planner]")!.textContent).toContain("1 round, 2 answers");
+  });
+
+  it("keeps a round open while bb resolves it, says when one ended unanswered, and reads the open questions when the sidebar leaves the thread out", async () => {
+    const lifecycle = (id: string, status: string, at: number) => ({ id: `evt_${id}_${at}`, threadId: "thr_p1", seq: at, createdAt: NOW - HOUR + at, type: "system/interaction/lifecycle", data: { interaction: { id, status, origin: { kind: "plugin", pluginId: "better-ask", rendererId: "ask-user-question" }, payload: { kind: "plugin", title: id === "pint_1" ? "Merge plan" : "Checks" }, resolution: null } } });
+    const list = vi.fn(async () => []);
+    const sdk = { threads: { interactions: { list }, events: { list: async () => [lifecycle("pint_1", "pending", 1), lifecycle("pint_1", "resolving", 2), lifecycle("pint_2", "pending", 3), lifecycle("pint_2", "interrupted", 4)] } } } as unknown as PluginSdkTestFakes;
+    const { slot } = await mountPage("_plan/thr_p1", { planningSession: () => session(), plannerView: () => early() }, { sdk });
+    await waitFor(() => expect(slot.container.querySelector("[data-planner-story]")!.textContent).toContain("The planner asks: Merge plan"));
+    const story = slot.container.querySelector<HTMLElement>("[data-planner-story]")!;
+    expect(story.textContent).toContain("Answer it in the Conversation view.");
+    expect(story.textContent).toContain("The planner's question “Checks” ended without an answer");
+    await waitFor(() => expect(list).toHaveBeenCalledWith({ threadId: "thr_p1" }));
+  });
+
+  it("reads the thread's lifecycle events a hundred at a time, after the last one it read", async () => {
+    const row = (seq: number) => ({ id: `evt_${seq}`, threadId: "thr_p1", seq, createdAt: NOW - HOUR + seq, type: "system/interaction/lifecycle", data: { interaction: { id: `pint_${seq}`, status: "pending", origin: { kind: "plugin", pluginId: "better-ask", rendererId: "ask-user-question" }, payload: { kind: "plugin", title: `Round ${seq}` }, resolution: null } } });
+    const list = vi.fn(async (args: { afterSeq?: string }) => (args.afterSeq === undefined ? Array.from({ length: 100 }, (_, n) => row(n + 1)) : [row(101)]));
+    const sdk = { threads: { interactions: { list: async () => [] }, events: { list } } } as unknown as PluginSdkTestFakes;
+    const { slot } = await mountPage("_plan/thr_p1", { planningSession: () => session(), plannerView: () => early() }, { sdk });
+    await waitFor(() => expect(slot.container.querySelector("[data-planner-story]")!.textContent).toContain("The planner asks: Round 101"));
+    expect(list.mock.calls.map(([args]) => args.afterSeq).slice(0, 2)).toEqual([undefined, "100"]);
+  });
+
+  it("shows the questions on the project's Planner tab too, with a ? on the tab", async () => {
     const list = vi.fn(async () => [asked("int_1", { threadId: "thr_plan" })]);
     const sdk = { threads: { interactions: { list } } } as unknown as PluginSdkTestFakes;
-    const { slot } = await mountPage("csv", { project: () => projectView() }, { sdk, sidebarThreads: sidebar("thr_plan", true) });
-    fireEvent.click(await slot.findByRole("tab", { name: "Planner" }));
+    const { slot } = await mountPage("csv", { project: () => projectView(), plannerView: () => plannerViewOf({ projectState: "running", approvedVersion: 1 }) }, { sdk, sidebarThreads: sidebar("thr_plan", true) });
+    expect((await slot.findByRole("tab", { name: "Planner" })).querySelector('[data-tab-badge="planner"]')!.textContent).toBe("?");
+    fireEvent.click(slot.getByRole("tab", { name: "Planner" }));
     await waitFor(() => expect(card(slot)).not.toBeNull());
     expect(list).toHaveBeenCalledWith({ threadId: "thr_plan" });
   });
@@ -1859,14 +1676,16 @@ describe("spec tab", () => {
   });
 
   it("offers no Approve on a draft while Loom's spec review holds it, and says where the review stands", async () => {
-    const draft = projectView({ overview: overview({ state: "draft", approvedVersion: null, ticketCount: 0, ticketCounts: {} }), board: [], next: null, specReview: { kind: "changes", version: 2, round: 1, findings: [{ path: "ticket[csv-export]", title: "No criterion for an empty export", detail: "Add one." }] } });
-    const { slot } = await mountPage("csv", { project: () => ({ ...draft, spec: { ...draft.spec, version: 2 } }), specVersion: () => specVersionView() });
+    const finding = { path: "ticket[csv-export]", title: "No criterion for an empty export", detail: "Add one." };
+    const draft = projectView({ overview: overview({ state: "draft", approvedVersion: null, ticketCount: 0, ticketCounts: {} }), board: [], next: null, specReview: { kind: "changes", version: 2, round: 1, findings: [finding] } });
+    const spec = specVersionView({ reviews: [{ version: 2, round: 1, state: "changes_requested", summary: "One gap.", findings: [finding], reason: null, startedAt: NOW - HOUR, endedAt: NOW }] });
+    const { slot } = await mountPage("csv", { project: () => ({ ...draft, spec: { ...draft.spec, version: 2 } }), specVersion: () => spec });
     fireEvent.click(await slot.findByRole("tab", { name: "Spec" }));
     await waitFor(() => expect(slot.container.querySelector("[data-review-panel]")).not.toBeNull());
     expect(slot.queryAllByRole("button", { name: /^Approve/ })).toEqual([]);
-    const status = slot.container.querySelector<HTMLElement>('[data-spec-review-status="changes"]')!;
-    expect(status.textContent).toContain("Loom's spec review found 1 problem in v2; the planner is revising it.");
-    expect(status.textContent).toContain("ticket[csv-export]No criterion for an empty export");
+    const status = slot.container.querySelector<HTMLElement>('[data-spec-review-status="changes_requested"]')!;
+    expect(status.textContent).toContain("Loom's spec review found 1 problem in v2 · round 1 of 3. The planner revises the spec for them; each is pinned on its part.");
+    expect(status.querySelector('[data-finding="1"]')!.textContent).toContain("No criterion for an empty export");
   });
 
   describe("tab badges", () => {
@@ -3832,6 +3651,33 @@ describe("spec page", () => {
     await waitFor(() => expect(sendNotes).toHaveBeenCalledWith({ slug: "csv", notes: [{ version: 2, paths: ["spec"], body: "Keep it small." }], confirm: true }));
   });
 
+  it("pins the findings of Loom's spec review on their parts, goes to one from the list, and tags the changes that answer earlier findings", async () => {
+    const round = (version: number, n: number, path: string, title: string) => ({ version, round: n, state: "changes_requested" as const, summary: `Round ${n}.`, findings: [{ path, title, detail: "Say exactly what it is." }], reason: null, startedAt: NOW - 2 * HOUR, endedAt: NOW - HOUR });
+    const spec = specVersionView({ reviews: [round(1, 1, "checks.commands[0]", "Run the tests the CI way"), round(2, 2, "ticket[csv-export].acceptance[1]", "Say what the empty file holds")] });
+    const slot = await openPage({ specVersion: () => spec });
+    const status = page(slot).querySelector<HTMLElement>('[data-spec-review-status="changes_requested"]')!;
+    expect(status.textContent).toContain("Loom's spec review found 1 problem in v2 · round 2 of 3.");
+    expect(status.querySelector('[data-finding="1"]')!.textContent).toContain("Say what the empty file holds");
+    expect(status.textContent).not.toContain("Run the tests the CI way");
+    const criterion = target(slot, "ticket[csv-export].acceptance[1]")!;
+    expect(criterion.querySelector('[data-finding-pin="1"]')!.getAttribute("title")).toBe("Loom's spec review: Say what the empty file holds");
+    expect(criterion.hasAttribute("data-found")).toBe(true);
+    expect(page(slot).querySelector('[data-change="checks.commands"]')!.textContent).toContain("answers Loom's review");
+    expect(page(slot).querySelector('[data-change="ticket[csv-export].acceptance"]')!.textContent).not.toContain("answers Loom's review");
+    scroll.mockClear();
+    fireEvent.click(within(status).getByRole("button", { name: "Go to it" }));
+    await waitFor(() => expect(scroll).toHaveBeenCalled());
+  });
+
+  it("keeps a passed review of a version after approval, with the reviewer's summary", async () => {
+    const spec = specVersionView({ status: "approved", reviews: [{ version: 2, round: 1, state: "approved", summary: "Every ticket serves the request.", findings: [], reason: null, startedAt: NOW - 2 * HOUR, endedAt: NOW - HOUR }] });
+    const slot = await openPage({ specVersion: () => spec }, projectView({ spec: { ...projectView().spec, version: 2 } }));
+    const status = page(slot).querySelector<HTMLElement>('[data-spec-review-status="approved"]')!;
+    expect(status.textContent).toContain("✓ Loom's spec review passed v2 · round 1 of 3");
+    expect(status.textContent).toContain("Every ticket serves the request.");
+    expect(page(slot).querySelector("[data-finding-pin]")).toBeNull();
+  });
+
   it("shows a changed ticket's changed parts beside the list, the whole ticket at a click, and takes a comment on a criterion", async () => {
     const slot = await openPage();
     const detail = () => section(slot, "tickets").querySelector<HTMLElement>("[data-ticket-detail]")!;
@@ -4093,15 +3939,14 @@ describe("repos", () => {
       ...over,
     });
   const chipsIn = (root: ParentNode) => [...root.querySelectorAll("[data-repo-chip]")].map((chip) => chip.textContent);
-  const dashboard = (slot: Slot) => slot.container.querySelector<HTMLElement>("[data-spec-dashboard]")!;
-  const pane = (slot: Slot) => dashboard(slot).querySelector<HTMLElement>("[role=tabpanel]")!;
-  const inPane = (slot: Slot, path: string) => pane(slot).querySelector<HTMLElement>(`[data-note-target="${path}"]`);
-  const openTab = (slot: Slot, name: string) => fireEvent.click(within(dashboard(slot)).getByRole("tab", { name }));
-  const openSpec = async (view: ProjectView, spec: SpecVersionView) => {
-    const session: PlanningSession = { threadId: "thr_p1", title: "Export orders as CSV", startedAt: Date.now(), slug: "csv", projectState: "draft" };
-    const { slot } = await mountPage("_plan/thr_p1", { planningSession: () => session, project: () => view, specVersion: () => spec });
-    await waitFor(() => expect(slot.container.querySelector("[data-spec-tile]")).not.toBeNull());
-    return slot;
+  const openFiles = async (view: ProjectView, spec: SpecVersionView) => {
+    const { slot } = await mountPage("csv", { project: () => view, specVersion: () => spec });
+    fireEvent.click(await slot.findByRole("tab", { name: "Spec" }));
+    await waitFor(() => expect(slot.container.querySelector("[data-spec-page]")).not.toBeNull());
+    const page = slot.container.querySelector<HTMLElement>("[data-spec-page]")!;
+    fireEvent.click(within(page).getByRole("button", { name: "The entire spec" }));
+    fireEvent.click(within(within(page).getByRole("group", { name: "Ticket layout" })).getByRole("button", { name: "Files" }));
+    return { slot, pane: () => page.querySelector<HTMLElement>('[data-spec-section="tickets"]')! };
   };
   const landing = (label = "Land · 2 repos"): NextStep => ({ stage: 5, tone: "normal", title: "Next: land the project.", text: "Every ticket is finished.", action: { control: "land", label, confirm: "Click again to land" } });
 
@@ -4123,64 +3968,16 @@ describe("repos", () => {
     expect(chipsIn(slot.container.querySelector("[data-ticket-header]")!)).toEqual(["api"]);
   });
 
-  it("lists the repos on the Project tab with their settings, and takes a note on each repo's path", async () => {
-    const slot = await openSpec(multi(), specVersionView({}, withRepos));
-    openTab(slot, "Project & limits");
-    const web = inPane(slot, "repo[0]")!;
-    expect(web.closest("[data-repo]")!.getAttribute("data-repo")).toBe("web");
-    expect(chipsIn(web)).toEqual(["web"]);
-    expect(web.querySelector("[data-repo-project]")!.textContent).toBe("bb project shop-web");
-    expect(web.textContent).toContain("base main");
-    expect(web.textContent).toContain("its own checks: npm run web-test");
-    expect(web.textContent).toContain("its own after-merge checks: npm run web-e2e");
-    expect(web.textContent).toContain("also protected:web.lock");
-    const api = inPane(slot, "repo[1]")!;
-    expect(api.querySelector("[data-repo-project]")!.textContent).toBe("bb project proj_api");
-    expect(api.textContent).toContain("base trunk");
-    expect(api.textContent).toContain("remote upstream");
-    expect(api.textContent).not.toContain("its own");
-    expect(api.textContent).not.toContain("protected");
-    expect(inPane(slot, "merge")!.textContent).toContain("you land it as one pull request per repo with bb loom land, one repo with bb loom land --repo, or straight onto each base with bb loom land --direct.");
-
-    fireEvent.click(slot.getByRole("button", { name: "Add a note on repo api" }));
-    expect(dashboard(slot).textContent).toContain("Note on repo api");
-    fireEvent.change(slot.getByRole("textbox", { name: "Note text" }), { target: { value: "Land api first." } });
-    fireEvent.click(slot.getByRole("button", { name: "Add note" }));
-    expect(JSON.parse(localStorage.getItem("loom.notes.csv")!)).toEqual([{ version: 2, paths: ["repo[1]"], label: "repo api", body: "Land api first." }]);
-    expect(inPane(slot, "repo[1]")!.hasAttribute("data-noted")).toBe(true);
-  });
-
-  it("shows each repo's checks on the Checks tab, and which checks a ticket without verify commands runs", async () => {
-    const slot = await openSpec(multi(), specVersionView({}, withRepos));
-    openTab(slot, "Checks & review");
-    expect(inPane(slot, "checks.timeout_minutes")!.textContent).toContain("Run on every submitted ticket in a repo without checks of its own");
-    const checksOf = (name: string) => pane(slot).querySelector<HTMLElement>(`[data-repo-checks="${name}"]`)!;
-    expect(checksOf("web").querySelector("[data-note-target]")!.getAttribute("data-note-target")).toBe("repo[0].checks");
-    expect(checksOf("web").textContent).toContain("npm run web-test");
-    expect(checksOf("web").textContent).toContain("after each merge: npm run web-e2e");
-    expect(checksOf("api").textContent).toContain("the project checks");
-    expect(checksOf("api").textContent).toContain("after each merge: nothing");
-    expect(inPane(slot, "ticket[csv-model].verify")!.textContent).toContain("none: only the web checks run");
-    expect(inPane(slot, "ticket[csv-export].verify")!.textContent).toContain("none: only the project checks run");
-
-    openTab(slot, "Tickets");
-    expect(chipsIn(pane(slot).querySelector('[data-spec-card="csv-model"]')!)).toEqual(["web"]);
-    const inspector = slot.container.querySelector<HTMLElement>("[data-spec-inspector]")!;
-    expect(inspector.textContent).toContain("repo web");
-    expect(inspector.textContent).toContain("No command of its own; only npm run web-test runs.");
-  });
-
-  it("groups the ticket scopes by repo on the Files tab, where the same path in two repos is not shared", async () => {
+  it("groups the ticket scopes by repo in the spec page's Files view, where the same path in two repos is not shared", async () => {
     const spec = specVersionView({ overlaps: [{ a: "csv-model", b: "csv-docs", paths: ["src/shared/types.ts"] }] }, (doc) => {
       withRepos(doc);
       doc.ticket[0].scope = ["src/model/**", "src/shared/types.ts"];
       doc.ticket[1].scope = ["src/export/**", "src/shared/types.ts"];
       doc.ticket.push({ ref: "csv-docs", title: "Export docs", body: "Document the types.", acceptance: ["WHEN the docs are read THE SYSTEM SHALL name every type"], scope: ["src/shared/types.ts"], repo: "web" });
     });
-    const slot = await openSpec(multi(), spec);
-    openTab(slot, "Files");
+    const { slot, pane } = await openFiles(multi(), spec);
     const groups = () =>
-      [...pane(slot).querySelectorAll("[data-repo-files]")].map((group) => [
+      [...pane().querySelectorAll("[data-repo-files]")].map((group) => [
         group.getAttribute("data-repo-files"),
         [...group.querySelectorAll("[data-folder]")].map((folder) => [folder.getAttribute("data-folder"), [...folder.querySelectorAll("[data-file]")].map((row) => row.getAttribute("data-file"))]),
       ]);
@@ -4188,8 +3985,8 @@ describe("repos", () => {
       ["web", [["src/model", ["src/model/**"]], ["src/shared", ["src/shared/types.ts"]]]],
       ["api", [["src/export", ["src/export/**"]], ["src/shared", ["src/shared/types.ts"]]]],
     ]);
-    expect(pane(slot).textContent).toContain("All files by repo and folder · 4 paths");
-    const group = (name: string) => pane(slot).querySelector<HTMLElement>(`[data-repo-files="${name}"]`)!;
+    expect(pane().textContent).toContain("All files by repo and folder · 4 paths");
+    const group = (name: string) => pane().querySelector<HTMLElement>(`[data-repo-files="${name}"]`)!;
     expect(group("web").querySelector("h5")!.textContent).toBe("web2 paths");
     const types = (name: string) => group(name).querySelector<HTMLElement>('[data-file="src/shared/types.ts"]')!;
     expect([...types("web").querySelectorAll("[data-ticket-chip]")].map((chip) => chip.textContent)).toEqual(["csv-model", "csv-docs"]);
@@ -4197,27 +3994,12 @@ describe("repos", () => {
     expect([...types("api").querySelectorAll("[data-ticket-chip]")].map((chip) => chip.textContent)).toEqual(["csv-export"]);
     expect(types("api").textContent).not.toContain("shared");
 
-    const shared = [...pane(slot).querySelectorAll("[data-shared]")].map((row) => [row.getAttribute("data-repo"), row.getAttribute("data-shared"), chipsIn(row)]);
+    const shared = [...pane().querySelectorAll("[data-shared]")].map((row) => [row.getAttribute("data-repo"), row.getAttribute("data-shared"), chipsIn(row)]);
     expect(shared).toEqual([["web", "src/shared/types.ts", ["web"]]]);
     expect(slot.getByRole("button", { name: "Add a note on shared path src/shared/types.ts in web" })).toBeTruthy();
 
-    fireEvent.click(within(within(pane(slot)).getByRole("group", { name: "Which files" })).getByRole("button", { name: "Shared only" }));
+    fireEvent.click(within(within(pane()).getByRole("group", { name: "Which files" })).getByRole("button", { name: "Shared only" }));
     expect(groups()).toEqual([["web", [["src/shared", ["src/shared/types.ts"]]]]]);
-  });
-
-  it("lists the repos on the draft card, by bb's name for each bb project or its id", async () => {
-    const summary = { ...projectView().spec.summary, repos: [{ name: "web", bbProjectId: "proj_web", bbProjectName: "shop-web" }, { name: "api", bbProjectId: "proj_api", bbProjectName: null }] };
-    const draft = multi({ overview: overview({ state: "draft", approvedVersion: null, ticketCount: 0, ticketCounts: {}, repos: repos() }), board: [], spec: { ...projectView().spec, summary } });
-    const session: PlanningSession = { threadId: "thr_p1", title: "Export orders as CSV", startedAt: Date.now(), slug: "csv", projectState: "draft" };
-    const { slot } = await mountPage("_plan/thr_p1", { planningSession: () => session, project: () => draft, specVersion: () => specVersionView({}, withRepos) });
-    await waitFor(() => expect(slot.container.querySelector("[data-draft-card]")).not.toBeNull());
-    const card = slot.container.querySelector<HTMLElement>("[data-draft-card]")!;
-    expect(card.textContent).toContain("2 tickets · 2 repos · checks: npm test · reviewer codex / gpt-5");
-    expect([...card.querySelectorAll("[data-draft-repo]")].map((row) => row.textContent)).toEqual(["webshop-web", "apiproj_api"]);
-
-    await waitFor(() => expect(slot.container.querySelector("[data-spec-tile]")).not.toBeNull());
-    openTab(slot, "Project & limits");
-    expect(inPane(slot, "repo[0]")!.querySelector("[data-repo-project]")!.textContent).toBe("bb project shop-web");
   });
 
   it("labels the land control for the pull requests of several repos, and names the repos to land in its confirm", async () => {
@@ -4326,11 +4108,5 @@ describe("repos", () => {
     await ticket.findByRole("heading", { name: /Export endpoint/ });
     expect(ticket.container.querySelector("[data-ticket-header] [data-repo-chip]")).toBeNull();
 
-    const session: PlanningSession = { threadId: "thr_p1", title: "Export orders as CSV", startedAt: Date.now(), slug: "csv", projectState: "draft" };
-    const draft = projectView({ overview: overview({ state: "draft", approvedVersion: null, ticketCount: 0, ticketCounts: {} }), board: [] });
-    const { slot: planning } = await mountPage("_plan/thr_p1", { planningSession: () => session, project: () => draft, specVersion: () => specVersionView() });
-    await waitFor(() => expect(planning.container.querySelector("[data-draft-card]")).not.toBeNull());
-    expect(planning.container.querySelector("[data-draft-repos]")).toBeNull();
-    expect(planning.container.querySelector("[data-draft-card]")!.textContent).not.toContain("repo");
   });
 });

@@ -6,6 +6,7 @@ import { its, plural } from "./format";
 import { followsFeedback, isMultiRepo, prSettings, repoSettings, type RepoSettings } from "./repos";
 import type { Finding } from "./review";
 import type { Spec } from "./spec";
+import { specDiff, type SpecChange } from "./spec-diff";
 import type { SpecNote } from "./spec-paths";
 import type { SpecFinding } from "./spec-review";
 import { SPEC_REVIEW_ROUNDS, type MergeChoice, type TicketState } from "./states";
@@ -624,6 +625,34 @@ export const SPEC_REVIEW_RUBRIC: readonly string[] = [
 ];
 
 const SPEC_LIMIT = 60_000;
+const CHANGES_LIMIT = 8000;
+
+const shown = (value: unknown) => clip(typeof value === "string" ? JSON.stringify(value) : JSON.stringify(value ?? null), 300);
+
+function describeChange(change: SpecChange): string {
+  switch (change.kind) {
+    case "value":
+      return `${shown(change.before)} → ${shown(change.after)}`;
+    case "list":
+      return change.steps
+        .filter((step) => step.op !== "same")
+        .map((step) => `${step.op === "added" ? "+" : "−"} ${clip(step.value, 200)}`)
+        .join("; ");
+    case "text":
+      return "rewritten";
+    case "ticket-added":
+      return "new ticket";
+    case "ticket-removed":
+      return "ticket removed";
+  }
+}
+
+/** What `after` changes from `before`, one spec path per line, for a reviewer of a pending version. */
+export function specChangeLines(before: Spec, after: Spec): string {
+  const changes = specDiff(before, after);
+  if (changes.length === 0) return "- nothing";
+  return clip(changes.map((change) => `- ${change.path}: ${describeChange(change)}`).join("\n"), CHANGES_LIMIT);
+}
 
 /** The findings as a numbered list: the spec path and title, then the detail indented. */
 export function specFindingsList(findings: readonly SpecFinding[]): string {
@@ -632,8 +661,9 @@ export function specFindingsList(findings: readonly SpecFinding[]): string {
     .join("\n");
 }
 
-export function specReviewerBrief(a: { project: ProjectRow; spec: Spec; toml: string; version: number; round: number; earlier: readonly SpecReviewRow[] }): string {
+export function specReviewerBrief(a: { project: ProjectRow; spec: Spec; toml: string; version: number; round: number; earlier: readonly SpecReviewRow[]; inForce?: { version: number; spec: Spec } | null }): string {
   const { project, spec, toml, version, round } = a;
+  const inForce = a.inForce ?? null;
   const earlier = a.earlier.filter((row) => row.state === "approved" || row.state === "changes_requested");
   const lines = [
     `You are Loom's spec reviewer for version ${version} of the project ${JSON.stringify(project.name)} (${project.slug}), round ${round} of ${SPEC_REVIEW_ROUNDS}. A planner agent wrote this spec from a conversation with the human. Before the human is asked to approve it, you check that it builds what the human asked for, and no more. You judge the spec; you change nothing.`,
@@ -645,6 +675,16 @@ export function specReviewerBrief(a: { project: ProjectRow; spec: Spec; toml: st
     `Goal: ${spec.project.goal}`,
     ...(spec.project.non_goals.length === 0 ? [] : ["Non-goals:", bullets(spec.project.non_goals)]),
     "",
+    ...(inForce === null
+      ? []
+      : [
+          "## A change to an approved project",
+          `The human approved v${inForce.version} and the project is ${project.state}, so its tickets are already on the board. The planner proposed v${version} after that, usually to unblock tickets in a triage round; its latest messages in the planning conversation say why. Judge what v${version} changes from v${inForce.version}, below, against the rubric; leave the parts it does not change alone. Tickets on the board change only through the planner's board tools, so ticket changes in the spec are a record, not new work.`,
+          "",
+          "What changes:",
+          specChangeLines(inForce.spec, spec),
+          "",
+        ]),
     "## Rubric",
     bullets(SPEC_REVIEW_RUBRIC),
     "",
@@ -674,11 +714,12 @@ export function specReviewNudgeText(version: number): string {
   return `[loom] Your turn ended without a verdict on spec v${version}. Call loom_spec_approve({ summary }) or loom_spec_request_changes({ summary, findings }), then end your turn.`;
 }
 
-/** The verdict for the planner, visible in its chat: no findings is an approval. */
-export function specReviewVerdictText(a: { slug: string; version: number; round: number; summary: string; findings: readonly SpecFinding[] }): string {
+/** The verdict for the planner, visible in its chat: no findings is an approval. `pending` is a version proposed after approval. */
+export function specReviewVerdictText(a: { slug: string; version: number; round: number; summary: string; findings: readonly SpecFinding[]; pending?: boolean }): string {
   const { slug, version, round, summary, findings } = a;
   if (findings.length === 0) {
-    return [`[loom] Spec review round ${round} passed v${version} of ${slug}: ${summary}`, "Hand over to the human now: tell them what you proposed and that the draft is ready to approve."].join("\n");
+    const handOver = a.pending === true ? `Hand over to the human now: tell them what v${version} changes and that it waits for their approval. If they need to do more after approving, such as requeue tickets, record it with loom_ask_human.` : "Hand over to the human now: tell them what you proposed and that the draft is ready to approve.";
+    return [`[loom] Spec review round ${round} passed v${version} of ${slug}: ${summary}`, handOver].join("\n");
   }
   const next =
     round >= SPEC_REVIEW_ROUNDS

@@ -25,6 +25,14 @@ export interface CommentTarget {
   preset?: SpecValue;
 }
 
+/** A finding of Loom's spec review on the version on screen, numbered as the review lists them. */
+export interface ReviewFinding {
+  n: number;
+  path: string | null;
+  title: string;
+  detail: string;
+}
+
 export interface Review {
   version: number;
   /** What this version changed from the version it is compared with. */
@@ -32,6 +40,8 @@ export interface Review {
   /** Only what changed, and what carries a note, is shown. */
   only: boolean;
   notes: readonly DraftNote[];
+  /** The open findings of Loom's spec review of this version; empty when it passed or none ran. */
+  findings?: readonly ReviewFinding[];
   /** Absent when the page takes no comments. */
   onComment?(target: CommentTarget, anchor: HTMLElement): void;
 }
@@ -43,8 +53,12 @@ const related = (a: string, b: string) => a === b || isUnder(a, b) || isUnder(b,
 export const changeAt = (review: Review, path: string) => review.changes.find((change) => change.path === path);
 export const changedAt = (review: Review, path: string) => review.changes.some((change) => touches(change, path));
 export const notedAt = (review: Review, path: string) => review.notes.some((note) => note.paths.some((one) => related(one, path)));
-/** Whether a part stays in view while only what changed is shown: it changed, or it carries a note. */
-export const kept = (review: Review, paths: readonly string[]) => !review.only || paths.some((path) => changedAt(review, path) || notedAt(review, path));
+/** Whether a finding of Loom's review is about the part, a part inside it, or the part it sits in. */
+export const foundAt = (review: Review, path: string) => (review.findings ?? []).some((finding) => finding.path !== null && related(finding.path, path));
+/** Whether a part stays in view while only what changed is shown: it changed, or it carries a note or a finding. */
+export const kept = (review: Review, paths: readonly string[]) => !review.only || paths.some((path) => changedAt(review, path) || notedAt(review, path) || foundAt(review, path));
+/** The findings on exactly `path`. */
+export const findingsAt = (review: Review, path: string) => (review.findings ?? []).filter((finding) => finding.path === path);
 /** The tray numbers, from 1, of the notes on exactly `path`. */
 export const pinsAt = (review: Review, path: string) => review.notes.flatMap((note, index) => (note.paths[0] === path ? [index + 1] : []));
 
@@ -187,6 +201,15 @@ export function Pin({ n }: { n: number }) {
   );
 }
 
+/** A finding of Loom's spec review on the part, numbered as the review lists them; its title shows on hover. */
+export function FindingPin({ finding }: { finding: ReviewFinding }) {
+  return (
+    <span data-finding-pin={finding.n} title={`Loom's spec review: ${finding.title}`} className="ml-1.5 inline-flex h-4 shrink-0 items-center justify-center rounded-full border border-attention bg-attention/15 px-1 align-[1px] text-[10px] leading-none font-semibold text-foreground">
+      R{finding.n}
+    </span>
+  );
+}
+
 export function WasBadge({ before }: { before: unknown }) {
   return (
     <span data-was className="ml-1.5 inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-1.5 align-[1px] text-[10.5px] leading-4 whitespace-nowrap text-primary">
@@ -208,6 +231,7 @@ export function Commentable({ target, as: Tag = "div", className = "", showWas =
   const review = useReview();
   const path = target.paths[0]!;
   const pins = pinsAt(review, path);
+  const found = findingsAt(review, path);
   const change = showWas ? changeAt(review, path) : undefined;
   const open = review.onComment;
   return (
@@ -215,6 +239,7 @@ export function Commentable({ target, as: Tag = "div", className = "", showWas =
       data-comment-target={path}
       data-comment-paths={target.paths.join(" ")}
       data-noted={pins.length > 0 || undefined}
+      data-found={found.length > 0 || undefined}
       tabIndex={open === undefined ? undefined : 0}
       title={open === undefined ? undefined : `Comment on ${target.label}`}
       onClick={
@@ -238,10 +263,13 @@ export function Commentable({ target, as: Tag = "div", className = "", showWas =
               open(target, event.currentTarget);
             }
       }
-      className={`group/comment relative rounded-md ${open === undefined ? "" : "cursor-pointer outline-offset-2 hover:bg-warning/10 hover:outline hover:outline-1 hover:outline-warning-text focus-visible:outline focus-visible:outline-1 focus-visible:outline-ring"} ${pins.length > 0 ? "outline outline-1 outline-dashed outline-warning-text" : ""} ${className}`}
+      className={`group/comment relative rounded-md ${open === undefined ? "" : "cursor-pointer outline-offset-2 hover:bg-warning/10 hover:outline hover:outline-1 hover:outline-warning-text focus-visible:outline focus-visible:outline-1 focus-visible:outline-ring"} ${pins.length > 0 ? "outline outline-1 outline-dashed outline-warning-text" : found.length > 0 ? "outline outline-1 outline-dashed outline-attention" : ""} ${className}`}
     >
       {children}
       {change?.kind === "value" && <WasBadge before={change.before} />}
+      {found.map((finding) => (
+        <FindingPin key={`r${finding.n}`} finding={finding} />
+      ))}
       {pins.map((n) => (
         <Pin key={n} n={n} />
       ))}
@@ -266,7 +294,8 @@ export function DiffList({ path, items, render, rest, compact }: { path: string;
   const fold = rest ?? ((count: number) => <span className="px-1 text-[11px] text-subtle-foreground">… {count} unchanged</span>);
   if (change?.kind !== "list") return <>{items.map((item, index) => <Fragment key={index}>{render(item, null, index)}</Fragment>)}</>;
   const trim = compact ?? review.only;
-  const noted = (index: number) => review.notes.some((note) => note.paths.some((one) => one === path || one === `${path}[${index}]` || isUnder(one, `${path}[${index}]`)));
+  const at = (one: string, index: number) => one === path || one === `${path}[${index}]` || isUnder(one, `${path}[${index}]`);
+  const noted = (index: number) => review.notes.some((note) => note.paths.some((one) => at(one, index))) || (review.findings ?? []).some((finding) => finding.path !== null && at(finding.path, index));
   const out: ReactNode[] = [];
   let same = 0;
   const flush = (key: string) => {

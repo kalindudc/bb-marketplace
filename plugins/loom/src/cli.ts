@@ -386,7 +386,7 @@ export function createCli(projects: Projects, engine: Engine, store: Store, now:
         positionals: [SLUG],
         options: {
           version: { ...version, description: "The version to approve; it must be the one waiting for approval." },
-          "skip-review": { type: "boolean", description: "Approve a draft whose automatic spec review has not passed: still running, with open findings, or not finished." },
+          "skip-review": { type: "boolean", description: "Approve a draft or pending version whose automatic spec review has not passed: still running, with open findings, or not finished." },
           json,
         },
         run: ({ options, positionals }, ctx) =>

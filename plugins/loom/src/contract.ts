@@ -11,7 +11,9 @@ import type { Finding } from "./review";
 import type { ProjectTimeline, SessionBar, TicketBar } from "./replay";
 import { repoSpecSchema } from "./spec";
 import type { SpecReviewStatus } from "./spec-review";
-import type { SentNote, SpecVersionView } from "./spec-view";
+import type { SentNote, SpecReviewRound, SpecVersionView } from "./spec-view";
+import type { PlannerAction, PlannerStep, PlannerVersion, PlannerView, TurnStep, VersionChange } from "./planner-view";
+import type { AskStep, PlannerAsk } from "./asks";
 import type { ActivityItem, Attempt, ChecksItem, CheckStep, Mark, MergeItem, PrFeedbackItem, PrTextItem, ReviewItem, TicketActivity } from "./activity";
 import type { ChangedFile, ChangeKind, ChangeRepo, ChangeSource, ChangesView, FilePatch } from "./changes";
 import type { AuthorKind, PostKind, ProjectState, ReviewVerdict, Role, ThreadState, TicketState } from "./states";
@@ -19,6 +21,8 @@ import { MERGE_CHOICES } from "./states";
 
 export type ProjectSummary = ProjectOverview;
 export type { ChangedFile, ChangeKind, ChangeRepo, ChangeSource, ChangesView, FilePatch };
+export type { SpecReviewRound };
+export type { AskStep, PlannerAction, PlannerAsk, PlannerStep, PlannerVersion, PlannerView, TurnStep, VersionChange };
 export type { ActivityItem, Attempt, BbProjectChoice, ChecksItem, CheckStep, PrFeedbackItem, PrTextItem, HomeProject, HomeView, Mark, MergeItem, NeedItem, NextStep, PlanningSession, ProjectHealth, ProjectTimeline, RepoOverview, ReviewItem, SentNote, SessionBar, SpecVersionView, TicketActivity, TicketBar };
 
 export interface BoardCard {
@@ -97,8 +101,10 @@ export interface ProjectView {
   now: number;
   /** The event the view was rewound to; null for the live view. */
   at: number | null;
-  /** The draft's automatic spec review; null in a rewound view. */
+  /** The automatic spec review of the draft or the pending version; null in a rewound view. */
   specReview: SpecReviewStatus | null;
+  /** The steps the planner asked the human to take (loom_ask_human) that are not done yet; 0 in a rewound view. */
+  openAsks: number;
 }
 
 export interface PostDto {
@@ -280,6 +286,9 @@ export const rpcContract = defineRpcContract({
   },
   planning: { input: z.null(), output: typed<PlanningSession[]>() },
   planningSession: { input: z.object({ threadId: z.string().min(1).max(200) }).strict(), output: typed<PlanningSession | null>() },
+  plannerView: { input: z.object({ threadId: z.string().min(1).max(200) }).strict(), output: typed<PlannerView | null>() },
+  messagePlanner: { input: z.object({ threadId: z.string().min(1).max(200), text: z.string().trim().min(1).max(20_000), confirm }).strict(), output: typed<PlannerView | null>() },
+  dismissAsk: { input: z.object({ slug, ask: z.number().int().positive(), confirm }).strict(), output: typed<PlannerView | null>() },
   bbProjects: { input: z.null(), output: typed<BbProjectChoice[]>() },
   startPlanning: {
     input: z

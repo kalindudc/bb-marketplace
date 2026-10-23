@@ -28,7 +28,7 @@ export interface NextStepInput {
   startFailed: string[];
   /** The blocked tickets whose reviewer bb refused to start. */
   reviewRefused: string[];
-  /** The draft's automatic spec review; left out, a draft has none to wait for. */
+  /** The automatic spec review of the draft or the pending version; left out, there is none to wait for. */
   specReview?: SpecReviewStatus;
 }
 
@@ -80,21 +80,25 @@ function landStep(overview: ProjectOverview): NextStep {
   };
 }
 
-/** A draft whose spec review has not passed waits in the Plan stage, with no button: the planner is still at work. */
-function reviewStep(slug: string, version: number, review: SpecReviewStatus | undefined): NextStep | null {
-  const override = `bb loom approve ${slug} --skip-review`;
+/**
+ * A version whose spec review has not passed waits with no button: the planner is still at work. A draft waits in the Plan
+ * stage, a pending version in the project's own stage (`pending`).
+ */
+function reviewStep(slug: string, version: number, review: SpecReviewStatus | undefined, pending: { stage: number } | null = null): NextStep | null {
+  const override = `bb loom approve ${slug}${pending === null ? "" : ` --version ${version}`} --skip-review`;
+  const stage = pending?.stage ?? 0;
   switch (review?.kind) {
     case "reviewing":
       return {
-        stage: 0,
+        stage,
         tone: "normal",
-        title: `Loom is reviewing draft v${version}.`,
+        title: `Loom is reviewing ${pending === null ? "draft " : ""}v${version}.`,
         text: `A separate reviewer checks it against your request and for work the goal does not need. The planner revises it for each finding, and this bar asks you to approve once a review passes. To approve it now anyway, run \`${override}\`.`,
         action: null,
       };
     case "changes":
       return {
-        stage: 0,
+        stage,
         tone: "normal",
         title: `The spec review found ${plural(review.findings.length, "problem")} in v${version}.`,
         text: `The planner is revising it (round ${review.round} of ${SPEC_REVIEW_ROUNDS} done). To approve it now anyway, run \`${override}\`.`,
@@ -102,7 +106,7 @@ function reviewStep(slug: string, version: number, review: SpecReviewStatus | un
       };
     case "failed":
       return {
-        stage: 0,
+        stage,
         tone: "warning",
         title: `The spec review of v${version} did not finish.`,
         text: `${review.reason[0]!.toUpperCase()}${review.reason.slice(1)}. Ask the planner to propose again to restart it, or approve without a passed review with \`${override}\`.`,
@@ -138,13 +142,16 @@ export function nextStepOf(input: NextStepInput): NextStep | null {
   }
 
   if (pendingVersion !== null) {
+    const stage = state === "ready" ? 3 : state === "done" ? STAGES.length : 4;
+    const waiting = reviewStep(overview.slug, pendingVersion, input.specReview, { stage });
+    if (waiting !== null) return waiting;
     const moves = approvalMoves(input, true);
     const moved = input.startFailed.length + input.reviewRefused.length;
     return {
-      stage: state === "ready" ? 3 : state === "done" ? STAGES.length : 4,
+      stage,
       tone: "normal",
       title: `Next: approve v${pendingVersion}.`,
-      text: `The planner proposed spec v${pendingVersion}; it changes the spec, not the tickets on the board. ${moves.length === 0 ? "Approving tells the planner." : `Approving ${moves.join(", ")}, and tells the planner.`}`,
+      text: `The planner proposed spec v${pendingVersion}; it changes the spec, not the tickets on the board. ${REVIEWED_NOTE[input.specReview?.kind ?? "none"] ?? ""}${moves.length === 0 ? "Approving tells the planner." : `Approving ${moves.join(", ")}, and tells the planner.`}`,
       action: {
         control: "approve",
         version: pendingVersion,

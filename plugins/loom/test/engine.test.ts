@@ -551,6 +551,20 @@ describe("spec review", () => {
     expect(h.bb.callsTo("archive")).toContainEqual(["thr_w1"]);
   });
 
+  it("refuses to approve a pending version in review, and approves it with skipReview, superseding the review", async () => {
+    await draft();
+    await h.engine.approve("csv", "human", undefined, { skipReview: true });
+    await h.projects.propose({ toml: specToml((doc) => (doc.project.goal = "Let people export their orders as a CSV file, by date.")), threadId: "thr_plan", bbProjectId: "proj_1", hostId: "host_1" });
+    expect(await ensureSpecReview(h.ctx, "csv")).toEqual({ kind: "reviewing", version: 2, round: 1 });
+    const refused = await h.engine.approve("csv", "human", 2).catch((error: unknown) => error as { message: string; hint?: string });
+    expect(refused).toMatchObject({ message: "Pending v2 of csv is still in its spec review (round 1 of 3)." });
+    expect(project().pending_version).toBe(2);
+
+    expect(await h.engine.approve("csv", "human", 2, { skipReview: true })).toMatchObject({ applied: "pending", version: 2 });
+    expect(h.store.specReviews(project().id).at(-1)!.state).toBe("superseded");
+    expect(project()).toMatchObject({ approved_version: 2, pending_version: null });
+  });
+
   it("approves a draft once its review passed, and ends a live review when the project is archived", async () => {
     await draft();
     await specVerdict(h.ctx, "thr_w1", [], "Fits the request.");

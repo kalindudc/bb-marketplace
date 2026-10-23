@@ -5,11 +5,12 @@ import { briefBody, LoomError } from "./projects";
 import { clip, triageDigest } from "./prompts";
 import { isMultiRepo, repoSettings } from "./repos";
 import { dependencyCycle, fallsUnder, numberErrors, type Spec, type TicketPatch, type TicketSpec } from "./spec";
-import { HUMAN_ACTOR, TICKET_STATES, canMoveTicket, type TicketState } from "./states";
+import { HUMAN_ACTOR, LOOM_ACTOR, TICKET_STATES, canMoveTicket, type TicketState } from "./states";
 import { endLiveRows, specOf, type EngineCtx } from "./workers";
 
 const ROUND_LIMIT_MS = 30 * 60_000;
 const DIGEST_POSTS = 3;
+const TRIAGE_REASON_LIMIT = 600;
 
 /** Sends the planner one batched message about every blocked ticket, when a round is due. True when it sent one. */
 export async function maybeSendTriage(ctx: EngineCtx, project: ProjectRow): Promise<boolean> {
@@ -35,6 +36,11 @@ export async function maybeSendTriage(ctx: EngineCtx, project: ProjectRow): Prom
   const summary = `[loom] Triage round ${round} for ${fresh.slug}: ${blocked.length === 1 ? "1 ticket is" : `${blocked.length} tickets are`} blocked.`;
   await ctx.bb.send(planner.thread_id, { summary, detail });
   store.updateProject(fresh.id, { triage_pending: 0, triage_round: round, triage_sent_at: ctx.now() });
+  store.event(fresh.id, null, "triage.sent", LOOM_ACTOR, {
+    round,
+    blocked: blocked.map((ticket) => ({ key: ticket.key, title: ticket.title, reason: clip(ticket.blocked_reason ?? "", TRIAGE_REASON_LIMIT) })),
+    paused: fresh.state === "paused",
+  });
   return true;
 }
 

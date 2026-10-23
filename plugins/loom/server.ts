@@ -66,7 +66,7 @@ export function createLoomPlugin(deps: PluginDeps = {}) {
         failed(error);
       }
     };
-    bb.events.on("thread.idle", ({ thread }) => safe("thread.idle", () => engine.onThreadIdle(thread.id)));
+    bb.events.on("thread.idle", ({ thread, lastAssistantText }) => safe("thread.idle", () => engine.onThreadIdle(thread.id, lastAssistantText ?? null)));
     bb.events.on("thread.failed", ({ thread }) => safe("thread.failed", () => engine.onThreadFailed(thread.id)));
     bb.events.on("thread.archived", ({ thread }) => safe("thread.archived", () => engine.onThreadGone(thread.id, "archived")));
     bb.events.on("thread.deleted", ({ thread }) => safe("thread.deleted", () => engine.onThreadGone(thread.id, "deleted")));

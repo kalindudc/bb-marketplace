@@ -159,11 +159,13 @@ describe("loom_propose", () => {
   });
 
   it("describes a pending version after approval", async () => {
+    stubSpawn();
     await propose();
     await host.projects.approve("csv", "human");
     const output = text(await propose((doc) => (doc.project.goal = "Export orders as CSV, with a delimiter the person can choose.")));
     expect(output).toContain("Spec v2 of `csv` is pending");
-    expect(output).toContain("bb loom approve csv --version 2");
+    expect(output).toContain("Spec review: a separate reviewer now checks v2");
+    expect(output).not.toContain("Needs you (human)");
     expect(output).toContain("Ticket changes after approval go through the planner's board tools.");
   });
 
@@ -226,7 +228,7 @@ describe("worker and planner tools", () => {
   it("gives a planner its tools, the worker tools stay away from it, and a worker cannot use the planner tools", async () => {
     const planner = await configure("thr_plan");
     expect(planner.tools.map((tool) => tool.name)).toEqual([...PLANNER_TOOLS]);
-    expect(PLANNER_TOOLS).toEqual(["loom_propose", "loom_discover", "loom_board", "loom_ticket", "loom_requeue", "loom_add_tickets", "loom_edit_ticket", "loom_cancel_ticket", "loom_post"]);
+    expect(PLANNER_TOOLS).toEqual(["loom_propose", "loom_discover", "loom_board", "loom_ticket", "loom_requeue", "loom_add_tickets", "loom_edit_ticket", "loom_cancel_ticket", "loom_post", "loom_ask_human"]);
     const workerId = await startWorkerFor("CSV-1");
     const worker = await configure(workerId);
     expect(worker.tools.map((tool) => tool.name)).toEqual([...WORKER_TOOLS]);
@@ -237,6 +239,7 @@ describe("worker and planner tools", () => {
       ["loom_requeue", { key: "CSV-1", note: "x" }],
       ["loom_cancel_ticket", { key: "CSV-1", reason: "x" }],
       ["loom_post", { key: "CSV-1", text: "x" }],
+      ["loom_ask_human", { why: "x", steps: [] }],
     ] as const) {
       const result = await call(name, input, workerId);
       expect(isError(result)).toBe(true);
@@ -367,6 +370,17 @@ describe("worker and planner tools", () => {
     expect(text(await call("loom_cancel_ticket", { key: "CSV-1", reason: "No longer needed" }, "thr_plan"))).toContain("CSV-1 is cancelled");
     expect(ticketNamed("CSV-1").state).toBe("cancelled");
     expect(host.store.threadByThreadId(workerId)?.state).toBe("ended");
+  });
+
+  it("loom_ask_human records the planner's steps for the page, refuses a step the human could not take, and clears", async () => {
+    await host.engine.block("CSV-1", "stuck", "human");
+    const recorded = text(await call("loom_ask_human", { why: "CSV-1 needs your answer.", steps: [{ action: "requeue", key: "CSV-1", text: "Requeue CSV-1 once you answered." }] }, "thr_plan"));
+    expect(recorded).toBe("The Loom page now asks the human to: Requeue CSV-1 once you answered.");
+    expect(host.store.eventsOfKind(harness.project.id, "planner.asked").at(-1)!.actor).toBe("thr_plan");
+    const refused = await call("loom_ask_human", { why: "x", steps: [{ action: "approve", version: 3, text: "Approve v3." }] }, "thr_plan");
+    expect(isError(refused)).toBe(true);
+    expect(text(refused)).toContain("no spec version of csv waits for approval");
+    expect(text(await call("loom_ask_human", { why: "", steps: [] }, "thr_plan"))).toBe("Your asks are cleared.");
   });
 
   it("refuses a planner that does not belong to the ticket's project", async () => {

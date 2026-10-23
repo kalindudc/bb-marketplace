@@ -2,7 +2,7 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
-## Unreleased
+## 0.14.0 (2026-10-23)
 
 ### Added
 
@@ -11,10 +11,17 @@ Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this
 - "What changed" lists every change by section, says which ones answer the comments you sent, and jumps to each one. A change you jumped to counts as seen, j and k step through the changes, and each section can be marked reviewed; all of it is kept in your browser.
 - Comment on any part of the spec by clicking it. A choice, a number or a switch can also take a suggested value, which reaches the planner as TOML on a line of its own, and quick picks such as "Split it in two" or "Not testable" start the text. Comments collect in a numbered review panel with a note on the whole spec, a preview and one Send, and the panel offers Approve when there is nothing to send and the next-step bar does not carry it.
 - `specVersion` returns the version it compares with, and takes a `base` version to compare with instead.
+- The Planner tab is a page about the planner's work, with its chat one click away under Conversation. A strip says whether the planner is working and on what, waits on you or is idle, and before approval where planning stands. Needs you holds its questions, the steps it asked for and a version ready for you. What happened tells its work as steps in chapters, one per draft version and one for the running project, with filters and newest or oldest first. A side column has a box to message the planner, your answers, the spec versions and facts about it.
+- The planner's Ask User Question rounds show one question at a time, with "Use the recommended answers for the rest" and a review before Send.
+- `loom_ask_human`: the planner records what the human has to do, such as approve v4 and then requeue two tickets. The Planner tab lists the steps under Needs you with a button for each, checks a step off when the human takes it, and counts the steps left on its tab; Set aside hides them. The Planner tab also shows "?" while the planner waits on a question.
+- Loom's spec review also checks a version the planner proposes after approval, as a change to the version in force, and approving it waits for the review the way a draft's approval does (`--skip-review` overrides it).
+- The Spec page keeps a version's spec review after approval, pins each finding on its part as R1, R2… with Go to it, and marks the changes in "What changed" that answer an earlier version's findings.
+- Loom keeps the planner's last words of each turn and the human's messages from the page, and records each triage round as a `triage.sent` event, for the Planner page. New RPC methods: `plannerView`, `messagePlanner` and `dismissAsk`; `specVersion` lists the spec reviews, and the project view counts the open asks.
 
 ### Changed
 
-- A note to the planner may have no text when it suggests a value. The planning view keeps the spec dashboard and its "+ note" until that page is redesigned.
+- A note to the planner may have no text when it suggests a value.
+- A planning conversation that proposed opens as its project's Planner tab. The spec dashboard under the planner's chat is gone; the Spec tab reviews every version.
 
 ## 0.13.1 (2026-10-23)
 

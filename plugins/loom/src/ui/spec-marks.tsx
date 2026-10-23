@@ -6,7 +6,7 @@ export interface NoteTarget {
   label: string;
 }
 
-/** What the dashboard marks on every part of the spec: the changes of the version on screen and the paths of the unsent notes. */
+/** What the Spec page's Files view marks on every path: the changes of the version on screen and the paths of the unsent notes. */
 export interface Marks {
   version: number;
   changes: SpecChanges | null;
@@ -20,9 +20,6 @@ export const MarksContext = createContext<Marks | null>(null);
 // Faint until its part is hovered, and always solid where nothing can hover (Tailwind's hover variants need hover).
 export const NOTE_BUTTON =
   "cursor-pointer rounded border border-border-seam bg-card px-1.5 text-[11px] leading-[18px] text-muted-foreground opacity-60 group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring [@media(hover:none)]:opacity-100";
-
-/** "provider / model" with only the parts that are set. */
-export const modelLabel = ({ provider, model }: { provider?: string; model?: string }) => [provider, model].filter((part) => part !== undefined).join(" / ") || "the default model";
 
 export const notesUnder = (notePaths: readonly string[], path: string) => notePaths.filter((notePath) => notePath === path || isUnder(notePath, path)).length;
 

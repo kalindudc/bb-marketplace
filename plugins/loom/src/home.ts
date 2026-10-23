@@ -109,8 +109,9 @@ function needsOf(store: Store, { project, row, tickets }: Loaded): NeedItem[] {
     const latest = store.latestSpecVersion(project.id)!;
     const text = review.kind === "failed" ? `draft v${latest.version}'s spec review did not finish: ${review.reason}` : `has a draft spec v${latest.version} with ${plural((JSON.parse(latest.spec_json) as Spec).ticket.length, "ticket")}`;
     items.push(item("approve", text, latest.created_at));
-  } else if (project.pending_version !== null) {
-    items.push(item("pending", `spec v${project.pending_version} waits for your approval`, store.specVersion(project.id, project.pending_version)!.created_at));
+  } else if (project.state !== "draft" && project.pending_version !== null && review.kind !== "reviewing" && review.kind !== "changes") {
+    const text = review.kind === "failed" ? `spec v${project.pending_version}'s spec review did not finish: ${review.reason}` : `spec v${project.pending_version} waits for your approval`;
+    items.push(item("pending", text, store.specVersion(project.id, project.pending_version)!.created_at));
   }
   if (readyToLand(row)) {
     items.push(item("land", `finished all ${plural(row.progress.done, "ticket")}; land the integration branch`, Math.max(...tickets.map((ticket) => ticket.state_at))));

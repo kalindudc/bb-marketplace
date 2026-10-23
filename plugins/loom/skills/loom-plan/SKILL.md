@@ -11,7 +11,7 @@ Read the spec reference first: the `loom` skill's `references/spec.md` lists eve
 
 ## When the Loom page started this thread
 
-The human can start a project from New project on the Loom page. Then this thread's first message is their goal, followed by a note that starts with `[loom]`. The note may already settle the merge plan, name the reviewer model they want, or list the repos they picked in the composer's repo picker. Skip the interview questions it answers, and ask the rest as usual. Picked repos are a starting point, not a limit: step 2 still applies to them, and you may add other repos the work changes. When you hand over, say that they can read, approve and start the draft on the Loom page, where the conversation stays open beside it.
+The human can start a project from New project on the Loom page. Then this thread's first message is their goal, followed by a note that starts with `[loom]`. The note may already settle the merge plan, name the reviewer model they want, or list the repos they picked in the composer's repo picker. Skip the interview questions it answers, and ask the rest as usual. Picked repos are a starting point, not a limit: step 2 still applies to them, and you may add other repos the work changes. When you hand over, say that they can read, approve and start the draft on the Loom page. Once you propose, this conversation is the project's Planner tab there.
 
 ## 1. Interview (one short round)
 
@@ -94,13 +94,17 @@ Then wait for the spec review. For each draft version Loom starts a separate rev
 
 The human can review the draft on the Loom page and send you notes. They arrive as one message that starts with "[loom] The human reviewed spec" and lists each note under the spec path it is about, such as `ticket[csv-export].acceptance[1]`: tickets by ref, list items counted from 0. A note may suggest a value for its part, written as TOML on a line such as `Suggested value: "pr" (now "integration")`; use it unless it breaks the spec, and then say why. Revise the spec for each note, or answer it in your reply, then call `loom_propose` again with the whole spec.
 
-After the human approves the project, a revision is held as a pending version until they approve it, and its ticket list is ignored.
+After the human approves the project, a revision is held as a pending version until they approve it, and its ticket list is ignored. Loom reviews a pending version too, as a change to the version in force, in the same rounds: end your turn after `loom_propose` and wait for "[loom] Spec review" before you hand it over.
+
+## When the human has to act
+
+Whenever the human has to do something, such as approve a pending version and then requeue the tickets it unblocks, call `loom_ask_human` with the steps in order, as well as saying them in your reply. The Loom page shows them under Needs you on the Planner tab, with a button for each: `approve` with the version, `requeue` or `reply` with the ticket key, `start`, `resume`, `land`, or `other` for anything the page cannot do. Each call replaces your earlier asks, and a step is checked off when the human does it. Call it with no steps once nothing is needed.
 
 ## 7. Hand over
 
-Hand over only after Loom's spec review passed, or after Loom said it stopped reviewing; then also name the findings you left open. The human cannot approve a draft whose review is still running or has findings unless they skip it with `bb loom approve <slug> --skip-review`.
+Hand over only after Loom's spec review passed, or after Loom said it stopped reviewing; then also name the findings you left open. The human cannot approve a draft or a pending version whose review is still running or has findings unless they skip it with `bb loom approve <slug> --skip-review`.
 
-Tell the human, in plain words, what you proposed and the next steps. On a project with `[[repo]]` tables, name the repos; landing opens one pull request in each repo with merged work, and `bb loom land <slug> --repo <name>` lands one. On the Loom page the draft shows Approve and Start buttons; in a terminal the commands are:
+Tell the human, in plain words, what you proposed and the next steps. On a project with `[[repo]]` tables, name the repos; landing opens one pull request in each repo with merged work, and `bb loom land <slug> --repo <name>` lands one. On the Loom page the next-step bar carries Approve and then Start; in a terminal the commands are:
 
 - `bb loom spec <slug>` to read the spec.
 - `bb loom approve <slug>` to approve it and create the tickets.

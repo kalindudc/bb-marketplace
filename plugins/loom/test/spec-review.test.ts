@@ -83,14 +83,68 @@ describe("starting a spec review", () => {
     expect(await draft()).toEqual({ kind: "reviewing", version: 1, round: 1 });
   });
 
-  it("has nothing to wait for on a draft with no review, and starts none for a pending version after approval", async () => {
+  it("has nothing to wait for on a draft with no review", async () => {
     await propose();
     expect(status()).toEqual({ kind: "none" });
     expect(approvalRefusal("csv", status())).toBeNull();
+  });
+});
+
+describe("ending reviews", () => {
+  it("ends the reviews up to the version approved, and keeps a newer version's review", async () => {
+    await draft();
+    const id = project().id;
+    const newer = h.store.addSpecReview({ project_id: id, version: 2, round: 1, spawn_token: "newer" });
+    await endSpecReviews(h.ctx, id, 1);
+    expect(rows().map((row) => [row.version, row.state])).toEqual([
+      [1, "superseded"],
+      [2, "reviewing"],
+    ]);
+    await endSpecReviews(h.ctx, id);
+    expect(h.store.specReview(newer.id)!.state).toBe("superseded");
+  });
+});
+
+describe("reviewing a pending version", () => {
+  const approveDraft = async () => {
+    await draft();
+    await specVerdict(h.ctx, reviewer(), findings(1), "Too much.");
+    await draft(goal(2));
+    await specVerdict(h.ctx, reviewer(), [], "Holds.");
+    await h.projects.approve("csv", "human");
+  };
+
+  it("reviews a version proposed after approval as a change to the version in force, counting its rounds from 1", async () => {
+    await approveDraft();
+    await propose(goal(3));
+    expect(await ensureSpecReview(h.ctx, "csv")).toEqual({ kind: "reviewing", version: 3, round: 1 });
+    expect(status()).toEqual({ kind: "reviewing", version: 3, round: 1 });
+    const brief = spawns().at(-1)!.prompt;
+    expect(brief).toContain("## A change to an approved project");
+    expect(brief).toContain("The human approved v2 and the project is ready");
+    expect(brief).toContain("- project.goal: rewritten");
+    expect(brief).not.toContain("## Earlier rounds");
+    expect(approvalRefusal("csv", status(), true)?.message).toBe("Pending v3 of csv is still in its spec review (round 1 of 3).");
+    expect(approvalRefusal("csv", status(), true)?.hint).toContain("bb loom approve csv --version 3 --skip-review");
+  });
+
+  it("tells the planner a passed pending version waits for the human, with loom_ask_human for what follows", async () => {
+    await approveDraft();
+    await propose(goal(3));
+    await ensureSpecReview(h.ctx, "csv");
+    await specVerdict(h.ctx, reviewer(), [], "The change is the smallest fix.");
+    expect(status()).toEqual({ kind: "approved", version: 3, round: 1, summary: "The change is the smallest fix." });
+    expect(toPlanner().at(-1)).toContain("tell them what v3 changes and that it waits for their approval");
+    expect(toPlanner().at(-1)).toContain("loom_ask_human");
+  });
+
+  it("has nothing to wait for on a pending version from before spec reviews, and none once it is approved", async () => {
+    await propose();
     await h.projects.approve("csv", "human");
     await propose(goal(2));
-    expect(await ensureSpecReview(h.ctx, "csv")).toEqual({ kind: "none" });
-    expect(spawns()).toEqual([]);
+    expect(status()).toEqual({ kind: "none" });
+    await h.projects.approve("csv", "human");
+    expect(status()).toEqual({ kind: "none" });
   });
 });
 

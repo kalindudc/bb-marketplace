@@ -20,6 +20,8 @@ import { blockedAtReview } from "./review";
 import { IN_FLIGHT, overlaps, readyTickets, toLite, type TicketLite } from "./scheduler";
 import { parseSpec, type Spec } from "./spec";
 import { specReviewStatus } from "./spec-review";
+import { dismissAsk, plannerAsk } from "./asks";
+import { plannerView } from "./planner-view";
 import { specVersionView } from "./spec-view";
 import { HUMAN_ACTOR, type TicketState } from "./states";
 import { blockedAtStart, specOf } from "./workers";
@@ -240,6 +242,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       now: at,
       at: past?.eventId ?? null,
       specReview,
+      openAsks: past === null && project.state !== "archived" ? (plannerAsk(store, project)?.steps.filter((step) => !step.done).length ?? 0) : 0,
     };
   };
 
@@ -367,6 +370,16 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
     timeline: ({ slug }) => projectTimeline(rowsOf(store, projects.require(slug)), now()),
     planning: () => projects.planningSessions(),
     planningSession: ({ threadId }) => projects.planningSession(threadId),
+    plannerView: ({ threadId }) => plannerView({ store, projects }, threadId, now()),
+    messagePlanner: async ({ threadId, text }, ctx) => {
+      await act(ctx, "message", {}, () => engine.messagePlanner(threadId, text));
+      return plannerView({ store, projects }, threadId, now());
+    },
+    dismissAsk: async ({ slug, ask }, ctx) => {
+      const project = projects.require(slug);
+      await act(ctx, "dismissAsk", { slug, ask }, () => dismissAsk(store, project, ask));
+      return project.planner_thread_id === null ? null : plannerView({ store, projects }, project.planner_thread_id, now());
+    },
     specVersion: ({ slug, version, base }) => specVersionView({ store, projects }, slug, version, base),
     bbProjects: () => projects.bbProjectChoices(),
     changes: ({ slug }) => changes.view(slug),
