@@ -3,7 +3,7 @@ import type { NewThreadRequest } from "@get-bb/plugin-sdk";
 import type { CheckRun } from "./checks";
 import type { PostRow, ProjectRow, ReviewRow, SpecReviewRow, TicketRow } from "./db/store";
 import { its, plural } from "./format";
-import { isMultiRepo, repoSettings, type RepoSettings } from "./repos";
+import { followsFeedback, isMultiRepo, prSettings, repoSettings, type RepoSettings } from "./repos";
 import type { Finding } from "./review";
 import type { Spec } from "./spec";
 import type { SpecNote } from "./spec-paths";
@@ -152,6 +152,21 @@ function otherReposSection(spec: Spec, repo: RepoSettings, checkouts: ReadonlyMa
   ];
 }
 
+/** What a worker on the pr strategy is told about the pull request Loom opens and follows for its ticket. */
+function pullRequestSection(spec: Spec, repo: RepoSettings): string[] {
+  const pr = prSettings(spec);
+  if (repo.forge.kind === "none") {
+    return ["## The pull request", "When the reviewers approve, Loom pushes the reviewed work to the ticket's branch and a person opens the pull request.", ""];
+  }
+  const write =
+    pr.describe === "worker"
+      ? "When the reviewers approve, Loom asks you to write the pull request with loom_pr: its title, its description and the commit message."
+      : "When the reviewers approve, Loom writes the pull request from this ticket.";
+  const push = pr.squash ? "Loom pushes the reviewed work as one commit and opens the pull request; the human merges it." : "Loom pushes the reviewed branch and opens the pull request; the human merges it.";
+  const follows = pr.maxFixRounds > 0 && followsFeedback(repo.forge) ? [`While it is open, Loom follows its checks and reviews and sends you what needs a fix. Each fix goes through the checks and a review again and is pushed as ${pr.squash ? "one more commit" : "more commits"}.`] : [];
+  return ["## The pull request", [write, push, ...follows].join(" "), ""];
+}
+
 /** `checkouts` holds the checkout path of each other repo on a multi-repo project, by repo name; a repo missing from it is listed without a path. */
 export function workerBrief(a: { project: ProjectRow; spec: Spec; ticket: TicketRow; posts: PostRow[]; resume: boolean; checkouts?: ReadonlyMap<string, string> }): string {
   const { project, spec, ticket, posts, resume } = a;
@@ -188,6 +203,7 @@ export function workerBrief(a: { project: ProjectRow; spec: Spec; ticket: Ticket
     "They run in this worktree, in this order, and stop at the first failure. They must not write tracked files, and you must not edit files while they run.",
     "",
     ...(multi ? otherReposSection(spec, repo, a.checkouts ?? new Map()) : []),
+    ...(spec.merge.strategy === "pr" ? pullRequestSection(spec, repo) : []),
     "## Rules",
     "- Work only in this worktree. Never push, merge, or edit a protected path.",
     "- Call loom_note({ text }) once for each milestone, so the human can follow along on the ticket.",
@@ -202,6 +218,7 @@ export function workerBrief(a: { project: ProjectRow; spec: Spec; ticket: Ticket
         ? "An earlier worker started this ticket, but no branch was kept, so this worktree starts from the base."
         : `An earlier worker already worked on this ticket. This worktree starts from its branch ${JSON.stringify(ticket.branch)}, so continue from what is there instead of starting again.`,
     );
+    if (ticket.pushed_sha !== null) lines.push(`This ticket's pull request${ticket.pr_url === null ? "" : ` ${ticket.pr_url}`} is open. Address what Loom's newest feedback post on the ticket lists; Loom pushes your fix to it as one more commit.`);
     lines.push("Read the ticket thread below first: the human's replies and the planner's answers are instructions, and the last block post says why work stopped.", "", renderThread(posts, THREAD_LIMIT));
   }
   return lines.join("\n");
@@ -345,6 +362,8 @@ export function reviewerBrief(a: {
   diff: { stat: string; patch: string; truncated: boolean };
   checkPost: PostRow | null;
   earlierReviews: ReviewRow[];
+  /** The fix round's feedback post when this review is of a fix for an open pull request. */
+  prFeedback?: PostRow | null;
 }): string {
   const { project, spec, ticket, round, diff, checkPost, earlierReviews } = a;
   const repo = repoSettings(spec, ticket.repo);
@@ -369,6 +388,14 @@ export function reviewerBrief(a: {
     "## Rubric",
     spec.review.rubric.length > 0 ? bullets(spec.review.rubric) : "- none; the acceptance criteria are the whole standard",
     "",
+    ...(a.prFeedback == null
+      ? []
+      : [
+          "## Pull request feedback",
+          `This is a fix for the ticket's open pull request${ticket.pr_url === null ? "" : ` ${ticket.pr_url}`}. Judge whether it addresses this feedback, as well as the acceptance criteria; the worker's summary says what it decided not to change and why.`,
+          clip(a.prFeedback.body, 12_000),
+          "",
+        ]),
     "## Scope report",
     ...(outside.length === 0 && protectedHits.length === 0 ? ["Every changed file is inside the ticket's scope."] : []),
     ...(outside.length > 0 ? [`Changed files outside the ticket's scope: ${outside.join(", ")}`] : []),
@@ -450,6 +477,108 @@ export function prBody(a: { ticket: TicketRow; approvals: ReviewRow[] }): string
     "",
     `Opened by Loom for ${ticket.key}.`,
   ].join("\n");
+}
+
+// ---------------------------------------------------------------- the pull request stage
+
+/** A failed check, and a review, review thread, comment or human reply, as a fix round lists them. */
+export interface FeedbackCheck {
+  name: string;
+  url: string | null;
+}
+export interface FeedbackItem {
+  kind: "review" | "thread" | "comment" | "reply";
+  author: string;
+  body: string;
+  url: string | null;
+  state: string | null;
+  path: string | null;
+  line: number | null;
+}
+
+const ITEM_TEXT = 1500;
+
+function itemLine(item: FeedbackItem): string {
+  const where = item.path === null ? "" : ` on ${item.path}${item.line === null ? "" : `:${item.line}`}`;
+  const what =
+    item.kind === "review"
+      ? `Review by ${item.author}${item.state === null ? "" : ` (${item.state.replace(/_/g, " ")})`}`
+      : item.kind === "thread"
+        ? `Review thread${where}, last from ${item.author}`
+        : item.kind === "reply"
+          ? "The human's reply on the ticket"
+          : `Comment by ${item.author}`;
+  const link = item.url === null ? "" : ` (${item.url})`;
+  return `- ${what}${link}:\n${clip(item.body.trim(), ITEM_TEXT).replace(/^/gm, "  > ")}`;
+}
+
+/** The feedback of one fix round as Markdown: the failed checks, then the reviews and comments. */
+export function feedbackList(checks: readonly FeedbackCheck[], items: readonly FeedbackItem[]): string {
+  const lines: string[] = [];
+  if (checks.length > 0) lines.push("Failed checks:", ...checks.map((check) => `- ${check.name}${check.url === null ? "" : ` (${check.url})`}`));
+  if (items.length > 0) lines.push(...(lines.length > 0 ? [""] : []), "Review feedback:", ...items.map(itemLine));
+  return lines.join("\n");
+}
+
+const PR_RULES = [
+  "Investigate a failed check with your own tools: the CI's CLI, the forge's CLI and the logs behind the links. A check that failed for a reason this change did not cause needs no code change; say so in your summary.",
+  "You may answer review comments on the pull request with the forge's CLI, for example to explain a change or to ask a question. Never push, merge, close, approve or edit the pull request: Loom does that.",
+  "If nothing needs to change, call loom_submit with a summary that says why; Loom then pushes nothing and keeps following the pull request.",
+  "Otherwise the fix goes through the checks and a review, then you write its commit message and Loom pushes it as one more commit.",
+];
+
+/** Loom asks the worker of an approved ticket for its pull request: title, description and commit message, or a fix round's commit message. */
+export function prAskText(a: { key: string; fix: boolean; round: number; url: string | null; limitMinutes: number }): { summary: string; detail: string } {
+  const own = "Write it the way you normally do: follow your own instructions and skills for pull request descriptions and commit messages, if you have any.";
+  const after = `Change no files: Loom pushes the exact commit the reviewers approved. Do not commit, push or open a pull request yourself. If loom_pr does not come within ${a.limitMinutes} minutes, Loom uses its own template.`;
+  if (a.fix) {
+    return {
+      summary: `[loom] ${a.key}: fix round ${a.round} is approved. Write its commit message and hand it in with loom_pr({ commit_message }), then end your turn.`,
+      detail: [`Loom pushes the approved fix to ${a.url ?? "the pull request's branch"} as one more commit with your message, and keeps the pull request's title and description.`, own, after].join("\n\n"),
+    };
+  }
+  return {
+    summary: `[loom] ${a.key} is approved. Write its pull request and hand it in with loom_pr({ title, body, commit_message }), then end your turn.`,
+    detail: [
+      "Loom pushes the reviewed work as one commit with your commit message, and opens the pull request with your title and description.",
+      own,
+      "- title: the pull request's title.\n- body: its description, in Markdown.\n- commit_message: the message of that one commit: a subject line, a blank line, then a short body.",
+      after,
+    ].join("\n\n"),
+  };
+}
+
+export function prNudgeText(key: string, fix: boolean): string {
+  const call = fix ? "loom_pr({ commit_message })" : "loom_pr({ title, body, commit_message })";
+  return `[loom] ${key}: your turn ended without loom_pr. Call ${call} now, then end your turn; if your turn ends again without it, Loom uses its own template.`;
+}
+
+/** A fix round: what the pull request's checks and reviews, or the human on the ticket, asked for. */
+export function prFeedbackText(a: { key: string; url: string | null; round: number; counted: number; max: number; checks: FeedbackCheck[]; items: FeedbackItem[]; diverged: { remote: string; branch: string } | null }): { summary: string; detail: string } {
+  const human = a.items.some((item) => item.kind === "reply");
+  const what = human ? "The human replied on the ticket about its open pull request" : a.url === null ? "The pull request needs fixes" : `The pull request ${a.url} needs fixes`;
+  const merge = a.diverged === null ? [] : [`The pull request's branch has commits Loom did not push. First run \`git fetch ${a.diverged.remote} ${a.diverged.branch}\` and \`git merge FETCH_HEAD\` in this worktree, so your fix builds on them.`];
+  return {
+    summary: `[loom] ${a.key}: ${what} (fix round ${a.round}${human ? "" : `; ${a.counted} of the ${a.max} the pull request may start`}). Address it, then call loom_submit({ summary }).`,
+    detail: [feedbackList(a.checks, a.items), ...merge, ...PR_RULES.map((rule) => `- ${rule}`)].join("\n\n"),
+  };
+}
+
+export function prUnchangedText(key: string): string {
+  return `[loom] ${key}: nothing changed since the pull request's last commit, so Loom pushes nothing and keeps following the pull request. End your turn and wait for a message.`;
+}
+
+/** The pull request's branch moved past Loom's last push to commits the worker's branch does not have. */
+export function prDivergedText(key: string, remote: string, branch: string): { summary: string; detail: string } {
+  return {
+    summary: `[loom] ${key}: the pull request's branch has commits Loom did not push, so Loom did not push your fix. Merge them into your branch and call loom_submit again.`,
+    detail: `Run \`git fetch ${remote} ${branch}\` and \`git merge FETCH_HEAD\` in this worktree, resolve any conflicts, run the checks, and call loom_submit({ summary }). The fix then goes through review again.`,
+  };
+}
+
+/** The worker's description with the line that says who opened the pull request. */
+export function workerPrBody(key: string, body: string): string {
+  return `${body.trimEnd()}\n\nOpened by Loom for ${key}.`;
 }
 
 /** "a", "a and b", "a, b and c". */

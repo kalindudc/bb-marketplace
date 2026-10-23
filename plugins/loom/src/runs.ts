@@ -14,6 +14,8 @@ export const STEP_LABELS: Partial<Record<HostMethod, string>> = {
   ensureWorktree: "prepare the Loom worktree",
   merge: "git merge",
   resetHard: "git reset --hard",
+  prState: "read the pull request",
+  prCommit: "build the pull request's commit",
   push: "git push",
   prCreate: "open the pull request",
 };
@@ -47,6 +49,14 @@ export function stepSummary(method: HostMethod, output: unknown): { ok: boolean;
       const merged = output as HostOutput<"merge">;
       if (merged.outcome === "conflict") return { ok: false, text: ["Conflicts in:", ...merged.files].join("\n") };
       return { ok: true, text: `Merged as ${sha12(merged.sha)}; the branch was at ${sha12(merged.before)}.${merged.already ? " (already merged)" : ""}` };
+    }
+    case "prState":
+      return { ok: true, text: `The pull request is ${(output as { state: string }).state.toLowerCase()}.` };
+    case "prCommit": {
+      const built = output as HostOutput<"prCommit">;
+      if (built.outcome === "diverged") return { ok: false, text: `The branch has commits Loom did not push; its tip is ${sha12(built.tip)}.` };
+      if (built.outcome !== "ok") return { ok: false, text: "unavailable" };
+      return { ok: true, text: built.created ? `Built ${sha12(built.sha)} with the reviewed work's files.` : `The branch already has the reviewed work at ${sha12(built.sha)}; nothing new to commit.` };
     }
     case "push":
       return { ok: true, text: "Pushed." };

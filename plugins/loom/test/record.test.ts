@@ -23,7 +23,7 @@ const send = async (settings: DoneSettings) => {
   sendRecords(h.ctx, settings);
   await settleRecords(h.ctx);
 };
-const pr = (doc: Doc) => (doc.merge = { strategy: "pr" });
+const pr = (doc: Doc) => (doc.merge = { strategy: "pr", describe: "loom", squash: false, max_fix_rounds: 0 });
 const PR = (n: number) => `https://github.com/acme/shop/pull/${n}`;
 const minute = (at: number) => `${new Date(at).toISOString().slice(0, 16).replace("T", " ")}Z`;
 const recordSpawns = () => h.bb.callsTo("spawnThread").map(([args]) => args as SpawnArgs).filter((args) => args.metadata.role === "record");

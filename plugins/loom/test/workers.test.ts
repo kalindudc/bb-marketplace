@@ -332,7 +332,8 @@ describe("spawnWorker on a multi-repo project", () => {
     expect(prompt).toContain('This ticket is in the repo "api", the bb project proj_api,');
     expect(prompt).toContain('Protected paths you must never edit:\n- "db/**"\nA change');
     expect(prompt).toContain('## Checks the plugin runs when you submit\n- "npm test"\nThey run');
-    expect(prompt).toContain(otherRepos('- "web" (bb project proj_web): /src/web', '- "docs" (bb project proj_docs): /src/docs', "", "## Rules"));
+    expect(prompt).toContain(otherRepos('- "web" (bb project proj_web): /src/web', '- "docs" (bb project proj_docs): /src/docs', "", "## The pull request"));
+    expect(prompt).toContain("Loom asks you to write the pull request with loom_pr");
     expect(prompt).not.toContain("merged work");
   });
 

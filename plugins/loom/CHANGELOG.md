@@ -2,6 +2,24 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## Unreleased
+
+### Added
+
+- The worker writes its pull request. On the pull request strategy, once the reviewers approve a ticket, Loom asks its worker for the pull request with the new `loom_pr` tool: its title, its description and the commit message, written the way the worker's own instructions and skills say. Loom opens the pull request with them. A worker that ends its turn twice without `loom_pr`, or takes more than 30 minutes, gets Loom's template instead; `merge.describe = "loom"` always uses the template.
+- One commit per pull request. Loom pushes the reviewed work as a single commit with the worker's message, on the point where the ticket's branch left its base, instead of every submit and WIP commit. `merge.squash = false` pushes the branch as it is. Loom's commits follow the user's git config, so they are signed when `commit.gpgsign` is set.
+- Loom follows the pull requests it opens. Every 5 minutes it reads the checks on the pull request's head, its reviews, its unresolved review threads and its comments, through `gh` or the new `feedback` command of a `kind = "command"` forge. Failed checks, reviews that request changes or comment with text, unresolved threads, and top-level comments from people go back to the ticket's worker as a fix round, each item once. Bots' top-level comments and anything from the pull request's author (the account a worker's replies come from) do not count. Failed checks wait until nothing else runs, or 30 minutes after the push.
+- Fix rounds. A fix round takes the ticket from `pr_open` back to `working` (or to the queue when its worker is gone). The worker may answer review comments with the forge's CLI, but never pushes, merges, closes, approves or edits the pull request. Its fix passes the checks and a Loom review again, with the feedback in the reviewer's brief, and Loom pushes it as one more commit after checking that the pull request is still open. A fix round that changes nothing goes straight back to `pr_open`. A pull request that merged during the round completes the ticket, and a branch with commits Loom did not push goes back to the worker to merge them. After `merge.max_fix_rounds` rounds (5 by default; 0 follows only merged and closed) the ticket blocks and the pull request stays open.
+- A human reply on a ticket whose pull request is open starts a fix round with that reply, while the project runs. A requeue of a ticket whose pull request stays open is a fix round on that pull request too.
+- Only the rounds the pull request's own feedback starts count toward `merge.max_fix_rounds`; the human's replies and requeues do not, and a requeue starts the count again.
+- The ticket page shows the pull request stage: the tracker's Pull request stage, a summary while the worker writes the pull request and while Loom follows it, facts for its number, the commits Loom pushed, its checks and the fix rounds used, a card with the worker's title, description and commit message, a card per fix round with the feedback it sent and what Loom did not count, a PR stage on each attempt, and a reply hint that says a reply starts a fix round.
+
+### Changed
+
+- A pull request closed without merging resets the ticket's pull request, so a requeue opens a new one with one commit.
+- The push-only forge completes a ticket when the remote's base branch contains the commit Loom pushed.
+- Pull requests opened before this version keep their branch: a fix round pushes one more commit to them.
+
 ## 0.12.0 (2026-10-23)
 
 ### Added

@@ -190,7 +190,7 @@ export const attempt = (over: Partial<Attempt> = {}): Attempt => ({
   endedAt: null,
   outcome: "in_progress",
   line: null,
-  pipeline: { work: "running", checks: [], review: [], merge: [] },
+  pipeline: { work: "running", checks: [], review: [], merge: [], pr: [] },
   items: [],
   ...over,
 });
@@ -210,6 +210,7 @@ export const ticketDetail = (over: Partial<TicketDetail> = {}): TicketDetail => 
   blockedReason: null,
   branch: "loom/csv-2",
   prUrl: null,
+  pr: null,
   body: "Serve the file.",
   acceptance: ["WHEN the endpoint is called THE SYSTEM SHALL stream a CSV"],
   verify: [],

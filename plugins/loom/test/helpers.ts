@@ -303,6 +303,15 @@ export class FakeHost implements HostPort {
   landed = new Set<string>();
   /** What changedFiles lists, by "<repo>:base..head" for one checkout or "base..head" for any; a missing entry lists no files. */
   listings = new Map<string, HostOutput<"changedFiles">>();
+  /** Each remote branch's tip, as push leaves it; prCommit builds on it. */
+  remoteBranches = new Map<string, string>();
+  /** The tree of each commit; a commit with none is its own tree. */
+  trees = new Map<string, string>();
+  /** Remote branches someone else pushed to: prCommit reports them diverged. */
+  foreign = new Set<string>();
+  /** What prFeedback answers, by pull request URL; a missing entry is an open pull request with no checks or feedback. */
+  feedback = new Map<string, Partial<Extract<HostOutput<"prFeedback">, { outcome: "ok" }>>>();
+  private squashes = 0;
   /** The tip fetchBranch reports for the remote's base branch. Every integration branch starts at base000, so base000 means it has not moved. */
   remoteBase = "base000";
   private commits = 0;
@@ -395,8 +404,25 @@ export class FakeHost implements HostPort {
       }
       case "fetchBranch":
         return { outcome: "ok", sha: this.remoteBase };
-      case "push":
+      case "prCommit": {
+        const { branch, head } = input as HostInput<"prCommit">;
+        const tip = this.remoteBranches.get(branch) ?? null;
+        const tree = this.trees.get(head) ?? head;
+        if (tip !== null && (this.trees.get(tip) ?? tip) === tree) return { outcome: "ok", sha: tip, created: false };
+        if (tip !== null && this.foreign.has(branch)) return { outcome: "diverged", tip };
+        const sha = `sq${++this.squashes}`;
+        this.trees.set(sha, tree);
+        return { outcome: "ok", sha, created: true };
+      }
+      case "push": {
+        const { src, branch } = input as HostInput<"push">;
+        this.remoteBranches.set(branch, src);
         return { outcome: "ok" };
+      }
+      case "prFeedback": {
+        const { url } = input as HostInput<"prFeedback">;
+        return { outcome: "ok", state: this.prStates.get(url) ?? "OPEN", head: "sq1", author: "kalindudc", checks: [], items: [], ...this.feedback.get(url) };
+      }
       case "prCreate": {
         const url = `https://github.com/acme/shop/pull/${++this.prs}`;
         this.prStates.set(url, "OPEN");

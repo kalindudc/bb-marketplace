@@ -926,7 +926,7 @@ const roles = () => h.bb.callsTo("spawnThread").map(([args]) => `${(args as Spaw
 const reviewerRows = (key: string) => h.store.threads({ ticketId: ticketOf(h, key).id, role: "reviewer" });
 const prProject = (doc: Doc) => {
   withDocsTicket(doc);
-  doc.merge = { strategy: "pr" };
+  doc.merge = { strategy: "pr", describe: "loom", squash: false, max_fix_rounds: 0 };
 };
 
 describe("tick: review and merge", () => {
@@ -1086,7 +1086,7 @@ describe("tick: review and merge", () => {
   });
 
   it("does not spawn reviewers or merge for a paused project, but polls its pull requests and finishes it when the last one merges", async () => {
-    await seedProject(h, (doc) => (doc.merge = { strategy: "pr" }));
+    await seedProject(h, (doc) => (doc.merge = { strategy: "pr", describe: "loom", squash: false, max_fix_rounds: 0 }));
     await reachApproved(h, "CSV-1");
     await h.engine.tick();
     await settleMerges(h.ctx);
@@ -1123,7 +1123,7 @@ describe("tick: review and merge", () => {
   });
 
   it("moves a pull request project to done in the same pass that sees its last ticket finish", async () => {
-    await seedProject(h, (doc) => (doc.merge = { strategy: "pr" }));
+    await seedProject(h, (doc) => (doc.merge = { strategy: "pr", describe: "loom", squash: false, max_fix_rounds: 0 }));
     for (const key of ["CSV-1", "CSV-2"]) h.store.setTicketState(ticketOf(h, key).id, "cancelled", "human");
     await h.engine.tick();
     expect(project().state).toBe("done");

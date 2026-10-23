@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { experimental_Icon as Icon, Markdown, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
-import type { ChecksItem, CheckStep, MergeItem, PostDto, ReviewDto, rpcContract, ThreadDto } from "../contract";
+import type { ChecksItem, CheckStep, MergeItem, PostDto, PrFeedbackItem, PrTextItem, ReviewDto, rpcContract, ThreadDto } from "../contract";
 import { formatDuration, plural } from "../format";
 import type { AuthorKind } from "../states";
 import { messageOf } from "./common";
@@ -261,7 +261,7 @@ export function MergeRow({ item, post, now }: { item: MergeItem; post: PostDto |
     <div data-merge>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 py-1 text-[13px]">
         <Icon name="GitBranch" aria-hidden className="size-3.5 text-muted-foreground" />
-        <span className={`font-semibold [overflow-wrap:anywhere] ${item.outcome === "conflict" ? "text-destructive-text" : ""} ${item.running ? "animate-pulse" : ""}`}>{text}</span>
+        <span className={`font-semibold [overflow-wrap:anywhere] ${item.outcome === "conflict" || item.outcome === "diverged" ? "text-destructive-text" : ""} ${item.running ? "animate-pulse" : ""}`}>{text}</span>
         <span className="text-xs text-subtle-foreground">{ago(item.at, now)}</span>
         {item.steps.length > 0 && (
           <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className={GHOST}>
@@ -274,6 +274,129 @@ export function MergeRow({ item, post, now }: { item: MergeItem; post: PostDto |
           <StepRows steps={item.steps} now={now} openStep={-1} />
         </div>
       )}
+    </div>
+  );
+}
+
+/** The pull request's checks in words: "18 passed, 2 running and 1 failed". */
+export function checksText(checks: { passed: number; failed: number; pending: number }): string {
+  const parts = [checks.passed > 0 ? `${checks.passed} passed` : null, checks.pending > 0 ? `${checks.pending} running` : null, checks.failed > 0 ? `${checks.failed} failed` : null].filter((part): part is string => part !== null);
+  if (parts.length === 0) return "no checks yet";
+  return parts.length === 1 ? parts[0]! : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
+}
+
+const DETAILS = "mt-1 text-xs [&_summary]:cursor-pointer [&_summary]:text-muted-foreground";
+
+/** The pull request's text as the worker wrote it, or Loom's template with the reason it stood in. */
+export function PrTextCard({ item, now, onThread }: { item: PrTextItem; now: number; onThread: (() => void) | null }) {
+  const worker = item.by === "worker";
+  const heading = item.fix ? `${worker ? "The worker" : "Loom"} wrote the commit message for fix round ${item.round}` : worker ? "The worker wrote the pull request" : "Loom wrote the pull request from its template";
+  return (
+    <div data-pr-text className={`${INNER} px-3 py-2`}>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px]">
+        <Avatar kind={worker ? "worker" : "loom"} />
+        <span className="font-semibold">{heading}</span>
+        <span className="text-xs text-subtle-foreground">{ago(item.at, now)}</span>
+        <span className="flex-1" />
+        {onThread !== null && (
+          <button type="button" aria-label="Open the worker's thread" onClick={onThread} className={GHOST}>
+            ↗ Thread
+          </button>
+        )}
+      </div>
+      {item.reason !== null && <p className="mt-0.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">Because {item.reason}.</p>}
+      {item.title !== null && <p data-pr-title className="mt-1 text-sm font-semibold [overflow-wrap:anywhere]">{item.title}</p>}
+      {item.body !== null && (
+        <details className={DETAILS}>
+          <summary>Description ({plural(item.body.length, "character")})</summary>
+          <div className="mt-1 rounded-md border border-border-seam p-2">
+            <Markdown content={item.body} className={MARKDOWN} />
+          </div>
+        </details>
+      )}
+      {item.commit !== "" &&
+        (item.fix ? (
+          <pre data-pr-commit className={PRE}>
+            {item.commit}
+          </pre>
+        ) : (
+          <details className={DETAILS}>
+            <summary>Commit message</summary>
+            <pre data-pr-commit className={PRE}>
+              {item.commit}
+            </pre>
+          </details>
+        ))}
+    </div>
+  );
+}
+
+const ENTRY_TAGS: Record<PrFeedbackItem["items"][number]["kind"], { text: string; tone: string }> = {
+  review: { text: "review", tone: "bg-warning/15 text-warning-text" },
+  thread: { text: "thread", tone: "bg-timeline-accent/15 text-timeline-accent" },
+  comment: { text: "comment", tone: "bg-foreground/5 text-muted-foreground" },
+  reply: { text: "your reply", tone: "bg-success/15 text-success-foreground" },
+};
+
+/** What one fix round sent the worker: the failed checks with their links, and each review, thread and comment. */
+export function FeedbackCard({ item, max, now, openUrl }: { item: PrFeedbackItem; max: number; now: number; openUrl(url: string): void }) {
+  const count = item.checks.length + item.items.length;
+  const ignored = [item.ignored.bots > 0 ? plural(item.ignored.bots, "bot comment") : null, item.ignored.own > 0 ? `${plural(item.ignored.own, "item")} from your own account, which the worker's replies come from` : null].filter((part) => part !== null);
+  return (
+    <div data-pr-feedback={item.round} className={`${INNER} px-3 py-2 ${item.overLimit ? "shadow-[inset_3px_0_0_var(--destructive-text)]" : "shadow-[inset_3px_0_0_var(--warning)]"}`}>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px]">
+        <Avatar kind="loom" />
+        <span className="font-semibold">{item.human ? "Your reply starts a fix round" : "Pull request feedback"}</span>
+        <span className={`rounded-full px-2 text-[11.5px] font-semibold ${item.overLimit ? "bg-destructive-text/15 text-destructive-text" : "bg-warning/15 text-warning-text"}`}>
+          {item.overLimit ? `over the limit of ${plural(max, "fix round")}` : item.human || item.counted === null ? `fix round ${item.round}` : `fix round ${item.round} · ${item.counted} of ${max}`}
+        </span>
+        {!item.human && <span className="text-xs text-muted-foreground">{plural(count, "item")}</span>}
+        <span className="text-xs text-subtle-foreground">{ago(item.at, now)}</span>
+        <span className="flex-1" />
+        {item.url !== null && (
+          <button type="button" aria-label="Open the pull request" onClick={() => openUrl(item.url!)} className={GHOST}>
+            Open the pull request ↗
+          </button>
+        )}
+      </div>
+      {!item.human && (
+        <ul className="mt-1.5 space-y-1.5">
+          {item.checks.map((check, index) => (
+            <li key={`check-${index}`} data-feedback-check className="rounded-md border border-border-seam bg-card px-2 py-1">
+              <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm">
+                <span className="rounded bg-destructive-text/10 px-1 text-[10.5px] font-bold uppercase tracking-wider text-destructive-text">check failed</span>
+                <span className="font-mono text-xs [overflow-wrap:anywhere]">{check.name}</span>
+                {check.url !== null && (
+                  <button type="button" aria-label={`Open the details of ${check.name}`} onClick={() => openUrl(check.url!)} className={GHOST}>
+                    Details ↗
+                  </button>
+                )}
+              </div>
+            </li>
+          ))}
+          {item.items.map((entry, index) => (
+            <li key={`item-${index}`} data-feedback-item={entry.kind} className="rounded-md border border-border-seam bg-card px-2 py-1">
+              <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm">
+                <span className={`rounded px-1 text-[10.5px] font-bold uppercase tracking-wider ${ENTRY_TAGS[entry.kind].tone}`}>{entry.kind === "review" && entry.state !== null ? entry.state.replace(/_/g, " ") : ENTRY_TAGS[entry.kind].text}</span>
+                <span className="font-semibold">{entry.author}</span>
+                {entry.path !== null && (
+                  <span className="rounded border border-border-seam px-1 font-mono text-[11px] text-muted-foreground [overflow-wrap:anywhere]">
+                    {entry.path}
+                    {entry.line === null ? "" : `:${entry.line}`}
+                  </span>
+                )}
+                {entry.url !== null && (
+                  <button type="button" aria-label={`Open the ${entry.kind} by ${entry.author}`} onClick={() => openUrl(entry.url!)} className={GHOST}>
+                    ↗
+                  </button>
+                )}
+              </div>
+              <Markdown content={entry.body} className="mt-0.5 line-clamp-6 text-xs text-muted-foreground [overflow-wrap:anywhere] [&_pre]:whitespace-pre-wrap" />
+            </li>
+          ))}
+        </ul>
+      )}
+      {ignored.length > 0 && <p className="mt-1.5 text-[11px] text-subtle-foreground">Not counted: {ignored.join(" and ")}.</p>}
     </div>
   );
 }

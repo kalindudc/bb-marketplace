@@ -3,13 +3,19 @@ import { experimental_Icon as Icon, Markdown, useBbNavigate } from "@get-bb/plug
 import type { ActivityItem, Attempt, ChecksItem, Mark, PostDto, TicketDetail } from "../contract";
 import { formatDuration, plural } from "../format";
 import { BUTTON, FIELD } from "./common";
-import { Avatar, ago, CLAMP, ChecksCard, GHOST, INNER, MARKDOWN, MergeRow, ReviewCard, useLong } from "./ticket-cards";
+import { Avatar, ago, CLAMP, ChecksCard, checksText, FeedbackCard, GHOST, INNER, MARKDOWN, MergeRow, PrTextCard, ReviewCard, useLong } from "./ticket-cards";
 
 const INDENT_PX = 16;
 const MAX_DEPTH = 6;
 
-export const replyHint = (to: TicketDetail["replyTo"]) =>
-  to === "worker" ? "The worker gets this now." : to === "planner" ? "The planner gets this now." : "It stays on the ticket for anyone who reads it.";
+export const replyHint = (to: TicketDetail["replyTo"], ticket?: Pick<TicketDetail, "state" | "projectState">) =>
+  ticket?.state === "pr_open" && ticket.projectState === "running"
+    ? "This starts a fix round: the worker gets it now, and Loom pushes the fix to the pull request as one more commit."
+    : to === "worker"
+      ? "The worker gets this now."
+      : to === "planner"
+        ? "The planner gets this now."
+        : "It stays on the ticket for anyone who reads it.";
 
 export function ReplyBox({ textLabel, sendLabel, busy, hint, placeholder, onSend, onCancel }: { textLabel: string; sendLabel: string; busy: boolean; hint: string; placeholder?: string; onSend(body: string): Promise<boolean>; onCancel?(): void }) {
   const [text, setText] = useState("");
@@ -44,6 +50,8 @@ interface StreamCtx {
   toggleExpanded(postId: number): void;
   send(postId: number, body: string): Promise<boolean>;
   onBrief(): void;
+  openThread(threadId: string): void;
+  openUrl(url: string): void;
 }
 
 const KIND_TAGS: Partial<Record<PostDto["kind"], { text: string; tone: string }>> = {
@@ -101,7 +109,7 @@ function Composer({ ctx, postId }: { ctx: StreamCtx; postId: number }) {
   if (ctx.composer !== postId) return null;
   return (
     <div className="px-3 pb-3">
-      <ReplyBox textLabel={`Reply text for #${postId}`} sendLabel={`Send reply to #${postId}`} busy={ctx.busy} hint={replyHint(ctx.ticket.replyTo)} onSend={(body) => ctx.send(postId, body)} onCancel={() => ctx.toggleComposer(postId)} />
+      <ReplyBox textLabel={`Reply text for #${postId}`} sendLabel={`Send reply to #${postId}`} busy={ctx.busy} hint={replyHint(ctx.ticket.replyTo, ctx.ticket)} onSend={(body) => ctx.send(postId, body)} onCancel={() => ctx.toggleComposer(postId)} />
     </div>
   );
 }
@@ -212,6 +220,22 @@ function Item({ ctx, item, openFailed }: { ctx: StreamCtx; item: ActivityItem; o
       const posted = post(item.postId)!;
       return posted.kind === "system" ? <Marker ctx={ctx} post={posted} /> : <PostCard ctx={ctx} post={posted} withReplies />;
     }
+    case "pr_text": {
+      const author = post(item.postId)?.authorThreadId ?? null;
+      return (
+        <div>
+          <PrTextCard item={item} now={ctx.now} onThread={author === null ? null : () => ctx.openThread(author)} />
+          <Replies ctx={ctx} postId={item.postId} />
+        </div>
+      );
+    }
+    case "pr_feedback":
+      return (
+        <div>
+          <FeedbackCard item={item} max={ctx.ticket.pr?.maxRounds ?? 0} now={ctx.now} openUrl={ctx.openUrl} />
+          <Replies ctx={ctx} postId={item.postId} />
+        </div>
+      );
   }
 }
 
@@ -228,6 +252,7 @@ function Pipeline({ pipeline }: { pipeline: Attempt["pipeline"] }) {
     ["Checks", pipeline.checks],
     ["Review", pipeline.review],
     ["Merge", pipeline.merge],
+    ["PR", pipeline.pr],
   ];
   return (
     <span data-pipeline className="inline-flex flex-wrap items-center gap-1 text-[11.5px] text-muted-foreground">
@@ -278,9 +303,18 @@ function LiveRow({ ctx, attempt }: { ctx: StreamCtx; attempt: Attempt }) {
       {action}
     </div>
   );
+  const pr = ticket.pr;
+  const worker = ticket.threads.filter((thread) => thread.role === "worker" && thread.state !== "ended" && thread.threadId !== null).at(-1);
+  const openWorker =
+    worker === undefined ? undefined : (
+      <button type="button" onClick={() => navigate.toThread(worker.threadId!)} className={GHOST}>
+        <span aria-hidden>↗</span> Open the worker thread
+      </button>
+    );
+  const fixing = pr !== null && pr.pushedSha !== null;
   switch (ticket.state) {
     case "working":
-      return row(true, `The worker is working · for ${formatDuration(now - attempt.startedAt)}`);
+      return fixing ? row(true, `The worker is fixing fix round ${pr.rounds} of the pull request · for ${formatDuration(now - ticket.stateAt)}`, openWorker) : row(true, `The worker is working · for ${formatDuration(now - attempt.startedAt)}`);
     case "review":
       return reviewer === undefined
         ? row(false, "Waiting for a reviewer")
@@ -292,11 +326,22 @@ function LiveRow({ ctx, attempt }: { ctx: StreamCtx; attempt: Attempt }) {
             </button>,
           );
     case "approved":
-      return row(false, "Approved; waiting for its turn to merge");
+      if (pr?.writing != null) return row(true, `${pr.writing.fix ? `The worker is writing the commit message for fix round ${pr.rounds}` : "The worker is writing the pull request"} · for ${formatDuration(now - pr.writing.since)}`, openWorker);
+      return row(false, pr === null ? "Approved; waiting for its turn to merge" : fixing ? "Approved; waiting for its turn to push the fix" : "Approved; waiting for its turn to open its pull request");
     case "merging":
-      return row(true, "Loom is merging");
-    case "pr_open":
-      return row(false, "The pull request is open");
+      return row(true, pr === null ? "Loom is merging" : fixing ? `Loom is pushing fix round ${pr.rounds}` : "Loom is opening the pull request");
+    case "pr_open": {
+      const open =
+        ticket.prUrl === null ? undefined : (
+          <button type="button" onClick={() => navigate.openUrl(ticket.prUrl!)} className={GHOST}>
+            Open the pull request ↗
+          </button>
+        );
+      if (pr?.forge === "none") return row(false, "Loom pushed the branch; the ticket is done when the remote's base branch contains it");
+      if (pr === null || !pr.follows) return row(false, "The pull request is open; Loom checks every 5 minutes whether it merged", open);
+      const next = pr.nextCheckAt === null ? "" : ` · next check ${pr.nextCheckAt <= now ? "now" : `in ${formatDuration(pr.nextCheckAt - now)}`}`;
+      return row(true, `Loom is following the pull request: ${pr.checks === null ? "waiting for its checks" : `checks ${checksText(pr.checks)}`}${next}`, open);
+    }
     default:
       return null;
   }
@@ -385,6 +430,7 @@ const holds = (attempt: Attempt, postId: number) => attempt.items.some((item) =>
 
 /** Every attempt as a card, newest first by default, with the planning group after them; the newest attempt starts open. */
 export function Stream({ ticket, now, busy, onReply, onBrief, jumpTo }: { ticket: TicketDetail; now: number; busy: boolean; onReply(body: string, parentId?: number): Promise<boolean>; onBrief(): void; jumpTo: { postId: number; seq: number } | null }) {
+  const navigate = useBbNavigate();
   const root = useRef<HTMLDivElement>(null);
   const [order, setOrder] = useState<"newest" | "oldest">("newest");
   const [opened, setOpened] = useState<Record<number, boolean>>({});
@@ -424,6 +470,8 @@ export function Stream({ ticket, now, busy, onReply, onBrief, jumpTo }: { ticket
       return sent;
     },
     onBrief,
+    openThread: (threadId) => navigate.toThread(threadId),
+    openUrl: (url) => navigate.openUrl(url),
   };
   const failedChecks = attempts.flatMap((attempt) => attempt.items.filter((item): item is ChecksItem => item.type === "checks" && item.status === "failed"));
   const openFailed = failedChecks.at(-1) ?? null;

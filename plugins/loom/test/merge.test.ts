@@ -478,7 +478,8 @@ describe("the integration merge on a multi-repo project", () => {
 
 describe("the pull request strategy", () => {
   const pr = (edit?: (doc: Doc) => void) => (doc: Doc) => {
-    doc.merge = { strategy: "pr" };
+    // Loom's template, the branch as it is, and no fix rounds: these tests cover pushing, opening and polling; test/pull-requests.test.ts covers the rest.
+    doc.merge = { strategy: "pr", describe: "loom", squash: false, max_fix_rounds: 0 };
     edit?.(doc);
   };
 
@@ -560,7 +561,7 @@ describe("the pull request strategy", () => {
   });
 
   it("opens a ready pull request when merge.draft is false", async () => {
-    await seedProject(h, pr((doc) => (doc.merge = { strategy: "pr", draft: false, remote: "upstream" })));
+    await seedProject(h, pr((doc) => (doc.merge = { strategy: "pr", draft: false, remote: "upstream", describe: "loom", squash: false, max_fix_rounds: 0 })));
     await reachApproved(h);
     await queue();
     expect(h.host.callsTo("prCreate")[0]).toMatchObject({ remote: "upstream", draft: false });
@@ -732,7 +733,7 @@ describe("the pull request strategy", () => {
 
 describe("finishIfComplete", () => {
   it("moves a running or paused pull request project to done once every ticket is done or cancelled", async () => {
-    await seedProject(h, (doc) => (doc.merge = { strategy: "pr" }));
+    await seedProject(h, (doc) => (doc.merge = { strategy: "pr", describe: "loom", squash: false, max_fix_rounds: 0 }));
     expect(finishIfComplete(h.ctx, project())).toBe(false);
     h.store.setTicketState(ticketOf(h, "CSV-1").id, "cancelled", "human");
     expect(finishIfComplete(h.ctx, project())).toBe(false);

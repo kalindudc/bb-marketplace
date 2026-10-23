@@ -193,7 +193,7 @@ describe("ticketActivity", () => {
     expect(steps.map((step) => step.label)).toEqual(["npm run e2e"]);
     expect(steps.every((step) => step.ok === true)).toBe(true);
     expect(steps[0]!.output).toBe("wrote dist/app.js");
-    expect(pipeline).toEqual({ work: "running", checks: [], review: [], merge: ["fail", "fail"] });
+    expect(pipeline).toEqual({ work: "running", checks: [], review: [], merge: ["fail", "fail"], pr: [] });
   });
 
   it("calls an attempt that bb refused to start blocked, and says it could not start", async () => {

@@ -5,16 +5,17 @@ import { delivers, workerOf, type CheckRun } from "./checks";
 import { repoCheckout, type RepoCheckout } from "./checkouts";
 import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { plural } from "./format";
-import { afterMergeChangedText, afterMergeFailedText, andList, clip, conflictText, landBody, prBody } from "./prompts";
+import { afterMergeChangedText, afterMergeFailedText, andList, clip, conflictText, landBody, prDivergedText, workerPrBody } from "./prompts";
+import { closedPrReset, followFeedback, inFixRound, prTextFor, prTextReady, templatePr } from "./pull-requests";
 import { prNumber, type HostInput, type HostOutput as HostOutputOf } from "./host-contract";
 import { LoomError } from "./projects";
-import { isMultiRepo, repoSettings, type RepoSettings } from "./repos";
+import { followsFeedback, isMultiRepo, prSettings, repoSettings, type RepoSettings } from "./repos";
 import { recordingHost } from "./runs";
 import type { ForgeSpec, Spec } from "./spec";
 import { LOOM_ACTOR } from "./states";
-import { applyMove, endLiveRows, endThread, pauseProject, released, resolveEnvironment, specOf, toWorking, type EngineCtx } from "./workers";
+import { applyMove, endLiveRows, endThread, freshBase, pauseProject, released, resolveEnvironment, specOf, toWorking, type EngineCtx } from "./workers";
 
-const POLL_MS = 5 * 60_000;
+export const POLL_MS = 5 * 60_000;
 const AFTER_OPEN_MS = 5 * 60_000;
 const PROVISION_MS = 10 * 60_000;
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -103,11 +104,11 @@ async function begin(ctx: EngineCtx, projectId: number, spec: Spec): Promise<Tic
   if (store.project(projectId)?.state !== "running") return null;
   const left = store.tickets(projectId, ["merging"])[0];
   if (left !== undefined) return left;
-  if (store.tickets(projectId, ["approved"]).length === 0) return null;
+  if (!store.tickets(projectId, ["approved"]).some((ticket) => prTextReady(spec, ticket))) return null;
   const waiting = spec.merge.strategy === "integration" ? await provisioningRepos(ctx, projectId) : new Set<string | null>();
   const next = store
     .tickets(projectId, ["approved"])
-    .filter((ticket) => !waiting.has(ticket.repo))
+    .filter((ticket) => !waiting.has(ticket.repo) && prTextReady(spec, ticket))
     .sort((a, b) => a.state_at - b.state_at || a.seq - b.seq)[0];
   if (next === undefined || store.project(projectId)?.state !== "running") return null;
   store.tx(() => {
@@ -330,40 +331,95 @@ async function sendBack(ctx: EngineCtx, ticketId: number, a: { post: MergePost; 
 async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow): Promise<void> {
   const { store } = ctx;
   const { hostId, path: repo, settings } = await checkoutIn(ctx, project, spec, ticket.repo);
-  if (ticket.branch === null) throw new Unavailable(`${ticket.key} has no branch recorded, so a pull request cannot be opened. Requeue it.`);
+  const branch = ticket.pr_branch ?? ticket.branch;
+  if (branch === null) throw new Unavailable(`${ticket.key} has no branch recorded, so a pull request cannot be opened. Requeue it.`);
   const { remote, base } = settings;
-  const pushed = await ctx.host.call(hostId, "push", { repo, remote, src: ticket.head_sha!, branch: ticket.branch });
-  if (pushed.outcome === "unavailable") throw new Unavailable(pushed.message);
-  if (settings.forge.kind === "none") {
-    const where = `${remote}/${ticket.branch}`;
-    const body = `Pushed ${ticket.branch} to ${remote}. Open its pull request there; Loom completes the ticket when ${remote}/${base} contains ${ticket.head_sha!.slice(0, 12)}.`;
-    store.tx(() => {
-      store.setTicketState(ticket.id, "pr_open", LOOM_ACTOR, { pushed: where });
-      store.updateTicket(ticket.id, { pr_url: null, pr_checked_at: ctx.now() });
-      store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "merge", body, data_json: JSON.stringify({ outcome: "branch_pushed", pushed: where }) });
-    });
-    store.changed(project.id);
+  const fix = inFixRound(ticket);
+  const text = prTextFor(spec, ticket) ?? { head: ticket.head_sha!, by: "loom" as const, title: null, body: null, commit: `${ticket.key}: ${ticket.title}` };
+
+  // While the worker fixed it, the human may have merged or closed the pull request.
+  if (fix && ticket.pr_url !== null && settings.forge.kind !== "none") {
+    const state = await ctx.host.call(hostId, "prState", { repo, url: ticket.pr_url, forge: stateForge(settings.forge) });
+    if (state.outcome === "unavailable") throw new Unavailable(state.message);
+    if (state.state === "MERGED") {
+      complete(ctx, ticket.id, { kind: "merge", body: `The pull request merged before Loom pushed fix round ${ticket.pr_rounds}, so the fix stays on ${ticket.branch ?? branch}.`, data: { outcome: "pr_merged", url: ticket.pr_url, unpushed: true } });
+      await endFinishedThreads(ctx, project.id);
+      return;
+    }
+    if (state.state === "CLOSED") {
+      await blockClosed(ctx, ticket);
+      return;
+    }
+  }
+
+  let src = ticket.head_sha!;
+  let created = true;
+  if (prSettings(spec).squash) {
+    const built = await ctx.host.call(hostId, "prCommit", { repo, remote, branch, base: freshBase(spec, ticket.repo), head: ticket.head_sha!, message: text.commit, ...(ticket.pushed_sha === null ? {} : { pushed: ticket.pushed_sha }) });
+    if (built.outcome === "unavailable") throw new Unavailable(built.message);
+    if (built.outcome === "diverged") {
+      await sendBack(ctx, ticket.id, {
+        post: { kind: "merge", body: `The pull request's branch ${branch} has commits Loom did not push (its tip is ${built.tip.slice(0, 12)}), so Loom pushed nothing.`, data: { outcome: "diverged", tip: built.tip, branch } },
+        text: prDivergedText(ticket.key, remote, branch),
+        countFailure: false,
+        reason: "the pull request's branch has commits Loom did not push",
+      });
+      return;
+    }
+    src = built.sha;
+    created = built.created;
+  }
+  if (created || src !== ticket.pushed_sha) {
+    const pushed = await ctx.host.call(hostId, "push", { repo, remote, src, branch });
+    if (pushed.outcome === "unavailable") throw new Unavailable(pushed.message);
+  }
+  const at = ctx.now();
+  const recorded = { pr_branch: branch, pushed_sha: src, pushed_at: at, pr_checked_at: at, pr_status_json: null };
+  const commits = prSettings(spec).squash ? ` as 1 commit (${src.slice(0, 12)})` : "";
+
+  if (settings.forge.kind === "none" || (fix && ticket.pr_url !== null)) {
+    const where = `${remote}/${branch}`;
+    const target = ticket.pr_url ?? where;
+    const pushedNow = created || src !== ticket.pushed_sha;
+    const post: MergePost = !fix
+      ? { kind: "merge", body: `Pushed ${branch} to ${remote}${commits}. Open its pull request there; Loom completes the ticket when ${remote}/${base} contains ${src.slice(0, 12)}.`, data: { outcome: "branch_pushed", pushed: where, sha: src } }
+      : pushedNow
+        ? { kind: "merge", body: `Pushed fix round ${ticket.pr_rounds} to ${target}${commits}.`, data: { outcome: "pr_pushed", url: ticket.pr_url, pushed: where, sha: src, round: ticket.pr_rounds } }
+        : { kind: "merge", body: `Fix round ${ticket.pr_rounds} changed nothing the pull request does not already have, so Loom pushed nothing to ${target}.`, data: { outcome: "pr_unchanged", url: ticket.pr_url, sha: src, round: ticket.pr_rounds } };
+    toPrOpen(ctx, ticket.id, { ...recorded }, post, settings.forge.kind === "none" ? { pushed: where } : { url: ticket.pr_url, fixRound: ticket.pr_rounds });
     return;
   }
-  const approvals = store.reviews(ticket.id, ticket.review_round).filter((review) => review.verdict === "approved");
-  const created = await ctx.host.call(hostId, "prCreate", {
-    repo,
-    remote,
-    base,
-    head: ticket.branch,
-    title: clip(`${ticket.key}: ${ticket.title}`, 256),
-    body: prBody({ ticket, approvals }),
-    draft: spec.merge.draft,
-    forge: openForge(settings.forge),
-  });
-  if (created.outcome === "unavailable") throw new Unavailable(created.message);
+
+  const pr = text.by === "worker" && text.title !== null && text.body !== null ? { title: text.title, body: workerPrBody(ticket.key, text.body) } : templatePr(ctx, ticket);
+  const opened = await ctx.host.call(hostId, "prCreate", { repo, remote, base, head: branch, title: clip(pr.title, 256), body: clip(pr.body, 60_000), draft: spec.merge.draft, forge: openForge(settings.forge) });
+  if (opened.outcome === "unavailable") throw new Unavailable(opened.message);
+  toPrOpen(ctx, ticket.id, { ...recorded, pr_url: opened.url }, { kind: "merge", body: `Opened pull request ${opened.url}${commits}.`, data: { outcome: "pr_opened", url: opened.url, sha: src } }, { url: opened.url });
+  await afterOpen(ctx, { hostId, repo, settings, head: branch, url: opened.url, projectId: project.id, ticketId: ticket.id });
+}
+
+/** merging to pr_open, with what Loom pushed and its post, in one transaction. */
+function toPrOpen(ctx: EngineCtx, ticketId: number, patch: Partial<TicketRow>, post: MergePost, data: object): void {
+  const { store } = ctx;
   store.tx(() => {
-    store.setTicketState(ticket.id, "pr_open", LOOM_ACTOR, { url: created.url });
-    store.updateTicket(ticket.id, { pr_url: created.url, pr_checked_at: ctx.now() });
-    store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "merge", body: `Opened pull request ${created.url}`, data_json: JSON.stringify({ outcome: "pr_opened", url: created.url }) });
+    const ticket = store.ticket(ticketId)!;
+    store.setTicketState(ticketId, "pr_open", LOOM_ACTOR, data);
+    store.updateTicket(ticketId, patch);
+    store.addPost({ project_id: ticket.project_id, ticket_id: ticketId, parent_id: null, author_kind: "loom", author_thread_id: null, kind: post.kind, body: post.body, data_json: JSON.stringify(post.data) });
   });
-  store.changed(project.id);
-  await afterOpen(ctx, { hostId, repo, settings, head: ticket.branch, url: created.url, projectId: project.id, ticketId: ticket.id });
+  store.changed(store.ticket(ticketId)!.project_id);
+}
+
+/** A pull request closed without merging blocks its ticket and ends its threads; a requeue opens a new one. The move comes first, so nothing slips in before the threads end. */
+async function blockClosed(ctx: EngineCtx, ticket: TicketRow): Promise<void> {
+  const { store } = ctx;
+  const reason = "the pull request was closed without merging";
+  store.tx(() => {
+    const current = store.ticket(ticket.id)!;
+    store.addPost({ project_id: current.project_id, ticket_id: current.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "block", body: reason, data_json: JSON.stringify({ reason, needs: "" }) });
+    applyMove(ctx, current, { to: "blocked", patch: { ...released, ...closedPrReset, blocked_reason: reason } }, LOOM_ACTOR, { reason });
+  });
+  store.changed(ticket.project_id);
+  for (const row of store.threads({ ticketId: ticket.id, states: ["active"] })) await endThread(ctx, row, "blocked", { commit: false, move: null });
 }
 
 const openForge = (forge: ForgeSpec): HostInput<"prCreate">["forge"] => (forge.kind === "command" ? { kind: "command", open: forge.open! } : { kind: "gh" });
@@ -402,6 +458,7 @@ export async function pollPullRequests(ctx: EngineCtx, project: ProjectRow): Pro
   const { store } = ctx;
   const spec = specOf(store, project);
   const forgeOf = (ticket: TicketRow) => repoSettings(spec, ticket.repo).forge;
+  const follows = prSettings(spec).maxFixRounds > 0;
   const due = store.tickets(project.id, ["pr_open"]).filter((ticket) => (ticket.pr_url !== null || forgeOf(ticket).kind === "none") && (ticket.pr_checked_at === null || ctx.now() - ticket.pr_checked_at >= POLL_MS));
   if (due.length === 0) return;
   // Each repo's checkout is read once per poll; a repo without one pauses the project and leaves its pull requests for the next poll.
@@ -425,11 +482,16 @@ export async function pollPullRequests(ctx: EngineCtx, project: ProjectRow): Pro
     if (checkout === null) continue;
     store.updateTicket(ticket.id, { pr_checked_at: ctx.now() });
     let state: HostOutputOf<"prState">;
+    let feedback: Extract<HostOutputOf<"prFeedback">, { outcome: "ok" }> | null = null;
     try {
       if (forge.kind === "none") {
-        // The push-only forge has no pull request to ask: the ticket is done once the remote base contains its commit.
-        const landed = await ctx.host.call(checkout.hostId, "landedOn", { repo: checkout.path, remote: checkout.settings.remote, base: checkout.settings.base, sha: ticket.head_sha! });
+        // The push-only forge has no pull request to ask: the ticket is done once the remote base contains the commit Loom pushed.
+        const landed = await ctx.host.call(checkout.hostId, "landedOn", { repo: checkout.path, remote: checkout.settings.remote, base: checkout.settings.base, sha: ticket.pushed_sha ?? ticket.head_sha! });
         state = landed.outcome === "ok" ? { outcome: "ok", state: landed.landed ? "MERGED" : "OPEN" } : landed;
+      } else if (follows && followsFeedback(forge)) {
+        const read = await ctx.host.call(checkout.hostId, "prFeedback", { repo: checkout.path, url: ticket.pr_url!, forge: forge.kind === "command" ? { kind: "command", feedback: forge.feedback! } : { kind: "gh" } });
+        if (read.outcome === "ok") feedback = read;
+        state = read.outcome === "ok" ? { outcome: "ok", state: read.state } : read;
       } else {
         state = await ctx.host.call(checkout.hostId, "prState", { repo: checkout.path, url: ticket.pr_url!, forge: stateForge(forge) });
       }
@@ -443,21 +505,16 @@ export async function pollPullRequests(ctx: EngineCtx, project: ProjectRow): Pro
     }
     // The answer is about the pull request and attempt that were polled; the human may have blocked and requeued the ticket during the host call.
     const current = store.ticket(ticket.id);
-    if (current?.state !== "pr_open" || current.pr_url !== ticket.pr_url || current.attempt !== ticket.attempt) continue;
+    if (current?.state !== "pr_open" || current.pr_url !== ticket.pr_url || current.attempt !== ticket.attempt || current.pushed_sha !== ticket.pushed_sha) continue;
     if (state.state === "MERGED" && forge.kind === "none") {
       const target = `${checkout.settings.remote}/${checkout.settings.base}`;
       complete(ctx, ticket.id, { kind: "merge", body: `The branch landed on ${target}.`, data: { outcome: "branch_landed", pushed: target } });
     } else if (state.state === "MERGED") {
       complete(ctx, ticket.id, { kind: "merge", body: "The pull request was merged.", data: { outcome: "pr_merged", url: ticket.pr_url } });
     } else if (state.state === "CLOSED") {
-      // The ticket moves to blocked in this same tick; ending its threads, which awaits, comes after.
-      const reason = "the pull request was closed without merging";
-      store.tx(() => {
-        store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "block", body: reason, data_json: JSON.stringify({ reason, needs: "" }) });
-        applyMove(ctx, current, { to: "blocked", patch: { ...released, blocked_reason: reason } }, LOOM_ACTOR, { reason });
-      });
-      store.changed(project.id);
-      for (const row of store.threads({ ticketId: ticket.id, states: ["active"] })) await endThread(ctx, row, "blocked", { commit: false, move: null });
+      await blockClosed(ctx, current);
+    } else if (feedback !== null) {
+      await followFeedback(ctx, store.project(project.id)!, current, feedback);
     }
   }
   await endFinishedThreads(ctx, project.id);

@@ -139,4 +139,15 @@ export const MIGRATIONS: string[] = [
     state TEXT NOT NULL CHECK (state IN ('reviewing', 'approved', 'changes_requested', 'failed', 'superseded')),
     spawn_token TEXT NOT NULL UNIQUE, thread_id TEXT UNIQUE, idle_count INTEGER NOT NULL DEFAULT 0, summary TEXT,
     findings_json TEXT NOT NULL DEFAULT '[]', reason TEXT, started_at INTEGER NOT NULL, ended_at INTEGER)`,
+  `ALTER TABLE tickets ADD COLUMN pr_branch TEXT`,
+  `ALTER TABLE tickets ADD COLUMN pushed_sha TEXT`,
+  `ALTER TABLE tickets ADD COLUMN pushed_at INTEGER`,
+  `ALTER TABLE tickets ADD COLUMN pr_ask_json TEXT`,
+  `ALTER TABLE tickets ADD COLUMN pr_text_json TEXT`,
+  `ALTER TABLE tickets ADD COLUMN pr_seen_json TEXT NOT NULL DEFAULT '[]'`,
+  `ALTER TABLE tickets ADD COLUMN pr_rounds INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE tickets ADD COLUMN pr_status_json TEXT`,
+  `ALTER TABLE tickets ADD COLUMN pr_deliver_json TEXT`,
+  // A pull request opened before these columns existed was pushed from the ticket's branch at its head.
+  `UPDATE tickets SET pr_branch = branch, pushed_sha = head_sha WHERE pr_url IS NOT NULL`,
 ];

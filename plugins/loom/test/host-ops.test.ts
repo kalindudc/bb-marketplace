@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import hostEntry from "../host";
-import { changedFiles, commitAll, diff, ensureBranch, ensureWorktree, exec, fetchBranch, filePatch, ghStatus, git, landedOn, merge, parseRemoteUrl, prCreate, prState, push, remotes, resetHard, trialWorktree, worktreeState } from "../src/host/ops";
+import { changedFiles, commitAll, diff, ensureBranch, ensureWorktree, exec, fetchBranch, filePatch, ghStatus, git, landedOn, merge, parseRemoteUrl, prCommit, prCreate, prFeedback, prState, push, remotes, resetHard, trialWorktree, worktreeState } from "../src/host/ops";
 
 const ENV: Record<string, string> = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
 const AUTHOR_VARS = ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"];
@@ -921,5 +921,203 @@ describe("host entry: discovery and the push-only forge", () => {
     sh(repo, "remote", "add", "origin", "https://example.com/acme/shop.git");
     expect(await harness.experimental_call("remotes", { repo })).toEqual({ remotes: [{ name: "origin", pushUrls: ["https://example.com/acme/shop.git"] }] });
     expect(await harness.experimental_call("trialWorktree", { repo })).toEqual({ outcome: "ok" });
+  });
+});
+
+describe("prCommit", () => {
+  const setup = () => {
+    const repo = makeRepo();
+    const remote = join(scratch, `remote-${counter++}.git`);
+    execFileSync("git", ["init", "-q", "--bare", remote]);
+    sh(repo, "remote", "add", "origin", remote);
+    sh(repo, "push", "-q", "origin", "main");
+    const base = sh(repo, "rev-parse", "main");
+    sh(repo, "checkout", "-q", "-b", "work");
+    commitFile(repo, "a.txt", "a", "WIP one");
+    const head = commitFile(repo, "b.txt", "b", "WIP two");
+    return { repo, remote, base, head };
+  };
+  const tree = (repo: string, ref: string) => sh(repo, "rev-parse", `${ref}^{tree}`);
+  const parents = (repo: string, sha: string) => sh(repo, "log", "-1", "--format=%P", sha).split(" ").filter((part) => part !== "");
+  const input = (repo: string, head: string, more: { message?: string; pushed?: string } = {}) => ({ repo, remote: "origin", branch: "loom/csv-1", base: "origin/main", head, message: more.message ?? "Add a and b\n\nTwo files.", ...(more.pushed === undefined ? {} : { pushed: more.pushed }) });
+
+  it("builds one commit with head's files on its merge base when the branch is not on the remote yet, with the message as given", async () => {
+    const { repo, base, head } = setup();
+    const built = await prCommit(input(repo, head));
+    expect(built).toMatchObject({ outcome: "ok", created: true });
+    const sha = (built as { sha: string }).sha;
+    expect(tree(repo, sha)).toBe(tree(repo, head));
+    expect(parents(repo, sha)).toEqual([base]);
+    expect(sh(repo, "log", "-1", "--format=%B", sha)).toBe("Add a and b\n\nTwo files.");
+  });
+
+  it("adds one commit on the remote tip for a fix round, and reports nothing new when the tip already has head's files", async () => {
+    const { repo, head } = setup();
+    const first = (await prCommit(input(repo, head))) as { sha: string };
+    await push({ repo, remote: "origin", src: first.sha, branch: "loom/csv-1" });
+    const fixed = commitFile(repo, "c.txt", "c", "WIP fix");
+    const fix = await prCommit(input(repo, fixed, { message: "Fix c", pushed: first.sha }));
+    expect(fix).toMatchObject({ outcome: "ok", created: true });
+    const sha = (fix as { sha: string }).sha;
+    expect(parents(repo, sha)).toEqual([first.sha]);
+    expect(tree(repo, sha)).toBe(tree(repo, fixed));
+    await push({ repo, remote: "origin", src: sha, branch: "loom/csv-1" });
+    expect(await prCommit(input(repo, fixed, { pushed: sha }))).toEqual({ outcome: "ok", sha, created: false });
+  });
+
+  it("reports the branch as diverged when it has commits that neither Loom pushed nor head contains", async () => {
+    const { repo, remote, head } = setup();
+    const first = (await prCommit(input(repo, head))) as { sha: string };
+    await push({ repo, remote: "origin", src: first.sha, branch: "loom/csv-1" });
+    const clone = join(scratch, `clone-${counter++}`);
+    execFileSync("git", ["clone", "-q", "-b", "loom/csv-1", remote, clone]);
+    sh(clone, "config", "user.email", "other@example.com");
+    sh(clone, "config", "user.name", "Other");
+    const theirs = commitFile(clone, "theirs.txt", "t");
+    sh(clone, "push", "-q", "origin", "HEAD:loom/csv-1");
+    const fixed = commitFile(repo, "c.txt", "c");
+    expect(await prCommit(input(repo, fixed, { pushed: first.sha }))).toEqual({ outcome: "diverged", tip: theirs });
+
+    sh(repo, "fetch", "-q", "origin", "loom/csv-1");
+    sh(repo, "merge", "-q", "--no-edit", "FETCH_HEAD");
+    const merged = sh(repo, "rev-parse", "HEAD");
+    const fix = (await prCommit(input(repo, merged, { pushed: first.sha }))) as { sha: string; created: boolean };
+    expect(fix.created).toBe(true);
+    expect(parents(repo, fix.sha)).toEqual([theirs]);
+  });
+
+  it("adds the newer base as a second parent when head merged it, so the pull request's diff stays the ticket's own", async () => {
+    const { repo, head } = setup();
+    const first = (await prCommit(input(repo, head))) as { sha: string };
+    await push({ repo, remote: "origin", src: first.sha, branch: "loom/csv-1" });
+    sh(repo, "checkout", "-q", "main");
+    const newer = commitFile(repo, "main.txt", "m");
+    sh(repo, "push", "-q", "origin", "main");
+    sh(repo, "checkout", "-q", "work");
+    sh(repo, "merge", "-q", "--no-edit", "origin/main");
+    const merged = sh(repo, "rev-parse", "HEAD");
+    const fix = (await prCommit(input(repo, merged, { pushed: first.sha }))) as { sha: string };
+    expect(parents(repo, fix.sha)).toEqual([first.sha, newer]);
+    expect(tree(repo, fix.sha)).toBe(tree(repo, merged));
+  });
+
+  it("reads the branch where the remote pushes, when it fetches from somewhere else", async () => {
+    const { repo, head } = setup();
+    const fork = join(scratch, `fork-${counter++}.git`);
+    execFileSync("git", ["init", "-q", "--bare", fork]);
+    sh(repo, "remote", "set-url", "--push", "origin", fork);
+    const first = (await prCommit(input(repo, head))) as { sha: string };
+    await push({ repo, remote: "origin", src: first.sha, branch: "loom/csv-1" });
+    const fixed = commitFile(repo, "c.txt", "c");
+    const fix = (await prCommit(input(repo, fixed, { pushed: first.sha }))) as { sha: string };
+    expect(parents(repo, fix.sha)).toEqual([first.sha]);
+  });
+
+  it("is unavailable, with git's message, when the remote cannot be read", async () => {
+    const repo = makeRepo();
+    const result = await prCommit(input(repo, "HEAD"));
+    expect(result.outcome).toBe("unavailable");
+  });
+});
+
+describe("prFeedback", () => {
+  const FEEDBACK = (command: string) => ({ kind: "command" as const, feedback: command });
+
+  it("reads a forge command's feedback from the JSON object on its last line, with LOOM_URL and LOOM_PR_NUMBER", async () => {
+    const repo = makeRepo();
+    const json = JSON.stringify({ state: "open", head: "abc123", author: "me", checks: [{ id: 7, name: "ci", state: "failed", url: "https://ci.example.com/7" }], items: [{ id: "r1", kind: "review", author: "alice", body: "Rename it.", state: "changes_requested" }, { id: 9, kind: "thread", author: "bob", body: "Why?", path: "src/a.ts", line: 3 }] });
+    const result = await prFeedback({ repo, url: "https://review.example.com/shop/42", forge: FEEDBACK(`echo "warming up" >&2; test "$LOOM_PR_NUMBER" = 42 && echo '${json}'`) });
+    expect(result).toEqual({
+      outcome: "ok",
+      state: "OPEN",
+      head: "abc123",
+      author: "me",
+      checks: [{ key: "check:7", name: "ci", state: "failed", url: "https://ci.example.com/7" }],
+      items: [
+        { key: "review:r1", kind: "review", author: "alice", bot: false, body: "Rename it.", url: null, state: "changes_requested", path: null, line: null },
+        { key: "thread:9", kind: "thread", author: "bob", bot: false, body: "Why?", url: null, state: null, path: "src/a.ts", line: 3 },
+      ],
+    });
+  });
+
+  it("is unavailable, naming the problem, when the command's last line is not that object or the command fails", async () => {
+    const repo = makeRepo();
+    const url = "https://review.example.com/shop/42";
+    const bad = await prFeedback({ repo, url, forge: FEEDBACK(`echo '{"state":"open"}'`) });
+    expect(bad).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("must print a JSON object on its last line; head:") });
+    expect(await prFeedback({ repo, url, forge: FEEDBACK("exit 3") })).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("feedback command failed (exit 3)") });
+  });
+
+  describe("through gh", () => {
+    let bin: string;
+    let savedPath: string | undefined;
+    beforeAll(() => {
+      savedPath = process.env.PATH;
+    });
+    beforeEach(() => {
+      bin = join(scratch, `bin-${counter++}`);
+      mkdirSync(bin);
+      process.env.PATH = `${bin}:${savedPath}`;
+    });
+    afterAll(() => {
+      process.env.PATH = savedPath;
+    });
+    const fakeGh = (json: unknown) => {
+      writeFileSync(join(bin, "response.json"), JSON.stringify(json));
+      writeFileSync(join(bin, "gh"), `#!/bin/sh\nprintf '%s\\n' "$@" > "${bin}/args.txt"\ncat "${bin}/response.json"\n`);
+      chmodSync(join(bin, "gh"), 0o755);
+    };
+    const user = (login: string) => ({ __typename: "User", login });
+    const bot = (login: string) => ({ __typename: "Bot", login });
+
+    it("asks GitHub's GraphQL API for the pull request in the URL and maps its checks, reviews, unresolved threads and comments", async () => {
+      fakeGh({
+        data: {
+          repository: {
+            pullRequest: {
+              state: "OPEN",
+              headRefOid: "f00d",
+              author: user("me"),
+              commits: { nodes: [{ commit: { statusCheckRollup: { contexts: { nodes: [
+                { __typename: "CheckRun", databaseId: 11, name: "lint", status: "COMPLETED", conclusion: "FAILURE", detailsUrl: "https://ci/11" },
+                { __typename: "CheckRun", databaseId: 12, name: "deploy", status: "COMPLETED", conclusion: "SKIPPED", detailsUrl: null },
+                { __typename: "CheckRun", databaseId: 13, name: "test", status: "IN_PROGRESS", conclusion: null, detailsUrl: null },
+                { __typename: "StatusContext", context: "reviews", state: "PENDING", targetUrl: null },
+              ] } } } }] },
+              reviews: { nodes: [{ databaseId: 21, author: user("alice"), state: "CHANGES_REQUESTED", body: "Please rename.", url: "https://gh/r21" }] },
+              reviewThreads: { nodes: [
+                { id: "T1", isResolved: false, path: "a.ts", line: 4, comments: { nodes: [{ databaseId: 31, author: bot("binks"), body: "Unanchored regex.", url: "https://gh/c31" }, { databaseId: 32, author: user("me"), body: "Will fix.", url: "https://gh/c32" }] } },
+                { id: "T2", isResolved: true, path: "b.ts", line: 1, comments: { nodes: [{ databaseId: 33, author: user("alice"), body: "Done.", url: "https://gh/c33" }] } },
+              ] },
+              comments: { nodes: [{ databaseId: 41, author: bot("terraform-actuator"), body: "Plan: 1 to change.", url: "https://gh/c41" }] },
+            },
+          },
+        },
+      });
+      const result = await prFeedback({ repo: makeRepo(), url: "https://github.com/acme/shop/pull/76810", forge: GH });
+      const args = readFileSync(join(bin, "args.txt"), "utf8").split("\n");
+      expect(args.slice(0, 4)).toEqual(["api", "graphql", "--hostname", "github.com"]);
+      expect(args).toEqual(expect.arrayContaining(["owner=acme", "name=shop", "number=76810"]));
+      expect(result).toMatchObject({ outcome: "ok", state: "OPEN", head: "f00d", author: "me" });
+      const ok = result as Extract<typeof result, { outcome: "ok" }>;
+      expect(ok.checks.map((check) => [check.key, check.state])).toEqual([
+        ["check:11", "failed"],
+        ["check:12", "neutral"],
+        ["check:13", "pending"],
+        ["status:reviews:PENDING:f00d", "pending"],
+      ]);
+      expect(ok.items.map((item) => [item.kind, item.author, item.bot])).toEqual([
+        ["review", "alice", false],
+        ["thread", "me", false],
+        ["comment", "terraform-actuator", true],
+      ]);
+      expect(ok.items[1]).toMatchObject({ key: expect.stringMatching(/^thread:T1:32:[0-9a-f]{12}$/u), path: "a.ts", line: 4, body: "binks: Unanchored regex.\n\nme: Will fix." });
+    });
+
+    it("is unavailable for a URL that is not a GitHub pull request, and when gh finds none", async () => {
+      expect(await prFeedback({ repo: makeRepo(), url: "https://github.com/acme/shop/issues/3", forge: GH })).toMatchObject({ outcome: "unavailable" });
+      fakeGh({ data: { repository: { pullRequest: null } } });
+      expect(await prFeedback({ repo: makeRepo(), url: "https://github.com/acme/shop/pull/3", forge: GH })).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("gh found no pull request") });
+    });
   });
 });

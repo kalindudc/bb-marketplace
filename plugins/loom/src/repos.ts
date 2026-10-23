@@ -56,6 +56,25 @@ export function repoSettings(spec: Spec, name: string | null): RepoSettings {
   return settingsOf(spec, repo);
 }
 
+/** How Loom writes, pushes and follows each ticket's pull request on the pr strategy. */
+export interface PrSettings {
+  /** Who writes the pull request's title, description and commit message: the ticket's worker, or Loom's template. */
+  describe: "worker" | "loom";
+  /** One commit per pull request, and one more per fix round, instead of the worker's branch as it is. */
+  squash: boolean;
+  /** Fix rounds the pull request's CI and review feedback may start before the ticket blocks; 0 follows only merged and closed. */
+  maxFixRounds: number;
+}
+
+export function prSettings(spec: Spec): PrSettings {
+  return { describe: spec.merge.describe ?? "worker", squash: spec.merge.squash ?? true, maxFixRounds: spec.merge.max_fix_rounds ?? 5 };
+}
+
+/** Whether Loom can read a pull request's checks and reviews on this forge: gh, or a command forge with a feedback command. */
+export function followsFeedback(forge: ForgeSpec): boolean {
+  return forge.kind === "gh" || (forge.kind === "command" && forge.feedback !== undefined);
+}
+
 /** Where a worker's branch starts in a repo when no earlier worker left one. */
 export function freshBaseOf(spec: Spec, name: string | null): string {
   const settings = repoSettings(spec, name);

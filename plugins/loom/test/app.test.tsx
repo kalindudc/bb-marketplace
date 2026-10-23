@@ -6,7 +6,7 @@ import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-libra
 import { loadPluginApp, mountPluginContentScripts, renderSlot, type PluginRpcTestHandlers, type PluginSdkTestFakes, type RenderSlotOptions } from "@get-bb/plugin-sdk/testing/app";
 import { useLayoutEffect, useState, useSyncExternalStore } from "react";
 import { useComposers, type NewThreadRequest, type PluginComposerApi, type PluginNavPanelProps, type PluginSidebarThread, type PluginThreadHeaderActionProps } from "@get-bb/plugin-sdk/app";
-import type { Attempt, BbProjectChoice, ChangedFile, ChangeSource, ChangesView, ChecksItem, HomeProject, NextStep, PlanningSession, ProjectSummary, ProjectView, RepoOverview, SentNote, SpecVersionView, ThreadInfo, rpcContract } from "../src/contract";
+import type { Attempt, BbProjectChoice, ChangedFile, ChangeSource, ChangesView, ChecksItem, HomeProject, NextStep, PlanningSession, ProjectSummary, ProjectView, RepoOverview, SentNote, SpecVersionView, ThreadInfo, TicketDetail, rpcContract } from "../src/contract";
 import type { TicketRow } from "../src/db/store";
 import { repoOverviews } from "../src/projects";
 import { notesMessage } from "../src/prompts";
@@ -2864,8 +2864,8 @@ describe("ticket", () => {
         brief,
         before: [],
         attempts: [
-          attempt({ n: 1, claimPostId: 4, outcome: "blocked", endedAt: Date.now(), line: "Asked the planner: Which API?", pipeline: { work: "fail", checks: [], review: [], merge: [] } }),
-          attempt({ n: 2, claimPostId: 10, outcome: "in_progress", pipeline: { work: "pass", checks: ["fail", "pass"], review: ["running"], merge: [] } }),
+          attempt({ n: 1, claimPostId: 4, outcome: "blocked", endedAt: Date.now(), line: "Asked the planner: Which API?", pipeline: { work: "fail", checks: [], review: [], merge: [], pr: [] } }),
+          attempt({ n: 2, claimPostId: 10, outcome: "in_progress", pipeline: { work: "pass", checks: ["fail", "pass"], review: ["running"], merge: [], pr: [] } }),
         ],
       },
     });
@@ -2999,7 +2999,7 @@ describe("ticket", () => {
       activity: withItems([checks(), { type: "review", postId: 8, reviewId: 2, notePostIds: [] }, { type: "merge", postId: 9, at: NOW - HOUR, outcome: "merged", into: "loom/csv", running: false, steps: [] }], {
         outcome: "merged",
         endedAt: NOW - HOUR,
-        pipeline: { work: "pass", checks: ["pass"], review: ["pass"], merge: ["pass"] },
+        pipeline: { work: "pass", checks: ["pass"], review: ["pass"], merge: ["pass"], pr: [] },
       }),
     });
     const checksCard = slot.container.querySelector<HTMLElement>("[data-checks-card]")!;
@@ -3105,7 +3105,7 @@ describe("ticket", () => {
       state: "queued",
       posts: [...posts, refused],
       threads: [{ threadId: null, role: "worker", attempt: 1, reviewRound: 0, state: "ended", startedAt: NOW - HOUR, endedAt: NOW - HOUR + 300, endReason: "failed" }],
-      activity: withItems([{ type: "post", postId: 6 }], { threadId: null, outcome: "ended", endedAt: NOW - HOUR + 300, line: "The worker could not start.", pipeline: { work: "fail", checks: [], review: [], merge: [] } }),
+      activity: withItems([{ type: "post", postId: 6 }], { threadId: null, outcome: "ended", endedAt: NOW - HOUR + 300, line: "The worker could not start.", pipeline: { work: "fail", checks: [], review: [], merge: [], pr: [] } }),
     });
     const card = slot.container.querySelector<HTMLElement>('[data-attempt="1"]')!;
     expect(card.getAttribute("data-open")).toBe("true");
@@ -3121,6 +3121,92 @@ describe("ticket", () => {
     const slot = await mountTicket();
     await slot.emitRealtime("loom:changed", { slug: "csv" });
     await waitFor(() => expect(calls(slot, "ticket")).toHaveLength(2));
+  });
+
+  describe("on the pull request strategy", () => {
+    const URL = "https://github.com/acme/shop/pull/76810";
+    const pr = (over: Partial<NonNullable<TicketDetail["pr"]>> = {}): NonNullable<TicketDetail["pr"]> => ({
+      url: URL,
+      draft: true,
+      forge: "gh",
+      branch: "loom/csv-2",
+      pushedSha: "6f28bec71d2",
+      commits: 1,
+      rounds: 0,
+      counted: 0,
+      maxRounds: 5,
+      follows: true,
+      checks: { passed: 18, failed: 0, pending: 2, at: Date.now() - 2 * 60_000 },
+      nextCheckAt: Date.now() + 3 * 60_000,
+      writing: null,
+      ...over,
+    });
+    const header = (slot: Slot) => slot.container.querySelector<HTMLElement>("[data-ticket-header]")!;
+    const stageNames = (slot: Slot) => [...slot.container.querySelectorAll("[data-stage]")].map((node) => node.textContent);
+
+    it("names the stage Pull request and says the worker is writing it, with how long it has left", async () => {
+      const now = Date.now();
+      const slot = await mountTicket({ state: "approved", reviewRound: 2, pr: pr({ pushedSha: null, commits: null, checks: null, nextCheckAt: null, writing: { since: now - 4 * 60_000, fix: false, until: now + 26 * 60_000 } }) });
+      expect(stageNames(slot)).toContain("Pull request");
+      expect(slot.container.querySelector("[data-ticket-summary]")!.textContent).toBe("Approved in round 2. The worker is writing the pull request's title, description and commit message (4m); Loom uses its own template if they are not in within 30m.");
+      expect(header(slot).querySelector("[data-fact='pr-writing']")!.textContent).toBe("Writing the pull request · 4m");
+      expect(slot.container.querySelector("[data-live-row]")!.textContent).toContain("The worker is writing the pull request · for 4m");
+    });
+
+    it("shows an open pull request's commits, checks and fix rounds, and that a reply starts a fix round", async () => {
+      const slot = await mountTicket({ state: "pr_open", prUrl: URL, replyTo: "worker", pr: pr() });
+      const summary = slot.container.querySelector("[data-ticket-summary]")!.textContent!;
+      expect(summary).toContain("The pull request is open as 1 commit.");
+      expect(summary).toContain("its checks: 18 passed and 2 running");
+      expect(summary).toContain("It's done when you merge it.");
+      expect(header(slot).querySelector("[data-fact='pr-number']")!.textContent).toBe("#76810");
+      expect(header(slot).querySelector("[data-fact='pr-commits']")!.textContent).toBe("1 commit · 6f28bec");
+      expect(header(slot).querySelector("[data-fact='pr-checks']")!.textContent).toContain("18 ✓");
+      expect(header(slot).querySelector("[data-fact='pr-rounds']")!.textContent).toBe("Fix rounds 0 of 5");
+      expect(slot.container.querySelector("[data-live-row]")!.textContent).toContain("Loom is following the pull request: checks 18 passed and 2 running · next check in 3m");
+      expect(slot.container.querySelector("[data-reply-hint]")!.textContent).toBe("This starts a fix round: the worker gets it now, and Loom pushes the fix to the pull request as one more commit.");
+    });
+
+    it("shows the worker's pull request text and a fix round's feedback as cards, with what Loom left out", async () => {
+      const now = Date.now();
+      const text = { type: "pr_text" as const, postId: 20, at: now - HOUR, by: "worker" as const, fix: false, round: 0, title: "Keep hipaa-lab out of the log sinks", body: "## Why\nThe POC.", commit: "Exclude hipaa-lab\n\nFrom both sinks.", reason: null };
+      const feedback = {
+        type: "pr_feedback" as const,
+        postId: 21,
+        at: now - 6 * 60_000,
+        round: 1,
+        overLimit: false,
+        counted: 1,
+        human: false,
+        url: URL,
+        checks: [{ name: "tf/plan", url: "https://ci/1" }],
+        items: [{ kind: "thread" as const, author: "binks-code-reviewer", body: "The regex is unanchored.", url: null, state: null, path: "gclb_logging.tf", line: 42 }],
+        ignored: { bots: 2, own: 1 },
+      };
+      const extra = [
+        { id: 20, parentId: null, depth: 0, authorKind: "worker" as const, authorThreadId: "thr_w1", kind: "merge" as const, body: "The worker wrote the pull request: Keep hipaa-lab out of the log sinks", at: now - HOUR },
+        { id: 21, parentId: null, depth: 0, authorKind: "loom" as const, authorThreadId: null, kind: "merge" as const, body: "Pull request feedback for fix round 1 of 5", at: now - 6 * 60_000 },
+      ];
+      const slot = await mountTicket({ state: "working", prUrl: URL, posts: [...posts, ...extra], pr: pr({ rounds: 1 }), activity: withItems([text, feedback], { pipeline: { work: "pass", checks: ["pass"], review: ["pass"], merge: [], pr: ["pass", "fail"] } }) });
+      const card = slot.container.querySelector<HTMLElement>("[data-pr-text]")!;
+      expect(card.textContent).toContain("The worker wrote the pull request");
+      expect(card.querySelector("[data-pr-title]")!.textContent).toBe("Keep hipaa-lab out of the log sinks");
+      expect(card.querySelector("[data-pr-commit]")!.textContent).toBe("Exclude hipaa-lab\n\nFrom both sinks.");
+      const round = slot.container.querySelector<HTMLElement>("[data-pr-feedback='1']")!;
+      expect(round.textContent).toContain("fix round 1 · 1 of 5");
+      expect(round.querySelector("[data-feedback-check]")!.textContent).toContain("tf/plan");
+      expect(round.querySelector("[data-feedback-item='thread']")!.textContent).toContain("gclb_logging.tf:42");
+      expect(round.textContent).toContain("Not counted: 2 bot comments and 1 item from your own account");
+      fireEvent.click(within(round).getByRole("button", { name: "Open the details of tf/plan" }));
+      expect(slot.inspection.navigateCalls.at(-1)).toMatchObject({ method: "openUrl" });
+      expect(slot.container.querySelector("[data-pipeline]")!.textContent).toContain("PR ✓✗");
+      expect(slot.container.querySelector("[data-ticket-summary]")!.textContent).toContain("Fix round 1: the worker is fixing the pull request's feedback");
+    });
+
+    it("says in a blocked ticket's callout that the pull request stays open and a requeue keeps it", async () => {
+      const slot = await mountTicket({ state: "blocked", prUrl: URL, blockedReason: "the pull request's checks and reviews needed more than 5 fix rounds", pr: pr({ rounds: 5 }) });
+      expect(slot.container.querySelector("[data-blocked-pr]")!.textContent).toContain("A requeue starts a new worker on the same pull request");
+    });
   });
 });
 

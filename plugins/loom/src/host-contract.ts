@@ -101,6 +101,17 @@ export const hostContract = defineRpcContract({
     input: z.object({ worktree: absPath, remote: ref, branch: ref }).strict(),
     output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), sha }).strict(), z.object({ outcome: z.literal("unavailable"), message: z.string() }).strict()]),
   },
+  // The commit to push to a ticket's pull request branch, with head's tree: on the remote branch's tip when it exists, else on
+  // head's merge base with base. `pushed` is the commit Loom pushed there last; a tip that is neither it nor in head's history
+  // has commits from someone else, which a commit with head's tree would undo, so it is reported as diverged instead.
+  prCommit: {
+    input: z.object({ repo: absPath, remote: ref, branch: ref, base: ref, head: commit, message: z.string().min(1).max(8000), pushed: commit.optional() }).strict(),
+    output: z.discriminatedUnion("outcome", [
+      z.object({ outcome: z.literal("ok"), sha, created: z.boolean() }).strict(),
+      z.object({ outcome: z.literal("diverged"), tip: sha }).strict(),
+      unavailable,
+    ]),
+  },
   push: {
     input: z.object({ repo: absPath, remote: ref, src: ref, branch: ref }).strict(),
     output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok") }).strict(), z.object({ outcome: z.literal("unavailable"), message: z.string() }).strict()]),
@@ -132,6 +143,45 @@ export const hostContract = defineRpcContract({
     output: z.discriminatedUnion("outcome", [
       z.object({ outcome: z.literal("ok"), state: z.enum(["OPEN", "MERGED", "CLOSED"]) }).strict(),
       z.object({ outcome: z.literal("unavailable"), message: z.string() }).strict(),
+    ]),
+  },
+  // A pull request's state, the checks on its head commit, and its reviews, unresolved review threads and comments.
+  // Through gh, or the spec's feedback command, which prints the same object as JSON on its last line.
+  prFeedback: {
+    input: z
+      .object({
+        repo: absPath,
+        url: z.string().regex(/^https?:\/\/\S+$/, "must be a pull request URL").max(500),
+        forge: z.discriminatedUnion("kind", [z.object({ kind: z.literal("gh") }).strict(), z.object({ kind: z.literal("command"), feedback: forgeCommand }).strict()]),
+      })
+      .strict(),
+    output: z.discriminatedUnion("outcome", [
+      z
+        .object({
+          outcome: z.literal("ok"),
+          state: z.enum(["OPEN", "MERGED", "CLOSED"]),
+          head: sha,
+          author: z.string(),
+          checks: z.array(z.object({ key: z.string(), name: z.string(), state: z.enum(["pending", "passed", "failed", "neutral"]), url: z.string().nullable() }).strict()),
+          items: z.array(
+            z
+              .object({
+                key: z.string(),
+                kind: z.enum(["review", "thread", "comment"]),
+                author: z.string(),
+                bot: z.boolean(),
+                body: z.string(),
+                url: z.string().nullable(),
+                /** The review's state; the thread's path and line. */
+                state: z.string().nullable(),
+                path: z.string().nullable(),
+                line: z.number().int().nullable(),
+              })
+              .strict(),
+          ),
+        })
+        .strict(),
+      unavailable,
     ]),
   },
   // Each git remote with its push URLs, in `git remote` order.

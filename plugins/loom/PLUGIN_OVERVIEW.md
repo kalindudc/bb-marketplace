@@ -1,4 +1,4 @@
-Run a software project with agents: a planner turns a goal into a validated spec and a ticket board, workers build the tickets in their own git worktrees, separate reviewers approve or ask for changes, and approved work merges into an integration branch or opens as pull requests. You watch and steer it from a full-screen page in bb's left navigation, or from `bb loom`.
+Run a software project with agents: a planner turns a goal into a validated spec and a ticket board, workers build the tickets in their own git worktrees, separate reviewers approve or ask for changes, and approved work merges into an integration branch or opens as one-commit pull requests the worker writes and Loom follows through CI. You watch and steer it from a full-screen page in bb's left navigation, or from `bb loom`.
 
 ## What you get
 
@@ -12,7 +12,7 @@ Run a software project with agents: a planner turns a goal into a validated spec
 - A Changes tab to see what lands before you land: the integration branch against the base, each merge, the commit in review and a working ticket's live worktree. A finished project still shows what it merged.
 - A timeline on every project: rewind the page to any moment, or play it back.
 - Controls with a second click: a next-step bar says what happens next and carries the one button you need now; start, pause, resume, land and archive a project; requeue, block or cancel a ticket; reply to a worker. Each is logged as your action.
-- A header chip such as `CSV-3 · review` on Loom's threads, and a Planning chip on a planning conversation, that open them on the page.
+- Header chips on Loom's threads and planning conversations that open them on the page.
 - The planner's Ask User Question questions appear above its chat, where you answer them, and the Loom icon in the navigation rail counts what needs you.
 - A ticket page with its stage, a summary, and each attempt as a card with its checks, reviews and merge.
 - `bb loom metrics`, `feed` and `report` print the numbers, the events and a finished project's record. A done hook in Loom's settings sends that record, or an agent's summary of it, to a command you choose.

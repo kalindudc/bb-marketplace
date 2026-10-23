@@ -55,6 +55,7 @@ export const forgeSchema = z
     kind: z.enum(["gh", "command", "none"]),
     open: command.optional(),
     state: command.optional(),
+    feedback: command.optional(),
     after_open: z.array(command).max(5).optional(),
   })
   .strict();
@@ -148,6 +149,10 @@ export const specSchema = z
         draft: z.boolean().default(true),
         forge: forgeSchema.optional(),
         worktree: worktreeSchema.optional(),
+        // No defaults, so a spec without them hashes as it did before they existed; prSettings fills them in.
+        describe: z.enum(["worker", "loom"]).optional(),
+        squash: z.boolean().optional(),
+        max_fix_rounds: z.number().int().min(0).max(20).optional(),
       })
       .strict(),
     checks: z
@@ -417,6 +422,12 @@ export function validateSemantics(spec: Spec, rawToml: string): { errors: string
     }
   });
 
+  if (spec.merge.strategy === "integration") {
+    for (const key of ["describe", "squash", "max_fix_rounds"] as const) {
+      if (spec.merge[key] !== undefined) errors.push(`merge.${key}: it applies to the pull request Loom opens for each ticket, but merge.strategy is "integration". Remove it, or use merge.strategy = "pr".`);
+    }
+  }
+
   errors.push(...forgeErrors(spec.merge.forge, "merge.forge"), ...worktreeErrors(spec, spec.merge.worktree, "merge.worktree"), ...environmentErrors(spec.environment, "environment"));
   repos.forEach((repo, index) => {
     errors.push(...forgeErrors(repo.forge, `repo[${index}].forge`), ...worktreeErrors(spec, repo.worktree, `repo[${index}].worktree`), ...environmentErrors(repo.environment, `repo[${index}].environment`));
@@ -443,7 +454,7 @@ function forgeErrors(forge: ForgeSpec | undefined, at: string): string[] {
     }
     return errors;
   }
-  for (const key of ["open", "state"] as const) {
+  for (const key of ["open", "state", "feedback"] as const) {
     if (forge[key] !== undefined) errors.push(`${at}.${key}: only kind = "command" runs it, and ${at}.kind is "${forge.kind}". Remove it, or set kind = "command".`);
   }
   if (forge.kind === "none" && forge.after_open !== undefined) {

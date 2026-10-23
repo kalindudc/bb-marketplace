@@ -52,11 +52,13 @@ export function canMoveProject(from: ProjectState, to: ProjectState): boolean {
 const TICKET_MOVES: Record<TicketState, readonly TicketState[]> = {
   queued: ["working"],
   working: ["checking", "queued"],
-  checking: ["working", "review", "queued"],
+  // Straight back to pr_open when a fix round changed nothing: there is nothing new to check, review or push.
+  checking: ["working", "review", "queued", "pr_open"],
   review: ["working", "approved", "queued"],
   approved: ["merging"],
   merging: ["done", "pr_open", "working", "queued"],
-  pr_open: ["done"],
+  // A fix round: the pull request's feedback, or the human's reply, goes back to the worker, or to the queue when it is gone.
+  pr_open: ["done", "working", "queued"],
   done: [],
   // Back to review only when bb refused the reviewer: the work already passed its checks (Engine.approve).
   blocked: ["queued", "review"],

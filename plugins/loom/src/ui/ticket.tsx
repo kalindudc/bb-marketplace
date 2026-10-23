@@ -116,7 +116,7 @@ export function TicketView({ slug, ticketKey, at = null, onNow }: { slug: string
           {tab !== "brief" && (
             <div className={`space-y-3 ${tab === "details" ? "hidden @4xl:block" : ""}`}>
               <Stream ticket={ticket} now={shown} busy={locked} onReply={reply} onBrief={() => choose("brief")} jumpTo={jumpTo} />
-              {!past && <ReplyBox textLabel="New reply" sendLabel="Send reply" busy={busy} hint={replyHint(ticket.replyTo)} placeholder={`Write on ${ticket.key}…`} onSend={(body) => reply(body)} />}
+              {!past && <ReplyBox textLabel="New reply" sendLabel="Send reply" busy={busy} hint={replyHint(ticket.replyTo, ticket)} placeholder={`Write on ${ticket.key}…`} onSend={(body) => reply(body)} />}
             </div>
           )}
           {tab === "details" && (

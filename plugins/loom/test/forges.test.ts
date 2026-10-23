@@ -21,7 +21,7 @@ const lastPost = (kind: string, key = "CSV-1") =>
     .posts(ticketOf(h, key).id)
     .filter((post) => post.kind === kind)
     .at(-1)!;
-const prStrategy = (forge: Doc) => (doc: Doc) => (doc.merge = { strategy: "pr", forge });
+const prStrategy = (forge: Doc) => (doc: Doc) => (doc.merge = { strategy: "pr", forge, describe: "loom", squash: false, max_fix_rounds: 0 });
 const COMMAND_FORGE = { kind: "command", open: "review create", state: "review state", after_open: ['ci run --pr "$LOOM_PR_NUMBER"'] };
 
 describe("a forge of the spec's own commands", () => {

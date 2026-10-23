@@ -3,7 +3,8 @@
 import { ticketRepo } from "./checkouts";
 import type { Store, ThreadRow, TicketRow } from "./db/store";
 import { plural } from "./format";
-import { checkFailedText, clip } from "./prompts";
+import { checkFailedText, clip, prUnchangedText } from "./prompts";
+import { unchangedFix } from "./pull-requests";
 import { LoomError } from "./projects";
 import { recordingHost } from "./runs";
 import { scopeReport } from "./scope";
@@ -92,6 +93,8 @@ export function resumeCheckingTickets(ctx: EngineCtx): number {
 
 interface Outcome {
   commitSha: string;
+  /** A fix round that changed nothing: no checks, no review, nothing to push. */
+  unchanged?: boolean;
   runs: CheckRun[];
   failure: CheckRun | null;
   outside: string[];
@@ -128,6 +131,7 @@ async function runPipeline(ctx: EngineCtx, ticket: TicketRow, spec: Spec, worker
 
   const commit = await ctx.host.call(hostId, "commitAll", { worktree, message: `${ticket.key}: ${ticket.title}` });
   await recordBranch(ctx, worker);
+  if (unchangedFix(ctx.store.posts(ticket.id), commit.sha)) return { commitSha: commit.sha, unchanged: true, runs: [], failure: null, outside: [], protectedHits: [] };
   const repo = ticketRepo(spec, ticket);
   const base = freshBase(spec, ticket.repo);
   const state = await ctx.host.call(hostId, "worktreeState", { worktree, base });
@@ -189,6 +193,13 @@ async function finish(ctx: EngineCtx, ticketId: number, spec: Spec, outcome: Out
     if (ticket === null || ticket.state !== "checking") return false;
     const owner = workerOf(store, ticket);
     worker = owner.standing === "active" ? owner.row : null;
+    if (outcome.unchanged === true) {
+      store.setTicketState(ticket.id, "pr_open", LOOM_ACTOR, { unchanged: true, fixRound: ticket.pr_rounds });
+      const body = `The worker changed nothing for fix round ${ticket.pr_rounds}, so Loom pushed nothing; it keeps following the pull request.`;
+      store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "merge", body, data_json: JSON.stringify({ outcome: "pr_unchanged", url: ticket.pr_url, round: ticket.pr_rounds }) });
+      if (worker !== null) store.updateThread((worker as ThreadRow).id, { idle_count: 0 });
+      return true;
+    }
     const { body, data } = checkPost(outcome, spec.scope.enforce);
     store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "check", body, data_json: JSON.stringify(data) });
     if (failure === null) {
@@ -215,7 +226,9 @@ async function finish(ctx: EngineCtx, ticketId: number, spec: Spec, outcome: Out
 
   const ticket = store.ticket(ticketId)!;
   const target = worker as ThreadRow | null;
-  if (target?.thread_id != null && delivers(ctx, ticket.project_id)) {
+  if (target?.thread_id != null && delivers(ctx, ticket.project_id) && outcome.unchanged === true) {
+    await send(ctx, target.thread_id, prUnchangedText(ticket.key));
+  } else if (target?.thread_id != null && delivers(ctx, ticket.project_id)) {
     if (failure === null) {
       const outside = outcome.outside.length > 0 ? ` These files are outside the ticket's scope: ${outcome.outside.join(", ")}.` : "";
       await send(ctx, target.thread_id, `[loom] ${ticket.key}: the checks passed. The ticket is waiting for review; end your turn and wait for a message.${outside}`);

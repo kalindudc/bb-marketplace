@@ -10,6 +10,7 @@ import { discoverText, gatherFacts, type RepoTarget } from "./discover";
 import type { Engine } from "./engine";
 import { LoomError, type ProposeResult, type Projects } from "./projects";
 import { specReviewBlocks } from "./format";
+import { handInPrText } from "./pull-requests";
 import { approve, requestChanges } from "./review";
 import { ticketPatchSchema, ticketSpecSchema } from "./spec";
 import { ensureSpecReview, specReviewerOf, specVerdict, type SpecReviewStatus } from "./spec-review";
@@ -18,7 +19,7 @@ import { addTickets, boardText, editTicket } from "./triage";
 import { blockTicket, requeueTicket } from "./workers";
 
 export const PLANNER_TOOLS = ["loom_propose", "loom_discover", "loom_board", "loom_ticket", "loom_requeue", "loom_add_tickets", "loom_edit_ticket", "loom_cancel_ticket", "loom_post"] as const;
-export const WORKER_TOOLS = ["loom_note", "loom_submit", "loom_block"] as const;
+export const WORKER_TOOLS = ["loom_note", "loom_submit", "loom_block", "loom_pr"] as const;
 export const REVIEWER_TOOLS = ["loom_note", "loom_approve", "loom_request_changes"] as const;
 export const ORDINARY_TOOLS = ["loom_propose", "loom_discover"] as const;
 export const SPEC_REVIEWER_TOOLS = ["loom_spec_approve", "loom_spec_request_changes"] as const;
@@ -295,6 +296,19 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
         void blockTicket(ctx, ticket, { reason, needs, actor: tool.threadId }).catch((error) => log(`block ${ticket.key}`, error));
         return `${ticket.key} is blocked and your work is saved on its branch, so end your turn now. The planner or the human will answer on the ticket.`;
       }),
+  });
+
+  bb.agents.registerTool({
+    name: "loom_pr",
+    description:
+      "Hand in the pull request Loom asked you for once your ticket is approved: its title, its description and the message of the one commit Loom pushes. In a fix round, hand in only the commit_message of the fix commit. Write them as you normally write a pull request and commit message. Then end your turn: Loom pushes and opens the pull request.",
+    presentation: { label: { pending: "Handing in the pull request", completed: "Handed in the pull request" } },
+    parameters: z.object({
+      title: z.string().min(1).max(256).optional().describe("The pull request's title. Required unless Loom asked for a fix round's commit message."),
+      body: z.string().min(1).max(50_000).optional().describe("The pull request's description, in Markdown. Required unless Loom asked for a fix round's commit message."),
+      commit_message: z.string().min(1).max(8000).describe("The commit's message: a subject line, a blank line, then a short body."),
+    }),
+    execute: (input, tool) => run(() => handInPrText(ctx, tool.threadId, input)),
   });
 
   // ---- the reviewer's tools

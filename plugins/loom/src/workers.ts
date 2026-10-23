@@ -483,7 +483,9 @@ export async function requeueTicket(ctx: EngineCtx, key: string, a: { note: stri
   const note = a.note.trim();
   ctx.store.tx(() => {
     ctx.store.setTicketState(ticket.id, "queued", a.actor, { requeued: true, failures: 0 });
-    ctx.store.updateTicket(ticket.id, { failures: 0, check_failures: 0, blocked_reason: null, ...released });
+    // A ticket whose pull request stays open comes back as a fix round on it, asked for its own text again.
+    const fix = ticket.pushed_sha !== null ? { pr_rounds: ticket.pr_rounds + 1 } : {};
+    ctx.store.updateTicket(ticket.id, { failures: 0, check_failures: 0, blocked_reason: null, ...released, ...fix, pr_ask_json: null, pr_text_json: null, pr_deliver_json: null });
     if (note !== "") {
       ctx.store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: a.author, author_thread_id: a.threadId ?? null, kind: "reply", body: note });
     }

@@ -77,6 +77,23 @@ export interface TicketRow {
   blocked_reason: string | null;
   /** The ticket's [[repo]] name; null for the Loom project's own repository, as in every row from before repos existed. */
   repo: string | null;
+  /** The remote branch of the ticket's pull request, kept when a later worker works on a branch of its own. */
+  pr_branch: string | null;
+  /** The commit Loom last pushed to pr_branch, and when. */
+  pushed_sha: string | null;
+  pushed_at: number | null;
+  /** PrAsk: Loom asked the worker to write the pull request for head_sha. */
+  pr_ask_json: string | null;
+  /** PrText: what the worker wrote for a head, or that Loom's template stands in. */
+  pr_text_json: string | null;
+  /** The ids of the pull request's checks, reviews and comments already sent to a worker. */
+  pr_seen_json: string;
+  /** Fix rounds the pull request's feedback started. */
+  pr_rounds: number;
+  /** PrStatus: the pull request's checks when Loom last read them. */
+  pr_status_json: string | null;
+  /** PrDelivery: a fix round's message to its worker that bb has not taken yet; the tick sends it again. */
+  pr_deliver_json: string | null;
   created_by: string;
   created_at: number;
   updated_at: number;

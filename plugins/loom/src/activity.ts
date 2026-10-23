@@ -50,13 +50,55 @@ export interface MergeItem {
   /** null for merge steps that no merge post follows yet. */
   postId: number | null;
   at: number;
-  outcome: "merged" | "conflict" | "pr_opened" | "pr_merged" | null;
+  outcome: "merged" | "conflict" | "pr_opened" | "pr_pushed" | "pr_unchanged" | "pr_merged" | "branch_pushed" | "branch_landed" | "diverged" | null;
   into: string | null;
   running: boolean;
   steps: CheckStep[];
 }
 
-export type ActivityItem = { type: "post"; postId: number } | ChecksItem | ReviewItem | MergeItem;
+/** The pull request's text: the worker's, or Loom's template; a fix round's has only the commit message. */
+export interface PrTextItem {
+  type: "pr_text";
+  postId: number;
+  at: number;
+  by: "worker" | "loom";
+  fix: boolean;
+  round: number;
+  title: string | null;
+  body: string | null;
+  commit: string;
+  /** Why Loom's template stood in; null for the worker's text. */
+  reason: string | null;
+}
+
+export interface PrFeedbackEntry {
+  kind: "review" | "thread" | "comment" | "reply";
+  author: string;
+  body: string;
+  url: string | null;
+  state: string | null;
+  path: string | null;
+  line: number | null;
+}
+
+/** What one fix round sent the worker: failed checks and review feedback, or the human's reply. */
+export interface PrFeedbackItem {
+  type: "pr_feedback";
+  postId: number;
+  at: number;
+  round: number;
+  /** Over the spec's fix-round limit: the ticket blocked instead. */
+  overLimit: boolean;
+  /** The rounds the pull request's feedback started since the last requeue, this one included; null for the human's reply. */
+  counted: number | null;
+  human: boolean;
+  url: string | null;
+  checks: Array<{ name: string; url: string | null }>;
+  items: PrFeedbackEntry[];
+  ignored: { bots: number; own: number };
+}
+
+export type ActivityItem = { type: "post"; postId: number } | ChecksItem | ReviewItem | MergeItem | PrTextItem | PrFeedbackItem;
 
 export interface Attempt {
   n: number;
@@ -67,7 +109,8 @@ export interface Attempt {
   outcome: "merged" | "in_progress" | "blocked" | "cancelled" | "ended";
   /** What happened, for the attempt's folded row; null while it is in progress. */
   line: string | null;
-  pipeline: { work: Mark; checks: Mark[]; review: Mark[]; merge: Mark[] };
+  /** `pr`: each push to the pull request passes, each round of its feedback fails, and it runs while the pull request is open. */
+  pipeline: { work: Mark; checks: Mark[]; review: Mark[]; merge: Mark[]; pr: Mark[] };
   /** Oldest first. Replies are not items: the page nests them under their parent. */
   items: ActivityItem[];
 }
@@ -98,10 +141,27 @@ interface PostData {
   outside?: string[];
   review?: number;
   verdict?: string;
-  outcome?: MergeItem["outcome"];
+  outcome?: MergeItem["outcome"] | "pr_text" | "pr_feedback" | "after_open_failed";
   branch?: string;
   patch?: Record<string, unknown>;
+  by?: "worker" | "loom";
+  fix?: boolean;
+  round?: number;
+  title?: string | null;
+  body?: string | null;
+  commit?: string;
+  reason?: string;
+  overLimit?: boolean;
+  human?: boolean;
+  counted?: number | null;
+  url?: string | null;
+  checks?: PrFeedbackItem["checks"];
+  items?: PrFeedbackEntry[];
+  ignored?: PrFeedbackItem["ignored"];
 }
+
+const PR_STAGE: ReadonlySet<string> = new Set(["pr_opened", "pr_pushed", "pr_unchanged", "pr_merged", "branch_pushed", "branch_landed"]);
+const isPrStage = (data: PostData) => data.outcome === "pr_text" || data.outcome === "pr_feedback";
 
 const LINE_MAX = 140;
 const IN_PROGRESS: readonly TicketState[] = ["working", "checking", "review", "approved", "merging", "pr_open"];
@@ -189,7 +249,7 @@ const unposted = (runs: readonly RunRow[], at: number, status: "running" | "unfi
 });
 
 function mergeMark(item: MergeItem): Mark {
-  if (item.outcome === "conflict") return "fail";
+  if (item.outcome === "conflict" || item.outcome === "diverged") return "fail";
   if (item.outcome !== null) return "pass";
   return item.running ? "running" : "none";
 }
@@ -227,7 +287,8 @@ export function ticketActivity(a: { state: TicketState; posts: readonly PostRow[
   });
 
   // Merge runs, by the first merge result posted at or after they started.
-  const mergeTargets = top.filter((post) => post.kind === "merge" || isAfterMerge(post));
+  // The pull request's text and feedback posts run no steps: the steps belong to the push that follows.
+  const mergeTargets = top.filter((post) => (post.kind === "merge" && !isPrStage(dataOf(post))) || isAfterMerge(post));
   const mergeRuns = new Map<number, RunRow[]>(mergeTargets.map((post) => [post.id, []]));
   const trailing: RunRow[] = [];
   for (const run of a.runs) {
@@ -251,7 +312,14 @@ export function ticketActivity(a: { state: TicketState; posts: readonly PostRow[
           return [reviews.get(post.id)!];
         case "merge": {
           const data = dataOf(post);
-          return [{ type: "merge", postId: post.id, at: post.at, outcome: data.outcome ?? null, into: data.branch ?? null, running: false, steps: mergeRuns.get(post.id)!.map(runStep) }];
+          if (data.outcome === "pr_text") {
+            return [{ type: "pr_text", postId: post.id, at: post.at, by: data.by ?? "loom", fix: data.fix === true, round: data.round ?? 0, title: data.title ?? null, body: data.body ?? null, commit: data.commit ?? "", reason: data.reason ?? null }];
+          }
+          if (data.outcome === "pr_feedback") {
+            return [{ type: "pr_feedback", postId: post.id, at: post.at, round: data.round ?? 0, overLimit: data.overLimit === true, counted: data.counted ?? null, human: data.human === true, url: data.url ?? null, checks: data.checks ?? [], items: data.items ?? [], ignored: data.ignored ?? { bots: 0, own: 0 } }];
+          }
+          const outcome = data.outcome === "after_open_failed" ? null : (data.outcome ?? null);
+          return [{ type: "merge", postId: post.id, at: post.at, outcome, into: data.branch ?? null, running: false, steps: (mergeRuns.get(post.id) ?? []).map(runStep) }];
         }
         case "note": {
           const review = post.author_kind === "reviewer" && post.author_thread_id !== null ? reviewBy.get(post.author_thread_id) : undefined;
@@ -294,7 +362,11 @@ export function ticketActivity(a: { state: TicketState; posts: readonly PostRow[
         ...items.flatMap((item): Mark[] => (item.type === "review" ? [dataOf(postById.get(item.postId)!).verdict === "approved" ? "pass" : "fail"] : [])),
         ...(newest && a.state === "review" ? (["running"] as const) : []),
       ],
-      merge: items.flatMap((item): Mark[] => (item.type === "merge" ? [mergeMark(item)] : item.type === "checks" && item.afterMerge ? ["fail"] : [])),
+      merge: items.flatMap((item): Mark[] => (item.type === "merge" && !PR_STAGE.has(item.outcome ?? "") ? [mergeMark(item)] : item.type === "checks" && item.afterMerge ? ["fail"] : [])),
+      pr: [
+        ...items.flatMap((item): Mark[] => (item.type === "merge" && PR_STAGE.has(item.outcome ?? "") ? ["pass"] : item.type === "pr_feedback" ? ["fail"] : [])),
+        ...(newest && a.state === "pr_open" ? (["running"] as const) : []),
+      ],
     };
 
     const merged = items.find((item): item is MergeItem => item.type === "merge" && (item.outcome === "merged" || item.outcome === "pr_merged"));

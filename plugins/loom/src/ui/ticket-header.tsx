@@ -4,7 +4,7 @@ import type { MergeItem, TicketAction, TicketDetail } from "../contract";
 import { formatDuration, plural } from "../format";
 import type { TicketState } from "../states";
 import { BUTTON, BUTTON_PRIMARY, ConfirmButton, FIELD, MoreMenu, RepoChip } from "./common";
-import { ago, GHOST } from "./ticket-cards";
+import { ago, checksText, GHOST } from "./ticket-cards";
 
 const STAGES = [
   ["queued", "Queued"],
@@ -32,16 +32,28 @@ const PULSING: readonly TicketState[] = ["working", "checking", "review", "mergi
 const FACT = "inline-flex min-w-0 items-center gap-1.5 rounded-md border border-border-seam px-2 py-0.5";
 const LINK = "cursor-pointer rounded text-xs text-foreground underline underline-offset-2 hover:text-destructive-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
+function prOpenSummary(pr: TicketDetail["pr"], now: number): string {
+  if (pr === null) return "The pull request is open; the ticket is done when it merges.";
+  if (pr.forge === "none") return "Loom pushed the branch; the ticket is done when the remote's base branch contains it.";
+  const commits = pr.commits === null ? "" : ` as ${plural(pr.commits, "commit")}`;
+  if (!pr.follows) return `The pull request is open${commits}. Loom checks every 5 minutes whether it merged. It's done when you merge it.`;
+  const checks = pr.checks === null ? "it waits for its checks" : `its checks: ${checksText(pr.checks)}${pr.checks.at < now ? `, read ${ago(pr.checks.at, now)}` : ""}`;
+  return `The pull request is open${commits}. Loom follows its checks and reviews every 5 minutes and sends the worker what needs a fix; ${checks}. It's done when you merge it.`;
+}
+
 /** One sentence on where the ticket is; null for a blocked ticket, whose callout says it. */
 function summaryOf(ticket: TicketDetail, now: number): string | null {
   const { attempts } = ticket.activity;
   const newest = attempts.at(-1);
   const n = newest?.n ?? 0;
   const r = ticket.reviewRound;
+  const pr = ticket.pr;
+  const fixing = pr !== null && pr.pushedSha !== null;
   switch (ticket.state) {
     case "queued":
       return newest === undefined ? "Waiting for a worker." : `Requeued after attempt ${n}; waiting for a worker.`;
     case "working":
+      if (fixing) return `Fix round ${pr.rounds}: the worker is fixing the pull request's feedback (${formatDuration(now - ticket.stateAt)}). The fix goes through Loom's checks and review, then Loom pushes it as ${pr.commits === null ? "more commits" : "one more commit"}.`;
       return `Worker attempt ${n} is working for ${formatDuration(now - newest!.startedAt)}.`;
     case "checking":
       return `Loom is running the checks for attempt ${n}.`;
@@ -50,11 +62,17 @@ function summaryOf(ticket: TicketDetail, now: number): string | null {
       return reviewing ? `Reviewer round ${r} is reviewing attempt ${n}.` : `Waiting for a reviewer for round ${r}.`;
     }
     case "approved":
-      return `Approved in round ${r}; waiting for its turn to merge.`;
+      if (pr?.writing != null) {
+        const took = formatDuration(now - pr.writing.since);
+        return pr.writing.fix
+          ? `Fix round ${pr.rounds} is approved. The worker is writing its commit message (${took}); Loom uses its own if it is not in within ${formatDuration(pr.writing.until - pr.writing.since)}.`
+          : `Approved in round ${r}. The worker is writing the pull request's title, description and commit message (${took}); Loom uses its own template if they are not in within ${formatDuration(pr.writing.until - pr.writing.since)}.`;
+      }
+      return pr === null ? `Approved in round ${r}; waiting for its turn to merge.` : fixing ? `Fix round ${pr.rounds} is approved; waiting for its turn to push.` : `Approved in round ${r}; waiting for its turn to open its pull request.`;
     case "merging":
-      return `Merging attempt ${n}.`;
+      return pr === null ? `Merging attempt ${n}.` : fixing ? `Loom is pushing fix round ${pr.rounds} to the pull request.` : "Loom is opening the pull request.";
     case "pr_open":
-      return "The pull request is open; the ticket is done when it merges.";
+      return prOpenSummary(pr, now);
     case "done": {
       const merged = attempts.flatMap((attempt) => attempt.items.filter((item): item is MergeItem => item.type === "merge" && item.outcome === "merged")).at(-1);
       const into = merged?.into ?? null;
@@ -69,7 +87,7 @@ function summaryOf(ticket: TicketDetail, now: number): string | null {
   }
 }
 
-function Tracker({ state, stoppedFrom }: Pick<TicketDetail, "state" | "stoppedFrom">) {
+function Tracker({ state, stoppedFrom, pr }: Pick<TicketDetail, "state" | "stoppedFrom"> & { pr: boolean }) {
   const stopped = state === "blocked" || state === "cancelled";
   const at = STAGE_INDEX[stopped && stoppedFrom !== null ? stoppedFrom : state];
   const markOf = (index: number) => (state === "done" || index < at ? "done" : index > at ? "todo" : stopped ? "stop" : "now");
@@ -89,7 +107,7 @@ function Tracker({ state, stoppedFrom }: Pick<TicketDetail, "state" | "stoppedFr
             <span aria-hidden className={`relative z-10 grid size-[18px] place-items-center rounded-full text-[10px] font-bold ${DOTS[mark]}`}>
               {mark === "done" ? "✓" : mark === "stop" ? (state === "blocked" ? "!" : "×") : ""}
             </span>
-            <span>{mark === "stop" ? (state === "blocked" ? "Blocked" : "Cancelled") : name}</span>
+            <span>{mark === "stop" ? (state === "blocked" ? "Blocked" : "Cancelled") : key === "merging" && pr ? "Pull request" : name}</span>
           </li>
         );
       })}
@@ -107,6 +125,11 @@ function BlockedCallout({ ticket, busy, onAction, onJump }: { ticket: TicketDeta
         {block?.authorKind === "worker" ? "Blocked: the worker needs an answer" : "Blocked"}
       </p>
       {ticket.blockedReason !== null && <p className="line-clamp-2 text-sm [overflow-wrap:anywhere]">{ticket.blockedReason}</p>}
+      {ticket.pr?.pushedSha != null && ticket.prUrl !== null && (
+        <p data-blocked-pr className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
+          Loom stopped following {ticket.prUrl}, which stays open. A requeue starts a new worker on the same pull request, and Loom pushes its fixes as more commits.
+        </p>
+      )}
       {block !== undefined && (
         <button type="button" aria-label="Read the post that blocked it" onClick={() => onJump(block.id)} className={LINK}>
           Read the post
@@ -118,6 +141,48 @@ function BlockedCallout({ ticket, busy, onAction, onJump }: { ticket: TicketDeta
         {ticket.replyTo === "planner" && <span className="text-[11px] text-subtle-foreground">Or reply on the post: the planner gets it now and can requeue the ticket itself.</span>}
       </div>
     </div>
+  );
+}
+
+/** The pull request's facts: its number, the commits Loom pushed, its checks, the fix rounds, and the worker writing it. */
+function PrFacts({ ticket, now }: { ticket: TicketDetail; now: number }) {
+  const pr = ticket.pr;
+  if (pr === null) return null;
+  const number = pr.url === null ? null : (/(\d+)(?!.*\d)/u.exec(pr.url)?.[1] ?? null);
+  const open = pr.pushedSha !== null && !["done", "cancelled"].includes(ticket.state);
+  return (
+    <>
+      {pr.writing !== null && ticket.state === "approved" && (
+        <span data-fact="pr-writing" className={FACT}>
+          {pr.writing.fix ? "Writing the fix's commit message" : "Writing the pull request"} · {formatDuration(now - pr.writing.since)}
+        </span>
+      )}
+      {number !== null && (
+        <span data-fact="pr-number" className={FACT}>
+          <span className="font-semibold">#{number}</span>
+        </span>
+      )}
+      {pr.pushedSha !== null && (
+        <span data-fact="pr-commits" className={`${FACT} font-mono`}>
+          {pr.commits === null ? "" : `${plural(pr.commits, "commit")} · `}
+          {pr.pushedSha.slice(0, 7)}
+        </span>
+      )}
+      {open && pr.checks !== null && (
+        <span data-fact="pr-checks" className={FACT}>
+          <span className="text-muted-foreground">checks</span>
+          {pr.checks.passed > 0 && <span className="text-success-foreground">{pr.checks.passed} ✓</span>}
+          {pr.checks.pending > 0 && <span className="text-timeline-accent">{pr.checks.pending} ●</span>}
+          {pr.checks.failed > 0 && <span className="text-destructive-text">{pr.checks.failed} ✗</span>}
+          <span className="text-muted-foreground">· read {ago(pr.checks.at, now)}</span>
+        </span>
+      )}
+      {(pr.follows || pr.rounds > 0) && pr.pushedSha !== null && (
+        <span data-fact="pr-rounds" className={FACT}>
+          Fix rounds {pr.counted} of {pr.maxRounds}
+        </span>
+      )}
+    </>
   );
 }
 
@@ -175,7 +240,7 @@ export function TicketHeader({ ticket, now, busy, onAction, onJump }: { ticket: 
         </p>
       )}
       {ticket.state === "blocked" && <BlockedCallout ticket={ticket} busy={busy} onAction={onAction} onJump={onJump} />}
-      <Tracker state={ticket.state} stoppedFrom={ticket.stoppedFrom} />
+      <Tracker state={ticket.state} stoppedFrom={ticket.stoppedFrom} pr={ticket.pr !== null} />
       <div className="flex flex-wrap items-center gap-2 text-xs">
         {ticket.attempt > 0 && <span className={FACT}>{plural(ticket.attempt, "attempt")}</span>}
         {ticket.reviewRound > 0 && <span className={FACT}>{plural(ticket.reviewRound, "review round")}</span>}
@@ -212,6 +277,7 @@ export function TicketHeader({ ticket, now, busy, onAction, onJump }: { ticket: 
             </button>
           </span>
         )}
+        <PrFacts ticket={ticket} now={now} />
         {ticket.prUrl !== null && (
           <button type="button" aria-label="Open the pull request" onClick={() => navigate.openUrl(ticket.prUrl!)} className={BUTTON}>
             Pull request

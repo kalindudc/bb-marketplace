@@ -1,9 +1,10 @@
 // What the host entry runs on the machine that owns the checkout: git through argv, never a shell, and check
 // commands in their own process group. host.ts wires these to RPC handlers; tests call them directly.
 import { execFile, spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { z } from "zod";
 import { prNumber, type HostInput, type HostOutput } from "../host-contract";
 
 const GIT_TIMEOUT_MS = 30_000;
@@ -250,6 +251,73 @@ export async function push(input: HostInput<"push">, signal?: AbortSignal): Prom
   return pushed.code === 0 ? { outcome: "ok" } : { outcome: "unavailable", message: `git push to ${remote} failed: ${tail(pushed.stderr || pushed.stdout)}` };
 }
 
+const isAncestor = async (repo: string, ancestor: string, of: string, signal?: AbortSignal): Promise<boolean> => {
+  const checked = await run(repo, ["merge-base", "--is-ancestor", ancestor, of], signal);
+  if (checked.code === 0 || checked.code === 1) return checked.code === 0;
+  throw failure(["merge-base", "--is-ancestor", ancestor, of], checked);
+};
+
+/**
+ * The one commit Loom pushes for a ticket's pull request: head's tree on the remote branch's tip, or, when the branch is not
+ * there yet, on head's merge base with `base`. When head also contains a newer base than the tip does, that base is a second
+ * parent, so the pull request's diff stays the ticket's own. It signs as the user's git config says.
+ */
+export async function prCommit(input: HostInput<"prCommit">, signal?: AbortSignal): Promise<HostOutput<"prCommit">> {
+  const { repo, remote, branch, base, head, message, pushed } = input;
+  // The branch is read where `git push` sends it, which a remote that fetches from elsewhere does not show.
+  const pushUrls = (await tryGit(repo, ["remote", "get-url", "--push", "--all", remote], signal))?.split("\n").filter((line) => line !== "");
+  if (pushUrls === undefined || pushUrls.length === 0) return { outcome: "unavailable", message: `The git remote "${remote}" does not exist in ${repo}.` };
+  if (pushUrls.length > 1) return { outcome: "unavailable", message: `The remote "${remote}" has ${pushUrls.length} push URLs, so Loom cannot tell which one holds the pull request's branch. Leave one with \`git remote set-url --push ${remote} <url>\`.` };
+  const target = pushUrls[0]!;
+  const listed = await run(repo, ["ls-remote", target, `refs/heads/${branch}`], signal, NETWORK_TIMEOUT_MS);
+  if (listed.code !== 0) return { outcome: "unavailable", message: `git ls-remote ${remote} failed: ${tail(listed.stderr || listed.stdout)}` };
+  const tip = listed.stdout.trim().split(/\s+/u)[0] || null;
+  if (tip !== null && (await tryGit(repo, ["cat-file", "-e", `${tip}^{commit}`], signal)) === null) {
+    const fetched = await run(repo, ["fetch", "--no-tags", "--no-write-fetch-head", target, `refs/heads/${branch}`], signal, NETWORK_TIMEOUT_MS);
+    if (fetched.code !== 0) return { outcome: "unavailable", message: `git fetch from ${remote} failed: ${tail(fetched.stderr || fetched.stdout)}` };
+  }
+  const tree = await git(repo, ["rev-parse", "--verify", `${head}^{tree}`], { signal });
+  const mergeBase = await git(repo, ["merge-base", head, base], { signal });
+  const parents: string[] = [];
+  if (tip !== null) {
+    if ((await git(repo, ["rev-parse", "--verify", `${tip}^{tree}`], { signal })) === tree) return { outcome: "ok", sha: tip, created: false };
+    if (tip !== pushed && !(await isAncestor(repo, tip, head, signal))) return { outcome: "diverged", tip };
+    parents.push(tip);
+    if (!(await isAncestor(repo, mergeBase, tip, signal))) parents.push(mergeBase);
+  } else {
+    parents.push(mergeBase);
+  }
+  return { outcome: "ok", sha: await commitTree(repo, tree, parents, message, signal), created: true };
+}
+
+// git commit-tree with the message on stdin, which execFile cannot give, so it runs through spawn.
+function commitTree(repo: string, tree: string, parents: readonly string[], message: string, signal?: AbortSignal): Promise<string> {
+  return identityArgs(repo, signal).then(
+    (identity) =>
+      new Promise((resolve, reject) => {
+        const args = ["-C", repo, ...identity, "commit-tree", tree, ...parents.flatMap((parent) => ["-p", parent]), "-F", "-"];
+        const child = spawn("git", args, { env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C" }, signal, stdio: ["pipe", "pipe", "pipe"] });
+        let stdout = "";
+        let stderr = "";
+        const timer = setTimeout(() => child.kill("SIGKILL"), NETWORK_TIMEOUT_MS);
+        child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString("utf8")));
+        child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
+        child.stdin.on("error", () => undefined);
+        child.stdin.end(message.endsWith("\n") ? message : `${message}\n`);
+        child.on("error", (error) => {
+          clearTimeout(timer);
+          reject(error);
+        });
+        child.on("close", (code) => {
+          clearTimeout(timer);
+          const sha = stdout.trim();
+          if (code === 0 && /^[0-9a-f]{40,64}$/u.test(sha)) resolve(sha);
+          else reject(new Error(`git commit-tree failed (${code ?? "killed"}): ${tail(stderr || stdout)}`));
+        });
+      }),
+  );
+}
+
 export async function fetchBranch(input: HostInput<"fetchBranch">, signal?: AbortSignal): Promise<HostOutput<"fetchBranch">> {
   const { worktree, remote, branch } = input;
   const fetched = await run(worktree, ["fetch", "--no-tags", remote, `refs/heads/${branch}`], signal, NETWORK_TIMEOUT_MS);
@@ -327,6 +395,144 @@ export async function prState(input: HostInput<"prState">, signal?: AbortSignal)
   const state = parseJson<{ state?: unknown }>(viewed.stdout)?.state;
   if (state === "OPEN" || state === "MERGED" || state === "CLOSED") return { outcome: "ok", state };
   return { outcome: "unavailable", message: `gh pr view returned an unknown state: ${tail(viewed.stdout)}` };
+}
+
+// ---------------------------------------------------------------- pull request feedback
+
+type Feedback = Extract<HostOutput<"prFeedback">, { outcome: "ok" }>;
+type FeedbackItem = Feedback["items"][number];
+type FeedbackCheck = Feedback["checks"][number];
+
+// Every item comes back, so none is lost before Loom filters out the seen and ignored ones; the bodies are clipped instead.
+const BODY_MAX = 2000;
+const digest = (text: string) => createHash("sha1").update(text).digest("hex").slice(0, 12);
+const clipBody = (text: string) => (text.length <= BODY_MAX ? text : `${text.slice(0, BODY_MAX - 1)}…`);
+
+const FEEDBACK_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      state headRefOid author { login }
+      commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes { __typename
+        ... on CheckRun { databaseId name status conclusion detailsUrl }
+        ... on StatusContext { context state targetUrl } } } } } } }
+      reviews(last: 50) { nodes { databaseId author { __typename login } state body url } }
+      reviewThreads(last: 100) { nodes { id isResolved path line comments(last: 20) { nodes { databaseId author { __typename login } body url } } } }
+      comments(last: 50) { nodes { databaseId author { __typename login } body url } }
+    }
+  }
+}`;
+
+type GhAuthor = { __typename?: string; login?: string } | null;
+interface GhPull {
+  state: string;
+  headRefOid: string;
+  author: GhAuthor;
+  commits: { nodes: Array<{ commit: { statusCheckRollup: { contexts: { nodes: Array<Record<string, unknown>> } } | null } }> };
+  reviews: { nodes: Array<{ databaseId: number; author: GhAuthor; state: string; body: string; url: string }> };
+  reviewThreads: { nodes: Array<{ id: string; isResolved: boolean; path: string | null; line: number | null; comments: { nodes: Array<{ databaseId: number; author: GhAuthor; body: string; url: string }> } }> };
+  comments: { nodes: Array<{ databaseId: number; author: GhAuthor; body: string; url: string }> };
+}
+
+const loginOf = (author: GhAuthor) => author?.login ?? "ghost";
+const isBot = (author: GhAuthor) => author?.__typename === "Bot";
+
+function checkState(node: Record<string, unknown>): FeedbackCheck["state"] {
+  if (node.__typename === "StatusContext") {
+    const state = String(node.state);
+    return state === "SUCCESS" ? "passed" : state === "FAILURE" || state === "ERROR" ? "failed" : "pending";
+  }
+  if (node.status !== "COMPLETED") return "pending";
+  const conclusion = String(node.conclusion);
+  if (conclusion === "SUCCESS") return "passed";
+  return ["FAILURE", "TIMED_OUT", "STARTUP_FAILURE", "ACTION_REQUIRED"].includes(conclusion) ? "failed" : "neutral";
+}
+
+// Keys change when what the worker should read changes: a rerun check, an edited review or comment, a new reply in a thread.
+function ghFeedback(pull: GhPull): Feedback {
+  const head = pull.headRefOid;
+  const contexts = pull.commits.nodes[0]?.commit.statusCheckRollup?.contexts.nodes ?? [];
+  const checks = contexts.map((node): FeedbackCheck => {
+    const status = node.__typename === "StatusContext";
+    const name = String(status ? node.context : node.name);
+    const state = checkState(node);
+    return { key: status ? `status:${name}:${String(node.state)}:${head}` : `check:${String(node.databaseId)}`, name, state, url: (status ? (node.targetUrl as string | null) : (node.detailsUrl as string | null)) ?? null };
+  });
+  const items: FeedbackItem[] = [];
+  for (const review of pull.reviews.nodes) {
+    items.push({ key: `review:${review.databaseId}:${digest(review.state + review.body)}`, kind: "review", author: loginOf(review.author), bot: isBot(review.author), body: clipBody(review.body), url: review.url, state: review.state.toLowerCase(), path: null, line: null });
+  }
+  for (const thread of pull.reviewThreads.nodes) {
+    const comments = thread.comments.nodes;
+    const last = comments.at(-1);
+    if (thread.isResolved || last === undefined) continue;
+    const body = comments.map((comment) => `${loginOf(comment.author)}: ${comment.body}`).join("\n\n");
+    items.push({ key: `thread:${thread.id}:${last.databaseId}:${digest(body)}`, kind: "thread", author: loginOf(last.author), bot: isBot(last.author), body: clipBody(body), url: last.url, state: null, path: thread.path, line: thread.line });
+  }
+  for (const comment of pull.comments.nodes) {
+    items.push({ key: `comment:${comment.databaseId}:${digest(comment.body)}`, kind: "comment", author: loginOf(comment.author), bot: isBot(comment.author), body: clipBody(comment.body), url: comment.url, state: null, path: null, line: null });
+  }
+  const state = pull.state === "MERGED" || pull.state === "CLOSED" ? pull.state : "OPEN";
+  return { outcome: "ok", state, head, author: loginOf(pull.author), checks, items };
+}
+
+const PULL_URL = /^https?:\/\/([^/\s]+)\/([^/\s]+)\/([^/\s]+)\/pull\/(\d+)/u;
+
+// The feedback command's last line, as the spec reference documents it; fields a forge does not know may be left out.
+const commandFeedbackSchema = z.object({
+  state: z.string().transform((state) => state.toUpperCase()).pipe(z.enum(["OPEN", "MERGED", "CLOSED"])),
+  head: z.string().min(1).max(64),
+  author: z.string().max(200).default(""),
+  checks: z.array(z.object({ id: z.union([z.string(), z.number()]), name: z.string().max(500), state: z.enum(["pending", "passed", "failed", "neutral"]), url: z.string().max(2000).nullish() })).max(200).default([]),
+  items: z
+    .array(
+      z.object({
+        id: z.union([z.string(), z.number()]),
+        kind: z.enum(["review", "thread", "comment"]),
+        author: z.string().max(200),
+        bot: z.boolean().default(false),
+        body: z.string(),
+        url: z.string().max(2000).nullish(),
+        state: z.string().max(100).nullish(),
+        path: z.string().max(4096).nullish(),
+        line: z.number().int().nullish(),
+      }),
+    )
+    .max(500)
+    .default([]),
+});
+
+async function feedbackWithCommand(input: HostInput<"prFeedback">, command: string, signal?: AbortSignal): Promise<HostOutput<"prFeedback">> {
+  const result = await spawnCommand({ cwd: input.repo, command, timeoutMs: FORGE_COMMAND_MS, env: { LOOM_URL: input.url, LOOM_PR_NUMBER: prNumber(input.url) } }, signal);
+  const failed = commandFailure("feedback", result);
+  if (failed !== null) return { outcome: "unavailable", message: failed };
+  const line = result.output.trim().split("\n").at(-1) ?? "";
+  const parsed = commandFeedbackSchema.safeParse(parseJson(line));
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    return { outcome: "unavailable", message: `The forge's feedback command must print a JSON object on its last line${issue === undefined ? "" : `; ${issue.path.join(".") || "it"}: ${issue.message}`}: ${tail(line, 300)}` };
+  }
+  const data = parsed.data;
+  return {
+    outcome: "ok",
+    state: data.state,
+    head: data.head,
+    author: data.author,
+    checks: data.checks.map((check) => ({ key: `check:${check.id}`, name: check.name, state: check.state, url: check.url ?? null })),
+    items: data.items.map((item) => ({ key: `${item.kind}:${item.id}`, kind: item.kind, author: item.author, bot: item.bot, body: clipBody(item.body), url: item.url ?? null, state: item.state ?? null, path: item.path ?? null, line: item.line ?? null })),
+  };
+}
+
+export async function prFeedback(input: HostInput<"prFeedback">, signal?: AbortSignal): Promise<HostOutput<"prFeedback">> {
+  if (input.forge.kind === "command") return feedbackWithCommand(input, input.forge.feedback, signal);
+  const match = PULL_URL.exec(input.url);
+  if (match === null) return { outcome: "unavailable", message: `${input.url} is not a GitHub pull request URL.` };
+  const [, host, owner, name, number] = match;
+  const asked = await gh(input.repo, ["api", "graphql", "--hostname", host!, "-f", `owner=${owner}`, "-f", `name=${name}`, "-F", `number=${number}`, "-f", `query=${FEEDBACK_QUERY}`], { signal });
+  if (asked === "missing") return { outcome: "unavailable", message: GH_MISSING };
+  if (asked.code !== 0) return { outcome: "unavailable", message: ghFailed("gh api graphql", asked) };
+  const pull = parseJson<{ data?: { repository?: { pullRequest?: GhPull | null } | null } }>(asked.stdout)?.data?.repository?.pullRequest;
+  if (pull == null) return { outcome: "unavailable", message: `gh found no pull request at ${input.url}: ${tail(asked.stdout, 300)}` };
+  return ghFeedback(pull);
 }
 
 // ---------------------------------------------------------------- the spec's forge commands

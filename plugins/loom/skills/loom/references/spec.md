@@ -30,6 +30,9 @@ A spec without `[[repo]]` tables is a single-repo project: every ticket runs in 
 | `draft` | boolean | `true` | whether pull requests open as drafts |
 | `forge` | table | `{ kind = "gh" }` | where pull requests open; see [merge.forge] |
 | `worktree` | table | none | integration strategy only; prepares the integration worktree; see [merge.worktree] |
+| `describe` | string | `"worker"` | pr strategy only; who writes each pull request's title, description and commit message: `"worker"` (the ticket's worker, with `loom_pr`, after approval) or `"loom"` (Loom's template from the ticket) |
+| `squash` | boolean | `true` | pr strategy only; push the reviewed work as one commit, and each fix round as one more, instead of the worker's branch as it is |
+| `max_fix_rounds` | integer | `5` | pr strategy only; 0 to 20; fix rounds the pull request's checks and reviews may start before the ticket blocks, counted again from each requeue; the human's replies do not count; `0` follows only merged and closed |
 
 ### [merge.forge]
 
@@ -40,6 +43,7 @@ The server that hosts pull requests. Leave it out for GitHub: Loom opens and fol
 | `kind` | string | required | `"gh"`, `"command"` (the `open` and `state` commands below) or `"none"` (Loom only pushes the branch) |
 | `open` | string | none | required with `kind = "command"`, refused otherwise; a shell command that opens a pull request for a branch that is already pushed |
 | `state` | string | none | required with `kind = "command"`, refused otherwise; a shell command that prints the pull request's state |
+| `feedback` | string | none | `kind = "command"` only; a shell command that prints the pull request's checks and review feedback, so Loom can start fix rounds; without it Loom follows only merged and closed |
 | `after_open` | string array | none | at most 5; shell commands run once after a pull request opens, such as one that starts CI; a failure is posted and blocks nothing; not allowed with `kind = "none"` |
 
 The commands run with `/bin/sh` in the repo's checkout, with a 2-minute limit (`after_open`: 5 minutes):
@@ -47,6 +51,15 @@ The commands run with `/bin/sh` in the repo's checkout, with a 2-minute limit (`
 - `open` gets `LOOM_REMOTE`, `LOOM_BASE`, `LOOM_HEAD` (the pushed branch), `LOOM_TITLE` and `LOOM_DRAFT` (`1` or `0`), and reads the body on standard input. Loom takes the last `http(s)://` URL it prints as the pull request. When one is already open for the branch, it must print that one: a restart can run it again.
 - `state` gets `LOOM_URL` and `LOOM_PR_NUMBER` (the last run of digits in the URL). The first word of its last non-empty line must be `open`, `merged` or `closed`, in any case. Merged completes the ticket; closed blocks it.
 - `after_open` gets `LOOM_URL`, `LOOM_PR_NUMBER`, `LOOM_HEAD` and `LOOM_BASE`.
+- `feedback` gets `LOOM_URL` and `LOOM_PR_NUMBER`, and prints one JSON object on its last non-empty line:
+
+  ```json
+  {"state": "open", "head": "<sha of the pull request's head>", "author": "<the pull request's author>",
+   "checks": [{"id": "1", "name": "lint", "state": "failed", "url": "https://ci.example.com/1"}],
+   "items": [{"id": "r7", "kind": "review", "author": "alice", "bot": false, "body": "Rename it.", "state": "changes_requested", "url": null, "path": null, "line": null}]}
+  ```
+
+  `state` is `open`, `merged` or `closed`. A check's `state` is `pending`, `passed`, `failed` or `neutral`. An item's `kind` is `review`, `thread` (an unresolved review thread, with `path` and `line`, whose `author` is its latest comment's) or `comment`. `author`, `checks`, `items`, `bot`, `url`, `state`, `path` and `line` may be left out. An `id` must stay the same while the thing it names does not change, and change when it does (a check that runs again, an edited comment, a new reply in a thread): Loom sends each id to the worker once.
 
 With `kind = "none"`, Loom pushes the ticket's branch and says where; a person opens the pull request. The ticket is done when the remote's base branch contains the ticket's exact commit, so a squash or rebase merge is not seen: block or cancel that ticket by hand. On the integration strategy, `bb loom land` pushes the integration branch and opens nothing.
 
@@ -342,7 +355,8 @@ A spec with any error is refused and nothing is saved. Errors are numbered, at m
 - A ticket scope glob equals, or sits under, a protected glob (the text before the first `*` is compared).
 - A ticket has no `verify` command and `checks.commands` is empty.
 - `checks.after_merge` is set with strategy `"pr"`.
-- A forge with `kind = "command"` lacks `open` or `state`, a forge of another kind sets them, or `kind = "none"` sets `after_open`.
+- A forge with `kind = "command"` lacks `open` or `state`, a forge of another kind sets them or `feedback`, or `kind = "none"` sets `after_open`.
+- `merge.describe`, `merge.squash` or `merge.max_fix_rounds` on the integration strategy.
 - `merge.worktree` is set with strategy `"pr"`.
 - An `inputs` string holds a `{name}` other than `{branch}` or `{base}`.
 

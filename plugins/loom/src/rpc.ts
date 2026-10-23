@@ -1,13 +1,16 @@
 // The page's server side: reads over the store and changes through the same engine methods the CLI calls.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { humanAction } from "./cli";
-import { rpcContract, type AgentRow, type BoardCard, type ProjectView, type SpecSummary, type ThreadInfo, type TicketDetail } from "./contract";
-import type { EventRow, ReviewRow, Store, ThreadRow, TicketRow } from "./db/store";
+import { rpcContract, type AgentRow, type BoardCard, type ProjectView, type SpecSummary, type ThreadInfo, type TicketDetail, type TicketPr } from "./contract";
+import type { EventRow, PostRow, ProjectRow, ReviewRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { stripAnsi, ticketActivity } from "./activity";
 import { Changes } from "./changes";
 import { replyRecipient, type Engine } from "./engine";
 import { projectHealth } from "./health";
 import { homeView } from "./home";
+import { POLL_MS } from "./merge";
+import { askOf, forgeRoundsSinceRequeue, PR_TEXT_MINUTES, prTextFor, statusOf } from "./pull-requests";
+import { followsFeedback, prSettings, repoSettings } from "./repos";
 import { computeMetrics } from "./metrics";
 import { nextStepOf } from "./next-step";
 import { LoomError, landsOf, namedRepos, repoOverviews, withRepoNames, type Projects } from "./projects";
@@ -240,6 +243,42 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
     };
   };
 
+  /** The ticket's pull request on the pr strategy; a rewound view leaves out what Loom read and asked since. */
+  const ticketPr = (project: ProjectRow, ticket: TicketRow, posts: readonly PostRow[], live: boolean): TicketPr | null => {
+    const spec = specOf(store, project);
+    if (spec.merge.strategy !== "pr") return null;
+    const settings = prSettings(spec);
+    const forge = repoSettings(spec, ticket.repo).forge;
+    const merges = posts.filter((post) => post.kind === "merge").map((post) => JSON.parse(post.data_json) as { outcome?: string; sha?: string; overLimit?: boolean });
+    const outcomes = merges.map((data) => data.outcome);
+    // A requeue after a closed pull request opens a new one, whose commits start again at its own first push.
+    const opened = Math.max(outcomes.lastIndexOf("pr_opened"), outcomes.lastIndexOf("branch_pushed"));
+    const first = opened >= 0 ? 1 : 0;
+    // A rewound view has the live row's pull request columns, so it reads what was pushed by then from the posts it kept.
+    const pushedSha = live ? ticket.pushed_sha : (merges.filter((data) => data.sha !== undefined && ["pr_opened", "pr_pushed", "pr_unchanged", "branch_pushed"].includes(data.outcome ?? "")).at(-1)?.sha ?? null);
+    const feedback = merges.slice(Math.max(0, opened)).filter((data) => data.outcome === "pr_feedback" && data.overLimit !== true) as Array<{ human?: boolean; counted?: number | null }>;
+    const rounds = live ? ticket.pr_rounds : feedback.length;
+    const counted = live ? forgeRoundsSinceRequeue(store, ticket.id) : (feedback.filter((data) => data.human !== true).at(-1)?.counted ?? 0);
+    const status = live ? statusOf(ticket) : null;
+    const ask = live ? askOf(ticket) : null;
+    const asked = ask !== null && ticket.state === "approved" && ask.head === ticket.head_sha && prTextFor(spec, ticket) === null;
+    return {
+      url: ticket.pr_url,
+      draft: spec.merge.draft,
+      forge: forge.kind,
+      branch: pushedSha === null ? null : ticket.pr_branch,
+      pushedSha,
+      commits: settings.squash && pushedSha !== null ? first + outcomes.slice(Math.max(0, opened)).filter((outcome) => outcome === "pr_pushed").length : null,
+      rounds,
+      counted,
+      maxRounds: settings.maxFixRounds,
+      follows: settings.maxFixRounds > 0 && followsFeedback(forge),
+      checks: status === null || status.head === null ? null : { passed: status.passed, failed: status.failed, pending: status.pending, at: status.at },
+      nextCheckAt: live && ticket.state === "pr_open" && ticket.pr_checked_at !== null ? ticket.pr_checked_at + POLL_MS : null,
+      writing: asked ? { since: ask.at, fix: ask.fix, until: ask.at + PR_TEXT_MINUTES * 60_000 } : null,
+    };
+  };
+
   /** With `eventId`, the ticket as it was at that event: no reply goes anywhere from there. */
   const ticketDetail = (key: string, eventId?: number): TicketDetail => {
     const view = projects.ticketView(key);
@@ -274,6 +313,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       blockedReason: ticket.blocked_reason,
       branch: ticket.branch,
       prUrl: ticket.pr_url,
+      pr: ticketPr(project, ticket, posts, past === null),
       body: ticket.body,
       acceptance: JSON.parse(ticket.acceptance_json) as string[],
       verify: JSON.parse(ticket.verify_json) as string[],

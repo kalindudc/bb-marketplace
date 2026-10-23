@@ -12,6 +12,7 @@ import { backToReview, blockedAtReview, failReviewerSpawn, onReviewerGone, onRev
 import { approvalRefusal, endSpecReviews, onSpecReviewerGone, onSpecReviewerIdle, onSpecReviewerTurnFailed, reconcileSpecReviews, specReviewStatus } from "./spec-review";
 import { budgetReason, spawnable, toLite, type TicketLite } from "./scheduler";
 import { LOOM_ACTOR, canMoveTicket } from "./states";
+import { askForPrTexts, deliverFixRounds, humanFixRound, onPrWriterIdle, resumePrAsks } from "./pull-requests";
 import { cancelTicket, maybeSendTriage, onPlannerIdle } from "./triage";
 import {
   blockTicket,
@@ -42,7 +43,9 @@ export interface Approved extends ApproveResult {
 
 /** Who hears the human's reply on a ticket at once: the active worker holding a working ticket, or the project's active planner when it is blocked. */
 export function replyRecipient(store: Store, ticket: TicketRow): { role: "worker" | "planner"; threadId: string } | null {
-  const worker = ticket.state === "working" && ticket.worker_thread_id !== null ? store.threadByThreadId(ticket.worker_thread_id) : null;
+  // On an open pull request of a running project the reply starts a fix round (humanFixRound), which the worker gets; while paused it stays on the ticket.
+  const prRound = ticket.state === "pr_open" && store.project(ticket.project_id)?.state === "running";
+  const worker = (ticket.state === "working" || prRound) && ticket.worker_thread_id !== null ? store.threadByThreadId(ticket.worker_thread_id) : null;
   // A blocked ticket has no worker, and triage rounds go out only when a ticket blocks, so the planner hears the reply now.
   const planner = ticket.state === "blocked" ? store.threads({ projectId: ticket.project_id, role: "planner", states: ["active"] })[0] : undefined;
   if (worker?.state === "active" && worker.thread_id !== null) return { role: "worker", threadId: worker.thread_id };
@@ -152,6 +155,10 @@ export class Engine {
         if (ticket?.state !== "working" || ticket.worker_thread_id !== row.thread_id) continue;
         await endThread(this.ctx, row, "timeout", { commit: true });
       }
+      if (running() === null) return;
+      await deliverFixRounds(this.ctx, running()!);
+      if (running() === null) return;
+      await askForPrTexts(this.ctx, running()!, spec);
       if (running() === null) return;
       await runMergeQueue(this.ctx, running()!, spec);
       if (running() === null) return;
@@ -372,6 +379,7 @@ export class Engine {
       if (thread !== null && ["active", "starting", "pending"].includes(thread.status)) continue;
       await bb.send(row.thread_id!, resumeText(ticket.key, heldCheckResult(store.posts(ticket.id)))).catch((error) => this.warn(`resume ${row.thread_id}`, error));
     }
+    await resumePrAsks(this.ctx, project.id);
     this.kick();
     return project;
   }
@@ -453,6 +461,7 @@ export class Engine {
     const { store, bb } = this.ctx;
     const post = this.projects.post(key, { body, parentId, author: "human" });
     const ticket = store.ticketByKey(key)!;
+    if (await humanFixRound(this.ctx, ticket, post)) return post;
     const where = parentId === undefined ? "" : ` (answering #${parentId})`;
     const to = replyRecipient(store, ticket);
     if (to?.role === "worker") {
@@ -472,7 +481,9 @@ export class Engine {
     if (review !== null) return onSpecReviewerIdle(this.ctx, review);
     if (row === null || row.state !== "active") return;
     if (row.role === "planner") onPlannerIdle(this.ctx, row);
-    else if (row.role === "worker") await onWorkerIdle(this.ctx, row);
+    else if (row.role === "worker") {
+      if (!(await onPrWriterIdle(this.ctx, row))) await onWorkerIdle(this.ctx, row);
+    }
     else await onReviewerIdle(this.ctx, row);
     this.kick();
   }

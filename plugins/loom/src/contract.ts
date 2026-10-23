@@ -12,14 +12,14 @@ import type { ProjectTimeline, SessionBar, TicketBar } from "./replay";
 import { repoSpecSchema } from "./spec";
 import type { SpecReviewStatus } from "./spec-review";
 import type { SentNote, SpecVersionView } from "./spec-view";
-import type { ActivityItem, Attempt, ChecksItem, CheckStep, Mark, MergeItem, ReviewItem, TicketActivity } from "./activity";
+import type { ActivityItem, Attempt, ChecksItem, CheckStep, Mark, MergeItem, PrFeedbackItem, PrTextItem, ReviewItem, TicketActivity } from "./activity";
 import type { ChangedFile, ChangeKind, ChangeRepo, ChangeSource, ChangesView, FilePatch } from "./changes";
 import type { AuthorKind, PostKind, ProjectState, ReviewVerdict, Role, ThreadState, TicketState } from "./states";
 import { MERGE_CHOICES } from "./states";
 
 export type ProjectSummary = ProjectOverview;
 export type { ChangedFile, ChangeKind, ChangeRepo, ChangeSource, ChangesView, FilePatch };
-export type { ActivityItem, Attempt, BbProjectChoice, ChecksItem, CheckStep, HomeProject, HomeView, Mark, MergeItem, NeedItem, NextStep, PlanningSession, ProjectHealth, ProjectTimeline, RepoOverview, ReviewItem, SentNote, SessionBar, SpecVersionView, TicketActivity, TicketBar };
+export type { ActivityItem, Attempt, BbProjectChoice, ChecksItem, CheckStep, PrFeedbackItem, PrTextItem, HomeProject, HomeView, Mark, MergeItem, NeedItem, NextStep, PlanningSession, ProjectHealth, ProjectTimeline, RepoOverview, ReviewItem, SentNote, SessionBar, SpecVersionView, TicketActivity, TicketBar };
 
 export interface BoardCard {
   key: string;
@@ -137,6 +137,30 @@ export interface ThreadDto {
   endReason: string | null;
 }
 
+/** A ticket's pull request on the pr strategy, for the ticket page. */
+export interface TicketPr {
+  url: string | null;
+  draft: boolean;
+  forge: "gh" | "command" | "none";
+  /** The remote branch Loom pushes to, and the commit it last pushed there; null before the first push. */
+  branch: string | null;
+  pushedSha: string | null;
+  /** The commits Loom pushed: one, and one more per fix round with a change; null when the spec pushes the branch as it is. */
+  commits: number | null;
+  /** Every fix round so far, the human's included; `counted` is the rounds the pull request's feedback started since the last requeue, which `maxRounds` limits. */
+  rounds: number;
+  counted: number;
+  maxRounds: number;
+  /** Whether Loom reads the pull request's checks and reviews on this forge. */
+  follows: boolean;
+  /** The checks on the pull request's head when Loom last read them; null before the first read after a push. */
+  checks: { passed: number; failed: number; pending: number; at: number } | null;
+  /** When Loom reads the pull request next; null when it is not open. */
+  nextCheckAt: number | null;
+  /** Loom asked the worker for the pull request's text, or a fix round's commit message, at `since` and waits for it. */
+  writing: { since: number; fix: boolean; until: number } | null;
+}
+
 export interface TicketDetail {
   slug: string;
   projectState: ProjectState;
@@ -155,6 +179,8 @@ export interface TicketDetail {
   blockedReason: string | null;
   branch: string | null;
   prUrl: string | null;
+  /** Null on the integration strategy. */
+  pr: TicketPr | null;
   body: string;
   acceptance: string[];
   verify: string[];

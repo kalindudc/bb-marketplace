@@ -545,4 +545,24 @@ describe("forges, integration worktrees and environments", () => {
     expect(run((doc) => (doc.environment = { provider: "Trees!" })).errors[0]).toMatch(/^environment\.provider: must be a bb environment provider id/u);
     expect(run((doc) => (doc.merge.worktree = { plugin: "bad id", command: "x" })).errors[0]).toMatch(/^merge\.worktree\.plugin: must be a bb plugin id/u);
   });
+
+  it("parses who writes each pull request, squashing and the fix-round limit on the pr strategy, and a forge's feedback command", () => {
+    const result = run((doc) => (doc.merge = { strategy: "pr", describe: "loom", squash: false, max_fix_rounds: 2, forge: { kind: "command", open: "o", state: "s", feedback: "f --json" } }));
+    expect(result.errors).toEqual([]);
+    expect(result.spec!.merge).toMatchObject({ describe: "loom", squash: false, max_fix_rounds: 2, forge: { feedback: "f --json" } });
+    const plain = run((doc) => (doc.merge = { strategy: "pr" })).spec!;
+    expect(Object.keys(plain.merge)).not.toContain("describe");
+    expect(Object.keys(plain.merge)).not.toContain("squash");
+    expect(Object.keys(plain.merge)).not.toContain("max_fix_rounds");
+  });
+
+  it("refuses the pull request keys on the integration strategy, a feedback command on another forge kind, and a limit out of range", () => {
+    expect(run((doc) => (doc.merge = { strategy: "integration", describe: "worker", squash: true })).errors).toEqual([
+      'merge.describe: it applies to the pull request Loom opens for each ticket, but merge.strategy is "integration". Remove it, or use merge.strategy = "pr".',
+      'merge.squash: it applies to the pull request Loom opens for each ticket, but merge.strategy is "integration". Remove it, or use merge.strategy = "pr".',
+    ]);
+    expect(run((doc) => (doc.merge = { strategy: "pr", forge: { kind: "gh", feedback: "f" } })).errors).toEqual(['merge.forge.feedback: only kind = "command" runs it, and merge.forge.kind is "gh". Remove it, or set kind = "command".']);
+    expect(run((doc) => (doc.merge = { strategy: "pr", max_fix_rounds: 21 })).errors[0]).toMatch(/^merge\.max_fix_rounds: /u);
+    expect(run((doc) => (doc.merge = { strategy: "pr", describe: "planner" })).errors[0]).toMatch(/^merge\.describe: /u);
+  });
 });

@@ -8,6 +8,7 @@ import type { ProjectRow, ReviewRow, Store, ThreadRow, TicketRow } from "./db/st
 import { spawnEnvironment, threadBranch } from "./environments";
 import { plural } from "./format";
 import { changesRequestedText, findingsList, reviewerBrief, reviewerNudgeText } from "./prompts";
+import { openFeedback } from "./pull-requests";
 import { SpawnRefusedError } from "./ports";
 import { LoomError } from "./projects";
 import { idleAction } from "./scheduler";
@@ -273,7 +274,7 @@ async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow,
 
   const { row, project, spec, ticket } = reserved;
   const agent = spec.agents.reviewer;
-  const brief = reviewerBrief({ project, spec, ticket, round, diff, checkPost: store.posts(ticket.id).filter((post) => post.kind === "check").at(-1) ?? null, earlierReviews: store.reviews(ticket.id).filter((review) => review.round < round) });
+  const brief = reviewerBrief({ project, spec, ticket, round, diff, checkPost: store.posts(ticket.id).filter((post) => post.kind === "check").at(-1) ?? null, earlierReviews: store.reviews(ticket.id).filter((review) => review.round < round), prFeedback: openFeedback(store.posts(ticket.id)) });
   let spawned;
   try {
     spawned = await ctx.bb.spawnThread({
