@@ -201,7 +201,7 @@ export function TicketHeader({ ticket, now, busy, onAction, onJump }: { ticket: 
       close();
     });
   return (
-    <header data-ticket-header className="space-y-3 rounded-lg border border-border-seam bg-card p-4 @4xl:col-span-2">
+    <header data-ticket-header className="col-span-full space-y-3 rounded-lg border border-border-seam bg-card p-4">
       <div className="flex flex-wrap items-center gap-2">
         <span className="rounded border border-border-seam px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">{ticket.key}</span>
         <span data-state-badge className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-semibold ${STATE_TINTS[ticket.state]}`}>

@@ -1,24 +1,37 @@
+import { Fragment } from "react";
 import { experimental_copyToClipboard, experimental_Icon as Icon, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import type { ThreadDto, TicketDetail } from "../contract";
 import { endLabel, formatDuration } from "../format";
 import { Avatar, GHOST } from "./ticket-cards";
 
-const SIDE_CARD = "rounded-lg border border-border-seam bg-card p-3";
+const SIDE_CARD = "min-w-0 rounded-lg border border-border-seam bg-card p-3.5";
 const TITLE = "mb-2 flex flex-wrap items-center gap-2 text-[12.5px] font-semibold";
 const COUNT = "text-[11px] font-normal text-subtle-foreground";
 const THREAD_STATE_TEXT = { spawning: "starting", active: "working", ending: "ending" } as const;
 
-/** A criterion with its EARS keywords set apart; the split puts the keywords at the odd indexes. */
+const EARS = /\b(THE SYSTEM SHALL|WHEN|WHILE|WHERE|IF|THEN)\b/;
+
+/** A criterion with its EARS keywords set apart and its backticked text as code. Each split puts the matches at the odd indexes. */
 function Criterion({ line }: { line: string }) {
   return (
     <>
-      {line.split(/\b(THE SYSTEM SHALL|WHEN|WHILE|WHERE|IF|THEN)\b/).map((part, index) =>
-        index % 2 === 1 ? (
-          <span key={index} data-ears className="text-[10px] font-semibold tracking-wider text-subtle-foreground">
-            {part}
-          </span>
+      {line.split(/`([^`]+)`/).map((chunk, at) =>
+        at % 2 === 1 ? (
+          <code key={at} className="rounded bg-foreground/5 px-1 font-mono text-[11.5px]">
+            {chunk}
+          </code>
         ) : (
-          part
+          <Fragment key={at}>
+            {chunk.split(EARS).map((part, index) =>
+              index % 2 === 1 ? (
+                <span key={index} data-ears className="text-[10px] font-semibold tracking-wider text-subtle-foreground">
+                  {part}
+                </span>
+              ) : (
+                part
+              ),
+            )}
+          </Fragment>
         ),
       )}
     </>
@@ -58,7 +71,7 @@ function Agents({ ticket, now }: { ticket: TicketDetail; now: number }) {
           return (
             <li key={thread.threadId ?? `${thread.role}-${index}`} data-thread-row={thread.threadId ?? thread.role} className="flex items-center gap-2 text-xs">
               <Avatar kind={thread.role} />
-              <span className="min-w-0 flex-1">
+              <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
                 <span className="block font-medium text-foreground">{worker ? `Worker · attempt ${n}` : `Reviewer · round ${thread.reviewRound}`}</span>
                 {(thread.threadId !== null || thread.state !== "ended") && <span className="block text-[11px] text-subtle-foreground">{formatDuration((thread.endedAt ?? now) - thread.startedAt)}</span>}
               </span>
@@ -91,7 +104,7 @@ export function SideCards({ ticket, now }: { ticket: TicketDetail; now: number }
           Acceptance criteria <span className={COUNT}>{ticket.acceptance.length}</span>
           {approved && <span className="rounded-full bg-success/15 px-2 text-[11px] font-semibold text-success-foreground">✓ approved, round {ticket.reviewRound}</span>}
         </h3>
-        <ol className="list-decimal space-y-1.5 pl-5 text-[12.5px] marker:text-subtle-foreground">
+        <ol className="list-decimal space-y-2 pl-5 text-[13px] leading-relaxed [overflow-wrap:anywhere] marker:text-subtle-foreground">
           {ticket.acceptance.map((line, index) => (
             <li key={index}>
               <Criterion line={line} />

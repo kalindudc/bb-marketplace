@@ -3037,40 +3037,78 @@ describe("ticket", () => {
     expect(toned(within(page).getByRole("button", { name: "CSV-1" }).nextElementSibling!)).toBe(true);
   });
 
-  it("caps the side column 16px above the bottom of the window, under its sticky top, once the page is laid out", async () => {
+  it("scrolls the side column with the page, and pins it beside the activity only while all of it fits", async () => {
     const plain = await mountTicket();
     const plainSide = plain.container.querySelector<HTMLElement>("[data-ticket-side]")!;
-    expect(plainSide.style.maxHeight).toBe("");
-    expect(plainSide.className).toContain("@4xl:max-h-[calc(100dvh-6rem)]");
+    expect(plainSide.getAttribute("data-pinned")).toBe("false");
+    expect(plainSide.className).not.toMatch(/overflow|max-h|sticky/u);
     plain.lifecycle.unmount();
 
     const height = Object.getOwnPropertyDescriptor(window, "innerHeight")!;
+    const offset = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight")!;
+    let sideHeight = 600;
     const rect = (top: number, bottom: number) => ({ top, bottom, height: bottom - top, left: 0, right: 0, width: 0, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
     const boxes = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
       return this.hasAttribute("data-loom-scroll") ? rect(48, 1000) : rect(0, 0);
     });
-    const added = vi.spyOn(window, "addEventListener");
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.hasAttribute("data-ticket-side") ? sideHeight : 0;
+      },
+    });
     const removed = vi.spyOn(window, "removeEventListener");
     try {
       Object.defineProperty(window, "innerHeight", { configurable: true, value: 1000 });
       const slot = await mountTicket();
       const side = slot.container.querySelector<HTMLElement>("[data-ticket-side]")!;
-      expect(side.style.maxHeight).toBe("936px");
-      side.style.top = "16px";
-      Object.defineProperty(window, "innerHeight", { configurable: true, value: 900 });
+      expect(side.getAttribute("data-pinned")).toBe("true");
+      expect(side.className).toContain("@4xl:sticky");
+      sideHeight = 1200;
       act(() => {
         window.dispatchEvent(new Event("resize"));
       });
-      expect(side.style.maxHeight).toBe("820px");
-      const listener = added.mock.calls.find(([type]) => type === "resize")![1];
+      expect(side.getAttribute("data-pinned")).toBe("false");
+      expect(side.className).not.toContain("sticky");
       slot.lifecycle.unmount();
-      expect(removed).toHaveBeenCalledWith("resize", listener);
+      expect(removed).toHaveBeenCalledWith("resize", expect.any(Function));
     } finally {
       Object.defineProperty(window, "innerHeight", height);
+      Object.defineProperty(HTMLElement.prototype, "offsetHeight", offset);
       boxes.mockRestore();
-      added.mockRestore();
       removed.mockRestore();
     }
+  });
+
+  it("hides and shows the side column on a wide page, and remembers the choice for the next ticket", async () => {
+    localStorage.removeItem("loom.ticket.sideOpen");
+    const slot = await mountTicket();
+    const toggle = () => slot.container.querySelector<HTMLElement>("[data-side-toggle]")!;
+    expect(toggle().textContent).toBe("Hide details");
+    expect(toggle().getAttribute("aria-expanded")).toBe("true");
+    expect(slot.container.querySelector("[data-ticket-grid]")!.className).toContain("@6xl:grid-cols-[minmax(0,1fr)_24rem]");
+    fireEvent.click(toggle());
+    expect(slot.container.querySelector("[data-ticket-side]")).toBeNull();
+    expect(toggle().textContent).toBe("Show details");
+    expect(slot.container.querySelector("[data-ticket-grid]")!.className).not.toContain("grid-cols");
+    expect(localStorage.getItem("loom.ticket.sideOpen")).toBe("false");
+    slot.lifecycle.unmount();
+
+    const next = await mountTicket();
+    expect(next.container.querySelector("[data-ticket-side]")).toBeNull();
+    fireEvent.click(next.container.querySelector<HTMLElement>("[data-side-toggle]")!);
+    expect(next.container.querySelector("[data-ticket-side]")).not.toBeNull();
+    expect(localStorage.getItem("loom.ticket.sideOpen")).toBe("true");
+    localStorage.removeItem("loom.ticket.sideOpen");
+  });
+
+  it("wraps long words in the criteria and shows backticked text as code", async () => {
+    const slot = await mountTicket({ acceptance: ["WHEN a backend has `logging false` THE SYSTEM SHALL drop `networkservices.googleapis.com/WasmPluginVersion` entries"] });
+    const criteria = slot.container.querySelector<HTMLElement>("[data-ticket-side] [data-ac] ol")!;
+    expect(criteria.className).toContain("[overflow-wrap:anywhere]");
+    expect([...criteria.querySelectorAll("code")].map((node) => node.textContent)).toEqual(["logging false", "networkservices.googleapis.com/WasmPluginVersion"]);
+    expect([...criteria.querySelectorAll("[data-ears]")].map((node) => node.textContent)).toEqual(["WHEN", "THE SYSTEM SHALL"]);
+    expect(criteria.textContent).not.toContain("`");
   });
 
   it("drops the clamp and Show all from a long post or review that fits once laid out", async () => {

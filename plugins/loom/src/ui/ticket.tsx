@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Markdown, useRpc } from "@get-bb/plugin-sdk/app";
+import { experimental_Icon as Icon, Markdown, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract, TicketAction, TicketDetail } from "../contract";
 import { plural } from "../format";
 import { BUTTON, momentLabel, useRemote, useRun } from "./common";
 import { TicketHeader } from "./ticket-header";
+import { GHOST } from "./ticket-cards";
 import { SideCards } from "./ticket-side";
 import { ReplyBox, replyHint, Stream } from "./ticket-stream";
 
@@ -23,24 +24,51 @@ function useNow(ms: number): number {
   return now;
 }
 
-/** The sticky side column. Its height cap is measured, 16 px above the bottom of the page's scroller or of the window, whichever comes first; the CSS cap stays where nothing is laid out. */
+const SIDE_OPEN_KEY = "loom.ticket.sideOpen";
+/** The gap the pinned side column keeps above and below it in the page's scroller. */
+const PIN_GAP = 16;
+
+// Storage can be unavailable: then the side column starts open and the choice is not remembered.
+function savedSideOpen(): boolean {
+  try {
+    return localStorage.getItem(SIDE_OPEN_KEY) !== "false";
+  } catch {
+    return true;
+  }
+}
+
+function saveSideOpen(open: boolean): void {
+  try {
+    localStorage.setItem(SIDE_OPEN_KEY, String(open));
+  } catch {}
+}
+
+/**
+ * The side column scrolls with the page and never on its own. It stays pinned beside the activity only while all of it
+ * fits in the page's scroller (or the window, whichever ends first); a taller one scrolls away with the page.
+ */
 function SideColumn({ children }: { children: ReactNode }) {
   const root = useRef<HTMLElement>(null);
+  const [pinned, setPinned] = useState(false);
   useEffect(() => {
     const side = root.current!;
     const scroller = side.closest("[data-loom-scroll]");
-    if (scroller === null) return;
     const fit = () => {
-      const box = scroller.getBoundingClientRect();
-      const top = parseFloat(getComputedStyle(side).top);
-      side.style.maxHeight = box.height > 0 ? `${Math.min(window.innerHeight, box.bottom) - box.top - (Number.isNaN(top) ? 0 : top) - 16}px` : "";
+      const box = scroller?.getBoundingClientRect();
+      const room = box === undefined || box.height === 0 ? 0 : Math.min(window.innerHeight, box.bottom) - Math.max(0, box.top) - 2 * PIN_GAP;
+      setPinned(side.offsetHeight > 0 && side.offsetHeight <= room);
     };
     fit();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(fit);
+    observer?.observe(side);
     window.addEventListener("resize", fit);
-    return () => window.removeEventListener("resize", fit);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", fit);
+    };
   }, []);
   return (
-    <aside ref={root} data-ticket-side className="hidden flex-col gap-3 @4xl:sticky @4xl:top-4 @4xl:flex @4xl:max-h-[calc(100dvh-6rem)] @4xl:self-start @4xl:overflow-y-auto">
+    <aside ref={root} data-ticket-side data-pinned={pinned ? "true" : "false"} className={`hidden min-w-0 flex-col gap-3 @4xl:flex @4xl:self-start ${pinned ? "@4xl:sticky @4xl:top-4" : ""}`}>
       {children}
     </aside>
   );
@@ -54,6 +82,7 @@ export function TicketView({ slug, ticketKey, at = null, onNow }: { slug: string
   const now = useNow(30_000);
   const [tab, setTab] = useState<Tab>("activity");
   const [jumpTo, setJumpTo] = useState<{ postId: number; seq: number } | null>(null);
+  const [sideOpen, setSideOpen] = useState(savedSideOpen);
   const ticket: TicketDetail | null = remote.data;
 
   if (ticket === null) {
@@ -78,12 +107,16 @@ export function TicketView({ slug, ticketKey, at = null, onNow }: { slug: string
     setTab("activity");
     setJumpTo((before) => ({ postId, seq: (before?.seq ?? 0) + 1 }));
   };
+  const toggleSide = () => {
+    saveSideOpen(!sideOpen);
+    setSideOpen(!sideOpen);
+  };
   const { brief } = ticket.activity;
   // While Details is chosen, a wide page shows the stream with Activity marked, so widening the page shows the stream once.
   const activityTone = tab === "activity" ? TAB_ON : tab === "details" ? `${TAB_OFF} @4xl:border-foreground @4xl:font-semibold @4xl:text-foreground` : TAB_OFF;
 
   return (
-    <div data-ticket={ticket.key} className="@container mx-auto w-full max-w-6xl space-y-4 p-4">
+    <div data-ticket={ticket.key} className="@container mx-auto w-full max-w-[90rem] space-y-4 p-4">
       {past && (
         <p data-ticket-rewound className="flex flex-wrap items-center gap-3 rounded-md border border-warning bg-warning/10 px-4 py-2 text-sm text-warning-text">
           <span className="min-w-0 flex-1">
@@ -94,10 +127,10 @@ export function TicketView({ slug, ticketKey, at = null, onNow }: { slug: string
           </button>
         </p>
       )}
-      <div className="grid gap-4 @4xl:grid-cols-[minmax(0,1fr)_300px]">
+      <div data-ticket-grid className={`grid gap-4 ${sideOpen ? "@4xl:grid-cols-[minmax(0,1fr)_20rem] @6xl:grid-cols-[minmax(0,1fr)_24rem]" : ""}`}>
         <TicketHeader ticket={ticket} now={shown} busy={locked} onAction={act} onJump={jump} />
         {error !== null && (
-          <p role="alert" className="text-xs text-destructive-text @4xl:col-span-2">
+          <p role="alert" className="col-span-full text-xs text-destructive-text">
             {error}
           </p>
         )}
@@ -111,6 +144,11 @@ export function TicketView({ slug, ticketKey, at = null, onNow }: { slug: string
             </button>
             <button type="button" role="tab" aria-selected={tab === "details"} onClick={() => choose("details")} className={`${TAB} @4xl:hidden ${tab === "details" ? TAB_ON : TAB_OFF}`}>
               Details
+            </button>
+            <span className="flex-1" />
+            <button type="button" data-side-toggle aria-expanded={sideOpen} onClick={toggleSide} className={`${GHOST} hidden self-center @4xl:inline-flex`}>
+              <Icon name="ChevronRight" aria-hidden className={`size-3.5 ${sideOpen ? "" : "rotate-180"}`} />
+              {sideOpen ? "Hide details" : "Show details"}
             </button>
           </div>
           {tab !== "brief" && (
@@ -133,9 +171,11 @@ export function TicketView({ slug, ticketKey, at = null, onNow }: { slug: string
             </section>
           )}
         </div>
-        <SideColumn>
-          <SideCards ticket={ticket} now={shown} />
-        </SideColumn>
+        {sideOpen && (
+          <SideColumn>
+            <SideCards ticket={ticket} now={shown} />
+          </SideColumn>
+        )}
       </div>
     </div>
   );

@@ -2,6 +2,17 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.13.1 (2026-10-23)
+
+### Fixed
+
+- The ticket page's side column (acceptance criteria, files in scope, verify command and agents) no longer scrolls on its own, in either direction. It scrolls with the page and stays pinned beside the activity only while all of it fits in the window. Long words in the criteria wrap, and backticked text shows as code.
+
+### Changed
+
+- The ticket page is wider: up to 90rem instead of 72rem, with a side column of 20rem, or 24rem on a wide page, instead of 300px.
+- Hide details folds the side column away so the activity takes the full width, and Show details brings it back. The page remembers the choice for every ticket.
+
 ## 0.13.0 (2026-10-23)
 
 ### Added
