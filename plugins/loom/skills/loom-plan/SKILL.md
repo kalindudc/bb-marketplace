@@ -92,7 +92,7 @@ Then wait for the spec review. For each draft version Loom starts a separate rev
 - A review that did not finish (the reviewer stopped, or bb could not start it) restarts when you call `loom_propose` again with the same spec.
 - A revision for the human's notes is reviewed again before you hand it back.
 
-The human can review the draft on the Loom page and send you notes. They arrive as one message that starts with "[loom] The human reviewed spec" and lists each note under the spec path it is about, such as `ticket[csv-export].acceptance[1]`: tickets by ref, list items counted from 0. Revise the spec for each note, or answer it in your reply, then call `loom_propose` again with the whole spec.
+The human can review the draft on the Loom page and send you notes. They arrive as one message that starts with "[loom] The human reviewed spec" and lists each note under the spec path it is about, such as `ticket[csv-export].acceptance[1]`: tickets by ref, list items counted from 0. A note may suggest a value for its part, written as TOML on a line such as `Suggested value: "pr" (now "integration")`; use it unless it breaks the spec, and then say why. Revise the spec for each note, or answer it in your reply, then call `loom_propose` again with the whole spec.
 
 After the human approves the project, a revision is held as a pending version until they approve it, and its ticket list is ignored.
 

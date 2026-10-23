@@ -1,6 +1,6 @@
 // One spec version as the page's dashboard reads it: the parsed spec, what it changed, and the notes the human sent on it.
 import type { Store } from "./db/store";
-import type { Projects, SpecView } from "./projects";
+import { LoomError, type Projects, type SpecView } from "./projects";
 import { scopeOverlaps, validateSemantics, type Spec } from "./spec";
 import { changedAt, specChanges, type SpecChanges, type SpecNote } from "./spec-paths";
 
@@ -20,18 +20,26 @@ export interface SpecVersionView {
   spec: Spec;
   overlaps: Array<{ a: string; b: string; paths: string[] }>;
   warnings: string[];
-  /** Null for version 1. */
+  /** What this version changed from the one before; null for version 1. */
   changes: SpecChanges | null;
+  /**
+   * The version the page compares this one with, by default the version in force for a pending one and the one before
+   * for any other; null for version 1. The page diffs the two specs itself.
+   */
+  compared: { version: number; status: SpecView["status"]; spec: Spec } | null;
   versions: Array<{ version: number; status: SpecView["status"] }>;
   /** Newest batch first, in the order sent within a batch. */
   notes: SentNote[];
 }
 
-export function specVersionView(deps: { store: Store; projects: Projects }, slug: string, version?: number): SpecVersionView {
+export function specVersionView(deps: { store: Store; projects: Projects }, slug: string, version?: number, base?: number): SpecVersionView {
   const { store, projects } = deps;
   const project = projects.require(slug);
   const newest = store.latestSpecVersion(project.id)!.version;
   const view = projects.spec(slug, version ?? newest);
+  if (base !== undefined && base >= view.version) throw new LoomError("loom_invalid_input", `Compare v${view.version} with an older version, v1 to v${view.version - 1}.`);
+  const inForce = project.approved_version;
+  const comparedWith = base ?? (view.status === "pending" && inForce !== null && inForce < view.version ? inForce : view.version > 1 ? view.version - 1 : null);
   const parsed = new Map<number, Spec>();
   const specAt = (n: number): Spec => {
     if (!parsed.has(n)) parsed.set(n, JSON.parse(store.specVersion(project.id, n)!.spec_json) as Spec);
@@ -60,6 +68,7 @@ export function specVersionView(deps: { store: Store; projects: Projects }, slug
     overlaps: scopeOverlaps(spec.ticket).map(({ i, j, paths }) => ({ a: spec.ticket[i]!.ref, b: spec.ticket[j]!.ref, paths })),
     warnings: validateSemantics(spec, view.toml).warnings,
     changes: view.version === 1 ? null : specChanges(specAt(view.version - 1), spec),
+    compared: comparedWith === null ? null : { version: comparedWith, status: projects.specStatus(project, comparedWith), spec: specAt(comparedWith) },
     versions: Array.from({ length: newest }, (_, index) => ({ version: index + 1, status: projects.specStatus(project, index + 1) })),
     notes,
   };

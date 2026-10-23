@@ -13,8 +13,14 @@ export interface SpecChanges {
 export interface SpecNote {
   version: number;
   paths: string[];
+  /** Empty only when the note suggests a value. */
   body: string;
+  /** A value the human suggests for the part, as TOML: `"pr"`, `2` or `false`, with the value it has now. */
+  suggest?: { from: string; to: string };
 }
+
+/** The path of a note on the spec as a whole; any change answers it. */
+export const WHOLE_SPEC = "spec";
 
 /** True when `path` names a part inside `above`, such as ticket[a].scope[0] inside ticket[a]. */
 export const isUnder = (path: string, above: string) => path.startsWith(`${above}.`) || path.startsWith(`${above}[`);
@@ -43,10 +49,11 @@ export function specChanges(before: Spec, after: Spec): SpecChanges {
   };
 }
 
-/** True when a change touches any of `paths`: at it, under it or above it, or inside a removed ticket. */
+/** True when a change touches any of `paths`: at it, under it or above it, or inside a removed ticket; any change touches the whole spec. */
 export function changedAt(changes: SpecChanges, paths: readonly string[]): boolean {
   return paths.some(
     (path) =>
+      (path === WHOLE_SPEC && (changes.changed.length > 0 || changes.removed.length > 0)) ||
       changes.changed.some((changed) => changed === path || isUnder(changed, path) || isUnder(path, changed)) ||
       changes.removed.some((ref) => path === `ticket[${ref}]` || isUnder(path, `ticket[${ref}]`)),
   );

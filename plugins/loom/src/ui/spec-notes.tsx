@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useRpc } from "@get-bb/plugin-sdk/app";
 import type { SentNote, SpecVersionView, rpcContract } from "../contract";
 import { notesMessage } from "../prompts";
+import type { SpecSection } from "../spec-diff";
 import type { SpecNote } from "../spec-paths";
 import { BUTTON, BUTTON_PRIMARY, CARD, ConfirmButton, FIELD, HEADING, plural, useRun } from "./common";
 import type { NoteTarget } from "./spec-marks";
@@ -9,7 +10,12 @@ import type { NoteTarget } from "./spec-marks";
 /** A note not sent yet. `version` is the version on screen when it was written. */
 export interface DraftNote extends SpecNote {
   label: string;
+  /** The Spec page's section the note's part is in; notes from the planning view's dashboard have none. */
+  section?: SpecSection;
 }
+
+/** What the RPC takes of a draft note. */
+export const sentForm = ({ version, paths, body, suggest }: DraftNote): SpecNote => ({ version, paths, body, ...(suggest === undefined ? {} : { suggest }) });
 
 const keyOf = (slug: string) => `loom.notes.${slug}`;
 
@@ -40,6 +46,7 @@ export function useNoteTray(slug: string) {
   return {
     notes,
     add: (note: DraftNote) => update([...notes, note]),
+    replace: (index: number, note: DraftNote) => update(notes.map((one, at) => (at === index ? note : one))),
     remove: (index: number) => update(notes.filter((_, at) => at !== index)),
     clear: () => update([]),
   };
@@ -82,7 +89,7 @@ export function NoteTray({ view, notes, onRemove, onSent }: { view: SpecVersionV
   const label = `Send ${plural(notes.length, "note")} to the planner`;
   const send = () =>
     void run(async () => {
-      const sent = await rpc.call("sendNotes", { slug: view.slug, notes: notes.map(({ version, paths, body }) => ({ version, paths, body })), ...(older ? { includeOlder: true as const } : {}), confirm: true });
+      const sent = await rpc.call("sendNotes", { slug: view.slug, notes: notes.map(sentForm), ...(older ? { includeOlder: true as const } : {}), confirm: true });
       onSent(sent);
     });
 

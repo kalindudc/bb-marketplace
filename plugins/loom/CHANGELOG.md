@@ -2,6 +2,20 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## Unreleased
+
+### Added
+
+- The Spec tab is a new spec page in three sections, read in order: How it runs (the settings as cards), Tickets (a list by wave beside the picked ticket, a Map of the waves, and Files) and Goal & guardrails (the goal, non-goals, rubric, open questions and the raw TOML).
+- A version that has one before it opens on only what changed: settings, tickets and parts that did not change are hidden or faded, a changed value says what it was, added items are outlined, removed ones struck through, a rewritten brief or goal shows word by word, and a removed ticket shows what it had. "The entire spec" and "View the entire spec" show everything. A pending version compares with the version in force, and "compared with" picks any older version.
+- "What changed" lists every change by section, says which ones answer the comments you sent, and jumps to each one. A change you jumped to counts as seen, j and k step through the changes, and each section can be marked reviewed; all of it is kept in your browser.
+- Comment on any part of the spec by clicking it. A choice, a number or a switch can also take a suggested value, which reaches the planner as TOML on a line of its own, and quick picks such as "Split it in two" or "Not testable" start the text. Comments collect in a numbered review panel with a note on the whole spec, a preview and one Send, and the panel offers Approve when there is nothing to send and the next-step bar does not carry it.
+- `specVersion` returns the version it compares with, and takes a `base` version to compare with instead.
+
+### Changed
+
+- A note to the planner may have no text when it suggests a value. The planning view keeps the spec dashboard and its "+ note" until that page is redesigned.
+
 ## 0.13.1 (2026-10-23)
 
 ### Fixed

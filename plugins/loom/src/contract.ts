@@ -259,7 +259,17 @@ export const rpcContract = defineRpcContract({
       .object({
         slug,
         notes: z
-          .array(z.object({ version: z.number().int().min(1), paths: z.array(z.string().min(1).max(200)).min(1).max(10), body: z.string().trim().min(1).max(4000) }).strict())
+          .array(
+            z
+              .object({
+                version: z.number().int().min(1),
+                paths: z.array(z.string().min(1).max(200)).min(1).max(10),
+                body: z.string().trim().max(4000),
+                suggest: z.object({ from: z.string().max(500), to: z.string().trim().min(1).max(500) }).strict().optional(),
+              })
+              .strict()
+              .refine((note) => note.body !== "" || note.suggest !== undefined, "A note needs text or a suggested value."),
+          )
           .min(1)
           .max(30),
         includeOlder: z.literal(true).optional(),
@@ -283,7 +293,7 @@ export const rpcContract = defineRpcContract({
       .strict(),
     output: typed<{ threadId: string }>(),
   },
-  specVersion: { input: z.object({ slug, version: z.number().int().min(1).optional() }).strict(), output: typed<SpecVersionView>() },
+  specVersion: { input: z.object({ slug, version: z.number().int().min(1).optional(), base: z.number().int().min(1).optional() }).strict(), output: typed<SpecVersionView>() },
   changes: { input: z.object({ slug }).strict(), output: typed<ChangesView>() },
   changePatch: {
     input: z.object({ slug, path: z.string().min(1).max(4096), base: commitHash.optional(), head: commitHash.optional(), key: key.optional(), repo: repoSpecSchema.shape.name.optional() }).strict(),

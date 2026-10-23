@@ -367,7 +367,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
     timeline: ({ slug }) => projectTimeline(rowsOf(store, projects.require(slug)), now()),
     planning: () => projects.planningSessions(),
     planningSession: ({ threadId }) => projects.planningSession(threadId),
-    specVersion: ({ slug, version }) => specVersionView({ store, projects }, slug, version),
+    specVersion: ({ slug, version, base }) => specVersionView({ store, projects }, slug, version, base),
     bbProjects: () => projects.bbProjectChoices(),
     changes: ({ slug }) => changes.view(slug),
     changePatch: (input) => changes.patch(input),

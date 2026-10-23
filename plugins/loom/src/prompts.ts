@@ -115,13 +115,16 @@ export function notesMessage(a: { slug: string; version: number; status: string;
   const count = a.notes.length === 1 ? "1 note" : `${a.notes.length} notes`;
   const notes = a.notes.map((note, index) => {
     const older = note.version < a.version ? ` (written on v${note.version})` : "";
-    const body = note.body.split("\n").map((line) => (line === "" ? "" : `   ${line}`));
-    return [`${index + 1}. ${note.paths.join(", ")}${older}`, ...body].join("\n");
+    const suggest = note.suggest === undefined ? [] : [`   Suggested value: ${note.suggest.to} (now ${note.suggest.from})`];
+    const body = note.body === "" ? [] : note.body.split("\n").map((line) => (line === "" ? "" : `   ${line}`));
+    return [`${index + 1}. ${note.paths.join(", ")}${older}`, ...suggest, ...body].join("\n");
   });
+  const suggests = a.notes.some((note) => note.suggest !== undefined);
   return [
     `[loom] The human reviewed spec v${a.version} (${a.status}) of ${a.slug} on the Loom page and left ${count}.`,
     "Revise the spec for each note, or answer it in your reply, then call loom_propose again with the whole spec.",
     "A path names a ticket by its ref and counts list items from 0, for example ticket[csv-export].acceptance[1].",
+    ...(suggests ? ["A suggested value is written as TOML; use it unless it breaks the spec, and then say why."] : []),
     "",
     notes.join("\n\n"),
   ].join("\n");

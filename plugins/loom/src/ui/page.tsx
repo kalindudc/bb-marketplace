@@ -18,7 +18,8 @@ import { MetricsView } from "./metrics-view";
 import { NewProject } from "./new-project";
 import { NextStepBar, repoLand } from "./next-step-bar";
 import { PlannerChat, PlanningView } from "./planning";
-import { SpecDashboard, bbProjectNamesOf } from "./spec-dashboard";
+import { bbProjectNamesOf } from "./spec-dashboard";
+import { SpecPage } from "./spec-page";
 import { TicketView } from "./ticket";
 import { TimelineStrip } from "./timeline-strip";
 
@@ -97,32 +98,28 @@ function Controls({ view, busy, primary, onControl }: { view: ProjectView; busy:
   );
 }
 
-/** The dashboard, under a note on any pending version. Its Approve shows only when the next-step bar does not carry one. Rewound, it shows the version in force then and takes no notes. */
+/**
+ * The spec page for the version waiting for the human, or the newest one. Its review panel offers Approve only when the
+ * next-step bar does not carry it. Rewound, it shows the version in force then and takes no comments.
+ */
 function SpecTab({ view, busy, rewound, onApprove }: { view: ProjectView; busy: boolean; rewound: boolean; onApprove(version: number): void }) {
   const { spec, overview } = view;
   const barApproves = view.next?.action?.control === "approve";
-  if (rewound) {
-    return (
-      <div className="space-y-6 p-4">
+  const waiting = overview.state === "draft" ? (specReviewBlocks(view.specReview) ? null : spec.version) : overview.state === "archived" ? null : spec.pendingVersion;
+  const approve = rewound || barApproves || waiting === null ? null : { version: waiting, label: `Approve v${waiting}`, busy, onApprove: () => onApprove(waiting) };
+  return (
+    <div className="space-y-3 p-4">
+      {rewound && (
         <p data-spec-rewound className="text-xs text-muted-foreground">
           At this moment, version {spec.version} was the spec in force.
         </p>
-        <SpecDashboard slug={overview.slug} version={spec.version} readOnly bbProjectNames={bbProjectNamesOf(view)} />
-      </div>
-    );
-  }
-  return (
-    <div className="space-y-6 p-4">
-      {spec.pendingVersion !== null && (
-        <section data-spec-pending>
-          <div className="flex items-center gap-2">
-            <h2 className="text-sm font-semibold">Pending v{spec.pendingVersion}</h2>
-            <span className="text-xs text-muted-foreground">waiting for approval; its tickets are unchanged</span>
-            {!barApproves && <ConfirmButton label={`Approve v${spec.pendingVersion}`} disabled={busy} onConfirm={() => onApprove(spec.pendingVersion!)} />}
-          </div>
-        </section>
       )}
-      <SpecDashboard slug={overview.slug} bbProjectNames={bbProjectNamesOf(view)} />
+      {!rewound && spec.pendingVersion !== null && (
+        <p data-spec-pending className="text-xs text-muted-foreground">
+          v{spec.pendingVersion} waits for your approval; until then the project runs on v{spec.version} and its tickets stay as they are.
+        </p>
+      )}
+      <SpecPage slug={overview.slug} version={rewound ? spec.version : undefined} readOnly={rewound} bbProjectNames={bbProjectNamesOf(view)} specReview={view.specReview} approve={approve} />
     </div>
   );
 }

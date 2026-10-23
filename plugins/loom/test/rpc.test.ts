@@ -758,6 +758,37 @@ describe("spec versions", () => {
     await expect(call("specVersion", { slug: "csv", version: 9 })).rejects.toThrow(/no spec version 9/);
   });
 
+  it("specVersion compares a draft with the version before, or with the base it is given", async () => {
+    await propose();
+    await revise();
+    await propose((doc) => {
+      doc.project.goal = "Let people export their orders and customers as CSV files, by date.";
+      doc.ticket[1].acceptance[1] = "WHEN there are no orders THE SYSTEM SHALL return an empty file";
+    });
+    const view = await call<SpecVersionView>("specVersion", { slug: "csv" });
+    expect(view.compared).toMatchObject({ version: 2, status: "superseded" });
+    expect(view.compared!.spec.project.goal).toBe("Let people export their orders and customers as CSV files.");
+    const first = await call<SpecVersionView>("specVersion", { slug: "csv", version: 3, base: 1 });
+    expect(first.compared).toMatchObject({ version: 1, status: "superseded" });
+    // `changes` stays what the version changed from the one before, whatever it is compared with.
+    expect(first.changes).toEqual({ changed: ["project.goal"], removed: [] });
+    expect((await call<SpecVersionView>("specVersion", { slug: "csv", version: 1 })).compared).toBeNull();
+    await expect(call("specVersion", { slug: "csv", version: 2, base: 2 })).rejects.toThrow("Compare v2 with an older version, v1 to v1.");
+  });
+
+  it("specVersion compares a pending version with the version in force, not with a superseded one", async () => {
+    await approved();
+    await revise();
+    await propose((doc) => {
+      doc.project.goal = "Let people export their orders and customers as CSV files, by date.";
+      doc.ticket[1].acceptance[1] = "WHEN there are no orders THE SYSTEM SHALL return an empty file";
+    });
+    const view = await call<SpecVersionView>("specVersion", { slug: "csv" });
+    expect(view).toMatchObject({ version: 3, status: "pending" });
+    expect(view.compared).toMatchObject({ version: 1, status: "approved" });
+    expect(view.compared!.spec.project.goal).toBe("Let people export their orders as a CSV file from the admin page.");
+  });
+
   it("specVersion names the overlapping tickets by ref, with the view's warnings", async () => {
     await propose(board);
     const view = await call<SpecVersionView>("specVersion", { slug: "csv" });
@@ -774,6 +805,7 @@ describe("spec versions", () => {
     const notes = [
       { version: 1, paths: ["project.goal"], body: "Say who exports." },
       { version: 1, paths: ["ticket[csv-model].title"], body: "Name the rows." },
+      { version: 1, paths: ["spec"], body: "Keep it small." },
     ];
     host.store.event(project.id, null, "human.action", "human", { action: "notes", slug: "csv", notes });
     await revise();
@@ -781,6 +813,8 @@ describe("spec versions", () => {
     expect(view.notes).toEqual([
       { ...notes[0], sentAt: expect.any(Number), answeredIn: 2, changed: true },
       { ...notes[1], sentAt: expect.any(Number), answeredIn: 2, changed: false },
+      // Any change answers a note on the whole spec.
+      { ...notes[2], sentAt: expect.any(Number), answeredIn: 2, changed: true },
     ]);
   });
 });
@@ -810,11 +844,27 @@ describe("sendNotes", () => {
     expect(fake.sent("thr_plan")[0]).toContain("1. ticket[csv-export].acceptance[1] (written on v1)\n");
   });
 
+  it("sends a suggested value as TOML before the note's text, and a suggestion with no text on its own", async () => {
+    await propose();
+    const suggested = [
+      { version: 1, paths: ["merge.strategy"], body: "Review each part as its own pull request.", suggest: { from: '"integration"', to: '"pr"' } },
+      { version: 1, paths: ["agents.max_workers"], body: "", suggest: { from: "2", to: "1" } },
+    ];
+    await send({ notes: suggested });
+    const [message] = fake.sent("thr_plan");
+    expect(message).toContain("A suggested value is written as TOML; use it unless it breaks the spec, and then say why.");
+    expect(message).toContain('1. merge.strategy\n   Suggested value: "pr" (now "integration")\n   Review each part as its own pull request.\n\n2. agents.max_workers\n   Suggested value: 1 (now 2)');
+    expect(message!.endsWith("Suggested value: 1 (now 2)")).toBe(true);
+    expect(humanEvents().at(-1)).toEqual({ actor: "human", action: "notes", slug: "csv", notes: suggested });
+    expect(notesMessage({ slug: "csv", version: 1, status: "draft", notes })).not.toContain("Suggested value");
+  });
+
   it("refuses a missing version, a missing confirm, another plugin and a planner that ended, and sends nothing", async () => {
     await propose();
     await expect(send({ notes: [{ ...notes[0], version: 9 }] })).rejects.toThrow("Project csv has no spec version 9.");
     await expect(send({ confirm: undefined })).rejects.toThrow();
     await expect(send({ notes: [{ ...notes[0], body: "   " }] })).rejects.toThrow();
+    await expect(send({ notes: [{ ...notes[0], suggest: { from: "2", to: " " } }] })).rejects.toThrow();
     await expect(send({}, { experimental_caller: { kind: "plugin", pluginId: "other" } })).rejects.toThrow(/human/);
     host.projects.threadGone("thr_plan", "archived");
     await expect(send()).rejects.toThrow("Project csv has no planner thread to send notes to.");

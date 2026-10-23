@@ -227,6 +227,16 @@ export const ticketDetail = (over: Partial<TicketDetail> = {}): TicketDetail => 
   ...over,
 });
 
+/** v1 of specVersionView's draft: `edit`'s spec with another second criterion on csv-export and another check. */
+export const specV1 = (edit?: (doc: Doc) => void) =>
+  parseSpec(
+    specToml((doc) => {
+      edit?.(doc);
+      doc.checks.commands = ["npm test -- --ci"];
+      doc.ticket[1].acceptance[1] = "WHEN there are no orders THE SYSTEM SHALL return an empty file";
+    }),
+  ).spec!;
+
 /** v2, a draft, of the helpers' base spec, changed from v1 in one criterion and one check. */
 export const specVersionView = (over: Partial<SpecVersionView> = {}, edit?: (doc: Doc) => void): SpecVersionView => ({
   slug: "csv",
@@ -237,6 +247,7 @@ export const specVersionView = (over: Partial<SpecVersionView> = {}, edit?: (doc
   overlaps: [],
   warnings: [],
   changes: { changed: ["ticket[csv-export].acceptance[1]", "checks.commands[0]"], removed: [] },
+  compared: { version: 1, status: "superseded", spec: specV1(edit) },
   versions: [
     { version: 1, status: "superseded" },
     { version: 2, status: "draft" },

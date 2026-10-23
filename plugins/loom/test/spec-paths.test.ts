@@ -52,6 +52,12 @@ describe("changedAt", () => {
     expect(changedAt(changes, ["checks.commands[0]"])).toBe(true);
   });
 
+  it("is true for a note on the whole spec when anything changed, and false when nothing did", () => {
+    expect(changedAt(changes, ["spec"])).toBe(true);
+    expect(changedAt({ changed: [], removed: ["csv-docs"] }, ["spec"])).toBe(true);
+    expect(changedAt({ changed: [], removed: [] }, ["spec"])).toBe(false);
+  });
+
   it("is false elsewhere", () => {
     expect(changedAt(changes, ["ticket[csv-export].acceptance[0]"])).toBe(false);
     expect(changedAt(changes, ["ticket[csv-model]"])).toBe(false);
