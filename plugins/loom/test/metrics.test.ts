@@ -518,6 +518,18 @@ describe("feedText", () => {
     expect(text(event(at(1), "record.failed", null, { kind: "full", reason: "it exited with 1" }, "loom"))).toBe("The done hook failed: it exited with 1.");
   });
 
+  it("says what the spec review did, and names an approval that skipped it", () => {
+    const ended = (data: Record<string, unknown>) => text(event(at(1), "spec.review.ended", null, { version: 2, round: 1, findings: 0, ...data }, "loom"));
+    expect(text(event(at(1), "spec.review.started", null, { version: 2, round: 1 }, "loom"))).toBe("A spec reviewer started on spec version 2 (round 1).");
+    expect(ended({ state: "approved" })).toBe("The spec review passed version 2 in round 1.");
+    expect(ended({ state: "changes_requested", findings: 3 })).toBe("The spec review found 3 problems in version 2 in round 1.");
+    expect(ended({ state: "changes_requested", findings: 1 })).toBe("The spec review found 1 problem in version 2 in round 1.");
+    expect(ended({ state: "failed", reason: "the reviewer's thread was archived or deleted" })).toBe("The spec review of version 2 did not finish: the reviewer's thread was archived or deleted.");
+    expect(ended({ state: "superseded" })).toBe("The spec review of version 2 stopped: a newer version or an approval replaced it.");
+    expect(text(human(at(1), "approve", { pending: false, skipReview: true }))).toBe("The human approved the spec without a passed spec review.");
+    expect(text(human(at(1), "approve", { pending: false }))).toBe("The human ran approve.");
+  });
+
   it("names an event kind it does not know", () => {
     expect(text(event(at(1), "something.new", null))).toBe("something.new by loom.");
   });

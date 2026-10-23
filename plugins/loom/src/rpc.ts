@@ -16,6 +16,7 @@ import { projectFeed, projectMetrics } from "./reports";
 import { blockedAtReview } from "./review";
 import { IN_FLIGHT, overlaps, readyTickets, toLite, type TicketLite } from "./scheduler";
 import { parseSpec, type Spec } from "./spec";
+import { specReviewStatus } from "./spec-review";
 import { specVersionView } from "./spec-view";
 import { HUMAN_ACTOR, type TicketState } from "./states";
 import { blockedAtStart, specOf } from "./workers";
@@ -209,6 +210,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
     const current = approved ?? inForce;
     const board = project.state === "draft" ? draftCards(current, at) : boardCards(tickets, threads);
     const summary = specSummary(spec.toml);
+    const specReview = past === null ? specReviewStatus(store, project) : null;
     return {
       overview,
       board,
@@ -228,11 +230,13 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
         triage: current.agents.triage,
         startFailed: past === null ? tickets.filter((ticket) => blockedAtStart(store, ticket)).map((ticket) => ticket.key) : [],
         reviewRefused: tickets.filter(blockedAtReview).map((ticket) => ticket.key),
+        ...(specReview === null ? {} : { specReview }),
       }),
       health: approved === null ? null : projectHealth({ tickets, threads, metrics, spec: approved, now: at }),
       agents: agentRows(threads, tickets, approved),
       now: at,
       at: past?.eventId ?? null,
+      specReview,
     };
   };
 

@@ -178,6 +178,7 @@ export const projectView = (over: Partial<ProjectView> = {}): ProjectView => ({
   agents: [agent()],
   now: NOW,
   at: null,
+  specReview: null,
   ...over,
 });
 

@@ -21,7 +21,7 @@ export type EndReason = "abandoned" | "timeout" | "failed" | "gone" | "blocked" 
 export type TicketMove = { to: TicketState; patch: Partial<TicketRow> };
 
 const ENDING_LIMIT_MS = 10 * 60_000;
-const MAX_RATE_LIMIT_RETRIES = 3;
+export const MAX_RATE_LIMIT_RETRIES = 3;
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 export function specOf(store: Store, project: ProjectRow): Spec {
@@ -402,18 +402,22 @@ export async function onTurnFailed(ctx: EngineCtx, event: TurnFailure): Promise<
   await onWorkerIdle(ctx, row, "failed");
 }
 
+/** When to retry a rate-limited turn: 15 seconds after the blocking window resets, else a minute per attempt. */
+export function rateLimitRetryAt(now: number, event: TurnFailure): number {
+  const windows = event.rateLimits?.windows ?? [];
+  const blocked = windows.filter((window) => window.status === "blocked" && window.resetsAtMs !== null).map((window) => window.resetsAtMs!);
+  const any = windows.filter((window) => window.resetsAtMs !== null).map((window) => window.resetsAtMs!);
+  const reset = blocked.length > 0 ? Math.max(...blocked) : any.length > 0 ? Math.min(...any) : null;
+  return reset !== null && reset > now ? reset + 15_000 : now + 60_000 * Math.max(1, event.attemptNumber);
+}
+
 // True when a retry was queued; false when the row used up its retries and the failure should be handled like any other.
 export async function retryRateLimited(ctx: EngineCtx, row: ThreadRow, project: ProjectRow, event: TurnFailure): Promise<boolean> {
   if (row.rate_limit_retries >= MAX_RATE_LIMIT_RETRIES || event.attemptNumber > MAX_RATE_LIMIT_RETRIES) {
     ctx.bb.log("warn", `Thread ${event.threadId} stayed rate limited after ${row.rate_limit_retries} retries.`);
     return false;
   }
-  const now = ctx.now();
-  const windows = event.rateLimits?.windows ?? [];
-  const blocked = windows.filter((window) => window.status === "blocked" && window.resetsAtMs !== null).map((window) => window.resetsAtMs!);
-  const any = windows.filter((window) => window.resetsAtMs !== null).map((window) => window.resetsAtMs!);
-  const reset = blocked.length > 0 ? Math.max(...blocked) : any.length > 0 ? Math.min(...any) : null;
-  const sendAt = reset !== null && reset > now ? reset + 15_000 : now + 60_000 * Math.max(1, event.attemptNumber);
+  const sendAt = rateLimitRetryAt(ctx.now(), event);
   await ctx.bb.retryTurn(event.threadId, event.requestId, sendAt);
   ctx.store.updateThread(row.id, { rate_limit_retries: row.rate_limit_retries + 1 });
   ctx.store.updateProject(project.id, { hold_until: Math.max(project.hold_until ?? 0, sendAt) });

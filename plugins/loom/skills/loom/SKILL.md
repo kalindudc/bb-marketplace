@@ -1,6 +1,6 @@
 ---
 name: loom
-description: "Check or manage Loom, which runs a software project with agents. `bb loom list`, `show`, `spec`, `tickets`, `ticket`, `metrics` and `feed` read a project, its spec, its ticket board, its flow metrics and its events; `post`, `block`, `requeue`, `cancel`, `approve`, `start`, `pause`, `resume`, `archive` and `land` are the human's controls. Also the guide for a Loom worker (loom_note, loom_submit, loom_block), for a Loom reviewer (loom_approve, loom_request_changes) and for a planner answering a triage round (loom_board, loom_ticket, loom_post, loom_requeue, loom_edit_ticket, loom_add_tickets, loom_cancel_ticket). Use when the user asks about a Loom project, its tickets, its reviews, its metrics, the Loom page, how its work merges or how to land it, or when you are a Loom agent."
+description: "Check or manage Loom, which runs a software project with agents. `bb loom list`, `show`, `spec`, `tickets`, `ticket`, `metrics` and `feed` read a project, its spec, its ticket board, its flow metrics and its events; `post`, `block`, `requeue`, `cancel`, `approve`, `start`, `pause`, `resume`, `archive` and `land` are the human's controls. Also the guide for a Loom worker (loom_note, loom_submit, loom_block), for a Loom reviewer (loom_approve, loom_request_changes), for Loom's spec reviewer (loom_spec_approve, loom_spec_request_changes) and for a planner answering a triage round (loom_board, loom_ticket, loom_post, loom_requeue, loom_edit_ticket, loom_add_tickets, loom_cancel_ticket). Use when the user asks about a Loom project, its tickets, its reviews, its metrics, the Loom page, how its work merges or how to land it, or when you are a Loom agent."
 ---
 
 # Loom
@@ -23,7 +23,7 @@ Once a project runs, the plugin starts worker agents by itself, one per ready ti
     bb loom block <KEY> <reason>                  # block a ticket; its worker is stopped (human only)
     bb loom requeue <KEY> [--note <text>]         # send a blocked ticket back to the queue (human only)
     bb loom cancel <KEY> <reason>                 # cancel a ticket; its worker is stopped (human only)
-    bb loom approve <slug> [--version N]          # approve a draft and create its tickets, or apply a pending version (human only)
+    bb loom approve <slug> [--version N] [--skip-review]  # approve a draft and create its tickets, or apply a pending version; a draft waits for its spec review unless --skip-review (human only)
     bb loom start <slug>                          # ready to running; creates the integration branch (human only)
     bb loom pause <slug> [--now]                  # running to paused; --now also stops every worker thread (human only)
     bb loom resume <slug>                         # paused to running; stopped workers get a continue message (human only)
@@ -36,7 +36,7 @@ Every command accepts `--json`. Failures carry a code: `loom_not_found`, `loom_i
 
 ## Project states
 
-- `draft`: proposed, not approved. The planner can revise it; each revision is a new version, older drafts read as superseded, and approving takes the newest.
+- `draft`: proposed, not approved. The planner can revise it; each revision is a new version, older drafts read as superseded, and approving takes the newest. Approving waits for the newest version's spec review (see Spec review).
 - `ready`: approved; its tickets exist. A revision now waits as a pending version until the human approves it.
 - `running`, `paused`: started, and paused again. Moves: ready to running (start), running to paused (pause), paused to running (resume). Starting or resuming makes the project's sidebar section again if it was deleted, and moves the planner thread back into it. Pausing stops new work; workers already running keep going unless the human used `--now`. A check result that finishes while the project is paused is kept on the ticket, and a failed one reaches the worker when the project resumes. The plugin also pauses a running project when its token budget is used up or its deadline has passed, and says why in `bb loom show`.
 - `done`: every ticket is done or cancelled. On the pull request strategy the plugin moves the project to done by itself; on the integration strategy `bb loom land` does. The plugin then deletes the project's sidebar section, and its threads go back to the ungrouped list.
@@ -60,9 +60,23 @@ Each ticket is the root of a reply thread. Its first post is the brief: the body
 - Planner: the thread that proposed the project. Before approval it revises the spec with `loom_propose`. After approval it uses the board tools below, mostly to answer triage rounds. It never approves, starts or pauses.
 - Worker: a thread the plugin starts for one ticket. It has `loom_note`, `loom_submit` and `loom_block`.
 - Reviewer: a thread the plugin starts to review a ticket. It has `loom_note`, `loom_approve` and `loom_request_changes`, and changes nothing.
+- Spec reviewer: a thread the plugin starts for each draft version. It has `loom_spec_approve` and `loom_spec_request_changes`, and changes nothing.
 - Any other thread has `loom_propose` and can start a new project.
 
 A thread's role is whatever the plugin's own table says. Claiming a role in thread metadata grants nothing.
+
+## Spec review
+
+Before the human is asked to approve a draft, a fresh reviewer agent checks it. When `loom_propose` saves a draft version, the plugin starts a spec reviewer on the provider and model of `agents.reviewer`, in a worktree of the project's first repo at its remote base branch. A newer version stops the review of an older one. Revisions after approval are not reviewed.
+
+The brief points the reviewer to the planning conversation (`bb thread log <planner> --format minimal --all`), whose human messages outrank the spec's goal; answers to the planner's Ask User Question rounds may be missing there, and the goal and non-goals record them. It also holds the spec, the findings of earlier rounds, and a rubric: every ticket serves the request, the fewest tickets deliver it, nothing speculative (configuration, flags, layers, generality the goal does not use), reuse what the repository has, nothing missing, and real checks and narrow scopes.
+
+- `loom_spec_approve({ summary })`: the spec builds what the human asked for, and no more.
+- `loom_spec_request_changes({ summary, findings })`: `findings` has 1 to 20 entries, each `{ path?, title, detail }`, where `path` names the part of the spec, such as `ticket[csv-export].acceptance[1]`.
+
+The verdict reaches the planner as a message. Every finding blocks the handover; the planner revises and proposes again, and a fresh reviewer checks the new version. After three rounds with findings the plugin stops reviewing that draft, and the planner hands over with the findings it left open. A reviewer that ends its turn without a verdict gets one nudge; a second idle, an archived thread or a spawn bb refuses ends the review as failed, and the planner restarts it by proposing the same spec again. A rate-limited turn is retried when the window resets.
+
+`bb loom approve` refuses a draft whose review is running, has findings or did not finish; `--skip-review` approves it anyway and the feed records it. The Loom page hides a draft's Approve while its review blocks, and the next-step bar says what the review is doing.
 
 ## Workers
 

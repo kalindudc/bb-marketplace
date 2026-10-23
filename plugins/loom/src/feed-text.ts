@@ -57,6 +57,7 @@ export function feedText(event: EventRow, keys: Map<number, string>): string {
       return `${key}'s worker hit a rate limit; retry ${data.attempt} is scheduled.`;
     case "human.action": {
       if (data.action === "notes") return `The human sent ${notesLabel(data.notes)} on the spec to the planner.`;
+      if (data.action === "approve" && data.skipReview === true) return "The human approved the spec without a passed spec review.";
       const target = text(data.key);
       return `The human ran ${data.action}${target === null ? "" : ` on ${target}`}.`;
     }
@@ -66,6 +67,15 @@ export function feedText(event: EventRow, keys: Map<number, string>): string {
     }
     case "record.failed":
       return `The done hook failed: ${data.reason}.`;
+    case "spec.review.started":
+      return `A spec reviewer started on spec version ${data.version} (round ${data.round}).`;
+    case "spec.review.ended": {
+      const n = num(data.findings) ?? 0;
+      if (data.state === "approved") return `The spec review passed version ${data.version} in round ${data.round}.`;
+      if (data.state === "changes_requested") return `The spec review found ${n} ${n === 1 ? "problem" : "problems"} in version ${data.version} in round ${data.round}.`;
+      if (data.state === "superseded") return `The spec review of version ${data.version} stopped: a newer version or an approval replaced it.`;
+      return `The spec review of version ${data.version} did not finish: ${text(data.reason) ?? "no reason recorded"}.`;
+    }
     default:
       return `${event.kind} by ${event.actor}.`;
   }

@@ -33,6 +33,9 @@ export function readyToLand(p: { state: string; strategy: string; ticketCounts: 
   return Object.entries(p.ticketCounts).every(([state, count]) => state === "done" || state === "cancelled" || !count);
 }
 
+/** A draft waits for its spec review while one runs, has open findings or did not finish. */
+export const specReviewBlocks = (status: { kind: string } | null | undefined): boolean => status?.kind === "reviewing" || status?.kind === "changes" || status?.kind === "failed";
+
 /** A single-repo project's one repo has no name. */
 export const isMultiRepoProject = (p: { repos: ReadonlyArray<{ name: string | null }> }) => p.repos.some((repo) => repo.name !== null);
 

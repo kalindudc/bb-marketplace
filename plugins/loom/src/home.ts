@@ -4,6 +4,7 @@ import { plural, readyToLand } from "./format";
 import { throughputOf } from "./metrics";
 import type { ProjectOverview, Projects } from "./projects";
 import { IN_FLIGHT } from "./scheduler";
+import { specReviewStatus } from "./spec-review";
 import type { Spec } from "./spec";
 import { PAUSE_NOW_REASON } from "./states";
 import { specOf } from "./workers";
@@ -102,9 +103,12 @@ function load(store: Store, overview: ProjectOverview, project: ProjectRow, now:
 function needsOf(store: Store, { project, row, tickets }: Loaded): NeedItem[] {
   const item = (kind: NeedItem["kind"], text: string, at: number, key: string | null = null): NeedItem => ({ kind, slug: project.slug, project: project.name, key, text, at });
   const items = tickets.filter((ticket) => ticket.state === "blocked").map((ticket) => item("blocked", ticket.blocked_reason ?? "blocked", ticket.state_at, ticket.key));
-  if (project.state === "draft") {
+  const review = specReviewStatus(store, project);
+  // A draft needs the human once its review passed or stopped, or when it did not finish.
+  if (project.state === "draft" && review.kind !== "reviewing" && review.kind !== "changes") {
     const latest = store.latestSpecVersion(project.id)!;
-    items.push(item("approve", `has a draft spec v${latest.version} with ${plural((JSON.parse(latest.spec_json) as Spec).ticket.length, "ticket")}`, latest.created_at));
+    const text = review.kind === "failed" ? `draft v${latest.version}'s spec review did not finish: ${review.reason}` : `has a draft spec v${latest.version} with ${plural((JSON.parse(latest.spec_json) as Spec).ticket.length, "ticket")}`;
+    items.push(item("approve", text, latest.created_at));
   } else if (project.pending_version !== null) {
     items.push(item("pending", `spec v${project.pending_version} waits for your approval`, store.specVersion(project.id, project.pending_version)!.created_at));
   }

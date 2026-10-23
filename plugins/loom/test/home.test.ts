@@ -40,6 +40,21 @@ const finish = (key: string) => {
 const view = () => homeView({ store: host.store, projects: host.projects, now: Date.now() });
 
 describe("homeView needs you", () => {
+  it("leaves out a draft while its spec review runs or has findings, and names a review that did not finish", async () => {
+    await propose("docs", "DOC", "Docs site");
+    const docs = project("docs");
+    const row = host.store.addSpecReview({ project_id: docs.id, version: 1, round: 1, spawn_token: "tok_docs" });
+    expect(view().needsYou).toEqual([]);
+    host.store.endSpecReview(row.id, "changes_requested", { summary: "Too big", findings: [{ title: "a", detail: "b" }] });
+    expect(view().needsYou).toEqual([]);
+    const retry = host.store.addSpecReview({ project_id: docs.id, version: 1, round: 2, spawn_token: "tok_docs_2" });
+    host.store.endSpecReview(retry.id, "failed", { reason: "the reviewer's thread was archived or deleted" });
+    expect(view().needsYou.map((item) => [item.kind, item.text])).toEqual([["approve", "draft v1's spec review did not finish: the reviewer's thread was archived or deleted"]]);
+    const passed = host.store.addSpecReview({ project_id: docs.id, version: 1, round: 2, spawn_token: "tok_docs_3" });
+    host.store.endSpecReview(passed.id, "approved", { summary: "Fits." });
+    expect(view().needsYou.map((item) => [item.kind, item.text])).toEqual([["approve", "has a draft spec v1 with 2 tickets"]]);
+  });
+
   it("has one item per blocked ticket, draft, pending version, project Loom paused and finished integration project, newest first", async () => {
     await running("csv", "CSV", "CSV export");
     await propose("docs", "DOC", "Docs site");

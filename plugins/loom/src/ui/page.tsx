@@ -3,7 +3,7 @@ import { experimental_Icon as Icon, useBbNavigate, useRpc, type PluginNavPanelPr
 import type { ControlAction, ProjectView, rpcContract } from "../contract";
 import { isMultiRepoProject } from "../format";
 import type { ProjectMetrics } from "../metrics";
-import { readyToLand } from "../format";
+import { readyToLand, specReviewBlocks } from "../format";
 import { STAGES } from "../next-step";
 import type { WindowDays } from "../states";
 import { AgentsView } from "./agents";
@@ -80,7 +80,7 @@ function Controls({ view, busy, primary, onControl }: { view: ProjectView; busy:
     action === primary ? null : <ConfirmButton key={label} label={label} confirmLabel={confirm} disabled={busy} onConfirm={() => onControl(action, version)} />;
   return (
     <span data-controls className="ml-auto flex flex-wrap items-center gap-2">
-      {overview.state === "draft" && act("Approve", "approve")}
+      {overview.state === "draft" && !specReviewBlocks(view.specReview) && act("Approve", "approve")}
       {overview.state !== "draft" && overview.state !== "archived" && overview.pendingVersion !== null && act(`Approve v${overview.pendingVersion}`, "approve", overview.pendingVersion)}
       {overview.state === "ready" && act("Start", "start")}
       {overview.state === "running" && act("Pause", "pause")}

@@ -135,4 +135,8 @@ export const MIGRATIONS: string[] = [
     thread_id TEXT, started_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
   `ALTER TABLE tickets ADD COLUMN repo TEXT`,
   `CREATE TABLE project_repos (project_id INTEGER NOT NULL, name TEXT NOT NULL, pr_url TEXT, landed_sha TEXT, landed_at INTEGER, PRIMARY KEY (project_id, name))`,
+  `CREATE TABLE spec_reviews (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, version INTEGER NOT NULL, round INTEGER NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('reviewing', 'approved', 'changes_requested', 'failed', 'superseded')),
+    spawn_token TEXT NOT NULL UNIQUE, thread_id TEXT UNIQUE, idle_count INTEGER NOT NULL DEFAULT 0, summary TEXT,
+    findings_json TEXT NOT NULL DEFAULT '[]', reason TEXT, started_at INTEGER NOT NULL, ended_at INTEGER)`,
 ];

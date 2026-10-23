@@ -2,7 +2,7 @@ Run a software project with agents: a planner turns a goal into a validated spec
 
 ## What you get
 
-- A planner skill (`loom-plan`): any thread can propose a project as a TOML spec with tickets, acceptance criteria, checks, a review policy and a merge strategy. The plugin validates it with numbered errors you can act on, and you approve it before anything runs.
+- A planner skill (`loom-plan`): any thread can propose a project as a TOML spec with tickets, acceptance criteria, checks, a review policy and a merge strategy. A separate agent checks it against your request and for work it does not need before you approve it.
 - Start a project from the page: New project opens bb's own new-thread composer, and the planner's questions, its draft and the Approve and Start buttons stay on the page.
 - Review a spec without reading TOML: a dashboard with the tickets in dependency waves, shared files, the checks and the limits. Press "+ note" on any part to send the planner your notes in one message, and compare its versions.
 - Workers that start by themselves: one thread per ready ticket, in its own worktree, only when its dependencies are done and its files do not overlap work in flight. The plugin, not the agent, commits, runs your check commands, and decides whether the work passed.

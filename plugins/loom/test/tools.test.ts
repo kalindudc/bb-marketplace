@@ -1,7 +1,8 @@
 import type { PluginAgentToolResult } from "@get-bb/plugin-sdk";
 import { makePluginAgentConfigurationContext } from "@get-bb/plugin-sdk/testing";
 import { beforeEach, describe, expect, it } from "vitest";
-import { ORDINARY_TOOLS, PLANNER_TOOLS, REVIEWER_TOOLS, SKILLS, WORKER_TOOLS, registerTools } from "../src/tools";
+import { specVerdict } from "../src/spec-review";
+import { ORDINARY_TOOLS, PLANNER_TOOLS, REVIEWER_TOOLS, SKILLS, SPEC_REVIEWER_TOOLS, WORKER_TOOLS, registerTools } from "../src/tools";
 import { readFileSync } from "node:fs";
 import { Clock, FakePort, checkOutHead, makeHost, seedProject, specToml, type Doc, type EngineHarness } from "./helpers";
 
@@ -16,6 +17,12 @@ const text = (result: PluginAgentToolResult) => (typeof result === "string" ? re
 const isError = (result: PluginAgentToolResult) => typeof result !== "string" && result.isError === true;
 
 const propose = (edit?: (doc: Doc) => void, threadId = "thr_plan") => host.harness.callAgentTool("loom_propose", { spec_toml: specToml(edit) }, { threadId, projectId: "proj_1" });
+
+/** bb starts a spec reviewer as thr_spec_<n>; without this stub the fake SDK refuses the spawn and the review fails. */
+const stubSpawn = () => {
+  let n = 0;
+  host.harness.sdk.stub("threads.spawn", async () => ({ id: `thr_spec_${++n}`, environmentId: `env_spec_${n}` }));
+};
 
 const configure = (threadId: string, over: Parameters<typeof makePluginAgentConfigurationContext>[0] = {}) =>
   host.harness.resolveAgentConfiguration(makePluginAgentConfigurationContext({ ...over, thread: { id: threadId, ...over.thread } }));
@@ -48,6 +55,7 @@ describe("agent configuration", () => {
     expect(config.instructions).toContain('"csv"');
     expect(config.instructions).not.toContain("somebody-else");
     expect(config.instructions).toContain("you never start, pause or approve the project");
+    expect(config.instructions).toContain("only after Loom's spec review of it passes");
   });
 
   it("gives a worker row exactly the worker tools and the usage skill, and a reviewer row exactly the reviewer tools, the usage skill and the one-verdict instruction", async () => {
@@ -66,22 +74,51 @@ describe("agent configuration", () => {
     expect(reviewer.instructions).toBe("You are a Loom reviewer for a ticket, round 0; change nothing; follow the brief and call one verdict tool.");
     expect(host.store.threadBySpawnToken("tok_1")?.thread_id).toBe("thr_reviewer");
   });
+
+  it("gives a spec reviewer bound by its spawn token exactly its two tools, the usage skill and the one-verdict instruction", async () => {
+    await propose();
+    const project = host.store.projectBySlug("csv")!;
+    host.store.addSpecReview({ project_id: project.id, version: 1, round: 1, spawn_token: "tok_spec" });
+    const config = await configure("thr_spec", { pluginMetadata: { spawnToken: "tok_spec", role: "spec-review" } });
+    expect(config.tools.map((tool) => tool.name)).toEqual([...SPEC_REVIEWER_TOOLS]);
+    expect(config.skills).toEqual([SKILLS.usage]);
+    expect(config.instructions).toBe("You are Loom's spec reviewer for spec v1; change nothing; follow the brief and call one verdict tool.");
+    expect(host.store.specReviewBySpawnToken("tok_spec")?.thread_id).toBe("thr_spec");
+    const forged = await configure("thr_forged", { pluginMetadata: { spawnToken: "forged", role: "spec-review" } });
+    expect(forged.tools.map((tool) => tool.name)).toEqual([...ORDINARY_TOOLS]);
+  });
 });
 
 describe("loom_propose", () => {
-  it("creates a draft from an ordinary thread, makes it the planner and moves it into the new section", async () => {
+  it("creates a draft from an ordinary thread, makes it the planner, moves it into the new section and starts its spec review", async () => {
+    stubSpawn();
     const result = await propose();
     expect(isError(result)).toBe(false);
     const output = text(result);
     expect(output).toContain("Draft ready: `csv` · spec v1.");
-    expect(output).toContain("bb loom spec csv");
-    expect(output).toContain("bb loom approve csv");
-    expect(output).toContain("bb loom start csv");
+    expect(output).toContain("Spec review: a separate reviewer now checks v1 against the human's request and for work the goal does not need (round 1 of 3). Do not hand over yet");
+    expect(output).not.toContain("bb loom approve csv");
+    expect(host.harness.sdk.callsTo("threads.spawn")).toHaveLength(1);
 
     expect(host.store.projectBySlug("csv")).toMatchObject({ state: "draft", host_id: "host_env", bb_project_id: "proj_1", planner_thread_id: "thr_plan", section_id: "sec_1" });
     expect(host.harness.sdk.callsTo("threadSections.create")).toEqual([[{ name: "Loom · CSV export (csv)" }]]);
     expect(host.harness.sdk.callsTo("threads.update")).toEqual([[{ threadId: "thr_plan", sectionId: "sec_1" }]]);
     expect(host.harness.sdk.callsTo("threads.updatePluginMetadata")).toEqual([[{ threadId: "thr_plan", set: { project: "csv", role: "planner" }, pluginId: "loom" }]]);
+  });
+
+  it("hands over once the spec review passed, and says when the review could not start", async () => {
+    const failed = text(await propose());
+    expect(failed).toContain("Spec review: it did not finish: bb could not start the reviewer:");
+    expect(failed).not.toContain("bb loom approve csv");
+
+    stubSpawn();
+    await propose();
+    await specVerdict(host.engine.ctx, "thr_spec_1", [], "Fits the request.");
+    const passed = text(await propose());
+    expect(passed).toContain("Spec review: v1 passed.");
+    expect(passed).toContain("bb loom spec csv");
+    expect(passed).toContain("bb loom approve csv");
+    expect(passed).toContain("bb loom start csv");
   });
 
   it("uses the server's primary host when the thread has no environment", async () => {

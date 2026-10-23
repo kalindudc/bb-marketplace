@@ -675,3 +675,36 @@ describe("runs", () => {
     expect(seen).toEqual([project.id, project.id]);
   });
 });
+
+describe("spec reviews", () => {
+  it("adds a reviewing row, binds its thread, ends it once, and appends both events", () => {
+    const project = store.createProject(newProject(), "human");
+    const row = store.addSpecReview({ project_id: project.id, version: 2, round: 1, spawn_token: "tok_s1" });
+    expect(row).toMatchObject({ project_id: project.id, version: 2, round: 1, state: "reviewing", thread_id: null, idle_count: 0, findings_json: "[]", started_at: clock.t, ended_at: null });
+    expect(store.specReviewBySpawnToken("tok_s1")?.id).toBe(row.id);
+    expect(store.openSpecReviews().map((review) => review.id)).toEqual([row.id]);
+
+    store.updateSpecReview(row.id, { thread_id: "thr_s1", idle_count: 1 });
+    expect(store.specReviewByThreadId("thr_s1")).toMatchObject({ id: row.id, idle_count: 1 });
+
+    clock.advance(10);
+    expect(store.endSpecReview(row.id, "changes_requested", { summary: "Too big", findings: [{ title: "Drop the settings page", detail: "Nothing asks for it." }] })).toBe(true);
+    expect(store.endSpecReview(row.id, "approved", { summary: "late" })).toBe(false);
+    expect(store.specReview(row.id)).toMatchObject({ state: "changes_requested", summary: "Too big", ended_at: clock.t });
+    expect(JSON.parse(store.specReview(row.id)!.findings_json)).toHaveLength(1);
+    expect(store.openSpecReviews()).toEqual([]);
+    expect(store.specReviews(project.id)).toHaveLength(1);
+
+    const events = store.events(project.id).filter((event) => event.kind.startsWith("spec.review."));
+    expect(events.map((event) => [event.kind, event.actor, JSON.parse(event.data_json)])).toEqual([
+      ["spec.review.started", "loom", { version: 2, round: 1 }],
+      ["spec.review.ended", "loom", { version: 2, round: 1, state: "changes_requested", findings: 1 }],
+    ]);
+  });
+
+  it("refuses an unknown state", () => {
+    const project = store.createProject(newProject(), "human");
+    const row = store.addSpecReview({ project_id: project.id, version: 1, round: 1, spawn_token: "tok_s1" });
+    expect(() => db.prepare("UPDATE spec_reviews SET state = 'pending' WHERE id = ?").run(row.id)).toThrow(/CHECK/);
+  });
+});

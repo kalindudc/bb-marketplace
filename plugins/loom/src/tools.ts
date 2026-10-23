@@ -8,9 +8,11 @@ import { formatTicket } from "./cli";
 import { StoreError, type ThreadRow, type TicketRow } from "./db/store";
 import type { Engine } from "./engine";
 import { LoomError, type ProposeResult, type Projects } from "./projects";
+import { specReviewBlocks } from "./format";
 import { approve, requestChanges } from "./review";
 import { ticketPatchSchema, ticketSpecSchema } from "./spec";
-import { TICKET_STATES } from "./states";
+import { ensureSpecReview, specReviewerOf, specVerdict, type SpecReviewStatus } from "./spec-review";
+import { SPEC_REVIEW_ROUNDS, TICKET_STATES } from "./states";
 import { addTickets, boardText, editTicket } from "./triage";
 import { blockTicket, requeueTicket } from "./workers";
 
@@ -18,6 +20,7 @@ export const PLANNER_TOOLS = ["loom_propose", "loom_board", "loom_ticket", "loom
 export const WORKER_TOOLS = ["loom_note", "loom_submit", "loom_block"] as const;
 export const REVIEWER_TOOLS = ["loom_note", "loom_approve", "loom_request_changes"] as const;
 export const ORDINARY_TOOLS = ["loom_propose"] as const;
+export const SPEC_REVIEWER_TOOLS = ["loom_spec_approve", "loom_spec_request_changes"] as const;
 export const SKILLS = { plan: "loom-plan", usage: "loom" } as const;
 
 const MAX_OUTPUT = 12_000;
@@ -28,6 +31,12 @@ const findingSchema = z.object({
   detail: z.string().min(1).max(2000).describe("What is wrong and how to fix it."),
   file: z.string().min(1).max(500).optional(),
   line: z.number().int().min(1).optional(),
+});
+
+const specFindingSchema = z.object({
+  path: z.string().min(1).max(200).optional().describe("The part of the spec, such as ticket[csv-export] or ticket[csv-export].acceptance[1]: tickets by ref, list items counted from 0."),
+  title: z.string().min(1).max(200),
+  detail: z.string().min(1).max(2000).describe("What is wrong, and the smaller or right alternative."),
 });
 
 const clip = (text: string, max: number) => (text.length <= max ? text : `${text.slice(0, Math.max(0, max - 1))}…`);
@@ -41,7 +50,25 @@ async function run(fn: () => Promise<string> | string): Promise<PluginAgentToolR
   }
 }
 
-function proposeReport(result: ProposeResult): string {
+/** What the planner reads about the draft's spec review; empty when there is none to wait for. */
+function reviewLines(version: number, review: SpecReviewStatus | null): string[] {
+  switch (review?.kind) {
+    case "reviewing":
+      return [`Spec review: a separate reviewer now checks v${version} against the human's request and for work the goal does not need (round ${review.round} of ${SPEC_REVIEW_ROUNDS}). Do not hand over yet: end your turn; Loom sends the verdict to this thread.`];
+    case "changes":
+      return [`Spec review: v${version} has ${review.findings.length === 1 ? "1 open finding" : `${review.findings.length} open findings`} from round ${review.round}. Revise the spec for them and call loom_propose again; do not hand over yet.`];
+    case "failed":
+      return [`Spec review: it did not finish: ${review.reason}. Call loom_propose again with the same spec to retry; do not hand over until a review passes.`];
+    case "approved":
+      return [`Spec review: v${version} passed.`];
+    case "limit":
+      return [`Spec review: Loom stopped reviewing after ${SPEC_REVIEW_ROUNDS} rounds; tell the human which findings you left open.`];
+    default:
+      return [];
+  }
+}
+
+function proposeReport(result: ProposeResult, review: SpecReviewStatus | null): string {
   const { slug, version } = result;
   const lines: string[] = [];
   if (result.change === "created") lines.push(`Draft ready: \`${slug}\` · spec v${version}.`);
@@ -52,7 +79,8 @@ function proposeReport(result: ProposeResult): string {
   if (result.pending) {
     lines.push(`Needs you (human): read it with \`bb loom spec ${slug} --version ${version}\`, then apply it with \`bb loom approve ${slug} --version ${version}\`.`);
   } else if (result.state === "draft") {
-    lines.push(`Needs you (human): read the spec with \`bb loom spec ${slug}\`, approve it with \`bb loom approve ${slug}\`, then start the project with \`bb loom start ${slug}\`. You never approve, start or pause a project.`);
+    lines.push(...reviewLines(version, review));
+    if (!specReviewBlocks(review)) lines.push(`Needs you (human): read the spec with \`bb loom spec ${slug}\`, approve it with \`bb loom approve ${slug}\`, then start the project with \`bb loom start ${slug}\`. You never approve, start or pause a project.`);
   }
   return lines.join("\n");
 }
@@ -92,7 +120,8 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
     execute: ({ spec_toml }, tool) =>
       run(async () => {
         const hostId = await projects.hostOf(tool.threadId);
-        return proposeReport(await projects.propose({ toml: spec_toml, threadId: tool.threadId, bbProjectId: tool.projectId, hostId }));
+        const result = await projects.propose({ toml: spec_toml, threadId: tool.threadId, bbProjectId: tool.projectId, hostId });
+        return proposeReport(result, result.state === "draft" ? await ensureSpecReview(ctx, result.slug) : null);
       }),
   });
 
@@ -261,14 +290,38 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
     execute: ({ summary, findings }, tool) => run(() => requestChanges(ctx, tool.threadId, summary, findings)),
   });
 
+  // ---- the spec reviewer's tools
+
+  bb.agents.registerTool({
+    name: "loom_spec_approve",
+    description: "Approve the draft spec you review: it builds what the human asked for, and no more. Give one verdict per review, then end your turn.",
+    presentation: { label: { pending: "Approving the spec", completed: "Approved the spec" } },
+    parameters: z.object({ summary: z.string().min(1).max(4000).describe("Why the spec builds what the human asked for, and no more.") }),
+    execute: ({ summary }, tool) => run(() => specVerdict(ctx, tool.threadId, [], summary)),
+  });
+
+  bb.agents.registerTool({
+    name: "loom_spec_request_changes",
+    description:
+      "Send the draft spec back to its planner with findings: each has a title, a detail and, where you can, the spec path it is about. Every finding stops the handover. Give one verdict per review, then end your turn.",
+    presentation: { label: { pending: "Requesting spec changes", completed: "Requested spec changes" } },
+    parameters: z.object({ summary: z.string().min(1).max(4000).describe("What is wrong, in a few sentences."), findings: z.array(specFindingSchema).min(1).max(20) }),
+    execute: ({ summary, findings }, tool) => run(() => specVerdict(ctx, tool.threadId, findings, summary)),
+  });
+
   bb.agents.configure((context) => {
     if (context.origin.kind === "fork" && context.origin.pluginId === "side-chat") return { tools: [], skills: [] };
     let row;
+    let review = null;
     try {
       row = projects.roleOf(context.thread.id, context.pluginMetadata);
+      if (row === null) review = specReviewerOf(store, context.thread.id, context.pluginMetadata);
     } catch (error) {
       bb.log.warn(`agent configuration: ${errText(error)}`);
       return { tools: [], skills: [] };
+    }
+    if (review !== null) {
+      return { tools: [...SPEC_REVIEWER_TOOLS], skills: [SKILLS.usage], instructions: `You are Loom's spec reviewer for spec v${review.version}; change nothing; follow the brief and call one verdict tool.` };
     }
     if (row === null) return { tools: [...ORDINARY_TOOLS], skills: [SKILLS.plan, SKILLS.usage] };
     if (row.role === "planner") {
@@ -276,7 +329,7 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
       return {
         tools: [...PLANNER_TOOLS],
         skills: [SKILLS.plan, SKILLS.usage],
-        instructions: `This is the planning thread for Loom project ${JSON.stringify(slug)}. Revise its spec with loom_propose, keeping that slug; you never start, pause or approve the project, because those are the human's. After approval, change the board only through the board tools, and answer a triage round only through the tools.`,
+        instructions: `This is the planning thread for Loom project ${JSON.stringify(slug)}. Revise its spec with loom_propose, keeping that slug; you never start, pause or approve the project, because those are the human's. After approval, change the board only through the board tools, and answer a triage round only through the tools. Hand a draft over to the human only after Loom's spec review of it passes, or after Loom says it stopped reviewing.`,
       };
     }
     if (row.role === "worker") {

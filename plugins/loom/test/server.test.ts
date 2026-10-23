@@ -30,6 +30,7 @@ async function loadEngine(over: { tickMs?: number } = {}) {
   const threads = new Map<string, SdkThread>();
   const fakeHost = new FakeHost();
   let n = 0;
+  let specs = 0;
   const base = sdkStubs(state);
   const host = createFakePluginHost({
     pluginId: "loom",
@@ -44,9 +45,11 @@ async function loadEngine(over: { tickMs?: number } = {}) {
         get: async ({ threadId }) => threads.get(threadId) ?? (threadId === "thr_plan" ? { id: threadId, environmentId: state.environmentId, status: "idle", archivedAt: null, deletedAt: null } : Promise.reject(new Error("404 not found"))),
         list: async () => [...threads.values()],
         getPluginMetadata: async ({ threadId }) => threads.get(threadId)?.metadata ?? {},
+        // A spec reviewer is thr_spec<n>, so the workers keep their own numbering.
         spawn: async (args) => {
-          n += 1;
-          const thread = { id: `thr_w${n}`, status: "active", archivedAt: null, deletedAt: null, environmentId: `env_w${n}`, metadata: (args.pluginMetadata ?? {}) as Record<string, unknown> };
+          const spec = (args.pluginMetadata as Record<string, unknown> | undefined)?.role === "spec-review";
+          const id = spec ? `thr_spec${++specs}` : `thr_w${++n}`;
+          const thread = { id, status: "active", archivedAt: null, deletedAt: null, environmentId: `env_${id.slice(4)}`, metadata: (args.pluginMetadata ?? {}) as Record<string, unknown> };
           threads.set(thread.id, thread);
           return thread;
         },
@@ -67,15 +70,29 @@ const until = async (check: () => boolean, ms = 2000) => {
   expect(check()).toBe(true);
 };
 
-const callPropose = (harness: Awaited<ReturnType<typeof load>>["harness"], threadId = "thr_plan") =>
-  harness.callAgentTool("loom_propose", { spec_toml: specToml() }, { threadId, projectId: "proj_1" });
+type Harness = Awaited<ReturnType<typeof load>>["harness"];
+
+const callPropose = (harness: Harness, threadId = "thr_plan") => harness.callAgentTool("loom_propose", { spec_toml: specToml() }, { threadId, projectId: "proj_1" });
+
+/** Proposes, and has the spec reviewer bb started pass the draft, so the human can approve it. */
+const proposeReviewed = async (harness: Harness) => {
+  await callPropose(harness);
+  await harness.callAgentTool("loom_spec_approve", { summary: "Fits the request." }, { threadId: "thr_spec1", projectId: "proj_1" });
+};
+const workerSpawns = (harness: Harness) => harness.sdk.callsTo("threads.spawn").filter(([args]) => (args as { pluginMetadata?: Record<string, string> }).pluginMetadata?.role === "worker");
+const sendsTo = (harness: Harness, threadId: string) => harness.sdk.callsTo("threads.send").filter(([args]) => (args as { threadId: string }).threadId === threadId);
 
 describe("Loom plugin", () => {
-  it("proposes by tool call, then approves and starts from the CLI", async () => {
+  it("proposes by tool call, waits for the spec review, then approves and starts from the CLI", async () => {
     const { harness } = await loadEngine();
     const proposed = await callPropose(harness);
     expect(typeof proposed === "string" ? proposed : "").toContain("Draft ready: `csv`");
+    expect(harness.sdk.callsTo("threads.spawn")[0]![0]).toMatchObject({ title: "CSV · spec review v1", pluginMetadata: { project: "csv", role: "spec-review", version: "1" } });
+    expect((await harness.behavior.runCli(["approve", "csv"])).exitCode).toBe(1);
 
+    const verdict = await harness.callAgentTool("loom_spec_approve", { summary: "Fits the request." }, { threadId: "thr_spec1", projectId: "proj_1" });
+    expect(verdict).toBe("Your verdict on spec v1 is recorded and goes to the planner. End your turn.");
+    expect(sendsTo(harness, "thr_plan")).toHaveLength(1);
     const approve = await harness.behavior.runCli(["approve", "csv"]);
     expect(approve).toMatchObject({ exitCode: 0 });
     expect(approve.stdout).toContain("CSV-1, CSV-2");
@@ -110,7 +127,7 @@ describe("Loom plugin", () => {
     await callPropose(first.harness);
     const reloaded = await first.harness.reload(createLoomPlugin());
     expect(await reloaded.harness.behavior.callRpc("projects", null)).toMatchObject([{ slug: "csv" }]);
-    await reloaded.harness.behavior.callRpc("control", { slug: "csv", action: "approve", confirm: true });
+    await reloaded.harness.behavior.callRpc("control", { slug: "csv", action: "archive", confirm: true });
     await until(() => reloaded.harness.realtimeSignals.some((signal) => signal.channel === "loom:changed"));
   });
 
@@ -154,7 +171,7 @@ describe("Loom plugin", () => {
 
   it("runs a project end to end through the sdk: the service spawns a worker, two idles end it and requeue its ticket", async () => {
     const { bb, harness, threads, fakeHost } = await loadEngine({ tickMs: 20 });
-    await harness.callAgentTool("loom_propose", { spec_toml: specToml() }, { threadId: "thr_plan", projectId: "proj_1" });
+    await proposeReviewed(harness);
     await harness.behavior.runCli(["approve", "csv"]);
     const started = await harness.behavior.runCli(["start", "csv"]);
     expect(started).toMatchObject({ exitCode: 0 });
@@ -163,8 +180,8 @@ describe("Loom plugin", () => {
     expect(harness.sdk.callsTo("projects.get")).toHaveLength(1);
 
     const service = harness.runService("engine");
-    await until(() => harness.sdk.callsTo("threads.spawn").length === 1);
-    const spawn = harness.sdk.callsTo("threads.spawn")[0]![0] as { title: string; sectionId: string; pluginMetadata: Record<string, string>; environment: { workspace: { baseBranch: { name: string } } } };
+    await until(() => workerSpawns(harness).length === 1);
+    const spawn = workerSpawns(harness)[0]![0] as { title: string; sectionId: string; pluginMetadata: Record<string, string>; environment: { workspace: { baseBranch: { name: string } } } };
     expect(spawn).toMatchObject({ title: "CSV-1 · Order rows", sectionId: "sec_1", pluginMetadata: { project: "csv", role: "worker", ticket: "CSV-1" } });
     expect(spawn.environment.workspace.baseBranch.name).toBe("loom/csv");
     const row = () => bb.storage.database().prepare("SELECT state, end_reason FROM threads WHERE thread_id = 'thr_w1'").get();
@@ -174,7 +191,7 @@ describe("Loom plugin", () => {
     fakeHost.worktree("/wt/env_w1").dirty = true;
     const idle = () => harness.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: "thr_w1" }), lastAssistantText: null });
     await idle();
-    await until(() => harness.sdk.callsTo("threads.send").length === 1);
+    await until(() => sendsTo(harness, "thr_w1").length === 1);
     await idle();
     await until(() => row() !== undefined && (row() as { state: string }).state === "ended");
     expect(row()).toEqual({ state: "ended", end_reason: "abandoned" });
@@ -190,11 +207,11 @@ describe("Loom plugin", () => {
 
   it("routes archived, failed-turn and rate-limit events to the engine, and stops on dispose", async () => {
     const { bb, harness, threads } = await loadEngine({ tickMs: 20 });
-    await harness.callAgentTool("loom_propose", { spec_toml: specToml() }, { threadId: "thr_plan", projectId: "proj_1" });
+    await proposeReviewed(harness);
     await harness.behavior.runCli(["approve", "csv"]);
     await harness.behavior.runCli(["start", "csv"]);
     const service = harness.runService("engine");
-    await until(() => harness.sdk.callsTo("threads.spawn").length === 1);
+    await until(() => workerSpawns(harness).length === 1);
     service.controller.abort();
     await service.done;
 
@@ -213,11 +230,11 @@ describe("Loom plugin", () => {
 
   it("reconciles at service start: a worker row whose thread vanished while the plugin was down is ended", async () => {
     const first = await loadEngine({ tickMs: 20 });
-    await first.harness.callAgentTool("loom_propose", { spec_toml: specToml() }, { threadId: "thr_plan", projectId: "proj_1" });
+    await proposeReviewed(first.harness);
     await first.harness.behavior.runCli(["approve", "csv"]);
     await first.harness.behavior.runCli(["start", "csv"]);
     const running = first.harness.runService("engine");
-    await until(() => first.harness.sdk.callsTo("threads.spawn").length === 1);
+    await until(() => workerSpawns(first.harness).length === 1);
     running.controller.abort();
     await running.done;
 

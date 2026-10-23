@@ -2,7 +2,7 @@
 // and post change appends an event in the same transaction.
 import type Database from "better-sqlite3";
 import type { Finding } from "../review";
-import { canMoveProject, canMoveTicket, type AuthorKind, type PostKind, type ProjectState, type Role, type ReviewVerdict, type ThreadState, type TicketState } from "../states";
+import { LOOM_ACTOR, canMoveProject, canMoveTicket, type AuthorKind, type PostKind, type ProjectState, type Role, type ReviewVerdict, type ThreadState, type TicketState } from "../states";
 
 export interface ProjectRow {
   id: number;
@@ -188,6 +188,28 @@ export interface RecordRow {
   started_at: number | null;
   created_at: number;
   updated_at: number;
+}
+
+export type SpecReviewState = "reviewing" | "approved" | "changes_requested" | "failed" | "superseded";
+
+/** One automatic review of one draft spec version; a version reviewed again after a failure has several rows. */
+export interface SpecReviewRow {
+  id: number;
+  project_id: number;
+  version: number;
+  /** The changes-requested reviews of the project before this one, plus one. */
+  round: number;
+  state: SpecReviewState;
+  spawn_token: string;
+  /** The reviewer's thread, once bb started it. */
+  thread_id: string | null;
+  idle_count: number;
+  summary: string | null;
+  findings_json: string;
+  /** Why a failed or superseded review ended. */
+  reason: string | null;
+  started_at: number;
+  ended_at: number | null;
 }
 
 export class StoreError extends Error {}
@@ -591,6 +613,58 @@ export class Store {
     this.patch("records", id, patch);
   }
 
+  // ---- spec reviews
+
+  addSpecReview(row: Pick<SpecReviewRow, "project_id" | "version" | "round" | "spawn_token">): SpecReviewRow {
+    return this.tx(() => {
+      const result = this.db
+        .prepare("INSERT INTO spec_reviews (project_id, version, round, state, spawn_token, started_at) VALUES (?, ?, ?, 'reviewing', ?, ?)")
+        .run(row.project_id, row.version, row.round, row.spawn_token, this.now());
+      this.event(row.project_id, null, "spec.review.started", LOOM_ACTOR, { version: row.version, round: row.round });
+      return this.db.prepare("SELECT * FROM spec_reviews WHERE id = ?").get(Number(result.lastInsertRowid)) as SpecReviewRow;
+    });
+  }
+
+  specReviews(projectId: number): SpecReviewRow[] {
+    return this.db.prepare("SELECT * FROM spec_reviews WHERE project_id = ? ORDER BY id").all(projectId) as SpecReviewRow[];
+  }
+
+  /** Reviews still running, in every project, oldest first. */
+  openSpecReviews(): SpecReviewRow[] {
+    return this.db.prepare("SELECT * FROM spec_reviews WHERE state = 'reviewing' ORDER BY id").all() as SpecReviewRow[];
+  }
+
+  specReview(id: number): SpecReviewRow | null {
+    return (this.db.prepare("SELECT * FROM spec_reviews WHERE id = ?").get(id) as SpecReviewRow | undefined) ?? null;
+  }
+
+  specReviewByThreadId(threadId: string): SpecReviewRow | null {
+    return (this.db.prepare("SELECT * FROM spec_reviews WHERE thread_id = ?").get(threadId) as SpecReviewRow | undefined) ?? null;
+  }
+
+  specReviewBySpawnToken(token: string): SpecReviewRow | null {
+    return (this.db.prepare("SELECT * FROM spec_reviews WHERE spawn_token = ?").get(token) as SpecReviewRow | undefined) ?? null;
+  }
+
+  updateSpecReview(id: number, patch: Partial<Pick<SpecReviewRow, "thread_id" | "idle_count">>): void {
+    // The table has no updated_at column.
+    this.patch("spec_reviews", id, patch, false);
+  }
+
+  /** Ends a review that is still running, with its spec.review.ended event; false when it had already ended. */
+  endSpecReview(id: number, state: Exclude<SpecReviewState, "reviewing">, data: { summary?: string; findings?: readonly unknown[]; reason?: string } = {}): boolean {
+    return this.tx(() => {
+      const findings = data.findings ?? [];
+      const changed = this.db
+        .prepare("UPDATE spec_reviews SET state = ?, summary = ?, findings_json = ?, reason = ?, ended_at = ? WHERE id = ? AND state = 'reviewing'")
+        .run(state, data.summary ?? null, JSON.stringify(findings), data.reason ?? null, this.now(), id).changes;
+      if (changed === 0) return false;
+      const row = this.specReview(id)!;
+      this.event(row.project_id, null, "spec.review.ended", LOOM_ACTOR, { version: row.version, round: row.round, state, findings: findings.length, ...(data.reason === undefined ? {} : { reason: data.reason }) });
+      return true;
+    });
+  }
+
   // ----
 
   private requireProject(id: number): ProjectRow {
@@ -605,7 +679,7 @@ export class Store {
     return ticket;
   }
 
-  private patch(table: "projects" | "tickets" | "threads" | "records", id: number, patch: Record<string, unknown>, touch = true): void {
+  private patch(table: "projects" | "tickets" | "threads" | "records" | "spec_reviews", id: number, patch: Record<string, unknown>, touch = true): void {
     const entries = Object.entries(patch).filter(([, value]) => value !== undefined);
     if (touch) entries.push(["updated_at", this.now()]);
     if (entries.length === 0) return;

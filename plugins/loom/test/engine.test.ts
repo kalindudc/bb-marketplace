@@ -5,6 +5,7 @@ import { settleChecks, submit } from "../src/checks";
 import { holdMerge, settleMerges } from "../src/merge";
 import { SpawnRefusedError, type SpawnArgs } from "../src/ports";
 import { approve, settleReviews } from "../src/review";
+import { ensureSpecReview, specVerdict } from "../src/spec-review";
 import { PAUSE_NOW_REASON } from "../src/states";
 import { editTicket } from "../src/triage";
 import { checkOutHead, makeEngine, reachApproved, reachReview, seedProject, seedRepoProject, specToml, ticketOf, withDocsTicket, workerRows, type Doc } from "./helpers";
@@ -527,6 +528,59 @@ describe("events", () => {
     expect(h.store.threadByThreadId("thr_plan")?.state).toBe("active");
     await h.engine.onThreadGone("thr_plan", "deleted");
     expect(h.store.threadByThreadId("thr_plan")).toMatchObject({ state: "ended", end_reason: "deleted" });
+  });
+});
+
+describe("spec review", () => {
+  const draft = async () => {
+    await h.projects.propose({ toml: specToml(), threadId: "thr_plan", bbProjectId: "proj_1", hostId: "host_1" });
+    await ensureSpecReview(h.ctx, "csv");
+  };
+  const review = () => h.store.specReviews(project().id)[0]!;
+
+  it("refuses to approve a draft in review, with the override in the hint, and approves with skipReview, superseding the review", async () => {
+    await draft();
+    const refused = await h.engine.approve("csv", "human").catch((error: unknown) => error as { message: string; hint?: string });
+    expect(refused).toMatchObject({ message: "Draft v1 of csv is still in its spec review (round 1 of 3)." });
+    expect((refused as { hint?: string }).hint).toContain("bb loom approve csv --skip-review");
+    expect(project().state).toBe("draft");
+
+    const approved = await h.engine.approve("csv", "human", undefined, { skipReview: true });
+    expect(approved).toMatchObject({ state: "ready", applied: "draft" });
+    expect(review().state).toBe("superseded");
+    expect(h.bb.callsTo("archive")).toContainEqual(["thr_w1"]);
+  });
+
+  it("approves a draft once its review passed, and ends a live review when the project is archived", async () => {
+    await draft();
+    await specVerdict(h.ctx, "thr_w1", [], "Fits the request.");
+    expect(await h.engine.approve("csv", "human")).toMatchObject({ state: "ready" });
+
+    await h.projects.propose({ toml: specToml((doc) => {
+        doc.project.slug = "csv-two";
+        doc.project.key = "CSVB";
+      }), threadId: "thr_plan2", bbProjectId: "proj_1", hostId: "host_1" });
+    await ensureSpecReview(h.ctx, "csv-two");
+    const other = h.store.projectBySlug("csv-two")!;
+    await h.engine.archive("csv-two", "human");
+    expect(h.store.specReviews(other.id)[0]!.state).toBe("superseded");
+  });
+
+  it("sends a spec reviewer's idle, archive and failed turn to the spec review, and reconcile fails one that never started", async () => {
+    await draft();
+    await h.engine.onThreadIdle("thr_w1");
+    expect(h.bb.sent("thr_w1")).toEqual([expect.stringContaining("Your turn ended without a verdict on spec v1")]);
+    await h.engine.onTurnFailed(makeTurnFailedEvent({ threadId: "thr_w1" }));
+    expect(review()).toMatchObject({ state: "failed", reason: "the reviewer ended its turn twice without a verdict" });
+
+    await ensureSpecReview(h.ctx, "csv");
+    const second = h.store.specReviews(project().id)[1]!;
+    await h.engine.onThreadGone(second.thread_id!, "archived");
+    expect(h.store.specReview(second.id)).toMatchObject({ state: "failed", reason: "the reviewer's thread was archived or deleted" });
+
+    const lost = h.store.addSpecReview({ project_id: project().id, version: 1, round: 1, spawn_token: "tok_lost" });
+    await h.engine.reconcile();
+    expect(h.store.specReview(lost.id)).toMatchObject({ state: "failed", reason: "Loom restarted before the reviewer started" });
   });
 });
 

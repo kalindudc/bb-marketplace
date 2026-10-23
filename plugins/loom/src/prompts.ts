@@ -1,13 +1,14 @@
 // The texts agents read. Plain prose; every message the plugin sends starts with "[loom]".
 import type { NewThreadRequest } from "@get-bb/plugin-sdk";
 import type { CheckRun } from "./checks";
-import type { PostRow, ProjectRow, ReviewRow, TicketRow } from "./db/store";
-import { its } from "./format";
+import type { PostRow, ProjectRow, ReviewRow, SpecReviewRow, TicketRow } from "./db/store";
+import { its, plural } from "./format";
 import { isMultiRepo, repoSettings, type RepoSettings } from "./repos";
 import type { Finding } from "./review";
 import type { Spec } from "./spec";
 import type { SpecNote } from "./spec-paths";
-import type { MergeChoice, TicketState } from "./states";
+import type { SpecFinding } from "./spec-review";
+import { SPEC_REVIEW_ROUNDS, type MergeChoice, type TicketState } from "./states";
 
 const minute = (at: number) => `${new Date(at).toISOString().slice(0, 16)}Z`;
 
@@ -476,4 +477,84 @@ export function recordPrompt(project: ProjectRow): string {
     "## Follow-ups (work left, known gaps, risks), ## Files (the main files as backticked repo-relative paths named in the record).",
     "Keep exact names, numbers, commit hashes and links. Do not run tools, change files or ask questions: your reply is passed to a command exactly as written.",
   ].join("\n");
+}
+
+// ---------------------------------------------------------------- spec review
+
+/** What the spec reviewer judges a draft against. Each line names what counts as a finding. */
+export const SPEC_REVIEW_RUBRIC: readonly string[] = [
+  "Fit: every ticket and acceptance criterion serves what the human asked for. Work the human ruled out, or never asked for and the goal does not need, is a finding.",
+  "Size: the fewest tickets that deliver the goal. A ticket that only prepares for a later one, or that could join another and still be one reviewable change, is a finding.",
+  "No speculation: configuration, flags, settings, abstraction layers, plugin points or generality that nothing in the goal uses now are findings, and so is work for possible future needs.",
+  "Reuse: read the code the tickets touch. A ticket that rebuilds what the repository already has, such as a helper, component, command or test fixture, is a finding; name what to reuse.",
+  "Completeness: a part of the goal that no ticket delivers, or an acceptance criterion no one could test, is a finding.",
+  "Checks and scope: a check command that does not exist in the repository, a scope far wider than the ticket's work, or a depends_on where no order is needed, is a finding.",
+];
+
+const SPEC_LIMIT = 60_000;
+
+/** The findings as a numbered list: the spec path and title, then the detail indented. */
+export function specFindingsList(findings: readonly SpecFinding[]): string {
+  return findings
+    .map((finding, index) => `${index + 1}. ${finding.path === undefined ? "" : `${finding.path}: `}${finding.title}\n${finding.detail.split("\n").map((line) => `   ${line}`).join("\n")}`)
+    .join("\n");
+}
+
+export function specReviewerBrief(a: { project: ProjectRow; spec: Spec; toml: string; version: number; round: number; earlier: readonly SpecReviewRow[] }): string {
+  const { project, spec, toml, version, round } = a;
+  const earlier = a.earlier.filter((row) => row.state === "approved" || row.state === "changes_requested");
+  const lines = [
+    `You are Loom's spec reviewer for version ${version} of the project ${JSON.stringify(project.name)} (${project.slug}), round ${round} of ${SPEC_REVIEW_ROUNDS}. A planner agent wrote this spec from a conversation with the human. Before the human is asked to approve it, you check that it builds what the human asked for, and no more. You judge the spec; you change nothing.`,
+    "",
+    "## What the human asked for",
+    `Read the planning conversation first: \`bb thread log ${project.planner_thread_id} --format minimal --all\`. The User messages are the human's request and answers; messages that start with [loom] come from Loom, not the human. The human's words outrank the spec's goal, which is the planner's summary of them.`,
+    "The human's answers to the planner's Ask User Question rounds may be missing from that log. The goal and non-goals below record them, so treat those as the human's words unless the log contradicts them.",
+    "",
+    `Goal: ${spec.project.goal}`,
+    ...(spec.project.non_goals.length === 0 ? [] : ["Non-goals:", bullets(spec.project.non_goals)]),
+    "",
+    "## Rubric",
+    bullets(SPEC_REVIEW_RUBRIC),
+    "",
+    "## The spec",
+    clip(toml, SPEC_LIMIT),
+    ...(toml.length > SPEC_LIMIT ? ["", `[The spec was clipped at ${SPEC_LIMIT} characters. Read the rest with \`bb loom spec ${project.slug} --version ${version}\`.]`] : []),
+  ];
+  if (earlier.length > 0) {
+    lines.push("", "## Earlier rounds", "Do not raise again what the planner fixed, or answered in the conversation with a reason you accept.");
+    for (const row of earlier) {
+      const found = JSON.parse(row.findings_json) as SpecFinding[];
+      lines.push(`Round ${row.round} · v${row.version} · ${row.state === "approved" ? "approved" : "changes requested"}: ${row.summary ?? ""}`);
+      if (found.length > 0) lines.push(specFindingsList(found));
+    }
+  }
+  lines.push(
+    "",
+    "## Rules",
+    "- This worktree is a checkout of the base branch. Read the code the tickets touch; `bb project list --json` gives the checkouts of the project's other repos. Run anything that writes nothing; change nothing and commit nothing.",
+    "- Every finding stops the planner from handing the spec over, so raise only what would make the project build the wrong thing, more than the goal needs, or less. Never raise wording, style or taste. What the human explicitly asked for is in scope, even when it looks like more than the goal needs.",
+    "- Call exactly one verdict tool, then end your turn: loom_spec_approve({ summary }) when the spec holds, or loom_spec_request_changes({ summary, findings }). Each finding is { path?, title, detail }: path names the part of the spec, such as ticket[csv-export] or ticket[csv-export].acceptance[1] (tickets by ref, list items counted from 0); detail says what is wrong and the smaller or right alternative.",
+  );
+  return lines.join("\n");
+}
+
+export function specReviewNudgeText(version: number): string {
+  return `[loom] Your turn ended without a verdict on spec v${version}. Call loom_spec_approve({ summary }) or loom_spec_request_changes({ summary, findings }), then end your turn.`;
+}
+
+/** The verdict for the planner, visible in its chat: no findings is an approval. */
+export function specReviewVerdictText(a: { slug: string; version: number; round: number; summary: string; findings: readonly SpecFinding[] }): string {
+  const { slug, version, round, summary, findings } = a;
+  if (findings.length === 0) {
+    return [`[loom] Spec review round ${round} passed v${version} of ${slug}: ${summary}`, "Hand over to the human now: tell them what you proposed and that the draft is ready to approve."].join("\n");
+  }
+  const next =
+    round >= SPEC_REVIEW_ROUNDS
+      ? "This was the last automatic round. Revise the spec for the findings you agree with and call loom_propose once more; Loom does not review it again. Then hand over, and tell the human which findings you left open and why."
+      : "Revise the spec for each finding and call loom_propose again; a fresh reviewer checks the new version. If a finding is wrong, leave that part as it is and say why in your reply: the next reviewer reads this conversation. Do not hand over yet.";
+  return [`[loom] Spec review round ${round} of ${SPEC_REVIEW_ROUNDS} found ${plural(findings.length, "problem")} in v${version} of ${slug}: ${summary}`, "", specFindingsList(findings), "", next].join("\n");
+}
+
+export function specReviewFailedText(a: { slug: string; version: number; reason: string }): string {
+  return `[loom] The spec review of v${a.version} of ${a.slug} did not finish: ${a.reason}. Call loom_propose again with the same spec to start a new review; do not hand over until a review passes.`;
 }

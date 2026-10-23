@@ -12,8 +12,8 @@ span several, with each ticket in one of them.
 
 ## How a project runs
 
-1. Plan: press New project on the Loom page and describe the goal, or ask any thread to plan it; every thread has the `loom-plan` skill. The planner asks a round of questions and calls `loom_propose` with a TOML spec. The plugin validates it and saves a draft.
-2. Approve: the human reads the spec and approves it. The tickets appear on the board.
+1. Plan: press New project on the Loom page and describe the goal, or ask any thread to plan it; every thread has the `loom-plan` skill. The planner asks a round of questions and calls `loom_propose` with a TOML spec. The plugin validates it and saves a draft, then starts a spec reviewer: a fresh agent that checks the spec against the human's request and for work the goal does not need, and sends any findings back to the planner, for up to three rounds.
+2. Approve: once the spec review passes, the human reads the spec and approves it. The tickets appear on the board. `bb loom approve <slug> --skip-review` approves a draft whose review has not passed.
 3. Start: the human starts the project. The plugin picks ready tickets (dependencies done, no scope overlap with work in flight) and starts a worker thread for each.
 4. Work: a worker calls `loom_note` as it goes, then `loom_submit`, or `loom_block` when it needs help.
 5. Check: the plugin commits the worktree and runs the ticket's and the project's check commands. A failure goes back to the worker.
@@ -105,7 +105,7 @@ bb loom ticket CSV-1                         # a ticket and its reply thread
 bb loom metrics <slug> [--days N] [--json]   # flow and agent metrics, one line each; --days sets the window (default 14)
 bb loom feed <slug> [--after <id>] [--json]  # the newest events as sentences
 bb loom report <slug> [--send]               # the project's record as Markdown; --send runs the done hook again
-bb loom approve <slug> [--version N]         # approve a draft (creates the tickets) or a pending version
+bb loom approve <slug> [--version N] [--skip-review]  # approve a draft (creates the tickets) or a pending version; --skip-review skips a spec review that has not passed
 bb loom start <slug>                         # workers start by themselves
 bb loom pause <slug> [--now]                 # --now also stops the worker threads
 bb loom resume <slug>
@@ -134,6 +134,7 @@ the planner back into it.
 | Planner | `loom_propose`, `loom_board`, `loom_ticket`, `loom_post`, `loom_requeue`, `loom_edit_ticket`, `loom_add_tickets`, `loom_cancel_ticket` |
 | Worker | `loom_note`, `loom_submit`, `loom_block` |
 | Reviewer | `loom_note`, `loom_approve`, `loom_request_changes` |
+| Spec reviewer | `loom_spec_approve`, `loom_spec_request_changes` |
 
 ## The page
 

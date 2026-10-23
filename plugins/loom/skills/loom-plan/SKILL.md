@@ -52,6 +52,7 @@ When the repos use different toolchains, give each `[[repo]]` its own `checks` (
 
 ## 4. Write the tickets
 
+- Build only what the goal needs: the fewest tickets that deliver it, no configuration, flags, layers or future-proofing it does not use, and reuse what the repository already has. Loom's spec reviewer checks exactly this.
 - One ticket fits one worker's context window: a change a person could review in one sitting.
 - Acceptance criteria are testable statements, preferably in EARS form: "WHEN <event> THE SYSTEM SHALL <response>". Every ticket needs at least one.
 - Scope lists the exact files or directories the ticket may change, as globs. A ticket outside its scope is flagged.
@@ -71,11 +72,21 @@ On a project with `[[repo]]` tables:
 
 Call `loom_propose` with the whole spec. Fix every numbered error it returns and call it again; a refused spec creates nothing. Calling it again from this thread with the same slug revises the draft. Read any warnings and fix the ones that matter.
 
+Then wait for the spec review. For each draft version Loom starts a separate reviewer agent that reads this conversation, the spec and the code, and checks that the spec builds what the human asked for, and no more. End your turn after `loom_propose`; the verdict arrives in this thread as a message that starts with "[loom] Spec review".
+
+- A passed review says so: hand over (step 6).
+- Findings arrive as a numbered list, each with the spec path it is about. Revise the spec for each finding and call `loom_propose` again; a fresh reviewer checks the new version. If a finding is wrong, leave that part as it is and say why in your reply: the next reviewer reads this conversation.
+- After three rounds with findings, Loom stops reviewing. Revise for the findings you agree with, propose once more, then hand over and name the findings you left open and why.
+- A review that did not finish (the reviewer stopped, or bb could not start it) restarts when you call `loom_propose` again with the same spec.
+- A revision for the human's notes is reviewed again before you hand it back.
+
 The human can review the draft on the Loom page and send you notes. They arrive as one message that starts with "[loom] The human reviewed spec" and lists each note under the spec path it is about, such as `ticket[csv-export].acceptance[1]`: tickets by ref, list items counted from 0. Revise the spec for each note, or answer it in your reply, then call `loom_propose` again with the whole spec.
 
 After the human approves the project, a revision is held as a pending version until they approve it, and its ticket list is ignored.
 
 ## 6. Hand over
+
+Hand over only after Loom's spec review passed, or after Loom said it stopped reviewing; then also name the findings you left open. The human cannot approve a draft whose review is still running or has findings unless they skip it with `bb loom approve <slug> --skip-review`.
 
 Tell the human, in plain words, what you proposed and the next steps. On a project with `[[repo]]` tables, name the repos; landing opens one pull request in each repo with merged work, and `bb loom land <slug> --repo <name>` lands one. On the Loom page the draft shows Approve and Start buttons; in a terminal the commands are:
 

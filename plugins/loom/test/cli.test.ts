@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createCli, formatMetrics } from "../src/cli";
 import { formatDuration, readyToLand } from "../src/format";
+import { ensureSpecReview } from "../src/spec-review";
 import type { ProjectMetrics } from "../src/metrics";
 import { TICKET_STATES } from "../src/states";
 import { START_FAILED } from "../src/workers";
@@ -103,6 +104,23 @@ describe("read commands", () => {
     const json = JSON.parse((await run(["ticket", "CSV-1", "--json"])).stdout) as { posts: Array<{ depth: number }> };
     expect(json.posts.map((post) => post.depth)).toEqual([0, 1, 2]);
     expect(errorOf((await run(["ticket", "CSV-9", "--json"])).stdout).code).toBe("loom_not_found");
+  });
+});
+
+describe("approve and the spec review", () => {
+  it("refuses a draft in its spec review and names --skip-review, which approves it and logs the override", async () => {
+    await propose();
+    await ensureSpecReview(host.engine.ctx, "csv");
+    const refused = await run(["approve", "csv", "--json"]);
+    expect(refused.exitCode).toBe(1);
+    expect(errorOf(refused.stdout)).toMatchObject({ code: "loom_invalid_state", message: "Draft v1 of csv is still in its spec review (round 1 of 3)." });
+    expect(errorOf(refused.stdout).hint).toContain("bb loom approve csv --skip-review");
+
+    const approved = await run(["approve", "csv", "--skip-review"]);
+    expect(approved.exitCode).toBe(0);
+    expect(host.store.projectBySlug("csv")?.state).toBe("ready");
+    expect(humanEvents()).toEqual([{ action: "approve", slug: "csv", pending: false, skipReview: true }]);
+    expect(host.store.specReviews(host.store.projectBySlug("csv")!.id)[0]!.state).toBe("superseded");
   });
 });
 
@@ -699,10 +717,13 @@ describe("loom_human_only", () => {
     const project = host.store.projectBySlug("csv")!;
     host.store.addThread({ thread_id: "thr_worker", project_id: project.id, role: "worker", state: "active" });
     host.store.addThread({ thread_id: "thr_review", project_id: project.id, role: "reviewer", state: "active" });
+    const spec = host.store.addSpecReview({ project_id: project.id, version: 1, round: 1, spawn_token: "tok_spec" });
+    host.store.updateSpecReview(spec.id, { thread_id: "thr_spec" });
   }
 
   const humanCommands = [
     ["approve", "csv"],
+    ["approve", "csv", "--skip-review"],
     ["start", "csv"],
     ["pause", "csv"],
     ["resume", "csv"],
@@ -715,10 +736,10 @@ describe("loom_human_only", () => {
     ["report", "csv", "--send"],
   ];
 
-  it("refuses every state-changing command from a planner, worker or reviewer thread", async () => {
+  it("refuses every state-changing command from a planner, worker, reviewer or spec reviewer thread", async () => {
     await setup();
     const before = host.store.events(host.store.projectBySlug("csv")!.id).length;
-    for (const threadId of ["thr_plan", "thr_worker", "thr_review"]) {
+    for (const threadId of ["thr_plan", "thr_worker", "thr_review", "thr_spec"]) {
       for (const argv of humanCommands) {
         const out = await run([...argv, "--json"], threadId);
         expect(out.exitCode, `${threadId} ${argv.join(" ")}`).toBe(1);

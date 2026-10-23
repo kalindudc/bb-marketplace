@@ -27,6 +27,9 @@ export type MergeChoice = (typeof MERGE_CHOICES)[number];
 export const WINDOW_DAYS = [7, 14, 30] as const;
 export type WindowDays = (typeof WINDOW_DAYS)[number];
 
+/** Spec review rounds with findings before Loom stops reviewing a draft and hands it to the human. */
+export const SPEC_REVIEW_ROUNDS = 3;
+
 export const HUMAN_ACTOR = "human";
 /** The actor on every change the plugin makes by itself. */
 export const LOOM_ACTOR = "loom";

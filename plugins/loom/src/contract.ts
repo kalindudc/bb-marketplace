@@ -10,6 +10,7 @@ import { MAX_PLANNING_REPOS } from "./prompts";
 import type { Finding } from "./review";
 import type { ProjectTimeline, SessionBar, TicketBar } from "./replay";
 import { repoSpecSchema } from "./spec";
+import type { SpecReviewStatus } from "./spec-review";
 import type { SentNote, SpecVersionView } from "./spec-view";
 import type { ActivityItem, Attempt, ChecksItem, CheckStep, Mark, MergeItem, ReviewItem, TicketActivity } from "./activity";
 import type { ChangedFile, ChangeKind, ChangeRepo, ChangeSource, ChangesView, FilePatch } from "./changes";
@@ -96,6 +97,8 @@ export interface ProjectView {
   now: number;
   /** The event the view was rewound to; null for the live view. */
   at: number | null;
+  /** The draft's automatic spec review; null in a rewound view. */
+  specReview: SpecReviewStatus | null;
 }
 
 export interface PostDto {

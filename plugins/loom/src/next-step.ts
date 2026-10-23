@@ -3,7 +3,8 @@
 import type { BoardCard, ControlAction } from "./contract";
 import { isMultiRepoProject, its, plural, readyToLand, reposHave } from "./format";
 import type { ProjectOverview } from "./projects";
-import { PAUSE_NOW_REASON } from "./states";
+import type { SpecReviewStatus } from "./spec-review";
+import { PAUSE_NOW_REASON, SPEC_REVIEW_ROUNDS } from "./states";
 
 export const STAGES = ["Plan", "Review draft", "Approve", "Start", "Work", "Land"] as const;
 
@@ -27,6 +28,8 @@ export interface NextStepInput {
   startFailed: string[];
   /** The blocked tickets whose reviewer bb refused to start. */
   reviewRefused: string[];
+  /** The draft's automatic spec review; left out, a draft has none to wait for. */
+  specReview?: SpecReviewStatus;
 }
 
 const list = (keys: readonly string[]) => (keys.length <= 1 ? keys.join("") : `${keys.slice(0, -1).join(", ")} and ${keys.at(-1)}`);
@@ -77,6 +80,44 @@ function landStep(overview: ProjectOverview): NextStep {
   };
 }
 
+/** A draft whose spec review has not passed waits in the Plan stage, with no button: the planner is still at work. */
+function reviewStep(slug: string, version: number, review: SpecReviewStatus | undefined): NextStep | null {
+  const override = `bb loom approve ${slug} --skip-review`;
+  switch (review?.kind) {
+    case "reviewing":
+      return {
+        stage: 0,
+        tone: "normal",
+        title: `Loom is reviewing draft v${version}.`,
+        text: `A separate reviewer checks it against your request and for work the goal does not need. The planner revises it for each finding, and this bar asks you to approve once a review passes. To approve it now anyway, run \`${override}\`.`,
+        action: null,
+      };
+    case "changes":
+      return {
+        stage: 0,
+        tone: "normal",
+        title: `The spec review found ${plural(review.findings.length, "problem")} in v${version}.`,
+        text: `The planner is revising it (round ${review.round} of ${SPEC_REVIEW_ROUNDS} done). To approve it now anyway, run \`${override}\`.`,
+        action: null,
+      };
+    case "failed":
+      return {
+        stage: 0,
+        tone: "warning",
+        title: `The spec review of v${version} did not finish.`,
+        text: `${review.reason[0]!.toUpperCase()}${review.reason.slice(1)}. Ask the planner to propose again to restart it, or approve without a passed review with \`${override}\`.`,
+        action: null,
+      };
+    default:
+      return null;
+  }
+}
+
+const REVIEWED_NOTE: Partial<Record<SpecReviewStatus["kind"], string>> = {
+  approved: "Loom's spec review passed it. ",
+  limit: `Loom stopped reviewing it after ${SPEC_REVIEW_ROUNDS} rounds; the planner's chat lists the findings it left open. `,
+};
+
 export function nextStepOf(input: NextStepInput): NextStep | null {
   const { overview, board, version } = input;
   const { state, pendingVersion, reason } = overview;
@@ -84,12 +125,14 @@ export function nextStepOf(input: NextStepInput): NextStep | null {
   if (state === "archived") return null;
 
   if (state === "draft") {
+    const waiting = reviewStep(overview.slug, version, input.specReview);
+    if (waiting !== null) return waiting;
     const tickets = plural(board.length, "ticket");
     return {
       stage: 1,
       tone: "normal",
       title: `Next: review draft v${version}.`,
-      text: `Read its tickets and checks, and ask the planner in its chat for any change, or approve it as it is. Approving creates ${tickets} on the board; nothing runs until you start.`,
+      text: `${REVIEWED_NOTE[input.specReview?.kind ?? "none"] ?? ""}Read its tickets and checks, and ask the planner in its chat for any change, or approve it as it is. Approving creates ${tickets} on the board; nothing runs until you start.`,
       action: { control: "approve", version, label: `Approve v${version} · create ${tickets}`, confirm: `Click again to approve v${version}` },
     };
   }

@@ -35,6 +35,38 @@ describe("nextStepOf", () => {
     expect(step.action).toEqual({ control: "approve", version: 1, label: "Approve v1 · create 2 tickets", confirm: "Click again to approve v1" });
   });
 
+  it("waits in the Plan stage with no button while a draft's spec review runs, has findings or did not finish, and names the override", () => {
+    const draft = (specReview: NextStepInput["specReview"]) => nextStepOf(input({ state: "draft", approvedVersion: null }, [queued("CSV-1", true)], { specReview }))!;
+    expect(draft({ kind: "reviewing", version: 1, round: 1 })).toEqual({
+      stage: 0,
+      tone: "normal",
+      title: "Loom is reviewing draft v1.",
+      text: "A separate reviewer checks it against your request and for work the goal does not need. The planner revises it for each finding, and this bar asks you to approve once a review passes. To approve it now anyway, run `bb loom approve csv --skip-review`.",
+      action: null,
+    });
+    expect(draft({ kind: "changes", version: 1, round: 2, findings: [{ title: "a", detail: "b" }, { title: "c", detail: "d" }] })).toMatchObject({
+      stage: 0,
+      title: "The spec review found 2 problems in v1.",
+      text: "The planner is revising it (round 2 of 3 done). To approve it now anyway, run `bb loom approve csv --skip-review`.",
+      action: null,
+    });
+    expect(draft({ kind: "failed", version: 1, round: 1, reason: "the reviewer's thread was archived or deleted" })).toMatchObject({
+      stage: 0,
+      tone: "warning",
+      title: "The spec review of v1 did not finish.",
+      text: "The reviewer's thread was archived or deleted. Ask the planner to propose again to restart it, or approve without a passed review with `bb loom approve csv --skip-review`.",
+      action: null,
+    });
+  });
+
+  it("asks to review a draft whose spec review passed or stopped, and says which", () => {
+    const draft = (specReview: NextStepInput["specReview"]) => nextStepOf(input({ state: "draft", approvedVersion: null }, [queued("CSV-1", true)], { specReview }))!;
+    const passed = draft({ kind: "approved", version: 1, round: 1, summary: "Fits." });
+    expect(passed).toMatchObject({ stage: 1, title: "Next: review draft v1.", action: { control: "approve", version: 1 } });
+    expect(passed.text.startsWith("Loom's spec review passed it. Read its tickets and checks")).toBe(true);
+    expect(draft({ kind: "limit", version: 4, findings: [] }).text.startsWith("Loom stopped reviewing it after 3 rounds; the planner's chat lists the findings it left open. Read")).toBe(true);
+  });
+
   it("asks to approve a pending version, and names the tickets it requeues", () => {
     const board = [blocked("CSV-1", refused), blocked("CSV-2", refused), queued("CSV-3", false)];
     const step = nextStepOf(input({ state: "running", pendingVersion: 2 }, board, { startFailed: ["CSV-1", "CSV-2"] }))!;

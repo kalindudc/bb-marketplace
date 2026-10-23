@@ -2,13 +2,13 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { createCli } from "../src/cli";
 import { parseSpec } from "../src/spec";
-import { ORDINARY_TOOLS, PLANNER_TOOLS, REVIEWER_TOOLS, SKILLS, WORKER_TOOLS } from "../src/tools";
+import { ORDINARY_TOOLS, PLANNER_TOOLS, REVIEWER_TOOLS, SKILLS, SPEC_REVIEWER_TOOLS, WORKER_TOOLS } from "../src/tools";
 import { makeHost } from "./helpers";
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const host = makeHost();
 const commands = createCli(host.projects, host.engine, host.store, Date.now).commands!.map((command) => command.name);
-const tools = [...new Set([...ORDINARY_TOOLS, ...PLANNER_TOOLS, ...WORKER_TOOLS, ...REVIEWER_TOOLS])];
+const tools = [...new Set([...ORDINARY_TOOLS, ...PLANNER_TOOLS, ...WORKER_TOOLS, ...REVIEWER_TOOLS, ...SPEC_REVIEWER_TOOLS])];
 
 describe("the plugin's own documents", () => {
   it("declares skill roots the way bb reads them, so configure() can select every skill", () => {
@@ -52,6 +52,15 @@ describe("the plugin's own documents", () => {
       .filter((path) => path.endsWith(".md"))
       .map((path) => `skills/${path}`);
     for (const path of [...sources, ...skills, "server.ts", "host.ts", "app.tsx"]) expect(read(path), path).not.toMatch(/cortex/i);
+  });
+
+  it("README and the loom skill describe the spec review and its override, and the loom-plan skill waits for it", () => {
+    for (const path of ["README.md", "skills/loom/SKILL.md"]) {
+      const text = read(path);
+      for (const phrase of ["spec review", "--skip-review", ...SPEC_REVIEWER_TOOLS]) expect(text, `${path}: ${phrase}`).toContain(phrase);
+    }
+    const plan = read("skills/loom-plan/SKILL.md");
+    for (const phrase of ["spec review", "[loom] Spec review", "Hand over only after"]) expect(plan, phrase).toContain(phrase);
   });
 
   it("PLUGIN_OVERVIEW is under 4000 characters and has no title", () => {

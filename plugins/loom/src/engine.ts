@@ -9,6 +9,7 @@ import { LoomError, type ApproveResult, type Projects } from "./projects";
 import { isMultiRepo } from "./repos";
 import { NO_HOOK, sendRecords, type DoneSettings } from "./record";
 import { backToReview, blockedAtReview, failReviewerSpawn, onReviewerGone, onReviewerIdle, onReviewerTurnFailed, spawnReviewers } from "./review";
+import { approvalRefusal, endSpecReviews, onSpecReviewerGone, onSpecReviewerIdle, onSpecReviewerTurnFailed, reconcileSpecReviews, specReviewStatus } from "./spec-review";
 import { budgetReason, spawnable, toLite, type TicketLite } from "./scheduler";
 import { LOOM_ACTOR, canMoveTicket } from "./states";
 import { cancelTicket, maybeSendTriage, onPlannerIdle } from "./triage";
@@ -240,6 +241,7 @@ export class Engine {
       if (thread === null || thread.archivedAt !== null || thread.deletedAt !== null) this.projects.planningGone(session.thread_id, "gone");
     }
     for (const row of store.threads({ states: ["ending"] })) await resumeEnding(this.ctx, row);
+    await reconcileSpecReviews(this.ctx);
     const rechecked = resumeCheckingTickets(this.ctx);
     for (const project of store.projects()) {
       if (project.state === "running") await runMergeQueue(this.ctx, project, specOf(store, project));
@@ -276,10 +278,18 @@ export class Engine {
    * Approves the draft or the pending version. A pending version also requeues the tickets whose worker never started,
    * sends the tickets whose reviewer bb refused back to review, and tells the planner.
    */
-  async approve(slug: string, actor: string, version?: number): Promise<Approved> {
+  async approve(slug: string, actor: string, version?: number, opts: { skipReview?: boolean } = {}): Promise<Approved> {
     const { store, bb } = this.ctx;
+    const draft = store.projectBySlug(slug);
+    if (draft?.state === "draft" && opts.skipReview !== true) {
+      const refusal = approvalRefusal(slug, specReviewStatus(store, draft));
+      if (refusal !== null) throw refusal;
+    }
     const result = await this.projects.approve(slug, actor, version);
-    if (result.applied !== "pending") return { ...result, requeued: [], backToReview: [] };
+    if (result.applied !== "pending") {
+      await endSpecReviews(this.ctx, store.projectBySlug(slug)!.id);
+      return { ...result, requeued: [], backToReview: [] };
+    }
     const project = store.projectBySlug(slug)!;
     const requeued: string[] = [];
     const sentBack: string[] = [];
@@ -368,6 +378,7 @@ export class Engine {
 
   async archive(slug: string, actor: string): Promise<ProjectRow> {
     const project = await this.projects.archive(slug, actor);
+    await endSpecReviews(this.ctx, project.id);
     for (const row of this.ctx.store.threads({ projectId: project.id, states: ["active"] })) {
       if (row.role !== "planner") await endThread(this.ctx, row, "cancelled", { commit: false, move: null });
     }
@@ -457,6 +468,8 @@ export class Engine {
 
   async onThreadIdle(threadId: string): Promise<void> {
     const row = this.ctx.store.threadByThreadId(threadId);
+    const review = row === null ? this.ctx.store.specReviewByThreadId(threadId) : null;
+    if (review !== null) return onSpecReviewerIdle(this.ctx, review);
     if (row === null || row.state !== "active") return;
     if (row.role === "planner") onPlannerIdle(this.ctx, row);
     else if (row.role === "worker") await onWorkerIdle(this.ctx, row);
@@ -472,6 +485,8 @@ export class Engine {
   async onThreadGone(threadId: string, why: "archived" | "deleted"): Promise<void> {
     this.projects.planningGone(threadId, why);
     const row = this.ctx.store.threadByThreadId(threadId);
+    const review = row === null ? this.ctx.store.specReviewByThreadId(threadId) : null;
+    if (review !== null) return onSpecReviewerGone(this.ctx, review);
     if (row === null) return;
     if (row.role === "reviewer") await onReviewerGone(this.ctx, row);
     else if (row.role === "worker") await endGoneThread(this.ctx, threadId);
@@ -480,6 +495,8 @@ export class Engine {
   }
 
   async onTurnFailed(event: TurnFailure): Promise<void> {
+    const review = this.ctx.store.specReviewByThreadId(event.threadId);
+    if (review !== null) return onSpecReviewerTurnFailed(this.ctx, review, event);
     if (this.ctx.store.threadByThreadId(event.threadId)?.role === "reviewer") await onReviewerTurnFailed(this.ctx, event);
     else await handleTurnFailed(this.ctx, event);
     this.kick();

@@ -1633,6 +1633,14 @@ describe("project controls", () => {
     expect(await labels(bare("archived", none))).toEqual([]);
   });
 
+  it("hides a draft's Approve while its spec review runs, has findings or did not finish, and shows it once the review passed", async () => {
+    const draft = (specReview: ReturnType<typeof projectView>["specReview"]) => ({ ...bare("draft", { approvedVersion: null, ticketCounts: {} }), specReview });
+    expect(await labels(draft({ kind: "reviewing", version: 1, round: 1 }))).toEqual(["⋯"]);
+    expect(await labels(draft({ kind: "changes", version: 1, round: 1, findings: [{ title: "Too big", detail: "Drop it." }] }))).toEqual(["⋯"]);
+    expect(await labels(draft({ kind: "failed", version: 1, round: 1, reason: "the reviewer ended its turn twice without a verdict" }))).toEqual(["⋯"]);
+    expect(await labels(draft({ kind: "approved", version: 1, round: 1, summary: "Fits." }))).toEqual(["Approve", "⋯"]);
+  });
+
   it("offers Land on an integration project with a done ticket, and Approve for a pending spec version", async () => {
     expect(await labels(bare("running", { ticketCounts: { done: 1 } }))).toEqual(["Pause", "Pause now", "Land", "Land to main", "⋯"]);
     expect(await labels(bare("running", { strategy: "pr", ticketCounts: { done: 1 } }))).toEqual(["Pause", "Pause now", "⋯"]);

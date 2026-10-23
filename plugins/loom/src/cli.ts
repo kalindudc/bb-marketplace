@@ -27,7 +27,8 @@ export async function humanAction<T>(
   data: HumanActionData,
   fn: () => Promise<T> | T,
 ): Promise<T> {
-  if (ctx.threadId !== undefined && deps.projects.roleOf(ctx.threadId) !== null) {
+  // A spec reviewer has no threads row, so roleOf cannot see it.
+  if (ctx.threadId !== undefined && (deps.projects.roleOf(ctx.threadId) !== null || deps.store.specReviewByThreadId(ctx.threadId) !== null)) {
     throw new PluginCliError(`"${action}" is for the human: Loom planner, worker and reviewer threads cannot run it.`, {
       code: "loom_human_only",
       hint: "Tell the human what you need and let them run the command.",
@@ -383,12 +384,18 @@ export function createCli(projects: Projects, engine: Engine, store: Store, now:
       approve: cliCommand({
         summary: "Approve a draft (creates its tickets), or apply a pending spec version (human only)",
         positionals: [SLUG],
-        options: { version: { ...version, description: "The version to approve; it must be the one waiting for approval." }, json },
+        options: {
+          version: { ...version, description: "The version to approve; it must be the one waiting for approval." },
+          "skip-review": { type: "boolean", description: "Approve a draft whose automatic spec review has not passed: still running, with open findings, or not finished." },
+          json,
+        },
         run: ({ options, positionals }, ctx) =>
           guarded(async () => {
             const project = deps.store.projectBySlug(positionals.slug);
             const pending = project !== null && project.state !== "draft" && project.pending_version !== null;
-            const result = await humanAction(deps, ctx, "approve", { slug: positionals.slug, pending }, () => engine.approve(positionals.slug, HUMAN_ACTOR, options.version));
+            const skipReview = options["skip-review"] === true;
+            const data = { slug: positionals.slug, pending, ...(skipReview ? { skipReview: true } : {}) };
+            const result = await humanAction(deps, ctx, "approve", data, () => engine.approve(positionals.slug, HUMAN_ACTOR, options.version, { skipReview }));
             return out(options.json ? toJson(result) : formatApprove(result));
           }),
       }),
