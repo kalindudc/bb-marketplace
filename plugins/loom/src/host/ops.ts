@@ -1,14 +1,16 @@
 // What the host entry runs on the machine that owns the checkout: git through argv, never a shell, and check
 // commands in their own process group. host.ts wires these to RPC handlers; tests call them directly.
 import { execFile, spawn } from "node:child_process";
-import { existsSync, mkdirSync, realpathSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import type { HostInput, HostOutput } from "../host-contract";
+import { prNumber, type HostInput, type HostOutput } from "../host-contract";
 
 const GIT_TIMEOUT_MS = 30_000;
 // Pushes, gh calls and the first checkout of the integration worktree can take a while on a slow link or a large repository.
 const NETWORK_TIMEOUT_MS = 120_000;
 const GIT_MAX_BUFFER = 64 * 1024 * 1024;
+const FORGE_COMMAND_MS = 120_000;
 const OUTPUT_HEAD_BYTES = 16 * 1024;
 const OUTPUT_TAIL_BYTES = 48 * 1024;
 
@@ -175,10 +177,13 @@ async function commonDir(cwd: string, signal?: AbortSignal): Promise<string | nu
  */
 export async function ensureWorktree(input: HostInput<"ensureWorktree">, dataDir: string, signal?: AbortSignal): Promise<HostOutput<"ensureWorktree">> {
   const { repo, key, branch } = input;
-  const path = join(dataDir, "worktrees", key);
+  // A provisioned path comes from the spec's worktree command: Loom uses it as it is and may switch its branch.
+  const provisioned = input.path !== undefined;
+  const path = input.path ?? join(dataDir, "worktrees", key);
   const unavailable = (reason: "branch_checked_out" | "git", message: string): HostOutput<"ensureWorktree"> => ({ outcome: "unavailable", reason, message });
 
   if (!existsSync(path)) {
+    if (provisioned) return unavailable("git", `The integration worktree command printed ${path}, which does not exist.`);
     await git(repo, ["worktree", "prune"], { signal });
     mkdirSync(dirname(path), { recursive: true });
     const added = await run(repo, ["worktree", "add", path, branch], signal, NETWORK_TIMEOUT_MS);
@@ -193,7 +198,17 @@ export async function ensureWorktree(input: HostInput<"ensureWorktree">, dataDir
   const expected = await commonDir(repo, signal);
   if (owner === null || owner !== expected) return unavailable("git", `The Loom worktree at ${path} belongs to the repository ${owner ?? "(unknown)"}, not ${expected ?? repo}; move it away.`);
   const current = (await tryGit(path, ["symbolic-ref", "--short", "-q", "HEAD"], signal)) || null;
-  if (current !== branch) return unavailable("git", `The Loom worktree at ${path} is on ${current ?? "a detached HEAD"}, not ${branch}.`);
+  if (current !== branch) {
+    if (!provisioned) return unavailable("git", `The Loom worktree at ${path} is on ${current ?? "a detached HEAD"}, not ${branch}.`);
+    if ((await git(path, ["status", "--porcelain", "--untracked-files=no"], { signal })) !== "") {
+      return unavailable("git", `The integration worktree at ${path} is on ${current ?? "a detached HEAD"} with uncommitted changes, so Loom cannot switch it to ${branch}. Commit or discard them, or make the worktree command prepare a clean checkout.`);
+    }
+    const switched = await run(path, ["switch", branch], signal);
+    if (switched.code !== 0) {
+      const message = tail(switched.stderr || switched.stdout);
+      return unavailable(checkedOutElsewhere.test(message) ? "branch_checked_out" : "git", message);
+    }
+  }
 
   if ((await tryGit(path, ["rev-parse", "-q", "--verify", "MERGE_HEAD"], signal)) !== null) await run(path, ["merge", "--abort"], signal);
   await git(path, ["reset", "--hard", "HEAD"], { signal });
@@ -278,6 +293,7 @@ const ghFailed = (what: string, run: GitRun) => `${what} failed: ${tail(run.stde
 const withoutCredentials = (url: string) => url.replace(/\/\/[^@/\s]+@/u, "//");
 
 export async function prCreate(input: HostInput<"prCreate">, signal?: AbortSignal): Promise<HostOutput<"prCreate">> {
+  if (input.forge.kind === "command") return openWithCommand(input, input.forge.open, signal);
   const { repo, remote, base, head, title, body, draft } = input;
   const unavailable = (message: string): HostOutput<"prCreate"> => ({ outcome: "unavailable", message });
   // The push URL, not the fetch URL: the branch goes where `git push` sends it, and the pull request must be opened there.
@@ -304,12 +320,91 @@ export async function prCreate(input: HostInput<"prCreate">, signal?: AbortSigna
 }
 
 export async function prState(input: HostInput<"prState">, signal?: AbortSignal): Promise<HostOutput<"prState">> {
+  if (input.forge.kind === "command") return stateWithCommand(input, input.forge.state, signal);
   const viewed = await gh(input.repo, ["pr", "view", input.url, "--json", "state"], { signal });
   if (viewed === "missing") return { outcome: "unavailable", message: GH_MISSING };
   if (viewed.code !== 0) return { outcome: "unavailable", message: ghFailed("gh pr view", viewed) };
   const state = parseJson<{ state?: unknown }>(viewed.stdout)?.state;
   if (state === "OPEN" || state === "MERGED" || state === "CLOSED") return { outcome: "ok", state };
   return { outcome: "unavailable", message: `gh pr view returned an unknown state: ${tail(viewed.stdout)}` };
+}
+
+// ---------------------------------------------------------------- the spec's forge commands
+
+const URL_IN_OUTPUT = /https?:\/\/\S+/gu;
+
+function commandFailure(what: string, result: HostOutput<"exec">): string | null {
+  if (result.timedOut) return `The forge's ${what} command took longer than ${FORGE_COMMAND_MS / 60_000} minutes: ${tail(result.output)}`;
+  if (result.exitCode !== 0) return `The forge's ${what} command failed (exit ${result.exitCode}): ${tail(result.output)}`;
+  return null;
+}
+
+async function openWithCommand(input: HostInput<"prCreate">, command: string, signal?: AbortSignal): Promise<HostOutput<"prCreate">> {
+  const { repo, remote, base, head, title, body, draft } = input;
+  const env = { LOOM_REMOTE: remote, LOOM_BASE: base, LOOM_HEAD: head, LOOM_TITLE: title, LOOM_DRAFT: draft ? "1" : "0" };
+  const result = await spawnCommand({ cwd: repo, command, timeoutMs: FORGE_COMMAND_MS, stdin: body, env }, signal);
+  const failed = commandFailure("open", result);
+  if (failed !== null) return { outcome: "unavailable", message: failed };
+  const url = [...result.output.matchAll(URL_IN_OUTPUT)].at(-1)?.[0].replace(/[.,;:)\]'"]+$/u, "");
+  return url === undefined ? { outcome: "unavailable", message: `The forge's open command printed no pull request URL: ${tail(result.output)}` } : { outcome: "ok", url };
+}
+
+// The last non-empty line decides, so a warning a CLI prints first does not hide the state.
+async function stateWithCommand(input: HostInput<"prState">, command: string, signal?: AbortSignal): Promise<HostOutput<"prState">> {
+  const result = await spawnCommand({ cwd: input.repo, command, timeoutMs: FORGE_COMMAND_MS, env: { LOOM_URL: input.url, LOOM_PR_NUMBER: prNumber(input.url) } }, signal);
+  const failed = commandFailure("state", result);
+  if (failed !== null) return { outcome: "unavailable", message: failed };
+  const line = result.output.trim().split("\n").at(-1) ?? "";
+  const word = line.trim().split(/\s+/u)[0]?.toUpperCase();
+  if (word === "OPEN" || word === "MERGED" || word === "CLOSED") return { outcome: "ok", state: word };
+  return { outcome: "unavailable", message: `The forge's state command printed "${tail(line, 200)}", not open, merged or closed.` };
+}
+
+// ---------------------------------------------------------------- discovery and the push-only forge
+
+export async function remotes(input: HostInput<"remotes">, signal?: AbortSignal): Promise<HostOutput<"remotes">> {
+  const names = (await git(input.repo, ["remote"], { signal })).split("\n").filter((name) => name !== "");
+  const listed: HostOutput<"remotes">["remotes"] = [];
+  for (const name of names) {
+    const urls = (await tryGit(input.repo, ["remote", "get-url", "--push", "--all", name], signal)) ?? "";
+    listed.push({ name, pushUrls: urls.split("\n").filter((url) => url !== "").map(withoutCredentials) });
+  }
+  return { remotes: listed };
+}
+
+export async function ghStatus(input: HostInput<"ghStatus">, signal?: AbortSignal): Promise<HostOutput<"ghStatus">> {
+  const host = parseRemoteUrl(input.pushUrl)?.split("/")[0] ?? null;
+  if (host === null) return { status: "not_a_url", host: null };
+  const checked = await gh(input.repo, ["auth", "status", "--hostname", host], { signal });
+  if (checked === "missing") return { status: "missing", host };
+  return { status: checked.code === 0 ? "ready" : "signed_out", host };
+}
+
+/** Adds a worktree with no checkout under the data directory and removes it again; git's refusal is the message. */
+export async function trialWorktree(input: HostInput<"trialWorktree">, dataDir: string, signal?: AbortSignal): Promise<HostOutput<"trialWorktree">> {
+  const path = join(dataDir, "trial", randomBytes(6).toString("hex"));
+  mkdirSync(dirname(path), { recursive: true });
+  const added = await run(input.repo, ["worktree", "add", "--no-checkout", "--detach", path, "HEAD"], signal);
+  if (added.code !== 0) return { outcome: "refused", message: tail(added.stderr || added.stdout) };
+  await run(input.repo, ["worktree", "remove", "--force", path], signal);
+  if (existsSync(path)) {
+    rmSync(path, { recursive: true, force: true });
+    await run(input.repo, ["worktree", "prune"], signal);
+  }
+  return { outcome: "ok" };
+}
+
+export async function landedOn(input: HostInput<"landedOn">, signal?: AbortSignal): Promise<HostOutput<"landedOn">> {
+  const { repo, remote, base, sha } = input;
+  const listed = await run(repo, ["ls-remote", remote, `refs/heads/${base}`], signal, NETWORK_TIMEOUT_MS);
+  if (listed.code !== 0) return { outcome: "unavailable", message: `git ls-remote ${remote} failed: ${tail(listed.stderr || listed.stdout)}` };
+  const tip = listed.stdout.trim().split(/\s+/u)[0] ?? "";
+  if (tip === "") return { outcome: "unavailable", message: `The remote "${remote}" has no branch ${base}.` };
+  const fetched = await run(repo, ["fetch", "--no-tags", "--no-write-fetch-head", remote, `refs/heads/${base}`], signal, NETWORK_TIMEOUT_MS);
+  if (fetched.code !== 0) return { outcome: "unavailable", message: `git fetch from ${remote} failed: ${tail(fetched.stderr || fetched.stdout)}` };
+  const ancestry = await run(repo, ["merge-base", "--is-ancestor", sha, tip], signal);
+  if (ancestry.code === 0 || ancestry.code === 1) return { outcome: "ok", landed: ancestry.code === 0 };
+  throw failure(["merge-base", "--is-ancestor", sha, tip], ancestry);
 }
 
 function parseJson<T>(text: string): T | null {

@@ -503,3 +503,46 @@ describe("skills/loom/references/spec.md", () => {
     expect(result.spec?.ticket.map((ticket) => ticket.ref)).toEqual(["row-mapper", "export-endpoint"]);
   });
 });
+
+describe("forges, integration worktrees and environments", () => {
+  it("leaves them out of a spec that does not set them, so its hash is the one it had before", () => {
+    const spec = run().spec!;
+    expect(Object.keys(spec.merge)).not.toContain("forge");
+    expect(Object.keys(spec.merge)).not.toContain("worktree");
+    expect(Object.keys(spec)).not.toContain("environment");
+    expect(specHash(spec)).toBe("975e726bf34c40a6b5becf170f1eb25e6dc3f7a8e6818724e1ea96d69bf2808f");
+  });
+
+  it("parses a command forge, a plugin worktree and an environment with placeholders, top level and per repo", () => {
+    const result = run((doc) => {
+      doc.merge.forge = { kind: "command", open: "review create", state: "review state", after_open: ["ci run"] };
+      doc.merge.worktree = { plugin: "trees", command: "prepare loom" };
+      doc.environment = { provider: "trees", inputs: { pool: { branch: "{branch}", base: "{base}", zones: ["a"] } } };
+      doc.repo = [
+        { name: "web", project: "proj_web", forge: { kind: "none" }, environment: { provider: "git-worktree" }, worktree: { command: "prep" } },
+        { name: "api", project: "proj_api" },
+      ];
+      doc.ticket[0].repo = "web";
+      doc.ticket[1].repo = "api";
+    });
+    expect(result.errors).toEqual([]);
+    expect(result.spec!.merge.forge).toEqual({ kind: "command", open: "review create", state: "review state", after_open: ["ci run"] });
+    expect(result.spec!.repo![0]!.forge).toEqual({ kind: "none" });
+  });
+
+  it("refuses a command forge without its commands, commands on another kind, and after_open with none", () => {
+    expect(run((doc) => (doc.merge.forge = { kind: "command" })).errors).toEqual([
+      expect.stringMatching(/^merge\.forge\.open: is required when merge\.forge\.kind is "command"\. Add the command that opens a pull request/u),
+      expect.stringMatching(/^merge\.forge\.state: is required when merge\.forge\.kind is "command"\./u),
+    ]);
+    expect(run((doc) => (doc.merge.forge = { kind: "gh", open: "x" })).errors).toEqual(['merge.forge.open: only kind = "command" runs it, and merge.forge.kind is "gh". Remove it, or set kind = "command".']);
+    expect(run((doc) => (doc.merge.forge = { kind: "none", after_open: ["x"] })).errors).toEqual([expect.stringMatching(/^merge\.forge\.after_open: kind = "none" opens no pull request/u)]);
+  });
+
+  it("refuses a worktree on the pull request strategy, an unknown placeholder, and malformed ids", () => {
+    expect(run((doc) => (doc.merge = { strategy: "pr", worktree: { command: "prep" } })).errors).toEqual(['merge.worktree: only the integration strategy has an integration worktree, and merge.strategy is "pr". Remove merge.worktree, or use merge.strategy = "integration".']);
+    expect(run((doc) => (doc.environment = { provider: "trees", inputs: { tree: "{ticket}" } })).errors).toEqual(["environment.inputs: {ticket} is not a Loom placeholder. Use {branch} or {base}, or write the value out."]);
+    expect(run((doc) => (doc.environment = { provider: "Trees!" })).errors[0]).toMatch(/^environment\.provider: must be a bb environment provider id/u);
+    expect(run((doc) => (doc.merge.worktree = { plugin: "bad id", command: "x" })).errors[0]).toMatch(/^merge\.worktree\.plugin: must be a bb plugin id/u);
+  });
+});

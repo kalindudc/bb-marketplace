@@ -28,6 +28,49 @@ A spec without `[[repo]]` tables is a single-repo project: every ticket runs in 
 | `branch` | string | `loom/<slug>` | integration strategy only; a multi-repo project has an integration branch of this name in every repo |
 | `remote` | string | `"origin"` | a plain remote name; the default `remote` of every `[[repo]]` |
 | `draft` | boolean | `true` | whether pull requests open as drafts |
+| `forge` | table | `{ kind = "gh" }` | where pull requests open; see [merge.forge] |
+| `worktree` | table | none | integration strategy only; prepares the integration worktree; see [merge.worktree] |
+
+### [merge.forge]
+
+The server that hosts pull requests. Leave it out for GitHub: Loom opens and follows pull requests with `gh`. `loom_propose` refuses a spec whose remote pushes to a host `gh` is not signed in to, until this table says how to reach that server.
+
+| Key | Type | Default | Rule |
+|---|---|---|---|
+| `kind` | string | required | `"gh"`, `"command"` (the `open` and `state` commands below) or `"none"` (Loom only pushes the branch) |
+| `open` | string | none | required with `kind = "command"`, refused otherwise; a shell command that opens a pull request for a branch that is already pushed |
+| `state` | string | none | required with `kind = "command"`, refused otherwise; a shell command that prints the pull request's state |
+| `after_open` | string array | none | at most 5; shell commands run once after a pull request opens, such as one that starts CI; a failure is posted and blocks nothing; not allowed with `kind = "none"` |
+
+The commands run with `/bin/sh` in the repo's checkout, with a 2-minute limit (`after_open`: 5 minutes):
+
+- `open` gets `LOOM_REMOTE`, `LOOM_BASE`, `LOOM_HEAD` (the pushed branch), `LOOM_TITLE` and `LOOM_DRAFT` (`1` or `0`), and reads the body on standard input. Loom takes the last `http(s)://` URL it prints as the pull request. When one is already open for the branch, it must print that one: a restart can run it again.
+- `state` gets `LOOM_URL` and `LOOM_PR_NUMBER` (the last run of digits in the URL). The first word of its last non-empty line must be `open`, `merged` or `closed`, in any case. Merged completes the ticket; closed blocks it.
+- `after_open` gets `LOOM_URL`, `LOOM_PR_NUMBER`, `LOOM_HEAD` and `LOOM_BASE`.
+
+With `kind = "none"`, Loom pushes the ticket's branch and says where; a person opens the pull request. The ticket is done when the remote's base branch contains the ticket's exact commit, so a squash or rebase merge is not seen: block or cancel that ticket by hand. On the integration strategy, `bb loom land` pushes the integration branch and opens nothing.
+
+### [merge.worktree]
+
+Integration strategy only. Loom normally adds its own git worktree of the integration branch in its data directory; some repositories refuse worktrees outside their own location. `loom_discover` says when, with git's message, and `loom_propose` then refuses the integration strategy until this table is set.
+
+| Key | Type | Default | Rule |
+|---|---|---|---|
+| `command` | string | required | a shell command that prepares a checkout of the repository and prints its absolute path on its last line |
+| `plugin` | string | none | a bb plugin id; Loom then runs `bb plugin run <plugin> <command>`; the plugin must be installed and turned on, and the command's first word must be one of its CLI commands |
+
+The command runs in the repo's checkout before every merge and land, with a 10-minute limit, so it must be safe to run again. It gets `LOOM_PROJECT_SLUG`, `LOOM_BRANCH` (the integration branch) and `LOOM_BASE`. The path must be a checkout of the same repository; when it is on another branch and has no uncommitted changes, Loom switches it to the integration branch.
+
+### [environment]
+
+Where the threads Loom starts in the repository run: its workers and reviewers, the spec reviewer and the agent that summarizes a finished project. Leave it out for a git worktree per thread, which is what bb's `git-worktree` provider makes. `loom_propose` refuses a spec that leaves it out while a plugin offers an environment provider for the repository on this machine; `provider = "git-worktree"` keeps plain worktrees.
+
+| Key | Type | Default | Rule |
+|---|---|---|---|
+| `provider` | string | required | the id of a bb environment provider that is available for the project on this machine (`bb environment providers --project <id> --machine <host> --json`) |
+| `inputs` | table | none | the provider's inputs, checked against its inputs schema; a provider that needs inputs refuses a spec without them |
+
+In any string of `inputs`, Loom replaces `{branch}` with a new branch for that thread (`loom/<slug>/<key>-<attempt>` for a worker, `loom/<slug>/<key>-review-<round>-<n>` for a reviewer) and `{base}` with where the thread starts, the same base it would give a worktree. Any other `{name}` is an error.
 
 ### [checks]
 
@@ -87,6 +130,9 @@ Zero to 10 entries. Leave them out when the work stays in the planner thread's o
 | `checks` | string array | `checks.commands` | at most 10; replaces `checks.commands` for the tickets in this repo; an empty list runs no project checks there |
 | `after_merge` | string array | `checks.after_merge` | at most 10; replaces `checks.after_merge` on this repo's integration branch; not allowed with strategy `"pr"` |
 | `protected` | string array | `[]` | at most 100 globs, relative to this repo's root; added to `scope.protected` for the tickets in this repo |
+| `forge` | table | `merge.forge` | like [merge.forge], for this repo's pull requests |
+| `environment` | table | `environment` | like [environment], for the threads Loom starts in this repo |
+| `worktree` | table | `merge.worktree` | like [merge.worktree], for this repo's integration worktree |
 
 Each repo gets its own integration branch (`merge.branch`, from the repo's `base`) and its own Loom worktree. Tickets in different repos never share a file, so their scopes never overlap.
 
@@ -241,6 +287,47 @@ depends_on = ["notes-api"]
 - A ticket's protected paths are `.github/**` and its own repo's list: `go.sum` in `api`, `package-lock.json` in `web`.
 - `bb loom land order-notes` opens one pull request in each repo, `bb loom land order-notes --repo api` lands only `api`, and the project is done when every repo with merged work has landed.
 
+## Example: servers other than GitHub
+
+A project in a repository whose remote is not on GitHub, and whose workers need a plugin's environment. The values come from `loom_discover` and the human; Loom knows none of them.
+
+```toml
+[project]
+slug = "order-tags"
+name = "Order tags"
+key = "TAG"
+goal = "Let support staff tag an order with free-text labels and filter the order list by tag."
+
+[merge]
+strategy = "pr"
+remote = "upstream"
+
+[merge.forge]
+kind = "command"
+open = 'review-cli create --base "$LOOM_BASE" --head "$LOOM_HEAD" --title "$LOOM_TITLE" --body-file -'
+state = 'review-cli status "$LOOM_PR_NUMBER"'
+after_open = ['ci-cli run --pr "$LOOM_PR_NUMBER"']
+
+# On merge.strategy = "integration", the same plugin could prepare the integration worktree:
+# [merge.worktree]
+# plugin = "example-trees"
+# command = 'prepare "loom-$LOOM_PROJECT_SLUG" services/orders'
+
+[environment]
+provider = "example-trees"
+inputs = { branch = "{branch}", base = "{base}", paths = ["services/orders"] }
+
+[checks]
+commands = ["make -C services/orders test"]
+
+[[ticket]]
+ref = "tag-model"
+title = "Store tags on orders"
+body = "Add a tags column to orders in services/orders/db and expose it on the Order model."
+acceptance = ["WHEN an order is saved with tags THE SYSTEM SHALL return the same tags when it is read back"]
+scope = ["services/orders/db/**", "services/orders/model/**"]
+```
+
 ## Errors
 
 A spec with any error is refused and nothing is saved. Errors are numbered, at most 20 shown.
@@ -255,6 +342,9 @@ A spec with any error is refused and nothing is saved. Errors are numbered, at m
 - A ticket scope glob equals, or sits under, a protected glob (the text before the first `*` is compared).
 - A ticket has no `verify` command and `checks.commands` is empty.
 - `checks.after_merge` is set with strategy `"pr"`.
+- A forge with `kind = "command"` lacks `open` or `state`, a forge of another kind sets them, or `kind = "none"` sets `after_open`.
+- `merge.worktree` is set with strategy `"pr"`.
+- An `inputs` string holds a `{name}` other than `{branch}` or `{base}`.
 
 Repos add these errors:
 
@@ -271,11 +361,20 @@ Loom also checks every `[[repo]]` against bb when the spec is proposed:
 - The bb project has no checkout on the machine the planner runs on, where the workers run. The error gives the command that clones it there, `bb project source add <id> --clone --machine <host>`; run it once the human agrees, then propose again.
 - bb's projects could not be read, or bb did not say which machine the planner runs on. Unlike an unreadable provider list, this refuses the spec, because the project could not start without a checkout of every repo. Propose again in a moment.
 
+Loom then checks how each repo is reached on the planner's machine (`loom_discover` reports the same facts):
+
+- The repo has no git remote named `remote`. The error lists its remotes.
+- The forge is `gh`, and `gh` is missing or not signed in to the push URL's host, or the push URL is not a repository URL.
+- A plugin offers an environment provider for the repo, and the spec names no `environment`.
+- The `environment` provider is not offered or not available there, or its `inputs` do not match its schema. The error quotes the provider's description and schema.
+- On the integration strategy with no `worktree`, git refused Loom's own worktree. The error quotes git.
+- `worktree.plugin` is not installed or is turned off, or `bb plugin run <plugin> <first word> --help` fails.
+
 Refusals tied to existing projects come back the same way:
 
 - `project.key` is used by another project, archived ones included.
 - The slug already belongs to a project this thread does not plan, or this thread already plans a different slug.
-- After approval, a revision that changes `project.key`, `merge.strategy` or `merge.branch`.
+- After approval, a revision that changes `project.key`, `merge.strategy` or `merge.branch`, a repo's forge `kind`, or whether it has a `worktree`.
 - After approval, a revision that adds `[[repo]]` tables to a project approved without them, removes or renames an approved repo, or changes an approved repo's `project`, `base` or `remote`, including through the `project.base` or `merge.remote` it inherits. Its tickets, branches and worktrees already use them. A revision may add new `[[repo]]` tables; the planner adds their tickets with `loom_add_tickets`.
 - bb already has a sidebar section named `Loom · <name> (<slug>)`.
 - Workers and reviewers cannot propose projects.

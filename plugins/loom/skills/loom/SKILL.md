@@ -32,7 +32,7 @@ Once a project runs, the plugin starts worker agents by itself, one per ready ti
     bb loom land <slug> --direct                  # merge in the remote's base branch, run after_merge, push to the base branch with no pull request (human only)
     bb loom land <slug> --repo <name>             # on a multi-repo project, land only that repo; goes with or without --direct (human only)
 
-Every command accepts `--json`. Failures carry a code: `loom_not_found`, `loom_invalid_state` (the message names the current state), `loom_invalid_spec`, `loom_invalid_input`, `loom_no_checkout` (the bb project, or one of the project's repos, has no checkout on the project's machine; the message gives the clone command), `loom_unavailable` (git or gh is missing or failed on the project's machine; the message is the host's) and `loom_human_only`.
+Every command accepts `--json`. Failures carry a code: `loom_not_found`, `loom_invalid_state` (the message names the current state), `loom_invalid_spec`, `loom_invalid_input`, `loom_no_checkout` (the bb project, or one of the project's repos, has no checkout on the project's machine; the message gives the clone command), `loom_unavailable` (git or the repo's forge, `gh` or the spec's forge commands, is missing or failed on the project's machine; the message is the host's) and `loom_human_only`.
 
 ## Project states
 
@@ -57,11 +57,11 @@ Each ticket is the root of a reply thread. Its first post is the brief: the body
 
 ## Roles
 
-- Planner: the thread that proposed the project. Before approval it revises the spec with `loom_propose`. After approval it uses the board tools below, mostly to answer triage rounds. It never approves, starts or pauses.
+- Planner: the thread that proposed the project. Before approval it revises the spec with `loom_propose`, after `loom_discover` has told it how each repo is reached (its remotes, whether `gh` serves them, the environment providers bb offers and whether Loom can add its own integration worktree). After approval it uses the board tools below, mostly to answer triage rounds. It never approves, starts or pauses.
 - Worker: a thread the plugin starts for one ticket. It has `loom_note`, `loom_submit` and `loom_block`.
 - Reviewer: a thread the plugin starts to review a ticket. It has `loom_note`, `loom_approve` and `loom_request_changes`, and changes nothing.
 - Spec reviewer: a thread the plugin starts for each draft version. It has `loom_spec_approve` and `loom_spec_request_changes`, and changes nothing.
-- Any other thread has `loom_propose` and can start a new project.
+- Any other thread has `loom_discover` and `loom_propose` and can start a new project.
 
 A thread's role is whatever the plugin's own table says. Claiming a role in thread metadata grants nothing.
 
@@ -127,9 +127,9 @@ The plugin counts a verdict only from the reviewer thread it started for that ti
 Approved tickets enter a merge queue, one ticket at a time per project. The plugin merges exactly the commit that passed the checks and was reviewed, never the branch tip.
 
 - `merge.strategy = "integration"`: the plugin merges the commit into the integration branch (`merge.branch`, `loom/<slug>` by default) in a worktree it owns, with a merge commit, then runs `checks.after_merge` on the merged result. The branch only moves forward when the combined code passes. A conflict, a failed after_merge check, or an after_merge check that commits or edits a tracked file leaves the branch where it was, and the ticket goes back to its worker: a conflict names the files and tells the worker to merge the integration branch into its own branch, resolve them, run the checks and call `loom_submit`; a failed check sends the output, and so does a check that changed the branch. Either way the ticket goes through checks and review again. No new worker starts while a merge is running, so none branches from a merge that has not passed.
-- `merge.strategy = "pr"`: the plugin pushes the commit to the ticket's branch and opens one pull request with `gh`, a draft unless `merge.draft = false`, with the ticket's title, body, acceptance criteria and review summary. It follows the pull request every few minutes: merged completes the ticket, closed without merging blocks it.
+- `merge.strategy = "pr"`: the plugin pushes the commit to the ticket's branch and opens one pull request through the repo's forge, a draft unless `merge.draft = false`, with the ticket's title, body, acceptance criteria and review summary. The forge is `gh` unless `[merge.forge]` says otherwise: the spec's own `open` and `state` commands, or `none`, where the plugin only pushes the branch. It follows the pull request every few minutes: merged completes the ticket, closed without merging blocks it. With `none`, the ticket is done once the remote's base branch contains its commit.
 
-Under both strategies a ticket that depends on another starts only after it is done. If git, gh or the remote is missing, or the integration branch is checked out in another worktree, the plugin pauses the project and says why in `bb loom show`; fix it and `bb loom resume`. A merge left half done resumes without a second merge commit or a second pull request.
+Under both strategies a ticket that depends on another starts only after it is done. If git, the repo's forge or the remote is missing, or the integration branch is checked out in another worktree, the plugin pauses the project and says why in `bb loom show`; fix it and `bb loom resume`. A merge left half done resumes without a second merge commit or a second pull request.
 
 ## Landing
 

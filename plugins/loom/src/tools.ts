@@ -6,6 +6,7 @@ import { z } from "zod";
 import { submit } from "./checks";
 import { formatTicket } from "./cli";
 import { StoreError, type ThreadRow, type TicketRow } from "./db/store";
+import { discoverText, gatherFacts, type RepoTarget } from "./discover";
 import type { Engine } from "./engine";
 import { LoomError, type ProposeResult, type Projects } from "./projects";
 import { specReviewBlocks } from "./format";
@@ -16,10 +17,10 @@ import { SPEC_REVIEW_ROUNDS, TICKET_STATES } from "./states";
 import { addTickets, boardText, editTicket } from "./triage";
 import { blockTicket, requeueTicket } from "./workers";
 
-export const PLANNER_TOOLS = ["loom_propose", "loom_board", "loom_ticket", "loom_requeue", "loom_add_tickets", "loom_edit_ticket", "loom_cancel_ticket", "loom_post"] as const;
+export const PLANNER_TOOLS = ["loom_propose", "loom_discover", "loom_board", "loom_ticket", "loom_requeue", "loom_add_tickets", "loom_edit_ticket", "loom_cancel_ticket", "loom_post"] as const;
 export const WORKER_TOOLS = ["loom_note", "loom_submit", "loom_block"] as const;
 export const REVIEWER_TOOLS = ["loom_note", "loom_approve", "loom_request_changes"] as const;
-export const ORDINARY_TOOLS = ["loom_propose"] as const;
+export const ORDINARY_TOOLS = ["loom_propose", "loom_discover"] as const;
 export const SPEC_REVIEWER_TOOLS = ["loom_spec_approve", "loom_spec_request_changes"] as const;
 export const SKILLS = { plan: "loom-plan", usage: "loom" } as const;
 
@@ -122,6 +123,32 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
         const hostId = await projects.hostOf(tool.threadId);
         const result = await projects.propose({ toml: spec_toml, threadId: tool.threadId, bbProjectId: tool.projectId, hostId });
         return proposeReport(result, result.state === "draft" ? await ensureSpecReview(ctx, result.slug) : null);
+      }),
+  });
+
+  bb.agents.registerTool({
+    name: "loom_discover",
+    description:
+      "Before proposing a Loom spec: for each repo, its git remotes, whether gh can open pull requests there, the environment providers bb offers for it on this machine (with their inputs schemas), and whether Loom can add its own integration worktree. Every choice comes back as found or ask; ask the human about each ask item before you propose.",
+    presentation: { label: { pending: "Discovering how the repos are reached", completed: "Discovered how the repos are reached" } },
+    parameters: z.object({
+      projects: z
+        .array(z.string().min(1).max(100))
+        .min(1)
+        .max(10)
+        .optional()
+        .describe("bb project ids of the repos, in the order of their [[repo]] tables; leave out for this thread's own project"),
+    }),
+    execute: ({ projects: ids }, tool) =>
+      run(async () => {
+        const hostId = await projects.hostOf(tool.threadId);
+        if (hostId === null) throw new LoomError("loom_unavailable", "bb did not say which machine this thread runs on, so Loom cannot look at its checkouts. Call loom_discover again in a moment.");
+        let targets: RepoTarget[] = [{ label: "this thread's repository", index: null, bbProjectId: tool.projectId, settings: null }];
+        if (ids !== undefined) {
+          const names = new Map((await ctx.bb.listProjects()).map((project) => [project.id, project.name]));
+          targets = ids.map((id, index) => ({ label: `the repo of bb project ${names.get(id) ?? id}`, index, bbProjectId: id, settings: null }));
+        }
+        return discoverText(await gatherFacts(ctx, targets, hostId));
       }),
   });
 

@@ -13,7 +13,7 @@ import { approve, settleReviews, spawnReviewers } from "../src/review";
 import { Projects } from "../src/projects";
 import type { DoneSettings } from "../src/record";
 import { specOf, spawnWorker, type EngineCtx } from "../src/workers";
-import { SectionNameConflictError, type BbPort, type BbProjectInfo, type EnvironmentFile, type EnvironmentFiles, type EnvironmentInfo, type EnvironmentPatch, type HostPort, type SpawnArgs, type ThreadInfo } from "../src/ports";
+import { SectionNameConflictError, type BbPort, type BbProjectInfo, type EnvironmentFile, type EnvironmentFiles, type EnvironmentInfo, type EnvironmentPatch, type EnvironmentProviderInfo, type HostPort, type PluginInfo, type SpawnArgs, type ThreadInfo } from "../src/ports";
 
 export function makeDb(): Database.Database {
   const db = new Database(":memory:");
@@ -33,6 +33,18 @@ export interface PortCall {
   method: string;
   args: unknown[];
 }
+
+/** bb's own git-worktree provider, as bb lists it. */
+export const GIT_WORKTREE_PROVIDER: EnvironmentProviderInfo = {
+  id: "git-worktree",
+  displayName: "Worktree",
+  description: "Create an isolated Git worktree for your changes.",
+  pluginId: "environment-git-worktree",
+  acceptsEmptyInputs: true,
+  inputs: null,
+  available: true,
+  unavailableReason: null,
+};
 
 export class FakePort implements BbPort {
   calls: PortCall[] = [];
@@ -213,6 +225,19 @@ export class FakePort implements BbPort {
     if (this.providers instanceof Error) throw this.providers;
     return [...this.providers];
   }
+  /** The environment providers bb offers for any project; an Error makes the listing fail. */
+  environmentProviderList: EnvironmentProviderInfo[] | Error = [GIT_WORKTREE_PROVIDER];
+  async environmentProviders(bbProjectId: string, hostId: string) {
+    this.record("environmentProviders", bbProjectId, hostId);
+    if (this.environmentProviderList instanceof Error) throw this.environmentProviderList;
+    return this.environmentProviderList.map((provider) => ({ ...provider }));
+  }
+  /** The installed plugins. */
+  pluginList: PluginInfo[] = [{ id: "environment-git-worktree", enabled: true, builtin: true }];
+  async plugins() {
+    this.record("plugins");
+    return this.pluginList.map((plugin) => ({ ...plugin }));
+  }
   /** Threads with a pending interaction. */
   waiting = new Set<string>();
   async waitingOnUser(threadIds: readonly string[]) {
@@ -265,6 +290,17 @@ export class FakeHost implements HostPort {
   /** The merges made in each worktree, oldest first: what `merge` reports as already merged, and what `resetHard` undoes. */
   merges = new Map<string, Array<{ ref: string; before: string; sha: string }>>();
   prStates = new Map<string, "OPEN" | "MERGED" | "CLOSED">();
+  /** What `remotes` lists for every checkout. */
+  remoteList: HostOutput<"remotes">["remotes"] = [
+    { name: "origin", pushUrls: ["https://github.com/acme/shop.git"] },
+    { name: "upstream", pushUrls: ["https://github.com/acme/upstream.git"] },
+  ];
+  /** What `ghStatus` answers; its host is the push URL's. */
+  ghState: HostOutput<"ghStatus">["status"] = "ready";
+  /** What `trialWorktree` answers. */
+  trial: HostOutput<"trialWorktree"> = { outcome: "ok" };
+  /** The commits `landedOn` reports as on the remote's base branch. */
+  landed = new Set<string>();
   /** What changedFiles lists, by "<repo>:base..head" for one checkout or "base..head" for any; a missing entry lists no files. */
   listings = new Map<string, HostOutput<"changedFiles">>();
   /** The tip fetchBranch reports for the remote's base branch. Every integration branch starts at base000, so base000 means it has not moved. */
@@ -330,8 +366,8 @@ export class FakeHost implements HostPort {
       case "diff":
         return { stat: " src/a.ts | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)", patch: "diff --git a/src/a.ts b/src/a.ts\n+export const a = 1;\n", truncated: false };
       case "ensureWorktree": {
-        const { key, branch } = input as HostInput<"ensureWorktree">;
-        const path = `/data/worktrees/${key}`;
+        const { key, branch, path: provisioned } = input as HostInput<"ensureWorktree">;
+        const path = provisioned ?? `/data/worktrees/${key}`;
         if (!this.worktrees.has(path)) this.worktrees.set(path, { branch, head: "base000", dirty: false, changed: [] });
         return { outcome: "ok", path };
       }
@@ -368,6 +404,16 @@ export class FakeHost implements HostPort {
       }
       case "prState":
         return { outcome: "ok", state: this.prStates.get((input as HostInput<"prState">).url) ?? "OPEN" };
+      case "remotes":
+        return { remotes: this.remoteList.map((remote) => ({ name: remote.name, pushUrls: [...remote.pushUrls] })) };
+      case "ghStatus": {
+        const host = /^(?:https?|ssh):\/\/(?:[^@/]+@)?([^/:]+)|^[^@:/]+@([^:/]+):/u.exec((input as HostInput<"ghStatus">).pushUrl);
+        return host === null ? { status: "not_a_url", host: null } : { status: this.ghState, host: host[1] ?? host[2]! };
+      }
+      case "trialWorktree":
+        return this.trial;
+      case "landedOn":
+        return { outcome: "ok", landed: this.landed.has((input as HostInput<"landedOn">).sha) };
       case "changedFiles": {
         const { repo, base, head } = input as HostInput<"changedFiles">;
         return this.listings.get(`${repo}:${base}..${head}`) ?? this.listings.get(`${base}..${head}`) ?? { outcome: "ok", base, head, files: [], truncated: false };
@@ -431,7 +477,12 @@ export function sdkStubs(state: SdkState): FakeSdkOverrides {
       update: async () => ({}),
       updatePluginMetadata: async () => ({}),
     },
-    environments: { get: async ({ environmentId }) => ({ id: environmentId, hostId: state.environmentHost }) },
+    environments: {
+      get: async ({ environmentId }) => ({ id: environmentId, hostId: state.environmentHost }),
+      listProviders: async () => [{ ...GIT_WORKTREE_PROVIDER, machineAvailability: {}, availability: null }],
+    },
+    plugins: { list: async () => ({ plugins: [{ id: "environment-git-worktree", enabled: true, provenance: "builtin" }] }) },
+    projects: { get: async ({ projectId }) => ({ id: projectId, sources: [{ hostId: state.environmentHost, path: "/repo", isDefault: true }] }) },
     system: { config: async () => ({ primaryHostId: state.primaryHostId }) },
   };
 }
@@ -447,8 +498,8 @@ export function makeHost(opts: { port?: BbPort; settings?: () => DoneSettings } 
   bb.storage.migrate(db, MIGRATIONS);
   const store = new Store(db, Date.now);
   const port = opts.port ?? createBbPort(bb);
-  const projects = new Projects({ store, bb: port, now: Date.now });
   const hostPort = new FakeHost();
+  const projects = new Projects({ store, bb: port, now: Date.now, host: hostPort });
   const engine = new Engine({ store, bb: port, now: Date.now, host: hostPort, projects, settings: opts.settings });
   vi.spyOn(engine, "kick").mockImplementation(() => undefined);
   return { bb, harness, state, store, projects, engine, hostPort };
@@ -472,16 +523,21 @@ export function makeCtx(): EngineHarness {
   const bb = new FakePort();
   bb.addThread("thr_plan", "idle");
   const host = new FakeHost();
-  const projects = new Projects({ store, bb, now: clock.now });
+  const projects = new Projects({ store, bb, now: clock.now, host });
   const kicks = { count: 0 };
   const ctx: EngineCtx = { store, bb, now: clock.now, host, kick: () => void (kicks.count += 1) };
   return { ctx, clock, store, bb, host, projects, kicks };
 }
 
-/** Proposes and approves the base spec (two tickets, CSV-1 and CSV-2), then moves the project to `state`. */
+/**
+ * Proposes and approves the base spec (two tickets, CSV-1 and CSV-2), then moves the project to `state`. The calls the
+ * proposal made to look at the repos are cleared, so a test counts only the calls after its project exists.
+ */
 export async function seedProject(h: EngineHarness, edit?: (doc: Doc) => void, state: "ready" | "running" | "paused" = "running"): Promise<ProjectRow> {
   await h.projects.propose({ toml: specToml(edit), threadId: "thr_plan", bbProjectId: "proj_1", hostId: "host_1" });
   await h.projects.approve("csv", "human");
+  h.host.calls = [];
+  h.bb.calls = h.bb.calls.filter((call) => !["plugins", "environmentProviders", "projectCheckout"].includes(call.method));
   const project = h.store.projectBySlug("csv")!;
   if (state !== "ready") h.store.setProjectState(project.id, "running", "human");
   if (state === "paused") h.store.setProjectState(project.id, "paused", "human");

@@ -3,6 +3,7 @@
 import type { PluginSettingDescriptors } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import type { EventRow, PostRow, ProjectRow, RecordRow, Store, TicketRow } from "./db/store";
+import { spawnEnvironment, threadBranch } from "./environments";
 import { plural } from "./format";
 import { checkoutOf } from "./merge";
 import { SpawnRefusedError, type ThreadInfo } from "./ports";
@@ -202,6 +203,7 @@ async function startSummary(ctx: EngineCtx, row: RecordRow, project: ProjectRow,
       bbProjectId: repoSettings(spec, repo).bbProjectId ?? project.bb_project_id,
       hostId,
       baseBranch: freshBaseOf(spec, repo),
+      environment: spawnEnvironment(repoSettings(spec, repo), { branch: threadBranch(project.slug, "record", String(row.id)), base: freshBaseOf(spec, repo) }),
       title: `${project.key} · record`,
       prompt: recordPrompt(project),
       detail: projectRecord(store, project),

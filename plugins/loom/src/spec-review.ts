@@ -3,6 +3,7 @@
 // worker and ticket reviewer machinery never sees it. Drafts are not ticked, so bb's thread events and loom_propose drive it.
 import { randomBytes } from "node:crypto";
 import type { ProjectRow, SpecReviewRow, Store } from "./db/store";
+import { spawnEnvironment, threadBranch } from "./environments";
 import { LoomError } from "./projects";
 import { specReviewFailedText, specReviewNudgeText, specReviewVerdictText, specReviewerBrief } from "./prompts";
 import { isMultiRepo, repoSettings } from "./repos";
@@ -121,6 +122,7 @@ async function startReview(ctx: EngineCtx, project: ProjectRow, version: number,
       bbProjectId: settings.bbProjectId ?? project.bb_project_id,
       hostId: project.host_id,
       baseBranch: `${settings.remote}/${settings.base}`,
+      environment: spawnEnvironment(settings, { branch: threadBranch(project.slug, "spec", `review-${version}-${round}`), base: `${settings.remote}/${settings.base}` }),
       title: `${project.key} · spec review v${version}`,
       prompt: specReviewerBrief({ project, spec, toml, version, round, earlier }),
       sectionId: project.section_id,

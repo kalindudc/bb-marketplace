@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { TomlError, parse } from "smol-toml";
 import { z } from "zod";
+import { unknownPlaceholders } from "./environments";
 import { plural } from "./format";
 import { matchesAny } from "./scope";
 
@@ -48,6 +49,32 @@ function isRealDate(text: string): boolean {
 // TOML reads an unquoted 2026-12-31 as a date object, not a string.
 const isoDate = z.preprocess((value) => (value instanceof Date ? value.toISOString().slice(0, 10) : value), z.string().refine(isRealDate, "must be a real date such as 2026-12-31"));
 
+// The server that hosts a repo's pull requests: gh, the spec's own commands, or none (Loom only pushes the branch).
+export const forgeSchema = z
+  .object({
+    kind: z.enum(["gh", "command", "none"]),
+    open: command.optional(),
+    state: command.optional(),
+    after_open: z.array(command).max(5).optional(),
+  })
+  .strict();
+
+// A bb environment provider for workers and reviewers, with inputs that may hold the {branch} and {base} placeholders.
+export const environmentSchema = z
+  .object({
+    provider: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,99}$/, "must be a bb environment provider id, such as git-worktree"),
+    inputs: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict();
+
+// A command, or a plugin's CLI command, that prepares the integration worktree and prints its path last.
+export const worktreeSchema = z
+  .object({
+    plugin: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/, "must be a bb plugin id, such as world-tree").optional(),
+    command,
+  })
+  .strict();
+
 const agentSchema = z
   .object({
     provider: z.string().min(1).max(100).optional(),
@@ -80,6 +107,9 @@ export const repoSpecSchema = z
     checks: z.array(command).max(10).optional(),
     after_merge: z.array(command).max(10).optional(),
     protected: z.array(glob).max(100).optional(),
+    forge: forgeSchema.optional(),
+    environment: environmentSchema.optional(),
+    worktree: worktreeSchema.optional(),
   })
   .strict();
 
@@ -116,6 +146,8 @@ export const specSchema = z
         branch: gitName.optional(),
         remote: remoteName.default("origin"),
         draft: z.boolean().default(true),
+        forge: forgeSchema.optional(),
+        worktree: worktreeSchema.optional(),
       })
       .strict(),
     checks: z
@@ -162,6 +194,7 @@ export const specSchema = z
       .strict()
       .prefault({}),
     // No default: a spec without [[repo]] must parse, and hash, exactly as it did before repos existed.
+    environment: environmentSchema.optional(),
     repo: z.array(repoSpecSchema).max(10).optional(),
     ticket: z.array(ticketSpecSchema).min(1).max(200),
   })
@@ -171,6 +204,9 @@ export type Spec = z.output<typeof specSchema>;
 export type TicketSpec = z.output<typeof ticketSpecSchema>;
 export type TicketPatch = z.output<typeof ticketPatchSchema>;
 export type RepoSpec = z.output<typeof repoSpecSchema>;
+export type ForgeSpec = z.output<typeof forgeSchema>;
+export type EnvironmentSpec = z.output<typeof environmentSchema>;
+export type WorktreeSpec = z.output<typeof worktreeSchema>;
 
 export interface SpecResult {
   ok: boolean;
@@ -381,6 +417,11 @@ export function validateSemantics(spec: Spec, rawToml: string): { errors: string
     }
   });
 
+  errors.push(...forgeErrors(spec.merge.forge, "merge.forge"), ...worktreeErrors(spec, spec.merge.worktree, "merge.worktree"), ...environmentErrors(spec.environment, "environment"));
+  repos.forEach((repo, index) => {
+    errors.push(...forgeErrors(repo.forge, `repo[${index}].forge`), ...worktreeErrors(spec, repo.worktree, `repo[${index}].worktree`), ...environmentErrors(repo.environment, `repo[${index}].environment`));
+  });
+
   const { worker, reviewer } = spec.agents;
   if (worker.provider === reviewer.provider && worker.model === reviewer.model) {
     warnings.push("agents.reviewer: the reviewer uses the same provider and model as the worker, so it shares the worker's blind spots. Set agents.reviewer.provider and model to a different model.");
@@ -388,6 +429,37 @@ export function validateSemantics(spec: Spec, rawToml: string): { errors: string
   warnings.push(...overlapWarnings(scopeOverlaps(spec.ticket)));
 
   return { errors, warnings };
+}
+
+function forgeErrors(forge: ForgeSpec | undefined, at: string): string[] {
+  if (forge === undefined) return [];
+  const errors: string[] = [];
+  if (forge.kind === "command") {
+    if (forge.open === undefined) {
+      errors.push(`${at}.open: is required when ${at}.kind is "command". Add the command that opens a pull request: it gets LOOM_REMOTE, LOOM_BASE, LOOM_HEAD, LOOM_TITLE and LOOM_DRAFT, reads the body on stdin, and prints the pull request's URL.`);
+    }
+    if (forge.state === undefined) {
+      errors.push(`${at}.state: is required when ${at}.kind is "command". Add the command that prints open, merged or closed for the pull request in LOOM_URL (its number is in LOOM_PR_NUMBER).`);
+    }
+    return errors;
+  }
+  for (const key of ["open", "state"] as const) {
+    if (forge[key] !== undefined) errors.push(`${at}.${key}: only kind = "command" runs it, and ${at}.kind is "${forge.kind}". Remove it, or set kind = "command".`);
+  }
+  if (forge.kind === "none" && forge.after_open !== undefined) {
+    errors.push(`${at}.after_open: kind = "none" opens no pull request, so nothing would run these. Remove after_open, or use kind = "gh" or "command".`);
+  }
+  return errors;
+}
+
+function worktreeErrors(spec: Spec, worktree: WorktreeSpec | undefined, at: string): string[] {
+  if (worktree === undefined || spec.merge.strategy === "integration") return [];
+  return [`${at}: only the integration strategy has an integration worktree, and merge.strategy is "pr". Remove ${at}, or use merge.strategy = "integration".`];
+}
+
+function environmentErrors(environment: EnvironmentSpec | undefined, at: string): string[] {
+  if (environment?.inputs === undefined) return [];
+  return unknownPlaceholders(environment.inputs).map((name) => `${at}.inputs: {${name}} is not a Loom placeholder. Use {branch} or {base}, or write the value out.`);
 }
 
 export interface ScopeOverlap {

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import hostEntry from "../host";
-import { changedFiles, commitAll, diff, ensureBranch, ensureWorktree, exec, fetchBranch, filePatch, git, merge, parseRemoteUrl, prCreate, prState, push, resetHard, worktreeState } from "../src/host/ops";
+import { changedFiles, commitAll, diff, ensureBranch, ensureWorktree, exec, fetchBranch, filePatch, ghStatus, git, landedOn, merge, parseRemoteUrl, prCreate, prState, push, remotes, resetHard, trialWorktree, worktreeState } from "../src/host/ops";
 
 const ENV: Record<string, string> = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
 const AUTHOR_VARS = ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"];
@@ -16,6 +16,7 @@ let scratch: string;
 let counter = 0;
 
 const sh = (cwd: string, ...args: string[]) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
+const GH = { kind: "gh" } as const;
 const put = (root: string, path: string, content: string) => {
   mkdirSync(join(root, path, ".."), { recursive: true });
   writeFileSync(join(root, path), content);
@@ -641,7 +642,7 @@ describe("gh", () => {
   it("creates the pull request with --repo from an https remote, the body on stdin, and returns the last stdout line", async () => {
     fakeGh(`cat > "$dir/stdin.txt"\necho "Creating pull request for loom/csv-1 into main" 1>&2\necho "https://github.com/acme/shop/pull/7"`);
     const repo = repoWithRemote("https://github.com/acme/shop.git");
-    const result = await prCreate({ repo, remote: "origin", base: "main", head: "loom/csv-1", title: "CSV-1: Order rows", body: "Body line\n\nAcceptance:\n1. x", draft: true });
+    const result = await prCreate({ repo, remote: "origin", base: "main", head: "loom/csv-1", title: "CSV-1: Order rows", body: "Body line\n\nAcceptance:\n1. x", draft: true, forge: GH });
     expect(result).toEqual({ outcome: "ok", url: "https://github.com/acme/shop/pull/7" });
     expect(calls()).toEqual([["pr", "create", "--repo", "github.com/acme/shop", "--base", "main", "--head", "loom/csv-1", "--title", "CSV-1: Order rows", "--body-file", "-", "--draft"]]);
     expect(readFileSync(join(bin, "stdin.txt"), "utf8")).toBe("Body line\n\nAcceptance:\n1. x");
@@ -650,7 +651,7 @@ describe("gh", () => {
   it("parses an ssh remote and leaves out --draft for a ready pull request", async () => {
     fakeGh(`cat > /dev/null\necho "https://github.com/acme/shop/pull/8"`);
     const repo = repoWithRemote("git@github.com:acme/shop.git");
-    await prCreate({ repo, remote: "origin", base: "main", head: "loom/csv-2", title: "t", body: "", draft: false });
+    await prCreate({ repo, remote: "origin", base: "main", head: "loom/csv-2", title: "t", body: "", draft: false, forge: GH });
     expect(calls()[0]).toEqual(["pr", "create", "--repo", "github.com/acme/shop", "--base", "main", "--head", "loom/csv-2", "--title", "t", "--body-file", "-"]);
   });
 
@@ -658,7 +659,7 @@ describe("gh", () => {
     fakeGh(`cat > /dev/null\necho "https://github.com/fork/shop/pull/3"`);
     const repo = repoWithRemote("https://github.com/acme/shop.git");
     sh(repo, "remote", "set-url", "--push", "origin", "git@github.com:fork/shop.git");
-    await prCreate({ repo, remote: "origin", base: "main", head: "loom/csv-3", title: "t", body: "", draft: true });
+    await prCreate({ repo, remote: "origin", base: "main", head: "loom/csv-3", title: "t", body: "", draft: true, forge: GH });
     expect(calls()[0]).toEqual(["pr", "create", "--repo", "github.com/fork/shop", "--base", "main", "--head", "loom/csv-3", "--title", "t", "--body-file", "-", "--draft"]);
   });
 
@@ -667,7 +668,7 @@ describe("gh", () => {
     const repo = repoWithRemote("https://github.com/acme/shop.git");
     sh(repo, "remote", "set-url", "--push", "origin", "git@github.com:acme/shop.git");
     sh(repo, "remote", "set-url", "--add", "--push", "origin", "git@github.com:fork/shop.git");
-    const result = await prCreate({ repo, remote: "origin", base: "main", head: "loom/csv-4", title: "t", body: "", draft: true });
+    const result = await prCreate({ repo, remote: "origin", base: "main", head: "loom/csv-4", title: "t", body: "", draft: true, forge: GH });
     expect(result).toMatchObject({ outcome: "unavailable", message: expect.stringMatching(/"origin".*2 push URLs/u) });
     expect(calls()).toEqual([]);
   });
@@ -677,7 +678,7 @@ describe("gh", () => {
       `case "$1 $2" in\n"pr create") cat > /dev/null; echo 'a pull request for branch "loom/csv-1" into branch "main" already exists:' 1>&2; echo "https://github.com/acme/shop/pull/7" 1>&2; exit 1;;\n"pr view") echo '{"url":"https://github.com/acme/shop/pull/7"}';;\nesac`,
     );
     const repo = repoWithRemote("https://github.com/acme/shop.git");
-    const result = await prCreate({ repo, remote: "origin", base: "main", head: "loom/csv-1", title: "t", body: "b", draft: true });
+    const result = await prCreate({ repo, remote: "origin", base: "main", head: "loom/csv-1", title: "t", body: "b", draft: true, forge: GH });
     expect(result).toEqual({ outcome: "ok", url: "https://github.com/acme/shop/pull/7" });
     expect(calls()[1]).toEqual(["pr", "view", "loom/csv-1", "--repo", "github.com/acme/shop", "--json", "url"]);
   });
@@ -685,35 +686,35 @@ describe("gh", () => {
   it("is unavailable when the remote does not parse, the remote is missing, gh fails or gh is not installed", async () => {
     fakeGh(`cat > /dev/null\necho "https://github.com/x/y/pull/1"`);
     const local = repoWithRemote("/srv/git/shop.git");
-    expect(await prCreate({ repo: local, remote: "origin", base: "main", head: "h", title: "t", body: "", draft: true })).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("GitHub") });
+    expect(await prCreate({ repo: local, remote: "origin", base: "main", head: "h", title: "t", body: "", draft: true, forge: GH })).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("GitHub") });
     const bare = makeRepo();
-    expect(await prCreate({ repo: bare, remote: "origin", base: "main", head: "h", title: "t", body: "", draft: true })).toMatchObject({ outcome: "unavailable" });
+    expect(await prCreate({ repo: bare, remote: "origin", base: "main", head: "h", title: "t", body: "", draft: true, forge: GH })).toMatchObject({ outcome: "unavailable" });
     expect(calls()).toEqual([]);
 
     fakeGh(`cat > /dev/null\necho "gh: not logged in" 1>&2\nexit 4`);
     const repo = repoWithRemote("https://github.com/acme/shop.git");
-    const failed = await prCreate({ repo, remote: "origin", base: "main", head: "h", title: "t", body: "", draft: true });
+    const failed = await prCreate({ repo, remote: "origin", base: "main", head: "h", title: "t", body: "", draft: true, forge: GH });
     expect(failed).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("not logged in") });
 
     const gitOnly = join(scratch, `git-only-${counter++}`);
     mkdirSync(gitOnly);
     symlinkSync(execFileSync("which", ["git"], { encoding: "utf8" }).trim(), join(gitOnly, "git"));
     process.env.PATH = gitOnly;
-    const missing = await prCreate({ repo, remote: "origin", base: "main", head: "h", title: "t", body: "", draft: true });
+    const missing = await prCreate({ repo, remote: "origin", base: "main", head: "h", title: "t", body: "", draft: true, forge: GH });
     expect(missing).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("gh") });
   });
 
   it("reads the state of a pull request, and sets the prompt guards", async () => {
     fakeGh(`echo "$GH_PROMPT_DISABLED $GIT_TERMINAL_PROMPT" > "$dir/env.txt"\necho '{"state":"MERGED"}'`);
     const repo = makeRepo();
-    expect(await prState({ repo, url: "https://github.com/acme/shop/pull/7" })).toEqual({ outcome: "ok", state: "MERGED" });
+    expect(await prState({ repo, url: "https://github.com/acme/shop/pull/7", forge: GH })).toEqual({ outcome: "ok", state: "MERGED" });
     expect(calls()).toEqual([["pr", "view", "https://github.com/acme/shop/pull/7", "--json", "state"]]);
     expect(readFileSync(join(bin, "env.txt"), "utf8").trim()).toBe("1 0");
 
     fakeGh(`echo "no pull requests found" 1>&2\nexit 1`);
-    expect(await prState({ repo, url: "https://github.com/acme/shop/pull/9" })).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("no pull requests found") });
+    expect(await prState({ repo, url: "https://github.com/acme/shop/pull/9", forge: GH })).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("no pull requests found") });
     fakeGh(`echo '{"state":"WEIRD"}'`);
-    expect(await prState({ repo, url: "https://github.com/acme/shop/pull/9" })).toMatchObject({ outcome: "unavailable" });
+    expect(await prState({ repo, url: "https://github.com/acme/shop/pull/9", forge: GH })).toMatchObject({ outcome: "unavailable" });
   });
 });
 
@@ -769,5 +770,156 @@ describe("host entry", () => {
     await expect(harness.experimental_call("ensureBranch", { repo: scratch, branch: "a..b", from: "main" })).rejects.toThrow();
     await expect(harness.experimental_call("ensureBranch", { repo: scratch, branch: "a b", from: "main" })).rejects.toThrow();
     await expect(harness.experimental_call("fetchBranch", { worktree: scratch, remote: "--upload-pack=x", branch: "main" })).rejects.toThrow();
+  });
+});
+
+describe("the spec's forge commands", () => {
+  it("opens with the open command: the body on stdin, LOOM_* in the environment, the last URL it prints", async () => {
+    const repo = makeRepo();
+    const out = join(scratch, `open-${counter++}`);
+    const open = `cat > "${out}.body"; printf '%s|%s|%s|%s|%s|%s' "$LOOM_REMOTE" "$LOOM_BASE" "$LOOM_HEAD" "$LOOM_TITLE" "$LOOM_DRAFT" "$PWD" > "${out}.env"; echo "created https://review.example.com/r/1"; echo "see https://review.example.com/r/42."`;
+    const result = await prCreate({ repo, remote: "upstream", base: "main", head: "loom/csv-1", title: "CSV-1: Rows", body: "the body", draft: false, forge: { kind: "command", open } });
+    expect(result).toEqual({ outcome: "ok", url: "https://review.example.com/r/42" });
+    expect(readFileSync(`${out}.env`, "utf8")).toBe(`upstream|main|loom/csv-1|CSV-1: Rows|0|${repo}`);
+    expect(readFileSync(`${out}.body`, "utf8")).toBe("the body");
+  });
+
+  it("is unavailable when the open command fails or prints no URL", async () => {
+    const repo = makeRepo();
+    const input = { repo, remote: "origin", base: "main", head: "h", title: "t", body: "", draft: true };
+    expect(await prCreate({ ...input, forge: { kind: "command", open: "echo denied; exit 2" } })).toMatchObject({ outcome: "unavailable", message: expect.stringMatching(/open command failed \(exit 2\): denied/u) });
+    expect(await prCreate({ ...input, forge: { kind: "command", open: "echo created" } })).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("printed no pull request URL") });
+  });
+
+  it("reads the first word of the state command's last line, in any case, with LOOM_URL and LOOM_PR_NUMBER set", async () => {
+    const repo = makeRepo();
+    const url = "https://review.example.com/r/42";
+    const state = 'echo "warning: old cli"; [ "$LOOM_URL" = "https://review.example.com/r/42" ] && echo "Merged as $LOOM_PR_NUMBER"';
+    expect(await prState({ repo, url, forge: { kind: "command", state } })).toEqual({ outcome: "ok", state: "MERGED" });
+    expect(await prState({ repo, url, forge: { kind: "command", state: "echo open" } })).toEqual({ outcome: "ok", state: "OPEN" });
+    expect(await prState({ repo, url, forge: { kind: "command", state: "echo pending" } })).toMatchObject({ outcome: "unavailable", message: expect.stringContaining('printed "pending", not open, merged or closed') });
+  });
+});
+
+describe("remotes", () => {
+  it("lists each remote with its push URLs, credentials left out", async () => {
+    const repo = makeRepo();
+    sh(repo, "remote", "add", "origin", "https://user:secret@example.com/acme/shop.git");
+    sh(repo, "remote", "add", "delta", "https://delta.example.com/shop/world.git");
+    sh(repo, "remote", "set-url", "--push", "delta", "git@delta.example.com:shop/world.git");
+    expect(await remotes({ repo })).toEqual({
+      remotes: [
+        { name: "delta", pushUrls: ["git@delta.example.com:shop/world.git"] },
+        { name: "origin", pushUrls: ["https://example.com/acme/shop.git"] },
+      ],
+    });
+  });
+});
+
+describe("ghStatus", () => {
+  let savedPath: string | undefined;
+  beforeAll(() => {
+    savedPath = process.env.PATH;
+  });
+  afterAll(() => {
+    process.env.PATH = savedPath;
+  });
+  const pathWith = (script: string | null) => {
+    const bin = join(scratch, `ghbin-${counter++}`);
+    mkdirSync(bin);
+    if (script === null) symlinkSync(execFileSync("which", ["git"], { encoding: "utf8" }).trim(), join(bin, "git"));
+    else {
+      writeFileSync(join(bin, "gh"), `#!/bin/sh\n${script}\n`);
+      chmodSync(join(bin, "gh"), 0o755);
+    }
+    process.env.PATH = script === null ? bin : `${bin}:${savedPath}`;
+  };
+
+  it("asks gh about the host the push URL points at", async () => {
+    pathWith('[ "$1 $2 $3 $4" = "auth status --hostname github.com" ] && exit 0; exit 1');
+    const repo = makeRepo();
+    expect(await ghStatus({ repo, pushUrl: "https://github.com/acme/shop.git" })).toEqual({ status: "ready", host: "github.com" });
+    expect(await ghStatus({ repo, pushUrl: "git@delta.example.com:shop/world.git" })).toEqual({ status: "signed_out", host: "delta.example.com" });
+    expect(await ghStatus({ repo, pushUrl: "/srv/git/shop.git" })).toEqual({ status: "not_a_url", host: null });
+  });
+
+  it("says gh is missing when it is not on PATH", async () => {
+    const repo = makeRepo();
+    pathWith(null);
+    expect(await ghStatus({ repo, pushUrl: "https://github.com/acme/shop.git" })).toEqual({ status: "missing", host: "github.com" });
+  });
+});
+
+describe("trialWorktree", () => {
+  const dataDir = () => join(scratch, "trial-data");
+
+  it("adds a worktree with no checkout and removes it again", async () => {
+    const repo = makeRepo();
+    expect(await trialWorktree({ repo }, dataDir())).toEqual({ outcome: "ok" });
+    expect(sh(repo, "worktree", "list").split("\n")).toHaveLength(1);
+  });
+
+  it("is refused with git's message when git cannot add one", async () => {
+    const repo = makeRepo(false);
+    const result = await trialWorktree({ repo }, dataDir());
+    expect(result.outcome).toBe("refused");
+    expect(result.outcome === "refused" && result.message).toMatch(/HEAD/u);
+  });
+});
+
+describe("landedOn", () => {
+  it("says whether the remote's base branch contains the commit, writing no FETCH_HEAD", async () => {
+    const repo = makeRepo();
+    const remote = join(scratch, `remote-${counter++}.git`);
+    execFileSync("git", ["init", "-q", "--bare", remote]);
+    sh(repo, "remote", "add", "origin", remote);
+    sh(repo, "push", "-q", "origin", "main");
+    const head = commitFile(repo, "x.txt", "x");
+    expect(await landedOn({ repo, remote: "origin", base: "main", sha: head })).toEqual({ outcome: "ok", landed: false });
+    sh(repo, "push", "-q", "origin", "HEAD:main");
+    expect(await landedOn({ repo, remote: "origin", base: "main", sha: head })).toEqual({ outcome: "ok", landed: true });
+    expect(existsSync(join(repo, ".git", "FETCH_HEAD"))).toBe(false);
+  });
+
+  it("is unavailable when the remote has no such branch", async () => {
+    const repo = makeRepo();
+    const remote = join(scratch, `remote-${counter++}.git`);
+    execFileSync("git", ["init", "-q", "--bare", remote]);
+    sh(repo, "remote", "add", "origin", remote);
+    expect(await landedOn({ repo, remote: "origin", base: "main", sha: sh(repo, "rev-parse", "HEAD") })).toEqual({ outcome: "unavailable", message: 'The remote "origin" has no branch main.' });
+  });
+});
+
+describe("ensureWorktree with a prepared path", () => {
+  const dataDir = () => join(scratch, "prepared-data");
+
+  it("uses the path as it is and switches a clean checkout to the integration branch", async () => {
+    const repo = makeRepo();
+    await ensureBranch({ repo, branch: "loom/prep", from: "main" });
+    const path = addWorktree(repo, "tree-branch");
+    expect(await ensureWorktree({ repo, key: "prep", branch: "loom/prep", path }, dataDir())).toEqual({ outcome: "ok", path });
+    expect(sh(path, "symbolic-ref", "--short", "HEAD")).toBe("loom/prep");
+  });
+
+  it("refuses one with uncommitted changes, one that does not exist, and one of another repository", async () => {
+    const repo = makeRepo();
+    await ensureBranch({ repo, branch: "loom/prep2", from: "main" });
+    const dirty = addWorktree(repo, "tree-dirty");
+    put(dirty, "README.md", "changed\n");
+    expect(await ensureWorktree({ repo, key: "prep", branch: "loom/prep2", path: dirty }, dataDir())).toMatchObject({ outcome: "unavailable", reason: "git", message: expect.stringContaining("with uncommitted changes") });
+    expect(await ensureWorktree({ repo, key: "prep", branch: "loom/prep2", path: join(scratch, "nowhere") }, dataDir())).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("which does not exist") });
+    const other = makeRepo();
+    expect(await ensureWorktree({ repo, key: "prep", branch: "loom/prep2", path: other }, dataDir())).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("belongs to the repository") });
+  });
+});
+
+describe("host entry: discovery and the push-only forge", () => {
+  const harness = experimental_createHostEntryHarness(hostEntry, { experimental_paths: { dataDir: join(tmpdir(), "loom-host-entry-data"), tempDir: tmpdir() } });
+
+  it("serves remotes and trialWorktree through the contract", async () => {
+    const repo = makeRepo();
+    sh(repo, "remote", "add", "origin", "https://example.com/acme/shop.git");
+    expect(await harness.experimental_call("remotes", { repo })).toEqual({ remotes: [{ name: "origin", pushUrls: ["https://example.com/acme/shop.git"] }] });
+    expect(await harness.experimental_call("trialWorktree", { repo })).toEqual({ outcome: "ok" });
   });
 });

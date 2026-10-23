@@ -20,5 +20,9 @@ export default experimental_defineHostEntry({
     push: (input, { signal }) => ops.push(input, signal),
     prCreate: (input, { signal }) => ops.prCreate(input, signal),
     prState: (input, { signal }) => ops.prState(input, signal),
+    remotes: (input, { signal }) => ops.remotes(input, signal),
+    ghStatus: (input, { signal }) => ops.ghStatus(input, signal),
+    trialWorktree: (input, { signal, experimental_paths }) => ops.trialWorktree(input, experimental_paths.dataDir, signal),
+    landedOn: (input, { signal }) => ops.landedOn(input, signal),
   },
 });

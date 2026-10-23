@@ -377,7 +377,7 @@ export function createCli(projects: Projects, engine: Engine, store: Store, now:
             const finished = "Every ticket is done or cancelled, so the project is done.\n";
             if (options.json) return out(toJson(result));
             if ("repos" in result) return out(formatRepoLand(positionals.slug, result, direct));
-            if (result.url === null) return out(`Landed ${positionals.slug} on ${result.pushed} at ${result.sha.slice(0, 12)}.\n${result.done ? finished : "Run `bb loom land --direct` again after more tickets merge to push them too.\n"}`);
+            if (result.url === null) return out(`Landed ${positionals.slug} on ${result.pushed} at ${result.sha.slice(0, 12)}.\n${result.done ? finished : `Run \`bb loom land${direct ? " --direct" : ""}\` again after more tickets merge to push them too.\n`}`);
             return out(`Landed ${positionals.slug}: ${result.url}\n${result.done ? finished : "Run `bb loom land` again after more tickets merge to push them to the same pull request.\n"}`);
           }),
       }),

@@ -16,6 +16,13 @@ const commit = z.string().regex(/^[0-9a-fA-F]{4,64}$/, "must be a commit hash");
 // A Loom worktree's key: the project slug, or the slug and a [[repo]] name joined by a dot. It names a directory, so nothing looser.
 const worktreeKey = z.string().regex(/^[a-z][a-z0-9-]{1,39}(?:\.[a-z][a-z0-9-]{0,23})?$/, "must be a project slug, or a project slug and a repo name joined by a dot");
 const missing = z.object({ outcome: z.literal("missing"), message: z.string() }).strict();
+const forgeCommand = z.string().min(1).max(2000);
+const unavailable = z.object({ outcome: z.literal("unavailable"), message: z.string() }).strict();
+
+/** A pull request's number as forge commands get it in LOOM_PR_NUMBER: the last run of digits in its URL, empty when there is none. */
+export function prNumber(url: string): string {
+  return /(\d+)(?!.*\d)/u.exec(url)?.[1] ?? "";
+}
 
 export const FILE_STATUSES = ["added", "modified", "deleted", "renamed", "copied", "type_changed"] as const;
 const changedFile = z
@@ -71,7 +78,7 @@ export const hostContract = defineRpcContract({
     output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), patch: z.string(), truncated: z.boolean() }).strict(), missing]),
   },
   ensureWorktree: {
-    input: z.object({ repo: absPath, key: worktreeKey, branch: ref }).strict(),
+    input: z.object({ repo: absPath, key: worktreeKey, branch: ref, path: absPath.optional() }).strict(),
     output: z.discriminatedUnion("outcome", [
       z.object({ outcome: z.literal("ok"), path: z.string() }).strict(),
       z.object({ outcome: z.literal("unavailable"), reason: z.enum(["branch_checked_out", "git"]), message: z.string() }).strict(),
@@ -99,16 +106,53 @@ export const hostContract = defineRpcContract({
     output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok") }).strict(), z.object({ outcome: z.literal("unavailable"), message: z.string() }).strict()]),
   },
   prCreate: {
-    input: z.object({ repo: absPath, remote: ref, base: ref, head: ref, title: z.string().min(1).max(256), body: z.string().max(60_000), draft: z.boolean() }).strict(),
+    input: z
+      .object({
+        repo: absPath,
+        remote: ref,
+        base: ref,
+        head: ref,
+        title: z.string().min(1).max(256),
+        body: z.string().max(60_000),
+        draft: z.boolean(),
+        forge: z.discriminatedUnion("kind", [z.object({ kind: z.literal("gh") }).strict(), z.object({ kind: z.literal("command"), open: forgeCommand }).strict()]),
+      })
+      .strict(),
     output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), url: z.string() }).strict(), z.object({ outcome: z.literal("unavailable"), message: z.string() }).strict()]),
   },
-  // gh pr view <url> --json state
+  // The pull request's state through the repo's forge: gh pr view <url> --json state, or the spec's state command.
   prState: {
-    input: z.object({ repo: absPath, url: z.string().regex(/^https?:\/\/\S+$/, "must be a pull request URL").max(500) }).strict(),
+    input: z
+      .object({
+        repo: absPath,
+        url: z.string().regex(/^https?:\/\/\S+$/, "must be a pull request URL").max(500),
+        forge: z.discriminatedUnion("kind", [z.object({ kind: z.literal("gh") }).strict(), z.object({ kind: z.literal("command"), state: forgeCommand }).strict()]),
+      })
+      .strict(),
     output: z.discriminatedUnion("outcome", [
       z.object({ outcome: z.literal("ok"), state: z.enum(["OPEN", "MERGED", "CLOSED"]) }).strict(),
       z.object({ outcome: z.literal("unavailable"), message: z.string() }).strict(),
     ]),
+  },
+  // Each git remote with its push URLs, in `git remote` order.
+  remotes: {
+    input: z.object({ repo: absPath }).strict(),
+    output: z.object({ remotes: z.array(z.object({ name: z.string(), pushUrls: z.array(z.string()) }).strict()) }).strict(),
+  },
+  // Whether gh can open pull requests where pushUrl points: gh auth status --hostname <its host>.
+  ghStatus: {
+    input: z.object({ repo: absPath, pushUrl: z.string().min(1).max(2000) }).strict(),
+    output: z.object({ status: z.enum(["ready", "signed_out", "missing", "not_a_url"]), host: z.string().nullable() }).strict(),
+  },
+  // Whether Loom could add its own worktree of the repository: a worktree added in the data directory and removed at once.
+  trialWorktree: {
+    input: z.object({ repo: absPath }).strict(),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok") }).strict(), z.object({ outcome: z.literal("refused"), message: z.string() }).strict()]),
+  },
+  // Whether the remote's base branch contains sha, for the push-only forge. Leaves no FETCH_HEAD behind.
+  landedOn: {
+    input: z.object({ repo: absPath, remote: ref, base: ref, sha: commit }).strict(),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), landed: z.boolean() }).strict(), unavailable]),
   },
 });
 

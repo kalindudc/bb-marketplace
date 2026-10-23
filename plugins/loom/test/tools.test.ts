@@ -226,7 +226,7 @@ describe("worker and planner tools", () => {
   it("gives a planner its tools, the worker tools stay away from it, and a worker cannot use the planner tools", async () => {
     const planner = await configure("thr_plan");
     expect(planner.tools.map((tool) => tool.name)).toEqual([...PLANNER_TOOLS]);
-    expect(PLANNER_TOOLS).toEqual(["loom_propose", "loom_board", "loom_ticket", "loom_requeue", "loom_add_tickets", "loom_edit_ticket", "loom_cancel_ticket", "loom_post"]);
+    expect(PLANNER_TOOLS).toEqual(["loom_propose", "loom_discover", "loom_board", "loom_ticket", "loom_requeue", "loom_add_tickets", "loom_edit_ticket", "loom_cancel_ticket", "loom_post"]);
     const workerId = await startWorkerFor("CSV-1");
     const worker = await configure(workerId);
     expect(worker.tools.map((tool) => tool.name)).toEqual([...WORKER_TOOLS]);
@@ -527,5 +527,26 @@ describe("the loom skill", () => {
     for (const heading of ["## Reviewers", "## Merging", "## Landing"]) expect(skill, heading).toContain(heading);
     expect(skill).not.toContain("later release");
     expect(skill).not.toContain("runs no workers");
+  });
+});
+
+describe("loom_discover", () => {
+  it("reports how this thread's repository is reached, every choice found for a GitHub checkout", async () => {
+    const output = text(await host.harness.callAgentTool("loom_discover", {}, { threadId: "thr_plan", projectId: "proj_1" }));
+    expect(output).toContain("This thread's repository (bb project proj_1), checkout /repo");
+    expect(output).toContain("- Forge for origin: found: gh can open pull requests on github.com.");
+    expect(output).not.toContain("ask:");
+    expect(host.hostPort.calls.map((call) => [call.hostId, call.method])).toEqual([
+      ["host_env", "remotes"],
+      ["host_env", "ghStatus"],
+      ["host_env", "ghStatus"],
+      ["host_env", "trialWorktree"],
+    ]);
+  });
+
+  it("says what to ask when gh cannot serve the remote", async () => {
+    host.hostPort.ghState = "signed_out";
+    const output = text(await host.harness.callAgentTool("loom_discover", {}, { threadId: "thr_plan", projectId: "proj_1" }));
+    expect(output).toContain("- Forge for origin: ask: gh is not signed in to github.com.");
   });
 });

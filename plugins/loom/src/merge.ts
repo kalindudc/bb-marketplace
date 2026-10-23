@@ -6,14 +6,17 @@ import { repoCheckout, type RepoCheckout } from "./checkouts";
 import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { plural } from "./format";
 import { afterMergeChangedText, afterMergeFailedText, andList, clip, conflictText, landBody, prBody } from "./prompts";
+import { prNumber, type HostInput, type HostOutput as HostOutputOf } from "./host-contract";
 import { LoomError } from "./projects";
 import { isMultiRepo, repoSettings, type RepoSettings } from "./repos";
 import { recordingHost } from "./runs";
-import type { Spec } from "./spec";
+import type { ForgeSpec, Spec } from "./spec";
 import { LOOM_ACTOR } from "./states";
 import { applyMove, endLiveRows, endThread, pauseProject, released, resolveEnvironment, specOf, toWorking, type EngineCtx } from "./workers";
 
 const POLL_MS = 5 * 60_000;
+const AFTER_OPEN_MS = 5 * 60_000;
+const PROVISION_MS = 10 * 60_000;
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 // ---------------------------------------------------------------- the per-project guard
@@ -181,9 +184,27 @@ const branchIn = (settings: RepoSettings) => (settings.name === null ? settings.
 async function loomWorktree(ctx: EngineCtx, project: ProjectRow, spec: Spec, name: string | null = null): Promise<{ hostId: string; repo: string; worktree: string; settings: RepoSettings }> {
   const { hostId, path: repo, settings } = await checkoutIn(ctx, project, spec, name);
   const key = name === null ? project.slug : `${project.slug}.${name}`;
-  const ready = await ctx.host.call(hostId, "ensureWorktree", { repo, key, branch: settings.branch! });
+  const path = settings.worktree === null ? undefined : await provisionedPath(ctx, hostId, repo, project, settings);
+  const ready = await ctx.host.call(hostId, "ensureWorktree", { repo, key, branch: settings.branch!, ...(path === undefined ? {} : { path }) });
   if (ready.outcome === "ok") return { hostId, repo, worktree: ready.path, settings };
   throw new Unavailable(ready.reason === "branch_checked_out" ? `${branchIn(settings)} is checked out elsewhere; switch that checkout off it and resume` : ready.message);
+}
+
+/** Runs the spec's worktree command, or a plugin's CLI command, before each merge and land, and returns the absolute path it printed last. */
+async function provisionedPath(ctx: EngineCtx, hostId: string, repo: string, project: ProjectRow, settings: RepoSettings): Promise<string> {
+  const worktree = settings.worktree!;
+  // The spec checks a plugin id against ^[a-z0-9][a-z0-9-]*$, so it needs no quoting.
+  const command = worktree.plugin === undefined ? worktree.command : `bb plugin run ${worktree.plugin} ${worktree.command}`;
+  const env = { LOOM_PROJECT_SLUG: project.slug, LOOM_BRANCH: settings.branch!, LOOM_BASE: settings.base };
+  const result = await ctx.host.call(hostId, "exec", { cwd: repo, command, timeoutMs: PROVISION_MS, env });
+  const output = result.output.trim();
+  if (result.timedOut || result.exitCode !== 0) {
+    const how = result.timedOut ? `took longer than ${PROVISION_MS / 60_000} minutes` : `failed (exit ${result.exitCode})`;
+    throw new Unavailable(`The integration worktree command \`${command}\` ${how}: ${clip(output.slice(-1500), 1500)}`);
+  }
+  const last = output.split("\n").map((line) => line.trim()).filter((line) => line !== "").at(-1) ?? "";
+  if (!last.startsWith("/")) throw new Unavailable(`The integration worktree command \`${command}\` must print the worktree's absolute path on its last line, but printed: ${clip(output.slice(-500), 500)}`);
+  return last;
 }
 
 // A message to the worker about its merge, which names the repo on a multi-repo project.
@@ -313,6 +334,17 @@ async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
   const { remote, base } = settings;
   const pushed = await ctx.host.call(hostId, "push", { repo, remote, src: ticket.head_sha!, branch: ticket.branch });
   if (pushed.outcome === "unavailable") throw new Unavailable(pushed.message);
+  if (settings.forge.kind === "none") {
+    const where = `${remote}/${ticket.branch}`;
+    const body = `Pushed ${ticket.branch} to ${remote}. Open its pull request there; Loom completes the ticket when ${remote}/${base} contains ${ticket.head_sha!.slice(0, 12)}.`;
+    store.tx(() => {
+      store.setTicketState(ticket.id, "pr_open", LOOM_ACTOR, { pushed: where });
+      store.updateTicket(ticket.id, { pr_url: null, pr_checked_at: ctx.now() });
+      store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "merge", body, data_json: JSON.stringify({ outcome: "branch_pushed", pushed: where }) });
+    });
+    store.changed(project.id);
+    return;
+  }
   const approvals = store.reviews(ticket.id, ticket.review_round).filter((review) => review.verdict === "approved");
   const created = await ctx.host.call(hostId, "prCreate", {
     repo,
@@ -322,6 +354,7 @@ async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
     title: clip(`${ticket.key}: ${ticket.title}`, 256),
     body: prBody({ ticket, approvals }),
     draft: spec.merge.draft,
+    forge: openForge(settings.forge),
   });
   if (created.outcome === "unavailable") throw new Unavailable(created.message);
   store.tx(() => {
@@ -330,6 +363,36 @@ async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
     store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "merge", body: `Opened pull request ${created.url}`, data_json: JSON.stringify({ outcome: "pr_opened", url: created.url }) });
   });
   store.changed(project.id);
+  await afterOpen(ctx, { hostId, repo, settings, head: ticket.branch, url: created.url, projectId: project.id, ticketId: ticket.id });
+}
+
+const openForge = (forge: ForgeSpec): HostInput<"prCreate">["forge"] => (forge.kind === "command" ? { kind: "command", open: forge.open! } : { kind: "gh" });
+const stateForge = (forge: ForgeSpec): HostInput<"prState">["forge"] => (forge.kind === "command" ? { kind: "command", state: forge.state! } : { kind: "gh" });
+
+/** Runs the forge's after_open commands once a pull request is open. A failure is posted and blocks nothing: the pull request stays open. */
+async function afterOpen(ctx: EngineCtx, a: { hostId: string; repo: string; settings: RepoSettings; head: string; url: string; projectId: number; ticketId: number | null }): Promise<void> {
+  for (const command of a.settings.forge.after_open ?? []) {
+    let problem: string | null;
+    try {
+      const env = { LOOM_URL: a.url, LOOM_PR_NUMBER: prNumber(a.url), LOOM_HEAD: a.head, LOOM_BASE: a.settings.base };
+      const result = await ctx.host.call(a.hostId, "exec", { cwd: a.repo, command, timeoutMs: AFTER_OPEN_MS, env });
+      const output = result.output.trim() === "" ? "" : `\n\n${clip(result.output.slice(-2000), 2000)}`;
+      problem = result.timedOut ? `timed out after ${AFTER_OPEN_MS / 60_000} minutes${output}` : result.exitCode !== 0 ? `failed (exit ${result.exitCode})${output}` : null;
+    } catch (error) {
+      problem = `could not run: ${errText(error)}`;
+    }
+    if (problem === null) continue;
+    const body = `The after_open command \`${command}\` ${problem}\n\nThe pull request ${a.url} is open; nothing else changed.`;
+    const data = { outcome: "after_open_failed", command, url: a.url };
+    // A land's pull request belongs to no ticket, so its failure is an event and a log line instead of a post.
+    if (a.ticketId === null) {
+      ctx.store.event(a.projectId, null, "project.after_open_failed", LOOM_ACTOR, data);
+      ctx.bb.log("warn", body);
+    } else {
+      ctx.store.addPost({ project_id: a.projectId, ticket_id: a.ticketId, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "merge", body, data_json: JSON.stringify(data) });
+    }
+    ctx.store.changed(a.projectId);
+  }
 }
 
 // ---------------------------------------------------------------- pull requests
@@ -337,9 +400,10 @@ async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
 /** Reads the state of every open pull request not read in the last 5 minutes: merged completes the ticket, closed blocks it. */
 export async function pollPullRequests(ctx: EngineCtx, project: ProjectRow): Promise<void> {
   const { store } = ctx;
-  const due = store.tickets(project.id, ["pr_open"]).filter((ticket) => ticket.pr_url !== null && (ticket.pr_checked_at === null || ctx.now() - ticket.pr_checked_at >= POLL_MS));
-  if (due.length === 0) return;
   const spec = specOf(store, project);
+  const forgeOf = (ticket: TicketRow) => repoSettings(spec, ticket.repo).forge;
+  const due = store.tickets(project.id, ["pr_open"]).filter((ticket) => (ticket.pr_url !== null || forgeOf(ticket).kind === "none") && (ticket.pr_checked_at === null || ctx.now() - ticket.pr_checked_at >= POLL_MS));
+  if (due.length === 0) return;
   // Each repo's checkout is read once per poll; a repo without one pauses the project and leaves its pull requests for the next poll.
   const checkouts = new Map<string | null, RepoCheckout | null>();
   const checkoutOfRepo = async (name: string | null): Promise<RepoCheckout | null> => {
@@ -354,13 +418,21 @@ export async function pollPullRequests(ctx: EngineCtx, project: ProjectRow): Pro
   };
   for (const seen of due) {
     const ticket = store.ticket(seen.id);
-    if (ticket?.state !== "pr_open" || ticket.pr_url === null) continue;
+    if (ticket?.state !== "pr_open") continue;
+    const forge = forgeOf(ticket);
+    if (ticket.pr_url === null && forge.kind !== "none") continue;
     const checkout = await checkoutOfRepo(ticket.repo);
     if (checkout === null) continue;
     store.updateTicket(ticket.id, { pr_checked_at: ctx.now() });
-    let state;
+    let state: HostOutputOf<"prState">;
     try {
-      state = await ctx.host.call(checkout.hostId, "prState", { repo: checkout.path, url: ticket.pr_url });
+      if (forge.kind === "none") {
+        // The push-only forge has no pull request to ask: the ticket is done once the remote base contains its commit.
+        const landed = await ctx.host.call(checkout.hostId, "landedOn", { repo: checkout.path, remote: checkout.settings.remote, base: checkout.settings.base, sha: ticket.head_sha! });
+        state = landed.outcome === "ok" ? { outcome: "ok", state: landed.landed ? "MERGED" : "OPEN" } : landed;
+      } else {
+        state = await ctx.host.call(checkout.hostId, "prState", { repo: checkout.path, url: ticket.pr_url!, forge: stateForge(forge) });
+      }
     } catch (error) {
       pauseProject(ctx, project.id, `Reading the pull request of ${ticket.key} stopped: ${errText(error)}`);
       continue;
@@ -372,7 +444,10 @@ export async function pollPullRequests(ctx: EngineCtx, project: ProjectRow): Pro
     // The answer is about the pull request and attempt that were polled; the human may have blocked and requeued the ticket during the host call.
     const current = store.ticket(ticket.id);
     if (current?.state !== "pr_open" || current.pr_url !== ticket.pr_url || current.attempt !== ticket.attempt) continue;
-    if (state.state === "MERGED") {
+    if (state.state === "MERGED" && forge.kind === "none") {
+      const target = `${checkout.settings.remote}/${checkout.settings.base}`;
+      complete(ctx, ticket.id, { kind: "merge", body: `The branch landed on ${target}.`, data: { outcome: "branch_landed", pushed: target } });
+    } else if (state.state === "MERGED") {
       complete(ctx, ticket.id, { kind: "merge", body: "The pull request was merged.", data: { outcome: "pr_merged", url: ticket.pr_url } });
     } else if (state.state === "CLOSED") {
       // The ticket moves to blocked in this same tick; ending its threads, which awaits, comes after.
@@ -468,6 +543,13 @@ export async function land(ctx: EngineCtx, slug: string, a: LandArgs): Promise<L
       return { url: null, pushed, sha, done: store.project(project.id)!.state === "done" };
     }
     const { sha, url } = await guarded(() => pushIntegration(ctx, project, spec, null, project.pr_url, a, landBody({ project, spec, done })));
+    if (url === null) {
+      const pushed = `${spec.merge.remote}/${spec.merge.branch!}`;
+      store.event(project.id, null, "project.landed", a.actor, { pushed, sha });
+      completeProject(ctx, project.id);
+      store.changed(project.id);
+      return { url: null, pushed, sha, done: store.project(project.id)!.state === "done" };
+    }
     if (project.pr_url === null) store.updateProject(project.id, { pr_url: url });
     store.event(project.id, null, "project.landed", a.actor, { url, sha, created: project.pr_url === null });
     completeProject(ctx, project.id);
@@ -508,6 +590,12 @@ async function landRepo(ctx: EngineCtx, project: ProjectRow, spec: Spec, name: s
   }
   const open = store.projectRepo(project.id, name)?.pr_url ?? null;
   const { sha, url } = await guarded(() => pushIntegration(ctx, project, spec, name, open, a, landBody({ project, spec, done, repo: name })));
+  if (url === null) {
+    const settings = repoSettings(spec, name);
+    const pushed = `${settings.remote}/${settings.branch!}`;
+    store.updateProjectRepo(project.id, name, { landed_sha: sha, landed_at: ctx.now() }, a.actor, { pushed, sha });
+    return { repo: name, url: null, pushed, sha };
+  }
   store.updateProjectRepo(project.id, name, { pr_url: url, landed_sha: sha, landed_at: ctx.now() }, a.actor, { url, sha, created: open === null });
   return { repo: name, url, sha };
 }
@@ -539,16 +627,18 @@ const landWorktree = (ctx: EngineCtx, project: ProjectRow, spec: Spec, name: str
     throw error instanceof Unavailable ? unavailable(error.message) : error;
   });
 
-/** Pushes a repo's integration branch as its Loom worktree has it, and opens its pull request when `open` holds none yet. Returns the pushed sha and the pull request's url. */
-async function pushIntegration(ctx: EngineCtx, project: ProjectRow, spec: Spec, name: string | null, open: string | null, a: LandArgs, body: string): Promise<{ sha: string; url: string }> {
+/** Pushes a repo's integration branch as its Loom worktree has it, and opens its pull request when `open` holds none yet. Returns the pushed sha and the pull request's url, null on the push-only forge. */
+async function pushIntegration(ctx: EngineCtx, project: ProjectRow, spec: Spec, name: string | null, open: string | null, a: LandArgs, body: string): Promise<{ sha: string; url: string | null }> {
   const { hostId, repo, worktree, settings } = await landWorktree(ctx, project, spec, name);
   const { remote, base } = settings;
   const head = (await ctx.host.call(hostId, "worktreeState", { worktree, base })).head;
   const pushed = await ctx.host.call(hostId, "push", { repo, remote, src: head, branch: settings.branch! });
   if (pushed.outcome === "unavailable") throw unavailable(pushed.message);
+  if (settings.forge.kind === "none") return { sha: head, url: null };
   if (open !== null) return { sha: head, url: open };
-  const created = await ctx.host.call(hostId, "prCreate", { repo, remote, base, head: settings.branch!, title: clip(a.title ?? project.name, 256), body, draft: spec.merge.draft && !a.ready });
+  const created = await ctx.host.call(hostId, "prCreate", { repo, remote, base, head: settings.branch!, title: clip(a.title ?? project.name, 256), body, draft: spec.merge.draft && !a.ready, forge: openForge(settings.forge) });
   if (created.outcome === "unavailable") throw unavailable(created.message);
+  await afterOpen(ctx, { hostId, repo, settings, head: settings.branch!, url: created.url, projectId: project.id, ticketId: null });
   return { sha: head, url: created.url };
 }
 

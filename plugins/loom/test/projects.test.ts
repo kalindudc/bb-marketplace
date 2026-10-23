@@ -3,18 +3,20 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { Store } from "../src/db/store";
 import type { BbProjectInfo } from "../src/ports";
 import { LoomError, Projects } from "../src/projects";
-import { Clock, FakePort, makeDb, specToml, type Doc } from "./helpers";
+import { Clock, FakeHost, FakePort, makeDb, specToml, type Doc } from "./helpers";
 
 let clock: Clock;
 let store: Store;
 let bb: FakePort;
 let projects: Projects;
+let host: FakeHost;
 
 beforeEach(() => {
   clock = new Clock();
   store = new Store(makeDb(), clock.now);
   bb = new FakePort();
-  projects = new Projects({ store, bb, now: clock.now });
+  host = new FakeHost();
+  projects = new Projects({ store, bb, now: clock.now, host });
 });
 
 const propose = (edit?: (doc: Doc) => void, threadId = "thr_plan") => projects.propose({ toml: specToml(edit), threadId, bbProjectId: "proj_1", hostId: "host_local" });
@@ -1062,5 +1064,36 @@ describe("planning", () => {
     expect(projects.planningSessions()).toEqual([]);
     expect(store.planning("thr_p1")).toMatchObject({ ended_at: clock.t, end_reason: "archived" });
     projects.planningGone("thr_unknown", "archived");
+  });
+});
+
+describe("how the repos are reached", () => {
+  it("refuses a spec whose repository gh cannot serve, naming the host, and saves nothing", async () => {
+    host.ghState = "signed_out";
+    const error = await failure(propose());
+    expect(error.code).toBe("loom_invalid_spec");
+    expect(error.message).toContain("merge.forge: the project's repository pushes to https://github.com/acme/shop.git, and gh is not signed in to github.com");
+    expect(store.projectBySlug("csv")).toBeNull();
+  });
+
+  it("reads the remotes, asks gh about the one in use and tries the integration worktree, on the proposer's machine", async () => {
+    await propose();
+    expect(host.calls.map((call) => call.method)).toEqual(["remotes", "ghStatus", "trialWorktree"]);
+    expect(host.calls.every((call) => call.hostId === "host_local")).toBe(true);
+    expect(host.callsTo("ghStatus")).toEqual([{ repo: "/repo", pushUrl: "https://github.com/acme/shop.git" }]);
+  });
+
+  it("refuses, asking to propose again, when the machine cannot be read", async () => {
+    host.errors.remotes = new Error("host offline");
+    const error = await failure(propose());
+    expect(error.message).toContain("Loom could not check how the repositories are reached on this machine (host offline)");
+  });
+
+  it("keeps a repo's forge kind and whether it has a worktree as approved, and lets its environment change", async () => {
+    await propose();
+    await projects.approve("csv", "human");
+    expect((await failure(propose((doc) => (doc.merge.forge = { kind: "none" })))).message).toContain('merge.forge.kind: cannot change from "gh" to "none" after approval');
+    expect((await failure(propose((doc) => (doc.merge.worktree = { command: "prep" })))).message).toContain("merge.worktree: cannot be added after approval");
+    expect((await propose((doc) => (doc.environment = { provider: "git-worktree" }))).change).toBe("pending");
   });
 });

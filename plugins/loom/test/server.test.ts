@@ -11,7 +11,13 @@ beforeEach(() => {
 });
 
 async function load(deps?: Parameters<typeof createLoomPlugin>[0]) {
-  const host = createFakePluginHost({ pluginId: "loom", agentSkillIds: ["loom-plan", "loom"], sdk: sdkStubs(state) });
+  const fakeHost = new FakeHost();
+  const host = createFakePluginHost({
+    pluginId: "loom",
+    agentSkillIds: ["loom-plan", "loom"],
+    experimental_callHostRpc: (call) => fakeHost.call(call.hostId, call.method as HostMethod, call.input as never),
+    sdk: sdkStubs(state),
+  });
   await createLoomPlugin(deps)(host.bb);
   return host;
 }
@@ -39,7 +45,7 @@ async function loadEngine(over: { tickMs?: number } = {}) {
     sdk: {
       ...base,
       projects: { get: async () => ({ id: "proj_1", sources: [{ hostId: "host_env", path: "/repo", isDefault: true }] }) },
-      environments: { get: async ({ environmentId }) => ({ id: environmentId, hostId: "host_env", path: `/wt/${environmentId}`, branchName: `wt-${environmentId}` }) },
+      environments: { ...base.environments, get: async ({ environmentId }) => ({ id: environmentId, hostId: "host_env", path: `/wt/${environmentId}`, branchName: `wt-${environmentId}` }) },
       threads: {
         ...base.threads,
         get: async ({ threadId }) => threads.get(threadId) ?? (threadId === "thr_plan" ? { id: threadId, environmentId: state.environmentId, status: "idle", archivedAt: null, deletedAt: null } : Promise.reject(new Error("404 not found"))),
@@ -109,7 +115,7 @@ describe("Loom plugin", () => {
     const { harness } = await load();
     expect((await harness.behavior.runCli(["list"])).stdout).toContain("No Loom projects yet");
     const config = await harness.resolveAgentConfiguration(makePluginAgentConfigurationContext());
-    expect(config.tools.map((tool) => tool.name)).toEqual(["loom_propose"]);
+    expect(config.tools.map((tool) => tool.name)).toEqual(["loom_propose", "loom_discover"]);
     expect(config.skills).toEqual(["loom-plan", "loom"]);
   });
 
@@ -177,7 +183,8 @@ describe("Loom plugin", () => {
     expect(started).toMatchObject({ exitCode: 0 });
     expect(started.stdout).not.toContain("does not run workers");
     expect(harness.experimental_hostRpcCalls.filter((call) => call.method === "ensureBranch")).toHaveLength(1);
-    expect(harness.sdk.callsTo("projects.get")).toHaveLength(1);
+    // One lookup by loom_propose, which checks how the repo is reached, and one by start.
+    expect(harness.sdk.callsTo("projects.get")).toHaveLength(2);
 
     const service = harness.runService("engine");
     await until(() => workerSpawns(harness).length === 1);

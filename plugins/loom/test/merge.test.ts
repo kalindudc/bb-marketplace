@@ -502,7 +502,7 @@ describe("the pull request strategy", () => {
     expect(h.store.thread(worker.id)!.state).toBe("active");
     expect(mergeRuns().map((run) => [run.label, run.ok])).toEqual([
       ["git push", 1],
-      ["gh pr create", 1],
+      ["open the pull request", 1],
     ]);
     expect(h.store.runOutput(mergeRuns()[1]!.id)).toBe("Opened https://github.com/acme/shop/pull/1.");
   });
@@ -524,8 +524,8 @@ describe("the pull request strategy", () => {
     h.clock.advance(5 * 60_000);
     await pollPullRequests(h.ctx, project());
     expect(h.host.callsTo("prState")).toEqual([
-      { repo: "/src/web", url: "https://github.com/acme/shop/pull/2" },
-      { repo: "/src/api", url: "https://github.com/acme/shop/pull/1" },
+      { repo: "/src/web", url: "https://github.com/acme/shop/pull/2", forge: { kind: "gh" } },
+      { repo: "/src/api", url: "https://github.com/acme/shop/pull/1", forge: { kind: "gh" } },
     ]);
     expect(h.host.calls.filter((call) => call.method === "prState").every((call) => call.hostId === "host_1")).toBe(true);
   });
@@ -544,7 +544,7 @@ describe("the pull request strategy", () => {
     await pollPullRequests(h.ctx, project());
 
     expect(project()).toMatchObject({ state: "paused", system_reason: expect.stringContaining('Repo "web" (bb project proj_web) has no checkout') });
-    expect(h.host.callsTo("prState")).toEqual([{ repo: "/src/api", url: ticketOf(h, "CSV-2").pr_url }]);
+    expect(h.host.callsTo("prState")).toEqual([{ repo: "/src/api", url: ticketOf(h, "CSV-2").pr_url, forge: { kind: "gh" } }]);
     expect(ticketOf(h, "CSV-2").state).toBe("done");
     expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "pr_open", pr_checked_at: checked });
   });
@@ -604,7 +604,7 @@ describe("the pull request strategy", () => {
 
     h.clock.advance(5 * 60_000);
     await pollPullRequests(h.ctx, project());
-    expect(h.host.callsTo("prState")).toEqual([{ repo: "/repo", url: "https://github.com/acme/shop/pull/1" }]);
+    expect(h.host.callsTo("prState")).toEqual([{ repo: "/repo", url: "https://github.com/acme/shop/pull/1", forge: { kind: "gh" } }]);
     expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "pr_open", pr_checked_at: h.clock.t });
     await pollPullRequests(h.ctx, project());
     expect(h.host.callsTo("prState")).toHaveLength(1);
@@ -997,11 +997,11 @@ describe("land on a multi-repo project", () => {
       ["ensureWorktree", { repo: "/src/web", key: "csv.web", branch: "loom/csv" }],
       ["worktreeState", { worktree: WEB, base: "main" }],
       ["push", { repo: "/src/web", remote: "origin", src: "m2", branch: "loom/csv" }],
-      ["prCreate", { repo: "/src/web", remote: "origin", base: "main", head: "loom/csv", title: "CSV export", body: "…", draft: true }],
+      ["prCreate", { repo: "/src/web", remote: "origin", base: "main", head: "loom/csv", title: "CSV export", body: "…", draft: true, forge: { kind: "gh" } }],
       ["ensureWorktree", { repo: "/src/api", key: "csv.api", branch: "loom/csv" }],
       ["worktreeState", { worktree: API, base: "trunk" }],
       ["push", { repo: "/src/api", remote: "upstream", src: "m1", branch: "loom/csv" }],
-      ["prCreate", { repo: "/src/api", remote: "upstream", base: "trunk", head: "loom/csv", title: "CSV export", body: "…", draft: true }],
+      ["prCreate", { repo: "/src/api", remote: "upstream", base: "trunk", head: "loom/csv", title: "CSV export", body: "…", draft: true, forge: { kind: "gh" } }],
     ]);
 
     const [web, api] = h.host.callsTo("prCreate").map((call) => call.body);

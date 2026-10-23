@@ -57,6 +57,10 @@ export interface BbPort {
   spawnPlanner(args: { request: NewThreadRequest; title: string; kickoff: string }): Promise<string>;
   /** The ids of the agent providers bb has, such as claude-code, codex and pi. */
   providerIds(): Promise<string[]>;
+  /** The environment providers bb offers for the project on that machine, with each one's availability there. */
+  environmentProviders(bbProjectId: string, hostId: string): Promise<EnvironmentProviderInfo[]>;
+  /** Every installed plugin; builtin ones ship with bb. */
+  plugins(): Promise<PluginInfo[]>;
   /** The ids among `threadIds` with a pending interaction (a question or an approval); unknown threads are left out. */
   waitingOnUser(threadIds: readonly string[]): Promise<string[]>;
   /** The thread's final output, as GET /threads/:id/output assembles it; null before it has one. */
@@ -102,6 +106,26 @@ export interface SpawnArgs {
   permissionMode?: "accept-edits" | "auto" | "full";
   /** Text only the agent reads, after the prompt. */
   detail?: string;
+  /** A bb environment provider to start in, on hostId; absent keeps the managed worktree from baseBranch. */
+  environment?: { providerId: string; inputs: unknown };
+}
+
+export interface EnvironmentProviderInfo {
+  id: string;
+  displayName: string;
+  description: string | null;
+  pluginId: string;
+  acceptsEmptyInputs: boolean;
+  /** The JSON Schema of its inputs; null when it takes none. */
+  inputs: unknown;
+  available: boolean;
+  unavailableReason: string | null;
+}
+
+export interface PluginInfo {
+  id: string;
+  enabled: boolean;
+  builtin: boolean;
 }
 
 export interface ThreadInfo {

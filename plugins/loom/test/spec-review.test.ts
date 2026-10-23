@@ -16,7 +16,7 @@ import {
 } from "../src/spec-review";
 import { SPEC_REVIEW_ROUNDS } from "../src/states";
 import { MAX_RATE_LIMIT_RETRIES, type TurnFailure } from "../src/workers";
-import { makeCtx, specToml, type Doc, type EngineHarness } from "./helpers";
+import { GIT_WORKTREE_PROVIDER, makeCtx, specToml, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;
 
@@ -233,5 +233,19 @@ describe("binding and restarts", () => {
     h.bb.threads.delete("thr_w1");
     await reconcileSpecReviews(h.ctx);
     expect(rows()[0]).toMatchObject({ state: "failed", reason: "the reviewer's thread was archived or deleted" });
+  });
+});
+
+describe("the spec reviewer's environment", () => {
+  it("starts in the spec's environment provider, on its own branch from the remote base, and in a managed worktree without one", async () => {
+    h.bb.environmentProviderList = [GIT_WORKTREE_PROVIDER, { ...GIT_WORKTREE_PROVIDER, id: "trees", pluginId: "trees", inputs: { type: "object" } }];
+    h.bb.pluginList = [...h.bb.pluginList, { id: "trees", enabled: true, builtin: false }];
+    await draft((doc) => (doc.environment = { provider: "trees", inputs: { branch: "{branch}", base: "{base}" } }));
+    expect(spawns().at(-1)!.environment).toEqual({ providerId: "trees", inputs: { branch: "loom/csv/spec-review-1-1", base: "origin/main" } });
+  });
+
+  it("keeps the managed worktree without an environment", async () => {
+    await draft();
+    expect(spawns().at(-1)!.environment).toBeUndefined();
   });
 });

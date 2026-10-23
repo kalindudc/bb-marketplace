@@ -3,7 +3,8 @@
 import type { NewThreadRequest } from "@get-bb/plugin-sdk";
 import type { EventRow, PlanningRow, PostRow, ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { StoreError } from "./db/store";
-import { SectionNameConflictError, type BbPort, type BbProjectInfo } from "./ports";
+import { gatherFacts, reachErrors, specTargets } from "./discover";
+import { SectionNameConflictError, type BbPort, type BbProjectInfo, type HostPort } from "./ports";
 import { MAX_PLANNING_REPOS, notesMessage, planningKickoff, planningTitle, type PickedRepo } from "./prompts";
 import { isMultiRepo, repoSettings } from "./repos";
 import { numberErrors, parseSpec, specHash, type Spec } from "./spec";
@@ -27,6 +28,7 @@ export interface Ctx {
   store: Store;
   bb: BbPort;
   now: () => number;
+  host: HostPort;
 }
 
 export interface ProposeResult {
@@ -156,11 +158,13 @@ const parseList = (json: string) => JSON.parse(json) as string[];
 export class Projects {
   readonly store: Store;
   private readonly bb: BbPort;
+  private readonly host: HostPort;
   private readonly now: () => number;
 
   constructor(ctx: Ctx) {
     this.store = ctx.store;
     this.bb = ctx.bb;
+    this.host = ctx.host;
     this.now = ctx.now;
   }
 
@@ -170,6 +174,7 @@ export class Projects {
     const parsed = parseSpec(args.toml);
     if (!parsed.ok || parsed.spec === null) throw rejected(parsed.errors);
     const errors = [...this.proposalErrors(args.threadId, parsed.spec), ...(await this.providerErrors(parsed.spec)), ...(await this.repoErrors(parsed.spec, args.hostId))];
+    if (errors.length === 0) errors.push(...(await this.reachErrorsOf(parsed.spec, args)));
     if (errors.length > 0) throw rejected(errors);
     const existing = this.store.projectBySlug(parsed.spec.project.slug);
     return existing === null ? await this.createDraft(args, parsed.spec, parsed.warnings) : await this.revise(existing, args, parsed.spec, parsed.warnings);
@@ -247,6 +252,19 @@ export class Projects {
     });
   }
 
+  /**
+   * How the spec reaches each repo on the proposer's machine: its remote, its forge, its environment provider and its
+   * integration worktree. Without a machine there is nothing to check, as for a single repo's checkout in repoErrors.
+   */
+  private async reachErrorsOf(spec: Spec, args: { bbProjectId: string; hostId: string | null }): Promise<string[]> {
+    if (args.hostId === null) return [];
+    try {
+      return reachErrors(await gatherFacts({ bb: this.bb, host: this.host }, specTargets(spec, args.bbProjectId), args.hostId));
+    } catch (error) {
+      return [`merge: Loom could not check how the repositories are reached on this machine (${error instanceof Error ? error.message : String(error)}), and the project could not start without that. Call loom_propose again in a moment.`];
+    }
+  }
+
   private lockedFieldErrors(project: ProjectRow, spec: Spec): string[] {
     const approved = this.specOf(project.id, project.approved_version!);
     const errors: string[] = [];
@@ -259,7 +277,7 @@ export class Projects {
     if (approved.merge.branch !== spec.merge.branch) {
       errors.push(`merge.branch: cannot change from "${approved.merge.branch ?? "(none)"}" to "${spec.merge.branch ?? "(none)"}" after approval, because the integration branch and its worktree may already exist. Keep the branch, or archive this project and propose a new one.`);
     }
-    errors.push(...lockedRepoErrors(approved, spec));
+    errors.push(...lockedRepoErrors(approved, spec), ...lockedReachErrors(approved, spec));
     return errors;
   }
 
@@ -813,6 +831,25 @@ export class Projects {
 }
 
 /** A revision after approval may add repos, but every approved repo keeps its name, bb project, base and remote: its tickets, branches and worktrees already use them. */
+/** A repo's forge kind and whether it has a [merge.worktree] stay as approved: open pull requests and the integration worktree depend on them. */
+function lockedReachErrors(approved: Spec, spec: Spec): string[] {
+  const names: Array<string | null> = isMultiRepo(approved) ? approved.repo!.map((repo) => repo.name).filter((name) => spec.repo?.some((entry) => entry.name === name)) : isMultiRepo(spec) ? [] : [null];
+  return names.flatMap((name) => {
+    const before = repoSettings(approved, name);
+    const after = repoSettings(spec, name);
+    const at = (key: "forge" | "worktree") => (name === null ? `merge.${key}` : `repo[${spec.repo!.findIndex((entry) => entry.name === name)}].${key}`);
+    const where = name === null ? "" : ` for the repo "${name}"`;
+    const errors: string[] = [];
+    if (before.forge.kind !== after.forge.kind) {
+      errors.push(`${at("forge")}.kind: cannot change from "${before.forge.kind}" to "${after.forge.kind}"${where} after approval, because Loom follows open pull requests through the forge that opened them. Keep the kind, or archive this project and propose a new one.`);
+    }
+    if ((before.worktree === null) !== (after.worktree === null)) {
+      errors.push(`${at("worktree")}: cannot be ${after.worktree === null ? "removed" : "added"}${where} after approval, because the integration worktree may already exist. Keep it as approved, or archive this project and propose a new one.`);
+    }
+    return errors;
+  });
+}
+
 function lockedRepoErrors(approved: Spec, spec: Spec): string[] {
   const before = approved.repo ?? [];
   const after = spec.repo ?? [];

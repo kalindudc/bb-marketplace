@@ -1,5 +1,5 @@
 // Adapts bb.sdk to Loom's BbPort. bb.sdk is read inside each call, never at load.
-import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import type { BbPluginApi, JsonValue } from "@get-bb/plugin-sdk";
 import { hostContract, type HostInput, type HostMethod, type HostOutput } from "./host-contract";
 import { SectionNameConflictError, SpawnRefusedError, type BbPort, type HostPort } from "./ports";
 
@@ -56,7 +56,10 @@ export function createBbPort(bb: BbPluginApi): BbPort {
     async spawnThread(args) {
       const thread = await bb.sdk.threads.spawn({
         projectId: args.bbProjectId,
-        environment: { type: "host", hostId: args.hostId, workspace: { type: "managed-worktree", baseBranch: { kind: "named", name: args.baseBranch } } },
+        environment:
+          args.environment === undefined
+            ? { type: "host", hostId: args.hostId, workspace: { type: "managed-worktree", baseBranch: { kind: "named", name: args.baseBranch } } }
+            : { type: "provider", environmentProviderId: args.environment.providerId, inputs: args.environment.inputs as JsonValue, machine: { type: "existing", hostId: args.hostId } },
         ...(args.detail === undefined
           ? { prompt: args.prompt }
           : { input: [{ type: "text" as const, text: args.prompt, mentions: [] }, { type: "text" as const, text: args.detail, mentions: [], visibility: "agent-only" as const }] }),
@@ -152,6 +155,25 @@ export function createBbPort(bb: BbPluginApi): BbPort {
     async providerIds() {
       return (await bb.sdk.providers.list()).map((provider) => provider.id);
     },
+    async environmentProviders(bbProjectId, hostId) {
+      return (await bb.sdk.environments.listProviders({ projectId: bbProjectId, hostId })).map((provider) => {
+        // The machine's own answer wins; null from bb means nothing stands in the way.
+        const availability = provider.machineAvailability[hostId] ?? provider.availability;
+        return {
+          id: provider.id,
+          displayName: provider.displayName,
+          description: provider.description,
+          pluginId: provider.pluginId,
+          acceptsEmptyInputs: provider.acceptsEmptyInputs,
+          inputs: provider.inputs,
+          available: availability === null || availability.status === "available",
+          unavailableReason: availability === null || availability.status === "available" ? null : availability.message,
+        };
+      });
+    },
+    async plugins() {
+      return (await bb.sdk.plugins.list()).plugins.map((plugin) => ({ id: plugin.id, enabled: plugin.enabled, builtin: plugin.provenance === "builtin" }));
+    },
     async waitingOnUser(threadIds) {
       const waiting = await Promise.all(
         threadIds.map(async (threadId) => {
@@ -203,7 +225,7 @@ export function createBbPort(bb: BbPluginApi): BbPort {
 
 const HOST_CALL_MS = 30_000;
 const NETWORK_CALL_MS = 150_000;
-const NETWORK_METHODS: readonly HostMethod[] = ["fetchBranch", "push", "prCreate", "prState", "ensureWorktree"];
+const NETWORK_METHODS: readonly HostMethod[] = ["fetchBranch", "push", "prCreate", "prState", "ensureWorktree", "ghStatus", "landedOn"];
 
 /** The host entry client. Git calls get 30 s; fetches, pushes, gh and ensureWorktree (a first checkout) get 150 s; exec gets its own timeout plus 30 s, under the 30-minute host call cap. */
 export function createHostPort(bb: BbPluginApi): HostPort {

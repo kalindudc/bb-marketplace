@@ -15,7 +15,7 @@ export const STEP_LABELS: Partial<Record<HostMethod, string>> = {
   merge: "git merge",
   resetHard: "git reset --hard",
   push: "git push",
-  prCreate: "gh pr create",
+  prCreate: "open the pull request",
 };
 
 const sha12 = (sha: string) => sha.slice(0, 12);

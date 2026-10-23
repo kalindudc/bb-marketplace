@@ -21,7 +21,7 @@ Ask only what you cannot find in the repository:
 - Non-goals: what is explicitly out of scope.
 - Repos: which repositories the work spans. Most projects change one repository, this thread's own. When the work also changes other repositories, step 2 finds them.
 - Base branch: where work starts (default `main`), and whether a repo uses another base.
-- Merge plan: an integration branch that collects all approved tickets (`strategy = "integration"`), or one pull request per ticket (`strategy = "pr"`).
+- Merge plan: an integration branch that collects all approved tickets (`strategy = "integration"`), or one pull request per ticket (`strategy = "pr"`). Where step 3 finds that Loom cannot add its own integration worktree, the choices are one pull request per ticket, or a `[merge.worktree]` command or plugin.
 - Check commands: the commands that must pass on every submitted ticket (tests, type checks, lint), per repo when the repos use different toolchains.
 - Models: ask for a reviewer model that differs from the worker's, so the reviewer does not share the worker's blind spots. `provider` in `[agents.worker]` and `[agents.reviewer]` is a bb provider id, such as `claude-code`, `codex` or `pi`, not a model name such as `claude`; `loom_propose` refuses a provider bb does not have and lists the ids it has.
 - Protected paths: files no ticket may change, such as lockfiles, CI config or generated code.
@@ -44,13 +44,25 @@ Every repo needs a checkout on this machine; `loom_propose` refuses a repo witho
 - A bb project with no checkout here: clone it with `bb project source add <id> --clone --machine <host>`.
 - A repository that is not a bb project yet: when `bb project discover` found it on this machine, register that path with `bb project create --root <path> --machine <host>`; otherwise clone it first (`git clone <url> <path>`), then register it the same way. Use the new project's id as `project`.
 
-## 3. Read the code and run the checks once
+## 3. Discover how each repo is reached
+
+Call `loom_discover` once you know the repos: with no arguments for this thread's own repository, or with the bb project ids of every `[[repo]]`, in their order. For each repo it reports its git remotes, whether `gh` can open pull requests there, the environment providers bb offers for it on this machine, and whether Loom can add its own integration worktree. Every line ends in found or ask.
+
+- Settle every ask item before you propose. Look for the answer yourself first: in the goal, the repository's docs, the skills loaded in this thread and, for an environment provider, its description, its inputs schema and its plugin's skill (`bb skill list`). Ask the human only for what is still missing.
+- Ask everything that is left in ONE round with your question tool, giving each question the options discovery found. The Loom page shows the questions next to the draft.
+- A remote: when there is no `origin`, set `merge.remote`, or `remote` on the `[[repo]]`, to the remote its pull requests go through.
+- A forge: when `gh` cannot open pull requests on the push URL's host, set `[merge.forge]`, or `forge` on the `[[repo]]`: `kind = "command"` with an `open` and a `state` command for that server's own CLI, or `kind = "none"` to only push branches. The loom skill's `references/spec.md` gives the commands' variables and the output Loom reads.
+- An environment provider: when a plugin offers one, ask whether Loom's threads (workers, reviewers and the spec reviewer) run there. Set `[environment]`, or `environment` on the `[[repo]]`, to its `provider` id and `inputs` written to its schema, with `{branch}` and `{base}` where each thread's branch and starting point go. To keep plain git worktrees, set `provider = "git-worktree"`.
+- The integration worktree: on `strategy = "integration"`, when git refused Loom's own worktree, offer `strategy = "pr"`, or set `[merge.worktree]` to a command that prepares a checkout and prints its path last, or to a plugin's CLI command with `plugin = "<id>"` (`bb plugin run <id> --help` lists its commands).
+- Anything the human cannot answer yet goes in `project.open_questions`. `loom_propose` refuses a spec that leaves any of these unsettled, and its numbered errors name the key to set.
+
+## 4. Read the code and run the checks once
 
 Read the parts of each repository the goal touches. Run each check command once and note whether it passes on the base branch. A check that already fails will fail every ticket; tell the human before you propose.
 
 When the repos use different toolchains, give each `[[repo]]` its own `checks` (and `after_merge` on the integration strategy), which replace the top-level ones for that repo's tickets. Run each repo's checks once, in that repo's checkout, and note whether they pass on its base branch.
 
-## 4. Write the tickets
+## 5. Write the tickets
 
 - Build only what the goal needs: the fewest tickets that deliver it, no configuration, flags, layers or future-proofing it does not use, and reuse what the repository already has. Loom's spec reviewer checks exactly this.
 - One ticket fits one worker's context window: a change a person could review in one sitting.
@@ -68,7 +80,7 @@ On a project with `[[repo]]` tables:
 - Scopes, `verify` commands and protected paths are relative to the ticket's repo. Write `src/**`, not the repo's checkout path. Scopes in different repos never overlap.
 - In the body of a dependent ticket, say which files of the other repo to read, such as an API schema. Its brief gives the other repos' checkout paths, and on the integration strategy it can read their merged work from the integration branch.
 
-## 5. Propose
+## 6. Propose
 
 Call `loom_propose` with the whole spec. Fix every numbered error it returns and call it again; a refused spec creates nothing. Calling it again from this thread with the same slug revises the draft. Read any warnings and fix the ones that matter.
 
@@ -84,7 +96,7 @@ The human can review the draft on the Loom page and send you notes. They arrive 
 
 After the human approves the project, a revision is held as a pending version until they approve it, and its ticket list is ignored.
 
-## 6. Hand over
+## 7. Hand over
 
 Hand over only after Loom's spec review passed, or after Loom said it stopped reviewing; then also name the findings you left open. The human cannot approve a draft whose review is still running or has findings unless they skip it with `bb loom approve <slug> --skip-review`.
 

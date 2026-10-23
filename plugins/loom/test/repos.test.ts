@@ -57,6 +57,9 @@ describe("repoSettings", () => {
       checks: ["npm test"],
       afterMerge: ["npm run build"],
       protected: ["package-lock.json"],
+      forge: { kind: "gh" },
+      environment: null,
+      worktree: null,
     });
   });
 
@@ -70,6 +73,9 @@ describe("repoSettings", () => {
       checks: ["npm test"],
       afterMerge: ["npm run build"],
       protected: ["package-lock.json"],
+      forge: { kind: "gh" },
+      environment: null,
+      worktree: null,
     });
   });
 
@@ -83,6 +89,9 @@ describe("repoSettings", () => {
       checks: ["make test"],
       afterMerge: ["make build"],
       protected: ["package-lock.json", "vendor/**"],
+      forge: { kind: "gh" },
+      environment: null,
+      worktree: null,
     });
   });
 
@@ -142,6 +151,6 @@ describe("freshBaseOf", () => {
 describe("src/repos.ts", () => {
   it("imports nothing but types from ./spec, so the page can import it", () => {
     const source = readFileSync(new URL("../src/repos.ts", import.meta.url), "utf8");
-    expect(source.match(/^import .*$/gm)).toEqual(['import type { RepoSpec, Spec } from "./spec";']);
+    expect(source.match(/^import .*$/gm)).toEqual(['import type { EnvironmentSpec, ForgeSpec, RepoSpec, Spec, WorktreeSpec } from "./spec";']);
   });
 });

@@ -24,5 +24,5 @@ Every change appends an event, in the same transaction, to a log that refuses ed
 ## Requirements
 
 - `git` on the machine that has the project's checkouts.
-- `gh`, signed in, for the pull request strategy and for `bb loom land`, and a GitHub remote.
+- `gh`, signed in, for GitHub pull requests; elsewhere, the CLI `[merge.forge]` runs.
 - Provider usage: every worker, reviewer and planner is an ordinary bb thread, so your providers' limits apply to them. Set a token budget or a deadline in the spec to have the plugin pause the project for you.

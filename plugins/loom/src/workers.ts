@@ -3,6 +3,7 @@
 import { randomBytes } from "node:crypto";
 import { repoCheckout, ticketRepo } from "./checkouts";
 import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
+import { spawnEnvironment, threadBranch } from "./environments";
 import { plural } from "./format";
 import { SpawnRefusedError, type EnvironmentInfo, type HostPort } from "./ports";
 import { latestChangesRequested, nudgeText, workerBrief } from "./prompts";
@@ -145,6 +146,7 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
         bbProjectId: repo.bbProjectId ?? project.bb_project_id,
         hostId: project.host_id!,
         baseBranch,
+        environment: spawnEnvironment(repo, { branch: threadBranch(project.slug, ticket.key, String(row.attempt)), base: baseBranch }),
         title: `${ticket.key} · ${ticket.title}`,
         prompt: brief,
         sectionId: project.section_id,

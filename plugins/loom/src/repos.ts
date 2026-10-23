@@ -1,4 +1,4 @@
-import type { RepoSpec, Spec } from "./spec";
+import type { EnvironmentSpec, ForgeSpec, RepoSpec, Spec, WorktreeSpec } from "./spec";
 
 /** One repository of a project, with every setting the spec leaves to the top level filled in from it. */
 export interface RepoSettings {
@@ -13,6 +13,12 @@ export interface RepoSettings {
   checks: string[];
   afterMerge: string[];
   protected: string[];
+  /** Where its pull requests open; gh when the spec names none. */
+  forge: ForgeSpec;
+  /** The environment provider its workers and reviewers start in; null for today's managed worktree. */
+  environment: EnvironmentSpec | null;
+  /** The command that prepares its integration worktree; null for Loom's own git worktree. */
+  worktree: WorktreeSpec | null;
 }
 
 export function isMultiRepo(spec: Spec): boolean {
@@ -30,6 +36,9 @@ function settingsOf(spec: Spec, repo: RepoSpec | null): RepoSettings {
     checks: [...(repo?.checks ?? spec.checks.commands)],
     afterMerge: [...(repo?.after_merge ?? spec.checks.after_merge)],
     protected: [...spec.scope.protected, ...(repo?.protected ?? [])],
+    forge: repo?.forge ?? spec.merge.forge ?? { kind: "gh" },
+    environment: repo?.environment ?? spec.environment ?? null,
+    worktree: repo?.worktree ?? spec.merge.worktree ?? null,
   };
 }
 

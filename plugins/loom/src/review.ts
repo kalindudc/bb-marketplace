@@ -5,6 +5,7 @@ import { randomBytes } from "node:crypto";
 import { delivers, workerOf } from "./checks";
 import { repoCheckout, ticketRepo } from "./checkouts";
 import type { ProjectRow, ReviewRow, Store, ThreadRow, TicketRow } from "./db/store";
+import { spawnEnvironment, threadBranch } from "./environments";
 import { plural } from "./format";
 import { changesRequestedText, findingsList, reviewerBrief, reviewerNudgeText } from "./prompts";
 import { SpawnRefusedError } from "./ports";
@@ -279,6 +280,7 @@ async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow,
       bbProjectId: ticketRepo(spec, ticket).bbProjectId ?? project.bb_project_id,
       hostId: project.host_id!,
       baseBranch: ticket.branch ?? freshBase(spec, ticket.repo),
+      environment: spawnEnvironment(ticketRepo(spec, ticket), { branch: threadBranch(project.slug, ticket.key, `review-${round}-${row.id}`), base: ticket.branch ?? freshBase(spec, ticket.repo) }),
       title: `Review ${ticket.key} · round ${round}`,
       prompt: brief,
       sectionId: project.section_id,

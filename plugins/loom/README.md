@@ -130,8 +130,8 @@ the planner back into it.
 
 | Role | Tools |
 |---|---|
-| Any other thread | `loom_propose` |
-| Planner | `loom_propose`, `loom_board`, `loom_ticket`, `loom_post`, `loom_requeue`, `loom_edit_ticket`, `loom_add_tickets`, `loom_cancel_ticket` |
+| Any other thread | `loom_discover`, `loom_propose` |
+| Planner | `loom_discover`, `loom_propose`, `loom_board`, `loom_ticket`, `loom_post`, `loom_requeue`, `loom_edit_ticket`, `loom_add_tickets`, `loom_cancel_ticket` |
 | Worker | `loom_note`, `loom_submit`, `loom_block` |
 | Reviewer | `loom_note`, `loom_approve`, `loom_request_changes` |
 | Spec reviewer | `loom_spec_approve`, `loom_spec_request_changes` |
@@ -350,6 +350,32 @@ bb plugin config loom set doneHook 'cat >> "$HOME/notes/loom-$LOOM_PROJECT_SLUG.
 bb plugin config loom set doneHook 'cortex add "Loom: $LOOM_PROJECT_NAME" --lane "$(cortex memory lane)" --status done -t loom --as "loom-$LOOM_PROJECT_SLUG" --body-file -'
 ```
 
+## Servers other than GitHub
+
+Loom opens pull requests with `gh` unless the spec says otherwise, and it knows
+no other server by name. Before proposing, the planner calls `loom_discover`,
+which reports for each repo its git remotes, whether `gh` can open pull requests
+where it pushes, the environment providers bb offers for it on this machine, and
+whether Loom can add its own integration worktree. Each choice is found or ask,
+and the planner asks you the ask items in one round. `loom_propose` refuses a
+spec that leaves one of them open.
+
+- `[merge.forge]` names the server: `kind = "command"` with an `open` command
+  and a `state` command for that server's CLI, plus optional `after_open`
+  commands such as one that starts CI, or `kind = "none"`, where Loom only pushes
+  the branch and completes the ticket when the remote's base branch contains it.
+- `[environment]` starts the threads Loom runs in a repository (workers,
+  reviewers, the spec reviewer and the summary agent) in a bb environment provider, such
+  as one a plugin adds, with `inputs` in which Loom fills `{branch}` and `{base}`
+  for each thread.
+- `[merge.worktree]` prepares the integration worktree with a command, or with a
+  plugin's CLI command (`plugin = "<id>"`), for repositories that refuse
+  worktrees outside their own location. Without it, such a repository uses one
+  pull request per ticket.
+
+Every key, with the commands' variables and output, is in the loom skill's
+`references/spec.md`.
+
 ## Safety
 
 - Only plugin code moves a ticket, runs checks, merges or decides that work is done. A thread's role comes from the plugin's own table, never from thread metadata.
@@ -379,8 +405,8 @@ bb plugin config loom set doneHook 'cortex add "Loom: $LOOM_PROJECT_NAME" --lane
   that ticks every 15 seconds, reconciles after a restart and handles bb's
   thread events.
 - `host.ts` and `src/host/ops.ts` run on the machine that owns the checkout:
-  git through argv, `gh` for pull requests, and check commands in their own
-  process group.
+  git through argv, the repo's forge for pull requests (`gh`, the spec's own
+  commands, or none), and check commands in their own process group.
 - `src/metrics.ts` and `src/feed-text.ts` are pure; `src/reports.ts` reads them
   for the CLI and the page. `src/replay.ts` is pure too: it rewinds a project's
   rows to one event, for a rewound page, and builds the Timeline.

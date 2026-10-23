@@ -209,3 +209,36 @@ describe("projectKind", () => {
     await expect(port.projectKind("proj_1")).rejects.toThrow(/database is locked/);
   });
 });
+
+describe("environment providers and plugins", () => {
+  const args: SpawnArgs = { bbProjectId: "proj_1", hostId: "host_1", baseBranch: "origin/main", title: "CSV-1", prompt: "Work.", sectionId: null, metadata: {} };
+
+  it("spawns into a managed worktree from baseBranch, or into the named provider on the project's machine", async () => {
+    const { port, harness } = portWith({ threads: { spawn: async () => ({ id: "thr_w1", environmentId: null }) } });
+    await port.spawnThread(args);
+    await port.spawnThread({ ...args, environment: { providerId: "world-tree", inputs: { tree: "loom-csv" } } });
+    const [managed, provider] = harness.sdk.callsTo("threads.spawn").map((call) => (call[0] as { environment: unknown }).environment);
+    expect(managed).toEqual({ type: "host", hostId: "host_1", workspace: { type: "managed-worktree", baseBranch: { kind: "named", name: "origin/main" } } });
+    expect(provider).toEqual({ type: "provider", environmentProviderId: "world-tree", inputs: { tree: "loom-csv" }, machine: { type: "existing", hostId: "host_1" } });
+  });
+
+  it("lists providers for the project and machine with that machine's availability, and plugins with whether bb ships them", async () => {
+    const listed = [
+      { id: "git-worktree", displayName: "Worktree", description: null, pluginId: "environment-git-worktree", acceptsEmptyInputs: true, inputs: null, availability: null, machineAvailability: {} },
+      { id: "world-tree", displayName: "World tree", description: "Trees.", pluginId: "world-tree", acceptsEmptyInputs: false, inputs: { type: "object" }, availability: { status: "available" }, machineAvailability: { host_1: { status: "unavailable", message: "No ~/world here." } } },
+    ];
+    const { port, harness } = portWith({
+      environments: { listProviders: async () => listed },
+      plugins: { list: async () => ({ plugins: [{ id: "environment-git-worktree", enabled: true, provenance: "builtin" }, { id: "world-tree", enabled: false, provenance: "catalog" }] }) },
+    } as FakeSdkOverrides);
+    expect(await port.environmentProviders("proj_1", "host_1")).toEqual([
+      { id: "git-worktree", displayName: "Worktree", description: null, pluginId: "environment-git-worktree", acceptsEmptyInputs: true, inputs: null, available: true, unavailableReason: null },
+      { id: "world-tree", displayName: "World tree", description: "Trees.", pluginId: "world-tree", acceptsEmptyInputs: false, inputs: { type: "object" }, available: false, unavailableReason: "No ~/world here." },
+    ]);
+    expect(harness.sdk.callsTo("environments.listProviders")).toEqual([[{ projectId: "proj_1", hostId: "host_1" }]]);
+    expect(await port.plugins()).toEqual([
+      { id: "environment-git-worktree", enabled: true, builtin: true },
+      { id: "world-tree", enabled: false, builtin: false },
+    ]);
+  });
+});
