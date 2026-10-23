@@ -2,7 +2,7 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
-## Unreleased
+## 0.12.0 (2026-10-23)
 
 ### Added
 
