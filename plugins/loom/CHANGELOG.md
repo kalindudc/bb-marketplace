@@ -16,6 +16,7 @@ Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this
 
 ### Changed
 
+- The Board tab stacks a row per stage down the page instead of nine lanes side by side, so it no longer scrolls sideways. Blocked tickets come first under Needs you; In progress holds Working, Checking, Review and Shipping (approved, merging and open pull requests, each card with its state); Up next holds Ready and Waiting; and Done and Cancelled fold to one line each under Finished. A bar on top counts the tickets done, shipping, in progress, up next and blocked.
 - A pull request closed without merging resets the ticket's pull request, so a requeue opens a new one with one commit.
 - The push-only forge completes a ticket when the remote's base branch contains the commit Loom pushed.
 - Pull requests opened before this version keep their branch: a fix round pushes one more commit to them.

@@ -2297,6 +2297,7 @@ describe("changes tab", () => {
       fireEvent.click(slot.getByRole("button", { name: "Review changes" }));
       await waitFor(() => expect(shown(slot)).toBe("branch:api"));
       fireEvent.click(slot.getByRole("tab", { name: "Board" }));
+      fireEvent.click(slot.getByRole("button", { name: /^Show \d+ done tickets?$/u }));
       fireEvent.click(slot.getByRole("button", { name: "Show the changes of CSV-1" }));
       await waitFor(() => expect(shown(slot)).toBe("merge:CSV-1"));
       slot.lifecycle.unmount();
@@ -2338,20 +2339,34 @@ describe("board", () => {
     return slot;
   };
 
-  it("has one lane per ticket state, in order, with the cancelled lane collapsed", async () => {
+  it("stacks a row per stage down the page, blocked first, with Shipping holding approved, merging and open pull requests", async () => {
     const slot = await mountBoard();
-    expect([...slot.container.querySelectorAll("[data-lane]")].map((node) => node.getAttribute("data-lane"))).toEqual(["queued", "working", "checking", "review", "approved", "done", "blocked", "cancelled"]);
-    expect(lane(slot, "approved").textContent).toContain("Approved and merging");
-    expect(lane(slot, "approved").textContent).toContain("Merge me");
+    expect([...slot.container.querySelectorAll("[data-lane]")].map((node) => node.getAttribute("data-lane"))).toEqual(["blocked", "working", "checking", "review", "approved", "queued", "done", "cancelled"]);
+    expect(lane(slot, "approved").textContent).toContain("Shipping");
+    expect(lane(slot, "approved").textContent).toContain("approved · merging");
+    expect(lane(slot, "approved").querySelector('[data-card="CSV-8"] [data-card-state]')!.textContent).toBe("merging");
+    expect(lane(slot, "working").querySelector("[data-card-state]")).toBeNull();
+    expect(lane(slot, "checking").textContent).toContain("None");
+    expect(slot.container.querySelector("[data-board-progress]")!.textContent).toContain("1 of 8 done");
+  });
+
+  it("folds the done and cancelled tickets to one line each", async () => {
+    const slot = await mountBoard();
+    expect(lane(slot, "done").textContent).not.toContain("Order rows");
+    fireEvent.click(within(lane(slot, "done")).getByRole("button", { name: "Show 1 done ticket" }));
+    expect(lane(slot, "done").textContent).toContain("Order rows");
     expect(lane(slot, "cancelled").textContent).not.toContain("Old idea");
     fireEvent.click(lane(slot, "cancelled").querySelector("button[aria-expanded]")!);
     expect(lane(slot, "cancelled").textContent).toContain("Old idea");
   });
 
-  it("shows the PR open lane only for the pull request strategy", async () => {
+  it("puts open pull requests in Shipping on the pull request strategy, and leaves out Needs you when nothing is blocked", async () => {
     const pr = await mountBoard("pr");
-    expect([...pr.container.querySelectorAll("[data-lane]")].map((node) => node.getAttribute("data-lane"))).toEqual(["queued", "working", "checking", "review", "approved", "pr_open", "done", "blocked", "cancelled"]);
-    expect(lane(pr, "pr_open").textContent).toContain("Open PR");
+    expect(lane(pr, "approved").textContent).toContain("approved · merging · PR open");
+    expect(lane(pr, "approved").querySelector('[data-card="CSV-9"] [data-card-state]')!.textContent).toBe("PR open");
+    const { slot } = await mountPage("csv", { project: () => projectView({ board: cards.filter((entry) => entry.state !== "blocked") }) });
+    await slot.findByRole("tab", { name: "Board" });
+    expect(slot.container.querySelector('[data-lane="blocked"]')).toBeNull();
   });
 
   it("splits the queue into ready tickets and tickets that wait, and names what they wait on", async () => {
@@ -2388,9 +2403,11 @@ describe("board", () => {
     expect(slot.inspection.navigateCalls).toEqual([{ method: "openUrl", url: "https://github.com/acme/shop/pull/9" }]);
   });
 
-  it("scrolls sideways on a narrow screen", async () => {
+  it("grows down the page instead of sideways", async () => {
     const slot = await mountBoard();
-    expect(slot.container.querySelector("[data-board]")!.className).toContain("overflow-x-auto");
+    const board = slot.container.querySelector("[data-board]")!;
+    expect(board.className).not.toContain("overflow-x-auto");
+    expect(board.className).toContain("@container");
   });
 
   it("shows a draft's tickets as dashed cards under a note, with no ticket link", async () => {
