@@ -1,7 +1,7 @@
 {
   "id": "vantage",
   "displayName": "Vantage",
-  "description": "See every worktree your parallel agents work in, review what each one changed, and send your comments back to the agent that made the change. A full-screen Vantage page lists every recent thread's worktrees in bb's sidebar, grouped by what needs doing, and shows one worktree's changes as a stream of diffs with a file tree, side-by-side view and expandable context, plus an overlaps page for files two worktrees both changed and an All changes view by repository. Inside a thread, a Vantage tab, a folded summary above the composer and an Info section show its child threads' worktrees. Vantage is quiet by default: watch a thread to see when its worktrees need you, and turn on reviews to tick files as reviewed.",
+  "description": "See every worktree your parallel agents work in, review what each one changed, and send your comments back to the agent that made the change. A full-screen Vantage page lists every recent thread's worktrees in bb's sidebar, grouped by what needs doing, and shows one worktree's changes as a stream of diffs with a file tree, side-by-side view and expandable context, plus an overlaps page for files two worktrees both changed and an All changes view by repository. Inside a thread, a Vantage tab, a folded summary above the composer and an Info section show its child threads' worktrees. Every thread shows its real state and every file has a Reviewed tick, with nothing to turn on; two settings choose the badge and toasts for threads that need you.",
   "icon": "FolderGit",
   "screenshots": [
     "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/vantage/full-screen.png",

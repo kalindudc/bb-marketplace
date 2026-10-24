@@ -2,10 +2,10 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { createCli, type OverviewRequest } from "./src/cli";
 import { buildOverview, buildShell, type CollectDeps, type HostCall } from "./src/collect";
-import { PREFS_TAG, hostContract, rpcContract, type HostInput, type HostMethod, type HostOutput, type Overview, type Prefs, type ShellInput } from "./src/contract";
+import { hostContract, rpcContract, type HostInput, type HostMethod, type HostOutput, type Overview, type ShellInput } from "./src/contract";
 import { createEditIndex, findRecordedEdits, type EventsSdk } from "./src/edits";
-import { createPrefsStore } from "./src/prefs-store";
 import { createRepoCache, isDeltaOnly } from "./src/repo-cache";
+import { createReviewStore } from "./src/review-store";
 import { createRootCache } from "./src/root-cache";
 import { loadCommitFiles, loadFileSides, loadPatch } from "./src/sources";
 
@@ -38,27 +38,23 @@ export default function vantage(bb: BbPluginApi): void {
       description: "The page reads at most this many of the most recent threads. A higher limit makes the first load slower.",
       experimental_schema: z.number().int().min(10).max(500),
     },
-    watchByDefault: {
-      type: "boolean", default: false, label: "Watch every thread's worktrees",
-      description: "Off: Vantage says nothing about a worktree that needs you or failed, unless you watch its thread from the thread's menu or its Vantage tab. On: every thread is watched unless you turn it off for that thread. Diffs and files work either way.",
+    // Read by the app; the server only declares them.
+    badge: {
+      type: "boolean", default: true, label: "Badge the Vantage icon when a thread needs you",
+      description: "Shows on Vantage's icon in bb's navigation how many threads wait for your answer or failed.",
     },
-    reviewsByDefault: {
-      type: "boolean", default: false, label: "Track reviews in every thread",
-      description: "Off: diffs are shown without reviewed ticks or progress, unless you turn reviews on for a thread. On: every thread tracks reviewed files unless you turn it off for that thread.",
+    toasts: {
+      type: "boolean", default: false, label: "Show a toast when a thread needs you",
+      description: "Pops up a toast when a thread starts waiting for your answer or fails, unless you are looking at it. bb's own notifications are separate.",
     },
   });
-  const store = createPrefsStore(() => bb.storage.kv);
+  const store = createReviewStore(() => bb.storage.kv);
   settings.onChange((next, prev) => {
     if (next.windowHours !== prev.windowHours || next.maxThreads !== prev.maxThreads) {
       cache.clear();
       bb.realtime.publish(SETTINGS_CHANNEL, {});
     }
-    if (next.watchByDefault !== prev.watchByDefault || next.reviewsByDefault !== prev.reviewsByDefault) bb.rpc.experimental_invalidate([PREFS_TAG]);
   });
-  const prefs = async (threads?: Prefs["threads"]): Promise<Prefs> => {
-    const { watchByDefault, reviewsByDefault } = await settings.get();
-    return { watchByDefault, reviewsByDefault, threads: threads ?? (await store.threadPrefs()) };
-  };
 
   const unsubscribers = [
     bb.sdk.subscribe({
@@ -110,8 +106,6 @@ export default function vantage(bb: BbPluginApi): void {
     patch: (input) => loadPatch(deps(), input),
     fileSides: (input) => loadFileSides(deps(), input),
     commitFiles: (input) => loadCommitFiles(deps(), input),
-    prefs: () => prefs(),
-    setThreadPref: async (input) => prefs(await store.setThreadPref(input)),
     reviewed: ({ keys }) => store.reviewed(keys),
     setReviewed: (input) => store.setReviewed(input),
     recordedEdits: async ({ threadIds, rawPaths }) => ({

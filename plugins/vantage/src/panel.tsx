@@ -8,7 +8,6 @@ import { Hint } from "./hint";
 import { FilterChips, WorktreeList } from "./list";
 import { LiveThreadsProvider, useLiveThread } from "./live";
 import type { Chip } from "./model";
-import { PrefToggles } from "./page";
 import { Review, isTyping } from "./review";
 import { useSetReviewed } from "./reviewed";
 import { formatRoute, type PageRoute } from "./route";
@@ -140,7 +139,7 @@ function PanelScreen({ threadId }: { threadId: string }) {
             <div data-panel-drill className="min-h-0 flex-1 overflow-y-auto">
               <Review key={row.worktree.key} overview={overview} row={row} index={index} total={data.order.length} compact currentThreadId={threadId} currentHostId={currentHostId}
                 terminal="thread" marks={data.marks[row.worktree.key]} titleOf={data.titleOf} branchOf={data.branchOf} comments={comments} loaders={loaders}
-                setReviewed={setReviewed} onToggleReviews={() => data.toggleFor("reviews", row.threadId, threadId)} onStep={step}
+                setReviewed={setReviewed} onStep={step}
                 onMessage={() => setTab("chat")} onCompare={() => fullScreen({ view: "overlaps", selectedKey: null })}
                 onSent={() => { if (!own) setTab("chat"); }} toolbar={switcher} />
             </div>
@@ -189,7 +188,6 @@ function PanelScreen({ threadId }: { threadId: string }) {
           ))}
         </div>
         <span className="min-w-0 flex-1" />
-        <PrefToggles threadId={threadId} data={data} size="small" />
         {snapshot.refreshing && <span aria-live="polite" className="sr-only">Updating</span>}
         <button type="button" aria-label="Refresh" title="Refresh" onClick={() => { reloadLoaded(); store?.refresh({ hard: true }); }} className={ICON_BUTTON}>
           <Icon name="ArrowReloadHorizontal" fallback="RotateCcw" className={`size-3.5 ${snapshot.refreshing ? "animate-spin" : ""}`} aria-hidden />

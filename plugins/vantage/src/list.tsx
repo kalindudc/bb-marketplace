@@ -1,9 +1,11 @@
-import { memo, useEffect, useState, type ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { isWorking } from "./live";
-import { plural, type Chip, type Group, type Outside, type Row } from "./model";
+import { plural, reviewStarted, type Chip, type Group, type Outside, type Row } from "./model";
+import { useRemembered } from "./remember";
 import { PullRequestChip, StatusGlyph } from "./review";
 import { EditsSkeleton, Skeleton } from "./skeleton";
+import { groupFolds } from "./ui-prefs";
 
 export interface WorktreeListProps {
   groups: readonly Group[];
@@ -92,7 +94,7 @@ function RowView({ row, selected, under, titleOf, onOpen }: { row: Row; selected
         {!loading && <PullRequestChip environmentId={row.worktree.ref.kind === "workspace" ? row.worktree.ref.environmentId : null} />}
       </span>
       <span className="whitespace-nowrap text-right text-[11px] text-subtle-foreground">
-        {row.progress !== null && row.progress.total > 0 && (
+        {reviewStarted(row) && row.progress !== null && (
           row.progress.reviewed === row.progress.total
             ? <span className="inline-flex items-center gap-0.5 text-success"><Icon name="Check" className="size-3" aria-hidden />reviewed</span>
             : <span title="Files reviewed">{row.progress.reviewed}/{row.progress.total}</span>
@@ -122,29 +124,30 @@ function Heading({ children, count, action }: { children: ReactNode; count?: num
 export function WorktreeList(props: WorktreeListProps) {
   const { groups, outside, selectedKey, selectedOutside = null, titleOf, onOpen, onOpenOutside, hidden, archivedHidden, onIncludeArchived, partial, underOf } = props;
   const hasArchived = groups.some((group) => group.id === "archived");
-  const selectedArchived = groups.some((group) => group.id === "archived" && group.rows.some((row) => row.worktree.key === selectedKey));
-  const [archivedOpen, setArchivedOpen] = useState(selectedArchived);
-  useEffect(() => { if (selectedArchived) setArchivedOpen(true); }, [selectedArchived]);
+  const folds = useRemembered(groupFolds);
+  const foldedByDefault = (id: string) => id === "archived";
+  const isFolded = (id: string) => folds.get(id) ?? foldedByDefault(id);
+  const toggle = (id: string) => {
+    const folded = !isFolded(id);
+    groupFolds.set(id, folded === foldedByDefault(id) ? undefined : folded);
+  };
   return (
     <div data-worktree-list className="pb-3">
       {groups.length === 0 && outside.length === 0 && !partial && (
         <p className="px-2 pt-3 text-sm text-muted-foreground">No worktree has changes{props.chip === null ? " yet" : " in this filter"}.</p>
       )}
       {groups.map((group) => {
-        const archived = group.id === "archived";
-        const open = !archived || archivedOpen;
+        const open = !isFolded(group.id);
+        // A folded group still shows the worktree that is open, so the selection is never hidden.
+        const rows = open ? group.rows : group.rows.filter((row) => row.worktree.key === selectedKey);
         return (
           <section key={group.id} data-worktree-group={group.label}>
-            {archived
-              ? (
-                <Heading count={group.rows.length}>
-                  <button type="button" aria-expanded={open} onClick={() => setArchivedOpen(!open)} className="inline-flex cursor-pointer items-center gap-1 uppercase">
-                    <Icon name={open ? "ChevronDown" : "ChevronRight"} className="size-3" aria-hidden />{group.label}
-                  </button>
-                </Heading>
-              )
-              : <Heading count={group.rows.length}>{group.label}</Heading>}
-            {open && group.rows.map((row) => (
+            <Heading count={group.rows.length}>
+              <button type="button" aria-expanded={open} onClick={() => toggle(group.id)} className="inline-flex cursor-pointer items-center gap-1 uppercase hover:text-foreground">
+                <Icon name={open ? "ChevronDown" : "ChevronRight"} className="size-3" aria-hidden />{group.label}
+              </button>
+            </Heading>
+            {rows.map((row) => (
               <WorktreeRow key={row.worktree.key} row={row} selected={row.worktree.key === selectedKey} under={underOf?.(row) ?? null} titleOf={titleOf} onOpen={onOpen} />
             ))}
           </section>

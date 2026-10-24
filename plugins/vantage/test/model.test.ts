@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Overview, ReviewMarks, Worktree } from "../src/contract";
-import { buildRows, chipCounts, groupRows, hiddenCount, matchesChip, outsideEntries, type RowsInput } from "../src/model";
+import { buildRows, chipCounts, groupRows, hiddenCount, matchesChip, outsideEntries, reviewStarted, type RowsInput } from "../src/model";
 import { markId, signature } from "../src/reviewed";
 import { checkoutRepo, fileChange, overview, sharedFile, sidebarThread, threadSummary, worktree } from "./fixtures";
 
@@ -19,8 +19,6 @@ function input(over: Partial<Overview>, options: Partial<RowsInput> = {}): RowsI
       ["thr_1", sidebarThread({ id: "thr_1", displayTitle: "Shop work", indicator: "waiting-for-input" })],
       ["thr_2", sidebarThread({ id: "thr_2", displayTitle: "Api work", indicator: "runtime" })],
     ]),
-    watched: () => false,
-    reviewing: () => false,
     marks: {},
     currentThreadId: null,
     text: "",
@@ -32,38 +30,57 @@ describe("buildRows", () => {
   it("leaves out worktrees with nothing changed and names each row by its thread", () => {
     const rows = buildRows(input({}));
     expect(rows.map((row) => [row.worktree.key, row.title])).toEqual([["w1", "Shop work"], ["w2", "Api work"]]);
-    expect(rows[0]).toMatchObject({ additions: 3, deletions: 1, progress: null });
+    expect(rows[0]).toMatchObject({ additions: 3, deletions: 1, progress: { reviewed: 0, total: 1 } });
   });
 
-  it("says nothing about a thread waiting for you unless its tree is watched", () => {
-    expect(buildRows(input({}))[0]!.bucket).toBe("changed");
-    expect(buildRows(input({}, { watched: (id) => id === "thr_1" }))[0]!.bucket).toBe("needs");
+  it("files a thread that waits for you under Needs you, as bb's sidebar marks it", () => {
+    expect(buildRows(input({}))[0]!.bucket).toBe("needs");
+    const failed = new Map([["thr_1", sidebarThread({ id: "thr_1", indicator: "unread-error" })]]);
+    expect(buildRows(input({}, { live: failed }))[0]!.bucket).toBe("needs");
   });
 
-  it("asks only the row's own thread whether it is watched, so a watched sibling in the same checkout does not leak in", () => {
-    const shared = worktree({ key: "w1", threadIds: ["thr_1", "thr_2"], uncommitted: [file], label: "Shop" });
-    const rows = buildRows(input({ worktrees: [shared] }, { watched: (id) => id === "thr_2" }));
-    expect(rows[0]).toMatchObject({ threadId: "thr_1", watched: false, bucket: "changed" });
+  it("files a worktree with changes and no question under To review", () => {
+    const idle = new Map([["thr_1", sidebarThread({ id: "thr_1", indicator: "none" })]]);
+    expect(buildRows(input({}, { live: idle }))[0]!.bucket).toBe("review");
   });
 
-  it("puts a running thread under Working, watched or not", () => {
+  it("files a worktree that cannot be read under Unavailable, never To review", () => {
+    const idle = new Map([["thr_1", sidebarThread({ id: "thr_1", indicator: "none" })]]);
+    const broken = worktree({ ...one, state: "unavailable", uncommitted: [], message: "git failed" });
+    const rows = buildRows(input({ worktrees: [broken] }, { live: idle }));
+    expect(rows.map((row) => row.bucket)).toEqual(["unavailable"]);
+    expect(chipCounts(rows).review).toBe(0);
+    expect(groupRows(rows, "status").map((group) => group.label)).toEqual(["Unavailable"]);
+  });
+
+  it("puts a running thread under Working", () => {
     expect(buildRows(input({}))[1]!.bucket).toBe("working");
   });
 
-  it("tracks reviews only where they are on, and calls a worktree reviewed once every part is ticked", () => {
-    const reviewing = () => true;
-    expect(buildRows(input({}, { reviewing }))[0]).toMatchObject({ bucket: "review", progress: { reviewed: 0, total: 1 } });
+  it("counts reviewed files in every worktree, and calls one reviewed once every part is ticked", () => {
+    const idle = new Map([["thr_1", sidebarThread({ id: "thr_1", indicator: "none" })]]);
     const marks: Record<string, ReviewMarks> = { w1: { [markId("uncommitted", "src/a.ts")]: signature(file) } };
-    expect(buildRows(input({}, { reviewing, marks }))[0]).toMatchObject({ bucket: "reviewed", progress: { reviewed: 1, total: 1 } });
+    expect(buildRows(input({}, { live: idle, marks }))[0]).toMatchObject({ bucket: "reviewed", progress: { reviewed: 1, total: 1 } });
+  });
+
+  it("says a review has started only once a file is ticked, and has no progress before the files are read", () => {
+    expect(reviewStarted({ progress: { reviewed: 0, total: 3 } })).toBe(false);
+    expect(reviewStarted({ progress: { reviewed: 1, total: 3 } })).toBe(true);
+    expect(reviewStarted({ progress: null })).toBe(false);
+    const loading = worktree({ ...one, state: "loading" });
+    const rows = buildRows(input({ worktrees: [loading] }));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.progress).toBeNull();
   });
 
   it("does not count a tick from before the file changed", () => {
+    const idle = new Map([["thr_1", sidebarThread({ id: "thr_1", indicator: "none" })]]);
     const marks: Record<string, ReviewMarks> = { w1: { [markId("uncommitted", "src/a.ts")]: "modified:1:1:" } };
-    expect(buildRows(input({}, { reviewing: () => true, marks }))[0]).toMatchObject({ bucket: "review", progress: { reviewed: 0, total: 1 } });
+    expect(buildRows(input({}, { live: idle, marks }))[0]).toMatchObject({ bucket: "review", progress: { reviewed: 0, total: 1 } });
   });
 
-  it("files an archived thread's worktree under Archived, even when it is watched and waiting", () => {
-    const rows = buildRows(input({ threads: [threadSummary({ id: "thr_1", archived: true }), threadSummary({ id: "thr_2" })] }, { watched: () => true }));
+  it("files an archived thread's worktree under Archived, even when it is waiting", () => {
+    const rows = buildRows(input({ threads: [threadSummary({ id: "thr_1", archived: true }), threadSummary({ id: "thr_2" })] }));
     expect(rows[0]!.bucket).toBe("archived");
   });
 
@@ -83,7 +100,7 @@ describe("buildRows", () => {
 });
 
 describe("groups and chips", () => {
-  const rows = buildRows(input({ sharedFiles: [sharedFile({ path: "src/a.ts", worktreeKeys: ["w1", "w2"] })] }, { watched: () => true }));
+  const rows = buildRows(input({ sharedFiles: [sharedFile({ path: "src/a.ts", worktreeKeys: ["w1", "w2"] })] }));
 
   it("groups by what needs doing, in a fixed order, and leaves out empty groups", () => {
     expect(groupRows(rows, "status").map((group) => [group.label, group.rows.length])).toEqual([["Needs you", 1], ["Working", 1]]);

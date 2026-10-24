@@ -4,7 +4,7 @@ import { AttentionToasts, useVantageBadge } from "./src/notify";
 import { AGENT_TAB_ID, AgentTab, PAGE_PANEL_ID, PAGE_PATH, VantageHeader, VantagePage, VantageSidebar, usePageTitle } from "./src/page";
 import { VantagePanel } from "./src/panel";
 import {
-  SegmentDetails, SegmentSummary, VantageHeaderButton, VantageInfoSection, openAction, prefsAction, useSegmentVisible,
+  SegmentDetails, SegmentSummary, VantageHeaderButton, VantageInfoSection, openAction, useSegmentVisible,
 } from "./src/thread-surfaces";
 
 export default definePluginApp((app) => {
@@ -29,7 +29,6 @@ export default definePluginApp((app) => {
   });
   app.slots.experimental_threadInfoSection({ id: "worktrees", group: "2_changes", order: 90, component: VantageInfoSection });
   app.slots.experimental_threadAction(openAction);
-  app.slots.experimental_threadAction(prefsAction);
   app.slots.experimental_appOverlay({ id: "attention", component: AttentionToasts });
   for (const command of createCommands()) app.commands.register(command);
 });

@@ -5,6 +5,8 @@ import { act, fireEvent, screen, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginCommandContext } from "@get-bb/plugin-sdk/app";
 import { PANEL_ACTION_ID, createCommands } from "../src/commands";
+import { useVantageBadge } from "../src/notify";
+import { sidebarThread } from "./fixtures";
 import { disposeSessions } from "../src/session";
 
 afterEach(() => {
@@ -33,13 +35,13 @@ describe("plugin app", () => {
     expect(app.tabs.find((tab) => tab.context.kind === "thread")).toMatchObject({ id: PANEL_ACTION_ID, title: "Vantage", icon: "FolderGit", layout: "flush" });
   });
 
-  it("adds a composer segment, an Info section, two thread menu entries and the toasts for watched threads", async () => {
+  it("adds a composer segment, an Info section, one thread menu entry and the toasts", async () => {
     const app = await loadPluginApp(() => import("../app"));
     expect(app.threadContextSegments.map(({ id, group }) => ({ id, group }))).toEqual([{ id: "worktrees", group: "3_git" }]);
     expect(app.threadContextSegments[0]!.details).toBeTypeOf("function");
     expect(app.threadContextSegments[0]!.useVisible).toBeTypeOf("function");
     expect(app.threadInfoSections.map(({ id, group }) => ({ id, group }))).toEqual([{ id: "worktrees", group: "2_changes" }]);
-    expect(app.threadActions.map(({ id, group }) => ({ id, group }))).toEqual([{ id: "review", group: "1_open" }, { id: "prefs", group: "3_settings" }]);
+    expect(app.threadActions.map(({ id, group }) => ({ id, group }))).toEqual([{ id: "review", group: "1_open" }]);
     expect(app.appOverlays.map(({ id }) => id)).toEqual(["attention"]);
     expect(app.threadHeaderActions.map(({ id, title }) => ({ id, title }))).toEqual([{ id: "open", title: "Vantage" }]);
     expect(app.contentScripts).toHaveLength(0);
@@ -126,5 +128,31 @@ describe("manifest", () => {
   it("keeps the SDK a dev dependency pinned to the version bb 0.47 ships, and bundles zod", () => {
     expect(manifest.dependencies).toEqual({ zod: "^4.3.6" });
     expect(manifest.devDependencies["@get-bb/plugin-sdk"]).toBe("0.6.75");
+  });
+});
+
+describe("the Vantage icon's badge", () => {
+  const threads = [
+    sidebarThread({ id: "thr_a", displayTitle: "Asks", indicator: "waiting-for-input" }),
+    sidebarThread({ id: "thr_b", displayTitle: "Broke", indicator: "unread-error" }),
+    sidebarThread({ id: "thr_c", displayTitle: "Busy", indicator: "runtime" }),
+  ];
+  function Probe() {
+    return <output>{JSON.stringify(useVantageBadge())}</output>;
+  }
+  const badge = (settings?: Record<string, boolean>) => {
+    const slot = renderSlot({ component: Probe }, {}, { pluginId: "vantage", sidebarThreads: { status: "ready", threads }, ...(settings ? { settings } : {}) });
+    const value = JSON.parse(slot.container.querySelector("output")!.textContent!);
+    slot.lifecycle.unmount();
+    return value;
+  };
+
+  it("counts every thread that waits for you or failed when the badge setting is on", () => {
+    expect(badge({ badge: true, toasts: false })).toEqual({ count: 2, tone: "warning", label: "2 threads need you" });
+  });
+
+  it("shows nothing when the setting is off or not loaded yet", () => {
+    expect(badge({ badge: false, toasts: false })).toBeNull();
+    expect(badge()).toBeNull();
   });
 });

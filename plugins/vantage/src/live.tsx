@@ -57,12 +57,6 @@ export const isWorking = (live: Pick<LiveThread, "indicator" | "archived">): boo
 export const needsYou = (live: Pick<LiveThread, "indicator" | "archived">): boolean =>
   !live.archived && (live.indicator === "waiting-for-input" || live.indicator === "unread-error");
 
-// A thread Vantage does not watch keeps only what it is doing, never that it waits for you, failed or finished unread.
-export function quietIndicator(indicator: PluginSidebarThreadIndicator, watched: boolean): PluginSidebarThreadIndicator {
-  if (watched) return indicator;
-  return WORKING.has(indicator) ? indicator : "none";
-}
-
 // The parts of GitHub PR Status's `pullRequests` reply Vantage reads; `bb plugin rpc inspect bb--github-pr-status pullRequests` has it all.
 const githubPrStatus = defineContract({
   pullRequests: {

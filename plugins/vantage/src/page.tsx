@@ -8,7 +8,7 @@ import { createArchivedPreference } from "./archived-preference";
 import { AllChanges } from "./changes";
 import { FilterChips, WorktreeList } from "./list";
 import { LiveThreadsProvider, resolveLive, useLiveThread, useSidebarIndex } from "./live";
-import { plural, type Outside, type Row } from "./model";
+import { plural, reviewStarted, type Outside, type Row } from "./model";
 import { Overlaps } from "./overlaps";
 import { Review, StatusGlyph, isTyping } from "./review";
 import { useSetReviewed } from "./reviewed";
@@ -63,26 +63,6 @@ function useOpenAgent() {
 
 const BUTTON = "inline-flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-md border border-border-seam bg-card px-2.5 text-xs text-foreground hover:bg-state-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
-export function PrefToggles({ threadId, data, size = "normal" }: { threadId: string; data: RowsData; size?: "normal" | "small" }) {
-  const watched = data.watched(threadId);
-  const reviewing = data.reviewing(threadId);
-  const base = `inline-flex ${size === "small" ? "h-6" : "h-7"} shrink-0 cursor-pointer items-center gap-1 rounded-md px-2 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring`;
-  return (
-    <>
-      <button type="button" aria-pressed={watched} onClick={() => data.toggle("watch", threadId)}
-        title={watched ? "Watching: Vantage says when a worktree in this tree needs you or failed" : "Not watching: Vantage stays quiet about this tree's worktrees. Click to watch them."}
-        className={`${base} ${watched ? "bg-surface-selected text-foreground" : "text-muted-foreground hover:bg-state-hover"}`}>
-        <Icon name={watched ? "Eye" : "EyeOff"} className="size-3.5" aria-hidden />{watched ? "Watching" : "Watch"}
-      </button>
-      <button type="button" aria-pressed={reviewing} onClick={() => data.toggle("reviews", threadId)}
-        title={reviewing ? "Reviews on: tick files as you review them in this tree" : "Reviews off: diffs only. Click to tick files as you review them."}
-        className={`${base} ${reviewing ? "bg-surface-selected text-foreground" : "text-muted-foreground hover:bg-state-hover"}`}>
-        <Icon name="Check" className="size-3.5" aria-hidden />{reviewing ? "Reviews on" : "Track reviews"}
-      </button>
-    </>
-  );
-}
-
 function Metric({ value, label, tone = "text-foreground", onClick }: { value: number; label: string; tone?: string; onClick(): void }) {
   return (
     <button type="button" onClick={onClick} data-metric={label}
@@ -95,13 +75,12 @@ function Metric({ value, label, tone = "text-foreground", onClick }: { value: nu
 
 function RowLine({ row, action, onAction, titleOf }: { row: Row; action: string; onAction(): void; titleOf(key: string): string }) {
   const overlap = row.bucket === "archived" ? undefined : row.overlaps[0];
-  const reason = row.bucket === "needs"
-    ? <span className={row.live.indicator === "unread-error" ? "text-destructive-text" : "text-foreground"}>{row.live.sidebar?.indicatorLabel ?? "Needs you"}</span>
-    : overlap !== undefined
-      ? <span className="text-warning-text">Overlaps with {titleOf(overlap.otherKeys[0]!)} in {overlap.path}</span>
-      : row.progress !== null && row.progress.total > 0
-        ? <span className="text-muted-foreground">{row.progress.reviewed} of {row.progress.total} files reviewed</span>
-        : <span className="text-muted-foreground">{plural(row.worktree.uncommitted.length + row.worktree.committed.length, "file")} changed</span>;
+  let reason: ReactNode;
+  if (row.bucket === "unavailable") reason = <span className="text-destructive-text">{row.worktree.message ?? "This worktree cannot be read"}</span>;
+  else if (row.bucket === "needs") reason = <span className={row.live.indicator === "unread-error" ? "text-destructive-text" : "text-foreground"}>{row.live.sidebar?.indicatorLabel ?? "Needs you"}</span>;
+  else if (overlap !== undefined) reason = <span className="text-warning-text">Overlaps with {titleOf(overlap.otherKeys[0]!)} in {overlap.path}</span>;
+  else if (reviewStarted(row) && row.progress !== null) reason = <span className="text-muted-foreground">{row.progress.reviewed} of {row.progress.total} files reviewed</span>;
+  else reason = <span className="text-muted-foreground">{plural(row.worktree.uncommitted.length + row.worktree.committed.length, "file")} changed</span>;
   const loading = row.worktree.state === "loading";
   return (
     <div className="flex items-center gap-3 border-t border-border-seam px-4 py-2.5 first:border-t-0">
@@ -138,47 +117,37 @@ function PageOverview({ overview, route, data, onOpen, onAnswer, onOverlaps, onC
   const root = useLiveThread(rootId, overview.threads.find((thread) => thread.id === rootId));
   const { rows, counts } = data;
   const active = rows.filter((row) => row.bucket !== "archived");
-  const next = [...rows.filter((row) => row.bucket === "needs"), ...rows.filter((row) => row.bucket === "review" || row.bucket === "changed")];
+  const next = [...rows.filter((row) => row.bucket === "needs"), ...rows.filter((row) => row.bucket === "review"), ...rows.filter((row) => row.bucket === "unavailable")];
   const working = rows.filter((row) => row.bucket === "working");
   const reviewed = rows.filter((row) => row.bucket === "reviewed");
   const files = active.reduce((total, row) => total + row.worktree.uncommitted.length + row.worktree.committed.length, 0);
   const projects = new Set(active.map((row) => row.worktree.projectId)).size;
-  const anyWatched = rows.some((row) => row.watched);
-  const anyReviewing = rows.some((row) => row.reviewing);
   const first = next[0] ?? rows[0];
   return (
     <div data-page-overview className="mx-auto w-full max-w-4xl px-7 pb-10 pt-7">
       <h1 className="text-xl font-semibold text-foreground">{route.target.kind === "tree" ? root.title : `All threads in the last ${overview.windowHours ?? 24} hours`}</h1>
       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-muted-foreground">
         <span>{plural(active.length, "worktree")} in {plural(projects, "project")} · {plural(files, "file")}</span>
-        {route.target.kind === "tree" && <PrefToggles threadId={rootId} data={data} />}
         <span className="flex-1" />
         <button type="button" className={BUTTON} onClick={onChanges}>All changes</button>
         {first !== undefined && (
           <button type="button" onClick={() => onOpen(first.worktree.key)} className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-md bg-primary px-3 text-xs text-primary-foreground hover:opacity-90">
-            {anyReviewing ? "Start reviewing" : "Open the first worktree"}<span className="rounded border border-primary-foreground/40 px-1 text-[10px]">]</span>
+            Start reviewing<span className="rounded border border-primary-foreground/40 px-1 text-[10px]">]</span>
           </button>
         )}
       </div>
       <div className="mt-5 grid grid-cols-2 gap-2.5 md:grid-cols-4">
-        {anyWatched && <Metric value={counts.needs} label="Need you" onClick={() => pageChip.set("needs")} />}
-        {anyReviewing
-          ? <Metric value={counts.review} label="To review" onClick={() => pageChip.set("review")} />
-          : <Metric value={rows.filter((row) => row.bucket === "changed").length} label="Changed" onClick={() => pageChip.set(null)} />}
+        <Metric value={counts.needs} label="Need you" onClick={() => pageChip.set("needs")} />
+        <Metric value={counts.review} label="To review" onClick={() => pageChip.set("review")} />
         <Metric value={counts.working} label="Working" onClick={() => pageChip.set("working")} />
         <Metric value={counts.overlaps} label="Overlapping files" tone={counts.overlaps > 0 ? "text-warning-text" : "text-foreground"} onClick={onOverlaps} />
       </div>
-      {!anyWatched && rows.length > 0 && (
-        <p className="mt-3 text-xs text-subtle-foreground">
-          Vantage is not watching {route.target.kind === "tree" ? "this tree" : "any of these threads"}, so it does not say when a worktree needs you. Watch a thread from its menu, its Vantage tab or the button above.
-        </p>
-      )}
       {overview.partial && <SkeletonRows count={3} label="Reading every worktree's changes" />}
       {next.length > 0 && (
         <Section title="Up next">
           {next.map((row) => (
             <RowLine key={row.worktree.key} row={row} titleOf={data.titleOf}
-              action={row.bucket === "needs" ? (row.live.indicator === "waiting-for-input" ? "Answer" : "Open") : row.reviewing ? "Review" : "Open"}
+              action={row.bucket === "needs" ? (row.live.indicator === "waiting-for-input" ? "Answer" : "Open") : row.bucket === "review" ? "Review" : "Open"}
               onAction={() => (row.bucket === "needs" && row.live.indicator === "waiting-for-input" ? onAnswer(row.worktree.key) : onOpen(row.worktree.key))} />
           ))}
         </Section>
@@ -317,11 +286,10 @@ function PageScreen({ subPath }: PluginNavPanelProps) {
   let body: ReactNode;
   if (overview === null) body = snapshot.status === "error" ? null : <SkeletonRows count={4} label="Loading worktrees" />;
   else if (row !== null) {
-    const rootThread = overview.threads.find((thread) => thread.id === row.threadId)?.rootThreadId ?? row.threadId;
     const review = (
       <Review key={row.worktree.key} overview={overview} row={row} index={index} total={data.order.length} compact={narrow} currentThreadId={null} currentHostId={null}
         terminal="environment" marks={data.marks[row.worktree.key]} titleOf={data.titleOf} branchOf={data.branchOf} comments={comments}
-        loaders={loaders} setReviewed={setReviewed} onToggleReviews={() => data.toggleFor("reviews", row.threadId, rootThread)} onStep={step}
+        loaders={loaders} setReviewed={setReviewed} onStep={step}
         onMessage={openAgent} onCompare={compare} onSent={openAgent} />
     );
     // A compact review is one column with no scroll area of its own.

@@ -334,25 +334,6 @@ export type CommitFilesOutput = z.infer<typeof commitFilesOutputSchema>;
 export const fileSidesOutputSchema = z.object({ old: z.string().nullable(), new: z.string().nullable() }).strict();
 export type FileSidesOutput = z.infer<typeof fileSidesOutputSchema>;
 
-// A thread's own choice; a thread without one follows its nearest ancestor that has one, and then the setting.
-export const threadPrefSchema = z.object({ watch: z.boolean().optional(), reviews: z.boolean().optional() }).strict();
-export type ThreadPref = z.infer<typeof threadPrefSchema>;
-
-export const prefsSchema = z.object({
-  watchByDefault: z.boolean(),
-  reviewsByDefault: z.boolean(),
-  threads: z.record(text, threadPrefSchema),
-}).strict();
-export type Prefs = z.infer<typeof prefsSchema>;
-
-// `null` clears the thread's own choice, so it follows its ancestors and the setting again.
-export const setThreadPrefInputSchema = z.object({
-  threadId: text.min(1),
-  watch: z.boolean().nullable().optional(),
-  reviews: z.boolean().nullable().optional(),
-}).strict();
-export type SetThreadPrefInput = z.infer<typeof setThreadPrefInputSchema>;
-
 // One worktree's reviewed files: each part of a file (its uncommitted change, its committed change, or one commit's change)
 // maps to the signature it had when it was ticked, so a change made afterwards shows as not reviewed.
 export const reviewMarksSchema = z.record(z.string().max(8192), z.string().max(256));
@@ -365,7 +346,6 @@ export const setReviewedInputSchema = z.object({
 }).strict();
 export type SetReviewedInput = z.infer<typeof setReviewedInputSchema>;
 
-export const PREFS_TAG = "vantage:prefs";
 export const reviewedTag = (key: string): string => `vantage:reviewed:${key}`;
 
 export const rpcContract = defineContract({
@@ -375,8 +355,6 @@ export const rpcContract = defineContract({
   fileSides: { input: patchInputSchema, output: fileSidesOutputSchema },
   commitFiles: { input: commitFilesInputSchema, output: commitFilesOutputSchema },
   recordedEdits: { input: recordedEditsInputSchema, output: recordedEditsOutputSchema },
-  prefs: { input: z.object({}).strict(), output: prefsSchema, tags: () => [PREFS_TAG] },
-  setThreadPref: { input: setThreadPrefInputSchema, output: prefsSchema, invalidates: () => [PREFS_TAG] },
   reviewed: {
     input: reviewedInputSchema,
     output: z.record(text, reviewMarksSchema),

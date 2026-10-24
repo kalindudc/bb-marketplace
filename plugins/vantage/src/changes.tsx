@@ -1,14 +1,15 @@
-import { useCallback, useMemo, useState, type KeyboardEvent } from "react";
+import { useCallback, useMemo, type KeyboardEvent } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import type { FileChange, Overview, Repo, Scope, ThreadSummary } from "./contract";
 import { isArchivedOnly } from "./archived";
 import { FileCard, type FileLoaders } from "./file-card";
 import { filterRepos, focusRepos, type RepoFocus } from "./filters";
 import { plural } from "./model";
-import { FoldAllButton, isTyping } from "./review";
+import { useRemembered } from "./remember";
+import { FoldAllButton, WrapButton, isTyping } from "./review";
 import { EditsSkeleton, Skeleton, SkeletonRows } from "./skeleton";
 import { useShared } from "./session";
-import { diffView } from "./ui-prefs";
+import { diffView, diffWrap, fileFolds, foldAll, otherChangesShown, setFoldAll } from "./ui-prefs";
 
 export interface AllChangesProps {
   overview: Overview;
@@ -33,17 +34,18 @@ function caption(repo: Repo): string {
   }
 }
 
-function RepoBlock({ repo, scope, threads, folds, onFold, compact, loaders, onOpenThread }: {
-  repo: Repo; scope: Scope; threads: ReadonlyMap<string, ThreadSummary>; folds: ReadonlyMap<string, boolean>; onFold(key: string): void;
+function RepoBlock({ repo, scope, threads, isFolded, onFold, compact, loaders, onOpenThread }: {
+  repo: Repo; scope: Scope; threads: ReadonlyMap<string, ThreadSummary>; isFolded(key: string): boolean; onFold(key: string): void;
   compact: boolean; loaders: FileLoaders; onOpenThread(threadId: string): void;
 }) {
-  const [showOthers, setShowOthers] = useState(false);
+  const showOthers = useRemembered(otherChangesShown).get(repo.key) === true;
   const view = useShared(diffView);
+  const wrap = useShared(diffWrap);
   const card = (file: FileChange) => {
     const key = `${repo.key}\0${scope}\0${file.path}`;
     return (
-      <FileCard key={key} cardKey={key} repo={repo} file={file} scope={scope} folded={folds.get(key) ?? false} onFold={onFold}
-        view={compact ? "unified" : view} compact={compact} threads={threads} loaders={loaders} />
+      <FileCard key={key} cardKey={key} repo={repo} file={file} scope={scope} folded={isFolded(key)} onFold={onFold}
+        view={compact ? "unified" : view} wrap={wrap} compact={compact} threads={threads} loaders={loaders} />
     );
   };
   return (
@@ -89,7 +91,7 @@ function RepoBlock({ repo, scope, threads, folds, onFold, compact, loaders, onOp
           {repo.truncated && <p className="py-1 text-xs text-muted-foreground">Showing the first {repo.files.length} files</p>}
           {repo.otherFiles.length > 0 && (
             <>
-              <button type="button" aria-expanded={showOthers} onClick={() => setShowOthers(!showOthers)}
+              <button type="button" aria-expanded={showOthers} onClick={() => otherChangesShown.set(repo.key, showOthers ? undefined : true)}
                 className="mb-2 inline-flex cursor-pointer items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
                 <Icon name={showOthers ? "ChevronDown" : "ChevronRight"} className="size-3" aria-hidden />
                 {plural(repo.otherFiles.length, "other change")} in this repository, not made by these agents
@@ -107,18 +109,29 @@ export function AllChanges({ overview, scope, onScope, focus, onClearFocus, text
   const threads = useMemo(() => new Map(overview.threads.map((thread) => [thread.id, thread])), [overview.threads]);
   const filtered = useMemo(() => filterRepos(overview, { text, projectId: null, changedOnly: true }), [overview, text]);
   const shown = useMemo(() => focusRepos(filtered, focus), [filtered, focus]);
-  const [folds, setFolds] = useState<ReadonlyMap<string, boolean>>(() => new Map());
-  const onFold = useCallback((key: string) => setFolds((current) => new Map(current).set(key, !(current.get(key) ?? false))), []);
+  const folds = useRemembered(fileFolds);
+  const foldedByDefault = useShared(foldAll);
+  const wrap = useShared(diffWrap);
+  const isFolded = (key: string) => folds.get(`changes\0${key}`) ?? foldedByDefault;
+  // Stable, so a fold re-renders only the card it changes; it reads the current values when called.
+  const onFold = useCallback((key: string) => {
+    const byDefault = foldAll.get();
+    const folded = !(fileFolds.get(`changes\0${key}`) ?? byDefault);
+    fileFolds.set(`changes\0${key}`, folded === byDefault ? undefined : folded);
+  }, []);
   const allKeys = [
     ...shown.repos.flatMap((repo) => repo.files.map((file) => `${repo.key}\0${scope}\0${file.path}`)),
     ...shown.otherFiles.map((file) => `other\0${scope}\0${file.path}`),
   ];
-  const allFolded = allKeys.length > 0 && allKeys.every((key) => folds.get(key) === true);
-  const foldAll = () => setFolds(new Map(allKeys.map((key) => [key, !allFolded])));
+  const allFolded = allKeys.length > 0 && allKeys.every(isFolded);
+  // Shared with the worktree reviews, so either one's Collapse all is how the next diffs open.
+  const foldEvery = () => setFoldAll(!allFolded);
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
-    if (event.key !== "x" || event.metaKey || event.ctrlKey || event.altKey || event.defaultPrevented || isTyping(event.target) || allKeys.length === 0) return;
+    if (event.metaKey || event.ctrlKey || event.altKey || event.defaultPrevented || isTyping(event.target)) return;
+    if (event.key === "x" && allKeys.length > 0) foldEvery();
+    else if (event.key === "w") diffWrap.set(!wrap);
+    else return;
     event.preventDefault();
-    foldAll();
   };
   const active = shown.repos.filter((repo) => !isArchivedOnly(repo, threads));
   const archived = shown.repos.filter((repo) => isArchivedOnly(repo, threads));
@@ -144,17 +157,18 @@ export function AllChanges({ overview, scope, onScope, focus, onClearFocus, text
         )}
         <span className="text-xs text-muted-foreground">{overview.partial ? "" : `${plural(shown.repos.length, "repository")} · ${plural(files, "file")}`}</span>
         <span className="flex-1" />
-        {allKeys.length > 0 && <FoldAllButton allFolded={allFolded} compact={compact} onToggle={foldAll} />}
+        <WrapButton />
+        {allKeys.length > 0 && <FoldAllButton allFolded={allFolded} compact={compact} onToggle={foldEvery} />}
       </div>
       {shown.repos.length === 0 && shown.otherFiles.length === 0 && !overview.partial && (
         <p className="py-2 text-sm text-muted-foreground">{text.trim() === "" ? "No changes in these threads yet." : "No changes match the filter."}</p>
       )}
       {active.map((repo) => (
-        <RepoBlock key={repo.key} repo={repo} scope={scope} threads={threads} folds={folds} onFold={onFold} compact={compact} loaders={loaders} onOpenThread={onOpenThread} />
+        <RepoBlock key={repo.key} repo={repo} scope={scope} threads={threads} isFolded={isFolded} onFold={onFold} compact={compact} loaders={loaders} onOpenThread={onOpenThread} />
       ))}
       {archived.length > 0 && <h3 className="pb-2 pt-1 text-[10.5px] font-semibold uppercase tracking-wider text-subtle-foreground">Archived</h3>}
       {archived.map((repo) => (
-        <RepoBlock key={repo.key} repo={repo} scope={scope} threads={threads} folds={folds} onFold={onFold} compact={compact} loaders={loaders} onOpenThread={onOpenThread} />
+        <RepoBlock key={repo.key} repo={repo} scope={scope} threads={threads} isFolded={isFolded} onFold={onFold} compact={compact} loaders={loaders} onOpenThread={onOpenThread} />
       ))}
       {overview.partial && <EditsSkeleton />}
       {shown.otherFiles.length > 0 && (
@@ -164,8 +178,8 @@ export function AllChanges({ overview, scope, onScope, focus, onClearFocus, text
           {shown.otherFiles.map((file) => {
             const key = `other\0${scope}\0${file.path}`;
             return (
-              <FileCard key={key} cardKey={key} repo={null} file={file} scope={scope} folded={folds.get(key) ?? false} onFold={onFold}
-                view={compact ? "unified" : view} compact={compact} threads={threads} loaders={loaders} />
+              <FileCard key={key} cardKey={key} repo={null} file={file} scope={scope} folded={isFolded(key)} onFold={onFold}
+                view={compact ? "unified" : view} wrap={wrap} compact={compact} threads={threads} loaders={loaders} />
             );
           })}
         </section>

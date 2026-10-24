@@ -125,7 +125,7 @@ describe("server", () => {
     const { harness, ready } = start();
     await ready;
     expect(harness.registrations.rpcMethods).toEqual([
-      "shell", "overview", "patch", "fileSides", "commitFiles", "recordedEdits", "prefs", "setThreadPref", "reviewed", "setReviewed",
+      "shell", "overview", "patch", "fileSides", "commitFiles", "recordedEdits", "reviewed", "setReviewed",
     ]);
     expect(harness.registrations.cli?.name).toBe("vantage");
     expect(harness.logEntries).toContainEqual({ level: "info", message: "loaded" });
@@ -355,32 +355,23 @@ describe("server: every thread", () => {
     expect(statuses(harness)).toBe(4);
   });
 
-  it("declares watching and reviews as settings that are off by default", async () => {
+  it("declares the badge as on and toasts as off, and no per-thread choices", async () => {
     const { harness, ready } = start(TWO);
     await ready;
     expect(harness.registrations.settingsDescriptors).toMatchObject({
-      watchByDefault: { type: "boolean", default: false, label: "Watch every thread's worktrees" },
-      reviewsByDefault: { type: "boolean", default: false, label: "Track reviews in every thread" },
+      badge: { type: "boolean", default: true, label: "Badge the Vantage icon when a thread needs you" },
+      toasts: { type: "boolean", default: false, label: "Show a toast when a thread needs you" },
     });
-    expect(await harness.behavior.callRpc("prefs", {})).toEqual({ watchByDefault: false, reviewsByDefault: false, threads: {} });
+    expect(harness.registrations.settingsDescriptors).not.toHaveProperty("watchByDefault");
+    expect(harness.registrations.settingsDescriptors).not.toHaveProperty("reviewsByDefault");
   });
 
-  it("keeps a thread's own watch and review choices, clears one with null, and refreshes every reader", async () => {
+  it("changes nothing on the server when an alert setting changes", async () => {
     const { harness, ready } = start(TWO);
     await ready;
-    expect(await harness.behavior.callRpc("setThreadPref", { threadId: "thr_1", watch: true })).toMatchObject({ threads: { thr_1: { watch: true } } });
-    expect(await harness.behavior.callRpc("setThreadPref", { threadId: "thr_1", reviews: false })).toMatchObject({ threads: { thr_1: { watch: true, reviews: false } } });
-    expect(await harness.behavior.callRpc("setThreadPref", { threadId: "thr_1", watch: null, reviews: null })).toMatchObject({ threads: {} });
-    expect(await harness.behavior.callRpc("prefs", {})).toMatchObject({ threads: {} });
-  });
-
-  it("refreshes the preferences, without clearing the cache, when a default changes", async () => {
-    const { harness, ready } = start(TWO);
-    await ready;
-    await harness.behavior.setSettings({ watchByDefault: true });
-    expect(harness.inspection.experimental_rpcInvalidations).toContainEqual(["vantage:prefs"]);
+    await harness.behavior.setSettings({ toasts: true, badge: false });
+    expect(harness.inspection.experimental_rpcInvalidations).toEqual([]);
     expect(harness.inspection.realtimeSignals).toEqual([]);
-    expect(await harness.behavior.callRpc("prefs", {})).toMatchObject({ watchByDefault: true, reviewsByDefault: false });
   });
 
   it("keeps the reviewed marks of each worktree apart and drops a mark set to null", async () => {

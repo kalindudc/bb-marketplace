@@ -1,11 +1,14 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import type { FileChange, Overview, PatchOutput, SharedFile, ThreadSummary, Worktree } from "./contract";
 import type { CommentStore } from "./comments";
 import { FileCard, patchKey, patchRequest, type FileLoaders } from "./file-card";
 import { loadShared, useLoaded, type Loaded } from "./loaded";
 import { plural, type Row } from "./model";
+import { useRemembered } from "./remember";
 import { StatusGlyph } from "./review";
+import { useShared } from "./session";
+import { diffWrap, fileFolds } from "./ui-prefs";
 
 export type Verdict = "conflict" | "clean" | "unknown";
 interface Range { start: number; end: number }
@@ -66,7 +69,8 @@ function OverlapCard({ shared, overview, rows, titleOf, threads, loaders, onRevi
   const loaded = usePatches(sides, loaders);
   const ready = loaded.status === "ready" || loaded.status === "error";
   const verdict: Verdict = loaded.status === "ready" ? overlapVerdict(loaded.value) : "unknown";
-  const [folds, setFolds] = useState<ReadonlyMap<string, boolean>>(() => new Map());
+  const folds = useRemembered(fileFolds);
+  const wrap = useShared(diffWrap);
   const project = sides[0]?.worktree.label ?? "";
   return (
     <section data-overlap={shared.path} className="mb-4 overflow-hidden rounded-xl border border-border-seam bg-card">
@@ -97,9 +101,9 @@ function OverlapCard({ shared, overview, rows, titleOf, threads, loaders, onRevi
             {side.parts.map((part) => {
               const key = `${side.worktree.key}\0${part.scope}\0${part.file.path}`;
               return (
-                <FileCard key={key} cardKey={key} repo={side.worktree} file={part.file} scope={part.scope} folded={folds.get(key) ?? false}
-                  onFold={(id) => setFolds((current) => new Map(current).set(id, !(current.get(id) ?? false)))}
-                  note={part.scope === "uncommitted" ? "not committed" : "committed"} view="unified" compact threads={threads} loaders={loaders} />
+                <FileCard key={key} cardKey={key} repo={side.worktree} file={part.file} scope={part.scope} folded={folds.get(`overlap\0${key}`) === true}
+                  onFold={(id) => fileFolds.set(`overlap\0${id}`, folds.get(`overlap\0${id}`) === true ? undefined : true)}
+                  note={part.scope === "uncommitted" ? "not committed" : "committed"} view="unified" wrap={wrap} compact threads={threads} loaders={loaders} />
               );
             })}
           </div>

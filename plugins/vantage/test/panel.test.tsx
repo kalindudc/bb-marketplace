@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
-import type { Overview, Prefs, rpcContract } from "../src/contract";
+import type { Overview, rpcContract } from "../src/contract";
 import { clearLoadedCache } from "../src/loaded";
 import { panelSelection, panelView } from "../src/panel";
 import { disposeSessions } from "../src/session";
+import { reloadUiState } from "../src/ui-prefs";
 import { fileChange, overview, sidebarThread, threadSummary, worktree } from "./fixtures";
 
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { error: vi.fn() }) }));
@@ -39,19 +40,18 @@ afterEach(() => {
   panelSelection.set(null);
   document.body.replaceChildren();
   window.localStorage.clear();
+  reloadUiState();
 });
 
-async function mountPanel(prefs: Partial<Prefs> = {}, rows = 2) {
+async function mountPanel(rows = 2) {
   const app = await loadPluginApp(() => import("../app"));
   const tab = app.tabs.find((entry) => entry.context.kind === "thread")!;
-  const setThreadPref = vi.fn(async () => ({ watchByDefault: false, reviewsByDefault: false, threads: {} }));
   const slot = renderSlot<{ threadId: string; params: null }, typeof rpcContract>(tab as never, { threadId: "thr_root", params: null }, {
     pluginId: "vantage",
     rpc: {
       shell: () => new Promise<Overview>(() => {}), overview: () => TREE,
       patch: () => ({ patch: "@@ -1 +1 @@\n-a\n+b", truncated: false, binary: false }), fileSides: () => ({ old: null, new: null }),
       recordedEdits: () => ({ edits: [] }), commitFiles: () => ({ files: [] }),
-      prefs: () => ({ watchByDefault: false, reviewsByDefault: false, threads: {}, ...prefs }), setThreadPref,
       reviewed: ({ keys }: { keys: string[] }) => Object.fromEntries(keys.map((entry) => [entry, {}])), setReviewed: () => ({}),
     } as never,
     sdk: { subscribe: (() => () => {}) as never, terminals: { create: vi.fn() as never } },
@@ -60,24 +60,21 @@ async function mountPanel(prefs: Partial<Prefs> = {}, rows = 2) {
   });
   mounts.push(slot);
   if (rows > 0) await waitFor(() => expect(slot.container.querySelectorAll("[data-worktree-row]")).toHaveLength(rows));
-  return { slot, setThreadPref };
+  return { slot };
 }
 
 describe("the thread's Vantage tab", () => {
-  it("lists this thread's own checkout and its child's worktree, without saying the child waits while unwatched", async () => {
+  it("lists this thread's own checkout and its child's worktree, with the waiting child under Needs you and no switches", async () => {
     const { slot } = await mountPanel();
-    expect(within(slot.container).getByText("This thread")).toBeTruthy();
-    expect(slot.container.querySelector("[data-worktree-group='Needs you']")).toBeNull();
-  });
-
-  it("watches this thread's tree from its header", async () => {
-    const { slot, setThreadPref } = await mountPanel();
-    fireEvent.click(within(slot.container).getByRole("button", { name: /^Watch$/ }));
-    await waitFor(() => expect(setThreadPref).toHaveBeenCalledWith(expect.objectContaining({ threadId: "thr_root", watch: true })));
+    const view = within(slot.container);
+    expect(view.getByText("This thread")).toBeTruthy();
+    expect(slot.container.querySelector(`[data-worktree-group='Needs you'] [data-worktree-row='${CHILD.key}']`)).not.toBeNull();
+    expect(view.queryByRole("button", { name: /Watch/ })).toBeNull();
+    expect(view.queryByRole("button", { name: /Track reviews/ })).toBeNull();
   });
 
   it("opens a worktree in place, steps back, and switches to its agent's chat", async () => {
-    const { slot } = await mountPanel({ watchByDefault: true });
+    const { slot } = await mountPanel();
     const view = within(slot.container);
     fireEvent.click(slot.container.querySelector(`[data-worktree-row='${CHILD.key}']`)!);
     await waitFor(() => expect(slot.container.querySelector("[data-panel-drill] [data-file-card='src/a.ts']")).not.toBeNull());
@@ -101,6 +98,18 @@ describe("the thread's Vantage tab", () => {
     expect(view.getByRole("button", { name: "Hide src/a.ts" })).toBeTruthy();
   });
 
+  it("wraps long lines from the tab's narrow bar and in All changes", async () => {
+    const { slot } = await mountPanel();
+    const view = within(slot.container);
+    fireEvent.click(slot.container.querySelector(`[data-worktree-row='${CHILD.key}']`)!);
+    await waitFor(() => expect(slot.container.querySelector("[data-testid='bb-diff']")?.getAttribute("data-overflow")).toBe("scroll"));
+    fireEvent.click(view.getByRole("button", { name: "Wrap long lines" }));
+    expect(slot.container.querySelector("[data-testid='bb-diff']")?.getAttribute("data-overflow")).toBe("wrap");
+    fireEvent.click(view.getByRole("button", { name: "All changes" }));
+    await waitFor(() => expect(slot.container.querySelector("[data-all-changes] [data-testid='bb-diff']")?.getAttribute("data-overflow")).toBe("wrap"));
+    expect(view.getByRole("button", { name: "Wrap long lines" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
   it("shows every change of the tree in All changes", async () => {
     const { slot } = await mountPanel();
     fireEvent.click(within(slot.container).getByRole("button", { name: "All changes" }));
@@ -109,7 +118,7 @@ describe("the thread's Vantage tab", () => {
 
   it("opens the worktree the composer segment asked for before the tab was open", async () => {
     panelSelection.set({ threadId: "thr_root", key: CHILD.key, at: 1 });
-    const { slot } = await mountPanel({}, 0);
+    const { slot } = await mountPanel(0);
     await waitFor(() => expect(slot.container.querySelector(`[data-review='${CHILD.key}']`)).not.toBeNull());
     expect(panelSelection.get()).toBeNull();
   });

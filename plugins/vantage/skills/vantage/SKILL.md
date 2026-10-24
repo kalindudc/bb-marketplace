@@ -77,7 +77,7 @@ Read these from `--json` output:
 
 ## The user's Vantage choices
 
-In bb, the user can watch a thread (Vantage then says when its worktrees need them or failed) and turn on reviews for a thread (reviewed ticks on its diffs). Both are off by default and cover the thread's child threads. They change only what Vantage shows the user: the commands here print the same output either way, and there is no command to change them. If asked, point the user to the thread's menu, its Vantage tab, or Vantage's settings ("Watch every thread's worktrees" and "Track reviews in every thread"). Review comments the user writes in Vantage arrive in a thread as an ordinary message that starts "Review notes from Vantage on your changes:".
+In bb, the user can tick files as reviewed in Vantage, and two Vantage settings choose its alerts: "Badge the Vantage icon when a thread needs you" (on by default) and "Show a toast when a thread needs you" (off by default). There are no per-thread choices. None of this changes what the commands here print, and there is no command to change it. Review comments the user writes in Vantage arrive in a thread as an ordinary message that starts "Review notes from Vantage on your changes:".
 
 ## Limits
 

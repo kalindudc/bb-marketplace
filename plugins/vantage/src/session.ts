@@ -1,6 +1,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useRpc, useSdk } from "@get-bb/plugin-sdk/app";
 import type { OverviewTarget, rpcContract } from "./contract";
+import { writeStorage } from "./remember";
 import { createVantageStore, type VantageSnapshot, type VantageStore } from "./store";
 
 // The page and its sidebar, title bar and Agent tab are separate React trees, and so are a thread's tab, composer segment
@@ -85,24 +86,38 @@ export function useSession(surface: Surface, target: OverviewTarget | null, incl
 
 // A small shared value with listeners, for state two separate React trees both read.
 export function createShared<T>(initial: T, persist?: { win: Window; key: string; parse(raw: string): T | null }) {
-  let value = initial;
-  if (persist !== undefined) {
+  const stored = (): T => {
+    if (persist === undefined) return initial;
     const raw = persist.win.localStorage.getItem(persist.key);
     const parsed = raw === null ? null : persist.parse(raw);
-    if (parsed !== null) value = parsed;
-  }
+    return parsed ?? initial;
+  };
+  let value = stored();
   const listeners = new Set<() => void>();
+  const notify = () => { for (const listener of [...listeners]) listener(); };
+  const reload = (): void => {
+    const next = stored();
+    if (Object.is(next, value)) return;
+    value = next;
+    notify();
+  };
+  const onStorage = (event: StorageEvent) => { if (event.key === persist?.key || event.key === null) reload(); };
   return {
     get: (): T => value,
     set(next: T): void {
       if (Object.is(next, value)) return;
       value = next;
-      if (persist !== undefined) persist.win.localStorage.setItem(persist.key, String(next));
-      for (const listener of [...listeners]) listener();
+      notify();
+      if (persist !== undefined) writeStorage(persist.win, persist.key, String(next));
     },
+    reload,
     subscribe(listener: () => void): () => void {
       listeners.add(listener);
-      return () => { listeners.delete(listener); };
+      if (persist !== undefined && listeners.size === 1) persist.win.addEventListener("storage", onStorage);
+      return () => {
+        if (!listeners.delete(listener)) return;
+        if (persist !== undefined && listeners.size === 0) persist.win.removeEventListener("storage", onStorage);
+      };
     },
   };
 }

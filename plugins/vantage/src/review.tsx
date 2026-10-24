@@ -6,14 +6,16 @@ import {
 import { toast } from "sonner";
 import type { Commit, CommitFilesInput, CommitFilesOutput, FileChange, Overview, PatchScope, ReviewMarks, ThreadSummary, Worktree } from "./contract";
 import { composeReview, useComments, type Comment, type CommentStore } from "./comments";
-import { FileCard, ICON_BUTTON, StatusLetter, Counts, type Composing, type FileLoaders } from "./file-card";
-import { isWorking, needsYou, quietIndicator, usePullRequest } from "./live";
+import { FileCard, ICON_BUTTON, type Composing, type FileLoaders } from "./file-card";
+import { FileTree } from "./file-tree-view";
+import { isWorking, needsYou, usePullRequest } from "./live";
 import { useLoaded } from "./loaded";
-import { plural, type Row } from "./model";
+import { plural, reviewStarted, type Row } from "./model";
 import { isReviewed, isStale, markId, type FilePart, type Part, type SetReviewed } from "./reviewed";
 import { SkeletonRows } from "./skeleton";
 import { openEnvironmentTerminal, openHostTerminal, openWorktreeTerminal } from "./terminal";
-import { diffView, fileTree, hideReviewed } from "./ui-prefs";
+import { diffView, diffWrap, fileFolds, fileTree, foldAll, hideReviewed, reviewScopes, setFoldAll } from "./ui-prefs";
+import { useRemembered } from "./remember";
 import { useShared } from "./session";
 
 // Keys are the user's while they type: in a field, an editor or anything that says it is a text box.
@@ -43,7 +45,6 @@ export interface ReviewProps {
   comments: CommentStore;
   loaders: ReviewLoaders;
   setReviewed: SetReviewed;
-  onToggleReviews(): void;
   onStep(delta: -1 | 1): void;
   onMessage(): void;
   onCompare(path: string): void;
@@ -71,16 +72,16 @@ function terminalBlock(worktree: Worktree, currentHostId: string | null, termina
   return null;
 }
 
-export function StatusGlyph({ row }: { row: Pick<Row, "live" | "watched" | "worktree"> }) {
+export function StatusGlyph({ row }: { row: Pick<Row, "live" | "worktree"> }) {
   if (row.worktree.state === "unavailable") return <Icon name="AlertTriangle" className="size-3.5 text-destructive-text" aria-label="Unavailable" />;
-  return <ThreadStatusGlyph indicator={quietIndicator(row.live.indicator, row.watched)} archived={row.live.archived} size="compact" />;
+  return <ThreadStatusGlyph indicator={row.live.indicator} archived={row.live.archived} size="compact" />;
 }
 
 export function statusLabel(row: Row): string {
   if (row.worktree.state === "unavailable") return "Unavailable";
   if (row.live.archived) return "Archived";
-  if (row.watched && row.live.indicator === "waiting-for-input") return "Needs you";
-  if (row.watched && row.live.indicator === "unread-error") return "Failed";
+  if (row.live.indicator === "waiting-for-input") return "Needs you";
+  if (row.live.indicator === "unread-error") return "Failed";
   if (isWorking(row.live)) return "Working";
   if (row.bucket === "reviewed") return "Reviewed";
   return "Idle";
@@ -128,6 +129,27 @@ export function FoldAllButton({ allFolded, compact = false, onToggle }: { allFol
   );
 }
 
+export function WrapButton() {
+  const wrap = useShared(diffWrap);
+  return (
+    <button type="button" aria-pressed={wrap} aria-label="Wrap long lines" title={`${wrap ? "Stop wrapping" : "Wrap"} long lines (W)`} onClick={() => diffWrap.set(!wrap)}
+      className={`${ICON_BUTTON} size-7 ${wrap ? "bg-surface-selected text-foreground" : ""}`}>
+      <Icon name="TextWrap" fallback="AlignLeft" className="size-3.5" aria-hidden />
+    </button>
+  );
+}
+
+// A scope remembered for a worktree, while it still applies: a commit can be rewritten away, and a removed worktree has nothing
+// uncommitted. One restored from an earlier visit also gives way when it is empty and the rest is not, such as Not committed
+// after the agent committed everything; one picked during this visit stays, so its button does not ignore the click.
+export function scopeFrom(stored: string | undefined, worktree: Pick<Worktree, "kind" | "uncommitted" | "committed">, commits: readonly Commit[], restored: boolean): ChangeScope {
+  const emptyBesideOthers = (mine: readonly unknown[], others: readonly unknown[]) => restored && mine.length === 0 && others.length > 0;
+  if (stored === "uncommitted") return worktree.kind === "branch" || emptyBesideOthers(worktree.uncommitted, worktree.committed) ? "all" : "uncommitted";
+  if (stored === "committed") return emptyBesideOthers(worktree.committed, worktree.uncommitted) ? "all" : "committed";
+  if (stored?.startsWith("commit:") && commits.some((commit) => commit.sha === stored.slice(7))) return stored as ChangeScope;
+  return "all";
+}
+
 function partsFor(worktree: Worktree, scope: ChangeScope, commitFiles: readonly FileChange[] | null): FilePart[] {
   const uncommitted = worktree.uncommitted.map((file) => ({ part: "uncommitted" as Part, file }));
   const committed = worktree.committed.map((file) => ({ part: "committed" as Part, file }));
@@ -140,56 +162,6 @@ function partsFor(worktree: Worktree, scope: ChangeScope, commitFiles: readonly 
 const patchScopeOf = (part: Part): PatchScope => (part === "uncommitted" ? "uncommitted" : "committed");
 const shaOf = (part: Part): string | null => (part.startsWith("commit:") ? part.slice(7) : null);
 const noteOf = (part: Part): string => (part === "uncommitted" ? "not committed" : part === "committed" ? "committed" : "");
-
-function FileTree({ parts, cardKey, focused, row, marks, commentCounts, overlapPaths, onJump, onReview }: {
-  parts: readonly FilePart[]; cardKey(part: FilePart): string; focused: string | null; row: Row; marks: ReviewMarks | undefined;
-  commentCounts: ReadonlyMap<string, number>; overlapPaths: ReadonlySet<string>; onJump(key: string): void; onReview(part: FilePart): void;
-}) {
-  const byDir = new Map<string, FilePart[]>();
-  for (const part of parts) {
-    const slash = part.file.path.lastIndexOf("/");
-    const dir = slash === -1 ? "" : part.file.path.slice(0, slash);
-    byDir.set(dir, [...(byDir.get(dir) ?? []), part]);
-  }
-  const dirs = [...byDir.keys()].sort((a, b) => (a === "" ? 1 : b === "" ? -1 : a.localeCompare(b)));
-  return (
-    <nav aria-label="Files" data-file-tree className="min-h-0 overflow-y-auto border-r border-border-seam px-1.5 py-2 text-xs">
-      {dirs.map((dir) => (
-        <div key={dir}>
-          {dir !== "" && (
-            <div className="flex items-center gap-1 px-1.5 py-1 text-muted-foreground">
-              <Icon name="Folder" className="size-3 shrink-0" aria-hidden />
-              <span className="truncate font-mono text-[11px]" title={dir}>{dir}</span>
-            </div>
-          )}
-          {byDir.get(dir)!.map((part) => {
-            const key = cardKey(part);
-            const reviewed = row.reviewing && isReviewed(marks, part);
-            const comments = commentCounts.get(markId(part.part, part.file.path)) ?? 0;
-            return (
-              <div key={key} className={`flex items-center rounded-md ${focused === key ? "bg-surface-selected" : "hover:bg-state-hover"} ${dir === "" ? "" : "pl-3"}`}>
-                <button type="button" onClick={() => onJump(key)} title={part.file.path}
-                  className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 py-1 pl-1.5 text-left">
-                  <StatusLetter file={part.file} />
-                  <span className={`min-w-0 flex-1 truncate font-mono text-[11.5px] ${reviewed ? "text-subtle-foreground" : "text-foreground"}`}>{part.file.path.slice(part.file.path.lastIndexOf("/") + 1)}</span>
-                  {overlapPaths.has(part.file.path) && <Icon name="AlertTriangle" className="size-3 shrink-0 text-warning-text" aria-label="Also changed in another worktree" />}
-                  {comments > 0 && <span className="shrink-0 text-[10.5px] text-muted-foreground" title={plural(comments, "comment")}>{comments}</span>}
-                  <Counts file={part.file} />
-                </button>
-                {row.reviewing && (
-                  <button type="button" aria-label={reviewed ? `Mark ${part.file.path} as not reviewed` : `Mark ${part.file.path} as reviewed`} aria-pressed={reviewed}
-                    onClick={() => onReview(part)} className={`${ICON_BUTTON} ml-0.5 ${reviewed ? "text-success" : ""}`}>
-                    <Icon name={reviewed ? "Check" : "Square"} className="size-3.5" aria-hidden />
-                  </button>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      ))}
-    </nav>
-  );
-}
 
 function CommitsMenu({ commits, heading, value, onPick }: { commits: readonly Commit[]; heading: string; value: string | null; onPick(sha: string): void }) {
   const [open, setOpen] = useState(false);
@@ -323,16 +295,18 @@ function SendBar({ row, comments, compact, root, onDiscard, onDone, onSent, send
 export function Review(props: ReviewProps) {
   const {
     overview, row, index, total, compact = false, currentThreadId, currentHostId, terminal, marks, titleOf, branchOf, comments: commentStore,
-    loaders, setReviewed, onToggleReviews, onStep, onMessage, onCompare, onSent, toolbar,
+    loaders, setReviewed, onStep, onMessage, onCompare, onSent, toolbar,
   } = props;
   const { worktree } = row;
   const sdk = useSdk();
   const navigate = useBbNavigate();
   const view = useShared(diffView);
+  const wrap = useShared(diffWrap);
   const hide = useShared(hideReviewed);
   const treeOn = useShared(fileTree);
-  const [scope, setScope] = useState<ChangeScope>("all");
-  const [folds, setFolds] = useState<ReadonlyMap<string, boolean>>(() => new Map());
+  const foldedByDefault = useShared(foldAll);
+  const folds = useRemembered(fileFolds);
+  const scopes = useRemembered(reviewScopes);
   const [focused, setFocused] = useState<string | null>(null);
   const [composing, setComposing] = useState<Composing | null>(null);
   const streamRef = useRef<HTMLDivElement | null>(null);
@@ -342,18 +316,30 @@ export function Review(props: ReviewProps) {
   const own = currentThreadId !== null && row.threadId === currentThreadId;
   const loading = worktree.state === "loading";
   const unavailable = worktree.state === "unavailable";
+  const commitList = worktree.commits.length > 0 ? worktree.commits : worktree.threadCommits;
+  const commitHeading = worktree.commits.length > 0 ? `Commits ahead of ${worktree.base ?? "the base branch"}` : `Commits its threads made on ${worktree.branch ?? "its branch"}`;
+  const [pickedHere, setPickedHere] = useState(false);
+  const scope = scopeFrom(scopes.get(worktree.key), worktree, commitList, !pickedHere);
+  const setScope = (next: ChangeScope) => {
+    setPickedHere(true);
+    reviewScopes.set(worktree.key, next === "all" ? undefined : next);
+  };
 
   const commitSha = scope.startsWith("commit:") ? scope.slice(7) : null;
   const [commitState, retryCommit] = useLoaded<CommitFilesOutput>(`commitFiles\0${worktree.key}\0${commitSha ?? ""}`, commitSha !== null,
     () => loaders.commitFiles({ ref: worktree.ref, sha: commitSha! }));
   const parts = partsFor(worktree, scope, commitState.status === "ready" ? commitState.value.files : null);
   const cardKey = useCallback((part: FilePart) => `${worktree.key}\0${part.part}\0${part.file.path}`, [worktree.key]);
-  const reviewedPart = (part: FilePart) => row.reviewing && isReviewed(marks, part);
-  const shown = row.reviewing && hide ? parts.filter((part) => !reviewedPart(part)) : parts;
-  const isFolded = (part: FilePart) => folds.get(cardKey(part)) ?? reviewedPart(part);
+  const reviewedPart = (part: FilePart) => isReviewed(marks, part);
+  const shown = hide ? parts.filter((part) => !reviewedPart(part)) : parts;
+  const foldKey = (part: FilePart) => `review\0${cardKey(part)}`;
+  // Reviewed files fold on their own, and after Collapse all so does every file nobody opened by hand.
+  const foldsByDefault = (part: FilePart) => reviewedPart(part) || foldedByDefault;
+  const isFolded = (part: FilePart) => folds.get(foldKey(part)) ?? foldsByDefault(part);
   const allFolded = parts.length > 0 && parts.every(isFolded);
-  // An explicit fold for every file, so Expand all also opens the ones reviews fold by default.
-  const foldAll = (folded: boolean) => setFolds(new Map(parts.map((part) => [cardKey(part), folded])));
+  const setFold = (part: FilePart, folded: boolean) => fileFolds.set(foldKey(part), folded === foldsByDefault(part) ? undefined : folded);
+  // Kept for the next worktree too. Reviewed files fold on their own, so opening every file here opens them by hand.
+  const foldEvery = (folded: boolean) => setFoldAll(folded, folded ? [] : parts.filter(reviewedPart).map(foldKey));
   const reviewedCount = parts.filter(reviewedPart).length;
   const overlapPaths = useMemo(() => new Set(row.overlaps.map((overlap) => overlap.path)), [row.overlaps]);
   const commentCounts = useMemo(() => {
@@ -361,23 +347,25 @@ export function Review(props: ReviewProps) {
     for (const comment of drafts) counts.set(markId(comment.part, comment.path), (counts.get(markId(comment.part, comment.path)) ?? 0) + 1);
     return counts;
   }, [drafts]);
-  const commitList = worktree.commits.length > 0 ? worktree.commits : worktree.threadCommits;
-  const commitHeading = worktree.commits.length > 0 ? `Commits ahead of ${worktree.base ?? "the base branch"}` : `Commits its threads made on ${worktree.branch ?? "its branch"}`;
+  // A path listed twice, uncommitted and committed, says which is which in the tree.
+  const pathCounts = new Map<string, number>();
+  for (const part of shown) pathCounts.set(part.file.path, (pathCounts.get(part.file.path) ?? 0) + 1);
 
-  const toggleFold = useCallback((key: string) => setFolds((current) => {
-    const part = parts.find((entry) => cardKey(entry) === key);
-    const next = new Map(current);
-    next.set(key, !(current.get(key) ?? (part !== undefined && reviewedPart(part))));
-    return next;
-  }), [parts, cardKey, marks, row.reviewing]);
+  const partFor = (key: string) => parts.find((entry) => cardKey(entry) === key);
+  const toggleFold = (key: string) => {
+    const part = partFor(key);
+    if (part !== undefined) setFold(part, !isFolded(part));
+  };
   const toggleReviewed = (part: FilePart) => {
     const reviewed = !reviewedPart(part);
-    setFolds((current) => { const next = new Map(current); next.delete(cardKey(part)); return next; });
+    // A ticked file folds away; an unticked one opens, because it needs another look.
+    fileFolds.set(foldKey(part), !reviewed && foldedByDefault ? false : undefined);
     setReviewed(worktree.key, [part], reviewed).catch((error: unknown) => toast.error(`Could not save: ${errorMessage(error)}`));
   };
   const jump = (key: string) => {
     setFocused(key);
-    setFolds((current) => { const next = new Map(current); next.set(key, false); return next; });
+    const part = partFor(key);
+    if (part !== undefined) setFold(part, false);
     requestAnimationFrame(() => {
       const cards = streamRef.current?.querySelectorAll<HTMLElement>("[data-card-key]") ?? [];
       [...cards].find((card) => card.dataset.cardKey === key)?.scrollIntoView?.({ block: "start" });
@@ -391,7 +379,7 @@ export function Review(props: ReviewProps) {
   };
   const startComment = (part: FilePart, quote: string) => {
     setFocused(cardKey(part));
-    setFolds((current) => { const next = new Map(current); next.set(cardKey(part), false); return next; });
+    setFold(part, false);
     setComposing({ path: part.file.path, part: part.part, quote, text: "", editing: null });
   };
   const saveComment = (text: string) => {
@@ -410,9 +398,10 @@ export function Review(props: ReviewProps) {
     } else if (event.metaKey || event.ctrlKey) return;
     else if (event.key === "j") step(1);
     else if (event.key === "k") step(-1);
-    else if (event.key === "v" && current !== undefined && row.reviewing) { toggleReviewed(current); if (!reviewedPart(current)) step(1); }
+    else if (event.key === "v" && current !== undefined) { toggleReviewed(current); if (!reviewedPart(current)) step(1); }
     else if (event.key === "c" && current !== undefined) startComment(current, "");
-    else if (event.key === "x" && parts.length > 0) foldAll(!allFolded);
+    else if (event.key === "x" && parts.length > 0) foldEvery(!allFolded);
+    else if (event.key === "w") diffWrap.set(!wrap);
     else return;
     event.preventDefault();
     event.stopPropagation();
@@ -448,10 +437,10 @@ export function Review(props: ReviewProps) {
   };
 
   const status = statusLabel(row);
-  const answer = row.watched && row.live.indicator === "waiting-for-input" && !row.live.archived;
+  const answer = row.live.indicator === "waiting-for-input" && !row.live.archived;
   const wide = !compact && treeOn;
   const strips: ReactNode[] = [];
-  if (row.watched && needsYou(row.live)) {
+  if (needsYou(row.live)) {
     strips.push(row.live.indicator === "waiting-for-input"
       ? <Strip key="needs" tone="attention" icon="SideChat" actions={<button type="button" className={PRIMARY} onClick={onMessage}>Answer</button>}>
         <b className="font-semibold">{row.live.sidebar?.indicatorLabel ?? "The agent is waiting for you"}.</b>
@@ -579,7 +568,7 @@ export function Review(props: ReviewProps) {
       </div>
       {commitList.length > 0 && <CommitsMenu commits={commitList} heading={commitHeading} value={commitSha} onPick={(sha) => setScope(`commit:${sha}`)} />}
       <span className="flex-1" />
-      {row.reviewing ? (
+      {(reviewedCount > 0 || reviewStarted(row)) && (
         <>
           <span data-review-progress className="inline-flex items-center gap-2 whitespace-nowrap text-xs text-muted-foreground">
             <span className="h-1.5 w-20 overflow-hidden rounded-full bg-surface-recessed">
@@ -592,13 +581,9 @@ export function Review(props: ReviewProps) {
             Hide reviewed
           </button>
         </>
-      ) : null}
-      <button type="button" aria-pressed={row.reviewing} onClick={onToggleReviews}
-        title={row.reviewing ? "Stop tracking reviews in this tree" : "Tick files as you review them, in this tree"}
-        className={`inline-flex h-7 cursor-pointer items-center gap-1 rounded-md px-2 text-xs ${row.reviewing ? "text-muted-foreground hover:bg-state-hover" : "border border-border-seam text-foreground hover:bg-state-hover"}`}>
-        <Icon name="Check" className="size-3.5" aria-hidden />{row.reviewing ? "Reviews on" : "Track reviews"}
-      </button>
-      {parts.length > 0 && <FoldAllButton allFolded={allFolded} compact={compact} onToggle={() => foldAll(!allFolded)} />}
+      )}
+      <WrapButton />
+      {parts.length > 0 && <FoldAllButton allFolded={allFolded} compact={compact} onToggle={() => foldEvery(!allFolded)} />}
       {!compact && (
         <div role="group" aria-label="Diff layout" className="inline-flex rounded-md bg-surface-recessed p-0.5">
           {(["unified", "split"] as const).map((mode) => (
@@ -633,9 +618,9 @@ export function Review(props: ReviewProps) {
           return (
             <FileCard key={key} cardKey={key} repo={worktree} file={part.file} scope={patchScopeOf(part.part)} sha={shaOf(part.part)}
               note={scope === "all" && worktree.uncommitted.length > 0 && worktree.committed.length > 0 ? noteOf(part.part) : null}
-              folded={isFolded(part)} onFold={toggleFold} view={compact ? "unified" : view} focused={focused === key} compact={compact} threads={threads} loaders={loaders}
+              folded={isFolded(part)} onFold={toggleFold} view={compact ? "unified" : view} wrap={wrap} focused={focused === key} compact={compact} threads={threads} loaders={loaders}
               overlap={overlap === undefined ? null : { title: titleOf(overlap.otherKeys[0]!), onCompare: () => onCompare(part.file.path) }}
-              review={row.reviewing ? { reviewed: reviewedPart(part), stale: isStale(marks, part), onToggle: () => toggleReviewed(part) } : null}
+              review={{ reviewed: reviewedPart(part), stale: isStale(marks, part), onToggle: () => toggleReviewed(part) }}
               comments={{
                 list: drafts.filter((comment) => markId(comment.part, comment.path) === mark),
                 composing: composing !== null && markId(composing.part as Part, composing.path) === mark ? composing : null,
@@ -676,9 +661,10 @@ export function Review(props: ReviewProps) {
       {compact
         ? stream
         : (
-          <div className={`grid min-h-0 flex-1 ${wide && parts.length > 0 ? "grid-cols-[15rem_minmax(0,1fr)]" : "grid-cols-1"}`}>
+          <div className={`grid min-h-0 flex-1 ${wide && parts.length > 0 ? "grid-cols-[16rem_minmax(0,1fr)]" : "grid-cols-1"}`}>
             {wide && parts.length > 0 && (
-              <FileTree parts={shown} cardKey={cardKey} focused={focused} row={row} marks={marks} commentCounts={commentCounts} overlapPaths={overlapPaths}
+              <FileTree parts={shown} worktreeKey={worktree.key} cardKey={cardKey} noteOf={(part) => ((pathCounts.get(part.file.path) ?? 0) > 1 ? noteOf(part.part) : null)}
+                focused={focused} marks={marks} commentCounts={commentCounts} overlapPaths={overlapPaths}
                 onJump={jump} onReview={toggleReviewed} />
             )}
             {stream}

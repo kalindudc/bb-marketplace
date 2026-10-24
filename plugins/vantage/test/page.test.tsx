@@ -2,11 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
-import type { Overview, PatchRequest, Prefs, rpcContract } from "../src/contract";
+import type { Overview, PatchRequest, rpcContract } from "../src/contract";
 import { clearLoadedCache } from "../src/loaded";
 import { disposeSessions } from "../src/session";
 import { comments } from "../src/shared";
-import { pageChip, pageText } from "../src/ui-prefs";
+import { pageChip, pageText, reloadUiState } from "../src/ui-prefs";
 import { fileChange, overview, sharedFile, sidebarThread, threadSummary, worktree } from "./fixtures";
 
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { error: vi.fn() }) }));
@@ -57,18 +57,27 @@ afterEach(() => {
   for (const draft of ["host_1:/work/child", "host_1:/work/root"]) comments.clear(draft);
   document.body.replaceChildren();
   window.localStorage.clear();
+  reloadUiState();
 });
 
-interface Options { prefs?: Partial<Prefs>; overview?: Overview; marks?: Record<string, Record<string, string>> }
+interface Options { overview?: Overview; marks?: Record<string, Record<string, string>> }
 
 async function mount(subPath: string, options: Options = {}, part: "page" | "sidebar" | "agent" = "page") {
   const app = await loadPluginApp(() => import("../app"));
   const page = app.navPanels[0]!;
-  const prefs: Prefs = { watchByDefault: false, reviewsByDefault: false, threads: {}, ...options.prefs };
+  const stored: Record<string, Record<string, string>> = { ...options.marks };
   const calls = {
     patch: vi.fn(async (input: PatchRequest) => ({ patch: `@@ -1,1 +1,2 @@\n line\n+${input.scope} ${input.path}`, truncated: false, binary: false })),
-    setThreadPref: vi.fn(async () => prefs),
-    setReviewed: vi.fn(async () => ({})),
+    // Kept like the server keeps them, so a tick survives the reload its mutation asks for.
+    setReviewed: vi.fn(async (input: { key: string; marks: Array<{ mark: string; signature: string | null }> }) => {
+      const row = { ...stored[input.key] };
+      for (const { mark, signature } of input.marks) {
+        if (signature === null) delete row[mark];
+        else row[mark] = signature;
+      }
+      stored[input.key] = row;
+      return row;
+    }),
     send: vi.fn(async (_input: { threadId: string; mode: string; input: unknown[] }) => ({ ok: true, delivery: "sent" })),
     commitFiles: vi.fn(async () => ({ files: [fileChange({ path: "README.md", additions: 2, deletions: 0 })] })),
   };
@@ -82,9 +91,7 @@ async function mount(subPath: string, options: Options = {}, part: "page" | "sid
       fileSides: () => ({ old: null, new: null }),
       recordedEdits: () => ({ edits: [] }),
       commitFiles: calls.commitFiles,
-      prefs: () => prefs,
-      setThreadPref: calls.setThreadPref,
-      reviewed: ({ keys }: { keys: string[] }) => Object.fromEntries(keys.map((entry) => [entry, options.marks?.[entry] ?? {}])),
+      reviewed: ({ keys }: { keys: string[] }) => Object.fromEntries(keys.map((entry) => [entry, stored[entry] ?? {}])),
       setReviewed: calls.setReviewed,
     } as never,
     sdk: { subscribe: (() => () => {}) as never, threads: { send: calls.send as never, retry: vi.fn() as never }, terminals: { create: vi.fn() as never } },
@@ -95,29 +102,27 @@ async function mount(subPath: string, options: Options = {}, part: "page" | "sid
   return { slot, calls, page };
 }
 
+// Leaves and comes back after a reload, so only what this device stored remains.
+async function comeBack(slot: Slot, subPath: string, options: Options = {}, part: "page" | "sidebar" = "page") {
+  mounts.splice(mounts.indexOf(slot), 1);
+  slot.lifecycle.unmount();
+  disposeSessions();
+  reloadUiState();
+  return mount(subPath, options, part);
+}
+
+const treeFiles = (container: HTMLElement) => [...container.querySelectorAll("[data-file-tree] [data-tree-file]")].map((row) => row.getAttribute("data-tree-file"));
+
 describe("the page", () => {
-  it("lists what to look at next, and says Vantage is not watching any thread", async () => {
+  it("lists what to look at next, with the waiting thread first and no switches to turn on", async () => {
     const { slot } = await mount("tree/thr_root");
     const view = within(slot.container);
     await view.findByText("Up next");
     expect(view.getByText("Holiday sale", { selector: "h1" })).toBeTruthy();
-    expect(view.queryByText("Need you")).toBeNull();
-    expect(view.getByText(/Vantage is not watching this tree/)).toBeTruthy();
-    expect(view.getByRole("button", { name: /Watch/ }).getAttribute("aria-pressed")).toBe("false");
-  });
-
-  it("shows the waiting thread as needing you once its tree is watched", async () => {
-    const { slot } = await mount("tree/thr_root", { prefs: { threads: { thr_root: { watch: true } } } });
-    const view = within(slot.container);
-    await view.findByText("Need you");
+    expect(view.getByText("Need you")).toBeTruthy();
     expect(view.getByRole("button", { name: "Answer" })).toBeTruthy();
-    expect(view.queryByText(/Vantage is not watching/)).toBeNull();
-  });
-
-  it("turns watching on for the tree's root from the overview", async () => {
-    const { slot, calls } = await mount("tree/thr_root");
-    fireEvent.click(await within(slot.container).findByRole("button", { name: /^Watch$/ }));
-    await waitFor(() => expect(calls.setThreadPref).toHaveBeenCalledWith(expect.objectContaining({ threadId: "thr_root", watch: true })));
+    expect(view.queryByRole("button", { name: /Watch/ })).toBeNull();
+    expect(view.queryByRole("button", { name: /Track reviews/ })).toBeNull();
   });
 
   it("opens a worktree with every change as a diff, and narrows to what is committed or one commit", async () => {
@@ -135,7 +140,7 @@ describe("the page", () => {
 
   it("collapses every diff at once and expands them again, with the button or X", async () => {
     const marks = { [CHILD.key]: { "uncommitted\0src/money.js": "modified:6:0:" } };
-    const { slot } = await mount(`tree/thr_root/worktree/${key(CHILD.key)}`, { prefs: { reviewsByDefault: true }, marks });
+    const { slot } = await mount(`tree/thr_root/worktree/${key(CHILD.key)}`, { marks });
     const view = within(slot.container);
     await waitFor(() => expect(view.getByRole("button", { name: "Show src/money.js" })).toBeTruthy());
     const open = () => [...slot.container.querySelectorAll("[data-file-card] header button[aria-expanded]")].map((button) => button.getAttribute("aria-expanded"));
@@ -150,6 +155,112 @@ describe("the page", () => {
     expect(open()).toEqual(["true", "true"]);
   });
 
+  it("opens the next worktree collapsed after Collapse all, and keeps a file opened by hand open, across a reload", async () => {
+    const first = await mount(`tree/thr_root/worktree/${key(CHILD.key)}`);
+    await waitFor(() => expect(first.slot.container.querySelectorAll("[data-file-card]")).toHaveLength(2));
+    fireEvent.click(within(first.slot.container).getByRole("button", { name: "Collapse all diffs" }));
+    fireEvent.click(within(first.slot.container).getByRole("button", { name: "Show README.md" }));
+    const other = await comeBack(first.slot, `tree/thr_root/worktree/${key(ROOT.key)}`);
+    await waitFor(() => expect(within(other.slot.container).getByRole("button", { name: "Show README.md" })).toBeTruthy());
+    const back = await comeBack(other.slot, `tree/thr_root/worktree/${key(CHILD.key)}`);
+    const view = within(back.slot.container);
+    await waitFor(() => expect(view.getByRole("button", { name: "Show src/money.js" })).toBeTruthy());
+    expect(view.getByRole("button", { name: "Hide README.md" })).toBeTruthy();
+  });
+
+  it("lets a later Collapse all elsewhere fold the reviewed files that Expand all opened", async () => {
+    const marks = { [CHILD.key]: { "uncommitted\0src/money.js": "modified:6:0:" } };
+    const first = await mount(`tree/thr_root/worktree/${key(CHILD.key)}`, { marks });
+    const view = within(first.slot.container);
+    await waitFor(() => expect(view.getByRole("button", { name: "Show src/money.js" })).toBeTruthy());
+    fireEvent.click(view.getByRole("button", { name: "Collapse all diffs" }));
+    fireEvent.click(view.getByRole("button", { name: "Expand all diffs" }));
+    expect(view.getByRole("button", { name: "Hide src/money.js" })).toBeTruthy();
+    const other = await comeBack(first.slot, `tree/thr_root/worktree/${key(ROOT.key)}`, { marks });
+    fireEvent.click(await within(other.slot.container).findByRole("button", { name: "Collapse all diffs" }));
+    const back = await comeBack(other.slot, `tree/thr_root/worktree/${key(CHILD.key)}`, { marks });
+    const again = within(back.slot.container);
+    await waitFor(() => expect(again.getByRole("button", { name: "Show src/money.js" })).toBeTruthy());
+    expect(again.getByRole("button", { name: "Show README.md" })).toBeTruthy();
+  });
+
+  it("keeps a file open when its tick is taken back, even after Collapse all", async () => {
+    const marks = { [CHILD.key]: { "uncommitted\0src/money.js": "modified:6:0:" } };
+    const { slot } = await mount(`tree/thr_root/worktree/${key(CHILD.key)}`, { marks });
+    const view = within(slot.container);
+    await waitFor(() => expect(view.getByRole("button", { name: "Show src/money.js" })).toBeTruthy());
+    fireEvent.click(view.getByRole("button", { name: "Collapse all diffs" }));
+    fireEvent.click(view.getByRole("button", { name: "Show src/money.js" }));
+    const money = slot.container.querySelector("[data-file-card='src/money.js']") as HTMLElement;
+    fireEvent.click(within(money).getByRole("button", { name: /^Reviewed/ }));
+    await waitFor(() => expect(slot.container.querySelector("[data-review-progress]")).toBeNull());
+    expect(view.getByRole("button", { name: "Hide src/money.js" })).toBeTruthy();
+  });
+
+  it("shows All changes when the kept choice is empty now, but not when it was just picked", async () => {
+    window.localStorage.setItem("bb-plugin-vantage:review-scopes", JSON.stringify([[CHILD.key, "uncommitted"]]));
+    reloadUiState();
+    const committedOnly = worktree({ ...CHILD, uncommitted: [] });
+    const { slot } = await mount(`tree/thr_root/worktree/${key(CHILD.key)}`, { overview: tree({ worktrees: [ROOT, committedOnly, QUIET] }) });
+    const view = within(slot.container);
+    await waitFor(() => expect(view.getByRole("button", { name: /^All changes/ }).getAttribute("aria-pressed")).toBe("true"));
+    fireEvent.click(view.getByRole("button", { name: /^Not committed/ }));
+    expect(view.getByRole("button", { name: /^Not committed/ }).getAttribute("aria-pressed")).toBe("true");
+    expect(view.getByText("Nothing uncommitted.")).toBeTruthy();
+  });
+
+  it("keeps a folder folded when another scope joins it with the folder inside", async () => {
+    const split = worktree({
+      ...CHILD, uncommitted: [fileChange({ path: "src/lib/round.js" })], committed: [fileChange({ path: "src/money.js" }), fileChange({ path: "README.md" })],
+    });
+    const { slot } = await mount(`tree/thr_root/worktree/${key(CHILD.key)}`, { overview: tree({ worktrees: [ROOT, split, QUIET] }) });
+    const view = within(slot.container);
+    await waitFor(() => expect(treeFiles(slot.container)).toEqual(["src/lib/round.js", "src/money.js", "README.md"]));
+    fireEvent.click(view.getByRole("button", { name: "src folder" }));
+    fireEvent.click(view.getByRole("button", { name: /^Not committed/ }));
+    expect(view.getByRole("button", { name: "src/lib folder" }).getAttribute("aria-expanded")).toBe("false");
+    expect(treeFiles(slot.container)).toEqual([]);
+    fireEvent.click(view.getByRole("button", { name: "src/lib folder" }));
+    fireEvent.click(view.getByRole("button", { name: /^All changes/ }));
+    expect(treeFiles(slot.container)).toEqual(["src/lib/round.js", "src/money.js", "README.md"]);
+  });
+
+  it("wraps long lines in every diff with the button or W, and remembers it", async () => {
+    const { slot } = await mount(`tree/thr_root/worktree/${key(CHILD.key)}`);
+    const overflow = () => [...slot.container.querySelectorAll("[data-testid='bb-diff']")].map((diff) => diff.getAttribute("data-overflow"));
+    await waitFor(() => expect(overflow()).toEqual(["scroll", "scroll"]));
+    fireEvent.click(within(slot.container).getByRole("button", { name: "Wrap long lines" }));
+    expect(overflow()).toEqual(["wrap", "wrap"]);
+    expect(window.localStorage.getItem("bb-plugin-vantage:diff-wrap")).toBe("true");
+    fireEvent.keyDown(slot.container.querySelector("[data-review]")!, { key: "w" });
+    expect(overflow()).toEqual(["scroll", "scroll"]);
+  });
+
+  it("remembers which changes a worktree showed", async () => {
+    const first = await mount(`tree/thr_root/worktree/${key(CHILD.key)}`);
+    await waitFor(() => expect(first.slot.container.querySelectorAll("[data-file-card]")).toHaveLength(2));
+    fireEvent.click(within(first.slot.container).getByRole("button", { name: /^Committed/ }));
+    const back = await comeBack(first.slot, `tree/thr_root/worktree/${key(CHILD.key)}`);
+    await waitFor(() => expect(within(back.slot.container).getByRole("button", { name: /^Committed/ }).getAttribute("aria-pressed")).toBe("true"));
+    expect([...back.slot.container.querySelectorAll("[data-file-card]")].map((card) => card.getAttribute("data-file-card"))).toEqual(["README.md"]);
+  });
+
+  it("lists the files as a tree whose folders fold, and keeps them folded across a reload", async () => {
+    const deep = worktree({ ...CHILD, uncommitted: [fileChange({ path: "src/money.js" }), fileChange({ path: "src/lib/round.js" })] });
+    const options = { overview: tree({ worktrees: [ROOT, deep, QUIET] }) };
+    const first = await mount(`tree/thr_root/worktree/${key(CHILD.key)}`, options);
+    await waitFor(() => expect(treeFiles(first.slot.container)).toEqual(["src/lib/round.js", "src/money.js", "README.md"]));
+    const files = first.slot.container.querySelector("[data-file-tree]") as HTMLElement;
+    fireEvent.click(within(files).getByRole("button", { name: "src/lib folder" }));
+    expect(treeFiles(first.slot.container)).toEqual(["src/money.js", "README.md"]);
+    fireEvent.click(within(files).getByRole("button", { name: "src folder" }));
+    expect(treeFiles(first.slot.container)).toEqual(["README.md"]);
+    const back = await comeBack(first.slot, `tree/thr_root/worktree/${key(CHILD.key)}`, options);
+    await waitFor(() => expect(treeFiles(back.slot.container)).toEqual(["README.md"]));
+    fireEvent.click(within(back.slot.container).getByRole("button", { name: "Expand every folder" }));
+    expect(treeFiles(back.slot.container)).toEqual(["src/lib/round.js", "src/money.js", "README.md"]);
+  });
+
   it("does not fold the diffs when X is typed into a comment", async () => {
     const { slot } = await mount(`tree/thr_root/worktree/${key(CHILD.key)}`);
     const view = within(slot.container);
@@ -159,25 +270,23 @@ describe("the page", () => {
     expect(view.getByRole("button", { name: "Collapse all diffs" })).toBeTruthy();
   });
 
-  it("shows no reviewed ticks until reviews are turned on for the tree", async () => {
+  it("offers a Reviewed tick on every file, and shows progress only once a file is ticked", async () => {
     const { slot, calls } = await mount(`tree/thr_root/worktree/${key(CHILD.key)}`);
     const view = within(slot.container);
     await waitFor(() => expect(slot.container.querySelectorAll("[data-file-card]")).toHaveLength(2));
-    expect(view.queryByRole("button", { name: /^Reviewed/ })).toBeNull();
+    expect(view.getAllByRole("button", { name: /^Reviewed/ })).toHaveLength(2);
     expect(slot.container.querySelector("[data-review-progress]")).toBeNull();
-    fireEvent.click(view.getAllByRole("button", { name: "Track reviews" })[0]!);
-    await waitFor(() => expect(calls.setThreadPref).toHaveBeenCalledWith(expect.objectContaining({ threadId: "thr_root", reviews: true })));
-  });
-
-  it("turns reviews off where they were turned on, not on the tree's root", async () => {
-    const { slot, calls } = await mount(`tree/thr_root/worktree/${key(CHILD.key)}`, { prefs: { threads: { thr_child: { reviews: true } } } });
-    fireEvent.click(await within(slot.container).findByRole("button", { name: "Reviews on" }));
-    await waitFor(() => expect(calls.setThreadPref).toHaveBeenCalledWith({ threadId: "thr_child", reviews: null }));
+    expect(view.queryByRole("button", { name: "Hide reviewed" })).toBeNull();
+    fireEvent.keyDown(slot.container.querySelector("[data-review]")!, { key: "j" });
+    fireEvent.keyDown(slot.container.querySelector("[data-review]")!, { key: "v" });
+    await waitFor(() => expect(calls.setReviewed).toHaveBeenCalledWith({ key: CHILD.key, marks: [{ mark: "uncommitted\0src/money.js", signature: "modified:6:0:" }] }));
+    await waitFor(() => expect(slot.container.querySelector("[data-review-progress]")?.textContent).toContain("1 of 2 reviewed"));
+    expect(view.getByRole("button", { name: "Hide reviewed" })).toBeTruthy();
   });
 
   it("lists only the files the stream shows when reviewed ones are hidden", async () => {
     const marks = { [CHILD.key]: { "uncommitted\0src/money.js": "modified:6:0:" } };
-    const { slot } = await mount(`tree/thr_root/worktree/${key(CHILD.key)}`, { prefs: { reviewsByDefault: true }, marks });
+    const { slot } = await mount(`tree/thr_root/worktree/${key(CHILD.key)}`, { marks });
     await waitFor(() => expect(slot.container.querySelector("[data-review-progress]")?.textContent).toContain("1 of 2 reviewed"));
     fireEvent.click(within(slot.container).getByRole("button", { name: "Hide reviewed" }));
     const tree = slot.container.querySelector("[data-file-tree]") as HTMLElement;
@@ -225,17 +334,15 @@ describe("the page", () => {
     expect(view.getByText("1 comment for Pricing")).toBeTruthy();
   });
 
-  it("ticks a file as reviewed and folds it away when reviews are on", async () => {
+  it("ticks a file as reviewed and folds a reviewed file away", async () => {
     const marks = { [CHILD.key]: { "uncommitted\0src/money.js": "modified:6:0:" } };
-    const { slot, calls } = await mount(`tree/thr_root/worktree/${key(CHILD.key)}`, { prefs: { reviewsByDefault: true }, marks });
-    const view = within(slot.container);
+    const { slot, calls } = await mount(`tree/thr_root/worktree/${key(CHILD.key)}`, { marks });
     await waitFor(() => expect(slot.container.querySelector("[data-review-progress]")?.textContent).toContain("1 of 2 reviewed"));
     const money = slot.container.querySelector("[data-file-card='src/money.js']")!;
     expect(within(money as HTMLElement).getByRole("button", { name: "Show src/money.js" })).toBeTruthy();
     const readme = slot.container.querySelector("[data-file-card='README.md']") as HTMLElement;
     fireEvent.click(within(readme).getByRole("button", { name: /Reviewed/ }));
     await waitFor(() => expect(calls.setReviewed).toHaveBeenCalledWith({ key: CHILD.key, marks: [{ mark: "committed\0README.md", signature: "modified:2:0:" }] }));
-    expect(view.getByRole("button", { name: "Reviews on" })).toBeTruthy();
   });
 
   it("collects a comment and sends it to the worktree's agent as one message", async () => {
@@ -306,13 +413,25 @@ describe("the page's sidebar", () => {
     const { slot } = await mount("tree/thr_root", {}, "sidebar");
     const view = within(slot.container);
     await waitFor(() => expect(slot.container.querySelectorAll("[data-worktree-row]")).toHaveLength(2));
-    expect([...slot.container.querySelectorAll("[data-worktree-group]")].map((group) => group.getAttribute("data-worktree-group"))).toEqual(["Changed"]);
+    expect([...slot.container.querySelectorAll("[data-worktree-group]")].map((group) => group.getAttribute("data-worktree-group"))).toEqual(["Needs you", "To review"]);
     expect(view.getByText("1 worktree with no changes is hidden.")).toBeTruthy();
     expect(view.getByText("Tree: Holiday sale")).toBeTruthy();
   });
 
-  it("files a watched thread that waits for you under Needs you", async () => {
-    const { slot } = await mount("tree/thr_root", { prefs: { watchByDefault: true } }, "sidebar");
+  it("folds a group of worktrees and keeps it folded, still showing the open worktree", async () => {
+    const first = await mount("tree/thr_root", {}, "sidebar");
+    await waitFor(() => expect(first.slot.container.querySelectorAll("[data-worktree-row]")).toHaveLength(2));
+    fireEvent.click(within(first.slot.container).getByRole("button", { name: "Needs you" }));
+    const rows = (slot: Slot) => [...slot.container.querySelectorAll("[data-worktree-row]")].map((row) => row.getAttribute("data-worktree-row"));
+    expect(rows(first.slot)).toEqual([ROOT.key]);
+    const back = await comeBack(first.slot, `tree/thr_root/worktree/${key(CHILD.key)}`, {}, "sidebar");
+    await waitFor(() => expect(back.slot.container.querySelector("[data-worktree-group='Needs you']")).not.toBeNull());
+    expect(within(back.slot.container).getByRole("button", { name: "Needs you" }).getAttribute("aria-expanded")).toBe("false");
+    expect(rows(back.slot)).toEqual([CHILD.key, ROOT.key]);
+  });
+
+  it("files a thread that waits for you under Needs you", async () => {
+    const { slot } = await mount("tree/thr_root", {}, "sidebar");
     await waitFor(() => expect(slot.container.querySelector("[data-worktree-group='Needs you']")).not.toBeNull());
     expect(within(slot.container).getByRole("button", { name: /1Needs you/ })).toBeTruthy();
   });

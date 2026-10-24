@@ -12,13 +12,13 @@ Vantage has two places:
   every thread active in the last 24 hours, or one thread's tree, and is where
   you review diffs. See [The Vantage page](#the-vantage-page).
 - **Inside a thread**: a Vantage tab in the side panel, a one-line summary
-  above the composer, a Worktrees section in the Info tab, and two entries in
-  the thread menu. See [Inside a thread](#inside-a-thread).
+  above the composer, a Worktrees section in the Info tab, and an entry in the
+  thread menu. See [Inside a thread](#inside-a-thread).
 
-Vantage is quiet by default. It does not tell you that a worktree needs you
-until you watch its thread, and it does not track reviewed files until you
-turn reviews on. Diffs and file lists work for every thread either way. See
-[Watching and reviews](#watching-and-reviews).
+There is nothing to turn on. Vantage shows each thread's real state, the same
+one bb's sidebar shows, and every file has a Reviewed tick for when you want
+one. Two settings choose how loudly it tells you a thread needs you. See
+[Status, reviews and alerts](#status-reviews-and-alerts).
 
 ## The Vantage page
 
@@ -41,8 +41,10 @@ worktrees.
 - **Chips** filter the list to one kind of worktree: Needs you, To review,
   Working or Overlaps. A chip shows only when something matches it.
 - **Rows** are grouped by what you need to do next: Needs you, To review,
-  Changed, Working, Reviewed, then Archived, which starts folded. "Group by
-  Project" at the bottom groups them by project instead. A row shows the
+  Working, Reviewed, Unavailable (a worktree that cannot be read), then
+  Archived. A group's heading folds it, and
+  Archived starts folded; a folded group still shows the worktree you have
+  open. "Group by Project" at the bottom groups them by project instead. A row shows the
   thread, its line counts, its project, its commits or uncommitted files, its
   pull request, and, when files are reviewed, how many. A third line says why
   the row matters, such as "Overlaps with Banner in README.md".
@@ -58,10 +60,9 @@ worktrees.
 
 With no worktree selected, the page answers "what should I look at next?":
 counts of what is waiting, then an Up next list with a button on each row
-(Review, Open, or Answer for a watched thread that asks you something), then
-what is still working, overlapping files, reviewed worktrees and changes
-outside worktrees. On a thread's tree it also has the Watch and Track reviews
-buttons for that tree.
+(Review, Open, or Answer for a thread that asks you something), then what is
+still working, overlapping files, reviewed worktrees and changes outside
+worktrees.
 
 ### Reviewing a worktree
 
@@ -69,25 +70,40 @@ Select a row to open its worktree.
 
 - **The header** has the thread's title and state, its project, branch (with a
   copy button), how far it is behind its base branch, its pull request and
-  machine, and its actions: Message agent (Answer when a watched thread waits
-  for you), Open thread, Terminal, Copy path and bb's own thread menu.
+  machine, and its actions: Message agent (Answer when the thread waits for
+  you), Open thread, Terminal, Copy path and bb's own thread menu.
   `[` and `]`, or the arrows, step to the previous and next worktree.
 - **Strips** under the header say what you should know: the agent is waiting
-  for you or its last turn failed (watched threads only, with Answer, Retry and
-  Message agent), it is still working, it is archived, or a file is also
+  for you or its last turn failed (with Answer, Retry and Message agent), it
+  is still working, it is archived, or a file is also
   changed in another worktree, with Compare and "Ask to rebase onto …".
 - **One switch** chooses which changes you read: All changes, Not committed,
-  Committed, or one commit from the Commits menu.
-- **The file tree** on the left lists every file with its status letter, line
-  counts, an overlap mark and its number of comments. Click a file to jump to
-  it. The list button hides it.
+  Committed, or one commit from the Commits menu. Each worktree keeps its
+  choice, and shows All changes instead when the kept choice has nothing left
+  in it, such as Not committed after the agent committed everything.
+- **The file tree** on the left nests the files in their folders, folders
+  first, and joins a chain of folders that hold only one folder into one row
+  (`src/ui/forms`). Each file has its status letter, line counts, an overlap
+  mark and its number of comments. A folder's chevron folds it; a folded
+  folder shows how many files it holds and still carries the overlap mark,
+  comment count and reviewed tick of the files inside. The button at the top
+  folds or opens every folder. Click a file to jump to it. The list button
+  hides the tree.
 - **Every diff is in one stream**, each file with a header that stays in view.
   Diffs are unified or side by side (the two buttons at the right), and
   "unchanged lines" between the changes expand to show the rest of the file.
-  The chevron folds one file away; Collapse all folds every file at once, and
-  Expand all opens them all again.
+  The wrap button wraps long lines instead of scrolling them sideways. The
+  chevron folds one file away; Collapse all folds every file at once, and
+  Expand all opens them all again. Collapse all is kept: the next worktree
+  you open starts folded too, until you press Expand all. Either button also
+  drops the files you folded or opened by hand.
 - `J` and `K` step through the files, `C` comments on the current file, `X`
-  collapses or expands every file, and `Escape` goes back to the overview.
+  collapses or expands every file, `W` wraps long lines or stops wrapping
+  them, and `Escape` goes back to the overview.
+- **What Vantage remembers** on this device, across reloads: the diff layout,
+  wrapping, Collapse all, each file you folded or opened by hand, each
+  worktree's change switch, the folders you folded in each worktree's tree,
+  the list groups you folded, whether the tree shows, and Hide reviewed.
 
 ### Comments
 
@@ -125,9 +141,11 @@ All changes lists every change the threads made, grouped by repository: thread
 workspaces, checkouts agents work in or edited by path, archived branches, and
 the recorded edits of files outside any repository. Switch between Not
 committed and Since the base branch, and fold every file with Collapse all
-(or `X`), then open them again with Expand all. A
+(or `X`), then open them again with Expand all. Collapse all and wrapping
+(`W`) are the same choices as in a worktree's review. A
 repository an agent only edited by path lists the files the agents edited
-first, and keeps the repository's other changes under a folded line.
+first, and keeps the repository's other changes under a folded line, which
+stays open once you open it.
 
 ### Addresses
 
@@ -165,49 +183,45 @@ than the limit, the page says so.
   child threads' worktrees, grouped like the page. Select one to review it in
   the tab, with the same switch, diffs, reviewed ticks and comments, and Chat to
   talk to its agent. All changes shows everything the tree changed, by
-  repository. The header has Watch and Track reviews for this thread, Refresh
-  and Open full screen, which opens the page on this thread's tree.
+  repository. The header has Refresh and Open full screen, which opens the
+  page on this thread's tree.
 - **Above the composer**, one line sums up the child threads' worktrees, such
   as "4 worktrees · 1 needs you · 2 overlaps". It shows only once a child
   thread has changed something, and it stays one line until you click it; then
-  it lists the worktrees, with Watch, Track reviews and Open Vantage. Clicking a
-  worktree opens it in the Vantage tab.
+  it lists the worktrees, with Open Vantage. Clicking a worktree opens it in
+  the Vantage tab.
 - **The Info tab** has a Worktrees section with the first three child
   worktrees and why each matters.
 - **The thread menu** (in the header, on the sidebar row and on its right-click
   menu) has "Review changes in Vantage", which opens the page on that thread's
-  tree, and a Vantage entry with Watch worktrees and Track reviews.
+  tree.
 
-## Watching and reviews
+## Status, reviews and alerts
 
-Both are off by default, and both are chosen per thread. A choice on a thread
-covers its child threads too, and a child can make its own choice. A thread
-that has made none follows its nearest ancestor that has, and then the
-setting.
+Vantage has no per-thread switches. Earlier versions had Watch and Track
+reviews; both are gone, and the choices they stored are ignored.
 
-**Watching** decides whether Vantage tells you a worktree needs you. For a
-watched thread that waits for your answer or whose last turn failed, Vantage
-files its worktree under Needs you, shows bb's status mark for it, counts it
-in the composer summary, the Info section and the badge on the Vantage icon in
-bb's navigation, and shows a toast when it starts waiting (unless you are
-looking at that thread). An unwatched thread shows none of this: its worktree
-sits under Changed or Working, with no status mark beyond "working". bb's own
-notifications for the thread are not affected.
+**Status** is always the thread's real state, the one bb's sidebar shows. A
+thread that waits for your answer or whose last turn failed files its worktree
+under Needs you, with bb's status mark, a strip with Answer or Retry, and a
+count in the composer summary and the Info section.
 
-**Reviews** decide whether diffs carry reviewed ticks. With reviews on, each
-file has a Reviewed button (`V`), a reviewed file folds away, the bar shows
-"3 of 5 reviewed" with a Hide reviewed switch, and the list shows each
-worktree's progress and files it under To review or Reviewed. A file that
-changes after you tick it shows "Changed" until you tick it again. With reviews
-off, the same diffs show without any of that.
+**Reviews** are always there. Every file has a Reviewed button (`V`), in its
+header and in the file tree. A reviewed file folds away. Once you tick a file
+in a worktree, the bar shows "3 of 5 reviewed" with a Hide reviewed switch, and
+the list shows the worktree's progress; a worktree you have not started shows
+no count. Worktrees with changes sit under To review until every file is
+ticked, then under Reviewed. A file that changes after you tick it shows
+"Changed" until you tick it again.
 
-Turn them on or off with Watch and Track reviews on the page's overview of a
-tree, in a thread's Vantage tab, in the summary above the composer or in the
-thread menu. In a worktree's bar, Track reviews changes the choice where it
-was made, or the tree's top thread when no thread in it has chosen.
-Two settings in Vantage's plugin settings change the default for every thread:
-"Watch every thread's worktrees" and "Track reviews in every thread". A thread
-you turned off stays off when you turn a default on.
+**Alerts** are two settings in Vantage's plugin settings:
+
+- "Badge the Vantage icon when a thread needs you" (on by default) counts the
+  threads that wait for your answer or failed on Vantage's icon in bb's
+  navigation.
+- "Show a toast when a thread needs you" (off by default) pops up a toast when
+  a thread starts waiting or fails, unless you are looking at it. bb's own
+  notifications are separate and not affected.
 
 ## Loading and archived threads
 
@@ -300,8 +314,8 @@ bb plugin install vantage@kalindudc
 ## How it works
 
 Vantage never stages, commits or changes a file. What it writes is your own
-state: watch and review choices and reviewed marks, in Vantage's plugin
-storage, and comment drafts, in this browser's storage. Sending comments starts
+state: reviewed marks, in Vantage's plugin storage, and comment drafts and
+view choices, in this browser's storage. Sending comments starts
 or steers a turn of the worktree's thread, as typing them into its chat would.
 
 - The thread tree comes from `threads.get` and `threads.experimental_listDescendants`.
@@ -324,10 +338,11 @@ or steers a turn of the worktree's thread, as typing them into its chat would.
   with `git cat-file` on the host for everything else. A side over 1 MiB, a
   binary file and a symlink come back empty, and the diff then shows its
   changes without expanding.
-- Watch and review choices are stored per thread, and reviewed marks per
-  worktree, in `bb.storage.kv`. A mark is the file's status and line counts
-  when you ticked it. The `prefs` and `reviewed` reads are tagged, so a change
-  made in one window, or a changed default, refreshes every other window.
+- Reviewed marks are stored per worktree in `bb.storage.kv`. A mark is the
+  file's status and line counts when you ticked it. The `reviewed` read is
+  tagged, so a tick made in one window refreshes every other window. Earlier
+  versions also kept watch and review choices in a `prefs` row, which nothing
+  reads now.
 - Other checkouts and archived branches are read by a host entry (`host.ts`),
   plugin code that bb runs on the machine that owns the repository. It runs
   `git` with `GIT_OPTIONAL_LOCKS=0`, so it never takes the index lock that
@@ -451,11 +466,24 @@ or steers a turn of the worktree's thread, as typing them into its chat would.
   ranges each change touches, not a real merge.
 - Comment drafts are kept in the browser's storage, so they stay on the device
   you wrote them on.
-- The toast for a watched thread that starts waiting for you shows in every
+- The toast for a thread that starts waiting for you shows in every
   open bb window.
 
 ## Changes
 
+- **0.7.0**: no more Watch and Track reviews. Vantage always shows each
+  thread's real state, so Needs you, the strips and the composer summary match
+  bb's sidebar; every file has a Reviewed tick, and progress shows once you
+  tick one. The rail badge (on by default) and toasts (off by default) are two
+  plugin settings, replacing "Watch every thread's worktrees" and "Track
+  reviews in every thread". The thread menu's Vantage entry is gone, and the
+  Changed group is now To review. The file tree is a real tree: files nest in
+  their folders, and folders fold. Diffs can wrap long lines (the wrap button
+  or `W`). Vantage remembers what you set instead of resetting it: Collapse
+  all carries over to the next worktree, and files folded by hand, each
+  worktree's change switch, folded tree folders, folded list groups and the
+  open "other changes" line in All changes survive a reload. Every group in
+  the worktree list can fold, not only Archived.
 - **0.6.2**: a comment you edit after pressing Send, while the message is
   still on its way, stays a draft with your new text. Before, the agent got
   the old text and the edit was deleted along with the sent comments.
@@ -550,5 +578,5 @@ After review, bump the package version, merge to an up-to-date `main`, and
 tag that version. This release uses:
 
 ```sh
-git tag vantage/v0.6.2 && git push origin vantage/v0.6.2
+git tag vantage/v0.7.0 && git push origin vantage/v0.7.0
 ```

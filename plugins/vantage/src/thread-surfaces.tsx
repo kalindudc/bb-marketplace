@@ -9,10 +9,8 @@ import { createArchivedPreference } from "./archived-preference";
 import { PANEL_ACTION_ID } from "./commands";
 import { Hint } from "./hint";
 import { LiveThreadsProvider, useSidebarIndex, type SidebarIndex } from "./live";
-import { plural, type Row } from "./model";
-import { PrefToggles } from "./page";
+import { plural, reviewStarted, type Row } from "./model";
 import { panelSelection } from "./panel";
-import { parentLookup, resolvePref, toggleInput, usePrefs, useSetPref } from "./prefs";
 import { StatusGlyph } from "./review";
 import { useSession } from "./session";
 import { useRows, type RowsData } from "./use-rows";
@@ -56,9 +54,10 @@ function useOpenTab() {
 
 function why(row: Row, data: RowsData): string {
   if (row.bucket === "needs") return row.live.sidebar?.indicatorLabel ?? "Needs you";
+  if (row.bucket === "unavailable") return "Cannot be read";
   const overlap = row.overlaps[0];
   if (overlap !== undefined) return `Overlaps with ${data.titleOf(overlap.otherKeys[0]!)} in ${overlap.path.slice(overlap.path.lastIndexOf("/") + 1)}`;
-  if (row.progress !== null && row.progress.total > 0) return `${row.progress.reviewed} of ${row.progress.total} reviewed`;
+  if (reviewStarted(row) && row.progress !== null) return `${row.progress.reviewed} of ${row.progress.total} reviewed`;
   return row.bucket === "working" ? "Working" : plural(row.worktree.uncommitted.length + row.worktree.committed.length, "file");
 }
 
@@ -108,7 +107,6 @@ function SegmentDetailsView({ threadId, isExpanded }: ExperimentalThreadContextS
   return (
     <div data-vantage-segment-details className="max-h-64 overflow-y-auto py-1 text-xs">
       <div className="flex flex-wrap items-center gap-1.5 px-2 pb-1.5">
-        <PrefToggles threadId={threadId} data={data} size="small" />
         <span className="flex-1" />
         <button type="button" onClick={() => open(threadId)} className="h-6 cursor-pointer rounded-md px-2 text-muted-foreground hover:bg-state-hover hover:text-foreground">Open Vantage</button>
       </div>
@@ -163,47 +161,4 @@ export const openAction: PluginThreadActionRegistration = {
     icon: "FolderGit",
     run: () => { navigate.toPluginPanel("vantage", { subPath: `tree/${thread.id}` }); },
   }),
-};
-
-interface PrefsData { prefs: ReturnType<typeof usePrefs>; setPref: ReturnType<typeof useSetPref>; parentOf: ReturnType<typeof parentLookup> }
-
-export const prefsAction: PluginThreadActionRegistration<PrefsData> = {
-  id: "prefs",
-  title: "Vantage",
-  icon: "FolderGit",
-  group: "3_settings",
-  order: 90,
-  useData: () => {
-    const prefs = usePrefs();
-    const setPref = useSetPref();
-    const live = useSidebarIndex();
-    const parentOf = useMemo(() => parentLookup(live.values()), [live]);
-    return { prefs, setPref, parentOf };
-  },
-  item: ({ thread, data }) => {
-    const watch = resolvePref(data.prefs, "watch", thread.id, data.parentOf).on;
-    const reviews = resolvePref(data.prefs, "reviews", thread.id, data.parentOf).on;
-    return {
-      label: "Vantage",
-      detail: [watch ? "Watching" : "Not watching", reviews ? "reviews on" : "reviews off"].join(" · "),
-      icon: "FolderGit",
-      choices: {
-        heading: "Vantage for this thread and its child threads",
-        hint: "Watching shows when a worktree needs you or failed. Reviews add ticks and progress to the diffs. Vantage's settings choose the default for other threads.",
-        items: [
-          { id: "watch", label: "Watch worktrees", icon: "Eye", selected: watch },
-          // Not a check mark: bb draws its own mark for the chosen items, and a check would read as chosen.
-          { id: "reviews", label: "Track reviews", icon: "FileDiff", selected: reviews },
-        ],
-      },
-      run: async ({ value }) => {
-        if (value !== "watch" && value !== "reviews") return;
-        try {
-          await data.setPref(toggleInput(data.prefs, value, thread.id, data.parentOf));
-        } catch (error) {
-          toast.error(`Could not save: ${error instanceof Error ? error.message : String(error)}`);
-        }
-      },
-    };
-  },
 };

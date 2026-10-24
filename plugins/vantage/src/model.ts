@@ -5,7 +5,7 @@ import { isWorking, needsYou, resolveLive, type LiveThread, type SidebarIndex } 
 import { progress, worktreeParts } from "./reviewed";
 import { primaryThreadId } from "./worktrees";
 
-export type Bucket = "needs" | "working" | "review" | "changed" | "reviewed" | "archived";
+export type Bucket = "needs" | "working" | "review" | "reviewed" | "unavailable" | "archived";
 export type Chip = "needs" | "working" | "review" | "overlaps";
 export type GroupBy = "status" | "project";
 
@@ -16,9 +16,8 @@ export interface Row {
   threadId: string;
   live: LiveThread;
   title: string;
-  watched: boolean;
-  reviewing: boolean;
   bucket: Bucket;
+  // Null until the worktree's files are read.
   progress: { reviewed: number; total: number } | null;
   overlaps: Overlap[];
   additions: number;
@@ -32,8 +31,6 @@ export interface Group { id: string; label: string; rows: Row[] }
 export interface RowsInput {
   overview: Overview;
   live: SidebarIndex;
-  watched(threadId: string): boolean;
-  reviewing(threadId: string): boolean;
   marks: Readonly<Record<string, ReviewMarks>>;
   currentThreadId: string | null;
   text: string;
@@ -42,12 +39,12 @@ export interface RowsInput {
 export const STATUS_GROUPS: ReadonlyArray<{ id: Bucket; label: string }> = [
   { id: "needs", label: "Needs you" },
   { id: "review", label: "To review" },
-  { id: "changed", label: "Changed" },
   { id: "working", label: "Working" },
   { id: "reviewed", label: "Reviewed" },
+  { id: "unavailable", label: "Unavailable" },
   { id: "archived", label: "Archived" },
 ];
-const ORDER: Record<Bucket, number> = { needs: 0, review: 1, changed: 2, working: 3, reviewed: 4, archived: 5 };
+const ORDER: Record<Bucket, number> = { needs: 0, review: 1, working: 2, reviewed: 3, unavailable: 4, archived: 5 };
 
 const sum = (files: readonly FileChange[], field: "additions" | "deletions"): number => files.reduce((total, file) => total + (file[field] ?? 0), 0);
 export const plural = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? "" : "s"}`;
@@ -73,31 +70,32 @@ function overlapsByWorktree(overview: Overview): Map<string, Overlap[]> {
   return out;
 }
 
-export function bucketOf(input: { archived: boolean; live: LiveThread; watched: boolean; reviewing: boolean; done: boolean }): Bucket {
+export function bucketOf(input: { archived: boolean; unavailable: boolean; live: LiveThread; done: boolean }): Bucket {
   if (input.archived) return "archived";
-  if (input.watched && needsYou(input.live)) return "needs";
+  if (needsYou(input.live)) return "needs";
   if (isWorking(input.live)) return "working";
-  if (!input.reviewing) return "changed";
+  // A worktree that cannot be read has nothing to review and never becomes reviewed.
+  if (input.unavailable) return "unavailable";
   return input.done ? "reviewed" : "review";
 }
 
 export function rowOf(worktree: Worktree, input: Omit<RowsInput, "text">, context: { threads: ReadonlyMap<string, ThreadSummary>; overlaps: ReadonlyMap<string, Overlap[]> }): Row {
   const threadId = primaryThreadId(worktree, input.currentThreadId);
   const thread = resolveLive(input.live.get(threadId) ?? null, context.threads.get(threadId), threadId);
-  // The row shows its primary thread, so only that thread's watch decides whether it says the thread needs you.
-  const watched = input.watched(threadId);
-  const reviewing = input.reviewing(threadId);
-  const counted = reviewing && worktree.state === "ready" ? progress(input.marks[worktree.key], worktreeParts(worktree)) : null;
+  const counted = worktree.state === "ready" ? progress(input.marks[worktree.key], worktreeParts(worktree)) : null;
   const archived = isArchivedOnly(worktree, context.threads) || thread.archived;
   const { additions, deletions } = lineCounts(worktree);
   return {
-    worktree, threadId, live: thread, watched, reviewing, additions, deletions,
+    worktree, threadId, live: thread, additions, deletions,
     title: threadId === input.currentThreadId ? "This thread" : thread.title,
     progress: counted,
     overlaps: context.overlaps.get(worktree.key) ?? [],
-    bucket: bucketOf({ archived, live: thread, watched, reviewing, done: counted !== null && counted.total > 0 && counted.reviewed === counted.total }),
+    bucket: bucketOf({ archived, unavailable: worktree.state === "unavailable", live: thread, done: counted !== null && counted.total > 0 && counted.reviewed === counted.total }),
   };
 }
+
+// Review progress shows once a file of the worktree is ticked, so a worktree nobody reviews carries no "0 of 5".
+export const reviewStarted = (row: Pick<Row, "progress">): boolean => row.progress !== null && row.progress.reviewed > 0;
 
 export function rowContext(overview: Overview) {
   return { threads: new Map<string, ThreadSummary>(overview.threads.map((thread) => [thread.id, thread])), overlaps: overlapsByWorktree(overview) };

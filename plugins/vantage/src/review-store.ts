@@ -1,4 +1,4 @@
-import { reviewMarksSchema, threadPrefSchema, type ReviewMarks, type SetReviewedInput, type SetThreadPrefInput, type ThreadPref } from "./contract";
+import { reviewMarksSchema, type ReviewMarks, type SetReviewedInput } from "./contract";
 
 export interface KvStorage {
   get<T>(key: string): Promise<T | undefined>;
@@ -6,27 +6,12 @@ export interface KvStorage {
   delete(key: string): Promise<void>;
 }
 
-const PREFS_KEY = "prefs";
 const REVIEWED_PREFIX = "reviewed:";
-const MAX_THREAD_PREFS = 5000;
 const MAX_MARKS = 2000;
 // bb caps a kv row at 256 KiB of UTF-8.
 const MAX_ROW_BYTES = 200_000;
-const MAX_THREAD_ID = 4096;
 const encoder = new TextEncoder();
 const bytes = (value: unknown): number => encoder.encode(JSON.stringify(value)).length;
-
-// Stored rows are parsed on the way in, so a row an older version wrote cannot break the reply.
-function parsePrefs(value: unknown): Record<string, ThreadPref> {
-  if (value === null || typeof value !== "object") return {};
-  const out: Record<string, ThreadPref> = {};
-  for (const [id, pref] of Object.entries(value)) {
-    if (id.length === 0 || id.length > MAX_THREAD_ID) continue;
-    const parsed = threadPrefSchema.safeParse(pref);
-    if (parsed.success && (parsed.data.watch !== undefined || parsed.data.reviews !== undefined)) out[id] = parsed.data;
-  }
-  return out;
-}
 
 // Entry by entry, so one bad mark does not throw away every other tick of the worktree.
 function parseMarks(value: unknown): ReviewMarks {
@@ -45,7 +30,9 @@ function fit<T>(entries: Array<[string, T]>, max: number): Record<string, T> {
   return Object.fromEntries(kept);
 }
 
-export function createPrefsStore(kv: () => KvStorage) {
+// Reviewed marks, one kv row per worktree. Versions before 0.7 also kept per-thread watch and review choices in a
+// "prefs" row; nothing reads it now.
+export function createReviewStore(kv: () => KvStorage) {
   // Two quick writes to one row must not read the same old value.
   const chains = new Map<string, Promise<unknown>>();
   const serial = <T>(key: string, run: () => Promise<T>): Promise<T> => {
@@ -57,25 +44,6 @@ export function createPrefsStore(kv: () => KvStorage) {
   };
 
   return {
-    async threadPrefs(): Promise<Record<string, ThreadPref>> {
-      return parsePrefs(await kv().get(PREFS_KEY));
-    },
-    setThreadPref(input: SetThreadPrefInput): Promise<Record<string, ThreadPref>> {
-      return serial(PREFS_KEY, async () => {
-        const current = parsePrefs(await kv().get(PREFS_KEY));
-        const pref: ThreadPref = { ...current[input.threadId] };
-        for (const field of ["watch", "reviews"] as const) {
-          const value = input[field];
-          if (value === null) delete pref[field];
-          else if (value !== undefined) pref[field] = value;
-        }
-        delete current[input.threadId];
-        if (pref.watch !== undefined || pref.reviews !== undefined) current[input.threadId] = pref;
-        const next = fit(Object.entries(current), MAX_THREAD_PREFS);
-        await kv().set(PREFS_KEY, next);
-        return next;
-      });
-    },
     async reviewed(keys: readonly string[]): Promise<Record<string, ReviewMarks>> {
       const rows = await Promise.all(keys.map(async (key) => [key, parseMarks(await kv().get(REVIEWED_PREFIX + key))] as const));
       return Object.fromEntries(rows);

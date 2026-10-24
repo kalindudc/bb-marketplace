@@ -1,61 +1,59 @@
 import { useEffect, useMemo, useRef } from "react";
-import { experimental_useSidebarThreads, useBbContext, useBbNavigate, type ExperimentalBadge } from "@get-bb/plugin-sdk/app";
+import { experimental_useSidebarThreads, useBbContext, useBbNavigate, useSettings, type ExperimentalBadge } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import { needsYou, useSidebarIndex, type SidebarIndex } from "./live";
-import { parentLookup, resolvePref, usePrefsState } from "./prefs";
-import type { Prefs } from "./contract";
 
 export interface Attention { id: string; title: string; failed: boolean }
 
-// Threads Vantage watches, directly or through an ancestor, that wait for you or failed. Nothing is watched by default.
-export function watchedAttention(live: SidebarIndex, prefs: Prefs): Attention[] {
-  const parentOf = parentLookup(live.values());
+// Threads that wait for your answer or whose last turn failed, the same ones bb's sidebar marks.
+export function attentionOf(live: SidebarIndex): Attention[] {
   const out: Attention[] = [];
   for (const thread of live.values()) {
     if (thread.isArchived || thread.isHidden) continue;
-    const state = { indicator: thread.indicator, archived: thread.isArchived };
-    if (!needsYou(state) || !resolvePref(prefs, "watch", thread.id, parentOf).on) continue;
+    if (!needsYou({ indicator: thread.indicator, archived: thread.isArchived })) continue;
     out.push({ id: thread.id, title: thread.displayTitle, failed: thread.indicator === "unread-error" });
   }
   return out;
 }
 
-function useAttention(): { attention: Attention[]; ready: boolean } {
-  const live = useSidebarIndex();
-  const { status } = experimental_useSidebarThreads();
-  const { prefs, loaded } = usePrefsState();
-  const attention = useMemo(() => watchedAttention(live, prefs), [live, prefs]);
-  return { attention, ready: loaded && status === "ready" };
+// Both alerts are settings; nothing shows until bb has said what they are.
+function useAlerts(): { badge: boolean; toasts: boolean; loaded: boolean } {
+  const { values } = useSettings();
+  return { badge: values?.badge === true, toasts: values?.toasts === true, loaded: values !== undefined };
 }
 
 export function useVantageBadge(): ExperimentalBadge | null {
-  const { attention } = useAttention();
-  if (attention.length === 0) return null;
-  const count = attention.length;
-  return { count, tone: "warning", label: `${count} watched ${count === 1 ? "thread needs" : "threads need"} you` };
+  const live = useSidebarIndex();
+  const { badge } = useAlerts();
+  const count = useMemo(() => attentionOf(live).length, [live]);
+  if (!badge || count === 0) return null;
+  return { count, tone: "warning", label: `${count} ${count === 1 ? "thread needs" : "threads need"} you` };
 }
 
-// A toast when a watched thread starts waiting for you or fails, unless it is the thread on screen.
+// The threads to toast: new since the last look, not the one on screen. The first look is what was already waiting before
+// this window opened, which bb's own sidebar shows. With toasts off nothing is toasted, but what was seen still moves on,
+// so turning them on does not toast everything already waiting.
+export function toastsFor(seen: ReadonlySet<string> | null, attention: readonly Attention[], onScreen: string | null, enabled: boolean): Attention[] {
+  if (seen === null || !enabled) return [];
+  return attention.filter((entry) => !seen.has(entry.id) && entry.id !== onScreen);
+}
+
 export function AttentionToasts() {
-  const { attention, ready } = useAttention();
+  const live = useSidebarIndex();
+  const { status } = experimental_useSidebarThreads();
+  const { toasts, loaded } = useAlerts();
+  const attention = useMemo(() => attentionOf(live), [live]);
   const { threadId } = useBbContext();
   const navigate = useBbNavigate();
   const seen = useRef<Set<string> | null>(null);
   useEffect(() => {
-    if (!ready) return;
-    const now = new Set(attention.map((entry) => entry.id));
-    // The first answer is what was already waiting before this window opened, which bb's own sidebar already shows.
-    if (seen.current === null) {
-      seen.current = now;
-      return;
-    }
-    for (const entry of attention) {
-      if (seen.current.has(entry.id) || entry.id === threadId) continue;
+    if (!loaded || status !== "ready") return;
+    for (const entry of toastsFor(seen.current, attention, threadId, toasts)) {
       toast(entry.failed ? `${entry.title} failed` : `${entry.title} needs you`, {
         action: { label: "Open", onClick: () => navigate.toThread(entry.id) },
       });
     }
-    seen.current = now;
-  }, [attention, ready, threadId, navigate]);
+    seen.current = new Set(attention.map((entry) => entry.id));
+  }, [attention, loaded, status, toasts, threadId, navigate]);
   return null;
 }

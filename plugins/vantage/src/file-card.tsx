@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState, type RefObject } from "react";
 import {
-  experimental_Diff as Diff, experimental_FileLink as FileLink, experimental_Icon as Icon, type ExperimentalLiveFileTarget,
+  experimental_Diff as Diff, experimental_FileLink as FileLink, experimental_Icon as Icon, type CodeOverflowMode, type ExperimentalLiveFileTarget,
 } from "@get-bb/plugin-sdk/app";
 import type {
   FileChange, FileSidesOutput, PatchOutput, PatchRequest, PatchScope, RecordedEditsInput, RecordedEditsOutput, Repo, ThreadSummary,
@@ -41,6 +41,8 @@ export interface FileCardProps {
   folded: boolean;
   onFold(key: string): void;
   view: DiffView;
+  // Long lines wrap instead of scrolling sideways.
+  wrap?: boolean;
   focused?: boolean;
   compact?: boolean;
   overlap?: { title: string; onCompare(): void } | null;
@@ -114,8 +116,8 @@ export function patchRequest(repo: FileRepo, file: FileChange, scope: PatchScope
 export const patchKey = (repo: FileRepo, file: FileChange, scope: PatchScope, sha: string | null): string =>
   `${repo.key}\0${file.path}\0${scope}\0${sha ?? ""}\0${signatureOf(file)}`;
 
-function PatchBody({ repo, file, scope, sha, view, loaders, visible }: {
-  repo: FileRepo; file: FileChange; scope: PatchScope; sha: string | null; view: DiffView; loaders: FileLoaders; visible: boolean;
+function PatchBody({ repo, file, scope, sha, view, overflow, loaders, visible }: {
+  repo: FileRepo; file: FileChange; scope: PatchScope; sha: string | null; view: DiffView; overflow: CodeOverflowMode; loaders: FileLoaders; visible: boolean;
 }) {
   const skipped = file.tooLarge || file.binary;
   const request = patchRequest(repo, file, scope, sha);
@@ -135,7 +137,7 @@ function PatchBody({ repo, file, scope, sha, view, loaders, visible }: {
     : undefined;
   return (
     <>
-      <Diff patch={patch} path={file.path} view={view} {...(full === undefined ? {} : { experimental_fullFileContents: full })} />
+      <Diff patch={patch} path={file.path} view={view} overflow={overflow} {...(full === undefined ? {} : { experimental_fullFileContents: full })} />
       {truncated && <Note>The diff was cut because it is very long.</Note>}
     </>
   );
@@ -143,7 +145,9 @@ function PatchBody({ repo, file, scope, sha, view, loaders, visible }: {
 
 const formatTime = (at: number): string => new Date(at).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
-function EditsBody({ file, threads, loaders, view, visible }: { file: FileChange; threads: ReadonlyMap<string, ThreadSummary>; loaders: FileLoaders; view: DiffView; visible: boolean }) {
+function EditsBody({ file, threads, loaders, view, overflow, visible }: {
+  file: FileChange; threads: ReadonlyMap<string, ThreadSummary>; loaders: FileLoaders; view: DiffView; overflow: CodeOverflowMode; visible: boolean;
+}) {
   const edits = file.edits;
   const key = `edits\0${edits?.threadIds.join(",")}\0${edits?.rawPaths.join(",")}\0${edits?.count}`;
   const [state, retry] = useLoaded(key, visible && edits !== null, () => loaders.recordedEdits({
@@ -158,7 +162,7 @@ function EditsBody({ file, threads, loaders, view, visible }: { file: FileChange
       {state.value.edits.map((edit, index) => (
         <div key={`${edit.threadId}:${edit.at}:${index}`}>
           <p className="px-3 pt-2 text-xs text-muted-foreground">{threads.get(edit.threadId)?.title ?? edit.threadId} · {formatTime(edit.at)}</p>
-          {edit.diff === null ? <Note>No diff recorded for this edit.</Note> : <Diff patch={edit.diff} path={file.path} view={view} />}
+          {edit.diff === null ? <Note>No diff recorded for this edit.</Note> : <Diff patch={edit.diff} path={file.path} view={view} overflow={overflow} />}
           {edit.truncated && <Note>The diff was cut because it is very long.</Note>}
         </div>
       ))}
@@ -226,7 +230,8 @@ function CommentBox({ composing, placeholder, onSave, onCancel }: { composing: C
 }
 
 function FileCardView(props: FileCardProps) {
-  const { repo, file, scope, sha = null, cardKey, note, folded, onFold, view, focused = false, compact = false, overlap, review, comments, threads, loaders } = props;
+  const { repo, file, scope, sha = null, cardKey, note, folded, onFold, view, wrap = false, focused = false, compact = false, overlap, review, comments, threads, loaders } = props;
+  const overflow: CodeOverflowMode = wrap ? "wrap" : "scroll";
   const ref = useRef<HTMLElement | null>(null);
   const visible = useNearViewport(ref, !folded);
   const slash = file.path.lastIndexOf("/");
@@ -282,8 +287,8 @@ function FileCardView(props: FileCardProps) {
       {!folded && (
         <div className="overflow-hidden rounded-b-lg">
           {recordedOnly || repo === null
-            ? <EditsBody file={file} threads={threads} loaders={loaders} view={view} visible={visible} />
-            : <PatchBody repo={repo} file={file} scope={scope} sha={sha} view={view} loaders={loaders} visible={visible} />}
+            ? <EditsBody file={file} threads={threads} loaders={loaders} view={view} overflow={overflow} visible={visible} />
+            : <PatchBody repo={repo} file={file} scope={scope} sha={sha} view={view} overflow={overflow} loaders={loaders} visible={visible} />}
         </div>
       )}
       {comments?.list.filter((comment) => comment.id !== composing?.editing).map((comment) => (

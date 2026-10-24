@@ -29,12 +29,11 @@ afterEach(() => {
   document.body.replaceChildren();
 });
 
-function options(watch: boolean) {
+function options() {
   return {
     pluginId: "vantage",
     rpc: {
       shell: () => new Promise<Overview>(() => {}), overview: () => TREE,
-      prefs: () => ({ watchByDefault: watch, reviewsByDefault: false, threads: {} }), setThreadPref: vi.fn(),
       reviewed: () => ({}), setReviewed: () => ({}),
     } as never,
     sdk: { subscribe: (() => () => {}) as never },
@@ -48,26 +47,18 @@ describe("the composer segment", () => {
     const app = await loadPluginApp(() => import("../app"));
     const segment = app.threadContextSegments[0]!;
     const onToggle = vi.fn();
-    const slot = renderSlot<object, typeof rpcContract>({ component: segment.summary } as never, { ...PROPS, segments: [], isExpanded: false, onToggle }, options(false));
+    const slot = renderSlot<object, typeof rpcContract>({ component: segment.summary } as never, { ...PROPS, segments: [], isExpanded: false, onToggle }, options());
     const button = await within(slot.container).findByRole("button", { expanded: false });
-    await waitFor(() => expect(button.textContent).toBe("2 worktrees · 2 overlaps"));
+    await waitFor(() => expect(button.textContent).toBe("2 worktrees · 1 needs you · 2 overlaps"));
     fireEvent.click(button);
     expect(onToggle).toHaveBeenCalledTimes(1);
-    slot.lifecycle.unmount();
-  });
-
-  it("counts a child waiting for you only when the tree is watched", async () => {
-    const app = await loadPluginApp(() => import("../app"));
-    const slot = renderSlot<object, typeof rpcContract>({ component: app.threadContextSegments[0]!.summary } as never,
-      { ...PROPS, segments: [], isExpanded: false, onToggle: vi.fn() }, options(true));
-    await waitFor(() => expect(slot.container.textContent).toContain("1 needs you"));
     slot.lifecycle.unmount();
   });
 
   it("draws nothing below the row while folded", async () => {
     const app = await loadPluginApp(() => import("../app"));
     const slot = renderSlot<object, typeof rpcContract>({ component: app.threadContextSegments[0]!.details! } as never,
-      { ...PROPS, segments: [], isExpanded: false, onToggle: vi.fn() }, options(false));
+      { ...PROPS, segments: [], isExpanded: false, onToggle: vi.fn() }, options());
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(slot.container.querySelector("[data-vantage-segment-details]")).toBeNull();
     slot.lifecycle.unmount();
@@ -76,7 +67,7 @@ describe("the composer segment", () => {
   it("lists the worktrees when expanded and opens one in the thread's tab", async () => {
     const app = await loadPluginApp(() => import("../app"));
     const slot = renderSlot<object, typeof rpcContract>({ component: app.threadContextSegments[0]!.details! } as never,
-      { ...PROPS, segments: [], isExpanded: true, onToggle: vi.fn() }, options(false));
+      { ...PROPS, segments: [], isExpanded: true, onToggle: vi.fn() }, options());
     const row = await within(slot.container).findByRole("button", { name: /^Pricing/ });
     fireEvent.click(row);
     expect(panelSelection.get()).toMatchObject({ threadId: "thr_root", key: "w_b" });
@@ -88,9 +79,10 @@ describe("the composer segment", () => {
 describe("the Info section", () => {
   it("lists the child worktrees with why each one matters", async () => {
     const app = await loadPluginApp(() => import("../app"));
-    const slot = renderSlot<object, typeof rpcContract>(app.threadInfoSections[0]! as never, PROPS, options(false));
+    const slot = renderSlot<object, typeof rpcContract>(app.threadInfoSections[0]! as never, PROPS, options());
     await waitFor(() => expect(slot.container.textContent).toContain("Banner"));
-    expect(slot.container.textContent).toContain("Overlaps with Pricing in README.md");
+    expect(slot.container.textContent).toContain("BannerNeeds you");
+    expect(slot.container.textContent).toContain("Overlaps with Banner in README.md");
     slot.lifecycle.unmount();
   });
 });
