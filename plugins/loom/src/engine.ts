@@ -4,7 +4,7 @@ import { resumeCheckingTickets } from "./checks";
 import { repoCheckout, type RepoCheckout } from "./checkouts";
 import { finishIfComplete, holdMerge, land, mergeHeld, pollPullRequests, runMergeQueue, type LandResult } from "./merge";
 import type { PostRow, ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
-import { approvedText, blockedReplyText, heldCheckResult, resumeText, reviewRequeueNote, startRequeueNote } from "./prompts";
+import { COMMENT_SIGNATURE, approvedText, blockedReplyText, heldCheckResult, resumeText, reviewRequeueNote, startRequeueNote } from "./prompts";
 import { LoomError, type ApproveResult, type Projects } from "./projects";
 import { isMultiRepo } from "./repos";
 import { CHECKS_SETTLE_MINUTES } from "./pull-requests";
@@ -70,7 +70,8 @@ export class Engine {
     this.projects = deps.projects;
     this.settings = deps.settings ?? (() => NO_HOOK);
     const settleMs = () => (this.settings().checksSettleMinutes ?? CHECKS_SETTLE_MINUTES) * 60_000;
-    this.ctx = { store: deps.store, bb: deps.bb, now: deps.now, host: deps.host, kick: () => this.kick(), checksSettleMs: settleMs };
+    const signature = () => this.settings().commentSignature ?? COMMENT_SIGNATURE;
+    this.ctx = { store: deps.store, bb: deps.bb, now: deps.now, host: deps.host, kick: () => this.kick(), checksSettleMs: settleMs, commentSignature: signature };
   }
 
   private warn(what: string, error: unknown): void {

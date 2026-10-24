@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { finishIfComplete, land, pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
 import { SpawnRefusedError, type SpawnArgs } from "../src/ports";
 import { recordPrompt } from "../src/prompts";
-import { HOOK_TIMEOUT_MS, NO_HOOK, RECORD_MAX, SUMMARY_TIMEOUT_MS, projectRecord, sendRecords, settleRecords, type DoneSettings } from "../src/record";
+import { HOOK_TIMEOUT_MS, NO_HOOK, RECORD_MAX, SETTINGS, SUMMARY_TIMEOUT_MS, projectRecord, sendRecords, settleRecords, type DoneSettings } from "../src/record";
 import { specOf } from "../src/workers";
 import { makeCtx, reachApproved, seedProject, seedRepoProject, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
@@ -77,6 +77,17 @@ async function summarizing(): Promise<string> {
   expect(row()).toMatchObject({ state: "summarizing", started_at: h.clock.t });
   return row()!.thread_id!;
 }
+
+describe("Loom's settings", () => {
+  it("signs pull request comments with Posted by Loom unless the user sets another line, or none", () => {
+    const signature = SETTINGS.commentSignature;
+    expect(signature.default).toBe("Posted by Loom");
+    expect(signature.experimental_schema.safeParse("<sub>Sent by Loom for Kai</sub>").success).toBe(true);
+    expect(signature.experimental_schema.safeParse("").success).toBe(true);
+    expect(signature.experimental_schema.safeParse("two\nlines").success).toBe(false);
+    expect(signature.experimental_schema.safeParse("x".repeat(201)).success).toBe(false);
+  });
+});
 
 describe("projectRecord", () => {
   it("has the goal, the outcome, and each ticket's criteria, submits, reviews, merges, blocks and the planner's and human's replies, in order", async () => {

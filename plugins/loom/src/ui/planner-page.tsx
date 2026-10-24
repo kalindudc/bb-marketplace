@@ -8,7 +8,7 @@ import { BUTTON, ConfirmButton, HEADING, plural, useRemote, useRun } from "./com
 import { PlannerMark, timeLabel } from "./planner-kit";
 import { About, Decisions, MessageBox, Versions } from "./planner-side";
 import { PlannerStory } from "./planner-story";
-import { PlannerQuestions, usePendingQuestions, useQuestionRounds } from "./questions";
+import { PlannerQuestions, questionsOf, usePendingQuestions, useQuestionRounds } from "./questions";
 
 type Status = "working" | "waiting" | "idle" | "missing";
 
@@ -306,6 +306,8 @@ export function PlannerPage({ threadId, project, busy = false, onControl, onSpec
   const commented = view.steps.some((step) => step.kind === "notes" && step.version === waitingVersion);
   const versionCard = waitingVersion !== null && !askedApprove && !commented && (!specReviewBlocks(view.review) || view.review.kind === "failed");
   const pendingQuestions = questions.rows.length;
+  // One Ask User Question round can hold several questions; the strip counts the questions, Needs you the rounds.
+  const askedCount = questions.rows.reduce((sum, row) => sum + (questionsOf(row.payload.data)?.length ?? 1), 0);
   const needCount = pendingQuestions + (ask === null ? 0 : ask.steps.filter((step) => !step.done).length) + (versionCard ? 1 : 0);
   const repos = (project?.overview.repos ?? []).flatMap((repo) => (repo.name === null ? [] : [repo.name]));
   const toNeeds = () => needs.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -342,7 +344,7 @@ export function PlannerPage({ threadId, project, busy = false, onControl, onSpec
 
   return (
     <div ref={root} data-planner-page className="@container space-y-3 p-4">
-      <Strip view={view} status={status} questions={pendingQuestions} steps={steps} />
+      <Strip view={view} status={status} questions={askedCount} steps={steps} />
       <div className="flex flex-wrap items-center gap-3">
         <div role="tablist" aria-label="Planner view" className="flex gap-0.5 rounded-md border border-border-seam p-0.5">
           {(["summary", "chat"] as const).map((entry) => (

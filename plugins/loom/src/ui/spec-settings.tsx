@@ -4,6 +4,8 @@ import { BUTTON, CHIP, RepoChip, plural } from "./common";
 import { CHANGED_TAG, Commentable, DiffList, Pin, changeAt, changedAt, kept, pinsAt, useReview, type CommentTarget, type ListMark, type SpecValue } from "./spec-review-kit";
 
 const CODE = "rounded bg-surface-recessed px-1 font-mono text-xs [overflow-wrap:anywhere]";
+/** A card's labels and values: side by side once the card has room for both, one under the other in a narrow card. */
+const ROWS = "grid grid-cols-1 gap-x-3 gap-y-0.5 @min-[17rem]:grid-cols-[7rem_minmax(0,1fr)] @min-[17rem]:gap-y-1.5";
 const minutes = (n: number) => (n % 60 === 0 ? `${n / 60} h` : plural(n, "minute"));
 
 /** A choice of the spec as a segmented control: the option in force is raised, and clicking another one suggests it. */
@@ -36,7 +38,7 @@ function Choice({ path, label, value, options, names }: { path: string; label: s
 
 function Slots({ n, max }: { n: number; max: number }) {
   return (
-    <span className="inline-flex items-center gap-[3px]" aria-label={`${n} of up to ${max}`}>
+    <span className="inline-flex flex-wrap items-center gap-[3px]" aria-label={`${n} of up to ${max}`}>
       {Array.from({ length: max }, (_, index) => (
         <span key={index} aria-hidden className={`size-3 rounded-[3px] border ${index < n ? "border-primary bg-primary" : "border-border-seam bg-card"}`} />
       ))}
@@ -45,11 +47,30 @@ function Slots({ n, max }: { n: number; max: number }) {
   );
 }
 
+/** "anthropic/claude-sonnet-5-5" may break after its slash before it breaks inside a word. */
+function modelParts(model: string): ReactNode {
+  const slash = model.indexOf("/");
+  if (slash < 0) return model;
+  return (
+    <>
+      {model.slice(0, slash + 1)}
+      <wbr />
+      {model.slice(slash + 1)}
+    </>
+  );
+}
+
 function Model({ agent }: { agent: { provider?: string; model?: string } }) {
   return (
     <span className="inline-flex min-w-0 flex-wrap items-center gap-1.5">
       <span className="rounded bg-surface-recessed px-1.5 text-[11px] leading-[18px] text-muted-foreground">{agent.provider ?? "default provider"}</span>
-      <span className="font-mono text-xs [overflow-wrap:anywhere]">{agent.model ?? "default model"}</span>
+      {agent.model === undefined ? (
+        <span className="font-mono text-xs">default model</span>
+      ) : (
+        <span data-model={agent.model} className="font-mono text-xs [overflow-wrap:anywhere]">
+          {modelParts(agent.model)}
+        </span>
+      )}
     </span>
   );
 }
@@ -89,11 +110,15 @@ function Card({ card }: { card: SettingsCard }) {
       data-anchor={card.paths.join(" ")}
       data-changed={changed || undefined}
       aria-label={card.title}
-      className={`min-w-0 rounded-lg border bg-card p-3 ${changed ? "border-primary ring-1 ring-primary ring-inset" : "border-border-seam"} ${card.full ? "@3xl:col-span-3 @xl:col-span-2" : card.wide ? "@3xl:col-span-2 @xl:col-span-2" : ""}`}
+      className={`@container min-w-0 rounded-lg border bg-card p-3 ${changed ? "border-primary ring-1 ring-primary ring-inset" : "border-border-seam"} ${card.full ? "@xl:col-span-2 @5xl:col-span-3" : card.wide ? "@xl:col-span-2" : ""}`}
     >
       <header className="mb-2.5 flex items-center gap-2">
         <h3 className="text-sm font-semibold">{card.title}</h3>
-        {card.note !== undefined && <span className="truncate text-xs text-muted-foreground">{card.note}</span>}
+        {card.note !== undefined && (
+          <span className="min-w-0 truncate text-xs text-muted-foreground" title={card.note}>
+            {card.note}
+          </span>
+        )}
         {changed && <span className={CHANGED_TAG}>changed</span>}
         {pins.map((n) => (
           <Pin key={n} n={n} />
@@ -175,14 +200,14 @@ export function SettingsSection({ spec, bbProjectNames, onShowAll, onJump }: { s
               {project.base}
             </Commentable>
           </p>
-          <dl className="grid grid-cols-[7rem_minmax(0,1fr)] gap-x-3 gap-y-1.5">
+          <dl className={ROWS}>
             <Row label="Strategy" paths={["merge.strategy"]}>
               <Choice path="merge.strategy" label="Merge strategy" value={merge.strategy} options={["integration", "pr"]} names={{ integration: "Integration branch", pr: "Pull request per ticket" }} />
             </Row>
             {integration ? (
               <Row label="Landing" paths={["merge.strategy"]}>
                 <span className="text-xs text-muted-foreground">
-                  You land it with <code className={CODE}>bb loom land</code>: {repos.length > 0 ? "one pull request per repo" : "one pull request"}, or onto {repos.length > 0 ? "each base" : project.base} with <code className={CODE}>--direct</code>.
+                  You land it with <code className={`${CODE} whitespace-nowrap`}>bb loom land</code>: {repos.length > 0 ? "one pull request per repo" : "one pull request"}, or onto {repos.length > 0 ? "each base" : project.base} with <code className={`${CODE} whitespace-nowrap`}>--direct</code>.
                 </span>
               </Row>
             ) : (
@@ -238,7 +263,7 @@ export function SettingsSection({ spec, bbProjectNames, onShowAll, onJump }: { s
       note: "write the code",
       paths: ["agents.worker", "agents.max_workers", "agents.ticket_timeout_minutes", "environment"],
       body: (
-        <dl className="grid grid-cols-[7rem_minmax(0,1fr)] gap-x-3 gap-y-1.5">
+        <dl className={ROWS}>
           <Row label="Model" paths={["agents.worker.model", "agents.worker.provider"]}>
             <Commentable as="span" target={{ paths: ["agents.worker.model", "agents.worker.provider"], label: "Worker model", kind: "text" }}>
               <Model agent={worker} />
@@ -278,7 +303,7 @@ export function SettingsSection({ spec, bbProjectNames, onShowAll, onJump }: { s
       note: "approve each ticket",
       paths: ["agents.reviewer", "agents.max_reviewers", "review.approvals", "review.max_rounds"],
       body: (
-        <dl className="grid grid-cols-[7rem_minmax(0,1fr)] gap-x-3 gap-y-1.5">
+        <dl className={ROWS}>
           <Row label="Model" paths={["agents.reviewer.model", "agents.reviewer.provider"]}>
             <Commentable as="span" target={{ paths: ["agents.reviewer.model", "agents.reviewer.provider"], label: "Reviewer model", kind: "text" }}>
               <Model agent={reviewer} />
@@ -491,10 +516,13 @@ export function SettingsSection({ spec, bbProjectNames, onShowAll, onJump }: { s
   return (
     <>
       {shown.length > 0 && (
-        <div className="grid gap-3 @xl:grid-cols-2 @3xl:grid-cols-3">
-          {shown.map((card) => (
-            <Card key={card.id} card={card} />
-          ))}
+        // Its own container: beside the review panel, the spec page is much wider than this column.
+        <div className="@container">
+          <div data-settings-grid className="grid grid-flow-row-dense gap-3 @xl:grid-cols-2 @5xl:grid-cols-3">
+            {shown.map((card) => (
+              <Card key={card.id} card={card} />
+            ))}
+          </div>
         </div>
       )}
       {hidden > 0 && (

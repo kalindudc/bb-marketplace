@@ -6,7 +6,7 @@ import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { spawnEnvironment, threadBranch } from "./environments";
 import { plural } from "./format";
 import { SpawnRefusedError, type EnvironmentInfo, type HostPort } from "./ports";
-import { andList, latestChangesRequested, nudgeText, workerBrief } from "./prompts";
+import { COMMENT_SIGNATURE, andList, latestChangesRequested, nudgeText, workerBrief } from "./prompts";
 import { LoomError, type Ctx } from "./projects";
 import { freshBaseOf, repoSettings } from "./repos";
 import { idleAction, spawnable, toLite, type TicketLite } from "./scheduler";
@@ -19,7 +19,11 @@ export interface EngineCtx extends Ctx {
   kick(): void;
   /** How long a pull request's failed checks wait for the pending ones after a push; Loom's checksSettleMinutes setting. */
   checksSettleMs?: () => number;
+  /** The line a worker ends its pull request comments with; Loom's commentSignature setting. */
+  commentSignature?: () => string;
 }
+
+export const signatureOf = (ctx: EngineCtx): string => ctx.commentSignature?.() ?? COMMENT_SIGNATURE;
 
 export type EndReason = "abandoned" | "timeout" | "failed" | "gone" | "blocked" | "cancelled" | "verdict" | "superseded" | "merged";
 export type TicketMove = { to: TicketState; patch: Partial<TicketRow> };
@@ -156,7 +160,7 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
   try {
     const repo = ticketRepo(spec, ticket);
     const checkouts = await otherCheckouts(ctx, project, spec, ticket);
-    const brief = workerBrief({ project, spec, ticket: store.ticket(ticket.id)!, posts: store.posts(ticket.id), resume, checkouts, tickets: store.tickets(project.id) });
+    const brief = workerBrief({ project, spec, ticket: store.ticket(ticket.id)!, posts: store.posts(ticket.id), resume, checkouts, tickets: store.tickets(project.id), signature: signatureOf(ctx) });
     const spawn = (baseBranch: string) =>
       ctx.bb.spawnThread({
         bbProjectId: repo.bbProjectId ?? project.bb_project_id,

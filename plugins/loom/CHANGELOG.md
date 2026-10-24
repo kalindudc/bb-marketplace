@@ -2,6 +2,21 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.16.0 (2026-10-23)
+
+### Added
+
+- A `commentSignature` setting, "Posted by Loom" by default. On the pull request strategy a worker posts from your account, so it now ends every comment and reply it posts on a pull request with this line. It takes Markdown, such as `<sub>Posted by Loom</sub>` for small text on GitHub, and an empty value turns it off. The fix-round message carries it, and so does the brief of a worker that resumes on an open pull request.
+
+### Fixed
+
+- The Spec tab's How it runs cards no longer overflow beside the review panel. The cards are laid out by the width of their own column instead of the whole page, use three columns only from 64rem, stack each label above its value when a card is narrow, and fill the gap a wide card leaves. A model name breaks after its slash instead of inside a word, and the slot squares wrap.
+- The Planner tab's strip counts the questions the planner waits on, so one round of four questions reads "Waiting on you · 4 questions" instead of "1 question".
+
+### Changed
+
+- The README is reorganized and shorter: install and quick start first, the page by tab with screenshots, and one section for pull requests.
+
 ## 0.15.0 (2026-10-23)
 
 ### Added

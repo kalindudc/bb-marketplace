@@ -11,7 +11,7 @@ import { feedbackList, prAskText, prBody, prFeedbackText, prNudgeText, type Feed
 import { prSettings, repoSettings } from "./repos";
 import type { Spec } from "./spec";
 import { LOOM_ACTOR } from "./states";
-import { applyMove, released, resumeEnding, specOf, toWorking, type EngineCtx } from "./workers";
+import { applyMove, released, resumeEnding, signatureOf, specOf, toWorking, type EngineCtx } from "./workers";
 
 /** How long the worker has to hand in loom_pr before Loom's template stands in; paused time does not count. */
 export const PR_TEXT_MINUTES = 30;
@@ -324,7 +324,7 @@ async function startFixRound(ctx: EngineCtx, seen: TicketRow, a: Round): Promise
     post(ctx, ticket, { body, data: feedbackData(ticket, round, counted, a, false) });
     const move = { fixRound: round, ...(a.human ? { human: true } : {}) };
     if (worker.standing === "active" && worker.row.thread_id !== null) {
-      const text = prFeedbackText({ key: ticket.key, url: ticket.pr_url, round, counted, max, checks: a.checks, items: a.items, diverged: a.diverged });
+      const text = prFeedbackText({ key: ticket.key, url: ticket.pr_url, round, counted, max, checks: a.checks, items: a.items, diverged: a.diverged, signature: signatureOf(ctx) });
       store.updateTicket(ticket.id, { pr_deliver_json: JSON.stringify({ thread: worker.row.thread_id, text } satisfies PrDelivery) });
       toWorking(ctx, store.ticket(ticket.id)!, worker.row, move);
       return { kind: "working" };

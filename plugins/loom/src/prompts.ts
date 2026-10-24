@@ -158,7 +158,7 @@ function otherReposSection(spec: Spec, repo: RepoSettings, checkouts: ReadonlyMa
 }
 
 /** What a worker on the pr strategy is told about the pull request Loom opens and follows for its ticket. */
-function pullRequestSection(spec: Spec, repo: RepoSettings): string[] {
+function pullRequestSection(spec: Spec, repo: RepoSettings, signature: string): string[] {
   const pr = prSettings(spec);
   if (repo.forge.kind === "none") {
     return ["## The pull request", "When the reviewers approve, Loom pushes the reviewed work to the ticket's branch and a person opens the pull request.", ""];
@@ -168,8 +168,9 @@ function pullRequestSection(spec: Spec, repo: RepoSettings): string[] {
       ? "When the reviewers approve, Loom asks you to write the pull request with loom_pr: its title, its description and the commit message."
       : "When the reviewers approve, Loom writes the pull request from this ticket.";
   const push = pr.squash ? "Loom pushes the reviewed work as one commit and opens the pull request; the human merges it." : "Loom pushes the reviewed branch and opens the pull request; the human merges it.";
-  const follows = pr.maxFixRounds > 0 && followsFeedback(repo.forge) ? [`While it is open, Loom follows its checks and reviews and sends you what needs a fix. Each fix goes through the checks and a review again and is pushed as ${pr.squash ? "one more commit" : "more commits"}.`] : [];
-  return ["## The pull request", [write, push, ...follows].join(" "), ""];
+  const following = pr.maxFixRounds > 0 && followsFeedback(repo.forge);
+  const follows = following ? [`While it is open, Loom follows its checks and reviews and sends you what needs a fix. Each fix goes through the checks and a review again and is pushed as ${pr.squash ? "one more commit" : "more commits"}.`] : [];
+  return ["## The pull request", [write, push, ...follows].join(" "), ...(following ? signRule(signature) : []), ""];
 }
 
 /**
@@ -221,7 +222,7 @@ export function dependsOnLines(spec: Spec, tickets: readonly TicketRow[], ticket
 }
 
 /** `checkouts` holds the checkout path of each other repo on a multi-repo project, by repo name; a repo missing from it is listed without a path. */
-export function workerBrief(a: { project: ProjectRow; spec: Spec; ticket: TicketRow; posts: PostRow[]; resume: boolean; checkouts?: ReadonlyMap<string, string>; tickets?: readonly TicketRow[] }): string {
+export function workerBrief(a: { project: ProjectRow; spec: Spec; ticket: TicketRow; posts: PostRow[]; resume: boolean; checkouts?: ReadonlyMap<string, string>; tickets?: readonly TicketRow[]; signature?: string }): string {
   const { project, spec, ticket, posts, resume } = a;
   const multi = isMultiRepo(spec);
   const repo = repoSettings(spec, ticket.repo);
@@ -257,7 +258,7 @@ export function workerBrief(a: { project: ProjectRow; spec: Spec; ticket: Ticket
     "",
     ...(multi ? otherReposSection(spec, repo, a.checkouts ?? new Map()) : []),
     ...dependenciesSection(spec, ticket, a.tickets ?? [], a.checkouts ?? new Map()),
-    ...(spec.merge.strategy === "pr" ? pullRequestSection(spec, repo) : []),
+    ...(spec.merge.strategy === "pr" ? pullRequestSection(spec, repo, a.signature ?? COMMENT_SIGNATURE) : []),
     "## Rules",
     "- Work only in this worktree. Never push, merge, or edit a protected path.",
     "- Call loom_note({ text }) once for each milestone, so the human can follow along on the ticket.",
@@ -589,9 +590,19 @@ export function feedbackList(checks: readonly FeedbackCheck[], items: readonly F
   return lines.join("\n");
 }
 
-const PR_RULES = [
+/** What a worker's pull request comments end with unless Loom's commentSignature setting says otherwise. */
+export const COMMENT_SIGNATURE = "Posted by Loom";
+
+/** The rule that signs a worker's pull request comments, or none for an empty signature. A worker posts from the human's account. */
+function signRule(signature: string): string[] {
+  const line = signature.trim();
+  return line === "" ? [] : [`End every comment and reply you post on the pull request with a blank line and then this line, exactly as written:\n  ${line}`];
+}
+
+const prRules = (signature: string) => [
   "Investigate a failed check with your own tools: the CI's CLI, the forge's CLI and the logs behind the links. A check that failed for a reason this change did not cause needs no code change; say so in your summary.",
   "You may answer review comments on the pull request with the forge's CLI, for example to explain a change or to ask a question. Never push, merge, close, approve or edit the pull request: Loom does that.",
+  ...signRule(signature),
   "If nothing needs to change, call loom_submit with a summary that says why; Loom then pushes nothing and keeps following the pull request.",
   "Otherwise the fix goes through the checks and a review, then you write its commit message and Loom pushes it as one more commit.",
 ];
@@ -623,13 +634,13 @@ export function prNudgeText(key: string, fix: boolean): string {
 }
 
 /** A fix round: what the pull request's checks and reviews, or the human on the ticket, asked for. */
-export function prFeedbackText(a: { key: string; url: string | null; round: number; counted: number; max: number; checks: FeedbackCheck[]; items: FeedbackItem[]; diverged: { remote: string; branch: string } | null }): { summary: string; detail: string } {
+export function prFeedbackText(a: { key: string; url: string | null; round: number; counted: number; max: number; checks: FeedbackCheck[]; items: FeedbackItem[]; diverged: { remote: string; branch: string } | null; signature?: string }): { summary: string; detail: string } {
   const human = a.items.some((item) => item.kind === "reply");
   const what = human ? "The human replied on the ticket about its open pull request" : a.url === null ? "The pull request needs fixes" : `The pull request ${a.url} needs fixes`;
   const merge = a.diverged === null ? [] : [`The pull request's branch has commits Loom did not push. First run \`git fetch ${a.diverged.remote} ${a.diverged.branch}\` and \`git merge FETCH_HEAD\` in this worktree, so your fix builds on them.`];
   return {
     summary: `[loom] ${a.key}: ${what} (fix round ${a.round}${human ? "" : `; ${a.counted} of the ${a.max} the pull request may start`}). Address it, then call loom_submit({ summary }).`,
-    detail: [feedbackList(a.checks, a.items), ...merge, ...PR_RULES.map((rule) => `- ${rule}`)].join("\n\n"),
+    detail: [feedbackList(a.checks, a.items), ...merge, ...prRules(a.signature ?? COMMENT_SIGNATURE).map((rule) => `- ${rule}`)].join("\n\n"),
   };
 }
 

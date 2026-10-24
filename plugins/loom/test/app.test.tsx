@@ -1240,6 +1240,12 @@ describe("planner questions", () => {
   };
   const card = (slot: Slot, id = "int_1") => slot.container.querySelector<HTMLElement>(`[data-question-card="${id}"]`);
 
+  it("counts the questions the planner waits on, not its rounds of questions", async () => {
+    const { slot } = await mountQuestions(() => [asked("int_1"), single("int_2", { createdAt: 2 })]);
+    await waitFor(() => expect(card(slot)).not.toBeNull());
+    expect(slot.container.querySelector("[data-planner-status]")!.textContent).toBe("Waiting on you \u00b7 3 questions");
+  });
+
   it("asks the planner's questions one at a time under Needs you, and sends the answers as the question plugin's own form does", async () => {
     let rows = [asked("int_1")];
     const { slot, list, answer } = await mountQuestions(() => rows);
@@ -3594,6 +3600,25 @@ describe("spec page", () => {
     expect(page(slot).querySelector('[data-settings-card="checks"]')!.hasAttribute("data-changed")).toBe(true);
     expect(page(slot).querySelector('[data-settings-card="merge"]')!.hasAttribute("data-changed")).toBe(false);
     expect(section(slot, "guardrails").querySelector('[data-guardrail="goal"]')!.textContent).toContain("Let people export their orders as a CSV file from the admin page.");
+  });
+
+  it("sizes the settings cards by their own column, so a narrow card stacks its rows and a long model name breaks at its slash", async () => {
+    const slot = await openPage({
+      specVersion: () =>
+        specVersionView({ version: 1, compared: null, changes: null, versions: [{ version: 1, status: "draft" }] }, (doc) => {
+          doc.agents = { worker: { provider: "pi", model: "anthropic/claude-sonnet-5-5" }, reviewer: { provider: "pi", model: "openai/gpt-5.5" } };
+        }),
+    });
+    // The page is one container and the review panel sits beside these cards, so the page's width says nothing about theirs.
+    const grid = section(slot, "settings").querySelector<HTMLElement>("[data-settings-grid]")!;
+    expect(grid.parentElement!.className).toContain("@container");
+    expect(grid.className).not.toContain("@3xl:grid-cols-3");
+    const workers = grid.querySelector<HTMLElement>('[data-settings-card="workers"]')!;
+    expect(workers.className).toContain("@container");
+    expect(workers.querySelector("dl")!.className.split(" ")).toContain("grid-cols-1");
+    const model = within(workers).getByText((_, element) => element?.getAttribute("data-model") === "anthropic/claude-sonnet-5-5");
+    expect(model.innerHTML).toBe("anthropic/<wbr>claude-sonnet-5-5");
+    expect(workers.querySelector('[aria-label="2 of up to 8"]')!.className).toContain("flex-wrap");
   });
 
   it("shows the entire spec of a first version, with no filter and no list of changes", async () => {

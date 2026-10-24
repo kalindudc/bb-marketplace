@@ -7,7 +7,7 @@ import { spawnEnvironment, threadBranch } from "./environments";
 import { plural } from "./format";
 import { checkoutOf } from "./merge";
 import { SpawnRefusedError, type ThreadInfo } from "./ports";
-import { andList, clip, recordPrompt } from "./prompts";
+import { COMMENT_SIGNATURE, andList, clip, recordPrompt } from "./prompts";
 import { LoomError, landsOf, repoOverviews, type RepoOverview } from "./projects";
 import { freshBaseOf, isMultiRepo, repoSettings } from "./repos";
 import type { Spec } from "./spec";
@@ -40,11 +40,19 @@ export const SETTINGS = {
     default: 30,
     experimental_schema: z.number().int().min(1).max(1440),
   },
+  commentSignature: {
+    type: "string",
+    label: "Signature on pull request comments",
+    description:
+      "On the pull request strategy, a worker ends every comment and reply it posts on a pull request with this line, so people can tell an agent wrote it from your account. Markdown works, such as <sub>Posted by Loom</sub> for small text on GitHub. Empty: no signature.",
+    default: COMMENT_SIGNATURE,
+    experimental_schema: z.string().max(200).regex(/^[^\r\n]*$/, "The signature is one line."),
+  },
 } satisfies PluginSettingDescriptors;
 
 export type DoneSettings = { doneHook: string; doneRecord: string };
-/** Every Loom setting; checksSettleMinutes is optional so a caller with only the done hook's settings can pass them. */
-export type LoomSettings = DoneSettings & { checksSettleMinutes?: number };
+/** Every Loom setting; the pull request ones are optional so a caller with only the done hook's settings can pass them. */
+export type LoomSettings = DoneSettings & { checksSettleMinutes?: number; commentSignature?: string };
 export const NO_HOOK: DoneSettings = { doneHook: "", doneRecord: "summary" };
 
 export const RECORD_MAX = 300_000;

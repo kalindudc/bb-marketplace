@@ -816,4 +816,15 @@ describe("prompts", () => {
     const reject = parseSpec(specToml((doc: Doc) => (doc.scope = { enforce: "reject" }))).spec!;
     expect(workerBrief({ project: project(), spec: reject, ticket, posts, resume: false })).toContain("makes loom_submit fail");
   });
+
+  it("tells a pull request worker how to sign its comments, also when it resumes on an open pull request", async () => {
+    await seedProject(h);
+    const spec = parseSpec(specToml((doc: Doc) => (doc.merge = { strategy: "pr" }))).spec!;
+    const ticket = ticketOf(h, "CSV-1");
+    const sign = "End every comment and reply you post on the pull request with a blank line and then this line, exactly as written:\n  Posted by Loom";
+    expect(workerBrief({ project: project(), spec, ticket, posts: [], resume: true, signature: "Posted by Loom" })).toContain(sign);
+    expect(workerBrief({ project: project(), spec, ticket, posts: [], resume: true, signature: "" })).not.toContain("End every comment");
+    const integration = parseSpec(specToml()).spec!;
+    expect(workerBrief({ project: project(), spec: integration, ticket, posts: [], resume: false, signature: "Posted by Loom" })).not.toContain("End every comment");
+  });
 });

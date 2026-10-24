@@ -202,6 +202,32 @@ describe("following the pull request", () => {
     expect(engine(() => ({ doneHook: "", doneRecord: "summary", checksSettleMinutes: 45 })).ctx.checksSettleMs!()).toBe(45 * 60_000);
   });
 
+  it("asks the worker to sign every comment it posts on the pull request with Loom's commentSignature setting", async () => {
+    h.ctx.commentSignature = () => "<sub>Posted by Loom</sub>";
+    const worker = await openPr();
+    h.host.feedback.set(URL, changesRequested);
+    await poll();
+    const message = h.bb.sent(worker.thread_id!).at(-1)!;
+    expect(message).toContain("End every comment and reply you post on the pull request with a blank line and then this line, exactly as written:\n  <sub>Posted by Loom</sub>");
+  });
+
+  it("asks for no signature when the setting is empty", async () => {
+    h.ctx.commentSignature = () => "  ";
+    const worker = await openPr();
+    h.host.feedback.set(URL, changesRequested);
+    await poll();
+    const message = h.bb.sent(worker.thread_id!).at(-1)!;
+    expect(message).toContain("You may answer review comments on the pull request with the forge's CLI");
+    expect(message).not.toContain("End every comment");
+  });
+
+  it("reads the signature through the engine, Posted by Loom when it is not set", () => {
+    const store = h.store;
+    const engine = (settings?: () => { doneHook: string; doneRecord: string; commentSignature?: string }) => new Engine({ store, bb: h.bb, now: h.clock.now, host: h.host, projects: h.projects, ...(settings === undefined ? {} : { settings }) });
+    expect(engine().ctx.commentSignature!()).toBe("Posted by Loom");
+    expect(engine(() => ({ doneHook: "", doneRecord: "summary", commentSignature: "Sent by an agent for me" })).ctx.commentSignature!()).toBe("Sent by an agent for me");
+  });
+
   it("starts a fix round with reviews, threads and people's comments, leaves out bots' comments and the author's own, and sends each item once", async () => {
     const worker = await openPr();
     const items: Feedback["items"] = [
