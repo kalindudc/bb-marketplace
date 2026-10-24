@@ -1,421 +1,541 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from "react";
 import {
-  experimental_Icon as Icon, useBbNavigate, useRealtime, useRpc, useSdk, type PluginNavPanelProps,
+  ThreadChat, experimental_Icon as Icon, experimental_useAppPanel, useBbNavigate, useRealtime,
+  type ExperimentalPageTitle, type PluginNavPanelProps,
 } from "@get-bb/plugin-sdk/app";
-import { DEFAULT_FILTER, filterRepos, filterWorktrees, focusLabel, focusRepos, projectOptions, type PageFilter, type RepoFocus } from "./filters";
-import { FocusChip } from "./focus-chip";
-import type { FileChange, Overview, Repo, Scope, rpcContract } from "./contract";
-import { fileKey, FileRow } from "./file-row";
-import { createLimiter } from "./limit";
-import { RepoSection } from "./repo-section";
-import { ArchivedSkeleton, EditsSkeleton, Skeleton, SkeletonRows } from "./skeleton";
+import type { Overview } from "./contract";
 import { createArchivedPreference } from "./archived-preference";
-import { ArchivedToggle } from "./archived-toggle";
-import { countArchived, isArchivedOnly } from "./archived";
-import { formatRoute, parseRoute, type PageRoute, type PageView } from "./route";
-import { createVantageStore, type VantageSnapshot, type VantageStore } from "./store";
-import { WorktreeDetail, type WorktreeDetailProps } from "./worktree-detail";
-import { LiveThreadsProvider, WorktreeList, lineCounts, useLiveThread, useWorktreeTally } from "./worktree-list";
+import { AllChanges } from "./changes";
+import { FilterChips, WorktreeList } from "./list";
+import { LiveThreadsProvider, resolveLive, useLiveThread, useSidebarIndex } from "./live";
+import { plural, type Outside, type Row } from "./model";
+import { Overlaps } from "./overlaps";
+import { Review, StatusGlyph, isTyping } from "./review";
+import { useSetReviewed } from "./reviewed";
+import { formatRoute, parseRoute, type PageRoute } from "./route";
+import { reloadLoaded } from "./loaded";
+import { useSession, useShared } from "./session";
+import { comments, useLoaders } from "./shared";
+import { Skeleton, SkeletonRows } from "./skeleton";
+import { groupBy, pageChip, pageText } from "./ui-prefs";
+import { useRows, type RowsData } from "./use-rows";
 
-const PAGE_PATH = "vantage";
-const WIDE_FROM_PX = 880;
-const PATCH_CONCURRENCY = 4;
-const EMPTY_SNAPSHOT: VantageSnapshot = { status: "loading", overview: null, scope: "uncommitted", refreshing: false, error: null };
-const VIEWS: ReadonlyArray<{ view: PageView; label: string }> = [
-  { view: "worktrees", label: "Worktrees" },
-  { view: "repositories", label: "Repositories" },
-];
-const SCOPES: ReadonlyArray<{ scope: Scope; label: string }> = [
-  { scope: "uncommitted", label: "Uncommitted" },
-  { scope: "branch", label: "Branch" },
-];
-const SWITCH = "inline-flex shrink-0 overflow-hidden rounded-md border border-border-seam";
-const FIELD = "h-7 rounded-md border border-border-seam bg-transparent px-2 text-xs text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+export const PAGE_PATH = "vantage";
+export const PAGE_PANEL_ID = "vantage";
+export const AGENT_TAB_ID = "agent";
+const NARROW_BELOW_PX = 760;
 
-const limitPatches = createLimiter(PATCH_CONCURRENCY);
 const archivedPreference = createArchivedPreference(window, "page");
-const plural = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? "" : "s"}`;
 
-function fileKeys(repos: readonly Repo[], otherFiles: readonly FileChange[], scope: Scope): string[] {
-  return [
-    ...repos.flatMap((repo) => [...repo.files, ...repo.otherFiles].map((file) => fileKey(repo, file.path, scope))),
-    ...otherFiles.map((file) => fileKey(null, file.path, scope)),
-  ];
+function usePage(subPath: string) {
+  const { route, canonical } = useMemo(() => parseRoute(subPath), [subPath]);
+  const includeArchived = useSyncExternalStore(archivedPreference.subscribe, archivedPreference.get, archivedPreference.get);
+  const session = useSession("page", route.target, includeArchived);
+  useRealtime("vantage:settings", () => { session.store?.refresh(); });
+  return { route, canonical, ...session };
 }
 
-function SwitchButtons<T extends string>({ label, options, value, onChange }: {
-  label: string; options: ReadonlyArray<{ value: T; text: string }>; value: T; onChange(value: T): void;
-}) {
-  return (
-    <div role="group" aria-label={label} className={SWITCH}>
-      {options.map((option) => (
-        <button key={option.value} type="button" aria-pressed={value === option.value} onClick={() => onChange(option.value)}
-          className={`cursor-pointer px-2 py-0.5 text-xs ${value === option.value ? "bg-surface-selected text-foreground" : "text-muted-foreground hover:bg-state-hover"}`}>
-          {option.text}
-        </button>
-      ))}
-    </div>
-  );
+function useGo() {
+  const navigate = useBbNavigate();
+  const ref = useRef(navigate);
+  ref.current = navigate;
+  return useCallback((next: PageRoute, replace = false) => {
+    ref.current.toPluginPanel(PAGE_PATH, { subPath: formatRoute(next), ...(replace ? { replace: true } : {}) });
+  }, []);
 }
 
-function ScopeLabel({ overview, route, onShowAll }: { overview: Overview | null; route: PageRoute; onShowAll(): void }) {
-  const threadId = route.target.kind === "tree" ? route.target.threadId : "";
-  const live = useLiveThread(threadId, overview?.threads.find((thread) => thread.id === threadId));
-  if (route.target.kind === "all") {
-    return <span className="shrink-0 text-sm font-semibold text-foreground">All threads{overview?.windowHours == null ? "" : ` · last ${overview.windowHours} h`}</span>;
-  }
+function usePageRows(overview: Overview | null): RowsData {
+  const text = useShared(pageText);
+  const chip = useShared(pageChip);
+  const by = useShared(groupBy);
+  return useRows(overview, { currentThreadId: null, text, chip, groupBy: by });
+}
+
+const rootTitle = (overview: Overview | null, route: PageRoute, title: string | null): string =>
+  route.target.kind === "all" ? `All threads${overview?.windowHours == null ? "" : ` · last ${overview.windowHours} h`}` : (title ?? "This tree");
+
+function useOpenAgent() {
+  const panel = experimental_useAppPanel();
+  return useCallback(() => {
+    panel.experimental_openTab({ surface: { kind: "current" }, tab: { id: AGENT_TAB_ID, context: { kind: "nav-panel", panelId: PAGE_PANEL_ID }, availability: "fixed" } });
+  }, [panel]);
+}
+
+const BUTTON = "inline-flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-md border border-border-seam bg-card px-2.5 text-xs text-foreground hover:bg-state-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+
+export function PrefToggles({ threadId, data, size = "normal" }: { threadId: string; data: RowsData; size?: "normal" | "small" }) {
+  const watched = data.watched(threadId);
+  const reviewing = data.reviewing(threadId);
+  const base = `inline-flex ${size === "small" ? "h-6" : "h-7"} shrink-0 cursor-pointer items-center gap-1 rounded-md px-2 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring`;
   return (
     <>
-      <span className="min-w-0 truncate text-sm font-semibold text-foreground">Tree: {live.title}</span>
-      <button type="button" onClick={onShowAll}
-        className="shrink-0 cursor-pointer rounded px-1.5 py-0.5 text-xs text-muted-foreground underline hover:bg-state-hover hover:text-foreground">
-        Show all threads
+      <button type="button" aria-pressed={watched} onClick={() => data.toggle("watch", threadId)}
+        title={watched ? "Watching: Vantage says when a worktree in this tree needs you or failed" : "Not watching: Vantage stays quiet about this tree's worktrees. Click to watch them."}
+        className={`${base} ${watched ? "bg-surface-selected text-foreground" : "text-muted-foreground hover:bg-state-hover"}`}>
+        <Icon name={watched ? "Eye" : "EyeOff"} className="size-3.5" aria-hidden />{watched ? "Watching" : "Watch"}
+      </button>
+      <button type="button" aria-pressed={reviewing} onClick={() => data.toggle("reviews", threadId)}
+        title={reviewing ? "Reviews on: tick files as you review them in this tree" : "Reviews off: diffs only. Click to tick files as you review them."}
+        className={`${base} ${reviewing ? "bg-surface-selected text-foreground" : "text-muted-foreground hover:bg-state-hover"}`}>
+        <Icon name="Check" className="size-3.5" aria-hidden />{reviewing ? "Reviews on" : "Track reviews"}
       </button>
     </>
   );
 }
 
-function WorktreeSummary({ overview, worktrees }: { overview: Overview; worktrees: Overview["worktrees"] }) {
-  const tally = useWorktreeTally(overview, worktrees, null);
-  const files = worktrees.reduce((sum, worktree) => sum + worktree.uncommitted.length + worktree.committed.length, 0);
-  const lines = worktrees.map(lineCounts);
-  const projects = new Set(worktrees.map((worktree) => worktree.projectId)).size;
-  const archived = countArchived(worktrees, overview.threads);
+function Metric({ value, label, tone = "text-foreground", onClick }: { value: number; label: string; tone?: string; onClick(): void }) {
   return (
-    <span data-page-summary className="text-xs text-muted-foreground">
-      {plural(worktrees.length, "workspace")} · {tally.running} running · {tally.needs} {tally.needs === 1 ? "needs" : "need"} you · {tally.failed} failed ·{" "}
-      {archived > 0 && `${archived} archived · `}
-      {overview.partial
-        ? <Skeleton className="h-3 w-24 align-middle" />
-        : (
-          <>
-            {plural(files, "file")} <span className="text-diff-added">+{lines.reduce((sum, entry) => sum + entry.additions, 0)}</span>{" "}
-            <span className="text-diff-removed">−{lines.reduce((sum, entry) => sum + entry.deletions, 0)}</span>
-          </>
-        )}
-      {" "}· {plural(projects, "project")}
-    </span>
+    <button type="button" onClick={onClick} data-metric={label}
+      className="grid cursor-pointer gap-0.5 rounded-xl border border-border-seam bg-card px-3.5 py-3 text-left hover:border-ring">
+      <span className={`text-2xl font-semibold ${tone}`}>{value}</span>
+      <span className="text-xs text-muted-foreground">{label}</span>
+    </button>
   );
 }
 
-function RepoSummary({ repos, partial }: { repos: readonly Repo[]; partial: boolean }) {
-  const files = repos.reduce((sum, repo) => sum + repo.totals.files, 0);
-  const projects = new Set(repos.map((repo) => repo.projectId)).size;
+function RowLine({ row, action, onAction, titleOf }: { row: Row; action: string; onAction(): void; titleOf(key: string): string }) {
+  const overlap = row.bucket === "archived" ? undefined : row.overlaps[0];
+  const reason = row.bucket === "needs"
+    ? <span className={row.live.indicator === "unread-error" ? "text-destructive-text" : "text-foreground"}>{row.live.sidebar?.indicatorLabel ?? "Needs you"}</span>
+    : overlap !== undefined
+      ? <span className="text-warning-text">Overlaps with {titleOf(overlap.otherKeys[0]!)} in {overlap.path}</span>
+      : row.progress !== null && row.progress.total > 0
+        ? <span className="text-muted-foreground">{row.progress.reviewed} of {row.progress.total} files reviewed</span>
+        : <span className="text-muted-foreground">{plural(row.worktree.uncommitted.length + row.worktree.committed.length, "file")} changed</span>;
+  const loading = row.worktree.state === "loading";
   return (
-    <span data-page-summary className="text-xs text-muted-foreground">
-      {plural(repos.length, "repo")} ·{" "}
-      {partial
-        ? <Skeleton className="h-3 w-24 align-middle" />
-        : (
-          <>
-            {plural(files, "file")} <span className="text-diff-added">+{repos.reduce((sum, repo) => sum + repo.totals.additions, 0)}</span>{" "}
-            <span className="text-diff-removed">−{repos.reduce((sum, repo) => sum + repo.totals.deletions, 0)}</span>
-          </>
-        )}
-      {" "}· {plural(projects, "project")}
-    </span>
+    <div className="flex items-center gap-3 border-t border-border-seam px-4 py-2.5 first:border-t-0">
+      <span className="flex size-4 shrink-0 items-center justify-center"><StatusGlyph row={row} /></span>
+      <span className="min-w-0 flex-1">
+        <span className="flex min-w-0 items-baseline gap-2">
+          <span className="min-w-0 truncate text-sm font-medium text-foreground">{row.title}</span>
+          <span className="shrink-0 whitespace-nowrap font-mono text-[11px]">
+            {loading ? <Skeleton className="h-3 w-12 align-middle" /> : <><span className="text-diff-added">+{row.additions}</span> <span className="text-diff-removed">−{row.deletions}</span></>}
+          </span>
+        </span>
+        <span className="block min-w-0 truncate text-xs text-muted-foreground">
+          {row.worktree.label}{row.worktree.branch === null ? "" : ` · ${row.worktree.branch}`} · {loading ? "reading its changes…" : reason}
+        </span>
+      </span>
+      <button type="button" onClick={onAction} className={row.bucket === "needs" ? "h-7 shrink-0 cursor-pointer rounded-md bg-primary px-2.5 text-xs text-primary-foreground hover:opacity-90" : BUTTON}>{action}</button>
+    </div>
   );
 }
 
-function VantageScreen({ subPath }: PluginNavPanelProps) {
-  const rpc = useRpc<typeof rpcContract>();
-  const sdk = useSdk();
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="mt-6">
+      <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-subtle-foreground">{title}</h3>
+      <div className="overflow-hidden rounded-xl border border-border-seam bg-card">{children}</div>
+    </section>
+  );
+}
+
+function PageOverview({ overview, route, data, onOpen, onAnswer, onOverlaps, onChanges, onOutside }: {
+  overview: Overview; route: PageRoute; data: RowsData; onOpen(key: string): void; onAnswer(key: string): void; onOverlaps(): void; onChanges(): void; onOutside(entry: Outside): void;
+}) {
+  const rootId = route.target.kind === "tree" ? route.target.threadId : "";
+  const root = useLiveThread(rootId, overview.threads.find((thread) => thread.id === rootId));
+  const { rows, counts } = data;
+  const active = rows.filter((row) => row.bucket !== "archived");
+  const next = [...rows.filter((row) => row.bucket === "needs"), ...rows.filter((row) => row.bucket === "review" || row.bucket === "changed")];
+  const working = rows.filter((row) => row.bucket === "working");
+  const reviewed = rows.filter((row) => row.bucket === "reviewed");
+  const files = active.reduce((total, row) => total + row.worktree.uncommitted.length + row.worktree.committed.length, 0);
+  const projects = new Set(active.map((row) => row.worktree.projectId)).size;
+  const anyWatched = rows.some((row) => row.watched);
+  const anyReviewing = rows.some((row) => row.reviewing);
+  const first = next[0] ?? rows[0];
+  return (
+    <div data-page-overview className="mx-auto w-full max-w-4xl px-7 pb-10 pt-7">
+      <h1 className="text-xl font-semibold text-foreground">{route.target.kind === "tree" ? root.title : `All threads in the last ${overview.windowHours ?? 24} hours`}</h1>
+      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-muted-foreground">
+        <span>{plural(active.length, "worktree")} in {plural(projects, "project")} · {plural(files, "file")}</span>
+        {route.target.kind === "tree" && <PrefToggles threadId={rootId} data={data} />}
+        <span className="flex-1" />
+        <button type="button" className={BUTTON} onClick={onChanges}>All changes</button>
+        {first !== undefined && (
+          <button type="button" onClick={() => onOpen(first.worktree.key)} className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-md bg-primary px-3 text-xs text-primary-foreground hover:opacity-90">
+            {anyReviewing ? "Start reviewing" : "Open the first worktree"}<span className="rounded border border-primary-foreground/40 px-1 text-[10px]">]</span>
+          </button>
+        )}
+      </div>
+      <div className="mt-5 grid grid-cols-2 gap-2.5 md:grid-cols-4">
+        {anyWatched && <Metric value={counts.needs} label="Need you" onClick={() => pageChip.set("needs")} />}
+        {anyReviewing
+          ? <Metric value={counts.review} label="To review" onClick={() => pageChip.set("review")} />
+          : <Metric value={rows.filter((row) => row.bucket === "changed").length} label="Changed" onClick={() => pageChip.set(null)} />}
+        <Metric value={counts.working} label="Working" onClick={() => pageChip.set("working")} />
+        <Metric value={counts.overlaps} label="Overlapping files" tone={counts.overlaps > 0 ? "text-warning-text" : "text-foreground"} onClick={onOverlaps} />
+      </div>
+      {!anyWatched && rows.length > 0 && (
+        <p className="mt-3 text-xs text-subtle-foreground">
+          Vantage is not watching {route.target.kind === "tree" ? "this tree" : "any of these threads"}, so it does not say when a worktree needs you. Watch a thread from its menu, its Vantage tab or the button above.
+        </p>
+      )}
+      {overview.partial && <SkeletonRows count={3} label="Reading every worktree's changes" />}
+      {next.length > 0 && (
+        <Section title="Up next">
+          {next.map((row) => (
+            <RowLine key={row.worktree.key} row={row} titleOf={data.titleOf}
+              action={row.bucket === "needs" ? (row.live.indicator === "waiting-for-input" ? "Answer" : "Open") : row.reviewing ? "Review" : "Open"}
+              onAction={() => (row.bucket === "needs" && row.live.indicator === "waiting-for-input" ? onAnswer(row.worktree.key) : onOpen(row.worktree.key))} />
+          ))}
+        </Section>
+      )}
+      {working.length > 0 && (
+        <Section title="Working">
+          {working.map((row) => <RowLine key={row.worktree.key} row={row} titleOf={data.titleOf} action="Open" onAction={() => onOpen(row.worktree.key)} />)}
+        </Section>
+      )}
+      {counts.overlaps > 0 && (
+        <Section title="Overlapping files">
+          {overview.sharedFiles.filter((file) => file.worktreeKeys.some((key) => data.rowFor(key)?.bucket !== "archived")).map((file) => (
+            <div key={`${file.projectId}\0${file.path}`} className="flex items-center gap-3 border-t border-border-seam px-4 py-2.5 first:border-t-0">
+              <Icon name="AlertTriangle" className="size-3.5 shrink-0 text-warning-text" aria-hidden />
+              <span className="min-w-0 flex-1 truncate text-sm">
+                <span className="font-mono text-foreground">{file.path}</span>
+                <span className="text-muted-foreground"> · changed by {file.worktreeKeys.map(data.titleOf).join(" and ")}</span>
+              </span>
+              <button type="button" className={BUTTON} onClick={onOverlaps}>Compare</button>
+            </div>
+          ))}
+        </Section>
+      )}
+      {reviewed.length > 0 && (
+        <Section title="Reviewed">
+          {reviewed.map((row) => <RowLine key={row.worktree.key} row={row} titleOf={data.titleOf} action="Open" onAction={() => onOpen(row.worktree.key)} />)}
+        </Section>
+      )}
+      {data.outside.length > 0 && (
+        <Section title="Changed outside worktrees">
+          {data.outside.map((entry) => (
+            <div key={entry.key} className="flex items-center gap-3 border-t border-border-seam px-4 py-2.5 first:border-t-0">
+              <Icon name={entry.kind === "repo" ? "Folder" : "EditFile"} className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+              <span className="min-w-0 flex-1 truncate text-sm text-foreground">{entry.title} <span className="text-muted-foreground">· {entry.detail} · {plural(entry.files, "file")}</span></span>
+              <button type="button" className={BUTTON} onClick={() => onOutside(entry)}>Show</button>
+            </div>
+          ))}
+        </Section>
+      )}
+      {rows.length === 0 && data.outside.length === 0 && !overview.partial && (
+        <p className="mt-8 text-sm text-muted-foreground">
+          {overview.worktrees.length === 0
+            ? (route.target.kind === "all" ? `No worktrees in the last ${overview.windowHours ?? 24} hours.` : "No worktrees in this thread or its child threads yet.")
+            : "Nothing has changed in these worktrees yet."}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function Banners({ overview, error, status, onRetry, all }: { overview: Overview | null; error: string | null; status: string; onRetry(): void; all: boolean }) {
+  const notices = overview === null ? [] : [
+    ...overview.warnings,
+    ...(overview.truncatedThreads ? [all ? `Showing the ${overview.threads.length} most recent threads; raise the limit in Vantage's settings` : "Only the first 200 threads of this tree were read."] : []),
+  ];
+  return (
+    <>
+      {status === "error" && (
+        <div role="alert" className="border-b border-border-seam px-5 py-3 text-sm text-destructive-text">
+          Could not load changes: {error}<button type="button" className="ml-2 cursor-pointer underline" onClick={onRetry}>Retry</button>
+        </div>
+      )}
+      {status === "ready" && error !== null && (
+        <div role="alert" className="border-b border-border-seam px-5 py-2 text-xs text-warning-text">
+          Could not refresh: {error}<button type="button" className="ml-2 cursor-pointer underline" onClick={onRetry}>Retry</button>
+        </div>
+      )}
+      {notices.map((notice) => <div key={notice} role="status" className="border-b border-border-seam px-5 py-2 text-xs text-warning-text">{notice}</div>)}
+    </>
+  );
+}
+
+function PageScreen({ subPath }: PluginNavPanelProps) {
+  const { route, canonical, store, snapshot } = usePage(subPath);
+  const go = useGo();
   const navigate = useBbNavigate();
-  const rpcRef = useRef(rpc);
-  rpcRef.current = rpc;
-  const sdkRef = useRef(sdk);
-  sdkRef.current = sdk;
-  const navigateRef = useRef(navigate);
-  navigateRef.current = navigate;
-
-  const { route, canonical } = useMemo(() => parseRoute(subPath), [subPath]);
-  const go = useCallback((next: PageRoute, replace = false) => {
-    navigateRef.current.toPluginPanel(PAGE_PATH, { subPath: formatRoute(next), ...(replace ? { replace: true } : {}) });
-  }, []);
-  useEffect(() => {
-    if (canonical !== subPath) go(route, true);
-  }, [canonical, subPath, route, go]);
-
-  const targetKey = JSON.stringify(route.target);
-  const [mounted, setMounted] = useState<{ key: string; store: VantageStore } | null>(null);
-  const store = mounted?.key === targetKey ? mounted.store : null;
-  useEffect(() => {
-    const next = createVantageStore({
-      rpc: { call: (method, input) => rpcRef.current.call(method, input) }, sdk: sdkRef.current, target: route.target,
-      includeArchived: archivedPreference.get(),
-    });
-    setMounted({ key: targetKey, store: next });
-    return () => next.dispose();
-    // The store follows the target's content, not the identity of the route object.
-  }, [targetKey]);
-  const includeArchived = useSyncExternalStore(archivedPreference.subscribe, archivedPreference.get, archivedPreference.get);
-  useEffect(() => { store?.setIncludeArchived(includeArchived); }, [store, includeArchived]);
-  const subscribe = useCallback((listener: () => void) => store?.subscribe(listener) ?? (() => {}), [store]);
-  const getSnapshot = useCallback(() => store?.getSnapshot() ?? EMPTY_SNAPSHOT, [store]);
-  const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const openAgent = useOpenAgent();
+  const loaders = useLoaders();
+  const setReviewed = useSetReviewed();
+  const text = useShared(pageText);
   const { overview } = snapshot;
-  useRealtime("vantage:settings", () => { store?.refresh(); });
+  const data = usePageRows(overview);
+  useEffect(() => { if (canonical !== subPath) go(route, true); }, [canonical, subPath, route, go]);
 
   const rootRef = useRef<HTMLElement | null>(null);
-  const [wide, setWide] = useState<boolean | null>(null);
+  const [narrow, setNarrow] = useState(false);
   useLayoutEffect(() => {
     const root = rootRef.current;
-    if (root === null) return;
-    setWide(root.getBoundingClientRect().width >= WIDE_FROM_PX);
+    if (root === null || typeof ResizeObserver === "undefined") return;
+    setNarrow(root.getBoundingClientRect().width < NARROW_BELOW_PX);
     const observer = new ResizeObserver((entries) => {
       const width = entries.at(-1)?.contentRect.width;
-      if (width !== undefined) setWide(width >= WIDE_FROM_PX);
+      if (width !== undefined) setNarrow(width < NARROW_BELOW_PX);
     });
     observer.observe(root);
     return () => observer.disconnect();
   }, []);
 
-  const [filter, setFilter] = useState<PageFilter>(DEFAULT_FILTER);
-  const worktrees = useMemo(() => (overview === null ? [] : filterWorktrees(overview, filter)), [overview, filter]);
-  const repoView = useMemo(() => (overview === null ? { repos: [], otherFiles: [] } : filterRepos(overview, filter)), [overview, filter]);
-  const projects = useMemo(() => (overview === null ? [] : projectOptions(overview)), [overview]);
-  // The list's "changed outside worktrees" rows follow the filters too.
-  const listOverview = useMemo(() => (overview === null ? null : { ...overview, ...repoView }), [overview, repoView]);
-  const focused = useMemo(() => focusRepos(repoView, route.focus), [repoView, route.focus]);
-  const threads = useMemo(() => new Map((overview?.threads ?? []).map((thread) => [thread.id, thread])), [overview?.threads]);
-
   const selectedKey = route.selectedKey;
-  const selected = selectedKey === null ? undefined : overview?.worktrees.find((worktree) => worktree.key === selectedKey);
-  const detailOpen = route.view === "worktrees" && selected !== undefined;
+  const row = selectedKey === null ? null : data.rowFor(selectedKey);
   useEffect(() => {
     // The outline may leave out a worktree the full overview has, so only the full result can say it is gone.
-    if (overview !== null && !overview.partial && selectedKey !== null && selected === undefined) go({ ...route, selectedKey: null }, true);
-  }, [overview, selectedKey, selected, route, go]);
-  const [tab, setTab] = useState<WorktreeDetailProps["tab"]>("changes");
-  useEffect(() => { setTab("changes"); }, [selectedKey]);
-
-  const select = useCallback((key: string) => { if (key !== selectedKey) go({ ...route, selectedKey: key }); }, [go, route, selectedKey]);
-  const clear = useCallback(() => go({ ...route, selectedKey: null }), [go, route]);
+    if (overview !== null && !overview.partial && selectedKey !== null && row === null) go({ ...route, selectedKey: null }, true);
+  }, [overview, selectedKey, row, route, go]);
+  const open = useCallback((key: string) => go({ ...route, view: "overview", selectedKey: key, focus: null }), [go, route]);
+  const home = useCallback(() => go({ ...route, view: "overview", selectedKey: null, focus: null }), [go, route]);
+  const index = row === null ? -1 : data.order.findIndex((entry) => entry.worktree.key === row.worktree.key);
   const step = useCallback((delta: -1 | 1) => {
-    const next = worktrees[worktrees.findIndex((worktree) => worktree.key === selectedKey) + delta];
-    if (next !== undefined) go({ ...route, selectedKey: next.key });
-  }, [go, route, selectedKey, worktrees]);
+    const list = data.order;
+    if (list.length === 0) return;
+    const next = index === -1 ? list[delta > 0 ? 0 : list.length - 1] : list[index + delta];
+    if (next !== undefined) open(next.worktree.key);
+  }, [data.order, index, open]);
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
-    if (!detailOpen || event.ctrlKey || event.metaKey || event.altKey) return;
-    const target = event.target;
-    if (!(target instanceof Element) || !event.currentTarget.contains(target)) return;
-    if (target.closest("input, textarea, select, [contenteditable='true'], [contenteditable='']")) return;
+    if (event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented || isTyping(event.target)) return;
     if (event.key === "[") step(-1);
     else if (event.key === "]") step(1);
-    else if (event.key === "Escape") clear();
+    else if (event.key === "Escape" && (route.selectedKey !== null || route.view !== "overview")) home();
     else return;
     event.preventDefault();
     event.stopPropagation();
   };
-
-  const loaders = useMemo<WorktreeDetailProps["loaders"]>(() => ({
-    patch: (input) => limitPatches(() => rpcRef.current.call("patch", input)),
-    recordedEdits: (input) => rpcRef.current.call("recordedEdits", input),
-    commitFiles: (input) => rpcRef.current.call("commitFiles", input),
-  }), []);
-  const onOpenThread = useCallback((id: string) => navigateRef.current.toThread(id), []);
-
-  const [collapsedRepos, setCollapsedRepos] = useState<ReadonlySet<string>>(() => new Set());
-  const [expandedFiles, setExpandedFiles] = useState<ReadonlySet<string>>(() => new Set());
-  const flip = useCallback((set: ReadonlySet<string>, key: string): ReadonlySet<string> => {
-    const next = new Set(set);
-    if (!next.delete(key)) next.add(key);
-    return next;
-  }, []);
-  const onToggleRepo = useCallback((key: string) => setCollapsedRepos((current) => flip(current, key)), [flip]);
-  const onToggleFile = useCallback((key: string) => setExpandedFiles((current) => flip(current, key)), [flip]);
-  const allKeys = fileKeys(focused.repos, focused.otherFiles, snapshot.scope);
-  const everythingOpen = overview !== null && !overview.partial && focused.repos.every((repo) => !collapsedRepos.has(repo.key)) && allKeys.every((key) => expandedFiles.has(key));
-  const toggleAll = () => {
-    if (everythingOpen) {
-      setCollapsedRepos(new Set(focused.repos.map((repo) => repo.key)));
-      setExpandedFiles(new Set());
-    } else {
-      setCollapsedRepos(new Set());
-      setExpandedFiles(new Set(allKeys));
-    }
-  };
-
-  const setView = (view: PageView) => {
-    if (view === route.view) return;
-    const focus: RepoFocus | null = view === "repositories" && selectedKey !== null ? { kind: "repo", key: selectedKey } : null;
-    go({ ...route, view, selectedKey: null, focus });
-  };
-  const showRepositories = (focus: RepoFocus) => go({ ...route, view: "repositories", selectedKey: null, focus });
-  const clearFocus = () => go({ ...route, focus: null });
-  const showAll = () => go({ ...route, target: { kind: "all" }, selectedKey: null });
-  const refreshHard = () => store?.refresh({ hard: true });
-
-  const notices = overview === null ? [] : [
-    ...overview.warnings,
-    ...(overview.truncatedThreads
-      ? [route.target.kind === "all"
-        ? `Showing the ${overview.threads.length} most recent threads; raise the limit in Settings`
-        : "Only the first 200 threads of this tree were read."]
-      : []),
-  ];
-  const banners = (
-    <>
-      {snapshot.status === "error" && (
-        <div role="alert" className="border-b border-border-seam px-4 py-3 text-sm text-destructive-text">
-          Could not load changes: {snapshot.error}
-          <button type="button" className="ml-2 underline" onClick={refreshHard}>Retry</button>
-        </div>
-      )}
-      {snapshot.status === "ready" && snapshot.error !== null && (
-        <div role="alert" className="border-b border-border-seam px-4 py-2 text-xs text-warning-text">
-          Could not refresh: {snapshot.error}
-          <button type="button" className="ml-2 underline" onClick={refreshHard}>Retry</button>
-        </div>
-      )}
-      {notices.map((notice) => (
-        <div key={notice} role="status" className="border-b border-border-seam px-4 py-2 text-xs text-warning-text">{notice}</div>
-      ))}
-    </>
-  );
-
-  const detail = detailOpen && overview !== null && (
-    <WorktreeDetail overview={overview} worktreeKey={selectedKey!} worktrees={worktrees} tab={tab} currentThreadId={null} currentHostId={null}
-      terminal="environment" onTab={setTab} onStep={step} onBack={clear} loaders={loaders} />
-  );
-  const list = overview !== null && listOverview !== null && (
-    <WorktreeList overview={listOverview} worktrees={worktrees} currentThreadId={null} selectedKey={selectedKey} showSummary={false}
-      onOpen={select} onShowRepositories={showRepositories} />
-  );
-
-  const threadIndex = useMemo(() => new Map((overview?.threads ?? []).map((thread) => [thread.id, thread])), [overview?.threads]);
-  // Archived repositories get their own project groups after every active one, as in the worktree list.
-  const groups = useMemo(() => {
-    const byProject = (repos: readonly Repo[], archived: boolean) => {
-      const found = new Map<string | null, Repo[]>();
-      for (const repo of repos) found.set(repo.projectId, [...(found.get(repo.projectId) ?? []), repo]);
-      const named = projects.flatMap((project) => (found.has(project.id) ? [{ id: project.id, name: project.name, archived, repos: found.get(project.id)! }] : []));
-      const listed = new Set(projects.map((project) => project.id));
-      const rest = [...found].flatMap(([id, entries]) => (id !== null && listed.has(id) ? [] : [{ id, name: "Other repositories", archived, repos: entries }]));
-      return [...named, ...rest];
+  const compare = (path: string) => {
+    go({ ...route, view: "overlaps", selectedKey: null, focus: null });
+    // The overlaps page draws its cards only once every worktree's files are known, so look again for a few seconds.
+    let tries = 0;
+    const look = () => {
+      const card = [...document.querySelectorAll<HTMLElement>("[data-overlap]")].find((entry) => entry.dataset.overlap === path);
+      if (card !== undefined) card.scrollIntoView?.({ block: "start" });
+      else if (tries++ < 40) setTimeout(look, 100);
     };
-    return [
-      ...byProject(focused.repos.filter((repo) => !isArchivedOnly(repo, threadIndex)), false),
-      ...byProject(focused.repos.filter((repo) => isArchivedOnly(repo, threadIndex)), true),
-    ];
-  }, [focused.repos, projects, threadIndex]);
-  const archivedReposPending = overview !== null && !overview.partial && route.focus === null && overview.repos.some((repo) =>
-    repo.state === "loading" && !repoView.repos.includes(repo) && isArchivedOnly(repo, threadIndex));
-  const showHost = overview !== null && new Set(overview.repos.map((repo) => repo.hostId)).size > 1;
+    requestAnimationFrame(look);
+  };
+  const openOutside = (entry: Outside) => go({ ...route, view: "changes", selectedKey: null, focus: entry.kind === "repo" ? { kind: "repo", key: entry.key } : { kind: "otherFiles" } });
 
-  let body;
-  if (wide === null || overview === null) {
-    body = snapshot.status === "error" ? null : <SkeletonRows count={4} label="Loading worktrees" />;
-  } else if (route.view === "repositories") {
+  let body: ReactNode;
+  if (overview === null) body = snapshot.status === "error" ? null : <SkeletonRows count={4} label="Loading worktrees" />;
+  else if (row !== null) {
+    const rootThread = overview.threads.find((thread) => thread.id === row.threadId)?.rootThreadId ?? row.threadId;
+    const review = (
+      <Review key={row.worktree.key} overview={overview} row={row} index={index} total={data.order.length} compact={narrow} currentThreadId={null} currentHostId={null}
+        terminal="environment" marks={data.marks[row.worktree.key]} titleOf={data.titleOf} branchOf={data.branchOf} comments={comments}
+        loaders={loaders} setReviewed={setReviewed} onToggleReviews={() => data.toggleFor("reviews", row.threadId, rootThread)} onStep={step}
+        onMessage={openAgent} onCompare={compare} onSent={openAgent} />
+    );
+    // A compact review is one column with no scroll area of its own.
+    body = narrow ? <div className="h-full overflow-y-auto">{review}</div> : review;
+  } else if (route.view === "changes") {
+    body = (
+      <div className="h-full overflow-y-auto pt-2">
+        <AllChanges overview={overview} scope={snapshot.scope} onScope={(scope) => store?.setScope(scope)} focus={route.focus}
+          onClearFocus={() => go({ ...route, focus: null })} text={text} loaders={loaders} onOpenThread={(id) => navigate.toThread(id)} />
+      </div>
+    );
+  } else if (route.view === "overlaps") {
+    body = <div className="h-full overflow-y-auto"><Overlaps overview={overview} rows={data.rows} titleOf={data.titleOf} loaders={loaders} comments={comments} onReview={open} text={text} /></div>;
+  } else {
     body = (
       <div className="h-full overflow-y-auto">
-        <div className="mx-auto w-full max-w-5xl pb-6">
-          {focused.repos.length === 0 && focused.otherFiles.length === 0 && (
-            <p className="p-4 text-sm text-muted-foreground">
-              {overview.repos.length === 0 && overview.otherFiles.length === 0 ? "No changes in these threads yet." : "No repositories match the filters."}
-            </p>
-          )}
-          {groups.map((group) => (
-            <section key={`${group.archived ? "archived" : "active"}\0${group.id ?? "none"}`}>
-              <h3 data-project-group={group.name} className="px-4 pb-1 pt-4 text-[10.5px] font-semibold uppercase tracking-wider text-subtle-foreground">
-                {`${group.archived ? "Archived · " : ""}${group.name} · ${plural(group.repos.length, "repo")} · ${plural(group.repos.reduce((sum, repo) => sum + repo.totals.files, 0), "file")}`}
-              </h3>
-              {group.repos.map((repo) => (
-                <RepoSection key={repo.key} repo={repo} scope={overview.scope} threads={threads} expanded={!collapsedRepos.has(repo.key)}
-                  expandedFiles={expandedFiles} onToggleRepo={onToggleRepo} onToggleFile={onToggleFile} onOpenThread={onOpenThread}
-                  loaders={loaders} showHost={showHost} />
-              ))}
-            </section>
-          ))}
-          {archivedReposPending && <ArchivedSkeleton />}
-          {overview.partial && <EditsSkeleton />}
-          {focused.otherFiles.length > 0 && (
-            <section data-other-files className="pb-2">
-              <h3 className="px-4 pb-1 pt-4 text-[10.5px] font-semibold uppercase tracking-wider text-subtle-foreground">Other files</h3>
-              <p className="px-4 pb-1 text-xs text-muted-foreground">Edits outside any repository, from the agents' recorded edits.</p>
-              {focused.otherFiles.map((file) => (
-                <FileRow key={file.path} repo={null} file={file} scope={overview.scope} threads={threads}
-                  expanded={expandedFiles.has(fileKey(null, file.path, overview.scope))} onToggle={onToggleFile} loaders={loaders} />
-              ))}
-            </section>
-          )}
-        </div>
+        <PageOverview overview={overview} route={route} data={data} onOpen={open} onAnswer={(key) => { open(key); openAgent(); }}
+          onOverlaps={() => go({ ...route, view: "overlaps", selectedKey: null, focus: null })}
+          onChanges={() => go({ ...route, view: "changes", selectedKey: null, focus: null })} onOutside={openOutside} />
       </div>
     );
-  } else if (overview.worktrees.length === 0) {
-    body = <p className="p-4 text-sm text-muted-foreground">{route.target.kind === "all" ? `No worktrees in the last ${overview.windowHours ?? 24} hours.` : "No worktrees in this thread or its child threads yet."}</p>;
-  } else if (wide) {
-    body = (
-      <div data-page-panes className="grid h-full min-h-0 grid-cols-[minmax(320px,420px)_minmax(0,1fr)]">
-        <div className="min-h-0 overflow-y-auto border-r border-border-seam">{list}</div>
-        <div className="flex min-h-0 min-w-0 flex-col">
-          {detail || <p className="p-6 text-sm text-muted-foreground">Select a worktree to inspect it.</p>}
-        </div>
-      </div>
-    );
-  } else {
-    body = <div data-page-panes className="h-full min-h-0">{detail || <div className="h-full overflow-y-auto">{list}</div>}</div>;
   }
 
   return (
     <section ref={rootRef} data-vantage-page tabIndex={-1} onKeyDown={onKeyDown} className="flex h-full min-h-0 min-w-0 flex-col bg-surface-recessed text-foreground">
-      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-border-seam px-4 py-2.5">
-        <ScopeLabel overview={overview} route={route} onShowAll={showAll} />
-        <SwitchButtons label="View" options={VIEWS.map((entry) => ({ value: entry.view, text: entry.label }))} value={route.view} onChange={setView} />
-        {route.view === "repositories" && route.focus !== null && (
-          <FocusChip label={focusLabel(overview?.repos ?? [], route.focus)} onClear={clearFocus} />
-        )}
-        <label className="relative inline-flex items-center">
-          <Icon name="Search" className="pointer-events-none absolute left-2 size-3.5 text-muted-foreground" aria-hidden />
-          <input type="search" aria-label="Filter by text" placeholder="Thread, branch or file" value={filter.text}
-            onChange={(event) => setFilter({ ...filter, text: event.target.value })} className={`${FIELD} w-44 pl-7`} />
-        </label>
-        <label className="relative inline-flex items-center">
-          <Icon name="Filter" className="pointer-events-none absolute left-2 size-3.5 text-muted-foreground" aria-hidden />
-          <select aria-label="Project" value={filter.projectId ?? ""} onChange={(event) => setFilter({ ...filter, projectId: event.target.value === "" ? null : event.target.value })}
-            className={`${FIELD} max-w-44 cursor-pointer pl-7`}>
-            <option value="">All projects</option>
-            {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-          </select>
-        </label>
-        <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
-          <input type="checkbox" checked={filter.changedOnly} onChange={(event) => setFilter({ ...filter, changedOnly: event.target.checked })} />
-          With changes only
-        </label>
-        <ArchivedToggle overview={overview} included={includeArchived} onChange={(next) => archivedPreference.set(next)} />
-        {route.view === "repositories" && (
-          <>
-            <SwitchButtons label="Scope" options={SCOPES.map((entry) => ({ value: entry.scope, text: entry.label }))} value={snapshot.scope}
-              onChange={(scope) => store?.setScope(scope)} />
-            <button type="button" disabled={overview === null || overview.partial} onClick={toggleAll}
-              className="shrink-0 cursor-pointer rounded px-2 py-0.5 text-xs text-muted-foreground hover:bg-state-hover disabled:cursor-default disabled:opacity-60">
-              {everythingOpen ? "Collapse all" : "Expand all"}
-            </button>
-          </>
-        )}
-        <span className="ml-auto flex shrink-0 items-center gap-2">
-          {snapshot.refreshing && <span aria-live="polite" className="text-xs text-muted-foreground">Updating…</span>}
-          <button type="button" aria-label="Refresh" title="Refresh" onClick={refreshHard}
-            className="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-foreground">
-            <Icon name="Refresh" className={`size-3.5 ${snapshot.refreshing ? "animate-spin" : ""}`} aria-hidden />
-          </button>
-        </span>
-        {overview !== null && (
-          <div className="basis-full">
-            {route.view === "repositories" ? <RepoSummary repos={focused.repos} partial={overview.partial} /> : <WorktreeSummary overview={overview} worktrees={worktrees} />}
-          </div>
-        )}
+      <div className="shrink-0">
+        <Banners overview={overview} error={snapshot.error} status={snapshot.status} onRetry={() => store?.refresh({ hard: true })} all={route.target.kind === "all"} />
       </div>
-      <div className="shrink-0">{banners}</div>
       <div className="min-h-0 flex-1">{body}</div>
     </section>
   );
 }
 
 export function VantagePage(props: PluginNavPanelProps) {
+  return <LiveThreadsProvider><PageScreen {...props} /></LiveThreadsProvider>;
+}
+
+function SidebarScreen({ subPath }: PluginNavPanelProps) {
+  const { route, snapshot, store } = usePage(subPath);
+  const go = useGo();
+  const text = useShared(pageText);
+  const chip = useShared(pageChip);
+  const by = useShared(groupBy);
+  const data = usePageRows(snapshot.overview);
+  const overview = snapshot.overview;
+  const rootId = route.target.kind === "tree" ? route.target.threadId : "";
+  const root = useLiveThread(rootId, overview?.threads.find((thread) => thread.id === rootId));
+  const selectedOutside = route.view === "changes" && route.focus !== null ? (route.focus.kind === "repo" ? route.focus.key : "other-files") : null;
+  const includeArchived = useSyncExternalStore(archivedPreference.subscribe, archivedPreference.get, archivedPreference.get);
   return (
-    <LiveThreadsProvider>
-      <VantageScreen {...props} />
-    </LiveThreadsProvider>
+    <div data-vantage-sidebar className="flex h-full min-h-0 flex-col text-foreground">
+      <div className="grid shrink-0 gap-2 px-2.5 pb-2 pt-1">
+        <label className="flex h-8 items-center gap-1.5 rounded-lg border border-border-seam bg-card px-2 text-muted-foreground">
+          <Icon name="Search" className="size-3.5 shrink-0" aria-hidden />
+          <input type="search" aria-label="Filter worktrees" placeholder="Filter by title, branch or file" value={text}
+            onChange={(event) => pageText.set(event.target.value)} className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-subtle-foreground" />
+        </label>
+        <div className="flex min-w-0 items-center gap-1 text-xs">
+          <span data-scope className="inline-flex h-6 min-w-0 items-center gap-1 rounded-md bg-surface-selected py-px pl-2 pr-1 font-medium text-foreground">
+            <Icon name="Layers" fallback="FolderGit" className="size-3 shrink-0" aria-hidden />
+            <span className="min-w-0 truncate">{route.target.kind === "tree" ? `Tree: ${root.title}` : rootTitle(overview, route, null)}</span>
+            {route.target.kind === "tree" && (
+              <button type="button" aria-label="Show all threads" title="Show all threads" onClick={() => go({ target: { kind: "all" }, view: "overview", selectedKey: null, focus: null })}
+                className="inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground hover:bg-state-hover">
+                <Icon name="X" className="size-3" aria-hidden />
+              </button>
+            )}
+          </span>
+        </div>
+        <FilterChips counts={data.counts} chip={chip} onChip={(next) => pageChip.set(next)} />
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-1.5">
+        {overview === null
+          ? <SkeletonRows count={5} label="Loading worktrees" />
+          : (
+            <WorktreeList groups={data.groups} outside={data.outside} counts={data.counts} chip={chip} onChip={(next) => pageChip.set(next)}
+              selectedKey={route.selectedKey} selectedOutside={selectedOutside} titleOf={data.titleOf}
+              onOpen={(key) => go({ ...route, view: "overview", selectedKey: key, focus: null })}
+              onOpenOutside={(entry) => go({ ...route, view: "changes", selectedKey: null, focus: entry.kind === "repo" ? { kind: "repo", key: entry.key } : { kind: "otherFiles" } })}
+              hidden={data.hidden} archivedHidden={includeArchived ? 0 : overview.archivedHidden} onIncludeArchived={() => archivedPreference.set(true)}
+              partial={overview.partial}
+              underOf={(row) => {
+                if (route.target.kind === "tree") return null;
+                const summary = overview.threads.find((thread) => thread.id === row.threadId);
+                if (summary === undefined || summary.rootThreadId === row.threadId) return null;
+                const root = overview.threads.find((thread) => thread.id === summary.rootThreadId);
+                return resolveLive(data.live.get(summary.rootThreadId) ?? null, root, summary.rootThreadId).title;
+              }} />
+          )}
+      </div>
+      <div className="flex shrink-0 items-center gap-2 border-t border-border-seam px-2.5 py-2 text-xs text-muted-foreground">
+        Group by
+        <span role="group" aria-label="Group by" className="inline-flex rounded-md bg-surface-recessed p-0.5">
+          {(["status", "project"] as const).map((value) => (
+            <button key={value} type="button" aria-pressed={by === value} onClick={() => groupBy.set(value)}
+              className={`h-6 cursor-pointer rounded px-2 ${by === value ? "bg-card font-medium text-foreground shadow-sm" : "hover:text-foreground"}`}>
+              {value === "status" ? "Status" : "Project"}
+            </button>
+          ))}
+        </span>
+        <span className="flex-1" />
+        {includeArchived && (
+          <button type="button" onClick={() => archivedPreference.set(false)} className="cursor-pointer text-[11px] underline hover:text-foreground" title="Leave archived threads out again">Hide archived</button>
+        )}
+        {store === null && <span className="sr-only">Loading</span>}
+      </div>
+    </div>
   );
+}
+
+export function VantageSidebar(props: PluginNavPanelProps) {
+  return <LiveThreadsProvider><SidebarScreen {...props} /></LiveThreadsProvider>;
+}
+
+function ago(at: number, now: number): string {
+  const seconds = Math.max(0, Math.round((now - at) / 1000));
+  if (seconds < 60) return `${seconds} s ago`;
+  const minutes = Math.round(seconds / 60);
+  return minutes < 60 ? `${minutes} min ago` : `${Math.round(minutes / 60)} h ago`;
+}
+
+function HeaderScreen({ subPath }: PluginNavPanelProps) {
+  const { route, snapshot, store } = usePage(subPath);
+  const go = useGo();
+  const data = usePageRows(snapshot.overview);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 5000);
+    return () => clearInterval(timer);
+  }, []);
+  const overview = snapshot.overview;
+  const updated = overview === null || overview.partial ? "Loading" : snapshot.refreshing ? "Updating" : `Updated ${ago(overview.generatedAt, now)}`;
+  return (
+    <span data-vantage-header className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+      <button type="button" aria-label="Refresh" title={`Refresh · ${updated}`} onClick={() => { reloadLoaded(); store?.refresh({ hard: true }); }}
+        className="inline-flex size-7 cursor-pointer items-center justify-center rounded-md hover:bg-state-hover hover:text-foreground">
+        <Icon name="ArrowReloadHorizontal" fallback="RotateCcw" className={`size-3.5 ${snapshot.refreshing ? "animate-spin" : ""}`} aria-hidden />
+      </button>
+      {data.counts.overlaps > 0 && (
+        <button type="button" onClick={() => go({ ...route, view: "overlaps", selectedKey: null, focus: null })}
+          title={`${plural(data.counts.overlaps, "worktree")} change files another worktree also changes`}
+          className="inline-flex h-7 cursor-pointer items-center gap-1 whitespace-nowrap rounded-md border border-border-seam px-2 text-xs text-foreground hover:bg-state-hover">
+          <Icon name="AlertTriangle" className="size-3.5 text-warning-text" aria-hidden />{data.counts.overlaps}<span className="sr-only"> overlaps</span>
+        </button>
+      )}
+    </span>
+  );
+}
+
+export function VantageHeader(props: PluginNavPanelProps) {
+  return <LiveThreadsProvider><HeaderScreen {...props} /></LiveThreadsProvider>;
+}
+
+// bb's title bar shares its row with the header buttons, so a long thread title is cut.
+const CRUMB_MAX = 60;
+const clip = (label: string): string => (label.length <= CRUMB_MAX ? label : `${label.slice(0, CRUMB_MAX - 1).trimEnd()}…`);
+
+// The page title: where you are, each part linking back.
+export function usePageTitle({ subPath }: PluginNavPanelProps): ExperimentalPageTitle | null {
+  const { route, snapshot } = usePage(subPath);
+  const live = useSidebarIndex();
+  const overview = snapshot.overview;
+  const rootId = route.target.kind === "tree" ? route.target.threadId : null;
+  const rootTitleText = rootId === null ? null : resolveLive(live.get(rootId) ?? null, overview?.threads.find((thread) => thread.id === rootId), rootId).title;
+  const scope = route.target.kind === "tree" ? (rootTitleText ?? "This tree") : "All threads";
+  let last: string | null = null;
+  if (route.selectedKey !== null) {
+    const worktree = overview?.worktrees.find((entry) => entry.key === route.selectedKey);
+    if (worktree !== undefined) {
+      const id = worktree.threadIds[0] ?? "";
+      last = resolveLive(live.get(id) ?? null, overview?.threads.find((thread) => thread.id === id), id).title;
+    }
+  } else if (route.view === "changes") last = "All changes";
+  else if (route.view === "overlaps") last = "Overlapping files";
+  // One title, not breadcrumbs: bb draws two crumbs over each other when the page is narrow. The sidebar names the scope.
+  return { title: clip(last ?? scope), windowTitle: `Vantage · ${last ?? scope}` };
+}
+
+function AgentScreen({ subPath }: PluginNavPanelProps) {
+  const { route, snapshot } = usePage(subPath);
+  // Keyed, so a thread picked for one worktree is not kept for the next.
+  return <AgentChat key={route.selectedKey ?? ""} selectedKey={route.selectedKey} overview={snapshot.overview} />;
+}
+
+function AgentChat({ selectedKey, overview }: { selectedKey: string | null; overview: Overview | null }) {
+  const worktree = selectedKey === null ? undefined : overview?.worktrees.find((entry) => entry.key === selectedKey);
+  const ids = worktree?.threadIds ?? [];
+  const [picked, setPicked] = useState<string | null>(null);
+  const threadId = picked !== null && ids.includes(picked) ? picked : ids[0] ?? null;
+  if (threadId === null) {
+    return <p className="p-4 text-sm text-muted-foreground">Select a worktree to talk to its agent here.</p>;
+  }
+  return (
+    <div data-vantage-agent className="flex h-full min-h-0 flex-col">
+      {ids.length > 1 && (
+        <div className="flex shrink-0 flex-wrap gap-1.5 border-b border-border-seam px-3 py-1.5">
+          {ids.map((id) => <AgentChip key={id} threadId={id} overview={overview} selected={id === threadId} onSelect={() => setPicked(id)} />)}
+        </div>
+      )}
+      <div className="min-h-0 flex-1"><ThreadChat threadId={threadId} variant="compact" layout="contained" permissionPolicy="inherit" /></div>
+    </div>
+  );
+}
+
+function AgentChip({ threadId, overview, selected, onSelect }: { threadId: string; overview: Overview | null; selected: boolean; onSelect(): void }) {
+  const live = useLiveThread(threadId, overview?.threads.find((thread) => thread.id === threadId));
+  return (
+    <button type="button" aria-pressed={selected} onClick={onSelect}
+      className={`max-w-48 cursor-pointer truncate rounded-full border px-2 py-px text-xs ${selected ? "border-ring text-foreground" : "border-border-seam text-muted-foreground hover:text-foreground"}`}>
+      {live.title}
+    </button>
+  );
+}
+
+export function AgentTab(props: PluginNavPanelProps) {
+  return <LiveThreadsProvider><AgentScreen {...props} /></LiveThreadsProvider>;
 }

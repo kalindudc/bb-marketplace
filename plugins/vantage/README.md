@@ -1,235 +1,228 @@
 # Vantage
 
-A bb plugin for a parent thread that runs many agents at once. Its side-panel
-tab shows how every child's worktree is doing, lets you look inside any one of
-them without leaving the parent, and groups everything the thread tree changed
-by repository. Open it from the thread header, from the palette ("Vantage:
-Show changes across repositories") or from the thread's side-panel tabs; on
-a phone the header leaves its button out and the tabs open it. The
-command has no default shortcut; you can bind one under Settings, Keyboard.
+A bb plugin for a parent thread that runs many agents at once. It shows every
+worktree your agents work in, lets you read and review what each one changed,
+and sends your review comments back to the agent that made the change. It
+also shows everything a thread tree changed in other repositories, and warns
+you when two worktrees change the same file.
 
-A full-screen Vantage page in bb's left navigation does the same for every
-recent thread at once: see [The full-screen page](#the-full-screen-page).
-Both views paint at once and fill in their numbers as git answers: see
-[Loading and archived threads](#loading-and-archived-threads).
+Vantage has two places:
 
-bb's Changes tab shows the diff of one thread's own workspace. Agents often
-work beyond it: a parent spawns child threads in their own worktrees, agents
-edit files in other repositories by absolute path, and bb removes a child's
-worktree when the child is archived. Vantage gathers all of that for the thread
-and every descendant, archived and hidden children included. A switch at the
-left of the toolbar chooses between two views, and the choice is remembered on
-this device.
+- **The Vantage page** in bb's left navigation (the folder icon). It covers
+  every thread active in the last 24 hours, or one thread's tree, and is where
+  you review diffs. See [The Vantage page](#the-vantage-page).
+- **Inside a thread**: a Vantage tab in the side panel, a one-line summary
+  above the composer, a Worktrees section in the Info tab, and two entries in
+  the thread menu. See [Inside a thread](#inside-a-thread).
 
-## The Worktrees view
+Vantage is quiet by default. It does not tell you that a worktree needs you
+until you watch its thread, and it does not track reviewed files until you
+turn reviews on. Diffs and file lists work for every thread either way. See
+[Watching and reviews](#watching-and-reviews).
 
-![The Vantage tab beside a parent thread: four storefront worktrees and an API worktree, each with branch, commits ahead and behind and uncommitted files, an archived docs branch in its own Archived group below them, a warning that README.md changed in two worktrees, and a docs repository edited by path](../../screenshots/vantage/side-panel.png)
+## The Vantage page
 
+![The Vantage page reviewing the Pricing worktree: the worktree list in bb's sidebar grouped into Needs you and To review, a warning that README.md is also changed in the Banner worktree, the file tree with one file reviewed, the README diff with a draft comment quoting a line, and the bar that sends the comment to the agent](../../screenshots/vantage/full-screen.png)
 
-This is the default. It lists one row for each workspace in the thread tree:
-the parent's own checkout (it reads "This thread"), every child's worktree, and
-the kept branch of every archived child. A row shows bb's own status glyph
-(running, needs you, failed, finished), the branch, how many commits it is
-ahead of and behind its base branch, how many files are uncommitted, the line
-counts and the pull request, if there is one. Rows are grouped by project. A
-banner warns when files are changed in more than one worktree of the same
-project, because those branches may conflict when merged; it opens to list the
-files and the threads.
+Click Vantage in bb's left navigation to open the page. While it is open, its
+worktree list takes the place of bb's thread list, so the page itself keeps its
+whole width for diffs. bb's title bar names where you are, such as
+"Holiday sale / Pricing: apply the 20% sale rule", and each part links back.
+On its right sit the Refresh button (point at it to see when the data was
+read) and, when files overlap, a button with the number of overlapping
+worktrees.
 
-A thread that works on its base branch, such as one on `main` in the project
-checkout, has nothing ahead of that base, so once it commits its row would show
-no change at all. Its row reads "on base" instead of ↑0 ↓0, and counts the
-commits its threads made there ("3 commits"). Vantage finds those commits in
-the checkout's reflog: each commit that `git commit` made while one of the
-worktree's threads was running a `git commit` command, and that is still on
-the branch. A worktree whose own commits were merged into its base gets the
-same list.
+### The worktree list
 
-Agents sometimes make their own checkout outside bb and work there, for
-example a clone or `git worktree add` run from a shell, while their bb
-workspace stays untouched. Once a thread has both edited a file in such a checkout and run
-commands in it (see [How it works](#how-it-works)), the checkout gets a row of
-its own, grouped with the thread's project and marked "in <folder>". It shows
-the checkout's branch, its commits ahead of and behind `origin/HEAD`, and
-every uncommitted and committed change, whether an edit tool or a shell
-command made it. Other repositories that agents only edited by path, and files
-outside any repository, are listed under "Changed outside worktrees". Clicking
-one opens the Repositories view filtered to just that repository, or to just
-the other files.
+- **Search** matches thread titles, project names, branches, folders and file
+  paths.
+- **The scope** reads "All threads · last 24 h" or "Tree: <thread>". A tree's
+  × shows every thread again.
+- **Chips** filter the list to one kind of worktree: Needs you, To review,
+  Working or Overlaps. A chip shows only when something matches it.
+- **Rows** are grouped by what you need to do next: Needs you, To review,
+  Changed, Working, Reviewed, then Archived, which starts folded. "Group by
+  Project" at the bottom groups them by project instead. A row shows the
+  thread, its line counts, its project, its commits or uncommitted files, its
+  pull request, and, when files are reviewed, how many. A third line says why
+  the row matters, such as "Overlaps with Banner in README.md".
+- **Changed outside worktrees** lists repositories an agent edited by path and
+  files outside any repository. A row opens them in All changes.
+- Worktrees with no changes are left out; a line at the bottom counts them.
+  Archived threads are left out of the page until you press Show next to
+  Archived, and Hide archived at the bottom leaves them out again.
 
-Click a row to open that worktree inside the parent's panel:
+### The overview
 
-- **Changes** lists the uncommitted files and the files committed on the
-  branch, each with its diff, and marks a file that other worktrees also
-  changed.
-- **Commits** lists the commits ahead of the base branch, or, when none are,
-  the commits its threads made on its base branch. Open one to see its files
-  and their diffs.
-- **Chat** shows the child's conversation in bb's own chat component, so you
-  can approve a request or steer the agent from there. The parent's own row has
-  no Chat tab.
-- **Open thread** opens the child in a split pane. **Terminal here** starts a
-  shell in the worktree's folder in the parent's terminal panel; it needs a
-  worktree on disk, on the same machine as the parent thread. **Copy path**
-  copies the folder. The ⋯ button is bb's own thread menu (stop, archive and
-  the other usual actions).
-- `[` and `]` step to the previous and next worktree, and Escape returns to the
-  list. The keys do nothing while you type in a text field.
+![The overview of the Holiday sale tree: watching and reviews on, counts of what needs you, what is to review and the overlapping files, then an Up next list that starts with the worktree waiting for an answer](../../screenshots/vantage/overview.png)
 
-## The Repositories view
+With no worktree selected, the page answers "what should I look at next?":
+counts of what is waiting, then an Up next list with a button on each row
+(Review, Open, or Answer for a watched thread that asks you something), then
+what is still working, overlapping files, reviewed worktrees and changes
+outside worktrees. On a thread's tree it also has the Watch and Track reviews
+buttons for that tree.
 
-![The Repositories view on the full-screen page, filtered to the docs project with archived threads included: the docs repository an agent edited by path with its diff, and an archived child's kept branch with its new file in its own Archived group](../../screenshots/vantage/repositories.png)
+### Reviewing a worktree
 
+Select a row to open its worktree.
 
-A toolbar with a summary ("3 repos · 12 files · +120 −30 · 5 threads"), a scope
-switch, Expand all and Refresh, then one section for each repository. A section
-header has the repository's project name, its branch, a caption, the totals and
-a chip for every thread that touched it, and "N commits by its threads on
-main" when a worktree on its base branch has such commits (point at it for
-their subjects). A chip opens that thread in a split; an archived thread's chip
-has an archive mark. Open a file to see its diff in
-bb's own viewer.
+- **The header** has the thread's title and state, its project, branch (with a
+  copy button), how far it is behind its base branch, its pull request and
+  machine, and its actions: Message agent (Answer when a watched thread waits
+  for you), Open thread, Terminal, Copy path and bb's own thread menu.
+  `[` and `]`, or the arrows, step to the previous and next worktree.
+- **Strips** under the header say what you should know: the agent is waiting
+  for you or its last turn failed (watched threads only, with Answer, Retry and
+  Message agent), it is still working, it is archived, or a file is also
+  changed in another worktree, with Compare and "Ask to rebase onto …".
+- **One switch** chooses which changes you read: All changes, Not committed,
+  Committed, or one commit from the Commits menu.
+- **The file tree** on the left lists every file with its status letter, line
+  counts, an overlap mark and its number of comments. Click a file to jump to
+  it. The list button hides it.
+- **Every diff is in one stream**, each file with a header that stays in view.
+  Diffs are unified or side by side (the two buttons at the right), and
+  "unchanged lines" between the changes expand to show the rest of the file.
+  The chevron folds one file away; Collapse all folds every file at once, and
+  Expand all opens them all again.
+- `J` and `K` step through the files, `C` comments on the current file, `X`
+  collapses or expands every file, and `Escape` goes back to the overview.
 
-| Kind | Caption | Where it is read from |
-| --- | --- | --- |
-| Thread workspace | Thread workspace | bb's environment status API (the same call as the worktree row); the Branch scope uses bb's diff API |
-| A checkout a thread works in outside bb | Thread checkout | git, on the machine that owns the checkout (one call shared with its worktree row) |
-| Another checkout an agent edited by path | Edited by path | git, on the machine that owns the checkout |
-| An archived child's branch | Archived branch · N commits | git in the project checkout, comparing the branch with its base branch |
-| No repository could be read | Recorded edits only | the file edits bb keeps in each thread's history |
+### Comments
 
-A thread checkout lists every change in it, like a workspace. In a checkout
-only edited by path, the files the agents edited come first. The repository's other
-changes sit under a folded "N other changes in this repo" row, so changes made
-by commands such as code generators are not lost and your own unrelated edits
-stay out of the way. A file that an agent edited but that has no change now
-(for example because it was committed) is listed as clean, and opening it
-shows the agent's recorded edits. Files outside any repository, such as thread
-storage or /tmp, are listed under "Other files" the same way.
+The comment button on a file opens a box for a comment. Select lines in the
+diff first to quote them. Comments are drafts kept on this device and listed
+under their file, where you can edit or remove them. Once there is one, a bar
+at the bottom collects them: Preview shows the exact message, and Send to
+agent sends every comment as one message to the worktree's thread, which then
+opens in the Agent tab. While the agent works, the button reads "Queue for
+agent", and the message waits for its current turn. Its menu has Send now
+(added to the running turn), Queue after its current turn, and Copy as
+Markdown. `⌘↵` sends.
 
-When the Repositories view was opened from one row, or with a worktree open,
-it shows only that repository, and an "Only <project> · <branch>" chip sits
-beside the view switch. The chip's × button shows every repository again, and
-so does switching to Worktrees and back.
+### The Agent tab
 
-The switch chooses between **Uncommitted** (working-tree changes) and **Branch**
-(everything since the base branch). The tab refreshes within about two seconds
-of an agent's edit and on the Refresh button. A machine that is offline, or a
-repository that fails, marks only its own section as unavailable; the rest
-still shows.
+The page's right panel has an Agent tab next to bb's Terminal and Browser
+tabs. It shows the selected worktree's conversation in bb's own chat, where you
+can answer a question or steer the agent. A worktree several threads share has
+a chip for each.
 
-## The full-screen page
+### Overlapping files
 
-![The full-screen Vantage page: worktrees of every recent thread grouped by project, and the pricing worktree's README.md diff with an "also in Banner" warning](../../screenshots/vantage/full-screen.png)
+![The overlaps page: README.md changed by the Banner and Pricing worktrees, both changes side by side, marked Likely to conflict, with buttons that ask either agent to rebase onto the other](../../screenshots/vantage/overlaps.png)
 
+The overlaps page lists every file that more than one worktree of a project
+changed. Each card shows both changes side by side and Vantage's guess at what
+merging both branches will do: "Likely to conflict" when the two change the
+same or neighbouring lines, or "Should merge cleanly". This is a guess made
+from the changed line ranges, not a real merge. "Ask <agent> to rebase onto
+<other>" writes a comment for that worktree and opens it, ready to send.
 
-Click Vantage in bb's left navigation (the folder icon) to open the page at
-`/plugins/vantage/vantage`. It covers every thread active in the time window
-(24 hours by default), plus any thread that is running and any thread archived
-in that window, so you see all your parallel agents across projects in one
-place. Threads whose parent is not in the window start their own tree.
+### All changes
 
-- **Worktrees** is the default view. On a window at least 880 pixels wide, the
-  list is on the left, grouped by project, and the selected worktree's detail
-  (Changes, Commits, Chat) is on the right; with nothing selected the right
-  side says "Select a worktree to inspect it." On a narrower window the list and
-  the detail take turns, as in the side panel. A row for a child shows
-  "under <root thread>". Click a row to select it; `[` and `]` step through the
-  rows that are shown, and Escape clears the selection. **Terminal here**
-  starts a shell in the worktree's folder as a terminal of the worktree's own
-  environment, in the page's terminal panel, on whichever machine it is on; a
-  thread checkout has no environment, so its terminal opens in its folder on
-  its machine.
-  **Open thread** opens the thread and leaves the page.
-- **Repositories** shows every repository those threads changed, grouped by
-  project ("Shop · 2 repos · 4 files"), then "Other files". The scope switch
-  and Expand all sit in the toolbar. A row under "Changed outside worktrees",
-  or the Repositories switch pressed while a worktree is selected, opens it
-  filtered to that one repository (or to the other files), with a chip to
-  clear the filter; the toolbar filters still apply on top.
-- The toolbar's **text filter** matches thread titles, project and repository
-  names, branches, folders and file paths. The **project** select narrows to one
-  project. **With changes only** (on by default) hides worktrees and
-  repositories with nothing to show, but keeps one that could not be read.
-  The summary line counts what is shown: "6 workspaces · 2 running · 1 needs
-  you · 0 failed · 14 files +120 −30 · 3 projects".
-- Every view and selection has its own address, so the browser's back and
-  forward buttons work and a link opens the same view:
+All changes lists every change the threads made, grouped by repository: thread
+workspaces, checkouts agents work in or edited by path, archived branches, and
+the recorded edits of files outside any repository. Switch between Not
+committed and Since the base branch, and fold every file with Collapse all
+(or `X`), then open them again with Expand all. A
+repository an agent only edited by path lists the files the agents edited
+first, and keeps the repository's other changes under a folded line.
 
-  | Address after `/plugins/vantage/vantage/` | Shows |
-  | --- | --- |
-  | (nothing) | every thread, Worktrees |
-  | `repositories` | every thread, Repositories |
-  | `worktree/<key>` | every thread, one worktree selected |
-  | `tree/<thread id>` | only that thread's tree, Worktrees |
-  | `repositories/repo/<key>` | every thread, Repositories, only that repository |
-  | `repositories/other-files` | every thread, Repositories, only the other files |
-  | `tree/<thread id>/repositories` | that tree, Repositories |
-  | `tree/<thread id>/repositories/repo/<key>` | that tree, Repositories, only that repository |
-  | `tree/<thread id>/worktree/<key>` | that tree, one worktree selected |
+### Addresses
 
-  A part that is not valid is dropped and the address is corrected. A
-  worktree or repository key is written with letters, digits, `.`, `_`, `-` and `~XX` for any
-  other byte (a `:` is `~3A`, a `/` is `~2F`), because bb encodes each address
-  segment a second time and its router would otherwise alter a percent-encoded
-  key.
-- In a thread's Vantage tab, **Open full screen** (the corner-arrows button in
-  the toolbar) opens the page for just that thread's tree. **Show all threads**
-  in the page's toolbar widens it again.
+Every view has its own address, so back, forward and links work:
 
-The window and the number of threads are Vantage's plugin settings (open the
-plugin's page in bb's Tools): "Time window for the full-screen page (hours)" from 1
-to 720, default 24, and "Most threads on the full-screen page" from 10 to 500,
-default 200. When more threads match than the limit, the page says "Showing the
-200 most recent threads; raise the limit in Settings". Changing a setting
-refreshes every open page.
+| Address after `/plugins/vantage/vantage/` | Shows |
+| --- | --- |
+| (nothing) | every thread, the overview |
+| `worktree/<key>` | every thread, one worktree |
+| `changes` | every thread, All changes |
+| `changes/repo/<key>` | All changes for one repository |
+| `changes/other-files` | All changes for files outside any repository |
+| `overlaps` | every thread, the overlapping files |
+| `tree/<thread id>` | only that thread's tree, with any of the above after it |
 
-The page reads more than one tree, so a cold load costs more than the side
-panel. The server keeps each repository's result for 60 seconds, and an agent's
-edit, a workspace change that bb reports, or the 60 seconds clear only the
-entries they touch, so a refresh reloads just the repositories that changed.
-Open windows share one build, and the side panel reads through the same cache.
-The page refreshes about 5 seconds after a change, every 60 seconds while the
-window is visible, when you return to it, and on the Refresh button (which
-clears the cache).
+An address from 0.5 or earlier that says `repositories` opens All changes. A
+part that is not valid is dropped and the address is corrected. A worktree or
+repository key is written with letters, digits, `.`, `_`, `-` and `~XX` for any
+other byte (a `:` is `~3A`, a `/` is `~2F`), because bb encodes each address
+segment a second time and its router would otherwise alter a percent-encoded
+key.
+
+The time window and the number of threads are Vantage's settings: "Time window
+for the full-screen page (hours)" from 1 to 720, default 24, and "Most threads
+on the full-screen page" from 10 to 500, default 200. When more threads match
+than the limit, the page says so.
+
+## Inside a thread
+
+![A parent thread with its Vantage tab open: its child threads' worktrees grouped into Needs you and To review, with Watching and Reviews on in the tab's header, and the one-line summary "4 worktrees · 1 needs you · 2 overlaps" above the composer](../../screenshots/vantage/side-panel.png)
+
+- **The Vantage tab** opens from the thread header's folder button, the palette
+  ("Vantage: Show changes across repositories") or the side panel's tab
+  launcher. Worktrees lists the thread's own checkout ("This thread") and its
+  child threads' worktrees, grouped like the page. Select one to review it in
+  the tab, with the same switch, diffs, reviewed ticks and comments, and Chat to
+  talk to its agent. All changes shows everything the tree changed, by
+  repository. The header has Watch and Track reviews for this thread, Refresh
+  and Open full screen, which opens the page on this thread's tree.
+- **Above the composer**, one line sums up the child threads' worktrees, such
+  as "4 worktrees · 1 needs you · 2 overlaps". It shows only once a child
+  thread has changed something, and it stays one line until you click it; then
+  it lists the worktrees, with Watch, Track reviews and Open Vantage. Clicking a
+  worktree opens it in the Vantage tab.
+- **The Info tab** has a Worktrees section with the first three child
+  worktrees and why each matters.
+- **The thread menu** (in the header, on the sidebar row and on its right-click
+  menu) has "Review changes in Vantage", which opens the page on that thread's
+  tree, and a Vantage entry with Watch worktrees and Track reviews.
+
+## Watching and reviews
+
+Both are off by default, and both are chosen per thread. A choice on a thread
+covers its child threads too, and a child can make its own choice. A thread
+that has made none follows its nearest ancestor that has, and then the
+setting.
+
+**Watching** decides whether Vantage tells you a worktree needs you. For a
+watched thread that waits for your answer or whose last turn failed, Vantage
+files its worktree under Needs you, shows bb's status mark for it, counts it
+in the composer summary, the Info section and the badge on the Vantage icon in
+bb's navigation, and shows a toast when it starts waiting (unless you are
+looking at that thread). An unwatched thread shows none of this: its worktree
+sits under Changed or Working, with no status mark beyond "working". bb's own
+notifications for the thread are not affected.
+
+**Reviews** decide whether diffs carry reviewed ticks. With reviews on, each
+file has a Reviewed button (`V`), a reviewed file folds away, the bar shows
+"3 of 5 reviewed" with a Hide reviewed switch, and the list shows each
+worktree's progress and files it under To review or Reviewed. A file that
+changes after you tick it shows "Changed" until you tick it again. With reviews
+off, the same diffs show without any of that.
+
+Turn them on or off with Watch and Track reviews on the page's overview of a
+tree, in a thread's Vantage tab, in the summary above the composer or in the
+thread menu. In a worktree's bar, Track reviews changes the choice where it
+was made, or the tree's top thread when no thread in it has chosen.
+Two settings in Vantage's plugin settings change the default for every thread:
+"Watch every thread's worktrees" and "Track reviews in every thread". A thread
+you turned off stays off when you turn a default on.
 
 ## Loading and archived threads
 
-**The instant outline.** A load sends two requests at once. The first, `shell`,
-returns in about a tenth of a second with every worktree row (title, status,
-branch, project, machine) and every repository header, and no git work. Grey
-placeholder bars stand where the line counts, the ahead and behind counts and
-the file lists will be, and "Changed outside worktrees" says "Looking for edits
-in other repositories…". The second, `overview`, replaces the outline when git
-has answered. Until then you can already open a worktree: its header, actions
-and Chat work, and Changes and Commits show placeholders. Later refreshes (an
-agent's edit, the 60-second refresh, the Refresh button) ask for the overview
-only. A failed outline is ignored; a failed overview shows the usual error.
+The page and the tab paint every worktree row at once, with grey placeholders
+where the line counts and files will be, and fill them in when git has
+answered. A first, quick `shell` request draws the rows in about a tenth of a
+second; the full `overview` follows. Later refreshes (an agent's edit, a
+workspace change, every 60 seconds while the page is visible, and the Refresh
+button) ask for the overview only.
 
-**Archived threads.** Most of a busy page is finished work, so the full-screen
-page starts without archived threads and their kept branches. Tick
-**Include archived (N)**, after "With changes only", to add them; N is how many
-were left out, or how many are in view once ticked. Archived rows get their
-own groups, headed "Archived · <project>", after every active group, and the
-summary line says how many are showing, such as "6 workspaces · … · 1 archived".
-Switching keeps every active row and its numbers on screen: archived rows
-appear below them, or disappear, while the rest reloads. With "With changes
-only" ticked, archived rows whose changes are still being read wait behind one
-"Loading archived threads…" placeholder, so rows with nothing changed never
-flash up and vanish. Active threads always come first under the
-thread limit. The side tab is about one tree's children, so it includes
-archived children by default and has the same checkbox. Each choice is
-remembered on this device (`bb-plugin-vantage:page-archived` and
+The page starts without archived threads, because most of a busy page is
+finished work; Show next to Archived adds them below the active ones without
+moving the active rows. The thread tab includes its archived children. Each
+choice is remembered on this device (`bb-plugin-vantage:page-archived` and
 `bb-plugin-vantage:panel-archived`).
-
-**What makes it faster.** A workspace's git status is read once and feeds both
-the worktree row and the Repositories view; bb's diff call is used only for the
-Branch scope. Those reads start as soon as the threads are known, 8 at a time,
-while the edit history and the git roots are looked up. An archived thread's
-edit history is not read again once it has been indexed. Git roots are
-remembered for 10 minutes, and a branch that no longer exists for 10 minutes
-too, instead of being asked about on every refresh. A thread's own tree now
-uses the same 60-second cache as the page.
 
 ## For agents
 
@@ -239,7 +232,7 @@ bb vantage worktrees --thread <id>    # another thread's tree
 bb vantage worktrees --json
 bb vantage worktree <thread>          # that thread's worktree: files and commits
 bb vantage worktree <thread> --json
-bb vantage changes                    # the Repositories view, as text
+bb vantage changes                    # All changes, as text
 bb vantage changes --thread <id>      # another thread
 bb vantage changes --scope branch     # everything since the base branch
 bb vantage changes --json             # the full overview
@@ -248,7 +241,7 @@ bb vantage changes --all --hours 6    # the last 6 hours instead of the setting
 bb vantage worktrees --all --archived # include archived threads, which --all hides
 ```
 
-`--all` reads the same threads as the full-screen page. It cannot be used with
+`--all` reads the same threads as the Vantage page. It cannot be used with
 `--thread` (error code `target_conflict`). `--hours <n>` (1 to 720) overrides
 the window for that call and needs `--all` (error code `hours_requires_all`).
 `--all` leaves archived threads out, like the page; add `--archived` to include
@@ -306,13 +299,15 @@ bb plugin install vantage@kalindudc
 
 ## How it works
 
-Vantage only reads. It never stages, commits or changes a file, and it keeps
-nothing on disk.
+Vantage never stages, commits or changes a file. What it writes is your own
+state: watch and review choices and reviewed marks, in Vantage's plugin
+storage, and comment drafts, in this browser's storage. Sending comments starts
+or steers a turn of the worktree's thread, as typing them into its chat would.
 
 - The thread tree comes from `threads.get` and `threads.experimental_listDescendants`.
 - Each worktree's branch, commits ahead and behind, and uncommitted and
-  committed files come from one `environments.status` call, which the
-  Repositories view reuses for the same workspace's uncommitted files. The
+  committed files come from one `environments.status` call, which All changes
+  reuses for the same workspace's uncommitted files. The
   Branch scope and a commit's files use `environments.diffFiles`, and diffs use
   `diffPatch`. For an untracked file the status reports the same line counts as
   `diffFiles`; it does not flag a file as too large and does not name a renamed
@@ -320,8 +315,19 @@ nothing on disk.
   range call on the host, shared by both views.
 - The instant outline is built from the thread, environment, project and
   machine lists alone. It makes no git, status, diff or event call.
-- A row's status, title and pull request come from the data bb's own sidebar
-  already loads, so they cost no extra requests.
+- A row's status and title come from the data bb's own sidebar already loads,
+  so they cost no extra requests. Its pull request comes from bb's GitHub PR
+  Status plugin (`pullRequests`, keyed by environment), which re-checks a row
+  only while it is on screen.
+- The expandable context comes from a `fileSides` call: both whole sides of
+  one file, read with `environments.diffFile` for a workspace bb manages and
+  with `git cat-file` on the host for everything else. A side over 1 MiB, a
+  binary file and a symlink come back empty, and the diff then shows its
+  changes without expanding.
+- Watch and review choices are stored per thread, and reviewed marks per
+  worktree, in `bb.storage.kv`. A mark is the file's status and line counts
+  when you ticked it. The `prefs` and `reviewed` reads are tagged, so a change
+  made in one window, or a changed default, refreshes every other window.
 - Other checkouts and archived branches are read by a host entry (`host.ts`),
   plugin code that bb runs on the machine that owns the repository. It runs
   `git` with `GIT_OPTIONAL_LOCKS=0`, so it never takes the index lock that
@@ -337,7 +343,7 @@ nothing on disk.
   becomes a thread checkout when the same thread both edited a file in it and
   ran commands in it. One `checkoutStatus` host call reads its branch,
   uncommitted and committed files, commits ahead and behind and the commit
-  list; the worktree row and the Repositories view share it through the
+  list; the worktree row and All changes share it through the
   60-second cache. A checkout only edited by path keeps the cheaper
   uncommitted-only call, and the instant outline shows a thread checkout's row
   when earlier loads already know the edits and the roots.
@@ -371,9 +377,13 @@ nothing on disk.
 - To place a path in a repository, the host asks git itself
   (`rev-parse --show-toplevel --show-prefix`) instead of comparing path
   prefixes, so `/tmp` and `/private/tmp` agree on macOS.
-- The panel refreshes on bb's thread, environment and connection events, with
-  at most one request at a time and 1.5 seconds between requests.
-- The full-screen page asks for every thread with `threads.list`, 100 at a
+- The thread tab refreshes on bb's thread, environment and connection events,
+  with at most one request at a time and 1.5 seconds between requests. The
+  page, its sidebar, its title bar and its Agent tab share one store, and so do
+  a thread's tab, composer summary and Info section; a store lingers 30
+  seconds after its last reader closes, so moving between views does not load
+  everything again.
+- The Vantage page asks for every thread with `threads.list`, 100 at a
   time (up to 1,000 active and 500 archived threads), and keeps those active in
   the window, running, or archived in it. It builds the same overview as a
   tree, over that set of threads, with each repository's git result and each
@@ -381,19 +391,19 @@ nothing on disk.
   events clear. Concurrent requests share one build for each scope and archived
   choice. Its store follows every thread's file changes, at most one request per
   5 seconds.
-- In the side panel, "Terminal here" creates a terminal scoped to the parent
+- In the thread tab, Terminal creates a terminal scoped to the parent
   thread, because bb shows a thread only its own terminals, and starts
-  `cd <folder> && exec $SHELL -l` in it. On the full-screen page, which belongs
-  to no thread, it creates a terminal scoped to the worktree's environment, which
+  `cd <folder> && exec $SHELL -l` in it. On the page, which belongs to no
+  thread, it creates a terminal scoped to the worktree's environment, which
   opens in the worktree's folder.
 
 ## Limits
 
 - At most 500 files per repository or worktree list, 100 commits per worktree,
   200 shared files, 200 other files and 200 threads in a tree; patches are cut
-  at 1 MiB and recorded diffs at 60,000 characters. The full-screen page reads
+  at 1 MiB and recorded diffs at 60,000 characters. The Vantage page reads
   at most the thread limit setting (200 by default, 500 at most).
-- The full-screen page can show a repository up to 60 seconds late if bb does
+- The Vantage page can show a repository up to 60 seconds late if bb does
   not report a change that no agent made, such as a file you edit by hand; its
   60-second refresh and the Refresh button bring it up to date.
 - When a child is archived, bb keeps its worktree on disk for about five
@@ -401,7 +411,7 @@ nothing on disk.
   then as the kept branch. Uncommitted work is removed with the worktree, so
   only committed work remains.
 - A branch that no longer exists is not a worktree, so it is not listed; its
-  recorded edits show in the Repositories view.
+  recorded edits show in All changes.
 - Titles and statuses come from bb's sidebar. A thread bb does not list in it
   (a hidden one, such as a study's worker, or an archived page that was not
   loaded) shows the title the thread tree gave it, and is marked running only
@@ -427,9 +437,39 @@ nothing on disk.
   recorded edits instead. An archived thread shows only its committed work,
   even when its folder, and any uncommitted change in it, is still on disk.
 - Git must be installed on the machine that owns each repository.
+- A comment is about a file, optionally quoting lines you selected. bb's diff
+  viewer does not tell a plugin which line was clicked, so there are no
+  comments on a single line.
+- A reviewed mark is the file's status and line counts. An edit made after the
+  tick that leaves both counts the same is not noticed, so the file stays
+  reviewed.
+- Expanding unchanged lines needs both whole sides of the file to match the
+  diff. A checkout read with git gives the file as it is on disk, so with
+  `core.autocrlf` or Git LFS the sides may not match and the diff then shows
+  only its changes.
+- "Likely to conflict" and "Should merge cleanly" are guesses from the line
+  ranges each change touches, not a real merge.
+- Comment drafts are kept in the browser's storage, so they stay on the device
+  you wrote them on.
+- The toast for a watched thread that starts waiting for you shows in every
+  open bb window.
 
 ## Changes
 
+- **0.6.0**: a page built for reviewing. The worktree list replaces bb's
+  thread list while the page is open and groups worktrees by what you need to
+  do; one switch chooses all, uncommitted, committed or one commit's changes;
+  every diff is in one stream with a file tree, side-by-side view,
+  expandable context, and Collapse all and Expand all (`X`); comments on files go to the agent as one message; the
+  agent's chat is in the page's Agent tab; an overlaps page guesses whether two
+  worktrees will conflict; the Repositories view is now All changes. Watching
+  (needs-you signals, the navigation badge and toasts) and reviews (reviewed
+  ticks and progress) are both opt in per thread, with a setting for each
+  default. In a thread: the tab gains All changes and Watch and Track reviews,
+  a collapsible one-line summary sits above the composer once a child thread
+  has changes, the Info tab has a Worktrees section, and the thread menu has
+  "Review changes in Vantage" and Vantage's watch and review choices. Pull
+  requests come from bb's GitHub PR Status plugin. Needs bb 0.47.
 - **0.5.0**: a worktree on its base branch, such as a thread working on `main`
   in the project checkout, reads "on base" instead of ↑0 ↓0 and lists the
   commits its threads made there with `git commit`, found in the checkout's
@@ -502,5 +542,5 @@ After review, bump the package version, merge to an up-to-date `main`, and
 tag that version. This release uses:
 
 ```sh
-git tag vantage/v0.4.1 && git push origin vantage/v0.4.1
+git tag vantage/v0.6.0 && git push origin vantage/v0.6.0
 ```

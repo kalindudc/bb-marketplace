@@ -3,25 +3,49 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { act, fireEvent, screen, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
-import type { PluginCommandContext, PluginThreadPanelProps } from "@get-bb/plugin-sdk/app";
+import type { PluginCommandContext } from "@get-bb/plugin-sdk/app";
 import { PANEL_ACTION_ID, createCommands } from "../src/commands";
-import type { Overview, rpcContract } from "../src/contract";
-import { overview } from "./fixtures";
+import { disposeSessions } from "../src/session";
 
 afterEach(() => {
+  disposeSessions();
   document.body.replaceChildren();
 });
 
 describe("plugin app", () => {
-  it("registers the flush Changes tab titled Vantage and a thread-header action", async () => {
+  it("registers the page with its sidebar, title bar, page title and badge, and an Agent tab beside it", async () => {
     const app = await loadPluginApp(() => import("../app"));
-    expect(app.threadPanelActions).toHaveLength(1);
-    expect(app.threadPanelActions[0]).toMatchObject({ id: "changes", title: "Vantage", icon: "FolderGit", layout: "flush" });
+    expect(app.navPanels).toHaveLength(1);
+    const page = app.navPanels[0]!;
+    expect(page).toMatchObject({ id: "vantage", title: "Vantage", icon: "FolderGit", path: "vantage" });
+    expect(page.experimental_sidebar).toBeTypeOf("function");
+    expect(page.headerContent).toBeTypeOf("function");
+    expect(page.experimental_usePageTitle).toBeTypeOf("function");
+    expect(page.experimental_useBadge).toBeTypeOf("function");
+    expect(app.tabs.map(({ id, context, availability }) => ({ id, context, availability }))).toEqual([
+      { id: "agent", context: { kind: "nav-panel", panelId: "vantage" }, availability: "fixed" },
+      { id: "changes", context: { kind: "thread" }, availability: "action" },
+    ]);
+  });
+
+  it("keeps the thread tab's id from the retired panel action, so a tab left open keeps working", async () => {
+    const app = await loadPluginApp(() => import("../app"));
+    expect(app.tabs.find((tab) => tab.context.kind === "thread")).toMatchObject({ id: PANEL_ACTION_ID, title: "Vantage", icon: "FolderGit", layout: "flush" });
+  });
+
+  it("adds a composer segment, an Info section, two thread menu entries and the toasts for watched threads", async () => {
+    const app = await loadPluginApp(() => import("../app"));
+    expect(app.threadContextSegments.map(({ id, group }) => ({ id, group }))).toEqual([{ id: "worktrees", group: "3_git" }]);
+    expect(app.threadContextSegments[0]!.details).toBeTypeOf("function");
+    expect(app.threadContextSegments[0]!.useVisible).toBeTypeOf("function");
+    expect(app.threadInfoSections.map(({ id, group }) => ({ id, group }))).toEqual([{ id: "worktrees", group: "2_changes" }]);
+    expect(app.threadActions.map(({ id, group }) => ({ id, group }))).toEqual([{ id: "review", group: "1_open" }, { id: "prefs", group: "3_settings" }]);
+    expect(app.appOverlays.map(({ id }) => id)).toEqual(["attention"]);
     expect(app.threadHeaderActions.map(({ id, title }) => ({ id, title }))).toEqual([{ id: "open", title: "Vantage" }]);
     expect(app.contentScripts).toHaveLength(0);
   });
 
-  it("opens the panel from the header button", async () => {
+  it("opens the thread tab from the header button", async () => {
     const app = await loadPluginApp(() => import("../app"));
     const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: "thr_1", projectId: "proj_1", isCompactViewport: false }, {
       pluginId: "vantage", openThreadPanel: () => true,
@@ -50,7 +74,7 @@ describe("plugin app", () => {
     const button = within(slot.container).getByRole("button", { name: "Open Vantage" });
     expect(button.hasAttribute("title")).toBe(false);
     fireEvent.pointerMove(button, { pointerType: "mouse" });
-    expect((await screen.findByRole("tooltip")).textContent).toBe(TOOLTIP);
+    expect((await screen.findByRole("tooltip")).textContent).toBe("Vantage: what this thread and its child threads changed");
     fireEvent.pointerLeave(button, { pointerType: "mouse" });
     slot.lifecycle.unmount();
 
@@ -59,37 +83,8 @@ describe("plugin app", () => {
     });
     fireEvent.keyDown(document.body, { key: "Tab" });
     act(() => within(again.container).getByRole("button", { name: "Open Vantage" }).focus());
-    expect((await screen.findByRole("tooltip")).textContent).toBe(TOOLTIP);
+    expect((await screen.findByRole("tooltip")).textContent).toBe("Vantage: what this thread and its child threads changed");
     again.lifecycle.unmount();
-  });
-});
-
-const TOOLTIP = "Vantage: what this thread and its child threads changed, by worktree and repository";
-
-describe("full-screen page", () => {
-  it("registers a Vantage entry for bb's left navigation", async () => {
-    const app = await loadPluginApp(() => import("../app"));
-    expect(app.navPanels.map(({ id, title, icon, path }) => ({ id, title, icon, path }))).toEqual([
-      { id: "vantage", title: "Vantage", icon: "FolderGit", path: "vantage" },
-    ]);
-  });
-
-  it("opens that thread's tree on the page from the side panel's Open full screen button, and names it in a tooltip", async () => {
-    const app = await loadPluginApp(() => import("../app"));
-    const slot = renderSlot<PluginThreadPanelProps, typeof rpcContract>(app.threadPanelActions[0]!, { threadId: "thr_1", params: null }, {
-      pluginId: "vantage",
-      rpc: { shell: () => new Promise<Overview>(() => {}), overview: () => overview(), patch: () => ({ patch: "", truncated: false, binary: false }), recordedEdits: () => ({ edits: [] }), commitFiles: () => ({ files: [] }) },
-      sdk: { subscribe: (() => () => {}) as never },
-      sidebarThreads: { status: "ready", threads: [] }, sidebarPullRequests: {}, threadActions: (() => []) as never,
-    });
-    const button = within(slot.container).getByRole("button", { name: "Open full screen" });
-    expect(button.querySelector("[data-icon='Maximize2']")).not.toBeNull();
-    expect(button.hasAttribute("title")).toBe(false);
-    fireEvent.click(button);
-    expect(slot.inspection.navigateCalls).toEqual([{ method: "toPluginPanel", path: "vantage", options: { subPath: "tree/thr_1" } }]);
-    fireEvent.pointerMove(button, { pointerType: "mouse" });
-    expect((await screen.findByRole("tooltip")).textContent).toBe("Open Vantage full screen for this thread tree");
-    slot.lifecycle.unmount();
   });
 });
 
@@ -103,18 +98,13 @@ describe("commands", () => {
     expect(commands.map((command) => command.id)).toEqual(["open"]);
     expect(commands[0]?.title).toBe("Vantage: Show changes across repositories");
     expect(commands[0]?.defaultShortcut).toBeUndefined();
-    expect(PANEL_ACTION_ID).toBe("changes");
   });
 
-  it("is available only where a thread is in view", () => {
+  it("is available only where a thread is in view, and opens the thread tab", async () => {
     const open = createCommands()[0]!;
     expect(open.isAvailable?.(context({ threadId: null, projectId: null }))).toBe(false);
-    expect(open.isAvailable?.(context())).toBe(true);
-  });
-
-  it("opens the Changes panel", async () => {
-    const open = createCommands()[0]!;
     const ready = context();
+    expect(open.isAvailable?.(ready)).toBe(true);
     await open.run(ready);
     expect(ready.openPanel).toHaveBeenCalledWith({ actionId: "changes" });
   });
@@ -130,12 +120,11 @@ describe("manifest", () => {
       name: "Vantage", branding: { icon: "FolderGit" }, server: "./server.ts", app: "./app.tsx", host: "./host.ts",
       skills: ["./skills"],
     });
-    expect(manifest.bb.branding.experimental_icons).toBeUndefined();
-    expect(manifest.engines).toEqual({ bb: ">=0.46", bbPluginSdk: ">=0.6.49" });
+    expect(manifest.engines).toEqual({ bb: ">=0.47", bbPluginSdk: ">=0.6.75" });
   });
 
-  it("keeps the SDK a dev dependency and bundles zod", () => {
+  it("keeps the SDK a dev dependency pinned to the version bb 0.47 ships, and bundles zod", () => {
     expect(manifest.dependencies).toEqual({ zod: "^4.3.6" });
-    expect(manifest.devDependencies["@get-bb/plugin-sdk"]).toBe("0.6.49");
+    expect(manifest.devDependencies["@get-bb/plugin-sdk"]).toBe("0.6.75");
   });
 });

@@ -3,7 +3,7 @@ import type { PluginBbSdk } from "@get-bb/plugin-sdk";
 import type { CollectDeps, HostCall, RepoPlan, Touched } from "../src/collect";
 import type { PatchInput, RepoRef } from "../src/contract";
 import type { EditRecord } from "../src/edits";
-import { BB_DEADLINE_MS, loadCommitFiles, loadPatch, loadRepoFiles, loadWorkspaceStatus, recordedFile } from "../src/sources";
+import { BB_DEADLINE_MS, loadCommitFiles, loadFileSides, loadPatch, loadRepoFiles, loadWorkspaceStatus, recordedFile } from "../src/sources";
 
 const AVAILABLE = { outcome: "available", initialPatches: [], mergeBaseRef: null, shortstat: "", truncated: false };
 const diffFile = (overrides: object = {}) => ({
@@ -417,5 +417,50 @@ describe("loadCommitFiles", () => {
 
   it("rejects a recorded repository", async () => {
     await expect(loadCommitFiles(deps().deps, { ref: { kind: "recorded" }, sha: SHA })).rejects.toThrow("not available");
+  });
+});
+
+describe("loadFileSides", () => {
+  const input = (scope: PatchInput["scope"], extra: Partial<PatchInput> = {}): PatchInput => ({
+    ref: workspace("origin/main"), path: "src/a.ts", previousPath: null, untracked: false, scope, sha: null, ...extra,
+  });
+  const sidesDeps = (diffFile: (args: { side: string }) => Promise<unknown>) => {
+    const made = deps({ diffFiles: { ...AVAILABLE, files: [], mergeBaseRef: "b".repeat(40) } });
+    const fake = vi.fn(diffFile);
+    (made.deps.sdk.environments as unknown as { diffFile: typeof fake }).diffFile = fake;
+    return { ...made, diffFile: fake };
+  };
+  const text = (content: string) => ({ content, contentEncoding: "utf8", sizeBytes: content.length, path: "src/a.ts" });
+
+  it("reads the old side of committed and branch changes at the merge base, not at the tip of the base branch", async () => {
+    const { deps: d, diffFile, diffFiles } = sidesDeps(async ({ side }) => text(side));
+    expect(await loadFileSides(d, input("committed"))).toEqual({ old: "old", new: "new" });
+    expect(diffFiles).toHaveBeenCalledWith(expect.objectContaining({ environmentId: "env_1", target: "branch_committed", mergeBaseBranch: "origin/main" }));
+    expect(diffFile).toHaveBeenCalledWith(expect.objectContaining({ side: "old", target: "branch_committed", mergeBaseRef: "b".repeat(40), path: "src/a.ts" }));
+    await loadFileSides(d, input("branch"));
+    expect(diffFile).toHaveBeenCalledWith(expect.objectContaining({ side: "old", target: "all", mergeBaseRef: "b".repeat(40) }));
+  });
+
+  it("asks for no merge base for an uncommitted change or one commit, and reads a renamed file's old side at its old path", async () => {
+    const { deps: d, diffFile, diffFiles } = sidesDeps(async ({ side }) => text(side));
+    await loadFileSides(d, input("uncommitted", { previousPath: "src/old.ts" }));
+    expect(diffFile).toHaveBeenCalledWith(expect.objectContaining({ side: "old", target: "uncommitted", path: "src/old.ts" }));
+    await loadFileSides(d, input("committed", { sha: "c".repeat(40) }));
+    expect(diffFile).toHaveBeenCalledWith(expect.objectContaining({ target: "commit", sha: "c".repeat(40) }));
+    expect(diffFiles).not.toHaveBeenCalled();
+  });
+
+  it("answers a side the file does not have with nothing, and lets any other failure through", async () => {
+    const missing = Object.assign(new Error("HTTP 404: not found"), { status: 404, code: "ENOENT" });
+    const { deps: d } = sidesDeps(async ({ side }) => { if (side === "old") throw missing; return text("new"); });
+    expect(await loadFileSides(d, input("uncommitted"))).toEqual({ old: null, new: "new" });
+    const offline = Object.assign(new Error("HTTP 503: host offline"), { status: 503, code: "host_offline" });
+    const { deps: down } = sidesDeps(async () => { throw offline; });
+    await expect(loadFileSides(down, input("uncommitted"))).rejects.toThrow("host offline");
+  });
+
+  it("sends no content for a binary or oversized side", async () => {
+    const { deps: d } = sidesDeps(async ({ side }) => (side === "old" ? { ...text("x"), contentEncoding: "base64" } : { ...text("y"), sizeBytes: 2 * 1024 * 1024 }));
+    expect(await loadFileSides(d, input("uncommitted"))).toEqual({ old: null, new: null });
   });
 });

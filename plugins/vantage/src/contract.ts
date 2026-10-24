@@ -126,6 +126,21 @@ export const hostContract = defineRpcContract({
       hostUnavailableSchema,
     ]),
   },
+  // Both whole sides of one file's diff, so the diff can show the unchanged lines between its hunks. A side the file does not
+  // have (an added or a deleted file) is null, and so is a side too large to send.
+  fileSides: {
+    input: z.object({
+      root: absolutePath,
+      path: relativePath,
+      previousPath: relativePath.nullable(),
+      untracked: z.boolean(),
+      target: hostTargetSchema,
+    }).strict(),
+    output: z.discriminatedUnion("outcome", [
+      z.object({ outcome: z.literal("available"), old: z.string().nullable(), new: z.string().nullable() }).strict(),
+      hostUnavailableSchema,
+    ]),
+  },
 });
 
 export type HostMethod = keyof typeof hostContract & string;
@@ -316,10 +331,56 @@ export type CommitFilesInput = z.infer<typeof commitFilesInputSchema>;
 export const commitFilesOutputSchema = z.object({ files: z.array(fileChangeSchema) }).strict();
 export type CommitFilesOutput = z.infer<typeof commitFilesOutputSchema>;
 
+export const fileSidesOutputSchema = z.object({ old: z.string().nullable(), new: z.string().nullable() }).strict();
+export type FileSidesOutput = z.infer<typeof fileSidesOutputSchema>;
+
+// A thread's own choice; a thread without one follows its nearest ancestor that has one, and then the setting.
+export const threadPrefSchema = z.object({ watch: z.boolean().optional(), reviews: z.boolean().optional() }).strict();
+export type ThreadPref = z.infer<typeof threadPrefSchema>;
+
+export const prefsSchema = z.object({
+  watchByDefault: z.boolean(),
+  reviewsByDefault: z.boolean(),
+  threads: z.record(text, threadPrefSchema),
+}).strict();
+export type Prefs = z.infer<typeof prefsSchema>;
+
+// `null` clears the thread's own choice, so it follows its ancestors and the setting again.
+export const setThreadPrefInputSchema = z.object({
+  threadId: text.min(1),
+  watch: z.boolean().nullable().optional(),
+  reviews: z.boolean().nullable().optional(),
+}).strict();
+export type SetThreadPrefInput = z.infer<typeof setThreadPrefInputSchema>;
+
+// One worktree's reviewed files: each part of a file (its uncommitted change, its committed change, or one commit's change)
+// maps to the signature it had when it was ticked, so a change made afterwards shows as not reviewed.
+export const reviewMarksSchema = z.record(z.string().max(8192), z.string().max(256));
+export type ReviewMarks = z.infer<typeof reviewMarksSchema>;
+
+export const reviewedInputSchema = z.object({ keys: z.array(text.min(1)).min(1).max(2000) }).strict();
+export const setReviewedInputSchema = z.object({
+  key: text.min(1),
+  marks: z.array(z.object({ mark: z.string().min(1).max(8192), signature: z.string().max(256).nullable() }).strict()).min(1).max(500),
+}).strict();
+export type SetReviewedInput = z.infer<typeof setReviewedInputSchema>;
+
+export const PREFS_TAG = "vantage:prefs";
+export const reviewedTag = (key: string): string => `vantage:reviewed:${key}`;
+
 export const rpcContract = defineRpcContract({
   shell: { input: shellInputSchema, output: overviewSchema },
   overview: { input: overviewInputSchema, output: overviewSchema },
   patch: { input: patchInputSchema, output: patchOutputSchema },
+  fileSides: { input: patchInputSchema, output: fileSidesOutputSchema },
   commitFiles: { input: commitFilesInputSchema, output: commitFilesOutputSchema },
   recordedEdits: { input: recordedEditsInputSchema, output: recordedEditsOutputSchema },
+  prefs: { input: z.object({}).strict(), output: prefsSchema, tags: () => [PREFS_TAG] },
+  setThreadPref: { input: setThreadPrefInputSchema, output: prefsSchema, invalidates: () => [PREFS_TAG] },
+  reviewed: {
+    input: reviewedInputSchema,
+    output: z.record(text, reviewMarksSchema),
+    keyTags: (key) => [reviewedTag(key)],
+  },
+  setReviewed: { input: setReviewedInputSchema, output: reviewMarksSchema, invalidates: (input) => [reviewedTag(input.key)] },
 });

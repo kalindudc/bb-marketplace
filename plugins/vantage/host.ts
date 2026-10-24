@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process";
+import { constants } from "node:fs";
 import { lstat, open, readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { experimental_defineHostEntry } from "@get-bb/plugin-sdk";
 import { hostContract, type GitFile, type HostInput, type HostOutput, type HostTarget, type HostUnavailable } from "./src/contract";
@@ -17,6 +18,7 @@ const GIT_MAX_BUFFER = 32 * 1024 * 1024;
 const UNTRACKED_COUNT_LIMIT = 2 * 1024 * 1024;
 const BINARY_SNIFF_BYTES = 8000;
 const COMMIT_LIMIT = 100;
+const SIDE_LIMIT = 1024 * 1024;
 const REFLOG_LIMIT = 5000;
 
 class Unavailable extends Error {
@@ -327,6 +329,7 @@ async function repoPatch(input: HostInput<"repoPatch">, signal: AbortSignal): Pr
     await verifyRoot(root, signal);
     checkPaths(path, previousPath);
     const diff = ["diff", "--no-color", "--no-ext-diff"];
+    if (untracked && (await insideRoot(root, path)) === null) throw new Unavailable("invalid-input", `Not inside the repository: ${path}`);
     const output = untracked
       ? await mustGit(root, [...diff, "--no-index", "--", "/dev/null", path], signal, [0, 1])
       : await mustGit(root, [
@@ -335,6 +338,90 @@ async function repoPatch(input: HostInput<"repoPatch">, signal: AbortSignal): Pr
       ], signal);
     const { patch, truncated } = truncatePatch(output);
     return { outcome: "available" as const, patch, truncated, binary: /^Binary files .* differ$/m.test(patch) };
+  });
+}
+
+// The revision each side of a target's diff reads from; `null` for the new side is the working tree.
+async function sideRevisions(root: string, target: HostTarget, signal: AbortSignal): Promise<{ old: string | null; new: string | null }> {
+  if (target.type === "range") {
+    const range = await resolveRange(root, target.base, target.head, signal);
+    const base = (await mustGit(root, ["merge-base", range.base, range.head], signal)).trim();
+    return { old: base, new: range.head };
+  }
+  if (target.type === "commit") {
+    const [parent, sha] = await resolveCommit(root, target.sha, signal);
+    return { old: parent === EMPTY_TREE ? null : parent!, new: sha! };
+  }
+  if (target.type === "committed") {
+    const committed = await resolveMergeBase(root, target.base, signal);
+    if (committed === null) throw new Unavailable("missing-ref", "There is no base branch to compare with");
+    return { old: committed.commit, new: "HEAD" };
+  }
+  const mergeBase = target.type === "merge-base" ? await resolveMergeBase(root, target.base, signal) : null;
+  const old = mergeBase?.commit ?? (await headTree(root, signal));
+  return { old: old === EMPTY_TREE ? null : old, new: null };
+}
+
+const isText = (content: Buffer): boolean => !content.subarray(0, BINARY_SNIFF_BYTES).includes(0);
+
+// Only a regular file's blob: a symlink stored in git is its target's name, and a tree is not a file.
+async function blobAt(root: string, revision: string, path: string, signal: AbortSignal): Promise<string | null> {
+  const listing = await runGit(root, ["ls-tree", "-l", "-z", revision, "--", `:(literal)${path}`], signal);
+  if (listing.code !== 0) return null;
+  const entry = /^(\d{6}) (\w+) ([0-9a-f]+) +(\d+|-)\t([^\0]*)\0/.exec(listing.stdout);
+  if (entry === null || entry[5] !== path || entry[2] !== "blob" || (entry[1] !== "100644" && entry[1] !== "100755")) return null;
+  if (Number(entry[4]) > SIDE_LIMIT) return null;
+  const content = await mustGit(root, ["cat-file", "blob", entry[3]!], signal);
+  return content.includes("\0") ? null : content;
+}
+
+// The file's own folder, with every symlink in it resolved, must still be inside the repository; checkPaths only looks at
+// the text of the path, and a symlinked folder could point anywhere.
+async function insideRoot(root: string, path: string): Promise<string | null> {
+  const full = join(root, path);
+  try {
+    const [realRoot, folder] = await Promise.all([realpath(root), realpath(dirname(full))]);
+    if (folder !== realRoot && !folder.startsWith(realRoot + sep)) return null;
+    return join(folder, basename(full));
+  } catch {
+    return null;
+  }
+}
+
+// Opened once, without following a symlink, and read with a bound, so a file swapped or grown after the check is not read.
+async function workingFile(root: string, path: string): Promise<string | null> {
+  const full = await insideRoot(root, path);
+  if (full === null) return null;
+  let handle;
+  try {
+    handle = await open(full, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  } catch {
+    return null;
+  }
+  try {
+    const info = await handle.stat();
+    if (!info.isFile() || info.size > SIDE_LIMIT) return null;
+    const buffer = Buffer.alloc(SIDE_LIMIT + 1);
+    const { bytesRead } = await handle.read(buffer, 0, SIDE_LIMIT + 1, 0);
+    if (bytesRead > SIDE_LIMIT) return null;
+    const content = buffer.subarray(0, bytesRead);
+    return isText(content) ? content.toString("utf8") : null;
+  } finally {
+    await handle.close();
+  }
+}
+
+async function fileSides(input: HostInput<"fileSides">, signal: AbortSignal): Promise<HostOutput<"fileSides">> {
+  return guard(async () => {
+    const { root, path, previousPath, untracked, target } = input;
+    await verifyRoot(root, signal);
+    checkPaths(path, previousPath);
+    const revisions = untracked ? { old: null, new: null } : await sideRevisions(root, target, signal);
+    const [old, next] = await Promise.all([
+      revisions.old === null ? null : blobAt(root, revisions.old, previousPath ?? path, signal),
+      revisions.new === null ? workingFile(root, path) : blobAt(root, revisions.new, path, signal),
+    ]);
+    return { outcome: "available" as const, old, new: next };
   });
 }
 
@@ -380,6 +467,7 @@ export default experimental_defineHostEntry({
     repoFiles: (input, { signal }) => repoFiles(input, signal),
     checkoutStatus: (input, { signal }) => checkoutStatus(input, signal),
     repoPatch: (input, { signal }) => repoPatch(input, signal),
+    fileSides: (input, { signal }) => fileSides(input, signal),
     threadCommits: (input, { signal }) => threadCommits(input, signal),
   },
 });

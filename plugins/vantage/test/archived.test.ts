@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { archivedLast, countArchived, includeArchivedLabel, isArchivedOnly } from "../src/archived";
+import { archivedLast, countArchived, isArchivedOnly } from "../src/archived";
 import { overview, threadSummary } from "./fixtures";
 
 const threads = [
@@ -37,14 +37,5 @@ describe("archivedLast", () => {
 describe("countArchived", () => {
   it("counts the rows whose threads are all archived", () => {
     expect(countArchived([{ threadIds: ["thr_old"] }, { threadIds: ["thr_live"] }, { threadIds: ["thr_old", "thr_older"] }], threads)).toBe(2);
-  });
-});
-
-describe("includeArchivedLabel", () => {
-  it("counts the archived threads in view when ticked and the ones left out when not", () => {
-    expect(includeArchivedLabel(overview({ threads }), true)).toBe("Include archived (2)");
-    expect(includeArchivedLabel(overview({ threads: [threadSummary()], archivedHidden: 5 }), false)).toBe("Include archived (5)");
-    expect(includeArchivedLabel(overview({ threads: [threadSummary()] }), true)).toBe("Include archived");
-    expect(includeArchivedLabel(null, false)).toBe("Include archived");
   });
 });

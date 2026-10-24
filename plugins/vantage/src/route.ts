@@ -1,7 +1,8 @@
 import type { OverviewTarget } from "./contract";
 import type { RepoFocus } from "./filters";
 
-export type PageView = "worktrees" | "repositories";
+// "overview": nothing selected, or one worktree when `selectedKey` is set. "changes": every change, by repository.
+export type PageView = "overview" | "changes" | "overlaps";
 export interface PageRoute { target: OverviewTarget; view: PageView; selectedKey: string | null; focus: RepoFocus | null }
 
 const THREAD_ID = /^[A-Za-z0-9_-]{1,64}$/;
@@ -44,22 +45,26 @@ export function parseRoute(subPath: string): { route: PageRoute; canonical: stri
     rest = end === -1 ? "" : rest.slice(end + 1);
     return head;
   };
-  const route: PageRoute = { target: { kind: "all" }, view: "worktrees", selectedKey: null, focus: null };
+  const route: PageRoute = { target: { kind: "all" }, view: "overview", selectedKey: null, focus: null };
   if (has(rest, "tree")) {
     take();
     const threadId = take();
     if (THREAD_ID.test(threadId)) route.target = { kind: "tree", threadId };
     else rest = "";
   }
-  if (has(rest, "repositories")) {
+  // "repositories" is the address 0.5 and earlier gave this view.
+  if (has(rest, "changes") || has(rest, "repositories")) {
     take();
-    route.view = "repositories";
+    route.view = "changes";
     if (has(rest, "other-files")) route.focus = { kind: "otherFiles" };
     else if (has(rest, "repo")) {
       take();
       const key = parseKey(rest);
       if (key !== null) route.focus = { kind: "repo", key };
     }
+  } else if (has(rest, "overlaps")) {
+    take();
+    route.view = "overlaps";
   } else if (has(rest, "worktree")) {
     take();
     route.selectedKey = parseKey(rest);
@@ -70,8 +75,9 @@ export function parseRoute(subPath: string): { route: PageRoute; canonical: stri
 export function formatRoute(route: PageRoute): string {
   const parts: string[] = [];
   if (route.target.kind === "tree") parts.push("tree", route.target.threadId);
-  if (route.view === "repositories") {
-    parts.push("repositories");
+  if (route.view === "overlaps") parts.push("overlaps");
+  else if (route.view === "changes") {
+    parts.push("changes");
     if (route.focus?.kind === "otherFiles") parts.push("other-files");
     else if (route.focus?.kind === "repo") parts.push("repo", encodeKey(route.focus.key));
   } else if (route.selectedKey !== null) parts.push("worktree", encodeKey(route.selectedKey));

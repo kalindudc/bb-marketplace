@@ -1,40 +1,35 @@
-import {
-  definePluginApp, experimental_Icon as Icon, useBbNavigate,
-  type PluginThreadHeaderActionProps,
-} from "@get-bb/plugin-sdk/app";
+import { definePluginApp } from "@get-bb/plugin-sdk/app";
 import { createCommands, PANEL_ACTION_ID } from "./src/commands";
-import { Hint } from "./src/hint";
-import { VantagePage } from "./src/page";
+import { AttentionToasts, useVantageBadge } from "./src/notify";
+import { AGENT_TAB_ID, AgentTab, PAGE_PANEL_ID, PAGE_PATH, VantageHeader, VantagePage, VantageSidebar, usePageTitle } from "./src/page";
 import { VantagePanel } from "./src/panel";
-
-function VantageButton({ isCompactViewport }: PluginThreadHeaderActionProps) {
-  const navigate = useBbNavigate();
-  // A phone header has no room to spare, and the panel launcher already lists the tab.
-  if (isCompactViewport) return null;
-  return (
-    <Hint label="Vantage: what this thread and its child threads changed, by worktree and repository">
-      <button type="button" aria-label="Open Vantage"
-        className="inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-state-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-        onClick={() => { navigate.openThreadPanel({ actionId: PANEL_ACTION_ID }); }}>
-        <Icon name="FolderGit" className="size-4" aria-hidden />
-      </button>
-    </Hint>
-  );
-}
+import {
+  SegmentDetails, SegmentSummary, VantageHeaderButton, VantageInfoSection, openAction, prefsAction, useSegmentVisible,
+} from "./src/thread-surfaces";
 
 export default definePluginApp((app) => {
-  app.slots.navPanel({ id: "vantage", title: "Vantage", icon: "FolderGit", path: "vantage", component: VantagePage });
-  app.slots.threadPanelAction({
-    id: PANEL_ACTION_ID,
-    title: "Vantage",
-    icon: "FolderGit",
-    layout: "flush",
-    component: VantagePanel,
+  app.slots.navPanel({
+    id: PAGE_PANEL_ID, title: "Vantage", icon: "FolderGit", path: PAGE_PATH, component: VantagePage,
+    experimental_sidebar: VantageSidebar, headerContent: VantageHeader,
+    experimental_usePageTitle: usePageTitle, experimental_useBadge: useVantageBadge,
   });
-  app.slots.experimental_threadHeaderAction({
-    id: "open",
-    title: "Vantage",
-    component: VantageButton,
+  app.slots.experimental_tab({
+    context: { kind: "nav-panel", panelId: PAGE_PANEL_ID }, availability: "fixed",
+    id: AGENT_TAB_ID, title: "Agent", icon: "Bot", tooltip: "The selected worktree's agent", layout: "flush", component: AgentTab,
   });
+  // The id is the one the retired thread panel action had, so a Vantage tab someone left open keeps working.
+  app.slots.experimental_tab({
+    context: { kind: "thread" }, availability: "action",
+    id: PANEL_ACTION_ID, title: "Vantage", icon: "FolderGit", layout: "flush", component: VantagePanel,
+  });
+  app.slots.experimental_threadHeaderAction({ id: "open", title: "Vantage", component: VantageHeaderButton });
+  app.slots.experimental_threadContextSegment({
+    id: "worktrees", title: "Worktrees", group: "3_git", order: 90,
+    summary: SegmentSummary, details: SegmentDetails, useVisible: useSegmentVisible,
+  });
+  app.slots.experimental_threadInfoSection({ id: "worktrees", group: "2_changes", order: 90, component: VantageInfoSection });
+  app.slots.experimental_threadAction(openAction);
+  app.slots.experimental_threadAction(prefsAction);
+  app.slots.experimental_appOverlay({ id: "attention", component: AttentionToasts });
   for (const command of createCommands()) app.commands.register(command);
 });

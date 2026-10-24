@@ -1,23 +1,24 @@
 {
   "id": "vantage",
   "displayName": "Vantage",
-  "description": "See every worktree your parallel agents work in, and everything they changed across repositories, from the parent thread. Each worktree shows status, branch, commits ahead and behind, uncommitted files and its pull request; open one to read its diffs and commits, talk to its agent, or start a terminal in it. Files changed in two worktrees are flagged before they conflict. A full-screen Vantage page in bb's left navigation shows every recent thread's worktrees and changed repositories at once, filtered by project. It paints at once and loads git details in the background; archived threads stay hidden on the page until you ask for them.",
+  "description": "See every worktree your parallel agents work in, review what each one changed, and send your comments back to the agent that made the change. A full-screen Vantage page lists every recent thread's worktrees in bb's sidebar, grouped by what needs doing, and shows one worktree's changes as a stream of diffs with a file tree, side-by-side view and expandable context, plus an overlaps page for files two worktrees both changed and an All changes view by repository. Inside a thread, a Vantage tab, a folded summary above the composer and an Info section show its child threads' worktrees. Vantage is quiet by default: watch a thread to see when its worktrees need you, and turn on reviews to tick files as reviewed.",
   "icon": "FolderGit",
   "screenshots": [
-    "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/vantage/side-panel.png",
     "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/vantage/full-screen.png",
-    "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/vantage/repositories.png"
+    "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/vantage/overview.png",
+    "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/vantage/side-panel.png",
+    "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/vantage/overlaps.png"
   ],
   "tags": [
     "git",
     "diffs",
+    "code-review",
     "changes",
     "multi-repo",
     "child-threads",
     "worktrees",
     "side-panel",
     "parallel-agents",
-    "terminal",
     "dashboard"
   ],
   "author": {

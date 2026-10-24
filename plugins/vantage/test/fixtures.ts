@@ -1,4 +1,4 @@
-import type { PluginSidebarThread, PluginSidebarPullRequest } from "@get-bb/plugin-sdk/app";
+import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import type { Environment } from "../src/collect";
 import type { Commit, FileChange, Overview, Repo, SharedFile, ThreadSummary, Worktree } from "../src/contract";
 
@@ -270,10 +270,3 @@ export function sidebarThread(overrides: Partial<PluginSidebarThread> = {}): Plu
   };
 }
 
-export function sidebarPullRequest(overrides: Partial<PluginSidebarPullRequest> = {}): PluginSidebarPullRequest {
-  return {
-    experimental_autoMerge: false, experimental_inMergeQueue: null,
-    experimental_checks: { state: "passing" }, experimental_review: { state: "none" }, experimental_mergeability: { state: "mergeable" },
-    number: 42, title: "Add the thing", url: "https://example.com/pull/42", state: "open", attention: "none", ...overrides,
-  };
-}

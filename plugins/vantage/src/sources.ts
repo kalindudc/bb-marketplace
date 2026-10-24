@@ -1,6 +1,6 @@
 import type { CollectDeps, RepoPlan, Touched } from "./collect";
 import type {
-  Commit, CommitFilesInput, CommitFilesOutput, FileChange, GitFile, HostOutput, HostTarget, PatchInput, PatchOutput, RepoRef, Scope, Worktree,
+  Commit, CommitFilesInput, CommitFilesOutput, FileChange, FileSidesOutput, GitFile, HostOutput, HostTarget, PatchInput, PatchOutput, RepoRef, Scope, Worktree,
 } from "./contract";
 
 export type LiveFiles = { files: FileChange[]; branch: string | null; base: string | null; aheadCount: number | null; truncated: boolean };
@@ -354,4 +354,70 @@ export async function loadCommitFiles(deps: CollectDeps, input: CommitFilesInput
     return { files: result.files.map(gitFileChange) };
   }
   throw new Error("Commits are not available for this repository");
+}
+
+const SIDE_LIMIT = 1024 * 1024;
+
+type DiffFileTarget =
+  | { target: "uncommitted" }
+  | { target: "branch_committed" | "all"; mergeBaseRef: string }
+  | { target: "commit"; sha: string };
+
+function diffFileTarget(target: PatchTarget): DiffFileTarget {
+  if (target.type === "uncommitted") return { target: "uncommitted" };
+  if (target.type === "commit") return { target: "commit", sha: target.sha };
+  return { target: target.type, mergeBaseRef: target.mergeBaseBranch };
+}
+
+// bb answers a side the file does not have with a 404; every other failure is a real error.
+const isMissing = (error: unknown): boolean => {
+  const failure = error as { status?: unknown; code?: unknown } | null;
+  return failure !== null && typeof failure === "object" && (failure.status === 404 || failure.code === "ENOENT");
+};
+
+async function workspaceSide(
+  deps: CollectDeps, environmentId: string, path: string, side: "old" | "new", target: DiffFileTarget, signal?: AbortSignal,
+): Promise<string | null> {
+  try {
+    const result = await deps.sdk.environments.diffFile({ environmentId, path, side, ...target, signal });
+    if (result.contentEncoding !== "utf8" || result.sizeBytes > SIDE_LIMIT || result.content.includes("\0")) return null;
+    return result.content;
+  } catch (error) {
+    if (isMissing(error)) return null;
+    throw error;
+  }
+}
+
+// bb reads the old side at the revision it is given, so it needs the merge base itself, not the base branch's tip; its
+// own diff panel passes the merge base that diffFiles reports. One answer serves every file of the workspace.
+function workspaceMergeBase(deps: CollectDeps, ref: WorkspaceRef & { base: string }, signal?: AbortSignal): Promise<string | null> {
+  const read = async (own?: AbortSignal) => {
+    const result = await deps.sdk.environments.diffFiles({ environmentId: ref.environmentId, target: "branch_committed", mergeBaseBranch: ref.base, signal: own });
+    return result.outcome === "available" ? result.mergeBaseRef : null;
+  };
+  return shared(deps, `mb\0${ref.environmentId}\0${ref.base}`, ref.environmentId, [], read, signal);
+}
+
+export async function loadFileSides(deps: CollectDeps, input: PatchInput, signal?: AbortSignal): Promise<FileSidesOutput> {
+  const { path, previousPath } = input;
+  const ref = input.ref.kind === "workspace" ? (atRoot(input.ref) ?? input.ref) : input.ref;
+  if (ref.kind === "recorded") return { old: null, new: null };
+  if (ref.kind === "workspace") {
+    let target = diffFileTarget(workspacePatchTarget(ref, input));
+    if (target.target === "branch_committed" || target.target === "all") {
+      const mergeBase = ref.base === null ? null : await workspaceMergeBase(deps, { ...ref, base: ref.base }, signal);
+      if (mergeBase === null) return { old: null, new: null };
+      target = { target: target.target, mergeBaseRef: mergeBase };
+    }
+    const [old, next] = await Promise.all([
+      input.untracked ? null : workspaceSide(deps, ref.environmentId, previousPath ?? path, "old", target, signal),
+      workspaceSide(deps, ref.environmentId, path, "new", target, signal),
+    ]);
+    return { old, new: next };
+  }
+  const result = await deps.host("fileSides", {
+    root: ref.root, path, previousPath, untracked: input.untracked, target: hostPatchTarget(ref, input),
+  }, { hostId: ref.hostId, signal });
+  if (result.outcome === "unavailable") throw new Error(hostMessage(result));
+  return { old: result.old, new: result.new };
 }
