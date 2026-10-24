@@ -48,9 +48,14 @@ export function createCommentStore(win: Window) {
     remove(key: string, id: string): void {
       write({ ...drafts, [key]: (drafts[key] ?? []).filter((comment) => comment.id !== id) });
     },
-    removeMany(key: string, ids: readonly string[]): void {
-      const gone = new Set(ids);
-      write({ ...drafts, [key]: (drafts[key] ?? []).filter((comment) => !gone.has(comment.id)) });
+    // Only the comments exactly as they were sent: one added or edited while the message was on its way stays a draft.
+    removeSent(key: string, sent: readonly Comment[]): void {
+      const same = new Map(sent.map((comment) => [comment.id, comment]));
+      const unchanged = (comment: Comment) => {
+        const was = same.get(comment.id);
+        return was !== undefined && was.text === comment.text && was.quote === comment.quote;
+      };
+      write({ ...drafts, [key]: (drafts[key] ?? []).filter((comment) => !unchanged(comment)) });
     },
     clear(key: string): void {
       const next = { ...drafts };

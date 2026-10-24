@@ -39,6 +39,17 @@ describe("comments", () => {
     expect(JSON.parse(window.localStorage.getItem(COMMENTS_STORAGE_KEY)!)).toEqual({});
   });
 
+  it("removes a sent comment only if it is unchanged since it was sent", () => {
+    const store = createCommentStore(window);
+    store.add("w1", { path: "a.ts", part: "uncommitted", quote: "", text: "One" });
+    store.add("w1", { path: "b.ts", part: "uncommitted", quote: "", text: "Two" });
+    const sent = store.get("w1");
+    store.update("w1", sent[1]!.id, "Two, edited");
+    store.add("w1", { path: "c.ts", part: "uncommitted", quote: "", text: "Three" });
+    store.removeSent("w1", sent);
+    expect(store.get("w1").map((comment) => comment.text)).toEqual(["Two, edited", "Three"]);
+  });
+
   it("ignores a stored value it cannot read", () => {
     window.localStorage.setItem(COMMENTS_STORAGE_KEY, "[1,2");
     expect(createCommentStore(window).get("w1")).toEqual([]);

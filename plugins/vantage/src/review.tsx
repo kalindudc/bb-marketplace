@@ -231,7 +231,7 @@ function CommitsMenu({ commits, heading, value, onPick }: { commits: readonly Co
 }
 
 function SendBar({ row, comments, compact, root, onDiscard, onDone, onSent, sendRef }: {
-  row: Row; comments: readonly Comment[]; compact: boolean; root: string | null; onDiscard(): void; onDone(ids: readonly string[]): void; onSent(): void;
+  row: Row; comments: readonly Comment[]; compact: boolean; root: string | null; onDiscard(): void; onDone(sent: readonly Comment[]): void; onSent(): void;
   sendRef: { current: (() => void) | null };
 }) {
   const sdk = useSdk();
@@ -245,8 +245,8 @@ function SendBar({ row, comments, compact, root, onDiscard, onDone, onSent, send
   const send = (mode: "steer-if-active" | "queue-if-active") => {
     setMenu(false);
     setSending(true);
-    // Comments added while this one is on its way stay as drafts.
-    const sent = comments.map((comment) => comment.id);
+    // The comments as this message has them; any added or edited while it is on its way stay as drafts.
+    const sent = comments;
     sdk.threads.send({ threadId: row.threadId, input: [{ type: "text", text: message, mentions: [] }], mode }).then(
       (result) => {
         setSending(false);
@@ -662,7 +662,7 @@ export function Review(props: ReviewProps) {
   const stream = (
     <div ref={streamRef} data-diff-stream className={compact ? "px-3 pt-3" : "min-h-0 overflow-y-auto px-5 pt-3"}>
       {content}
-      {drafts.length > 0 && <SendBar row={row} comments={drafts} compact={compact} root={worktree.root || null} onDiscard={() => commentStore.clear(worktree.key)} onDone={(ids) => commentStore.removeMany(worktree.key, ids)} onSent={onSent} sendRef={sendRef} />}
+      {drafts.length > 0 && <SendBar row={row} comments={drafts} compact={compact} root={worktree.root || null} onDiscard={() => commentStore.clear(worktree.key)} onDone={(sent) => commentStore.removeSent(worktree.key, sent)} onSent={onSent} sendRef={sendRef} />}
       {drafts.length === 0 && <div className="h-4" />}
     </div>
   );

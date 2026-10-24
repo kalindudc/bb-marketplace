@@ -456,6 +456,9 @@ or steers a turn of the worktree's thread, as typing them into its chat would.
 
 ## Changes
 
+- **0.6.2**: a comment you edit after pressing Send, while the message is
+  still on its way, stays a draft with your new text. Before, the agent got
+  the old text and the edit was deleted along with the sent comments.
 - **0.6.1**: installing 0.6.0 from the marketplace failed with "Could not
   resolve @get-bb/plugin-sdk", because its page code took the RPC contract
   helper from the SDK's root package, which a git install does not include.
@@ -547,5 +550,5 @@ After review, bump the package version, merge to an up-to-date `main`, and
 tag that version. This release uses:
 
 ```sh
-git tag vantage/v0.6.1 && git push origin vantage/v0.6.1
+git tag vantage/v0.6.2 && git push origin vantage/v0.6.2
 ```

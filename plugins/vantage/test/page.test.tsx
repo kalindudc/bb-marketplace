@@ -205,6 +205,26 @@ describe("the page", () => {
     expect(comments.get(CHILD.key).map((entry) => entry.text)).toEqual(["Second"]);
   });
 
+  it("keeps a comment edited while it was being sent, with its new text", async () => {
+    const { slot, calls } = await mount(`tree/thr_root/worktree/${key(CHILD.key)}`);
+    const view = within(slot.container);
+    await waitFor(() => expect(slot.container.querySelectorAll("[data-file-card]")).toHaveLength(2));
+    let finish: (value: { ok: true; delivery: "sent" }) => void = () => {};
+    calls.send.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    fireEvent.click(view.getByRole("button", { name: "Comment on src/money.js" }));
+    fireEvent.change(view.getByRole("textbox", { name: "Comment" }), { target: { value: "Round to the cent" } });
+    fireEvent.click(view.getByRole("button", { name: "Add comment" }));
+    fireEvent.click(view.getByRole("button", { name: /Send to agent/ }));
+    fireEvent.click(view.getByRole("button", { name: "Edit comment" }));
+    fireEvent.change(view.getByRole("textbox", { name: "Comment" }), { target: { value: "Round half up to the cent" } });
+    fireEvent.click(view.getByRole("button", { name: "Save" }));
+    finish({ ok: true, delivery: "sent" });
+    await waitFor(() => expect(calls.send).toHaveBeenCalledTimes(1));
+    expect(JSON.stringify(calls.send.mock.calls[0]![0])).toContain("Round to the cent");
+    await waitFor(() => expect(comments.get(CHILD.key).map((entry) => entry.text)).toEqual(["Round half up to the cent"]));
+    expect(view.getByText("1 comment for Pricing")).toBeTruthy();
+  });
+
   it("ticks a file as reviewed and folds it away when reviews are on", async () => {
     const marks = { [CHILD.key]: { "uncommitted\0src/money.js": "modified:6:0:" } };
     const { slot, calls } = await mount(`tree/thr_root/worktree/${key(CHILD.key)}`, { prefs: { reviewsByDefault: true }, marks });
