@@ -103,7 +103,9 @@ describe("Shuttle page", () => {
     const slot = await page("requested", { review: () => ({ threadId: "thr_review" }) });
     await slot.findByText(first.title);
     fireEvent.keyDown(within(row(slot, first.key)).getByRole("button", { name: /Pick a preset/u }), { key: "Enter" });
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Customize this run…" }));
+    const customize = await screen.findByRole("menuitem", { name: "Customize this run…" });
+    expect(customize.closest("[data-bb-plugin='shuttle'][data-bb-plugin-root]")).not.toBeNull();
+    fireEvent.click(customize);
     const dialog = await slot.findByRole("dialog");
     fireEvent.click(within(dialog).getByRole("radio", { name: /Standard review/u }));
     fireEvent.click(within(dialog).getByText("Change this run only"));

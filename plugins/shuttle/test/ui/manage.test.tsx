@@ -225,6 +225,22 @@ describe("the Manage your PR card", () => {
     release();
   });
 
+  // bb applies Shuttle's CSS only under [data-bb-plugin=shuttle]; a portal outside it loses classes such as size-[22px].
+  it("portals its pickers inside Shuttle's CSS scope, as a menu and as a sheet", async () => {
+    const desktop = await open(mine());
+    openMenu(within(row(desktop.card, "reviewers")).getByRole("button", { name: "Request reviewers" }));
+    const menu = await screen.findByRole("menu", { name: "Request reviewers" });
+    expect(desktop.slot.container.contains(menu)).toBe(false);
+    expect(menu.closest("[data-bb-plugin='shuttle'][data-bb-plugin-root]")).not.toBeNull();
+    unmountAll();
+    setViewport(390);
+    const phone = await open(mine());
+    fireEvent.click(within(row(phone.card, "reviewers")).getByRole("button", { name: "Request reviewers" }));
+    const sheet = await screen.findByRole("dialog", { name: "Request reviewers" });
+    expect(phone.slot.container.contains(sheet)).toBe(false);
+    expect(sheet.closest("[data-bb-plugin='shuttle'][data-bb-plugin-root]")).not.toBeNull();
+  });
+
   it("opens its pickers as bottom sheets on a phone", async () => {
     setViewport(390);
     const { slot, card } = await open(mine());

@@ -1,7 +1,17 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useEffect, useId, useRef, type ReactNode } from "react";
-import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
+import { experimental_Icon as Icon, experimental_usePluginId } from "@get-bb/plugin-sdk/app";
 import { initials } from "./format";
+
+/**
+ * bb scopes a plugin's CSS to elements under [data-bb-plugin=<id>], so anything portalled to
+ * document.body loses every class bb's own stylesheet lacks (such as size-[22px]) unless it
+ * carries the scope itself, as bb's own overlays do.
+ */
+export function usePortalScope() {
+  const pluginId = experimental_usePluginId();
+  return { "data-bb-portaled-overlay": "", "data-bb-plugin-root": "", "data-bb-plugin": pluginId } as const;
+}
 
 export const BUTTON = "inline-flex h-7 shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md border border-border bg-card px-2.5 text-xs text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50";
 export const BUTTON_PRIMARY = "inline-flex h-7 shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md border border-primary bg-primary px-2.5 text-xs font-semibold text-primary-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50";
@@ -131,6 +141,7 @@ export function Menu({ trigger, label, align = "right", children }: {
   align?: "left" | "right";
   children: ReactNode;
 }) {
+  const scope = usePortalScope();
   return (
     <DropdownMenu.Root modal={false}>
       <DropdownMenu.Trigger asChild>
@@ -140,7 +151,7 @@ export function Menu({ trigger, label, align = "right", children }: {
         </button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
-        <DropdownMenu.Content aria-label={label} align={align === "right" ? "end" : "start"} sideOffset={4} collisionPadding={8}
+        <DropdownMenu.Content {...scope} aria-label={label} align={align === "right" ? "end" : "start"} sideOffset={4} collisionPadding={8}
           className="z-50 flex w-72 flex-col rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md">
           {children}
         </DropdownMenu.Content>

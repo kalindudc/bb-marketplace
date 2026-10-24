@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1
+
+- Menus and sheets drawn over the page now get all of Shuttle's styles. bb applies a plugin's CSS only inside the plugin's own part of the page, and these were drawn outside it, so they kept only the classes bb's own stylesheet also has. In the reviewer picker, for example, the avatars were squashed and the group headings were too large. A test now fails if a menu or sheet is drawn without Shuttle's styles.
+
 ## 0.2.0
 
 - Shuttle works on a phone. Opening a PR shows it on its own screen, with a bar to go back and a bar at the bottom for Review, Link and Open; Back and the swipe return to the list. The list shows the sections as chips, and the review presets, labels and reviewers open as sheets from the bottom.

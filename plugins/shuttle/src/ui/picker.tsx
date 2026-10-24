@@ -2,7 +2,7 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { createContext, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
-import { BUTTON } from "./common";
+import { BUTTON, usePortalScope } from "./common";
 
 /** A phone's menu: a sheet from the bottom with a handle, a title and Done. Escape and the scrim close it. */
 function BottomSheet({ title, onClose, children }: { title: string; onClose(): void; children: ReactNode }) {
@@ -19,9 +19,10 @@ function BottomSheet({ title, onClose, children }: { title: string; onClose(): v
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, []);
+  const scope = usePortalScope();
   // In a portal, like bb's own menus, so no scrolling or transformed ancestor can clip it.
   return createPortal(
-    <div className="fixed inset-0 z-50">
+    <div {...scope} className="fixed inset-0 z-50">
       <div data-scrim className="absolute inset-0 bg-background/70" onClick={onClose} />
       <div role="dialog" aria-modal="true" aria-labelledby={titleId}
         className="absolute inset-x-0 bottom-0 flex max-h-[78vh] flex-col rounded-t-2xl border-t border-border bg-card text-foreground shadow-lg animate-in slide-in-from-bottom duration-200">
@@ -59,6 +60,7 @@ export function Picker({ phone, title, trigger, triggerClassName, triggerLabel, 
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const scope = usePortalScope();
   const label = triggerLabel ?? title;
   if (phone) {
     return (
@@ -82,7 +84,7 @@ export function Picker({ phone, title, trigger, triggerClassName, triggerLabel, 
         <button type="button" aria-label={label} title={disabled ? disabledReason : undefined} className={triggerClassName}>{trigger}</button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
-        <DropdownMenu.Content align={align} sideOffset={4} collisionPadding={8}
+        <DropdownMenu.Content {...scope} align={align} sideOffset={4} collisionPadding={8}
           className="z-50 flex max-h-[min(24rem,var(--radix-dropdown-menu-content-available-height))] w-80 flex-col overflow-y-auto rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md">
           <Context.Provider value={{ mode: "menu", close: () => setOpen(false) }}>{children}</Context.Provider>
         </DropdownMenu.Content>
