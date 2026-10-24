@@ -426,6 +426,8 @@ export class FakeHost implements HostPort {
       }
       case "prRetarget":
         return { outcome: "ok" };
+      case "prRequestReview":
+        return { outcome: "ok", requested: [...(input as HostInput<"prRequestReview">).reviewers], failed: [] };
       case "push": {
         const { src, branch } = input as HostInput<"push">;
         this.remoteBranches.set(branch, src);

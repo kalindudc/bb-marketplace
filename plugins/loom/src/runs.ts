@@ -20,6 +20,7 @@ export const STEP_LABELS: Partial<Record<HostMethod, string>> = {
   prCreate: "open the pull request",
   stackBase: "build the commit to stack on",
   prRetarget: "move the pull request to another base",
+  prRequestReview: "ask the reviewers to review again",
   fetchBranch: "git fetch",
 };
 
@@ -73,6 +74,12 @@ export function stepSummary(method: HostMethod, output: unknown): { ok: boolean;
     }
     case "prRetarget":
       return { ok: true, text: "Moved." };
+    case "prRequestReview": {
+      const asked = output as HostOutput<"prRequestReview">;
+      if (asked.outcome !== "ok") return { ok: false, text: "unavailable" };
+      const lines = [asked.requested.length > 0 ? `Asked ${asked.requested.join(", ")}.` : "Asked no one.", ...asked.failed.map((miss) => `${miss.login}: ${miss.message}`)];
+      return { ok: asked.failed.length === 0, text: lines.join("\n") };
+    }
     default:
       return { ok: true, text: JSON.stringify(output) };
   }

@@ -2,6 +2,12 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.17.0 (2026-10-24)
+
+### Added
+
+- On the pull request strategy, once Loom pushes a fix round, it asks the people whose reviews and review threads the fix answered to review the pull request again, as GitHub's Re-request review button does. It asks only people, not bots, and not those who only left a top-level comment; a round of failed checks alone, or the human's reply on the ticket, asks no one. A post on the ticket names who was asked, and anyone Loom could not ask with GitHub's reason; the fix stays pushed either way. This goes through `gh` only, with a new host operation that calls GitHub's request reviewers endpoint once for each person.
+
 ## 0.16.1 (2026-10-23)
 
 ### Changed

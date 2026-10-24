@@ -250,7 +250,7 @@ export function newFeedback(ticket: TicketRow, feedback: Feedback, now: number, 
       sorted.ignored.bots += 1;
       sorted.ignored.keys.push(item.key);
     } else if (item.kind !== "review" || item.state === "changes_requested" || (item.state === "commented" && item.body.trim() !== "")) {
-      sorted.items.push({ key: item.key, kind: item.kind, author: item.author, body: item.body, url: item.url, state: item.state, path: item.path, line: item.line });
+      sorted.items.push({ key: item.key, kind: item.kind, author: item.author, bot: item.bot, body: item.body, url: item.url, state: item.state, path: item.path, line: item.line });
     } else {
       sorted.ignored.keys.push(item.key);
     }
@@ -412,7 +412,7 @@ function feedbackData(ticket: TicketRow, round: number, counted: number, a: Roun
     diverged: a.diverged !== null,
     checks: a.checks.map((check) => ({ name: check.name, url: check.url })),
     skipped: a.skipped,
-    items: a.items.map((item) => ({ kind: item.kind, author: item.author, body: item.body.slice(0, 2000), url: item.url, state: item.state, path: item.path, line: item.line })),
+    items: a.items.map((item) => ({ kind: item.kind, author: item.author, bot: item.bot === true, body: item.body.slice(0, 2000), url: item.url, state: item.state, path: item.path, line: item.line })),
     ignored: a.ignored,
   };
 }
@@ -427,6 +427,27 @@ export function openFeedback(posts: readonly PostRow[]): PostRow | null {
     if (outcome === "pr_opened" || outcome === "pr_pushed" || outcome === "pr_unchanged" || outcome === "branch_pushed") return null;
   }
   return null;
+}
+
+/**
+ * Who to ask for a new review once Loom pushes a fix: the people whose reviews and review threads the fix rounds since
+ * its last push sent the worker. Bots cannot be asked, and "ghost" is GitHub's name for a deleted account.
+ */
+export function reviewersToAsk(posts: readonly PostRow[]): string[] {
+  type Data = { outcome?: string; items?: Array<{ kind?: string; author?: string; bot?: boolean }> };
+  const rounds: Data[] = [];
+  for (let index = posts.length - 1; index >= 0; index -= 1) {
+    const candidate = posts[index]!;
+    if (candidate.kind !== "merge") continue;
+    const data = JSON.parse(candidate.data_json) as Data;
+    if (data.outcome === "pr_opened" || data.outcome === "pr_pushed" || data.outcome === "pr_unchanged" || data.outcome === "branch_pushed") break;
+    if (data.outcome === "pr_feedback") rounds.unshift(data);
+  }
+  const reviewers = new Set<string>();
+  for (const item of rounds.flatMap((round) => round.items ?? [])) {
+    if ((item.kind === "review" || item.kind === "thread") && item.bot !== true && item.author !== undefined && item.author !== "ghost") reviewers.add(item.author);
+  }
+  return [...reviewers];
 }
 
 /** Whether a fix round's submit changed nothing: its commit is still the head the open feedback was sent for. */

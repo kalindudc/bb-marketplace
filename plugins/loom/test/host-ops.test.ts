@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import hostEntry from "../host";
-import { changedFiles, commitAll, diff, ensureBranch, ensureWorktree, exec, fetchBranch, filePatch, ghStatus, git, landedOn, merge, parseRemoteUrl, prCommit, prCreate, prFeedback, prState, push, remotes, resetHard, stackBase, trialWorktree, worktreeState } from "../src/host/ops";
+import { changedFiles, commitAll, diff, ensureBranch, ensureWorktree, exec, fetchBranch, filePatch, ghStatus, git, landedOn, merge, parseRemoteUrl, prCommit, prCreate, prFeedback, prRequestReview, prState, push, remotes, resetHard, stackBase, trialWorktree, worktreeState } from "../src/host/ops";
 
 const ENV: Record<string, string> = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
 const AUTHOR_VARS = ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"];
@@ -716,6 +716,19 @@ describe("gh", () => {
     fakeGh(`echo '{"state":"WEIRD"}'`);
     expect(await prState({ repo, url: "https://github.com/acme/shop/pull/9", forge: GH })).toMatchObject({ outcome: "unavailable" });
   });
+
+  it("asks each reviewer for a review in its own REST call, the login in the JSON on stdin, and reports the ones GitHub refused", async () => {
+    fakeGh(`body=$(cat)\necho "$body" >> "$dir/stdin.txt"\ncase "$body" in *carol*) echo "gh: Reviews may only be requested from collaborators. (HTTP 422)" 1>&2; exit 1;; esac`);
+    const repo = makeRepo();
+    const result = await prRequestReview({ repo, url: "https://github.example.com/acme/shop/pull/7", reviewers: ["alice", "carol"] });
+    expect(result).toEqual({ outcome: "ok", requested: ["alice"], failed: [{ login: "carol", message: "gh: Reviews may only be requested from collaborators. (HTTP 422)" }] });
+    const call = ["api", "--hostname", "github.example.com", "--method", "POST", "repos/acme/shop/pulls/7/requested_reviewers", "--input", "-", "--silent"];
+    expect(calls()).toEqual([call, call]);
+    expect(readFileSync(join(bin, "stdin.txt"), "utf8")).toBe('{"reviewers":["alice"]}\n{"reviewers":["carol"]}\n');
+
+    expect(await prRequestReview({ repo, url: "https://review.example.com/shop/42", reviewers: ["alice"] })).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("not a GitHub pull request URL") });
+    expect(calls()).toHaveLength(2);
+  });
 });
 
 describe("host entry", () => {
@@ -770,6 +783,9 @@ describe("host entry", () => {
     await expect(harness.experimental_call("ensureBranch", { repo: scratch, branch: "a..b", from: "main" })).rejects.toThrow();
     await expect(harness.experimental_call("ensureBranch", { repo: scratch, branch: "a b", from: "main" })).rejects.toThrow();
     await expect(harness.experimental_call("fetchBranch", { worktree: scratch, remote: "--upload-pack=x", branch: "main" })).rejects.toThrow();
+    for (const reviewers of [[], ["-alice"], ["al ice"], ["alice[bot]"]]) {
+      await expect(harness.experimental_call("prRequestReview", { repo: scratch, url: "https://github.com/acme/shop/pull/7", reviewers }), JSON.stringify(reviewers)).rejects.toThrow();
+    }
   });
 });
 

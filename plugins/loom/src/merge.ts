@@ -6,7 +6,7 @@ import { repoCheckout, type RepoCheckout } from "./checkouts";
 import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { plural } from "./format";
 import { afterMergeChangedText, afterMergeFailedText, andList, clip, conflictText, dependsOnLines, landBody, prDivergedText, restackConflictText, restackFailedText, workerPrBody } from "./prompts";
-import { closedPrReset, followFeedback, inFixRound, prTextFor, prTextReady, templatePr, type PrText } from "./pull-requests";
+import { closedPrReset, followFeedback, inFixRound, prTextFor, prTextReady, reviewersToAsk, templatePr, type PrText } from "./pull-requests";
 import { prNumber, type HostInput, type HostOutput as HostOutputOf } from "./host-contract";
 import { LoomError } from "./projects";
 import { followsFeedback, isMultiRepo, prSettings, repoSettings, type RepoSettings } from "./repos";
@@ -460,8 +460,10 @@ async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
           ? { kind: "merge", body: `Pushed fix round ${current.pr_rounds} to ${target}${commits}.`, data: { outcome: "pr_pushed", url: current.pr_url, pushed: where, sha: src, round: current.pr_rounds } }
           : { kind: "merge", body: `Fix round ${current.pr_rounds} changed nothing the pull request does not already have, so Loom pushed nothing to ${target}.`, data: { outcome: "pr_unchanged", url: current.pr_url, sha: src, round: current.pr_rounds } };
     const moved = current.pr_url !== null && prBase !== (current.pr_base ?? base) ? await retarget(ctx, { hostId, repo, settings, ticket: current, base: prBase }) : null;
+    const asked = fix && !catchUp && pushedNow ? await askForReviews(ctx, { hostId, repo, settings, ticket: current }) : null;
     const data = settings.forge.kind === "none" ? { pushed: where } : catchUp ? { url: current.pr_url, restack: true } : { url: current.pr_url, fixRound: current.pr_rounds };
-    toPrOpen(ctx, current.id, { ...recorded, ...(moved === null ? {} : { pr_base: prBase }) }, [...(post === null ? [] : [post]), ...(moved === null ? [] : [moved])], data);
+    const posts = [post, moved, asked].filter((each): each is MergePost => each !== null);
+    toPrOpen(ctx, current.id, { ...recorded, ...(moved === null ? {} : { pr_base: prBase }) }, posts, data);
     return;
   }
 
@@ -579,6 +581,29 @@ async function retarget(ctx: EngineCtx, a: { hostId: string; repo: string; setti
   const moved = await ctx.host.call(a.hostId, "prRetarget", { repo: a.repo, url, base: a.base });
   if (moved.outcome === "unavailable") throw new Unavailable(`Moving ${a.ticket.key}'s pull request to ${a.base} stopped: ${moved.message}`);
   return { kind: "merge", body: `Moved the pull request ${url} to ${a.base}.`, data: { outcome: "retargeted", url, base: a.base } };
+}
+
+/**
+ * After a fix round's push, asks the people whose reviews and review threads the round answered to review the pull
+ * request again, and returns the post that says so. Only through gh. A failure is posted and blocks nothing: the fix is pushed.
+ */
+async function askForReviews(ctx: EngineCtx, a: { hostId: string; repo: string; settings: RepoSettings; ticket: TicketRow }): Promise<MergePost | null> {
+  const url = a.ticket.pr_url;
+  if (a.settings.forge.kind !== "gh" || url === null) return null;
+  const reviewers = reviewersToAsk(ctx.store.posts(a.ticket.id)).slice(0, 20);
+  if (reviewers.length === 0) return null;
+  // A host from before this call refuses it; that is one more failure to post.
+  const asked: HostOutputOf<"prRequestReview"> = await ctx.host
+    .call(a.hostId, "prRequestReview", { repo: a.repo, url, reviewers })
+    .catch((error: unknown) => ({ outcome: "unavailable" as const, message: errText(error) }));
+  const requested = asked.outcome === "ok" ? asked.requested : [];
+  const failed = asked.outcome === "ok" ? asked.failed : reviewers.map((login) => ({ login, message: asked.message }));
+  const lines =
+    asked.outcome === "ok"
+      ? [...(requested.length > 0 ? [`Asked ${andList(requested)} to review the pull request again.`] : []), ...failed.map((miss) => `Loom could not ask ${miss.login} to review it again: ${miss.message}`)]
+      : [`Loom could not ask ${andList(reviewers)} to review the pull request again: ${asked.message}`];
+  const data = { outcome: requested.length > 0 ? "review_requested" : "review_request_failed", url, round: a.ticket.pr_rounds, requested, failed };
+  return { kind: "merge", body: lines.join("\n\n"), data };
 }
 
 /** merging to pr_open, with what Loom pushed and its posts, in one transaction. */

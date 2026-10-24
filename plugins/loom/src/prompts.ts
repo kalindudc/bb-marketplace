@@ -560,6 +560,8 @@ export interface FeedbackCheck {
 export interface FeedbackItem {
   kind: "review" | "thread" | "comment" | "reply";
   author: string;
+  /** Unknown on the human's reply and in older feedback posts. */
+  bot?: boolean;
   body: string;
   url: string | null;
   state: string | null;

@@ -356,6 +356,11 @@ its own pull request.
   round, which passes the checks and a Loom review again and is pushed as one
   more commit. After `merge.max_fix_rounds` rounds (5 by default) the ticket
   blocks and the pull request stays open.
+- Once a fix is pushed, Loom asks the people whose reviews and review threads
+  it answered to review the pull request again, as GitHub's Re-request review
+  button does. Bots, people who only left a top-level comment, and rounds of
+  failed checks alone ask no one. This goes through `gh`; a person Loom cannot
+  ask is named in a post on the ticket, and the fix stays pushed.
 - A failed check goes to the worker once the pending checks stop holding it
   back, so the worker does not wait for slow or stuck CI. A check still queued
   5 minutes after Loom first saw it stops holding. A running check holds only

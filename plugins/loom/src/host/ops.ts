@@ -629,6 +629,22 @@ export async function prFeedback(input: HostInput<"prFeedback">, signal?: AbortS
   return ghFeedback(pull);
 }
 
+// GitHub re-requests a review from someone who already reviewed when they are requested again, as its Re-request button does.
+export async function prRequestReview(input: HostInput<"prRequestReview">, signal?: AbortSignal): Promise<HostOutput<"prRequestReview">> {
+  const match = PULL_URL.exec(input.url);
+  if (match === null) return { outcome: "unavailable", message: `${input.url} is not a GitHub pull request URL.` };
+  const [, host, owner, name, number] = match;
+  const requested: string[] = [];
+  const failed: Array<{ login: string; message: string }> = [];
+  for (const login of input.reviewers) {
+    const asked = await gh(input.repo, ["api", "--hostname", host!, "--method", "POST", `repos/${owner}/${name}/pulls/${number}/requested_reviewers`, "--input", "-", "--silent"], { stdin: JSON.stringify({ reviewers: [login] }), signal });
+    if (asked === "missing") return { outcome: "unavailable", message: GH_MISSING };
+    if (asked.code === 0) requested.push(login);
+    else failed.push({ login, message: tail(asked.stderr || asked.stdout, 500) });
+  }
+  return { outcome: "ok", requested, failed };
+}
+
 // ---------------------------------------------------------------- the spec's forge commands
 
 const URL_IN_OUTPUT = /https?:\/\/\S+/gu;

@@ -169,6 +169,21 @@ export const hostContract = defineRpcContract({
       z.object({ outcome: z.literal("unavailable"), message: z.string() }).strict(),
     ]),
   },
+  // Asks each login for a review of the pull request, again for one who already reviewed it: one REST call each through gh,
+  // so one who cannot be asked, such as a person without access to the repository, does not stop the others.
+  prRequestReview: {
+    input: z
+      .object({
+        repo: absPath,
+        url: z.string().regex(/^https?:\/\/\S+$/, "must be a pull request URL").max(500),
+        reviewers: z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/, "must be a forge login")).min(1).max(20),
+      })
+      .strict(),
+    output: z.discriminatedUnion("outcome", [
+      z.object({ outcome: z.literal("ok"), requested: z.array(z.string()), failed: z.array(z.object({ login: z.string(), message: z.string() }).strict()) }).strict(),
+      unavailable,
+    ]),
+  },
   // A pull request's state, the checks on its head commit, and its reviews, unresolved review threads and comments.
   // Through gh, or the spec's feedback command, which prints the same object as JSON on its last line.
   prFeedback: {

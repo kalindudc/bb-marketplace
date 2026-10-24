@@ -396,6 +396,95 @@ describe("following the pull request", () => {
     expect(dataOf("pr_pushed")[0]!.post.body).toBe(`Pushed fix round 1 to ${URL} as 1 commit (sq2).`);
   });
 
+  describe("asking the reviewers to review again", () => {
+    const carol = { key: "thread:T2:3", kind: "thread" as const, author: "carol", bot: false, body: "carol: Why a Set here?", url: null, state: null, path: "src/b.ts", line: 9 };
+    const pushFix = async (worker: ThreadRow) => {
+      await approveFix(worker);
+      await ask();
+      handInPrText(h.ctx, worker.thread_id!, { commit_message: "Rename the column" });
+      await queue();
+    };
+
+    it("asks the people whose reviews and review threads the fix answered, once the fix is pushed, and not bots, commenters or approvers", async () => {
+      const worker = await openPr();
+      h.host.feedback.set(URL, {
+        items: [
+          changesRequested.items![0]!,
+          { key: "thread:T1:9", kind: "thread", author: "binks", bot: true, body: "binks: The regex is unanchored.", url: null, state: null, path: "src/a.ts", line: 4 },
+          carol,
+          { key: "comment:7:z", kind: "comment", author: "dave", bot: false, body: "Can this ship today?", url: null, state: null, path: null, line: null },
+          { key: "review:2:b", kind: "review", author: "bob", bot: false, body: "LGTM", url: null, state: "approved", path: null, line: null },
+        ],
+      });
+      await poll();
+      expect(dataOf("pr_feedback")[0]!.data.items).toEqual(expect.arrayContaining([expect.objectContaining({ author: "binks", bot: true }), expect.objectContaining({ author: "alice", bot: false })]));
+      expect(h.host.callsTo("prRequestReview")).toEqual([]);
+
+      await pushFix(worker);
+      expect(h.host.callsTo("prRequestReview")).toEqual([{ repo: "/repo", url: URL, reviewers: ["alice", "carol"] }]);
+      expect(ticket().state).toBe("pr_open");
+      expect(dataOf("review_requested")[0]).toMatchObject({ post: { body: "Asked alice and carol to review the pull request again." }, data: { url: URL, round: 1, requested: ["alice", "carol"], failed: [] } });
+    });
+
+    it("asks only the reviewers of the rounds since Loom last pushed or found nothing to push", async () => {
+      const worker = await openPr();
+      h.host.feedback.set(URL, changesRequested);
+      await poll();
+      await approveFix(worker, false);
+      expect(ticket().state).toBe("pr_open");
+      expect(h.host.callsTo("prRequestReview")).toEqual([]);
+
+      h.host.feedback.set(URL, { items: [changesRequested.items![0]!, carol] });
+      await poll();
+      await pushFix(worker);
+      expect(h.host.callsTo("prRequestReview").map((call) => call.reviewers)).toEqual([["carol"]]);
+
+      h.host.feedback.set(URL, { head: "sq2", items: [changesRequested.items![0]!, { ...carol, key: "thread:T2:4" }, { ...changesRequested.items![0]!, key: "review:3:c", body: "Also the header." }] });
+      await poll();
+      await pushFix(worker);
+      expect(h.host.callsTo("prRequestReview").map((call) => call.reviewers)).toEqual([["carol"], ["carol", "alice"]]);
+    });
+
+    it("asks no one after a round of failed checks alone, or the human's reply, or on a command forge", async () => {
+      const worker = await openPr();
+      h.host.feedback.set(URL, { checks: [{ key: "check:9", name: "lint", state: "failed", url: null }] });
+      h.clock.advance(31 * 60_000);
+      await poll();
+      expect(ticket().state).toBe("working");
+      await pushFix(worker);
+      expect(dataOf("pr_pushed")).toHaveLength(1);
+      expect(h.host.callsTo("prRequestReview")).toEqual([]);
+
+      h = makeCtx();
+      const commandWorker = await openPr({ forge: { kind: "command", open: "review open", state: "review state", feedback: "review feedback --json" } });
+      h.host.feedback.set(URL, changesRequested);
+      await poll();
+      await pushFix(commandWorker);
+      expect(dataOf("pr_pushed")).toHaveLength(1);
+      expect(h.host.callsTo("prRequestReview")).toEqual([]);
+    });
+
+    it("posts whom it could not ask, and the fix stays pushed", async () => {
+      const worker = await openPr();
+      h.host.feedback.set(URL, { items: [changesRequested.items![0]!, carol] });
+      await poll();
+      h.host.scripted.prRequestReview = [{ outcome: "ok", requested: ["alice"], failed: [{ login: "carol", message: "Reviews may only be requested from collaborators. (HTTP 422)" }] }];
+      await pushFix(worker);
+      expect(ticket()).toMatchObject({ state: "pr_open", pushed_sha: "sq2" });
+      expect(dataOf("review_requested")[0]!.post.body).toBe("Asked alice to review the pull request again.\n\nLoom could not ask carol to review it again: Reviews may only be requested from collaborators. (HTTP 422)");
+
+      h.host.feedback.set(URL, { head: "sq2", items: [{ ...carol, key: "thread:T2:5" }] });
+      await poll();
+      h.host.errors.prRequestReview = new Error("unknown method prRequestReview");
+      await pushFix(worker);
+      expect(ticket()).toMatchObject({ state: "pr_open", pushed_sha: "sq3" });
+      expect(dataOf("review_request_failed")[0]).toMatchObject({
+        post: { body: "Loom could not ask carol to review the pull request again: unknown method prRequestReview" },
+        data: { requested: [], failed: [{ login: "carol", message: "unknown method prRequestReview" }] },
+      });
+    });
+  });
+
   it("tells the reviewer of a fix what the pull request's feedback asked", async () => {
     const worker = await openPr();
     h.host.feedback.set(URL, changesRequested);
