@@ -1,5 +1,5 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
-import { defineRpcContract } from "@get-bb/plugin-sdk";
+import { defineContract } from "./define-contract";
 import {
   experimental_useRpcKeyedQuery, experimental_useSidebarThreads, type PluginSidebarThread, type PluginSidebarThreadIndicator,
 } from "@get-bb/plugin-sdk/app";
@@ -64,7 +64,7 @@ export function quietIndicator(indicator: PluginSidebarThreadIndicator, watched:
 }
 
 // The parts of GitHub PR Status's `pullRequests` reply Vantage reads; `bb plugin rpc inspect bb--github-pr-status pullRequests` has it all.
-const githubPrStatus = defineRpcContract({
+const githubPrStatus = defineContract({
   pullRequests: {
     input: z.object({ keys: z.array(z.string()) }),
     output: z.record(z.string(), z.discriminatedUnion("outcome", [

@@ -1,4 +1,4 @@
-import { defineRpcContract } from "@get-bb/plugin-sdk";
+import { defineContract } from "./define-contract";
 import { z } from "zod";
 
 const text = z.string().max(4096);
@@ -53,7 +53,7 @@ export const hostUnavailableSchema = z.object({
 }).strict();
 export type HostUnavailable = z.infer<typeof hostUnavailableSchema>;
 
-export const hostContract = defineRpcContract({
+export const hostContract = defineContract({
   resolveRoots: {
     input: z.object({ paths: z.array(resolvablePath).max(2000) }).strict(),
     output: z.object({
@@ -368,7 +368,7 @@ export type SetReviewedInput = z.infer<typeof setReviewedInputSchema>;
 export const PREFS_TAG = "vantage:prefs";
 export const reviewedTag = (key: string): string => `vantage:reviewed:${key}`;
 
-export const rpcContract = defineRpcContract({
+export const rpcContract = defineContract({
   shell: { input: shellInputSchema, output: overviewSchema },
   overview: { input: overviewInputSchema, output: overviewSchema },
   patch: { input: patchInputSchema, output: patchOutputSchema },

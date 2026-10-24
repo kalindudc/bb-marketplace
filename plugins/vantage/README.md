@@ -456,6 +456,11 @@ or steers a turn of the worktree's thread, as typing them into its chat would.
 
 ## Changes
 
+- **0.6.1**: installing 0.6.0 from the marketplace failed with "Could not
+  resolve @get-bb/plugin-sdk", because its page code took the RPC contract
+  helper from the SDK's root package, which a git install does not include.
+  The page now uses a local copy of that helper, and a test keeps the page's
+  code off the SDK's root package.
 - **0.6.0**: a page built for reviewing. The worktree list replaces bb's
   thread list while the page is open and groups worktrees by what you need to
   do; one switch chooses all, uncommitted, committed or one commit's changes;
@@ -542,5 +547,5 @@ After review, bump the package version, merge to an up-to-date `main`, and
 tag that version. This release uses:
 
 ```sh
-git tag vantage/v0.6.0 && git push origin vantage/v0.6.0
+git tag vantage/v0.6.1 && git push origin vantage/v0.6.1
 ```
