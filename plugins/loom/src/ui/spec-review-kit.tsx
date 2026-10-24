@@ -81,6 +81,8 @@ const LABELS: Record<string, string> = {
   "merge.describe": "Who writes the pull request",
   "merge.squash": "One commit per pull request",
   "merge.max_fix_rounds": "Fix rounds",
+  "merge.checks_queued_minutes": "Stop waiting for queued checks",
+  "merge.checks_near_done_percent": "Wait for running checks this far along",
   "merge.forge": "Pull request server",
   "merge.worktree": "Integration worktree",
   "project.base": "Base branch",

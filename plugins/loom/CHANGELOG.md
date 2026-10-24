@@ -2,6 +2,19 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.16.1 (2026-10-23)
+
+### Changed
+
+- On the pull request strategy, failed checks no longer wait for every pending check. A check still queued 5 minutes after Loom first saw it, or after the push, stops holding them back, so the worker starts on them sooner. A running check holds them only while it is at least 75% along, by the forge's own progress, its time so far against the median of its last 5 passed runs on the same forge repository, or its GitHub Actions job's finished steps; one running for more than twice its usual time stops holding. A check Loom cannot measure, and every commit status, holds until `checksSettleMinutes` after the push, as before.
+- The fix round's message and its post on the ticket list the pending checks Loom did not wait for, and why.
+
+### Added
+
+- Settings `checksQueuedMinutes` (5 by default; 0 waits for queued checks) and `checksNearDonePercent` (75 by default; 0 waits for every running check), and the spec keys `merge.checks_queued_minutes` and `merge.checks_near_done_percent`, which override them for one project. The Spec tab shows the spec keys when they are set.
+- A command forge's `feedback` output may give each check `started`, `started_at`, `completed_at` and `progress`. Through `gh`, Loom reads each check run's status, start and end times and job steps.
+- A `check_durations` table that keeps how long each passed check took, by forge repository, the newest 20 runs of each check.
+
 ## 0.16.0 (2026-10-23)
 
 ### Added

@@ -7,6 +7,7 @@ import type { PostRow, ProjectRow, Store, ThreadRow, TicketRow } from "./db/stor
 import { COMMENT_SIGNATURE, approvedText, blockedReplyText, heldCheckResult, resumeText, reviewRequeueNote, startRequeueNote } from "./prompts";
 import { LoomError, type ApproveResult, type Projects } from "./projects";
 import { isMultiRepo } from "./repos";
+import { CHECKS_NEAR_DONE_PERCENT, CHECKS_QUEUED_MINUTES } from "./check-wait";
 import { CHECKS_SETTLE_MINUTES } from "./pull-requests";
 import { NO_HOOK, sendRecords, type LoomSettings } from "./record";
 import { backToReview, blockedAtReview, failReviewerSpawn, onReviewerGone, onReviewerIdle, onReviewerTurnFailed, spawnReviewers } from "./review";
@@ -71,7 +72,17 @@ export class Engine {
     this.settings = deps.settings ?? (() => NO_HOOK);
     const settleMs = () => (this.settings().checksSettleMinutes ?? CHECKS_SETTLE_MINUTES) * 60_000;
     const signature = () => this.settings().commentSignature ?? COMMENT_SIGNATURE;
-    this.ctx = { store: deps.store, bb: deps.bb, now: deps.now, host: deps.host, kick: () => this.kick(), checksSettleMs: settleMs, commentSignature: signature };
+    this.ctx = {
+      store: deps.store,
+      bb: deps.bb,
+      now: deps.now,
+      host: deps.host,
+      kick: () => this.kick(),
+      checksSettleMs: settleMs,
+      checksQueuedMinutes: () => this.settings().checksQueuedMinutes ?? CHECKS_QUEUED_MINUTES,
+      checksNearDonePercent: () => this.settings().checksNearDonePercent ?? CHECKS_NEAR_DONE_PERCENT,
+      commentSignature: signature,
+    };
   }
 
   private warn(what: string, error: unknown): void {

@@ -34,6 +34,8 @@ A spec without `[[repo]]` tables is a single-repo project: every ticket runs in 
 | `squash` | boolean | `true` | pr strategy only; push the reviewed work as one commit, and each fix round as one more, instead of the worker's branch as it is |
 | `max_fix_rounds` | integer | `5` | pr strategy only; 0 to 20; fix rounds the pull request's checks and reviews may start before the ticket blocks, counted again from each requeue; the human's replies do not count; `0` follows only merged and closed |
 | `stack` | boolean | `true` | pr strategy only; a ticket starts once its dependencies' pull requests are open, on top of them in its own repo, and its pull request opens on its one open dependency's branch; `false` waits for each dependency to merge |
+| `checks_queued_minutes` | integer | Loom's `checksQueuedMinutes` setting (`5`) | pr strategy only; 0 to 1440; a pending check that is still queued this many minutes after Loom first saw it, or after the push, no longer holds back the failed ones; `0` waits for queued checks too |
+| `checks_near_done_percent` | integer | Loom's `checksNearDonePercent` setting (`75`) | pr strategy only; 0 to 100; once a check has failed, a running check holds back the fix round only while it is at least this far along; a check Loom cannot measure, and every commit status, keeps holding it; `0` waits for every running check. See [When failed checks go to the worker](#when-failed-checks-go-to-the-worker) |
 
 ### [merge.forge]
 
@@ -56,13 +58,24 @@ The commands run with `/bin/sh` in the repo's checkout, with a 2-minute limit (`
 
   ```json
   {"state": "open", "head": "<sha of the pull request's head>", "author": "<the pull request's author>",
-   "checks": [{"id": "1", "name": "lint", "state": "failed", "url": "https://ci.example.com/1"}],
+   "checks": [{"id": "1", "name": "lint", "state": "failed", "url": "https://ci.example.com/1"},
+              {"id": "2", "name": "test", "state": "pending", "started": true, "started_at": "2026-10-24T10:00:00Z", "progress": 60}],
    "items": [{"id": "r7", "kind": "review", "author": "alice", "bot": false, "body": "Rename it.", "state": "changes_requested", "url": null, "path": null, "line": null}]}
   ```
 
-  `state` is `open`, `merged` or `closed`. A check's `state` is `pending`, `passed`, `failed` or `neutral`. An item's `kind` is `review`, `thread` (an unresolved review thread, with `path` and `line`, whose `author` is its latest comment's) or `comment`. `author`, `checks`, `items`, `bot`, `url`, `state`, `path` and `line` may be left out. An `id` must stay the same while the thing it names does not change, and change when it does (a check that runs again, an edited comment, a new reply in a thread): Loom sends each id to the worker once.
+  `state` is `open`, `merged` or `closed`. A check's `state` is `pending`, `passed`, `failed` or `neutral`. An item's `kind` is `review`, `thread` (an unresolved review thread, with `path` and `line`, whose `author` is its latest comment's) or `comment`. A pending check may say whether it `started` (`false` while it waits in a queue) and how far it got as `progress`, 0 to 100; any check may give `started_at` and `completed_at` as ISO 8601 times, and the times of passed checks give Loom their usual durations. `author`, `checks`, `items`, `bot`, `url`, `state`, `path`, `line`, `started`, `started_at`, `completed_at` and `progress` may be left out. An `id` must stay the same while the thing it names does not change, and change when it does (a check that runs again, an edited comment, a new reply in a thread): Loom sends each id to the worker once.
 
 With `kind = "none"`, Loom pushes the ticket's branch and says where; a person opens the pull request. The ticket is done when the remote's base branch contains the ticket's exact commit, so a squash or rebase merge is not seen: block or cancel that ticket by hand. On the integration strategy, `bb loom land` pushes the integration branch and opens nothing.
+
+### When failed checks go to the worker
+
+On the pull request strategy, a failed check waits for the pending checks that hold it back, and goes to the worker as a fix round once none does, or once Loom's `checksSettleMinutes` setting (30 minutes) has passed since the push, whichever comes first:
+
+- A check still queued `checks_queued_minutes` after Loom first saw it stops holding. A check on Loom's first reading of its own push counts from the push.
+- A running check holds only while it is at least `checks_near_done_percent` along. Loom reads how far it got from the forge's own `progress`, else from its time so far against the median of its last 5 passed runs on the same forge repository, else from a GitHub Actions job's finished steps. A check running for more than twice its usual time stops holding.
+- A running check Loom cannot measure, and every commit status (it says only pending), holds until the settle time.
+
+The fix round's message lists the pending checks Loom did not wait for, and why. They run again on the worker's fix commit; when the fix changes nothing, Loom follows their results on the same commit.
 
 ### [merge.worktree]
 
@@ -357,7 +370,7 @@ A spec with any error is refused and nothing is saved. Errors are numbered, at m
 - A ticket has no `verify` command and `checks.commands` is empty.
 - `checks.after_merge` is set with strategy `"pr"`.
 - A forge with `kind = "command"` lacks `open` or `state`, a forge of another kind sets them or `feedback`, or `kind = "none"` sets `after_open`.
-- `merge.describe`, `merge.squash`, `merge.max_fix_rounds` or `merge.stack` on the integration strategy.
+- `merge.describe`, `merge.squash`, `merge.max_fix_rounds`, `merge.stack`, `merge.checks_queued_minutes` or `merge.checks_near_done_percent` on the integration strategy.
 - `merge.worktree` is set with strategy `"pr"`.
 - An `inputs` string holds a `{name}` other than `{branch}` or `{base}`.
 

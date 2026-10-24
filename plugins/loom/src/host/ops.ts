@@ -467,7 +467,7 @@ const FEEDBACK_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
     pullRequest(number: $number) {
       state headRefOid author { login }
       commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes { __typename
-        ... on CheckRun { databaseId name status conclusion detailsUrl }
+        ... on CheckRun { databaseId name status conclusion detailsUrl startedAt completedAt steps(first: 100) { totalCount nodes { status } } }
         ... on StatusContext { context state targetUrl } } } } } } }
       reviews(last: 50) { nodes { databaseId author { __typename login } state body url } }
       reviewThreads(last: 100) { nodes { id isResolved path line comments(last: 20) { nodes { databaseId author { __typename login } body url } } } }
@@ -501,6 +501,22 @@ function checkState(node: Record<string, unknown>): FeedbackCheck["state"] {
   return ["FAILURE", "TIMED_OUT", "STARTUP_FAILURE", "ACTION_REQUIRED"].includes(conclusion) ? "failed" : "neutral";
 }
 
+const timeOf = (value: unknown) => (typeof value === "string" && !Number.isNaN(Date.parse(value)) ? Date.parse(value) : null);
+
+/** When and how far a check run got. A commit status says only pending, so Loom counts it as running and gets no times. */
+function checkTiming(node: Record<string, unknown>): Pick<FeedbackCheck, "started" | "startedAt" | "completedAt" | "steps"> {
+  if (node.__typename === "StatusContext") return { started: null, startedAt: null, completedAt: null, steps: null };
+  const status = String(node.status);
+  const steps = node.steps as { totalCount?: number; nodes?: Array<{ status?: string }> } | null | undefined;
+  const total = steps?.totalCount ?? 0;
+  return {
+    started: status === "IN_PROGRESS" || status === "COMPLETED",
+    startedAt: timeOf(node.startedAt),
+    completedAt: timeOf(node.completedAt),
+    steps: total === 0 ? null : { done: (steps?.nodes ?? []).filter((step) => step.status === "COMPLETED").length, total },
+  };
+}
+
 // Keys change when what the worker should read changes: a rerun check, an edited review or comment, a new reply in a thread.
 function ghFeedback(pull: GhPull): Feedback {
   const head = pull.headRefOid;
@@ -509,7 +525,7 @@ function ghFeedback(pull: GhPull): Feedback {
     const status = node.__typename === "StatusContext";
     const name = String(status ? node.context : node.name);
     const state = checkState(node);
-    return { key: status ? `status:${name}:${String(node.state)}:${head}` : `check:${String(node.databaseId)}`, name, state, url: (status ? (node.targetUrl as string | null) : (node.detailsUrl as string | null)) ?? null };
+    return { key: status ? `status:${name}:${String(node.state)}:${head}` : `check:${String(node.databaseId)}`, name, state, url: (status ? (node.targetUrl as string | null) : (node.detailsUrl as string | null)) ?? null, ...checkTiming(node) };
   });
   const items: FeedbackItem[] = [];
   for (const review of pull.reviews.nodes) {
@@ -536,7 +552,21 @@ const commandFeedbackSchema = z.object({
   state: z.string().transform((state) => state.toUpperCase()).pipe(z.enum(["OPEN", "MERGED", "CLOSED"])),
   head: z.string().min(1).max(64),
   author: z.string().max(200).default(""),
-  checks: z.array(z.object({ id: z.union([z.string(), z.number()]), name: z.string().max(500), state: z.enum(["pending", "passed", "failed", "neutral"]), url: z.string().max(2000).nullish() })).max(200).default([]),
+  checks: z
+    .array(
+      z.object({
+        id: z.union([z.string(), z.number()]),
+        name: z.string().max(500),
+        state: z.enum(["pending", "passed", "failed", "neutral"]),
+        url: z.string().max(2000).nullish(),
+        started: z.boolean().nullish(),
+        started_at: z.iso.datetime({ offset: true }).nullish(),
+        completed_at: z.iso.datetime({ offset: true }).nullish(),
+        progress: z.number().min(0).max(100).nullish(),
+      }),
+    )
+    .max(200)
+    .default([]),
   items: z
     .array(
       z.object({
@@ -571,7 +601,17 @@ async function feedbackWithCommand(input: HostInput<"prFeedback">, command: stri
     state: data.state,
     head: data.head,
     author: data.author,
-    checks: data.checks.map((check) => ({ key: `check:${check.id}`, name: check.name, state: check.state, url: check.url ?? null })),
+    checks: data.checks.map((check) => ({
+      key: `check:${check.id}`,
+      name: check.name,
+      state: check.state,
+      url: check.url ?? null,
+      started: check.started ?? null,
+      startedAt: timeOf(check.started_at),
+      completedAt: timeOf(check.completed_at),
+      progress: check.progress ?? null,
+      steps: null,
+    })),
     items: data.items.map((item) => ({ key: `${item.kind}:${item.id}`, kind: item.kind, author: item.author, bot: item.bot, body: clipBody(item.body), url: item.url ?? null, state: item.state ?? null, path: item.path ?? null, line: item.line ?? null })),
   };
 }

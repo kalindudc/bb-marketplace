@@ -155,4 +155,8 @@ export const MIGRATIONS: string[] = [
   `CREATE INDEX planner_log_thread ON planner_log (thread_id, id)`,
   `ALTER TABLE tickets ADD COLUMN stack_json TEXT`,
   `ALTER TABLE tickets ADD COLUMN pr_base TEXT`,
+  // How long each passed check took, by the forge repository its pull request is on, so Loom can tell how far a running one is.
+  `CREATE TABLE check_durations (repo_key TEXT NOT NULL, name TEXT NOT NULL, check_key TEXT NOT NULL, duration_ms INTEGER NOT NULL, at INTEGER NOT NULL,
+    PRIMARY KEY (repo_key, check_key))`,
+  `CREATE INDEX check_durations_name ON check_durations (repo_key, name, at)`,
 ];

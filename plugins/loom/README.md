@@ -356,6 +356,16 @@ its own pull request.
   round, which passes the checks and a Loom review again and is pushed as one
   more commit. After `merge.max_fix_rounds` rounds (5 by default) the ticket
   blocks and the pull request stays open.
+- A failed check goes to the worker once the pending checks stop holding it
+  back, so the worker does not wait for slow or stuck CI. A check still queued
+  5 minutes after Loom first saw it stops holding. A running check holds only
+  while it is at least 75% along: by the server's own progress, its time so far
+  against its usual duration on that repository, or its GitHub Actions job's
+  steps. A check Loom cannot measure, and every commit status, holds until
+  `checksSettleMinutes` after the push. The fix round's message lists the
+  checks Loom did not wait for. The spec's `merge.checks_queued_minutes` and
+  `merge.checks_near_done_percent` change the two numbers for one project, and
+  the settings change them for all (see [Settings](#settings)).
 - The worker may answer review comments with the server's CLI. It posts from
   your account, so it ends each comment and reply with a signature line,
   "Posted by Loom" unless you change it (see [Settings](#settings)).
@@ -577,25 +587,35 @@ bb plugin config loom set doneRecord summary   # or full
 
 ## Settings
 
-Besides the done hook, Loom has two settings for pull requests. Set them in
+Besides the done hook, Loom has four settings for pull requests. Set them in
 bb's settings for Loom, or from a terminal:
 
 ```sh
 bb plugin config loom set checksSettleMinutes 45
+bb plugin config loom set checksQueuedMinutes 10
+bb plugin config loom set checksNearDonePercent 90
 bb plugin config loom set commentSignature '<sub>Posted by Loom</sub>'
 ```
 
-- `checksSettleMinutes` is how long Loom waits for a pull request's checks
-  after it pushes. It sends the failed ones to the worker as a fix round once
-  every check has finished, or once this many minutes have passed, whichever
-  comes first, because some checks stay pending until a person approves them.
-  It is 30 by default.
+- `checksSettleMinutes` is the longest Loom waits for a pull request's
+  pending checks after it pushes. It sends the failed ones to the worker as a
+  fix round once no pending check holds them back, or once this many minutes
+  have passed, whichever comes first, because some checks stay pending until a
+  person approves them. It is 30 by default.
+- `checksQueuedMinutes` is how long a check that has not started holds back
+  the failed ones, from when Loom first saw it or from the push. It is 5 by
+  default, and 0 waits for queued checks too.
+- `checksNearDonePercent` is how far along a running check must be to hold
+  back the failed ones. It is 75 by default, and 0 waits for every running
+  check.
 - `commentSignature` is the line a worker ends every comment and reply on a
   pull request with, so people can tell an agent wrote it from your account.
   It is "Posted by Loom" by default, takes Markdown (on GitHub, `<sub>…</sub>`
   makes it small), and an empty value turns it off.
 
-Both apply to every project.
+They apply to every project; a spec's `merge.checks_queued_minutes` and
+`merge.checks_near_done_percent` override the queued and running check
+settings for that project.
 
 ## Safety
 

@@ -186,7 +186,24 @@ export const hostContract = defineRpcContract({
           state: z.enum(["OPEN", "MERGED", "CLOSED"]),
           head: sha,
           author: z.string(),
-          checks: z.array(z.object({ key: z.string(), name: z.string(), state: z.enum(["pending", "passed", "failed", "neutral"]), url: z.string().nullable() }).strict()),
+          checks: z.array(
+            z
+              .object({
+                key: z.string(),
+                name: z.string(),
+                state: z.enum(["pending", "passed", "failed", "neutral"]),
+                url: z.string().nullable(),
+                /** False while it waits in a queue to start; null when the forge cannot tell, as with a commit status. Optional so an older host's answer still parses. */
+                started: z.boolean().nullable().optional(),
+                startedAt: z.number().int().nullable().optional(),
+                completedAt: z.number().int().nullable().optional(),
+                /** How much of it is done, 0 to 100, as the forge's own command reports it. */
+                progress: z.number().min(0).max(100).nullable().optional(),
+                /** A GitHub Actions job's steps: those finished, and all of them. */
+                steps: z.object({ done: z.number().int().min(0), total: z.number().int().min(0) }).strict().nullable().optional(),
+              })
+              .strict(),
+          ),
           items: z.array(
             z
               .object({

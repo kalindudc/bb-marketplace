@@ -1,5 +1,6 @@
 // The texts agents read. Plain prose; every message the plugin sends starts with "[loom]".
 import type { NewThreadRequest } from "@get-bb/plugin-sdk";
+import type { Skipped } from "./check-wait";
 import type { CheckRun } from "./checks";
 import type { PostRow, ProjectRow, ReviewRow, SpecReviewRow, TicketRow } from "./db/store";
 import { its, plural } from "./format";
@@ -582,10 +583,23 @@ function itemLine(item: FeedbackItem): string {
   return `- ${what}${link}:\n${clip(item.body.trim(), ITEM_TEXT).replace(/^/gm, "  > ")}`;
 }
 
-/** The feedback of one fix round as Markdown: the failed checks, then the reviews and comments. */
-export function feedbackList(checks: readonly FeedbackCheck[], items: readonly FeedbackItem[]): string {
+function skippedLine(check: Skipped): string {
+  const why =
+    check.why === "queued"
+      ? `still queued after ${plural(check.minutes, "minute")}`
+      : check.why === "running"
+        ? `running, about ${check.percent}% done`
+        : check.why === "overrun"
+          ? `running for ${check.percent}% of its usual time`
+          : `still pending ${plural(check.minutes, "minute")} after the push`;
+  return `- ${check.name}${check.url === null ? "" : ` (${check.url})`}: ${why}`;
+}
+
+/** The feedback of one fix round as Markdown: the failed checks and the pending ones Loom did not wait for, then the reviews and comments. */
+export function feedbackList(checks: readonly FeedbackCheck[], items: readonly FeedbackItem[], skipped: readonly Skipped[] = []): string {
   const lines: string[] = [];
   if (checks.length > 0) lines.push("Failed checks:", ...checks.map((check) => `- ${check.name}${check.url === null ? "" : ` (${check.url})`}`));
+  if (checks.length > 0 && skipped.length > 0) lines.push("", "Still pending; Loom did not wait for them, so their results are not in yet:", ...skipped.map(skippedLine));
   if (items.length > 0) lines.push(...(lines.length > 0 ? [""] : []), "Review feedback:", ...items.map(itemLine));
   return lines.join("\n");
 }
@@ -634,13 +648,13 @@ export function prNudgeText(key: string, fix: boolean): string {
 }
 
 /** A fix round: what the pull request's checks and reviews, or the human on the ticket, asked for. */
-export function prFeedbackText(a: { key: string; url: string | null; round: number; counted: number; max: number; checks: FeedbackCheck[]; items: FeedbackItem[]; diverged: { remote: string; branch: string } | null; signature?: string }): { summary: string; detail: string } {
+export function prFeedbackText(a: { key: string; url: string | null; round: number; counted: number; max: number; checks: FeedbackCheck[]; items: FeedbackItem[]; skipped?: Skipped[]; diverged: { remote: string; branch: string } | null; signature?: string }): { summary: string; detail: string } {
   const human = a.items.some((item) => item.kind === "reply");
   const what = human ? "The human replied on the ticket about its open pull request" : a.url === null ? "The pull request needs fixes" : `The pull request ${a.url} needs fixes`;
   const merge = a.diverged === null ? [] : [`The pull request's branch has commits Loom did not push. First run \`git fetch ${a.diverged.remote} ${a.diverged.branch}\` and \`git merge FETCH_HEAD\` in this worktree, so your fix builds on them.`];
   return {
     summary: `[loom] ${a.key}: ${what} (fix round ${a.round}${human ? "" : `; ${a.counted} of the ${a.max} the pull request may start`}). Address it, then call loom_submit({ summary }).`,
-    detail: [feedbackList(a.checks, a.items), ...merge, ...prRules(a.signature ?? COMMENT_SIGNATURE).map((rule) => `- ${rule}`)].join("\n\n"),
+    detail: [feedbackList(a.checks, a.items, a.skipped), ...merge, ...prRules(a.signature ?? COMMENT_SIGNATURE).map((rule) => `- ${rule}`)].join("\n\n"),
   };
 }
 

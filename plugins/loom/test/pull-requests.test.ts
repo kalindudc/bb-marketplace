@@ -5,11 +5,13 @@ import type { HostOutput } from "../src/host-contract";
 import { Engine } from "../src/engine";
 import { pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
 import { askForPrTexts, deliverFixRounds, handInPrText, onPrWriterIdle, resumePrAsks } from "../src/pull-requests";
+import type { LoomSettings } from "../src/record";
 import { approve, settleReviews, spawnReviewers } from "../src/review";
 import { blockTicket, endThread, requeueTicket, resumeEnding, specOf } from "../src/workers";
 import { checkOutHead, makeCtx, makeEngine, reachApproved, seedProject, startWorker, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 type Feedback = Partial<Extract<HostOutput<"prFeedback">, { outcome: "ok" }>>;
+type FeedbackCheck = Extract<HostOutput<"prFeedback">, { outcome: "ok" }>["checks"][number];
 
 let h: EngineHarness;
 beforeEach(() => {
@@ -195,11 +197,126 @@ describe("following the pull request", () => {
     expect(ticket().state).toBe("working");
   });
 
-  it("reads the setting through the engine, 30 minutes when it is not set", () => {
+  it("reads the settings through the engine: 30, 5 and 75 when they are not set", () => {
     const store = h.store;
-    const engine = (settings?: () => { doneHook: string; doneRecord: string; checksSettleMinutes?: number }) => new Engine({ store, bb: h.bb, now: h.clock.now, host: h.host, projects: h.projects, ...(settings === undefined ? {} : { settings }) });
+    const engine = (settings?: () => LoomSettings) => new Engine({ store, bb: h.bb, now: h.clock.now, host: h.host, projects: h.projects, ...(settings === undefined ? {} : { settings }) });
     expect(engine().ctx.checksSettleMs!()).toBe(30 * 60_000);
-    expect(engine(() => ({ doneHook: "", doneRecord: "summary", checksSettleMinutes: 45 })).ctx.checksSettleMs!()).toBe(45 * 60_000);
+    expect(engine().ctx.checksQueuedMinutes!()).toBe(5);
+    expect(engine().ctx.checksNearDonePercent!()).toBe(75);
+    const set = engine(() => ({ doneHook: "", doneRecord: "summary", checksSettleMinutes: 45, checksQueuedMinutes: 0, checksNearDonePercent: 90 })).ctx;
+    expect([set.checksSettleMs!(), set.checksQueuedMinutes!(), set.checksNearDonePercent!()]).toEqual([45 * 60_000, 0, 90]);
+  });
+
+  describe("which pending checks hold the failed ones", () => {
+    const lint = { key: "check:1", name: "lint", state: "failed", url: "https://ci/1", started: true } as const;
+    const check = (key: string, name: string, more: Partial<FeedbackCheck> = {}): FeedbackCheck => ({ key, name, state: "pending", url: null, started: true, ...more });
+    const skippedOf = () => dataOf("pr_feedback")[0]!.data.skipped;
+    /** The time of the next poll, which advances the clock by 5 minutes. */
+    const nextPoll = () => h.clock.t + 5 * 60_000;
+
+    it("stops waiting for a check still queued 5 minutes after the push, and tells the worker it did not wait for it", async () => {
+      const worker = await openPr();
+      h.host.feedback.set(URL, { checks: [lint, check("check:2", "e2e", { started: false })] });
+      await poll();
+      expect(ticket().state).toBe("working");
+      expect(skippedOf()).toEqual([{ name: "e2e", url: null, why: "queued", minutes: 5 }]);
+      expect(h.bb.sent(worker.thread_id!).at(-1)).toContain("Still pending; Loom did not wait for them, so their results are not in yet:\n- e2e: still queued after 5 minutes");
+      expect(posts().at(-1)!.body).toContain("- e2e: still queued after 5 minutes");
+    });
+
+    it("counts a queued check that appears on a later reading from that reading", async () => {
+      await openPr();
+      h.host.feedback.set(URL, { checks: [lint, check("check:2", "build")] });
+      await poll();
+      expect(ticket().state).toBe("pr_open");
+      h.host.feedback.set(URL, { checks: [lint, { ...check("check:2", "build"), state: "passed" }, check("check:3", "e2e", { started: false })] });
+      await poll();
+      expect(ticket().state).toBe("pr_open");
+      expect(JSON.parse(ticket().pr_status_json!).queued).toEqual({ "check:3": h.clock.t });
+      await poll();
+      expect(ticket().state).toBe("working");
+      expect(skippedOf()).toEqual([{ name: "e2e", url: null, why: "queued", minutes: 5 }]);
+    });
+
+    it("takes the queued limit from Loom's setting, and the spec's merge.checks_queued_minutes over it; 0 waits until the settle time", async () => {
+      h.ctx.checksQueuedMinutes = () => 15;
+      await openPr();
+      h.host.feedback.set(URL, { checks: [lint, check("check:2", "e2e", { started: false })] });
+      await poll();
+      await poll();
+      expect(ticket().state).toBe("pr_open");
+      await poll();
+      expect(ticket().state).toBe("working");
+      expect(skippedOf()).toEqual([{ name: "e2e", url: null, why: "queued", minutes: 15 }]);
+
+      h = makeCtx();
+      h.ctx.checksQueuedMinutes = () => 15;
+      await openPr({ checks_queued_minutes: 0 });
+      h.host.feedback.set(URL, { checks: [lint, check("check:2", "e2e", { started: false })] });
+      for (let index = 0; index < 5; index += 1) await poll();
+      expect(ticket().state).toBe("pr_open");
+      await poll();
+      expect(ticket().state).toBe("working");
+      expect(skippedOf()).toEqual([{ name: "e2e", url: null, why: "settled", minutes: 30 }]);
+    });
+
+    it("waits for a running GitHub Actions job only once 75% of its steps are done", async () => {
+      await openPr();
+      h.host.feedback.set(URL, { checks: [lint, check("check:2", "test", { steps: { done: 3, total: 4 } })] });
+      await poll();
+      expect(ticket().state).toBe("pr_open");
+      h.host.feedback.set(URL, { checks: [lint, check("check:2", "test", { steps: { done: 1, total: 4 } })] });
+      await poll();
+      expect(ticket().state).toBe("working");
+      expect(skippedOf()).toEqual([{ name: "test", url: null, why: "running", percent: 25 }]);
+    });
+
+    it("measures a running check against the median of its earlier passed runs on the same repository, and stops waiting for one past twice that", async () => {
+      h.store.addCheckDurations("https://github.com/acme/shop", [8, 10, 12].map((minutes, index) => ({ name: "test", key: `check:old${index}`, durationMs: minutes * 60_000, at: index })));
+      await openPr();
+      h.host.feedback.set(URL, { checks: [lint, check("check:2", "test", { startedAt: nextPoll() - 8 * 60_000 })] });
+      await poll();
+      expect(ticket().state).toBe("pr_open");
+      h.host.feedback.set(URL, { checks: [lint, check("check:2", "test", { startedAt: nextPoll() - 21 * 60_000 })] });
+      await poll();
+      expect(ticket().state).toBe("working");
+      expect(skippedOf()).toEqual([{ name: "test", url: null, why: "overrun", percent: 210 }]);
+    });
+
+    it("keeps how long each passed check took, once per run", async () => {
+      await openPr();
+      const passed = { ...check("check:2", "test", { startedAt: 1_000, completedAt: 1_000 + 9 * 60_000 }), state: "passed" as const };
+      h.host.feedback.set(URL, { checks: [passed, { ...check("check:3", "lint"), state: "passed" }] });
+      await poll();
+      await poll();
+      expect(h.store.checkDurations("https://github.com/acme/shop", ["test", "lint"], 5)).toEqual(new Map([["test", [9 * 60_000]]]));
+    });
+
+    it("prefers the forge's own progress, and the spec's merge.checks_near_done_percent over Loom's setting; 0 waits for every running check", async () => {
+      h.ctx.checksNearDonePercent = () => 95;
+      await openPr({ checks_near_done_percent: 80 });
+      h.host.feedback.set(URL, { checks: [lint, check("check:2", "test", { progress: 85, steps: { done: 1, total: 4 } })] });
+      await poll();
+      expect(ticket().state).toBe("pr_open");
+
+      h = makeCtx();
+      await openPr({ checks_near_done_percent: 0 });
+      h.host.feedback.set(URL, { checks: [lint, check("check:2", "test", { progress: 5 })] });
+      await poll();
+      expect(ticket().state).toBe("pr_open");
+    });
+
+    it("keeps waiting for a running check it cannot measure and for a commit status, until the settle time", async () => {
+      await openPr();
+      h.host.feedback.set(URL, { checks: [lint, check("check:2", "deploy"), check("status:reviews", "reviews", { started: null })] });
+      for (let index = 0; index < 5; index += 1) await poll();
+      expect(ticket().state).toBe("pr_open");
+      await poll();
+      expect(skippedOf()).toEqual([
+        { name: "deploy", url: null, why: "settled", minutes: 30 },
+        { name: "reviews", url: null, why: "settled", minutes: 30 },
+      ]);
+    });
   });
 
   it("asks the worker to sign every comment it posts on the pull request with Loom's commentSignature setting", async () => {

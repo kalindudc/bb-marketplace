@@ -1090,12 +1090,34 @@ describe("prFeedback", () => {
       state: "OPEN",
       head: "abc123",
       author: "me",
-      checks: [{ key: "check:7", name: "ci", state: "failed", url: "https://ci.example.com/7" }],
+      checks: [{ key: "check:7", name: "ci", state: "failed", url: "https://ci.example.com/7", started: null, startedAt: null, completedAt: null, progress: null, steps: null }],
       items: [
         { key: "review:r1", kind: "review", author: "alice", bot: false, body: "Rename it.", url: null, state: "changes_requested", path: null, line: null },
         { key: "thread:9", kind: "thread", author: "bob", bot: false, body: "Why?", url: null, state: null, path: "src/a.ts", line: 3 },
       ],
     });
+  });
+
+  it("reads whether a command forge's check started, when, and how far it got", async () => {
+    const json = JSON.stringify({
+      state: "open",
+      head: "abc123",
+      checks: [
+        { id: "a", name: "build", state: "pending", started: true, started_at: "2026-10-24T10:00:00Z", progress: 80 },
+        { id: "b", name: "deploy", state: "pending", started: false },
+        { id: "c", name: "lint", state: "passed", started_at: "2026-10-24T10:00:00+00:00", completed_at: "2026-10-24T10:02:30Z" },
+      ],
+    });
+    const result = await prFeedback({ repo: makeRepo(), url: "https://review.example.com/shop/42", forge: FEEDBACK(`echo '${json}'`) });
+    const ok = result as Extract<typeof result, { outcome: "ok" }>;
+    const at = Date.parse("2026-10-24T10:00:00Z");
+    expect(ok.checks).toEqual([
+      { key: "check:a", name: "build", state: "pending", url: null, started: true, startedAt: at, completedAt: null, progress: 80, steps: null },
+      { key: "check:b", name: "deploy", state: "pending", url: null, started: false, startedAt: null, completedAt: null, progress: null, steps: null },
+      { key: "check:c", name: "lint", state: "passed", url: null, started: null, startedAt: at, completedAt: at + 150_000, progress: null, steps: null },
+    ]);
+    const bad = await prFeedback({ repo: makeRepo(), url: "https://review.example.com/shop/42", forge: FEEDBACK(`echo '{"state":"open","head":"a","checks":[{"id":1,"name":"x","state":"pending","progress":150}]}'`) });
+    expect(bad).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("checks.0.progress") });
   });
 
   it("is unavailable, naming the problem, when the command's last line is not that object or the command fails", async () => {
@@ -1137,10 +1159,11 @@ describe("prFeedback", () => {
               headRefOid: "f00d",
               author: user("me"),
               commits: { nodes: [{ commit: { statusCheckRollup: { contexts: { nodes: [
-                { __typename: "CheckRun", databaseId: 11, name: "lint", status: "COMPLETED", conclusion: "FAILURE", detailsUrl: "https://ci/11" },
+                { __typename: "CheckRun", databaseId: 11, name: "lint", status: "COMPLETED", conclusion: "FAILURE", detailsUrl: "https://ci/11", startedAt: "2026-10-24T10:00:00Z", completedAt: "2026-10-24T10:01:00Z", steps: { totalCount: 0, nodes: [] } },
                 { __typename: "CheckRun", databaseId: 12, name: "deploy", status: "COMPLETED", conclusion: "SKIPPED", detailsUrl: null },
-                { __typename: "CheckRun", databaseId: 13, name: "test", status: "IN_PROGRESS", conclusion: null, detailsUrl: null },
+                { __typename: "CheckRun", databaseId: 13, name: "test", status: "IN_PROGRESS", conclusion: null, detailsUrl: null, startedAt: "2026-10-24T10:00:00Z", completedAt: null, steps: { totalCount: 4, nodes: [{ status: "COMPLETED" }, { status: "COMPLETED" }, { status: "IN_PROGRESS" }, { status: "QUEUED" }] } },
                 { __typename: "StatusContext", context: "reviews", state: "PENDING", targetUrl: null },
+                { __typename: "CheckRun", databaseId: 14, name: "e2e", status: "QUEUED", conclusion: null, detailsUrl: null, startedAt: null, completedAt: null },
               ] } } } }] },
               reviews: { nodes: [{ databaseId: 21, author: user("alice"), state: "CHANGES_REQUESTED", body: "Please rename.", url: "https://gh/r21" }] },
               reviewThreads: { nodes: [
@@ -1163,7 +1186,17 @@ describe("prFeedback", () => {
         ["check:12", "neutral"],
         ["check:13", "pending"],
         ["status:reviews:PENDING:f00d", "pending"],
+        ["check:14", "pending"],
       ]);
+      const at = Date.parse("2026-10-24T10:00:00Z");
+      expect(ok.checks.map(({ started, startedAt, completedAt, steps }) => ({ started, startedAt, completedAt, steps }))).toEqual([
+        { started: true, startedAt: at, completedAt: at + 60_000, steps: null },
+        { started: true, startedAt: null, completedAt: null, steps: null },
+        { started: true, startedAt: at, completedAt: null, steps: { done: 2, total: 4 } },
+        { started: null, startedAt: null, completedAt: null, steps: null },
+        { started: false, startedAt: null, completedAt: null, steps: null },
+      ]);
+      expect(args.join("\n")).toContain("startedAt completedAt steps(first: 100)");
       expect(ok.items.map((item) => [item.kind, item.author, item.bot])).toEqual([
         ["review", "alice", false],
         ["thread", "me", false],

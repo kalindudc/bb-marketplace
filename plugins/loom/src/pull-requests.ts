@@ -2,6 +2,7 @@
 // template stands in. While it is open, Loom follows its checks and reviews through the forge and sends what needs a fix
 // back to the worker as a fix round, which goes through the checks and a review again before Loom pushes one more
 // commit. Merging stays the human's.
+import { checkWaitOf, durationsKey, holdOf, median, queuedSince, USUAL_RUNS, type CheckWait, type Skipped } from "./check-wait";
 import { delivers, workerOf } from "./checks";
 import type { PostRow, ProjectRow, ThreadRow, TicketRow } from "./db/store";
 import type { HostOutput } from "./host-contract";
@@ -16,7 +17,7 @@ import { applyMove, released, resumeEnding, signatureOf, specOf, toWorking, type
 /** How long the worker has to hand in loom_pr before Loom's template stands in; paused time does not count. */
 export const PR_TEXT_MINUTES = 30;
 const PR_TEXT_MS = PR_TEXT_MINUTES * 60_000;
-/** Failed checks wait for the rest to finish, or this long after the push: some status checks stay pending until a person approves. Loom's checksSettleMinutes setting changes it. */
+/** Failed checks wait for the pending checks that hold them, or at most this long after the push: some status checks stay pending until a person approves. Loom's checksSettleMinutes setting changes it. */
 export const CHECKS_SETTLE_MINUTES = 30;
 export const CHECKS_SETTLE_MS = CHECKS_SETTLE_MINUTES * 60_000;
 
@@ -44,6 +45,8 @@ export interface PrStatus {
   passed: number;
   failed: number;
   pending: number;
+  /** When Loom first saw each check that is still queued on this head, by check key. */
+  queued?: Record<string, number>;
 }
 
 type Feedback = Extract<HostOutput<"prFeedback">, { outcome: "ok" }>;
@@ -197,26 +200,47 @@ export function handInPrText(ctx: EngineCtx, threadId: string, a: { title?: stri
 
 // ---------------------------------------------------------------- following the open pull request
 
-/** The checks counted on the ticket page, from the forge's latest answer. */
-export function recordStatus(ctx: EngineCtx, ticket: TicketRow, feedback: Feedback): void {
+/** The checks counted on the ticket page, from the forge's latest answer, with when Loom first saw each queued one; and how long the passed ones took. */
+export function recordStatus(ctx: EngineCtx, ticket: TicketRow, feedback: Feedback): PrStatus {
+  const now = ctx.now();
   const count = (state: string) => feedback.checks.filter((check) => check.state === state).length;
-  const status: PrStatus = { at: ctx.now(), head: feedback.head, passed: count("passed"), failed: count("failed"), pending: count("pending") };
+  const queued = queuedSince(feedback.checks, statusOf(ticket), { head: feedback.head, pushedSha: ticket.pushed_sha, pushedAt: ticket.pushed_at, now });
+  const status: PrStatus = { at: now, head: feedback.head, passed: count("passed"), failed: count("failed"), pending: count("pending"), queued };
   ctx.store.updateTicket(ticket.id, { pr_status_json: JSON.stringify(status) });
+  const runs = feedback.checks.flatMap((check) =>
+    check.state === "passed" && check.startedAt != null && check.completedAt != null && check.completedAt > check.startedAt ? [{ name: check.name, key: check.key, durationMs: check.completedAt - check.startedAt, at: check.completedAt }] : [],
+  );
+  ctx.store.addCheckDurations(durationsKey(ticket.pr_url, ticket.project_id, ticket.repo), runs);
+  return status;
 }
+
+/** The spec's check wait for this project, else Loom's settings. */
+export const checkWait = (ctx: EngineCtx, spec: Spec): CheckWait =>
+  checkWaitOf(spec, { settleMs: ctx.checksSettleMs?.() ?? CHECKS_SETTLE_MS, queuedMinutes: ctx.checksQueuedMinutes?.(), nearDonePercent: ctx.checksNearDonePercent?.() });
 
 interface Sorted {
   checks: Array<FeedbackCheck & { key: string }>;
   items: Array<FeedbackItem & { key: string }>;
   /** Not counted: bots' top-level comments, and anything from the pull request's author, whom a worker's replies come from. */
   ignored: { bots: number; own: number; keys: string[] };
+  /** Pending checks the round does not wait for, when it sends failed ones. */
+  skipped: Skipped[];
 }
 
-/** The feedback not yet sent to a worker that asks for a fix. Failed checks wait until no check runs, or `settleMs` after the push. */
-export function newFeedback(ticket: TicketRow, feedback: Feedback, now: number, settleMs: number = CHECKS_SETTLE_MS): Sorted {
+/** What newFeedback needs besides the forge's answer: when Loom first saw each queued check, the checks' usual durations and the wait. */
+export interface CheckContext {
+  queued: Record<string, number>;
+  usual: ReadonlyMap<string, number>;
+  wait: CheckWait;
+}
+
+/** The feedback not yet sent to a worker that asks for a fix. Failed checks wait until no pending check holds them (holdOf), or the settle time after the push. */
+export function newFeedback(ticket: TicketRow, feedback: Feedback, now: number, context: CheckContext): Sorted {
   const seen = new Set(JSON.parse(ticket.pr_seen_json) as string[]);
-  const settled = !feedback.checks.some((check) => check.state === "pending") || (ticket.pushed_at !== null && now - ticket.pushed_at >= settleMs);
-  const checks = settled ? feedback.checks.filter((check) => check.state === "failed" && !seen.has(check.key)).map((check) => ({ key: check.key, name: check.name, url: check.url })) : [];
-  const sorted: Sorted = { checks, items: [], ignored: { bots: 0, own: 0, keys: [] } };
+  const failed = feedback.checks.filter((check) => check.state === "failed" && !seen.has(check.key));
+  const hold = failed.length === 0 ? { settled: false, skipped: [] } : holdOf(feedback.checks, { ...context, now, pushedAt: ticket.pushed_at });
+  const checks = hold.settled ? failed.map((check) => ({ key: check.key, name: check.name, url: check.url })) : [];
+  const sorted: Sorted = { checks, items: [], ignored: { bots: 0, own: 0, keys: [] }, skipped: hold.settled ? hold.skipped : [] };
   for (const item of feedback.items) {
     if (seen.has(item.key)) continue;
     if (feedback.author !== "" && item.author === feedback.author) {
@@ -237,17 +261,28 @@ export function newFeedback(ticket: TicketRow, feedback: Feedback, now: number, 
 /** Sends what the forge's latest answer asks for to the worker as a fix round, and marks everything it read as seen. */
 export async function followFeedback(ctx: EngineCtx, project: ProjectRow, ticket: TicketRow, feedback: Feedback): Promise<void> {
   const { store } = ctx;
-  recordStatus(ctx, ticket, feedback);
+  const status = recordStatus(ctx, ticket, feedback);
   if (project.state !== "running") return;
-  const found = newFeedback(ticket, feedback, ctx.now(), ctx.checksSettleMs?.() ?? CHECKS_SETTLE_MS);
+  const spec = specOf(store, project);
+  const pending = feedback.checks.filter((check) => check.state === "pending").map((check) => check.name);
+  const durations = store.checkDurations(durationsKey(ticket.pr_url, ticket.project_id, ticket.repo), pending, USUAL_RUNS);
+  const usual = new Map([...durations].map(([name, runs]) => [name, median(runs)!]));
+  const found = newFeedback(ticket, feedback, ctx.now(), { queued: status.queued ?? {}, usual, wait: checkWait(ctx, spec) });
   if (found.checks.length === 0 && found.items.length === 0) {
     if (found.ignored.keys.length > 0) markSeen(ctx, ticket, found.ignored.keys);
     return;
   }
-  const spec = specOf(store, project);
   const settings = repoSettings(spec, ticket.repo);
   const diverged = ticket.pushed_sha !== null && feedback.head !== ticket.pushed_sha ? { remote: settings.remote, branch: ticket.pr_branch ?? ticket.branch ?? "" } : null;
-  await startFixRound(ctx, ticket, { checks: found.checks, items: found.items, seen: [...found.checks, ...found.items].map((entry) => entry.key).concat(found.ignored.keys), ignored: found.ignored, diverged, human: false });
+  await startFixRound(ctx, ticket, {
+    checks: found.checks,
+    items: found.items,
+    seen: [...found.checks, ...found.items].map((entry) => entry.key).concat(found.ignored.keys),
+    ignored: found.ignored,
+    skipped: found.skipped,
+    diverged,
+    human: false,
+  });
 }
 
 function markSeen(ctx: EngineCtx, ticket: TicketRow, keys: readonly string[]): void {
@@ -260,7 +295,7 @@ function markSeen(ctx: EngineCtx, ticket: TicketRow, keys: readonly string[]): v
 export async function humanFixRound(ctx: EngineCtx, ticket: TicketRow, reply: PostRow): Promise<boolean> {
   if (ticket.state !== "pr_open" || !delivers(ctx, ticket.project_id)) return false;
   const item: FeedbackItem = { kind: "reply", author: "the human", body: reply.body, url: null, state: null, path: null, line: null };
-  return startFixRound(ctx, ticket, { checks: [], items: [item], seen: [], ignored: { bots: 0, own: 0 }, diverged: null, human: true, replyId: reply.id });
+  return startFixRound(ctx, ticket, { checks: [], items: [item], seen: [], ignored: { bots: 0, own: 0 }, skipped: [], diverged: null, human: true, replyId: reply.id });
 }
 
 interface Round {
@@ -268,6 +303,7 @@ interface Round {
   items: FeedbackItem[];
   seen: string[];
   ignored: { bots: number; own: number };
+  skipped: Skipped[];
   diverged: { remote: string; branch: string } | null;
   human: boolean;
   replyId?: number;
@@ -313,18 +349,18 @@ async function startFixRound(ctx: EngineCtx, seen: TicketRow, a: Round): Promise
       // Claiming the worker here makes its ending, which carries the ticket's move to blocked, replayable by the tick.
       if (worker.standing === "active" && !store.claimThread(worker.row.id, "blocked")) return null;
       store.updateTicket(ticket.id, { pr_seen_json: JSON.stringify([...seenKeys]), blocked_reason: reason });
-      post(ctx, ticket, { body: `Pull request feedback over the limit of ${plural(max, "fix round")}:\n\n${feedbackList(a.checks, a.items)}`, data: feedbackData(ticket, round, counted, a, true) });
+      post(ctx, ticket, { body: `Pull request feedback over the limit of ${plural(max, "fix round")}:\n\n${feedbackList(a.checks, a.items, a.skipped)}`, data: feedbackData(ticket, round, counted, a, true) });
       store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "block", body: reason, data_json: JSON.stringify({ reason, needs: "" }) });
       if (worker.standing === "active") return { kind: "blocking", worker: store.thread(worker.row.id)! };
       applyMove(ctx, store.ticket(ticket.id)!, { to: "blocked", patch: { ...released, blocked_reason: reason } }, LOOM_ACTOR, { reason });
       return { kind: "blocked" };
     }
     store.updateTicket(ticket.id, { pr_seen_json: JSON.stringify([...seenKeys]), pr_rounds: round, pr_ask_json: null, pr_text_json: null });
-    const body = a.human ? `Your reply starts fix round ${round} on the pull request.` : `Pull request feedback for fix round ${round} (${counted} of ${max} the pull request may start):\n\n${feedbackList(a.checks, a.items)}`;
+    const body = a.human ? `Your reply starts fix round ${round} on the pull request.` : `Pull request feedback for fix round ${round} (${counted} of ${max} the pull request may start):\n\n${feedbackList(a.checks, a.items, a.skipped)}`;
     post(ctx, ticket, { body, data: feedbackData(ticket, round, counted, a, false) });
     const move = { fixRound: round, ...(a.human ? { human: true } : {}) };
     if (worker.standing === "active" && worker.row.thread_id !== null) {
-      const text = prFeedbackText({ key: ticket.key, url: ticket.pr_url, round, counted, max, checks: a.checks, items: a.items, diverged: a.diverged, signature: signatureOf(ctx) });
+      const text = prFeedbackText({ key: ticket.key, url: ticket.pr_url, round, counted, max, checks: a.checks, items: a.items, skipped: a.skipped, diverged: a.diverged, signature: signatureOf(ctx) });
       store.updateTicket(ticket.id, { pr_deliver_json: JSON.stringify({ thread: worker.row.thread_id, text } satisfies PrDelivery) });
       toWorking(ctx, store.ticket(ticket.id)!, worker.row, move);
       return { kind: "working" };
@@ -375,6 +411,7 @@ function feedbackData(ticket: TicketRow, round: number, counted: number, a: Roun
     url: ticket.pr_url,
     diverged: a.diverged !== null,
     checks: a.checks.map((check) => ({ name: check.name, url: check.url })),
+    skipped: a.skipped,
     items: a.items.map((item) => ({ kind: item.kind, author: item.author, body: item.body.slice(0, 2000), url: item.url, state: item.state, path: item.path, line: item.line })),
     ignored: a.ignored,
   };

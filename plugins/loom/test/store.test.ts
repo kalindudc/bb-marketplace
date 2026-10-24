@@ -708,3 +708,19 @@ describe("spec reviews", () => {
     expect(() => db.prepare("UPDATE spec_reviews SET state = 'pending' WHERE id = ?").run(row.id)).toThrow(/CHECK/);
   });
 });
+
+describe("check durations", () => {
+  it("keeps each run once, the newest runs of each check by repository, and reads them newest first", () => {
+    const run = (name: string, index: number, durationMs = index * 1000) => ({ name, key: `check:${name}${index}`, durationMs, at: index });
+    store.addCheckDurations("https://github.com/acme/shop", [1, 2, 3, 4].map((index) => run("test", index)), 3);
+    store.addCheckDurations("https://github.com/acme/shop", [run("test", 4, 99_000), run("lint", 1)], 3);
+    store.addCheckDurations("https://github.com/acme/api", [run("test", 9)], 3);
+    expect(store.checkDurations("https://github.com/acme/shop", ["test", "lint", "e2e"], 5)).toEqual(
+      new Map([
+        ["test", [4000, 3000, 2000]],
+        ["lint", [1000]],
+      ]),
+    );
+    expect(store.checkDurations("https://github.com/acme/shop", ["test"], 2)).toEqual(new Map([["test", [4000, 3000]]]));
+  });
+});

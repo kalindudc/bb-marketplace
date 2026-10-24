@@ -19,6 +19,10 @@ export interface EngineCtx extends Ctx {
   kick(): void;
   /** How long a pull request's failed checks wait for the pending ones after a push; Loom's checksSettleMinutes setting. */
   checksSettleMs?: () => number;
+  /** How long a queued check may hold the failed ones; Loom's checksQueuedMinutes setting, which the spec can override. */
+  checksQueuedMinutes?: () => number;
+  /** How far along a running check must be to hold the failed ones; Loom's checksNearDonePercent setting, which the spec can override. */
+  checksNearDonePercent?: () => number;
   /** The line a worker ends its pull request comments with; Loom's commentSignature setting. */
   commentSignature?: () => string;
 }

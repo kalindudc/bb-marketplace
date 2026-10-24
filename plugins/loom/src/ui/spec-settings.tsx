@@ -230,6 +230,32 @@ export function SettingsSection({ spec, bbProjectNames, onShowAll, onJump }: { s
                     <b className="tabular-nums">{merge.max_fix_rounds ?? 5}</b> <span className="text-xs text-muted-foreground">then the ticket blocks</span>
                   </Commentable>
                 </Row>
+                {merge.checks_queued_minutes !== undefined && (
+                  <Row label="Queued checks" paths={["merge.checks_queued_minutes"]}>
+                    <Commentable as="span" target={value("merge.checks_queued_minutes", "Stop waiting for queued checks", "number", merge.checks_queued_minutes, { min: 0, max: 1440 })}>
+                      {merge.checks_queued_minutes === 0 ? (
+                        <span className="text-xs text-muted-foreground">Failed checks wait for queued ones</span>
+                      ) : (
+                        <>
+                          <b className="tabular-nums">{merge.checks_queued_minutes} min</b> <span className="text-xs text-muted-foreground">then they stop holding failed checks</span>
+                        </>
+                      )}
+                    </Commentable>
+                  </Row>
+                )}
+                {merge.checks_near_done_percent !== undefined && (
+                  <Row label="Running checks" paths={["merge.checks_near_done_percent"]}>
+                    <Commentable as="span" target={value("merge.checks_near_done_percent", "Wait for running checks this far along", "number", merge.checks_near_done_percent, { min: 0, max: 100 })}>
+                      {merge.checks_near_done_percent === 0 ? (
+                        <span className="text-xs text-muted-foreground">Failed checks wait for every running one</span>
+                      ) : (
+                        <>
+                          <b className="tabular-nums">{merge.checks_near_done_percent}%</b> <span className="text-xs text-muted-foreground">done, or failed checks go without them</span>
+                        </>
+                      )}
+                    </Commentable>
+                  </Row>
+                )}
               </>
             )}
             {merge.remote !== "origin" && (

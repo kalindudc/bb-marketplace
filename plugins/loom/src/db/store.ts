@@ -628,6 +628,30 @@ export class Store {
     return this.db.prepare("UPDATE runs SET ended_at = ?, output = ? WHERE ended_at IS NULL").run(this.now(), note).changes;
   }
 
+  // ---- how long checks took
+
+  /** Keeps each passed check run once, and the newest `keep` runs of each check name. */
+  addCheckDurations(repoKey: string, runs: ReadonlyArray<{ name: string; key: string; durationMs: number; at: number }>, keep = 20): void {
+    if (runs.length === 0) return;
+    this.tx(() => {
+      const insert = this.db.prepare("INSERT INTO check_durations (repo_key, name, check_key, duration_ms, at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (repo_key, check_key) DO NOTHING");
+      for (const run of runs) insert.run(repoKey, run.name, run.key, run.durationMs, run.at);
+      const prune = this.db.prepare("DELETE FROM check_durations WHERE repo_key = ? AND name = ? AND check_key NOT IN (SELECT check_key FROM check_durations WHERE repo_key = ? AND name = ? ORDER BY at DESC LIMIT ?)");
+      for (const name of new Set(runs.map((run) => run.name))) prune.run(repoKey, name, repoKey, name, keep);
+    });
+  }
+
+  /** The newest `limit` durations of each named check, newest first. */
+  checkDurations(repoKey: string, names: readonly string[], limit: number): Map<string, number[]> {
+    const found = new Map<string, number[]>();
+    const select = this.db.prepare("SELECT duration_ms FROM check_durations WHERE repo_key = ? AND name = ? ORDER BY at DESC LIMIT ?");
+    for (const name of new Set(names)) {
+      const rows = select.all(repoKey, name, limit) as Array<{ duration_ms: number }>;
+      if (rows.length > 0) found.set(name, rows.map((row) => row.duration_ms));
+    }
+    return found;
+  }
+
   // ---- records
 
   /** Queues the project's record for the done hook, replacing an earlier row. */
