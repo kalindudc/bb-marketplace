@@ -7,10 +7,13 @@ import type { PostRow, ProjectRow, Store, ThreadRow, TicketRow } from "./db/stor
 import { approvedText, blockedReplyText, heldCheckResult, resumeText, reviewRequeueNote, startRequeueNote } from "./prompts";
 import { LoomError, type ApproveResult, type Projects } from "./projects";
 import { isMultiRepo } from "./repos";
-import { NO_HOOK, sendRecords, type DoneSettings } from "./record";
+import { CHECKS_SETTLE_MINUTES } from "./pull-requests";
+import { NO_HOOK, sendRecords, type LoomSettings } from "./record";
 import { backToReview, blockedAtReview, failReviewerSpawn, onReviewerGone, onReviewerIdle, onReviewerTurnFailed, spawnReviewers } from "./review";
 import { approvalRefusal, endSpecReviews, onSpecReviewerGone, onSpecReviewerIdle, onSpecReviewerTurnFailed, reconcileSpecReviews, specReviewStatus } from "./spec-review";
 import { budgetReason, spawnable, toLite, type TicketLite } from "./scheduler";
+import { conflictWaits, stacking } from "./stack";
+import { noteUpstreamChanges } from "./upstream";
 import { LOOM_ACTOR, canMoveTicket } from "./states";
 import { askForPrTexts, deliverFixRounds, humanFixRound, onPrWriterIdle, resumePrAsks } from "./pull-requests";
 import { recordPlannerTurn } from "./planner-view";
@@ -35,7 +38,7 @@ import {
 const TOKEN_REFRESH_MS = 60_000;
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-export type EngineDeps = Omit<EngineCtx, "kick"> & { projects: Projects; settings?: () => DoneSettings };
+export type EngineDeps = Omit<EngineCtx, "kick" | "checksSettleMs"> & { projects: Projects; settings?: () => LoomSettings };
 
 export interface Approved extends ApproveResult {
   requeued: string[];
@@ -61,12 +64,13 @@ export class Engine {
   private currentTick: Promise<void> | null = null;
   private tickAgain = false;
 
-  private readonly settings: () => DoneSettings;
+  private readonly settings: () => LoomSettings;
 
   constructor(deps: EngineDeps) {
     this.projects = deps.projects;
     this.settings = deps.settings ?? (() => NO_HOOK);
-    this.ctx = { store: deps.store, bb: deps.bb, now: deps.now, host: deps.host, kick: () => this.kick() };
+    const settleMs = () => (this.settings().checksSettleMinutes ?? CHECKS_SETTLE_MINUTES) * 60_000;
+    this.ctx = { store: deps.store, bb: deps.bb, now: deps.now, host: deps.host, kick: () => this.kick(), checksSettleMs: settleMs };
   }
 
   private warn(what: string, error: unknown): void {
@@ -157,6 +161,8 @@ export class Engine {
         await endThread(this.ctx, row, "timeout", { commit: true });
       }
       if (running() === null) return;
+      await noteUpstreamChanges(this.ctx, running()!, spec);
+      if (running() === null) return;
       await deliverFixRounds(this.ctx, running()!);
       if (running() === null) return;
       await askForPrTexts(this.ctx, running()!, spec);
@@ -192,8 +198,12 @@ export class Engine {
       const project = store.project(projectId);
       if (project?.state !== "running" || (project.hold_until !== null && project.hold_until > now())) return null;
       const spec = specOf(store, project);
-      const waiting = (ticket: TicketLite) => spec.merge.strategy === "integration" && this.integrationMoving(projectId, ticket.repo);
-      const lite = spawnable(spec.agents.max_workers, store.tickets(projectId).map(toLite), waiting).find((candidate) => !tried.has(candidate.id));
+      const rows = store.tickets(projectId);
+      const stack = stacking(spec);
+      // A stacked start whose dependencies' commits conflicted waits until one of them changes.
+      const waiting = (ticket: TicketLite) =>
+        (spec.merge.strategy === "integration" && this.integrationMoving(projectId, ticket.repo)) || (stack && conflictWaits(rows, rows.find((row) => row.id === ticket.id)!));
+      const lite = spawnable(spec.agents.max_workers, rows.map(toLite), waiting, stack).find((candidate) => !tried.has(candidate.id));
       return lite === undefined ? null : { project, spec, ticket: store.ticket(lite.id)!, waiting };
     };
 

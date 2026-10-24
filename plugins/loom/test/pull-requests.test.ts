@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { settleChecks, submit } from "../src/checks";
 import type { ThreadRow } from "../src/db/store";
 import type { HostOutput } from "../src/host-contract";
+import { Engine } from "../src/engine";
 import { pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
 import { askForPrTexts, deliverFixRounds, handInPrText, onPrWriterIdle, resumePrAsks } from "../src/pull-requests";
 import { approve, settleReviews, spawnReviewers } from "../src/review";
@@ -182,6 +183,23 @@ describe("following the pull request", () => {
     await poll();
     expect(ticket().state).toBe("working");
     expect(dataOf("pr_feedback")[0]!.data).toMatchObject({ round: 1, checks: [{ name: "lint", url: "https://ci/1" }], items: [] });
+  });
+
+  it("holds a failed check only as long as Loom's checksSettleMinutes setting says", async () => {
+    h.ctx.checksSettleMs = () => 10 * 60_000;
+    await openPr();
+    h.host.feedback.set(URL, { checks: [{ key: "check:1", name: "lint", state: "failed", url: "https://ci/1" }, { key: "status:reviews", name: "reviews", state: "pending", url: null }] });
+    await poll();
+    expect(ticket().state).toBe("pr_open");
+    await poll();
+    expect(ticket().state).toBe("working");
+  });
+
+  it("reads the setting through the engine, 30 minutes when it is not set", () => {
+    const store = h.store;
+    const engine = (settings?: () => { doneHook: string; doneRecord: string; checksSettleMinutes?: number }) => new Engine({ store, bb: h.bb, now: h.clock.now, host: h.host, projects: h.projects, ...(settings === undefined ? {} : { settings }) });
+    expect(engine().ctx.checksSettleMs!()).toBe(30 * 60_000);
+    expect(engine(() => ({ doneHook: "", doneRecord: "summary", checksSettleMinutes: 45 })).ctx.checksSettleMs!()).toBe(45 * 60_000);
   });
 
   it("starts a fix round with reviews, threads and people's comments, leaves out bots' comments and the author's own, and sends each item once", async () => {

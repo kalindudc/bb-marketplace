@@ -10,7 +10,7 @@ import { recordingHost } from "./runs";
 import { scopeReport } from "./scope";
 import type { Spec } from "./spec";
 import { LOOM_ACTOR } from "./states";
-import { applyMove, endThread, freshBase, recordBranch, resolveEnvironment, specOf, ticketMoveFor, toWorking, type EngineCtx } from "./workers";
+import { applyMove, baseOf, endThread, recordBranch, resolveEnvironment, specOf, ticketMoveFor, toWorking, type EngineCtx } from "./workers";
 
 export interface CheckRun {
   command: string;
@@ -133,7 +133,7 @@ async function runPipeline(ctx: EngineCtx, ticket: TicketRow, spec: Spec, worker
   await recordBranch(ctx, worker);
   if (unchangedFix(ctx.store.posts(ticket.id), commit.sha)) return { commitSha: commit.sha, unchanged: true, runs: [], failure: null, outside: [], protectedHits: [] };
   const repo = ticketRepo(spec, ticket);
-  const base = freshBase(spec, ticket.repo);
+  const base = baseOf(spec, ticket);
   const state = await ctx.host.call(hostId, "worktreeState", { worktree, base });
   const report = scopeReport(state.changed, JSON.parse(ticket.scope_json) as string[], repo.protected);
   const outcome: Outcome = { commitSha: commit.sha, runs: [], failure: null, outside: report.outside, protectedHits: report.protectedHits };

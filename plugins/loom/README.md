@@ -14,11 +14,11 @@ span several, with each ticket in one of them.
 
 1. Plan: press New project on the Loom page and describe the goal, or ask any thread to plan it; every thread has the `loom-plan` skill. The planner asks a round of questions and calls `loom_propose` with a TOML spec. The plugin validates it and saves a draft, then starts a spec reviewer: a fresh agent that checks the spec against the human's request and for work the goal does not need, and sends any findings back to the planner, for up to three rounds.
 2. Approve: once the spec review passes, the human reads the spec and approves it. The tickets appear on the board. `bb loom approve <slug> --skip-review` approves a draft whose review has not passed, and `--version N --skip-review` a pending version.
-3. Start: the human starts the project. The plugin picks ready tickets (dependencies done, no scope overlap with work in flight) and starts a worker thread for each.
+3. Start: the human starts the project. The plugin picks ready tickets (dependencies done, or on the pull request strategy their pull requests open; no scope overlap with work in flight) and starts a worker thread for each.
 4. Work: a worker calls `loom_note` as it goes, then `loom_submit`, or `loom_block` when it needs help.
 5. Check: the plugin commits the worktree and runs the ticket's and the project's check commands. A failure goes back to the worker.
 6. Review: reviewer threads read the diff and call `loom_approve` or `loom_request_changes`. Requested changes go back to the worker as numbered findings.
-7. Merge: the plugin merges exactly the commit that was reviewed, one ticket at a time, into the integration branch and runs the `after_merge` checks on the result. On the pull request strategy the worker writes the pull request with `loom_pr` (its title, description and commit message, the way the worker's own instructions and skills say), and the plugin pushes the reviewed work as one commit and opens one pull request per ticket. It then follows the pull request's checks and reviews: what needs a fix goes back to the worker as a fix round, which passes the checks and a review again and is pushed as one more commit. The human merges it.
+7. Merge: the plugin merges exactly the commit that was reviewed, one ticket at a time, into the integration branch and runs the `after_merge` checks on the result. On the pull request strategy the worker writes the pull request with `loom_pr` (its title, description and commit message, the way the worker's own instructions and skills say), and the plugin pushes the reviewed work as one commit and opens one pull request per ticket. It then follows the pull request's checks and reviews: what needs a fix goes back to the worker as a fix round, which passes the checks and a review again and is pushed as one more commit. The human merges it. A ticket that depends on it does not wait for that: it stacks on the open pull request (see [Stacked pull requests](#stacked-pull-requests)).
 8. Land: on the integration strategy the human reads what lands on the project's Changes tab, then runs `bb loom land` to push the branch and open one pull request upstream, or `bb loom land --direct` to merge the remote's base branch in when it moved, run the `after_merge` checks on the result, and push straight to the base branch. A multi-repo project lands each repo, or one with `--repo` or from that repo's section of the Changes tab.
 
 A ticket that gets stuck is blocked. The planner hears about blocked tickets in a
@@ -98,6 +98,49 @@ per repo, linked with `depends_on`.
   pull request and land, and `bb loom tickets` adds a repo column.
 - After approval, a new spec version may add repos but cannot remove or rename
   one, or change its bb project, base or remote.
+
+## Stacked pull requests
+
+On the pull request strategy, a ticket does not wait for the tickets it depends
+on to merge. It starts once each of them is done or has an open pull request
+with a commit Loom pushed, so chasing reviews and merges no longer holds up the
+work that builds on them. `merge.stack = false` in the spec turns this off, and
+each dependent waits for the merge as before.
+
+- In the same repo, the dependent stacks on its dependency. Its worker's
+  worktree starts from the dependency's pull request commit, through a branch
+  Loom points at it, `loom/<slug>/<key>-stack`. Its scope check and its
+  reviewers' diff count only its own changes from that commit, and its pull
+  request opens on the dependency's branch with a line saying to merge that
+  one first.
+- When the dependency's pull request gets a new commit, after a fix round,
+  Loom merges it into each ticket stacked on it, in that ticket's worker
+  worktree, runs the ticket's checks and pushes the result. There is no new
+  worker turn and no new review. A conflict, or a check that fails on the
+  result, goes back to the ticket's worker. That merge needs the worker's
+  worktree, so a ticket whose worker is gone catches up only once a fix round
+  gives it a new one.
+- When the dependency merges, Loom merges the remote base branch into each
+  ticket stacked on it, the same way, and moves its pull request to the base
+  branch with `gh pr edit --base`. On another forge, the ticket's post asks you
+  to change the base by hand.
+- A ticket with two or more open dependencies in its repo starts on a merge of
+  their commits and goes through checks and review. Its pull request waits
+  until all but one of them have merged, because a pull request builds on one
+  branch. Loom then merges the base branch into the one still open, so the new
+  pull request does not show the merged work as its own, and opens the
+  ticket's pull request on it. When their commits conflict with each other,
+  the ticket waits and says so on its ticket.
+- A dependency in another repo cannot be stacked on. Its dependents start on
+  its open pull request, and their brief says how to read its files from that
+  repo's checkout. Each new commit on it is posted on the dependent ticket and
+  sent to that ticket's worker while it works, and the dependent's pull
+  request names it.
+- The board marks a stacked ticket with what it is stacked on, and an approved
+  ticket whose pull request waits with what it waits for.
+
+Some repositories run CI only on pull requests to the default branch. A stacked
+pull request's checks then start once Loom moves it to the base branch.
 
 ## Commands
 
@@ -354,6 +397,20 @@ bb plugin config loom set doneHook 'cat >> "$HOME/notes/loom-$LOOM_PROJECT_SLUG.
 # Save it as a done Cortex task in the repository's lane.
 bb plugin config loom set doneHook 'cortex add "Loom: $LOOM_PROJECT_NAME" --lane "$(cortex memory lane)" --status done -t loom --as "loom-$LOOM_PROJECT_SLUG" --body-file -'
 ```
+
+## Settings
+
+Besides the done hook above, Loom has one setting for pull requests:
+
+```sh
+bb plugin config loom set checksSettleMinutes 45
+```
+
+`checksSettleMinutes` is how long Loom waits for a pull request's checks after
+it pushes. Loom sends the failed ones to the worker as a fix round once every
+check has finished, or once this many minutes have passed, whichever comes
+first, because some checks stay pending until a person approves them. It is 30
+by default and applies to every project.
 
 ## Servers other than GitHub
 

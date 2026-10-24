@@ -318,6 +318,53 @@ function commitTree(repo: string, tree: string, parents: readonly string[], mess
   );
 }
 
+/**
+ * The commit a stacked ticket starts from or merges in. `base` fetches the remote base branch into its remote-tracking ref,
+ * as `git fetch` does, and adds its tip. Commits another one contains are left out; the rest are merged one by one with
+ * merge-tree, which touches no worktree. Only a clean result moves `branch`, which no worktree may have checked out.
+ */
+export async function stackBase(input: HostInput<"stackBase">, signal?: AbortSignal): Promise<HostOutput<"stackBase">> {
+  const { repo, branch, message } = input;
+  const commits: string[] = [];
+  for (const commit of input.commits) commits.push(await git(repo, ["rev-parse", "--verify", `${commit}^{commit}`], { signal }));
+  let tip: string | null = null;
+  if (input.base !== undefined) {
+    const { remote, branch: base } = input.base;
+    const tracking = `refs/remotes/${remote}/${base}`;
+    const fetched = await run(repo, ["fetch", "--no-tags", "--no-write-fetch-head", remote, `+refs/heads/${base}:${tracking}`], signal, NETWORK_TIMEOUT_MS);
+    if (fetched.code !== 0) return { outcome: "unavailable", message: `git fetch from ${remote} failed: ${tail(fetched.stderr || fetched.stdout)}` };
+    tip = await git(repo, ["rev-parse", "--verify", `${tracking}^{commit}`], { signal });
+    commits.push(tip);
+  }
+  const unique = [...new Set(commits)];
+  if (unique.length === 0) throw new Error("stackBase needs at least one commit or the base branch.");
+  const kept: string[] = [];
+  for (const commit of unique) {
+    let contained = false;
+    for (const other of unique) {
+      if (other !== commit && (await isAncestor(repo, commit, other, signal))) {
+        contained = true;
+        break;
+      }
+    }
+    if (!contained) kept.push(commit);
+  }
+  let sha = kept[0]!;
+  for (const next of kept.slice(1)) {
+    const merged = await run(repo, ["merge-tree", "--write-tree", "--name-only", "--no-messages", sha, next], signal);
+    const lines = merged.stdout.split("\n").filter((line) => line !== "");
+    if (merged.code === 1) return { outcome: "conflict", files: [...new Set(lines.slice(1))].sort() };
+    if (merged.code !== 0 || lines[0] === undefined) throw failure(["merge-tree", "--write-tree", sha, next], merged);
+    sha = await commitTree(repo, lines[0], [sha, next], message, signal);
+  }
+  const worktrees = await git(repo, ["worktree", "list", "--porcelain"], { signal });
+  if (worktrees.split("\n").includes(`branch refs/heads/${branch}`)) {
+    return { outcome: "unavailable", message: `The branch ${branch} is checked out in a worktree, so Loom cannot move it to the stacked commit. Switch that worktree to another branch.` };
+  }
+  await git(repo, ["update-ref", `refs/heads/${branch}`, sha], { signal });
+  return { outcome: "ok", sha, tip };
+}
+
 export async function fetchBranch(input: HostInput<"fetchBranch">, signal?: AbortSignal): Promise<HostOutput<"fetchBranch">> {
   const { worktree, remote, branch } = input;
   const fetched = await run(worktree, ["fetch", "--no-tags", remote, `refs/heads/${branch}`], signal, NETWORK_TIMEOUT_MS);
@@ -385,6 +432,13 @@ export async function prCreate(input: HostInput<"prCreate">, signal?: AbortSigna
   if (viewed.code !== 0) return unavailable(ghFailed("gh pr view", viewed));
   const url = parseJson<{ url?: unknown }>(viewed.stdout)?.url;
   return typeof url === "string" ? { outcome: "ok", url } : unavailable(`gh pr view printed no URL: ${tail(viewed.stdout)}`);
+}
+
+export async function prRetarget(input: HostInput<"prRetarget">, signal?: AbortSignal): Promise<HostOutput<"prRetarget">> {
+  const edited = await gh(input.repo, ["pr", "edit", input.url, "--base", input.base], { signal });
+  if (edited === "missing") return { outcome: "unavailable", message: GH_MISSING };
+  if (edited.code !== 0) return { outcome: "unavailable", message: ghFailed("gh pr edit", edited) };
+  return { outcome: "ok" };
 }
 
 export async function prState(input: HostInput<"prState">, signal?: AbortSignal): Promise<HostOutput<"prState">> {

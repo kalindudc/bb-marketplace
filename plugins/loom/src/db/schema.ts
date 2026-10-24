@@ -153,4 +153,6 @@ export const MIGRATIONS: string[] = [
   `CREATE TABLE planner_log (id INTEGER PRIMARY KEY AUTOINCREMENT, thread_id TEXT NOT NULL, at INTEGER NOT NULL,
     author TEXT NOT NULL CHECK (author IN ('planner', 'human')), text TEXT NOT NULL)`,
   `CREATE INDEX planner_log_thread ON planner_log (thread_id, id)`,
+  `ALTER TABLE tickets ADD COLUMN stack_json TEXT`,
+  `ALTER TABLE tickets ADD COLUMN pr_base TEXT`,
 ];

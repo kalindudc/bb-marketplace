@@ -32,9 +32,19 @@ export const SETTINGS = {
     default: "summary",
     experimental_optionLabels: { summary: "A summary an agent writes from the record", full: "The full record" },
   },
+  checksSettleMinutes: {
+    type: "number",
+    label: "Wait for pull request checks (minutes)",
+    description:
+      "On the pull request strategy, Loom sends a pull request's failed checks to the worker once every check has finished, or this many minutes after it pushed, whichever comes first; some checks stay pending until a person approves them. It applies to every project.",
+    default: 30,
+    experimental_schema: z.number().int().min(1).max(1440),
+  },
 } satisfies PluginSettingDescriptors;
 
 export type DoneSettings = { doneHook: string; doneRecord: string };
+/** Every Loom setting; checksSettleMinutes is optional so a caller with only the done hook's settings can pass them. */
+export type LoomSettings = DoneSettings & { checksSettleMinutes?: number };
 export const NO_HOOK: DoneSettings = { doneHook: "", doneRecord: "summary" };
 
 export const RECORD_MAX = 300_000;

@@ -14,7 +14,7 @@ import { LoomError } from "./projects";
 import { idleAction } from "./scheduler";
 import type { Spec } from "./spec";
 import { LOOM_ACTOR } from "./states";
-import { applyMove, endLiveRows, endThread, freshBase, pauseProject, released, resolveEnvironment, resumeEnding, retryRateLimited, specOf, toWorking, type EndReason, type EngineCtx, type TurnFailure } from "./workers";
+import { applyMove, baseOf, endLiveRows, endThread, freshBase, pauseProject, released, resolveEnvironment, resumeEnding, retryRateLimited, specOf, toWorking, type EndReason, type EngineCtx, type TurnFailure } from "./workers";
 
 export interface Finding {
   severity: "blocking" | "should-fix";
@@ -244,7 +244,7 @@ async function startReviewers(ctx: EngineCtx, project: ProjectRow, spec: Spec, t
 async function readDiff(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow): Promise<Diff | null> {
   try {
     const checkout = await repoCheckout(ctx, project, spec, ticket.repo);
-    return await ctx.host.call(checkout.hostId, "diff", { repo: checkout.path, base: freshBase(spec, ticket.repo), head: ticket.head_sha!, maxBytes: PATCH_BYTES });
+    return await ctx.host.call(checkout.hostId, "diff", { repo: checkout.path, base: baseOf(spec, ticket), head: ticket.head_sha!, maxBytes: PATCH_BYTES });
   } catch (error) {
     pauseProject(ctx, project.id, `Could not read the diff of ${ticket.key} for review: ${errText(error)}`);
     return null;
@@ -391,7 +391,7 @@ async function requireHeadCheckedOut(ctx: EngineCtx, row: ThreadRow, ticket: Tic
     throw new LoomError("loom_unavailable", `Could not find your worktree: ${errText(error)}`);
   });
   if (environment?.path == null) throw new LoomError("loom_invalid_state", "Your worktree is not available yet. Try again in a moment.");
-  const state = await ctx.host.call(environment.hostId, "worktreeState", { worktree: environment.path, base: freshBase(spec, ticket.repo) }).catch((error) => {
+  const state = await ctx.host.call(environment.hostId, "worktreeState", { worktree: environment.path, base: baseOf(spec, ticket) }).catch((error) => {
     throw new LoomError("loom_unavailable", `Could not read your worktree: ${errText(error)}`);
   });
   if (state.head !== ticket.head_sha) throw new LoomError("loom_invalid_state", `Check out ${ticket.head_sha} first, then review again.`);

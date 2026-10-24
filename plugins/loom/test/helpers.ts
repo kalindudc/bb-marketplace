@@ -312,6 +312,9 @@ export class FakeHost implements HostPort {
   /** What prFeedback answers, by pull request URL; a missing entry is an open pull request with no checks or feedback. */
   feedback = new Map<string, Partial<Extract<HostOutput<"prFeedback">, { outcome: "ok" }>>>();
   private squashes = 0;
+  private stacks = 0;
+  /** Each branch stackBase pointed, at the commit it built. */
+  stackBranches = new Map<string, string>();
   /** The tip fetchBranch reports for the remote's base branch. Every integration branch starts at base000, so base000 means it has not moved. */
   remoteBase = "base000";
   private commits = 0;
@@ -414,6 +417,15 @@ export class FakeHost implements HostPort {
         this.trees.set(sha, tree);
         return { outcome: "ok", sha, created: true };
       }
+      case "stackBase": {
+        const { branch, commits, base } = input as HostInput<"stackBase">;
+        const all = [...commits, ...(base === undefined ? [] : [this.remoteBase])];
+        const sha = all.length === 1 ? all[0]! : `st${++this.stacks}`;
+        this.stackBranches.set(branch, sha);
+        return { outcome: "ok", sha, tip: base === undefined ? null : this.remoteBase };
+      }
+      case "prRetarget":
+        return { outcome: "ok" };
       case "push": {
         const { src, branch } = input as HostInput<"push">;
         this.remoteBranches.set(branch, src);

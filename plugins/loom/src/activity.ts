@@ -50,7 +50,24 @@ export interface MergeItem {
   /** null for merge steps that no merge post follows yet. */
   postId: number | null;
   at: number;
-  outcome: "merged" | "conflict" | "pr_opened" | "pr_pushed" | "pr_unchanged" | "pr_merged" | "branch_pushed" | "branch_landed" | "diverged" | null;
+  outcome:
+    | "merged"
+    | "conflict"
+    | "pr_opened"
+    | "pr_pushed"
+    | "pr_unchanged"
+    | "pr_merged"
+    | "branch_pushed"
+    | "branch_landed"
+    | "diverged"
+    | "restacked"
+    | "held"
+    | "restack_conflict"
+    | "restack_waits"
+    | "retargeted"
+    | "retarget_failed"
+    | "retarget_by_hand"
+    | null;
   into: string | null;
   running: boolean;
   steps: CheckStep[];
@@ -160,7 +177,8 @@ interface PostData {
   ignored?: PrFeedbackItem["ignored"];
 }
 
-const PR_STAGE: ReadonlySet<string> = new Set(["pr_opened", "pr_pushed", "pr_unchanged", "pr_merged", "branch_pushed", "branch_landed"]);
+// Stacking's holds, catch-ups that could not run and base moves are about the pull request, so they mark no merge either.
+const PR_STAGE: ReadonlySet<string> = new Set(["pr_opened", "pr_pushed", "pr_unchanged", "pr_merged", "branch_pushed", "branch_landed", "held", "restack_conflict", "restack_waits", "retargeted", "retarget_failed", "retarget_by_hand"]);
 const isPrStage = (data: PostData) => data.outcome === "pr_text" || data.outcome === "pr_feedback";
 
 const LINE_MAX = 140;

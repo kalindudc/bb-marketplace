@@ -18,6 +18,9 @@ export const STEP_LABELS: Partial<Record<HostMethod, string>> = {
   prCommit: "build the pull request's commit",
   push: "git push",
   prCreate: "open the pull request",
+  stackBase: "build the commit to stack on",
+  prRetarget: "move the pull request to another base",
+  fetchBranch: "git fetch",
 };
 
 const sha12 = (sha: string) => sha.slice(0, 12);
@@ -62,6 +65,14 @@ export function stepSummary(method: HostMethod, output: unknown): { ok: boolean;
       return { ok: true, text: "Pushed." };
     case "prCreate":
       return { ok: true, text: `Opened ${(output as { url: string }).url}.` };
+    case "stackBase": {
+      const built = output as HostOutput<"stackBase">;
+      if (built.outcome === "conflict") return { ok: false, text: ["The commits to stack on conflict in:", ...built.files].join("\n") };
+      if (built.outcome !== "ok") return { ok: false, text: "unavailable" };
+      return { ok: true, text: `Built ${sha12(built.sha)}${built.tip === null ? "" : `, with the base branch at ${sha12(built.tip)}`}.` };
+    }
+    case "prRetarget":
+      return { ok: true, text: "Moved." };
     default:
       return { ok: true, text: JSON.stringify(output) };
   }

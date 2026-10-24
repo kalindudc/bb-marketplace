@@ -87,6 +87,8 @@ export const card = (over: Partial<BoardCard> = {}): BoardCard => ({
   prUrl: null,
   blockedReason: null,
   hasChanges: false,
+  stackedOn: [],
+  holding: null,
   ...over,
 });
 

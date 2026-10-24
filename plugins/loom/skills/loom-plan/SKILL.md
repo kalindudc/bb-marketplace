@@ -21,7 +21,7 @@ Ask only what you cannot find in the repository:
 - Non-goals: what is explicitly out of scope.
 - Repos: which repositories the work spans. Most projects change one repository, this thread's own. When the work also changes other repositories, step 2 finds them.
 - Base branch: where work starts (default `main`), and whether a repo uses another base.
-- Merge plan: an integration branch that collects all approved tickets (`strategy = "integration"`), or one pull request per ticket (`strategy = "pr"`). Where step 3 finds that Loom cannot add its own integration worktree, the choices are one pull request per ticket, or a `[merge.worktree]` command or plugin.
+- Merge plan: an integration branch that collects all approved tickets (`strategy = "integration"`), or one pull request per ticket (`strategy = "pr"`). On `"pr"`, dependent tickets start on their dependencies' open pull requests and stack on them in the same repo; ask only if the human wants each to wait for the merge instead (`merge.stack = false`). Where step 3 finds that Loom cannot add its own integration worktree, the choices are one pull request per ticket, or a `[merge.worktree]` command or plugin.
 - Check commands: the commands that must pass on every submitted ticket (tests, type checks, lint), per repo when the repos use different toolchains.
 - Models: ask for a reviewer model that differs from the worker's, so the reviewer does not share the worker's blind spots. `provider` in `[agents.worker]` and `[agents.reviewer]` is a bb provider id, such as `claude-code`, `codex` or `pi`, not a model name such as `claude`; `loom_propose` refuses a provider bb does not have and lists the ids it has.
 - Protected paths: files no ticket may change, such as lockfiles, CI config or generated code.
@@ -69,6 +69,7 @@ When the repos use different toolchains, give each `[[repo]]` its own `checks` (
 - Acceptance criteria are testable statements, preferably in EARS form: "WHEN <event> THE SYSTEM SHALL <response>". Every ticket needs at least one.
 - Scope lists the exact files or directories the ticket may change, as globs. A ticket outside its scope is flagged.
 - Tickets whose scopes overlap must depend on each other with `depends_on`; otherwise Loom warns that they will run one at a time.
+- On the pull request strategy a dependent ticket usually starts before its dependency merges: its brief lists each dependency's open pull request and commit, and in the same repo its worktree starts on that commit. So say in its body which of the dependency's files or names it builds on, not that the dependency "is merged". Do not plan two independent tickets in one repo that a third depends on unless you must: its pull request can open only once one of them has merged.
 - `verify` lists commands that check this ticket alone. A ticket with no `verify` needs commands in `[checks]`, or in its repo's `checks`.
 - Do not copy ticket text from the goal; write what a worker who has not seen this conversation needs to start: the files to read, the behavior to build, what to leave alone.
 - Never write `[NEEDS CLARIFICATION]` markers. Ask the human instead.
@@ -76,9 +77,9 @@ When the repos use different toolchains, give each `[[repo]]` its own `checks` (
 On a project with `[[repo]]` tables:
 
 - One ticket changes one repo, and every ticket sets `repo` to one of the `[[repo]]` names. A worker has a checkout of its ticket's repo only; it can read the other repos but not change them.
-- Split cross-repo work into one ticket per repo, linked with `depends_on`: for example the API ticket first, then the web ticket that `depends_on` it. A ticket starts only when the tickets it depends on are done, that is merged in their own repos.
+- Split cross-repo work into one ticket per repo, linked with `depends_on`: for example the API ticket first, then the web ticket that `depends_on` it. On the integration strategy a ticket starts only when the tickets it depends on are done; on the pull request strategy it starts once their pull requests are open, and reads their work from the other repo's checkout at the commit its brief names.
 - Scopes, `verify` commands and protected paths are relative to the ticket's repo. Write `src/**`, not the repo's checkout path. Scopes in different repos never overlap.
-- In the body of a dependent ticket, say which files of the other repo to read, such as an API schema. Its brief gives the other repos' checkout paths, and on the integration strategy it can read their merged work from the integration branch.
+- In the body of a dependent ticket, say which files of the other repo to read, such as an API schema. Its brief gives the other repos' checkout paths; on the integration strategy it can read their merged work from the integration branch, and on the pull request strategy from the commit of their open pull request.
 
 ## 6. Propose
 

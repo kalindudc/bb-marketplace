@@ -7,10 +7,11 @@ import type { ProjectRow, Store, TicketRow } from "./db/store";
 import type { HostInput, HostOutput } from "./host-contract";
 import type { BbPort, EnvironmentFile, FileStatus, HostPort } from "./ports";
 import { LoomError } from "./projects";
-import { freshBaseOf, isMultiRepo, repoSettings, type RepoSettings } from "./repos";
+import { isMultiRepo, repoSettings, type RepoSettings } from "./repos";
 import type { Spec } from "./spec";
+import { stackOf } from "./stack";
 import type { TicketState } from "./states";
-import { specOf } from "./workers";
+import { baseOf, specOf } from "./workers";
 
 const MAX_FILES = 2000;
 const PATCH_BYTES = 400_000;
@@ -138,7 +139,7 @@ const ticketSource = (ticket: TicketRow, kind: ChangeKind, against: string, at: 
 function unmergedPlan(ticket: TicketRow, spec: Spec, opts: { against: string; landed: boolean }): Plan {
   const commit: GitRead | null = ticket.head_sha === null ? null : { base: opts.against, head: ticket.head_sha, mergeBase: true, ...(opts.landed ? { landed: true } : {}) };
   if (LIVE_STATES.includes(ticket.state) && ticket.environment_id !== null) {
-    const fresh = freshBaseOf(spec, ticket.repo);
+    const fresh = baseOf(spec, ticket);
     return { source: ticketSource(ticket, "live", fresh), read: { kind: "live", environmentId: ticket.environment_id, base: fresh, fallback: commit } };
   }
   if (commit !== null) return { source: ticketSource(ticket, "commit", opts.against), read: { kind: "git", input: commit } };
@@ -148,7 +149,11 @@ function unmergedPlan(ticket: TicketRow, spec: Spec, opts: { against: string; la
 /** Each repo's whole branch, in the spec's [[repo]] order, then each merge oldest first, then the tickets that have not merged. */
 function plansOf(store: Store, project: ProjectRow, spec: Spec, repos: readonly RepoSettings[]): Plan[] {
   const tickets = store.tickets(project.id);
-  if (spec.merge.strategy === "pr") return tickets.map((ticket) => unmergedPlan(ticket, spec, { against: remoteBaseOf(repoSettings(spec, ticket.repo)), landed: ticket.state === "done" }));
+  if (spec.merge.strategy === "pr") {
+    // A stacked ticket that has not merged is read against the commit it is stacked on, so its dependencies' changes are not counted as its own.
+    const against = (ticket: TicketRow) => (ticket.state === "done" ? null : stackOf(ticket)?.base) ?? remoteBaseOf(repoSettings(spec, ticket.repo));
+    return tickets.map((ticket) => unmergedPlan(ticket, spec, { against: against(ticket), landed: ticket.state === "done" }));
+  }
 
   const branch = spec.merge.branch!;
   const finished = project.state === "done" || project.state === "archived";
@@ -318,7 +323,7 @@ export class Changes {
       const ticket = this.deps.store.ticketByKey(input.key);
       if (ticket === null || ticket.project_id !== project.id) throw new LoomError("loom_not_found", `No ticket ${input.key} in ${input.slug}.`);
       if (ticket.environment_id === null) return { patch: null, message: `${ticket.key} has no worktree now.` };
-      const live = await this.deps.bb.environmentPatch(ticket.environment_id, freshBaseOf(specOf(this.deps.store, project), ticket.repo), input.path);
+      const live = await this.deps.bb.environmentPatch(ticket.environment_id, baseOf(specOf(this.deps.store, project), ticket), input.path);
       return live.outcome === "ok" ? { patch: live.patch, truncated: live.truncated } : { patch: null, message: live.message };
     }
     if (input.base === undefined || input.head === undefined) throw new LoomError("loom_invalid_input", "A file's patch needs the two commits it is read between, or the key of a working ticket.");

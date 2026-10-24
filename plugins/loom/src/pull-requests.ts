@@ -16,8 +16,9 @@ import { applyMove, released, resumeEnding, specOf, toWorking, type EngineCtx } 
 /** How long the worker has to hand in loom_pr before Loom's template stands in; paused time does not count. */
 export const PR_TEXT_MINUTES = 30;
 const PR_TEXT_MS = PR_TEXT_MINUTES * 60_000;
-/** Failed checks wait for the rest to finish, or this long after the push: some status checks stay pending until a person approves. */
-export const CHECKS_SETTLE_MS = 30 * 60_000;
+/** Failed checks wait for the rest to finish, or this long after the push: some status checks stay pending until a person approves. Loom's checksSettleMinutes setting changes it. */
+export const CHECKS_SETTLE_MINUTES = 30;
+export const CHECKS_SETTLE_MS = CHECKS_SETTLE_MINUTES * 60_000;
 
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -70,9 +71,9 @@ function templateText(ticket: TicketRow, body: string | null): PrText {
 }
 
 /** Loom's title and description for a pull request whose text the worker did not write. */
-export function templatePr(ctx: EngineCtx, ticket: TicketRow): { title: string; body: string } {
+export function templatePr(ctx: EngineCtx, ticket: TicketRow, dependsOn: string[] = []): { title: string; body: string } {
   const approvals = ctx.store.reviews(ticket.id, ticket.review_round).filter((review) => review.verdict === "approved");
-  return { title: `${ticket.key}: ${ticket.title}`, body: prBody({ ticket, approvals }) };
+  return { title: `${ticket.key}: ${ticket.title}`, body: prBody({ ticket, approvals, dependsOn }) };
 }
 
 function post(ctx: EngineCtx, ticket: TicketRow, a: { body: string; data: object; author?: "worker" | "loom"; threadId?: string | null }): void {
@@ -210,10 +211,10 @@ interface Sorted {
   ignored: { bots: number; own: number; keys: string[] };
 }
 
-/** The feedback not yet sent to a worker that asks for a fix. Failed checks wait until no check runs, or CHECKS_SETTLE_MS after the push. */
-export function newFeedback(ticket: TicketRow, feedback: Feedback, now: number): Sorted {
+/** The feedback not yet sent to a worker that asks for a fix. Failed checks wait until no check runs, or `settleMs` after the push. */
+export function newFeedback(ticket: TicketRow, feedback: Feedback, now: number, settleMs: number = CHECKS_SETTLE_MS): Sorted {
   const seen = new Set(JSON.parse(ticket.pr_seen_json) as string[]);
-  const settled = !feedback.checks.some((check) => check.state === "pending") || (ticket.pushed_at !== null && now - ticket.pushed_at >= CHECKS_SETTLE_MS);
+  const settled = !feedback.checks.some((check) => check.state === "pending") || (ticket.pushed_at !== null && now - ticket.pushed_at >= settleMs);
   const checks = settled ? feedback.checks.filter((check) => check.state === "failed" && !seen.has(check.key)).map((check) => ({ key: check.key, name: check.name, url: check.url })) : [];
   const sorted: Sorted = { checks, items: [], ignored: { bots: 0, own: 0, keys: [] } };
   for (const item of feedback.items) {
@@ -238,7 +239,7 @@ export async function followFeedback(ctx: EngineCtx, project: ProjectRow, ticket
   const { store } = ctx;
   recordStatus(ctx, ticket, feedback);
   if (project.state !== "running") return;
-  const found = newFeedback(ticket, feedback, ctx.now());
+  const found = newFeedback(ticket, feedback, ctx.now(), ctx.checksSettleMs?.() ?? CHECKS_SETTLE_MS);
   if (found.checks.length === 0 && found.items.length === 0) {
     if (found.ignored.keys.length > 0) markSeen(ctx, ticket, found.ignored.keys);
     return;
@@ -398,4 +399,4 @@ export function unchangedFix(posts: readonly PostRow[], sha: string): boolean {
 }
 
 /** When a closed pull request blocks its ticket, a requeue starts a new one: one commit on a new branch, with fresh rounds. */
-export const closedPrReset = { pr_branch: null, pushed_sha: null, pushed_at: null, pr_ask_json: null, pr_text_json: null, pr_seen_json: "[]", pr_rounds: 0, pr_status_json: null, pr_deliver_json: null } as const;
+export const closedPrReset = { pr_branch: null, pushed_sha: null, pushed_at: null, pr_ask_json: null, pr_text_json: null, pr_seen_json: "[]", pr_rounds: 0, pr_status_json: null, pr_deliver_json: null, pr_base: null } as const;

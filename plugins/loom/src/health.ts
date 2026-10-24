@@ -3,6 +3,7 @@ import type { ThreadRow, TicketRow } from "./db/store";
 import type { ProjectMetrics } from "./metrics";
 import { readyTickets, toLite, workerSlots } from "./scheduler";
 import type { Spec } from "./spec";
+import { stacking } from "./stack";
 
 export interface ProjectHealth {
   progress: { done: number; total: number; inFlight: number; blocked: number; queued: number };
@@ -42,7 +43,7 @@ export function projectHealth(a: { tickets: TicketRow[]; threads: ThreadRow[]; m
       maxWorkers,
       reviewers: a.threads.filter((thread) => thread.role === "reviewer" && (thread.state === "spawning" || thread.state === "active")).length,
       maxReviewers,
-      readyWaiting: Math.max(0, readyTickets(lites).length - workerSlots(maxWorkers, lites)),
+      readyWaiting: Math.max(0, readyTickets(lites, stacking(spec)).length - workerSlots(maxWorkers, lites)),
     },
   };
 }

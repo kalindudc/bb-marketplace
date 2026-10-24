@@ -94,6 +94,10 @@ export interface TicketRow {
   pr_status_json: string | null;
   /** PrDelivery: a fix round's message to its worker that bb has not taken yet; the tick sends it again. */
   pr_deliver_json: string | null;
+  /** Stack: what the ticket's branch is built on when its project stacks pull requests; null before its first worker started. */
+  stack_json: string | null;
+  /** The branch its pull request was opened on, or last retargeted to; null for the repo's base, as in every row from before stacking. */
+  pr_base: string | null;
   created_by: string;
   created_at: number;
   updated_at: number;

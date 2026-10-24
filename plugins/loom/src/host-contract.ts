@@ -112,6 +112,30 @@ export const hostContract = defineRpcContract({
       unavailable,
     ]),
   },
+  // The commit a stacked ticket starts from, or merges in to catch up: the commits given, with `base` the remote base branch's
+  // tip fetched as well, less any that another one contains, merged into one commit when more than one is left. `branch`
+  // is pointed at it, for a worker to start from or merge. A conflict between them names the files and moves no branch.
+  stackBase: {
+    input: z
+      .object({
+        repo: absPath,
+        branch: ref,
+        commits: z.array(commit).max(20),
+        base: z.object({ remote: ref, branch: ref }).strict().optional(),
+        message: z.string().min(1).max(500),
+      })
+      .strict(),
+    output: z.discriminatedUnion("outcome", [
+      z.object({ outcome: z.literal("ok"), sha, tip: sha.nullable() }).strict(),
+      z.object({ outcome: z.literal("conflict"), files: z.array(z.string()) }).strict(),
+      unavailable,
+    ]),
+  },
+  // Moves an open pull request to another base branch: gh pr edit <url> --base <base>.
+  prRetarget: {
+    input: z.object({ repo: absPath, url: z.string().regex(/^https?:\/\/\S+$/, "must be a pull request URL").max(500), base: ref }).strict(),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok") }).strict(), unavailable]),
+  },
   push: {
     input: z.object({ repo: absPath, remote: ref, src: ref, branch: ref }).strict(),
     output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok") }).strict(), z.object({ outcome: z.literal("unavailable"), message: z.string() }).strict()]),

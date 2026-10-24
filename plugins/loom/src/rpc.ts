@@ -17,7 +17,8 @@ import { LoomError, landsOf, namedRepos, repoOverviews, withRepoNames, type Proj
 import { overviewAt, projectTimeline, rewind, rowsOf } from "./replay";
 import { projectFeed, projectMetrics } from "./reports";
 import { blockedAtReview } from "./review";
-import { IN_FLIGHT, overlaps, readyTickets, toLite, type TicketLite } from "./scheduler";
+import { IN_FLIGHT, kinship, overlaps, readyTickets, startable, toLite, type TicketLite } from "./scheduler";
+import { holdOf, stacking, stackOf, upstreamOf } from "./stack";
 import { parseSpec, type Spec } from "./spec";
 import { specReviewStatus } from "./spec-review";
 import { dismissAsk, plannerAsk } from "./asks";
@@ -115,16 +116,17 @@ function stoppedFrom(ticket: TicketRow, moves: EventRow[]): TicketState | null {
 }
 
 /** Whether a ticket is ready and, when it waits, on what. */
-function queueOf(lites: TicketLite[]): (lite: TicketLite) => { ready: boolean; waitingOn: string[] } {
-  const ready = readyTickets(lites);
+function queueOf(lites: TicketLite[], stack = false): (lite: TicketLite) => { ready: boolean; waitingOn: string[] } {
+  const ready = readyTickets(lites, stack);
   const readyIds = new Set(ready.map((lite) => lite.id));
-  const done = new Set(lites.filter((lite) => lite.state === "done").map((lite) => lite.key));
+  const done = startable(lites, stack);
+  const kin = stack ? kinship(lites) : () => false;
   return (lite) => {
     const waiting = lite.state === "queued" && !readyIds.has(lite.id);
     const waitingOn = waiting
       ? [
           ...lite.deps.filter((key) => !done.has(key)),
-          ...lites.filter((other) => IN_FLIGHT.includes(other.state) && overlaps(other.scope, lite.scope)).map((other) => other.key),
+          ...lites.filter((other) => IN_FLIGHT.includes(other.state) && other.repo === lite.repo && !kin(other, lite) && overlaps(other.scope, lite.scope)).map((other) => other.key),
           ...ready.filter((other) => (other.priority - lite.priority || other.seq - lite.seq) < 0 && overlaps(other.scope, lite.scope)).map((other) => other.key),
         ]
       : [];
@@ -132,10 +134,11 @@ function queueOf(lites: TicketLite[]): (lite: TicketLite) => { ready: boolean; w
   };
 }
 
-/** One card per ticket. A queued ticket that is not ready says why, from a single readyTickets pass. */
-export function boardCards(tickets: TicketRow[], threads: ThreadRow[]): BoardCard[] {
+/** One card per ticket. A queued ticket that is not ready says why, from a single readyTickets pass; `spec` says whether the project stacks. */
+export function boardCards(tickets: TicketRow[], threads: ThreadRow[], spec: Spec | null = null): BoardCard[] {
   const lites = tickets.map(toLite);
-  const queue = queueOf(lites);
+  const stack = spec !== null && stacking(spec);
+  const queue = queueOf(lites, stack);
   return tickets.map((ticket, index) => {
     const lite = lites[index]!;
     const live = threads.filter((row) => row.ticket_id === ticket.id && row.state === "active" && row.thread_id !== null).sort((a, b) => Number(b.role === "worker") - Number(a.role === "worker"));
@@ -154,8 +157,18 @@ export function boardCards(tickets: TicketRow[], threads: ThreadRow[]): BoardCar
       prUrl: ticket.pr_url,
       blockedReason: ticket.blocked_reason,
       hasChanges: ticket.head_sha !== null || ((ticket.state === "working" || ticket.state === "checking") && ticket.environment_id !== null),
+      ...stackFacts(tickets, ticket, stack),
     };
   });
+}
+
+function stackFacts(tickets: TicketRow[], ticket: TicketRow, stack: boolean): Pick<BoardCard, "stackedOn" | "holding"> {
+  if (!stack || ticket.state === "done" || ticket.state === "cancelled") return { stackedOn: [], holding: null };
+  const open = new Set(upstreamOf(tickets, ticket).open.map((dep) => dep.key));
+  const stackedOn = Object.keys(stackOf(ticket)?.deps ?? {}).filter((key) => open.has(key));
+  const hold = ticket.state === "approved" ? holdOf(tickets, ticket) : null;
+  const holding = hold === null ? null : hold.why === "merge" ? `Its pull request opens once all but one of ${hold.keys.join(", ")} merge` : hold.why === "push" ? `Its pull request opens once ${hold.keys[0]} has one` : `Its pull request opens once ${hold.keys[0]} takes the base branch`;
+  return { stackedOn, holding };
 }
 
 /** A draft's tickets as queued cards, keyed as approval will key them, so the Board shows what approving creates. */
@@ -168,6 +181,7 @@ export function draftCards(spec: Spec, at: number): BoardCard[] {
     priority: ticket.priority,
     seq: index + 1,
     deps: ticket.depends_on.map((ref) => keyOf.get(ref)!),
+    pushed: false,
     scope: ticket.scope,
     repo: ticket.repo ?? null,
   }));
@@ -187,6 +201,8 @@ export function draftCards(spec: Spec, at: number): BoardCard[] {
     prUrl: null,
     blockedReason: null,
     hasChanges: false,
+    stackedOn: [],
+    holding: null,
   }));
 }
 
@@ -213,7 +229,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
     const metrics = past === null ? projectMetrics(store, project, at) : computeMetrics({ ...past, now: at });
     const approved = project.approved_version === null ? null : specOf(store, project);
     const current = approved ?? inForce;
-    const board = project.state === "draft" ? draftCards(current, at) : boardCards(tickets, threads);
+    const board = project.state === "draft" ? draftCards(current, at) : boardCards(tickets, threads, current);
     const summary = specSummary(spec.toml);
     const specReview = past === null ? specReviewStatus(store, project) : null;
     return {

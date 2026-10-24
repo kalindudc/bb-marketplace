@@ -33,6 +33,7 @@ A spec without `[[repo]]` tables is a single-repo project: every ticket runs in 
 | `describe` | string | `"worker"` | pr strategy only; who writes each pull request's title, description and commit message: `"worker"` (the ticket's worker, with `loom_pr`, after approval) or `"loom"` (Loom's template from the ticket) |
 | `squash` | boolean | `true` | pr strategy only; push the reviewed work as one commit, and each fix round as one more, instead of the worker's branch as it is |
 | `max_fix_rounds` | integer | `5` | pr strategy only; 0 to 20; fix rounds the pull request's checks and reviews may start before the ticket blocks, counted again from each requeue; the human's replies do not count; `0` follows only merged and closed |
+| `stack` | boolean | `true` | pr strategy only; a ticket starts once its dependencies' pull requests are open, on top of them in its own repo, and its pull request opens on its one open dependency's branch; `false` waits for each dependency to merge |
 
 ### [merge.forge]
 
@@ -161,7 +162,7 @@ One to 200 entries.
 | `acceptance` | string array | required | 1 to 20 items; EARS form is recommended: "WHEN ... THE SYSTEM SHALL ..." |
 | `verify` | string array | `[]` | at most 10 commands |
 | `scope` | string array | required | 1 to 50 globs |
-| `depends_on` | string array | `[]` | at most 20 refs |
+| `depends_on` | string array | `[]` | at most 20 refs; the ticket starts once these are done, or on the pr strategy with `merge.stack` once their pull requests are open |
 | `priority` | integer | `2` | 0 (highest) to 3 |
 | `repo` | string | none | required when the spec has `[[repo]]` tables, and then one of their names; not allowed without them. The ticket changes only this repo: its `scope`, `verify` and protected paths are relative to the repo's root. `depends_on` may name a ticket in another repo. |
 
@@ -356,7 +357,7 @@ A spec with any error is refused and nothing is saved. Errors are numbered, at m
 - A ticket has no `verify` command and `checks.commands` is empty.
 - `checks.after_merge` is set with strategy `"pr"`.
 - A forge with `kind = "command"` lacks `open` or `state`, a forge of another kind sets them or `feedback`, or `kind = "none"` sets `after_open`.
-- `merge.describe`, `merge.squash` or `merge.max_fix_rounds` on the integration strategy.
+- `merge.describe`, `merge.squash`, `merge.max_fix_rounds` or `merge.stack` on the integration strategy.
 - `merge.worktree` is set with strategy `"pr"`.
 - An `inputs` string holds a `{name}` other than `{branch}` or `{base}`.
 

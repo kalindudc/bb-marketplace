@@ -58,7 +58,8 @@ const TICKET_MOVES: Record<TicketState, readonly TicketState[]> = {
   approved: ["merging"],
   merging: ["done", "pr_open", "working", "queued"],
   // A fix round: the pull request's feedback, or the human's reply, goes back to the worker, or to the queue when it is gone.
-  pr_open: ["done", "working", "queued"],
+  // To merging when a dependency it is stacked on changed or merged, so Loom brings its branch up to date and pushes it.
+  pr_open: ["done", "working", "queued", "merging"],
   done: [],
   // Back to review only when bb refused the reviewer: the work already passed its checks (Engine.approve).
   blocked: ["queued", "review"],

@@ -9,7 +9,7 @@ import { specToml, type Doc } from "./helpers";
 let seq = 0;
 const ticket = (over: Partial<TicketLite> = {}): TicketLite => {
   seq += 1;
-  return { id: seq, key: `CSV-${seq}`, state: "queued", priority: 2, seq, deps: [], scope: [`area${seq}/**`], repo: null, ...over };
+  return { id: seq, key: `CSV-${seq}`, state: "queued", priority: 2, seq, deps: [], scope: [`area${seq}/**`], repo: null, pushed: false, ...over };
 };
 const keys = (tickets: TicketLite[]) => tickets.map((t) => t.key);
 
@@ -73,6 +73,37 @@ describe("readyTickets", () => {
   });
 });
 
+describe("readyTickets with stacking", () => {
+  it("starts a dependent once its dependency's pull request has a pushed commit, and not while it is blocked or only working", () => {
+    const pushed = ticket({ key: "A", state: "pr_open", pushed: true, scope: ["a/**"] });
+    const fixing = ticket({ key: "B", state: "working", pushed: true, scope: ["b/**"] });
+    const blocked = ticket({ key: "C", state: "blocked", pushed: true, scope: ["c/**"] });
+    const fresh = ticket({ key: "D", state: "review", scope: ["d/**"] });
+    const onA = ticket({ key: "E", deps: ["A"], scope: ["e/**"] });
+    const onB = ticket({ key: "F", deps: ["B"], scope: ["f/**"] });
+    const onC = ticket({ key: "G", deps: ["C"], scope: ["g/**"] });
+    const onD = ticket({ key: "H", deps: ["D"], scope: ["h/**"] });
+    const all = [pushed, fixing, blocked, fresh, onA, onB, onC, onD];
+    expect(keys(readyTickets(all, true))).toEqual(["E", "F"]);
+    expect(keys(readyTickets(all))).toEqual([]);
+  });
+
+  it("lets a stacked ticket overlap the scope of the dependencies it builds on, directly or through others, and of nothing else", () => {
+    const root = ticket({ key: "A", state: "pr_open", pushed: true, scope: ["src/**"] });
+    const middle = ticket({ key: "B", state: "pr_open", pushed: true, deps: ["A"], scope: ["src/b/**"] });
+    const top = ticket({ key: "C", deps: ["B"], scope: ["src/c/**"] });
+    const stranger = ticket({ key: "D", scope: ["src/d/**"] });
+    expect(keys(readyTickets([root, middle, top, stranger], true))).toEqual(["C"]);
+    expect(keys(readyTickets([root, middle, top, stranger], false))).toEqual([]);
+  });
+
+  it("lets a requeued dependency start while the ticket stacked on it holds an overlapping scope", () => {
+    const dependency = ticket({ key: "A", state: "queued", pushed: true, scope: ["src/**"] });
+    const stacked = ticket({ key: "B", state: "pr_open", pushed: true, deps: ["A"], scope: ["src/b/**"] });
+    expect(keys(readyTickets([dependency, stacked], true))).toEqual(["A"]);
+  });
+});
+
 describe("workerSlots", () => {
   it("counts working and checking tickets and no others", () => {
     const states = TICKET_STATES.map((state) => ticket({ state }));
@@ -85,9 +116,10 @@ describe("workerSlots", () => {
 
 describe("toLite", () => {
   it("parses the dependency and scope lists and keeps the repo", () => {
-    const row = { id: 4, key: "CSV-4", state: "queued", priority: 1, seq: 4, deps_json: '["CSV-1"]', scope_json: '["src/**","docs/**"]', repo: null } as TicketRow;
-    expect(toLite(row)).toEqual({ id: 4, key: "CSV-4", state: "queued", priority: 1, seq: 4, deps: ["CSV-1"], scope: ["src/**", "docs/**"], repo: null });
+    const row = { id: 4, key: "CSV-4", state: "queued", priority: 1, seq: 4, deps_json: '["CSV-1"]', scope_json: '["src/**","docs/**"]', repo: null, pushed_sha: null } as TicketRow;
+    expect(toLite(row)).toEqual({ id: 4, key: "CSV-4", state: "queued", priority: 1, seq: 4, deps: ["CSV-1"], scope: ["src/**", "docs/**"], repo: null, pushed: false });
     expect(toLite({ ...row, repo: "api" }).repo).toBe("api");
+    expect(toLite({ ...row, pushed_sha: "sq1" }).pushed).toBe(true);
   });
 });
 

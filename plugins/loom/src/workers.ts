@@ -6,16 +6,19 @@ import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { spawnEnvironment, threadBranch } from "./environments";
 import { plural } from "./format";
 import { SpawnRefusedError, type EnvironmentInfo, type HostPort } from "./ports";
-import { latestChangesRequested, nudgeText, workerBrief } from "./prompts";
+import { andList, latestChangesRequested, nudgeText, workerBrief } from "./prompts";
 import { LoomError, type Ctx } from "./projects";
-import { freshBaseOf } from "./repos";
+import { freshBaseOf, repoSettings } from "./repos";
 import { idleAction, spawnable, toLite, type TicketLite } from "./scheduler";
 import type { Spec } from "./spec";
+import { EMPTY_STACK, stackBranch, stacking, stackOf, upstreamOf, type Stack } from "./stack";
 import { HUMAN_ACTOR, LOOM_ACTOR, PAUSE_NOW_REASON, canMoveTicket, type AuthorKind, type TicketState } from "./states";
 
 export interface EngineCtx extends Ctx {
   host: HostPort;
   kick(): void;
+  /** How long a pull request's failed checks wait for the pending ones after a push; Loom's checksSettleMinutes setting. */
+  checksSettleMs?: () => number;
 }
 
 export type EndReason = "abandoned" | "timeout" | "failed" | "gone" | "blocked" | "cancelled" | "verdict" | "superseded" | "merged";
@@ -34,6 +37,11 @@ export function specOf(store: Store, project: ProjectRow): Spec {
 /** Where a worker's branch starts in `repo`, the Loom project's own repository for null, when no earlier worker left one. */
 export function freshBase(spec: Spec, repo: string | null = null): string {
   return freshBaseOf(spec, repo);
+}
+
+/** What a ticket's own changes are measured against: the commit it is stacked on, else its repo's fresh base. */
+export function baseOf(spec: Spec, ticket: Pick<TicketRow, "repo" | "stack_json">): string {
+  return stackOf(ticket)?.base ?? freshBase(spec, ticket.repo);
 }
 
 // ---------------------------------------------------------------- ticket moves
@@ -107,6 +115,13 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
   const token = randomBytes(12).toString("hex");
   const fromBranch = ticket.branch !== null;
   const resume = ticket.attempt > 0;
+  const stack = stacking(spec);
+  let start: { branch: string | null; stack: Stack } | null = null;
+  if (stack && !fromBranch) {
+    if (store.ticket(ticket.id)?.state !== "queued") return;
+    start = await stackStart(ctx, project, spec, store.ticket(ticket.id)!);
+    if (start === null) return;
+  }
 
   // The final eligibility check and the claim share one synchronous transaction, so nothing can change between them.
   const row = store.tx(() => {
@@ -115,12 +130,13 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
     const fresh = store.project(project.id);
     if (fresh === null) return null;
     const tickets = store.tickets(project.id).map(toLite);
-    if (!spawnable(specOf(store, fresh).agents.max_workers, tickets, waiting).some((lite) => lite.id === ticket.id)) return null;
+    const freshSpec = specOf(store, fresh);
+    if (!spawnable(freshSpec.agents.max_workers, tickets, waiting, stacking(freshSpec)).some((lite) => lite.id === ticket.id)) return null;
     const attempt = current.attempt + 1;
     const created = store.addThread({ project_id: project.id, ticket_id: ticket.id, role: "worker", state: "spawning", spawn_token: token });
     store.updateThread(created.id, { clock_at: ctx.now(), attempt });
     store.setTicketState(ticket.id, "working", LOOM_ACTOR, { attempt });
-    store.updateTicket(ticket.id, { attempt, ...released });
+    store.updateTicket(ticket.id, { attempt, ...released, ...(start === null ? {} : { stack_json: JSON.stringify(start.stack) }) });
     store.addPost({ project_id: project.id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "claim", body: `Worker attempt ${attempt} is starting.` });
     return store.thread(created.id)!;
   });
@@ -140,7 +156,7 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
   try {
     const repo = ticketRepo(spec, ticket);
     const checkouts = await otherCheckouts(ctx, project, spec, ticket);
-    const brief = workerBrief({ project, spec, ticket: store.ticket(ticket.id)!, posts: store.posts(ticket.id), resume, checkouts });
+    const brief = workerBrief({ project, spec, ticket: store.ticket(ticket.id)!, posts: store.posts(ticket.id), resume, checkouts, tickets: store.tickets(project.id) });
     const spawn = (baseBranch: string) =>
       ctx.bb.spawnThread({
         bbProjectId: repo.bbProjectId ?? project.bb_project_id,
@@ -156,11 +172,12 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
         reasoningLevel: agent.reasoning,
         permissionMode: agent.permission_mode,
       });
-    const base = ticket.branch ?? freshBase(spec, ticket.repo);
+    const base = start?.branch ?? ticket.branch ?? freshBase(spec, ticket.repo);
     try {
       spawned = await spawn(base);
     } catch (error) {
-      if (fromBranch || spec.merge.strategy !== "pr" || !isRefError(error)) throw error;
+      // A stacked start never falls back to the base: its dependencies' work would be missing.
+      if (fromBranch || (start?.branch ?? null) !== null || spec.merge.strategy !== "pr" || !isRefError(error)) throw error;
       spawned = await spawn(repo.base);
     }
   } catch (error) {
@@ -184,6 +201,54 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
   } else if (now.project.state === "paused" && now.project.system_reason === PAUSE_NOW_REASON) {
     await ctx.bb.stop(spawned.threadId).catch((error) => ctx.bb.log("warn", `Could not stop ${spawned.threadId} after pause --now: ${errText(error)}`));
   }
+}
+
+/**
+ * Where a ticket's first worker starts when its project stacks pull requests: on the pull request commits of its open
+ * dependencies in its repo, with the base branch's tip when one of them merged already, through a branch Loom points at
+ * that commit; or at the fresh base when none is open. Null while it must wait: the commits conflict with each other, or
+ * the machine cannot build the commit now.
+ */
+async function stackStart(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow): Promise<{ branch: string | null; stack: Stack } | null> {
+  const { store } = ctx;
+  const up = upstreamOf(store.tickets(project.id), ticket);
+  const cross = Object.fromEntries(up.cross.filter((dep) => dep.state !== "done" && dep.pushed_sha !== null).map((dep) => [dep.key, dep.pushed_sha!]));
+  const open = up.open.filter((dep) => dep.pushed_sha !== null);
+  if (open.length === 0) return { branch: null, stack: { ...EMPTY_STACK, synced: ctx.now(), cross } };
+  const deps = Object.fromEntries(open.map((dep) => [dep.key, dep.pushed_sha!]));
+  const withBase = up.merged.length > 0;
+  const settings = repoSettings(spec, ticket.repo);
+  const branch = stackBranch(project.slug, ticket.key);
+  let built;
+  try {
+    const checkout = await repoCheckout(ctx, project, spec, ticket.repo);
+    built = await ctx.host.call(checkout.hostId, "stackBase", {
+      repo: checkout.path,
+      branch,
+      commits: open.map((dep) => dep.pushed_sha!),
+      ...(withBase ? { base: { remote: settings.remote, branch: settings.base } } : {}),
+      message: `Loom: ${andList(open.map((dep) => dep.key))} for ${ticket.key}`,
+    });
+  } catch (error) {
+    ctx.bb.log("warn", `${ticket.key} cannot start on its dependencies' pull requests yet: ${errText(error)}`);
+    return null;
+  }
+  if (built.outcome === "unavailable") {
+    ctx.bb.log("warn", `${ticket.key} cannot start on its dependencies' pull requests yet: ${built.message}`);
+    return null;
+  }
+  if (built.outcome === "conflict") {
+    const known = stackOf(ticket) ?? EMPTY_STACK;
+    const body = `Loom cannot start ${ticket.key} on its dependencies' pull requests: ${andList(open.map((dep) => dep.key))} conflict with each other in ${built.files.join(", ")}. It starts once one of them changes or merges.`;
+    store.tx(() => {
+      store.updateTicket(ticket.id, { stack_json: JSON.stringify({ ...known, conflict: { on: deps, files: built.files } } satisfies Stack) });
+      store.addPost({ project_id: project.id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "system", body, data_json: JSON.stringify({ stackConflict: true, on: deps, files: built.files }) });
+    });
+    store.changed(project.id);
+    return null;
+  }
+  const synced = withBase ? ctx.now() : Math.min(...open.map((dep) => stackOf(dep)?.synced ?? 0));
+  return { branch, stack: { deps, base: built.sha, synced, cross } };
 }
 
 /** The checkout path of each other repo of the project on its machine, by repo name. A repo without a checkout is left out, so the brief lists it without a path. */

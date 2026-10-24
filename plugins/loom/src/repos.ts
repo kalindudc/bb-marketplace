@@ -64,10 +64,12 @@ export interface PrSettings {
   squash: boolean;
   /** Fix rounds the pull request's CI and review feedback may start before the ticket blocks; 0 follows only merged and closed. */
   maxFixRounds: number;
+  /** A ticket starts once its dependencies' pull requests are open, on top of them in its own repo, instead of once they merged. */
+  stack: boolean;
 }
 
 export function prSettings(spec: Spec): PrSettings {
-  return { describe: spec.merge.describe ?? "worker", squash: spec.merge.squash ?? true, maxFixRounds: spec.merge.max_fix_rounds ?? 5 };
+  return { describe: spec.merge.describe ?? "worker", squash: spec.merge.squash ?? true, maxFixRounds: spec.merge.max_fix_rounds ?? 5, stack: spec.merge.stack ?? true };
 }
 
 /** Whether Loom can read a pull request's checks and reviews on this forge: gh, or a command forge with a feedback command. */

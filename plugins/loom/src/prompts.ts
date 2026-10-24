@@ -7,6 +7,7 @@ import { followsFeedback, isMultiRepo, prSettings, repoSettings, type RepoSettin
 import type { Finding } from "./review";
 import type { Spec } from "./spec";
 import { specDiff, type SpecChange } from "./spec-diff";
+import { stackOf, upstreamOf } from "./stack";
 import type { SpecNote } from "./spec-paths";
 import type { SpecFinding } from "./spec-review";
 import { SPEC_REVIEW_ROUNDS, type MergeChoice, type TicketState } from "./states";
@@ -171,8 +172,56 @@ function pullRequestSection(spec: Spec, repo: RepoSettings): string[] {
   return ["## The pull request", [write, push, ...follows].join(" "), ""];
 }
 
+/**
+ * On the pr strategy, what each of the ticket's dependencies is: merged, or a pull request still open, which this
+ * worktree starts on when it is in the same repo and the worker can read from the other repo's checkout when it is not.
+ */
+function dependenciesSection(spec: Spec, ticket: TicketRow, tickets: readonly TicketRow[], checkouts: ReadonlyMap<string, string>): string[] {
+  const keys = JSON.parse(ticket.deps_json) as string[];
+  if (spec.merge.strategy !== "pr" || keys.length === 0) return [];
+  const byKey = new Map(tickets.map((row) => [row.key, row]));
+  const stack = stackOf(ticket);
+  let crossOpen = false;
+  const lines = keys.flatMap((key) => {
+    const dep = byKey.get(key);
+    if (dep === undefined) return [];
+    const elsewhere = dep.repo !== ticket.repo;
+    const name = `${dep.key} ${JSON.stringify(dep.title)}${elsewhere ? ` in the repo ${JSON.stringify(dep.repo)}` : ""}`;
+    if (dep.state === "done") return [`- ${name}: merged.`];
+    if (dep.state === "cancelled") return [`- ${name}: cancelled.`];
+    if (dep.pushed_sha === null) return [`- ${name}: not merged, and it has no pull request yet.`];
+    const pr = dep.pr_url ?? `the branch ${repoSettings(spec, dep.repo).remote}/${dep.pr_branch ?? dep.branch ?? ""}`;
+    const open = `- ${name}: its pull request ${pr} is open and not merged yet, at commit ${dep.pushed_sha.slice(0, 12)}.`;
+    if (!elsewhere) return [stack?.deps[dep.key] !== undefined ? `${open} This worktree starts on it, so its changes are already here.` : open];
+    crossOpen = true;
+    const path = checkouts.get(dep.repo ?? "");
+    return [path === undefined ? open : `${open} Read its files with \`git -C ${path} show ${dep.pushed_sha}:<file>\`; that checkout's working tree does not have them.`];
+  });
+  const stacked = Object.keys(stack?.deps ?? {});
+  const notes: string[] = [];
+  if (stacked.length > 0) {
+    const one = stacked.length === 1;
+    notes.push(
+      `This worktree starts from the pull request ${one ? "commit" : "commits"} of ${andList(stacked)}. Those changes are not yours: do not change or redo them. The plugin measures your scope, and your reviewers' diff, from that commit. When ${one ? "that pull request changes or merges" : "those pull requests change or merge"}, Loom merges the new commits into your branch and runs your checks; a conflict or a failing check comes back to you as a message.`,
+    );
+  }
+  if (stacked.length > 1) notes.push(`A pull request builds on one other branch, so yours opens once all but one of ${andList(stacked)} have merged, on top of the one still open.`);
+  if (crossOpen) notes.push("A pull request in another repo may still change in review. Loom posts each new commit of it on this ticket and tells you while you work, so build against what it has now.");
+  return ["## Dependencies", ...lines, ...(notes.length > 0 ? ["", ...notes] : []), ""];
+}
+
+/** The lines a pull request's description gets for the pull requests it depends on: the one it is stacked on, and those in other repos. */
+export function dependsOnLines(spec: Spec, tickets: readonly TicketRow[], ticket: TicketRow): string[] {
+  const up = upstreamOf(tickets, ticket);
+  const lines: string[] = [];
+  const only = up.open.length === 1 ? up.open[0]! : null;
+  if (only?.pr_url != null) lines.push(`Stacked on ${only.pr_url} (${only.key}): merge that one first. Loom moves this pull request to ${repoSettings(spec, ticket.repo).base} when it merges.`);
+  for (const dep of up.cross) if (dep.state !== "done" && dep.state !== "cancelled" && dep.pr_url !== null) lines.push(`Depends on ${dep.pr_url} (${dep.key}) in the repo ${JSON.stringify(dep.repo)}: merge that one first.`);
+  return lines;
+}
+
 /** `checkouts` holds the checkout path of each other repo on a multi-repo project, by repo name; a repo missing from it is listed without a path. */
-export function workerBrief(a: { project: ProjectRow; spec: Spec; ticket: TicketRow; posts: PostRow[]; resume: boolean; checkouts?: ReadonlyMap<string, string> }): string {
+export function workerBrief(a: { project: ProjectRow; spec: Spec; ticket: TicketRow; posts: PostRow[]; resume: boolean; checkouts?: ReadonlyMap<string, string>; tickets?: readonly TicketRow[] }): string {
   const { project, spec, ticket, posts, resume } = a;
   const multi = isMultiRepo(spec);
   const repo = repoSettings(spec, ticket.repo);
@@ -207,6 +256,7 @@ export function workerBrief(a: { project: ProjectRow; spec: Spec; ticket: Ticket
     "They run in this worktree, in this order, and stop at the first failure. They must not write tracked files, and you must not edit files while they run.",
     "",
     ...(multi ? otherReposSection(spec, repo, a.checkouts ?? new Map()) : []),
+    ...dependenciesSection(spec, ticket, a.tickets ?? [], a.checkouts ?? new Map()),
     ...(spec.merge.strategy === "pr" ? pullRequestSection(spec, repo) : []),
     "## Rules",
     "- Work only in this worktree. Never push, merge, or edit a protected path.",
@@ -358,6 +408,18 @@ function reviewerRepositorySection(project: ProjectRow, repo: RepoSettings): str
   ];
 }
 
+/** A stacked ticket's reviewer sees its dependencies' changes in the worktree, which are not the ticket's to judge. */
+function stackedReviewSection(ticket: TicketRow): string[] {
+  const stack = stackOf(ticket);
+  const keys = Object.keys(stack?.deps ?? {});
+  if (stack?.base == null || keys.length === 0) return [];
+  return [
+    "## Stacked work",
+    `This ticket builds on the open pull ${keys.length === 1 ? "request" : "requests"} of ${andList(keys)}, so ${keys.length === 1 ? "its" : "their"} changes are in this worktree too. They are reviewed on their own tickets: judge only the changes below, which are measured from ${stack.base.slice(0, 12)}, and read the rest for context.`,
+    "",
+  ];
+}
+
 export function reviewerBrief(a: {
   project: ProjectRow;
   spec: Spec;
@@ -400,6 +462,7 @@ export function reviewerBrief(a: {
           clip(a.prFeedback.body, 12_000),
           "",
         ]),
+    ...stackedReviewSection(ticket),
     "## Scope report",
     ...(outside.length === 0 && protectedHits.length === 0 ? ["Every changed file is inside the ticket's scope."] : []),
     ...(outside.length > 0 ? [`Changed files outside the ticket's scope: ${outside.join(", ")}`] : []),
@@ -467,8 +530,9 @@ export function afterMergeChangedText(key: string, run: CheckRun, changed: strin
   };
 }
 
-export function prBody(a: { ticket: TicketRow; approvals: ReviewRow[] }): string {
+export function prBody(a: { ticket: TicketRow; approvals: ReviewRow[]; dependsOn?: string[] }): string {
   const { ticket, approvals } = a;
+  const dependsOn = a.dependsOn ?? [];
   const acceptance = JSON.parse(ticket.acceptance_json) as string[];
   return [
     ticket.body,
@@ -479,6 +543,7 @@ export function prBody(a: { ticket: TicketRow; approvals: ReviewRow[] }): string
     `Review: approved by ${approvals.length} ${approvals.length === 1 ? "reviewer" : "reviewers"}.`,
     ...approvals.map((review) => `- ${review.summary ?? ""}`),
     "",
+    ...(dependsOn.length > 0 ? [...dependsOn, ""] : []),
     `Opened by Loom for ${ticket.key}.`,
   ].join("\n");
 }
@@ -580,9 +645,39 @@ export function prDivergedText(key: string, remote: string, branch: string): { s
   };
 }
 
-/** The worker's description with the line that says who opened the pull request. */
-export function workerPrBody(key: string, body: string): string {
-  return `${body.trimEnd()}\n\nOpened by Loom for ${key}.`;
+/** The worker's description with the pull requests it depends on and the line that says who opened it. */
+export function workerPrBody(key: string, body: string, dependsOn: readonly string[] = []): string {
+  return [body.trimEnd(), "", ...(dependsOn.length > 0 ? [...dependsOn, ""] : []), `Opened by Loom for ${key}.`].join("\n");
+}
+
+/** Loom could not merge what a stacked ticket's branch must take: the worker merges `branch` and resolves the conflict. */
+export function restackConflictText(key: string, what: string, branch: string, files: readonly string[]): { summary: string; detail: string } {
+  return {
+    summary: `[loom] ${key}: Loom could not bring your branch up to date with ${what}: the merge conflicts in ${plural(files.length, "file")}. Merge it yourself, resolve them and call loom_submit again.`,
+    detail: [
+      `Merging ${what} into your branch conflicted in:`,
+      ...files.map((file) => `- ${file}`),
+      `Your branch was left unchanged. In your worktree run \`git merge --no-edit ${branch}\`, resolve those files so both sides' changes hold, run the checks, and call loom_submit({ summary }). The plugin commits the merge with your fix, and the work goes through review again before Loom pushes it.`,
+    ].join("\n"),
+  };
+}
+
+/** Loom merged what a stacked ticket's branch must take, and one of the ticket's checks failed or changed the worktree on the result. */
+export function restackFailedText(key: string, what: string, run: CheckRun, changed?: string): { summary: string; detail: string } {
+  const how = changed !== undefined ? `passed but changed the worktree (${changed})` : run.timedOut ? "timed out" : `exited with ${run.exitCode}`;
+  return {
+    summary: `[loom] ${key}: Loom merged ${what} into your branch, and then the check ${JSON.stringify(run.command)} ${how}. The merge stays in your branch: fix your work for what changed and call loom_submit again.`,
+    detail: `Output of ${JSON.stringify(run.command)} on the merged result, the last ${CHECK_TAIL} characters at most:\n${run.output.slice(-CHECK_TAIL)}`,
+  };
+}
+
+/** A pull request in another repo that a working ticket depends on has a new commit. */
+export function upstreamChangedText(key: string, dep: { key: string; url: string | null; sha: string; repo: string | null }, path: string | null): { summary: string; detail: string } {
+  const where = dep.url ?? `its branch in the repo ${JSON.stringify(dep.repo)}`;
+  return {
+    summary: `[loom] ${key}: ${dep.key}'s pull request ${where} has a new commit, ${dep.sha.slice(0, 12)}. Check that your work still fits it.`,
+    detail: path === null ? `${dep.key} is in the repo ${JSON.stringify(dep.repo)}.` : `Read its files with \`git -C ${path} show ${dep.sha}:<file>\`, and its change with \`git -C ${path} show ${dep.sha}\`.`,
+  };
 }
 
 /** "a", "a and b", "a, b and c". */

@@ -2,6 +2,20 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.15.0 (2026-10-23)
+
+### Added
+
+- Stacked pull requests, on by default on the pull request strategy. A ticket starts once each ticket it depends on is done or has an open pull request with a commit Loom pushed, instead of waiting for it to merge. `merge.stack = false` in the spec turns this off.
+- In the same repo, a ticket stacks on its dependency: its worktree starts from the dependency's pull request commit through the branch `loom/<slug>/<key>-stack`, its scope check, reviewers' diff and Changes tab count only its own changes, and its pull request opens on the dependency's branch with a line saying to merge that one first. Its scope may overlap the tickets it builds on.
+- When a dependency's pull request gets a new commit, or merges, Loom brings each ticket stacked on it up to date: it merges the new commit, or the remote base branch, in that ticket's worker worktree, runs the ticket's checks and pushes, with no new review. After a merge it moves the pull request to the base branch with `gh pr edit --base`. A conflict or a failing check goes back to the worker with the branch to merge. An open pull request moves from `pr_open` to `merging` while it catches up.
+- A ticket with two or more open dependencies in its repo starts on a merge of their commits, and its pull request waits after review until all but one have merged. Loom then merges the base branch into the one still open, so the new pull request does not show merged work as its own, and opens the ticket's pull request on it. Dependencies whose commits conflict with each other hold the start, with a post on the ticket.
+- A dependency in another repo: its dependents start on its open pull request, the brief says how to read its files from that repo's checkout, each new commit on it is posted on the dependent ticket and sent to its worker while it works, and the dependent's pull request names it.
+- The worker brief has a Dependencies section with each dependency's state, pull request and commit, and a stacked ticket's reviewer is told that the dependencies' changes in its worktree are not the ticket's.
+- The board shows what a ticket is stacked on, and why an approved ticket's pull request waits.
+- A `checksSettleMinutes` setting (30 by default): how long Loom waits for a pull request's pending checks after a push before it sends the failed ones to the worker.
+- Host calls `stackBase`, which builds the commit a stacked ticket starts from or merges in with `git merge-tree`, and `prRetarget`. New ticket columns `stack_json` and `pr_base`.
+
 ## 0.14.0 (2026-10-23)
 
 ### Added

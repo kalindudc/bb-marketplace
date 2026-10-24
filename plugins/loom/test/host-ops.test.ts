@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import hostEntry from "../host";
-import { changedFiles, commitAll, diff, ensureBranch, ensureWorktree, exec, fetchBranch, filePatch, ghStatus, git, landedOn, merge, parseRemoteUrl, prCommit, prCreate, prFeedback, prState, push, remotes, resetHard, trialWorktree, worktreeState } from "../src/host/ops";
+import { changedFiles, commitAll, diff, ensureBranch, ensureWorktree, exec, fetchBranch, filePatch, ghStatus, git, landedOn, merge, parseRemoteUrl, prCommit, prCreate, prFeedback, prState, push, remotes, resetHard, stackBase, trialWorktree, worktreeState } from "../src/host/ops";
 
 const ENV: Record<string, string> = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
 const AUTHOR_VARS = ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"];
@@ -921,6 +921,64 @@ describe("host entry: discovery and the push-only forge", () => {
     sh(repo, "remote", "add", "origin", "https://example.com/acme/shop.git");
     expect(await harness.experimental_call("remotes", { repo })).toEqual({ remotes: [{ name: "origin", pushUrls: ["https://example.com/acme/shop.git"] }] });
     expect(await harness.experimental_call("trialWorktree", { repo })).toEqual({ outcome: "ok" });
+  });
+});
+
+describe("stackBase", () => {
+  // Two pull request branches off main, each with its own file; `shared` makes them both change one file.
+  const setup = (shared = false) => {
+    const repo = makeRepo();
+    const remote = join(scratch, `remote-${counter++}.git`);
+    execFileSync("git", ["init", "-q", "--bare", remote]);
+    sh(repo, "remote", "add", "origin", remote);
+    sh(repo, "push", "-q", "origin", "main");
+    sh(repo, "checkout", "-q", "-b", "one", "main");
+    const one = commitFile(repo, shared ? "README.md" : "one.txt", "one\n");
+    sh(repo, "checkout", "-q", "-b", "two", "main");
+    const two = commitFile(repo, shared ? "README.md" : "two.txt", "two\n");
+    sh(repo, "checkout", "-q", "main");
+    return { repo, remote, one, two };
+  };
+  const input = (repo: string, commits: string[], base = false) => ({ repo, branch: "loom/csv/csv-3-stack", commits, ...(base ? { base: { remote: "origin", branch: "main" } } : {}), message: "Loom: CSV-1 and CSV-2 for CSV-3" });
+
+  it("points the branch at the one commit given, with no new commit", async () => {
+    const { repo, one } = setup();
+    expect(await stackBase(input(repo, [one]))).toEqual({ outcome: "ok", sha: one, tip: null });
+    expect(sh(repo, "rev-parse", "loom/csv/csv-3-stack")).toBe(one);
+  });
+
+  it("merges two pull request commits into one commit with both as parents, touching no worktree", async () => {
+    const { repo, one, two } = setup();
+    const built = (await stackBase(input(repo, [one, two]))) as { outcome: "ok"; sha: string };
+    expect(built.outcome).toBe("ok");
+    expect(sh(repo, "log", "-1", "--format=%P", built.sha).split(" ")).toEqual([one, two]);
+    expect(sh(repo, "ls-tree", "--name-only", built.sha).split("\n").sort()).toEqual(["README.md", "one.txt", "two.txt"]);
+    expect(sh(repo, "log", "-1", "--format=%s", built.sha)).toBe("Loom: CSV-1 and CSV-2 for CSV-3");
+    expect(sh(repo, "status", "--porcelain")).toBe("");
+  });
+
+  it("fetches the base branch's tip and leaves out a commit another one already contains", async () => {
+    const { repo, remote, one } = setup();
+    // The base branch moved on the remote to a commit that contains `one`, as when its pull request merged.
+    sh(repo, "push", "-q", remote, `${one}:refs/heads/main`);
+    const built = await stackBase(input(repo, [one], true));
+    expect(built).toEqual({ outcome: "ok", sha: one, tip: one });
+    expect(sh(repo, "rev-parse", "refs/remotes/origin/main")).toBe(one);
+  });
+
+  it("reports the files two commits conflict in and moves no branch", async () => {
+    const { repo, one, two } = setup(true);
+    expect(await stackBase(input(repo, [one, two]))).toEqual({ outcome: "conflict", files: ["README.md"] });
+    expect(sh(repo, "branch", "--list", "loom/csv/csv-3-stack")).toBe("");
+  });
+
+  it("refuses to move a branch a worktree has checked out", async () => {
+    const { repo, one, two } = setup();
+    sh(repo, "branch", "loom/csv/csv-3-stack", one);
+    sh(repo, "worktree", "add", "-q", join(scratch, `wt-${counter++}`), "loom/csv/csv-3-stack");
+    const built = await stackBase(input(repo, [one, two]));
+    expect(built).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("is checked out in a worktree") });
+    expect(sh(repo, "rev-parse", "loom/csv/csv-3-stack")).toBe(one);
   });
 });
 

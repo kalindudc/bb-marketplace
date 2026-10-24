@@ -18,6 +18,8 @@ export default experimental_defineHostEntry({
     resetHard: (input, { signal }) => ops.resetHard(input, signal),
     fetchBranch: (input, { signal }) => ops.fetchBranch(input, signal),
     prCommit: (input, { signal }) => ops.prCommit(input, signal),
+    stackBase: (input, { signal }) => ops.stackBase(input, signal),
+    prRetarget: (input, { signal }) => ops.prRetarget(input, signal),
     push: (input, { signal }) => ops.push(input, signal),
     prCreate: (input, { signal }) => ops.prCreate(input, signal),
     prState: (input, { signal }) => ops.prState(input, signal),

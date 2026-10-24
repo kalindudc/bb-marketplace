@@ -46,6 +46,10 @@ export interface BoardCard {
   blockedReason: string | null;
   /** It has a commit, or a worker's worktree at work, for the Changes tab to show. */
   hasChanges: boolean;
+  /** The open pull requests, by ticket key, whose commits this ticket's branch is built on. */
+  stackedOn: string[];
+  /** Why an approved ticket's pull request waits on its open dependencies, in a short sentence; null when it does not. */
+  holding: string | null;
 }
 
 /** What the draft card shows before a project has tickets on the board. */

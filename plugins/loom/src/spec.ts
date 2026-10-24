@@ -153,6 +153,7 @@ export const specSchema = z
         describe: z.enum(["worker", "loom"]).optional(),
         squash: z.boolean().optional(),
         max_fix_rounds: z.number().int().min(0).max(20).optional(),
+        stack: z.boolean().optional(),
       })
       .strict(),
     checks: z
@@ -423,7 +424,7 @@ export function validateSemantics(spec: Spec, rawToml: string): { errors: string
   });
 
   if (spec.merge.strategy === "integration") {
-    for (const key of ["describe", "squash", "max_fix_rounds"] as const) {
+    for (const key of ["describe", "squash", "max_fix_rounds", "stack"] as const) {
       if (spec.merge[key] !== undefined) errors.push(`merge.${key}: it applies to the pull request Loom opens for each ticket, but merge.strategy is "integration". Remove it, or use merge.strategy = "pr".`);
     }
   }

@@ -72,6 +72,8 @@ function Card({ slug, card, now, draft, onChanges, withState }: { card: BoardCar
       </button>
       <p className="mt-1 text-xs text-muted-foreground">{detail.join(" · ")}</p>
       {card.state === "queued" && !card.ready && card.waitingOn.length > 0 && <p className="mt-1 text-xs text-warning-text">Waiting on {card.waitingOn.join(", ")}</p>}
+      {card.stackedOn.length > 0 && <p className="mt-1 text-xs text-muted-foreground">Stacked on {card.stackedOn.join(", ")}</p>}
+      {card.holding !== null && <p className="mt-1 text-xs text-warning-text">{card.holding}</p>}
       {card.state === "blocked" && card.blockedReason !== null && <p className="mt-1 text-xs text-destructive-text [overflow-wrap:anywhere]">{card.blockedReason}</p>}
       <div className="mt-1.5 flex flex-wrap gap-3">
         {card.threadId !== null && (

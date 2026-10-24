@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { prSettings } from "../src/repos";
 import { dependencyCycle, globsOverlap, numberErrors, parseSpec, scopeOverlaps, specHash, ticketPatchSchema } from "../src/spec";
 import { specToml, type Doc } from "./helpers";
 
@@ -564,5 +565,15 @@ describe("forges, integration worktrees and environments", () => {
     expect(run((doc) => (doc.merge = { strategy: "pr", forge: { kind: "gh", feedback: "f" } })).errors).toEqual(['merge.forge.feedback: only kind = "command" runs it, and merge.forge.kind is "gh". Remove it, or set kind = "command".']);
     expect(run((doc) => (doc.merge = { strategy: "pr", max_fix_rounds: 21 })).errors[0]).toMatch(/^merge\.max_fix_rounds: /u);
     expect(run((doc) => (doc.merge = { strategy: "pr", describe: "planner" })).errors[0]).toMatch(/^merge\.describe: /u);
+  });
+
+  it("stacks pull requests on the pr strategy unless merge.stack = false, and refuses the key on the integration strategy", () => {
+    const plain = run((doc) => (doc.merge = { strategy: "pr" })).spec!;
+    expect(Object.keys(plain.merge)).not.toContain("stack");
+    expect(prSettings(plain).stack).toBe(true);
+    expect(prSettings(run((doc) => (doc.merge = { strategy: "pr", stack: false })).spec!).stack).toBe(false);
+    expect(run((doc) => (doc.merge = { strategy: "integration", stack: true })).errors).toEqual([
+      'merge.stack: it applies to the pull request Loom opens for each ticket, but merge.strategy is "integration". Remove it, or use merge.strategy = "pr".',
+    ]);
   });
 });
