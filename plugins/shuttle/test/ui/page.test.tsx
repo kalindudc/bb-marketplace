@@ -1,6 +1,6 @@
 import { formatRoute } from "../../src/ui/route";
 import { afterEach, describe, expect, it } from "vitest";
-import { fireEvent, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import { app, callsTo, event, handlers, link, mount, pr, unmountAll, type Handlers } from "./helpers";
 
@@ -14,7 +14,7 @@ async function page(subPath: string, rpc: Partial<Handlers> = {}) {
   const panel = loaded.navPanels[0]!;
   return mount<PluginNavPanelProps>(panel.component, { subPath }, handlers({
     list: () => ({ prs: [first, second] }),
-    detail: ({ key }) => ({ pr: [first, second].find((item) => item.key === key)!, events: [] }),
+    detail: ({ key }) => ({ pr: [first, second].find((item) => item.key === key)!, events: [], body: "## What changes\n\nAdds **compact** headers." }),
     ...rpc,
   }));
 }
@@ -73,7 +73,7 @@ describe("Shuttle page", () => {
     });
     const slot = await page(formatRoute({ view: "section", section: "requested", key: linked.key }), {
       list: () => ({ prs: [linked] }),
-      detail: () => ({ pr: linked, events: [event({ text: "tomas approved", threadId: "thr_a" })] }),
+      detail: () => ({ pr: linked, events: [event({ text: "tomas approved", threadId: "thr_a" })], body: null }),
       unlink: ({ threadId }) => {
         linked = { ...linked, links: linked.links.filter((item) => item.threadId !== threadId) };
         return { pr: linked };
@@ -102,8 +102,8 @@ describe("Shuttle page", () => {
   it("starts a review with the chosen preset and this run's overrides", async () => {
     const slot = await page("requested", { review: () => ({ threadId: "thr_review" }) });
     await slot.findByText(first.title);
-    fireEvent.click(within(row(slot, first.key)).getByRole("button", { name: /Pick a preset/u }));
-    fireEvent.click(slot.getByRole("menuitem", { name: "Customize this run…" }));
+    fireEvent.keyDown(within(row(slot, first.key)).getByRole("button", { name: /Pick a preset/u }), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Customize this run…" }));
     const dialog = await slot.findByRole("dialog");
     fireEvent.click(within(dialog).getByRole("radio", { name: /Standard review/u }));
     fireEvent.click(within(dialog).getByText("Change this run only"));
@@ -130,10 +130,10 @@ describe("Shuttle page", () => {
 
   it("sends a review to a thread the PR is already linked to", async () => {
     const linked = pr({ links: [link({ threadId: "thr_a", title: "Owner thread", role: "owner" }), link({ threadId: "thr_b", title: "Second review", role: "review" })] });
-    const slot = await page("requested", { list: () => ({ prs: [linked] }), detail: () => ({ pr: linked, events: [] }), review: () => ({ threadId: "thr_b" }) });
+    const slot = await page("requested", { list: () => ({ prs: [linked] }), detail: () => ({ pr: linked, events: [], body: "" }), review: () => ({ threadId: "thr_b" }) });
     await slot.findAllByText(linked.title);
-    fireEvent.click(within(row(slot, linked.key)).getByRole("button", { name: /Pick a preset/u }));
-    fireEvent.click(slot.getByRole("menuitem", { name: "Customize this run…" }));
+    fireEvent.keyDown(within(row(slot, linked.key)).getByRole("button", { name: /Pick a preset/u }), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Customize this run…" }));
     const dialog = await slot.findByRole("dialog");
     const thread = within(dialog).getByRole("combobox", { name: "Thread" }) as HTMLSelectElement;
     expect([...thread.options].map((option) => option.textContent)).toEqual(["A new thread", "Reuse “Owner thread”", "Reuse “Second review”"]);
@@ -146,7 +146,7 @@ describe("Shuttle page", () => {
     let watched = pr({ watch: "act", needs: "Auto review finished: choose what to post", links: [link({ role: "owner" })] });
     const slot = await page(formatRoute({ view: "section", section: "needs", key: watched.key }), {
       list: () => ({ prs: [watched] }),
-      detail: () => ({ pr: watched, events: [] }),
+      detail: () => ({ pr: watched, events: [], body: "" }),
       watch: ({ mode }) => {
         watched = { ...watched, watch: mode };
         return { pr: watched };
@@ -166,11 +166,34 @@ describe("Shuttle page", () => {
     expect(callsTo(slot, "dismiss")).toEqual([{ key: watched.key }]);
   });
 
+  it("renders the Review menu outside the drawer, so the drawer's scrolling cannot clip it", async () => {
+    const slot = await page(formatRoute({ view: "section", section: "requested", key: first.key }));
+    const drawer = await waitFor(() => {
+      const found = slot.container.querySelector<HTMLElement>(`[data-detail="${first.key}"]`);
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    fireEvent.keyDown((await within(drawer).findAllByRole("button", { name: /Pick a preset/u }))[0]!, { key: "Enter" });
+    const menu = await screen.findByRole("menu");
+    expect(drawer.contains(menu)).toBe(false);
+    expect(slot.container.contains(menu)).toBe(false);
+  });
+
+  it("shows the PR's description in the drawer", async () => {
+    const slot = await page(formatRoute({ view: "section", section: "requested", key: first.key }));
+    const description = await waitFor(() => {
+      const found = slot.container.querySelector("[data-description]");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    expect(description.textContent).toContain("Adds **compact** headers");
+  });
+
   it("runs a preset straight from the Review menu, with no overrides", async () => {
     const slot = await page("requested", { review: () => ({ threadId: "thr_review" }) });
     await slot.findByText(first.title);
-    fireEvent.click(within(row(slot, first.key)).getByRole("button", { name: /Pick a preset/u }));
-    fireEvent.click(slot.getByRole("menuitem", { name: /Quick skim/u }));
+    fireEvent.keyDown(within(row(slot, first.key)).getByRole("button", { name: /Pick a preset/u }), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Quick skim/u }));
     await waitFor(() => expect(callsTo(slot, "review")).toEqual([{ key: first.key, presetId: "quick" }]));
   });
 
@@ -249,7 +272,7 @@ describe("Shuttle page", () => {
     const slot = await page(formatRoute({ view: "pr", key: second.key }), {
       detail: ({ key }) => {
         if (!known) throw Object.assign(new Error(`no pull request ${key}`), { code: "not_found" });
-        return { pr: second, events: [] };
+        return { pr: second, events: [], body: "" };
       },
       lookup: () => {
         known = true;

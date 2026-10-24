@@ -80,6 +80,23 @@ describe("command adapter", () => {
   });
 });
 
+describe("descriptions", () => {
+  it("are read by view, kept through list syncs, and fetched once for a PR only lists have seen", async () => {
+    const h = harness();
+    h.lists.review_requested = [pr(3)];
+    await h.shuttle.sync();
+    expect(h.shuttle.detail("forge:shop/world#3").body).toBeNull();
+    h.views[3] = pr(3, { body: "Explains the change" });
+    await h.shuttle.refreshStale(["forge:shop/world#3"], 60_000);
+    expect(h.shuttle.detail("forge:shop/world#3").body).toBe("Explains the change");
+    await h.shuttle.sync();
+    expect(h.shuttle.detail("forge:shop/world#3").body).toBe("Explains the change");
+    h.views[4] = pr(4);
+    await h.shuttle.lookup("forge:shop/world#4");
+    expect(h.shuttle.detail("forge:shop/world#4").body).toBe("");
+  });
+});
+
 describe("shell safety", () => {
   it("quotes server data in read commands and refuses hostile repo names", async () => {
     const { fillCommand } = await import("../src/adapters/exec");

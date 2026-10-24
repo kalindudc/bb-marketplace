@@ -18,13 +18,22 @@ function toThread(thread: ThreadLike): ThreadInfo {
 
 export function createBbPort(bb: BbPluginApi): BbPort {
   let publishTimer: ReturnType<typeof setTimeout> | null = null;
+  /** A managed worktree is made on a machine: the one with the project's default checkout, else bb's primary machine. */
+  const hostFor = async (projectId: string): Promise<string> => {
+    const project = await bb.sdk.projects.get({ projectId });
+    const source = project.sources.find((s) => s.isDefault) ?? project.sources[0];
+    if (source) return source.hostId;
+    const primary = (await bb.sdk.system.config()).primaryHostId;
+    if (primary) return primary;
+    throw new Error(`no machine has a checkout of project ${project.name}, so a worktree cannot be made for it`);
+  };
   return {
     async spawnThread(args) {
       const thread = await bb.sdk.threads.spawn({
         projectId: args.projectId,
         environment:
           args.workspace === "worktree"
-            ? { type: "host", workspace: { type: "managed-worktree", baseBranch: { kind: "default" } } }
+            ? { type: "host", hostId: await hostFor(args.projectId), workspace: { type: "managed-worktree", baseBranch: { kind: "default" } } }
             : { type: "project-default" },
         prompt: args.prompt,
         title: args.title,

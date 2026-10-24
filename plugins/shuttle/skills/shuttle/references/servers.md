@@ -59,6 +59,7 @@ PR from a list it knows is incomplete, so an old request cannot come back lookin
  "additions": 1204, "deletions": 388, "files": 23, "teams": ["@shop/edge-routing"]}
 ```
 
+`view` may add `"body"`, the description in Markdown; the PR's drawer shows it.
 `state` is `open`, `draft`, `merged` or `closed`. `checks` is `passed`, `failed`, `pending` or
 `none`; `review` is `approved`, `changes`, `required` or `none`. Only `repo`, `number`, `title`
 and `state` are required.

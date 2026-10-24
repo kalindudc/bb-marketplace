@@ -1,5 +1,6 @@
 import { toast } from "sonner";
-import { experimental_copyToClipboard, experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
+import { useState } from "react";
+import { experimental_copyToClipboard, experimental_Icon as Icon, Markdown } from "@get-bb/plugin-sdk/app";
 import type { EventView, LinkRole, PrView, ReviewRunView } from "../contract";
 import type { WatchMode } from "../config";
 import { BUTTON, BUTTON_PRIMARY, ErrorNote, FIELD, ICON_GHOST, Pill, SectionTitle, ServerBadge, Toggle } from "./common";
@@ -11,6 +12,34 @@ import { ReviewButton } from "./review-button";
 import { isLive, isReviewable, type PrActions } from "./row";
 
 const SECTION = "border-b border-border px-4 py-3";
+const LONG_DESCRIPTION = 1500;
+
+/** The PR's own description, rendered by bb's sanitizing Markdown renderer. */
+function Description({ body }: { body: string | null }) {
+  const [expanded, setExpanded] = useState(false);
+  const long = body !== null && body.length > LONG_DESCRIPTION;
+  return (
+    <div className={SECTION}>
+      <SectionTitle icon="FileText">Description</SectionTitle>
+      {body === null ? (
+        <div className="text-sm text-muted-foreground">Loading the description…</div>
+      ) : body.trim() === "" ? (
+        <div className="text-sm text-muted-foreground">No description.</div>
+      ) : (
+        <>
+          <div data-description className={`min-w-0 overflow-x-auto break-words text-sm ${long && !expanded ? "max-h-80 overflow-y-hidden [mask-image:linear-gradient(to_bottom,black_75%,transparent)]" : ""}`}>
+            <Markdown content={body} />
+          </div>
+          {long && (
+            <button type="button" className="mt-2 cursor-pointer text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground" onClick={() => setExpanded(!expanded)}>
+              {expanded ? "Show less" : "Show the whole description"}
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
 
 function ReviewRun({ run, pr, actions }: { run: ReviewRunView | null; pr: PrView; actions: PrActions }) {
   if (run === null) {
@@ -84,7 +113,7 @@ export function PrDetail({ prKey, actions, onClose }: { prKey: string; actions: 
       </aside>
     );
   }
-  const { pr, events } = detail.data;
+  const { pr, events, body } = detail.data;
   const copyKey = async () => {
     if (await experimental_copyToClipboard({ text: pr.key })) toast.success(`Copied ${pr.key}`);
     else toast.error("Could not copy the key");
@@ -138,6 +167,8 @@ export function PrDetail({ prKey, actions, onClose }: { prKey: string; actions: 
           </div>
         </div>
       )}
+
+      <Description body={body} />
 
       {!pr.mine && (
         <div className={SECTION}>

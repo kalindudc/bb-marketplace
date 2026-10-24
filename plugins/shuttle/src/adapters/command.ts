@@ -66,7 +66,8 @@ export class CommandAdapter implements Adapter {
 
   async view(repo: string, number: number, signal?: AbortSignal): Promise<PrSummary> {
     const row = this.parse("view", prSummarySchema, await this.json("view", this.refEnv(repo, number), signal));
-    return this.withUrl(toSummary(row));
+    // A view always counts as having read the description, even when the server sends none.
+    return this.withUrl({ ...toSummary(row), body: row.body ?? "" });
   }
 
   async activity(repo: string, number: number, signal?: AbortSignal): Promise<Activity> {

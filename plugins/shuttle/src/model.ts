@@ -24,6 +24,8 @@ export const prSummarySchema = z.object({
   deletions: z.number().int().nonnegative().nullish(),
   files: z.number().int().nonnegative().nullish(),
   teams: z.array(text(200)).max(50).nullish(),
+  /** view only: the description, in the server's Markdown. */
+  body: text(65_536).nullish(),
 });
 export type PrSummaryInput = z.input<typeof prSummarySchema>;
 
@@ -44,6 +46,7 @@ export interface PrSummary {
   deletions: number | null;
   files: number | null;
   teams: string[];
+  body: string | null;
 }
 
 export function toSummary(raw: z.output<typeof prSummarySchema>): PrSummary {
@@ -65,6 +68,7 @@ export function toSummary(raw: z.output<typeof prSummarySchema>): PrSummary {
     deletions: raw.deletions ?? null,
     files: raw.files ?? null,
     teams: raw.teams ?? [],
+    body: raw.body ?? null,
   };
 }
 

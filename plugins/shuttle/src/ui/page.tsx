@@ -135,7 +135,7 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
         )}
       </div>
       {showDetail && (
-        <div className="min-w-0 border-t border-border xl:w-[400px] xl:shrink-0 xl:overflow-y-auto xl:border-l xl:border-t-0">
+        <div className="min-w-0 border-t border-border xl:w-[min(640px,45%)] xl:shrink-0 xl:overflow-y-auto xl:border-l xl:border-t-0">
           <PrDetail key={selectedKey} prKey={selectedKey} actions={actions}
             onClose={route.view === "section" ? () => go({ ...route, key: null }, true) : undefined} />
         </div>

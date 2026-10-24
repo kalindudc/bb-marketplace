@@ -90,4 +90,5 @@ export const MIGRATIONS: string[] = [
   `CREATE INDEX events_pr ON events (pr_id)`,
   `CREATE INDEX events_thread ON events (thread_id)`,
   `CREATE TABLE deliveries (pr_id INTEGER NOT NULL, item_id TEXT NOT NULL, thread_id TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (pr_id, item_id, thread_id))`,
+  `ALTER TABLE prs ADD COLUMN body TEXT`,
 ];

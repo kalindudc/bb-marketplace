@@ -1,3 +1,4 @@
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { initials } from "./format";
@@ -118,44 +119,36 @@ export function Dialog({ title, subtitle, leading, onClose, footer, children, wi
 }
 
 /** A trigger with a menu below it; a mousedown elsewhere or Escape closes it, as does the `close` function children get. */
+/**
+ * A dropdown in bb's shared Radix menu: it renders in a portal above the page, so a scrolling
+ * drawer cannot clip it, and it stacks with bb's own overlays.
+ */
 export function Menu({ trigger, label, align = "right", children }: {
   trigger: ReactNode;
   label: string;
   align?: "left" | "right";
-  children: (close: () => void) => ReactNode;
+  children: ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
-  const root = useRef<HTMLSpanElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (event: MouseEvent) => {
-      if (!root.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
   return (
-    <span ref={root} className="relative inline-flex">
-      <button type="button" aria-label={label} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}
-        className="inline-flex h-7 shrink-0 cursor-pointer items-center rounded-r-md border border-l-0 border-border bg-card px-1.5 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
-        {trigger}
-      </button>
-      {open && (
-        <div role="menu" aria-label={label}
-          className={`absolute top-8 z-40 flex w-72 flex-col rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md ${align === "right" ? "right-0" : "left-0"}`}>
-          {children(() => setOpen(false))}
-        </div>
-      )}
-    </span>
+    <DropdownMenu.Root modal={false}>
+      <DropdownMenu.Trigger asChild>
+        <button type="button" aria-label={label}
+          className="inline-flex h-7 shrink-0 cursor-pointer items-center rounded-r-md border border-l-0 border-border bg-card px-1.5 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
+          {trigger}
+        </button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content aria-label={label} align={align === "right" ? "end" : "start"} sideOffset={4} collisionPadding={8}
+          className="z-50 flex w-72 flex-col rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md">
+          {children}
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
   );
 }
+
+export const MenuItem = DropdownMenu.Item;
+export const MenuSeparator = () => <DropdownMenu.Separator className="my-1 border-t border-border" />;
 
 export const MENU_ITEM = "flex w-full cursor-pointer flex-col items-start rounded-md px-2.5 py-1.5 text-left text-sm hover:bg-accent focus-visible:bg-accent focus-visible:outline-none";
 

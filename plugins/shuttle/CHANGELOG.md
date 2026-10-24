@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3
+
+- The Review button's preset menu renders above the page, in bb's shared dropdown, instead of being clipped by the PR drawer it sits in.
+- Starting a review with the worktree workspace no longer fails with "hostId is required": Shuttle creates the worktree on the machine that has the project's default checkout, or bb's primary machine.
+- The PR drawer is wider (up to 640px, at most 45% of the page) and shows the PR's description, rendered as Markdown; a long one is folded until you open it. Lists carry no description, so Shuttle reads it from the server the first time you open a PR. Command servers can send it as `body` from `view`; the Delta adapter does.
+
 ## 0.1.2
 
 - Installs from the marketplace. Git installs leave dev dependencies out, and the UI imported `defineRpcContract` from the SDK's root entry, which only a dev dependency provides; the UI now uses its own copy of that identity function.

@@ -32,6 +32,7 @@ const summaryNode = z.object({
   additions: z.number().nullable(),
   deletions: z.number().nullable(),
   changedFiles: z.number().nullable(),
+  body: z.string().optional(),
   author: actor,
   repository: z.object({ nameWithOwner: z.string() }),
   commits: z.object({ nodes: z.array(z.object({ commit: z.object({ statusCheckRollup: z.object({ state: z.string() }).nullable() }) })) }),
@@ -89,6 +90,7 @@ export function toSummary(node: SummaryNode): PrSummary {
     deletions: node.deletions,
     files: node.changedFiles,
     teams,
+    body: node.body ?? null,
   };
 }
 
@@ -239,7 +241,7 @@ export class GithubAdapter implements Adapter {
   }
 
   async view(repo: string, number: number, signal?: AbortSignal): Promise<PrSummary> {
-    const query = `query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { ${SUMMARY_FIELDS} } } }`;
+    const query = `query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { ${SUMMARY_FIELDS} body } } }`;
     const schema = z.object({ repository: z.object({ pullRequest: summaryNode.nullable() }).nullable() });
     const data = await this.graphql("view", query, this.repoVars(repo, number), schema, signal);
     const node = data.repository?.pullRequest;

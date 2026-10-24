@@ -27,6 +27,8 @@ export interface PrRow {
   mine: number;
   fetched_at: number;
   dismissed_at: number | null;
+  /** The description, once a view fetched it; null while only lists have seen the PR. */
+  body: string | null;
 }
 
 export interface ServerRow {
@@ -140,12 +142,13 @@ export class Store {
     const key = prKey({ server, repo: summary.repo, number: summary.number });
     this.db
       .prepare(
-        `INSERT INTO prs (key, server, repo, number, url, title, author, state, checks, review, head, head_ref, base, additions, deletions, files, updated_at, mine, fetched_at)
-         VALUES (@key, @server, @repo, @number, @url, @title, @author, @state, @checks, @review, @head, @head_ref, @base, @additions, @deletions, @files, @updated_at, @mine, @fetched_at)
+        `INSERT INTO prs (key, server, repo, number, url, title, author, state, checks, review, head, head_ref, base, additions, deletions, files, updated_at, mine, fetched_at, body)
+         VALUES (@key, @server, @repo, @number, @url, @title, @author, @state, @checks, @review, @head, @head_ref, @base, @additions, @deletions, @files, @updated_at, @mine, @fetched_at, @body)
          ON CONFLICT (key) DO UPDATE SET url = excluded.url, title = excluded.title, author = excluded.author, state = excluded.state, checks = excluded.checks,
          review = excluded.review, head = excluded.head, head_ref = COALESCE(excluded.head_ref, prs.head_ref), base = COALESCE(excluded.base, prs.base),
          additions = COALESCE(excluded.additions, prs.additions), deletions = COALESCE(excluded.deletions, prs.deletions), files = COALESCE(excluded.files, prs.files),
-         updated_at = COALESCE(excluded.updated_at, prs.updated_at), mine = MAX(prs.mine, excluded.mine), fetched_at = excluded.fetched_at`,
+         updated_at = COALESCE(excluded.updated_at, prs.updated_at), mine = MAX(prs.mine, excluded.mine), fetched_at = excluded.fetched_at,
+         body = COALESCE(excluded.body, prs.body)`,
       )
       .run({
         key,
@@ -167,6 +170,7 @@ export class Store {
         updated_at: summary.updatedAt,
         mine: mine ? 1 : 0,
         fetched_at: this.now(),
+        body: summary.body,
       });
     return this.prByKey(key)!;
   }

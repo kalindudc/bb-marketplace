@@ -135,7 +135,8 @@ const CONFIG = () => ["config"];
 export const rpcContract = defineContract({
   overview: { input: z.object({}), output: overviewSchema, tags: () => ["prs", "servers", "config"] },
   list: { input: z.object({ section: z.enum(SECTIONS) }), output: z.object({ prs: z.array(prViewSchema) }), tags: PRS },
-  detail: { input: z.object({ key }), output: z.object({ pr: prViewSchema, events: z.array(eventViewSchema) }), tags: PRS },
+  /** body is the description, or null until Shuttle has fetched the PR itself (lists carry none). */
+  detail: { input: z.object({ key }), output: z.object({ pr: prViewSchema, events: z.array(eventViewSchema), body: z.string().nullable() }), tags: PRS },
   /** A link or a key such as delta:shop/world#2261179; fetched from its server and kept. */
   lookup: { input: z.object({ query: z.string().min(1).max(500) }), output: prOut, invalidates: PRS },
   activity: { input: z.object({ limit: z.number().int().min(1).max(500).optional() }), output: z.object({ events: z.array(eventViewSchema) }), tags: PRS },

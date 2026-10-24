@@ -130,13 +130,13 @@ export class Shuttle implements Ctx {
     return toView(this, requirePr(this, key));
   }
 
-  detail(key: string): { pr: PrView; events: EventView[] } {
+  detail(key: string): { pr: PrView; events: EventView[]; body: string | null } {
     const pr = requirePr(this, key);
-    return { pr: toView(this, pr), events: this.store.events({ prId: pr.id, limit: 50 }).map(toEventView) };
+    return { pr: toView(this, pr), events: this.store.events({ prId: pr.id, limit: 50 }).map(toEventView), body: pr.body };
   }
 
   /** A deep link to a PR Shuttle has not stored yet looks it up on its server first. */
-  async detailOrLookup(key: string): Promise<{ pr: PrView; events: EventView[] }> {
+  async detailOrLookup(key: string): Promise<{ pr: PrView; events: EventView[]; body: string | null }> {
     if (!this.store.prByKey(key)) await lookup(this, key);
     return this.detail(key);
   }
@@ -147,8 +147,8 @@ export class Shuttle implements Ctx {
       if (signal?.aborted) return;
       const pr = this.store.prByKey(key);
       const ref = parseKey(key);
-      // Search results carry no diff counts, so a PR seen only in a list is fetched once on view.
-      const partial = pr !== null && pr.files === null;
+      // Lists carry no description, so a PR seen only in lists is fetched once when it is viewed.
+      const partial = pr !== null && pr.body === null;
       if (!pr || !ref || (!partial && this.now() - pr.fetched_at < maxAgeMs) || (!partial && pr.state !== "open" && pr.state !== "draft")) continue;
       await fetchPr(this, ref).catch((error: unknown) => this.port.log("warn", `refresh ${key}: ${errText(error)}`));
     }

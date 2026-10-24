@@ -31,7 +31,7 @@ case "${SHUTTLE_OPERATION:?}" in
     for team in $(printf '%s' "${SHUTTLE_DELTA_TEAMS:?set SHUTTLE_DELTA_TEAMS to your team slugs}" | tr ',' ' '); do
       search "is:open team-review-requested:$team"
     done | jq -s '{items: ([.[].items[]] | unique_by(.number)), complete: all(.[]; .complete)}' ;;
-  view) get "repos/$REPO/pulls/${SHUTTLE_NUMBER:?}" | jq --arg repo "$REPO" "$SUMMARY" ;;
+  view) get "repos/$REPO/pulls/${SHUTTLE_NUMBER:?}" | jq --arg repo "$REPO" "$SUMMARY + {body: (.body // \"\")}" ;;
   activity)
     n="${SHUTTLE_NUMBER:?}"
     {
