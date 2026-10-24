@@ -1,5 +1,5 @@
 // The RPC contract between Shuttle's server and its UI, and the shapes both sides share.
-import { defineRpcContract } from "@get-bb/plugin-sdk";
+import { defineContract } from "./define-contract";
 import { z } from "zod";
 import { configSchema, WATCH_MODES } from "./config";
 
@@ -132,7 +132,7 @@ export type ReviewInput = z.infer<typeof reviewInputSchema>;
 const PRS = () => ["prs"];
 const CONFIG = () => ["config"];
 
-export const rpcContract = defineRpcContract({
+export const rpcContract = defineContract({
   overview: { input: z.object({}), output: overviewSchema, tags: () => ["prs", "servers", "config"] },
   list: { input: z.object({ section: z.enum(SECTIONS) }), output: z.object({ prs: z.array(prViewSchema) }), tags: PRS },
   detail: { input: z.object({ key }), output: z.object({ pr: prViewSchema, events: z.array(eventViewSchema) }), tags: PRS },

@@ -1,5 +1,5 @@
 import { toast } from "sonner";
-import { defineRpcContract } from "@get-bb/plugin-sdk";
+import { defineContract } from "../define-contract";
 import { experimental_useAppPanel } from "@get-bb/plugin-sdk/app";
 import { z } from "zod";
 import { PANEL_ACTION_ID } from "./constants";
@@ -19,7 +19,7 @@ export function useOpenShuttleTab() {
 export const GITHUB_PR_STATUS = "bb--github-pr-status";
 
 /** The part of GitHub PR Status's contract Shuttle reads: the PR of each environment's branch. */
-export const githubPrStatus = defineRpcContract({
+export const githubPrStatus = defineContract({
   pullRequests: {
     input: z.object({ keys: z.array(z.string()) }),
     output: z.record(

@@ -1,8 +1,12 @@
 # Changelog
 
+## 0.1.2
+
+- Installs from the marketplace. Git installs leave dev dependencies out, and the UI imported `defineRpcContract` from the SDK's root entry, which only a dev dependency provides; the UI now uses its own copy of that identity function.
+
 ## 0.1.1
 
-- Installs from the marketplace again where npm points at a registry without the plugin SDK Shuttle needs: its own `.npmrc` sends the install to the public npm registry.
+- Adds an `.npmrc` so `npm install` in the plugin uses the public npm registry, which has the plugin SDK Shuttle pins. This did not fix the marketplace install; 0.1.2 does.
 
 ## 0.1.0
 
