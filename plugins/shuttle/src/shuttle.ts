@@ -1,6 +1,6 @@
 // Shuttle's operations, shared by the RPC handlers, the agent tools and the CLI.
 import { adapterFor, type Adapter } from "./adapters";
-import type { Runner } from "./adapters/exec";
+import { runProcess, type Runner } from "./adapters/exec";
 import { configChanges, configFromToml, configToToml, ConfigError, parseConfig, serverSchema, type Config, type ServerConfig, type WatchMode } from "./config";
 import { SECTIONS, type EventView, type LinkRole, type Overview, type PrView, type ReviewInput, type Section, type TestResult, type ThreadOption } from "./contract";
 import { errText, ShuttleError, type Ctx } from "./ctx";
@@ -46,7 +46,10 @@ export class Shuttle implements Ctx {
     this.now = deps.now;
     this.settings = deps.settings;
     this.runner = deps.runner;
+    this.run = deps.runner ?? runProcess;
   }
+
+  readonly run: Runner;
 
   config(): Config {
     return this.store.config();

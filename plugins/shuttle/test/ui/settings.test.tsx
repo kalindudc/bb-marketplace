@@ -127,6 +127,22 @@ describe("Shuttle settings sections", () => {
     await waitFor(() => expect(slot.container.querySelector("[data-server-form]")).toBeNull());
   });
 
+  it("edits a server's review workspace and keeps the fields its form does not show", async () => {
+    const delta = { id: "delta", name: "Delta", kind: "command" as const, enabled: true, sep: "#" as const, pattern: "^https://d/(?<repo>[^/]+/[^/]+)/pull/(?<number>\\d+)", link: "https://d/{repo}/pull/{number}", read: "dt pr view {number} -R {repo}", commands: { view: "sh delta.sh" } };
+    const slot = await section("servers", { getConfig: () => ({ config: config({ servers: [...config().servers, delta] }) }) });
+    fireEvent.click(await slot.findByRole("button", { name: "Edit Delta" }));
+    const form = slot.container.querySelector<HTMLElement>("[data-server-form]")!;
+    expect((within(form).getByRole("textbox", { name: "Read command" }) as HTMLInputElement).value).toBe("dt pr view {number} -R {repo}");
+    fireEvent.change(within(form).getByRole("combobox", { name: "Review workspace" }), { target: { value: "provider" } });
+    fireEvent.change(within(form).getByRole("textbox", { name: "Environment provider" }), { target: { value: "world-tree" } });
+    fireEvent.change(within(form).getByRole("textbox", { name: "Provider inputs" }), { target: { value: "{ nope" } });
+    expect((within(form).getByRole("button", { name: "Save server" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(within(form).getByRole("textbox", { name: "Provider inputs" }), { target: { value: '{ "tree": "shuttle-{number}" }' } });
+    fireEvent.click(within(form).getByRole("button", { name: "Save server" }));
+    await waitFor(() => expect(saved(slot)).toHaveLength(1));
+    expect(saved(slot)[0]!.servers.at(-1)).toEqual({ ...delta, workspace: { kind: "provider", provider: "world-tree", inputs: { tree: "shuttle-{number}" } } });
+  });
+
   it("flags a link pattern without its groups before saving", async () => {
     const slot = await section("servers");
     fireEvent.click(await slot.findByRole("button", { name: "Add a server" }));

@@ -79,6 +79,33 @@ check). An `id` must stay the same while the item does not change and change whe
 new reply, a check run again): Shuttle sends each id to a thread once. When a PR is first
 watched, every item already there counts as seen.
 
+## Review workspace
+
+A review preset whose workspace is "its own checkout" gets bb's git worktree, unless the PR's
+server says otherwise. Some repositories refuse worktrees outside their own place: World only
+allows them under `~/world/trees`. A server can then name a bb environment provider:
+
+```toml
+[server.workspace]
+kind = "provider"
+provider = "world-tree"
+inputs = { tree = "shuttle-{number}" }
+```
+
+or a command that prepares a checkout and prints its absolute path on its last line (it runs
+with `/bin/sh` in bb's server process, with a 10-minute limit, so it must be safe to run again):
+
+```toml
+[server.workspace]
+kind = "command"
+command = "cd ~/world && (dev tree add shuttle-{number} >&2 || true) && echo ~/world/trees/shuttle-{number}/src"
+```
+
+Provider inputs and the command may use `{number}`, `{repo}`, `{repo_name}`, `{head_ref}`,
+`{base}`, `{head}`, `{server}` and `{slug}` (the key as lowercase letters, digits and dashes).
+In the command they are shell-quoted. The thread opens in the review's project on the machine
+that holds its default checkout.
+
 ## GitHub
 
 `kind = "github"` needs no commands: Shuttle uses `gh api graphql`. Requested of me is

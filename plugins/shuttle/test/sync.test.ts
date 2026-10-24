@@ -63,7 +63,7 @@ describe("auto review", () => {
     await h.shuttle.sync();
     expect(h.port.spawned).toHaveLength(1);
     const spawned = h.port.spawned[0]!;
-    expect(spawned).toMatchObject({ projectId: "proj_world", providerId: "pi", model: "m1", reasoningLevel: "high", workspace: "worktree", title: "Review shop/world#3" });
+    expect(spawned).toMatchObject({ projectId: "proj_world", providerId: "pi", model: "m1", reasoningLevel: "high", workspace: { kind: "worktree" }, title: "Review shop/world#3" });
     expect(spawned.prompt).toBe("Review https://forge.test/shop/world/pull/3 Use the `pr-reviewer` skill for this review.\nforge pr view 3 -R shop/world");
     const view = h.shuttle.view("forge:shop/world#3");
     expect(view.links).toEqual([{ threadId: spawned.threadId, title: "Review shop/world#3", role: "review", archived: false }]);

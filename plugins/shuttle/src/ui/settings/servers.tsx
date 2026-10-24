@@ -21,12 +21,45 @@ interface ServerDraft {
   link: string;
   sep: "#" | "!";
   commands: Record<Operation, string>;
+  read: string;
+  workspaceKind: "git" | "provider" | "command";
+  provider: string;
+  /** The provider's inputs as JSON text, checked on save. */
+  inputs: string;
+  workspaceCommand: string;
+}
+
+type WorkspaceDraft = Pick<ServerDraft, "workspaceKind" | "provider" | "inputs" | "workspaceCommand">;
+
+function workspaceDraftOf(workspace: ServerConfig["workspace"]): WorkspaceDraft {
+  if (workspace?.kind === "provider") return { workspaceKind: "provider", provider: workspace.provider, inputs: JSON.stringify(workspace.inputs, null, 2), workspaceCommand: "" };
+  if (workspace?.kind === "command") return { workspaceKind: "command", provider: "", inputs: "{}", workspaceCommand: workspace.command };
+  return { workspaceKind: "git", provider: "", inputs: "{}", workspaceCommand: "" };
+}
+
+/** The workspace the draft describes, or the reason it cannot be saved. */
+export function workspaceOf(draft: WorkspaceDraft): { workspace: ServerConfig["workspace"] } | { problem: string } {
+  if (draft.workspaceKind === "git") return { workspace: undefined };
+  if (draft.workspaceKind === "command") {
+    const command = draft.workspaceCommand.trim();
+    return command ? { workspace: { kind: "command", command } } : { problem: "Enter the command that prints the checkout's path." };
+  }
+  const provider = draft.provider.trim();
+  if (!provider) return { problem: "Enter the environment provider's id, such as world-tree." };
+  let inputs: unknown;
+  try {
+    inputs = JSON.parse(draft.inputs.trim() || "{}");
+  } catch (error) {
+    return { problem: `The inputs are not JSON: ${(error as Error).message}` };
+  }
+  if (inputs === null || typeof inputs !== "object" || Array.isArray(inputs)) return { problem: "The inputs must be a JSON object." };
+  return { workspace: { kind: "provider", provider, inputs: inputs as Record<string, unknown> } };
 }
 
 const emptyCommands = (): Record<Operation, string> => Object.fromEntries(OPERATIONS.map((op) => [op, ""])) as Record<Operation, string>;
 
 function draftOf(server: ServerConfig | null): ServerDraft {
-  if (server === null) return { original: null, kind: "command", id: "", name: "", hostname: "", pattern: "", link: "", sep: "#", commands: emptyCommands() };
+  if (server === null) return { original: null, kind: "command", id: "", name: "", hostname: "", pattern: "", link: "", sep: "#", commands: emptyCommands(), read: "", ...workspaceDraftOf(undefined) };
   return {
     original: server.id,
     kind: server.kind,
@@ -37,6 +70,8 @@ function draftOf(server: ServerConfig | null): ServerDraft {
     link: server.link ?? "",
     sep: server.sep,
     commands: { ...emptyCommands(), ...server.commands },
+    read: server.read ?? "",
+    ...workspaceDraftOf(server.workspace),
   };
 }
 
@@ -50,6 +85,8 @@ function serverOf(draft: ServerDraft, saved: ServerConfig | null): ServerConfig 
   const hostname = draft.kind === "github" ? optional(draft.hostname) : undefined;
   const pattern = optional(draft.pattern);
   const link = optional(draft.link);
+  const read = optional(draft.read);
+  const workspace = workspaceOf(draft);
   // RPC input is strict JSON: an unset field is left out rather than undefined.
   return {
     id: draft.id.trim(),
@@ -60,6 +97,8 @@ function serverOf(draft: ServerDraft, saved: ServerConfig | null): ServerConfig 
     ...(pattern === undefined ? {} : { pattern }),
     ...(link === undefined ? {} : { link }),
     sep: draft.sep,
+    ...(read === undefined ? {} : { read }),
+    ...("workspace" in workspace && workspace.workspace !== undefined ? { workspace: workspace.workspace } : {}),
     commands,
   };
 }
@@ -130,7 +169,7 @@ function ServerCard({ server, status, busy, onEnable, onEdit, onDelete }: {
         {status !== null && status.ok === false && status.lastOkAt !== null && <span className="text-xs text-muted-foreground">last good sync {ago(status.lastOkAt)}</span>}
         <button type="button" className={BUTTON} disabled={testing} onClick={() => void test()}>{testing ? "Testing…" : "Test"}</button>
         <Toggle on={server.enabled} label={`Enable ${server.name}`} disabled={busy} onChange={onEnable} />
-        <button type="button" className={BUTTON_GHOST} onClick={onEdit}>Edit</button>
+        <button type="button" aria-label={`Edit ${server.name}`} className={BUTTON_GHOST} onClick={onEdit}>Edit</button>
         {confirming ? (
           <>
             <button type="button" className={`${BUTTON} text-destructive`} disabled={busy} onClick={() => { setConfirming(false); onDelete(); }}>Click again to delete</button>
@@ -167,6 +206,8 @@ function ServerForm({ initial, saved, existingIds, saving, onSave, onCancel }: {
   const set = <K extends keyof ServerDraft>(key: K, value: ServerDraft[K]) => setDraft((current) => ({ ...current, [key]: value }));
   const problem = draft.kind === "command" ? patternProblem(draft.pattern) : null;
   const duplicate = draft.original === null && existingIds.includes(draft.id.trim());
+  const workspaceResult = workspaceOf(draft);
+  const workspaceProblem = "problem" in workspaceResult ? workspaceResult.problem : null;
   const test = async () => {
     const out = await testServer.run({ server: serverOf(draft, saved) });
     if (out !== null) setResults(out.results);
@@ -231,11 +272,46 @@ function ServerForm({ initial, saved, existingIds, saving, onSave, onCancel }: {
             </p>
           </>
         )}
+        <label className={row}>
+          <span className={label}>Read command</span>
+          <span>
+            <input aria-label="Read command" className={`${FIELD} w-full font-mono`} placeholder={draft.kind === "github" ? "gh pr view {number} -R {repo} --comments (the default)" : "dt pr view {number} -R {repo} --comments"}
+              value={draft.read} onChange={(event) => set("read", event.target.value)} />
+            <span className="mt-1 block text-xs text-muted-foreground">How a review agent reads a PR with its conversation; {"{repo}"}, {"{number}"} and {"{url}"} are filled in, shell-quoted.</span>
+          </span>
+        </label>
+        <label className={row}>
+          <span className={label}>Review workspace</span>
+          <select aria-label="Review workspace" className={FIELD} value={draft.workspaceKind} onChange={(event) => set("workspaceKind", event.target.value as ServerDraft["workspaceKind"])}>
+            <option value="git">bb's git worktree</option>
+            <option value="provider">A bb environment provider, such as World tree</option>
+            <option value="command">A command that prints a checkout's path</option>
+          </select>
+        </label>
+        {draft.workspaceKind === "provider" && (
+          <>
+            <label className={row}><span className={label}>Provider</span><input aria-label="Environment provider" className={`${FIELD} font-mono`} placeholder="world-tree" value={draft.provider} onChange={(event) => set("provider", event.target.value)} /></label>
+            <label className={row}>
+              <span className={label}>Inputs (JSON)</span>
+              <textarea aria-label="Provider inputs" rows={3} className={`${FIELD} w-full font-mono text-xs`} placeholder='{ "tree": "shuttle-{number}" }' value={draft.inputs} onChange={(event) => set("inputs", event.target.value)} />
+            </label>
+          </>
+        )}
+        {draft.workspaceKind === "command" && (
+          <label className={row}>
+            <span className={label}>Command</span>
+            <input aria-label="Workspace command" className={`${FIELD} w-full font-mono text-xs`} placeholder="cd ~/world && dev tree add shuttle-{number} >&2 && echo ~/world/trees/shuttle-{number}/src"
+              value={draft.workspaceCommand} onChange={(event) => set("workspaceCommand", event.target.value)} />
+          </label>
+        )}
+        <p className={`text-xs ${workspaceProblem ? "text-destructive" : "text-muted-foreground"}`}>
+          {workspaceProblem ?? "Used when a review preset asks for its own checkout. Inputs and the command may use {number}, {repo}, {repo_name}, {head_ref}, {base}, {head}, {server} and {slug}; the command prints the checkout's absolute path on its last line."}
+        </p>
       </div>
       {results !== null && <TestResults results={results} />}
       <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
         <button type="button" className={BUTTON} disabled={testing} onClick={() => void test()}>{testing ? "Testing…" : "Test commands"}</button>
-        <button type="button" className={BUTTON_PRIMARY} disabled={saving || duplicate} onClick={() => onSave(serverOf(draft, saved))}>Save server</button>
+        <button type="button" className={BUTTON_PRIMARY} disabled={saving || duplicate || workspaceProblem !== null} onClick={() => onSave(serverOf(draft, saved))}>Save server</button>
       </div>
     </div>
   );

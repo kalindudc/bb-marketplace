@@ -15,6 +15,26 @@ export type WatchMode = (typeof WATCH_MODES)[number];
 
 const command = z.string().trim().min(1).max(4000);
 
+/**
+ * How a review gets its own checkout of this server's PRs, when its preset asks for one. Without
+ * it, bb's git worktree. Some repositories refuse worktrees outside their own place (World wants
+ * ~/world/trees), so a server can name a bb environment provider, or a command that prints a path.
+ */
+export const serverWorkspaceSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("provider"),
+    provider: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,99}$/u, "must be a bb environment provider id such as world-tree"),
+    /** The provider's inputs; every string may use {number}, {repo}, {repo_name}, {head_ref}, {base}, {head}, {server} and {slug}. */
+    inputs: z.record(z.string(), z.unknown()).default({}),
+  }).strict(),
+  z.object({
+    kind: z.literal("command"),
+    /** Prints the checkout's absolute path on its last line; the same placeholders, shell-quoted. */
+    command,
+  }).strict(),
+]);
+export type ServerWorkspace = z.infer<typeof serverWorkspaceSchema>;
+
 export const serverSchema = z
   .object({
     id: z.string().regex(/^[a-z][a-z0-9-]{0,31}$/u, "must be lowercase letters, digits and dashes, starting with a letter"),
@@ -30,6 +50,7 @@ export const serverSchema = z
     sep: z.enum(["#", "!"]).default("#"),
     /** How an agent reads the PR with its conversation, with {repo}, {number} and {url}; shown in review and watch prompts. */
     read: z.string().min(1).max(1000).optional(),
+    workspace: serverWorkspaceSchema.optional(),
     commands: z.partialRecord(z.enum(OPERATIONS), command).default({}),
   })
   .strict()

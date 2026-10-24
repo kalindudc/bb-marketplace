@@ -13,7 +13,7 @@ import { useConfig } from "./use-config";
 
 const WORKSPACE_LABELS: Record<(typeof WORKSPACES)[number], string> = {
   "project-default": "The project's default workspace",
-  worktree: "A worktree on the PR head",
+  worktree: "Its own checkout: the server's review workspace, else a git worktree",
 };
 
 function freshId(taken: readonly string[]): string {

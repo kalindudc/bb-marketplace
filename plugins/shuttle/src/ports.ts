@@ -1,11 +1,12 @@
 // What Shuttle needs from bb, behind an interface so tests can fake it.
 import type { JsonValue } from "@get-bb/plugin-sdk";
+import type { Workspace } from "./workspaces";
 
 export interface SpawnArgs {
   projectId: string;
   title: string;
   prompt: string;
-  workspace: "project-default" | "worktree";
+  workspace: Workspace;
   providerId?: string;
   model?: string;
   reasoningLevel?: string;

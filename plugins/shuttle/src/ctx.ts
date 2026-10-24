@@ -1,4 +1,5 @@
 import type { Adapter } from "./adapters";
+import type { Runner } from "./adapters/exec";
 import type { Config, ServerConfig } from "./config";
 import type { Store } from "./db/store";
 import type { BbPort, ProjectInfo } from "./ports";
@@ -14,6 +15,8 @@ export interface Ctx {
   server(id: string): ServerConfig | null;
   adapter(serverId: string): Adapter;
   projects(): Promise<ProjectInfo[]>;
+  /** Runs a user-configured command, such as a server workspace command. */
+  run: Runner;
 }
 
 export class ShuttleError extends Error {

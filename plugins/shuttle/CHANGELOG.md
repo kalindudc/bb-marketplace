@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.4
+
+- A server can say how reviews get their own checkout of its PRs, for repositories that refuse bb's git worktree (World only allows worktrees under `~/world/trees`): a bb environment provider such as World tree, with inputs, or a command that prints a checkout's path, such as one around `dev tree add`. Inputs and the command take the PR's number, repo, branches and head; in a command they are shell-quoted. Set it under Review workspace when editing a server.
+- Editing a server in Settings no longer drops its read command.
+
 ## 0.1.3
 
 - The Review button's preset menu renders above the page, in bb's shared dropdown, instead of being clipped by the PR drawer it sits in.

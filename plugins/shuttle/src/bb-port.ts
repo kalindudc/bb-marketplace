@@ -1,5 +1,7 @@
-import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import type { BbPort, ThreadInfo } from "./ports";
+import type { BbPluginApi, JsonValue } from "@get-bb/plugin-sdk";
+import type { BbPort, SpawnArgs, ThreadInfo } from "./ports";
+
+type ThreadSpawnArgs = Parameters<BbPluginApi["sdk"]["threads"]["spawn"]>[0];
 
 const isNotFound = (error: unknown) => /\b404\b|not[ _]found/iu.test(error instanceof Error ? error.message : String(error));
 
@@ -27,14 +29,24 @@ export function createBbPort(bb: BbPluginApi): BbPort {
     if (primary) return primary;
     throw new Error(`no machine has a checkout of project ${project.name}, so a worktree cannot be made for it`);
   };
+  const environmentFor = async (args: SpawnArgs): Promise<ThreadSpawnArgs["environment"]> => {
+    const workspace = args.workspace;
+    switch (workspace.kind) {
+      case "project-default":
+        return { type: "project-default" };
+      case "worktree":
+        return { type: "host", hostId: await hostFor(args.projectId), workspace: { type: "managed-worktree", baseBranch: { kind: "default" } } };
+      case "provider":
+        return { type: "provider", environmentProviderId: workspace.providerId, inputs: workspace.inputs as JsonValue, machine: { type: "existing", hostId: await hostFor(args.projectId) } };
+      case "path":
+        return { type: "host", hostId: await hostFor(args.projectId), workspace: { type: "unmanaged", path: workspace.path } };
+    }
+  };
   return {
     async spawnThread(args) {
       const thread = await bb.sdk.threads.spawn({
         projectId: args.projectId,
-        environment:
-          args.workspace === "worktree"
-            ? { type: "host", hostId: await hostFor(args.projectId), workspace: { type: "managed-worktree", baseBranch: { kind: "default" } } }
-            : { type: "project-default" },
+        environment: await environmentFor(args),
         prompt: args.prompt,
         title: args.title,
         pluginMetadata: args.metadata,

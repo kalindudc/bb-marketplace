@@ -6,6 +6,7 @@ import type { PrRow } from "./db/store";
 import { matchProject } from "./projects";
 import { linkPr, requirePr, shortKey } from "./prs";
 import { renderTemplate } from "./templates";
+import { workspaceFor } from "./workspaces";
 
 export { renderTemplate };
 
@@ -64,7 +65,7 @@ export async function startReview(ctx: Ctx, input: ReviewInput, trigger: "auto" 
       title: `Review ${shortKey(ctx, pr)}`,
       ...(sectionId ? { sectionId } : {}),
       prompt,
-      workspace: preset.workspace,
+      workspace: await workspaceFor(preset, ctx.server(pr.server)?.workspace, pr, ctx.run),
       ...(providerId ? { providerId } : {}),
       ...(model ? { model } : {}),
       ...(reasoningLevel ? { reasoningLevel } : {}),
@@ -106,7 +107,7 @@ export async function startOwnerThread(ctx: Ctx, key: string, projectId?: string
     projectId: await projectFor(ctx, pr, projectId),
     title: `${shortKey(ctx, pr)}: ${pr.title}`.slice(0, 120),
     prompt: renderTemplate(OWN_PROMPT, promptVars(ctx, pr)),
-    workspace: "project-default",
+    workspace: { kind: "project-default" },
     metadata: { shuttle: { pr: pr.key, role: "owner" } },
   });
   await linkPr(ctx, pr, threadId, "owner");

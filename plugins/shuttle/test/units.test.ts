@@ -80,6 +80,38 @@ describe("command adapter", () => {
   });
 });
 
+describe("server workspaces", () => {
+  const worktreePreset = parseConfig({ ...DEFAULT_CONFIG, presets: [{ id: "p", name: "P", default: true, workspace: "worktree", prompt: "x" }] }).presets[0]!;
+  const row = (extra: Record<string, unknown> = {}) => ({ number: 7, repo: "shop/world", server: "delta", head: "abc", head_ref: "sam/fix it", base: "main", ...extra }) as never;
+
+  it("fills a provider's inputs at any depth, and leaves the project's own workspace alone", async () => {
+    const { workspaceFor } = await import("../src/workspaces");
+    const provider = { kind: "provider" as const, provider: "world-tree", inputs: { tree: "shuttle-{number}", zones: ["//areas/{repo_name}"], depth: 1 } };
+    expect(await workspaceFor(worktreePreset, provider, row(), runProcess)).toEqual({ kind: "provider", providerId: "world-tree", inputs: { tree: "shuttle-7", zones: ["//areas/world"], depth: 1 } });
+    expect(await workspaceFor({ ...worktreePreset, workspace: "project-default" }, provider, row(), runProcess)).toEqual({ kind: "project-default" });
+    expect(await workspaceFor(worktreePreset, undefined, row(), runProcess)).toEqual({ kind: "worktree" });
+  });
+
+  it("runs a command with shell-quoted PR data and takes the path on its last line", async () => {
+    const { workspaceFor } = await import("../src/workspaces");
+    const command = { kind: "command" as const, command: "echo preparing >&2; echo noise; printf '/tmp/trees/%s\\n' {head_ref}" };
+    expect(await workspaceFor(worktreePreset, command, row({ head_ref: "a; echo pwned" }), runProcess)).toEqual({ kind: "path", path: "/tmp/trees/a; echo pwned" });
+    await expect(workspaceFor(worktreePreset, { kind: "command", command: "echo relative/path" }, row(), runProcess)).rejects.toThrow(/absolute path/u);
+    await expect(workspaceFor(worktreePreset, { kind: "command", command: "echo nope >&2; exit 4" }, row(), runProcess)).rejects.toThrow(/exited 4: nope/u);
+  });
+
+  it("starts a review in the server's provider", async () => {
+    const h = harness(testConfig({
+      servers: [{ ...TEST_SERVER, workspace: { kind: "provider", provider: "world-tree", inputs: { tree: "shuttle-{number}" } } }],
+      presets: [{ id: "p", name: "P", default: true, workspace: "worktree", prompt: "x" }],
+    } as never));
+    h.lists.review_requested = [pr(3)];
+    await h.shuttle.sync();
+    await h.shuttle.review({ key: "forge:shop/world#3" });
+    expect(h.port.spawned[0]!.workspace).toEqual({ kind: "provider", providerId: "world-tree", inputs: { tree: "shuttle-3" } });
+  });
+});
+
 describe("descriptions", () => {
   it("are read by view, kept through list syncs, and fetched once for a PR only lists have seen", async () => {
     const h = harness();
@@ -149,7 +181,7 @@ describe("reviews", () => {
     await expect(h.shuttle.review({ key: "forge:x/unknown#4" })).rejects.toThrow(/no bb project matches x\/unknown/u);
     h.settings.defaultProject = "proj_world";
     await h.shuttle.review({ key: "forge:x/unknown#4" });
-    expect(h.port.spawned[0]).toMatchObject({ projectId: "proj_world", workspace: "project-default" });
+    expect(h.port.spawned[0]).toMatchObject({ projectId: "proj_world", workspace: { kind: "project-default" } });
   });
 
   it("files review threads in the configured section, and still starts them when the section cannot be made", async () => {
