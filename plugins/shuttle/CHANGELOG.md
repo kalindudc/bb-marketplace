@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1
+
+- Installs from the marketplace again where npm points at a registry without the plugin SDK Shuttle needs: its own `.npmrc` sends the install to the public npm registry.
+
 ## 0.1.0
 
 The first release: every pull request that needs you, from any server, in one place.
