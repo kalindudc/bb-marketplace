@@ -17,9 +17,9 @@ const TRIGGER_LABELS: Record<Trigger, { label: string; hint?: string }> = {
   mentioned: { label: "I am @mentioned" },
 };
 
-const WATCH_MODE_SETTINGS: Record<(typeof WATCH_MODES)[number], string> = {
-  act: "Send it to the owner threads and ask them to act",
-  forward: "Send it to the owner threads only",
+const AGENT_MODE_SETTINGS: Record<(typeof WATCH_MODES)[number], string> = {
+  act: "Fix it: send new feedback and ask it to fix it",
+  forward: "Just tell it: send new feedback only",
 };
 
 const splitGlobs = (text: string) => text.split(/[\s,]+/u).filter((glob) => glob !== "");
@@ -40,7 +40,7 @@ function Card({ icon, title, hint, on, onToggle, children }: { icon: string; tit
   );
 }
 
-/** What Shuttle does by itself: auto reviews and the messages a watched PR sends to its threads. */
+/** What Shuttle does by itself: auto reviews, and what agents get sent about your PRs. */
 export function AutomationsSection() {
   const { config, loadError, saving, saveError, save, clearSaveError } = useConfig();
   const [draft, setDraft] = useState<{ autoReview: AutoReview; watch: Watch; repos: string } | null>(null);
@@ -94,7 +94,7 @@ export function AutomationsSection() {
             <span className="flex items-center gap-2">
               <input aria-label="Auto reviews a day" type="number" min={0} max={100} className={`${FIELD} w-20`} value={Number.isNaN(auto.maxPerDay) ? "" : auto.maxPerDay}
                 onChange={(event) => setAuto({ maxPerDay: number(event.target.value) })} />
-              <span className="text-xs text-muted-foreground">a day; the rest wait for you in Needs you</span>
+              <span className="text-xs text-muted-foreground">a day; the rest wait for you in Reviews</span>
             </span>
           </label>
           <label className={row}>
@@ -107,12 +107,12 @@ export function AutomationsSection() {
         </div>
       </Card>
 
-      <Card icon="Eye" title="Watched PRs" hint="Send new reviews on a watched PR to its owner threads." on={watch.enabled} onToggle={(enabled) => setWatch({ enabled })}>
+      <Card icon="Bot" title="Agents" hint="Send new reviews, comments and failed checks on your PRs to the thread that handles them." on={watch.enabled} onToggle={(enabled) => setWatch({ enabled })}>
         <div className="flex flex-col gap-2.5 text-sm">
           <label className={row}>
-            <span className={label}>When a review arrives</span>
-            <select aria-label="When a review arrives" className={FIELD} value={watch.mode} onChange={(event) => setWatch({ mode: event.target.value as Watch["mode"] })}>
-              {WATCH_MODES.map((mode) => <option key={mode} value={mode}>{WATCH_MODE_SETTINGS[mode]}</option>)}
+            <span className={label}>What a new agent does</span>
+            <select aria-label="What a new agent does" className={FIELD} value={watch.mode} onChange={(event) => setWatch({ mode: event.target.value as Watch["mode"] })}>
+              {WATCH_MODES.map((mode) => <option key={mode} value={mode}>{AGENT_MODE_SETTINGS[mode]}</option>)}
             </select>
           </label>
           <label className={row}>
@@ -125,13 +125,13 @@ export function AutomationsSection() {
           </label>
         </div>
         <div className="mt-1.5">
-          <Checkbox checked={watch.autoWatch} label="Watch my PRs as soon as they are linked to a thread" onChange={(autoWatch) => setWatch({ autoWatch })} />
-          <Checkbox checked={watch.includeChecks} label="Also send CI failures on the head" onChange={(includeChecks) => setWatch({ includeChecks })} />
+          <Checkbox checked={watch.autoWatch} label="A thread that links one of your PRs becomes its agent" hint="Only when the PR has no agent yet." onChange={(autoWatch) => setWatch({ autoWatch })} />
+          <Checkbox checked={watch.includeChecks} label="Also send failed checks on the head" onChange={(includeChecks) => setWatch({ includeChecks })} />
           <Checkbox checked={watch.ignoreBots} label="Ignore bots" hint="Reviews and comments from accounts the server marks as bots." onChange={(ignoreBots) => setWatch({ ignoreBots })} />
         </div>
         <div className={`${row} mt-2 items-start text-sm`}>
-          <span className={`${label} pt-1.5`}>Act prompt</span>
-          <PromptEditor label="Act prompt" rows={4} value={watch.actPrompt} variables={ACT_PROMPT_VARIABLES} onChange={(actPrompt) => setWatch({ actPrompt })} />
+          <span className={`${label} pt-1.5`}>What a Fix it agent is asked to do</span>
+          <PromptEditor label="What a Fix it agent is asked to do" rows={4} value={watch.actPrompt} variables={ACT_PROMPT_VARIABLES} onChange={(actPrompt) => setWatch({ actPrompt })} />
         </div>
       </Card>
 

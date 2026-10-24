@@ -5,7 +5,17 @@ type ThreadSpawnArgs = Parameters<BbPluginApi["sdk"]["threads"]["spawn"]>[0];
 
 const isNotFound = (error: unknown) => /\b404\b|not[ _]found/iu.test(error instanceof Error ? error.message : String(error));
 
-type ThreadLike = { id: string; title: string | null; titleFallback?: string | null; archivedAt: number | null; projectId: string | null; status: string; updatedAt?: number | null };
+type ThreadLike = {
+  id: string;
+  title: string | null;
+  titleFallback?: string | null;
+  archivedAt: number | null;
+  projectId: string | null;
+  status: string;
+  hasPendingInteraction?: boolean;
+  environmentBranchName?: string | null;
+  updatedAt?: number | null;
+};
 
 function toThread(thread: ThreadLike): ThreadInfo {
   return {
@@ -14,11 +24,13 @@ function toThread(thread: ThreadLike): ThreadInfo {
     archived: thread.archivedAt !== null,
     projectId: thread.projectId,
     status: thread.status,
+    waiting: thread.hasPendingInteraction === true,
+    branch: thread.environmentBranchName ?? null,
     updatedAt: thread.updatedAt ?? null,
   };
 }
 
-export function createBbPort(bb: BbPluginApi): BbPort {
+export function createBbPort(bb: BbPluginApi, setSettings: BbPort["setSettings"] = async () => {}): BbPort {
   let publishTimer: ReturnType<typeof setTimeout> | null = null;
   /** A managed worktree is made on a machine: the one with the project's default checkout, else bb's primary machine. */
   const hostFor = async (projectId: string): Promise<string> => {
@@ -93,12 +105,13 @@ export function createBbPort(bb: BbPluginApi): BbPort {
       const result = await bb.sdk.skills.list({ projectId, environmentId: null });
       return result.skills.map((skill) => ({ id: skill.id, name: skill.name, description: skill.description ?? "" }));
     },
+    setSettings,
     publish() {
       // Many changes land together during a sync; one signal is enough.
       if (publishTimer) return;
       publishTimer = setTimeout(() => {
         publishTimer = null;
-        bb.rpc.experimental_invalidate(["prs", "servers"]);
+        bb.rpc.experimental_invalidate(["prs", "servers", "conversation"]);
       }, 150);
     },
     log(level, text) {

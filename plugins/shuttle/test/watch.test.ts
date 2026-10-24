@@ -50,7 +50,7 @@ describe("keeping PRs fresh", () => {
 describe("watched PRs", () => {
   it("refuses to watch a PR without an owner thread", async () => {
     const h = await setup();
-    expect(() => h.shuttle.watch("forge:shop/world#1", "act")).toThrow(/no owner thread/u);
+    expect(() => h.shuttle.watch("forge:shop/world#1", "act")).toThrow(/no agent/u);
   });
 
   it("baselines what is already there, then sends new items after the batch window, once", async () => {
@@ -103,24 +103,25 @@ describe("watched PRs", () => {
     expect(h.shuttle.threadPrs("thr_owner").sent).toHaveLength(2);
   });
 
-  it("delivers to every owner: a failed owner is retried without resending to the one that got it", async () => {
+  it("gives a PR one agent: linking another owner leaves the first for reference, and only the agent gets feedback", async () => {
     const h = await setup();
     h.port.addThread("thr_second", "Second");
     await h.shuttle.link("forge:shop/world#1", "thr_owner");
     await h.shuttle.link("forge:shop/world#1", "thr_second");
+    expect(h.shuttle.view("forge:shop/world#1").links.map((l) => [l.threadId, l.role])).toEqual([
+      ["thr_owner", "reference"],
+      ["thr_second", "owner"],
+    ]);
+    expect(h.shuttle.view("forge:shop/world#1").agent).toMatchObject({ threadId: "thr_second", mode: "fix" });
     await h.shuttle.sync();
     h.activity[1] = { items: [review("a1")] };
     h.clock.now += 3 * 60_000;
-    h.port.failSendTo.add("thr_second");
     await h.shuttle.sync();
     h.clock.now += 3 * 60_000;
     await h.shuttle.tick();
-    expect(h.port.sent.map((s) => s.threadId)).toEqual(["thr_owner"]);
-    expect(h.shuttle.view("forge:shop/world#1").pendingItems).toBe(1);
-    h.port.failSendTo.clear();
-    await h.shuttle.tick();
-    expect(h.port.sent.map((s) => s.threadId)).toEqual(["thr_owner", "thr_second"]);
-    expect(h.shuttle.view("forge:shop/world#1").pendingItems).toBe(0);
+    expect(h.port.sent.map((s) => s.threadId)).toEqual(["thr_second"]);
+    expect(h.port.sent[0]!.text).toMatch(/\[ref [0-9a-f]{8}\] review by ana/u);
+    expect(h.port.sent[0]!.text).toContain("shuttle_feedback_done");
   });
 
   it("never lets server text break out of its data block, and serializes concurrent sends", async () => {
@@ -152,13 +153,13 @@ describe("watched PRs", () => {
     expect(h.shuttle.view("forge:shop/world#1").pendingItems).toBe(0);
   });
 
-  it("flags my PR with changes requested in Needs you only while no watching thread acts on it", async () => {
+  it("puts my PR with changes requested in the Inbox only while no agent acts on it", async () => {
     const h = harness();
     h.lists.authored = [pr(1, { author: "me", review: "changes" })];
     await h.shuttle.sync();
-    expect(h.shuttle.list("needs").map((p) => p.number)).toEqual([1]);
+    expect(h.shuttle.inbox().prs.map((p) => [p.number, p.next.kind])).toEqual([[1, "nobody"]]);
     h.port.addThread("thr_owner");
     await h.shuttle.link("forge:shop/world#1", "thr_owner");
-    expect(h.shuttle.list("needs")).toEqual([]);
+    expect(h.shuttle.inbox().prs).toEqual([]);
   });
 });

@@ -5,12 +5,34 @@
 # "my teams" search), for example `SHUTTLE_DELTA_TEAMS=edge-infrastructure sh delta.sh`.
 # ready, close, reopen, edit_labels and edit_reviewers change the PR through dt pr. Delta has no
 # way back to draft, so there is no draft operation.
+# merge_options reads the merge gate; merge runs dt pr merge (squash or merge, never rebase, and no
+# auto-merge: Delta has none). comment, review, reply and resolve write through dt pr and dt api.
+# The lists search SHUTTLE_DELTA_REPO (default shop/world); every operation on one PR works on that
+# PR's own repository, SHUTTLE_REPO.
 set -eu
-REPO="${SHUTTLE_DELTA_REPO:-shop/world}"
+fail() { echo "delta.sh: $1" >&2; exit 2; }
+REPO="${SHUTTLE_REPO:-${SHUTTLE_DELTA_REPO:-shop/world}}"
+case "$REPO" in
+  */*/* | /* | */ | . | .. | ./* | ../* | */. | */.. | *[!A-Za-z0-9._/-]*) fail "$REPO is not owner/name" ;;
+  */*) ;;
+  *) fail "$REPO is not owner/name" ;;
+esac
 HOST="https://delta.shopify.io"
 
 get() { dt api "$1" -X GET --host "$HOST" -R "$REPO"; }
 pr() { dt pr "$@" --host "$HOST" -R "$REPO" >&2; }
+# Every page of a list endpoint as one array, up to 1000 items.
+all() {
+  page=1
+  acc='[]'
+  while :; do
+    chunk=$(get "$1?per_page=100&page=$page")
+    acc=$(printf '%s\n%s\n' "$acc" "$chunk" | jq -cs 'add')
+    if [ "$(printf '%s' "$chunk" | jq 'length')" -lt 100 ] || [ "$page" -ge 10 ]; then break; fi
+    page=$((page + 1))
+  done
+  printf '%s\n' "$acc"
+}
 # Runs `pr edit <number> <flag> <value>` once per line of $2, skipping blank lines.
 each() {
   printf '%s\n' "$2" | while IFS= read -r value; do
@@ -21,16 +43,68 @@ each() {
 SUMMARY='{repo: $repo, number, title, author: (.user.login // ""),
   state: (if (.merged == true) or (.merged_at != null) or ((.pull_request.merged_at? // null) != null) then "merged"
           elif (.state | ascii_downcase) == "open" then (if .draft == true then "draft" else "open" end) else "closed" end),
-  url: .html_url, head: .head.sha, head_ref: .head.ref, base: .base.ref, updated_at,
+  url: .html_url, head: .head.sha, head_ref: .head.ref, base: .base.ref, updated_at, created_at,
+  closed_at: (if (.state | ascii_downcase) == "open" then null else (.merged_at // (.pull_request.merged_at? // null) // .closed_at) end),
   additions, deletions, files: .changed_files, teams: [(.requested_teams // [])[] | "@" + .slug],
   labels: [(.labels // [])[] | {name, color}]}'
 
-# Requested reviewers, then the latest review of everyone else, from [pull, reviews].
-REVIEWERS='.[0] as $pr | ([$pr.requested_reviewers[]? | {login, state: "requested"}]
+# From [pull, reviews]: each reviewer's latest submitted review, then requested reviewers, then
+# everyone else; a requested reviewer keeps the time and commit of their last review.
+REVIEWERS='.[0] as $pr | ([.[1][] | select(.state != "PENDING")] | group_by(.user.login) | map(last)) as $latest
+  | ($latest | map({key: .user.login, value: {at: .submitted_at, head: .commit_id}}) | from_entries) as $when
+  | ([$pr.requested_reviewers[]? | {login, state: "requested", bot: (.type == "Bot")} + ($when[.login] // {at: null, head: null})]
     + [$pr.requested_teams[]? | {login: .slug, team: true, state: "requested"}]) as $req
-  | $req + ([.[1][] | select(.state != "PENDING") | select(.user.login != $pr.user.login)
-      | {login: .user.login, state: ({APPROVED: "approved", CHANGES_REQUESTED: "changes", DISMISSED: "dismissed"}[.state] // "commented")}]
-    | group_by(.login) | map(last) | map(select(.login as $l | $req | any(.login == $l and (.team // false) == false) | not)))'
+  | $req + ([$latest[] | select(.user.login != $pr.user.login)
+      | {login: .user.login, state: ({APPROVED: "approved", CHANGES_REQUESTED: "changes", DISMISSED: "dismissed"}[.state] // "commented"),
+         at: .submitted_at, head: .commit_id, bot: (.user.type == "Bot")}]
+    | map(select(.login as $l | $req | any(.login == $l and (.team // false) == false) | not)))'
+MY_REVIEW='[.[1][] | select(.state != "PENDING") | select(.user.login == $me)] | last
+  | if . == null then null else {state: ({APPROVED: "approved", CHANGES_REQUESTED: "changes", DISMISSED: "dismissed"}[.state] // "commented"),
+      at: .submitted_at, head: .commit_id} end'
+FAILED='IN("failure", "error", "timed_out", "cancelled", "action_required", "startup_failure")'
+# From the merge gate's answer: every check and status on the head, by outcome.
+CHECK_COUNTS='if (.status_check_rollup.contexts? | type) != "array" then null else
+  [.status_check_rollup.contexts[] | if .status != "completed" then "pending"
+    elif (.conclusion | IN("success", "neutral", "skipped")) then "passed"
+    elif (.conclusion | '"$FAILED"') then "failed"
+    else "pending" end]
+  | {passed: map(select(. == "passed")) | length, failed: map(select(. == "failed")) | length,
+     pending: map(select(. == "pending")) | length, total: length} end'
+# From the PR, its reviews, review comments, issue comments and merge gate. A failed check's id is
+# the check and the head it ran on, so the same failure on a new head is new again.
+ACTIVITY='($pull[0].head.sha) as $head | ($gate[0] // null) as $g
+  | {head: $head, items: (
+    [$reviews[0][] | select(.state != "PENDING") | select(.state != "COMMENTED" or ((.body // "") != ""))
+      | {id: "\(.node_id):\(.state)", kind: "review", author: .user.login, bot: (.user.type == "Bot"),
+         state: (.state | ascii_downcase | gsub("_"; " ")), body, url: .html_url, at: .submitted_at}]
+    + [$threads[0][]
+      | {id: .node_id, kind: "thread", author: .user.login, bot: (.user.type == "Bot"), body, path, line, url: .html_url,
+         at: .created_at, thread: .thread_id, resolved: (.resolved == true)}]
+    + [$comments[0][] | {id: .node_id, kind: "comment", author: .user.login, bot: (.user.type == "Bot"), body, url: .html_url, at: .created_at}]
+    + (if $g == null then [] else ($g.head // $head) as $on | [$g.status_check_rollup.contexts[]?
+      | select(.status == "completed" and (.conclusion | '"$FAILED"'))
+      | {id: (("\(.kind):\(.producer // ""):\(.name // "")" | .[0:240]) + ":\($on)"), kind: "check", author: null, bot: false,
+         state: "failed", body: "\(.name // "check") failed", url: .details_url}] end))}'
+# The merge gate's blockers in plain words.
+BLOCKERS='[.blockers[]? | (.context // "" | sub("^[^:]*:"; "")) as $name
+  | if .code == "stacked" then "it is part of a stack"
+    elif .code == "conflict" then "it has conflicts with the base branch"
+    elif .code == "merged" then "it is already merged"
+    elif .code == "draft" then "it is a draft"
+    elif (.code | test("failing$")) then "\($name) is failing"
+    elif (.code | test("pending$")) then "\($name) has not finished"
+    elif .message then .message
+    else (.code | gsub("_"; " ")) + (if $name != "" then " (\($name))" else "" end) end]'
+MERGE_OPTIONS='([.viewer.allowed_methods[]? | select(. == "squash" or . == "merge")] | if length == 0 then ["squash", "merge"] else . end) as $methods
+  | [.blockers[]?.code] as $codes | ('"$BLOCKERS"') as $why
+  | (if ($codes | index("conflict")) or .merge_state_status == "dirty" or .mergeable == false then "conflicts"
+     elif .merge_state_status == "behind" then "behind"
+     elif ($codes | length) == 0 then (if .viewer.can_merge == true or .merge_state_status == "clean" then "clean" else "unknown" end)
+     elif ($codes | all(test("pending$"))) then "pending"
+     else "blocked" end) as $state
+  | {methods: $methods, default: $methods[0], delete_branch: false, can_auto: false, state: $state,
+     detail: (if $state == "clean" then null elif ($why | length) == 0 then null
+       else ($why | join("; ") | (.[0:1] | ascii_upcase) + .[1:]) + "." end)}'
 
 search() {
   q=$(printf 'repo:%s is:pr %s' "$REPO" "$1" | jq -sRr @uri)
@@ -48,21 +122,93 @@ case "${SHUTTLE_OPERATION:?}" in
     for team in $(printf '%s' "${SHUTTLE_DELTA_TEAMS:?set SHUTTLE_DELTA_TEAMS to your team slugs}" | tr ',' ' '); do
       search "is:open team-review-requested:$team"
     done | jq -s '{items: ([.[].items[]] | unique_by(.number)), complete: all(.[]; .complete)}' ;;
+  reviewed) search "is:open reviewed-by:@me -author:@me" ;;
   view)
     n="${SHUTTLE_NUMBER:?}"
-    { get "repos/$REPO/pulls/$n"; get "repos/$REPO/pulls/$n/reviews?per_page=100"; } \
-      | jq -s --arg repo "$REPO" "(.[0] | $SUMMARY + {body: (.body // \"\")}) + {reviewers: ($REVIEWERS)}" ;;
+    tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"' EXIT
+    get "repos/$REPO/pulls/$n" > "$tmp/pull" & pull=$!
+    all "repos/$REPO/pulls/$n/reviews" > "$tmp/reviews" & reviews=$!
+    dt auth status --host "$HOST" -R "$REPO" --json > "$tmp/me" & me=$!
+    get "repos/$REPO/pulls/$n/merge-readiness" > "$tmp/gate" 2>/dev/null & gate=$!
+    wait "$pull"; wait "$reviews"; wait "$me"
+    # The merge gate only adds check counts; without it the view still stands.
+    wait "$gate" || : > "$tmp/gate"
+    jq -n --arg repo "$REPO" --arg me "$(jq -r .principal "$tmp/me")" \
+      --slurpfile pull "$tmp/pull" --slurpfile reviews "$tmp/reviews" --slurpfile gate "$tmp/gate" \
+      "[\$pull[0], \$reviews[0]] as \$both | (\$pull[0] | $SUMMARY + {body: (.body // \"\")})
+        + {reviewers: (\$both | $REVIEWERS), my_review: (\$both | $MY_REVIEW), check_counts: (\$gate[0] // null | $CHECK_COUNTS)}" ;;
   activity)
     n="${SHUTTLE_NUMBER:?}"
-    {
-      get "repos/$REPO/pulls/$n" | jq '{head: .head.sha}'
-      get "repos/$REPO/pulls/$n/reviews" | jq '[.[] | select(.state != "PENDING") | select(.state != "COMMENTED" or ((.body // "") != ""))
-        | {id: "\(.node_id):\(.state)", kind: "review", author: .user.login, bot: (.user.type == "Bot"),
-           state: (.state | ascii_downcase | gsub("_"; " ")), body, url: .html_url}]'
-      get "repos/$REPO/pulls/$n/comments" | jq '[.[] | select(.resolved != true)
-        | {id: .node_id, kind: "thread", author: .user.login, bot: (.user.type == "Bot"), body, path, line, url: .html_url}]'
-      get "repos/$REPO/issues/$n/comments" | jq '[.[] | {id: .node_id, kind: "comment", author: .user.login, bot: (.user.type == "Bot"), body, url: .html_url}]'
-    } | jq -s '{head: .[0].head, items: (.[1] + .[2] + .[3])}' ;;
+    tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"' EXIT
+    get "repos/$REPO/pulls/$n" > "$tmp/pull" & pull=$!
+    all "repos/$REPO/pulls/$n/reviews" > "$tmp/reviews" & reviews=$!
+    all "repos/$REPO/pulls/$n/comments" > "$tmp/threads" & threads=$!
+    all "repos/$REPO/issues/$n/comments" > "$tmp/comments" & comments=$!
+    get "repos/$REPO/pulls/$n/merge-readiness" > "$tmp/gate" 2>/dev/null & gate=$!
+    wait "$pull"; wait "$reviews"; wait "$threads"; wait "$comments"
+    # Without the merge gate the reviews and comments still arrive; failed checks come with a later read.
+    wait "$gate" || : > "$tmp/gate"
+    jq -n --slurpfile pull "$tmp/pull" --slurpfile reviews "$tmp/reviews" --slurpfile threads "$tmp/threads" \
+      --slurpfile comments "$tmp/comments" --slurpfile gate "$tmp/gate" "$ACTIVITY" ;;
+  merge_options) get "repos/$REPO/pulls/${SHUTTLE_NUMBER:?}/merge-readiness" | jq "$MERGE_OPTIONS" ;;
+  merge)
+    : "${SHUTTLE_NUMBER:?}" "${SHUTTLE_HEAD:?}"
+    if [ "${SHUTTLE_AUTO:-0}" = 1 ]; then fail "Delta has no auto-merge"; fi
+    if [ "${SHUTTLE_DELETE_BRANCH:-0}" = 1 ]; then fail "dt pr merge cannot delete the branch; merge without deleting it"; fi
+    # dt pr merge takes no commit title, so SHUTTLE_SUBJECT has nowhere to go.
+    case "${SHUTTLE_METHOD:?}" in
+      squash) pr merge "$SHUTTLE_NUMBER" --squash --sha "$SHUTTLE_HEAD" ;;
+      merge) pr merge "$SHUTTLE_NUMBER" --sha "$SHUTTLE_HEAD" ;;
+      *) fail "Delta merges with squash or merge, not $SHUTTLE_METHOD" ;;
+    esac ;;
+  comment) pr comment "${SHUTTLE_NUMBER:?}" --body="${SHUTTLE_BODY:?}" ;;
+  review)
+    n="${SHUTTLE_NUMBER:?}"
+    comments="${SHUTTLE_COMMENTS:-[]}"
+    count=$(printf '%s' "$comments" | jq 'length')
+    case "${SHUTTLE_VERDICT:?}" in
+      approve) event=APPROVE ;;
+      changes) event=REQUEST_CHANGES ;;
+      comment) event=COMMENT ;;
+      *) fail "no verdict $SHUTTLE_VERDICT" ;;
+    esac
+    if [ "$event" = COMMENT ] && [ "$count" -eq 0 ] && [ -z "${SHUTTLE_BODY:-}" ]; then fail "a comment review needs a body or at least one comment"; fi
+    err=$(mktemp)
+    trap 'rm -f "$err"' EXIT
+    # Every review goes through the reviews API so it lands on SHUTTLE_HEAD; dt pr review has no --sha.
+    # The comments ride in the review's comments[], the way dt pr review --file-comment batches them.
+    post() {
+      jq -n --arg body "$2" --arg event "$event" --arg head "${SHUTTLE_HEAD:-}" --argjson comments "$1" \
+        '{event: $event} + (if $body == "" then {} else {body: $body} end) + (if $head == "" then {} else {commit_id: $head} end)
+         + (if ($comments | length) == 0 then {} else {comments: [$comments[] | if .line == null then {path, body, subject_type: "file"} else {path, line, side: "RIGHT", body} end]} end)' \
+        | dt api "repos/$REPO/pulls/$n/reviews" -X POST --input - --host "$HOST" -R "$REPO" > /dev/null 2> "$err"
+    }
+    if post "$comments" "${SHUTTLE_BODY:-}"; then
+      printf '{"placed": %s, "in_body": 0}\n' "$count"
+    # Only a 422 about where a comment goes is posted again; one that names the commit means the head moved on.
+    elif [ "$count" -gt 0 ] && grep -Eq '(^|[^0-9])422([^0-9]|$)' "$err" \
+        && grep -Eiqw 'line|start_line|path|position|side|start_side|subject_type|diff|diff_hunk' "$err" \
+        && ! grep -Eiqw 'commit|commit_id|sha|head' "$err"; then
+      body=$(jq -rn --arg body "${SHUTTLE_BODY:-}" --argjson comments "$comments" \
+        '[($body | select(. != "")), ($comments | map("- `\(.path)\(if .line == null then "" else ":\(.line)" end)` \(.body | gsub("\n"; "\n  "))") | join("\n"))] | join("\n\n")')
+      if post '[]' "$body"; then printf '{"placed": 0, "in_body": %s}\n' "$count"
+      else cat "$err" >&2; exit 1; fi
+    else
+      cat "$err" >&2
+      exit 1
+    fi ;;
+  reply)
+    n="${SHUTTLE_NUMBER:?}"
+    # dt pr comment --reply-to takes a comment id; Shuttle names the thread, so reply to its first comment.
+    root=$(all "repos/$REPO/pulls/$n/comments" | jq -r --arg thread "${SHUTTLE_THREAD:?}" \
+      '[.[] | select(.thread_id == $thread)] | ((map(select(.in_reply_to_id == null)) + .) | first | .id // empty)')
+    if [ -z "$root" ]; then fail "no review comment in thread $SHUTTLE_THREAD"; fi
+    pr comment "$n" --reply-to "$root" --body="${SHUTTLE_BODY:?}" ;;
+  resolve)
+    if [ "${SHUTTLE_RESOLVED:?}" = 1 ]; then pr resolve "${SHUTTLE_NUMBER:?}" "${SHUTTLE_THREAD:?}"
+    else pr unresolve "${SHUTTLE_NUMBER:?}" "${SHUTTLE_THREAD:?}"; fi ;;
   ready) pr ready "${SHUTTLE_NUMBER:?}" ;;
   close) pr close "${SHUTTLE_NUMBER:?}" ;;
   reopen) pr reopen "${SHUTTLE_NUMBER:?}" ;;

@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { experimental_Icon as Icon, useBbNavigate } from "@get-bb/plugin-sdk/app";
-import type { WatchMode } from "../config";
 import type { LinkRole, PrView } from "../contract";
 import { BUTTON, BUTTON_PRIMARY, Dialog, ErrorNote, FIELD, ServerBadge } from "./common";
 import { LINK_ROLES, ROLE_LABELS } from "./constants";
@@ -11,8 +10,6 @@ import { ago, shortKey } from "./format";
 export interface LinkRequest {
   pr: PrView;
   tab: "existing" | "new";
-  /** Turn watching on in this mode once the PR has an owner thread. */
-  watchAfter: WatchMode | null;
 }
 
 const SEARCH_DELAY_MS = 200;
@@ -40,12 +37,11 @@ export function ProjectSelect({ projects, value, onChange }: { projects: Output<
 }
 
 export function LinkDialog({ request, onClose }: { request: LinkRequest; onClose(): void }) {
-  const { pr, watchAfter } = request;
+  const { pr } = request;
   const navigate = useBbNavigate();
   const link = useShuttleMutation("link");
   const newThread = useShuttleMutation("newThread");
-  const watch = useShuttleMutation("watch");
-  const busy = link.isPending || newThread.isPending || watch.isPending;
+  const busy = link.isPending || newThread.isPending;
   const [tab, setTab] = useState(request.tab);
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState("");
@@ -57,17 +53,12 @@ export function LinkDialog({ request, onClose }: { request: LinkRequest; onClose
   const threads = threadsQuery.data?.threads;
   const projects = useShuttleQuery("projects", { key: pr.key });
   const [picked, setPicked] = useState<string | null>(null);
-  const [role, setRole] = useState<LinkRole>("owner");
+  const [role, setRole] = useState<LinkRole>("reference");
   const [projectChoice, setProjectChoice] = useState<string | null>(null);
   const projectId = projectChoice ?? projects.data?.suggested ?? "";
   const [start, setStart] = useState<"own" | "review">(pr.mine ? "own" : "review");
   const projectName = (id: string | null) => (id === null ? null : projects.data?.projects.find((project) => project.id === id)?.name ?? null);
   const linkedRole = (threadId: string) => pr.links.find((link) => link.threadId === threadId)?.role ?? null;
-
-  const watchIfAsked = async (owner: boolean) => {
-    if (watchAfter === null || !owner) return;
-    if (await watch.run({ key: pr.key, mode: watchAfter })) toast.success(`Watching ${shortKey(pr)}`);
-  };
 
   const submit = async () => {
     if (tab === "existing") {
@@ -76,7 +67,6 @@ export function LinkDialog({ request, onClose }: { request: LinkRequest; onClose
       const linked = await link.run({ key: pr.key, threadId: thread.id, role });
       if (linked === null) return;
       toast.success(`Linked ${shortKey(pr)} to “${thread.title}”`);
-      await watchIfAsked(role === "owner");
       onClose();
       return;
     }
@@ -85,7 +75,6 @@ export function LinkDialog({ request, onClose }: { request: LinkRequest; onClose
     toast.success(start === "own" ? "Started a thread that owns this PR" : "Started a review thread", {
       action: { label: "Open", onClick: () => navigate.toThread(started.threadId) },
     });
-    await watchIfAsked(start === "own");
     onClose();
   };
 
@@ -98,15 +87,12 @@ export function LinkDialog({ request, onClose }: { request: LinkRequest; onClose
       onClose={onClose}
       footer={(
         <>
-          <span className="flex-1 text-xs text-muted-foreground">Linking writes nothing to the PR.</span>
+          <span className="flex-1 text-xs text-muted-foreground">Linking writes nothing to the PR. To have a thread handle its feedback, make it the agent.</span>
           <button type="button" className={BUTTON} onClick={onClose}>Cancel</button>
           <button type="button" className={BUTTON_PRIMARY} disabled={!canSubmit} onClick={() => void submit()}>{tab === "existing" ? "Link" : "Start thread"}</button>
         </>
       )}
     >
-      {watchAfter !== null && (
-        <p className="mb-3 text-xs text-muted-foreground">Watching sends new reviews to an owner thread: pick or start one, and Shuttle turns watching on.</p>
-      )}
       <div role="tablist" className="mb-3 flex gap-1 border-b border-border">
         <TabButton on={tab === "existing"} onClick={() => setTab("existing")}>An existing thread</TabButton>
         <TabButton on={tab === "new"} onClick={() => setTab("new")}>A new thread</TabButton>
@@ -143,7 +129,7 @@ export function LinkDialog({ request, onClose }: { request: LinkRequest; onClose
           <label className="mt-3 grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-2 text-sm">
             <span className="text-xs text-muted-foreground">Role</span>
             <select aria-label="Role" className={FIELD} value={role} onChange={(event) => setRole(event.target.value as LinkRole)}>
-              {LINK_ROLES.map((item) => <option key={item} value={item}>{ROLE_LABELS[item].long}</option>)}
+              {LINK_ROLES.filter((item) => item !== "owner").map((item) => <option key={item} value={item}>{ROLE_LABELS[item].long}</option>)}
             </select>
           </label>
         </>
@@ -153,7 +139,7 @@ export function LinkDialog({ request, onClose }: { request: LinkRequest; onClose
           <ProjectSelect projects={projects.data} value={projectId} onChange={setProjectChoice} />
           <span className="text-xs text-muted-foreground">Start it to</span>
           <select aria-label="Start it to" className={FIELD} value={start} onChange={(event) => setStart(event.target.value as "own" | "review")}>
-            <option value="own">Own it: address its reviews and checks</option>
+            <option value="own">Own it: work on the PR</option>
             <option value="review">Review it</option>
           </select>
           {projects.error !== null && <div className="col-span-2"><ErrorNote>Could not list projects: {messageOf(projects.error)}</ErrorNote></div>}

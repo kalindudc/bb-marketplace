@@ -6,6 +6,13 @@ import { applyChange, type Change } from "../../src/ui/edit";
 import { formatRoute } from "../../src/ui/route";
 import { app, callsTo, handlers, mount, pr, setViewport, unmountAll, type Handlers } from "./helpers";
 
+/** Opens the PR view's Details, where the Manage card lives. */
+async function details(root: HTMLElement) {
+  const section = await waitFor(() => within(root).getByRole("region", { name: "Details" }));
+  fireEvent.click(within(section).getByRole("button", { name: /Details/u }));
+  return section;
+}
+
 const toasts = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn() }));
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), toasts) }));
 
@@ -17,7 +24,7 @@ afterEach(() => {
 
 const ALL_ACTIONS: PrView["actions"] = ["ready", "draft", "close", "reopen", "labels", "reviewers"];
 const mine = (overrides: Partial<PrView> = {}) => pr({
-  mine: true, author: "kalindudc", reasons: [], actions: ALL_ACTIONS,
+  mine: true, author: "kalindudc", reasons: [], actions: ALL_ACTIONS, requestedAt: null,
   labels: [{ name: "bug", color: "d73a4a" }],
   reviewers: [
     { login: "alice-w", team: false, state: "changes" },
@@ -31,9 +38,9 @@ const mine = (overrides: Partial<PrView> = {}) => pr({
 async function open(start: PrView, rpc: Partial<Handlers> = {}) {
   let current = start;
   const loaded = await app();
-  const slot = mount<PluginNavPanelProps>(loaded.navPanels[0]!.component, { subPath: formatRoute({ view: "section", section: "inflight", key: start.key }) }, handlers({
-    list: () => ({ prs: [current] }),
-    detail: () => ({ pr: current, events: [], body: "" }),
+  const slot = mount<PluginNavPanelProps>(loaded.navPanels[0]!.component, { subPath: formatRoute({ view: "mine", key: start.key }) }, handlers({
+    list: ({ area }) => ({ prs: area === "mine" ? [current] : [] }),
+    detail: () => ({ pr: current, events: [], body: "", draft: null }),
     editPr: ({ change }) => {
       current = applyChange(current, change as Change, new Map());
       return { pr: current };
@@ -48,6 +55,7 @@ async function open(start: PrView, rpc: Partial<Handlers> = {}) {
     }),
     ...rpc,
   }));
+  await details(slot.container);
   const card = await waitFor(() => slot.container.querySelector<HTMLElement>("[data-manage]") ?? Promise.reject(new Error("no manage card")));
   return { slot, card };
 }
@@ -59,8 +67,9 @@ describe("the Manage your PR card", () => {
   it("shows only for PRs with actions; others get labels and reviewers to read", async () => {
     const theirs = pr({ labels: [{ name: "loom", color: null }], reviewers: [{ login: "kalindudc", team: false, state: "requested" }] });
     const loaded = await app();
-    const slot = mount<PluginNavPanelProps>(loaded.navPanels[0]!.component, { subPath: formatRoute({ view: "section", section: "requested", key: theirs.key }) },
-      handlers({ list: () => ({ prs: [theirs] }), detail: () => ({ pr: theirs, events: [], body: "" }) }));
+    const slot = mount<PluginNavPanelProps>(loaded.navPanels[0]!.component, { subPath: formatRoute({ view: "reviews", source: "all", key: theirs.key }) },
+      handlers({ list: () => ({ prs: [theirs] }), detail: () => ({ pr: theirs, events: [], body: "", draft: null }) }));
+    await details(slot.container);
     await waitFor(() => expect(slot.container.querySelector("[data-readonly='labels']")).not.toBeNull());
     expect(slot.container.querySelector("[data-manage]")).toBeNull();
     expect(slot.container.querySelector("[data-readonly='labels'] [data-label='loom']")).not.toBeNull();
@@ -220,7 +229,7 @@ describe("the Manage your PR card", () => {
     });
     fireEvent.click(within(row(card, "labels")).getByRole("button", { name: "Remove label bug" }));
     await waitFor(() => expect(edits(slot)).toHaveLength(1));
-    const listRow = slot.container.querySelector<HTMLElement>(`ul[aria-label='Pull requests'] [data-pr="${mine().key}"]`)!;
+    const listRow = slot.container.querySelector<HTMLElement>(`li[data-pr="${mine().key}"]`)!;
     expect(listRow.querySelector("[data-label='bug']")).toBeNull();
     release();
   });

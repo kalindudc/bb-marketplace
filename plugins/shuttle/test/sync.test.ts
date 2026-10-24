@@ -10,11 +10,11 @@ describe("sync", () => {
     h.lists.team_requested = [pr(4, { teams: ["@shop/edge"] })];
     h.lists.mentioned = [pr(5)];
     await h.shuttle.sync();
-    expect(h.shuttle.list("inflight").map((p) => p.number)).toEqual([1]);
+    expect(h.shuttle.list("mine").map((p) => p.number)).toEqual([1]);
     expect(h.shuttle.list("done").map((p) => p.number)).toEqual([2]);
-    expect(h.shuttle.list("requested").map((p) => p.number)).toEqual([3]);
-    expect(h.shuttle.list("team")[0]!.reasons).toEqual([{ reason: "team", teams: ["@shop/edge"] }]);
-    expect(h.shuttle.list("mentioned").map((p) => p.number)).toEqual([5]);
+    const reviews = h.shuttle.list("reviews");
+    expect(reviews.map((p) => p.number).sort()).toEqual([3, 4, 5]);
+    expect(reviews.find((p) => p.number === 4)!).toMatchObject({ reasons: [{ reason: "team", teams: ["@shop/edge"] }], teams: ["edge"] });
     expect(h.shuttle.overview().servers[0]).toMatchObject({ ok: true, login: "me" });
     const closed = h.runner.calls.find((c) => c.operation === "authored" && c.env.SHUTTLE_STATE === "closed");
     expect(closed?.env.SHUTTLE_SINCE).toBe("2026-10-09");
@@ -26,14 +26,14 @@ describe("sync", () => {
     await h.shuttle.sync();
     h.lists.review_requested = [pr(6)];
     await h.shuttle.sync();
-    expect(h.shuttle.list("requested").map((p) => p.number)).toEqual([6]);
+    expect(h.shuttle.list("reviews").map((p) => p.number)).toEqual([6]);
     h.lists.review_requested = new Error("boom") as unknown as unknown[];
     await h.shuttle.sync();
-    expect(h.shuttle.list("requested").map((p) => p.number)).toEqual([6]);
+    expect(h.shuttle.list("reviews").map((p) => p.number)).toEqual([6]);
     const status = h.shuttle.overview().servers[0]!;
     expect(status.ok).toBe(false);
     expect(status.error).toContain("boom");
-    expect(h.shuttle.list("requested")[0]!.stale).toBe(true);
+    expect(h.shuttle.list("reviews")[0]!.stale).toBe(true);
   });
 
   it("refreshes a linked PR that no list covers", async () => {
@@ -64,7 +64,7 @@ describe("auto review", () => {
     expect(h.port.spawned).toHaveLength(1);
     const spawned = h.port.spawned[0]!;
     expect(spawned).toMatchObject({ projectId: "proj_world", providerId: "pi", model: "m1", reasoningLevel: "high", workspace: { kind: "worktree" }, title: "Review shop/world#3" });
-    expect(spawned.prompt).toBe("Review https://forge.test/shop/world/pull/3 Use the `pr-reviewer` skill for this review.\nforge pr view 3 -R shop/world");
+    expect(spawned.prompt).toMatch(/^Review https:\/\/forge\.test\/shop\/world\/pull\/3 Use the `pr-reviewer` skill for this review\.\nforge pr view 3 -R shop\/world\n\nWhen your review is ready, call the shuttle_review_draft tool for forge:shop\/world#3/u);
     const view = h.shuttle.view("forge:shop/world#3");
     expect(view.links).toEqual([{ threadId: spawned.threadId, title: "Review shop/world#3", role: "review", archived: false }]);
     expect(view.lastReview).toMatchObject({ trigger: "auto", state: "running" });
@@ -72,9 +72,9 @@ describe("auto review", () => {
     await h.shuttle.sync();
     expect(h.port.spawned).toHaveLength(1);
     h.shuttle.onThreadIdle(spawned.threadId);
-    expect(h.shuttle.list("needs").map((p) => p.number)).toEqual([3]);
-    h.shuttle.dismiss("forge:shop/world#3");
-    expect(h.shuttle.list("needs")).toEqual([]);
+    expect(h.shuttle.inbox().prs.map((p) => [p.number, p.next.kind])).toEqual([[3, "review_done"]]);
+    h.shuttle.snooze("forge:shop/world#3", "update");
+    expect(h.shuttle.inbox().prs).toEqual([]);
   });
 
   it("skips team requests, mentions, my own PRs, drafts and other repos unless configured", async () => {

@@ -44,11 +44,14 @@ function ChecksGlyph({ checks }: { checks: PrView["checks"] }) {
   return null;
 }
 
-function Trailing({ pr }: { pr: PrView }) {
+function Trailing({ pr, threadId }: { pr: PrView; threadId: string }) {
+  const agent = pr.agent;
   return (
     <span className="inline-flex items-center gap-1.5">
       <ChecksGlyph checks={pr.checks} />
-      {pr.watch !== null && <Icon name="Eye" aria-label="Watched" className="size-3.5 text-success" />}
+      {agent !== null && agent.mode !== "off" && (
+        <Icon name="Bot" aria-label={agent.threadId === threadId ? "This thread is the agent" : `Agent: ${agent.title}`} className={`size-3.5 ${agent.threadId === threadId ? "text-success" : "text-muted-foreground"}`} />
+      )}
     </span>
   );
 }
@@ -72,7 +75,7 @@ export function PullRequestsInfo({ threadId }: ExperimentalThreadInfoProps) {
           name={shortKey(pr)}
           title={pr.title}
           context={contextOf(pr)}
-          trailing={<Trailing pr={pr} />}
+          trailing={<Trailing pr={pr} threadId={threadId} />}
           onSelect={() => openTab(threadId)}
         />
       )} />
@@ -120,7 +123,7 @@ export function PullRequestsDetails({ threadId }: ExperimentalThreadContextSegme
               <span className="shrink-0 font-mono">{shortKey(pr)}</span>
               <span className="min-w-0 flex-1 truncate text-muted-foreground">{pr.title}</span>
               <span className={`shrink-0 ${TONE_TEXT[attention.tone]}`}>{attention.label}</span>
-              <Trailing pr={pr} />
+              <Trailing pr={pr} threadId={threadId} />
             </button>
           </li>
         );

@@ -1,13 +1,18 @@
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers, type RenderSlotOptions, type RenderedSlot } from "@get-bb/plugin-sdk/testing/app";
-import type { ComponentType } from "react";
+import { createElement, type ComponentType } from "react";
 import { DEFAULT_CONFIG, type Config } from "../../src/config";
-import { rpcContract, type EventView, type LinkView, type Overview, type PrView, type ServerStatus } from "../../src/contract";
+import {
+  rpcContract, type AgentView, type ConversationItem, type EventView, type InboxView, type InsightsView, type LinkView, type MergeOptions,
+  type NextStep, type Overview, type PrView, type ReviewDraft, type ServerStatus,
+} from "../../src/contract";
 
 export type Handlers = PluginRpcTestHandlers<typeof rpcContract>;
 /** GitHub PR Status's read, answered from the same map: the harness routes every plugin's RPC to it. */
 export type PullRequests = (input: { keys: string[] }) => Record<string, unknown>;
 
 export const NOW = Date.now();
+export const HOUR = 60 * 60_000;
+export const DAY = 24 * HOUR;
 
 // jsdom has no matchMedia. This one answers min- and max-width queries against a width the tests set.
 const DESKTOP = 1440;
@@ -35,6 +40,14 @@ export function setViewport(next: number) {
   for (const listener of [...mediaListeners]) listener();
 }
 
+/** A quiet next step: waiting for review, nothing to press, not in the Inbox. */
+export function next(overrides: Partial<NextStep> = {}): NextStep {
+  return {
+    kind: "waiting_review", tone: "neutral", label: "Waiting for review · 1d", why: "2 reviewers asked; nobody has approved yet.",
+    clears: null, inbox: false, primary: null, more: [], ...overrides,
+  };
+}
+
 export function pr(overrides: Partial<PrView> = {}): PrView {
   const repo = overrides.repo ?? "get-bb/bb";
   const number = overrides.number ?? 4411;
@@ -53,6 +66,7 @@ export function pr(overrides: Partial<PrView> = {}): PrView {
     mine: false,
     state: "open",
     checks: "passed",
+    checkCounts: null,
     review: "required",
     head: "4be81d0aa",
     headRef: "dana/compact-header",
@@ -61,21 +75,65 @@ export function pr(overrides: Partial<PrView> = {}): PrView {
     deletions: 12,
     files: 4,
     updatedAt: NOW - 25 * 60_000,
+    createdAt: NOW - DAY,
+    closedAt: null,
     reasons: [{ reason: "requested", teams: [] }],
-    watch: null,
+    teams: [],
+    requestedAt: NOW - 5 * HOUR,
+    bot: false,
+    quiet: false,
+    tracked: false,
     links: [],
+    agent: null,
+    suggestedAgent: null,
+    watch: null,
     lastReview: null,
-    needs: null,
+    myReview: null,
+    draft: null,
+    next: next(),
+    snoozedUntil: null,
+    handled: false,
+    autoMerge: false,
     stale: false,
     pendingItems: 0,
     labels: null,
     reviewers: null,
     actions: [],
+    can: { merge: false, comment: false, review: false, reply: false, resolve: false },
     ...overrides,
   };
 }
 
+/** One of the user's own PRs. */
+export const mine = (overrides: Partial<PrView> = {}) => pr({ mine: true, author: "kalindudc", reasons: [{ reason: "authored", teams: [] }], requestedAt: null, ...overrides });
+
+export const CAN_ALL: PrView["can"] = { merge: true, comment: true, review: true, reply: true, resolve: true };
+
+export const agent = (overrides: Partial<AgentView> = {}): AgentView => ({
+  threadId: "thr_agent", title: "CF token containment 2: retry WAF deletes", mode: "fix", status: "idle", auto: false, lastSent: null, ...overrides,
+});
+
 export const link = (overrides: Partial<LinkView> = {}): LinkView => ({ threadId: "thr_1", title: "Review get-bb/bb#4411", role: "review", archived: false, ...overrides });
+
+export function draft(overrides: Partial<ReviewDraft> = {}): ReviewDraft {
+  return {
+    id: 7, threadId: "thr_review", threadTitle: "Review get-bb/bb#4411", preset: "Standard review", trigger: "auto", head: "4be81d0aa", at: NOW - 55 * 60_000,
+    summary: "Thanks, this unblocks the header. One race and an ordering bug.", verdict: "changes",
+    findings: [
+      { id: "a", severity: "high", path: "src/header/actions.tsx", line: 88, body: "The compact prop never reaches the overflow menu." },
+      { id: "b", severity: "medium", path: "src/header/menu.tsx", line: 31, body: "The menu closes before the action runs." },
+      { id: "c", severity: "nit", path: "src/header/README.md", line: null, body: "The README still names the old prop." },
+    ],
+    ...overrides,
+  };
+}
+
+export function item(overrides: Partial<ConversationItem> = {}): ConversationItem {
+  return {
+    id: "c1", kind: "thread", author: "alice-w", bot: false, mine: false, state: null, body: "The retry should back off.", path: "app/jobs/waf.rb", line: 42,
+    url: "https://github.com/get-bb/bb/pull/4411#discussion_r1", at: NOW - 40 * 60_000, thread: "PRRT_1", resolved: false, delivery: null, outcome: null, ...overrides,
+  };
+}
 
 export function server(overrides: Partial<ServerStatus> = {}): ServerStatus {
   return {
@@ -89,13 +147,33 @@ export function server(overrides: Partial<ServerStatus> = {}): ServerStatus {
 export function overview(overrides: Partial<Overview> = {}): Overview {
   return {
     servers: [server(), server({ id: "delta", name: "Delta", kind: "command", login: "kalindu.decosta" })],
-    counts: { needs: 1, requested: 2, team: 0, mentioned: 0, watching: 0, inflight: 3, done: 1 },
+    counts: { inbox: 2, mine: 3, done: 1, reviews: 12 },
     syncedAt: NOW - 60_000,
     syncing: false,
     paused: false,
+    autoAgent: false,
     ...overrides,
   };
 }
+
+export function inbox(overrides: Partial<InboxView> = {}): InboxView {
+  return { prs: [], agents: { open: 0, withAgent: 0, working: 0, waiting: 0, none: 0 }, olderRequests: 0, handled: [], ...overrides };
+}
+
+export function insights(overrides: Partial<InsightsView> = {}): InsightsView {
+  return {
+    range: "30d", collectingSince: null,
+    kpis: { merged: 0, opened: 0, timeToMerge: null, firstReviewWait: null, reviewResponse: null },
+    phases: null,
+    feedback: { total: 0, fixed: 0, replied: 0, declined: 0, you: 0, open: 0, agentMedianMs: null },
+    requests: [], openRequests: [], ai: [], reviewers: [], ideas: [],
+    ...overrides,
+  };
+}
+
+export const mergeOptions = (overrides: Partial<MergeOptions> = {}): MergeOptions => ({
+  methods: ["squash", "merge"], default: "squash", deleteBranch: true, canAuto: true, state: "clean", detail: null, ...overrides,
+});
 
 export function config(overrides: Partial<Config> = {}): Config {
   const base = structuredClone(DEFAULT_CONFIG);
@@ -109,7 +187,7 @@ export function config(overrides: Partial<Config> = {}): Config {
   };
 }
 
-export const event = (overrides: Partial<EventView> = {}): EventView => ({ id: 1, at: NOW - 60_000, kind: "review_started", text: "Auto review started", key: null, threadId: null, ...overrides });
+export const event = (overrides: Partial<EventView> = {}): EventView => ({ id: 1, at: NOW - 60_000, kind: "review", text: "Auto review started", key: null, threadId: null, ...overrides });
 
 const unexpected = (method: string) => () => {
   throw new Error(`unexpected rpc ${method}`);
@@ -118,17 +196,26 @@ const unexpected = (method: string) => () => {
 export function handlers(overrides: Partial<Handlers> = {}): Handlers {
   return {
     overview: () => overview(),
+    inbox: () => inbox(),
     list: () => ({ prs: [] }),
     detail: unexpected("detail"),
+    conversation: () => ({ items: [], error: null, fetchedAt: NOW }),
     lookup: unexpected("lookup"),
     activity: () => ({ events: [] }),
+    insights: () => insights(),
     sync: () => ({ ok: true }),
     link: unexpected("link"),
     unlink: unexpected("unlink"),
     watch: unexpected("watch"),
+    setAgent: unexpected("setAgent"),
+    setAgentMode: unexpected("setAgentMode"),
+    askAgent: unexpected("askAgent"),
+    setSettings: unexpected("setSettings"),
+    track: unexpected("track"),
+    snooze: unexpected("snooze"),
+    handle: unexpected("handle"),
     review: unexpected("review"),
     newThread: unexpected("newThread"),
-    dismiss: unexpected("dismiss"),
     threadPrs: () => ({ prs: [], sent: [] }),
     sendUnread: () => ({ sent: 0 }),
     threads: () => ({ threads: [] }),
@@ -141,6 +228,15 @@ export function handlers(overrides: Partial<Handlers> = {}): Handlers {
     skills: () => ({ skills: [{ id: "pr-reviewer", name: "pr-reviewer", description: "Multi-model critic consensus reviews" }] }),
     editPr: unexpected("editPr"),
     editOptions: () => ({ labels: [], people: [], teams: [] }),
+    mergeOptions: () => mergeOptions(),
+    merge: unexpected("merge"),
+    cancelAutoMerge: unexpected("cancelAutoMerge"),
+    comment: unexpected("comment"),
+    submitReview: unexpected("submitReview"),
+    discardDraft: unexpected("discardDraft"),
+    restoreDraft: unexpected("restoreDraft"),
+    reply: unexpected("reply"),
+    resolve: unexpected("resolve"),
     ...overrides,
   };
 }
@@ -170,3 +266,24 @@ export function unmountAll() {
 }
 
 export const callsTo = (slot: RenderedSlot, method: string) => slot.inspection.rpcCalls.filter((call) => call.method === method).map((call) => call.input);
+
+/** The page at a subPath, and what bb's router does after a navigation: the same page with the new subPath. */
+export async function page(subPath: string, rpc: Partial<Handlers> = {}, options: Omit<RenderSlotOptions<typeof rpcContract>, "rpc"> = {}) {
+  const loaded = await app();
+  const panel = loaded.navPanels[0]!;
+  const slot = mount(panel.component, { subPath }, handlers(rpc), options);
+  const route = (nextPath: string) => slot.lifecycle.rerender(createElement(panel.component, { subPath: nextPath }));
+  return { slot, route };
+}
+
+/** Waits for an element by selector, under the slot's container or the whole document. */
+export async function find(root: ParentNode, selector: string): Promise<HTMLElement> {
+  const { waitFor } = await import("@testing-library/react");
+  return waitFor(() => {
+    const found = root.querySelector<HTMLElement>(selector);
+    if (found === null) throw new Error(`no ${selector}`);
+    return found;
+  });
+}
+
+export const lastNavigation = (slot: RenderedSlot) => slot.inspection.navigateCalls.at(-1);

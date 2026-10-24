@@ -5,17 +5,22 @@ import { errText, ShuttleError, type Ctx } from "./ctx";
 import type { PrRow } from "./db/store";
 import { matchProject } from "./projects";
 import { linkPr, requirePr, shortKey } from "./prs";
-import { renderTemplate } from "./templates";
+import { inert, renderTemplate } from "./templates";
 import { workspaceFor } from "./workspaces";
 
 export { renderTemplate };
+
+/** A server's link goes into prompts only as one plain http(s) URL; anything else is quoted server text. */
+export function promptUrl(url: string): string {
+  return /^https?:\/\/[^\s`<>"']{1,1000}$/u.test(url) ? url : `"${inert(url, 300)}"`;
+}
 
 export function promptVars(ctx: Ctx, pr: PrRow, extra: { skill?: string; note?: string } = {}): Record<string, string> {
   const server = ctx.server(pr.server);
   const skill = extra.skill?.trim() ?? "";
   const note = extra.note?.trim() ?? "";
   return {
-    url: pr.url,
+    url: promptUrl(pr.url),
     key: pr.key,
     server: server?.name ?? pr.server,
     repo: pr.repo,
@@ -24,8 +29,9 @@ export function promptVars(ctx: Ctx, pr: PrRow, extra: { skill?: string; note?: 
     display: shortKey(ctx, pr),
     head: pr.head ? pr.head.slice(0, 12) : "unknown",
     base: pr.base ?? "unknown",
-    title: pr.title,
-    author: pr.author,
+    // Server text: one bounded line, so a title can't pose as more of the prompt.
+    title: inert(pr.title, 300),
+    author: inert(pr.author, 100),
     skill,
     skill_line: skill ? `Use the \`${skill}\` skill for this review.\n` : "",
     view_command: ctx.adapter(pr.server).readCommand(pr.repo, pr.number, pr.url),
@@ -75,6 +81,9 @@ export async function startReview(ctx: Ctx, input: ReviewInput, trigger: "auto" 
   const role = ctx.store.linkRole(pr.id, threadId) ?? "review";
   await linkPr(ctx, pr, threadId, role, { watch: false });
   ctx.store.addReview({ pr_id: pr.id, thread_id: threadId, preset: preset.name, trigger, head: pr.head });
+  // A new review makes the last one's unposted draft out of date.
+  const stale = ctx.store.liveDraft(pr.id);
+  if (stale) ctx.store.setDraftState(stale.id, "discarded");
   ctx.store.setDismissed(pr.id, null);
   const why = trigger === "auto" ? "Auto review" : "Review";
   ctx.store.addEvent("review", `${why} of ${shortKey(ctx, pr)} started with ${preset.name}${skill ? ` (${skill})` : ""} in \u201c${ctx.store.threadTitle(threadId)}\u201d.`, pr.id, threadId);
@@ -94,12 +103,17 @@ async function reviewSectionId(ctx: Ctx, pr: PrRow): Promise<string | null> {
   }
 }
 
+/** Added to every review prompt, whatever the preset says, so the draft comes back to Shuttle to post. */
+export const DRAFT_PROMPT =
+  "When your review is ready, call the shuttle_review_draft tool for {key} with a short summary, the verdict you suggest (comment, approve or changes) and each finding: its severity (high, medium, low or nit), the file path, the line in the new version of the file, and the comment as you would post it. Shuttle shows the draft to me to choose what to post; do not post anything on the pull request yourself.";
+
 export function renderPromptFor(ctx: Ctx, pr: PrRow, preset: Preset, extra: { skill?: string; note?: string }): string {
-  return renderTemplate(preset.prompt, promptVars(ctx, pr, extra));
+  const vars = promptVars(ctx, pr, extra);
+  return `${renderTemplate(preset.prompt, vars)}\n\n${renderTemplate(DRAFT_PROMPT, vars)}`;
 }
 
 export const OWN_PROMPT =
-  "You own the pull request {url} ({display}): {title}.\nRead it with: {view_command}\nShuttle has linked it to this thread; when it is watched, new reviews arrive here. Read it now and summarize its state in a few lines, then wait for instructions.";
+  "You are the agent of the pull request {url} ({display}): {title}.\nRead it with: {view_command}\nShuttle sends new reviews, comments and failed checks on it to this thread. Read it now and summarize its state in a few lines, then wait for instructions.";
 
 export async function startOwnerThread(ctx: Ctx, key: string, projectId?: string): Promise<string> {
   const pr = requirePr(ctx, key);

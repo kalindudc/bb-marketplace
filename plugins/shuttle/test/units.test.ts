@@ -130,10 +130,14 @@ describe("descriptions", () => {
 });
 
 describe("shell safety", () => {
-  it("quotes server data in read commands and refuses hostile repo names", async () => {
+  it("quotes server data in read commands, fills each placeholder once, and refuses hostile repo names", async () => {
     const { fillCommand } = await import("../src/adapters/exec");
     expect(fillCommand("dt pr view {number} -R {repo} {url}", "a/b", 3, "https://x/y?a=1&b=2")).toBe("dt pr view 3 -R a/b 'https://x/y?a=1&b=2'");
     expect(fillCommand("x {repo}", "a/b'; echo pwned", 1, "u")).toBe("x 'a/b'\\''; echo pwned'");
+    const crafted = fillCommand("x -R {repo} {number}", "x{url}/y{number}", 7, "https://forge.test/p/7?tab=$(printf${IFS}INJECTED)");
+    expect(crafted).toBe("x -R 'x{url}/y{number}' 7");
+    const run = await runProcess("/bin/sh", ["-c", crafted.replace(/^x /u, "printf '%s\\n' ")], { timeoutMs: 5000 });
+    expect(run.stdout).toBe("-R\nx{url}/y{number}\n7\n");
     const server = parseConfig({ ...DEFAULT_CONFIG, servers: [{ ...TEST_SERVER, commands: { view: 'echo \'{"repo":"a/b; echo pwned","number":1,"title":"T","state":"open"}\'' } }] }).servers[0]!;
     await expect(new CommandAdapter(server, runProcess).view("a/b", 1)).rejects.toThrow(/wrong shape: repo/u);
   });
@@ -145,7 +149,7 @@ describe("github adapter", () => {
     expect(searchQuery("authored", { state: "closed", since: "2026-10-01" })).toContain("is:closed updated:>=2026-10-01");
   });
 
-  it("keeps real review activity and failed checks", () => {
+  it("keeps real review activity, resolved threads marked, and failed checks", () => {
     const who = (login: string, bot = false) => ({ login, __typename: bot ? "Bot" : "User" });
     const activity = toActivity({
       headRefOid: "abc",
@@ -164,8 +168,9 @@ describe("github adapter", () => {
         { __typename: "CheckRun", id: "CK2", name: "test", conclusion: "SUCCESS", detailsUrl: "d" },
       ] } } } }] },
     });
-    expect(activity.items.map((i) => i.id)).toEqual(["R1:CHANGES_REQUESTED", "T1:C0", "T1:C1", "IC1", "CK1:abc"]);
-    expect(activity.items[3]!.bot).toBe(true);
+    expect(activity.items.map((i) => i.id)).toEqual(["R1:CHANGES_REQUESTED", "T1:C0", "T1:C1", "T2:C2", "IC1", "CK1:abc"]);
+    expect(activity.items.map((i) => i.resolved)).toEqual([null, false, false, true, null, null]);
+    expect(activity.items[4]!.bot).toBe(true);
   });
 });
 

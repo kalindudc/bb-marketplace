@@ -25,8 +25,13 @@ export class FakePort implements BbPort {
   logs: string[] = [];
   private next = 1;
 
-  addThread(id: string, title = `Thread ${id}`, archived = false): void {
-    this.threads.set(id, { id, title, archived, projectId: "proj_world", status: "idle", updatedAt: 0 });
+  settingsPatches: Array<{ autoAgent?: boolean; inboxRequests?: boolean }> = [];
+
+  addThread(id: string, title = `Thread ${id}`, archived = false, extra: Partial<ThreadInfo> = {}): void {
+    this.threads.set(id, { id, title, archived, projectId: "proj_world", status: "idle", waiting: false, branch: null, updatedAt: 0, ...extra });
+  }
+  async setSettings(patch: { autoAgent?: boolean; inboxRequests?: boolean }): Promise<void> {
+    this.settingsPatches.push(patch);
   }
   async spawnThread(args: SpawnArgs): Promise<string> {
     const threadId = `thr_spawned${this.next++}`;

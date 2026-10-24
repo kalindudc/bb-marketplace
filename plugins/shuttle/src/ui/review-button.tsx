@@ -1,11 +1,11 @@
+import { useState } from "react";
 import { toast } from "sonner";
-import { experimental_Icon as Icon, experimental_usePluginId, UrlLink, useBbNavigate } from "@get-bb/plugin-sdk/app";
+import { experimental_Icon as Icon, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import type { Preset } from "../config";
 import type { PrView, ReviewInput } from "../contract";
-import { BUTTON, MENU_ITEM, Menu, MenuItem, MenuSeparator } from "./common";
-import { settingsHref, shortKey } from "./format";
+import { BUTTON_GHOST, BUTTON_PRIMARY, Choice, Dialog, FIELD } from "./common";
 import { useShuttleMutation } from "./data";
-import { PickerAction, PickerSeparator } from "./picker";
+import { tinyKey } from "./format";
 
 /** The preset the server uses when a review names none. */
 export const defaultPresetOf = (presets: readonly Preset[]): Preset | null => presets.find((preset) => preset.default) ?? presets[0] ?? null;
@@ -22,84 +22,71 @@ export function useStartReview() {
   const start = async (input: ReviewInput, presetName: string) => {
     const result = await review.run(input);
     if (result !== null) {
-      toast.success(`${presetName}: review thread started`, { action: { label: "Open", onClick: () => navigate.toThread(result.threadId) } });
+      toast.success(`${presetName} started. Its findings land on the PR.`, { action: { label: "Open", onClick: () => navigate.toThread(result.threadId) } });
     }
     return result;
   };
   return { busy: review.isPending, start };
 }
 
-/** Review with the default preset, or pick another from the arrow beside it. */
-export function ReviewButton({ pr, presets, onCustomize }: { pr: PrView; presets: readonly Preset[] | null; onCustomize(pr: PrView): void }) {
-  const pluginId = experimental_usePluginId();
+/** A re-review goes to the thread of the last one, which already knows your review. */
+export const reReviewThread = (pr: PrView): { threadId: string; title: string } | null =>
+  pr.next.kind === "rereview" && pr.lastReview !== null ? { threadId: pr.lastReview.threadId, title: pr.lastReview.title } : null;
+
+/** Pick a preset and start an AI review; "Change for this run…" opens the per-run dialog. */
+export function PresetDialog({ pr, presets, onCustomize, onClose }: { pr: PrView; presets: readonly Preset[]; onCustomize(): void; onClose(): void }) {
   const { busy, start } = useStartReview();
-  const preset = presets === null ? null : defaultPresetOf(presets);
+  const [presetId, setPresetId] = useState(defaultPresetOf(presets)?.id ?? null);
+  const again = reReviewThread(pr);
+  const preset = presets.find((item) => item.id === presetId) ?? null;
+  const submit = async () => {
+    if (preset === null) return;
+    if (await start({ key: pr.key, presetId: preset.id, ...(again === null ? {} : { threadId: again.threadId }) }, preset.name)) onClose();
+  };
   return (
-    <span className="inline-flex">
-      <button type="button" disabled={busy} className={`${BUTTON} rounded-r-none`} title={preset ? `Review with ${preset.name}` : "Review with your default preset"}
-        onClick={() => void start({ key: pr.key }, preset?.name ?? "Default preset")}>
-        <Icon name="Bot" className="size-3.5" aria-hidden />
-        Review
-      </button>
-      <Menu label={`Pick a preset to review ${shortKey(pr)}`} trigger={<Icon name="ChevronDown" className="size-3.5" aria-hidden />}>
-        {presets === null && <span className="px-2.5 py-1.5 text-xs text-muted-foreground">Loading presets…</span>}
-        {presets?.map((item) => (
-          <MenuItem key={item.id} className={MENU_ITEM} onSelect={() => void start({ key: pr.key, presetId: item.id }, item.name)}>
-            <span className="flex items-center gap-2 font-semibold">
-              {item.name}
-              {item.default && <span className="rounded-full border border-border px-1.5 text-[10.5px] font-normal text-muted-foreground">default</span>}
-            </span>
-            <span className="text-xs text-muted-foreground">{presetSummary(item)}</span>
-          </MenuItem>
+    <Dialog title={again !== null ? `Re-review ${tinyKey(pr)}` : `Start an AI review of ${tinyKey(pr)}`} leading={<Icon name="Play" className="size-4" aria-hidden />} onClose={onClose}
+      footer={(
+        <>
+          <button type="button" className={BUTTON_GHOST} onClick={onCustomize}>Change for this run…</button>
+          <span className="flex-1" />
+          <button type="button" className={BUTTON_PRIMARY} disabled={busy || preset === null} onClick={() => void submit()}>
+            <Icon name="Play" className="size-3.5" aria-hidden />Start
+          </button>
+        </>
+      )}>
+      <div role="radiogroup" aria-label="Preset">
+        {presets.map((item) => (
+          <Choice key={item.id} on={item.id === presetId} onPick={() => setPresetId(item.id)} hint={presetSummary(item)}
+            title={<>{item.name}{item.default && <span className="ml-1.5 text-xs font-normal text-muted-foreground">default</span>}</>} />
         ))}
-        <MenuSeparator />
-        <MenuItem className={`${MENU_ITEM} flex-row items-center gap-2`} onSelect={() => onCustomize(pr)}>
-          <Icon name="SlidersHorizontal" className="size-3.5" aria-hidden />
-          Customize this run…
-        </MenuItem>
-        <MenuItem asChild>
-          <UrlLink href={settingsHref(pluginId)} className={`${MENU_ITEM} flex-row items-center gap-2 text-muted-foreground`}>
-            <Icon name="Settings" className="size-3.5" aria-hidden />
-            Edit presets in Settings
-          </UrlLink>
-        </MenuItem>
-      </Menu>
-    </span>
+      </div>
+      {again !== null && <div className="mt-1.5 text-xs text-muted-foreground">Goes to the same thread, “{again.title}”, which already knows your last review.</div>}
+      <div className="mt-1.5 text-xs text-muted-foreground">It runs in its own thread and drafts findings here. Nothing is posted until you choose.</div>
+    </Dialog>
   );
 }
 
-/** The presets as rows of a phone's bottom sheet; `start` comes from a component that outlives the sheet. */
-export function PresetChoices({ pr, presets, start, onCustomize }: {
-  pr: PrView;
-  presets: readonly Preset[] | null;
-  start: ReturnType<typeof useStartReview>["start"];
-  onCustomize(pr: PrView): void;
-}) {
-  const pluginId = experimental_usePluginId();
+/** Approve someone else's PR as you, with an optional comment. */
+export function ApproveDialog({ pr, onClose }: { pr: PrView; onClose(): void }) {
+  const [text, setText] = useState("");
+  const submit = useShuttleMutation("submitReview");
+  const approve = async () => {
+    if ((await submit.run({ key: pr.key, verdict: "approve", body: text.trim(), findings: [] })) === null) return;
+    toast.success(`Approved ${tinyKey(pr)} on ${pr.serverName}.`);
+    onClose();
+  };
   return (
-    <>
-      {presets === null && <span className="px-2.5 py-1.5 text-xs text-muted-foreground">Loading presets…</span>}
-      {presets?.map((item) => (
-        <PickerAction key={item.id} onSelect={() => void start({ key: pr.key, presetId: item.id }, item.name)}>
-          <Icon name="Play" className="size-3.5 shrink-0" aria-hidden />
-          <span className="min-w-0 flex-1">
-            <span className="flex items-center gap-2 font-semibold">
-              {item.name}
-              {item.default && <span className="rounded-full border border-border px-1.5 text-[10.5px] font-normal text-muted-foreground">default</span>}
-            </span>
-            <span className="block truncate text-xs text-muted-foreground">{presetSummary(item)}</span>
-          </span>
-        </PickerAction>
-      ))}
-      <PickerSeparator />
-      <PickerAction onSelect={() => onCustomize(pr)}>
-        <Icon name="SlidersHorizontal" className="size-3.5" aria-hidden />
-        Customize this review…
-      </PickerAction>
-      <UrlLink role="menuitem" href={settingsHref(pluginId)} className={`${MENU_ITEM} flex-row items-center gap-2 py-2 text-muted-foreground`}>
-        <Icon name="Settings" className="size-3.5" aria-hidden />
-        Edit presets in Settings
-      </UrlLink>
-    </>
+    <Dialog title={`Approve ${tinyKey(pr)}`} leading={<Icon name="Check" className="size-4" aria-hidden />} onClose={onClose}
+      footer={(
+        <>
+          <span className="flex-1" />
+          <button type="button" className={BUTTON_GHOST} onClick={onClose}>Cancel</button>
+          <button type="button" className={`${BUTTON_PRIMARY} border-success bg-success`} disabled={submit.isPending} onClick={() => void approve()}>
+            <Icon name="Check" className="size-3.5" aria-hidden />Approve
+          </button>
+        </>
+      )}>
+      <textarea aria-label="Optional comment" rows={3} className={`${FIELD} w-full`} placeholder="Optional comment" value={text} onChange={(event) => setText(event.target.value)} />
+    </Dialog>
   );
 }

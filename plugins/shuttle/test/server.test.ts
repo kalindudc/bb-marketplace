@@ -31,17 +31,17 @@ describe("the plugin", () => {
     expect((await behavior.callRpc("importToml", { toml, apply: true })) as { changes: string[] }).toMatchObject({ changes: expect.arrayContaining(["adds server forge"]) });
     await behavior.callRpc("sync", {});
     await new Promise((resolve) => setTimeout(resolve, 50));
-    const inflight = (await behavior.callRpc("list", { section: "inflight" })) as { prs: Array<{ key: string }> };
+    const inflight = (await behavior.callRpc("list", { area: "mine" })) as { prs: Array<{ key: string }> };
     expect(inflight.prs.map((p) => p.key)).toEqual(["forge:shop/world#1"]);
     await behavior.callRpc("link", { key: "https://forge.test/shop/world/pull/2", threadId: "thr_1" });
     const linked = (await behavior.callRpc("threadPrs", { threadId: "thr_1" })) as { prs: Array<{ key: string }> };
     expect(linked.prs.map((p) => p.key)).toEqual(["forge:shop/world#2"]);
     const cli = await behavior.runCli(["link", "forge:shop/world#1"], { threadId: "thr_1" } as never);
     expect(cli, JSON.stringify(cli)).toMatchObject({ exitCode: 0 });
-    const list = await behavior.runCli(["list", "--section", "inflight"]);
+    const list = await behavior.runCli(["list", "--area", "mine"]);
     expect(list.stdout).toContain("forge:shop/world#1");
     const tools = JSON.stringify(inspection.registrations);
-    for (const name of ["shuttle_link", "shuttle_unlink", "shuttle_prs"]) expect(tools).toContain(name);
+    for (const name of ["shuttle_link", "shuttle_unlink", "shuttle_prs", "shuttle_review_draft", "shuttle_feedback_done"]) expect(tools).toContain(name);
     await lifecycle.dispose();
   });
 
@@ -50,11 +50,11 @@ describe("the plugin", () => {
     await behavior.callRpc("importToml", { toml: configToToml(testConfig()), apply: true });
     await expect(behavior.callRpc("watch", { key: "forge:shop/world#99", mode: "act" })).rejects.toMatchObject({ code: "not_found" });
     await behavior.callRpc("lookup", { query: "forge:shop/world#2" });
-    await expect(behavior.callRpc("watch", { key: "forge:shop/world#2", mode: "act" })).rejects.toMatchObject({ code: "invalid", message: expect.stringContaining("no owner thread") });
+    await expect(behavior.callRpc("watch", { key: "forge:shop/world#2", mode: "act" })).rejects.toMatchObject({ code: "invalid", message: expect.stringContaining("no agent") });
     const before = inspection.experimental_rpcInvalidations.length;
     await behavior.callRpc("sync", {});
     await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(inspection.experimental_rpcInvalidations.slice(before)).toContainEqual(["prs", "servers"]);
+    expect(inspection.experimental_rpcInvalidations.slice(before)).toContainEqual(["prs", "servers", "conversation"]);
     const detail = (await behavior.callRpc("detail", { key: "forge:shop/world#7" })) as { pr: { key: string } };
     expect(detail.pr.key).toBe("forge:shop/world#2".replace("#2", "#7"));
     await lifecycle.dispose();

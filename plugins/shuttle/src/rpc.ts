@@ -22,10 +22,13 @@ const WATCHED_FRESH_MS = 60_000;
 export function registerRpc(bb: BbPluginApi, shuttle: Shuttle): void {
   bb.rpc.register(rpcContract, {
     overview: () => refusing(() => shuttle.overview()),
-    list: ({ section }) => refusing(() => ({ prs: shuttle.list(section) })),
+    inbox: () => refusing(() => shuttle.inbox()),
+    list: ({ area }) => refusing(() => ({ prs: shuttle.list(area) })),
     detail: ({ key }) => refusing(() => shuttle.detailOrLookup(key)),
+    conversation: ({ key }) => refusing(() => shuttle.conversation(key)),
     lookup: ({ query }) => refusing(async () => ({ pr: await shuttle.lookup(query) })),
     activity: ({ limit }) => refusing(() => ({ events: shuttle.activity(limit) })),
+    insights: ({ range }) => refusing(() => shuttle.insights(range)),
     // A sync can take a minute on a slow server; the page follows it through overview.syncing.
     sync: () => {
       shuttle.sync().catch((error: unknown) => bb.log.warn(`sync: ${error instanceof Error ? error.message : String(error)}`));
@@ -34,9 +37,21 @@ export function registerRpc(bb: BbPluginApi, shuttle: Shuttle): void {
     link: ({ key, threadId, role }) => refusing(async () => ({ pr: await shuttle.link(key, threadId, role ?? "owner") })),
     unlink: ({ key, threadId }) => refusing(async () => ({ pr: await shuttle.unlink(key, threadId) })),
     watch: ({ key, mode }) => refusing(() => ({ pr: shuttle.watch(key, mode) })),
+    setAgent: ({ key, target, mode }) => refusing(() => shuttle.setAgent(key, target, mode)),
+    setAgentMode: ({ key, mode }) => refusing(async () => ({ pr: await shuttle.setAgentMode(key, mode) })),
+    askAgent: ({ key, text }) => refusing(async () => {
+      await shuttle.askAgent(key, text);
+      return { ok: true as const };
+    }),
+    setSettings: (patch) => refusing(async () => {
+      await shuttle.setSettings(patch);
+      return { ok: true as const };
+    }),
+    track: ({ key, on }) => refusing(() => ({ pr: shuttle.track(key, on) })),
+    snooze: ({ key, until }) => refusing(() => ({ pr: shuttle.snooze(key, until) })),
+    handle: ({ key, on }) => refusing(() => ({ pr: shuttle.handle(key, on) })),
     review: (input) => refusing(async () => ({ threadId: await shuttle.review(input) })),
     newThread: ({ key, start, projectId }) => refusing(async () => ({ threadId: await shuttle.newThread(key, start, projectId) })),
-    dismiss: ({ key }) => refusing(() => ({ pr: shuttle.dismiss(key) })),
     threadPrs: ({ threadId }) => refusing(() => shuttle.threadPrs(threadId)),
     sendUnread: ({ threadId }) => refusing(async () => ({ sent: await shuttle.sendUnread(threadId) })),
     threads: ({ query }) => refusing(async () => ({ threads: await shuttle.threads(query) })),
@@ -48,6 +63,21 @@ export function registerRpc(bb: BbPluginApi, shuttle: Shuttle): void {
     importToml: ({ toml, apply }) => refusing(() => shuttle.importToml(toml, apply)),
     editPr: ({ key, change }) => refusing(async () => ({ pr: await shuttle.editPr(key, change) })),
     editOptions: ({ key }) => refusing(() => shuttle.editOptions(key)),
+    mergeOptions: ({ key }) => refusing(() => shuttle.mergeOptions(key)),
+    merge: ({ key, ...input }) => refusing(() => shuttle.merge(key, input)),
+    cancelAutoMerge: ({ key }) => refusing(async () => ({ pr: await shuttle.cancelAutoMerge(key) })),
+    comment: ({ key, body }) => refusing(async () => ({ pr: await shuttle.comment(key, body) })),
+    submitReview: ({ key, ...input }) => refusing(() => shuttle.submitReview(key, input)),
+    discardDraft: ({ key, draftId }) => refusing(() => ({ pr: shuttle.discardDraft(key, draftId) })),
+    restoreDraft: ({ key, draftId }) => refusing(() => ({ pr: shuttle.restoreDraft(key, draftId) })),
+    reply: ({ key, thread, body }) => refusing(async () => {
+      await shuttle.reply(key, thread, body);
+      return { ok: true as const };
+    }),
+    resolve: ({ key, thread, resolved }) => refusing(async () => {
+      await shuttle.resolve(key, thread, resolved);
+      return { ok: true as const };
+    }),
     skills: ({ projectId }) => refusing(async () => ({ skills: await shuttle.skills(projectId) })),
   });
 

@@ -1,15 +1,23 @@
-// Watched PRs: find new review activity, hold it for the batch window, then send it to every
-// owner thread, one message per thread for all of that thread's PRs.
+// Agents: find new review activity on the PRs that have one, hold it for the batch window, then
+// send it to the agent (the owner thread), one message per thread for all of that thread's PRs.
+import { createHash } from "node:crypto";
 import { errText, type Ctx } from "./ctx";
 import type { PrRow } from "./db/store";
 import type { ActivityItem } from "./model";
 import { promptVars, renderTemplate } from "./reviews";
+import { inert } from "./templates";
 import { shortKey } from "./prs";
 
 const ITEMS_PER_PR = 25;
 const BODY_CHARS = 700;
 
+/** A short handle for an item that an agent can quote back in shuttle_feedback_done. */
+export function itemRef(itemId: string): string {
+  return createHash("sha1").update(itemId).digest("hex").slice(0, 8);
+}
+
 export function keepItem(ctx: Ctx, pr: PrRow, item: ActivityItem): boolean {
+  if (item.resolved) return false;
   const watch = ctx.config().watch;
   if (watch.ignoreBots && item.bot) return false;
   if (!watch.includeChecks && item.kind === "check") return false;
@@ -19,11 +27,11 @@ export function keepItem(ctx: Ctx, pr: PrRow, item: ActivityItem): boolean {
   return true;
 }
 
-export async function pollWatches(ctx: Ctx, serverId?: string, signal?: AbortSignal): Promise<void> {
+export async function pollWatches(ctx: Ctx, serverId?: string, signal?: AbortSignal, prId?: number): Promise<void> {
   const enabled = new Set(ctx.config().servers.filter((s) => s.enabled).map((s) => s.id));
   for (const watch of ctx.store.watches()) {
     const pr = ctx.store.prById(watch.pr_id);
-    if (!pr || !enabled.has(pr.server) || (serverId && pr.server !== serverId)) continue;
+    if (!pr || !enabled.has(pr.server) || (serverId && pr.server !== serverId) || (prId !== undefined && pr.id !== prId)) continue;
     if (pr.state !== "open" && pr.state !== "draft") continue;
     try {
       const activity = await ctx.adapter(pr.server).activity(pr.repo, pr.number, signal);
@@ -34,7 +42,10 @@ export async function pollWatches(ctx: Ctx, serverId?: string, signal?: AbortSig
         continue;
       }
       const seen = ctx.store.seenIds(pr.id);
-      const added = ctx.store.addPending(pr.id, items.filter((i) => !seen.has(i.id)));
+      // An agent that already had an item (before its mode went off and on again) does not get it twice.
+      const owner = ctx.store.ownerLink(pr.id);
+      const had = owner ? ctx.store.sentTo(pr.id, owner.thread_id) : new Set<string>();
+      const added = ctx.store.addPending(pr.id, items.filter((i) => !seen.has(i.id) && !had.has(i.id)));
       ctx.store.markWatchChecked(pr.id, null);
       if (added) ctx.port.publish();
     } catch (error) {
@@ -43,19 +54,18 @@ export async function pollWatches(ctx: Ctx, serverId?: string, signal?: AbortSig
   }
 }
 
-/** One line of server text: no newlines, no fences, bounded, so it cannot pose as Shuttle's own text. */
-export function inert(text: string, max: number): string {
-  const flat = text.replace(/\s+/gu, " ").replace(/`{3,}/gu, "''").replace(/~{3,}/gu, "--").trim();
-  return flat.length > max ? `${flat.slice(0, max)}\u2026` : flat;
-}
+export { inert } from "./templates";
 
 function itemLine(item: ActivityItem, index: number): string {
   const where = item.path ? ` on ${inert(item.path, 200)}${item.line ? `:${item.line}` : ""}` : "";
   const who = item.author ? ` by ${inert(item.author, 100)}` : "";
   const state = item.state ? ` (${inert(item.state, 40)})` : "";
   const body = inert(item.body ?? "", BODY_CHARS);
-  return `${index + 1}. ${item.kind}${who}${state}${where}${body ? `: ${body}` : ""}${item.url && /^https?:\/\//u.test(item.url) ? ` <${inert(item.url, 300)}>` : ""}`;
+  return `${index + 1}. [ref ${itemRef(item.id)}] ${item.kind}${who}${state}${where}${body ? `: ${body}` : ""}${item.url && /^https?:\/\//u.test(item.url) ? ` <${inert(item.url, 300)}>` : ""}`;
 }
+
+export const OUTCOME_PROMPT =
+  "When you have dealt with an item, tell Shuttle with the shuttle_feedback_done tool: its ref, and whether you fixed it (with the commit), replied, declined it, or need my decision.";
 
 export function formatMessage(ctx: Ctx, batch: ReadonlyArray<{ pr: PrRow; items: ActivityItem[] }>): string {
   const actPrompt = ctx.config().watch.actPrompt;
@@ -80,6 +90,7 @@ export function formatMessage(ctx: Ctx, batch: ReadonlyArray<{ pr: PrRow; items:
     if (ctx.store.watch(pr.id)?.mode === "act") section.push(renderTemplate(actPrompt, vars));
     parts.push(section.join("\n"));
   }
+  if (batch.some(({ pr }) => ctx.store.watch(pr.id)?.mode === "act")) parts.push(OUTCOME_PROMPT);
   return parts.join("\n\n");
 }
 

@@ -20,6 +20,10 @@ export interface ThreadInfo {
   archived: boolean;
   projectId: string | null;
   status: string;
+  /** It asked the user something and waits for the answer. */
+  waiting: boolean;
+  /** The branch of its environment, when it has one. */
+  branch: string | null;
   updatedAt: number | null;
 }
 
@@ -44,6 +48,8 @@ export interface BbPort {
   listThreads(limit: number): Promise<ThreadInfo[]>;
   listProjects(): Promise<ProjectInfo[]>;
   listSkills(projectId: string): Promise<SkillInfo[]>;
+  /** Changes Shuttle's own bb settings. */
+  setSettings(patch: { autoAgent?: boolean; inboxRequests?: boolean }): Promise<void>;
   publish(): void;
   log(level: "info" | "warn" | "error", text: string): void;
 }

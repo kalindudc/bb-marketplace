@@ -29,14 +29,22 @@ export function createShuttlePlugin(deps: PluginDeps = {}) {
     const store = new Store(db, now);
     const settingsHandle = bb.settings.define(SETTINGS);
     let settings: Settings = toSettings(await settingsHandle.get());
-    settingsHandle.onChange((next) => {
-      settings = toSettings(next);
-    });
-    const port = deps.port ? deps.port(bb) : createBbPort(bb);
-    const app = new Shuttle({ store, port, now, settings: () => settings, runner: deps.runner });
+    const setSettings = async (patch: { autoAgent?: boolean; inboxRequests?: boolean }) => {
+      settings = toSettings(await settingsHandle.experimental_set(patch));
+    };
+    const port = deps.port ? deps.port(bb) : createBbPort(bb, setSettings);
+    const lifetime = new AbortController();
+    const app = new Shuttle({ store, port, now, settings: () => settings, runner: deps.runner, lifetime: lifetime.signal });
     let disposed = false;
     bb.onDispose(() => {
       disposed = true;
+      lifetime.abort();
+    });
+    settingsHandle.onChange((next, prev) => {
+      settings = toSettings(next);
+      // Turning auto agent on gives the PRs without one their agents now, not at the next sync.
+      if (settings.autoAgent && prev.autoAgent !== true && !disposed) app.autoAgent().catch((error: unknown) => bb.log.warn(`auto agent: ${errText(error)}`));
+      port.publish();
     });
 
     registerRpc(bb, app);
@@ -53,6 +61,8 @@ export function createShuttlePlugin(deps: PluginDeps = {}) {
       }
     };
     bb.events.on("thread.idle", ({ thread }) => safe("thread.idle", () => app.onThreadIdle(thread.id)));
+    bb.events.on("thread.active", ({ thread }) => safe("thread.active", () => app.onThreadActive(thread.id)));
+    bb.events.on("interaction.pending", ({ thread }) => safe("interaction.pending", () => app.onInteractionPending(thread.id)));
     bb.events.on("thread.failed", ({ thread }) => safe("thread.failed", () => app.onThreadFailed(thread.id)));
     bb.events.on("thread.archived", ({ thread }) => safe("thread.archived", () => app.onThreadArchived(thread.id)));
     bb.events.on("thread.deleted", ({ thread }) => safe("thread.deleted", () => app.onThreadDeleted(thread.id)));

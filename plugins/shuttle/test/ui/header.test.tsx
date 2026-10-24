@@ -2,7 +2,7 @@ import { formatRoute } from "../../src/ui/route";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, waitFor } from "@testing-library/react";
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
-import { app, callsTo, handlers, mount, overview, pr, server, unmountAll, type Handlers } from "./helpers";
+import { app, callsTo, handlers, mount, pr, unmountAll, type Handlers } from "./helpers";
 
 const toasts = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn() }));
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), toasts) }));
@@ -20,15 +20,9 @@ async function header(rpc: Partial<Handlers> = {}) {
 }
 
 describe("Shuttle page header", () => {
-  it("shows each enabled server's health", async () => {
-    const slot = await header({
-      overview: () => overview({ servers: [server(), server({ id: "gitlab", name: "GitLab", ok: false, error: "glab: command not found" }), server({ id: "off", name: "Off", enabled: false })] }),
-    });
-    const failing = await slot.findByTitle("glab: command not found");
-    expect(failing.textContent).toBe("GitLab");
-    expect(slot.getByTitle("Signed in as kalindudc").textContent).toBe("GitHub");
-    expect(slot.queryByText("Off")).toBeNull();
-    expect(slot.getByText(/^synced /u)).toBeTruthy();
+  it("asks for a link to look up or track any PR", async () => {
+    const slot = await header();
+    expect(slot.getByRole("textbox", { name: "Look up a pull request" }).getAttribute("placeholder")).toBe("Look up or track any PR: paste a link");
   });
 
   it("looks up a pasted link and selects that PR on the page", async () => {

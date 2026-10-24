@@ -36,6 +36,33 @@ export const SETTINGS = {
     label: "Project for review threads",
     description: "Used when no project's git remote matches the PR's repository. Without one, Shuttle asks.",
   },
+  autoAgent: {
+    type: "boolean",
+    label: "Auto agent",
+    description:
+      "When one of your PRs has no agent, make the bb thread that opened it the agent: the thread whose id is in the branch name, or whose branch the PR is from. Off by default, so threads that follow their own PRs (such as Loom's) are left alone.",
+    default: false,
+  },
+  inboxRequests: {
+    type: "boolean",
+    label: "New review requests in the Inbox",
+    description: "PRs that ask for your review by name, or mention you, come to the Inbox for their first days. Off, they wait in Reviews.",
+    default: true,
+  },
+  inboxRequestDays: {
+    type: "number",
+    label: "Days a new request stays in the Inbox",
+    description: "After this, a request you have not reviewed waits in Reviews › Asked me.",
+    default: 3,
+    experimental_schema: z.number().int().min(1).max(30),
+  },
+  botAuthors: {
+    type: "string",
+    label: "Bot authors",
+    description: "Authors Reviews hides with Hide bots, as globs separated by commas, on top of the accounts a server marks as bots.",
+    default: "dependabot*, renovate*, *[bot], *-actuator, *.gserviceaccount.com",
+    experimental_schema: z.string().trim().max(1000),
+  },
 } satisfies PluginSettingDescriptors;
 
 export interface Settings {
@@ -44,9 +71,26 @@ export interface Settings {
   doneDays: number;
   defaultProject: string;
   reviewSection: string;
+  autoAgent: boolean;
+  inboxRequests: boolean;
+  inboxRequestDays: number;
+  botAuthors: string[];
 }
 
-export const DEFAULT_SETTINGS: Settings = { pauseAutomations: false, syncMinutes: 3, doneDays: 14, defaultProject: "", reviewSection: "" };
+export const DEFAULT_BOT_AUTHORS = "dependabot*, renovate*, *[bot], *-actuator, *.gserviceaccount.com";
+const globs = (text: string) => text.split(",").map((g) => g.trim()).filter(Boolean);
+
+export const DEFAULT_SETTINGS: Settings = {
+  pauseAutomations: false,
+  syncMinutes: 3,
+  doneDays: 14,
+  defaultProject: "",
+  reviewSection: "",
+  autoAgent: false,
+  inboxRequests: true,
+  inboxRequestDays: 3,
+  botAuthors: globs(DEFAULT_BOT_AUTHORS),
+};
 
 export function toSettings(values: Record<string, unknown>): Settings {
   const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : d);
@@ -56,5 +100,9 @@ export function toSettings(values: Record<string, unknown>): Settings {
     doneDays: num(values.doneDays, DEFAULT_SETTINGS.doneDays),
     defaultProject: typeof values.defaultProject === "string" ? values.defaultProject : "",
     reviewSection: typeof values.reviewSection === "string" ? values.reviewSection.trim() : "",
+    autoAgent: values.autoAgent === true,
+    inboxRequests: values.inboxRequests !== false,
+    inboxRequestDays: num(values.inboxRequestDays, DEFAULT_SETTINGS.inboxRequestDays),
+    botAuthors: globs(typeof values.botAuthors === "string" ? values.botAuthors : DEFAULT_BOT_AUTHORS),
   };
 }

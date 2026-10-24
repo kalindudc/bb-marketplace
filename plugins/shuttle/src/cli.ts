@@ -1,6 +1,6 @@
 import { PluginCliError, cliCommand, defineCli, type PluginCliRegistration, type PluginCliResult } from "@get-bb/plugin-sdk";
 import { readFile } from "node:fs/promises";
-import { SECTIONS, type Section } from "./contract";
+import { AGENT_MODES, AREAS, type AgentMode, type Area } from "./contract";
 import { errText } from "./ctx";
 import { prDetail, prList } from "./format";
 import type { Shuttle } from "./shuttle";
@@ -10,6 +10,8 @@ const thread = { type: "string", description: "The thread id; the calling thread
 const PR = { name: "pr", description: "A PR link, or a key such as github:owner/repo#123.", required: true } as const;
 const out = (stdout: string): PluginCliResult => ({ exitCode: 0, stdout: stdout.endsWith("\n") ? stdout : `${stdout}\n` });
 const toJson = (value: unknown) => JSON.stringify(value, null, 2);
+const LISTS = ["inbox", ...AREAS] as const;
+const countsText = (counts: Record<string, number>) => LISTS.map((l) => `${l} ${counts[l]}`).join(", ");
 
 async function guarded(fn: () => Promise<PluginCliResult> | PluginCliResult): Promise<PluginCliResult> {
   try {
@@ -39,19 +41,18 @@ export function createCli(shuttle: Shuttle): PluginCliRegistration {
             const overview = shuttle.overview();
             if (options.json) return out(toJson(overview));
             const servers = overview.servers.map((s) => `${s.id}  ${!s.enabled ? "off" : s.ok === null ? "not synced yet" : s.ok ? `ok as ${s.login}` : `failing: ${s.error}`}`);
-            const counts = SECTIONS.map((s) => `${s} ${overview.counts[s]}`).join(", ");
-            return out([...servers, counts, overview.paused ? "automations are paused" : ""].filter(Boolean).join("\n"));
+            return out([...servers, countsText(overview.counts), overview.paused ? "automations are paused" : "", overview.autoAgent ? "auto agent is on" : ""].filter(Boolean).join("\n"));
           }),
       }),
       list: cliCommand({
-        summary: `List the PRs of one section: ${SECTIONS.join(", ")} (needs by default)`,
-        options: { section: { type: "string", description: `One of ${SECTIONS.join(", ")}.` }, json },
+        summary: `List the PRs of one area: ${LISTS.join(", ")} (inbox by default)`,
+        options: { area: { type: "string", description: `One of ${LISTS.join(", ")}.` }, json },
         run: ({ options }) =>
           guarded(() => {
-            const section = (options.section ?? "needs") as Section;
-            if (!SECTIONS.includes(section)) throw new PluginCliError(`--section must be one of ${SECTIONS.join(", ")}`);
-            const prs = shuttle.list(section);
-            return out(options.json ? toJson(prs) : prList(prs, `Nothing in ${section}.`));
+            const area = options.area ?? "inbox";
+            if (!(LISTS as readonly string[]).includes(area)) throw new PluginCliError(`--area must be one of ${LISTS.join(", ")}`);
+            const prs = area === "inbox" ? shuttle.inbox().prs : shuttle.list(area as Area);
+            return out(options.json ? toJson(prs) : prList(prs, area === "inbox" ? "Nothing waits on you." : `Nothing in ${area}.`));
           }),
       }),
       show: cliCommand({
@@ -87,8 +88,47 @@ export function createCli(shuttle: Shuttle): PluginCliRegistration {
             return out(options.json ? toJson(view) : prDetail(view));
           }),
       }),
+      agent: cliCommand({
+        summary: "Set a PR's agent, the thread that gets its new reviews and failed checks: --thread <id>, --new or --none, and what it does with --mode",
+        positionals: [PR],
+        options: {
+          thread: { type: "string", description: "The thread to make the agent." },
+          new: { type: "boolean", description: "Start a new thread for the PR as its agent." },
+          none: { type: "boolean", description: "No agent; its thread stays linked for reference." },
+          mode: { type: "string", description: `${AGENT_MODES.join(", ")}: fix asks it to fix new feedback, notify only sends it.` },
+          json,
+        },
+        run: ({ options, positionals }) =>
+          guarded(async () => {
+            const mode = options.mode as AgentMode | undefined;
+            if (mode !== undefined && !AGENT_MODES.includes(mode)) throw new PluginCliError(`--mode must be one of ${AGENT_MODES.join(", ")}`);
+            const targets = [options.thread !== undefined, options.new === true, options.none === true].filter(Boolean).length;
+            if (targets > 1) throw new PluginCliError("Pass one of --thread, --new and --none");
+            const known = await shuttle.lookup(positionals.pr);
+            let view;
+            if (targets === 0) {
+              if (!mode) throw new PluginCliError("Pass --thread, --new, --none or --mode");
+              view = await shuttle.setAgentMode(known.key, mode);
+            } else {
+              const target = options.none ? { kind: "none" as const } : options.new ? { kind: "new" as const } : { kind: "existing" as const, threadId: options.thread! };
+              view = (await shuttle.setAgent(known.key, target, mode)).pr;
+            }
+            return out(options.json ? toJson(view) : prDetail(view));
+          }),
+      }),
+      track: cliCommand({
+        summary: "Track someone else's PR so it stays in Reviews and comes to the Inbox when it changes after your review, or stop with --off",
+        positionals: [PR],
+        options: { off: { type: "boolean", description: "Stop tracking." }, json },
+        run: ({ options, positionals }) =>
+          guarded(async () => {
+            const known = await shuttle.lookup(positionals.pr);
+            const view = shuttle.track(known.key, options.off !== true);
+            return out(options.json ? toJson(view) : prDetail(view));
+          }),
+      }),
       watch: cliCommand({
-        summary: "Watch a PR so new reviews go to its owner threads, or stop with --off",
+        summary: "Set what a PR's agent does with new feedback: act (fix it) or forward (just tell it), or stop with --off; `agent` does the same with more choices",
         positionals: [PR],
         options: { mode: { type: "string", description: "act (default: send and ask the thread to act) or forward (send only)." }, off: { type: "boolean", description: "Stop watching." }, json },
         run: ({ options, positionals }) =>
@@ -118,7 +158,7 @@ export function createCli(shuttle: Shuttle): PluginCliRegistration {
           guarded(async () => {
             await shuttle.sync();
             const overview = shuttle.overview();
-            return out(options.json ? toJson(overview) : `Synced. ${SECTIONS.map((s) => `${s} ${overview.counts[s]}`).join(", ")}`);
+            return out(options.json ? toJson(overview) : `Synced. ${countsText(overview.counts)}`);
           }),
       }),
       "config-export": cliCommand({

@@ -4,15 +4,19 @@ import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import { z } from "zod";
 
 export const OPERATIONS = [
-  "whoami", "authored", "review_requested", "team_requested", "mentioned", "view", "activity",
+  "whoami", "authored", "review_requested", "team_requested", "mentioned", "reviewed", "view", "activity",
   "ready", "draft", "close", "reopen", "edit_labels", "edit_reviewers", "edit_options",
+  "merge", "merge_options", "comment", "review", "reply", "resolve",
 ] as const;
 export type Operation = (typeof OPERATIONS)[number];
-export const LIST_OPERATIONS = ["authored", "review_requested", "team_requested", "mentioned"] as const;
+export const LIST_OPERATIONS = ["authored", "review_requested", "team_requested", "mentioned", "reviewed"] as const;
 export type ListOperation = (typeof LIST_OPERATIONS)[number];
 /** Operations that change a PR on its server. A server test never runs them. */
 export const CHANGE_OPERATIONS = ["ready", "draft", "close", "reopen", "edit_labels", "edit_reviewers"] as const;
 export type ChangeOperation = (typeof CHANGE_OPERATIONS)[number];
+/** Operations that write to a PR's conversation or merge it. A server test never runs them either. */
+export const WRITE_OPERATIONS = ["merge", "comment", "review", "reply", "resolve"] as const;
+export type WriteOperation = (typeof WRITE_OPERATIONS)[number];
 
 export const AUTO_TRIGGERS = ["requested", "team", "mentioned"] as const;
 export const WORKSPACES = ["project-default", "worktree"] as const;

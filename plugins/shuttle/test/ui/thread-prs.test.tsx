@@ -3,14 +3,14 @@ import { fireEvent, waitFor, within } from "@testing-library/react";
 import { experimental_THREAD_INFO_SECTION_GROUPS, type ExperimentalThreadContextSegmentProps, type ExperimentalThreadInfoProps } from "@get-bb/plugin-sdk/app";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { rpcContract, type PrView } from "../../src/contract";
-import { app, callsTo, handlers, link, mount, pr, unmountAll } from "./helpers";
+import { agent, app, callsTo, handlers, link, mount, pr, unmountAll } from "./helpers";
 
 afterEach(unmountAll);
 
 const THREAD = "thr_1";
 const SHUTTLE_TAB_OPEN = { surface: { kind: "current" }, tab: { id: "shuttle", context: { kind: "thread" }, availability: "action" }, params: { threadId: THREAD } };
 
-const owned = pr({ number: 4411, mine: true, reasons: [], links: [link({ threadId: THREAD, role: "owner" })], watch: "act" });
+const owned = pr({ number: 4411, mine: true, reasons: [], links: [link({ threadId: THREAD, role: "owner" })], agent: agent({ threadId: THREAD }), watch: "act" });
 const failing = pr({ repo: "get-bb/bb", number: 4412, mine: true, reasons: [], checks: "failed", links: [link({ threadId: THREAD, role: "owner" })] });
 const changes = pr({ repo: "get-bb/bb", number: 4413, mine: true, reasons: [], review: "changes", links: [link({ threadId: THREAD, role: "owner" })] });
 const unsent = pr({ repo: "get-bb/bb", number: 4414, mine: true, reasons: [], pendingItems: 2, links: [link({ threadId: THREAD, role: "owner" })] });
@@ -31,7 +31,8 @@ describe("the thread Info tab's Pull requests", () => {
     expect(rows.map((row) => row.querySelector("button")!.textContent)).toEqual(["get-bb/bb#4411", "get-bb/bb#4412"]);
     expect(rows[0]!.textContent).toContain("open");
     expect(rows[0]!.querySelector("[data-icon='Check']")).not.toBeNull();
-    expect(rows[0]!.querySelector("[data-icon='Eye']")).not.toBeNull();
+    expect(rows[0]!.querySelector("[data-icon='Bot']")!.getAttribute("aria-label")).toBe("This thread is the agent");
+    expect(rows[1]!.querySelector("[data-icon='Bot']")).toBeNull();
     expect(rows[1]!.textContent).toContain("open · checks failing");
     expect(rows[1]!.querySelector("[data-icon='X']")).not.toBeNull();
     fireEvent.click(within(rows[1]!).getByRole("button", { name: "get-bb/bb#4412" }));

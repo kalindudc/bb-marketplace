@@ -3,7 +3,7 @@ import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import type { Config, ServerConfig } from "../../config";
 import type { ServerStatus, TestResult } from "../../contract";
 import { BUTTON, BUTTON_GHOST, BUTTON_PRIMARY, CARD, ErrorNote, FIELD, Pill, ServerBadge, Toggle } from "../common";
-import { MANAGE_OPERATIONS, OPERATIONS, OPERATION_LABELS, READ_OPERATIONS } from "../constants";
+import { CONVERSATION_OPERATIONS, MANAGE_OPERATIONS, OPERATIONS, OPERATION_LABELS, READ_OPERATIONS } from "../constants";
 import { messageOf, useShuttleMutation, useShuttleQuery } from "../data";
 import { ago } from "../format";
 import { useConfig } from "./use-config";
@@ -203,7 +203,7 @@ function CommandTable({ operations, commands, onChange }: { operations: readonly
             </td>
             <td className="py-1.5">
               <input aria-label={`${op} command`} className={`${FIELD} w-full font-mono text-xs`} value={commands[op]}
-                placeholder={op === "view" ? "Required" : MANAGE_OPERATIONS.includes(op) ? "Leave empty if the server can't" : "Leave empty to skip this list"}
+                placeholder={op === "view" ? "Required" : MANAGE_OPERATIONS.includes(op) || CONVERSATION_OPERATIONS.includes(op) ? "Leave empty if the server can't" : "Leave empty to skip this list"}
                 onChange={(event) => onChange({ ...commands, [op]: event.target.value })} />
             </td>
           </tr>
@@ -281,6 +281,11 @@ function ServerForm({ initial, saved, existingIds, saving, onSave, onCancel }: {
               Commands get <span className="font-mono">SHUTTLE_REPO</span>, <span className="font-mono">SHUTTLE_NUMBER</span> and <span className="font-mono">SHUTTLE_URL</span>, and edits also get <span className="font-mono">SHUTTLE_ADD</span> and <span className="font-mono">SHUTTLE_REMOVE</span> (newline-separated) plus <span className="font-mono">SHUTTLE_ADD_TEAMS</span> and <span className="font-mono">SHUTTLE_REMOVE_TEAMS</span>; exit 0 means it worked. <span className="font-mono">edit_options</span> prints <span className="font-mono">{"{labels: [{name, color?, description?}], people?: [logins]}"}</span>.
             </p>
             <CommandTable operations={MANAGE_OPERATIONS} commands={draft.commands} onChange={(commands) => set("commands", commands)} />
+            <h4 className="mt-2 text-xs font-semibold">Conversation and merging (optional)</h4>
+            <p className="text-xs text-muted-foreground">
+              <span className="font-mono">merge</span> gets <span className="font-mono">SHUTTLE_METHOD</span>, <span className="font-mono">SHUTTLE_HEAD</span>, <span className="font-mono">SHUTTLE_AUTO</span>, <span className="font-mono">SHUTTLE_DELETE_BRANCH</span> and <span className="font-mono">SHUTTLE_SUBJECT</span>; <span className="font-mono">comment</span> and <span className="font-mono">reply</span> get <span className="font-mono">SHUTTLE_BODY</span>, and <span className="font-mono">reply</span> and <span className="font-mono">resolve</span> also <span className="font-mono">SHUTTLE_THREAD</span>; <span className="font-mono">review</span> gets <span className="font-mono">SHUTTLE_VERDICT</span>, <span className="font-mono">SHUTTLE_BODY</span>, <span className="font-mono">SHUTTLE_HEAD</span> and <span className="font-mono">SHUTTLE_COMMENTS</span> (JSON).
+            </p>
+            <CommandTable operations={CONVERSATION_OPERATIONS} commands={draft.commands} onChange={(commands) => set("commands", commands)} />
           </>
         )}
         <label className={row}>

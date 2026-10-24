@@ -18,9 +18,12 @@ export function prKey(ref: PrRef): string {
 
 const KEY = /^([a-z][a-z0-9-]{0,31}):([^\s#!]+)[#!](\d{1,12})$/u;
 
+/** The repo names servers use: path segments of letters, digits, dots, dashes and underscores. */
+export const REPO = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/u;
+
 export function parseKey(text: string): PrRef | null {
   const match = KEY.exec(text.trim());
-  if (!match) return null;
+  if (!match || !REPO.test(match[2]!)) return null;
   return { server: match[1]!, repo: match[2]!, number: Number(match[3]) };
 }
 
@@ -44,7 +47,7 @@ export function parseLink(text: string, servers: readonly ServerConfig[]): PrRef
     const match = linkPattern(server).exec(value);
     const repo = match?.groups?.repo;
     const number = Number(match?.groups?.number);
-    if (repo && Number.isInteger(number) && number > 0) return { server: server.id, repo, number };
+    if (repo && REPO.test(repo) && Number.isInteger(number) && number > 0) return { server: server.id, repo, number };
   }
   return null;
 }

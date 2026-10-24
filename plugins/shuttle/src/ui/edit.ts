@@ -1,13 +1,10 @@
 import { useCallback, useRef } from "react";
 import { toast } from "sonner";
 import type { Label, PrView, ReviewerRef } from "../contract";
-import { SECTIONS } from "./constants";
-import { useShuttleMutation, type Input } from "./data";
+import { patchPr, undoToast, useShuttleMutation, type Input } from "./data";
 import { shortKey } from "./format";
 
 export type Change = Input<"editPr">["change"];
-
-const UNDO_MS = 5000;
 
 const sameReviewer = (a: ReviewerRef, b: ReviewerRef) => a.login === b.login && a.team === b.team;
 
@@ -81,39 +78,41 @@ function inverseOf(pr: PrView, change: Change): Change | null {
 }
 
 /**
- * Changes one of the user's PRs at once: every loaded list, the detail and the linked threads' lists show
- * the change before the server answers, a toast offers Undo once it has, and a refusal puts it back.
+ * Changes the user's PRs at once: the Inbox, every loaded list, the detail and the linked threads' lists
+ * show the change before the server answers, a toast offers Undo once it has, and a refusal puts it back.
  */
-export function useEditPr(pr: PrView) {
-  // Colours learned from the PR and the label picker, kept so an undone removal comes back in its colour.
+export function useEditPrs(threadIds: readonly string[]) {
+  // Colours learned from PRs and the label picker, kept so an undone removal comes back in its colour.
   const colors = useRef(new Map<string, string | null>());
-  for (const label of pr.labels ?? []) colors.current.set(label.name, label.color);
-  const threadIds = pr.links.map((link) => link.threadId);
 
   const mutation = useShuttleMutation("editPr", ({ key, change }, cache) => {
     const known = new Map(colors.current);
-    const patch = (item: PrView) => (item.key === key ? applyChange(item, change, known) : item);
-    for (const section of SECTIONS) cache.update("list", { section }, (current) => ({ prs: current.prs.map(patch) }));
-    cache.update("detail", { key }, (current) => ({ ...current, pr: patch(current.pr) }));
-    for (const threadId of threadIds) cache.update("threadPrs", { threadId }, (current) => ({ ...current, prs: current.prs.map(patch) }));
+    patchPr(cache, key, (item) => applyChange(item, change, known), threadIds);
   });
 
-  const send = async (change: Change, message: string, undo: { change: Change; message: string } | null) => {
+  const send = async (pr: PrView, change: Change, message: string, undo: { change: Change; message: string } | null) => {
     const result = await mutation.run({ key: pr.key, change });
     if (result === null) return;
     // Some servers can't go back, such as Delta from ready to draft; the PR the server returned says which.
     if (undo === null || !result.pr.actions.includes(undo.change.kind)) toast.success(message);
-    else toast.success(message, { duration: UNDO_MS, action: { label: "Undo", onClick: () => void send(undo.change, undo.message, null) } });
+    else undoToast(message, () => void send(result.pr, undo.change, undo.message, null));
   };
 
-  const apply = (change: Change) => {
+  const apply = (pr: PrView, change: Change) => {
+    for (const label of pr.labels ?? []) colors.current.set(label.name, label.color);
     const inverse = inverseOf(pr, change);
-    void send(change, describeChange(pr, change), inverse === null ? null : { change: inverse, message: describeChange(applyChange(pr, change, colors.current), inverse) });
+    void send(pr, change, describeChange(pr, change), inverse === null ? null : { change: inverse, message: describeChange(applyChange(pr, change, colors.current), inverse) });
   };
   const rememberColors = useCallback((labels: readonly Label[]) => {
     for (const label of labels) colors.current.set(label.name, label.color);
   }, []);
   return { apply, rememberColors };
+}
+
+/** The edits of one PR, for its Manage card. */
+export function useEditPr(pr: PrView) {
+  const edits = useEditPrs(pr.links.map((link) => link.threadId));
+  return { apply: (change: Change) => edits.apply(pr, change), rememberColors: edits.rememberColors };
 }
 
 export type EditPr = ReturnType<typeof useEditPr>;

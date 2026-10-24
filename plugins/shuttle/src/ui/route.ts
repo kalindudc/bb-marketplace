@@ -1,34 +1,75 @@
-import type { Section } from "../contract";
-import { SECTIONS } from "./constants";
+export const SOURCES = ["all", "asked", "team", "mentioned", "tracked"] as const;
+export type Source = (typeof SOURCES)[number];
 
 export type Route =
-  | { view: "section"; section: Section; key: string | null }
-  | { view: "activity" }
+  | { view: "inbox"; key: string | null }
+  | { view: "mine"; key: string | null }
+  | { view: "done"; key: string | null }
+  | { view: "reviews"; source: Source; key: string | null }
+  | { view: "insights"; tab: "overview" | "log" }
   | { view: "pr"; key: string };
 
+/** A route that shows a list, with the PR selected in it. */
+export type ListRoute = Exclude<Route, { view: "insights" | "pr" }>;
+
+/** The four areas of the page; Merged and closed sits under My PRs. */
+export type Area = "inbox" | "mine" | "reviews" | "insights";
+
+/** A looked-up PR belongs to no area. */
+export function areaOf(route: Route): Area | null {
+  if (route.view === "done") return "mine";
+  if (route.view === "pr") return null;
+  return route.view;
+}
+
+const INBOX: Route = { view: "inbox", key: null };
+
+/** 0.2's sections, so its links and bookmarks still open something sensible. */
+const OLD_SECTIONS: Record<string, (key: string | null) => Route> = {
+  needs: (key) => ({ view: "inbox", key }),
+  requested: (key) => ({ view: "reviews", source: "asked", key }),
+  team: (key) => ({ view: "reviews", source: "team", key }),
+  mentioned: (key) => ({ view: "reviews", source: "mentioned", key }),
+  watching: (key) => ({ view: "reviews", source: "tracked", key }),
+  inflight: (key) => ({ view: "mine", key }),
+};
+
 /**
- * The page's subPath: "" is Needs you, a section id that section, "<section>/<server>/<repo…>/<number>"
- * a PR selected in it, "activity" the log, and "pr/<server>/<repo…>/<number>" one looked-up PR.
- * A key travels as plain path segments: bb encodes the subPath again, so a percent-encoded key
- * would come back still encoded.
+ * The page's subPath: "" is the Inbox, "mine", "done" and "reviews" their lists, each followed by a
+ * selected PR's key as path segments, "insights" and "insights/log", and "pr/<key>" one looked-up PR.
+ * A Reviews source other than Everything rides on the area as "reviews~team": server ids are lowercase
+ * words, so a "~" can never be mistaken for one. A key travels as plain segments: bb encodes the
+ * subPath again, so a percent-encoded key would come back still encoded.
  */
 export function parseRoute(subPath: string): Route {
   const [first = "", ...rest] = subPath.replace(/^\/+|\/+$/gu, "").split("/");
-  if (first === "activity" && rest.length === 0) return { view: "activity" };
-  if (first === "pr") {
-    const key = keyFromSegments(rest);
-    return key === null ? { view: "section", section: "needs", key: null } : { view: "pr", key };
+  const key = rest.length === 0 ? null : keyFromSegments(rest);
+  if (first === "" || first === "inbox") return { view: "inbox", key };
+  if (first === "mine" || first === "done") return { view: first, key };
+  if (first === "insights") return rest.length === 1 && rest[0] === "log" ? { view: "insights", tab: "log" } : { view: "insights", tab: "overview" };
+  if (first === "activity" && rest.length === 0) return { view: "insights", tab: "log" };
+  if (first === "pr") return key === null ? INBOX : { view: "pr", key };
+  const reviews = /^reviews(?:~([a-z]+))?$/u.exec(first);
+  if (reviews) {
+    const source = SOURCES.find((item) => item === (reviews[1] ?? "all"));
+    return source === undefined ? { view: "reviews", source: "all", key } : { view: "reviews", source, key };
   }
-  const section = first === "" ? "needs" : SECTIONS.find((id) => id === first);
-  if (section === undefined) return { view: "section", section: "needs", key: null };
-  return { view: "section", section, key: rest.length === 0 ? null : keyFromSegments(rest) };
+  const old = OLD_SECTIONS[first];
+  return old === undefined ? INBOX : old(key);
 }
 
 export function formatRoute(route: Route): string {
-  if (route.view === "pr") return `pr/${keySegments(route.key)}`;
-  if (route.view === "activity") return "activity";
-  if (route.key !== null) return `${route.section}/${keySegments(route.key)}`;
-  return route.section === "needs" ? "" : route.section;
+  switch (route.view) {
+    case "pr": return `pr/${keySegments(route.key)}`;
+    case "insights": return route.tab === "log" ? "insights/log" : "insights";
+    case "inbox": return route.key === null ? "" : `inbox/${keySegments(route.key)}`;
+    case "mine":
+    case "done": return route.key === null ? route.view : `${route.view}/${keySegments(route.key)}`;
+    case "reviews": {
+      const area = route.source === "all" ? "reviews" : `reviews~${route.source}`;
+      return route.key === null ? area : `${area}/${keySegments(route.key)}`;
+    }
+  }
 }
 
 const KEY = /^([a-z][a-z0-9-]{0,31}):(.+)#(\d+)$/u;

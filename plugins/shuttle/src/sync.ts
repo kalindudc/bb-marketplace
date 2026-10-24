@@ -12,7 +12,7 @@ import { shortKey } from "./prs";
 const DAY = 86_400_000;
 const REFRESH_CAP = 30;
 
-const REASON_OF: Record<ListOperation, Reason> = { authored: "authored", review_requested: "requested", team_requested: "team", mentioned: "mentioned" };
+const REASON_OF: Record<ListOperation, Reason> = { authored: "authored", review_requested: "requested", team_requested: "team", mentioned: "mentioned", reviewed: "reviewed" };
 
 export interface SyncResult {
   server: string;
@@ -37,6 +37,7 @@ export async function syncServer(ctx: Ctx, server: ServerConfig, signal?: AbortS
   let listed = 0;
   if (errors.length === 0) {
     for (const operation of LIST_OPERATIONS) {
+      if (signal?.aborted) break;
       if (!supported.has(operation)) continue;
       try {
         const lists =
@@ -62,8 +63,10 @@ export async function syncServer(ctx: Ctx, server: ServerConfig, signal?: AbortS
         errors.push(errText(error));
       }
     }
-    await refreshTracked(ctx, server, seen, errors, signal);
+    if (!signal?.aborted) await refreshTracked(ctx, server, seen, errors, signal);
   }
+  // A sync cut short by a stop says nothing about the server; the next one does.
+  if (signal?.aborted) return { server: server.id, ok: false, listed, errors: ["stopped"] };
   const now = ctx.now();
   const ok = errors.length === 0;
   ctx.store.saveServer({
@@ -83,18 +86,20 @@ export async function syncServer(ctx: Ctx, server: ServerConfig, signal?: AbortS
   return { server: server.id, ok, listed, errors };
 }
 
-/** Linked and watched open PRs that no list covered this round, such as someone else's PR you watch. */
+/** Linked, watched and tracked open PRs that no list covered this round, such as someone else's PR you track. */
 async function refreshTracked(ctx: Ctx, server: ServerConfig, seen: Set<number>, errors: string[], signal?: AbortSignal): Promise<void> {
   const tracked = ctx.store
     .allPrs()
     .filter((pr) => pr.server === server.id && !seen.has(pr.id) && (pr.state === "open" || pr.state === "draft"))
-    .filter((pr) => ctx.store.watch(pr.id) !== null || ctx.store.linksOf(pr.id).length > 0)
+    .filter((pr) => pr.tracked === 1 || ctx.store.watch(pr.id) !== null || ctx.store.linksOf(pr.id).length > 0)
     .sort((a, b) => a.fetched_at - b.fetched_at)
     .slice(0, REFRESH_CAP);
   const adapter = ctx.adapter(server.id);
   for (const pr of tracked) {
+    if (signal?.aborted) return;
     try {
       const summary = await adapter.view(pr.repo, pr.number, signal);
+      if (summary.repo.toLowerCase() !== pr.repo.toLowerCase() || summary.number !== pr.number) throw new Error(`answered for ${summary.repo}#${summary.number}`);
       ctx.store.upsertPr(server.id, { ...summary, repo: pr.repo }, summary.url ?? pr.url, false);
     } catch (error) {
       errors.push(`${shortKey(ctx, pr)}: ${errText(error)}`);
@@ -134,16 +139,17 @@ export function autoReviewCandidates(ctx: Ctx, serverId: string): PrRow[] {
   return out;
 }
 
-export async function runAutoReviews(ctx: Ctx, serverId: string): Promise<number> {
+export async function runAutoReviews(ctx: Ctx, serverId: string, signal?: AbortSignal): Promise<number> {
   const config = ctx.config().autoReview;
   if (!config.enabled || ctx.settings().pauseAutomations) return 0;
   let started = 0;
   for (const pr of autoReviewCandidates(ctx, serverId)) {
+    if (signal?.aborted) break;
     if (ctx.store.autoReviewsSince(ctx.now() - DAY) >= config.maxPerDay) {
       const day = new Date(ctx.now()).toISOString().slice(0, 10);
       if (ctx.store.kv("auto_capped") !== day) {
         ctx.store.setKv("auto_capped", day);
-        ctx.store.addEvent("auto_capped", `Auto review reached its limit of ${config.maxPerDay} a day; the rest wait in Requested of me.`);
+        ctx.store.addEvent("auto_capped", `Auto review reached its limit of ${config.maxPerDay} a day; the rest wait in Reviews.`);
       }
       break;
     }

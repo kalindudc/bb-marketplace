@@ -1,7 +1,8 @@
-import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useEffect, useId, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { experimental_Icon as Icon, experimental_usePluginId } from "@get-bb/plugin-sdk/app";
 import { initials } from "./format";
+import { useViewport } from "./viewport";
 
 /**
  * bb scopes a plugin's CSS to elements under [data-bb-plugin=<id>], so anything portalled to
@@ -16,7 +17,6 @@ export function usePortalScope() {
 export const BUTTON = "inline-flex h-7 shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md border border-border bg-card px-2.5 text-xs text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50";
 export const BUTTON_PRIMARY = "inline-flex h-7 shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md border border-primary bg-primary px-2.5 text-xs font-semibold text-primary-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50";
 export const BUTTON_GHOST = "inline-flex h-7 shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md px-2 text-xs text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50";
-export const ICON_BUTTON = "inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border bg-card text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50";
 export const ICON_GHOST = "inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50";
 export const FIELD = "rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-60";
 export const HEADING = "text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground";
@@ -30,6 +30,31 @@ const TONES: Record<Tone, string> = {
   warn: "border-warning/40 bg-warning/10 text-warning-text",
   info: "border-primary/40 bg-primary/10 text-primary",
   brand: "border-ring/40 bg-ring/10 text-foreground",
+};
+
+type NextTone = "ok" | "bad" | "warn" | "info" | "neutral";
+export const TONE_TEXT: Record<NextTone, string> = {
+  ok: "text-success",
+  bad: "text-destructive",
+  warn: "text-warning-text",
+  info: "text-primary",
+  neutral: "text-muted-foreground",
+};
+/** A card's coloured left edge. */
+export const TONE_EDGE: Record<NextTone, string> = {
+  ok: "border-l-success",
+  bad: "border-l-destructive",
+  warn: "border-l-warning",
+  info: "border-l-primary",
+  neutral: "border-l-muted-foreground",
+};
+/** A banner's tinted border and background. */
+export const TONE_PANEL: Record<NextTone, string> = {
+  ok: "border-success/40 bg-success/5",
+  bad: "border-destructive/40 bg-destructive/5",
+  warn: "border-warning/40 bg-warning/5",
+  info: "border-primary/40 bg-primary/5",
+  neutral: "border-border bg-card",
 };
 
 export function Pill({ tone = "neutral", icon, title, children }: { tone?: Tone; icon?: string; title?: string; children: ReactNode }) {
@@ -85,7 +110,7 @@ export function ErrorNote({ children }: { children: ReactNode }) {
   );
 }
 
-/** A plain modal: Escape and a click on the backdrop close it. */
+/** A plain modal: Escape and a click on the backdrop close it. On a phone it is a sheet from the bottom. */
 export function Dialog({ title, subtitle, leading, onClose, footer, children, wide = false }: {
   title: string;
   subtitle?: ReactNode;
@@ -99,6 +124,8 @@ export function Dialog({ title, subtitle, leading, onClose, footer, children, wi
   const panel = useRef<HTMLDivElement>(null);
   const close = useRef(onClose);
   close.current = onClose;
+  const phone = useViewport() === "phone";
+  const scope = usePortalScope();
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
@@ -110,20 +137,39 @@ export function Dialog({ title, subtitle, leading, onClose, footer, children, wi
     panel.current?.focus();
     return () => document.removeEventListener("keydown", onKey);
   }, []);
+  const head = (
+    <div className={phone ? "px-4 pb-2 pt-1" : "border-b border-border px-4 py-3"}>
+      <div className="flex items-center gap-2">
+        {leading}
+        <h3 id={titleId} className="min-w-0 flex-1 truncate text-[15px] font-semibold">{title}</h3>
+        <button type="button" aria-label="Close" className={ICON_GHOST} onClick={onClose}>
+          <Icon name="X" className="size-4" aria-hidden />
+        </button>
+      </div>
+      {subtitle && <div className="mt-1 text-xs text-muted-foreground">{subtitle}</div>}
+    </div>
+  );
+  if (phone) {
+    // In a portal, like bb's own sheets, so no scrolling or transformed ancestor can clip it.
+    return createPortal(
+      <div {...scope} className="fixed inset-0 z-50">
+        <div data-scrim className="absolute inset-0 bg-background/70" onClick={onClose} />
+        <div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId}
+          className="absolute inset-x-0 bottom-0 flex max-h-[86vh] flex-col rounded-t-2xl border-t border-border bg-card text-foreground shadow-lg animate-in slide-in-from-bottom duration-200 focus:outline-none">
+          <div aria-hidden className="mx-auto mb-1 mt-2 h-1 w-10 shrink-0 rounded-full bg-muted" />
+          {head}
+          <div className="min-h-0 overflow-y-auto px-4 pb-3">{children}</div>
+          {footer && <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-border px-4 pb-5 pt-3">{footer}</div>}
+        </div>
+      </div>,
+      document.body,
+    );
+  }
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-background/70 px-4 py-14" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId}
         className={`w-full ${wide ? "max-w-3xl" : "max-w-xl"} rounded-xl border border-border bg-card text-foreground shadow-lg focus:outline-none`}>
-        <div className="border-b border-border px-4 py-3">
-          <div className="flex items-center gap-2">
-            {leading}
-            <h3 id={titleId} className="min-w-0 flex-1 truncate text-[15px] font-semibold">{title}</h3>
-            <button type="button" aria-label="Close" className={ICON_GHOST} onClick={onClose}>
-              <Icon name="X" className="size-4" aria-hidden />
-            </button>
-          </div>
-          {subtitle && <div className="mt-1 text-xs text-muted-foreground">{subtitle}</div>}
-        </div>
+        {head}
         <div className="px-4 py-3">{children}</div>
         {footer && <div className="flex flex-wrap items-center gap-2 border-t border-border px-4 py-3">{footer}</div>}
       </div>
@@ -131,39 +177,47 @@ export function Dialog({ title, subtitle, leading, onClose, footer, children, wi
   );
 }
 
-/**
- * A dropdown in bb's shared Radix menu: it renders in a portal above the page, so a scrolling
- * drawer cannot clip it, and it stacks with bb's own overlays.
- */
-export function Menu({ trigger, label, align = "right", children }: {
-  trigger: ReactNode;
+/** One of a few choices, as in Fix it / Just tell it / Off. */
+export function Segmented<T extends string>({ label, value, options, onChange, disabled = false }: {
   label: string;
-  align?: "left" | "right";
-  children: ReactNode;
+  value: T;
+  options: readonly { value: NoInfer<T>; label: string; icon?: string; disabled?: boolean }[];
+  onChange(next: NoInfer<T>): void;
+  disabled?: boolean;
 }) {
-  const scope = usePortalScope();
   return (
-    <DropdownMenu.Root modal={false}>
-      <DropdownMenu.Trigger asChild>
-        <button type="button" aria-label={label}
-          className="inline-flex h-7 shrink-0 cursor-pointer items-center rounded-r-md border border-l-0 border-border bg-card px-1.5 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
-          {trigger}
-        </button>
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Portal>
-        <DropdownMenu.Content {...scope} aria-label={label} align={align === "right" ? "end" : "start"} sideOffset={4} collisionPadding={8}
-          className="z-50 flex w-72 flex-col rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md">
-          {children}
-        </DropdownMenu.Content>
-      </DropdownMenu.Portal>
-    </DropdownMenu.Root>
+    <div role="radiogroup" aria-label={label} className="flex gap-0.5 rounded-lg border border-border bg-background p-0.5">
+      {options.map((option) => {
+        const on = option.value === value;
+        return (
+          <button key={option.value} type="button" role="radio" aria-checked={on} disabled={disabled || option.disabled} onClick={() => !on && onChange(option.value)}
+            className={`inline-flex flex-1 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2 py-1 text-xs disabled:cursor-default disabled:opacity-50 ${on ? "bg-accent font-semibold text-foreground shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--primary)_40%,transparent)]" : "text-muted-foreground hover:text-foreground"}`}>
+            {option.icon && <Icon name={option.icon} fallback="Circle" className="size-3.5" aria-hidden />}
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
-export const MenuItem = DropdownMenu.Item;
-export const MenuSeparator = () => <DropdownMenu.Separator className="my-1 border-t border-border" />;
+/** A choice in a dialog's list of choices. */
+export function Choice({ on, disabled = false, title, hint, onPick, trailing }: { on: boolean; disabled?: boolean; title: ReactNode; hint?: ReactNode; onPick(): void; trailing?: ReactNode }) {
+  return (
+    <button type="button" role="radio" aria-checked={on} aria-disabled={disabled || undefined} onClick={() => !disabled && onPick()}
+      className={`mb-1.5 flex w-full items-start gap-2.5 rounded-lg border px-3 py-2 text-left text-sm ${disabled ? "cursor-default opacity-50" : "cursor-pointer"} ${on ? "border-primary/70 bg-primary/5" : `border-border ${disabled ? "" : "hover:bg-accent"}`}`}>
+      <span aria-hidden className={`mt-0.5 size-3.5 shrink-0 rounded-full border-[1.5px] ${on ? "border-4 border-primary" : "border-muted-foreground"}`} />
+      <span className="min-w-0 flex-1">
+        <span className="block font-semibold">{title}</span>
+        {hint && <span className="block text-xs text-muted-foreground">{hint}</span>}
+      </span>
+      {trailing}
+    </button>
+  );
+}
 
-export const MENU_ITEM = "flex w-full cursor-pointer flex-col items-start rounded-md px-2.5 py-1.5 text-left text-sm hover:bg-accent focus-visible:bg-accent focus-visible:outline-none";
+/** A small uppercase label above a group of fields. */
+export const LABEL = "mb-1.5 mt-3 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground";
 
 export function SectionTitle({ icon, children }: { icon?: string; children: ReactNode }) {
   return (
@@ -173,3 +227,35 @@ export function SectionTitle({ icon, children }: { icon?: string; children: Reac
     </h4>
   );
 }
+
+export function PageHeading({ title, description, children }: { title: string; description: string; children?: ReactNode }) {
+  return (
+    <div className="mb-2.5 flex flex-wrap items-start gap-2.5">
+      <div className="min-w-0 flex-1">
+        <h2 className="text-base font-semibold">{title}</h2>
+        <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/** An area's page, at most 900px wide. */
+/** A page fills the area beside bb's sidebar; its sections choose their columns from its width (a container), not the window's. */
+export const PAGE = "@container w-full px-4 pb-10 pt-4 sm:px-5";
+/** Card columns: one in a narrow area, two from 64rem, three from 110rem. */
+export const CARD_GRID = "grid items-stretch gap-2.5 @5xl:grid-cols-2 @[110rem]:grid-cols-3";
+
+const CONTROLS = "button, a, input, textarea, select, label, [role=menuitem], [role=option]";
+
+/** A click on a card opens its PR, unless it landed on one of its controls or came from a menu portalled out of it. */
+export function onCardClick(open: () => void) {
+  return (event: { target: EventTarget; currentTarget: HTMLElement }) => {
+    const target = event.target as Element;
+    if (!event.currentTarget.contains(target) || target.closest(CONTROLS) !== null) return;
+    // Selecting a title or a reason to copy it is not a click.
+    if (window.getSelection()?.toString()) return;
+    open();
+  };
+}
+export const STRIP = "my-1.5 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs";

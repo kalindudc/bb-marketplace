@@ -3,13 +3,16 @@ import type { EventView, PrView } from "./contract";
 
 const REVIEW_TEXT = { approved: "approved", changes: "changes requested", required: "review required", none: "no review decision" } as const;
 
+const MODE_TEXT = { fix: "fixes new feedback", notify: "is told about new feedback", off: "is off" } as const;
+
 export function prLine(pr: PrView): string {
   const bits = [pr.state, `checks ${pr.checks}`, REVIEW_TEXT[pr.review]];
-  if (pr.watch) bits.push(`watching (${pr.watch === "act" ? "forward and act" : "forward"})`);
+  if (pr.agent) bits.push(`agent ${pr.agent.threadId} ${MODE_TEXT[pr.agent.mode]}${pr.agent.status === "archived" ? " (archived)" : ""}`);
+  if (pr.tracked) bits.push("tracked");
   if (pr.pendingItems) bits.push(`${pr.pendingItems} unsent item${pr.pendingItems === 1 ? "" : "s"}`);
   if (pr.links.length) bits.push(`${pr.links.length} thread${pr.links.length === 1 ? "" : "s"}`);
-  if (pr.needs) bits.push(`needs you: ${pr.needs}`);
-  return `${pr.key}  ${bits.join(", ")}\n  ${pr.title} (by ${pr.author})\n  ${pr.url}`;
+  const next = `${pr.next.inbox ? "in the Inbox: " : "next: "}${pr.next.label}. ${pr.next.why}`;
+  return `${pr.key}  ${bits.join(", ")}\n  ${pr.title} (by ${pr.author})\n  ${next}\n  ${pr.url}`;
 }
 
 export function prDetail(pr: PrView, events: EventView[] = []): string {

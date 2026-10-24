@@ -3,9 +3,10 @@ import { defineContract } from "./define-contract";
 import { z } from "zod";
 import { configSchema, WATCH_MODES } from "./config";
 
-export const SECTIONS = ["needs", "requested", "team", "mentioned", "watching", "inflight", "done"] as const;
-export type Section = (typeof SECTIONS)[number];
-export const REASONS = ["authored", "requested", "team", "mentioned"] as const;
+/** The page's lists. The Inbox has its own read; Insights too. */
+export const AREAS = ["mine", "done", "reviews"] as const;
+export type Area = (typeof AREAS)[number];
+export const REASONS = ["authored", "requested", "team", "mentioned", "reviewed"] as const;
 export type Reason = (typeof REASONS)[number];
 export const PR_STATES = ["open", "draft", "merged", "closed"] as const;
 export type PrState = (typeof PR_STATES)[number];
@@ -21,8 +22,41 @@ export type ReviewerState = (typeof REVIEWER_STATES)[number];
 /** What the user can change on a PR of theirs right now, given its state and its server's commands. */
 export const PR_ACTIONS = ["ready", "draft", "close", "reopen", "labels", "reviewers"] as const;
 export type PrAction = (typeof PR_ACTIONS)[number];
+/** What an agent does with new feedback: fix it (watch mode act), just hear about it (forward), or nothing. */
+export const AGENT_MODES = ["fix", "notify", "off"] as const;
+export type AgentMode = (typeof AGENT_MODES)[number];
+export const AGENT_STATUSES = ["working", "waiting", "idle", "archived", "unknown"] as const;
+export const VERDICTS = ["comment", "approve", "changes"] as const;
+export type Verdict = (typeof VERDICTS)[number];
+export const SEVERITIES = ["high", "medium", "low", "nit"] as const;
+export type Severity = (typeof SEVERITIES)[number];
+export const MERGE_METHODS = ["squash", "merge", "rebase"] as const;
+export type MergeMethod = (typeof MERGE_METHODS)[number];
+export const OUTCOMES = ["fixed", "replied", "declined", "question"] as const;
+export type Outcome = (typeof OUTCOMES)[number];
+export const TONES = ["ok", "bad", "warn", "info", "neutral"] as const;
+export type NextTone = (typeof TONES)[number];
+
+/**
+ * The one rule every surface shows: what happens next with this PR. The Inbox card, the row's
+ * group and the PR view's banner all use these words, so they never disagree.
+ */
+export const NEXT_KINDS = [
+  // the user's own PRs
+  "merged", "closed", "agent_waiting", "nobody", "yours", "agent_on_it", "draft", "auto_merge", "ready_to_merge", "approved_pending", "waiting_review",
+  // everyone else's
+  "post", "review_done", "review_failed", "running", "rereview", "reviewed", "new_request", "not_reviewed", "looked_up",
+] as const;
+export type NextKind = (typeof NEXT_KINDS)[number];
+/** What a next step's buttons do; the UI owns how each one is carried out. */
+export const NEXT_ACTIONS = [
+  "merge", "assign_suggested", "pick_agent", "handle", "open_agent", "ready", "nudge", "cancel_auto_merge",
+  "choose", "open_review", "review", "approve", "not_now", "track", "reopen",
+] as const;
+export type NextAction = (typeof NEXT_ACTIONS)[number];
 
 const key = z.string().min(3).max(400);
+const threadId = z.string().min(1).max(100);
 
 export const linkViewSchema = z.object({ threadId: z.string(), title: z.string(), role: z.enum(LINK_ROLES), archived: z.boolean() });
 export type LinkView = z.infer<typeof linkViewSchema>;
@@ -41,7 +75,16 @@ export type ReviewRunView = z.infer<typeof reviewRunSchema>;
 export const labelSchema = z.object({ name: z.string(), color: z.string().nullable() });
 export type Label = z.infer<typeof labelSchema>;
 /** A team's login is its slug as its server writes it, such as org/team on GitHub. */
-export const reviewerSchema = z.object({ login: z.string(), team: z.boolean(), state: z.enum(REVIEWER_STATES) });
+export const reviewerSchema = z.object({
+  login: z.string(),
+  team: z.boolean(),
+  state: z.enum(REVIEWER_STATES),
+  /** When this reviewer's latest review was submitted, and on which head, when the server says. */
+  at: z.number().nullish(),
+  head: z.string().nullish(),
+  /** The server says the account is a bot or an app. */
+  bot: z.boolean().nullish(),
+});
 export type Reviewer = z.infer<typeof reviewerSchema>;
 const reviewerRef = z.object({ login: z.string().trim().min(1).max(200), team: z.boolean() });
 export type ReviewerRef = z.infer<typeof reviewerRef>;
@@ -55,6 +98,70 @@ export const prChangeSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("reviewers"), add: z.array(reviewerRef).max(50).default([]), remove: z.array(reviewerRef).max(50).default([]) }),
 ]);
 export type PrChange = z.output<typeof prChangeSchema>;
+
+export const checkCountsSchema = z.object({ passed: z.number(), failed: z.number(), pending: z.number(), total: z.number() });
+export type CheckCounts = z.infer<typeof checkCountsSchema>;
+
+export const agentViewSchema = z.object({
+  threadId: z.string(),
+  title: z.string(),
+  mode: z.enum(AGENT_MODES),
+  /** working: its thread is running; waiting: it asked you something; archived: its thread is archived. */
+  status: z.enum(AGENT_STATUSES),
+  /** Auto agent picked it, from the thread that opened the PR. */
+  auto: z.boolean(),
+  /** The last batch Shuttle sent it for this PR. */
+  lastSent: z.object({ at: z.number(), text: z.string() }).nullable(),
+});
+export type AgentView = z.infer<typeof agentViewSchema>;
+
+export const nextStepSchema = z.object({
+  kind: z.enum(NEXT_KINDS),
+  tone: z.enum(TONES),
+  /** Short: "Ready to merge", "Changes requested, and nobody is on it". */
+  label: z.string(),
+  /** One or two sentences with the facts behind the label. */
+  why: z.string(),
+  /** When an Inbox card leaves, such as "Leaves when it merges, or when you snooze it."; null outside the Inbox. */
+  clears: z.string().nullable(),
+  /** In the Inbox now (snoozed PRs are not). */
+  inbox: z.boolean(),
+  primary: z.object({ id: z.enum(NEXT_ACTIONS), label: z.string() }).nullable(),
+  more: z.array(z.object({ id: z.enum(NEXT_ACTIONS), label: z.string() })),
+});
+export type NextStep = z.infer<typeof nextStepSchema>;
+
+export const myReviewSchema = z.object({
+  verdict: z.enum(["approve", "changes", "comment", "dismissed"]),
+  at: z.number().nullable(),
+  head: z.string().nullable(),
+});
+export type MyReview = z.infer<typeof myReviewSchema>;
+
+export const findingSchema = z.object({
+  id: z.string(),
+  severity: z.enum(SEVERITIES),
+  path: z.string(),
+  /** A line in the new version of the file; null for a file-level finding. */
+  line: z.number().int().positive().nullable(),
+  body: z.string(),
+});
+export type Finding = z.infer<typeof findingSchema>;
+
+export const reviewDraftSchema = z.object({
+  id: z.number(),
+  threadId: z.string(),
+  threadTitle: z.string(),
+  preset: z.string().nullable(),
+  trigger: z.enum(["auto", "manual"]).nullable(),
+  /** The head the review read. */
+  head: z.string().nullable(),
+  at: z.number(),
+  summary: z.string(),
+  verdict: z.enum(VERDICTS),
+  findings: z.array(findingSchema),
+});
+export type ReviewDraft = z.infer<typeof reviewDraftSchema>;
 
 export const prViewSchema = z.object({
   /** `server:repo#number`, the PR's id everywhere in Shuttle. */
@@ -70,6 +177,8 @@ export const prViewSchema = z.object({
   mine: z.boolean(),
   state: z.enum(PR_STATES),
   checks: z.enum(CHECK_STATES),
+  /** How many checks passed, failed and are still running, when the server says; null otherwise. */
+  checkCounts: checkCountsSchema.nullable(),
   review: z.enum(REVIEW_STATES),
   head: z.string().nullable(),
   headRef: z.string().nullable(),
@@ -78,22 +187,51 @@ export const prViewSchema = z.object({
   deletions: z.number().nullable(),
   files: z.number().nullable(),
   updatedAt: z.number().nullable(),
+  createdAt: z.number().nullable(),
+  /** When it merged or closed. */
+  closedAt: z.number().nullable(),
   reasons: z.array(z.object({ reason: z.enum(REASONS), teams: z.array(z.string()) })),
-  watch: z.enum(WATCH_MODES).nullable(),
+  /** The teams it asks a review of, without @ or org, so one team reads the same on every server. */
+  teams: z.array(z.string()),
+  /** When you or your team were asked; null when it does not ask. */
+  requestedAt: z.number().nullable(),
+  /** The author is a bot, by the server or by the "Bot authors" setting. */
+  bot: z.boolean(),
+  /** Nothing changed in 30 days. */
+  quiet: z.boolean(),
+  /** Kept in Reviews › Tracked; it comes to the Inbox when it changes after your review. */
+  tracked: z.boolean(),
   links: z.array(linkViewSchema),
+  /** The thread that handles new reviews and failed checks on this PR; at most one. */
+  agent: agentViewSchema.nullable(),
+  /** A thread that could be the agent: the one that opened the PR, found by its branch. */
+  suggestedAgent: z.object({ threadId: z.string(), title: z.string(), why: z.string() }).nullable(),
+  /** Kept for the CLI and the thread panel: the watch mode behind the agent's mode. */
+  watch: z.enum(WATCH_MODES).nullable(),
   lastReview: reviewRunSchema.nullable(),
-  /** Why the PR is in Needs you, or null. */
-  needs: z.string().nullable(),
+  /** Your own latest review on the server, or the one you posted from Shuttle. */
+  myReview: myReviewSchema.nullable(),
+  /** An AI review draft waiting for you to choose what to post. */
+  draft: z.object({ id: z.number(), findings: z.number(), at: z.number() }).nullable(),
+  next: nextStepSchema,
+  /** Snoozed: out of the Inbox until this time or until it changes. */
+  snoozedUntil: z.number().nullable(),
+  /** You said "I'll do it" about its current feedback. */
+  handled: z.boolean(),
+  /** GitHub's auto-merge is on: it merges when its checks pass. */
+  autoMerge: z.boolean(),
   /** The server's last sync failed, so this row may be out of date. */
   stale: z.boolean(),
-  /** Review items found on a watched PR and not yet sent to its thread. */
+  /** Review items found on a PR with an agent and not yet sent. */
   pendingItems: z.number(),
   /** null until Shuttle has read them from the server. */
   labels: z.array(labelSchema).nullable(),
-  /** Requested reviewers and the latest review of everyone who reviewed; null until a view read them. */
+  /** Requested reviewers and the latest review of everyone who reviewed; null until a read carried them. */
   reviewers: z.array(reviewerSchema).nullable(),
   /** Empty unless the PR is the user's own. */
   actions: z.array(z.enum(PR_ACTIONS)),
+  /** What its server lets you do from Shuttle right now. */
+  can: z.object({ merge: z.boolean(), comment: z.boolean(), review: z.boolean(), reply: z.boolean(), resolve: z.boolean() }),
 });
 export type PrView = z.infer<typeof prViewSchema>;
 
@@ -125,12 +263,104 @@ export type EventView = z.infer<typeof eventViewSchema>;
 
 export const overviewSchema = z.object({
   servers: z.array(serverStatusSchema),
-  counts: z.record(z.enum(SECTIONS), z.number()),
+  counts: z.object({ inbox: z.number(), mine: z.number(), done: z.number(), reviews: z.number() }),
   syncedAt: z.number().nullable(),
   syncing: z.boolean(),
   paused: z.boolean(),
+  autoAgent: z.boolean(),
 });
 export type Overview = z.infer<typeof overviewSchema>;
+
+export const inboxSchema = z.object({
+  /** Highest priority first. */
+  prs: z.array(prViewSchema),
+  /** Your open PRs and who handles their feedback. */
+  agents: z.object({ open: z.number(), withAgent: z.number(), working: z.number(), waiting: z.number(), none: z.number() }),
+  /** Requests by name or mention that left the Inbox by age and are still not reviewed; they wait in Reviews. */
+  olderRequests: z.number(),
+  /** What automation did in the last 24 hours, newest first. */
+  handled: z.array(eventViewSchema),
+});
+export type InboxView = z.infer<typeof inboxSchema>;
+
+export const conversationItemSchema = z.object({
+  id: z.string(),
+  kind: z.enum(["review", "thread", "comment", "check"]),
+  author: z.string().nullable(),
+  bot: z.boolean(),
+  /** The author is you. */
+  mine: z.boolean(),
+  /** A review's verdict ("approved", "changes requested"), or "failed" for a check. */
+  state: z.string().nullable(),
+  body: z.string(),
+  path: z.string().nullable(),
+  line: z.number().nullable(),
+  url: z.string().nullable(),
+  at: z.number().nullable(),
+  /** The review thread this comment is in: what Reply and Resolve act on. */
+  thread: z.string().nullable(),
+  resolved: z.boolean(),
+  /** For your PRs: sent to the agent, or waiting to be sent; null when it was never queued. */
+  delivery: z.enum(["sent", "pending"]).nullable(),
+  /** What the agent said it did with it. */
+  outcome: z.object({ outcome: z.enum(OUTCOMES), note: z.string().nullable(), commit: z.string().nullable(), at: z.number() }).nullable(),
+});
+export type ConversationItem = z.infer<typeof conversationItemSchema>;
+
+export const mergeOptionsSchema = z.object({
+  /** Methods the repository allows, the default first. */
+  methods: z.array(z.enum(MERGE_METHODS)),
+  default: z.enum(MERGE_METHODS),
+  /** The repository deletes branches after a merge by default. */
+  deleteBranch: z.boolean(),
+  /** The server can merge it by itself once checks pass. */
+  canAuto: z.boolean(),
+  /** clean: it can merge now; blocked: required reviews or checks are missing; behind: base moved on; conflicts; unknown. */
+  state: z.enum(["clean", "blocked", "behind", "conflicts", "pending", "unknown"]),
+  /** The server's reason when it is not clean. */
+  detail: z.string().nullable(),
+});
+export type MergeOptions = z.infer<typeof mergeOptionsSchema>;
+
+const weekly = z.array(z.object({ week: z.string(), asked: z.number(), team: z.number(), reviewed: z.number() }));
+export const insightsSchema = z.object({
+  range: z.enum(["7d", "30d", "90d"]),
+  /** Shuttle keeps some of these numbers only from this time on; null when it has everything. */
+  collectingSince: z.number().nullable(),
+  kpis: z.object({
+    merged: z.number(),
+    opened: z.number(),
+    /** Median milliseconds, or null without data. */
+    timeToMerge: z.number().nullable(),
+    firstReviewWait: z.number().nullable(),
+    reviewResponse: z.number().nullable(),
+  }),
+  /** Share of your PRs' open time in each phase, 0 to 1; null before Shuttle has seen a PR through. */
+  phases: z.object({ draft: z.number(), waiting: z.number(), fixing: z.number(), approved: z.number() }).nullable(),
+  feedback: z.object({
+    total: z.number(),
+    fixed: z.number(),
+    replied: z.number(),
+    declined: z.number(),
+    /** Items on PRs you said you would handle. */
+    you: z.number(),
+    open: z.number(),
+    agentMedianMs: z.number().nullable(),
+  }),
+  requests: weekly,
+  /** Open requests at the end of each day Shuttle synced. */
+  openRequests: z.array(z.object({ day: z.string(), total: z.number(), bots: z.number(), quiet: z.number() })),
+  ai: z.array(z.object({ preset: z.string(), drafts: z.number(), posted: z.number(), kept: z.number().nullable() })),
+  reviewers: z.array(z.object({ login: z.string(), bot: z.boolean(), reviews: z.number(), medianMs: z.number().nullable() })),
+  ideas: z.array(z.object({
+    id: z.string(),
+    tone: z.enum(TONES),
+    title: z.string(),
+    detail: z.string(),
+    action: z.object({ id: z.enum(["nudge", "auto_agent", "hide_bots", "show_quiet", "edit_preset"]), label: z.string(), key: z.string().nullable() }).nullable(),
+  })),
+});
+export type InsightsView = z.infer<typeof insightsSchema>;
 
 export const threadOptionSchema = z.object({ id: z.string(), title: z.string(), projectId: z.string().nullable(), status: z.string(), updatedAt: z.number().nullable() });
 export type ThreadOption = z.infer<typeof threadOptionSchema>;
@@ -157,30 +387,57 @@ export const reviewInputSchema = z.object({
 });
 export type ReviewInput = z.infer<typeof reviewInputSchema>;
 
+export const agentTargetSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("existing"), threadId }),
+  z.object({ kind: z.literal("new"), projectId: z.string().max(100).optional() }),
+  /** No agent: the thread stays linked for reference. */
+  z.object({ kind: z.literal("none") }),
+]);
+export type AgentTarget = z.infer<typeof agentTargetSchema>;
+
+const body = z.string().trim().min(1).max(60_000);
+export const postFindingSchema = z.object({ path: z.string().min(1).max(1000), line: z.number().int().positive().nullable(), body: z.string().trim().min(1).max(20_000) });
+export type PostFinding = z.infer<typeof postFindingSchema>;
+
 // Reads carry tags and writes declare what they invalidate; background syncs invalidate "prs" and "servers" from the server.
 const PRS = () => ["prs"];
+const CONVERSATION = () => ["prs", "conversation"];
 const CONFIG = () => ["config"];
 
 export const rpcContract = defineContract({
   overview: { input: z.object({}), output: overviewSchema, tags: () => ["prs", "servers", "config"] },
-  list: { input: z.object({ section: z.enum(SECTIONS) }), output: z.object({ prs: z.array(prViewSchema) }), tags: PRS },
+  inbox: { input: z.object({}), output: inboxSchema, tags: PRS },
+  list: { input: z.object({ area: z.enum(AREAS) }), output: z.object({ prs: z.array(prViewSchema) }), tags: PRS },
   /** body is the description, or null until Shuttle has fetched the PR itself (lists carry none). */
-  detail: { input: z.object({ key }), output: z.object({ pr: prViewSchema, events: z.array(eventViewSchema), body: z.string().nullable() }), tags: PRS },
+  detail: { input: z.object({ key }), output: z.object({ pr: prViewSchema, events: z.array(eventViewSchema), body: z.string().nullable(), draft: reviewDraftSchema.nullable() }), tags: PRS },
+  /** The PR's reviews, comments and failed checks, read from its server (kept for 30 seconds). */
+  conversation: { input: z.object({ key }), output: z.object({ items: z.array(conversationItemSchema), error: z.string().nullable(), fetchedAt: z.number() }), tags: () => ["conversation"] },
   /** A link or a key such as delta:shop/world#2261179; fetched from its server and kept. */
   lookup: { input: z.object({ query: z.string().min(1).max(500) }), output: prOut, invalidates: PRS },
   activity: { input: z.object({ limit: z.number().int().min(1).max(500).optional() }), output: z.object({ events: z.array(eventViewSchema) }), tags: PRS },
-  sync: { input: z.object({}), output: ok, invalidates: () => ["prs", "servers"] },
-  link: { input: z.object({ key, threadId: z.string().min(1).max(100), role: z.enum(LINK_ROLES).optional() }), output: prOut, invalidates: PRS },
-  unlink: { input: z.object({ key, threadId: z.string().min(1).max(100) }), output: prOut, invalidates: PRS },
+  insights: { input: z.object({ range: z.enum(["7d", "30d", "90d"]) }), output: insightsSchema, tags: PRS },
+  sync: { input: z.object({}), output: ok, invalidates: () => ["prs", "servers", "conversation"] },
+  link: { input: z.object({ key, threadId, role: z.enum(LINK_ROLES).optional() }), output: prOut, invalidates: PRS },
+  unlink: { input: z.object({ key, threadId }), output: prOut, invalidates: PRS },
   watch: { input: z.object({ key, mode: z.enum(WATCH_MODES).nullable() }), output: prOut, invalidates: PRS },
+  /** Make a thread the PR's agent (the one before stays linked for reference), start a new one, or have none. */
+  setAgent: { input: z.object({ key, target: agentTargetSchema, mode: z.enum(AGENT_MODES).optional() }), output: z.object({ pr: prViewSchema, threadId: z.string().nullable() }), invalidates: PRS },
+  setAgentMode: { input: z.object({ key, mode: z.enum(AGENT_MODES) }), output: prOut, invalidates: PRS },
+  /** Send your text to the PR's agent thread, with the PR named; nothing is posted on the PR. */
+  askAgent: { input: z.object({ key, text: body }), output: ok, invalidates: PRS },
+  /** The page's own switches for Shuttle's bb settings. */
+  setSettings: { input: z.object({ autoAgent: z.boolean().optional(), inboxRequests: z.boolean().optional() }), output: ok, invalidates: () => ["prs", "servers", "config"] },
+  track: { input: z.object({ key, on: z.boolean() }), output: prOut, invalidates: PRS },
+  /** "tomorrow": until 9:00 tomorrow or until it changes; "update": until it changes; null: back now. */
+  snooze: { input: z.object({ key, until: z.enum(["tomorrow", "update"]).nullable() }), output: prOut, invalidates: PRS },
+  /** "I'll do it": its current feedback leaves the Inbox until new feedback arrives. */
+  handle: { input: z.object({ key, on: z.boolean() }), output: prOut, invalidates: PRS },
   review: { input: reviewInputSchema, output: z.object({ threadId: z.string() }), invalidates: PRS },
   /** Start a thread that owns the PR ("own") or reviews it ("review"), and link it. */
   newThread: { input: z.object({ key, start: z.enum(["own", "review"]), projectId: z.string().max(100).optional() }), output: z.object({ threadId: z.string() }), invalidates: PRS },
-  /** Clear the PR's Needs you entry until something new happens. */
-  dismiss: { input: z.object({ key }), output: prOut, invalidates: PRS },
-  threadPrs: { input: z.object({ threadId: z.string().min(1).max(100) }), output: z.object({ prs: z.array(prViewSchema), sent: z.array(eventViewSchema) }), tags: PRS },
-  /** Send every pending review item of the thread's watched PRs now, without waiting for the batch window. */
-  sendUnread: { input: z.object({ threadId: z.string().min(1).max(100) }), output: z.object({ sent: z.number() }), invalidates: PRS },
+  threadPrs: { input: z.object({ threadId }), output: z.object({ prs: z.array(prViewSchema), sent: z.array(eventViewSchema) }), tags: PRS },
+  /** Send every pending review item of the thread's PRs now, without waiting for the batch window. */
+  sendUnread: { input: z.object({ threadId }), output: z.object({ sent: z.number() }), invalidates: PRS },
   threads: { input: z.object({ query: z.string().max(200).optional() }), output: z.object({ threads: z.array(threadOptionSchema) }) },
   projects: { input: z.object({ key: key.optional() }), output: z.object({ projects: z.array(projectOptionSchema), suggested: z.string().nullable() }) },
   getConfig: { input: z.object({}), output: z.object({ config: configSchema }), tags: CONFIG },
@@ -196,5 +453,38 @@ export const rpcContract = defineContract({
     input: z.object({ key }),
     output: z.object({ labels: z.array(labelSchema.extend({ description: z.string().nullable() })), people: z.array(z.string()), teams: z.array(z.string()) }),
   },
+  /** How this PR can merge: the repository's methods and whether it can merge now. Untagged; read when the dialog opens. */
+  mergeOptions: { input: z.object({ key }), output: mergeOptionsSchema },
+  /** Merge one of your PRs, only while its head is still `head`; with `auto`, once its checks pass. */
+  merge: {
+    input: z.object({ key, method: z.enum(MERGE_METHODS), head: z.string().min(7).max(100), auto: z.boolean(), deleteBranch: z.boolean(), subject: z.string().trim().max(500).optional() }),
+    output: z.object({ pr: prViewSchema, merged: z.boolean() }),
+    invalidates: CONVERSATION,
+  },
+  cancelAutoMerge: { input: z.object({ key }), output: prOut, invalidates: PRS },
+  /** A comment on the PR's conversation, as you. */
+  comment: { input: z.object({ key, body }), output: prOut, invalidates: CONVERSATION },
+  /**
+   * A review as you: a verdict, a body and inline comments. With draftId, the AI draft it came from
+   * is marked posted. Findings the server cannot place on a line go into the body.
+   */
+  submitReview: {
+    input: z.object({
+      key,
+      verdict: z.enum(VERDICTS),
+      body: z.string().trim().max(60_000),
+      findings: z.array(postFindingSchema).max(100).default([]),
+      draftId: z.number().int().optional(),
+      /** Post a draft whose review read an older head: its comments stay on the lines that review read. Never for an approval. */
+      staleOk: z.boolean().optional(),
+    }),
+    output: z.object({ pr: prViewSchema, placed: z.number(), inBody: z.number() }),
+    invalidates: CONVERSATION,
+  },
+  discardDraft: { input: z.object({ key, draftId: z.number().int() }), output: prOut, invalidates: PRS },
+  /** Undo a discard. */
+  restoreDraft: { input: z.object({ key, draftId: z.number().int() }), output: prOut, invalidates: PRS },
+  reply: { input: z.object({ key, thread: z.string().min(1).max(300), body }), output: ok, invalidates: CONVERSATION },
+  resolve: { input: z.object({ key, thread: z.string().min(1).max(300), resolved: z.boolean() }), output: ok, invalidates: CONVERSATION },
   skills: { input: z.object({ projectId: z.string().max(100).optional() }), output: z.object({ skills: z.array(z.object({ id: z.string(), name: z.string(), description: z.string() })) }) },
 });

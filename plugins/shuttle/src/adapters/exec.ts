@@ -32,6 +32,8 @@ export function toolPath(env: NodeJS.ProcessEnv = process.env): string {
 
 export const runProcess: Runner = (bin, args, options) =>
   new Promise((resolve, reject) => {
+    // An abort that came before the start never fires its event, so the process would run to its timeout.
+    if (options.signal?.aborted) return reject(new Error("stopped before it started"));
     const child = spawn(bin, args, {
       env: { ...process.env, PATH: toolPath(), ...options.env },
       stdio: ["pipe", "pipe", "pipe"],
@@ -94,9 +96,13 @@ export function shellQuote(value: string): string {
   return /^[A-Za-z0-9._/:@%+=,-]+$/u.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-/** Placeholders filled with server data are quoted, so a hostile repo name or URL stays one argument. */
+/**
+ * Placeholders filled with server data are quoted, so a hostile repo name or URL stays one argument.
+ * One pass over the template: a value that holds "{url}" is never filled again outside its quotes.
+ */
 export function fillCommand(template: string, repo: string, number: number, url: string): string {
-  return template.replaceAll("{repo}", shellQuote(repo)).replaceAll("{number}", String(number)).replaceAll("{url}", shellQuote(url));
+  const values: Record<string, string> = { repo: shellQuote(repo), number: String(number), url: shellQuote(url) };
+  return template.replace(/\{(repo|number|url)\}/gu, (_whole, name: string) => values[name]!);
 }
 
 export function tail(text: string, lines = 4, chars = 600): string {

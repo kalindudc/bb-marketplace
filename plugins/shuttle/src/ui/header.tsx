@@ -1,19 +1,12 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { experimental_Icon as Icon, experimental_usePluginId, UrlLink, useBbNavigate } from "@get-bb/plugin-sdk/app";
-import type { ServerStatus } from "../contract";
-import { BUTTON, ICON_GHOST, Pill } from "./common";
+import { BUTTON, ICON_GHOST } from "./common";
 import { PANEL_PATH } from "./constants";
-import { messageOf, useShuttleMutation, useShuttleQuery } from "./data";
-import { ago, settingsHref } from "./format";
+import { useShuttleMutation, useShuttleQuery } from "./data";
+import { settingsHref } from "./format";
 import { formatRoute } from "./route";
 import { useViewport } from "./viewport";
-
-function Health({ server }: { server: ServerStatus }) {
-  if (server.ok === null) return <Pill icon="Circle" title="Not synced yet">{server.name}</Pill>;
-  if (server.ok) return <Pill tone="ok" icon="Circle" title={server.login ? `Signed in as ${server.login}` : "Synced"}>{server.name}</Pill>;
-  return <Pill tone="bad" icon="AlertTriangle" title={server.error ?? "The last sync failed"}>{server.name}</Pill>;
-}
 
 /** The look-up field: a link or a key, fetched from its server, then shown on the page. */
 export function LookupInput({ placeholder, onFound, icon = "Search", label = "Look up a pull request" }: {
@@ -85,26 +78,15 @@ export function ShuttleHeader() {
   const sync = async () => {
     if (await syncMutation.run({})) toast.success("Syncing every server");
   };
-  const servers = overview.data?.servers.filter((server) => server.enabled) ?? [];
   const syncing = syncMutation.isPending || overview.data?.syncing === true;
   const showPr = (key: string) => navigate.toPluginPanel(PANEL_PATH, { subPath: formatRoute({ view: "pr", key }) });
   if (phone) return <PhoneHeader onFound={showPr} syncing={syncing} onSync={() => void sync()} />;
   return (
     <div className="flex min-w-0 items-center gap-2">
-      <div className="hidden items-center gap-1.5 lg:flex">
-        {servers.map((server) => <Health key={server.id} server={server} />)}
-        {overview.data?.paused === true && <Pill tone="warn" icon="Pause">Paused</Pill>}
-        {overview.error !== null && <Pill tone="bad" icon="AlertTriangle" title={messageOf(overview.error)}>Status unavailable</Pill>}
-      </div>
       <div className="w-56 min-w-0 xl:w-80">
-        <LookupInput placeholder="Look up any PR: paste a link or key" onFound={showPr} />
+        <LookupInput placeholder="Look up or track any PR: paste a link" onFound={showPr} />
       </div>
-      {overview.data?.syncedAt != null && (
-        <span className="hidden whitespace-nowrap text-xs text-muted-foreground md:inline" title={new Date(overview.data.syncedAt).toLocaleString()}>
-          synced {ago(overview.data.syncedAt)}
-        </span>
-      )}
-      <button type="button" className={BUTTON} disabled={syncing} onClick={() => void sync()}>
+      <button type="button" className={BUTTON} disabled={syncing} title="Sync every server now" onClick={() => void sync()}>
         <Icon name="ArrowReloadHorizontal" className={`size-3.5 ${syncing ? "animate-spin" : ""}`} aria-hidden />
         {syncing ? "Syncing" : "Sync"}
       </button>

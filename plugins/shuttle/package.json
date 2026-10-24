@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-shuttle",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -9,7 +9,7 @@
   },
   "bb": {
     "name": "Shuttle",
-    "description": "Every pull request that needs you, from any server, in one place: your own PRs, review requests, team requests and mentions on GitHub, Delta or any server you add with a few commands. Start a review with your own skill, model and thinking level, review automatically when you are requested by name, link PRs to threads (a thread can own several), and send new reviews on a watched PR to the thread that should act on them.",
+    "description": "Every pull request that needs you, from any server, in one place. An Inbox of the decisions waiting on you, your own PRs with the agent thread that fixes their reviews and failed checks, a review centre for the PRs that ask you or your teams, and insights into where your time goes. Merge, comment, reply and post AI review drafts from Shuttle, on GitHub, Delta or any server you add with a few commands.",
     "branding": {
       "icon": "./icons/shuttle.svg",
       "experimental_icons": {

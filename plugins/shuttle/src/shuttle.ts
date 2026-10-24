@@ -2,17 +2,25 @@
 import { adapterFor, type Adapter } from "./adapters";
 import { runProcess, type Runner } from "./adapters/exec";
 import { configChanges, configFromToml, configToToml, ConfigError, parseConfig, serverSchema, type Config, type ServerConfig, type WatchMode } from "./config";
-import { SECTIONS, type EventView, type LinkRole, type Overview, type PrChange, type PrView, type ReviewInput, type Section, type TestResult, type ThreadOption } from "./contract";
+import type {
+  AgentMode, AgentTarget, Area, ConversationItem, EventView, InboxView, InsightsView, LinkRole, MergeMethod, MergeOptions, Outcome, Overview, PostFinding, PrChange, PrView, ReviewDraft,
+  ReviewInput, TestResult, ThreadOption, Verdict,
+} from "./contract";
+import { askAgent, runAutoAgent, setAgent, setAgentMode, type AgentChange } from "./agents";
+import { cancelAutoMerge, comment, Conversations, merge, mergeOptions, recordOutcomes, reply, resolve } from "./conversation";
+import { draftView, saveDraft, setDraftState, submitReview, type DraftInput } from "./drafts";
+import { insights, INSIGHTS_SINCE, snapshotCounts } from "./insights";
+import { agentActive, feedbackSignature, phaseOf } from "./next";
 import { errText, ShuttleError, type Ctx } from "./ctx";
 import type { EventRow, Store } from "./db/store";
 import type { BbPort, ProjectInfo } from "./ports";
-import { fetchPr, linkPr, lookup, rememberThread, requirePr, setWatch, unlinkPr } from "./prs";
+import { fetchPr, linkPr, lookup, rememberThread, requirePr, setWatch, shortKey, unlinkPr } from "./prs";
 import { parseKey } from "./keys";
 import { matchProject } from "./projects";
-import { startOwnerThread, startReview } from "./reviews";
+import { startReview } from "./reviews";
 import type { Settings } from "./settings";
 import { runAutoReviews, syncServer } from "./sync";
-import { allViews, inSection, toView } from "./views";
+import { allViews, inArea, inboxOf, toView } from "./views";
 import { editOptions, editPr } from "./edit";
 import { deliver, pollWatches } from "./watch";
 
@@ -24,6 +32,18 @@ export interface ShuttleDeps {
   now: () => number;
   settings: () => Settings;
   runner?: Runner;
+  /** Aborts when the plugin stops: syncs started by the UI or the CLI end with it. */
+  lifetime?: AbortSignal;
+}
+
+/** Settles with `work`, or as soon as `signal` aborts; the abort listener goes either way. */
+function settleOrAbort(work: Promise<void>, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const onAbort = () => resolve();
+    signal.addEventListener("abort", onAbort, { once: true });
+    work.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
 }
 
 export function toEventView(row: EventRow): EventView {
@@ -36,10 +56,12 @@ export class Shuttle implements Ctx {
   readonly now: () => number;
   readonly settings: () => Settings;
   private readonly runner?: Runner;
+  private readonly lifetime?: AbortSignal;
   private readonly adapters = new Map<string, { json: string; adapter: Adapter }>();
   private projectCache: { at: number; projects: ProjectInfo[] } | null = null;
   private syncing: Promise<void> | null = null;
   private deliveries: Promise<unknown> = Promise.resolve();
+  private readonly conversations = new Conversations(this);
 
   constructor(deps: ShuttleDeps) {
     this.store = deps.store;
@@ -48,6 +70,9 @@ export class Shuttle implements Ctx {
     this.settings = deps.settings;
     this.runner = deps.runner;
     this.run = deps.runner ?? runProcess;
+    this.lifetime = deps.lifetime;
+    // Insights only trust Shuttle's own sightings from here on; rows copied over at the upgrade predate them.
+    if (!this.store.kv(INSIGHTS_SINCE)) this.store.setKv(INSIGHTS_SINCE, String(this.now()));
   }
 
   readonly run: Runner;
@@ -99,7 +124,12 @@ export class Shuttle implements Ctx {
 
   overview(): Overview {
     const views = allViews(this);
-    const counts = Object.fromEntries(SECTIONS.map((s) => [s, views.filter((v) => inSection(v, s, this)).length])) as Record<Section, number>;
+    const counts = {
+      inbox: inboxOf(views).length,
+      mine: views.filter((v) => inArea(v, "mine", this)).length,
+      done: views.filter((v) => inArea(v, "done", this)).length,
+      reviews: views.filter((v) => inArea(v, "reviews", this)).length,
+    };
     const servers = this.config().servers.map((server) => {
       const row = this.store.server(server.id);
       let operations: string[];
@@ -123,24 +153,50 @@ export class Shuttle implements Ctx {
       };
     });
     const syncedAt = servers.reduce<number | null>((max, s) => (s.lastSyncAt !== null && (max === null || s.lastSyncAt > max) ? s.lastSyncAt : max), null);
-    return { servers, counts, syncedAt, syncing: this.syncing !== null, paused: this.settings().pauseAutomations };
+    return { servers, counts, syncedAt, syncing: this.syncing !== null, paused: this.settings().pauseAutomations, autoAgent: this.settings().autoAgent };
   }
 
-  list(section: Section): PrView[] {
-    return allViews(this).filter((v) => inSection(v, section, this));
+  list(area: Area): PrView[] {
+    return allViews(this).filter((v) => inArea(v, area, this));
+  }
+
+  inbox(): InboxView {
+    const views = allViews(this);
+    const open = views.filter((v) => v.mine && (v.state === "open" || v.state === "draft"));
+    const active = open.filter((v) => agentActive(v.agent));
+    const days = this.settings().inboxRequestDays;
+    const olderRequests = views.filter(
+      (v) => v.next.kind === "not_reviewed" && !v.bot && !v.quiet && v.reasons.some((r) => r.reason === "requested" || r.reason === "mentioned") && (v.requestedAt === null || this.now() - v.requestedAt >= days * 86_400_000),
+    ).length;
+    const handled = this.store
+      .events({ kinds: ["forwarded", "review_done", "auto_agent", "outcome", "draft", "auto_failed", "forward_failed"], limit: 20 })
+      .filter((e) => e.at >= this.now() - 86_400_000)
+      .slice(0, 8)
+      .map(toEventView);
+    return {
+      prs: inboxOf(views),
+      agents: { open: open.length, withAgent: active.length, working: active.filter((v) => v.agent?.status === "working").length, waiting: active.filter((v) => v.agent?.status === "waiting").length, none: open.length - active.length },
+      olderRequests,
+      handled,
+    };
+  }
+
+  insights(range: InsightsView["range"]): InsightsView {
+    return insights(this, range);
   }
 
   view(key: string): PrView {
     return toView(this, requirePr(this, key));
   }
 
-  detail(key: string): { pr: PrView; events: EventView[]; body: string | null } {
+  detail(key: string): { pr: PrView; events: EventView[]; body: string | null; draft: ReviewDraft | null } {
     const pr = requirePr(this, key);
-    return { pr: toView(this, pr), events: this.store.events({ prId: pr.id, limit: 50 }).map(toEventView), body: pr.body };
+    const draft = pr.mine ? null : this.store.liveDraft(pr.id);
+    return { pr: toView(this, pr), events: this.store.events({ prId: pr.id, limit: 50 }).map(toEventView), body: pr.body, draft: draft ? draftView(this, draft) : null };
   }
 
   /** A deep link to a PR Shuttle has not stored yet looks it up on its server first. */
-  async detailOrLookup(key: string): Promise<{ pr: PrView; events: EventView[]; body: string | null }> {
+  async detailOrLookup(key: string): Promise<{ pr: PrView; events: EventView[]; body: string | null; draft: ReviewDraft | null }> {
     if (!this.store.prByKey(key)) await lookup(this, key);
     return this.detail(key);
   }
@@ -194,11 +250,136 @@ export class Shuttle implements Ctx {
     return toView(this, pr);
   }
 
-  dismiss(key: string): PrView {
+  /** Sends a new agent the feedback already on the PR, now rather than after the batch window. */
+  private async kick(key: string, change: AgentChange): Promise<void> {
+    if (!change.backlog || !change.threadId) return;
     const pr = requirePr(this, key);
-    this.store.setDismissed(pr.id, this.now());
+    await pollWatches(this, undefined, undefined, pr.id);
+    await this.deliver({ force: true, threadId: change.threadId });
+  }
+
+  async setAgent(key: string, target: AgentTarget, mode?: AgentMode): Promise<{ pr: PrView; threadId: string | null }> {
+    if (target.kind !== "new") await lookup(this, key);
+    const change = await setAgent(this, key, target, mode);
+    await this.kick(key, change).catch((error: unknown) => this.port.log("warn", `send feedback to the new agent of ${key}: ${errText(error)}`));
+    return { pr: this.view(key), threadId: change.threadId };
+  }
+
+  async setAgentMode(key: string, mode: AgentMode): Promise<PrView> {
+    const change = setAgentMode(this, key, mode);
+    await this.kick(key, change).catch((error: unknown) => this.port.log("warn", `send feedback to the agent of ${key}: ${errText(error)}`));
+    return this.view(key);
+  }
+
+  async askAgent(key: string, text: string): Promise<void> {
+    await askAgent(this, key, text);
+  }
+
+  track(key: string, on: boolean): PrView {
+    const pr = requirePr(this, key);
+    this.store.setTracked(pr.id, on);
+    this.store.addEvent("tracked", on ? `You track ${shortKey(this, pr)}.` : `You stopped tracking ${shortKey(this, pr)}.`, pr.id);
     this.port.publish();
+    return toView(this, this.store.prById(pr.id)!);
+  }
+
+  /** "tomorrow" is 9:00 on the next day, in this machine's time zone. */
+  snooze(key: string, until: "tomorrow" | "update" | null): PrView {
+    const pr = requirePr(this, key);
+    if (until === null) {
+      this.store.setSnooze(pr.id, null, null);
+    } else {
+      const morning = new Date(this.now());
+      morning.setDate(morning.getDate() + 1);
+      morning.setHours(9, 0, 0, 0);
+      this.store.setSnooze(pr.id, this.now(), until === "tomorrow" ? morning.getTime() : null);
+      this.store.addEvent("snoozed", until === "tomorrow" ? `Snoozed ${shortKey(this, pr)} until tomorrow.` : `${shortKey(this, pr)} left the Inbox until it changes.`, pr.id);
+    }
+    this.port.publish();
+    return toView(this, this.store.prById(pr.id)!);
+  }
+
+  handle(key: string, on: boolean): PrView {
+    const pr = requirePr(this, key);
+    const reviewers = pr.reviewers ? (JSON.parse(pr.reviewers) as Parameters<typeof feedbackSignature>[0]) : null;
+    this.store.setHandled(pr.id, on ? JSON.stringify(feedbackSignature(reviewers, pr.checks, pr.head)) : null);
+    if (on) this.store.addEvent("handled", `You took the feedback on ${shortKey(this, pr)} yourself.`, pr.id);
+    this.port.publish();
+    return toView(this, this.store.prById(pr.id)!);
+  }
+
+  conversation(key: string): Promise<{ items: ConversationItem[]; error: string | null; fetchedAt: number }> {
+    return this.conversations.read(key);
+  }
+
+  async comment(key: string, body: string): Promise<PrView> {
+    const pr = await comment(this, key, body);
+    this.conversations.forget(key);
     return toView(this, pr);
+  }
+
+  async reply(key: string, thread: string, body: string): Promise<void> {
+    await reply(this, key, thread, body);
+    this.conversations.forget(key);
+  }
+
+  async resolve(key: string, thread: string, resolved: boolean): Promise<void> {
+    await resolve(this, key, thread, resolved);
+    this.conversations.forget(key);
+  }
+
+  mergeOptions(key: string): Promise<MergeOptions> {
+    return mergeOptions(this, key);
+  }
+
+  async merge(key: string, input: { method: MergeMethod; head: string; auto: boolean; deleteBranch: boolean; subject?: string }): Promise<{ pr: PrView; merged: boolean }> {
+    const out = await merge(this, key, input);
+    this.conversations.forget(key);
+    return { pr: toView(this, out.pr), merged: out.merged };
+  }
+
+  async cancelAutoMerge(key: string): Promise<PrView> {
+    return toView(this, await cancelAutoMerge(this, key));
+  }
+
+  async submitReview(key: string, input: { verdict: Verdict; body: string; findings: PostFinding[]; draftId?: number; staleOk?: boolean }): Promise<{ pr: PrView; placed: number; inBody: number }> {
+    const out = await submitReview(this, key, input);
+    this.conversations.forget(key);
+    return { pr: toView(this, out.pr), placed: out.placed, inBody: out.inBody };
+  }
+
+  discardDraft(key: string, draftId: number): PrView {
+    return toView(this, setDraftState(this, key, draftId, "discarded"));
+  }
+
+  restoreDraft(key: string, draftId: number): PrView {
+    return toView(this, setDraftState(this, key, draftId, "draft"));
+  }
+
+  async saveDraft(threadId: string, query: string, input: DraftInput): Promise<{ pr: PrView; findings: number }> {
+    const { pr, draft } = await saveDraft(this, threadId, query, input);
+    return { pr: toView(this, pr), findings: (JSON.parse(draft.findings) as unknown[]).length };
+  }
+
+  recordOutcomes(threadId: string, query: string, items: Array<{ ref: string; outcome: Outcome; note?: string; commit?: string }>) {
+    return recordOutcomes(this, threadId, query, items);
+  }
+
+  async setSettings(patch: { autoAgent?: boolean; inboxRequests?: boolean }): Promise<void> {
+    await this.port.setSettings(patch);
+  }
+
+  /** Auto agent's pass, and the feedback each new agent should get at once. */
+  async autoAgent(signal?: AbortSignal): Promise<void> {
+    for (const { key, change } of await runAutoAgent(this, signal)) {
+      await this.kick(key, change).catch((error: unknown) => this.port.log("warn", `send feedback to the new agent of ${key}: ${errText(error)}`));
+    }
+  }
+
+  /** Once a sync is in: the phase of each PR of yours, and the day's request counts. */
+  private record(): void {
+    for (const pr of this.store.allPrs()) if (pr.mine === 1) this.store.notePhase(pr.id, phaseOf(pr.state, pr.review, pr.checks));
+    this.store.saveSnapshot(new Date(this.now()).toISOString().slice(0, 10), snapshotCounts(allViews(this)));
   }
 
   async review(input: ReviewInput): Promise<string> {
@@ -209,7 +390,7 @@ export class Shuttle implements Ctx {
   async newThread(key: string, start: "own" | "review", projectId?: string): Promise<string> {
     await lookup(this, key);
     if (start === "review") return (await startReview(this, { key, ...(projectId ? { projectId } : {}) }, "manual")).threadId;
-    return startOwnerThread(this, key, projectId);
+    return (await this.setAgent(key, { kind: "new", ...(projectId ? { projectId } : {}) })).threadId!;
   }
 
   threadPrs(threadId: string): { prs: PrView[]; sent: EventView[] } {
@@ -278,7 +459,7 @@ export class Shuttle implements Ctx {
     const ops = new Set(adapter.operations());
     let sample: { repo: string; number: number; url: string } | null = null;
     if (ops.has("whoami")) await time("whoami", async () => `signed in as ${await adapter.whoami()}`);
-    for (const op of ["authored", "review_requested", "team_requested", "mentioned"] as const) {
+    for (const op of ["authored", "review_requested", "team_requested", "mentioned", "reviewed"] as const) {
       if (!ops.has(op)) continue;
       await time(op, async () => {
         const { rows } = await adapter.list(op, op === "authored" ? { state: "open" } : {});
@@ -294,23 +475,31 @@ export class Shuttle implements Ctx {
         const options = await adapter.editOptions(target.repo, target.number);
         return `${options.labels.length} labels, ${options.people.length} suggested reviewers`;
       });
+      if (ops.has("merge_options")) await time("merge_options", async () => {
+        const options = await adapter.mergeOptions(target.repo, target.number);
+        return `${options.methods.join(", ")}; ${options.state}`;
+      });
     }
     return results;
   }
 
   /** Syncs every enabled server, runs the auto reviews and checks watched PRs. One at a time. */
-  sync(signal?: AbortSignal): Promise<void> {
-    if (this.syncing) return this.syncing;
+  sync(signal: AbortSignal | undefined = this.lifetime): Promise<void> {
+    // The loop's tick must not wait out a sync the UI started once the loop itself is asked to stop.
+    if (this.syncing) return signal ? settleOrAbort(this.syncing, signal) : this.syncing;
     this.syncing = (async () => {
       this.port.publish();
       try {
         for (const server of this.config().servers) {
           if (!server.enabled || signal?.aborted) continue;
           const result = await syncServer(this, server, signal);
-          if (result.ok) await runAutoReviews(this, server.id);
-          await pollWatches(this, server.id, signal);
+          if (result.ok && !signal?.aborted) await runAutoReviews(this, server.id, signal);
+          if (!signal?.aborted) await pollWatches(this, server.id, signal);
         }
+        if (signal?.aborted) return;
         await this.refreshThreadTitles();
+        await this.autoAgent(signal).catch((error: unknown) => this.port.log("warn", `auto agent: ${errText(error)}`));
+        this.record();
         await this.deliver();
       } finally {
         this.syncing = null;
@@ -327,11 +516,18 @@ export class Shuttle implements Ctx {
     else await this.deliver();
   }
 
+  /** Titles and states of linked threads: bb's list has whether one waits on the user, a single read does not. */
   private async refreshThreadTitles(): Promise<void> {
+    let listed = new Map<string, Awaited<ReturnType<BbPort["listThreads"]>>[number]>();
+    try {
+      listed = new Map((await this.port.listThreads(200)).map((t) => [t.id, t]));
+    } catch {
+      // Each linked thread is read on its own below.
+    }
     for (const threadId of this.store.linkedThreadIds().slice(0, 100)) {
       try {
-        const thread = await this.port.getThread(threadId);
-        if (thread) this.store.saveThread(thread.id, thread.title, thread.archived);
+        const thread = listed.get(threadId) ?? (await this.port.getThread(threadId));
+        if (thread) this.store.saveThread(thread.id, thread.title, thread.archived, { status: thread.status, waiting: thread.waiting });
         else this.store.forgetThread(threadId);
       } catch {
         // A title refresh is cosmetic; the next sync tries again.
@@ -340,12 +536,31 @@ export class Shuttle implements Ctx {
   }
 
   onThreadIdle(threadId: string): void {
+    const known = this.store.setThreadStatus(threadId, "idle", false);
     const running = this.store.runningReviewsOfThread(threadId);
-    for (const review of running) this.store.finishReview(review.id, "done");
-    if (running.length) this.port.publish();
+    for (const review of running) {
+      this.store.finishReview(review.id, "done");
+      const pr = this.store.prById(review.pr_id);
+      const draft = pr ? this.store.liveDraft(pr.id) : null;
+      const name = pr ? shortKey(this, pr) : "a PR";
+      const findings = draft && draft.created_at >= review.created_at ? (JSON.parse(draft.findings) as unknown[]).length : null;
+      const text = findings !== null ? `${review.trigger === "auto" ? "Auto review" : "Review"} of ${name} finished: ${findings} finding${findings === 1 ? "" : "s"} drafted, nothing posted.` : `${review.trigger === "auto" ? "Auto review" : "Review"} of ${name} finished; read it in its thread.`;
+      this.store.addEvent("review_done", text, review.pr_id, threadId);
+    }
+    if (running.length || known) this.port.publish();
+  }
+
+  onThreadActive(threadId: string): void {
+    if (this.store.setThreadStatus(threadId, "active", false)) this.port.publish();
+  }
+
+  /** The thread asked the user something; an agent's question puts its PR in the Inbox. */
+  onInteractionPending(threadId: string): void {
+    if (this.store.setThreadStatus(threadId, null, true)) this.port.publish();
   }
 
   onThreadFailed(threadId: string): void {
+    this.store.setThreadStatus(threadId, "error", false);
     const running = this.store.runningReviewsOfThread(threadId);
     for (const review of running) {
       this.store.finishReview(review.id, "failed");

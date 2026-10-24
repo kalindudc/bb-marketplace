@@ -25,3 +25,9 @@ export function matchProject(repo: string, projects: readonly ProjectInfo[], fal
   if (fallback && projects.some((p) => p.id === fallback)) return fallback;
   return null;
 }
+
+/** The project whose git remote is exactly this repository; no name or default fallback. */
+export function exactProject(repo: string, projects: readonly ProjectInfo[]): string | null {
+  const want = repo.toLowerCase();
+  return projects.find((project) => project.gitRemoteUrl !== null && remotePath(project.gitRemoteUrl) === want)?.id ?? null;
+}

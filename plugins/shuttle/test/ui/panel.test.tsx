@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, waitFor, within } from "@testing-library/react";
 import type { ExperimentalThreadActionTabProps, ExperimentalTabRegistration } from "@get-bb/plugin-sdk/app";
 import type { PrView } from "../../src/contract";
-import { app, callsTo, event, handlers, link, mount, pr, unmountAll, type Handlers, type PullRequests } from "./helpers";
+import { agent, app, callsTo, event, handlers, link, mount, pr, unmountAll, type Handlers, type PullRequests } from "./helpers";
 
 const toasts = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn() }));
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), toasts) }));
@@ -10,11 +10,12 @@ vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), toasts) }));
 afterEach(() => {
   unmountAll();
   toasts.error.mockReset();
+  toasts.success.mockReset();
 });
 
 const THREAD = "thr_stack";
-const base = pr({ repo: "kalindudc/bb-marketplace", number: 118, title: "Loom: the ticket page", mine: true, reasons: [], links: [link({ threadId: THREAD, title: "Loom work", role: "owner" })], watch: "act", pendingItems: 2 });
-const middle = pr({ repo: "kalindudc/bb-marketplace", number: 119, title: "Loom: the side column", mine: true, reasons: [], links: [link({ threadId: THREAD, title: "Loom work", role: "owner" }), link({ threadId: "thr_review", title: "Review #119", role: "review" })] });
+const base = pr({ repo: "kalindudc/bb-marketplace", number: 118, title: "Loom: the ticket page", mine: true, reasons: [], links: [link({ threadId: THREAD, title: "Loom work", role: "owner" })], agent: agent({ threadId: THREAD, title: "Loom work" }), watch: "act", pendingItems: 2 });
+const middle = pr({ repo: "kalindudc/bb-marketplace", number: 119, title: "Loom: the side column", mine: true, reasons: [], links: [link({ threadId: THREAD, title: "Loom work", role: "owner" }), link({ threadId: "thr_review", title: "Review #119", role: "review" })], agent: agent({ threadId: "thr_other", title: "Loom: side column work" }) });
 const top = pr({ repo: "kalindudc/bb-marketplace", number: 120, title: "Loom: notes", mine: true, reasons: [], links: [link({ threadId: THREAD, title: "Loom work", role: "reference" })], pendingItems: 1 });
 
 async function tab(): Promise<ExperimentalTabRegistration> {
@@ -22,7 +23,7 @@ async function tab(): Promise<ExperimentalTabRegistration> {
   return loaded.tabs[0]!;
 }
 
-/** A fake server that remembers watch, link and unlink, as Shuttle's does. */
+/** A fake server that remembers agents, links and unlinks, as Shuttle's does. */
 async function panel(rpc: Partial<Handlers> & { pullRequests?: PullRequests } = {}, sdk = {}) {
   const registration = await tab();
   let prs: PrView[] = [base, middle, top];
@@ -33,7 +34,8 @@ async function panel(rpc: Partial<Handlers> & { pullRequests?: PullRequests } = 
   return mount<ExperimentalThreadActionTabProps>(registration.component as never, { threadId: THREAD, params: { threadId: THREAD } }, {
     ...handlers({
       threadPrs: () => ({ prs, sent: [event({ id: 7, kind: "forwarded", text: "tomas approved: sent with the act prompt", key: base.key, threadId: THREAD })] }),
-      watch: ({ key, mode }) => change(key, (item) => ({ ...item, watch: mode })),
+      setAgentMode: ({ key, mode }) => change(key, (item) => ({ ...item, agent: item.agent === null ? null : { ...item.agent, mode } })),
+      setAgent: ({ key, target }) => ({ ...change(key, (item) => ({ ...item, agent: target.kind === "existing" ? agent({ threadId: target.threadId, title: "Loom work" }) : null })), threadId: THREAD }),
       link: ({ key, threadId, role }) => change(key, (item) => ({ ...item, links: item.links.map((entry) => (entry.threadId === threadId ? { ...entry, role: role! } : entry)) })),
       unlink: ({ key }) => {
         const out = { pr: { ...prs.find((item) => item.key === key)!, links: [] } };
@@ -47,7 +49,8 @@ async function panel(rpc: Partial<Handlers> & { pullRequests?: PullRequests } = 
 }
 
 const card = (slot: Awaited<ReturnType<typeof panel>>, key: string) => slot.container.querySelector<HTMLElement>(`[data-pr="${key}"]`)!;
-const watchSwitch = (slot: Awaited<ReturnType<typeof panel>>, key: string) => within(card(slot, key)).getByRole("switch");
+const modes = (slot: Awaited<ReturnType<typeof panel>>, key: string) => within(card(slot, key)).getByRole("radiogroup");
+const mode = (slot: Awaited<ReturnType<typeof panel>>, key: string) => within(modes(slot, key)).getAllByRole("radio").find((radio) => radio.getAttribute("aria-checked") === "true")!.textContent;
 
 describe("Shuttle thread tab", () => {
   it("registers as a flush thread action tab that opens with the thread's id", async () => {
@@ -60,70 +63,69 @@ describe("Shuttle thread tab", () => {
     expect(openPanel).toHaveBeenCalledWith({ params: { threadId: "thr_1" } });
   });
 
-  it("lists every PR linked to the thread with its role and status", async () => {
+  it("lists every PR linked to the thread with its role, status and agent", async () => {
     const slot = await panel();
     await slot.findByText(top.title);
     expect(callsTo(slot, "threadPrs")).toContainEqual({ threadId: THREAD });
     const cards = [...slot.container.querySelectorAll("[data-pr]")].map((node) => node.getAttribute("data-pr"));
     expect(cards).toEqual([base.key, middle.key, top.key]);
-    expect(card(slot, base.key).textContent).toContain("Owner");
+    expect(card(slot, base.key).textContent).toContain("Agent");
     expect(card(slot, base.key).textContent).toContain("2 new items");
+    expect(card(slot, base.key).textContent).toContain("This thread is the agent");
     expect(card(slot, middle.key).textContent).toContain("Also linked to 1 other thread");
+    expect(card(slot, middle.key).textContent).toContain("Agent: Loom: side column work");
     expect(card(slot, top.key).textContent).toContain("Reference");
+    expect(card(slot, top.key).textContent).toContain("No agent");
     expect(slot.getByText("tomas approved: sent with the act prompt")).toBeTruthy();
     expect(slot.getByRole("button", { name: "Send 3 unread items now" })).toBeTruthy();
   });
 
-  it("shows a watch change at once, before the server answers", async () => {
+  it("switches what this thread does at once, before the server answers, with Undo", async () => {
     let release: () => void = () => {};
-    let watched: PrView = base;
+    let current: PrView = base;
     const slot = await panel({
-      watch: ({ mode }) => new Promise((resolve) => {
+      setAgentMode: ({ mode: next }) => new Promise((resolve) => {
         release = () => {
-          watched = { ...base, watch: mode };
-          resolve({ pr: watched });
+          current = { ...base, agent: { ...base.agent!, mode: next } };
+          resolve({ pr: current });
         };
       }),
-      threadPrs: () => ({ prs: [watched], sent: [] }),
+      threadPrs: () => ({ prs: [current], sent: [] }),
     });
     await slot.findByText(base.title);
-    expect(watchSwitch(slot, base.key).getAttribute("aria-checked")).toBe("true");
-    fireEvent.click(watchSwitch(slot, base.key));
-    await waitFor(() => expect(callsTo(slot, "watch")).toEqual([{ key: base.key, mode: null }]));
-    expect(watchSwitch(slot, base.key).getAttribute("aria-checked")).toBe("false");
+    expect(mode(slot, base.key)).toBe("Fix it");
+    fireEvent.click(within(modes(slot, base.key)).getByRole("radio", { name: "Off" }));
+    await waitFor(() => expect(callsTo(slot, "setAgentMode")).toEqual([{ key: base.key, mode: "off" }]));
+    expect(mode(slot, base.key)).toBe("Off");
     release();
-    await waitFor(() => expect(callsTo(slot, "threadPrs").length).toBeGreaterThan(1));
-    expect(watchSwitch(slot, base.key).getAttribute("aria-checked")).toBe("false");
+    await waitFor(() => expect(toasts.success).toHaveBeenCalledTimes(1));
+    expect(mode(slot, base.key)).toBe("Off");
+    toasts.success.mock.calls[0]![1].action.onClick();
+    await waitFor(() => expect(callsTo(slot, "setAgentMode")).toEqual([{ key: base.key, mode: "off" }, { key: base.key, mode: "fix" }]));
+    release();
+    await waitFor(() => expect(toasts.success).toHaveBeenCalledTimes(2));
   });
 
-  it("puts the switch back and shows why when the server refuses", async () => {
+  it("puts the mode back and shows why when the server refuses", async () => {
     const slot = await panel({
-      watch: () => { throw Object.assign(new Error("watching needs an owner thread"), { code: "invalid" }); },
+      setAgentMode: () => { throw Object.assign(new Error("the agent's thread is archived"), { code: "invalid" }); },
     });
     await slot.findByText(base.title);
-    fireEvent.click(watchSwitch(slot, base.key));
-    await waitFor(() => expect(toasts.error).toHaveBeenCalledWith("watching needs an owner thread"));
-    expect(watchSwitch(slot, base.key).getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(within(modes(slot, base.key)).getByRole("radio", { name: "Just tell it" }));
+    await waitFor(() => expect(toasts.error).toHaveBeenCalledWith("the agent's thread is archived"));
+    expect(mode(slot, base.key)).toBe("Fix it");
   });
 
-  it("turns watching on with the configured mode and changes how reviews arrive", async () => {
+  it("makes this thread the agent of a PR another thread handles, or that has none", async () => {
     const slot = await panel();
     await slot.findByText(top.title);
-    fireEvent.click(watchSwitch(slot, middle.key));
-    await waitFor(() => expect(callsTo(slot, "watch")).toContainEqual({ key: middle.key, mode: "act" }));
-    const select = await within(card(slot, middle.key)).findByRole("combobox");
-    fireEvent.change(select, { target: { value: "forward" } });
-    await waitFor(() => expect(callsTo(slot, "watch")).toContainEqual({ key: middle.key, mode: "forward" }));
-    expect(callsTo(slot, "link")).toEqual([]);
-  });
-
-  it("makes this thread an owner before watching a PR it only references", async () => {
-    const slot = await panel();
-    await slot.findByText(top.title);
-    fireEvent.click(watchSwitch(slot, top.key));
-    await waitFor(() => expect(callsTo(slot, "watch")).toEqual([{ key: top.key, mode: "act" }]));
-    expect(callsTo(slot, "link")).toEqual([{ key: top.key, threadId: THREAD, role: "owner" }]);
-    await waitFor(() => expect(card(slot, top.key).textContent).toContain("Owner"));
+    fireEvent.click(within(card(slot, middle.key)).getByRole("button", { name: "Make this thread the agent" }));
+    await waitFor(() => expect(callsTo(slot, "setAgent")).toEqual([{ key: middle.key, target: { kind: "existing", threadId: THREAD } }]));
+    await waitFor(() => expect(card(slot, middle.key).textContent).toContain("This thread is the agent"));
+    fireEvent.click(within(card(slot, top.key)).getByRole("button", { name: "Make this thread the agent" }));
+    await waitFor(() => expect(callsTo(slot, "setAgent")).toHaveLength(2));
+    expect(callsTo(slot, "setAgent")[1]).toEqual({ key: top.key, target: { kind: "existing", threadId: THREAD } });
+    await waitFor(() => expect(toasts.success).toHaveBeenCalledTimes(2));
   });
 
   it("unlinks one PR and keeps the others", async () => {

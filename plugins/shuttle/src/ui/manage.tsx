@@ -220,7 +220,7 @@ export function ManageCard({ pr, phone }: { pr: PrView; phone: boolean }) {
   const can = (action: PrAction) => pr.actions.includes(action);
   const reason = `${pr.serverName} can't do this`;
   return (
-    <section aria-label="Manage your PR" data-manage className="m-3 rounded-lg border border-primary/35 bg-primary/5">
+    <section aria-label="Manage your PR" data-manage className="mt-2 rounded-lg border border-primary/35 bg-primary/5">
       <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-sm font-semibold">
         <Icon name="GitPullRequest" className="size-4" aria-hidden />
         <span className="flex-1">Manage your PR</span>
@@ -278,7 +278,7 @@ export function ManageCard({ pr, phone }: { pr: PrView; phone: boolean }) {
   );
 }
 
-const SECTION = "border-b border-border px-4 py-3";
+const SECTION = "py-2";
 
 /** Someone else's PR: its labels and reviewers, to read. */
 export function LabelsAndReviewers({ pr }: { pr: PrView }) {

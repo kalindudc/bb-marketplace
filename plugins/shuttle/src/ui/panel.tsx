@@ -4,22 +4,18 @@ import {
   experimental_Icon as Icon, experimental_useRpcKeyedQuery, useBbNavigate, useSdk,
   type ExperimentalThreadActionTabProps,
 } from "@get-bb/plugin-sdk/app";
-import type { WatchMode } from "../config";
 import type { PrView } from "../contract";
-import { BUTTON, BUTTON_GHOST, CARD, ErrorNote, FIELD, HEADING, Pill, ServerBadge, Toggle } from "./common";
-import { PANEL_PATH, ROLE_LABELS, WATCH_MODES } from "./constants";
-import { messageOf, openExternal, useShuttleMutation, useShuttleQuery, useWatchMutation } from "./data";
+import { BUTTON, BUTTON_GHOST, CARD, ErrorNote, HEADING, Pill, Segmented, ServerBadge } from "./common";
+import { AGENT_MODE_META, PANEL_PATH, ROLE_LABELS } from "./constants";
+import { messageOf, openExternal, useShuttleMutation, useShuttleQuery } from "./data";
 import { ago, plural, shortKey } from "./format";
 import { LookupInput } from "./header";
-import { ChecksPill, LastReviewPill, ReviewPill, StatePill } from "./pills";
+import { AgentPill, ChecksPill, isLive, MyReviewPill, ReviewPill, StalePill, StatePill } from "./pills";
 import { formatRoute } from "./route";
-import { isLive } from "./row";
 import { GITHUB_PR_STATUS, githubPrStatus } from "./tab";
+import { usePrWrites, type PrWrites } from "./writes";
 
-const PANEL_MODE_LABELS: Record<WatchMode, string> = {
-  act: "Send them and ask this thread to act",
-  forward: "Send them only",
-};
+const MODES = (["fix", "notify", "off"] as const).map((value) => ({ value, label: AGENT_MODE_META[value].label }));
 
 const sameUrl = (a: string, b: string) => a.replace(/\/+$/u, "").toLowerCase() === b.replace(/\/+$/u, "").toLowerCase();
 
@@ -68,52 +64,73 @@ function BranchSuggestion({ threadId, linked, busy, onLink }: { threadId: string
   );
 }
 
-function PrCard({ pr, threadId, busy, onWatch, onMode, onUnlink }: {
+/** Who handles the PR's feedback, from this thread's side: it, another thread, or nobody. */
+function AgentBlock({ pr, threadId, writes }: { pr: PrView; threadId: string; writes: PrWrites }) {
+  const agent = pr.agent;
+  if (!isLive(pr) || (!pr.mine && agent === null)) return null;
+  const makeAgent = (
+    <button type="button" className={BUTTON} onClick={() => void writes.giveAgent(pr, { kind: "existing", threadId })}>
+      <Icon name="Bot" className="size-3.5" aria-hidden />Make this thread the agent
+    </button>
+  );
+  return (
+    <div data-agent-block className="mt-2.5 border-t border-border pt-2.5 text-sm">
+      {agent?.threadId === threadId ? (
+        <>
+          <div className="mb-1.5 flex items-center gap-1.5 font-semibold"><Icon name="Bot" className="size-3.5" aria-hidden />This thread is the agent</div>
+          <Segmented label={`What this thread does with ${shortKey(pr)}`} value={agent.mode} options={MODES} onChange={(mode) => void writes.changeMode(pr, mode)} />
+          <div className="mt-1.5 text-xs text-muted-foreground">{AGENT_MODE_META[agent.mode].sentence}</div>
+        </>
+      ) : agent !== null ? (
+        <>
+          <div className="mb-1.5 truncate text-xs text-muted-foreground" title={agent.title}>Agent: <span className="text-foreground">{agent.title}</span></div>
+          {makeAgent}
+        </>
+      ) : (
+        <>
+          <div className="mb-1.5 text-xs text-muted-foreground">No agent: new reviews and failed checks wait in the Inbox.</div>
+          {makeAgent}
+        </>
+      )}
+    </div>
+  );
+}
+
+function PrCard({ pr, threadId, busy, writes, onUnlink }: {
   pr: PrView;
   threadId: string;
   busy: boolean;
-  onWatch(pr: PrView, on: boolean): void;
-  onMode(pr: PrView, mode: WatchMode): void;
+  writes: PrWrites;
   onUnlink(pr: PrView): void;
 }) {
   const navigate = useBbNavigate();
-  const role = pr.links.find((link) => link.threadId === threadId)?.role ?? null;
+  const role = pr.agent?.threadId === threadId ? "Agent" : (() => {
+    const link = pr.links.find((entry) => entry.threadId === threadId);
+    return link === undefined ? null : ROLE_LABELS[link.role].short;
+  })();
   const others = pr.links.filter((link) => link.threadId !== threadId);
   return (
     <li data-pr={pr.key} className={`${CARD} p-3`}>
       <div className="flex items-center gap-2">
         <ServerBadge name={pr.serverName} />
         <span className="min-w-0 truncate font-mono text-xs">{shortKey(pr)}</span>
-        {role !== null && <Pill>{ROLE_LABELS[role].short}</Pill>}
+        {role !== null && <Pill>{role}</Pill>}
       </div>
       <div className="my-1.5 text-sm font-semibold leading-snug">{pr.title}</div>
       <div className="flex flex-wrap gap-1">
         <StatePill state={pr.state} />
-        <ChecksPill checks={pr.checks} />
-        <ReviewPill review={pr.review} />
-        <LastReviewPill run={pr.lastReview} />
+        <ChecksPill pr={pr} />
+        {pr.mine ? <ReviewPill pr={pr} /> : <MyReviewPill pr={pr} />}
+        {pr.mine && <AgentPill pr={pr} />}
         {pr.pendingItems > 0 && <Pill tone="info">{plural(pr.pendingItems, "new item")}</Pill>}
-        {pr.stale && <Pill tone="warn" icon="AlertTriangle" title="This server's last sync failed">May be out of date</Pill>}
+        <StalePill pr={pr} />
       </div>
       {others.length > 0 && (
         <div className="mt-1.5 text-xs text-muted-foreground" title={others.map((link) => link.title).join("\n")}>
           Also linked to {plural(others.length, "other thread")}
         </div>
       )}
-      {isLive(pr) && (
-        <div className="mt-2.5 border-t border-border pt-2.5">
-          <div className="flex items-center gap-2 text-sm">
-            <Toggle on={pr.watch !== null} label={`Watch ${shortKey(pr)}`} disabled={busy} onChange={(on) => onWatch(pr, on)} />
-            <span className="flex-1">Watch: send new reviews here</span>
-          </div>
-          {pr.watch !== null && (
-            <select aria-label={`When a review on ${shortKey(pr)} arrives`} className={`${FIELD} mt-2 w-full`} value={pr.watch} disabled={busy}
-              onChange={(event) => onMode(pr, event.target.value as WatchMode)}>
-              {WATCH_MODES.map((mode) => <option key={mode} value={mode}>{PANEL_MODE_LABELS[mode]}</option>)}
-            </select>
-          )}
-        </div>
-      )}
+      <AgentBlock pr={pr} threadId={threadId} writes={writes} />
       <div className="mt-2.5 flex flex-wrap gap-1.5">
         <button type="button" className={BUTTON} onClick={() => openExternal(navigate, pr.url)}>
           <Icon name="ExternalLink" className="size-3.5" aria-hidden />
@@ -129,11 +146,10 @@ function PrCard({ pr, threadId, busy, onWatch, onMode, onUnlink }: {
   );
 }
 
-/** The Shuttle tab beside a thread: every PR linked to it, its watch switch, what Shuttle sent here, and ways to link another. */
+/** The Shuttle tab beside a thread: every PR linked to it, its agent, what Shuttle sent here, and ways to link another. */
 export function ShuttlePanel({ threadId }: ExperimentalThreadActionTabProps) {
   const data = useShuttleQuery("threadPrs", { threadId });
-  const config = useShuttleQuery("getConfig", {});
-  const watch = useWatchMutation([threadId]);
+  const writes = usePrWrites([threadId]);
   const link = useShuttleMutation("link");
   const unlink = useShuttleMutation("unlink");
   const sendUnread = useShuttleMutation("sendUnread");
@@ -142,17 +158,6 @@ export function ShuttlePanel({ threadId }: ExperimentalThreadActionTabProps) {
   const prs = data.data?.prs;
   const pending = prs?.reduce((sum, pr) => sum + pr.pendingItems, 0) ?? 0;
 
-  const setWatch = async (pr: PrView, mode: WatchMode | null) => {
-    const role = pr.links.find((entry) => entry.threadId === threadId)?.role ?? null;
-    // Watched reviews go to owner threads, and this switch promises to send them here.
-    if (mode !== null && role !== "owner" && (await link.run({ key: pr.key, threadId, role: "owner" })) === null) return;
-    await watch.run({ key: pr.key, mode });
-  };
-  const onWatch = (pr: PrView, on: boolean) => {
-    if (!on) return void setWatch(pr, null);
-    if (config.data === undefined) return void toast.error("Shuttle's settings have not loaded yet");
-    void setWatch(pr, config.data.config.watch.mode);
-  };
   const onUnlink = async (pr: PrView) => {
     if (await unlink.run({ key: pr.key, threadId })) toast.success(`Unlinked ${shortKey(pr)}`);
   };
@@ -172,18 +177,17 @@ export function ShuttlePanel({ threadId }: ExperimentalThreadActionTabProps) {
         {prs === undefined && data.error === null && <div className="py-4 text-sm text-muted-foreground">Loading…</div>}
         {prs !== undefined && <BranchSuggestion threadId={threadId} linked={prs} busy={busy} onLink={(url) => void linkPr(url)} />}
         {prs?.length === 0 && (
-          <p className="py-2 text-sm text-muted-foreground">No pull request is linked to this thread. Paste a link or key below to link one; this thread then owns it.</p>
+          <p className="py-2 text-sm text-muted-foreground">No pull request is linked to this thread. Paste a link or key below to link one.</p>
         )}
         {prs !== undefined && prs.length > 0 && (
           <>
             <ul aria-label="Linked pull requests" className="flex flex-col gap-2.5">
               {prs.map((pr) => (
-                <PrCard key={pr.key} pr={pr} threadId={threadId} busy={busy} onWatch={onWatch}
-                  onMode={(item, mode) => void setWatch(item, mode)} onUnlink={(item) => void onUnlink(item)} />
+                <PrCard key={pr.key} pr={pr} threadId={threadId} busy={busy} writes={writes} onUnlink={(item) => void onUnlink(item)} />
               ))}
             </ul>
             <div className="mt-3 flex items-center gap-2">
-              <button type="button" className={BUTTON} disabled={busy} title="Checks the watched PRs for new activity now, then sends what this thread has not seen" onClick={() => void onSendUnread()}>
+              <button type="button" className={BUTTON} disabled={busy} title="Checks this thread's PRs for new activity now, then sends what this thread has not seen" onClick={() => void onSendUnread()}>
                 <Icon name="Sent" className="size-3.5" aria-hidden />
                 {pending === 0 ? "Send unread now" : `Send ${plural(pending, "unread item")} now`}
               </button>

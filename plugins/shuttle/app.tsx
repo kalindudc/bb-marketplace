@@ -57,13 +57,13 @@ export default definePluginApp((app) => {
   app.slots.settingsSection({
     id: "presets",
     title: "Review presets",
-    description: "What a review runs with. The Review button uses the default; the arrow next to it picks another.",
+    description: "What an AI review runs with. Start AI review offers each one, the default first.",
     component: PresetsSection,
   });
   app.slots.settingsSection({
     id: "automations",
     title: "Automations",
-    description: "What Shuttle does without you. Everything it does shows on Shuttle's Activity list.",
+    description: "What Shuttle does without you. Everything it does shows in Insights › Automation log.",
     component: AutomationsSection,
   });
   app.slots.settingsSection({

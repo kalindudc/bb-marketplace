@@ -163,14 +163,44 @@ describe("Shuttle settings sections", () => {
     fireEvent.change(slot.getByRole("textbox", { name: "Only these repositories" }), { target: { value: "shop/world, get-bb/*" } });
     fireEvent.change(slot.getByRole("spinbutton", { name: "Auto reviews a day" }), { target: { value: "3" } });
     fireEvent.change(slot.getByRole("combobox", { name: "Auto review preset" }), { target: { value: "quick" } });
-    fireEvent.change(slot.getByRole("combobox", { name: "When a review arrives" }), { target: { value: "forward" } });
+    fireEvent.change(slot.getByRole("combobox", { name: "What a new agent does" }), { target: { value: "forward" } });
     fireEvent.click(slot.getByRole("checkbox", { name: /Ignore bots/u }));
+    fireEvent.click(slot.getByRole("checkbox", { name: /A thread that links one of your PRs becomes its agent/u }));
     fireEvent.click(slot.getByRole("button", { name: "Save automations" }));
     await waitFor(() => expect(saved(slot)).toHaveLength(1));
     const next = saved(slot)[0]!;
     expect(next.autoReview).toMatchObject({ when: ["requested", "mentioned"], repos: ["shop/world", "get-bb/*"], maxPerDay: 3, preset: "quick" });
-    expect(next.watch).toMatchObject({ mode: "forward", ignoreBots: false });
+    expect(next.watch).toMatchObject({ mode: "forward", ignoreBots: false, autoWatch: false });
     expect(next.presets).toEqual(config().presets);
+  });
+
+  it("names agents, not watching, in the automations", async () => {
+    const slot = await section("automations");
+    await slot.findByText("Agents");
+    const mode = slot.getByRole("combobox", { name: "What a new agent does" }) as HTMLSelectElement;
+    expect([...mode.options].map((option) => [option.value, option.textContent])).toEqual([
+      ["act", "Fix it: send new feedback and ask it to fix it"],
+      ["forward", "Just tell it: send new feedback only"],
+    ]);
+    expect(slot.getByRole("checkbox", { name: /Also send failed checks on the head/u })).toBeTruthy();
+    expect(slot.getByText("What a Fix it agent is asked to do")).toBeTruthy();
+    expect(slot.queryByText(/Watched PRs/u)).toBeNull();
+  });
+
+  it("puts the conversation and merge commands in their own group of the server form", async () => {
+    const slot = await section("servers");
+    fireEvent.click(await slot.findByRole("button", { name: "Add a server" }));
+    const form = slot.container.querySelector<HTMLElement>("[data-server-form]")!;
+    const groups = [...form.querySelectorAll("h4")].map((heading) => heading.textContent);
+    expect(groups).toEqual(["Managing your PRs (optional)", "Conversation and merging (optional)"]);
+    const help = form.querySelectorAll("h4")[1]!.nextElementSibling!.textContent!;
+    for (const variable of ["SHUTTLE_METHOD", "SHUTTLE_HEAD", "SHUTTLE_AUTO", "SHUTTLE_DELETE_BRANCH", "SHUTTLE_SUBJECT", "SHUTTLE_BODY", "SHUTTLE_THREAD", "SHUTTLE_VERDICT", "SHUTTLE_COMMENTS"]) {
+      expect(help).toContain(variable);
+    }
+    for (const op of ["merge", "merge_options", "comment", "review", "reply", "resolve", "reviewed"]) {
+      expect(within(form).getByRole("textbox", { name: `${op} command` })).toBeTruthy();
+    }
+    expect(within(form).getByText("Reply in a review thread")).toBeTruthy();
   });
 
   it("previews a pasted TOML's changes, then applies it", async () => {

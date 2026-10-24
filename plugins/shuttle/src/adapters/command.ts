@@ -2,12 +2,16 @@
 import { z } from "zod";
 import { OPERATIONS, type ListOperation, type Operation, type ServerConfig } from "../config";
 import { linkFor } from "../keys";
-import type { PrChange } from "../contract";
-import { activitySchema, editOptionsSchema, prSummarySchema, toSummary, whoamiSchema, type Activity, type EditOptions, type PrSummary } from "../model";
-import { AdapterError, changeOperation, type Adapter, type ListOptions, type ListResult } from "./adapter";
+import type { MergeOptions, PrChange } from "../contract";
+import { activitySchema, editOptionsSchema, mergeOptionsInputSchema, prSummarySchema, reviewPostedSchema, toSummary, whoamiSchema, type Activity, type EditOptions, type PrSummary } from "../model";
+import { AdapterError, changeOperation, type Adapter, type ListOptions, type ListResult, type MergeInput, type ReviewPost, type ReviewPosted } from "./adapter";
 import { fillCommand, runProcess, shellQuote, tail, type Runner } from "./exec";
 
 export const COMMAND_TIMEOUT_MS = 60_000;
+
+/** What a server without merge_options, or one that leaves fields out, can merge with. */
+export const MERGE_DEFAULTS: MergeOptions = { methods: ["squash", "merge"], default: "squash", deleteBranch: false, canAuto: false, state: "unknown", detail: null };
+const flag = (value: boolean) => (value ? "1" : "0");
 
 export class CommandAdapter implements Adapter {
   constructor(
@@ -92,6 +96,65 @@ export class CommandAdapter implements Adapter {
 
   async editOptions(repo: string, number: number, signal?: AbortSignal): Promise<EditOptions> {
     return this.parse("edit_options", editOptionsSchema, await this.json("edit_options", this.refEnv(repo, number), signal));
+  }
+
+  async mergeOptions(repo: string, number: number, signal?: AbortSignal): Promise<MergeOptions> {
+    if (!this.server.commands.merge_options) return { ...MERGE_DEFAULTS, methods: [...MERGE_DEFAULTS.methods] };
+    const raw = this.parse("merge_options", mergeOptionsInputSchema, await this.json("merge_options", this.refEnv(repo, number), signal));
+    const methods = [...new Set(raw.methods ?? MERGE_DEFAULTS.methods)];
+    const first = raw.default ?? methods[0]!;
+    if (!methods.includes(first)) throw new AdapterError("merge_options", `merge_options printed JSON in the wrong shape: default ${first} is not one of its methods`);
+    return {
+      methods: [first, ...methods.filter((m) => m !== first)],
+      default: first,
+      deleteBranch: raw.delete_branch ?? MERGE_DEFAULTS.deleteBranch,
+      canAuto: raw.can_auto ?? MERGE_DEFAULTS.canAuto,
+      state: raw.state ?? MERGE_DEFAULTS.state,
+      detail: raw.detail ?? null,
+    };
+  }
+
+  async merge(repo: string, number: number, input: MergeInput, signal?: AbortSignal): Promise<{ merged: boolean }> {
+    await this.exec("merge", {
+      ...this.refEnv(repo, number),
+      SHUTTLE_METHOD: input.method,
+      SHUTTLE_HEAD: input.head,
+      SHUTTLE_AUTO: flag(input.auto),
+      SHUTTLE_DELETE_BRANCH: flag(input.deleteBranch),
+      SHUTTLE_SUBJECT: input.subject ?? "",
+    }, signal);
+    return { merged: !input.auto };
+  }
+
+  async comment(repo: string, number: number, body: string, signal?: AbortSignal): Promise<void> {
+    await this.exec("comment", { ...this.refEnv(repo, number), SHUTTLE_BODY: body }, signal);
+  }
+
+  async review(repo: string, number: number, post: ReviewPost, signal?: AbortSignal): Promise<ReviewPosted> {
+    const out = (await this.exec("review", {
+      ...this.refEnv(repo, number),
+      SHUTTLE_VERDICT: post.verdict,
+      SHUTTLE_BODY: post.body,
+      SHUTTLE_HEAD: post.head ?? "",
+      SHUTTLE_COMMENTS: JSON.stringify(post.comments.map((c) => ({ path: c.path, line: c.line, body: c.body }))),
+    }, signal)).trim();
+    if (!out) return { placed: post.comments.length, inBody: 0 };
+    let value: unknown;
+    try {
+      value = JSON.parse(out);
+    } catch {
+      throw new AdapterError("review", `review did not print JSON: ${tail(out, 2, 200)}`);
+    }
+    const posted = this.parse("review", reviewPostedSchema, value);
+    return { placed: posted.placed ?? 0, inBody: posted.in_body ?? 0 };
+  }
+
+  async reply(repo: string, number: number, thread: string, body: string, signal?: AbortSignal): Promise<void> {
+    await this.exec("reply", { ...this.refEnv(repo, number), SHUTTLE_THREAD: thread, SHUTTLE_BODY: body }, signal);
+  }
+
+  async resolve(repo: string, number: number, thread: string, resolved: boolean, signal?: AbortSignal): Promise<void> {
+    await this.exec("resolve", { ...this.refEnv(repo, number), SHUTTLE_THREAD: thread, SHUTTLE_RESOLVED: flag(resolved) }, signal);
   }
 
   readCommand(repo: string, number: number, url: string): string {

@@ -44,7 +44,7 @@ describe("editPr", () => {
     const view = await h.shuttle.editPr("forge:shop/world#1", { kind: "ready" });
     expect(callsOf(h, "ready")[0]!.env).toMatchObject({ SHUTTLE_REPO: "shop/world", SHUTTLE_NUMBER: "1" });
     expect(view.state).toBe("open");
-    expect(view.reviewers).toEqual([{ login: "ana", team: false, state: "requested" }]);
+    expect(view.reviewers?.map(({ login, team, state }) => ({ login, team, state }))).toEqual([{ login: "ana", team: false, state: "requested" }]);
     expect(h.shuttle.activity()[0]!.text).toBe("Marked shop/world#1 ready for review.");
   });
 
@@ -142,7 +142,7 @@ describe("the GitHub adapter's changes", () => {
     } as const;
     const summary = githubSummary(node as never);
     expect(summary.labels).toEqual([{ name: "bug", color: "d73a4a" }]);
-    expect(summary.reviewers).toEqual([
+    expect(summary.reviewers?.map(({ login, team, state }) => ({ login, team, state }))).toEqual([
       { login: "ana", team: false, state: "requested" },
       { login: "acme/edge", team: true, state: "requested" },
       { login: "bo", team: false, state: "approved" },

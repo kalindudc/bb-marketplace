@@ -12,13 +12,15 @@ import { SkillInput } from "./skill-input";
 
 const NEW_THREAD = "";
 
-export function ReviewDialog({ pr, presets, onClose }: { pr: PrView; presets: readonly Preset[]; onClose(): void }) {
+export function ReviewDialog({ pr, presets, thread = null, onClose }: { pr: PrView; presets: readonly Preset[]; thread?: { threadId: string; title: string } | null; onClose(): void }) {
   const { busy, start } = useStartReview();
   const [presetId, setPresetId] = useState(defaultPresetOf(presets)?.id ?? null);
   const preset = presets.find((item) => item.id === presetId) ?? null;
   const [skill, setSkill] = useState<string | null>(null);
   const [execution, setExecution] = useState<Execution | null>(null);
-  const [where, setWhere] = useState(NEW_THREAD);
+  const [where, setWhere] = useState(thread?.threadId ?? NEW_THREAD);
+  const reusable = pr.links.filter((link) => !link.archived).map((link) => ({ threadId: link.threadId, title: link.title }));
+  if (thread !== null && !reusable.some((link) => link.threadId === thread.threadId)) reusable.push(thread);
   const [projectChoice, setProjectChoice] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const projects = useShuttleQuery("projects", { key: pr.key });
@@ -99,7 +101,7 @@ export function ReviewDialog({ pr, presets, onClose }: { pr: PrView; presets: re
         <span className="text-xs text-muted-foreground">Thread</span>
         <select aria-label="Thread" className={FIELD} value={where} onChange={(event) => setWhere(event.target.value)}>
           <option value={NEW_THREAD}>A new thread</option>
-          {pr.links.filter((link) => !link.archived).map((link) => <option key={link.threadId} value={link.threadId}>Reuse “{link.title}”</option>)}
+          {reusable.map((link) => <option key={link.threadId} value={link.threadId}>Reuse “{link.title}”</option>)}
         </select>
         {where === NEW_THREAD && (
           <>
