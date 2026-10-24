@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.0
+
+- Shuttle works on a phone. Opening a PR shows it on its own screen, with a bar to go back and a bar at the bottom for Review, Link and Open; Back and the swipe return to the list. The list shows the sections as chips, and the review presets, labels and reviewers open as sheets from the bottom.
+- In windows narrower than 1280px, the PR panel slides over the list instead of appearing below it. Escape, ×, or a click outside closes it.
+- A "Manage your PR" card on your own PRs: mark a draft ready for review or turn it back into a draft, close or reopen it, add and remove labels, and request or withdraw reviewers or ask someone to review again. Each change goes to the server at once and offers Undo for a few seconds; a change the server refuses is put back, with its reason.
+- PRs show their labels, and the PR panel lists requested reviewers and everyone's latest review. Other people's PRs show them read-only.
+- GitHub uses `gh pr ready`, `gh pr close`, `gh pr reopen` and the REST API for labels and reviewers. Command servers get optional `ready`, `draft`, `close`, `reopen`, `edit_labels`, `edit_reviewers` and `edit_options` commands; the Delta adapter has all but `draft` and `edit_options`, since Delta can't go back to draft.
+- While a PR is on screen, Shuttle reads it from its server every minute, so new reviewers and labels appear.
+
 ## 0.1.4
 
 - A server can say how reviews get their own checkout of its PRs, for repositories that refuse bb's git worktree (World only allows worktrees under `~/world/trees`): a bb environment provider such as World tree, with inputs, or a command that prints a checkout's path, such as one around `dev tree add`. Inputs and the command take the PR's number, repo, branches and head; in a command they are shell-quoted. Set it under Review workspace when editing a server.

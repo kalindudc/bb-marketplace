@@ -3,7 +3,7 @@ import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import type { Config, ServerConfig } from "../../config";
 import type { ServerStatus, TestResult } from "../../contract";
 import { BUTTON, BUTTON_GHOST, BUTTON_PRIMARY, CARD, ErrorNote, FIELD, Pill, ServerBadge, Toggle } from "../common";
-import { OPERATIONS, OPERATION_LABELS } from "../constants";
+import { MANAGE_OPERATIONS, OPERATIONS, OPERATION_LABELS, READ_OPERATIONS } from "../constants";
 import { messageOf, useShuttleMutation, useShuttleQuery } from "../data";
 import { ago } from "../format";
 import { useConfig } from "./use-config";
@@ -191,6 +191,28 @@ function ServerCard({ server, status, busy, onEnable, onEdit, onDelete }: {
   );
 }
 
+function CommandTable({ operations, commands, onChange }: { operations: readonly Operation[]; commands: Record<Operation, string>; onChange(next: Record<Operation, string>): void }) {
+  return (
+    <table className="w-full border-collapse text-xs">
+      <tbody>
+        {operations.map((op) => (
+          <tr key={op} className="border-t border-border">
+            <td className="w-40 py-1.5 pr-2 align-middle">
+              <div className="font-mono">{op}</div>
+              <div className="text-[11px] text-muted-foreground">{OPERATION_LABELS[op]}</div>
+            </td>
+            <td className="py-1.5">
+              <input aria-label={`${op} command`} className={`${FIELD} w-full font-mono text-xs`} value={commands[op]}
+                placeholder={op === "view" ? "Required" : MANAGE_OPERATIONS.includes(op) ? "Leave empty if the server can't" : "Leave empty to skip this list"}
+                onChange={(event) => onChange({ ...commands, [op]: event.target.value })} />
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 function ServerForm({ initial, saved, existingIds, saving, onSave, onCancel }: {
   initial: ServerDraft;
   saved: ServerConfig | null;
@@ -250,26 +272,15 @@ function ServerForm({ initial, saved, existingIds, saving, onSave, onCancel }: {
                 <option value="!">! (as in group/project!77)</option>
               </select>
             </label>
-            <table className="w-full border-collapse text-xs">
-              <tbody>
-                {OPERATIONS.map((op) => (
-                  <tr key={op} className="border-t border-border">
-                    <td className="w-40 py-1.5 pr-2 align-middle">
-                      <div className="font-mono">{op}</div>
-                      <div className="text-[11px] text-muted-foreground">{OPERATION_LABELS[op]}</div>
-                    </td>
-                    <td className="py-1.5">
-                      <input aria-label={`${op} command`} className={`${FIELD} w-full font-mono text-xs`} value={draft.commands[op]}
-                        placeholder={op === "view" ? "Required" : "Leave empty to skip this list"}
-                        onChange={(event) => set("commands", { ...draft.commands, [op]: event.target.value })} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <CommandTable operations={READ_OPERATIONS} commands={draft.commands} onChange={(commands) => set("commands", commands)} />
             <p className="text-xs text-muted-foreground">
               Commands run with <span className="font-mono">/bin/sh</span> and get <span className="font-mono">SHUTTLE_REPO</span>, <span className="font-mono">SHUTTLE_NUMBER</span>, <span className="font-mono">SHUTTLE_STATE</span> and <span className="font-mono">SHUTTLE_TEAM</span>. Each prints JSON.
             </p>
+            <h4 className="mt-2 text-xs font-semibold">Managing your PRs (optional)</h4>
+            <p className="text-xs text-muted-foreground">
+              Commands get <span className="font-mono">SHUTTLE_REPO</span>, <span className="font-mono">SHUTTLE_NUMBER</span> and <span className="font-mono">SHUTTLE_URL</span>, and edits also get <span className="font-mono">SHUTTLE_ADD</span> and <span className="font-mono">SHUTTLE_REMOVE</span> (newline-separated) plus <span className="font-mono">SHUTTLE_ADD_TEAMS</span> and <span className="font-mono">SHUTTLE_REMOVE_TEAMS</span>; exit 0 means it worked. <span className="font-mono">edit_options</span> prints <span className="font-mono">{"{labels: [{name, color?, description?}], people?: [logins]}"}</span>.
+            </p>
+            <CommandTable operations={MANAGE_OPERATIONS} commands={draft.commands} onChange={(commands) => set("commands", commands)} />
           </>
         )}
         <label className={row}>

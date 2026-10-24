@@ -1,4 +1,4 @@
-import { AUTO_TRIGGERS, OPERATIONS, WATCH_MODES, WORKSPACES } from "../config";
+import { AUTO_TRIGGERS, CHANGE_OPERATIONS, OPERATIONS, WATCH_MODES, WORKSPACES } from "../config";
 import { LINK_ROLES, SECTIONS, type Section } from "../contract";
 
 export { AUTO_TRIGGERS, LINK_ROLES, OPERATIONS, SECTIONS, WATCH_MODES, WORKSPACES };
@@ -44,4 +44,15 @@ export const OPERATION_LABELS: Record<(typeof OPERATIONS)[number], string> = {
   mentioned: "PRs that mention you",
   view: "One PR by repo and number",
   activity: "A PR's reviews, comments and checks",
+  ready: "Mark ready for review",
+  draft: "Convert to draft",
+  close: "Close a PR",
+  reopen: "Reopen a PR",
+  edit_labels: "Add or remove labels",
+  edit_reviewers: "Request or withdraw reviewers",
+  edit_options: "Labels and reviewers to offer",
 };
+
+/** The optional commands that change the user's own PRs, shown apart from the ones that read. */
+export const MANAGE_OPERATIONS: readonly (typeof OPERATIONS)[number][] = [...CHANGE_OPERATIONS, "edit_options"];
+export const READ_OPERATIONS = OPERATIONS.filter((op) => !MANAGE_OPERATIONS.includes(op));

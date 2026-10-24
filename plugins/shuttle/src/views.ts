@@ -2,6 +2,7 @@
 import type { PrView, Section } from "./contract";
 import type { Ctx } from "./ctx";
 import type { PrRow } from "./db/store";
+import { actionsOf, parseLabels, parseReviewers } from "./edit";
 
 const DAY = 86_400_000;
 const isOpen = (pr: PrRow) => pr.state === "open" || pr.state === "draft";
@@ -58,6 +59,9 @@ export function toView(ctx: Ctx, pr: PrRow): PrView {
     needs: needsOf(ctx, pr),
     stale: state?.ok === 0,
     pendingItems: watch ? ctx.store.pendingCount(pr.id) : 0,
+    labels: parseLabels(pr.labels),
+    reviewers: parseReviewers(pr.reviewers),
+    actions: actionsOf(ctx, pr),
   };
 }
 

@@ -1,5 +1,5 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { initials } from "./format";
 
@@ -91,7 +91,10 @@ export function Dialog({ title, subtitle, leading, onClose, footer, children, wi
   close.current = onClose;
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close.current();
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      // bb's "Back to app" and the PR panel also listen for Escape; the dialog on top owns it.
+      event.preventDefault();
+      close.current();
     };
     document.addEventListener("keydown", onKey);
     panel.current?.focus();
@@ -118,7 +121,6 @@ export function Dialog({ title, subtitle, leading, onClose, footer, children, wi
   );
 }
 
-/** A trigger with a menu below it; a mousedown elsewhere or Escape closes it, as does the `close` function children get. */
 /**
  * A dropdown in bb's shared Radix menu: it renders in a portal above the page, so a scrolling
  * drawer cannot clip it, and it stacks with bb's own overlays.

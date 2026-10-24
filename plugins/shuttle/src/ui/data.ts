@@ -7,7 +7,7 @@ import { rpcContract, SECTIONS, type PrView } from "../contract";
 
 type Contract = typeof rpcContract;
 type Method = keyof Contract & string;
-type Input<M extends Method> = StandardSchemaV1InferInput<Contract[M]["input"]>;
+export type Input<M extends Method> = StandardSchemaV1InferInput<Contract[M]["input"]>;
 export type Output<M extends Method> = PluginRpcResult<Contract[M]>;
 type Optimistic<M extends Method> = (input: Input<M>, cache: ExperimentalRpcOptimisticCache<Contract>) => void;
 

@@ -1,10 +1,18 @@
 // What every adapter returns, whatever the server. Command adapters print these shapes as JSON;
 // the built-in GitHub adapter maps gh's GraphQL answers onto them.
 import { z } from "zod";
-import { CHECK_STATES, REVIEW_STATES, type CheckState, type PrState, type ReviewState } from "./contract";
+import { CHECK_STATES, REVIEW_STATES, REVIEWER_STATES, type CheckState, type Label, type PrState, type Reviewer, type ReviewState } from "./contract";
 
 const text = (max: number) => z.string().max(max);
 const id = z.union([z.string().min(1).max(300), z.number()]).transform(String);
+const color = z.string().regex(/^#?[0-9a-f]{3,8}$/iu).transform((c) => c.replace(/^#/u, "").toLowerCase());
+/** A label is a name, or a name with a colour such as "d73a4a" and a description. */
+export const labelInputSchema = z.union([
+  text(200).min(1).transform((name) => ({ name, color: null, description: null })),
+  z.object({ name: text(200).min(1), color: color.nullish().catch(null), description: text(1000).nullish() })
+    .transform((l) => ({ name: l.name, color: l.color ?? null, description: l.description ?? null })),
+]);
+export const reviewerInputSchema = z.object({ login: text(200).min(1), team: z.boolean().default(false), state: z.enum(REVIEWER_STATES) });
 
 export const prSummarySchema = z.object({
   repo: z.string().min(1).max(300).regex(/^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/u, "must be path segments of letters, digits, dots, dashes and underscores"),
@@ -26,6 +34,9 @@ export const prSummarySchema = z.object({
   teams: z.array(text(200)).max(50).nullish(),
   /** view only: the description, in the server's Markdown. */
   body: text(65_536).nullish(),
+  labels: z.array(labelInputSchema).max(200).nullish(),
+  /** view only: requested reviewers and the latest review of everyone else who reviewed. */
+  reviewers: z.array(reviewerInputSchema).max(200).nullish(),
 });
 export type PrSummaryInput = z.input<typeof prSummarySchema>;
 
@@ -47,6 +58,9 @@ export interface PrSummary {
   files: number | null;
   teams: string[];
   body: string | null;
+  /** null when the server's answer did not include them, so the stored ones stay. */
+  labels: Label[] | null;
+  reviewers: Reviewer[] | null;
 }
 
 export function toSummary(raw: z.output<typeof prSummarySchema>): PrSummary {
@@ -69,6 +83,8 @@ export function toSummary(raw: z.output<typeof prSummarySchema>): PrSummary {
     files: raw.files ?? null,
     teams: raw.teams ?? [],
     body: raw.body ?? null,
+    labels: raw.labels ? raw.labels.map((l) => ({ name: l.name, color: l.color })) : null,
+    reviewers: raw.reviewers ?? null,
   };
 }
 
@@ -94,5 +110,11 @@ export const activitySchema = z.object({
   items: z.array(activityItemSchema).max(1000),
 });
 export type Activity = z.output<typeof activitySchema>;
+
+export const editOptionsSchema = z.union([
+  z.array(labelInputSchema).max(1000).transform((labels) => ({ labels, people: [] as string[] })),
+  z.object({ labels: z.array(labelInputSchema).max(1000).default([]), people: z.array(text(200).min(1)).max(200).default([]) }),
+]);
+export type EditOptions = z.output<typeof editOptionsSchema>;
 
 export const whoamiSchema = z.object({ login: z.string().min(1).max(200) });

@@ -16,6 +16,11 @@ export type ReviewState = (typeof REVIEW_STATES)[number];
 export const LINK_ROLES = ["owner", "review", "reference"] as const;
 export type LinkRole = (typeof LINK_ROLES)[number];
 export const REVIEW_RUN_STATES = ["running", "done", "failed"] as const;
+export const REVIEWER_STATES = ["requested", "approved", "changes", "commented", "dismissed"] as const;
+export type ReviewerState = (typeof REVIEWER_STATES)[number];
+/** What the user can change on a PR of theirs right now, given its state and its server's commands. */
+export const PR_ACTIONS = ["ready", "draft", "close", "reopen", "labels", "reviewers"] as const;
+export type PrAction = (typeof PR_ACTIONS)[number];
 
 const key = z.string().min(3).max(400);
 
@@ -32,6 +37,24 @@ export const reviewRunSchema = z.object({
   at: z.number(),
 });
 export type ReviewRunView = z.infer<typeof reviewRunSchema>;
+
+export const labelSchema = z.object({ name: z.string(), color: z.string().nullable() });
+export type Label = z.infer<typeof labelSchema>;
+/** A team's login is its slug as its server writes it, such as org/team on GitHub. */
+export const reviewerSchema = z.object({ login: z.string(), team: z.boolean(), state: z.enum(REVIEWER_STATES) });
+export type Reviewer = z.infer<typeof reviewerSchema>;
+const reviewerRef = z.object({ login: z.string().trim().min(1).max(200), team: z.boolean() });
+export type ReviewerRef = z.infer<typeof reviewerRef>;
+const names = z.array(z.string().trim().min(1).max(200)).max(50);
+export const prChangeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("ready") }),
+  z.object({ kind: z.literal("draft") }),
+  z.object({ kind: z.literal("close") }),
+  z.object({ kind: z.literal("reopen") }),
+  z.object({ kind: z.literal("labels"), add: names.default([]), remove: names.default([]) }),
+  z.object({ kind: z.literal("reviewers"), add: z.array(reviewerRef).max(50).default([]), remove: z.array(reviewerRef).max(50).default([]) }),
+]);
+export type PrChange = z.output<typeof prChangeSchema>;
 
 export const prViewSchema = z.object({
   /** `server:repo#number`, the PR's id everywhere in Shuttle. */
@@ -65,6 +88,12 @@ export const prViewSchema = z.object({
   stale: z.boolean(),
   /** Review items found on a watched PR and not yet sent to its thread. */
   pendingItems: z.number(),
+  /** null until Shuttle has read them from the server. */
+  labels: z.array(labelSchema).nullable(),
+  /** Requested reviewers and the latest review of everyone who reviewed; null until a view read them. */
+  reviewers: z.array(reviewerSchema).nullable(),
+  /** Empty unless the PR is the user's own. */
+  actions: z.array(z.enum(PR_ACTIONS)),
 });
 export type PrView = z.infer<typeof prViewSchema>;
 
@@ -160,5 +189,12 @@ export const rpcContract = defineContract({
   testServer: { input: z.object({ id: z.string().max(32).optional(), server: z.unknown().optional() }), output: z.object({ results: z.array(testResultSchema) }) },
   exportToml: { input: z.object({}), output: z.object({ toml: z.string() }), tags: CONFIG },
   importToml: { input: z.object({ toml: z.string().max(200_000), apply: z.boolean() }), output: z.object({ changes: z.array(z.string()), config: configSchema.nullable() }), invalidates: (input) => (input.apply ? ["config", "prs", "servers"] : []) },
+  /** Change one of the user's own PRs on its server, then read it back. */
+  editPr: { input: z.object({ key, change: prChangeSchema }), output: prOut, invalidates: PRS },
+  /** What the label and reviewer pickers offer: the repo's labels, people the server suggests, and known teams. */
+  editOptions: {
+    input: z.object({ key }),
+    output: z.object({ labels: z.array(labelSchema.extend({ description: z.string().nullable() })), people: z.array(z.string()), teams: z.array(z.string()) }),
+  },
   skills: { input: z.object({ projectId: z.string().max(100).optional() }), output: z.object({ skills: z.array(z.object({ id: z.string(), name: z.string(), description: z.string() })) }) },
 });

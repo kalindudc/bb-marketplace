@@ -106,6 +106,8 @@ export interface Harness {
   lists: Record<string, unknown[]>;
   views: Record<number, unknown>;
   activity: Record<number, unknown>;
+  /** Answers for any other operation, such as the edit commands. */
+  answers: Record<string, unknown>;
   runner: ReturnType<typeof fakeRunner>;
 }
 
@@ -118,14 +120,16 @@ export function harness(config: Config = testConfig()): Harness {
   const lists: Record<string, unknown[]> = { authored: [], review_requested: [], team_requested: [], mentioned: [] };
   const views: Record<number, unknown> = {};
   const activity: Record<number, unknown> = {};
+  const answers: Record<string, unknown> = {};
   const runner = fakeRunner((operation, env) => {
     if (operation === "whoami") return { login: "me" };
     if (operation === "authored") return (lists.authored as Array<{ state: string }>).filter((row) => (env.SHUTTLE_STATE === "closed" ? row.state === "merged" || row.state === "closed" : row.state === "open" || row.state === "draft"));
     if (operation in lists) return lists[operation];
     if (operation === "view") return views[Number(env.SHUTTLE_NUMBER)] ?? new Error("not found");
     if (operation === "activity") return activity[Number(env.SHUTTLE_NUMBER)] ?? { items: [] };
+    if (operation in answers) return answers[operation];
     return new Error(`unexpected ${operation}`);
   });
   const shuttle = new Shuttle({ store, port, now: () => clock.now, settings: () => settings, runner });
-  return { shuttle, store, port, clock, settings, lists, views, activity, runner };
+  return { shuttle, store, port, clock, settings, lists, views, activity, answers, runner };
 }

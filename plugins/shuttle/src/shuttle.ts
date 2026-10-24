@@ -2,7 +2,7 @@
 import { adapterFor, type Adapter } from "./adapters";
 import { runProcess, type Runner } from "./adapters/exec";
 import { configChanges, configFromToml, configToToml, ConfigError, parseConfig, serverSchema, type Config, type ServerConfig, type WatchMode } from "./config";
-import { SECTIONS, type EventView, type LinkRole, type Overview, type PrView, type ReviewInput, type Section, type TestResult, type ThreadOption } from "./contract";
+import { SECTIONS, type EventView, type LinkRole, type Overview, type PrChange, type PrView, type ReviewInput, type Section, type TestResult, type ThreadOption } from "./contract";
 import { errText, ShuttleError, type Ctx } from "./ctx";
 import type { EventRow, Store } from "./db/store";
 import type { BbPort, ProjectInfo } from "./ports";
@@ -13,6 +13,7 @@ import { startOwnerThread, startReview } from "./reviews";
 import type { Settings } from "./settings";
 import { runAutoReviews, syncServer } from "./sync";
 import { allViews, inSection, toView } from "./views";
+import { editOptions, editPr } from "./edit";
 import { deliver, pollWatches } from "./watch";
 
 const PROJECTS_TTL_MS = 5 * 60_000;
@@ -150,11 +151,21 @@ export class Shuttle implements Ctx {
       if (signal?.aborted) return;
       const pr = this.store.prByKey(key);
       const ref = parseKey(key);
-      // Lists carry no description, so a PR seen only in lists is fetched once when it is viewed.
-      const partial = pr !== null && pr.body === null;
-      if (!pr || !ref || (!partial && this.now() - pr.fetched_at < maxAgeMs) || (!partial && pr.state !== "open" && pr.state !== "draft")) continue;
+      if (!pr || !ref) continue;
+      // Lists carry no description or reviewers on every server, so the PR on screen is read by itself:
+      // once when it was never read that way, and again every maxAgeMs while it is open.
+      const open = pr.state === "open" || pr.state === "draft";
+      if (pr.viewed_at !== null && (!open || this.now() - pr.viewed_at < maxAgeMs)) continue;
       await fetchPr(this, ref).catch((error: unknown) => this.port.log("warn", `refresh ${key}: ${errText(error)}`));
     }
+  }
+
+  async editPr(key: string, change: PrChange): Promise<PrView> {
+    return toView(this, await editPr(this, key, change));
+  }
+
+  editOptions(key: string) {
+    return editOptions(this, key);
   }
 
   activity(limit = 100): EventView[] {
@@ -279,6 +290,10 @@ export class Shuttle implements Ctx {
     if (target) {
       if (ops.has("view")) await time("view", async () => `${(await adapter.view(target.repo, target.number)).title}`);
       if (ops.has("activity")) await time("activity", async () => `${(await adapter.activity(target.repo, target.number)).items.length} items`);
+      if (ops.has("edit_options")) await time("edit_options", async () => {
+        const options = await adapter.editOptions(target.repo, target.number);
+        return `${options.labels.length} labels, ${options.people.length} suggested reviewers`;
+      });
     }
     return results;
   }

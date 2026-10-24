@@ -5,6 +5,7 @@ import type { PrView, ReviewInput } from "../contract";
 import { BUTTON, MENU_ITEM, Menu, MenuItem, MenuSeparator } from "./common";
 import { settingsHref, shortKey } from "./format";
 import { useShuttleMutation } from "./data";
+import { PickerAction, PickerSeparator } from "./picker";
 
 /** The preset the server uses when a review names none. */
 export const defaultPresetOf = (presets: readonly Preset[]): Preset | null => presets.find((preset) => preset.default) ?? presets[0] ?? null;
@@ -64,5 +65,41 @@ export function ReviewButton({ pr, presets, onCustomize }: { pr: PrView; presets
         </MenuItem>
       </Menu>
     </span>
+  );
+}
+
+/** The presets as rows of a phone's bottom sheet; `start` comes from a component that outlives the sheet. */
+export function PresetChoices({ pr, presets, start, onCustomize }: {
+  pr: PrView;
+  presets: readonly Preset[] | null;
+  start: ReturnType<typeof useStartReview>["start"];
+  onCustomize(pr: PrView): void;
+}) {
+  const pluginId = experimental_usePluginId();
+  return (
+    <>
+      {presets === null && <span className="px-2.5 py-1.5 text-xs text-muted-foreground">Loading presets…</span>}
+      {presets?.map((item) => (
+        <PickerAction key={item.id} onSelect={() => void start({ key: pr.key, presetId: item.id }, item.name)}>
+          <Icon name="Play" className="size-3.5 shrink-0" aria-hidden />
+          <span className="min-w-0 flex-1">
+            <span className="flex items-center gap-2 font-semibold">
+              {item.name}
+              {item.default && <span className="rounded-full border border-border px-1.5 text-[10.5px] font-normal text-muted-foreground">default</span>}
+            </span>
+            <span className="block truncate text-xs text-muted-foreground">{presetSummary(item)}</span>
+          </span>
+        </PickerAction>
+      ))}
+      <PickerSeparator />
+      <PickerAction onSelect={() => onCustomize(pr)}>
+        <Icon name="SlidersHorizontal" className="size-3.5" aria-hidden />
+        Customize this review…
+      </PickerAction>
+      <UrlLink role="menuitem" href={settingsHref(pluginId)} className={`${MENU_ITEM} flex-row items-center gap-2 py-2 text-muted-foreground`}>
+        <Icon name="Settings" className="size-3.5" aria-hidden />
+        Edit presets in Settings
+      </UrlLink>
+    </>
   );
 }

@@ -32,7 +32,7 @@ describe("Shuttle page", () => {
     expect(slot.container.querySelector("[data-detail]")).toBeNull();
     fireEvent.click(row(slot, second.key));
     expect(slot.inspection.navigateCalls).toEqual([
-      { method: "toPluginPanel", path: "shuttle", options: { subPath: formatRoute({ view: "section", section: "requested", key: second.key }), replace: true } },
+      { method: "toPluginPanel", path: "shuttle", options: { subPath: formatRoute({ view: "section", section: "requested", key: second.key }) } },
     ]);
   });
 

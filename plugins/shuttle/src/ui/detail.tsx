@@ -8,6 +8,7 @@ import { LINK_ROLES, ROLE_LABELS, WATCH_MODES, WATCH_MODE_LABELS } from "./const
 import { isNotFound, messageOf, useShuttleMutation, useShuttleQuery } from "./data";
 import { ago, plural, shortKey } from "./format";
 import { ReasonPills, StatePill } from "./pills";
+import { LabelsAndReviewers, ManageCard } from "./manage";
 import { ReviewButton } from "./review-button";
 import { isLive, isReviewable, type PrActions } from "./row";
 
@@ -97,7 +98,8 @@ function EventLine({ event, onOpenThread }: { event: EventView; onOpenThread(thr
   );
 }
 
-export function PrDetail({ prKey, actions, onClose }: { prKey: string; actions: PrActions; onClose?: () => void }) {
+/** One PR. On a phone the page's top and bottom bars carry its actions, so `phone` leaves them out here. */
+export function PrDetail({ prKey, actions, onClose, phone = false }: { prKey: string; actions: PrActions; onClose?: () => void; phone?: boolean }) {
   const detail = useShuttleQuery("detail", { key: prKey });
   const link = useShuttleMutation("link");
   const unlink = useShuttleMutation("unlink");
@@ -127,9 +129,11 @@ export function PrDetail({ prKey, actions, onClose }: { prKey: string; actions: 
           <span className="truncate font-mono text-xs">{shortKey(pr)}</span>
           <StatePill state={pr.state} />
           <span className="flex-1" />
-          <button type="button" aria-label="Copy key" title={`Copy ${pr.key}`} className={ICON_GHOST} onClick={() => void copyKey()}>
-            <Icon name="Copy" className="size-3.5" aria-hidden />
-          </button>
+          {!phone && (
+            <button type="button" aria-label="Copy key" title={`Copy ${pr.key}`} className={ICON_GHOST} onClick={() => void copyKey()}>
+              <Icon name="Copy" className="size-3.5" aria-hidden />
+            </button>
+          )}
           {onClose && (
             <button type="button" aria-label="Close details" className={ICON_GHOST} onClick={onClose}>
               <Icon name="X" className="size-4" aria-hidden />
@@ -145,7 +149,7 @@ export function PrDetail({ prKey, actions, onClose }: { prKey: string; actions: 
           {pr.deletions !== null && <span className="text-destructive">−{pr.deletions.toLocaleString()}</span>}
         </div>
         {pr.stale && <div className="mt-2 text-xs text-warning-text">{pr.serverName}'s last sync failed, so this may be out of date.</div>}
-        <div className="mt-3 flex flex-wrap gap-2">
+        {!phone && <div className="mt-3 flex flex-wrap gap-2">
           <button type="button" className={BUTTON_PRIMARY} onClick={() => actions.open(pr)}>
             <Icon name="ExternalLink" className="size-3.5" aria-hidden />
             Open on {pr.serverName}
@@ -155,7 +159,7 @@ export function PrDetail({ prKey, actions, onClose }: { prKey: string; actions: 
             <Icon name="Link" className="size-3.5" aria-hidden />
             Link a thread
           </button>
-        </div>
+        </div>}
       </div>
 
       {pr.needs !== null && (
@@ -167,6 +171,8 @@ export function PrDetail({ prKey, actions, onClose }: { prKey: string; actions: 
           </div>
         </div>
       )}
+
+      {pr.actions.length > 0 ? <ManageCard pr={pr} phone={phone} /> : <LabelsAndReviewers pr={pr} />}
 
       <Description body={body} />
 

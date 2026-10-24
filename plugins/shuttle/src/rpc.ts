@@ -46,6 +46,8 @@ export function registerRpc(bb: BbPluginApi, shuttle: Shuttle): void {
     testServer: (input) => refusing(async () => ({ results: await shuttle.testServer(input) })),
     exportToml: () => refusing(() => ({ toml: shuttle.exportToml() })),
     importToml: ({ toml, apply }) => refusing(() => shuttle.importToml(toml, apply)),
+    editPr: ({ key, change }) => refusing(async () => ({ pr: await shuttle.editPr(key, change) })),
+    editOptions: ({ key }) => refusing(() => shuttle.editOptions(key)),
     skills: ({ projectId }) => refusing(async () => ({ skills: await shuttle.skills(projectId) })),
   });
 

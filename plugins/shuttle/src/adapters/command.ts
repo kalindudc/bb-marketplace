@@ -2,8 +2,9 @@
 import { z } from "zod";
 import { OPERATIONS, type ListOperation, type Operation, type ServerConfig } from "../config";
 import { linkFor } from "../keys";
-import { activitySchema, prSummarySchema, toSummary, whoamiSchema, type Activity, type PrSummary } from "../model";
-import { AdapterError, type Adapter, type ListOptions, type ListResult } from "./adapter";
+import type { PrChange } from "../contract";
+import { activitySchema, editOptionsSchema, prSummarySchema, toSummary, whoamiSchema, type Activity, type EditOptions, type PrSummary } from "../model";
+import { AdapterError, changeOperation, type Adapter, type ListOptions, type ListResult } from "./adapter";
 import { fillCommand, runProcess, shellQuote, tail, type Runner } from "./exec";
 
 export const COMMAND_TIMEOUT_MS = 60_000;
@@ -18,7 +19,7 @@ export class CommandAdapter implements Adapter {
     return OPERATIONS.filter((op) => Boolean(this.server.commands[op]));
   }
 
-  private async json(operation: Operation, env: Record<string, string>, signal?: AbortSignal): Promise<unknown> {
+  private async exec(operation: Operation, env: Record<string, string>, signal?: AbortSignal): Promise<string> {
     const command = this.server.commands[operation];
     if (!command) throw new AdapterError(operation, `${this.server.name} has no ${operation} command`);
     const result = await this.run("/bin/sh", ["-c", command], {
@@ -30,7 +31,11 @@ export class CommandAdapter implements Adapter {
     });
     if (result.timedOut) throw new AdapterError(operation, `${operation} took longer than ${COMMAND_TIMEOUT_MS / 1000}s`);
     if (result.code !== 0) throw new AdapterError(operation, `${operation} exited ${result.code}: ${tail(result.stderr || result.stdout) || "no output"}`);
-    const out = result.stdout.trim();
+    return result.stdout;
+  }
+
+  private async json(operation: Operation, env: Record<string, string>, signal?: AbortSignal): Promise<unknown> {
+    const out = (await this.exec(operation, env, signal)).trim();
     if (operation === "whoami" && out && !out.startsWith("{") && !out.startsWith("\"")) return { login: out.split("\n")[0]!.trim() };
     try {
       return JSON.parse(out);
@@ -72,6 +77,21 @@ export class CommandAdapter implements Adapter {
 
   async activity(repo: string, number: number, signal?: AbortSignal): Promise<Activity> {
     return this.parse("activity", activitySchema, await this.json("activity", this.refEnv(repo, number), signal));
+  }
+
+  async change(repo: string, number: number, change: PrChange, signal?: AbortSignal): Promise<void> {
+    const env = this.refEnv(repo, number);
+    const lines = (values: readonly string[]) => values.join("\n");
+    if (change.kind === "labels") Object.assign(env, { SHUTTLE_ADD: lines(change.add), SHUTTLE_REMOVE: lines(change.remove) });
+    if (change.kind === "reviewers") {
+      const pick = (refs: typeof change.add, team: boolean) => lines(refs.filter((r) => r.team === team).map((r) => r.login));
+      Object.assign(env, { SHUTTLE_ADD: pick(change.add, false), SHUTTLE_REMOVE: pick(change.remove, false), SHUTTLE_ADD_TEAMS: pick(change.add, true), SHUTTLE_REMOVE_TEAMS: pick(change.remove, true) });
+    }
+    await this.exec(changeOperation(change), env, signal);
+  }
+
+  async editOptions(repo: string, number: number, signal?: AbortSignal): Promise<EditOptions> {
+    return this.parse("edit_options", editOptionsSchema, await this.json("edit_options", this.refEnv(repo, number), signal));
   }
 
   readCommand(repo: string, number: number, url: string): string {

@@ -20,6 +20,12 @@ view = "sh ~/.config/shuttle/delta.sh"
 activity = "sh ~/.config/shuttle/delta.sh"
 team_requested = "SHUTTLE_DELTA_TEAMS=edge-infrastructure sh ~/.config/shuttle/delta.sh"
 # mentioned left out: Delta refuses the mentions: qualifier
+# Managing your own PRs from Shuttle; draft is left out because Delta can't go back to draft.
+ready = "sh ~/.config/shuttle/delta.sh"
+close = "sh ~/.config/shuttle/delta.sh"
+reopen = "sh ~/.config/shuttle/delta.sh"
+edit_labels = "sh ~/.config/shuttle/delta.sh"
+edit_reviewers = "sh ~/.config/shuttle/delta.sh"
 ```
 
 `delta.sh` next to this file is a working adapter for Delta through `dt` and `jq`; copy it to
@@ -32,11 +38,13 @@ the usual tool directories on `PATH`, and a 60-second limit. It gets:
 
 | Variable | When |
 |---|---|
-| `SHUTTLE_OPERATION` | always: whoami, authored, review_requested, team_requested, mentioned, view or activity |
+| `SHUTTLE_OPERATION` | always: the operation's name, such as authored or edit_labels |
 | `SHUTTLE_SERVER` | always: the server id |
 | `SHUTTLE_STATE` | authored: `open`, or `closed` for merged and closed PRs |
 | `SHUTTLE_SINCE` | authored with `closed`: YYYY-MM-DD, the start of the Done window |
-| `SHUTTLE_REPO`, `SHUTTLE_NUMBER`, `SHUTTLE_URL` | view and activity |
+| `SHUTTLE_REPO`, `SHUTTLE_NUMBER`, `SHUTTLE_URL` | view, activity and the operations below that manage a PR |
+| `SHUTTLE_ADD`, `SHUTTLE_REMOVE` | edit_labels: label names; edit_reviewers: user logins; one per line |
+| `SHUTTLE_ADD_TEAMS`, `SHUTTLE_REMOVE_TEAMS` | edit_reviewers: team slugs, one per line |
 
 A command must exit 0 and print one JSON document. A non-zero exit, output that is not JSON or
 JSON in the wrong shape fails that operation, with the reason on the Servers page; the other
@@ -59,7 +67,12 @@ PR from a list it knows is incomplete, so an old request cannot come back lookin
  "additions": 1204, "deletions": 388, "files": 23, "teams": ["@shop/edge-routing"]}
 ```
 
-`view` may add `"body"`, the description in Markdown; the PR's drawer shows it.
+`view` may add `"body"`, the description in Markdown; the PR's drawer shows it. Any summary
+may add `"labels"`, as names or `{"name", "color", "description"}` with a hex colour. `view` may
+add `"reviewers"`: `[{"login": "ana", "team": false, "state": "requested"}]`, where `state` is
+`requested`, `approved`, `changes`, `commented` or `dismissed`. List requested reviewers first,
+then the latest review of everyone else. Leave a field out when the server's answer has no such
+data; Shuttle then keeps what it read before.
 `state` is `open`, `draft`, `merged` or `closed`. `checks` is `passed`, `failed`, `pending` or
 `none`; `review` is `approved`, `changes`, `required` or `none`. Only `repo`, `number`, `title`
 and `state` are required.
@@ -78,6 +91,25 @@ and `state` are required.
 check). An `id` must stay the same while the item does not change and change when it does (a
 new reply, a check run again): Shuttle sends each id to a thread once. When a PR is first
 watched, every item already there counts as seen.
+
+## Managing your own PRs
+
+These optional operations let you change your own PRs from Shuttle's PR panel. Each one runs
+once per change and only has to exit 0; its output is ignored, apart from the error text when
+it fails. Shuttle offers a change only when the server has its command, and only on PRs whose
+author is you.
+
+| Operation | What it does |
+|---|---|
+| `ready` | Marks a draft ready for review |
+| `draft` | Turns an open PR back into a draft |
+| `close`, `reopen` | Closes the PR without merging it, or reopens it |
+| `edit_labels` | Adds the labels in `SHUTTLE_ADD` and removes those in `SHUTTLE_REMOVE` |
+| `edit_reviewers` | Requests and withdraws the reviewers and teams in the four variables |
+| `edit_options` | Prints what the pickers offer: `{"labels": [...], "people": ["login"]}` |
+
+Without `edit_options`, the pickers offer the labels and reviewers Shuttle has seen on the repo's
+PRs and the teams your review requests named, and you can type any other name.
 
 ## Review workspace
 
@@ -110,4 +142,6 @@ that holds its default checkout.
 
 `kind = "github"` needs no commands: Shuttle uses `gh api graphql`. Requested of me is
 `user-review-requested:@me`, My teams is `review-requested:@me -user-review-requested:@me`, and
-each list shows the 50 most recently updated PRs.
+each list reads up to 300 of the most recently updated PRs. Changes to your own PRs go through
+`gh pr ready` (with `--undo` for back to draft), `gh pr close`, `gh pr reopen`, and the REST API
+through `gh api` for labels and requested reviewers.

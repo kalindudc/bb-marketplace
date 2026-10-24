@@ -29,6 +29,12 @@ export interface PrRow {
   dismissed_at: number | null;
   /** The description, once a view fetched it; null while only lists have seen the PR. */
   body: string | null;
+  /** JSON Label[], or null until a server's answer carried them. */
+  labels: string | null;
+  /** JSON Reviewer[], or null until a server's answer carried them. */
+  reviewers: string | null;
+  /** When a view (not a list) last read the PR. */
+  viewed_at: number | null;
 }
 
 export interface ServerRow {
@@ -142,13 +148,15 @@ export class Store {
     const key = prKey({ server, repo: summary.repo, number: summary.number });
     this.db
       .prepare(
-        `INSERT INTO prs (key, server, repo, number, url, title, author, state, checks, review, head, head_ref, base, additions, deletions, files, updated_at, mine, fetched_at, body)
-         VALUES (@key, @server, @repo, @number, @url, @title, @author, @state, @checks, @review, @head, @head_ref, @base, @additions, @deletions, @files, @updated_at, @mine, @fetched_at, @body)
+        `INSERT INTO prs (key, server, repo, number, url, title, author, state, checks, review, head, head_ref, base, additions, deletions, files, updated_at, mine, fetched_at, body, labels, reviewers, viewed_at)
+         VALUES (@key, @server, @repo, @number, @url, @title, @author, @state, @checks, @review, @head, @head_ref, @base, @additions, @deletions, @files, @updated_at, @mine, @fetched_at, @body,
+           @labels, @reviewers, @viewed_at)
          ON CONFLICT (key) DO UPDATE SET url = excluded.url, title = excluded.title, author = excluded.author, state = excluded.state, checks = excluded.checks,
          review = excluded.review, head = excluded.head, head_ref = COALESCE(excluded.head_ref, prs.head_ref), base = COALESCE(excluded.base, prs.base),
          additions = COALESCE(excluded.additions, prs.additions), deletions = COALESCE(excluded.deletions, prs.deletions), files = COALESCE(excluded.files, prs.files),
          updated_at = COALESCE(excluded.updated_at, prs.updated_at), mine = MAX(prs.mine, excluded.mine), fetched_at = excluded.fetched_at,
-         body = COALESCE(excluded.body, prs.body)`,
+         body = COALESCE(excluded.body, prs.body), labels = COALESCE(excluded.labels, prs.labels), reviewers = COALESCE(excluded.reviewers, prs.reviewers),
+         viewed_at = COALESCE(excluded.viewed_at, prs.viewed_at)`,
       )
       .run({
         key,
@@ -171,8 +179,19 @@ export class Store {
         mine: mine ? 1 : 0,
         fetched_at: this.now(),
         body: summary.body,
+        labels: summary.labels ? JSON.stringify(summary.labels) : null,
+        reviewers: summary.reviewers ? JSON.stringify(summary.reviewers) : null,
+        // Only a view carries the description, so it marks the read as a full one.
+        viewed_at: summary.body !== null ? this.now() : null,
       });
     return this.prByKey(key)!;
+  }
+
+  /** Records a change Shuttle made on the server, until the next read brings the server's own copy. */
+  patchPr(id: number, patch: Partial<Pick<PrRow, "state" | "labels" | "reviewers" | "updated_at">>): void {
+    const cols = Object.keys(patch).filter((c) => ["state", "labels", "reviewers", "updated_at"].includes(c));
+    if (!cols.length) return;
+    this.db.prepare(`UPDATE prs SET ${cols.map((c) => `${c} = @${c}`).join(", ")} WHERE id = @id`).run({ ...patch, id });
   }
 
   prByKey(key: string): PrRow | null {

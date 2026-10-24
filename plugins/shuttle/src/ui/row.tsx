@@ -5,6 +5,7 @@ import type { LinkView, PrView } from "../contract";
 import { ICON_BUTTON, ServerBadge } from "./common";
 import { ROLE_LABELS } from "./constants";
 import { ago, shortKey } from "./format";
+import { RowLabels } from "./manage";
 import { PrPills } from "./pills";
 import { ReviewButton } from "./review-button";
 
@@ -71,7 +72,27 @@ function WatchButton({ pr, onToggle }: { pr: PrView; onToggle(pr: PrView): void 
   );
 }
 
-export function PrRow({ pr, selected, actions }: { pr: PrView; selected: boolean; actions: PrActions }) {
+/** A phone's row: the whole row opens the PR, so its actions live in the PR view. */
+function CompactPrRow({ pr, onSelect }: { pr: PrView; onSelect(key: string): void }) {
+  return (
+    <li data-pr={pr.key} className="border-t border-border">
+      <button type="button" onClick={() => onSelect(pr.key)} className="flex w-full cursor-pointer items-center gap-2.5 px-3 py-2.5 text-left hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring">
+        <span className="min-w-0 flex-1">
+          <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="truncate font-mono">{shortKey(pr)}</span>
+            <span className="shrink-0">· {pr.serverName}{pr.updatedAt !== null && ` · ${ago(pr.updatedAt)}`}</span>
+          </span>
+          <span className="mb-1.5 mt-0.5 line-clamp-2 block text-sm font-medium">{pr.title}</span>
+          <span className="flex flex-wrap gap-1"><PrPills pr={pr} /><RowLabels labels={pr.labels} /></span>
+        </span>
+        <Icon name="ChevronRight" className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+      </button>
+    </li>
+  );
+}
+
+export function PrRow({ pr, selected, actions, compact = false }: { pr: PrView; selected: boolean; actions: PrActions; compact?: boolean }) {
+  if (compact) return <CompactPrRow pr={pr} onSelect={actions.select} />;
   const stop = (event: MouseEvent | KeyboardEvent) => event.stopPropagation();
   return (
     <li
@@ -108,7 +129,7 @@ export function PrRow({ pr, selected, actions }: { pr: PrView; selected: boolean
             </>
           )}
         </div>
-        <div className="mt-1.5 flex flex-wrap gap-1"><PrPills pr={pr} /></div>
+        <div className="mt-1.5 flex flex-wrap gap-1"><PrPills pr={pr} /><RowLabels labels={pr.labels} /></div>
       </div>
       <div className="col-start-2 flex flex-wrap items-start gap-1 lg:col-start-3 lg:justify-end" onClick={stop} onKeyDown={stop}>
         <ThreadChips pr={pr} actions={actions} />

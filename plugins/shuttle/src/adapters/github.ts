@@ -1,10 +1,10 @@
 // The built-in GitHub adapter: gh's GraphQL API, mapped onto the same shapes command adapters print.
 import { z } from "zod";
 import { OPERATIONS, type ListOperation, type Operation, type ServerConfig } from "../config";
-import type { CheckState, PrState, ReviewState } from "../contract";
+import type { CheckState, PrChange, PrState, Reviewer, ReviewerState, ReviewState } from "../contract";
 import { linkFor } from "../keys";
-import type { Activity, ActivityItem, PrSummary } from "../model";
-import { AdapterError, type Adapter, type ListOptions, type ListResult } from "./adapter";
+import type { Activity, ActivityItem, EditOptions, PrSummary } from "../model";
+import { AdapterError, changeOperation, type Adapter, type ListOptions, type ListResult } from "./adapter";
 import { fillCommand, runProcess, shellQuote, tail, type Runner } from "./exec";
 
 const GH_TIMEOUT_MS = 45_000;
@@ -15,7 +15,9 @@ export const SEARCH_PAGES = 6;
 const SUMMARY_FIELDS = `number title url isDraft state reviewDecision headRefOid headRefName baseRefName updatedAt additions deletions changedFiles
   author { login } repository { nameWithOwner }
   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
-  reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on Team { combinedSlug } } } }`;
+  labels(first: 30) { nodes { name color } }
+  latestReviews(first: 30) { nodes { state author { login } } }
+  reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on Team { combinedSlug } ... on User { login } ... on Bot { login } } } }`;
 
 const actor = z.object({ login: z.string(), __typename: z.string().optional() }).nullable();
 const summaryNode = z.object({
@@ -36,7 +38,9 @@ const summaryNode = z.object({
   author: actor,
   repository: z.object({ nameWithOwner: z.string() }),
   commits: z.object({ nodes: z.array(z.object({ commit: z.object({ statusCheckRollup: z.object({ state: z.string() }).nullable() }) })) }),
-  reviewRequests: z.object({ nodes: z.array(z.object({ requestedReviewer: z.object({ __typename: z.string(), combinedSlug: z.string().optional() }).nullable() })) }).nullable(),
+  labels: z.object({ nodes: z.array(z.object({ name: z.string(), color: z.string().nullable() })) }).nullish(),
+  latestReviews: z.object({ nodes: z.array(z.object({ state: z.string(), author: z.object({ login: z.string() }).nullable() })) }).nullish(),
+  reviewRequests: z.object({ nodes: z.array(z.object({ requestedReviewer: z.object({ __typename: z.string(), combinedSlug: z.string().optional(), login: z.string().optional() }).nullable() })) }).nullable(),
 });
 type SummaryNode = z.infer<typeof summaryNode>;
 
@@ -69,6 +73,25 @@ export function reviewState(decision: string | null): ReviewState {
   return "none";
 }
 
+const REVIEWER_STATE: Record<string, ReviewerState> = { APPROVED: "approved", CHANGES_REQUESTED: "changes", COMMENTED: "commented", DISMISSED: "dismissed" };
+
+/** Who is asked to review, then the latest review of everyone else; a re-request shows as requested. */
+export function reviewersOf(node: SummaryNode): Reviewer[] {
+  const author = node.author?.login;
+  const out: Reviewer[] = [];
+  for (const { requestedReviewer: r } of node.reviewRequests?.nodes ?? []) {
+    if (r?.__typename === "Team" && r.combinedSlug) out.push({ login: r.combinedSlug, team: true, state: "requested" });
+    else if (r?.login) out.push({ login: r.login, team: false, state: "requested" });
+  }
+  for (const review of node.latestReviews?.nodes ?? []) {
+    const login = review.author?.login;
+    const state = REVIEWER_STATE[review.state];
+    if (!login || !state || login === author || out.some((r) => !r.team && r.login === login)) continue;
+    out.push({ login, team: false, state });
+  }
+  return out;
+}
+
 export function toSummary(node: SummaryNode): PrSummary {
   const state: PrState = node.state === "MERGED" ? "merged" : node.state === "CLOSED" ? "closed" : node.isDraft ? "draft" : "open";
   const teams = (node.reviewRequests?.nodes ?? []).flatMap((n) => (n.requestedReviewer?.__typename === "Team" && n.requestedReviewer.combinedSlug ? [`@${n.requestedReviewer.combinedSlug}`] : []));
@@ -91,6 +114,8 @@ export function toSummary(node: SummaryNode): PrSummary {
     files: node.changedFiles,
     teams,
     body: node.body ?? null,
+    labels: node.labels ? node.labels.nodes.map((l) => ({ name: l.name, color: l.color ? l.color.toLowerCase() : null })) : null,
+    reviewers: node.reviewRequests && node.latestReviews ? reviewersOf(node) : null,
   };
 }
 
@@ -264,6 +289,52 @@ export class GithubAdapter implements Adapter {
     const node = data.repository?.pullRequest;
     if (!node) throw new AdapterError("activity", `${repo}#${number} was not found`);
     return toActivity(node);
+  }
+
+  async change(repo: string, number: number, change: PrChange, signal?: AbortSignal): Promise<void> {
+    const op = changeOperation(change);
+    const target = ["-R", this.server.hostname ? `${this.server.hostname}/${repo}` : repo];
+    const api = (method: string, path: string, fields: Array<[string, string]>) =>
+      this.gh(op, ["api", ...this.hostArgs(), "-X", method, path, ...fields.flatMap(([k, v]) => ["-f", `${k}=${v}`])], signal);
+    switch (change.kind) {
+      case "ready":
+      case "draft":
+        await this.gh(op, ["pr", "ready", String(number), ...target, ...(change.kind === "draft" ? ["--undo"] : [])], signal);
+        return;
+      case "close":
+      case "reopen":
+        await this.gh(op, ["pr", change.kind, String(number), ...target], signal);
+        return;
+      case "labels":
+        if (change.add.length) await api("POST", `repos/${repo}/issues/${number}/labels`, change.add.map((l) => ["labels[]", l]));
+        for (const label of change.remove) await api("DELETE", `repos/${repo}/issues/${number}/labels/${encodeURIComponent(label)}`, []);
+        return;
+      case "reviewers": {
+        // REST wants a team's slug without its org.
+        const fields = (refs: typeof change.add): Array<[string, string]> =>
+          refs.map((r) => (r.team ? ["team_reviewers[]", r.login.split("/").pop()!] : ["reviewers[]", r.login]));
+        if (change.add.length) await api("POST", `repos/${repo}/pulls/${number}/requested_reviewers`, fields(change.add));
+        if (change.remove.length) await api("DELETE", `repos/${repo}/pulls/${number}/requested_reviewers`, fields(change.remove));
+        return;
+      }
+    }
+  }
+
+  async editOptions(repo: string, number: number, signal?: AbortSignal): Promise<EditOptions> {
+    const query = `query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) {
+      labels(first: 100, orderBy: { field: NAME, direction: ASC }) { nodes { name color description } }
+      pullRequest(number: $number) { suggestedReviewers { reviewer { login } } } } }`;
+    const schema = z.object({
+      repository: z.object({
+        labels: z.object({ nodes: z.array(z.object({ name: z.string(), color: z.string().nullable(), description: z.string().nullable() })) }).nullable(),
+        pullRequest: z.object({ suggestedReviewers: z.array(z.object({ reviewer: z.object({ login: z.string() }).nullable() })) }).nullable(),
+      }).nullable(),
+    });
+    const data = await this.graphql("edit_options", query, this.repoVars(repo, number), schema, signal);
+    return {
+      labels: (data.repository?.labels?.nodes ?? []).map((l) => ({ name: l.name, color: l.color ? l.color.toLowerCase() : null, description: l.description })),
+      people: (data.repository?.pullRequest?.suggestedReviewers ?? []).flatMap((s) => (s.reviewer ? [s.reviewer.login] : [])),
+    };
   }
 
   readCommand(repo: string, number: number, url: string): string {

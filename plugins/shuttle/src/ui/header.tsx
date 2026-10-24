@@ -7,6 +7,7 @@ import { PANEL_PATH } from "./constants";
 import { messageOf, useShuttleMutation, useShuttleQuery } from "./data";
 import { ago, settingsHref } from "./format";
 import { formatRoute } from "./route";
+import { useViewport } from "./viewport";
 
 function Health({ server }: { server: ServerStatus }) {
   if (server.ok === null) return <Pill icon="Circle" title="Not synced yet">{server.name}</Pill>;
@@ -48,9 +49,37 @@ export function LookupInput({ placeholder, onFound, icon = "Search", label = "Lo
   );
 }
 
+/** A phone's header has room for two icons: look-up opens its field in their place. */
+function PhoneHeader({ onFound, syncing, onSync }: { onFound(key: string): void; syncing: boolean; onSync(): void }) {
+  const [searching, setSearching] = useState(false);
+  if (searching) {
+    return (
+      <div className="flex min-w-0 flex-1 items-center gap-1">
+        <div className="min-w-0 flex-1">
+          <LookupInput placeholder="Paste a PR link or key" onFound={(key) => { setSearching(false); onFound(key); }} />
+        </div>
+        <button type="button" aria-label="Close look-up" className={ICON_GHOST} onClick={() => setSearching(false)}>
+          <Icon name="X" className="size-4" aria-hidden />
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center gap-0.5">
+      <button type="button" aria-label="Look up a PR" title="Look up a PR" className={ICON_GHOST} onClick={() => setSearching(true)}>
+        <Icon name="Search" className="size-4" aria-hidden />
+      </button>
+      <button type="button" aria-label={syncing ? "Syncing" : "Sync"} title="Sync" className={ICON_GHOST} disabled={syncing} onClick={onSync}>
+        <Icon name="ArrowReloadHorizontal" className={`size-4 ${syncing ? "animate-spin" : ""}`} aria-hidden />
+      </button>
+    </div>
+  );
+}
+
 export function ShuttleHeader() {
   const navigate = useBbNavigate();
   const pluginId = experimental_usePluginId();
+  const phone = useViewport() === "phone";
   const overview = useShuttleQuery("overview", {});
   const syncMutation = useShuttleMutation("sync");
   const sync = async () => {
@@ -58,6 +87,8 @@ export function ShuttleHeader() {
   };
   const servers = overview.data?.servers.filter((server) => server.enabled) ?? [];
   const syncing = syncMutation.isPending || overview.data?.syncing === true;
+  const showPr = (key: string) => navigate.toPluginPanel(PANEL_PATH, { subPath: formatRoute({ view: "pr", key }) });
+  if (phone) return <PhoneHeader onFound={showPr} syncing={syncing} onSync={() => void sync()} />;
   return (
     <div className="flex min-w-0 items-center gap-2">
       <div className="hidden items-center gap-1.5 lg:flex">
@@ -66,8 +97,7 @@ export function ShuttleHeader() {
         {overview.error !== null && <Pill tone="bad" icon="AlertTriangle" title={messageOf(overview.error)}>Status unavailable</Pill>}
       </div>
       <div className="w-56 min-w-0 xl:w-80">
-        <LookupInput placeholder="Look up any PR: paste a link or key"
-          onFound={(key) => navigate.toPluginPanel(PANEL_PATH, { subPath: formatRoute({ view: "pr", key }) })} />
+        <LookupInput placeholder="Look up any PR: paste a link or key" onFound={showPr} />
       </div>
       {overview.data?.syncedAt != null && (
         <span className="hidden whitespace-nowrap text-xs text-muted-foreground md:inline" title={new Date(overview.data.syncedAt).toLocaleString()}>

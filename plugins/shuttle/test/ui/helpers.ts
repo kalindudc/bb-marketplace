@@ -9,6 +9,32 @@ export type PullRequests = (input: { keys: string[] }) => Record<string, unknown
 
 export const NOW = Date.now();
 
+// jsdom has no matchMedia. This one answers min- and max-width queries against a width the tests set.
+const DESKTOP = 1440;
+let width = DESKTOP;
+const mediaListeners = new Set<() => void>();
+function queryMatches(query: string): boolean {
+  const max = /max-width:\s*(\d+)px/u.exec(query);
+  const min = /min-width:\s*(\d+)px/u.exec(query);
+  return (max === null || width <= Number(max[1])) && (min === null || width >= Number(min[1]));
+}
+window.matchMedia = (query: string) => ({
+  get matches() { return queryMatches(query); },
+  media: query,
+  onchange: null,
+  addEventListener: (_type: string, listener: () => void) => mediaListeners.add(listener),
+  removeEventListener: (_type: string, listener: () => void) => mediaListeners.delete(listener),
+  addListener: (listener: () => void) => mediaListeners.add(listener),
+  removeListener: (listener: () => void) => mediaListeners.delete(listener),
+  dispatchEvent: () => false,
+}) as unknown as MediaQueryList;
+
+/** 390 is a phone, 1000 a narrow window, 1440 a desktop. */
+export function setViewport(next: number) {
+  width = next;
+  for (const listener of [...mediaListeners]) listener();
+}
+
 export function pr(overrides: Partial<PrView> = {}): PrView {
   const repo = overrides.repo ?? "get-bb/bb";
   const number = overrides.number ?? 4411;
@@ -42,6 +68,9 @@ export function pr(overrides: Partial<PrView> = {}): PrView {
     needs: null,
     stale: false,
     pendingItems: 0,
+    labels: null,
+    reviewers: null,
+    actions: [],
     ...overrides,
   };
 }
@@ -110,6 +139,8 @@ export function handlers(overrides: Partial<Handlers> = {}): Handlers {
     exportToml: () => ({ toml: "" }),
     importToml: () => ({ changes: [], config: null }),
     skills: () => ({ skills: [{ id: "pr-reviewer", name: "pr-reviewer", description: "Multi-model critic consensus reviews" }] }),
+    editPr: unexpected("editPr"),
+    editOptions: () => ({ labels: [], people: [], teams: [] }),
     ...overrides,
   };
 }
@@ -135,6 +166,7 @@ export function mount<Props extends object>(component: ComponentType<Props>, pro
 export function unmountAll() {
   for (const slot of mounted.splice(0)) slot.lifecycle.unmount();
   document.body.replaceChildren();
+  width = DESKTOP;
 }
 
 export const callsTo = (slot: RenderedSlot, method: string) => slot.inspection.rpcCalls.filter((call) => call.method === method).map((call) => call.input);
