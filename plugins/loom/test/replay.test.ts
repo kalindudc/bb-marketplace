@@ -202,7 +202,7 @@ describe("rewind", () => {
 const workerRowsOf = (h: EngineHarness, key = "CSV-1") => h.store.threads({ ticketId: ticketOf(h, key).id, role: "worker" });
 
 describe("projectTimeline", () => {
-  it("draws a ticket while it is in flight, a bar per session, the flow, the human's actions and the tickets in trouble", async () => {
+  it("draws a ticket while it is in flight with when it was sent back, a bar per session, the moments and the tickets in trouble", async () => {
     const h = makeCtx();
     const project = await seedProject(h);
     h.store.event(project.id, null, "human.action", "human", { action: "start", slug: "csv" });
@@ -230,7 +230,11 @@ describe("projectTimeline", () => {
     expect(bar).toMatchObject({ title: "Order rows", from: start, to: now });
     expect(bar.parts.map((part) => part.state)).toEqual(["working", "checking", "review", "working"]);
     expect(bar.parts[0]).toEqual({ from: start, to: start + MINUTE, state: "working" });
+    expect(bar.sentBack).toEqual([bar.parts[3]!.from]);
+    expect(bar.final).toBeNull();
     expect(timeline.tickets.map((entry) => entry.key)).toEqual(["CSV-1"]);
+    expect(timeline.ticketCount).toBe(2);
+    expect(timeline.state).toBe("running");
 
     expect(timeline.sessions.map((session) => [session.key, session.role, session.label])).toEqual([
       ["CSV-1", "worker", "attempt 1"],
@@ -239,12 +243,59 @@ describe("projectTimeline", () => {
     expect(timeline.sessions[0]!.to).toBe(now);
     expect(timeline.sessions[1]).toMatchObject({ endReason: "verdict" });
 
-    expect(timeline.flow.slice(0, 3).map((entry) => entry.counts)).toEqual([{ queued: 1 }, { queued: 2 }, { queued: 1, working: 1 }]);
-    expect(timeline.flow.at(-1)!.counts).toEqual({ queued: 1, working: 1 });
     expect(timeline.project.map((band) => band.state)).toEqual(["draft", "ready", "running"]);
     expect(timeline.project.at(-1)!.to).toBe(now);
-    expect(timeline.marks).toEqual([expect.objectContaining({ action: "start", key: null })]);
     expect(timeline.trouble).toEqual(["CSV-1"]);
+
+    const { moments } = timeline;
+    expect(moments.map((moment) => moment.id)).toEqual([...moments.map((moment) => moment.id)].sort((a, b) => a - b));
+    const you = moments.find((moment) => moment.lines.some((line) => line.text === "You ran start."))!;
+    expect(you.kind).toBe("you");
+    const sentBackMoment = moments.find((moment) => moment.lines.some((line) => line.kind === "trouble"))!;
+    expect(sentBackMoment.lines.find((line) => line.kind === "trouble")).toEqual({ kind: "trouble", text: "CSV-1 moved from review to working: changes requested in round 1.", key: "CSV-1" });
+    expect(sentBackMoment.kind).toBe("trouble");
+    expect(moments.at(-1)!.id).toBe(events.filter((event) => event.kind !== "post.added").at(-1)!.id);
+    expect(moments.flatMap((moment) => moment.lines).some((line) => line.text.includes("added a"))).toBe(false);
+  });
+
+  it("groups events less than 2 seconds apart into one moment, counts a burst of new tickets in one line, and leaves posts out, your replies too", () => {
+    const at = 1_000_000;
+    const event = (id: number, offset: number, kind: string, data: Record<string, unknown>, ticket: number | null = null) => ({ id, project_id: 1, ticket_id: ticket, at: at + offset, kind, actor: "human", data_json: JSON.stringify(data) });
+    const rows = {
+      project: { id: 1, state: "running" },
+      tickets: [1, 2, 3].map((id) => ({ id, key: `CSV-${id}`, title: `Ticket ${id}` })),
+      threads: [],
+      posts: [],
+      reviews: [],
+      runs: [],
+      events: [
+        event(1, 0, "spec.approved", { version: 1 }),
+        event(2, 0, "ticket.created", {}, 1),
+        event(3, 0, "ticket.created", {}, 2),
+        event(4, 0, "ticket.created", {}, 3),
+        event(5, 1_500, "human.action", { action: "start" }),
+        event(6, 3_000, "project.state", { from: "ready", to: "running" }),
+        event(7, 60_000, "post.added", { author: "worker", kind: "note", post: 1 }, 1),
+        event(10, 90_000, "human.action", { action: "post", key: "CSV-1" }, 1),
+        event(8, 120_000, "ticket.state", { from: "queued", to: "blocked", reason: "it needs a key" }, 2),
+        event(9, 120_500, "ticket.state", { from: "queued", to: "working", attempt: 1 }, 1),
+      ],
+    } as unknown as Parameters<typeof projectTimeline>[0];
+    const { moments } = projectTimeline(rows, at + 200_000);
+    expect(moments.map((moment) => [moment.id, moment.at, moment.kind])).toEqual([
+      [6, at + 3_000, "you"],
+      [9, at + 120_500, "trouble"],
+    ]);
+    expect(moments[0]!.lines).toEqual([
+      { kind: "milestone", text: "Spec version 1 was approved.", key: null },
+      { kind: "move", text: "3 tickets were created.", key: null },
+      { kind: "you", text: "You ran start.", key: null },
+      { kind: "milestone", text: "The project moved from ready to running.", key: null },
+    ]);
+    expect(moments[1]!.lines.map((line) => [line.kind, line.key])).toEqual([
+      ["trouble", "CSV-2"],
+      ["move", "CSV-1"],
+    ]);
   });
 
   it("ends a finished project's timeline at its last event", async () => {

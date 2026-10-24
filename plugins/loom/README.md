@@ -309,23 +309,33 @@ merge commits Loom recorded.
 
 #### Timeline
 
-Under the health strip, every project has a Timeline. Collapsed, it is one thin
-strip: the share of tickets in each state over time, with a playhead and a Play
-button. Click or drag the strip, press Play, or step with First, Previous and
-Next event (the arrow keys and Space work while it has focus) to rewind the
-whole page to that moment. Rewound, the health strip, Board, Agents, Feed,
-Metrics, Spec and any ticket show the project as it was then, every control is
-disabled, and Back to now returns the live page.
+Under the health strip, every project has a Timeline in a dashed frame. Collapsed,
+it is one row: a Play button, a strip of how much happened when on a labelled
+time axis, with a red dot under each time a ticket blocked or was sent back and
+a ring for each of your own actions, and whether the page is live. Hover the
+strip to read what happened at a moment before anything changes; click or drag
+it, press Play, or step with the arrow keys while the Timeline has focus to
+rewind the whole page to that moment. Rewound, the frame turns orange and the
+time after the playhead fades; the health strip, Board, Agents, Feed, Metrics,
+Spec and any ticket show the project as it was then, every control is disabled,
+and Back to now (or Esc) returns the live page.
 
-Open, the Timeline plays at 1, 5 or 20 minutes per second, marks your own
-actions as diamonds, zooms to the whole project or to 2 hours or 30 minutes
-around the playhead, and draws a bar per ticket or per agent session. Trouble
-keeps only the tickets that blocked or were sent back to work, and quiet
-stretches of 15 minutes or more fold to a band marked ≈. The server rebuilds
-the past from the event log and runs the live page's own views on it, so the
-numbers are the real ones. History from before Loom 0.7.0 kept no ticket text or
-failure counts per move, so a moment from then shows today's text and no failed
-attempts.
+The Timeline steps through moments, not raw events: each moment changes the
+board, the header or the health strip, and events less than 2 seconds apart
+read as one. Posts and edits only add text, so they are not moments, but the
+Feed of a rewound page still shows them. Open, the Timeline shows the moment's
+time and sentence with previous and next buttons, plays at 1, 5 or 20 minutes
+per second, and draws a row for the project's running and paused stretches,
+then a row per ticket on the same axis: its time working, in checks, in review,
+shipping and blocked, where it was sent back, a check when it was done, and its
+state at the playhead. Agents draws each ticket's worker and reviewer sessions
+instead, Only trouble keeps the tickets that blocked or were sent back, and a
+ticket's name opens it. Quiet stretches of 15 minutes or more fold to a dotted
+gap, and the axis labels the time work resumed after a long one. The server
+rebuilds the past from the event log and runs the live page's own views on it,
+so the numbers are the real ones. History from before Loom 0.7.0 kept no ticket
+text or failure counts per move, so a moment from then shows today's text and
+no failed attempts.
 
 #### Controls
 

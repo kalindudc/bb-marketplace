@@ -22,8 +22,9 @@ function moveReason(from: string, to: string, data: Record<string, unknown>): st
   return null;
 }
 
-/** `keys` maps a ticket id to its key. */
-export function feedText(event: EventRow, keys: Map<number, string>): string {
+/** `keys` maps a ticket id to its key. With `you`, the human's actions read "You ran …", as the timeline shows them to the human. */
+export function feedText(event: EventRow, keys: Map<number, string>, { you = false }: { you?: boolean } = {}): string {
+  const human = you ? "You" : "The human";
   const data = JSON.parse(event.data_json) as Record<string, unknown>;
   const key = event.ticket_id === null ? "A ticket" : (keys.get(event.ticket_id) ?? `Ticket ${event.ticket_id}`);
   switch (event.kind) {
@@ -56,11 +57,11 @@ export function feedText(event: EventRow, keys: Map<number, string>): string {
     case "turn.retry":
       return `${key}'s worker hit a rate limit; retry ${data.attempt} is scheduled.`;
     case "human.action": {
-      if (data.action === "notes") return `The human sent ${notesLabel(data.notes)} on the spec to the planner.`;
-      if (data.action === "approve" && data.skipReview === true) return "The human approved the spec without a passed spec review.";
-      if (data.action === "dismissAsk") return "The human set the planner's asks aside.";
+      if (data.action === "notes") return `${human} sent ${notesLabel(data.notes)} on the spec to the planner.`;
+      if (data.action === "approve" && data.skipReview === true) return `${human} approved the spec without a passed spec review.`;
+      if (data.action === "dismissAsk") return `${human} set the planner's asks aside.`;
       const target = text(data.key);
-      return `The human ran ${data.action}${target === null ? "" : ` on ${target}`}.`;
+      return `${human} ran ${data.action}${target === null ? "" : ` on ${target}`}.`;
     }
     case "record.sent": {
       const why = text(data.fallback);

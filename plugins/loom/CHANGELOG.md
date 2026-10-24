@@ -2,6 +2,19 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## Unreleased
+
+### Changed
+
+- The Timeline is redesigned to be calmer and easier to read. It sits in a dashed frame under the health strip, which turns orange while the page is rewound. Collapsed, it is one row: a Play button, a strip of how much happened when on a labelled time axis, with red dots where tickets blocked or were sent back and rings for your own actions, and whether the page is live. Hovering shows what happened at a moment before anything rewinds, and the time after the playhead fades while rewound.
+- The Timeline steps through moments instead of raw events: each one changes the board, the header or the health strip, events less than 2 seconds apart read as one, and each has the Feed's sentence for it, with your own actions written as "You ran …". Posts and edits are no longer steps.
+- Open, the Timeline has one row per ticket instead of packed rows, on the same time axis as the strip: its time in each state, where it was sent back, a check when it was done, its state at the playhead, and how long it took; a ticket's name opens it. Agents shows each ticket's sessions on its row, and Only trouble is a switch. Esc returns to now and Home goes to the first moment.
+- Quiet stretches fold to a dotted gap instead of a band marked "≈", and the axis labels the time work resumed after a fold of an hour or more.
+
+### Removed
+
+- The Timeline's stacked chart of ticket states, its zoom choice (whole project, 2 hours or 30 minutes), its First event and Now buttons, and its diamond markers. The `timeline` RPC no longer returns `flow` or `marks`; it returns `moments`, `state` and `ticketCount`, and each ticket bar carries `sentBack` and `final`.
+
 ## 0.17.0 (2026-10-24)
 
 ### Added

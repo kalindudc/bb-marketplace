@@ -1115,7 +1115,7 @@ describe("rewind", () => {
     expect((await call<ProjectMetrics>("metrics", { slug: "csv", days: 7 })).counts.done).toBe(1);
   });
 
-  it("timeline lists the events in order, a bar for a started ticket and the human's start", async () => {
+  it("timeline lists the events and moments in order, a bar for a started ticket and the human's start", async () => {
     await approved();
     later();
     await call("control", { slug: "csv", action: "start", confirm: true });
@@ -1127,7 +1127,8 @@ describe("rewind", () => {
     expect(ids).toEqual([...ids].sort((a, b) => a - b));
     expect(ids.at(-1)).toBe(newest().id);
     expect(timeline.tickets.map((bar) => bar.key)).toEqual(["CSV-1"]);
-    expect(timeline.marks.map((mark) => mark.action)).toEqual(["start"]);
+    expect(timeline.moments.map((moment) => moment.id)).toEqual([...timeline.moments.map((moment) => moment.id)].sort((a, b) => a - b));
+    expect(timeline.moments.flatMap((moment) => moment.lines).filter((line) => line.kind === "you").map((line) => line.text)).toEqual(["You ran start."]);
   });
 
   it("project at an event shows each repo's land as it was then", async () => {

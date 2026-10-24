@@ -1,6 +1,7 @@
 // A project as it was at one event, rebuilt from its rows and the append-only event log, and the timeline the page
 // scrubs through. Pure functions over rows, so the views of a past moment run the same code as the live ones.
 import type { EventRow, PostRow, ProjectRow, ReviewRow, RunRow, Store, ThreadRow, TicketRow } from "./db/store";
+import { feedText } from "./feed-text";
 import type { ProjectOverview } from "./projects";
 import { LoomError } from "./projects";
 import type { Spec } from "./spec";
@@ -30,6 +31,22 @@ export interface TicketBar {
   from: number;
   to: number;
   parts: Array<{ from: number; to: number; state: TicketState }>;
+  /** When checks, a review or a merge sent the ticket back to work, or a merge sent it back to the queue. */
+  sentBack: number[];
+  final: "done" | "cancelled" | null;
+}
+
+export type MomentKind = "you" | "trouble" | "milestone" | "done" | "move";
+
+/** A change the board, the header or the health strip shows. Posts and edits only add text, so they are not moments. */
+export interface Moment {
+  /** The moment's last event, which the page rewinds to, and its time. */
+  id: number;
+  at: number;
+  /** The kind of its most telling line. */
+  kind: MomentKind;
+  /** One sentence per event, as the Feed writes it; `key` is the ticket it is about. */
+  lines: Array<{ kind: MomentKind; text: string; key: string | null }>;
 }
 
 export interface SessionBar {
@@ -42,17 +59,18 @@ export interface SessionBar {
 }
 
 export interface ProjectTimeline {
+  /** The project's state now. */
+  state: ProjectState;
   start: number;
   end: number;
   /** The last event of each distinct time, in id order. */
   events: Array<[id: number, at: number]>;
   project: Array<{ from: number; to: number; state: ProjectState }>;
-  /** Every state's ticket count after each ticket event. */
-  flow: Array<{ at: number; counts: Partial<Record<TicketState, number>> }>;
+  /** In order; the timeline steps through these. */
+  moments: Moment[];
+  ticketCount: number;
   tickets: TicketBar[];
   sessions: SessionBar[];
-  /** The human's actions. */
-  marks: Array<{ id: number; at: number; action: string; key: string | null }>;
   /** Tickets that ever blocked or were sent back to work. */
   trouble: string[];
 }
@@ -182,6 +200,49 @@ export function overviewAt(
 }
 
 const FINAL: readonly TicketState[] = ["done", "cancelled"];
+const MOMENT_EVENTS = new Set(["project.created", "project.state", "project.landed", "spec.proposed", "spec.approved", "ticket.created", "ticket.state", "review.verdict", "human.action"]);
+/** Events this close to the one before come from one action or one engine pass. */
+const MOMENT_GAP_MS = 2_000;
+/** Most telling first. */
+const MOMENT_RANK: readonly MomentKind[] = ["you", "trouble", "milestone", "done", "move"];
+
+const sentBack = (from: unknown, to: unknown) => (to === "working" && (from === "review" || from === "checking" || from === "merging")) || (from === "merging" && to === "queued");
+const troubleMove = (from: unknown, to: unknown) => to === "blocked" || sentBack(from, to);
+
+function lineKind(event: Parsed): MomentKind {
+  const { kind } = event.row;
+  if (kind === "human.action") return "you";
+  if (kind === "ticket.state") return troubleMove(event.data.from, event.data.to) ? "trouble" : event.data.to === "done" ? "done" : "move";
+  return kind.startsWith("project.") || kind.startsWith("spec.") ? "milestone" : "move";
+}
+
+function momentsOf(events: readonly Parsed[], keys: Map<number, string>): Moment[] {
+  type Line = Moment["lines"][number] & { created: boolean };
+  const moments: Array<{ id: number; at: number; kind: MomentKind; lines: Line[] }> = [];
+  for (const event of events) {
+    // Your replies are posts, and posts only add text.
+    if (!MOMENT_EVENTS.has(event.row.kind) || (event.row.kind === "human.action" && event.data.action === "post")) continue;
+    const kind = lineKind(event);
+    const key = event.row.ticket_id === null ? null : (keys.get(event.row.ticket_id) ?? null);
+    const line = { kind, text: feedText(event.row, keys, { you: true }), key, created: event.row.kind === "ticket.created" };
+    const open = moments.at(-1);
+    if (open !== undefined && event.row.at - open.at < MOMENT_GAP_MS) {
+      open.id = event.row.id;
+      open.at = event.row.at;
+      open.lines.push(line);
+      if (MOMENT_RANK.indexOf(kind) < MOMENT_RANK.indexOf(open.kind)) open.kind = kind;
+      continue;
+    }
+    moments.push({ id: event.row.id, at: event.row.at, kind, lines: [line] });
+  }
+  return moments.map(({ id, at, kind, lines }) => {
+    const created = lines.filter((line) => line.created).length;
+    const first = lines.findIndex((line) => line.created);
+    // A spec's tickets are created in one burst, so one line counts them, where the first one was.
+    const shown = created <= 2 ? lines : lines.flatMap((line, index) => (!line.created ? [line] : index === first ? [{ ...line, text: `${created} tickets were created.`, key: null }] : []));
+    return { id, at, kind, lines: shown.map((line) => ({ kind: line.kind, text: line.text, key: line.key })) };
+  });
+}
 
 /** The whole project over time. A running or paused project's timeline runs to `now`; any other ends at its last event. */
 export function projectTimeline(rows: ProjectRows, now: number): ProjectTimeline {
@@ -200,32 +261,21 @@ export function projectTimeline(rows: ProjectRows, now: number): ProjectTimeline
   }
   project.push({ from: since, to: end, state });
 
-  const flow: ProjectTimeline["flow"] = [];
-  const stateOf = new Map<number, TicketState>();
-  const counts: Partial<Record<TicketState, number>> = {};
-  for (const event of events) {
-    const id = event.row.ticket_id;
-    if (id === null || (event.row.kind !== "ticket.created" && event.row.kind !== "ticket.state")) continue;
-    const from = stateOf.get(id);
-    const to = event.row.kind === "ticket.created" ? "queued" : (event.data.to as TicketState);
-    if (from !== undefined) counts[from] = counts[from]! - 1;
-    counts[to] = (counts[to] ?? 0) + 1;
-    stateOf.set(id, to);
-    flow.push({ at: event.row.at, counts: Object.fromEntries(Object.entries(counts).filter(([, count]) => count > 0)) });
-  }
-
   const moves = ofKind(events, "ticket.state");
   const tickets = rows.tickets.flatMap((ticket): TicketBar[] => {
     const own = moves.filter((event) => event.row.ticket_id === ticket.id);
     const first = own.findIndex((event) => event.data.to === "working");
     if (first < 0) return [];
     const span = own.slice(first);
-    const to = lastOf(span, (event) => FINAL.includes(event.data.to as TicketState))?.row.at ?? end;
+    const finished = lastOf(span, (event) => FINAL.includes(event.data.to as TicketState));
+    const to = finished?.row.at ?? end;
     const parts = span.flatMap((move, index) => {
       const part = move.data.to as TicketState;
       return FINAL.includes(part) ? [] : [{ from: move.row.at, to: span[index + 1]?.row.at ?? to, state: part }];
     });
-    return [{ key: ticket.key, title: ticket.title, from: span[0]!.row.at, to, parts }];
+    const back = span.filter((move) => sentBack(move.data.from, move.data.to)).map((move) => move.row.at);
+    const final = (finished?.data.to ?? null) as TicketBar["final"];
+    return [{ key: ticket.key, title: ticket.title, from: span[0]!.row.at, to, parts, sentBack: back, final }];
   });
 
   const sessions = rows.threads.flatMap((row): SessionBar[] => {
@@ -234,18 +284,18 @@ export function projectTimeline(rows: ProjectRows, now: number): ProjectTimeline
     return [{ key: row.ticket_id === null ? null : (keyOf.get(row.ticket_id) ?? null), role: row.role, label, from: row.started_at, to: row.ended_at ?? end, endReason: row.end_reason }];
   });
 
-  const sentBack = (from: unknown, to: unknown) => to === "blocked" || (to === "working" && (from === "review" || from === "checking" || from === "merging")) || (from === "merging" && to === "queued");
-  const troubled = new Set(moves.filter((move) => sentBack(move.data.from, move.data.to)).map((move) => move.row.ticket_id));
+  const troubled = new Set(moves.filter((move) => troubleMove(move.data.from, move.data.to)).map((move) => move.row.ticket_id));
 
   return {
+    state: rows.project.state,
     start,
     end,
     events: rows.events.flatMap((event, index): Array<[number, number]> => (rows.events[index + 1]?.at === event.at ? [] : [[event.id, event.at]])),
     project,
-    flow,
+    moments: momentsOf(events, keyOf),
+    ticketCount: rows.tickets.length,
     tickets,
     sessions,
-    marks: ofKind(events, "human.action").map((event) => ({ id: event.row.id, at: event.row.at, action: String(event.data.action), key: typeof event.data.key === "string" ? event.data.key : null })),
     trouble: rows.tickets.filter((ticket) => troubled.has(ticket.id)).map((ticket) => ticket.key),
   };
 }

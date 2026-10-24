@@ -264,8 +264,9 @@ export const feedRow = (over: Partial<FeedRow> = {}): FeedRow => ({ id: 1, at: N
 
 const MINUTE = 60_000;
 
-/** Three events five minutes apart, two overlapping ticket bars (CSV-2 in trouble), one worker session and the human's start. */
+/** Three moments five minutes apart (the tickets made, the human's start, two moves), two overlapping ticket bars (CSV-2 in trouble) and one worker session. */
 export const timeline = (over: Partial<ProjectTimeline> = {}): ProjectTimeline => ({
+  state: "running",
   start: NOW - 20 * MINUTE,
   end: NOW,
   events: [
@@ -277,17 +278,42 @@ export const timeline = (over: Partial<ProjectTimeline> = {}): ProjectTimeline =
     { from: NOW - 20 * MINUTE, to: NOW - 15 * MINUTE, state: "ready" },
     { from: NOW - 15 * MINUTE, to: NOW, state: "running" },
   ],
-  flow: [
-    { at: NOW - 20 * MINUTE, counts: { queued: 2 } },
-    { at: NOW - 15 * MINUTE, counts: { queued: 1, working: 1 } },
-    { at: NOW - 10 * MINUTE, counts: { working: 1, review: 1 } },
+  moments: [
+    {
+      id: 11,
+      at: NOW - 20 * MINUTE,
+      kind: "move",
+      lines: [
+        { kind: "move", text: "CSV-1 was created.", key: "CSV-1" },
+        { kind: "move", text: "CSV-2 was created.", key: "CSV-2" },
+      ],
+    },
+    {
+      id: 12,
+      at: NOW - 15 * MINUTE,
+      kind: "you",
+      lines: [
+        { kind: "milestone", text: "The project moved from ready to running.", key: null },
+        { kind: "you", text: "You ran start.", key: null },
+        { kind: "move", text: "CSV-1 moved from queued to working: attempt 1.", key: "CSV-1" },
+      ],
+    },
+    {
+      id: 13,
+      at: NOW - 10 * MINUTE,
+      kind: "move",
+      lines: [
+        { kind: "move", text: "CSV-1 moved from working to review: the checks passed, round 1.", key: "CSV-1" },
+        { kind: "move", text: "CSV-2 moved from queued to working: attempt 1.", key: "CSV-2" },
+      ],
+    },
   ],
+  ticketCount: 2,
   tickets: [
-    { key: "CSV-1", title: "Order rows", from: NOW - 15 * MINUTE, to: NOW, parts: [{ from: NOW - 15 * MINUTE, to: NOW - 10 * MINUTE, state: "working" }, { from: NOW - 10 * MINUTE, to: NOW, state: "review" }] },
-    { key: "CSV-2", title: "Export endpoint", from: NOW - 10 * MINUTE, to: NOW, parts: [{ from: NOW - 10 * MINUTE, to: NOW, state: "working" }] },
+    { key: "CSV-1", title: "Order rows", from: NOW - 15 * MINUTE, to: NOW, parts: [{ from: NOW - 15 * MINUTE, to: NOW - 10 * MINUTE, state: "working" }, { from: NOW - 10 * MINUTE, to: NOW, state: "review" }], sentBack: [], final: null },
+    { key: "CSV-2", title: "Export endpoint", from: NOW - 10 * MINUTE, to: NOW, parts: [{ from: NOW - 10 * MINUTE, to: NOW, state: "working" }], sentBack: [], final: null },
   ],
   sessions: [{ key: "CSV-1", role: "worker", label: "attempt 1", from: NOW - 15 * MINUTE, to: NOW, endReason: null }],
-  marks: [{ id: 12, at: NOW - 15 * MINUTE, action: "start", key: null }],
   trouble: ["CSV-2"],
   ...over,
 });

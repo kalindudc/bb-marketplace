@@ -8,7 +8,7 @@ import type { NextStep } from "./next-step";
 import type { BbProjectChoice, PlanningSession, ProjectOverview, RepoOverview } from "./projects";
 import { MAX_PLANNING_REPOS } from "./prompts";
 import type { Finding } from "./review";
-import type { ProjectTimeline, SessionBar, TicketBar } from "./replay";
+import type { Moment, MomentKind, ProjectTimeline, SessionBar, TicketBar } from "./replay";
 import { repoSpecSchema } from "./spec";
 import type { SpecReviewStatus } from "./spec-review";
 import type { SentNote, SpecReviewRound, SpecVersionView } from "./spec-view";
@@ -23,7 +23,7 @@ export type ProjectSummary = ProjectOverview;
 export type { ChangedFile, ChangeKind, ChangeRepo, ChangeSource, ChangesView, FilePatch };
 export type { SpecReviewRound };
 export type { AskStep, PlannerAction, PlannerAsk, PlannerStep, PlannerVersion, PlannerView, TurnStep, VersionChange };
-export type { ActivityItem, Attempt, BbProjectChoice, ChecksItem, CheckStep, PrFeedbackItem, PrTextItem, HomeProject, HomeView, Mark, MergeItem, NeedItem, NextStep, PlanningSession, ProjectHealth, ProjectTimeline, RepoOverview, ReviewItem, SentNote, SessionBar, SpecVersionView, TicketActivity, TicketBar };
+export type { ActivityItem, Attempt, BbProjectChoice, ChecksItem, CheckStep, PrFeedbackItem, PrTextItem, HomeProject, HomeView, Mark, MergeItem, Moment, MomentKind, NeedItem, NextStep, PlanningSession, ProjectHealth, ProjectTimeline, RepoOverview, ReviewItem, SentNote, SessionBar, SpecVersionView, TicketActivity, TicketBar };
 
 export interface BoardCard {
   key: string;

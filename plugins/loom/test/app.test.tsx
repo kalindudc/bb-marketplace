@@ -3436,40 +3436,46 @@ describe("timeline", () => {
   afterEach(() => localStorage.clear());
   const PAST = NOW - 15 * 60_000;
   const project = (input: { slug: string; at?: number }) => (input.at === undefined ? projectView() : projectView({ at: input.at, now: PAST }));
+  const strip = (slot: Slot) => slot.container.querySelector<HTMLElement>("[data-timeline-strip]")!;
   const open = async (slot: Slot) => {
     fireEvent.click(await slot.findByRole("button", { name: "Timeline" }));
     await waitFor(() => expect(slot.container.querySelector("[data-timeline-open]")).not.toBeNull());
   };
+  const rewound = async (slot: Slot) => waitFor(() => expect(slot.container.querySelector("[data-rewind-bar]")).not.toBeNull());
   const rewind = async (slot: Slot) => {
     await open(slot);
-    fireEvent.click(slot.getByRole("button", { name: "Previous event" }));
-    await slot.findByRole("button", { name: "Back to now" });
+    fireEvent.click(slot.getByRole("button", { name: "Previous moment" }));
+    await rewound(slot);
   };
+  // With no ResizeObserver the plot is 720 pixels wide over the fixture's 20 minutes, so a moment 15 minutes ago sits at 180.
+  const track = (slot: Slot) => slot.container.querySelector<HTMLElement>("[data-timeline-track]")!;
 
-  it("starts collapsed as a strip with a Play button", async () => {
+  it("starts collapsed as a dashed frame with a Play button and says it is live", async () => {
     const { slot } = await mountPage("csv", { project });
     const toggle = await slot.findByRole("button", { name: "Timeline" });
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    expect(slot.container.querySelector("[data-timeline-mini]")).not.toBeNull();
+    expect(strip(slot).className).toContain("border-dashed");
+    expect(track(slot)).not.toBeNull();
     expect(slot.container.querySelector("[data-timeline-open]")).toBeNull();
     expect(slot.getByRole("button", { name: "Play" })).toBeTruthy();
+    expect(slot.container.querySelector("[data-timeline-status]")!.textContent).toContain("Live");
     expect(calls(slot, "timeline")[0]!.input).toEqual({ slug: "csv" });
   });
 
-  it("opens, and stays open across a remount", async () => {
+  it("opens on the newest moment, and stays open across a remount", async () => {
     const first = await mountPage("csv", { project });
     await open(first.slot);
     expect(first.slot.getByRole("button", { name: "Timeline" }).getAttribute("aria-expanded")).toBe("true");
     expect(localStorage.getItem("loom.timeline.open")).toBe("true");
-    expect(first.slot.container.querySelector("[data-timeline-overview]")).not.toBeNull();
-    expect(first.slot.container.querySelector("[data-timeline-lanes]")).not.toBeNull();
-    expect(first.slot.getByText("event 3 of 3")).toBeTruthy();
+    expect(first.slot.container.querySelector("[data-timeline-count]")!.textContent).toBe("now");
+    expect(first.slot.container.querySelector("[data-timeline-moment]")!.textContent).toContain("CSV-1 moved from working to review: the checks passed, round 1.+1 more");
+    expect(first.slot.getByRole("button", { name: "Next moment" }).getAttribute("aria-disabled")).toBe("true");
     first.slot.lifecycle.unmount();
     const again = await mountPage("csv", { project });
     await waitFor(() => expect(again.slot.container.querySelector("[data-timeline-open]")).not.toBeNull());
   });
 
-  it("rewinds the page to the previous event, with no controls, and Back to now returns it", async () => {
+  it("rewinds the page to the previous moment, with no controls, and either Back to now returns it", async () => {
     const { slot } = await mountPage("csv", { project });
     await slot.findByRole("button", { name: "Pause" });
     await rewind(slot);
@@ -3479,34 +3485,211 @@ describe("timeline", () => {
     expect(slot.container.querySelector("[data-next-step]")).toBeNull();
     expect(slot.queryByRole("button", { name: "Pause" })).toBeNull();
     expect(slot.queryByRole("button", { name: "More actions" })).toBeNull();
-    expect(slot.getByText("event 2 of 3")).toBeTruthy();
+    expect(strip(slot).hasAttribute("data-rewound")).toBe(true);
+    expect(slot.container.querySelector("[data-timeline-count]")!.textContent).toBe("2 of 3");
+    // The caption is the line that gave the moment its kind, not the first one.
+    expect(slot.container.querySelector("[data-timeline-moment]")!.textContent).toContain("You ran start.+2 more");
+    expect(slot.container.querySelector("[data-timeline-playhead]")).not.toBeNull();
 
-    fireEvent.click(slot.getByRole("button", { name: "Back to now" }));
+    fireEvent.click(within(slot.container.querySelector<HTMLElement>("[data-rewind-bar]")!).getByRole("button", { name: "Back to now" }));
     await slot.findByRole("button", { name: "Pause" });
     expect(calls(slot, "project").at(-1)!.input).toEqual({ slug: "csv" });
     expect(slot.getByRole("button", { name: "More actions" })).toBeTruthy();
     expect(slot.container.querySelector("[data-rewind-bar]")).toBeNull();
+    expect(strip(slot).hasAttribute("data-rewound")).toBe(false);
+
+    fireEvent.click(slot.getByRole("button", { name: "Previous moment" }));
+    await rewound(slot);
+    fireEvent.click(within(strip(slot)).getByRole("button", { name: "Back to now" }));
+    await waitFor(() => expect(slot.container.querySelector("[data-rewind-bar]")).toBeNull());
   });
 
-  it("seeks to the moment of one of your actions", async () => {
+  it("steps with the arrow keys, and Escape returns to now", async () => {
     const { slot } = await mountPage("csv", { project });
     await open(slot);
-    fireEvent.click(slot.getByRole("button", { name: "You ran start" }));
-    await waitFor(() => expect(calls(slot, "project").at(-1)!.input).toEqual({ slug: "csv", at: 12 }));
+    fireEvent.keyDown(strip(slot), { key: "ArrowLeft" });
+    await rewound(slot);
+    expect(calls(slot, "project").at(-1)!.input).toEqual({ slug: "csv", at: 12 });
+    fireEvent.keyDown(strip(slot), { key: "ArrowLeft" });
+    await waitFor(() => expect(calls(slot, "project").at(-1)!.input).toEqual({ slug: "csv", at: 11 }));
+    const previous = slot.getByRole("button", { name: "Previous moment" });
+    expect(previous.getAttribute("aria-disabled")).toBe("true");
+    // At the first moment Previous keeps its focus and does nothing.
+    previous.focus();
+    fireEvent.click(previous);
+    expect(document.activeElement).toBe(previous);
+    expect(calls(slot, "project").at(-1)!.input).toEqual({ slug: "csv", at: 11 });
+    fireEvent.keyDown(strip(slot), { key: "Escape" });
+    await waitFor(() => expect(slot.container.querySelector("[data-rewind-bar]")).toBeNull());
+    expect(calls(slot, "project").at(-1)!.input).toEqual({ slug: "csv" });
   });
 
-  it("packs the bars into rows, and packs again for Trouble only and for agent sessions", async () => {
+  it("shows what happened at a moment on hover, before anything rewinds, and a click rewinds to it", async () => {
+    const { slot } = await mountPage("csv", { project });
+    await slot.findByRole("button", { name: "Timeline" });
+    fireEvent.mouseMove(track(slot), { clientX: 182, clientY: 10 });
+    const tip = await slot.findByRole("tooltip");
+    expect(tip.textContent).toContain("You ran start.");
+    expect(tip.textContent).toContain("The project moved from ready to running.");
+    expect(tip.textContent).toContain("Click to see the project at");
+    expect(slot.container.querySelector("[data-rewind-bar]")).toBeNull();
+
+    fireEvent.pointerDown(track(slot), { clientX: 4, clientY: 10 });
+    fireEvent.pointerUp(window);
+    await rewound(slot);
+    expect(calls(slot, "project").at(-1)!.input).toEqual({ slug: "csv", at: 11 });
+    fireEvent.mouseLeave(track(slot));
+    expect(slot.queryByRole("tooltip")).toBeNull();
+  });
+
+  it("draws a row per ticket, keeps only the tickets in trouble, and a row per ticket's agent sessions", async () => {
     const { slot } = await mountPage("csv", { project });
     await open(slot);
+    const rows = () => [...slot.container.querySelectorAll("[data-timeline-lanes] [data-timeline-row]")].map((row) => row.getAttribute("data-timeline-row"));
     const note = () => slot.container.querySelector("[data-timeline-note]")!.textContent;
-    expect(note()).toBe("2 tickets in 2 rows");
-    expect(slot.container.querySelectorAll("[data-timeline-bar]")).toHaveLength(2);
-    fireEvent.click(slot.getByRole("checkbox", { name: "Trouble only" }));
-    expect(note()).toBe("1 ticket in 1 row");
-    expect([...slot.container.querySelectorAll("[data-timeline-bar]")].map((bar) => bar.getAttribute("data-timeline-bar"))).toEqual(["CSV-2"]);
-    fireEvent.click(slot.getByRole("checkbox", { name: "Trouble only" }));
-    fireEvent.click(slot.getByRole("button", { name: "Agent sessions" }));
-    expect(note()).toBe("1 session in 1 row");
+    expect(rows()).toEqual(["CSV-1", "CSV-2"]);
+    expect(note()).toBe("2 tickets");
+    const trouble = slot.getByRole("switch", { name: /Only trouble/ });
+    expect(trouble.textContent).toContain("Only trouble · 1");
+    fireEvent.click(trouble);
+    expect(trouble.getAttribute("aria-checked")).toBe("true");
+    expect(rows()).toEqual(["CSV-2"]);
+    expect(note()).toBe("1 ticket");
+    fireEvent.click(trouble);
+    fireEvent.click(slot.getByRole("button", { name: "Agents" }));
+    expect(rows()).toEqual(["CSV-1"]);
+    expect(slot.container.querySelectorAll('[data-timeline-session="worker"]')).toHaveLength(1);
+    expect(slot.getByRole("img", { name: "Agent sessions over time" })).toBeTruthy();
+  });
+
+  it("tells a ticket's story on its row and opens the ticket from its name", async () => {
+    const { slot } = await mountPage("csv", { project });
+    await open(slot);
+    const lanes = slot.container.querySelector<HTMLElement>("[data-timeline-lanes-plot]")!;
+    fireEvent.mouseMove(lanes, { clientX: 400, clientY: 2 * 20 + 5 });
+    const tip = await slot.findByRole("tooltip");
+    expect(tip.textContent).toContain("CSV-2 · Export endpoint");
+    expect(tip.textContent).toContain("CSV-2 moved from queued to working: attempt 1.");
+    expect(tip.textContent).toContain("working 10m");
+    expect(tip.textContent).toContain("working for 10m");
+    fireEvent.mouseMove(lanes, { clientX: 400, clientY: 20 + 5 });
+    // CSV-1 worked 5 minutes and has been in review for the 10 since, not for its whole 15.
+    await waitFor(() => expect(slot.getByRole("tooltip").textContent).toContain("in review for 10m"));
+    fireEvent.click(slot.getByRole("button", { name: "Open CSV-2" }));
+    expect(slot.inspection.navigateCalls).toContainEqual(pushed("csv/CSV-2"));
+  });
+
+  it("counts in Only trouble just the tickets that have a row", async () => {
+    const { slot } = await mountPage("csv", { project, timeline: () => timeline({ trouble: ["CSV-2", "CSV-3"], ticketCount: 3 }) });
+    await open(slot);
+    expect(slot.getByRole("switch", { name: /Only trouble/ }).textContent).toContain("Only trouble · 1");
+    expect(slot.container.querySelector("[data-timeline-note]")!.textContent).toBe("2 tickets · 1 not started");
+  });
+
+  it("says when a stretch was quiet instead of pointing at a moment inside its fold", async () => {
+    const quiet = () =>
+      timeline({
+        start: NOW - 60 * 60_000,
+        events: [
+          [11, NOW - 60 * 60_000],
+          [12, NOW - 15 * 60_000],
+          [13, NOW - 10 * 60_000],
+        ],
+        project: [{ from: NOW - 60 * 60_000, to: NOW, state: "running" }],
+        moments: timeline().moments.map((moment, index) => (index === 0 ? { ...moment, at: NOW - 60 * 60_000 } : moment)),
+      });
+    const { slot } = await mountPage("csv", { project, timeline: quiet });
+    await slot.findByRole("button", { name: "Timeline" });
+    // The 45 quiet minutes fold to the first 16 pixels.
+    fireEvent.mouseMove(track(slot), { clientX: 8, clientY: 10 });
+    expect((await slot.findByRole("tooltip")).textContent).toContain("Quiet for 45m");
+    fireEvent.pointerDown(track(slot), { clientX: 8, clientY: 10, button: 0 });
+    expect(calls(slot, "project").every((call) => (call.input as { at?: number }).at === undefined)).toBe(true);
+  });
+
+  it("puts now one step past the newest moment when something happened after it, and on it when that was in the same millisecond", async () => {
+    const later = await mountPage("csv", { project, timeline: () => timeline({ events: [...timeline().events, [14, NOW - 5 * 60_000]] }) });
+    await open(later.slot);
+    fireEvent.click(later.slot.getByRole("button", { name: "Previous moment" }));
+    await rewound(later.slot);
+    expect(calls(later.slot, "project").at(-1)!.input).toEqual({ slug: "csv", at: 13 });
+    expect(later.slot.container.querySelector("[data-timeline-count]")!.textContent).toBe("3 of 3");
+    fireEvent.click(later.slot.getByRole("button", { name: "Next moment" }));
+    await waitFor(() => expect(calls(later.slot, "project").at(-1)!.input).toEqual({ slug: "csv" }));
+    later.slot.lifecycle.unmount();
+
+    const same = await mountPage("csv", { project, timeline: () => timeline({ events: [[11, NOW - 20 * 60_000], [12, NOW - 15 * 60_000], [14, NOW - 10 * 60_000]] }) });
+    // The first mount left the Timeline open.
+    fireEvent.click(await same.slot.findByRole("button", { name: "Previous moment" }));
+    await rewound(same.slot);
+    expect(calls(same.slot, "project").at(-1)!.input).toEqual({ slug: "csv", at: 12 });
+  });
+
+  it("plays the project back a moment at a time and returns to now at the end", async () => {
+    const { slot } = await mountPage("csv", { project });
+    await open(slot);
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout", "Date"] });
+    try {
+      fireEvent.click(slot.getByRole("button", { name: "Play" }));
+      await act(async () => {
+        vi.advanceTimersByTime(130);
+      });
+      expect(calls(slot, "project").at(-1)!.input).toEqual({ slug: "csv", at: 11 });
+      expect(slot.getByRole("button", { name: "Pause" })).toBeTruthy();
+      // One tick per act, so each moment the playhead passes renders and asks for its page.
+      for (let tick = 0; tick < 25; tick += 1)
+        await act(async () => {
+          vi.advanceTimersByTime(120);
+        });
+      expect(calls(slot, "project").at(-1)!.input).toEqual({ slug: "csv" });
+      expect(calls(slot, "project").some((call) => (call.input as { at?: number }).at === 12)).toBe(true);
+      expect(slot.getByRole("button", { name: "Play" })).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("scrubs on a mouse drag, and tells each row's story only up to the moment shown", async () => {
+    const { slot } = await mountPage("csv", { project });
+    await open(slot);
+    const summary = (key: string) => slot.getByRole("button", { name: `Open ${key}` }).getAttribute("aria-describedby")!;
+    const text = (key: string) => slot.container.querySelector(`[id="${summary(key)}"]`)!.textContent;
+    expect(text("CSV-2")).toBe("10m");
+    fireEvent.pointerDown(track(slot), { clientX: 4, clientY: 10, button: 0, buttons: 1, pointerId: 7 });
+    await waitFor(() => expect(calls(slot, "project").at(-1)!.input).toEqual({ slug: "csv", at: 11 }));
+    fireEvent.pointerMove(track(slot), { clientX: 182, clientY: 10, buttons: 1, pointerId: 7 });
+    await waitFor(() => expect(calls(slot, "project").at(-1)!.input).toEqual({ slug: "csv", at: 12 }));
+    fireEvent.pointerUp(track(slot), { clientX: 182, clientY: 10, pointerId: 7 });
+    // At 15 minutes ago CSV-2 had not started, and CSV-1 had worked for none of its 15 minutes yet.
+    await waitFor(() => expect(text("CSV-2")).toBe("not started"));
+    expect(text("CSV-1")).toBe("0s");
+  });
+
+  it("keeps focus in the Timeline when Escape removes its Back to now, and says nothing when the page opens", async () => {
+    const { slot } = await mountPage("csv", { project });
+    await open(slot);
+    expect(slot.container.querySelector("[data-timeline-announce]")!.textContent).toBe("");
+    fireEvent.click(slot.getByRole("button", { name: "Previous moment" }));
+    await rewound(slot);
+    expect(slot.container.querySelector("[data-timeline-announce]")!.textContent).toBe(`${new Date(NOW - 15 * 60_000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}: You ran start.`);
+    const back = within(strip(slot)).getByRole("button", { name: "Back to now" });
+    back.focus();
+    fireEvent.keyDown(back, { key: "Escape" });
+    await waitFor(() => expect(slot.container.querySelector("[data-rewind-bar]")).toBeNull());
+    expect(document.activeElement).toBe(strip(slot));
+    expect(slot.container.querySelector("[data-timeline-announce]")!.textContent).toBe("Back at the live page");
+  });
+
+  it("leaves the speed menu's own keys, modified arrows and a right click alone", async () => {
+    const { slot } = await mountPage("csv", { project });
+    await open(slot);
+    const before = calls(slot, "project").length;
+    fireEvent.keyDown(slot.getByRole("combobox", { name: "Playback speed" }), { key: "ArrowLeft" });
+    fireEvent.keyDown(strip(slot), { key: "ArrowLeft", metaKey: true });
+    fireEvent.pointerDown(track(slot), { clientX: 4, clientY: 10, button: 2 });
+    fireEvent.pointerDown(track(slot), { clientX: 4, clientY: 10, button: 0, ctrlKey: true });
+    expect(calls(slot, "project")).toHaveLength(before);
+    expect(slot.container.querySelector("[data-rewind-bar]")).toBeNull();
   });
 
   it("opens a ticket as it was at the rewound moment, with no reply box", async () => {
