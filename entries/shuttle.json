@@ -1,0 +1,28 @@
+{
+  "id": "shuttle",
+  "displayName": "Shuttle",
+  "description": "Every pull request that needs you, from any server, in one place: your PRs, review requests, team requests and mentions on GitHub, Delta or any server you add with commands. One-click reviews from presets (skill, model, thinking level), auto review when you are requested by name, PRs linked to the threads that own them, and new reviews on watched PRs sent to those threads.",
+  "icon": { "url": "plugins/shuttle/icons/shuttle.svg" },
+  "tags": [
+    "pull-requests",
+    "code-review",
+    "github",
+    "review-requests",
+    "automation",
+    "notifications"
+  ],
+  "author": {
+    "name": "Kalindu De Costa",
+    "github": "kalindudc"
+  },
+  "category": "tasks-and-workflows",
+  "overview": "./plugins/shuttle/PLUGIN_OVERVIEW.md",
+  "source": {
+    "git": {
+      "url": "https://github.com/kalindudc/bb-marketplace.git",
+      "subdir": "plugins/shuttle",
+      "range": ">=0.1.0 <1.0.0",
+      "tagPrefix": "shuttle/"
+    }
+  }
+}

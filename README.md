@@ -12,6 +12,7 @@ bb plugin install follow-thinking@kalindudc
 bb plugin install lan-connect@kalindudc
 bb plugin install loom@kalindudc
 bb plugin install session-log@kalindudc
+bb plugin install shuttle@kalindudc
 bb plugin install switchboard@kalindudc
 bb plugin install vantage@kalindudc
 bb plugin update follow-thinking     # after a new release is tagged
@@ -34,6 +35,7 @@ plugin store.
 | [LAN Connect](plugins/lan-connect) | `lan-connect` | Opens this bb to phones and laptops on your home network: pair a device once with a code or QR code, then use bb in its browser at `<computer>.local`, its LAN IP or your own name. No bb account needed. |
 | [Loom](plugins/loom) | `loom` | Run a software project with agents: a planner turns a goal into a validated spec and tickets, workers pick up tickets in their own worktrees, separate reviewers approve or request changes, and approved work merges into an integration branch or opens a pull request. |
 | [Retitle](plugins/retitle) | `retitle` | Titles threads that bb's automatic titling left untitled (it gives up after 8 seconds), using the Shopify AI proxy and only the text you typed, so `!plan` threads get a title for the work. `bb retitle` titles any thread again or backfills untitled ones. |
+| [Shuttle](plugins/shuttle) | `shuttle` | Every pull request that needs you, from any server, in one place: your PRs, review requests, team requests and mentions on GitHub, Delta or any server you add with a few commands. One-click reviews from presets (skill, model, thinking level), auto review when you are requested by name, PRs linked to the threads that own them (a thread can own several), and new reviews on watched PRs sent to those threads. |
 
 ## Layout
 
