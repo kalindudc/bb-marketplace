@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { BoardCard, ChangesView, FeedRow, HomeView, PlanningSession, ProjectSummary, ProjectTimeline, ProjectView, TicketDetail, ThreadInfo } from "../src/contract";
-import type { ProjectMetrics } from "../src/metrics";
+import type { BoardCard, ChangesView, HomeView, PlanningSession, ProjectInsights, ProjectSummary, ProjectTimeline, ProjectView, TicketDetail, ThreadInfo } from "../src/contract";
 import type { SpecVersionView } from "../src/spec-view";
 import type { BbPluginApi, NewThreadRequest } from "@get-bb/plugin-sdk";
 import { notesMessage } from "../src/prompts";
@@ -293,28 +292,34 @@ describe("reads", () => {
     expect(await call("runOutput", { id: 999 })).toBeNull();
   });
 
-  it("feed returns the newest events oldest first, and only newer ones after an id", async () => {
+  it("insights returns the story, the numbers and the activity of the whole project, and a window of it", async () => {
     await approved();
-    const all = await call<{ rows: FeedRow[]; lastId: number }>("feed", { slug: "csv" });
-    expect(all.rows.map((row) => row.kind)).toEqual(expect.arrayContaining(["project.created", "spec.approved", "ticket.created", "project.state"]));
-    expect(all.rows.map((row) => row.id)).toEqual([...all.rows.map((row) => row.id)].sort((a, b) => a - b));
-    expect(all.lastId).toBe(all.rows.at(-1)!.id);
-    expect(all.rows.find((row) => row.kind === "ticket.created")).toMatchObject({ ticketKey: "CSV-1", text: "CSV-1 was created." });
-
     await call("control", { slug: "csv", action: "start", confirm: true });
-    const later = await call<{ rows: FeedRow[]; lastId: number }>("feed", { slug: "csv", afterId: all.lastId });
-    expect(later.rows.map((row) => row.text)).toEqual(["The project moved from ready to running.", "The human ran start."]);
-    expect(later.lastId).toBeGreaterThan(all.lastId);
-    expect(await call("feed", { slug: "csv", afterId: later.lastId })).toEqual({ rows: [], lastId: later.lastId });
+    const view = await call<ProjectInsights>("insights", { slug: "csv" });
+    expect(view).toMatchObject({ state: "running", strategy: "integration", window: "all", range: null, presets: { run: false, day: false } });
+    expect(view.groups.map((group) => group.title)).toEqual(["Planning", "Running now"]);
+    expect(view.groups[0]!.items).toContainEqual(expect.objectContaining({ type: "created", by: ["from the spec you approved"], tickets: [expect.objectContaining({ key: "CSV-1" }), expect.objectContaining({ key: "CSV-2" })] }));
+    expect(view.figures.map((figure) => figure.label)).toEqual(["Running time", "A ticket takes", "Right first time", "Tokens"]);
+    expect(view.numbers.maxWorkers).toBe(2);
+    expect(view.activity.marks.filter((mark) => mark.kind === "milestone").map((mark) => mark.text)).toEqual(["Spec version 1 was approved."]);
+
+    const project = host.store.projectBySlug("csv")!;
+    const created = host.store.projectEvents(project.id)[0]!.at;
+    const ranged = await call<ProjectInsights>("insights", { slug: "csv", window: { from: created, to: created } });
+    expect(ranged.range).toEqual({ from: created, to: created });
+    expect(ranged.groups.flatMap((group) => group.lines).every((line) => line.at === created)).toBe(true);
+    expect((await call<ProjectInsights>("insights", { slug: "csv", window: "run" })).range).toMatchObject({ to: expect.any(Number) });
+    await expect(call("insights", { slug: "csv", window: "week" })).rejects.toThrow();
+    await expect(call("insights", { slug: "csv", window: { from: 1 } })).rejects.toThrow();
+    await expect(call("insights", { slug: "nope" })).rejects.toThrow(/No Loom project/);
   });
 
-  it("feed keeps only the newest 200 events", async () => {
-    await approved();
-    const project = host.store.projectBySlug("csv")!;
-    for (let n = 0; n < 250; n += 1) host.store.event(project.id, null, "custom", "loom", { n });
-    const { rows } = await call<{ rows: FeedRow[]; lastId: number }>("feed", { slug: "csv" });
-    expect(rows).toHaveLength(200);
-    expect(rows.at(-1)).toMatchObject({ text: "custom by loom." });
+  it("insights of a draft shows planning, with no ticket yet", async () => {
+    await propose();
+    const view = await call<ProjectInsights>("insights", { slug: "csv" });
+    expect(view.state).toBe("draft");
+    expect(view.headline).toBe("Planning: no ticket exists until you approve the spec.");
+    expect(view.current).toEqual([]);
   });
 
   it("project has the health strip once the spec is approved, and none for a draft", async () => {
@@ -341,15 +346,6 @@ describe("reads", () => {
     expect(agents[0]).toMatchObject({ ticketKey: "CSV-1", ticketTitle: "Order rows", model: "claude / sonnet", timeoutAt: worker.clock_at! + 120 * 60_000, endReason: null });
     expect(agents[1]).toMatchObject({ ticketKey: null, model: null, timeoutAt: null });
     expect(agents[2]).toMatchObject({ ticketKey: "CSV-2", model: "codex / gpt", endReason: "verdict", tokens: 400, reviewRound: 1, timeoutAt: null });
-  });
-
-  it("metrics returns the project's metrics over a 7, 14 or 30 day window, and refuses any other window", async () => {
-    await approved();
-    expect((await call<ProjectMetrics>("metrics", { slug: "csv", days: 30 })).throughput).toHaveLength(30);
-    expect((await call<ProjectMetrics>("metrics", { slug: "csv", days: 7 })).cumulativeFlow).toHaveLength(7);
-    await expect(call("metrics", { slug: "csv", days: 9 })).rejects.toThrow();
-    await expect(call("metrics", { slug: "csv" })).rejects.toThrow();
-    await expect(call("metrics", { slug: "nope", days: 14 })).rejects.toThrow(/No Loom project/);
   });
 
   it("home returns the totals, what needs the human and the project rows", async () => {
@@ -1096,23 +1092,20 @@ describe("rewind", () => {
     await expect(call("ticket", { key: "CSV-1", at: drafted })).rejects.toThrow("CSV-1 did not exist yet at that moment.");
   });
 
-  it("feed and metrics at an event read only what happened up to it", async () => {
+  it("insights at an event read only what happened up to it", async () => {
     await running();
-    const moment = newest().id;
+    const moment = newest();
     later();
     for (const to of ["working", "checking", "review", "approved", "merging", "done"] as const) host.store.setTicketState(ticketId("CSV-1"), to, "loom");
 
-    const feed = await call<{ rows: FeedRow[]; lastId: number }>("feed", { slug: "csv", at: moment });
-    expect(feed.rows.length).toBeGreaterThan(0);
-    expect(feed.rows.every((row) => row.id <= moment)).toBe(true);
-    expect(feed.lastId).toBe(moment);
-    expect((await call<{ lastId: number }>("feed", { slug: "csv" })).lastId).toBeGreaterThan(moment);
-
-    const past = await call<ProjectMetrics>("metrics", { slug: "csv", days: 7, at: moment });
-    expect(past.counts.done).toBe(0);
-    expect(past.throughput).toHaveLength(7);
-    expect(past.throughput.reduce((sum, day) => sum + day.done, 0)).toBe(0);
-    expect((await call<ProjectMetrics>("metrics", { slug: "csv", days: 7 })).counts.done).toBe(1);
+    const past = await call<ProjectInsights>("insights", { slug: "csv", at: moment.id });
+    expect(past.now).toBe(moment.at);
+    expect(past.groups.flatMap((group) => group.lines).every((line) => line.id <= moment.id)).toBe(true);
+    expect(past.numbers.reached).toBe(0);
+    expect(past.activity.marks.some((mark) => mark.kind === "done")).toBe(false);
+    const live = await call<ProjectInsights>("insights", { slug: "csv" });
+    expect(live.numbers.reached).toBe(1);
+    expect(live.activity.marks.filter((mark) => mark.kind === "done").map((mark) => mark.key)).toEqual(["CSV-1"]);
   });
 
   it("timeline lists the events and moments in order, a bar for a started ticket and the human's start", async () => {

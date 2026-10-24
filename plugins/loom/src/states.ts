@@ -23,10 +23,6 @@ export type ReviewVerdict = (typeof REVIEW_VERDICTS)[number];
 export const MERGE_CHOICES = ["ask", "integration", "pr"] as const;
 export type MergeChoice = (typeof MERGE_CHOICES)[number];
 
-/** The Metrics tab's windows, in days, for throughput and cumulative flow. */
-export const WINDOW_DAYS = [7, 14, 30] as const;
-export type WindowDays = (typeof WINDOW_DAYS)[number];
-
 /** Spec review rounds with findings before Loom stops reviewing a draft and hands it to the human. */
 export const SPEC_REVIEW_ROUNDS = 3;
 

@@ -80,6 +80,15 @@ describe("the plugin's own documents", () => {
     expect(plan.indexOf("## When the Loom page started this thread")).toBeLessThan(plan.indexOf("## 1. Interview"));
   });
 
+  it("README and the loom skill describe the Insights tab, and neither names a Feed or Metrics tab", () => {
+    for (const path of ["README.md", "skills/loom/SKILL.md"]) {
+      const text = read(path);
+      for (const phrase of ["Insights", "Right now", "Every event", "Latest run", "pull request opens"]) expect(text.replace(/\s+/g, " "), `${path}: ${phrase}`).toContain(phrase === "pull request opens" && path.endsWith("SKILL.md") ? "times a ticket to its pull request" : phrase);
+      expect(text, path).not.toMatch(/Feed tab|Metrics tab|a Feed of events|Agents, Feed and Metrics|day window for throughput/);
+    }
+    expect(read("PLUGIN_OVERVIEW.md")).toContain("Insights tab");
+  });
+
   it("README and the loom skill describe the home overview, the Agents tab and the metrics window", () => {
     const readme = read("README.md");
     for (const phrase of ["Needs you", "Agents", "--days", "flow efficiency"]) expect(readme, phrase).toContain(phrase);

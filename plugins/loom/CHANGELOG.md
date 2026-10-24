@@ -2,17 +2,27 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
-## Unreleased
+## 0.18.0 (2026-10-24)
+
+### Added
+
+- An Insights tab takes the place of the Feed and Metrics tabs. It leads with how the project went: a headline, a few plain sentences whose links show the problems or your own actions, and four figures (running time, how long a typical ticket takes, how many passed their first review, and tokens).
+- Insights draws when the work happened: a bar per stretch of time for the tickets shipped, sent back and blocked, the tickets in flight behind them, your actions and milestones above, paused stretches hatched and quiet stretches folded. Hovering reads a bar; a click or a drag across bars, or the arrow keys and Enter, shows only that stretch, and Whole project, Latest run and Last 24 hours pick one too. Every part of the tab follows the stretch, apart from tokens.
+- What happened tells the story by run and pause, newest or oldest first, with one entry per ticket in each that says what happened to it there, a bar of its time in each state and its steps one click away. Right now lists the blocked tickets, open pull requests and tickets a pause holds. Problems, You and Every event filter it, and a search box finds a ticket or a word. An action that wrote several events, such as a verdict and the move it caused, reads as one line. Unlike the Feed, it covers every event, not the newest 200.
+- In numbers: how long a ticket takes, with a dot per ticket that finds its story; where its time goes, with one sentence on why; how often the first try is right; what it cost; when you stepped in; what went wrong; and the checks by command.
+- On the pull request strategy, Insights times a ticket to its pull request opening and counts the time the pull request then waits on people separately. This is only how Insights measures; scheduling, stacking and merging are unchanged, and `bb loom metrics` still times tickets to done.
+- An `insights` RPC returns the tab for a project, a window (`all`, `run`, `day` or a `from` and `to` time) and an optional rewound event.
 
 ### Changed
 
 - The Timeline is redesigned to be calmer and easier to read. It sits in a dashed frame under the health strip, which turns orange while the page is rewound. Collapsed, it is one row: a Play button, a strip of how much happened when on a labelled time axis, with red dots where tickets blocked or were sent back and rings for your own actions, and whether the page is live. Hovering shows what happened at a moment before anything rewinds, and the time after the playhead fades while rewound.
-- The Timeline steps through moments instead of raw events: each one changes the board, the header or the health strip, events less than 2 seconds apart read as one, and each has the Feed's sentence for it, with your own actions written as "You ran …". Posts and edits are no longer steps.
+- The Timeline steps through moments instead of raw events: each one changes the board, the header or the health strip, events less than 2 seconds apart read as one, and each has the sentence `bb loom feed` writes for it, with your own actions written as "You ran …". Posts and edits are no longer steps.
 - Open, the Timeline has one row per ticket instead of packed rows, on the same time axis as the strip: its time in each state, where it was sent back, a check when it was done, its state at the playhead, and how long it took; a ticket's name opens it. Agents shows each ticket's sessions on its row, and Only trouble is a switch. Esc returns to now and Home goes to the first moment.
 - Quiet stretches fold to a dotted gap instead of a band marked "≈", and the axis labels the time work resumed after a fold of an hour or more.
 
 ### Removed
 
+- The Feed and Metrics tabs, with the Metrics tab's cumulative flow chart and its 7, 14 or 30 day window, and the `feed` and `metrics` RPCs that only they read. `bb loom feed` and `bb loom metrics` (with `--days`) are unchanged.
 - The Timeline's stacked chart of ticket states, its zoom choice (whole project, 2 hours or 30 minutes), its First event and Now buttons, and its diamond markers. The `timeline` RPC no longer returns `flow` or `marks`; it returns `moments`, `state` and `ticketCount`, and each ticket bar carries `sentBack` and `final`.
 
 ## 0.17.0 (2026-10-24)

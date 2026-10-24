@@ -8,6 +8,7 @@ import { Changes } from "./changes";
 import { replyRecipient, type Engine } from "./engine";
 import { projectHealth } from "./health";
 import { homeView } from "./home";
+import { projectInsights } from "./insights";
 import { POLL_MS } from "./merge";
 import { askOf, forgeRoundsSinceRequeue, PR_TEXT_MINUTES, prTextFor, statusOf } from "./pull-requests";
 import { followsFeedback, prSettings, repoSettings } from "./repos";
@@ -15,7 +16,7 @@ import { computeMetrics } from "./metrics";
 import { nextStepOf } from "./next-step";
 import { LoomError, landsOf, namedRepos, repoOverviews, withRepoNames, type Projects } from "./projects";
 import { overviewAt, projectTimeline, rewind, rowsOf } from "./replay";
-import { projectFeed, projectMetrics } from "./reports";
+import { projectMetrics } from "./reports";
 import { blockedAtReview } from "./review";
 import { IN_FLIGHT, kinship, overlaps, readyTickets, startable, toLite, type TicketLite } from "./scheduler";
 import { holdOf, stacking, stackOf, upstreamOf } from "./stack";
@@ -370,19 +371,21 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       const view = homeView({ store, projects, now: now() });
       return { ...view, projects: view.projects.map((row) => withRepoNames(row, names)) };
     },
-    metrics: ({ slug, days, at }) => {
-      const project = projects.require(slug);
-      if (at === undefined) return projectMetrics(store, project, now(), days);
-      const past = rewind(rowsOf(store, project), at);
-      return computeMetrics({ ...past, now: past.at, days });
-    },
     project: ({ slug, at }) => projectView(slug, at),
     ticket: ({ key, at }) => ticketDetail(key, at),
     runOutput: ({ id }) => {
       const output = store.runOutput(id);
       return output === null ? null : { output: stripAnsi(output) };
     },
-    feed: ({ slug, afterId, at }) => projectFeed(store, projects.require(slug), afterId, at),
+    insights: ({ slug, window, at }) => {
+      // One synchronous pass over the store, so the view is of one moment.
+      const live = projects.require(slug);
+      const rows = rowsOf(store, live);
+      const past = at === undefined ? null : rewind(rows, at);
+      const project = past?.project ?? live;
+      const spec = project.approved_version === null ? (JSON.parse(store.specVersion(live.id, projects.spec(slug, past?.specVersion).version)!.spec_json) as Spec) : specOf(store, project);
+      return projectInsights(past ?? rows, { now: past?.at ?? now(), window, strategy: spec.merge.strategy, maxWorkers: spec.agents.max_workers, maxTokens: spec.budget.max_tokens ?? null });
+    },
     timeline: ({ slug }) => projectTimeline(rowsOf(store, projects.require(slug)), now()),
     planning: () => projects.planningSessions(),
     planningSession: ({ threadId }) => projects.planningSession(threadId),

@@ -45,7 +45,7 @@ export interface Moment {
   at: number;
   /** The kind of its most telling line. */
   kind: MomentKind;
-  /** One sentence per event, as the Feed writes it; `key` is the ticket it is about. */
+  /** One sentence per event, as `bb loom feed` writes it; `key` is the ticket it is about. */
   lines: Array<{ kind: MomentKind; text: string; key: string | null }>;
 }
 

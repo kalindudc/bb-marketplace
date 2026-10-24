@@ -2,19 +2,16 @@ import { useCallback, useState } from "react";
 import { experimental_Icon as Icon, useBbNavigate, useRpc, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import type { ControlAction, ProjectView, rpcContract } from "../contract";
 import { isMultiRepoProject } from "../format";
-import type { ProjectMetrics } from "../metrics";
 import { readyToLand, specReviewBlocks } from "../format";
 import { STAGES } from "../next-step";
-import type { WindowDays } from "../states";
 import { AgentsView } from "./agents";
 import { Board } from "./board";
 import { ChangesTab, landingFiles, useViewed } from "./changes";
 import { BUTTON_PRIMARY, ConfirmButton, HEADING, MoreMenu, RepoChip, StateBadge, countsLabel, listText, mergeLabel, momentLabel, plural, useRemote, useRun } from "./common";
-import { Feed } from "./feed";
 import { Guide } from "./guide";
 import { HealthStrip } from "./health";
 import { Home } from "./home";
-import { MetricsView } from "./metrics-view";
+import { InsightsTab } from "./insights";
 import { NewProject } from "./new-project";
 import { NextStepBar, repoLand } from "./next-step-bar";
 import { PlannerPage } from "./planner-page";
@@ -24,12 +21,11 @@ import { SpecPage, bbProjectNamesOf } from "./spec-page";
 import { TicketView } from "./ticket";
 import { TimelineStrip } from "./timeline-strip";
 
-type Tab = "board" | "agents" | "feed" | "metrics" | "spec" | "planner" | "changes";
+type Tab = "board" | "agents" | "insights" | "spec" | "planner" | "changes";
 const TABS: ReadonlyArray<{ tab: Tab; label: string }> = [
   { tab: "board", label: "Board" },
   { tab: "agents", label: "Agents" },
-  { tab: "feed", label: "Feed" },
-  { tab: "metrics", label: "Metrics" },
+  { tab: "insights", label: "Insights" },
   { tab: "spec", label: "Spec" },
   { tab: "planner", label: "Planner" },
   { tab: "changes", label: "Changes" },
@@ -129,18 +125,6 @@ function SpecTab({ view, busy, rewound, requested, onApprove }: { view: ProjectV
       <SpecPage slug={overview.slug} version={rewound ? spec.version : (requested ?? undefined)} readOnly={rewound} bbProjectNames={bbProjectNamesOf(view)} specReview={view.specReview} approve={approve} />
     </div>
   );
-}
-
-/** The project view carries the 14-day metrics; another window reads the metrics RPC, at the rewound moment when `at` is set. */
-function MetricsTab({ slug, metrics, at }: { slug: string; metrics: ProjectMetrics; at: number | null }) {
-  const [days, setDays] = useState<WindowDays>(14);
-  return days === 14 ? <MetricsView metrics={metrics} days={days} onDays={setDays} /> : <WindowedMetrics slug={slug} days={days} at={at} onDays={setDays} />;
-}
-
-function WindowedMetrics({ slug, days, at, onDays }: { slug: string; days: WindowDays; at: number | null; onDays(days: WindowDays): void }) {
-  const { data, error } = useRemote((rpc) => rpc.call("metrics", at === null ? { slug, days } : { slug, days, at }), `metrics:${slug}:${days}${at === null ? "" : `@${at}`}`, slug);
-  if (data === null) return error === null ? <p role="status" className="p-4 text-sm text-muted-foreground">Loading…</p> : <p role="alert" className="p-4 text-sm text-destructive-text">Could not load the metrics: {error}</p>;
-  return <MetricsView metrics={data} days={days} onDays={onDays} />;
 }
 
 /** In place of the next-step bar while the page is rewound: when it shows, and the way back. */
@@ -279,8 +263,7 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek, go }: { slug: string; tab:
       <div role="tabpanel" className="min-h-0 flex-1">
         {shownTab === "board" && <Board slug={slug} cards={view.board} strategy={overview.strategy} now={view.now} draftVersion={overview.state === "draft" ? view.spec.version : null} onChanges={changesTab ? openChanges : undefined} />}
         {shownTab === "agents" && <AgentsView agents={view.agents} byRole={view.metrics.tokens.byRole} unreported={view.metrics.tokens.unreported} now={view.now} />}
-        {shownTab === "feed" && <Feed slug={slug} at={at} />}
-        {shownTab === "metrics" && <MetricsTab slug={slug} metrics={view.metrics} at={at} />}
+        {shownTab === "insights" && <InsightsTab slug={slug} at={at} onTicket={(key) => go(`${slug}/${key}`)} />}
         {shownTab === "spec" && <SpecTab view={view} busy={busy} rewound={rewound} requested={specVersion} onApprove={(version) => void control("approve", version)} />}
         {shownTab === "planner" && overview.plannerThreadId !== null && (
           <PlannerPage

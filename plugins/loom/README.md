@@ -296,16 +296,49 @@ a file changes again. On the branch, a panel carries Land and "Land to <base>"
 with what each pushes. A done project still shows what it merged, from the
 merge commits Loom recorded.
 
-#### Agents, Feed and Metrics
+#### Agents
 
-- Agents: every planner, worker and reviewer thread. Those working now come
-  first, with their ticket, model, running time, timeout, tokens and rate-limit
-  retries. Then the planner, on call for triage rounds, the tokens by role, how
-  threads ended, and the ended threads. A provider that reports no token usage
-  shows "not reported".
-- Feed: the project's events as sentences, newest first.
-- Metrics: the numbers under [Metrics](#metrics), with charts, and a 7, 14 or
-  30 day window for throughput and cumulative flow.
+Every planner, worker and reviewer thread. Those working now come first, with
+their ticket, model, running time, timeout, tokens and rate-limit retries. Then
+the planner, on call for triage rounds, the tokens by role, how threads ended,
+and the ended threads. A provider that reports no token usage shows "not
+reported".
+
+#### Insights
+
+![The Insights tab of a finished project: how it went in plain words with four figures, a chart of when the work happened, each ticket's story by run, and the numbers beside it](../../screenshots/loom/insights.png)
+
+How the project went, when its work happened and what happened to each
+ticket, on one page:
+
+- How it went: one headline, a few plain sentences and four figures: running
+  time, how long a typical ticket takes, how many passed their first review,
+  and tokens. A link in a sentence shows the problems, or your own actions, in
+  the story.
+- When the work happened: a bar per stretch of time for the tickets shipped,
+  sent back for a fix and blocked, with the tickets in flight behind them, your
+  actions and milestones above, and paused stretches hatched. Quiet stretches
+  fold. Hover a bar to read it; click a bar, or drag across bars, to show only
+  that stretch, or use the arrow keys, Enter and Escape. Whole project, Latest
+  run and Last 24 hours pick a stretch too.
+- What happened: a group per run and pause, newest or oldest first, and in
+  each one entry per ticket that says in a sentence or two what happened to
+  it there (shipped on the first try, sent back by a reviewer with the first
+  finding, blocked with its reason), with a bar of its time in each state and
+  its steps one click away. Right now, above the story, lists the blocked
+  tickets, the open pull requests and the tickets a pause holds. Problems, You
+  and Every event filter the story, and a search box finds a ticket or a word.
+  An action that wrote several events, such as a review and the move it
+  caused, reads as one line; the ticket page keeps everything.
+- In numbers: how long a ticket takes (a dot per ticket; a dot finds its
+  story), where its time goes, how often the first try is right, what it cost,
+  when you stepped in, what went wrong, and the checks by command.
+
+On the pull request strategy a ticket's work ends when its pull request opens,
+so the timings stop there and the time the pull request then waits on people
+is its own number. This is only how Insights measures: Loom schedules, stacks
+and merges exactly as before. Every part follows the stretch shown, apart from
+tokens, which threads report as one running total.
 
 #### Timeline
 
@@ -316,14 +349,14 @@ a ring for each of your own actions, and whether the page is live. Hover the
 strip to read what happened at a moment before anything changes; click or drag
 it, press Play, or step with the arrow keys while the Timeline has focus to
 rewind the whole page to that moment. Rewound, the frame turns orange and the
-time after the playhead fades; the health strip, Board, Agents, Feed, Metrics,
+time after the playhead fades; the health strip, Board, Agents, Insights,
 Spec and any ticket show the project as it was then, every control is disabled,
 and Back to now (or Esc) returns the live page.
 
 The Timeline steps through moments, not raw events: each moment changes the
 board, the header or the health strip, and events less than 2 seconds apart
 read as one. Posts and edits only add text, so they are not moments, but the
-Feed of a rewound page still shows them. Open, the Timeline shows the moment's
+Insights tab of a rewound page still shows them. Open, the Timeline shows the moment's
 time and sentence with previous and next buttons, plays at 1, 5 or 20 minutes
 per second, and draws a row for the project's running and paused stretches,
 then a row per ticket on the same axis: its time working, in checks, in review,
@@ -536,7 +569,10 @@ Every metric is computed from the append-only event log and the plugin's
 tables, so it can be recomputed at any time. `bb loom metrics <slug>` prints
 them, and `--json` prints the same numbers for scripts and agents. `--days N`
 (1 to 90) sets the window for throughput and cumulative flow; every other
-metric covers the whole project.
+metric covers the whole project. The page's [Insights](#insights) tab shows the
+same kind of numbers in plain words for any stretch of the project; on the pull
+request strategy it times a ticket to its pull request, where these metrics
+time it to done.
 
 | Metric | What it is |
 |---|---|
@@ -596,7 +632,8 @@ bb plugin config loom set doneRecord summary   # or full
   problems and fixes, follow-ups and files. The agent starts only when a hook
   is set, and when it cannot start, fails or takes longer than 30 minutes, the
   hook reads the full record instead. With `full`, no agent runs.
-- The feed says when the record was sent, or why the hook failed. A project
+- `bb loom feed` and the Insights tab say when the record was sent, or why
+  the hook failed. A project
   that finished before the hook was set is not sent;
   `bb loom report <slug> --send` sends it, for a backfill or after a failure.
 
@@ -677,9 +714,10 @@ settings for that project.
 - `host.ts` and `src/host/ops.ts` run on the machine that owns the checkout:
   git through argv, the repo's server for pull requests (`gh`, the spec's own
   commands, or none), and check commands in their own process group.
-- `src/metrics.ts`, `src/feed-text.ts` and `src/replay.ts` are pure;
-  `src/reports.ts` reads them for the CLI and the page, and `src/replay.ts`
-  rewinds a project's rows to one event for the Timeline. `src/rpc.ts` serves
+- `src/metrics.ts`, `src/feed-text.ts`, `src/insights.ts` and `src/replay.ts`
+  are pure; `src/reports.ts` reads them for the CLI, `src/insights.ts` builds
+  the Insights tab, and `src/replay.ts` rewinds a project's rows to one event
+  for the Timeline and for a rewound page. `src/rpc.ts` serves
   the page and publishes `loom:changed` after a project's events and after any
   change that writes no event (`Store.changed`), at most once every 300 ms per
   project; a change outside any project publishes `{ slug: null }`.

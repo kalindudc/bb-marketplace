@@ -987,6 +987,15 @@ describe("metrics and feed", () => {
     expect(JSON.parse((await run(["feed", "csv", "--after", "999999", "--json"])).stdout)).toEqual({ rows: [], lastId: 999999 });
   });
 
+  it("feed keeps only the newest 200 events", async () => {
+    await approved();
+    const project = host.store.projectBySlug("csv")!;
+    for (let n = 0; n < 250; n += 1) host.store.event(project.id, null, "custom", "loom", { n });
+    const { rows } = JSON.parse((await run(["feed", "csv", "--json"])).stdout) as { rows: Array<{ text: string }> };
+    expect(rows).toHaveLength(200);
+    expect(rows.at(-1)).toMatchObject({ text: "custom by loom." });
+  });
+
   it("feed refuses an unknown project", async () => {
     expect(errorOf((await run(["feed", "nope", "--json"])).stdout).code).toBe("loom_not_found");
   });

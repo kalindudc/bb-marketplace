@@ -3,6 +3,7 @@ import { defineRpcContract, type NewThreadRequest } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import type { ProjectHealth } from "./health";
 import type { HomeProject, HomeView, NeedItem } from "./home";
+import type { ActivityMark, Chip, CurrentItem, EventLine, InsightsFilter, InsightsNumbers, InsightsWindow, LineTone, Part, Phrase, ProjectInsights, StoryGroup, StoryItem } from "./insights";
 import type { ProjectMetrics } from "./metrics";
 import type { NextStep } from "./next-step";
 import type { BbProjectChoice, PlanningSession, ProjectOverview, RepoOverview } from "./projects";
@@ -20,6 +21,7 @@ import type { AuthorKind, PostKind, ProjectState, ReviewVerdict, Role, ThreadSta
 import { MERGE_CHOICES } from "./states";
 
 export type ProjectSummary = ProjectOverview;
+export type { ActivityMark, Chip, CurrentItem, EventLine, InsightsFilter, InsightsNumbers, InsightsWindow, LineTone, Part, Phrase, ProjectInsights, StoryGroup, StoryItem };
 export type { ChangedFile, ChangeKind, ChangeRepo, ChangeSource, ChangesView, FilePatch };
 export type { SpecReviewRound };
 export type { AskStep, PlannerAction, PlannerAsk, PlannerStep, PlannerVersion, PlannerView, TurnStep, VersionChange };
@@ -245,11 +247,13 @@ const isComposerRequest = (value: unknown) => typeof value === "object" && value
 export const rpcContract = defineRpcContract({
   projects: { input: z.null(), output: typed<ProjectSummary[]>() },
   home: { input: z.null(), output: typed<HomeView>() },
-  metrics: { input: z.object({ slug, days: z.union([z.literal(7), z.literal(14), z.literal(30)]), at: eventId.optional() }).strict(), output: typed<ProjectMetrics>() },
   project: { input: z.object({ slug, at: eventId.optional() }).strict(), output: typed<ProjectView>() },
   ticket: { input: z.object({ key, at: eventId.optional() }).strict(), output: typed<TicketDetail>() },
   runOutput: { input: z.object({ id: z.number().int().min(1) }).strict(), output: typed<{ output: string } | null>() },
-  feed: { input: z.object({ slug, afterId: z.number().int().min(0).optional(), at: eventId.optional() }).strict(), output: typed<{ rows: FeedRow[]; lastId: number }>() },
+  insights: {
+    input: z.object({ slug, window: z.union([z.enum(["all", "run", "day"]), z.object({ from: z.number().int().min(0), to: z.number().int().min(0) }).strict()]).optional(), at: eventId.optional() }).strict(),
+    output: typed<ProjectInsights>(),
+  },
   timeline: { input: z.object({ slug }).strict(), output: typed<ProjectTimeline>() },
   threadInfo: { input: z.object({ threadId: z.string().min(1).max(200) }).strict(), output: typed<ThreadInfo | null>() },
   reply: {

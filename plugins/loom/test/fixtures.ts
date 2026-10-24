@@ -1,4 +1,4 @@
-import type { AgentRow, Attempt, BoardCard, ChangeRepo, FeedRow, HomeProject, HomeView, PlannerView, ProjectHealth, ProjectSummary, ProjectTimeline, ProjectView, RepoOverview, SpecVersionView, TicketDetail } from "../src/contract";
+import type { AgentRow, Attempt, BoardCard, ChangeRepo, HomeProject, HomeView, PlannerView, ProjectHealth, ProjectSummary, ProjectTimeline, ProjectView, RepoOverview, SpecVersionView, TicketDetail } from "../src/contract";
 import type { ProjectMetrics } from "../src/metrics";
 import { parseSpec } from "../src/spec";
 import { TICKET_STATES, type TicketState } from "../src/states";
@@ -260,7 +260,6 @@ export const specVersionView = (over: Partial<SpecVersionView> = {}, edit?: (doc
   ...over,
 });
 
-export const feedRow = (over: Partial<FeedRow> = {}): FeedRow => ({ id: 1, at: NOW - HOUR, kind: "ticket.created", actor: "human", ticketKey: "CSV-1", text: "CSV-1 was created.", ...over });
 
 const MINUTE = 60_000;
 
