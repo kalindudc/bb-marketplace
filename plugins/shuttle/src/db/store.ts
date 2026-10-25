@@ -152,6 +152,18 @@ export interface ReviewRow {
   state: "running" | "done" | "failed";
   created_at: number;
   finished_at: number | null;
+  /** The run is in a thread Shuttle started for this PR's reviews: Shuttle archives it when the review is done. */
+  own_thread: number;
+  /** When Shuttle archived the thread after this run; null while it has not. */
+  archived_at: number | null;
+}
+
+export interface ThreadRow {
+  id: string;
+  title: string;
+  archived: number;
+  status: string | null;
+  waiting: number;
 }
 
 export interface EventRow {
@@ -416,6 +428,14 @@ export class Store {
     });
   }
 
+  thread(id: string): ThreadRow | null {
+    return (this.db.prepare("SELECT id, title, archived, status, waiting FROM threads WHERE id = ?").get(id) as ThreadRow | undefined) ?? null;
+  }
+
+  setThreadArchived(id: string, archived: boolean): void {
+    this.db.prepare("UPDATE threads SET archived = ?, updated_at = ? WHERE id = ?").run(archived ? 1 : 0, this.now(), id);
+  }
+
   threadTitle(id: string): string | null {
     return (this.db.prepare("SELECT title FROM threads WHERE id = ?").get(id) as { title: string } | undefined)?.title ?? null;
   }
@@ -617,11 +637,40 @@ export class Store {
     return (this.db.prepare("SELECT COUNT(*) AS n FROM pending_items WHERE pr_id = ?").get(prId) as { n: number }).n;
   }
 
-  addReview(row: Omit<ReviewRow, "id" | "finished_at" | "state" | "created_at">): ReviewRow {
+  addReview(row: Omit<ReviewRow, "id" | "finished_at" | "state" | "created_at" | "archived_at">): ReviewRow {
     const result = this.db
-      .prepare("INSERT INTO reviews (pr_id, thread_id, preset, trigger, head, state, created_at) VALUES (?, ?, ?, ?, ?, 'running', ?)")
-      .run(row.pr_id, row.thread_id, row.preset, row.trigger, row.head, this.now());
+      .prepare("INSERT INTO reviews (pr_id, thread_id, preset, trigger, head, state, created_at, own_thread) VALUES (?, ?, ?, ?, ?, 'running', ?, ?)")
+      .run(row.pr_id, row.thread_id, row.preset, row.trigger, row.head, this.now(), row.own_thread);
     return this.db.prepare("SELECT * FROM reviews WHERE id = ?").get(result.lastInsertRowid) as ReviewRow;
+  }
+
+  /** The latest run in a review thread Shuttle started for this PR, while bb still has the thread. */
+  reviewThreadOf(prId: number): ReviewRow | null {
+    return (this.db
+      .prepare("SELECT r.* FROM reviews r JOIN threads t ON t.id = r.thread_id WHERE r.pr_id = ? AND r.own_thread = 1 ORDER BY r.created_at DESC, r.id DESC LIMIT 1")
+      .get(prId) as ReviewRow | undefined) ?? null;
+  }
+
+  /** The last run of each of Shuttle's review threads that is not archived and that Shuttle has not archived since. */
+  unarchivedReviewRuns(filter: { prId?: number; threadId?: string } = {}): ReviewRow[] {
+    return this.db
+      .prepare(
+        `SELECT r.* FROM reviews r JOIN threads t ON t.id = r.thread_id
+         WHERE r.own_thread = 1 AND r.archived_at IS NULL AND t.archived = 0
+           AND r.id = (SELECT MAX(id) FROM reviews WHERE pr_id = r.pr_id AND thread_id = r.thread_id)
+           AND (? IS NULL OR r.pr_id = ?) AND (? IS NULL OR r.thread_id = ?)
+         ORDER BY r.id`,
+      )
+      .all(filter.prId ?? null, filter.prId ?? null, filter.threadId ?? null, filter.threadId ?? null) as ReviewRow[];
+  }
+
+  setReviewArchived(id: number, at: number | null): void {
+    this.db.prepare("UPDATE reviews SET archived_at = ? WHERE id = ?").run(at, id);
+  }
+
+  /** Drafts this thread handed back for the PR since a time, newest first. */
+  draftsOfThread(prId: number, threadId: string, since: number): DraftRow[] {
+    return this.db.prepare("SELECT * FROM review_drafts WHERE pr_id = ? AND thread_id = ? AND created_at >= ? ORDER BY created_at DESC, id DESC").all(prId, threadId, since) as DraftRow[];
   }
 
   lastReview(prId: number): ReviewRow | null {

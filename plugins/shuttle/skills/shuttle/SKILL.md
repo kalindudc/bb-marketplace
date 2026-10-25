@@ -46,7 +46,8 @@ that PR.
 `bb shuttle unlink <pr> [--thread <id>]`,
 `bb shuttle agent <pr> [--thread <id> | --new | --none] [--mode fix|notify|off]`,
 `bb shuttle track <pr> [--off]`, `bb shuttle watch <pr> [--mode act|forward] [--off]`,
-`bb shuttle review <pr> [--preset <id>] [--project <id>] [--note <text>]`, `bb shuttle sync`,
+`bb shuttle review <pr> [--preset <id>] [--project <id>] [--note <text>] [--new-thread]` (the PR's last review
+thread of Shuttle's gets it, brought back from the archive when needed, unless `--new-thread`), `bb shuttle sync`,
 `bb shuttle config-export`, `bb shuttle config-import <file> [--apply]`. Every command takes
 `--json`, and `link`/`unlink` default to the calling thread.
 

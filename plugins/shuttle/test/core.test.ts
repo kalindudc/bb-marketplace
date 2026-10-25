@@ -302,7 +302,7 @@ describe("reviews from Shuttle", () => {
     h.lists.review_requested = [pr(3, { head: "h1" })];
     await h.shuttle.sync();
     h.views[3] = pr(3, { head: "h1" });
-    const threadId = await h.shuttle.review({ key: KEY(3) });
+    const { threadId } = await h.shuttle.review({ key: KEY(3) });
     await h.shuttle.saveDraft(threadId, KEY(3), { summary: "Looks good", verdict: "changes", findings: [{ severity: "high", path: "a.go", line: 3, body: "Race" }, { severity: "nit", path: "b.go", body: "Typo" }] });
     h.shuttle.onThreadIdle(threadId);
     const detail = h.shuttle.detail(KEY(3));
@@ -324,13 +324,13 @@ describe("reviews from Shuttle", () => {
     const h = await withWrites();
     h.lists.team_requested = [pr(3)];
     await h.shuttle.sync();
-    const threadId = await h.shuttle.review({ key: KEY(3) });
+    const { threadId } = await h.shuttle.review({ key: KEY(3) });
     await h.shuttle.saveDraft(threadId, KEY(3), { summary: "s", verdict: "comment", findings: [] });
     const id = h.shuttle.detail(KEY(3)).draft!.id;
-    h.shuttle.discardDraft(KEY(3), id);
-    h.shuttle.onThreadIdle(threadId);
+    await h.shuttle.discardDraft(KEY(3), id);
+    await h.shuttle.onThreadIdle(threadId);
     expect(h.shuttle.view(KEY(3)).next.kind).toBe("not_reviewed");
-    h.shuttle.restoreDraft(KEY(3), id);
+    await h.shuttle.restoreDraft(KEY(3), id);
     expect(h.shuttle.view(KEY(3)).next.kind).toBe("post");
   });
 
@@ -338,8 +338,9 @@ describe("reviews from Shuttle", () => {
     const h = await withWrites();
     h.lists.review_requested = [pr(3, { head: "h1" })];
     await h.shuttle.sync();
-    const first = await h.shuttle.review({ key: KEY(3) });
-    const second = await h.shuttle.review({ key: KEY(3) });
+    const { threadId: first } = await h.shuttle.review({ key: KEY(3) });
+    // Only a review in another thread can be newer than this one's draft.
+    const { threadId: second } = await h.shuttle.review({ key: KEY(3), newThread: true });
     await expect(h.shuttle.saveDraft(first, KEY(3), { summary: "old", verdict: "comment", findings: [] })).rejects.toThrow(/newer review/u);
     await h.shuttle.saveDraft(second, KEY(3), { summary: "new", verdict: "approve", findings: [{ severity: "low", path: "a.go", line: 1, body: "x" }] });
     const id = h.shuttle.detail(KEY(3)).draft!.id;

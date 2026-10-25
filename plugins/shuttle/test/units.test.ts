@@ -198,7 +198,7 @@ describe("reviews", () => {
     await h.shuttle.review({ key: "forge:shop/world#4" });
     expect(h.port.spawned.map((s) => s.sectionId)).toEqual(["sec_1", "sec_1"]);
     h.port.failSections = true;
-    await h.shuttle.review({ key: "forge:shop/world#3" });
+    await h.shuttle.review({ key: "forge:shop/world#3", newThread: true });
     expect(h.port.spawned[2]!.sectionId).toBeUndefined();
     expect(h.shuttle.activity().some((e) => e.kind === "section_failed")).toBe(true);
     const owner = await h.shuttle.newThread("forge:shop/world#4", "own");

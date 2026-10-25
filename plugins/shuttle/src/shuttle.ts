@@ -17,6 +17,7 @@ import type { BbPort, ProjectInfo } from "./ports";
 import { fetchPr, linkPr, lookup, rememberThread, requirePr, setWatch, shortKey, unlinkPr } from "./prs";
 import { parseKey } from "./keys";
 import { matchProject } from "./projects";
+import { archiveDoneReviewThreads, unarchiveForDraft } from "./review-threads";
 import { startReview } from "./reviews";
 import { searchPrs } from "./search";
 import type { Settings } from "./settings";
@@ -350,15 +351,30 @@ export class Shuttle implements Ctx {
   async submitReview(key: string, input: { verdict: Verdict; body: string; findings: PostFinding[]; draftId?: number; staleOk?: boolean }): Promise<{ pr: PrView; placed: number; inBody: number }> {
     const out = await submitReview(this, key, input);
     this.conversations.forget(key);
-    return { pr: toView(this, out.pr), placed: out.placed, inBody: out.inBody };
+    await this.archiveReviewThreads({ prId: out.pr.id });
+    return { pr: toView(this, this.store.prById(out.pr.id)!), placed: out.placed, inBody: out.inBody };
   }
 
-  discardDraft(key: string, draftId: number): PrView {
-    return toView(this, setDraftState(this, key, draftId, "discarded"));
+  async discardDraft(key: string, draftId: number): Promise<PrView> {
+    const pr = setDraftState(this, key, draftId, "discarded");
+    // Awaited, so an Undo always finds the thread already archived and brings it back.
+    await this.archiveReviewThreads({ prId: pr.id });
+    return toView(this, this.store.prById(pr.id)!);
   }
 
-  restoreDraft(key: string, draftId: number): PrView {
-    return toView(this, setDraftState(this, key, draftId, "draft"));
+  async restoreDraft(key: string, draftId: number): Promise<PrView> {
+    const pr = setDraftState(this, key, draftId, "draft");
+    const draft = this.store.draftById(draftId);
+    if (draft) await unarchiveForDraft(this, pr, draft.thread_id);
+    return toView(this, this.store.prById(pr.id)!);
+  }
+
+  /** Review threads of Shuttle's whose review is done go to the archive; never fails the caller. */
+  async archiveReviewThreads(filter: { prId?: number; threadId?: string } = {}): Promise<number> {
+    return archiveDoneReviewThreads(this, filter).catch((error: unknown) => {
+      this.port.log("warn", `archive review threads: ${errText(error)}`);
+      return 0;
+    });
   }
 
   async saveDraft(threadId: string, query: string, input: DraftInput): Promise<{ pr: PrView; findings: number }> {
@@ -387,14 +403,15 @@ export class Shuttle implements Ctx {
     this.store.saveSnapshot(new Date(this.now()).toISOString().slice(0, 10), snapshotCounts(allViews(this)));
   }
 
-  async review(input: ReviewInput): Promise<string> {
+  async review(input: ReviewInput): Promise<{ threadId: string; revived: boolean }> {
     await lookup(this, input.key);
-    return (await startReview(this, input, "manual")).threadId;
+    const { threadId, revived } = await startReview(this, input, "manual");
+    return { threadId, revived };
   }
 
   async newThread(key: string, start: "own" | "review", projectId?: string): Promise<string> {
     await lookup(this, key);
-    if (start === "review") return (await startReview(this, { key, ...(projectId ? { projectId } : {}) }, "manual")).threadId;
+    if (start === "review") return (await startReview(this, { key, newThread: true, ...(projectId ? { projectId } : {}) }, "manual")).threadId;
     return (await this.setAgent(key, { kind: "new", ...(projectId ? { projectId } : {}) })).threadId!;
   }
 
@@ -506,6 +523,8 @@ export class Shuttle implements Ctx {
         await this.autoAgent(signal).catch((error: unknown) => this.port.log("warn", `auto agent: ${errText(error)}`));
         this.record();
         await this.deliver();
+        // After the lists: a PR that merged or closed since the last sync is done with its review thread.
+        if (!signal?.aborted) await this.archiveReviewThreads();
       } finally {
         this.syncing = null;
         this.port.publish();
@@ -540,7 +559,13 @@ export class Shuttle implements Ctx {
     }
   }
 
-  onThreadIdle(threadId: string): void {
+  /** A review thread that finishes after its review was done, such as one still writing when its draft was posted, is archived now. */
+  onThreadIdle(threadId: string): Promise<number> {
+    this.markIdle(threadId);
+    return this.archiveReviewThreads({ threadId });
+  }
+
+  private markIdle(threadId: string): void {
     const known = this.store.setThreadStatus(threadId, "idle", false);
     const running = this.store.runningReviewsOfThread(threadId);
     for (const review of running) {

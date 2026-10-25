@@ -108,7 +108,10 @@ describe("auto review", () => {
     await h.shuttle.sync();
     h.lists.review_requested = [pr(3, { head: "newhead" })];
     await h.shuttle.sync();
-    expect(h.port.spawned).toHaveLength(2);
+    // The second run goes to the first one's thread.
+    expect(h.port.spawned).toHaveLength(1);
+    expect(h.store.reviewsOf(h.store.prByKey("forge:shop/world#3")!.id).map((r) => [r.thread_id, r.head])).toEqual([[h.port.spawned[0]!.threadId, "head3"], [h.port.spawned[0]!.threadId, "newhead"]]);
+    expect(h.port.sent.map((s) => s.threadId)).toEqual([h.port.spawned[0]!.threadId]);
   });
 
   it("reviews a server without heads once, even with rerun on new heads", async () => {

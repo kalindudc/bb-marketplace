@@ -51,7 +51,7 @@ export function registerRpc(bb: BbPluginApi, shuttle: Shuttle): void {
     track: ({ key, on }) => refusing(() => ({ pr: shuttle.track(key, on) })),
     snooze: ({ key, until }) => refusing(() => ({ pr: shuttle.snooze(key, until) })),
     handle: ({ key, on }) => refusing(() => ({ pr: shuttle.handle(key, on) })),
-    review: (input) => refusing(async () => ({ threadId: await shuttle.review(input) })),
+    review: (input) => refusing(() => shuttle.review(input)),
     newThread: ({ key, start, projectId }) => refusing(async () => ({ threadId: await shuttle.newThread(key, start, projectId) })),
     threadPrs: ({ threadId }) => refusing(() => shuttle.threadPrs(threadId)),
     sendUnread: ({ threadId }) => refusing(async () => ({ sent: await shuttle.sendUnread(threadId) })),
@@ -69,8 +69,8 @@ export function registerRpc(bb: BbPluginApi, shuttle: Shuttle): void {
     cancelAutoMerge: ({ key }) => refusing(async () => ({ pr: await shuttle.cancelAutoMerge(key) })),
     comment: ({ key, body }) => refusing(async () => ({ pr: await shuttle.comment(key, body) })),
     submitReview: ({ key, ...input }) => refusing(() => shuttle.submitReview(key, input)),
-    discardDraft: ({ key, draftId }) => refusing(() => ({ pr: shuttle.discardDraft(key, draftId) })),
-    restoreDraft: ({ key, draftId }) => refusing(() => ({ pr: shuttle.restoreDraft(key, draftId) })),
+    discardDraft: ({ key, draftId }) => refusing(async () => ({ pr: await shuttle.discardDraft(key, draftId) })),
+    restoreDraft: ({ key, draftId }) => refusing(async () => ({ pr: await shuttle.restoreDraft(key, draftId) })),
     reply: ({ key, thread, body }) => refusing(async () => {
       await shuttle.reply(key, thread, body);
       return { ok: true as const };

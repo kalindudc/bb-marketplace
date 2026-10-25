@@ -171,7 +171,7 @@ describe("the Inbox", () => {
   });
 
   it("starts a review from a card with the preset picked in its dialog", async () => {
-    const { slot } = await inboxPage({ review: () => ({ threadId: "thr_review" }) });
+    const { slot } = await inboxPage({ review: () => ({ threadId: "thr_review", revived: false }) });
     fireEvent.click(within(await card(slot, request.key)).getByRole("button", { name: "Start AI review" }));
     const dialog = await slot.findByRole("dialog", { name: "Start an AI review of world#2311622" });
     fireEvent.click(within(dialog).getByRole("radio", { name: /Quick skim/u }));

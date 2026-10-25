@@ -15,6 +15,8 @@ type ThreadLike = {
   hasPendingInteraction?: boolean;
   environmentBranchName?: string | null;
   updatedAt?: number | null;
+  providerId?: string | null;
+  canRestoreEnvironment?: boolean;
 };
 
 function toThread(thread: ThreadLike): ThreadInfo {
@@ -27,6 +29,8 @@ function toThread(thread: ThreadLike): ThreadInfo {
     waiting: thread.hasPendingInteraction === true,
     branch: thread.environmentBranchName ?? null,
     updatedAt: thread.updatedAt ?? null,
+    providerId: thread.providerId ?? null,
+    canRestoreEnvironment: thread.canRestoreEnvironment === true,
   };
 }
 
@@ -69,8 +73,23 @@ export function createBbPort(bb: BbPluginApi, setSettings: BbPort["setSettings"]
       });
       return thread.id;
     },
-    async send(threadId, text) {
-      await bb.sdk.threads.send({ threadId, mode: "auto", input: [{ type: "text", text, mentions: [] }] });
+    async send(threadId, text, options = {}) {
+      await bb.sdk.threads.send({
+        threadId,
+        mode: "auto",
+        input: [{ type: "text", text, mentions: [] }],
+        ...(options.model ? { model: options.model } : {}),
+        ...(options.reasoningLevel ? { reasoningLevel: options.reasoningLevel } : {}),
+      });
+    },
+    async archive(threadId) {
+      return (await bb.sdk.threads.archive({ threadId })).archivedThreadIds;
+    },
+    async unarchive(threadId) {
+      await bb.sdk.threads.unarchive({ threadId });
+    },
+    async restoreEnvironment(threadId) {
+      await bb.sdk.threads.restoreEnvironment({ threadId });
     },
     async ensureSection(name) {
       const find = async () => (await bb.sdk.threadSections.list()).find((section) => section.name.trim().toLowerCase() === name.toLowerCase())?.id;

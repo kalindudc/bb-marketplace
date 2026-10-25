@@ -3,7 +3,7 @@ import type { Runner, RunOptions } from "../src/adapters/exec";
 import { DEFAULT_CONFIG, parseConfig, type Config } from "../src/config";
 import { MIGRATIONS } from "../src/db/schema";
 import { Store } from "../src/db/store";
-import type { BbPort, ProjectInfo, SpawnArgs, ThreadInfo } from "../src/ports";
+import type { BbPort, ProjectInfo, SendOptions, SpawnArgs, ThreadInfo } from "../src/ports";
 import { DEFAULT_SETTINGS, type Settings } from "../src/settings";
 import { Shuttle } from "../src/shuttle";
 
@@ -15,7 +15,12 @@ export function memoryDb(): Database.Database {
 
 export class FakePort implements BbPort {
   spawned: Array<SpawnArgs & { threadId: string }> = [];
-  sent: Array<{ threadId: string; text: string }> = [];
+  sent: Array<{ threadId: string; text: string; options?: SendOptions }> = [];
+  /** Child threads by parent, as bb's sidebar nests them. */
+  children = new Map<string, string[]>();
+  /** What Shuttle asked bb to do to threads, in order. */
+  lifecycle: string[] = [];
+  failArchive = false;
   threads = new Map<string, ThreadInfo>();
   projects: ProjectInfo[] = [{ id: "proj_world", name: "world", gitRemoteUrl: "git@github.com:Shopify/world.git" }];
   failSendTo = new Set<string>();
@@ -36,12 +41,36 @@ export class FakePort implements BbPort {
   async spawnThread(args: SpawnArgs): Promise<string> {
     const threadId = `thr_spawned${this.next++}`;
     this.spawned.push({ ...args, threadId });
-    this.addThread(threadId, args.title);
+    this.addThread(threadId, args.title, false, { providerId: args.providerId ?? "pi" });
     return threadId;
   }
-  async send(threadId: string, text: string): Promise<void> {
+  async send(threadId: string, text: string, options?: SendOptions): Promise<void> {
     if (this.failSendTo.has(threadId)) throw new Error("thread is gone");
-    this.sent.push({ threadId, text });
+    this.sent.push(options && Object.keys(options).length ? { threadId, text, options } : { threadId, text });
+  }
+  /** Like bb: the thread and every child under it. */
+  async archive(threadId: string): Promise<string[]> {
+    if (this.failArchive) throw new Error("archive refused");
+    this.lifecycle.push(`archive ${threadId}`);
+    const all = (id: string): string[] => [...(this.children.get(id) ?? []).flatMap(all), id];
+    const ids = all(threadId);
+    for (const id of ids) {
+      const thread = this.threads.get(id);
+      if (thread) this.threads.set(id, { ...thread, archived: true });
+    }
+    return ids;
+  }
+  /** Like bb: the thread only; its children stay archived. */
+  async unarchive(threadId: string): Promise<void> {
+    this.lifecycle.push(`unarchive ${threadId}`);
+    const thread = this.threads.get(threadId);
+    if (thread) this.threads.set(threadId, { ...thread, archived: false });
+  }
+  async restoreEnvironment(threadId: string): Promise<void> {
+    this.lifecycle.push(`restore ${threadId}`);
+    const thread = this.threads.get(threadId);
+    if (!thread?.canRestoreEnvironment) throw new Error("nothing to restore");
+    this.threads.set(threadId, { ...thread, canRestoreEnvironment: false });
   }
   async ensureSection(name: string): Promise<string> {
     if (this.failSections) throw new Error("sections are down");

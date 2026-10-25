@@ -156,12 +156,25 @@ export function createCli(shuttle: Shuttle): PluginCliRegistration {
       review: cliCommand({
         summary: "Start a review thread for a PR with a preset (the default preset by default)",
         positionals: [PR],
-        options: { preset: { type: "string", description: "A preset id." }, project: { type: "string", description: "The bb project for the thread; matched from the repository by default." }, note: { type: "string", description: "A note for the reviewer." }, json },
+        options: {
+          preset: { type: "string", description: "A preset id." },
+          project: { type: "string", description: "The bb project for a new thread; matched from the repository by default." },
+          note: { type: "string", description: "A note for the reviewer." },
+          "new-thread": { type: "boolean", description: "Start a new thread even when the PR has a review thread of Shuttle's to bring back." },
+          json,
+        },
         run: ({ options, positionals }) =>
           guarded(async () => {
             const known = await shuttle.lookup(positionals.pr);
-            const threadId = await shuttle.review({ key: known.key, ...(options.preset ? { presetId: options.preset } : {}), ...(options.project ? { projectId: options.project } : {}), ...(options.note ? { note: options.note } : {}) });
-            return out(options.json ? toJson({ threadId }) : `Started review thread ${threadId} for ${known.key}.`);
+            const result = await shuttle.review({
+              key: known.key,
+              ...(options.preset ? { presetId: options.preset } : {}),
+              ...(options.project ? { projectId: options.project } : {}),
+              ...(options.note ? { note: options.note } : {}),
+              ...(options["new-thread"] ? { newThread: true } : {}),
+            });
+            if (options.json) return out(toJson(result));
+            return out(result.revived ? `Brought review thread ${result.threadId} back from the archive for ${known.key}.` : `Started the review of ${known.key} in thread ${result.threadId}.`);
           }),
       }),
       sync: cliCommand({

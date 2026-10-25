@@ -31,6 +31,13 @@ export const SETTINGS = {
     default: "",
     experimental_schema: z.string().trim().max(80),
   },
+  archiveReviewThreads: {
+    type: "boolean",
+    label: "Archive finished review threads",
+    description:
+      "Archive a review thread Shuttle started, with its child threads, once its review is done: its draft posted or discarded, you reviewed the PR, or the PR merged or closed. The next review of the PR brings the thread back, without its child threads. Threads you picked yourself are never archived.",
+    default: true,
+  },
   defaultProject: {
     type: "project",
     label: "Project for review threads",
@@ -71,6 +78,7 @@ export interface Settings {
   doneDays: number;
   defaultProject: string;
   reviewSection: string;
+  archiveReviewThreads: boolean;
   autoAgent: boolean;
   inboxRequests: boolean;
   inboxRequestDays: number;
@@ -86,6 +94,7 @@ export const DEFAULT_SETTINGS: Settings = {
   doneDays: 14,
   defaultProject: "",
   reviewSection: "",
+  archiveReviewThreads: true,
   autoAgent: false,
   inboxRequests: true,
   inboxRequestDays: 3,
@@ -100,6 +109,7 @@ export function toSettings(values: Record<string, unknown>): Settings {
     doneDays: num(values.doneDays, DEFAULT_SETTINGS.doneDays),
     defaultProject: typeof values.defaultProject === "string" ? values.defaultProject : "",
     reviewSection: typeof values.reviewSection === "string" ? values.reviewSection.trim() : "",
+    archiveReviewThreads: values.archiveReviewThreads !== false,
     autoAgent: values.autoAgent === true,
     inboxRequests: values.inboxRequests !== false,
     inboxRequestDays: num(values.inboxRequestDays, DEFAULT_SETTINGS.inboxRequestDays),

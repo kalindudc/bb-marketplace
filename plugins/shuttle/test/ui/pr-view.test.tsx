@@ -419,7 +419,7 @@ describe("the PR view of someone else's PR", () => {
       lastReview: { threadId: "thr_last", title: "Review shop/world#2311622", state: "done" as const, preset: "Standard review", trigger: "manual" as const, head: "abc1234", at: Date.now() },
       next: next({ kind: "rereview", tone: "warn", label: "Updated after your review", why: "3 commits and a reply from elvin since your review 2 days ago.", inbox: true, primary: { id: "review", label: "Re-review…" } }),
     };
-    const { slot, view } = await prPage(updated, { review: () => ({ threadId: "thr_last" }), submitReview: () => ({ pr: updated, placed: 0, inBody: 0 }) });
+    const { slot, view } = await prPage(updated, { review: () => ({ threadId: "thr_last", revived: false }), submitReview: () => ({ pr: updated, placed: 0, inBody: 0 }) });
     const card = await find(await view(), "[data-your-review]");
     expect(card.textContent).toContain("You requested changes 2d ago");
     expect(card.textContent).toContain("3 commits and a reply from elvin since your review 2 days ago.");
@@ -438,13 +438,34 @@ describe("the PR view of someone else's PR", () => {
   });
 
   it("opens the per-run review dialog from the preset dialog", async () => {
-    const { slot, view } = await prPage(theirs, { review: () => ({ threadId: "thr_review" }) });
+    const { slot, view } = await prPage(theirs, { review: () => ({ threadId: "thr_review", revived: false }) });
     fireEvent.click(within(await find(await view(), "[data-your-review]")).getByRole("button", { name: "Start AI review" }));
     fireEvent.click(within(await slot.findByRole("dialog")).getByRole("button", { name: "Change for this run…" }));
     const dialog = await slot.findByRole("dialog", { name: "Review shop/world#2311622" });
     fireEvent.change(within(dialog).getByRole("textbox", { name: "Note for the reviewer" }), { target: { value: " focus on the fallback " } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Start review" }));
     await waitFor(() => expect(callsTo(slot, "review")).toEqual([{ key: theirs.key, presetId: "standard", note: "focus on the fallback", projectId: "prj_bb" }]));
+  });
+
+  it("sends the next review to its archived review thread, says so, and still offers a new thread", async () => {
+    const back = { ...theirs, reviewThread: { threadId: "thr_old", title: "Review shop/world#2311622", archived: true } };
+    const { slot, view } = await prPage(back, { review: () => ({ threadId: "thr_old", revived: true }) });
+    fireEvent.click(within(await find(await view(), "[data-your-review]")).getByRole("button", { name: "Start AI review" }));
+    const presets = await slot.findByRole("dialog");
+    expect(presets.querySelector("[data-review-thread]")!.textContent).toBe("Goes to its review thread, \u201cReview shop/world#2311622\u201d, brought back from the archive.");
+    fireEvent.click(within(presets).getByRole("button", { name: "Start" }));
+    await waitFor(() => expect(callsTo(slot, "review")).toEqual([{ key: theirs.key, presetId: "standard" }]));
+    await waitFor(() => expect(toasts.success).toHaveBeenCalledWith("Standard review started in its review thread, brought back from the archive. Its findings land on the PR.", expect.anything()));
+
+    fireEvent.click(within(await find(await view(), "[data-your-review]")).getByRole("button", { name: "Start AI review" }));
+    fireEvent.click(within(await slot.findByRole("dialog")).getByRole("button", { name: "Change for this run…" }));
+    const dialog = await slot.findByRole("dialog", { name: "Review shop/world#2311622" });
+    const select = within(dialog).getByRole("combobox", { name: "Thread" }) as HTMLSelectElement;
+    expect([...select.options].map((option) => option.textContent)).toEqual(["Its review thread, \u201cReview shop/world#2311622\u201d (brought back from the archive)", "A new thread"]);
+    expect(select.value).toBe("thr_old");
+    fireEvent.change(select, { target: { value: "" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Start review" }));
+    await waitFor(() => expect(callsTo(slot, "review")[1]).toEqual({ key: theirs.key, presetId: "standard", newThread: true, projectId: "prj_bb" }));
   });
 
   it("links a thread for reference from Threads", async () => {

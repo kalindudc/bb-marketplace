@@ -5,6 +5,7 @@ import { errText, ShuttleError, type Ctx } from "./ctx";
 import type { PrRow } from "./db/store";
 import { matchProject } from "./projects";
 import { linkPr, requirePr, shortKey } from "./prs";
+import { sendToReviewThread } from "./review-threads";
 import { inert, renderTemplate } from "./templates";
 import { workspaceFor } from "./workspaces";
 
@@ -49,6 +50,8 @@ export async function projectFor(ctx: Ctx, pr: PrRow, explicit?: string): Promis
 export interface ReviewStarted {
   threadId: string;
   preset: Preset;
+  /** The review went to a thread Shuttle brought back from the archive. */
+  revived: boolean;
 }
 
 export async function startReview(ctx: Ctx, input: ReviewInput, trigger: "auto" | "manual"): Promise<ReviewStarted> {
@@ -57,14 +60,35 @@ export async function startReview(ctx: Ctx, input: ReviewInput, trigger: "auto" 
   const preset = presetById(config, input.presetId ?? (trigger === "auto" ? config.autoReview.preset : undefined));
   const skill = input.skill ?? preset.skill;
   const prompt = renderPromptFor(ctx, pr, preset, { skill, note: input.note });
-  let threadId: string;
+  const providerId = input.providerId ?? preset.providerId;
+  const model = input.model ?? preset.model;
+  const reasoningLevel = input.reasoningLevel ?? preset.reasoningLevel;
+  const run = { ...(model ? { model } : {}), ...(reasoningLevel ? { reasoningLevel } : {}) };
+  let threadId: string | null = null;
+  let revived = false;
+  let ownThread = false;
   if (input.threadId) {
-    await ctx.port.send(input.threadId, prompt);
+    // A thread the user picked keeps its own model unless they changed it for this run.
+    const picked = { ...(input.model ? { model: input.model } : {}), ...(input.reasoningLevel ? { reasoningLevel: input.reasoningLevel } : {}) };
+    ({ revived } = await sendToReviewThread(ctx, input.threadId, prompt, picked));
     threadId = input.threadId;
-  } else {
-    const providerId = input.providerId ?? preset.providerId;
-    const model = input.model ?? preset.model;
-    const reasoningLevel = input.reasoningLevel ?? preset.reasoningLevel;
+    ownThread = ctx.store.reviewsOf(pr.id).some((review) => review.thread_id === threadId && review.own_thread === 1);
+  } else if (!input.newThread) {
+    // The PR's next review goes to the thread of its last one, which already knows the PR.
+    const last = ctx.store.reviewThreadOf(pr.id);
+    if (last && ctx.store.linkRole(pr.id, last.thread_id) === "review") {
+      try {
+        ({ revived } = await sendToReviewThread(ctx, last.thread_id, prompt, { ...run, ...(providerId ? { providerId } : {}) }));
+        threadId = last.thread_id;
+        ownThread = true;
+      } catch (error) {
+        const title = ctx.store.threadTitle(last.thread_id) ?? last.thread_id;
+        ctx.store.addEvent("revive_failed", `The review of ${shortKey(ctx, pr)} went to a new thread: “${title}” could not take it (${errText(error)}).`, pr.id, last.thread_id);
+      }
+    }
+  }
+  if (threadId === null) {
+    ownThread = true;
     const sectionId = await reviewSectionId(ctx, pr);
     threadId = await ctx.port.spawnThread({
       projectId: await projectFor(ctx, pr, input.projectId),
@@ -80,15 +104,16 @@ export async function startReview(ctx: Ctx, input: ReviewInput, trigger: "auto" 
   }
   const role = ctx.store.linkRole(pr.id, threadId) ?? "review";
   await linkPr(ctx, pr, threadId, role, { watch: false });
-  ctx.store.addReview({ pr_id: pr.id, thread_id: threadId, preset: preset.name, trigger, head: pr.head });
+  ctx.store.addReview({ pr_id: pr.id, thread_id: threadId, preset: preset.name, trigger, head: pr.head, own_thread: ownThread ? 1 : 0 });
   // A new review makes the last one's unposted draft out of date.
   const stale = ctx.store.liveDraft(pr.id);
   if (stale) ctx.store.setDraftState(stale.id, "discarded");
   ctx.store.setDismissed(pr.id, null);
   const why = trigger === "auto" ? "Auto review" : "Review";
-  ctx.store.addEvent("review", `${why} of ${shortKey(ctx, pr)} started with ${preset.name}${skill ? ` (${skill})` : ""} in \u201c${ctx.store.threadTitle(threadId)}\u201d.`, pr.id, threadId);
+  const back = revived ? ", brought back from the archive" : "";
+  ctx.store.addEvent("review", `${why} of ${shortKey(ctx, pr)} started with ${preset.name}${skill ? ` (${skill})` : ""} in \u201c${ctx.store.threadTitle(threadId)}\u201d${back}.`, pr.id, threadId);
   ctx.port.publish();
-  return { threadId, preset };
+  return { threadId, preset, revived };
 }
 
 /** A review still starts when its section cannot be made; the Activity list says why it is unfiled. */

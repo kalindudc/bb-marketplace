@@ -91,6 +91,9 @@ export function toView(ctx: Ctx, pr: PrRow): PrView {
   const lastReview = last
     ? { threadId: last.thread_id, title: ctx.store.threadTitle(last.thread_id) ?? "Review thread", state: last.state, preset: last.preset, trigger: last.trigger, head: last.head, at: last.created_at }
     : null;
+  const ownRun = pr.mine ? null : ctx.store.reviewThreadOf(pr.id);
+  const ownThread = ownRun && ctx.store.linkRole(pr.id, ownRun.thread_id) === "review" ? ctx.store.thread(ownRun.thread_id) : null;
+  const reviewThread = ownThread ? { threadId: ownThread.id, title: ownThread.title, archived: ownThread.archived === 1 } : null;
   const live = isLive(pr);
   const can = {
     merge: pr.mine === 1 && pr.state === "open" && ops.has("merge"),
@@ -181,6 +184,7 @@ export function toView(ctx: Ctx, pr: PrRow): PrView {
     suggestedAgent: suggested,
     watch: watch?.mode ?? null,
     lastReview,
+    reviewThread,
     myReview,
     draft: draft ? { id: draft.id, findings: draftFindings, at: draft.created_at } : null,
     next,

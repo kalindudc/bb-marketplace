@@ -22,7 +22,8 @@ export function useStartReview() {
   const start = async (input: ReviewInput, presetName: string) => {
     const result = await review.run(input);
     if (result !== null) {
-      toast.success(`${presetName} started. Its findings land on the PR.`, { action: { label: "Open", onClick: () => navigate.toThread(result.threadId) } });
+      const where = result.revived ? " in its review thread, brought back from the archive" : "";
+      toast.success(`${presetName} started${where}. Its findings land on the PR.`, { action: { label: "Open", onClick: () => navigate.toThread(result.threadId) } });
     }
     return result;
   };
@@ -60,8 +61,14 @@ export function PresetDialog({ pr, presets, onCustomize, onClose }: { pr: PrView
             title={<>{item.name}{item.default && <span className="ml-1.5 text-xs font-normal text-muted-foreground">default</span>}</>} />
         ))}
       </div>
-      {again !== null && <div className="mt-1.5 text-xs text-muted-foreground">Goes to the same thread, “{again.title}”, which already knows your last review.</div>}
-      <div className="mt-1.5 text-xs text-muted-foreground">It runs in its own thread and drafts findings here. Nothing is posted until you choose.</div>
+      {again !== null
+        ? <div className="mt-1.5 text-xs text-muted-foreground">Goes to the same thread, “{again.title}”, which already knows your last review.</div>
+        : pr.reviewThread !== null && (
+          <div data-review-thread className="mt-1.5 text-xs text-muted-foreground">
+            Goes to its review thread, “{pr.reviewThread.title}”{pr.reviewThread.archived ? ", brought back from the archive" : ""}.
+          </div>
+        )}
+      <div className="mt-1.5 text-xs text-muted-foreground">It drafts findings here. Nothing is posted until you choose.</div>
     </Dialog>
   );
 }

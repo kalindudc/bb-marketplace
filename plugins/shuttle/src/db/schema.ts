@@ -169,4 +169,11 @@ export const MIGRATIONS: string[] = [
   `INSERT INTO reasons_v3 (pr_id, reason, teams, since) SELECT pr_id, reason, teams, since FROM reasons`,
   `DROP TABLE reasons`,
   `ALTER TABLE reasons_v3 RENAME TO reasons`,
+  // 0.3.2: review threads Shuttle started are archived once their review is done, and brought back for the next one.
+  `ALTER TABLE reviews ADD COLUMN own_thread INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE reviews ADD COLUMN archived_at INTEGER`,
+  // A thread's first review that left it a review link was one Shuttle spawned; a reused owner or reference thread keeps its role.
+  `UPDATE reviews SET own_thread = 1 WHERE id IN (SELECT MIN(id) FROM reviews GROUP BY thread_id)
+    AND EXISTS (SELECT 1 FROM links l WHERE l.pr_id = reviews.pr_id AND l.thread_id = reviews.thread_id AND l.role = 'review')`,
+  `UPDATE reviews SET own_thread = 1 WHERE thread_id IN (SELECT thread_id FROM reviews WHERE own_thread = 1)`,
 ];

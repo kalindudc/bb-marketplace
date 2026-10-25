@@ -88,6 +88,7 @@ export function pr(overrides: Partial<PrView> = {}): PrView {
     suggestedAgent: null,
     watch: null,
     lastReview: null,
+    reviewThread: null,
     myReview: null,
     draft: null,
     next: next(),

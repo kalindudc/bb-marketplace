@@ -18,9 +18,10 @@ export function ReviewDialog({ pr, presets, thread = null, onClose }: { pr: PrVi
   const preset = presets.find((item) => item.id === presetId) ?? null;
   const [skill, setSkill] = useState<string | null>(null);
   const [execution, setExecution] = useState<Execution | null>(null);
-  const [where, setWhere] = useState(thread?.threadId ?? NEW_THREAD);
-  const reusable = pr.links.filter((link) => !link.archived).map((link) => ({ threadId: link.threadId, title: link.title }));
-  if (thread !== null && !reusable.some((link) => link.threadId === thread.threadId)) reusable.push(thread);
+  const own = pr.reviewThread;
+  const [where, setWhere] = useState(thread?.threadId ?? own?.threadId ?? NEW_THREAD);
+  const reusable = pr.links.filter((link) => !link.archived && link.threadId !== own?.threadId).map((link) => ({ threadId: link.threadId, title: link.title }));
+  if (thread !== null && thread.threadId !== own?.threadId && !reusable.some((link) => link.threadId === thread.threadId)) reusable.push(thread);
   const [projectChoice, setProjectChoice] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const projects = useShuttleQuery("projects", { key: pr.key });
@@ -43,7 +44,8 @@ export function ReviewDialog({ pr, presets, thread = null, onClose }: { pr: PrVi
         ? { providerId: execution.providerId, model: execution.model, ...(execution.reasoningLevel ? { reasoningLevel: execution.reasoningLevel } : {}) }
         : {}),
       ...(trimmedNote === "" ? {} : { note: trimmedNote }),
-      ...(where !== NEW_THREAD ? { threadId: where } : projectId === "" ? {} : { projectId }),
+      // Shuttle's own review thread is the default target: it brings it back and gives it the preset's model.
+      ...(where === NEW_THREAD ? { ...(own !== null ? { newThread: true } : {}), ...(projectId === "" ? {} : { projectId }) } : where === own?.threadId ? {} : { threadId: where }),
     };
     if (await start(input, preset.name)) onClose();
   };
@@ -100,6 +102,7 @@ export function ReviewDialog({ pr, presets, thread = null, onClose }: { pr: PrVi
       <div className="mt-3 grid grid-cols-[8rem_minmax(0,1fr)] items-center gap-x-3 gap-y-3 text-sm">
         <span className="text-xs text-muted-foreground">Thread</span>
         <select aria-label="Thread" className={FIELD} value={where} onChange={(event) => setWhere(event.target.value)}>
+          {own !== null && <option value={own.threadId}>Its review thread, “{own.title}”{own.archived ? " (brought back from the archive)" : ""}</option>}
           <option value={NEW_THREAD}>A new thread</option>
           {reusable.map((link) => <option key={link.threadId} value={link.threadId}>Reuse “{link.title}”</option>)}
         </select>

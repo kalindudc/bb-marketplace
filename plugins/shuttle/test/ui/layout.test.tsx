@@ -64,7 +64,7 @@ describe("on a phone", () => {
 
   it("opens dialogs and the composer as bottom sheets", async () => {
     setViewport(390);
-    const { slot } = await layoutPage(reviewSelected(second.key), { review: () => ({ threadId: "thr_review" }), comment: () => ({ pr: second }) });
+    const { slot } = await layoutPage(reviewSelected(second.key), { review: () => ({ threadId: "thr_review", revived: false }), comment: () => ({ pr: second }) });
     const view = await find(slot.container, "[data-phone-pr]");
     await find(view, `[data-detail="${second.key}"]`);
     fireEvent.click(view.querySelector<HTMLElement>("[data-phone-actions] [data-next='review']")!);

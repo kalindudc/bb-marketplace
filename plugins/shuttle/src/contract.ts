@@ -209,6 +209,8 @@ export const prViewSchema = z.object({
   /** Kept for the CLI and the thread panel: the watch mode behind the agent's mode. */
   watch: z.enum(WATCH_MODES).nullable(),
   lastReview: reviewRunSchema.nullable(),
+  /** The thread Shuttle started for this PR's reviews, where the next review goes; null when there is none to reuse. */
+  reviewThread: z.object({ threadId: z.string(), title: z.string(), archived: z.boolean() }).nullable(),
   /** Your own latest review on the server, or the one you posted from Shuttle. */
   myReview: myReviewSchema.nullable(),
   /** An AI review draft waiting for you to choose what to post. */
@@ -383,6 +385,8 @@ export const reviewInputSchema = z.object({
   note: z.string().max(4000).optional(),
   /** Send the review prompt to this existing thread instead of starting one. */
   threadId: z.string().max(100).optional(),
+  /** Start a thread even when the PR has a review thread of Shuttle's to bring back. */
+  newThread: z.boolean().optional(),
   projectId: z.string().max(100).optional(),
 });
 export type ReviewInput = z.infer<typeof reviewInputSchema>;
@@ -434,7 +438,8 @@ export const rpcContract = defineContract({
   snooze: { input: z.object({ key, until: z.enum(["tomorrow", "update"]).nullable() }), output: prOut, invalidates: PRS },
   /** "I'll do it": its current feedback leaves the Inbox until new feedback arrives. */
   handle: { input: z.object({ key, on: z.boolean() }), output: prOut, invalidates: PRS },
-  review: { input: reviewInputSchema, output: z.object({ threadId: z.string() }), invalidates: PRS },
+  /** Runs in the PR's review thread, brought back from the archive when Shuttle archived it, or in a new one. */
+  review: { input: reviewInputSchema, output: z.object({ threadId: z.string(), revived: z.boolean() }), invalidates: PRS },
   /** Start a thread that owns the PR ("own") or reviews it ("review"), and link it. */
   newThread: { input: z.object({ key, start: z.enum(["own", "review"]), projectId: z.string().max(100).optional() }), output: z.object({ threadId: z.string() }), invalidates: PRS },
   threadPrs: { input: z.object({ threadId }), output: z.object({ prs: z.array(prViewSchema), sent: z.array(eventViewSchema) }), tags: PRS },
