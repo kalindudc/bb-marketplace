@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.3
+
+- **You can post a review on someone else's draft PR.** Shuttle offered Post review, Approve and Request changes only on PRs marked ready for review. A review draft on a draft PR then said the server had no `review` command and pointed to Settings › Servers, even on GitHub, where the command is built in. Merging still waits until a PR is ready for review.
+
 ## 0.3.2
 
 - **Review threads are archived when their review is done.** Shuttle archives a review thread it started once you post or discard its draft, review the PR yourself, or the PR merges or closes. bb archives the thread's child threads with it, such as a reviewer's critics. A thread that is still working or waiting on you is archived once it stops. Shuttle never archives a thread you picked yourself or made the PR's agent, and leaves alone a thread you brought back from the archive until its next review. Undo after a discard brings the thread back. A setting, Archive finished review threads, turns this off.

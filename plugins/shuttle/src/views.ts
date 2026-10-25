@@ -98,7 +98,7 @@ export function toView(ctx: Ctx, pr: PrRow): PrView {
   const can = {
     merge: pr.mine === 1 && pr.state === "open" && ops.has("merge"),
     comment: live && ops.has("comment"),
-    review: pr.mine === 0 && pr.state === "open" && ops.has("review"),
+    review: pr.mine === 0 && live && ops.has("review"),
     reply: live && ops.has("reply"),
     resolve: live && ops.has("resolve"),
   };

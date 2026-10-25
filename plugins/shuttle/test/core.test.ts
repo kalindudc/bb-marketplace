@@ -320,6 +320,19 @@ describe("reviews from Shuttle", () => {
     expect(h.shuttle.inbox().prs.map((p) => [p.number, p.next.kind])).toEqual([[3, "rereview"]]);
   });
 
+  it("posts a review on someone else's draft PR, which is not a missing review command", async () => {
+    const h = await withWrites();
+    h.lists.review_requested = [pr(4, { draft: true })];
+    await h.shuttle.sync();
+    expect(h.shuttle.view(KEY(4))).toMatchObject({ state: "draft", can: { review: true, merge: false } });
+    await h.shuttle.submitReview(KEY(4), { verdict: "comment", body: "Early look", findings: [] });
+    expect(h.runner.calls.find((c) => c.operation === "review")!.env).toMatchObject({ SHUTTLE_VERDICT: "comment", SHUTTLE_BODY: "Early look" });
+    const plain = harness();
+    plain.lists.review_requested = [pr(4, { draft: true })];
+    await plain.shuttle.sync();
+    expect(plain.shuttle.view(KEY(4)).can.review).toBe(false);
+  });
+
   it("discards a draft and brings it back", async () => {
     const h = await withWrites();
     h.lists.team_requested = [pr(3)];
