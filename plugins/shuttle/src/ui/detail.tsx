@@ -14,19 +14,19 @@ import { YourReviewCard } from "./your-review";
 
 const LONG_DESCRIPTION = 1500;
 
-/** The PR's own description, rendered by bb's sanitizing Markdown renderer. */
+/** The PR's own description, rendered by bb's sanitizing Markdown renderer; a long one is cut until asked. */
 function Description({ body }: { body: string | null }) {
   const [expanded, setExpanded] = useState(false);
   const long = body !== null && body.length > LONG_DESCRIPTION;
   return (
-    <div className="mt-3">
-      <div className="mb-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">Description</div>
+    <section aria-label="Description" className="mx-4 mt-4">
+      <SectionTitle icon="FileText">Description</SectionTitle>
       {body === null ? (
         <div className="text-sm text-muted-foreground">Loading the description…</div>
       ) : body.trim() === "" ? (
         <div className="text-sm text-muted-foreground">No description.</div>
       ) : (
-        <>
+        <div className="rounded-lg border border-border bg-card px-3 py-2.5">
           <div data-description className={`min-w-0 overflow-x-auto break-words text-sm ${long && !expanded ? "max-h-80 overflow-y-hidden [mask-image:linear-gradient(to_bottom,black_75%,transparent)]" : ""}`}>
             <Markdown content={body} />
           </div>
@@ -35,9 +35,9 @@ function Description({ body }: { body: string | null }) {
               {expanded ? "Show less" : "Show the whole description"}
             </button>
           )}
-        </>
+        </div>
       )}
-    </div>
+    </section>
   );
 }
 
@@ -125,7 +125,7 @@ function Banner({ pr }: { pr: PrView }) {
   );
 }
 
-function Details({ pr, body }: { pr: PrView; body: string | null }) {
+function Details({ pr }: { pr: PrView }) {
   const { phone } = useActions();
   const [open, setOpen] = useState(false);
   return (
@@ -133,12 +133,11 @@ function Details({ pr, body }: { pr: PrView; body: string | null }) {
       <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="flex w-full cursor-pointer items-center gap-1.5 text-left">
         <Icon name={open ? "ChevronDown" : "ChevronRight"} className="size-3 text-muted-foreground" aria-hidden />
         <span className="flex-1 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">Details</span>
-        <span className="text-[11px] text-muted-foreground">{pr.mine ? "reviewers, labels, draft and close" : "reviewers, labels, description"}</span>
+        <span className="text-[11px] text-muted-foreground">{pr.mine ? "reviewers, labels, draft and close" : "reviewers and labels"}</span>
       </button>
       {open && (
         <div className="mt-1">
           {pr.mine && pr.actions.length > 0 ? <ManageCard pr={pr} phone={phone} /> : <LabelsAndReviewers pr={pr} />}
-          <Description body={body} />
         </div>
       )}
     </section>
@@ -272,9 +271,10 @@ export function PrDetail({ prKey, onClose, phone = false }: { prKey: string; onC
           {pr.agent !== null && <AgentCard pr={pr} />}
         </>
       )}
+      <Description body={body} />
       <Conversation pr={pr} items={items} error={conversationError} phone={phone} />
       <ChecksSection pr={pr} items={items} />
-      <Details pr={pr} body={body} />
+      <Details pr={pr} />
       <Threads pr={pr} />
     </aside>
   );

@@ -4,7 +4,8 @@ import { AREA_META, PANEL_PATH, SOURCE_META } from "./constants";
 import { useShuttleQuery } from "./data";
 import { ago, settingsHref } from "./format";
 import { sourceCounts } from "./reviews";
-import { formatRoute, parseRoute, SOURCES, type Route } from "./route";
+import { routeOf } from "./prefs";
+import { formatRoute, SOURCES, type Route } from "./route";
 
 function NavItem({ icon, label, count, hot = false, on, sub = false, onClick }: { icon?: string; label: string; count: number | null; hot?: boolean; on: boolean; sub?: boolean; onClick(): void }) {
   return (
@@ -35,7 +36,7 @@ export function ShuttleSidebar({ subPath }: PluginNavPanelProps) {
   const navigate = useBbNavigate();
   const pluginId = experimental_usePluginId();
   const overview = useShuttleQuery("overview", {});
-  const route = parseRoute(subPath);
+  const route = routeOf(subPath);
   const reviewsOpen = route.view === "reviews";
   const reviews = useShuttleQuery("list", { area: "reviews" }, reviewsOpen);
   const counts = overview.data?.counts;

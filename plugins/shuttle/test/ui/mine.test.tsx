@@ -135,3 +135,79 @@ describe("My PRs", () => {
     expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: "mine" } });
   });
 });
+
+describe("My PRs, sorted and folded", () => {
+  const aged = (pr: PrView, ago: number) => ({ ...pr, createdAt: Date.now() - ago });
+  const byAge = [aged(waiting, 5 * DAY), aged(ready, 60 * 60_000), aged(fixing, 2 * DAY), aged(waitingReview, 3 * DAY), aged(drafted, 10 * 60_000)];
+  const listed = (slot: Awaited<ReturnType<typeof minePage>>["slot"]) => keysIn(slot.container.querySelector<HTMLElement>("ul[aria-label='Pull requests']"));
+  const sortBy = (slot: Awaited<ReturnType<typeof minePage>>["slot"], value: string) => fireEvent.change(slot.getByRole("combobox", { name: "Sort by" }), { target: { value } });
+
+  it("flips to one sorted list and back to the groups, and remembers both choices", async () => {
+    const first = await minePage({}, byAge);
+    await find(first.slot.container, "[data-group]");
+    fireEvent.click(first.slot.getByRole("radio", { name: "List" }));
+    expect(first.slot.container.querySelector("[data-group]")).toBeNull();
+    sortBy(first.slot, "newest");
+    expect(listed(first.slot)).toEqual([drafted.key, ready.key, fixing.key, waitingReview.key, waiting.key]);
+    const row = first.slot.container.querySelector<HTMLElement>(`[data-pr="${waiting.key}"]`)!;
+    expect(row.querySelector("[data-row-group]")!.textContent).toBe("Needs you");
+    expect(row.textContent).toContain("opened 5d ago");
+    first.slot.lifecycle.unmount();
+
+    const again = await minePage({}, byAge);
+    await find(again.slot.container, "ul[aria-label='Pull requests']");
+    expect(listed(again.slot)).toEqual([drafted.key, ready.key, fixing.key, waitingReview.key, waiting.key]);
+    expect((again.slot.getByRole("combobox", { name: "Sort by" }) as HTMLSelectElement).value).toBe("newest");
+    fireEvent.click(again.slot.getByRole("radio", { name: "Grouped" }));
+    expect([...again.slot.container.querySelectorAll("[data-group]")].map((node) => node.getAttribute("data-group"))).toEqual(["Needs you", "Ready to merge", "Agent on it", "Waiting for review", "Drafts"]);
+    expect(again.slot.container.querySelector("[data-row-group]")).toBeNull();
+  });
+
+  it("sorts the rows inside each group", async () => {
+    const older = mine({ number: 6, title: "Drain the old edge pool", createdAt: Date.now() - 9 * DAY, next: next({ kind: "waiting_review" }) });
+    const newer = mine({ number: 7, title: "Add a canary for the new pool", createdAt: Date.now() - DAY, next: next({ kind: "waiting_review" }) });
+    const { slot } = await minePage({}, [older, newer]);
+    await find(slot.container, "[data-group]");
+    sortBy(slot, "oldest");
+    expect(keysIn(group(slot, "Waiting for review"))).toEqual([older.key, newer.key]);
+    sortBy(slot, "newest");
+    expect(keysIn(group(slot, "Waiting for review"))).toEqual([newer.key, older.key]);
+  });
+
+  it("folds a section to its title, remembers it, and folds or unfolds them all", async () => {
+    const first = await minePage();
+    await find(first.slot.container, "[data-group]");
+    const header = within(group(first.slot, "Needs you")!).getByRole("button", { name: /Needs you/u });
+    expect(header.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(header);
+    expect(header.getAttribute("aria-expanded")).toBe("false");
+    expect(keysIn(group(first.slot, "Needs you"))).toEqual([]);
+    expect(group(first.slot, "Needs you")!.textContent).toContain("1");
+    expect(keysIn(group(first.slot, "Ready to merge"))).toEqual([ready.key]);
+    first.slot.lifecycle.unmount();
+
+    const { slot } = await minePage();
+    await find(slot.container, "[data-group]");
+    expect(group(slot, "Needs you")!.hasAttribute("data-folded")).toBe(true);
+    fireEvent.click(slot.getByRole("button", { name: "Collapse all" }));
+    expect(slot.container.querySelectorAll("[data-group] [data-pr]")).toHaveLength(0);
+    fireEvent.click(slot.getByRole("button", { name: "Expand all" }));
+    expect(slot.container.querySelectorAll("[data-group] [data-pr]")).toHaveLength(5);
+    expect(slot.container.querySelector("[data-folded]")).toBeNull();
+  });
+
+  it("sorts the merged and closed ones by when they merged, or as picked", async () => {
+    const early = mine({ number: 140, title: "Vantage 0.6.0", state: "merged", closedAt: Date.now() - 5 * DAY, createdAt: Date.now() - 6 * DAY, next: next({ kind: "merged", label: "Merged" }) });
+    const late = mine({ number: 141, title: "Vantage 0.6.1", state: "closed", closedAt: Date.now() - DAY, createdAt: Date.now() - 9 * DAY, next: next({ kind: "closed", label: "Closed" }) });
+    const { slot } = await page("done", { list: ({ area }) => ({ prs: area === "done" ? [early, late] : [] }) });
+    await find(slot.container, `[data-pr="${early.key}"]`);
+    const select = slot.getByRole("combobox", { name: "Sort by" }) as HTMLSelectElement;
+    expect([...select.options].map((option) => option.text)).toEqual(["Recently merged", "Newest first", "Oldest first", "Repository", "Largest first"]);
+    expect(slot.queryByRole("radio", { name: "List" })).toBeNull();
+    expect(listed(slot)).toEqual([late.key, early.key]);
+    expect(slot.container.querySelector(`[data-pr="${late.key}"]`)!.textContent).toContain("closed 1d ago");
+    sortBy(slot, "newest");
+    expect(listed(slot)).toEqual([early.key, late.key]);
+    expect(slot.container.querySelector(`[data-pr="${late.key}"]`)!.textContent).toContain("opened 9d ago");
+  });
+});

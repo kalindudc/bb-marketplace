@@ -215,6 +215,6 @@ describe("the header on a phone", () => {
     const slot = mount<PluginNavPanelProps>(loaded.navPanels[0]!.headerContent!, { subPath: formatRoute({ view: "search", query: "edge", key: null }) }, handlers());
     expect((slot.getByRole("textbox", { name: "Search pull requests" }) as HTMLInputElement).value).toBe("edge");
     fireEvent.click(slot.getByRole("button", { name: "Close search" }));
-    expect(slot.inspection.navigateCalls).toEqual([{ method: "toPluginPanel", path: "shuttle", options: { subPath: "" } }]);
+    expect(slot.inspection.navigateCalls).toEqual([{ method: "toPluginPanel", path: "shuttle", options: { subPath: "inbox" } }]);
   });
 });

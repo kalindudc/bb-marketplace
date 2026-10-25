@@ -3,16 +3,10 @@ import type { PrView } from "../contract";
 import { ErrorNote, FIELD, PAGE, PageHeading } from "./common";
 import { REVIEW_GROUPS, SOURCE_META, type Group } from "./constants";
 import { messageOf, useShuttleQuery } from "./data";
+import { useFolding, type ReviewFilter } from "./prefs";
 import { SOURCES, type Route, type Source } from "./route";
-import { GroupList, ReviewRow, type RowLayout } from "./row";
+import { FoldAllButton, GroupList, ReviewRow, type RowLayout } from "./row";
 
-export interface ReviewFilter {
-  team: string;
-  hideBots: boolean;
-  hideQuiet: boolean;
-}
-
-export const DEFAULT_FILTER: ReviewFilter = { team: "all", hideBots: true, hideQuiet: true };
 const OTHER: Group = { title: "Other", kinds: [], description: "" };
 
 const has = (pr: PrView, reason: string) => pr.reasons.some((item) => item.reason === reason);
@@ -68,6 +62,11 @@ export function ReviewsView({ source, filter, layout, onFilter, onGo }: {
   const row = (pr: PrView) => <ReviewRow key={pr.key} pr={pr} layout={layout} />;
   const grouped = new Set(REVIEW_GROUPS.flatMap((group) => group.kinds));
   const oldestFirst = (items: PrView[]) => [...items].sort((a, b) => (a.requestedAt ?? Number.POSITIVE_INFINITY) - (b.requestedAt ?? Number.POSITIVE_INFINITY));
+  const folding = useFolding("reviews");
+  const sections = [...REVIEW_GROUPS, OTHER].map((group) => {
+    const members = group === OTHER ? shown.filter((pr) => !grouped.has(pr.next.kind)) : shown.filter((pr) => group.kinds.includes(pr.next.kind));
+    return { group, prs: group.title === "Not reviewed yet" ? oldestFirst(members) : members };
+  }).filter((section) => section.prs.length > 0);
 
   return (
     <div className={PAGE}>
@@ -88,6 +87,7 @@ export function ReviewsView({ source, filter, layout, onFilter, onGo }: {
         )}
         <Toggle on={filter.hideBots} label="Hide bots" count={bots} onChange={(hideBots) => onFilter({ ...filter, hideBots })} />
         <Toggle on={filter.hideQuiet} label="Hide quiet for 30+ days" count={quiet} onChange={(hideQuiet) => onFilter({ ...filter, hideQuiet })} />
+        <span className="ml-auto"><FoldAllButton titles={sections.map((section) => section.group.title)} folding={folding} /></span>
       </div>
       {list.error !== null && <ErrorNote>{messageOf(list.error)}</ErrorNote>}
       {prs === undefined && list.error === null && <div className="py-6 text-sm text-muted-foreground">Loading…</div>}
@@ -99,11 +99,7 @@ export function ReviewsView({ source, filter, layout, onFilter, onGo }: {
       {prs !== undefined && source !== "tracked" && shown.length === 0 && (
         <div className="py-10 text-center text-sm text-muted-foreground">{inScope.length === 0 ? "Nothing here." : "Everything here is hidden by the filters above."}</div>
       )}
-      {REVIEW_GROUPS.map((group) => {
-        const members = shown.filter((pr) => group.kinds.includes(pr.next.kind));
-        return <GroupList key={group.title} group={group} prs={group.title === "Not reviewed yet" ? oldestFirst(members) : members} layout={layout} row={row} />;
-      })}
-      <GroupList group={OTHER} prs={shown.filter((pr) => !grouped.has(pr.next.kind))} layout={layout} row={row} />
+      {sections.map((section) => <GroupList key={section.group.title} group={section.group} prs={section.prs} layout={layout} row={row} folding={folding} />)}
     </div>
   );
 }

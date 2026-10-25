@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.4
+
+- **Sort My PRs, or keep the groups.** My PRs has a Grouped and List switch and a Sort by menu: Recently updated, Newest first, Oldest first, Repository and Largest first. List shows every open PR in one list, each row with a pill for the group it would be in; Grouped keeps the sections and sorts the rows inside each. Merged and closed sorts too, by when each merged by default. A row shows the time its list is sorted by, such as "opened 3d ago".
+- **Fold sections.** Click a section's title in My PRs, Reviews or the Inbox's Handled for you to fold it to its title and count, and again to open it. Collapse all and Expand all do every section on the page.
+- **Shuttle remembers where you left it.** Opening Shuttle from the rail goes back to the list and the PR you last had open, and each list scrolls back to where you left it, including when a PR opens beside the list. Your folds, the My PRs layout and sort, and the Reviews filters (team, Hide bots, Hide quiet) are kept on this device and follow other bb windows. The Inbox now has its own path, `inbox`, so picking it is remembered too.
+- **The PR's description is in its view.** It shows above the conversation instead of inside the folded Details, and a long one is still cut until you ask for the rest.
+- **A wider PR panel on desktop.** The panel beside the list is 640px wide, up from 540px, and may take up to 55% of the page; the panel that slides over the list in a narrow window is up to 640px too.
+
 ## 0.3.3
 
 - **You can post a review on someone else's draft PR.** Shuttle offered Post review, Approve and Request changes only on PRs marked ready for review. A review draft on a draft PR then said the server had no `review` command and pointed to Settings › Servers, even on GitHub, where the command is built in. Merging still waits until a PR is ready for review.

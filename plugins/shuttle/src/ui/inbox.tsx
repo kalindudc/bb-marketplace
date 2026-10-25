@@ -6,6 +6,7 @@ import { BUTTON, BUTTON_GHOST, CARD_GRID, ErrorNote, onCardClick, PAGE, PageHead
 import { NEXT_ICONS } from "./constants";
 import { messageOf, useShuttleQuery } from "./data";
 import { age, plural, shortKey, tinyKey } from "./format";
+import { useFolding } from "./prefs";
 import type { Route } from "./route";
 import { GroupHeader, type RowLayout } from "./row";
 
@@ -43,6 +44,8 @@ function InboxCard({ pr, layout }: { pr: PrView; layout: RowLayout }) {
   );
 }
 
+const HANDLED = "Handled for you";
+
 /** Decisions waiting on you, each with why it is here and when it leaves; then what automation did. */
 export function InboxView({ layout, onGo }: { layout: RowLayout; onGo(route: Route): void }) {
   const inbox = useShuttleQuery("inbox", {});
@@ -51,6 +54,8 @@ export function InboxView({ layout, onGo }: { layout: RowLayout; onGo(route: Rou
   const cards = data?.prs.filter((pr) => pr.next.inbox) ?? [];
   const agents = data?.agents;
   const idle = agents === undefined ? 0 : agents.withAgent - agents.working - agents.waiting;
+  const folding = useFolding("inbox");
+  const handledFolded = folding.folded(HANDLED);
   return (
     <div className={PAGE}>
       <PageHeading title="Inbox" description="Decisions waiting on you. Every card says why it is here and when it leaves." />
@@ -85,9 +90,9 @@ export function InboxView({ layout, onGo }: { layout: RowLayout; onGo(route: Rou
       )}
       </div>
       {data !== undefined && (
-        <section aria-label="Handled for you">
-          <GroupHeader title="Handled for you" count="last 24 hours" description="What automation did, so you don't have to check" layout={layout} />
-          <ul className="overflow-hidden rounded-lg border border-border bg-card px-3 py-1">
+        <section aria-label={HANDLED} data-folded={handledFolded ? "" : undefined}>
+          <GroupHeader title={HANDLED} count="last 24 hours" description="What automation did, so you don't have to check" layout={layout} folded={handledFolded} onFold={() => folding.toggle(HANDLED)} />
+          {!handledFolded && <ul className="overflow-hidden rounded-lg border border-border bg-card px-3 py-1">
             {data.handled.length === 0 && <li className="py-2 text-[13px] text-muted-foreground">Nothing in the last 24 hours.</li>}
             {data.handled.map((event) => (
               <li key={event.id} data-event={event.kind} onClick={event.key === null ? undefined : onCardClick(() => layout.onSelect(event.key!))}
@@ -100,7 +105,7 @@ export function InboxView({ layout, onGo }: { layout: RowLayout; onGo(route: Rou
                 <span className="shrink-0 text-[11px] text-muted-foreground">{age(event.at)}</span>
               </li>
             ))}
-          </ul>
+          </ul>}
         </section>
       )}
     </div>

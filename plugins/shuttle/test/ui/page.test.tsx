@@ -75,7 +75,7 @@ describe("Shuttle page", () => {
     const view = await find(slot.container, `[data-detail="${second.key}"]`);
     expect(callsTo(slot, "list")).toEqual([]);
     fireEvent.click(within(view).getByRole("button", { name: "Close details" }));
-    expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: "", replace: true } });
+    expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: "inbox", replace: true } });
   });
 
   it("fetches a looked-up PR the server does not know yet when asked", async () => {
@@ -108,10 +108,11 @@ describe("Shuttle page", () => {
     await waitFor(() => expect(callsTo(slot, "list").length).toBeGreaterThan(before));
   });
 
-  it("shows the PR's description under Details", async () => {
+  it("shows the PR's description in the PR view, without opening Details", async () => {
     const { slot } = await reviews(selected(first.key));
     const view = await find(slot.container, `[data-detail="${first.key}"]`);
-    fireEvent.click(within(within(view).getByRole("region", { name: "Details" })).getByRole("button", { name: /Details/u }));
-    expect((await find(view, "[data-description]")).textContent).toContain("Adds **compact** headers");
+    const description = within(view).getByRole("region", { name: "Description" });
+    expect((await find(description, "[data-description]")).textContent).toContain("Adds **compact** headers");
+    expect(within(view).getByRole("region", { name: "Details" }).querySelector("[data-description]")).toBeNull();
   });
 });

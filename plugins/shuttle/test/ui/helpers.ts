@@ -5,6 +5,7 @@ import {
   rpcContract, type AgentView, type ConversationItem, type EventView, type InboxView, type InsightsView, type LinkView, type MergeOptions,
   type NextStep, type Overview, type PrView, type ReviewDraft, type ServerStatus,
 } from "../../src/contract";
+import { reloadPrefs } from "../../src/ui/prefs";
 
 export type Handlers = PluginRpcTestHandlers<typeof rpcContract>;
 /** GitHub PR Status's read, answered from the same map: the harness routes every plugin's RPC to it. */
@@ -265,6 +266,9 @@ export function unmountAll() {
   for (const slot of mounted.splice(0)) slot.lifecycle.unmount();
   document.body.replaceChildren();
   width = DESKTOP;
+  // What the page remembers on this device must not leak from one test into the next.
+  window.localStorage.clear();
+  reloadPrefs();
 }
 
 export const callsTo = (slot: RenderedSlot, method: string) => slot.inspection.rpcCalls.filter((call) => call.method === method).map((call) => call.input);

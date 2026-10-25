@@ -37,12 +37,13 @@ const OLD_SECTIONS: Record<string, (key: string | null) => Route> = {
 };
 
 /**
- * The page's subPath: "" is the Inbox, "mine", "done" and "reviews" their lists, each followed by a
+ * The page's subPath: "inbox", "mine", "done" and "reviews" are their lists, each followed by a
  * selected PR's key as path segments, "insights" and "insights/log", "pr/<key>" one looked-up PR, and
  * "search/<words>" the search results, the words percent-encoded as one segment, then a selected key.
  * A Reviews source other than Everything rides on the area as "reviews~team": server ids are lowercase
  * words, so a "~" can never be mistaken for one. A key travels as plain segments: bb encodes the
- * subPath again, so a percent-encoded key would come back still encoded.
+ * subPath again, so a percent-encoded key would come back still encoded. "" also parses as the Inbox, but the
+ * page opens there on the route it was last left on (see routeOf), so no link Shuttle makes is "".
  */
 export function parseRoute(subPath: string): Route {
   const [first = "", ...rest] = subPath.replace(/^\/+|\/+$/gu, "").split("/");
@@ -72,7 +73,7 @@ export function formatRoute(route: Route): string {
       return route.key === null ? words : `${words}/${keySegments(route.key)}`;
     }
     case "insights": return route.tab === "log" ? "insights/log" : "insights";
-    case "inbox": return route.key === null ? "" : `inbox/${keySegments(route.key)}`;
+    case "inbox": return route.key === null ? "inbox" : `inbox/${keySegments(route.key)}`;
     case "mine":
     case "done": return route.key === null ? route.view : `${route.view}/${keySegments(route.key)}`;
     case "reviews": {

@@ -19,10 +19,13 @@ import { MineView } from "./mine";
 import { isLive } from "./pills";
 import { ApproveDialog, PresetDialog } from "./review-button";
 import { ReviewDialog } from "./review-dialog";
-import { DEFAULT_FILTER, ReviewsView, type ReviewFilter } from "./reviews";
+import { lastRoute, reviewFilter } from "./prefs";
+import { useStored } from "./remember";
+import { ReviewsView } from "./reviews";
 import { SearchView } from "./search";
 import { areaOf, formatRoute, parseRoute, type Area, type ListRoute, type Route } from "./route";
 import type { RowLayout } from "./row";
+import { useScrollMemory } from "./scroll";
 import { useViewport } from "./viewport";
 import { usePrWrites } from "./writes";
 
@@ -149,7 +152,10 @@ function PhonePrView({ prKey, backLabel, onBack }: { prKey: string; backLabel: s
 
 /** The four areas, the PR list and the PR view; bb's sidebar holds the areas on a desktop (see sidebar.tsx). */
 export function ShuttlePage({ subPath }: PluginNavPanelProps) {
-  const route = parseRoute(subPath);
+  // bb opens the page at its root from the rail: that is where it was last left, until the URL says so too.
+  const remembered = useStored(lastRoute);
+  const resume = subPath === "" && remembered !== null ? remembered : null;
+  const route = parseRoute(resume ?? subPath);
   const viewport = useViewport();
   const phone = viewport === "phone";
   const navigate = useBbNavigate();
@@ -157,7 +163,8 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
   const config = useShuttleQuery("getConfig", {});
   const [dialog, setDialog] = useState<DialogState>(null);
   const [intent, setIntent] = useState<Intent | null>(null);
-  const [filter, setFilter] = useState<ReviewFilter>(DEFAULT_FILTER);
+  const filter = useStored(reviewFilter);
+  const setFilter = reviewFilter.set;
   const nonce = useRef(0);
 
   const selectedKey = route.view === "insights" ? null : route.key;
@@ -179,6 +186,13 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
   }, [selectedKey]);
 
   const go = (next: Route, replace = false) => navigate.toPluginPanel(PANEL_PATH, { subPath: formatRoute(next), ...(replace ? { replace: true } : {}) });
+  const here = formatRoute(route);
+  useEffect(() => {
+    if (subPath !== "") lastRoute.set(here);
+    else if (resume !== null) navigate.toPluginPanel(PANEL_PATH, { subPath: resume, replace: true });
+    // Only a change of place counts; `navigate` is a new object on each render.
+  }, [subPath, resume, here]);
+  const scroller = useScrollMemory(route.view === "pr" ? null : isListRoute(route) ? formatRoute({ ...route, key: null }) : here);
   const select = (key: string) => {
     if (!isListRoute(route)) {
       if (route.view === "pr" && route.key === key) return;
@@ -324,7 +338,7 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
   } else if (phone) {
     body = (
       <div className="flex h-full min-h-0 flex-col">
-        <div className="min-h-0 flex-1 overflow-y-auto">{notices}{area}</div>
+        <div ref={scroller.ref} onScroll={scroller.onScroll} data-scroller className="min-h-0 flex-1 overflow-y-auto">{notices}{area}</div>
         <TabBar route={route} overview={overview.data} onGo={(next) => go(next)} />
       </div>
     );
@@ -333,11 +347,11 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
       <div className="flex h-full min-h-0 flex-col">
         <AreaChips route={route} overview={overview.data} onGo={(next) => go(next)} />
         <div className="relative min-h-0 flex-1 overflow-hidden">
-          <div className="h-full overflow-y-auto">{notices}{area}</div>
+          <div ref={scroller.ref} onScroll={scroller.onScroll} data-scroller className="h-full overflow-y-auto">{notices}{area}</div>
           {overlay && (
             <>
               <div data-scrim className="absolute inset-0 z-10 bg-background/60" onClick={closeSelection} />
-              <div data-overlay className="absolute inset-y-0 right-0 z-20 w-[min(560px,88%)] overflow-y-auto border-l border-border bg-background shadow-lg animate-in slide-in-from-right duration-200">
+              <div data-overlay className="absolute inset-y-0 right-0 z-20 w-[min(640px,88%)] overflow-y-auto border-l border-border bg-background shadow-lg animate-in slide-in-from-right duration-200">
                 {detailPanel(closeSelection)}
               </div>
             </>
@@ -348,12 +362,12 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
   } else if (showDetail && isListRoute(route)) {
     body = (
       <div className="flex h-full min-h-0 flex-row">
-        <div className="min-w-0 flex-1 overflow-y-auto">{notices}{area}</div>
-        <div data-panel className="w-[540px] min-w-0 max-w-[50%] shrink-0 overflow-y-auto border-l border-border">{detailPanel(closeSelection)}</div>
+        <div ref={scroller.ref} onScroll={scroller.onScroll} data-scroller className="min-w-0 flex-1 overflow-y-auto">{notices}{area}</div>
+        <div data-panel className="w-[640px] min-w-0 max-w-[55%] shrink-0 overflow-y-auto border-l border-border">{detailPanel(closeSelection)}</div>
       </div>
     );
   } else {
-    body = <div className="h-full min-h-0 overflow-y-auto">{notices}{area}</div>;
+    body = <div ref={scroller.ref} onScroll={scroller.onScroll} data-scroller className="h-full min-h-0 overflow-y-auto">{notices}{area}</div>;
   }
 
   return (

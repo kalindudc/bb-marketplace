@@ -114,3 +114,23 @@ describe("Reviews", () => {
     expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: formatRoute({ view: "reviews", source: "asked", key: oldest.key }) } });
   });
 });
+
+describe("Reviews, folded and filtered", () => {
+  it("folds a section, and remembers the folds and the filters the next time it opens", async () => {
+    const first = await reviewsPage();
+    await find(first.slot.container, "[data-group]");
+    fireEvent.click(within(first.slot.container.querySelector<HTMLElement>("[data-group='Ready to post']")!).getByRole("button", { name: /Ready to post/u }));
+    expect(keysIn(first.slot.container, "Ready to post")).toEqual([]);
+    fireEvent.click(first.slot.getByRole("checkbox", { name: /Hide bots/u }));
+    await find(first.slot.container, `[data-pr="${bot.key}"]`);
+    first.slot.lifecycle.unmount();
+
+    const { slot } = await reviewsPage();
+    await find(slot.container, `[data-pr="${bot.key}"]`);
+    expect((slot.getByRole("checkbox", { name: /Hide bots/u }) as HTMLInputElement).checked).toBe(false);
+    expect(slot.container.querySelector("[data-group='Ready to post']")!.hasAttribute("data-folded")).toBe(true);
+    expect(keysIn(slot.container, "Updated since your review")).toEqual([updated.key]);
+    fireEvent.click(slot.getByRole("button", { name: "Collapse all" }));
+    expect(slot.container.querySelectorAll("[data-group] [data-pr]")).toHaveLength(0);
+  });
+});

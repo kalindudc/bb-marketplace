@@ -2,13 +2,15 @@ import type { KeyboardEvent, ReactNode } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import type { PrView } from "../contract";
 import { NextButton } from "./actions";
-import { Pill, onCardClick } from "./common";
-import type { Group } from "./constants";
+import { BUTTON_GHOST, Pill, onCardClick, type Tone } from "./common";
+import { NEXT_ICONS, type Group } from "./constants";
 import { age, shortKey, sizeOf, tinyKey } from "./format";
 import { RowLabels } from "./manage";
 import { AgentPill, ChecksPill, isLive, MyReviewPill, ReasonPills, ReviewPill, SizeChip, StalePill } from "./pills";
+import type { Folding } from "./prefs";
 
 const THREE_DAYS = 3 * 24 * 60 * 60_000;
+const NEXT_TONES: Record<PrView["next"]["tone"], Tone> = { ok: "ok", bad: "bad", warn: "warn", info: "info", neutral: "neutral" };
 
 export interface RowLayout {
   selected: string | null;
@@ -43,16 +45,20 @@ function Row({ pr, layout, meta, pills }: { pr: PrView; layout: RowLayout; meta:
   );
 }
 
-/** One of your PRs: its checks, its reviews and its agent, and its next step on the right. */
-export function MineRow({ pr, layout }: { pr: PrView; layout: RowLayout }) {
+/**
+ * One of your PRs: its checks, its reviews and its agent, and its next step on the right. `time` is the time its list
+ * is sorted by; `group` names the section it would sit in, for a list that is not grouped.
+ */
+export function MineRow({ pr, layout, time = pr.updatedAt === null ? null : age(pr.updatedAt), group }: { pr: PrView; layout: RowLayout; time?: string | null; group?: string }) {
   const meta = (
     <>
       <span className="truncate font-mono" title={shortKey(pr)}>{tinyKey(pr)}</span>
-      <span className="shrink-0">· {pr.serverName}{pr.updatedAt !== null && ` · ${age(pr.updatedAt)}`}</span>
+      <span className="shrink-0">· {pr.serverName}{time !== null && ` · ${time}`}</span>
     </>
   );
   const pills = (
     <>
+      {group !== undefined && <span data-row-group><Pill tone={NEXT_TONES[pr.next.tone]} icon={NEXT_ICONS[pr.next.kind]}>{group}</Pill></span>}
       {isLive(pr) ? (
         <>
           <ChecksPill pr={pr} />
@@ -91,24 +97,56 @@ export function ReviewRow({ pr, layout }: { pr: PrView; layout: RowLayout }) {
   return <Row pr={pr} layout={layout} meta={meta} pills={pills} />;
 }
 
-export function GroupHeader({ title, count, description, layout }: { title: string; count: ReactNode; description?: string; layout: Pick<RowLayout, "compact" | "phone"> }) {
-  return (
-    <div className="mb-1.5 mt-5 flex flex-wrap items-baseline gap-x-2">
+export function GroupHeader({ title, count, description, layout, folded, onFold }: {
+  title: string;
+  count: ReactNode;
+  description?: string;
+  layout: Pick<RowLayout, "compact" | "phone">;
+  folded?: boolean;
+  /** Makes the title a button that folds and unfolds the section. */
+  onFold?(): void;
+}) {
+  const label = (
+    <>
       <b className="text-xs uppercase tracking-wider">{title}</b>
       <span className="text-[11px] text-muted-foreground">{count}</span>
-      {description && layout.phone && <span className="w-full text-[11.5px] text-muted-foreground">{description}</span>}
+    </>
+  );
+  return (
+    <div className="mb-1.5 mt-5 flex flex-wrap items-baseline gap-x-2">
+      {onFold === undefined ? label : (
+        <button type="button" aria-expanded={!folded} title={folded ? "Show this section" : "Fold this section"} onClick={onFold}
+          className="-ml-1 inline-flex cursor-pointer items-baseline gap-x-2 rounded px-1 text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring [&:hover_b]:underline [&:hover_b]:underline-offset-2">
+          <Icon name={folded ? "ChevronRight" : "ChevronDown"} className="size-3 shrink-0 self-center text-muted-foreground" aria-hidden />
+          {label}
+        </button>
+      )}
+      {description && layout.phone && !folded && <span className="w-full text-[11.5px] text-muted-foreground">{description}</span>}
       {description && !layout.compact && <span className="ml-auto text-right text-[11.5px] text-muted-foreground">{description}</span>}
     </div>
   );
 }
 
 /** The PRs whose next step is one of a group's kinds, under the group's title; nothing when none is. */
-export function GroupList({ group, prs, layout, row }: { group: Group; prs: readonly PrView[]; layout: RowLayout; row(pr: PrView): ReactNode }) {
+export function GroupList({ group, prs, layout, row, folding }: { group: Group; prs: readonly PrView[]; layout: RowLayout; row(pr: PrView): ReactNode; folding?: Folding }) {
   if (prs.length === 0) return null;
+  const folded = folding?.folded(group.title) ?? false;
   return (
-    <section aria-label={group.title} data-group={group.title}>
-      <GroupHeader title={group.title} count={prs.length} description={group.description} layout={layout} />
-      <ul className="overflow-hidden rounded-lg border border-border bg-card">{prs.map(row)}</ul>
+    <section aria-label={group.title} data-group={group.title} data-folded={folded ? "" : undefined}>
+      <GroupHeader title={group.title} count={prs.length} description={group.description} layout={layout} folded={folded} onFold={folding && (() => folding.toggle(group.title))} />
+      {!folded && <ul className="overflow-hidden rounded-lg border border-border bg-card">{prs.map(row)}</ul>}
     </section>
+  );
+}
+
+/** Folds every section shown, or unfolds them all once every one is folded. */
+export function FoldAllButton({ titles, folding }: { titles: readonly string[]; folding: Folding }) {
+  if (titles.length === 0) return null;
+  const all = titles.every((title) => folding.folded(title));
+  return (
+    <button type="button" className={BUTTON_GHOST} title={all ? "Show every section" : "Fold every section to its title"} onClick={() => folding.setAll(titles, !all)}>
+      <Icon name={all ? "ChevronsDown" : "ChevronsUp"} fallback={all ? "ChevronDown" : "ChevronUp"} className="size-3.5" aria-hidden />
+      {all ? "Expand all" : "Collapse all"}
+    </button>
   );
 }

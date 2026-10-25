@@ -1,13 +1,17 @@
+import { useMemo } from "react";
 import { experimental_Icon as Icon, useSettings } from "@get-bb/plugin-sdk/app";
 import type { Overview, PrView } from "../contract";
 import { useActions } from "./actions";
-import { BUTTON_PRIMARY, ErrorNote, PAGE, PageHeading, Segmented, STRIP } from "./common";
+import { BUTTON_PRIMARY, ErrorNote, FIELD, PAGE, PageHeading, Segmented, STRIP } from "./common";
 import { MINE_GROUPS, type Group } from "./constants";
 import { messageOf, useShuttleQuery } from "./data";
 import { plural } from "./format";
 import { isLive } from "./pills";
+import { doneSort, mineLayout, mineSort, useFolding } from "./prefs";
+import { useStored } from "./remember";
 import type { Route } from "./route";
-import { GroupList, MineRow, type RowLayout } from "./row";
+import { FoldAllButton, GroupList, MineRow, type RowLayout } from "./row";
+import { DONE_SORTS, MINE_SORTS, rowTime, SORT_LABELS, sortPrs, type SortKey } from "./sort";
 
 const OTHER: Group = { title: "Other", kinds: [], description: "" };
 
@@ -43,33 +47,63 @@ function AutoAgent({ prs, overview }: { prs: readonly PrView[]; overview: Overvi
   );
 }
 
-/** Your open PRs grouped by what happens next, or your merged and closed ones. */
+const LAYOUTS = [
+  { value: "grouped" as const, label: "Grouped", icon: "Layers" },
+  { value: "list" as const, label: "List", icon: "ListView" },
+];
+
+function SortSelect({ value, options, onChange }: { value: SortKey; options: readonly SortKey[]; onChange(next: SortKey): void }) {
+  return (
+    <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+      <Icon name="Sort" fallback="ChevronDown" className="size-3.5" aria-hidden />
+      <select aria-label="Sort by" className={`${FIELD} h-7 py-0 text-xs`} value={value} onChange={(event) => onChange(event.target.value as SortKey)}>
+        {options.map((key) => <option key={key} value={key}>{SORT_LABELS[key]}</option>)}
+      </select>
+    </label>
+  );
+}
+
+const groupOf = (pr: PrView): Group => MINE_GROUPS.find((group) => group.kinds.includes(pr.next.kind)) ?? OTHER;
+
+/** Your open PRs grouped by what happens next, or in one sorted list; or your merged and closed ones. */
 export function MineView({ done, layout, overview, onGo }: { done: boolean; layout: RowLayout; overview: Overview | undefined; onGo(route: Route): void }) {
   const list = useShuttleQuery("list", { area: done ? "done" : "mine" });
   const days = useSettings().values?.doneDays;
+  const shape = useStored(mineLayout);
+  const sortStore = done ? doneSort : mineSort;
+  const sort = useStored(sortStore);
+  const folding = useFolding("mine");
   const prs = list.data?.prs;
+  const sorted = useMemo(() => (prs === undefined ? undefined : sortPrs(prs, sort)), [prs, sort]);
+  const grouped = !done && shape === "grouped";
+  const sections = grouped && sorted !== undefined
+    ? [...MINE_GROUPS, OTHER].map((group) => ({ group, prs: sorted.filter((pr) => groupOf(pr) === group) })).filter((section) => section.prs.length > 0)
+    : [];
   const tabs = (
     <Segmented label="My PRs" value={done ? "done" : "mine"} onChange={(view) => onGo({ view, key: null })}
       options={[{ value: "mine" as const, label: "Open" }, { value: "done" as const, label: "Merged" }]} />
   );
-  const grouped = new Set(MINE_GROUPS.flatMap((group) => group.kinds));
-  const row = (pr: PrView) => <MineRow key={pr.key} pr={pr} layout={layout} />;
+  const row = (pr: PrView) => <MineRow key={pr.key} pr={pr} layout={layout} time={rowTime(pr, sort)} group={done || grouped ? undefined : groupOf(pr).title} />;
+  const flat = (items: readonly PrView[]) => <ul aria-label="Pull requests" className="overflow-hidden rounded-lg border border-border bg-card">{items.map(row)}</ul>;
+  const tools = sorted !== undefined && sorted.length > 0 && (
+    <div data-list-tools className="mb-1 mt-2 flex flex-wrap items-center gap-1.5">
+      {!done && <Segmented label="Show" value={shape} options={LAYOUTS} onChange={(next) => mineLayout.set(next)} />}
+      <SortSelect value={sort} options={done ? DONE_SORTS : MINE_SORTS} onChange={(next) => sortStore.set(next)} />
+      {grouped && <span className="ml-auto"><FoldAllButton titles={sections.map((section) => section.group.title)} folding={folding} /></span>}
+    </div>
+  );
   return (
     <div className={PAGE}>
       {done
         ? <PageHeading title="Merged and closed" description={`Your PRs from the last ${plural(typeof days === "number" ? days : 14, "day")}.`}>{tabs}</PageHeading>
-        : <PageHeading title="My PRs" description="Grouped by what happens next. Each row shows its checks, its reviews and its agent.">{tabs}</PageHeading>}
+        : <PageHeading title="My PRs" description={grouped ? "Grouped by what happens next. Each row shows its checks, its reviews and its agent." : "One list, in the order you pick. Each row shows what happens next, its checks, its reviews and its agent."}>{tabs}</PageHeading>}
       {list.error !== null && <ErrorNote>{messageOf(list.error)}</ErrorNote>}
       {prs === undefined && list.error === null && <div className="py-6 text-sm text-muted-foreground">Loading…</div>}
       {prs !== undefined && prs.length === 0 && <div className="py-10 text-center text-sm text-muted-foreground">Nothing here.</div>}
-      {prs !== undefined && done && prs.length > 0 && <ul aria-label="Pull requests" className="overflow-hidden rounded-lg border border-border bg-card">{prs.map(row)}</ul>}
-      {prs !== undefined && !done && (
-        <>
-          <AutoAgent prs={prs} overview={overview} />
-          {MINE_GROUPS.map((group) => <GroupList key={group.title} group={group} prs={prs.filter((pr) => group.kinds.includes(pr.next.kind))} layout={layout} row={row} />)}
-          <GroupList group={OTHER} prs={prs.filter((pr) => !grouped.has(pr.next.kind))} layout={layout} row={row} />
-        </>
-      )}
+      {prs !== undefined && !done && <AutoAgent prs={prs} overview={overview} />}
+      {tools}
+      {sorted !== undefined && sorted.length > 0 && !grouped && flat(sorted)}
+      {sections.map((section) => <GroupList key={section.group.title} group={section.group} prs={section.prs} layout={layout} row={row} folding={folding} />)}
     </div>
   );
 }

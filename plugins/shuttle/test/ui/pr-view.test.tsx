@@ -67,7 +67,7 @@ describe("the PR view of your own PR", () => {
     const banner = panel.querySelector<HTMLElement>("[data-banner]")!;
     expect(banner.textContent).toContain("The agent is on it");
     expect(banner.textContent).toContain("“CF token containment 2” is fixing 4 items");
-    expect([...panel.querySelectorAll("section[aria-label]")].map((node) => node.getAttribute("aria-label"))).toEqual(["Agent", "Conversation", "Checks", "Details", "Threads"]);
+    expect([...panel.querySelectorAll("section[aria-label]")].map((node) => node.getAttribute("aria-label"))).toEqual(["Agent", "Description", "Conversation", "Checks", "Details", "Threads"]);
     expect(panel.querySelector("[data-your-review]")).toBeNull();
     const card = panel.querySelector<HTMLElement>("[data-agent-card]")!;
     expect(card.textContent).toContain("CF token containment 2: retry WAF deletes");
@@ -171,14 +171,16 @@ describe("the PR view of your own PR", () => {
     expect(callsTo(slot, "comment")).toEqual([]);
   });
 
-  it("keeps Details closed until asked, then shows the description and the Manage card", async () => {
+  it("shows the description above the conversation, and keeps Details closed until asked", async () => {
     const { view } = await prPage(own);
     const panel = await view();
+    const description = within(panel).getByRole("region", { name: "Description" });
+    await waitFor(() => expect(description.querySelector("[data-description]")!.textContent).toContain("Retries **5xx** deletes."));
     const details = within(panel).getByRole("region", { name: "Details" });
     expect(details.querySelector("[data-manage]")).toBeNull();
     fireEvent.click(within(details).getByRole("button", { name: /Details/u }));
     expect(details.querySelector("[data-manage]")).not.toBeNull();
-    await waitFor(() => expect(details.querySelector("[data-description]")!.textContent).toContain("Retries **5xx** deletes."));
+    expect(details.querySelector("[data-description]")).toBeNull();
   });
 
   it("lists its threads with their roles and unlinks one", async () => {

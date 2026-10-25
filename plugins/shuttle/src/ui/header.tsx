@@ -6,7 +6,8 @@ import { BUTTON, ICON_GHOST } from "./common";
 import { PANEL_PATH } from "./constants";
 import { useShuttleMutation, useShuttleQuery } from "./data";
 import { settingsHref } from "./format";
-import { formatRoute, parseRoute, type Route } from "./route";
+import { routeOf } from "./prefs";
+import { formatRoute, type Route } from "./route";
 import { useViewport } from "./viewport";
 
 const SEARCH_DELAY_MS = 200;
@@ -54,7 +55,7 @@ export function LookupInput({ placeholder, onFound, icon = "Search", label = "Lo
  */
 function SearchInput({ subPath, placeholder, autoFocus = false }: { subPath: string; placeholder: string; autoFocus?: boolean }) {
   const navigate = useBbNavigate();
-  const route = parseRoute(subPath);
+  const route = routeOf(subPath);
   const routeQuery = route.view === "search" ? route.query : null;
   const [text, setText] = useState(routeQuery ?? "");
   // The words this field last put in the route: a route change it made itself must not reset what is typed.
@@ -125,7 +126,7 @@ function SearchInput({ subPath, placeholder, autoFocus = false }: { subPath: str
 /** A phone's header has room for two icons: search opens its field in their place, and stays open on the Search page. */
 function PhoneHeader({ subPath, syncing, onSync, onClose }: { subPath: string; syncing: boolean; onSync(): void; onClose(): void }) {
   const [open, setOpen] = useState(false);
-  const onSearch = parseRoute(subPath).view === "search";
+  const onSearch = routeOf(subPath).view === "search";
   if (open || onSearch) {
     return (
       <div className="flex min-w-0 flex-1 items-center gap-1">

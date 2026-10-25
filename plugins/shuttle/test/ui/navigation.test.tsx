@@ -51,7 +51,7 @@ describe("the page title", () => {
   it("names the area and its part, the selected PR and a looked-up PR", async () => {
     expect(await title("")).toEqual({ title: "Inbox" });
     expect(await title(formatRoute({ view: "inbox", key: "delta:shop/world#2" }))).toEqual({
-      breadcrumbs: [{ label: "Inbox", to: "/plugins/shuttle/shuttle" }, { label: "shop/world#2" }],
+      breadcrumbs: [{ label: "Inbox", to: "/plugins/shuttle/shuttle/inbox" }, { label: "shop/world#2" }],
     });
     expect(await title("mine")).toEqual({ breadcrumbs: [{ label: "My PRs", to: "/plugins/shuttle/shuttle/mine" }, { label: "Open" }] });
     expect(await title("done")).toEqual({ breadcrumbs: [{ label: "My PRs", to: "/plugins/shuttle/shuttle/mine" }, { label: "Merged and closed" }] });
@@ -95,7 +95,7 @@ describe("the sidebar", () => {
     expect(slot.inspection.navigateCalls).toEqual([
       { method: "toPluginPanel", path: "shuttle", options: { subPath: "done" } },
       { method: "toPluginPanel", path: "shuttle", options: { subPath: "insights" } },
-      { method: "toPluginPanel", path: "shuttle", options: { subPath: "" } },
+      { method: "toPluginPanel", path: "shuttle", options: { subPath: "inbox" } },
     ]);
   });
 

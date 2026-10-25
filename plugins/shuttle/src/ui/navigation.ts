@@ -2,7 +2,8 @@ import { experimental_usePluginId, type ExperimentalBadge, type ExperimentalPage
 import { AREA_META, PANEL_PATH, SOURCE_META } from "./constants";
 import { useShuttleQuery } from "./data";
 import { keyLabel } from "./format";
-import { formatRoute, parseRoute, type Route } from "./route";
+import { routeOf } from "./prefs";
+import { formatRoute, type Route } from "./route";
 
 /** The rail badge: how many decisions wait in the Inbox. */
 export function useNeedsBadge(): ExperimentalBadge | null {
@@ -27,7 +28,7 @@ function crumbsOf(route: Route): { label: string; route: Route }[] {
 
 export function useShuttlePageTitle({ subPath }: PluginNavPanelProps): ExperimentalPageTitle | null {
   const pluginId = experimental_usePluginId();
-  const route = parseRoute(subPath);
+  const route = routeOf(subPath);
   const crumbs = crumbsOf(route);
   const key = route.view === "insights" ? null : route.key;
   if (key === null && crumbs.length === 1) return { title: crumbs[0]!.label };

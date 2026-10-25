@@ -19,7 +19,8 @@ describe("page routes", () => {
     expect(parseRoute("insights/log")).toEqual({ view: "insights", tab: "log" });
     expect(parseRoute("nonsense")).toEqual({ view: "inbox", key: null });
 
-    expect(formatRoute({ view: "inbox", key: null })).toBe("");
+    expect(formatRoute({ view: "inbox", key: null })).toBe("inbox");
+    expect(parseRoute("inbox")).toEqual({ view: "inbox", key: null });
     expect(formatRoute({ view: "inbox", key })).toBe("inbox/delta/shop/world/2261179");
     expect(formatRoute({ view: "reviews", source: "all", key })).toBe("reviews/delta/shop/world/2261179");
     expect(formatRoute({ view: "reviews", source: "asked", key: null })).toBe("reviews~asked");

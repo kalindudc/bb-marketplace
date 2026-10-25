@@ -22,7 +22,7 @@ src/conversation.ts    a PR's conversation, comments, replies, resolving and mer
 src/insights.ts        the numbers and ideas on the Insights page
 src/reviews.ts         review and agent threads from presets
 src/shuttle.ts         the operations the RPC handlers, tools and CLI share
-src/ui/                React components
+src/ui/                React components; prefs.ts is what the page remembers on this device (localStorage)
 ```
 
 ## Develop
