@@ -20,6 +20,7 @@ import { isLive } from "./pills";
 import { ApproveDialog, PresetDialog } from "./review-button";
 import { ReviewDialog } from "./review-dialog";
 import { DEFAULT_FILTER, ReviewsView, type ReviewFilter } from "./reviews";
+import { SearchView } from "./search";
 import { areaOf, formatRoute, parseRoute, type Area, type ListRoute, type Route } from "./route";
 import type { RowLayout } from "./row";
 import { useViewport } from "./viewport";
@@ -44,7 +45,7 @@ const AREA_ROUTES: Record<Area, Route> = {
 };
 const INBOX: Route = AREA_ROUTES.inbox;
 
-const isListRoute = (route: Route): route is ListRoute => route.view === "inbox" || route.view === "mine" || route.view === "done" || route.view === "reviews";
+const isListRoute = (route: Route): route is ListRoute => route.view === "inbox" || route.view === "mine" || route.view === "done" || route.view === "reviews" || route.view === "search";
 
 function countOf(area: Area, overview: Overview | undefined): number | null {
   if (overview === undefined || area === "insights") return null;
@@ -287,6 +288,7 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
     case "mine":
     case "done": area = <MineView done={route.view === "done"} layout={layout} overview={overview.data} onGo={go} />; break;
     case "reviews": area = <ReviewsView source={route.source} filter={filter} layout={layout} onFilter={setFilter} onGo={go} />; break;
+    case "search": area = <SearchView query={route.query} layout={layout} />; break;
     case "insights": area = <InsightsView tab={route.tab} onTab={(tab) => go({ view: "insights", tab })} onAction={onIdea} onOpenPr={select} />; break;
     case "pr": area = (
       <div className={PAGE}>
@@ -315,7 +317,7 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
   );
 
   const detailPanel = (onClose?: () => void) => selectedKey !== null && <PrDetail key={selectedKey} prKey={selectedKey} onClose={onClose} />;
-  const backLabel = route.view === "pr" ? "Back" : AREA_META[areaOf(route) ?? "inbox"].label;
+  const backLabel = route.view === "pr" ? "Back" : route.view === "search" ? "Search" : AREA_META[areaOf(route) ?? "inbox"].label;
   let body: ReactNode;
   if (phone && showDetail) {
     body = <PhonePrView prKey={selectedKey!} backLabel={backLabel} onBack={closeSelection} />;

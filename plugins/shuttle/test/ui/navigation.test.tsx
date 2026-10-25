@@ -65,6 +65,11 @@ describe("the page title", () => {
     expect(await title("insights/log")).toEqual({ breadcrumbs: [{ label: "Insights", to: "/plugins/shuttle/shuttle/insights" }, { label: "Automation log" }] });
     expect(await title("activity")).toEqual({ breadcrumbs: [{ label: "Insights", to: "/plugins/shuttle/shuttle/insights" }, { label: "Automation log" }] });
     expect(await title(formatRoute({ view: "pr", key: "delta:shop/world#2261179" }))).toEqual({ breadcrumbs: [{ label: "Look up" }, { label: "shop/world#2261179" }] });
+    expect(await title("search")).toEqual({ title: "Search" });
+    expect(await title(formatRoute({ view: "search", query: "edge cache", key: null }))).toEqual({ title: "Search: \u201cedge cache\u201d" });
+    expect(await title(formatRoute({ view: "search", query: "edge", key: "delta:shop/world#2" }))).toEqual({
+      breadcrumbs: [{ label: "Search: \u201cedge\u201d", to: "/plugins/shuttle/shuttle/search/edge" }, { label: "shop/world#2" }],
+    });
   });
 });
 

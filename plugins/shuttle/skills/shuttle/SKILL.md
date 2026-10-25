@@ -40,7 +40,8 @@ that PR.
 
 ## CLI
 
-`bb shuttle status`, `bb shuttle list [--area inbox|mine|done|reviews]`, `bb shuttle show <pr>`,
+`bb shuttle status`, `bb shuttle list [--area inbox|mine|done|reviews]`, `bb shuttle search <words…>`
+(the PRs Shuttle already has; every word must match, and a quoted `"#123"` is a PR number), `bb shuttle show <pr>`,
 `bb shuttle link <pr> [--thread <id>] [--role owner|review|reference]`,
 `bb shuttle unlink <pr> [--thread <id>]`,
 `bb shuttle agent <pr> [--thread <id> | --new | --none] [--mode fix|notify|off]`,

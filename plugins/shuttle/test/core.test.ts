@@ -103,6 +103,20 @@ describe("the next-step rule", () => {
     expect(nextStep({ ...reviewed, reasons: ["requested"], requestedAt: now - HOUR })).toMatchObject({ kind: "rereview", inbox: true });
   });
 
+  it("keeps every snoozed card out of the Inbox, whatever its kind", () => {
+    const now = facts({}).now;
+    const agent = { threadId: "t", title: "Fixer", mode: "fix" as const, status: "waiting" as const, auto: false, lastSent: null };
+    const cards = [
+      facts({ checks: "failed" }),
+      facts({ agent }),
+      facts({ review: "approved" }),
+      facts({ mine: false, author: "dana", reasons: ["requested"], requestedAt: now - HOUR }),
+      facts({ mine: false, author: "dana", reasons: ["team"], draft: { findings: 1, preset: "Std", auto: false } }),
+    ];
+    expect(cards.map((card) => [nextStep(card).kind, nextStep(card).inbox])).toEqual([["nobody", true], ["agent_waiting", true], ["ready_to_merge", true], ["new_request", true], ["post", true]]);
+    expect(cards.map((card) => nextStep({ ...card, snoozed: true }).inbox)).toEqual([false, false, false, false, false]);
+  });
+
   it("keeps \u201cI'll do it\u201d until new feedback arrives", () => {
     const reviewers = [{ login: "ana", team: false, state: "changes" as const, at: 1 }];
     const taken = JSON.stringify(feedbackSignature(reviewers, "failed", "h1"));
@@ -244,6 +258,16 @@ describe("the Inbox", () => {
     h.lists.authored = [pr(1, { author: "me", review: "approved", updated_at: new Date(h.clock.now).toISOString() })];
     await h.shuttle.sync();
     expect(h.shuttle.inbox().prs).toHaveLength(1);
+  });
+
+  it("snoozes feedback nobody is on, which is what the Inbox shows most", async () => {
+    const h = harness();
+    h.lists.authored = [pr(1, { author: "me", checks: "failed" })];
+    await h.shuttle.sync();
+    expect(h.shuttle.inbox().prs.map((p) => p.next.kind)).toEqual(["nobody"]);
+    const view = h.shuttle.snooze(KEY(1), "tomorrow");
+    expect(view.next).toMatchObject({ kind: "nobody", inbox: false });
+    expect(h.shuttle.inbox().prs).toEqual([]);
   });
 
   it("lets the user take feedback, until new feedback arrives", async () => {

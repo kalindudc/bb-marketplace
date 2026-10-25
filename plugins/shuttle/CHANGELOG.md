@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1
+
+- **Search.** The header's field searches the PRs Shuttle already has as you type: words in the title, repository, number, author, branches, server or labels, every word matching; `#2213` is a PR number. Results open on a Search page, your open PRs first, then other people's, then merged and closed ones, each opening beside the list. A pasted link or key is still looked up on its server when you press Enter. `bb shuttle search <words…>` does the same from the command line.
+- **Snooze works on every Inbox card.** Feedback nobody is on and an agent waiting on you ignored it, so a snoozed card came straight back.
+- A draft on a server with no `review` command now says so and links to Settings › Servers, instead of saying the server can't post reviews. Servers set up before 0.3, such as Delta through delta.sh, need `comment`, `review`, `reply` and `resolve` added to post from Shuttle.
+
 ## 0.3.0
 
 A redesign around what you do with pull requests, rather than where they come from.

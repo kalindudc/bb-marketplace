@@ -312,6 +312,16 @@ describe("the PR view of someone else's PR", () => {
     await waitFor(() => expect(toasts.success).toHaveBeenCalledWith("Posted your review on Delta: 1 inline, 1 in the body."));
   });
 
+  it("says a server without a review command needs one in Settings, instead of offering to post", async () => {
+    const posted = { ...theirs, can: { ...theirs.can, review: false }, draft: { id: 7, findings: 3, at: Date.now() }, next: next({ kind: "post", tone: "info", label: "AI review ready: choose what to post", why: "3 findings." }) };
+    const { view } = await prPage(posted, {}, { draft: draft() });
+    const card = await find(await view(), "[data-draft]");
+    expect(within(card).queryByRole("button", { name: /Post review/u })).toBeNull();
+    const note = card.querySelector<HTMLElement>("[data-no-review-command]")!;
+    expect(note.textContent).toBe("Shuttle can't post this yet: Delta has no review command in Settings › Servers. Add one there (Shuttle's Delta adapter, delta.sh, has it), or post it from the review thread.");
+    expect(within(note).getByRole("link", { name: "Settings › Servers" }).getAttribute("href")).toBe("/settings/plugins/shuttle");
+  });
+
   it("warns about a draft of an older head, offers no Approve, and posts only once confirmed", async () => {
     const posted = { ...theirs, head: "9f00aaa11", draft: { id: 7, findings: 3, at: Date.now() }, next: next({ kind: "post", tone: "info", label: "AI review ready" }) };
     const { slot, view } = await prPage(posted, { submitReview: () => ({ pr: posted, placed: 2, inBody: 0 }) }, { draft: draft({ verdict: "approve" }) });

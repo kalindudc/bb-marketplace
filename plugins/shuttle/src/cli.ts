@@ -55,6 +55,19 @@ export function createCli(shuttle: Shuttle): PluginCliRegistration {
             return out(options.json ? toJson(prs) : prList(prs, area === "inbox" ? "Nothing waits on you." : `Nothing in ${area}.`));
           }),
       }),
+      search: cliCommand({
+        summary: "Find PRs Shuttle already has by words in their title, repository, number, author, branches or labels",
+        positionals: [{ name: "words", description: "Every word must match; #123 is a PR number.", required: true, variadic: true }],
+        options: { json },
+        run: ({ options, positionals }) =>
+          guarded(() => {
+            const query = positionals.words.join(" ");
+            const { prs, total } = shuttle.search(query);
+            if (options.json) return out(toJson({ prs, total }));
+            const more = total > prs.length ? `\n${total - prs.length} more match; add a word to narrow it down.` : "";
+            return out(prList(prs, `No PR Shuttle has matches \u201c${query}\u201d.`) + more);
+          }),
+      }),
       show: cliCommand({
         summary: "Show one PR, fetched fresh from its server, with its threads and recent Shuttle activity",
         positionals: [PR],

@@ -21,6 +21,7 @@ function crumbsOf(route: Route): { label: string; route: Route }[] {
     case "reviews": return [{ label: AREA_META.reviews.label, route: { view: "reviews", source: "all", key: null } }, { label: SOURCE_META[route.source].label, route: { ...route, key: null } }];
     case "insights": return [{ label: AREA_META.insights.label, route: { view: "insights", tab: "overview" } }, { label: route.tab === "log" ? "Automation log" : "Overview", route }];
     case "pr": return [{ label: "Look up", route }];
+    case "search": return [{ label: route.query === "" ? "Search" : `Search: \u201c${route.query}\u201d`, route: { ...route, key: null } }];
   }
 }
 

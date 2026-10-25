@@ -412,6 +412,8 @@ export const rpcContract = defineContract({
   detail: { input: z.object({ key }), output: z.object({ pr: prViewSchema, events: z.array(eventViewSchema), body: z.string().nullable(), draft: reviewDraftSchema.nullable() }), tags: PRS },
   /** The PR's reviews, comments and failed checks, read from its server (kept for 30 seconds). */
   conversation: { input: z.object({ key }), output: z.object({ items: z.array(conversationItemSchema), error: z.string().nullable(), fetchedAt: z.number() }), tags: () => ["conversation"] },
+  /** PRs Shuttle already has whose title, repository, number, author, branches or labels hold every word; no server is asked. */
+  search: { input: z.object({ query: z.string().max(200) }), output: z.object({ prs: z.array(prViewSchema), total: z.number() }), tags: PRS },
   /** A link or a key such as delta:shop/world#2261179; fetched from its server and kept. */
   lookup: { input: z.object({ query: z.string().min(1).max(500) }), output: prOut, invalidates: PRS },
   activity: { input: z.object({ limit: z.number().int().min(1).max(500).optional() }), output: z.object({ events: z.array(eventViewSchema) }), tags: PRS },

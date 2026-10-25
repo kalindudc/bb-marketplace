@@ -195,17 +195,26 @@ describe("list rows", () => {
 });
 
 describe("the header on a phone", () => {
-  it("shows only look-up and Sync, and opens the field from the search icon", async () => {
+  it("shows only search and Sync, and opens the field from the search icon", async () => {
     setViewport(390);
     const loaded = await app();
     const slot = mount<PluginNavPanelProps>(loaded.navPanels[0]!.headerContent!, { subPath: "" }, handlers({ lookup: () => ({ pr: second }) }));
     expect(slot.queryByRole("textbox")).toBeNull();
     expect(slot.queryByRole("link", { name: "Shuttle settings" })).toBeNull();
     expect(slot.getByRole("button", { name: "Sync" })).toBeTruthy();
-    fireEvent.click(slot.getByRole("button", { name: "Look up a PR" }));
-    const input = slot.getByRole("textbox", { name: "Look up a pull request" });
-    fireEvent.change(input, { target: { value: "spy-v2#88" } });
+    fireEvent.click(slot.getByRole("button", { name: "Search PRs" }));
+    const input = slot.getByRole("textbox", { name: "Search pull requests" });
+    fireEvent.change(input, { target: { value: second.key } });
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(slot.inspection.navigateCalls).toEqual([{ method: "toPluginPanel", path: "shuttle", options: { subPath: formatRoute({ view: "pr", key: second.key }) } }]));
+  });
+
+  it("keeps the search field open on the Search page, and its X goes back to the Inbox", async () => {
+    setViewport(390);
+    const loaded = await app();
+    const slot = mount<PluginNavPanelProps>(loaded.navPanels[0]!.headerContent!, { subPath: formatRoute({ view: "search", query: "edge", key: null }) }, handlers());
+    expect((slot.getByRole("textbox", { name: "Search pull requests" }) as HTMLInputElement).value).toBe("edge");
+    fireEvent.click(slot.getByRole("button", { name: "Close search" }));
+    expect(slot.inspection.navigateCalls).toEqual([{ method: "toPluginPanel", path: "shuttle", options: { subPath: "" } }]);
   });
 });

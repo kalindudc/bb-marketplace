@@ -34,6 +34,17 @@ describe("page routes", () => {
     expect(parseRoute("pr/github/a/%E0%A4%A/1")).toEqual({ view: "inbox", key: null });
   });
 
+  it("keeps any search words in one segment, with a selected PR after them", () => {
+    expect(parseRoute("search")).toEqual({ view: "search", query: "", key: null });
+    expect(formatRoute({ view: "search", query: "edge cache", key: null })).toBe("search/edge%20cache");
+    // No words, no results: a selection has nothing to stand in.
+    expect(formatRoute({ view: "search", query: "", key })).toBe("search");
+    for (const query of ["edge", "kd/edge-retries #2213", "100% done?", "a~b"]) {
+      for (const route of [{ view: "search", query, key: null }, { view: "search", query, key }] as const) expect(parseRoute(formatRoute(route))).toEqual(route);
+    }
+    expect(parseRoute("search/100%")).toEqual({ view: "search", query: "100%", key: null });
+  });
+
   it("never reads a Reviews source as a server id", () => {
     expect(parseRoute("reviews~team/team/acme/app/12")).toEqual({ view: "reviews", source: "team", key: "team:acme/app#12" });
     expect(parseRoute("reviews/team/acme/app/12")).toEqual({ view: "reviews", source: "all", key: "team:acme/app#12" });

@@ -7,7 +7,9 @@ export type Route =
   | { view: "done"; key: string | null }
   | { view: "reviews"; source: Source; key: string | null }
   | { view: "insights"; tab: "overview" | "log" }
-  | { view: "pr"; key: string };
+  | { view: "pr"; key: string }
+  /** Words to find among the PRs Shuttle has; "" before the user types any. */
+  | { view: "search"; query: string; key: string | null };
 
 /** A route that shows a list, with the PR selected in it. */
 export type ListRoute = Exclude<Route, { view: "insights" | "pr" }>;
@@ -15,10 +17,10 @@ export type ListRoute = Exclude<Route, { view: "insights" | "pr" }>;
 /** The four areas of the page; Merged and closed sits under My PRs. */
 export type Area = "inbox" | "mine" | "reviews" | "insights";
 
-/** A looked-up PR belongs to no area. */
+/** A looked-up PR and search results belong to no area. */
 export function areaOf(route: Route): Area | null {
   if (route.view === "done") return "mine";
-  if (route.view === "pr") return null;
+  if (route.view === "pr" || route.view === "search") return null;
   return route.view;
 }
 
@@ -36,7 +38,8 @@ const OLD_SECTIONS: Record<string, (key: string | null) => Route> = {
 
 /**
  * The page's subPath: "" is the Inbox, "mine", "done" and "reviews" their lists, each followed by a
- * selected PR's key as path segments, "insights" and "insights/log", and "pr/<key>" one looked-up PR.
+ * selected PR's key as path segments, "insights" and "insights/log", "pr/<key>" one looked-up PR, and
+ * "search/<words>" the search results, the words percent-encoded as one segment, then a selected key.
  * A Reviews source other than Everything rides on the area as "reviews~team": server ids are lowercase
  * words, so a "~" can never be mistaken for one. A key travels as plain segments: bb encodes the
  * subPath again, so a percent-encoded key would come back still encoded.
@@ -49,6 +52,7 @@ export function parseRoute(subPath: string): Route {
   if (first === "insights") return rest.length === 1 && rest[0] === "log" ? { view: "insights", tab: "log" } : { view: "insights", tab: "overview" };
   if (first === "activity" && rest.length === 0) return { view: "insights", tab: "log" };
   if (first === "pr") return key === null ? INBOX : { view: "pr", key };
+  if (first === "search") return { view: "search", query: rest[0] === undefined ? "" : decoded(rest[0]), key: rest.length > 1 ? keyFromSegments(rest.slice(1)) : null };
   const reviews = /^reviews(?:~([a-z]+))?$/u.exec(first);
   if (reviews) {
     const source = SOURCES.find((item) => item === (reviews[1] ?? "all"));
@@ -61,6 +65,12 @@ export function parseRoute(subPath: string): Route {
 export function formatRoute(route: Route): string {
   switch (route.view) {
     case "pr": return `pr/${keySegments(route.key)}`;
+    case "search": {
+      // No words, no results: nothing to select.
+      if (route.query === "") return "search";
+      const words = `search/${encodeURIComponent(route.query)}`;
+      return route.key === null ? words : `${words}/${keySegments(route.key)}`;
+    }
     case "insights": return route.tab === "log" ? "insights/log" : "insights";
     case "inbox": return route.key === null ? "" : `inbox/${keySegments(route.key)}`;
     case "mine":
@@ -80,6 +90,14 @@ function keySegments(key: string): string {
   if (!match) return encodeURIComponent(key);
   const [, server, repo, number] = match;
   return [server, ...repo!.split("/").map((part) => (SAFE.test(part) ? part : encodeURIComponent(part))), number].join("/");
+}
+
+function decoded(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
 }
 
 function keyFromSegments(segments: string[]): string | null {

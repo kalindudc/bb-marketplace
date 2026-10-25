@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
-import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
+import { experimental_Icon as Icon, experimental_usePluginId, UrlLink } from "@get-bb/plugin-sdk/app";
 import type { MyReview, PrView, ReviewDraft, Severity, Verdict } from "../contract";
 import { NextButtons, useActions } from "./actions";
 import { BUTTON, BUTTON_GHOST, BUTTON_PRIMARY, FIELD, LABEL, Segmented, TONE_PANEL, TONE_TEXT } from "./common";
 import { NEXT_ICONS } from "./constants";
 import { useShuttleMutation } from "./data";
-import { ago, plural } from "./format";
+import { ago, plural, settingsHref } from "./format";
 import { isLive } from "./pills";
 
 const SEVERITY_TEXT: Record<Severity, string> = { high: "text-destructive", medium: "text-warning-text", low: "text-primary", nit: "text-muted-foreground" };
@@ -110,9 +110,20 @@ function DraftReview({ pr, draft }: { pr: PrView; draft: ReviewDraft }) {
         )}
         <button type="button" className={BUTTON_GHOST} onClick={() => void actions.writes.discard(pr, draft.id)}>Discard draft</button>
       </div>
-      <div className={NOTE}>
-        {pr.can.review ? `Posts to ${pr.serverName} as you: one review with inline comments. Edit a finding's text before you post.` : `${pr.serverName} can't post reviews from Shuttle; open the thread to post it there.`}
-      </div>
+      {pr.can.review
+        ? <div className={NOTE}>Posts to {pr.serverName} as you: one review with inline comments. Edit a finding's text before you post.</div>
+        : <NoReviewCommand pr={pr} />}
+    </div>
+  );
+}
+
+/** Without a review command in its settings, a command server cannot post: say where to add one. */
+function NoReviewCommand({ pr }: { pr: PrView }) {
+  const pluginId = experimental_usePluginId();
+  return (
+    <div data-no-review-command className={NOTE}>
+      Shuttle can't post this yet: {pr.serverName} has no <span className="font-mono">review</span> command in{" "}
+      <UrlLink href={settingsHref(pluginId)} className="text-primary hover:underline">Settings › Servers</UrlLink>. Add one there (Shuttle's Delta adapter, delta.sh, has it), or post it from the review thread.
     </div>
   );
 }

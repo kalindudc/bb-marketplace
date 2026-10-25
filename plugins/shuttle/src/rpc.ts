@@ -26,6 +26,7 @@ export function registerRpc(bb: BbPluginApi, shuttle: Shuttle): void {
     list: ({ area }) => refusing(() => ({ prs: shuttle.list(area) })),
     detail: ({ key }) => refusing(() => shuttle.detailOrLookup(key)),
     conversation: ({ key }) => refusing(() => shuttle.conversation(key)),
+    search: ({ query }) => refusing(() => shuttle.search(query)),
     lookup: ({ query }) => refusing(async () => ({ pr: await shuttle.lookup(query) })),
     activity: ({ limit }) => refusing(() => ({ events: shuttle.activity(limit) })),
     insights: ({ range }) => refusing(() => shuttle.insights(range)),

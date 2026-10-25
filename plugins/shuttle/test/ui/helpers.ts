@@ -201,6 +201,7 @@ export function handlers(overrides: Partial<Handlers> = {}): Handlers {
     detail: unexpected("detail"),
     conversation: () => ({ items: [], error: null, fetchedAt: NOW }),
     lookup: unexpected("lookup"),
+    search: () => ({ prs: [], total: 0 }),
     activity: () => ({ events: [] }),
     insights: () => insights(),
     sync: () => ({ ok: true }),

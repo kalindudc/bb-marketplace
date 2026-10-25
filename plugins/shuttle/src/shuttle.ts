@@ -18,6 +18,7 @@ import { fetchPr, linkPr, lookup, rememberThread, requirePr, setWatch, shortKey,
 import { parseKey } from "./keys";
 import { matchProject } from "./projects";
 import { startReview } from "./reviews";
+import { searchPrs } from "./search";
 import type { Settings } from "./settings";
 import { runAutoReviews, syncServer } from "./sync";
 import { allViews, inArea, inboxOf, toView } from "./views";
@@ -158,6 +159,10 @@ export class Shuttle implements Ctx {
 
   list(area: Area): PrView[] {
     return allViews(this).filter((v) => inArea(v, area, this));
+  }
+
+  search(query: string): { prs: PrView[]; total: number } {
+    return searchPrs(this, query);
   }
 
   inbox(): InboxView {

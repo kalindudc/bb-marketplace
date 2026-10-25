@@ -141,7 +141,7 @@ function mineNext(f: NextFacts): NextStep {
   if (f.review === "approved" && (f.checks === "passed" || f.checks === "none")) {
     const checks = f.checks === "passed" ? (counts?.total ? `, and all ${counts.total} checks pass` : ", and its checks pass") : "; its server reports no checks";
     return step("ready_to_merge", "ok", "Ready to merge", `${approved}${checks}.`, {
-      inbox: !f.snoozed,
+      inbox: true,
       clears: "Leaves when it merges, or when you snooze it.",
       primary: f.can.merge ? act("merge", "Merge\u2026") : null,
     });
@@ -179,7 +179,7 @@ function othersNext(f: NextFacts): NextStep {
   if (f.draft) {
     const from = f.draft.preset ? ` from ${f.draft.preset}${f.draft.auto ? " (started by auto review)" : ""}` : "";
     return step("post", "info", "AI review ready: choose what to post", `${plural(f.draft.findings, "finding")}${from}. Nothing is posted yet.`, {
-      inbox: !f.snoozed,
+      inbox: true,
       clears: "Leaves when you post it or discard it.",
       primary: act("choose", "Choose what to post"),
     });
@@ -193,7 +193,7 @@ function othersNext(f: NextFacts): NextStep {
   const reviewedAfterRun = my?.at != null && f.lastReviewFinishedAt !== null && my.at >= f.lastReviewFinishedAt;
   if (run?.state === "failed" && !reviewedAfterRun) {
     return step("review_failed", "bad", "The review thread failed", `\u201c${run.title}\u201d stopped with an error.`, {
-      inbox: !f.snoozed,
+      inbox: true,
       clears: "Leaves when you start another review, or when you snooze it.",
       primary: act("review", "Try again\u2026"),
       more: [act("open_review", "Open the thread")],
@@ -201,7 +201,7 @@ function othersNext(f: NextFacts): NextStep {
   }
   if (run?.state === "done" && !f.lastReviewHandled && !reviewedAfterRun) {
     return step("review_done", "info", "AI review finished", `${run.preset} finished in \u201c${run.title}\u201d without a draft for Shuttle. Read it in its thread.`, {
-      inbox: !f.snoozed,
+      inbox: true,
       clears: "Leaves when you review it, or when you snooze it.",
       primary: act("open_review", "Read it in its thread"),
       more: reviewMore,
@@ -214,7 +214,7 @@ function othersNext(f: NextFacts): NextStep {
     if (askedAgain || moved) {
       const why = askedAgain ? `${f.author} asked you to review again since you ${VERDICT_WORDS[my.verdict]}${when}.` : `New commits since you ${VERDICT_WORDS[my.verdict]}${when}.`;
       return step("rereview", "warn", "Updated after your review", why, {
-        inbox: (askedAgain || my.verdict !== "approve") && !f.snoozed,
+        inbox: askedAgain || my.verdict !== "approve",
         clears: "Leaves when you review again, or when you snooze it.",
         primary: act("review", "Re-review\u2026"),
         more: reviewMore,
@@ -232,7 +232,7 @@ function othersNext(f: NextFacts): NextStep {
     const facts = [`${asked}${age !== null ? ` ${agoText(age)}` : ""}`, size(f)].filter(Boolean).join(" \u00b7 ");
     if (fresh) {
       return step("new_request", "info", f.reasons.includes("requested") ? "New review request" : "Mentioned you", `${facts}.`, {
-        inbox: !f.snoozed,
+        inbox: true,
         clears: `Leaves when you start a review or say Not now. After ${plural(f.inboxRequestDays, "day")} it waits in Reviews.`,
         primary: act("review", "Start AI review"),
         more: [act("not_now", "Not now"), ...reviewMore],
@@ -248,8 +248,10 @@ function othersNext(f: NextFacts): NextStep {
     : step("looked_up", "neutral", "Not in your lists", "You looked this up. Track it to keep it in Reviews.", { primary: act("track", "Track"), more: [act("review", "Start AI review"), ...reviewMore] });
 }
 
+/** A snooze holds every card out of the Inbox, so the Snooze button means the same on each one. */
 export function nextStep(f: NextFacts): NextStep {
-  return f.mine ? mineNext(f) : othersNext(f);
+  const step = f.mine ? mineNext(f) : othersNext(f);
+  return f.snoozed && step.inbox ? { ...step, inbox: false } : step;
 }
 
 /** The Inbox's order: what blocks others or waits on you first. */

@@ -33,7 +33,7 @@ export function usePrWrites(threadIds: readonly string[]) {
   const track = useShuttleMutation("track", ({ key, on }, cache) => patchPr(cache, key, (pr) => ({ ...pr, tracked: on }), threadIds));
   const snooze = useShuttleMutation("snooze", ({ key, until }, cache) => patchPr(cache, key, (pr) => (until === null
     ? { ...pr, snoozedUntil: null, next: { ...pr.next, inbox: pr.snoozedUntil !== null || pr.next.inbox } }
-    : { ...pr, snoozedUntil: tomorrowAtNine(), next: { ...pr.next, inbox: false } }), threadIds));
+    : { ...pr, snoozedUntil: until === "tomorrow" ? tomorrowAtNine() : null, next: { ...pr.next, inbox: false } }), threadIds));
   const handle = useShuttleMutation("handle", ({ key, on }, cache) => patchPr(cache, key, (pr) => (on
     ? { ...pr, handled: true, next: { ...pr.next, inbox: false } }
     : { ...pr, handled: false, next: { ...pr.next, inbox: pr.handled || pr.next.inbox } }), threadIds));
