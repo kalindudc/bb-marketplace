@@ -199,4 +199,20 @@ describe("controller", () => {
     expect(controller.status().devices).toEqual([]);
     expect(await controller.revoke(device.id)).toBe(false);
   });
+
+  it("turns a device off, dropping its connections inside the service context, and on again", async () => {
+    const { controller, servers, devices, start, publishes } = await setup();
+    start(config({ lanAccess: true }));
+    await settle();
+    const { device } = await devices.add("Phone");
+    const before = publishes();
+    expect(await store.exit(() => controller.setDeviceEnabled(device.id, false))).toBe(true);
+    expect(servers[0]?.dropped).toEqual([{ id: device.id, store: "svc" }]);
+    expect(controller.status().devices).toEqual([{ ...device, enabled: false }]);
+    expect(publishes()).toBeGreaterThan(before);
+    expect(await controller.setDeviceEnabled(device.id, true)).toBe(true);
+    expect(servers[0]?.dropped).toHaveLength(1);
+    expect(controller.status().devices[0]?.enabled).toBe(true);
+    expect(await controller.setDeviceEnabled("missing", false)).toBe(false);
+  });
 });

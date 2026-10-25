@@ -58,7 +58,7 @@ function postForm(port: number, path: string, form: Record<string, string>): Pro
 const errorCode = (stdout: string) => (JSON.parse(stdout) as { error: { code: string } }).error.code;
 
 describe("LAN Connect plugin", () => {
-  it("serves only after LAN access is turned on, pairs a device, revokes it and closes on stop", async () => {
+  it("serves only after LAN access is turned on, pairs a device, turns it off and on, revokes it and closes on stop", async () => {
     const port = await freePort();
     const { bb, harness } = createFakePluginHost({ pluginId: "lan-connect", loopbackBaseUrl: upstreamUrl, settings: { port } });
     await lanConnect(bb);
@@ -86,6 +86,15 @@ describe("LAN Connect plugin", () => {
 
     const listed = JSON.parse((await harness.behavior.runCli(["devices", "--json"])).stdout) as Array<{ id: string; name: string }>;
     expect(listed.map((device) => device.name)).toEqual(["Phone"]);
+    const disabled = await harness.behavior.runCli(["disable", listed[0]?.id ?? ""]);
+    expect(disabled.exitCode).toBe(0);
+    expect(disabled.stdout).toContain("Turned LAN access off for Phone.");
+    expect((await get(port, "/api/v1/projects", { cookie })).status).toBe(403);
+    expect((await harness.behavior.runCli(["status"])).stdout).toContain("Paired devices: 1 (1 turned off).");
+    expect((await harness.behavior.runCli(["devices"])).stdout).toContain("  Phone  off  ");
+    await harness.behavior.callRpc("setDeviceEnabled", { deviceId: listed[0]?.id ?? "", enabled: true });
+    expect(await get(port, "/api/v1/projects", { cookie })).toMatchObject({ status: 200, body: "bb" });
+    expect(errorCode((await harness.behavior.runCli(["enable", "missing", "--json"])).stdout)).toBe("device_not_found");
     const revoked = await harness.behavior.runCli(["revoke", listed[0]?.id ?? ""]);
     expect(revoked).toMatchObject({ exitCode: 0, stdout: "Revoked Phone.\n" });
     expect((await get(port, "/api/v1/projects", { cookie })).status).toBe(401);

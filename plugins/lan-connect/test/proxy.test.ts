@@ -154,6 +154,25 @@ describe("gate", () => {
     },
   );
 
+  it("refuses a turned-off device without forwarding, and lets it back in once it is on", async () => {
+    const { device, cookieValue } = await devices.add("Phone");
+    const cookie = `${COOKIE_NAME}=${cookieValue}`;
+    await devices.setEnabled(device.id, false);
+    const page = await send("/threads/x", { headers: { cookie, accept: "text/html,*/*" } });
+    expect(page.status).toBe(403);
+    expect(page.headers["content-security-policy"]).toContain("default-src 'none'");
+    expect(page.body).toContain("LAN access is off for this device");
+    const api = await send("/api/v1/projects", { headers: { cookie } });
+    expect(api.status).toBe(403);
+    expect(JSON.parse(api.body).code).toBe("lan_device_off");
+    const pairPage = await send("/__bb-lan/pair", { headers: { cookie } });
+    expect(pairPage.status).toBe(403);
+    expect(pairPage.body).toContain("LAN access is off for this device");
+    expect(seen).toEqual([]);
+    await devices.setEnabled(device.id, true);
+    expect((await send("/api/v1/projects", { headers: { cookie } })).status).toBe(200);
+  });
+
   it("answers 400 for a path that cannot be decoded", async () => {
     expect((await send("/%E0%A4%A", { headers: { cookie: await cookieFor() } })).status).toBe(400);
   });
@@ -228,6 +247,21 @@ describe("pair page", () => {
     expect(opaque.status).toBe(403);
     expect(pairing.current()?.code).toBe(code);
   });
+
+  it("does not let a turned-off device pair again with a good code", async () => {
+    const { device, cookieValue } = await devices.add("Phone");
+    await devices.setEnabled(device.id, false);
+    const { code } = pairing.start();
+    const reply = await send("/__bb-lan/pair", {
+      method: "POST",
+      headers: { cookie: `${COOKIE_NAME}=${cookieValue}`, "content-type": "application/x-www-form-urlencoded", origin: `http://${host}` },
+      body: new URLSearchParams({ code, name: "Phone again" }).toString(),
+    });
+    expect(reply.status).toBe(403);
+    expect(reply.body).toContain("LAN access is off for this device");
+    expect(pairing.current()?.code).toBe(code);
+    expect(devices.list().map((entry) => entry.name)).toEqual(["Phone"]);
+  });
 });
 
 describe("forwarding", () => {
@@ -290,6 +324,32 @@ describe("upgrades", () => {
   it("refuses an unpaired upgrade", async () => {
     expect(await upgrade()).toEqual({ kind: "response", status: 401 });
     expect(seen).toEqual([]);
+  });
+
+  it("refuses a turned-off device's upgrade", async () => {
+    const { device, cookieValue } = await devices.add("Phone");
+    await devices.setEnabled(device.id, false);
+    expect(await upgrade({ cookie: `${COOKIE_NAME}=${cookieValue}` })).toEqual({ kind: "response", status: 403 });
+    expect(seen).toEqual([]);
+  });
+
+  it("ends an upgrade still in its upstream handshake when the device is dropped", async () => {
+    const { device, cookieValue } = await devices.add("Phone");
+    upstream.removeAllListeners("upgrade");
+    const arrived = new Promise<Socket>((resolve) =>
+      upstream.on("upgrade", (_req, socket: Socket) => {
+        upstreamSockets.push(socket);
+        socket.on("error", () => {});
+        resolve(socket);
+      }),
+    );
+    const result = upgrade({ cookie: `${COOKIE_NAME}=${cookieValue}` });
+    const upstreamSocket = await arrived;
+    lan.dropDevice(device.id);
+    const upstreamEnded = new Promise<void>((resolve) => upstreamSocket.once("end", () => resolve()));
+    upstreamSocket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n");
+    await expect(result).rejects.toThrow();
+    await upstreamEnded;
   });
 
   it("closes a device's live connection when it is dropped", async () => {

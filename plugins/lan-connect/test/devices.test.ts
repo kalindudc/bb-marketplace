@@ -89,7 +89,7 @@ describe("device store", () => {
     const kv = fakeKv();
     const store = await loadDeviceStore(kv, { now: () => 5 });
     const { device, cookieValue } = await store.add("  iPhone  ");
-    expect(device).toEqual({ id: expect.any(String), name: "iPhone", createdAt: 5, lastSeenAt: 5 });
+    expect(device).toEqual({ id: expect.any(String), name: "iPhone", createdAt: 5, lastSeenAt: 5, enabled: true });
     expect(device).not.toHaveProperty("tokenHash");
     expect(store.authenticate(cookieValue)?.id).toBe(device.id);
     expect(store.authenticate(`${device.id}.wrong`)).toBeNull();
@@ -117,6 +117,25 @@ describe("device store", () => {
     expect(await store.revoke(device.id)).toBe(false);
     expect(store.authenticate(cookieValue)).toBeNull();
     expect((await loadDeviceStore(kv)).list()).toEqual([]);
+  });
+
+  it("turns a device off and on again, keeping it paired across a reload", async () => {
+    const kv = fakeKv();
+    const store = await loadDeviceStore(kv);
+    const { device, cookieValue } = await store.add("Mac");
+    expect(await store.setEnabled(device.id, false)).toBe(true);
+    expect(store.authenticate(cookieValue)).toMatchObject({ id: device.id, enabled: false });
+    const reloaded = await loadDeviceStore(kv);
+    expect(reloaded.list()).toEqual([{ ...device, enabled: false }]);
+    expect(await reloaded.setEnabled(device.id, true)).toBe(true);
+    expect(reloaded.authenticate(cookieValue)?.enabled).toBe(true);
+    expect(await reloaded.setEnabled("missing", false)).toBe(false);
+  });
+
+  it("reads devices saved before devices could be turned off as on", async () => {
+    const stored = { version: 1, devices: [{ id: "a", name: "Mac", tokenHash: "0".repeat(64), createdAt: 1, lastSeenAt: 2 }] };
+    const store = await loadDeviceStore(fakeKv(stored));
+    expect(store.list()).toEqual([{ id: "a", name: "Mac", createdAt: 1, lastSeenAt: 2, enabled: true }]);
   });
 
   it("starts with no devices and reports an error when the stored value is corrupt", async () => {

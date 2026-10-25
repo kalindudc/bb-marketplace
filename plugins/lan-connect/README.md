@@ -27,6 +27,8 @@ opens its own port inside bb's server process and forwards each request to
      `same-site`) is refused with 403, except a document navigation outside
      `/api` and `/ws`.
   6. The device cookie is valid, else a redirect to the pairing page or 401.
+  7. The device is turned on, else a "LAN access is off" page or a 403
+     with the code `lan_device_off`.
 - Forwarded requests get bb's loopback `Host`, and an `Origin` equal to the
   LAN origin is rewritten to bb's origin, so bb's own host and origin checks
   pass. Any other `Origin` passes through and bb refuses it. The plugin
@@ -42,7 +44,9 @@ opens its own port inside bb's server process and forwards each request to
 - Pairing codes are eight characters, live in memory only, work once, expire
   after five minutes and are used up after five wrong tries. Paired devices
   are stored in the plugin's kv as a SHA-256 hash of their token
-  (`src/devices.ts`).
+  (`src/devices.ts`), with an `enabled` flag that `bb lan enable` and
+  `disable` set. Devices saved before the flag existed read as on. Turning a
+  device off or revoking it also closes its open WebSockets.
 
 ## Settings
 

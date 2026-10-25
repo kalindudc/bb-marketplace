@@ -12,12 +12,13 @@ import {
   type PublicDevice,
 } from "./devices";
 import { isAllowedHost, isLanAddress } from "./net";
-import { PAIR_PAGE_HEADERS, pairPage } from "./pair-page";
+import { PAIR_PAGE_HEADERS, deviceOffPage, pairPage } from "./pair-page";
 
 export const PAIR_PATH = "/__bb-lan/pair";
 const PLUGIN_PREFIX = "/__bb-lan/";
 const MAX_FORM_BYTES = 4096;
 const WRONG_CODE = "That code is wrong or has expired. Make a new one with `bb lan pair` or in Settings → LAN Connect.";
+const DEVICE_OFF = "LAN access is turned off for this device. Turn it back on in Settings → LAN Connect on the computer that runs bb.";
 
 const DROPPED_HEADERS = new Set([
   "host", "connection", "keep-alive", "proxy-connection", "te", "trailer", "upgrade", "forwarded", "x-real-ip", "x-bb-plugin-caller",
@@ -45,6 +46,7 @@ type Gate =
   | { kind: "refuse"; status: number; message: string }
   | { kind: "plugin"; path: string }
   | { kind: "unpaired" }
+  | { kind: "off" }
   | { kind: "forward"; device: PublicDevice };
 
 export function headersForUpstream(
@@ -149,7 +151,8 @@ export function createLanServer(options: LanServerOptions): LanServer {
     if (isInternal(path)) return { kind: "refuse", status: 404, message: "Not found." };
     if (isCrossSiteUse(req, path)) return { kind: "refuse", status: 403, message: "LAN Connect refuses requests that another site starts." };
     const device = pairedDevice(req);
-    return device === null ? { kind: "unpaired" } : { kind: "forward", device };
+    if (device === null) return { kind: "unpaired" };
+    return device.enabled ? { kind: "forward", device } : { kind: "off" };
   }
 
   function sendPage(res: http.ServerResponse, status: number, html: string, extra: Record<string, string> = {}) {
@@ -160,6 +163,10 @@ export function createLanServer(options: LanServerOptions): LanServer {
   async function handlePluginPage(req: http.IncomingMessage, res: http.ServerResponse, path: string) {
     if (path !== PAIR_PATH) {
       res.writeHead(404, { "content-type": "text/plain; charset=utf-8" }).end("Not found.");
+      return;
+    }
+    if (pairedDevice(req)?.enabled === false) {
+      sendPage(res, 403, deviceOffPage());
       return;
     }
     const userAgentName = deviceNameFromUserAgent(req.headers["user-agent"]);
@@ -252,6 +259,13 @@ export function createLanServer(options: LanServerOptions): LanServer {
           );
         }
         return;
+      case "off":
+        if ((req.method === "GET" || req.method === "HEAD") && (req.headers.accept ?? "").includes("text/html")) {
+          sendPage(res, 403, deviceOffPage());
+        } else {
+          res.writeHead(403, { "content-type": "application/json" }).end(JSON.stringify({ code: "lan_device_off", message: DEVICE_OFF }));
+        }
+        return;
       case "forward":
         options.devices.touch(result.device.id);
         forward(req, res);
@@ -262,12 +276,16 @@ export function createLanServer(options: LanServerOptions): LanServer {
     socket.on("error", () => socket.destroy());
     const result = gate(req);
     if (result.kind !== "forward") {
-      const status = result.kind === "refuse" ? result.status : result.kind === "unpaired" ? 401 : 404;
+      const status = result.kind === "refuse" ? result.status : result.kind === "unpaired" ? 401 : result.kind === "off" ? 403 : 404;
       socket.end(upgradeRefusal(status), () => socket.destroy());
       return;
     }
     const deviceId = result.device.id;
     options.devices.touch(deviceId);
+    // Tracked before the upstream handshake, so dropDevice also ends a handshake still in flight.
+    const open = upgraded.get(deviceId) ?? new Set<Socket>();
+    upgraded.set(deviceId, open.add(socket));
+    socket.on("close", () => open.delete(socket));
     const upstream = new URL(options.upstream());
     const upstreamReq = http.request({
       hostname: upstream.hostname,
@@ -287,12 +305,7 @@ export function createLanServer(options: LanServerOptions): LanServer {
       socket.write(`${lines.join("\r\n")}\r\n\r\n`);
       if (upstreamHead.length > 0) socket.write(upstreamHead);
       if (head.length > 0) upstreamSocket.write(head);
-      const open = upgraded.get(deviceId) ?? new Set<Socket>();
-      upgraded.set(deviceId, open.add(socket));
-      socket.on("close", () => {
-        open.delete(socket);
-        upstreamSocket.destroy();
-      });
+      socket.on("close", () => upstreamSocket.destroy());
       upstreamSocket.on("close", () => socket.destroy());
       upstreamSocket.pipe(socket);
       socket.pipe(upstreamSocket);

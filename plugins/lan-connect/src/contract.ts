@@ -3,7 +3,9 @@ import { z } from "zod";
 
 export const STATUS_CHANNEL = "lan-connect:status";
 
-export const deviceSchema = z.object({ id: z.string(), name: z.string(), createdAt: z.number(), lastSeenAt: z.number() }).strict();
+export const deviceSchema = z
+  .object({ id: z.string(), name: z.string(), createdAt: z.number(), lastSeenAt: z.number(), enabled: z.boolean() })
+  .strict();
 export const devicesSchema = z.array(deviceSchema);
 export const pairingSchema = z.object({ code: z.string(), expiresAt: z.number(), url: z.string(), qrSvg: z.string() }).strict();
 export const statusSchema = z
@@ -27,5 +29,9 @@ export const rpcContract = defineRpcContract({
   status: { input: z.null(), output: statusSchema },
   setEnabled: { input: z.object({ enabled: z.boolean() }).strict(), output: statusSchema },
   pair: { input: z.null(), output: pairingSchema },
+  setDeviceEnabled: {
+    input: z.object({ deviceId: z.string().min(1), enabled: z.boolean() }).strict(),
+    output: z.object({ updated: z.boolean() }).strict(),
+  },
   revoke: { input: z.object({ deviceId: z.string().min(1) }).strict(), output: z.object({ removed: z.boolean() }).strict() },
 });

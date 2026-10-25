@@ -35,6 +35,7 @@ export interface Controller {
   apply(config: LanConfig): Promise<void>;
   status(): LanStatus;
   pair(): Promise<PairingView>;
+  setDeviceEnabled(deviceId: string, enabled: boolean): Promise<boolean>;
   revoke(deviceId: string): Promise<boolean>;
 }
 
@@ -220,6 +221,13 @@ export function createController(deps: {
       pairingView = { code, expiresAt, url, qrSvg: await QRCode.toString(url, { type: "svg", margin: 1 }) };
       deps.publish();
       return pairingView;
+    },
+    async setDeviceEnabled(deviceId, enabled) {
+      const found = await deps.devices.setEnabled(deviceId, enabled);
+      if (!found) return false;
+      if (!enabled) await schedule(() => server?.dropDevice(deviceId));
+      deps.publish();
+      return true;
     },
     async revoke(deviceId) {
       const removed = await deps.devices.revoke(deviceId);

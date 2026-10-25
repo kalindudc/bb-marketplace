@@ -18,6 +18,7 @@ const deviceSchema = z.object({
   tokenHash: z.string().length(64),
   createdAt: z.number(),
   lastSeenAt: z.number(),
+  enabled: z.boolean().default(true),
 });
 const storedSchema = z.object({ version: z.literal(1), devices: z.array(deviceSchema) });
 
@@ -34,6 +35,7 @@ export interface DeviceStore {
   add(name: string): Promise<{ device: PublicDevice; cookieValue: string }>;
   authenticate(cookieValue: string | undefined): PublicDevice | null;
   touch(id: string): void;
+  setEnabled(id: string, enabled: boolean): Promise<boolean>;
   revoke(id: string): Promise<boolean>;
 }
 
@@ -70,7 +72,7 @@ export async function loadDeviceStore(
       if (devices.length >= MAX_DEVICES) throw new Error("Revoke a device before pairing another; LAN Connect keeps at most 50.");
       const token = randomBytes(32).toString("base64url");
       const at = now();
-      const device: Device = { id: randomUUID(), name: name.trim().slice(0, 64) || "Device", tokenHash: hashToken(token), createdAt: at, lastSeenAt: at };
+      const device: Device = { id: randomUUID(), name: name.trim().slice(0, 64) || "Device", tokenHash: hashToken(token), createdAt: at, lastSeenAt: at, enabled: true };
       devices = [...devices, device];
       await persist();
       return { device: publicOf(device), cookieValue: `${device.id}.${token}` };
@@ -92,6 +94,15 @@ export async function loadDeviceStore(
       if (device === undefined || at - device.lastSeenAt < TOUCH_INTERVAL_MS) return;
       device.lastSeenAt = at;
       void persist();
+    },
+    async setEnabled(id, enabled) {
+      const device = devices.find((entry) => entry.id === id);
+      if (device === undefined) return false;
+      if (device.enabled !== enabled) {
+        device.enabled = enabled;
+        await persist();
+      }
+      return true;
     },
     async revoke(id) {
       const remaining = devices.filter((entry) => entry.id !== id);

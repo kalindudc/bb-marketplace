@@ -8,7 +8,7 @@ afterEach(() => {
 });
 
 const pairing = { code: "ABCDEFGH", expiresAt: Date.now() + 300_000, url: "http://192.168.10.21:38890/__bb-lan/pair?code=ABCDEFGH", qrSvg: "<svg></svg>" };
-const device = { id: "dev-1", name: "iPhone", createdAt: 1_700_000_000_000, lastSeenAt: 1_700_000_100_000 };
+const device = { id: "dev-1", name: "iPhone", createdAt: 1_700_000_000_000, lastSeenAt: 1_700_000_100_000, enabled: true };
 const listening: LanStatusDto = {
   enabled: true,
   listening: true,
@@ -75,6 +75,26 @@ describe("plugin app", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Revoke iPhone" }));
     expect(await screen.findByText("No devices are paired.")).toBeTruthy();
     expect(slot.inspection.rpcCalls.find((call) => call.method === "revoke")?.input).toEqual({ deviceId: "dev-1" });
+    slot.lifecycle.unmount();
+  });
+
+  it("turns a device off and on again", async () => {
+    let current: LanStatusDto = listening;
+    const slot = await render({
+      status: () => current,
+      setDeviceEnabled: ({ enabled }: { enabled: boolean }) => {
+        current = { ...listening, devices: [{ ...device, enabled }] };
+        return { updated: true };
+      },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Turn off iPhone" }));
+    expect(await screen.findByText(/LAN access off/)).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "Turn on iPhone" }));
+    await waitFor(() => expect(screen.queryByText(/LAN access off/)).toBeNull());
+    expect(slot.inspection.rpcCalls.filter((call) => call.method === "setDeviceEnabled").map((call) => call.input)).toEqual([
+      { deviceId: "dev-1", enabled: false },
+      { deviceId: "dev-1", enabled: true },
+    ]);
     slot.lifecycle.unmount();
   });
 

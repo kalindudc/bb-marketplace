@@ -35,9 +35,21 @@ ${args.error === null ? "" : `<p class="error" role="alert">${escapeHtml(args.er
 <label>Device name<input name="name" value="${escapeHtml(args.name)}" maxlength="64"></label>
 <button type="submit">Pair this device</button>
 </form>`;
+  return htmlDocument("Pair with bb", body);
+}
+
+export function deviceOffPage(): string {
+  return htmlDocument(
+    "LAN access is off",
+    `<h1>LAN access is off for this device</h1>
+<p>This device is still paired. To use bb here again, turn it back on in Settings → LAN Connect or with <code>bb lan enable</code> on the computer that runs bb.</p>`,
+  );
+}
+
+function htmlDocument(title: string, body: string): string {
   return `<!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Pair with bb</title><style>${STYLE}</style></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title}</title><style>${STYLE}</style></head>
 <body><main>${body}</main></body>
 </html>
 `;

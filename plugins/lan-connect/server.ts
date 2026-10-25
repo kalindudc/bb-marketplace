@@ -76,6 +76,7 @@ export default async function lanConnect(bb: BbPluginApi): Promise<void> {
     status: () => controller.status(),
     setEnabled: ({ enabled }) => setEnabled(enabled),
     pair: () => controller.pair(),
+    setDeviceEnabled: async ({ deviceId, enabled }) => ({ updated: await controller.setDeviceEnabled(deviceId, enabled) }),
     revoke: async ({ deviceId }) => ({ removed: await controller.revoke(deviceId) }),
   });
 

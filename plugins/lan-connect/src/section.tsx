@@ -123,25 +123,37 @@ export function LanSection(_props: PluginSettingsSectionProps) {
             {status.devices.map((device) => (
               <li key={device.id} className="flex items-center justify-between gap-3 px-3 py-2">
                 <div className="min-w-0">
-                  <p className="truncate font-medium">{device.name}</p>
+                  <p className={device.enabled ? "truncate font-medium" : "truncate font-medium text-muted-foreground"}>{device.name}</p>
                   <p className="text-xs text-muted-foreground">
+                    {!device.enabled && "LAN access off · "}
                     Paired {date(device.createdAt)} · Last seen {date(device.lastSeenAt)}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  className={BUTTON}
-                  disabled={busy}
-                  aria-label={`Revoke ${device.name}`}
-                  onClick={() => void act(() => rpcRef.current.call("revoke", { deviceId: device.id }))}
-                >
-                  Revoke
-                </button>
+                <div className="flex shrink-0 gap-2">
+                  <button
+                    type="button"
+                    className={BUTTON}
+                    disabled={busy}
+                    aria-label={`${device.enabled ? "Turn off" : "Turn on"} ${device.name}`}
+                    onClick={() => void act(() => rpcRef.current.call("setDeviceEnabled", { deviceId: device.id, enabled: !device.enabled }))}
+                  >
+                    {device.enabled ? "Turn off" : "Turn on"}
+                  </button>
+                  <button
+                    type="button"
+                    className={BUTTON}
+                    disabled={busy}
+                    aria-label={`Revoke ${device.name}`}
+                    onClick={() => void act(() => rpcRef.current.call("revoke", { deviceId: device.id }))}
+                  >
+                    Revoke
+                  </button>
+                </div>
               </li>
             ))}
           </ul>
         )}
-        <p className="text-xs text-muted-foreground">A paired device can use all of bb, including terminals. Revoke any device you lose.</p>
+        <p className="text-xs text-muted-foreground">A paired device can use all of bb, including terminals. Turn a device off to block it until you turn it back on, without pairing it again. Revoke any device you lose.</p>
       </div>
     </div>
   );
