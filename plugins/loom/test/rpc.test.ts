@@ -255,6 +255,22 @@ describe("reads", () => {
     expect(detail.reviews.map((review) => review.threadId)).toEqual([null, "thr_r2", "thr_r3", "thr_r4"]);
   });
 
+  it("ticket says when Loom reads the pull request next: later after failed reads, and not before GitHub's rate limit ends", async () => {
+    await running((doc) => (doc.merge = { strategy: "pr", describe: "loom", squash: false }));
+    const checked = Date.now() - 60_000;
+    host.store.updateTicket(ticketId("CSV-1"), { state: "pr_open", pr_url: "https://github.com/acme/shop/pull/1", pr_checked_at: checked });
+    const nextCheck = async () => (await call<TicketDetail>("ticket", { key: "CSV-1" })).pr?.nextCheckAt;
+    expect(await nextCheck()).toBe(checked + 5 * 60_000);
+    host.store.updateTicket(ticketId("CSV-1"), { pr_poll_json: JSON.stringify({ failures: 3, since: checked - 15 * 60_000, message: "gh api graphql failed: gh: HTTP 502" }) });
+    expect(await nextCheck()).toBe(checked + 20 * 60_000);
+    const until = Date.now() + 45 * 60_000;
+    host.engine.ctx.forgeBackoffs.set("github.com", { until, delayMs: 15 * 60_000, message: "gh api graphql failed: gh: API rate limit exceeded" });
+    expect(await nextCheck()).toBe(until);
+    host.engine.ctx.forgeBackoffs.set("github.example.com", { until: until + 60_000, delayMs: 15 * 60_000, message: "another host" });
+    host.engine.ctx.forgeBackoffs.delete("github.com");
+    expect(await nextCheck()).toBe(checked + 20 * 60_000);
+  });
+
   it("ticket puts a recorded run into its check card with the size of its output", async () => {
     await running();
     await host.engine.tick();

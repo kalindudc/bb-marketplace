@@ -102,6 +102,8 @@ export interface TicketRow {
   start_wait_json: string | null;
   /** The ticket's merge patch over its repo's environment inputs, from its spec's `environment.inputs`; null for none. */
   environment_json: string | null;
+  /** PollWait: the pull request's reads failed with GitHub server errors in a row, so the next one waits longer; null once one succeeds. */
+  pr_poll_json: string | null;
   created_by: string;
   created_at: number;
   updated_at: number;

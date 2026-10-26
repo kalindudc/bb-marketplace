@@ -2,6 +2,17 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.19.1 (2026-10-26)
+
+### Fixed
+
+- One GitHub server error no longer pauses a project. When GitHub answers Loom's read of an open pull request with HTTP 500, 502, 503 or 504, times out or drops the connection, Loom waits longer before that pull request's next read (5, 10, 20, then 30 minutes) instead of pausing. The ticket gets one post when the failures start, the ticket page's next check time shows the wait, and the first read that works clears it. The project pauses only after an hour of failed reads, with a reason that names the pull request, the error and how long it lasted.
+- A GitHub rate limit no longer pauses a project either. Loom stops reading pull requests on that GitHub host, in every project, for 15 minutes, doubling to an hour while the limits go on, and longer when GitHub names a later time. The ticket whose read was limited gets one post per backoff. Any other failed read, such as a missing `gh` login or a pull request GitHub cannot find, still pauses the project as before.
+
+### Changed
+
+- Following a pull request through `gh` asks GitHub for less. The query no longer asks for the steps of every check run, which on a pull request with many checks (88 on one) took 6 to 11 seconds, long enough for GitHub to time out and answer 502. Loom now asks for steps only while a check has failed and others are still running, in a second small query for at most 20 running check runs, because it uses them only to tell how far a running check got. When that second query fails, Loom carries on without the steps. Loom still reads each pull request once per poll and never repeats a failed read within it.
+
 ## 0.19.0 (2026-10-25)
 
 ### Added

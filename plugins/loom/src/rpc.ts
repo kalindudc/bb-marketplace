@@ -9,7 +9,7 @@ import { replyRecipient, type Engine } from "./engine";
 import { projectHealth } from "./health";
 import { homeView } from "./home";
 import { projectInsights } from "./insights";
-import { POLL_MS } from "./merge";
+import { backedOffUntil, forgeHostOf, nextPollAt } from "./forge-waits";
 import { askOf, forgeRoundsSinceRequeue, PR_TEXT_MINUTES, prTextFor, statusOf } from "./pull-requests";
 import { followsFeedback, prSettings, repoSettings } from "./repos";
 import { computeMetrics } from "./metrics";
@@ -283,6 +283,14 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
     };
   };
 
+  /** When Loom reads an open pull request next: its own wait, or later while its forge host has rate-limited Loom. */
+  const nextCheck = (ticket: TicketRow, forge: string): number | null => {
+    const next = nextPollAt(ticket);
+    const host = forge === "gh" ? forgeHostOf(ticket.pr_url) : null;
+    const until = backedOffUntil(engine.ctx.forgeBackoffs, host, now());
+    return next === null ? null : Math.max(next, until ?? next);
+  };
+
   /** The ticket's pull request on the pr strategy; a rewound view leaves out what Loom read and asked since. */
   const ticketPr = (project: ProjectRow, ticket: TicketRow, posts: readonly PostRow[], live: boolean): TicketPr | null => {
     const spec = specOf(store, project);
@@ -314,7 +322,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       maxRounds: settings.maxFixRounds,
       follows: settings.maxFixRounds > 0 && followsFeedback(forge),
       checks: status === null || status.head === null ? null : { passed: status.passed, failed: status.failed, pending: status.pending, at: status.at },
-      nextCheckAt: live && ticket.state === "pr_open" && ticket.pr_checked_at !== null ? ticket.pr_checked_at + POLL_MS : null,
+      nextCheckAt: live && ticket.state === "pr_open" ? nextCheck(ticket, forge.kind) : null,
       writing: asked ? { since: ask.at, fix: ask.fix, until: ask.at + PR_TEXT_MINUTES * 60_000 } : null,
     };
   };

@@ -383,6 +383,8 @@ export function parseRemoteUrl(url: string): string | null {
 
 type GhRun = GitRun | "missing";
 
+class GhTimedOut extends Error {}
+
 // gh never prompts: GH_PROMPT_DISABLED turns its prompts into errors.
 function gh(cwd: string, args: readonly string[], opts: { stdin?: string; signal?: AbortSignal } = {}): Promise<GhRun> {
   return new Promise((resolve, reject) => {
@@ -395,7 +397,8 @@ function gh(cwd: string, args: readonly string[], opts: { stdin?: string; signal
         const failed = error as NodeJS.ErrnoException & { killed?: boolean };
         if (failed.code === "ENOENT") return resolve("missing");
         if (typeof failed.code === "number") return resolve({ code: failed.code, stdout, stderr });
-        reject(new Error(failed.killed === true ? `gh ${args[0]} took too long` : `gh ${args[0]}: ${failed.message}`));
+        if (failed.killed === true && failed.name !== "AbortError") return reject(new GhTimedOut(`gh ${args[0]} took too long`));
+        reject(new Error(`gh ${args[0]}: ${failed.message}`));
       },
     );
     child.stdin?.on("error", () => undefined);
@@ -406,6 +409,69 @@ function gh(cwd: string, args: readonly string[], opts: { stdin?: string; signal
 const GH_MISSING = "The gh CLI is not installed on this machine, or it is not on PATH.";
 const ghFailed = (what: string, run: GitRun) => `${what} failed: ${tail(run.stderr || run.stdout)}`;
 const withoutCredentials = (url: string) => url.replace(/\/\/[^@/\s]+@/u, "//");
+
+// ---------------------------------------------------------------- failed pull request reads
+
+type ReadUnavailable = Extract<HostOutput<"prFeedback">, { outcome: "unavailable" }>;
+type Transient = Pick<ReadUnavailable, "transient" | "retryAfterMs">;
+
+/** One gh call for a pull request read. A timeout comes back as a failed run, so it is classified like GitHub's own; nothing here runs gh again. */
+async function ghRead(cwd: string, args: readonly string[], signal?: AbortSignal): Promise<GhRun> {
+  try {
+    return await gh(cwd, args, { signal });
+  } catch (error) {
+    if (error instanceof GhTimedOut) return { code: -1, stdout: "", stderr: `gh timed out after ${NETWORK_TIMEOUT_MS / 60_000} minutes` };
+    throw error;
+  }
+}
+
+const GH_AUTH_EXIT = 4;
+const HTTP_STATUS = /\bHTTP (\d{3})\b/u;
+const RATE_LIMITED = /rate[-_ ]limit|abuse detection|too many requests/iu;
+const SERVER_TROUBLE = /\bserver error\b|bad gateway|service unavailable|gateway time-?out|\btime(?:d[- ]?|[- ]?)out|deadline exceeded|connection (?:reset|refused)|\bEOF\b|TLS handshake|something went wrong/iu;
+const RETRY_AFTER_SECONDS = /retry[- ]after:?\s*(\d{1,6})\b/iu;
+const RATE_LIMIT_RESET = /x-ratelimit-reset:?\s*(\d{10})\b/iu;
+const TRY_AGAIN_IN = /(?:try again|retry) in (\d{1,4}) (second|minute|hour)s?\b/iu;
+const UNIT_MS: Record<string, number> = { second: 1000, minute: 60_000, hour: 3_600_000 };
+const LONGEST_RETRY_AFTER_MS = 24 * 3_600_000;
+
+// A failed read's stdout is the response body, which can hold the pull request's own text; only its error fields are read.
+function ghErrorText(run: GitRun): string {
+  const body = parseJson<{ message?: unknown; errors?: unknown }>(run.stdout);
+  if (body === null || typeof body !== "object") return `${run.stderr}\n${run.stdout.slice(0, 2000)}`;
+  const errors = Array.isArray(body.errors) ? (body.errors as Array<{ type?: unknown; message?: unknown } | null>) : [];
+  const fields = [body.message, ...errors.flatMap((error) => [error?.type, error?.message])].filter((field): field is string => typeof field === "string");
+  return [run.stderr, ...fields].join("\n");
+}
+
+function retryAfterMs(text: string): number | null {
+  const seconds = RETRY_AFTER_SECONDS.exec(text);
+  const reset = RATE_LIMIT_RESET.exec(text);
+  const later = TRY_AGAIN_IN.exec(text);
+  const ms = seconds !== null ? Number(seconds[1]) * 1000 : reset !== null ? Number(reset[1]) * 1000 - Date.now() : later !== null ? Number(later[1]) * UNIT_MS[later[2]!.toLowerCase()]! : null;
+  return ms === null ? null : Math.min(LONGEST_RETRY_AFTER_MS, Math.max(0, Math.round(ms)));
+}
+
+/**
+ * Whether a failed gh read is worth waiting out: `rate_limit` when GitHub says it rate-limited the call (HTTP 403 or 429, or
+ * GraphQL's RATE_LIMITED), `server` for its 500, 502, 503 and 504 answers, timeouts and dropped connections. Null for the
+ * rest, such as a missing login, a 404 or a bad URL.
+ */
+export function ghTransient(run: GitRun): Transient | null {
+  if (run.code === GH_AUTH_EXIT) return null;
+  const text = ghErrorText(run);
+  const status = HTTP_STATUS.exec(text)?.[1];
+  if (RATE_LIMITED.test(text) && (status === undefined || status === "403" || status === "429")) {
+    const wait = retryAfterMs(text);
+    return wait === null ? { transient: "rate_limit" } : { transient: "rate_limit", retryAfterMs: wait };
+  }
+  if (status !== undefined) return /^50[0234]$/u.test(status) ? { transient: "server" } : null;
+  return SERVER_TROUBLE.test(text) ? { transient: "server" } : null;
+}
+
+function readFailed(what: string, run: GitRun): ReadUnavailable {
+  return { outcome: "unavailable", message: ghFailed(what, run), ...ghTransient(run) };
+}
 
 export async function prCreate(input: HostInput<"prCreate">, signal?: AbortSignal): Promise<HostOutput<"prCreate">> {
   if (input.forge.kind === "command") return openWithCommand(input, input.forge.open, signal);
@@ -443,9 +509,9 @@ export async function prRetarget(input: HostInput<"prRetarget">, signal?: AbortS
 
 export async function prState(input: HostInput<"prState">, signal?: AbortSignal): Promise<HostOutput<"prState">> {
   if (input.forge.kind === "command") return stateWithCommand(input, input.forge.state, signal);
-  const viewed = await gh(input.repo, ["pr", "view", input.url, "--json", "state"], { signal });
+  const viewed = await ghRead(input.repo, ["pr", "view", input.url, "--json", "state"], signal);
   if (viewed === "missing") return { outcome: "unavailable", message: GH_MISSING };
-  if (viewed.code !== 0) return { outcome: "unavailable", message: ghFailed("gh pr view", viewed) };
+  if (viewed.code !== 0) return readFailed("gh pr view", viewed);
   const state = parseJson<{ state?: unknown }>(viewed.stdout)?.state;
   if (state === "OPEN" || state === "MERGED" || state === "CLOSED") return { outcome: "ok", state };
   return { outcome: "unavailable", message: `gh pr view returned an unknown state: ${tail(viewed.stdout)}` };
@@ -467,7 +533,7 @@ const FEEDBACK_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
     pullRequest(number: $number) {
       state headRefOid author { login }
       commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes { __typename
-        ... on CheckRun { databaseId name status conclusion detailsUrl startedAt completedAt steps(first: 100) { totalCount nodes { status } } }
+        ... on CheckRun { id databaseId name status conclusion detailsUrl startedAt completedAt }
         ... on StatusContext { context state targetUrl } } } } } } }
       reviews(last: 50) { nodes { databaseId author { __typename login } state body url } }
       reviewThreads(last: 100) { nodes { id isResolved path line comments(last: 20) { nodes { databaseId author { __typename login } body url } } } }
@@ -477,6 +543,7 @@ const FEEDBACK_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
 }`;
 
 type GhAuthor = { __typename?: string; login?: string } | null;
+type GhSteps = { totalCount?: number; nodes?: Array<{ status?: string }> };
 interface GhPull {
   state: string;
   headRefOid: string;
@@ -504,10 +571,9 @@ function checkState(node: Record<string, unknown>): FeedbackCheck["state"] {
 const timeOf = (value: unknown) => (typeof value === "string" && !Number.isNaN(Date.parse(value)) ? Date.parse(value) : null);
 
 /** When and how far a check run got. A commit status says only pending, so Loom counts it as running and gets no times. */
-function checkTiming(node: Record<string, unknown>): Pick<FeedbackCheck, "started" | "startedAt" | "completedAt" | "steps"> {
+function checkTiming(node: Record<string, unknown>, steps: GhSteps | undefined): Pick<FeedbackCheck, "started" | "startedAt" | "completedAt" | "steps"> {
   if (node.__typename === "StatusContext") return { started: null, startedAt: null, completedAt: null, steps: null };
   const status = String(node.status);
-  const steps = node.steps as { totalCount?: number; nodes?: Array<{ status?: string }> } | null | undefined;
   const total = steps?.totalCount ?? 0;
   return {
     started: status === "IN_PROGRESS" || status === "COMPLETED",
@@ -518,14 +584,14 @@ function checkTiming(node: Record<string, unknown>): Pick<FeedbackCheck, "starte
 }
 
 // Keys change when what the worker should read changes: a rerun check, an edited review or comment, a new reply in a thread.
-function ghFeedback(pull: GhPull): Feedback {
+function ghFeedback(pull: GhPull, steps: ReadonlyMap<string, GhSteps>): Feedback {
   const head = pull.headRefOid;
-  const contexts = pull.commits.nodes[0]?.commit.statusCheckRollup?.contexts.nodes ?? [];
-  const checks = contexts.map((node): FeedbackCheck => {
+  const checks = contextsOf(pull).map((node): FeedbackCheck => {
     const status = node.__typename === "StatusContext";
     const name = String(status ? node.context : node.name);
     const state = checkState(node);
-    return { key: status ? `status:${name}:${String(node.state)}:${head}` : `check:${String(node.databaseId)}`, name, state, url: (status ? (node.targetUrl as string | null) : (node.detailsUrl as string | null)) ?? null, ...checkTiming(node) };
+    const timing = checkTiming(node, typeof node.id === "string" ? steps.get(node.id) : undefined);
+    return { key: status ? `status:${name}:${String(node.state)}:${head}` : `check:${String(node.databaseId)}`, name, state, url: (status ? (node.targetUrl as string | null) : (node.detailsUrl as string | null)) ?? null, ...timing };
   });
   const items: FeedbackItem[] = [];
   for (const review of pull.reviews.nodes) {
@@ -543,6 +609,33 @@ function ghFeedback(pull: GhPull): Feedback {
   }
   const state = pull.state === "MERGED" || pull.state === "CLOSED" ? pull.state : "OPEN";
   return { outcome: "ok", state, head, author: loginOf(pull.author), checks, items };
+}
+
+const contextsOf = (pull: GhPull) => pull.commits.nodes[0]?.commit.statusCheckRollup?.contexts.nodes ?? [];
+
+const STEPS_RUNS_MAX = 20;
+const NODE_ID = /^[A-Za-z0-9_=+/-]{1,200}$/u;
+
+/**
+ * The steps of the check runs in progress, by node id. check-wait reads steps only to tell how far a running check got
+ * while a failed check waits for it, so they are asked for only then, for at most STEPS_RUNS_MAX runs, in a second small
+ * query: asking for every run's steps made the main query slow enough to time out at GitHub. A failed answer leaves the
+ * steps out and the read stands; it is not asked again.
+ */
+async function runningSteps(repo: string, host: string, pull: GhPull, signal?: AbortSignal): Promise<Map<string, GhSteps>> {
+  const nodes = contextsOf(pull);
+  if (!nodes.some((node) => checkState(node) === "failed")) return new Map();
+  const ids = nodes
+    .filter((node) => node.__typename === "CheckRun" && node.status === "IN_PROGRESS" && typeof node.id === "string" && NODE_ID.test(node.id))
+    .map((node) => node.id as string)
+    .slice(0, STEPS_RUNS_MAX);
+  if (ids.length === 0) return new Map();
+  // The ids are checked against NODE_ID, so JSON's quoting is GraphQL's too; inline, they need no gh array syntax.
+  const query = `query { nodes(ids: ${JSON.stringify(ids)}) { ... on CheckRun { id steps(first: 100) { totalCount nodes { status } } } } }`;
+  const asked = await ghRead(repo, ["api", "graphql", "--hostname", host, "-f", `query=${query}`], signal).catch(() => null);
+  if (asked === null || asked === "missing" || asked.code !== 0) return new Map();
+  const found = parseJson<{ data?: { nodes?: Array<{ id?: unknown; steps?: GhSteps | null } | null> } }>(asked.stdout)?.data?.nodes ?? [];
+  return new Map(found.flatMap((node): Array<[string, GhSteps]> => (node != null && typeof node.id === "string" && node.steps != null ? [[node.id, node.steps]] : [])));
 }
 
 const PULL_URL = /^https?:\/\/([^/\s]+)\/([^/\s]+)\/([^/\s]+)\/pull\/(\d+)/u;
@@ -621,12 +714,12 @@ export async function prFeedback(input: HostInput<"prFeedback">, signal?: AbortS
   const match = PULL_URL.exec(input.url);
   if (match === null) return { outcome: "unavailable", message: `${input.url} is not a GitHub pull request URL.` };
   const [, host, owner, name, number] = match;
-  const asked = await gh(input.repo, ["api", "graphql", "--hostname", host!, "-f", `owner=${owner}`, "-f", `name=${name}`, "-F", `number=${number}`, "-f", `query=${FEEDBACK_QUERY}`], { signal });
+  const asked = await ghRead(input.repo, ["api", "graphql", "--hostname", host!, "-f", `owner=${owner}`, "-f", `name=${name}`, "-F", `number=${number}`, "-f", `query=${FEEDBACK_QUERY}`], signal);
   if (asked === "missing") return { outcome: "unavailable", message: GH_MISSING };
-  if (asked.code !== 0) return { outcome: "unavailable", message: ghFailed("gh api graphql", asked) };
+  if (asked.code !== 0) return readFailed("gh api graphql", asked);
   const pull = parseJson<{ data?: { repository?: { pullRequest?: GhPull | null } | null } }>(asked.stdout)?.data?.repository?.pullRequest;
   if (pull == null) return { outcome: "unavailable", message: `gh found no pull request at ${input.url}: ${tail(asked.stdout, 300)}` };
-  return ghFeedback(pull);
+  return ghFeedback(pull, await runningSteps(input.repo, host!, pull, signal));
 }
 
 // GitHub re-requests a review from someone who already reviewed when they are requested again, as its Re-request button does.

@@ -167,4 +167,6 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE records ADD COLUMN retry_at INTEGER`,
   // The ticket's merge patch over its repo's environment inputs; null for none.
   `ALTER TABLE tickets ADD COLUMN environment_json TEXT`,
+  // PollWait: the ticket's pull request reads failed with GitHub server errors in a row; null once a read succeeds.
+  `ALTER TABLE tickets ADD COLUMN pr_poll_json TEXT`,
 ];

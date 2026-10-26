@@ -4,7 +4,7 @@ import { finishIfComplete, holdMerge, land, mergeTicket, pollPullRequests, runMe
 import { readyTickets, toLite } from "../src/scheduler";
 import type { HostOutput } from "../src/host-contract";
 import { blockTicket, endThread, requeueTicket, specOf } from "../src/workers";
-import { makeCtx, reachApproved, seedProject, seedRepoProject, startWorker, ticketOf, withDocsTicket, type Doc, type EngineHarness } from "./helpers";
+import { makeCtx, reachApproved, seedProject, seedRepoProject, specToml, startWorker, ticketOf, withDocsTicket, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;
 
@@ -708,15 +708,169 @@ describe("the pull request strategy", () => {
     });
   });
 
-  it("pauses the project when gh cannot be reached while polling, and tries again in 5 minutes", async () => {
+  it("pauses the project when gh fails to read the pull request for a reason waiting does not fix, and tries again in 5 minutes", async () => {
     await seedProject(h, pr());
     await reachApproved(h);
     await queue();
-    h.host.scripted.prState = [{ outcome: "unavailable", message: "gh pr view failed: HTTP 502" }];
+    h.host.scripted.prState = [{ outcome: "unavailable", message: "gh pr view failed: HTTP 401: Bad credentials" }];
     h.clock.advance(5 * 60_000);
     await pollPullRequests(h.ctx, project());
-    expect(project()).toMatchObject({ state: "paused", system_reason: "gh pr view failed: HTTP 502" });
-    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "pr_open", pr_checked_at: h.clock.t });
+    expect(project()).toMatchObject({ state: "paused", system_reason: "gh pr view failed: HTTP 401: Bad credentials" });
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "pr_open", pr_checked_at: h.clock.t, pr_poll_json: null });
+    expect(h.host.callsTo("prState")).toHaveLength(1);
+  });
+
+  describe("when GitHub fails to answer a read", () => {
+    const BAD_GATEWAY = { outcome: "unavailable", message: "gh pr view failed: gh: HTTP 502", transient: "server" } as const;
+    const RATE_LIMITED = { outcome: "unavailable", message: "gh pr view failed: GraphQL: API rate limit exceeded for user ID 1234567.", transient: "rate_limit" } as const;
+    const MINUTE = 60_000;
+    const reads = () => h.host.callsTo("prState").map((input) => input.url);
+    const pollIn = async (minutes: number, of = project()) => {
+      h.clock.advance(minutes * MINUTE);
+      await pollPullRequests(h.ctx, of);
+    };
+    const waitOf = (key = "CSV-1") => JSON.parse(ticketOf(h, key).pr_poll_json ?? "null") as { failures: number; since: number; message: string } | null;
+    const systemPosts = (key = "CSV-1") => posts(key).filter((post) => post.kind === "system").map((post) => post.body);
+    const openOne = async () => {
+      await seedProject(h, pr());
+      await reachApproved(h);
+      await queue();
+    };
+    /** CSV-1's pull request is /pull/2 and CSV-2's /pull/1, both on github.com. */
+    const openTwo = async () => {
+      await seedRepoProject(h, pr());
+      await reachApproved(h, "CSV-2");
+      await queue();
+      await reachApproved(h, "CSV-1");
+      await queue();
+    };
+    /** Another running project on the same forge host, with one open pull request that is due. */
+    const otherProject = async () => {
+      h.bb.addThread("thr_plan2", "idle");
+      const toml = specToml((doc) => {
+        doc.project = { slug: "inv", name: "Invoices", key: "INV", goal: "Send each customer an invoice by email." };
+        pr()(doc);
+      });
+      await h.projects.propose({ toml, threadId: "thr_plan2", bbProjectId: "proj_1", hostId: "host_1" });
+      await h.projects.approve("inv", "human");
+      const other = h.store.projectBySlug("inv")!;
+      h.store.setProjectState(other.id, "running", "human");
+      h.store.updateTicket(ticketOf(h, "INV-1").id, { state: "pr_open", pr_url: "https://github.com/acme/billing/pull/9", pr_checked_at: null });
+      return () => h.store.projectBySlug("inv")!;
+    };
+
+    it("does not pause on a server error: each failure makes the next read wait longer, 5, 10, 20, then 30 minutes", async () => {
+      await openOne();
+      h.host.scripted.prState = Array.from({ length: 4 }, () => BAD_GATEWAY);
+      await pollIn(5);
+      const first = h.clock.t;
+      expect(project().state).toBe("running");
+      expect(waitOf()).toEqual({ failures: 1, since: first, message: BAD_GATEWAY.message });
+      expect(systemPosts()).toEqual([
+        "Reading the pull request failed with what looks like a temporary GitHub error: gh pr view failed: gh: HTTP 502. Loom reads it again in 5m, waiting longer after each failure up to 30m, and pauses the project only if the reads keep failing for 1h.",
+      ]);
+
+      const expected: Array<[number, number]> = [
+        [4, 1],
+        [1, 2],
+        [9, 2],
+        [1, 3],
+        [19, 3],
+        [1, 4],
+        [29, 4],
+      ];
+      for (const [minutes, count] of expected) {
+        await pollIn(minutes);
+        expect(reads(), `after ${minutes} more minutes`).toHaveLength(count);
+      }
+      expect(project().state).toBe("running");
+      expect(waitOf()).toMatchObject({ failures: 4, since: first });
+      expect(systemPosts()).toHaveLength(1);
+      expect(h.bb.calls.filter((call) => call.method === "log" && String(call.args[1]).includes("failed 4 times in a row"))).toHaveLength(1);
+    });
+
+    it("pauses the project once the reads have failed for an hour, naming the pull request, the error and how long", async () => {
+      await openOne();
+      h.host.scripted.prState = Array.from({ length: 5 }, () => BAD_GATEWAY);
+      for (const minutes of [5, 5, 10, 20, 30]) await pollIn(minutes);
+      expect(reads()).toHaveLength(5);
+      expect(project()).toMatchObject({
+        state: "paused",
+        system_reason: "Reading the pull request https://github.com/acme/shop/pull/1 of CSV-1 failed 5 times in a row over 1h 5m: gh pr view failed: gh: HTTP 502. Resume once GitHub answers again.",
+        triage_pending: 1,
+      });
+      expect(ticketOf(h, "CSV-1").state).toBe("pr_open");
+    });
+
+    it("clears the wait on the next read that succeeds, so the one after comes 5 minutes later and a new failure starts over", async () => {
+      await openOne();
+      h.host.scripted.prState = [BAD_GATEWAY, BAD_GATEWAY];
+      await pollIn(5);
+      await pollIn(5);
+      await pollIn(10);
+      expect(reads()).toHaveLength(3);
+      expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "pr_open", pr_poll_json: null });
+      await pollIn(5);
+      expect(reads()).toHaveLength(4);
+
+      h.host.scripted.prState = [BAD_GATEWAY];
+      await pollIn(5);
+      expect(waitOf()).toEqual({ failures: 1, since: h.clock.t, message: BAD_GATEWAY.message });
+      expect(systemPosts()).toHaveLength(2);
+    });
+
+    it("stops every read to the host for the rest of the poll and 15 minutes after a rate limit, in every project, without pausing", async () => {
+      await openTwo();
+      const other = await otherProject();
+      h.host.scripted.prState = [RATE_LIMITED];
+      await pollIn(5);
+      expect(reads()).toEqual(["https://github.com/acme/shop/pull/2"]);
+      expect(project().state).toBe("running");
+      expect(h.ctx.forgeBackoffs.get("github.com")).toEqual({ until: h.clock.t + 15 * MINUTE, delayMs: 15 * MINUTE, message: RATE_LIMITED.message });
+      expect(systemPosts("CSV-1")).toEqual([
+        "GitHub rate-limited Loom's read of the pull request: gh pr view failed: GraphQL: API rate limit exceeded for user ID 1234567. Loom reads no pull request on github.com, in any project, for 15m, and does not pause the project.",
+      ]);
+      expect(systemPosts("CSV-2")).toEqual([]);
+      expect(ticketOf(h, "CSV-2").pr_checked_at).toBe(ticketOf(h, "CSV-1").pr_checked_at! - 5 * MINUTE);
+
+      await pollPullRequests(h.ctx, other());
+      await pollIn(5);
+      await pollIn(5, other());
+      await pollIn(4);
+      expect(reads()).toHaveLength(1);
+      expect(other().state).toBe("running");
+
+      await pollIn(1);
+      expect(reads()).toEqual(["https://github.com/acme/shop/pull/2", "https://github.com/acme/shop/pull/2", "https://github.com/acme/shop/pull/1"]);
+      expect(h.ctx.forgeBackoffs.has("github.com")).toBe(false);
+      await pollPullRequests(h.ctx, other());
+      expect(reads().at(-1)).toBe("https://github.com/acme/billing/pull/9");
+      expect(systemPosts("CSV-1")).toHaveLength(1);
+    });
+
+    it("doubles the backoff to at most an hour while the limits go on, and waits until the time GitHub names", async () => {
+      await openOne();
+      h.host.scripted.prState = [RATE_LIMITED, RATE_LIMITED, RATE_LIMITED, RATE_LIMITED];
+      const delays: number[] = [];
+      for (const minutes of [5, 15, 30, 60]) {
+        await pollIn(minutes);
+        delays.push(h.ctx.forgeBackoffs.get("github.com")!.delayMs / MINUTE);
+      }
+      expect(delays).toEqual([15, 30, 60, 60]);
+      expect(reads()).toHaveLength(4);
+      expect(project().state).toBe("running");
+      expect(systemPosts()).toHaveLength(4);
+
+      await pollIn(60);
+      expect(h.ctx.forgeBackoffs.has("github.com")).toBe(false);
+      h.host.scripted.prState = [{ ...RATE_LIMITED, retryAfterMs: 40 * MINUTE }];
+      await pollIn(5);
+      expect(h.ctx.forgeBackoffs.get("github.com")).toMatchObject({ until: h.clock.t + 40 * MINUTE, delayMs: 15 * MINUTE });
+      await pollIn(39);
+      expect(reads()).toHaveLength(6);
+      await pollIn(1);
+      expect(reads()).toHaveLength(7);
+    });
   });
 
   it("polls a paused project too", async () => {

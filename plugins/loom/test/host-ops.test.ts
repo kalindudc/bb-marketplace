@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import hostEntry from "../host";
-import { changedFiles, commitAll, diff, ensureBranch, ensureWorktree, exec, fetchBranch, filePatch, ghStatus, git, landedOn, merge, parseRemoteUrl, prCommit, prCreate, prFeedback, prRequestReview, prState, push, remotes, resetHard, stackBase, trialWorktree, worktreeState } from "../src/host/ops";
+import { changedFiles, commitAll, diff, ensureBranch, ensureWorktree, exec, fetchBranch, filePatch, ghStatus, ghTransient, git, landedOn, merge, parseRemoteUrl, prCommit, prCreate, prFeedback, prRequestReview, prState, push, remotes, resetHard, stackBase, trialWorktree, worktreeState } from "../src/host/ops";
 
 const ENV: Record<string, string> = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
 const AUTHOR_VARS = ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"];
@@ -717,6 +717,18 @@ describe("gh", () => {
     expect(await prState({ repo, url: "https://github.com/acme/shop/pull/9", forge: GH })).toMatchObject({ outcome: "unavailable" });
   });
 
+  it("marks gh pr view's server errors and rate limits as transient, and runs it once", async () => {
+    const repo = makeRepo();
+    fakeGh(`echo "HTTP 503: Service Unavailable (https://api.github.com/graphql)" 1>&2\nexit 1`);
+    expect(await prState({ repo, url: "https://github.com/acme/shop/pull/7", forge: GH })).toEqual({ outcome: "unavailable", message: "gh pr view failed: HTTP 503: Service Unavailable (https://api.github.com/graphql)", transient: "server" });
+    expect(calls()).toHaveLength(1);
+    fakeGh(`echo "GraphQL: API rate limit exceeded for user ID 1234567." 1>&2\nexit 1`);
+    expect(await prState({ repo, url: "https://github.com/acme/shop/pull/7", forge: GH })).toMatchObject({ outcome: "unavailable", transient: "rate_limit" });
+    expect(calls()).toHaveLength(2);
+    fakeGh(`echo "HTTP 401: Bad credentials (https://api.github.com/graphql)" 1>&2\nexit 1`);
+    expect(await prState({ repo, url: "https://github.com/acme/shop/pull/7", forge: GH })).not.toHaveProperty("transient");
+  });
+
   it("asks each reviewer for a review in its own REST call, the login in the JSON on stdin, and reports the ones GitHub refused", async () => {
     fakeGh(`body=$(cat)\necho "$body" >> "$dir/stdin.txt"\ncase "$body" in *carol*) echo "gh: Reviews may only be requested from collaborators. (HTTP 422)" 1>&2; exit 1;; esac`);
     const repo = makeRepo();
@@ -728,6 +740,69 @@ describe("gh", () => {
 
     expect(await prRequestReview({ repo, url: "https://review.example.com/shop/42", reviewers: ["alice"] })).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("not a GitHub pull request URL") });
     expect(calls()).toHaveLength(2);
+  });
+});
+
+describe("ghTransient", () => {
+  const failed = (stderr: string, stdout = "", code = 1) => ghTransient({ code, stdout, stderr });
+
+  it.each([
+    "gh: HTTP 500",
+    "gh: HTTP 502",
+    "gh: HTTP 503",
+    "gh: HTTP 504",
+    "HTTP 502: Bad Gateway (https://api.github.com/graphql)",
+    "gh: Server Error",
+    "gh: Something went wrong while executing your query. This may be the result of a timeout, or it could be a GitHub bug. Please include `C2D4:1F2A:3B4C5D:6E7F80:6720A1B2` when reporting this issue.",
+    'Post "https://api.github.com/graphql": read tcp 192.168.1.20:52144->140.82.112.6:443: read: connection reset by peer',
+    'Post "https://api.github.com/graphql": dial tcp 140.82.112.6:443: connect: connection refused',
+    'Post "https://api.github.com/graphql": net/http: TLS handshake timeout',
+    'Post "https://api.github.com/graphql": unexpected EOF',
+    'Post "https://api.github.com/graphql": context deadline exceeded (Client.Timeout exceeded while awaiting headers)',
+    "gh timed out after 2 minutes",
+  ])("is a server error: %s", (stderr) => {
+    expect(failed(`${stderr}\n`)).toEqual({ transient: "server" });
+  });
+
+  it("reads a server error from a JSON body when stderr has none", () => {
+    expect(failed("", '{"message":"Server Error"}')).toEqual({ transient: "server" });
+    expect(failed("", "<html><head><title>502 Bad Gateway</title></head></html>")).toEqual({ transient: "server" });
+  });
+
+  it.each([
+    ["gh: You have exceeded a secondary rate limit. Please wait a few minutes before you try again. If you reach out to GitHub Support for help, please include the request ID C2D4:1F2A:3B4C5D.", '{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again.","documentation_url":"https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits"}'],
+    ["gh: API rate limit exceeded for user ID 1234567.", '{"data":null,"errors":[{"type":"RATE_LIMITED","message":"API rate limit exceeded for user ID 1234567."}]}'],
+    ["HTTP 403: API rate limit exceeded for user ID 1234567. (https://api.github.com/repos/acme/shop/pulls/7)", ""],
+    ["gh: You have triggered an abuse detection mechanism. Please wait a few minutes before you try again. (HTTP 403)", ""],
+    ["gh: HTTP 429: Too Many Requests", ""],
+  ])("is a rate limit: %s", (stderr, stdout) => {
+    expect(failed(`${stderr}\n`, stdout)).toEqual({ transient: "rate_limit" });
+  });
+
+  it("keeps the time GitHub names for a rate limit", () => {
+    expect(failed("gh: HTTP 429: Too Many Requests\nRetry-After: 120\n")).toEqual({ transient: "rate_limit", retryAfterMs: 120_000 });
+    expect(failed("gh: You have exceeded a secondary rate limit. Try again in 3 minutes.\n")).toEqual({ transient: "rate_limit", retryAfterMs: 180_000 });
+    const reset = Math.floor(Date.now() / 1000) + 600;
+    const wait = failed(`gh: API rate limit exceeded for user ID 1. x-ratelimit-reset: ${reset}\n`)?.retryAfterMs ?? 0;
+    expect(wait).toBeGreaterThan(590_000);
+    expect(wait).toBeLessThanOrEqual(600_000);
+  });
+
+  it.each([
+    ["gh: HTTP 401: Bad credentials (https://api.github.com/graphql)", "", 1],
+    ["To get started with GitHub CLI, please run:  gh auth login\nAlternatively, populate the GH_TOKEN environment variable with a GitHub API authentication token.", "", 4],
+    ["gh: Could not resolve to a PullRequest with the number of 9.", '{"data":{"repository":{"pullRequest":null}},"errors":[{"type":"NOT_FOUND","message":"Could not resolve to a PullRequest with the number of 9."}]}', 1],
+    ["gh: HTTP 404: Not Found (https://api.github.com/repos/acme/shop/pulls/9)", "", 1],
+    ["gh: HTTP 403: Resource not accessible by integration", "", 1],
+    ["gh: HTTP 501", "", 1],
+    ["gh: HTTP 401: Bad credentials, which no timeout fixes", "", 1],
+  ] as const)("is not transient: %s", (stderr, stdout, code) => {
+    expect(failed(`${stderr}\n`, stdout, code)).toBeNull();
+  });
+
+  it("reads only the error fields of a JSON body, not the pull request text it carries", () => {
+    const body = JSON.stringify({ data: { repository: { pullRequest: { comments: { nodes: [{ body: "CI failed with HTTP 502 and a rate limit, something went wrong" }] } } } }, errors: [{ type: "FORBIDDEN", message: "Resource not accessible by integration" }] });
+    expect(failed("gh: Resource not accessible by integration\n", body)).toBeNull();
   });
 });
 
@@ -1158,11 +1233,27 @@ describe("prFeedback", () => {
     afterAll(() => {
       process.env.PATH = savedPath;
     });
-    const fakeGh = (json: unknown) => {
+    // The main query answers with `json`; the steps query (nodes by id) answers with `steps`, or fails as GitHub's 502 does.
+    const fakeGh = (json: unknown, steps: unknown = { data: { nodes: [] } }) => {
       writeFileSync(join(bin, "response.json"), JSON.stringify(json));
-      writeFileSync(join(bin, "gh"), `#!/bin/sh\nprintf '%s\\n' "$@" > "${bin}/args.txt"\ncat "${bin}/response.json"\n`);
+      writeFileSync(join(bin, "steps.json"), JSON.stringify(steps));
+      const answerSteps = steps === "fail" ? `echo "gh: HTTP 502" >&2; exit 1` : `cat "${bin}/steps.json"`;
+      writeFileSync(join(bin, "gh"), `#!/bin/sh\nprintf '%s\\n' "$@" >> "${bin}/args.txt"\nprintf -- '--\\n' >> "${bin}/args.txt"\ncase "$*" in *"nodes(ids:"*) ${answerSteps};; *) cat "${bin}/response.json";; esac\n`);
       chmodSync(join(bin, "gh"), 0o755);
     };
+    const calls = (): string[][] =>
+      existsSync(join(bin, "args.txt"))
+        ? readFileSync(join(bin, "args.txt"), "utf8")
+            .split("--\n")
+            .filter((chunk) => chunk !== "")
+            .map((chunk) => chunk.trimEnd().split("\n"))
+        : [];
+    // The query is the last argument, and args.txt has one line per line of it.
+    const queryOf = (call: string[]) => call.slice(call.findIndex((arg) => arg.startsWith("query="))).join("\n");
+    const pullWith = (contexts: Array<Record<string, unknown>>) => ({
+      data: { repository: { pullRequest: { state: "OPEN", headRefOid: "f00d", author: user("me"), commits: { nodes: [{ commit: { statusCheckRollup: { contexts: { nodes: contexts } } } }] }, reviews: { nodes: [] }, reviewThreads: { nodes: [] }, comments: { nodes: [] } } } },
+    });
+    const run = (id: number, status: string, conclusion: string | null = null) => ({ __typename: "CheckRun", id: `CR_${id}`, databaseId: id, name: `job-${id}`, status, conclusion, detailsUrl: null, startedAt: "2026-10-24T10:00:00Z", completedAt: null });
     const user = (login: string) => ({ __typename: "User", login });
     const bot = (login: string) => ({ __typename: "Bot", login });
 
@@ -1175,11 +1266,11 @@ describe("prFeedback", () => {
               headRefOid: "f00d",
               author: user("me"),
               commits: { nodes: [{ commit: { statusCheckRollup: { contexts: { nodes: [
-                { __typename: "CheckRun", databaseId: 11, name: "lint", status: "COMPLETED", conclusion: "FAILURE", detailsUrl: "https://ci/11", startedAt: "2026-10-24T10:00:00Z", completedAt: "2026-10-24T10:01:00Z", steps: { totalCount: 0, nodes: [] } },
-                { __typename: "CheckRun", databaseId: 12, name: "deploy", status: "COMPLETED", conclusion: "SKIPPED", detailsUrl: null },
-                { __typename: "CheckRun", databaseId: 13, name: "test", status: "IN_PROGRESS", conclusion: null, detailsUrl: null, startedAt: "2026-10-24T10:00:00Z", completedAt: null, steps: { totalCount: 4, nodes: [{ status: "COMPLETED" }, { status: "COMPLETED" }, { status: "IN_PROGRESS" }, { status: "QUEUED" }] } },
+                { __typename: "CheckRun", id: "CR_11", databaseId: 11, name: "lint", status: "COMPLETED", conclusion: "FAILURE", detailsUrl: "https://ci/11", startedAt: "2026-10-24T10:00:00Z", completedAt: "2026-10-24T10:01:00Z" },
+                { __typename: "CheckRun", id: "CR_12", databaseId: 12, name: "deploy", status: "COMPLETED", conclusion: "SKIPPED", detailsUrl: null },
+                { __typename: "CheckRun", id: "CR_13", databaseId: 13, name: "test", status: "IN_PROGRESS", conclusion: null, detailsUrl: null, startedAt: "2026-10-24T10:00:00Z", completedAt: null },
                 { __typename: "StatusContext", context: "reviews", state: "PENDING", targetUrl: null },
-                { __typename: "CheckRun", databaseId: 14, name: "e2e", status: "QUEUED", conclusion: null, detailsUrl: null, startedAt: null, completedAt: null },
+                { __typename: "CheckRun", id: "CR_14", databaseId: 14, name: "e2e", status: "QUEUED", conclusion: null, detailsUrl: null, startedAt: null, completedAt: null },
               ] } } } }] },
               reviews: { nodes: [{ databaseId: 21, author: user("alice"), state: "CHANGES_REQUESTED", body: "Please rename.", url: "https://gh/r21" }] },
               reviewThreads: { nodes: [
@@ -1190,9 +1281,9 @@ describe("prFeedback", () => {
             },
           },
         },
-      });
+      }, { data: { nodes: [{ id: "CR_13", steps: { totalCount: 4, nodes: [{ status: "COMPLETED" }, { status: "COMPLETED" }, { status: "IN_PROGRESS" }, { status: "QUEUED" }] } }] } });
       const result = await prFeedback({ repo: makeRepo(), url: "https://github.com/acme/shop/pull/76810", forge: GH });
-      const args = readFileSync(join(bin, "args.txt"), "utf8").split("\n");
+      const [args, stepsCall] = calls() as [string[], string[]];
       expect(args.slice(0, 4)).toEqual(["api", "graphql", "--hostname", "github.com"]);
       expect(args).toEqual(expect.arrayContaining(["owner=acme", "name=shop", "number=76810"]));
       expect(result).toMatchObject({ outcome: "ok", state: "OPEN", head: "f00d", author: "me" });
@@ -1212,13 +1303,56 @@ describe("prFeedback", () => {
         { started: null, startedAt: null, completedAt: null, steps: null },
         { started: false, startedAt: null, completedAt: null, steps: null },
       ]);
-      expect(args.join("\n")).toContain("startedAt completedAt steps(first: 100)");
+      expect(queryOf(args)).toContain("... on CheckRun { id databaseId name status conclusion detailsUrl startedAt completedAt }");
+      expect(queryOf(args)).not.toContain("steps");
+      expect(stepsCall.slice(0, 4)).toEqual(["api", "graphql", "--hostname", "github.com"]);
+      expect(queryOf(stepsCall)).toBe('query=query { nodes(ids: ["CR_13"]) { ... on CheckRun { id steps(first: 100) { totalCount nodes { status } } } } }');
+      expect(calls()).toHaveLength(2);
       expect(ok.items.map((item) => [item.kind, item.author, item.bot])).toEqual([
         ["review", "alice", false],
         ["thread", "me", false],
         ["comment", "terraform-actuator", true],
       ]);
       expect(ok.items[1]).toMatchObject({ key: expect.stringMatching(/^thread:T1:32:[0-9a-f]{12}$/u), path: "a.ts", line: 4, body: "binks: Unanchored regex.\n\nme: Will fix." });
+    });
+
+    it("asks for steps only while a check failed and runs are in progress, and for at most 20 runs", async () => {
+      const running = Array.from({ length: 25 }, (_, index) => run(100 + index, "IN_PROGRESS"));
+      fakeGh(pullWith([...running, run(1, "QUEUED")]));
+      expect(await prFeedback({ repo: makeRepo(), url: "https://github.com/acme/shop/pull/7", forge: GH })).toMatchObject({ outcome: "ok" });
+      expect(calls()).toHaveLength(1);
+
+      fakeGh(pullWith([run(2, "COMPLETED", "FAILURE"), run(3, "COMPLETED", "SUCCESS"), run(1, "QUEUED")]));
+      await prFeedback({ repo: makeRepo(), url: "https://github.com/acme/shop/pull/7", forge: GH });
+      expect(calls()).toHaveLength(2);
+
+      fakeGh(pullWith([run(2, "COMPLETED", "FAILURE"), run(1, "QUEUED"), ...running]));
+      await prFeedback({ repo: makeRepo(), url: "https://github.com/acme/shop/pull/7", forge: GH });
+      expect(calls()).toHaveLength(4);
+      const ids = JSON.parse(/nodes\(ids: (\[[^\]]*\])\)/u.exec(queryOf(calls()[3]!))![1]!) as string[];
+      expect(ids).toEqual(running.slice(0, 20).map((node) => node.id));
+    });
+
+    it("returns the feedback without steps when the steps query fails, and asks it only once", async () => {
+      fakeGh(pullWith([run(2, "COMPLETED", "FAILURE"), run(5, "IN_PROGRESS")]), "fail");
+      const result = await prFeedback({ repo: makeRepo(), url: "https://github.com/acme/shop/pull/7", forge: GH });
+      expect(result).toMatchObject({ outcome: "ok", checks: [{ key: "check:2", state: "failed", steps: null }, { key: "check:5", state: "pending", started: true, steps: null }] });
+      expect(calls()).toHaveLength(2);
+    });
+
+    it("marks a GitHub server error or rate limit as transient, and asks once", async () => {
+      writeFileSync(join(bin, "gh"), `#!/bin/sh\nprintf -- '--\\n' >> "${bin}/args.txt"\necho "gh: HTTP 502" >&2\nexit 1\n`);
+      chmodSync(join(bin, "gh"), 0o755);
+      expect(await prFeedback({ repo: makeRepo(), url: "https://github.com/acme/shop/pull/7", forge: GH })).toEqual({ outcome: "unavailable", message: "gh api graphql failed: gh: HTTP 502", transient: "server" });
+      expect(readFileSync(join(bin, "args.txt"), "utf8")).toBe("--\n");
+
+      const limited = '{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again.","documentation_url":"https://docs.github.com/rest/overview/rate-limits-for-the-rest-api"}';
+      writeFileSync(join(bin, "gh"), `#!/bin/sh\nprintf -- '--\\n' >> "${bin}/args.txt"\necho '${limited}'\necho "gh: You have exceeded a secondary rate limit. Please wait a few minutes before you try again." >&2\nexit 1\n`);
+      expect(await prFeedback({ repo: makeRepo(), url: "https://github.com/acme/shop/pull/7", forge: GH })).toMatchObject({ outcome: "unavailable", transient: "rate_limit" });
+      expect(readFileSync(join(bin, "args.txt"), "utf8")).toBe("--\n--\n");
+
+      writeFileSync(join(bin, "gh"), `#!/bin/sh\necho "gh: Could not resolve to a PullRequest with the number of 7." >&2\nexit 1\n`);
+      expect(await prFeedback({ repo: makeRepo(), url: "https://github.com/acme/shop/pull/7", forge: GH })).toEqual({ outcome: "unavailable", message: "gh api graphql failed: gh: Could not resolve to a PullRequest with the number of 7." });
     });
 
     it("is unavailable for a URL that is not a GitHub pull request, and when gh finds none", async () => {

@@ -176,6 +176,22 @@ describe("following the pull request", () => {
     expect(ticket().state).toBe("pr_open");
   });
 
+  it("reads the feedback once per poll, falls back on no other read when GitHub fails it, and starts the fix round once a read succeeds", async () => {
+    await openPr();
+    h.host.feedback.set(URL, changesRequested);
+    h.host.scripted.prFeedback = [{ outcome: "unavailable", message: "gh api graphql failed: gh: HTTP 502", transient: "server" }];
+    await poll();
+    expect(h.host.callsTo("prFeedback")).toHaveLength(1);
+    expect(h.host.callsTo("prState")).toEqual([]);
+    expect(project().state).toBe("running");
+    expect(ticket()).toMatchObject({ state: "pr_open", pr_rounds: 0, pr_status_json: null });
+    expect(JSON.parse(ticket().pr_poll_json!)).toMatchObject({ failures: 1 });
+
+    await poll();
+    expect(h.host.callsTo("prFeedback")).toHaveLength(2);
+    expect(ticket()).toMatchObject({ state: "working", pr_rounds: 1, pr_poll_json: null });
+  });
+
   it("holds a failed check while others run, until 30 minutes after the push", async () => {
     await openPr();
     h.host.feedback.set(URL, { checks: [{ key: "check:1", name: "lint", state: "failed", url: "https://ci/1" }, { key: "status:reviews", name: "reviews", state: "pending", url: null }] });

@@ -2,6 +2,7 @@
 // and end any worker or reviewer thread in one place (endThread). Every state change goes through the store.
 import { randomBytes } from "node:crypto";
 import { repoCheckout, ticketRepo } from "./checkouts";
+import type { HostBackoffs } from "./forge-waits";
 import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { spawnEnvironment, threadBranch, ticketInputsOf } from "./environments";
 import { plural } from "./format";
@@ -18,6 +19,8 @@ import { HUMAN_ACTOR, LOOM_ACTOR, PAUSE_NOW_REASON, canMoveTicket, type AuthorKi
 export interface EngineCtx extends Ctx {
   host: HostPort;
   kick(): void;
+  /** Forge hosts that rate-limited Loom's pull request reads, for every project; in memory only. */
+  forgeBackoffs: HostBackoffs;
   /** How long a pull request's failed checks wait for the pending ones after a push; Loom's checksSettleMinutes setting. */
   checksSettleMs?: () => number;
   /** How long a queued check may hold the failed ones; Loom's checksQueuedMinutes setting, which the spec can override. */

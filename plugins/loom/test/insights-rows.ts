@@ -60,7 +60,7 @@ export class Rows {
 const TICKET: TicketRow = {
   id: 0, project_id: 1, seq: 0, key: "", ref: "", title: "", body: "", acceptance_json: "[]", verify_json: "[]", scope_json: "[]", deps_json: "[]", priority: 2, state: "queued", attempt: 0, failures: 0, check_failures: 0, review_round: 0,
   branch: null, environment_id: null, worker_thread_id: null, head_sha: null, merge_before: null, pr_url: null, pr_checked_at: null, blocked_reason: null, repo: null, pr_branch: null, pushed_sha: null, pushed_at: null, pr_ask_json: null, pr_text_json: null,
-  pr_seen_json: "[]", pr_rounds: 0, pr_status_json: null, pr_deliver_json: null, stack_json: null, pr_base: null, start_wait_json: null, environment_json: null, created_by: "human", created_at: T0, updated_at: T0, state_at: T0,
+  pr_seen_json: "[]", pr_rounds: 0, pr_status_json: null, pr_deliver_json: null, stack_json: null, pr_base: null, start_wait_json: null, environment_json: null, pr_poll_json: null, created_by: "human", created_at: T0, updated_at: T0, state_at: T0,
 };
 const PROJECT = { id: 1, slug: "csv", name: "CSV export", key: "CSV", bb_project_id: "proj_1", host_id: null, state: "draft", approved_version: 1, pending_version: null, section_id: null, planner_thread_id: null, system_reason: null, hold_until: null, triage_pending: 0, triage_round: 0, triage_sent_at: null, pr_url: null, created_at: T0, updated_at: T0 };
 

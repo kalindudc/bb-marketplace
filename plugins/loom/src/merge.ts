@@ -5,6 +5,7 @@ import { delivers, workerOf, type CheckRun } from "./checks";
 import { repoCheckout, type RepoCheckout } from "./checkouts";
 import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { plural } from "./format";
+import { backedOffUntil, backoffText, forgeHostOf, nextBackoff, nextPollAt, nextPollWait, pollWaitOf, pollWaitReason, pollWaitText, SERVER_ERROR_LIMIT_MS } from "./forge-waits";
 import { afterMergeChangedText, afterMergeFailedText, andList, clip, conflictText, dependsOnLines, landBody, prDivergedText, restackConflictText, restackFailedText, withRestoredNote, workerPrBody } from "./prompts";
 import { closedPrReset, followFeedback, inFixRound, prTextFor, prTextReady, reviewersToAsk, templatePr, type PrText } from "./pull-requests";
 import { prNumber, type HostInput, type HostOutput as HostOutputOf } from "./host-contract";
@@ -17,7 +18,6 @@ import { LOOM_ACTOR } from "./states";
 import { isWaking, restoredSinceSubmit } from "./release";
 import { applyMove, baseOf, endLiveRows, endThread, pauseProject, released, resolveEnvironment, specOf, toWorking, type EngineCtx } from "./workers";
 
-export const POLL_MS = 5 * 60_000;
 const AFTER_OPEN_MS = 5 * 60_000;
 const PROVISION_MS = 10 * 60_000;
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -449,7 +449,7 @@ async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
     if (pushed.outcome === "unavailable") throw new Unavailable(pushed.message);
   }
   const at = ctx.now();
-  const recorded: Partial<TicketRow> = { pr_branch: branch, pushed_sha: src, pushed_at: at, pr_checked_at: at, pr_status_json: null };
+  const recorded: Partial<TicketRow> = { pr_branch: branch, pushed_sha: src, pushed_at: at, pr_checked_at: at, pr_status_json: null, pr_poll_json: null };
   const commits = prSettings(spec).squash ? ` as 1 commit (${src.slice(0, 12)})` : "";
   const prBase = stacking(spec) ? prBaseOf(store.tickets(project.id), current, base) : base;
 
@@ -671,13 +671,18 @@ async function afterOpen(ctx: EngineCtx, a: { hostId: string; repo: string; sett
 
 // ---------------------------------------------------------------- pull requests
 
-/** Reads the state of every open pull request not read in the last 5 minutes: merged completes the ticket, closed blocks it. */
+/**
+ * Reads every open pull request whose next read is due, every 5 minutes unless it waits longer: merged completes the
+ * ticket, closed blocks it. Each due ticket gets one read, never repeated in the same poll. A GitHub server error or timeout
+ * makes that ticket wait longer and pauses the project only after an hour of them; a rate limit stops every read to that
+ * host, in this poll and every project's, for a while (forge-waits.ts). Any other failure pauses the project.
+ */
 export async function pollPullRequests(ctx: EngineCtx, project: ProjectRow): Promise<void> {
   const { store } = ctx;
   const spec = specOf(store, project);
   const forgeOf = (ticket: TicketRow) => repoSettings(spec, ticket.repo).forge;
   const follows = prSettings(spec).maxFixRounds > 0;
-  const due = store.tickets(project.id, ["pr_open"]).filter((ticket) => (ticket.pr_url !== null || forgeOf(ticket).kind === "none") && (ticket.pr_checked_at === null || ctx.now() - ticket.pr_checked_at >= POLL_MS));
+  const due = store.tickets(project.id, ["pr_open"]).filter((ticket) => (ticket.pr_url !== null || forgeOf(ticket).kind === "none") && (ticket.pr_checked_at === null || ctx.now() >= nextPollAt(ticket)!));
   if (due.length === 0) return;
   // Each repo's checkout is read once per poll; a repo without one pauses the project and leaves its pull requests for the next poll.
   const checkouts = new Map<string | null, RepoCheckout | null>();
@@ -696,6 +701,9 @@ export async function pollPullRequests(ctx: EngineCtx, project: ProjectRow): Pro
     if (ticket?.state !== "pr_open") continue;
     const forge = forgeOf(ticket);
     if (ticket.pr_url === null && forge.kind !== "none") continue;
+    // Left due, so it is read in the first poll after the backoff ends.
+    const host = forge.kind === "gh" ? forgeHostOf(ticket.pr_url) : null;
+    if (backedOffUntil(ctx.forgeBackoffs, host, ctx.now()) !== null) continue;
     const checkout = await checkoutOfRepo(ticket.repo);
     if (checkout === null) continue;
     store.updateTicket(ticket.id, { pr_checked_at: ctx.now() });
@@ -718,9 +726,13 @@ export async function pollPullRequests(ctx: EngineCtx, project: ProjectRow): Pro
       continue;
     }
     if (state.outcome === "unavailable") {
-      pauseProject(ctx, project.id, state.message);
+      if (state.transient === "rate_limit" && host !== null) backOff(ctx, ticket, host, state);
+      else if (state.transient === "server") waitOutServerError(ctx, ticket, state.message);
+      else pauseProject(ctx, project.id, state.message);
       continue;
     }
+    if (host !== null) ctx.forgeBackoffs.delete(host);
+    if (ticket.pr_poll_json !== null) store.updateTicket(ticket.id, { pr_poll_json: null });
     // The answer is about the pull request and attempt that were polled; the human may have blocked and requeued the ticket during the host call.
     const current = store.ticket(ticket.id);
     if (current?.state !== "pr_open" || current.pr_url !== ticket.pr_url || current.attempt !== ticket.attempt || current.pushed_sha !== ticket.pushed_sha) continue;
@@ -736,6 +748,34 @@ export async function pollPullRequests(ctx: EngineCtx, project: ProjectRow): Pro
     }
   }
   await endFinishedThreads(ctx, project.id);
+}
+
+function addWaitPost(ctx: EngineCtx, ticket: TicketRow, body: string, data: object): void {
+  ctx.store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "system", body, data_json: JSON.stringify(data) });
+}
+
+/** A read GitHub answered with a server error or that timed out: the ticket's next read waits longer, and an hour of them pauses the project. */
+function waitOutServerError(ctx: EngineCtx, ticket: TicketRow, message: string): void {
+  const { store } = ctx;
+  const now = ctx.now();
+  const previous = pollWaitOf(ticket);
+  const wait = nextPollWait(previous, { now, message });
+  store.tx(() => {
+    store.updateTicket(ticket.id, { pr_poll_json: JSON.stringify(wait) });
+    if (previous === null) addWaitPost(ctx, ticket, pollWaitText(wait), { prReadFailed: true, failures: wait.failures });
+  });
+  store.changed(ticket.project_id);
+  ctx.bb.log("warn", `Reading ${ticket.key}'s pull request failed ${plural(wait.failures, "time")} in a row: ${message}`);
+  if (now - wait.since >= SERVER_ERROR_LIMIT_MS) pauseProject(ctx, ticket.project_id, pollWaitReason(ticket, wait, now));
+}
+
+/** A read the forge host rate-limited: no read goes to that host, from any project, until the backoff ends. */
+function backOff(ctx: EngineCtx, ticket: TicketRow, host: string, failure: { message: string; retryAfterMs?: number }): void {
+  const now = ctx.now();
+  const backoff = nextBackoff(ctx.forgeBackoffs.get(host), { now, message: failure.message, retryAfterMs: failure.retryAfterMs });
+  ctx.forgeBackoffs.set(host, backoff);
+  addWaitPost(ctx, ticket, backoffText(host, backoff, now), { rateLimited: true, host, until: backoff.until });
+  ctx.bb.log("warn", `${host} rate-limited Loom's pull request reads, so none goes there until ${new Date(backoff.until).toISOString()}: ${failure.message}`);
 }
 
 /** On the pull request strategy, a running or paused project whose tickets are all done or cancelled is done. Integration projects finish in `land`. */

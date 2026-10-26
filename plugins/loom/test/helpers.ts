@@ -591,7 +591,7 @@ export function makeCtx(): EngineHarness {
   const host = new FakeHost();
   const projects = new Projects({ store, bb, now: clock.now, host });
   const kicks = { count: 0 };
-  const ctx: EngineCtx = { store, bb, now: clock.now, host, kick: () => void (kicks.count += 1) };
+  const ctx: EngineCtx = { store, bb, now: clock.now, host, kick: () => void (kicks.count += 1), forgeBackoffs: new Map() };
   return { ctx, clock, store, bb, host, projects, kicks };
 }
 

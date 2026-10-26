@@ -43,7 +43,7 @@ import {
 const TOKEN_REFRESH_MS = 60_000;
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-export type EngineDeps = Omit<EngineCtx, "kick" | "checksSettleMs"> & { projects: Projects; settings?: () => LoomSettings };
+export type EngineDeps = Omit<EngineCtx, "kick" | "checksSettleMs" | "forgeBackoffs"> & { projects: Projects; settings?: () => LoomSettings };
 
 export interface Approved extends ApproveResult {
   requeued: string[];
@@ -82,6 +82,7 @@ export class Engine {
       now: deps.now,
       host: deps.host,
       kick: () => this.kick(),
+      forgeBackoffs: new Map(),
       checksSettleMs: settleMs,
       checksQueuedMinutes: () => this.settings().checksQueuedMinutes ?? CHECKS_QUEUED_MINUTES,
       checksNearDonePercent: () => this.settings().checksNearDonePercent ?? CHECKS_NEAR_DONE_PERCENT,

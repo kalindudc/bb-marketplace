@@ -18,6 +18,11 @@ const worktreeKey = z.string().regex(/^[a-z][a-z0-9-]{1,39}(?:\.[a-z][a-z0-9-]{0
 const missing = z.object({ outcome: z.literal("missing"), message: z.string() }).strict();
 const forgeCommand = z.string().min(1).max(2000);
 const unavailable = z.object({ outcome: z.literal("unavailable"), message: z.string() }).strict();
+// A pull request read that failed. `transient` marks a GitHub failure worth waiting out instead of pausing: a server error or
+// timeout, or a rate limit; `retryAfterMs` is how long GitHub's answer said to wait, when it said. Optional, as from an older host.
+const readUnavailable = z
+  .object({ outcome: z.literal("unavailable"), message: z.string(), transient: z.enum(["server", "rate_limit"]).optional(), retryAfterMs: z.number().int().min(0).optional() })
+  .strict();
 
 /** A pull request's number as forge commands get it in LOOM_PR_NUMBER: the last run of digits in its URL, empty when there is none. */
 export function prNumber(url: string): string {
@@ -164,10 +169,7 @@ export const hostContract = defineRpcContract({
         forge: z.discriminatedUnion("kind", [z.object({ kind: z.literal("gh") }).strict(), z.object({ kind: z.literal("command"), state: forgeCommand }).strict()]),
       })
       .strict(),
-    output: z.discriminatedUnion("outcome", [
-      z.object({ outcome: z.literal("ok"), state: z.enum(["OPEN", "MERGED", "CLOSED"]) }).strict(),
-      z.object({ outcome: z.literal("unavailable"), message: z.string() }).strict(),
-    ]),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), state: z.enum(["OPEN", "MERGED", "CLOSED"]) }).strict(), readUnavailable]),
   },
   // Asks each login for a review of the pull request, again for one who already reviewed it: one REST call each through gh,
   // so one who cannot be asked, such as a person without access to the repository, does not stop the others.
@@ -237,7 +239,7 @@ export const hostContract = defineRpcContract({
           ),
         })
         .strict(),
-      unavailable,
+      readUnavailable,
     ]),
   },
   // Each git remote with its push URLs, in `git remote` order.
