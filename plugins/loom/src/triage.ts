@@ -115,11 +115,18 @@ export function addTickets(ctx: EngineCtx, projectId: number, tickets: TicketSpe
     for (const dep of ticket.depends_on) {
       if (!keyOf.has(dep) && !known.has(dep)) errors.push(`${label}.depends_on: "${dep}" is not a ref in this batch or a ticket on this board.`);
     }
+    for (const ref of ticket.merge_after ?? []) {
+      if (ref === ticket.ref) errors.push(`${label}.merge_after: "${ref}" is this ticket's own ref.`);
+      else if (!keyOf.has(ref) && !known.has(ref)) errors.push(`${label}.merge_after: "${ref}" is not a ref in this batch or a ticket on this board.`);
+    }
     errors.push(...problemsOf(spec, label, ticket.scope, ticket.verify, ticket.repo ?? null));
     errors.push(...environmentProblems(spec, `${label}.environment`, ticket.environment, ticket.repo ?? null));
   });
   const cycle = dependencyCycle(tickets);
   if (cycle !== null) errors.push(`tickets: dependency cycle ${cycle.join(" -> ")}. Remove one depends_on entry.`);
+  // A ticket on the board cannot name one of this batch, so a merge order loop can only run through the batch.
+  const order = cycle === null ? dependencyCycle(tickets.map((ticket) => ({ ref: ticket.ref, depends_on: [...ticket.depends_on, ...(ticket.merge_after ?? []).filter((ref) => ref !== ticket.ref)] }))) : null;
+  if (order !== null) errors.push(`tickets: merge order cycle ${order.join(" -> ")} through depends_on and merge_after. Remove one merge_after entry.`);
   if (errors.length > 0) throw refused(errors, "Tickets not added. Fix these and call loom_add_tickets again");
 
   const created = store.tx(() =>
@@ -136,6 +143,7 @@ export function addTickets(ctx: EngineCtx, projectId: number, tickets: TicketSpe
           verify_json: JSON.stringify(ticket.verify),
           scope_json: JSON.stringify(ticket.scope),
           deps_json: JSON.stringify(ticket.depends_on.map((dep) => keyOf.get(dep) ?? known.get(dep)!)),
+          merge_after_json: JSON.stringify((ticket.merge_after ?? []).map((ref) => keyOf.get(ref) ?? known.get(ref)!)),
           priority: ticket.priority,
           repo: ticket.repo ?? null,
           environment_json: ticket.environment === undefined ? null : JSON.stringify(ticket.environment.inputs),
@@ -157,12 +165,17 @@ const repoLocked = (key: string, why: string, repo: string) =>
     `${key} ${why}; its repo can change only while it is queued or blocked and has no branch, because a branch lives in one repository. Cancel ${key} with loom_cancel_ticket and add a new ticket in repo "${repo}" with loom_add_tickets.`,
   );
 
-/** Changes a queued or blocked ticket. Only the fields in the patch change; the repo changes only while the ticket has no branch. */
+/**
+ * Changes a queued or blocked ticket. Only the fields in the patch change; the repo changes only while the ticket has no branch.
+ * A patch of merge_after alone changes any ticket that has not finished, since the merge order holds nothing a worker does.
+ */
 export function editTicket(ctx: EngineCtx, key: string, patch: TicketPatch, actor: string): TicketRow {
   const { store } = ctx;
   const ticket = requireTicket(ctx, key);
   const movesRepo = patch.repo !== undefined && patch.repo !== ticket.repo;
-  if (ticket.state !== "queued" && ticket.state !== "blocked") {
+  const orderOnly = patch.merge_after !== undefined && (Object.keys(patch) as Array<keyof TicketPatch>).every((field) => field === "merge_after" || patch[field] === undefined);
+  if (orderOnly && (ticket.state === "done" || ticket.state === "cancelled")) throw new LoomError("loom_invalid_state", `${key} is ${ticket.state}, so its merge order no longer matters.`);
+  if (!orderOnly && ticket.state !== "queued" && ticket.state !== "blocked") {
     if (movesRepo) throw repoLocked(key, `is ${ticket.state}`, patch.repo!);
     throw new LoomError("loom_invalid_state", `${key} is ${ticket.state}; only a queued or blocked ticket can be edited.`, "A ticket a worker holds changes through a reply on the ticket, or cancel it and add a new one.");
   }
@@ -185,6 +198,24 @@ export function editTicket(ctx: EngineCtx, key: string, patch: TicketPatch, acto
     const cycle = errors.length === 0 ? dependencyCycle(graph) : null;
     if (cycle !== null) errors.push(`depends_on: dependency cycle ${cycle.join(" -> ")}.`);
   }
+  let mergeAfter = JSON.parse(ticket.merge_after_json) as string[];
+  if (patch.merge_after !== undefined) {
+    mergeAfter = [];
+    for (const ref of patch.merge_after) {
+      const resolved = known.get(ref);
+      if (resolved === undefined) errors.push(`merge_after: "${ref}" is not a ticket on this board.`);
+      else if (resolved === ticket.key) errors.push("merge_after: a ticket cannot merge after itself.");
+      else mergeAfter.push(resolved);
+    }
+  }
+  if (errors.length === 0 && (patch.merge_after !== undefined || patch.depends_on !== undefined)) {
+    const graph = board.map((other) => {
+      const own = other.key === ticket.key;
+      return { ref: other.key, depends_on: [...(own ? deps : (JSON.parse(other.deps_json) as string[])), ...(own ? mergeAfter : (JSON.parse(other.merge_after_json) as string[]))] };
+    });
+    const order = dependencyCycle(graph);
+    if (order !== null) errors.push(`merge_after: merge order cycle ${order.join(" -> ")} through depends_on and merge_after.`);
+  }
   const scope = patch.scope ?? (JSON.parse(ticket.scope_json) as string[]);
   const verify = patch.verify ?? (JSON.parse(ticket.verify_json) as string[]);
   // Moving to another repo checks the whole ticket against that repo's protected paths and checks.
@@ -203,6 +234,7 @@ export function editTicket(ctx: EngineCtx, key: string, patch: TicketPatch, acto
     ...(patch.verify === undefined ? {} : { verify_json: JSON.stringify(patch.verify) }),
     ...(patch.scope === undefined ? {} : { scope_json: JSON.stringify(patch.scope) }),
     ...(patch.depends_on === undefined ? {} : { deps_json: JSON.stringify(deps) }),
+    ...(patch.merge_after === undefined ? {} : { merge_after_json: JSON.stringify(mergeAfter) }),
     ...(patch.priority === undefined ? {} : { priority: patch.priority }),
     ...(patch.repo === undefined ? {} : { repo: patch.repo }),
     // An empty patch leaves the ticket with its repo's inputs.

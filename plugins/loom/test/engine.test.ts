@@ -1122,7 +1122,7 @@ describe("tick: review and merge", () => {
     h.host.prStates.set("https://github.com/acme/shop/pull/1", "OPEN");
     h.clock.advance(5 * 60_000);
     await h.engine.tick();
-    expect(h.host.callsTo("prState")).toHaveLength(1);
+    expect(h.host.callsTo("prBatch")).toHaveLength(1);
     expect(project().state).toBe("paused");
 
     h.host.prStates.set("https://github.com/acme/shop/pull/1", "MERGED");
@@ -1131,7 +1131,7 @@ describe("tick: review and merge", () => {
     expect(ticketOf(h, "CSV-1").state).toBe("done");
     expect(project().state).toBe("done");
     await h.engine.tick();
-    expect(h.host.callsTo("prState")).toHaveLength(2);
+    expect(h.host.callsTo("prBatch")).toHaveLength(2);
   });
 
   it("does not start reviewers or merges while the project is paused", async () => {

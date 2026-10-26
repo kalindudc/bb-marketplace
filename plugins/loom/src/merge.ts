@@ -8,7 +8,8 @@ import { plural } from "./format";
 import { backedOffUntil, backoffText, forgeHostOf, nextBackoff, nextPollAt, nextPollWait, pollWaitOf, pollWaitReason, pollWaitText, SERVER_ERROR_LIMIT_MS } from "./forge-waits";
 import { afterMergeChangedText, afterMergeFailedText, andList, clip, conflictText, dependsOnLines, landBody, prDivergedText, restackConflictText, restackFailedText, withRestoredNote, workerPrBody } from "./prompts";
 import { closedPrReset, followFeedback, inFixRound, prTextFor, prTextReady, reviewersToAsk, templatePr, type PrText } from "./pull-requests";
-import { prNumber, type HostInput, type HostOutput as HostOutputOf } from "./host-contract";
+import { githubPull, prNumber, PR_BATCH_MAX, type HostInput, type HostOutput as HostOutputOf } from "./host-contract";
+import type { PrMeta } from "./pr-meta";
 import { LoomError } from "./projects";
 import { followsFeedback, isMultiRepo, prSettings, repoSettings, type RepoSettings } from "./repos";
 import { recordingHost } from "./runs";
@@ -393,10 +394,15 @@ async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
   const catchUp = fix && movedToCatchUp(ctx, ticket);
   const text = prTextFor(spec, ticket) ?? { head: ticket.head_sha!, by: "loom" as const, title: null, body: null, commit: `${ticket.key}: ${ticket.title}` };
 
-  // While the worker fixed it, the human may have merged or closed the pull request.
+  // While the worker fixed it, the human may have merged or closed the pull request, perhaps into the branch it is stacked on.
   if (fix && ticket.pr_url !== null && settings.forge.kind !== "none") {
-    const state = await ctx.host.call(hostId, "prState", { repo, url: ticket.pr_url, forge: stateForge(settings.forge) });
+    const state = await fixRoundState(ctx, checkout, ticket.pr_url);
     if (state.outcome === "unavailable") throw new Unavailable(state.message);
+    store.updateTicket(ticket.id, { pr_meta_json: JSON.stringify({ at: ctx.now(), ...state.meta, state: state.state } satisfies PrMeta) });
+    if (state.state === "MERGED" && state.meta.base !== null && state.meta.base !== base) {
+      await blockMergedElsewhere(ctx, ticket, settings, state.meta.base);
+      return;
+    }
     if (state.state === "MERGED") {
       const body = catchUp ? `The pull request merged before Loom brought it up to date, so ${ticket.key} is done.` : `The pull request merged before Loom pushed fix round ${ticket.pr_rounds}, so the fix stays on ${ticket.branch ?? branch}.`;
       complete(ctx, ticket.id, { kind: "merge", body, data: { outcome: "pr_merged", url: ticket.pr_url, unpushed: true } });
@@ -478,7 +484,7 @@ async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
   const opened = await ctx.host.call(hostId, "prCreate", { repo, remote, base: prBase, head: branch, title: clip(pr.title, 256), body: clip(pr.body, 60_000), draft: spec.merge.draft, forge: openForge(settings.forge) });
   if (opened.outcome === "unavailable") throw new Unavailable(opened.message);
   const on = prBase === base ? "" : ` on ${prBase}`;
-  toPrOpen(ctx, current.id, { ...recorded, pr_url: opened.url, pr_base: prBase }, { kind: "merge", body: `Opened pull request ${opened.url}${on}${commits}.`, data: { outcome: "pr_opened", url: opened.url, sha: src, base: prBase } }, { url: opened.url });
+  toPrOpen(ctx, current.id, { ...recorded, pr_url: opened.url, pr_base: prBase, pr_meta_json: null }, { kind: "merge", body: `Opened pull request ${opened.url}${on}${commits}.`, data: { outcome: "pr_opened", url: opened.url, sha: src, base: prBase } }, { url: opened.url });
   await afterOpen(ctx, { hostId, repo, settings, head: branch, url: opened.url, projectId: project.id, ticketId: current.id });
 }
 
@@ -627,12 +633,36 @@ function toPrOpen(ctx: EngineCtx, ticketId: number, patch: Partial<TicketRow>, p
   store.changed(store.ticket(ticketId)!.project_id);
 }
 
-/** A pull request closed without merging blocks its ticket and ends its threads; a requeue opens a new one. The move comes first, so nothing slips in before the threads end. */
+/** A pull request closed without merging blocks its ticket and ends its threads; a requeue opens a new one. */
 async function blockClosed(ctx: EngineCtx, ticket: TicketRow): Promise<void> {
+  await blockPullRequest(ctx, ticket, "the pull request was closed without merging", null);
+}
+
+/**
+ * A pull request merged into a branch other than its repo's base, such as the branch of the pull request it was stacked
+ * on, did not bring its change to the base. Its ticket blocks as a closed one does, and the reason names the branch and
+ * the ticket whose pull request branch it is.
+ */
+async function blockMergedElsewhere(ctx: EngineCtx, ticket: TicketRow, settings: RepoSettings, branch: string): Promise<void> {
+  const { base } = settings;
+  const owner = ctx.store.tickets(ticket.project_id).find((other) => other.id !== ticket.id && other.repo === ticket.repo && other.pr_branch === branch) ?? null;
+  const into = owner === null ? `the branch ${branch}` : `${owner.key}'s branch (${branch})`;
+  const next = owner !== null && owner.state !== "done" && owner.state !== "cancelled" ? `Merge ${owner.key}'s pull request first, then put this change on ${base} again.` : `Put this change on ${base} again.`;
+  const reason = `Its pull request merged into ${into}, not ${base}, so its change is not on ${base}. ${next}`;
+  const post: MergePost = {
+    kind: "merge",
+    body: `The pull request ${ticket.pr_url} merged into ${into}, not ${base}, so Loom did not complete ${ticket.key}.`,
+    data: { outcome: "merged_elsewhere", url: ticket.pr_url, branch, base, ticket: owner?.key ?? null },
+  };
+  await blockPullRequest(ctx, ticket, reason, post);
+}
+
+// The move comes first, so nothing slips in before the threads end.
+async function blockPullRequest(ctx: EngineCtx, ticket: TicketRow, reason: string, post: MergePost | null): Promise<void> {
   const { store } = ctx;
-  const reason = "the pull request was closed without merging";
   store.tx(() => {
     const current = store.ticket(ticket.id)!;
+    if (post !== null) store.addPost({ project_id: current.project_id, ticket_id: current.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: post.kind, body: post.body, data_json: JSON.stringify(post.data) });
     store.addPost({ project_id: current.project_id, ticket_id: current.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "block", body: reason, data_json: JSON.stringify({ reason, needs: "" }) });
     applyMove(ctx, current, { to: "blocked", patch: { ...released, ...closedPrReset, blocked_reason: reason } }, LOOM_ACTOR, { reason });
   });
@@ -671,11 +701,33 @@ async function afterOpen(ctx: EngineCtx, a: { hostId: string; repo: string; sett
 
 // ---------------------------------------------------------------- pull requests
 
+type Feedback = Extract<HostOutputOf<"prFeedback">, { outcome: "ok" }>;
+
+/**
+ * One read of a pull request: its state, the PrMeta fields Loom stores (null for the push-only forge, which has no pull
+ * request), and its feedback when Loom follows it; or why it failed, with `transient` for a GitHub failure worth waiting out.
+ */
+type PrRead =
+  | { outcome: "ok"; state: "OPEN" | "MERGED" | "CLOSED"; meta: Pick<PrMeta, "draft" | "review" | "base"> | null; feedback: Feedback | null }
+  | { outcome: "unavailable"; message: string; transient?: "server" | "rate_limit"; retryAfterMs?: number };
+
+/** The due GitHub pull requests of one repository, with the checkout gh runs in; `forgeHost` keys the host's rate-limit backoff. */
+interface Batch {
+  checkout: RepoCheckout;
+  host: string;
+  forgeHost: string;
+  owner: string;
+  name: string;
+  tickets: Array<{ id: number; number: number }>;
+}
+
 /**
  * Reads every open pull request whose next read is due, every 5 minutes unless it waits longer: merged completes the
- * ticket, closed blocks it. Each due ticket gets one read, never repeated in the same poll. A GitHub server error or timeout
- * makes that ticket wait longer and pauses the project only after an hour of them; a rate limit stops every read to that
- * host, in this poll and every project's, for a while (forge-waits.ts). Any other failure pauses the project.
+ * ticket, closed blocks it, and so does one merged into a branch other than its repo's base. GitHub's are read PR_BATCH_MAX
+ * at a time in one call per repository; a command forge's and the push-only forge's one at a time. Each due ticket gets
+ * one read, never repeated in the same poll. A GitHub server error or timeout makes each ticket it read wait longer and
+ * pauses the project only after an hour of them; a rate limit stops every read to that host, in this poll and every
+ * project's, for a while (forge-waits.ts). Any other failure pauses the project.
  */
 export async function pollPullRequests(ctx: EngineCtx, project: ProjectRow): Promise<void> {
   const { store } = ctx;
@@ -696,6 +748,7 @@ export async function pollPullRequests(ctx: EngineCtx, project: ProjectRow): Pro
     checkouts.set(name, checkout);
     return checkout;
   };
+  const batches = new Map<string, Batch>();
   for (const seen of due) {
     const ticket = store.ticket(seen.id);
     if (ticket?.state !== "pr_open") continue;
@@ -706,45 +759,33 @@ export async function pollPullRequests(ctx: EngineCtx, project: ProjectRow): Pro
     if (backedOffUntil(ctx.forgeBackoffs, host, ctx.now()) !== null) continue;
     const checkout = await checkoutOfRepo(ticket.repo);
     if (checkout === null) continue;
-    store.updateTicket(ticket.id, { pr_checked_at: ctx.now() });
-    let state: HostOutputOf<"prState">;
-    let feedback: Extract<HostOutputOf<"prFeedback">, { outcome: "ok" }> | null = null;
-    try {
-      if (forge.kind === "none") {
-        // The push-only forge has no pull request to ask: the ticket is done once the remote base contains the commit Loom pushed.
-        const landed = await ctx.host.call(checkout.hostId, "landedOn", { repo: checkout.path, remote: checkout.settings.remote, base: checkout.settings.base, sha: ticket.pushed_sha ?? ticket.head_sha! });
-        state = landed.outcome === "ok" ? { outcome: "ok", state: landed.landed ? "MERGED" : "OPEN" } : landed;
-      } else if (follows && followsFeedback(forge)) {
-        const read = await ctx.host.call(checkout.hostId, "prFeedback", { repo: checkout.path, url: ticket.pr_url!, forge: forge.kind === "command" ? { kind: "command", feedback: forge.feedback! } : { kind: "gh" } });
-        if (read.outcome === "ok") feedback = read;
-        state = read.outcome === "ok" ? { outcome: "ok", state: read.state } : read;
-      } else {
-        state = await ctx.host.call(checkout.hostId, "prState", { repo: checkout.path, url: ticket.pr_url!, forge: stateForge(forge) });
+    if (forge.kind === "gh") {
+      const pull = githubPull(ticket.pr_url!);
+      if (pull === null) {
+        store.updateTicket(ticket.id, { pr_checked_at: ctx.now() });
+        pauseProject(ctx, project.id, `${ticket.key}'s pull request ${ticket.pr_url} is not a GitHub pull request URL, so gh cannot read it.`);
+        continue;
       }
+      const key = `${host}/${pull.owner}/${pull.name}`;
+      const batch = batches.get(key) ?? batches.set(key, { checkout, host: pull.host, forgeHost: host!, owner: pull.owner, name: pull.name, tickets: [] }).get(key)!;
+      batch.tickets.push({ id: ticket.id, number: pull.number });
+      continue;
+    }
+    store.updateTicket(ticket.id, { pr_checked_at: ctx.now() });
+    let read: PrRead;
+    try {
+      read = await readOne(ctx, checkout, ticket, forge, follows);
     } catch (error) {
       pauseProject(ctx, project.id, `Reading the pull request of ${ticket.key} stopped: ${errText(error)}`);
       continue;
     }
-    if (state.outcome === "unavailable") {
-      if (state.transient === "rate_limit" && host !== null) backOff(ctx, ticket, host, state);
-      else if (state.transient === "server") waitOutServerError(ctx, ticket, state.message);
-      else pauseProject(ctx, project.id, state.message);
-      continue;
-    }
-    if (host !== null) ctx.forgeBackoffs.delete(host);
-    if (ticket.pr_poll_json !== null) store.updateTicket(ticket.id, { pr_poll_json: null });
-    // The answer is about the pull request and attempt that were polled; the human may have blocked and requeued the ticket during the host call.
-    const current = store.ticket(ticket.id);
-    if (current?.state !== "pr_open" || current.pr_url !== ticket.pr_url || current.attempt !== ticket.attempt || current.pushed_sha !== ticket.pushed_sha) continue;
-    if (state.state === "MERGED" && forge.kind === "none") {
-      const target = `${checkout.settings.remote}/${checkout.settings.base}`;
-      complete(ctx, ticket.id, { kind: "merge", body: `The branch landed on ${target}.`, data: { outcome: "branch_landed", pushed: target } });
-    } else if (state.state === "MERGED") {
-      complete(ctx, ticket.id, { kind: "merge", body: "The pull request was merged.", data: { outcome: "pr_merged", url: ticket.pr_url } });
-    } else if (state.state === "CLOSED") {
-      await blockClosed(ctx, current);
-    } else if (feedback !== null) {
-      await followFeedback(ctx, store.project(project.id)!, current, feedback);
+    await settleRead(ctx, project, checkout.settings, ticket, read, host);
+  }
+  for (const batch of batches.values()) {
+    for (let start = 0; start < batch.tickets.length; start += PR_BATCH_MAX) {
+      // A rate limit in an earlier chunk leaves the rest due, for the first poll after the backoff ends.
+      if (backedOffUntil(ctx.forgeBackoffs, batch.forgeHost, ctx.now()) !== null) break;
+      await readBatch(ctx, project, spec, batch, batch.tickets.slice(start, start + PR_BATCH_MAX), follows);
     }
   }
   await endFinishedThreads(ctx, project.id);
@@ -776,6 +817,137 @@ function backOff(ctx: EngineCtx, ticket: TicketRow, host: string, failure: { mes
   ctx.forgeBackoffs.set(host, backoff);
   addWaitPost(ctx, ticket, backoffText(host, backoff, now), { rateLimited: true, host, until: backoff.until });
   ctx.bb.log("warn", `${host} rate-limited Loom's pull request reads, so none goes there until ${new Date(backoff.until).toISOString()}: ${failure.message}`);
+
+}
+
+/**
+ * What a pull request whose fix round is ready looks like now: one GitHub read of it, or a command forge's feedback command,
+ * which can name its base, else its state command, which cannot. Its draft flag, review and base are kept like a poll's.
+ */
+async function fixRoundState(ctx: EngineCtx, checkout: RepoCheckout, url: string): Promise<{ outcome: "ok"; state: "OPEN" | "MERGED" | "CLOSED"; meta: Pick<PrMeta, "draft" | "review" | "base"> } | { outcome: "unavailable"; message: string }> {
+  const { hostId, path: repo, settings } = checkout;
+  const { forge } = settings;
+  const pull = forge.kind === "gh" ? githubPull(url) : null;
+  if (pull !== null) {
+    const answer = await ctx.host.call(hostId, "prBatch", { repo, host: pull.host, owner: pull.owner, name: pull.name, numbers: [pull.number], feedback: false });
+    if (answer.outcome === "unavailable") return answer;
+    const read = answer.pulls.find((each) => each.number === pull.number);
+    if (read === undefined) return { outcome: "unavailable", message: answer.missing[0]?.message ?? `gh found no pull request at ${url}.` };
+    return { outcome: "ok", state: read.state, meta: { draft: read.draft, review: read.review, base: read.base } };
+  }
+  if (forge.kind === "command" && forge.feedback !== undefined) {
+    const read = await ctx.host.call(hostId, "prFeedback", { repo, url, forge: { kind: "command", feedback: forge.feedback } });
+    if (read.outcome === "unavailable") return read;
+    return { outcome: "ok", state: read.state, meta: { draft: read.draft ?? null, review: read.review ?? null, base: read.base ?? null } };
+  }
+  const state = await ctx.host.call(hostId, "prState", { repo, url, forge: stateForge(forge) });
+  return state.outcome === "ok" ? { outcome: "ok", state: state.state, meta: { draft: null, review: null, base: null } } : state;
+}
+
+/** A command forge's pull request through its feedback or state command, or the push-only forge's pushed commit. */
+async function readOne(ctx: EngineCtx, checkout: RepoCheckout, ticket: TicketRow, forge: ForgeSpec, follows: boolean): Promise<PrRead> {
+  const { hostId, path: repo, settings } = checkout;
+  if (forge.kind === "none") {
+    // The push-only forge has no pull request to ask: the ticket is done once the remote base contains the commit Loom pushed.
+    const landed = await ctx.host.call(hostId, "landedOn", { repo, remote: settings.remote, base: settings.base, sha: ticket.pushed_sha ?? ticket.head_sha! });
+    return landed.outcome === "ok" ? { outcome: "ok", state: landed.landed ? "MERGED" : "OPEN", meta: null, feedback: null } : landed;
+  }
+  if (follows && followsFeedback(forge)) {
+    const read = await ctx.host.call(hostId, "prFeedback", { repo, url: ticket.pr_url!, forge: forge.kind === "command" ? { kind: "command", feedback: forge.feedback! } : { kind: "gh" } });
+    if (read.outcome !== "ok") return read;
+    return { outcome: "ok", state: read.state, meta: { draft: read.draft ?? null, review: read.review ?? null, base: read.base ?? null }, feedback: read };
+  }
+  // The state command prints one word, so it tells nothing else about the pull request.
+  const state = await ctx.host.call(hostId, "prState", { repo, url: ticket.pr_url!, forge: stateForge(forge) });
+  return state.outcome === "ok" ? { outcome: "ok", state: state.state, meta: { draft: null, review: null, base: null }, feedback: null } : state;
+}
+
+/** Reads up to PR_BATCH_MAX of one repository's due GitHub pull requests in one call, then settles each ticket on its own. */
+async function readBatch(ctx: EngineCtx, project: ProjectRow, spec: Spec, batch: Batch, chunk: Batch["tickets"], follows: boolean): Promise<void> {
+  const { store } = ctx;
+  // Each ticket as it is when the call goes out: settleRead compares the ticket with it once the answer is in.
+  const polled = chunk.flatMap(({ id, number }) => {
+    const ticket = store.ticket(id);
+    return ticket?.state === "pr_open" ? [{ ticket, number }] : [];
+  });
+  if (polled.length === 0) return;
+  for (const { ticket } of polled) store.updateTicket(ticket.id, { pr_checked_at: ctx.now() });
+  const { checkout, host, owner, name } = batch;
+  let answer: HostOutputOf<"prBatch">;
+  try {
+    answer = await ctx.host.call(checkout.hostId, "prBatch", { repo: checkout.path, host, owner, name, numbers: [...new Set(polled.map((each) => each.number))], feedback: follows });
+  } catch (error) {
+    const what = polled.length === 1 ? `the pull request of ${polled[0]!.ticket.key}` : `the pull requests of ${andList(polled.map(({ ticket }) => ticket.key))}`;
+    pauseProject(ctx, project.id, `Reading ${what} stopped: ${errText(error)}`);
+    return;
+  }
+  if (answer.outcome === "unavailable") {
+    // A rate limit stops the whole host once; a server error or timeout makes each ticket of the call wait out its own.
+    if (answer.transient === "rate_limit") backOff(ctx, polled[0]!.ticket, batch.forgeHost, answer);
+    else if (answer.transient === "server") for (const { ticket } of polled) waitOutServerError(ctx, ticket, answer.message);
+    else pauseProject(ctx, project.id, answer.message);
+    return;
+  }
+  // Answered ones first: a read that worked clears the host's backoff, so a rate limit in the same answer must come after it.
+  const answered = (number: number) => answer.pulls.some((each) => each.number === number);
+  const missOf = (number: number) => answer.missing.find((each) => each.number === number);
+  const limited = polled.filter(({ number }) => missOf(number)?.transient === "rate_limit");
+  for (const { ticket, number } of [...polled.filter((each) => answered(each.number)), ...polled.filter((each) => !answered(each.number))]) {
+    if (limited.some((each) => each.ticket.id === ticket.id)) continue;
+    const pull = answer.pulls.find((each) => each.number === number);
+    const read: PrRead =
+      pull === undefined
+        ? missedRead(ticket, missOf(number))
+        : { outcome: "ok", state: pull.state, meta: { draft: pull.draft, review: pull.review, base: pull.base }, feedback: pull.feedback };
+    await settleRead(ctx, project, repoSettings(spec, ticket.repo), ticket, read, batch.forgeHost);
+  }
+  // However many pull requests of the one answer GitHub rate-limited, it is one limit: one backoff, one post, the longest wait it named.
+  if (limited.length > 0) {
+    const misses = limited.map(({ number }) => missOf(number)!);
+    const waits = misses.flatMap((each) => (each.retryAfterMs === undefined ? [] : [each.retryAfterMs]));
+    backOff(ctx, limited[0]!.ticket, batch.forgeHost, { message: misses[0]!.message, ...(waits.length === 0 ? {} : { retryAfterMs: Math.max(...waits) }) });
+  }
+}
+
+/** A pull request a batch answer left out: gone when GitHub says so, or a failure to wait out like a whole failed read. */
+function missedRead(ticket: TicketRow, miss: Extract<HostOutputOf<"prBatch">, { outcome: "ok" }>["missing"][number] | undefined): PrRead {
+  if (miss === undefined) return { outcome: "unavailable", message: `Reading the pull request of ${ticket.key} stopped: gh found no pull request at ${ticket.pr_url}.` };
+  const { message, ...transient } = miss;
+  return { outcome: "unavailable", message: `Reading the pull request of ${ticket.key} stopped: ${message}`, ...(transient.transient === undefined ? {} : { transient: transient.transient }), ...(transient.retryAfterMs === undefined ? {} : { retryAfterMs: transient.retryAfterMs }) };
+}
+
+/**
+ * Acts on one read of the ticket's pull request: merged completes the ticket, unless it merged into a branch other than
+ * the repo's base, closed blocks it, and open follows its feedback. A successful read stores the PrMeta first.
+ */
+async function settleRead(ctx: EngineCtx, project: ProjectRow, settings: RepoSettings, polled: TicketRow, read: PrRead, host: string | null): Promise<void> {
+  const { store } = ctx;
+  if (read.outcome === "unavailable") {
+    if (read.transient === "rate_limit" && host !== null) backOff(ctx, polled, host, read);
+    else if (read.transient === "server") waitOutServerError(ctx, polled, read.message);
+    else pauseProject(ctx, project.id, read.message);
+    return;
+  }
+  if (host !== null) ctx.forgeBackoffs.delete(host);
+  if (polled.pr_poll_json !== null) store.updateTicket(polled.id, { pr_poll_json: null });
+  // The answer is about the pull request and attempt that were polled; the human may have blocked and requeued the ticket during the host call.
+  const seen = store.ticket(polled.id);
+  if (seen?.state !== "pr_open" || seen.pr_url !== polled.pr_url || seen.attempt !== polled.attempt || seen.pushed_sha !== polled.pushed_sha) return;
+  if (read.meta !== null) store.updateTicket(seen.id, { pr_meta_json: JSON.stringify({ at: ctx.now(), ...read.meta, state: read.state } satisfies PrMeta) });
+  const current = store.ticket(seen.id)!;
+  const base = read.meta?.base ?? null;
+  if (read.state === "MERGED" && settings.forge.kind === "none") {
+    const target = `${settings.remote}/${settings.base}`;
+    complete(ctx, current.id, { kind: "merge", body: `The branch landed on ${target}.`, data: { outcome: "branch_landed", pushed: target } });
+  } else if (read.state === "MERGED" && base !== null && base !== settings.base) {
+    await blockMergedElsewhere(ctx, current, settings, base);
+  } else if (read.state === "MERGED") {
+    complete(ctx, current.id, { kind: "merge", body: "The pull request was merged.", data: { outcome: "pr_merged", url: current.pr_url } });
+  } else if (read.state === "CLOSED") {
+    await blockClosed(ctx, current);
+  } else if (read.feedback !== null) {
+    await followFeedback(ctx, store.project(project.id)!, current, read.feedback);
+  }
 }
 
 /** On the pull request strategy, a running or paused project whose tickets are all done or cancelled is done. Integration projects finish in `land`. */

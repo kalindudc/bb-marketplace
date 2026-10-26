@@ -50,6 +50,8 @@ const ticket = (n: number, state: TicketState, over: Partial<TicketRow> = {}): T
   start_wait_json: null,
   environment_json: null,
   pr_poll_json: null,
+  merge_after_json: "[]",
+  pr_meta_json: null,
   created_by: "human",
   created_at: NOW,
   updated_at: NOW,

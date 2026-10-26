@@ -36,7 +36,7 @@ export type SpecChange =
   /** `into`: the added tickets that share its scope. */
   | (ChangeBase & { kind: "ticket-removed"; ref: string; into: string[] });
 
-const GUARDRAILS = ["project.goal", "project.non_goals", "project.open_questions", "project.name", "project.key", "project.slug", "review.rubric"];
+const GUARDRAILS = ["project.goal", "project.summary", "project.done_when", "project.non_goals", "project.open_questions", "project.name", "project.key", "project.slug", "review.rubric"];
 // A string this long, or with a line break, reads better as a word diff than as an old and a new value.
 const TEXT_LENGTH = 160;
 // Word diffs past this many cells fall back to lines, so a rewritten 8000-character brief stays cheap.

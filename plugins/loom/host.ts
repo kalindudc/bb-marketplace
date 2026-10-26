@@ -24,6 +24,7 @@ export default experimental_defineHostEntry({
     prCreate: (input, { signal }) => ops.prCreate(input, signal),
     prState: (input, { signal }) => ops.prState(input, signal),
     prFeedback: (input, { signal }) => ops.prFeedback(input, signal),
+    prBatch: (input, { signal }) => ops.prBatch(input, signal),
     prRequestReview: (input, { signal }) => ops.prRequestReview(input, signal),
     remotes: (input, { signal }) => ops.remotes(input, signal),
     ghStatus: (input, { signal }) => ops.ghStatus(input, signal),

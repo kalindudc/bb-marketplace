@@ -445,3 +445,39 @@ describe("repos on the board tools", () => {
     });
   });
 });
+
+describe("merge_after on the board tools", () => {
+  it("adds tickets that merge after refs in the batch and tickets on the board, and refuses unknown refs, its own ref and a merge order cycle", async () => {
+    await seedProject(h);
+    const created = addTickets(h.ctx, project().id, [newTicket({ ref: "a", merge_after: ["CSV-2"] }), newTicket({ ref: "b", scope: ["web/**"], merge_after: ["a", "csv-model"] })], "thr_plan");
+    expect(created.map((ticket) => ticket.merge_after_json)).toEqual(['["CSV-2"]', '["CSV-3","CSV-1"]']);
+    const attempt = (tickets: TicketSpec[]) => () => addTickets(h.ctx, project().id, tickets, "thr_plan");
+    expect(attempt([newTicket({ ref: "c", merge_after: ["nope"] })])).toThrow(/merge_after: "nope" is not a ref in this batch or a ticket on this board/);
+    expect(attempt([newTicket({ ref: "c", merge_after: ["c"] })])).toThrow(/merge_after: "c" is this ticket's own ref/);
+    expect(attempt([newTicket({ ref: "c", merge_after: ["d"] }), newTicket({ ref: "d", scope: ["web/**"], depends_on: ["c"] })])).toThrow(/merge order cycle c -> d -> c|merge order cycle d -> c -> d/);
+    expect(h.store.tickets(project().id)).toHaveLength(4);
+  });
+
+  it("changes the merge order of a ticket whose pull request is open, but no other field of it, and not of a finished ticket", async () => {
+    await seedProject(h);
+    const docs = addTickets(h.ctx, project().id, [newTicket({ ref: "docs" })], "thr_plan")[0]!;
+    h.store.updateTicket(ticketOf(h, "CSV-2").id, { state: "pr_open" });
+    expect(editTicket(h.ctx, "CSV-2", { merge_after: [docs.key] }, "thr_plan").merge_after_json).toBe(`["${docs.key}"]`);
+    expect(() => editTicket(h.ctx, "CSV-2", { title: "x", merge_after: [] }, "thr_plan")).toThrow(/CSV-2 is pr_open; only a queued or blocked ticket/);
+    h.store.updateTicket(ticketOf(h, "CSV-2").id, { state: "done" });
+    expect(() => editTicket(h.ctx, "CSV-2", { merge_after: [] }, "thr_plan")).toThrow(/CSV-2 is done, so its merge order no longer matters/);
+  });
+
+  it("sets merge_after by key or ref, and refuses itself, an unknown ticket and a cycle with depends_on", async () => {
+    await seedProject(h);
+    const added = addTickets(h.ctx, project().id, [newTicket({ ref: "docs" })], "thr_plan")[0]!;
+    expect(editTicket(h.ctx, added.key, { merge_after: ["csv-export", "CSV-1"] }, "thr_plan").merge_after_json).toBe('["CSV-2","CSV-1"]');
+    expect(() => editTicket(h.ctx, "CSV-3", { merge_after: ["CSV-3"] }, "thr_plan")).toThrow(/cannot merge after itself/);
+    expect(() => editTicket(h.ctx, "CSV-3", { merge_after: ["CSV-9"] }, "thr_plan")).toThrow(/"CSV-9" is not a ticket on this board/);
+    // CSV-2 depends on CSV-1, so CSV-1 merging after CSV-2 is a loop.
+    expect(() => editTicket(h.ctx, "CSV-1", { merge_after: ["CSV-2"] }, "thr_plan")).toThrow(/merge order cycle/);
+    expect(ticketOf(h, "CSV-1").merge_after_json).toBe("[]");
+    const event = h.store.events(project().id).filter((each) => each.kind === "ticket.edited").at(-1)!;
+    expect(JSON.parse(event.data_json)).toMatchObject({ fields: ["merge_after"], before: { merge_after_json: "[]" } });
+  });
+});

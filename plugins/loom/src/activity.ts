@@ -57,6 +57,7 @@ export interface MergeItem {
     | "pr_pushed"
     | "pr_unchanged"
     | "pr_merged"
+    | "merged_elsewhere"
     | "branch_pushed"
     | "branch_landed"
     | "diverged"
@@ -181,7 +182,7 @@ interface PostData {
 }
 
 // Stacking's holds, catch-ups that could not run and base moves are about the pull request, so they mark no merge either.
-const PR_STAGE: ReadonlySet<string> = new Set(["pr_opened", "pr_pushed", "pr_unchanged", "pr_merged", "branch_pushed", "branch_landed", "held", "restack_conflict", "restack_waits", "retargeted", "retarget_failed", "retarget_by_hand", "review_requested", "review_request_failed"]);
+const PR_STAGE: ReadonlySet<string> = new Set(["pr_opened", "pr_pushed", "pr_unchanged", "pr_merged", "merged_elsewhere", "branch_pushed", "branch_landed", "held", "restack_conflict", "restack_waits", "retargeted", "retarget_failed", "retarget_by_hand", "review_requested", "review_request_failed"]);
 const isPrStage = (data: PostData) => data.outcome === "pr_text" || data.outcome === "pr_feedback";
 
 const LINE_MAX = 140;
@@ -385,7 +386,7 @@ export function ticketActivity(a: { state: TicketState; posts: readonly PostRow[
       ],
       merge: items.flatMap((item): Mark[] => (item.type === "merge" && !PR_STAGE.has(item.outcome ?? "") ? [mergeMark(item)] : item.type === "checks" && item.afterMerge ? ["fail"] : [])),
       pr: [
-        ...items.flatMap((item): Mark[] => (item.type === "merge" && PR_STAGE.has(item.outcome ?? "") ? ["pass"] : item.type === "pr_feedback" ? ["fail"] : [])),
+        ...items.flatMap((item): Mark[] => (item.type === "merge" && PR_STAGE.has(item.outcome ?? "") ? [item.outcome === "merged_elsewhere" ? "fail" : "pass"] : item.type === "pr_feedback" ? ["fail"] : [])),
         ...(newest && a.state === "pr_open" ? (["running"] as const) : []),
       ],
     };

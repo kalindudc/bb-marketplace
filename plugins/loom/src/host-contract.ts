@@ -29,6 +29,72 @@ export function prNumber(url: string): string {
   return /(\d+)(?!.*\d)/u.exec(url)?.[1] ?? "";
 }
 
+const PULL_URL = /^https?:\/\/([^/\s]+)\/([^/\s]+)\/([^/\s]+)\/pull\/(\d+)/u;
+
+/** The GitHub host, owner, repository name and number in a pull request URL; null for any other URL. */
+export function githubPull(url: string): { host: string; owner: string; name: string; number: number } | null {
+  const match = PULL_URL.exec(url);
+  return match === null ? null : { host: match[1]!, owner: match[2]!, name: match[3]!, number: Number(match[4]) };
+}
+
+/** The most pull requests one prBatch call reads, which bounds the GraphQL query's node count. */
+export const PR_BATCH_MAX = 10;
+
+const prState = z.enum(["OPEN", "MERGED", "CLOSED"]);
+export const REVIEW_DECISIONS = ["APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED"] as const;
+const reviewDecision = z.enum(REVIEW_DECISIONS);
+// GitHub's own limits on a host name, an owner and a repository name; they keep the values out of argv options and the query text.
+const ghHost = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9.-]{0,252}(?::\d{1,5})?$/u, "must be a host name");
+const ghName = z.string().regex(/^[A-Za-z0-9_.][A-Za-z0-9_.-]{0,99}$/u, "must be a GitHub owner or repository name");
+
+// A pull request's state, the checks on its head commit, and its reviews, unresolved review threads and comments.
+const feedbackOk = z
+  .object({
+    outcome: z.literal("ok"),
+    state: prState,
+    head: sha,
+    author: z.string(),
+    /** Whether it is a draft, its review decision and the branch it targets; null when the forge does not say. Optional so an older host's answer still parses. */
+    draft: z.boolean().nullable().optional(),
+    review: reviewDecision.nullable().optional(),
+    base: z.string().nullable().optional(),
+    checks: z.array(
+      z
+        .object({
+          key: z.string(),
+          name: z.string(),
+          state: z.enum(["pending", "passed", "failed", "neutral"]),
+          url: z.string().nullable(),
+          /** False while it waits in a queue to start; null when the forge cannot tell, as with a commit status. Optional so an older host's answer still parses. */
+          started: z.boolean().nullable().optional(),
+          startedAt: z.number().int().nullable().optional(),
+          completedAt: z.number().int().nullable().optional(),
+          /** How much of it is done, 0 to 100, as the forge's own command reports it. */
+          progress: z.number().min(0).max(100).nullable().optional(),
+          /** A GitHub Actions job's steps: those finished, and all of them. */
+          steps: z.object({ done: z.number().int().min(0), total: z.number().int().min(0) }).strict().nullable().optional(),
+        })
+        .strict(),
+    ),
+    items: z.array(
+      z
+        .object({
+          key: z.string(),
+          kind: z.enum(["review", "thread", "comment"]),
+          author: z.string(),
+          bot: z.boolean(),
+          body: z.string(),
+          url: z.string().nullable(),
+          /** The review's state; the thread's path and line. */
+          state: z.string().nullable(),
+          path: z.string().nullable(),
+          line: z.number().int().nullable(),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+
 export const FILE_STATUSES = ["added", "modified", "deleted", "renamed", "copied", "type_changed"] as const;
 const changedFile = z
   .object({
@@ -169,7 +235,7 @@ export const hostContract = defineRpcContract({
         forge: z.discriminatedUnion("kind", [z.object({ kind: z.literal("gh") }).strict(), z.object({ kind: z.literal("command"), state: forgeCommand }).strict()]),
       })
       .strict(),
-    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), state: z.enum(["OPEN", "MERGED", "CLOSED"]) }).strict(), readUnavailable]),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), state: prState }).strict(), readUnavailable]),
   },
   // Asks each login for a review of the pull request, again for one who already reviewed it: one REST call each through gh,
   // so one who cannot be asked, such as a person without access to the repository, does not stop the others.
@@ -186,8 +252,7 @@ export const hostContract = defineRpcContract({
       unavailable,
     ]),
   },
-  // A pull request's state, the checks on its head commit, and its reviews, unresolved review threads and comments.
-  // Through gh, or the spec's feedback command, which prints the same object as JSON on its last line.
+  // A pull request's feedback (feedbackOk) through gh, or the spec's feedback command, which prints the same object as JSON on its last line.
   prFeedback: {
     input: z
       .object({
@@ -196,47 +261,41 @@ export const hostContract = defineRpcContract({
         forge: z.discriminatedUnion("kind", [z.object({ kind: z.literal("gh") }).strict(), z.object({ kind: z.literal("command"), feedback: forgeCommand }).strict()]),
       })
       .strict(),
+    output: z.discriminatedUnion("outcome", [feedbackOk, readUnavailable]),
+  },
+  // Many pull requests of one GitHub repository in one GraphQL call: each one's state, draft flag, review decision and base
+  // branch, and with `feedback` what prFeedback reads for it. A number GitHub does not answer for is in `missing`.
+  prBatch: {
+    input: z
+      .object({
+        repo: absPath,
+        host: ghHost,
+        owner: ghName,
+        name: ghName,
+        numbers: z.array(z.number().int().min(1).max(2_147_483_647)).min(1).max(PR_BATCH_MAX),
+        feedback: z.boolean(),
+      })
+      .strict(),
     output: z.discriminatedUnion("outcome", [
       z
         .object({
           outcome: z.literal("ok"),
-          state: z.enum(["OPEN", "MERGED", "CLOSED"]),
-          head: sha,
-          author: z.string(),
-          checks: z.array(
+          pulls: z.array(
             z
               .object({
-                key: z.string(),
-                name: z.string(),
-                state: z.enum(["pending", "passed", "failed", "neutral"]),
-                url: z.string().nullable(),
-                /** False while it waits in a queue to start; null when the forge cannot tell, as with a commit status. Optional so an older host's answer still parses. */
-                started: z.boolean().nullable().optional(),
-                startedAt: z.number().int().nullable().optional(),
-                completedAt: z.number().int().nullable().optional(),
-                /** How much of it is done, 0 to 100, as the forge's own command reports it. */
-                progress: z.number().min(0).max(100).nullable().optional(),
-                /** A GitHub Actions job's steps: those finished, and all of them. */
-                steps: z.object({ done: z.number().int().min(0), total: z.number().int().min(0) }).strict().nullable().optional(),
+                number: z.number().int(),
+                state: prState,
+                /** Null for one GitHub leaves out of its answer. */
+                draft: z.boolean().nullable(),
+                review: reviewDecision.nullable(),
+                base: z.string().nullable(),
+                /** What prFeedback answers for it; null when `feedback` was not asked for. */
+                feedback: feedbackOk.nullable(),
               })
               .strict(),
           ),
-          items: z.array(
-            z
-              .object({
-                key: z.string(),
-                kind: z.enum(["review", "thread", "comment"]),
-                author: z.string(),
-                bot: z.boolean(),
-                body: z.string(),
-                url: z.string().nullable(),
-                /** The review's state; the thread's path and line. */
-                state: z.string().nullable(),
-                path: z.string().nullable(),
-                line: z.number().int().nullable(),
-              })
-              .strict(),
-          ),
+          /** A number GitHub answered no pull request for; `transient` when its error is one worth waiting out, as for a whole failed read. */
+          missing: z.array(z.object({ number: z.number().int(), message: z.string(), transient: z.enum(["server", "rate_limit"]).optional(), retryAfterMs: z.number().int().min(0).optional() }).strict()),
         })
         .strict(),
       readUnavailable,

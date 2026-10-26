@@ -222,7 +222,7 @@ function toneOf(ev: Ev): LineTone {
       return "made";
     case "post.added":
       if (post === null) return "detail";
-      if ((post.kind === "check" && post.data.passed === false) || post.kind === "block") return "bad";
+      if ((post.kind === "check" && post.data.passed === false) || post.kind === "block" || (post.kind === "merge" && post.data.outcome === "merged_elsewhere")) return "bad";
       if (post.kind === "merge" && post.data.outcome === "pr_feedback") return "back";
       return "detail";
     case "spec.review.ended":

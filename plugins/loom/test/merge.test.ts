@@ -508,7 +508,7 @@ describe("the pull request strategy", () => {
     expect(h.store.runOutput(mergeRuns()[1]!.id)).toBe("Opened https://github.com/acme/shop/pull/1.");
   });
 
-  it("pushes, opens and polls each ticket's pull request in that ticket's repo, with its remote and base", async () => {
+  it("pushes and opens each ticket's pull request in that ticket's repo, with its remote and base, and reads both of one GitHub repository in one call", async () => {
     await seedRepoProject(h, pr());
     await reachApproved(h, "CSV-2");
     await queue();
@@ -524,11 +524,9 @@ describe("the pull request strategy", () => {
 
     h.clock.advance(5 * 60_000);
     await pollPullRequests(h.ctx, project());
-    expect(h.host.callsTo("prState")).toEqual([
-      { repo: "/src/web", url: "https://github.com/acme/shop/pull/2", forge: { kind: "gh" } },
-      { repo: "/src/api", url: "https://github.com/acme/shop/pull/1", forge: { kind: "gh" } },
-    ]);
-    expect(h.host.calls.filter((call) => call.method === "prState").every((call) => call.hostId === "host_1")).toBe(true);
+    expect(h.host.callsTo("prBatch")).toEqual([{ repo: "/src/web", host: "github.com", owner: "acme", name: "shop", numbers: [2, 1], feedback: false }]);
+    expect(h.host.calls.filter((call) => call.method === "prBatch").every((call) => call.hostId === "host_1")).toBe(true);
+    expect(h.host.callsTo("prState")).toEqual([]);
   });
 
   it("pauses when a ticket's repo has no checkout, and still polls the pull requests of the other repos", async () => {
@@ -545,7 +543,7 @@ describe("the pull request strategy", () => {
     await pollPullRequests(h.ctx, project());
 
     expect(project()).toMatchObject({ state: "paused", system_reason: expect.stringContaining('Repo "web" (bb project proj_web) has no checkout') });
-    expect(h.host.callsTo("prState")).toEqual([{ repo: "/src/api", url: ticketOf(h, "CSV-2").pr_url, forge: { kind: "gh" } }]);
+    expect(h.host.callsTo("prBatch")).toEqual([{ repo: "/src/api", host: "github.com", owner: "acme", name: "shop", numbers: [2], feedback: false }]);
     expect(ticketOf(h, "CSV-2").state).toBe("done");
     expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "pr_open", pr_checked_at: checked });
   });
@@ -601,14 +599,14 @@ describe("the pull request strategy", () => {
     await reachApproved(h);
     await queue();
     await pollPullRequests(h.ctx, project());
-    expect(h.host.callsTo("prState")).toEqual([]);
+    expect(h.host.callsTo("prBatch")).toEqual([]);
 
     h.clock.advance(5 * 60_000);
     await pollPullRequests(h.ctx, project());
-    expect(h.host.callsTo("prState")).toEqual([{ repo: "/repo", url: "https://github.com/acme/shop/pull/1", forge: { kind: "gh" } }]);
+    expect(h.host.callsTo("prBatch")).toEqual([{ repo: "/repo", host: "github.com", owner: "acme", name: "shop", numbers: [1], feedback: false }]);
     expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "pr_open", pr_checked_at: h.clock.t });
     await pollPullRequests(h.ctx, project());
-    expect(h.host.callsTo("prState")).toHaveLength(1);
+    expect(h.host.callsTo("prBatch")).toHaveLength(1);
   });
 
   it("completes the ticket when the pull request is merged, and ends its threads", async () => {
@@ -638,15 +636,16 @@ describe("the pull request strategy", () => {
 
   describe("an answer that arrives after the ticket moved on", () => {
     const hold = () => {
-      const gate = deferred<HostOutput<"prState">>();
+      const answer = deferred<"OPEN" | "MERGED" | "CLOSED">();
       const reached = deferred<void>();
       const original = h.host.call.bind(h.host);
       h.host.call = (async (hostId: string, method: string, input: unknown) => {
-        if (method !== "prState") return original(hostId, method as "push", input as never);
+        if (method !== "prBatch") return original(hostId, method as "push", input as never);
         reached.resolve();
-        return gate.promise;
+        const state = await answer.promise;
+        return { outcome: "ok", pulls: [{ number: 1, state, draft: false, review: null, base: "main", feedback: null }], missing: [] } satisfies HostOutput<"prBatch">;
       }) as typeof h.host.call;
-      return { gate, reached };
+      return { gate: { resolve: (read: { outcome: "ok"; state: "OPEN" | "MERGED" | "CLOSED" }) => answer.resolve(read.state) }, reached };
     };
     const pollOpen = async () => {
       await seedProject(h, pr());
@@ -712,19 +711,21 @@ describe("the pull request strategy", () => {
     await seedProject(h, pr());
     await reachApproved(h);
     await queue();
-    h.host.scripted.prState = [{ outcome: "unavailable", message: "gh pr view failed: HTTP 401: Bad credentials" }];
+    h.host.scripted.prBatch = [{ outcome: "unavailable", message: "gh api graphql failed: HTTP 401: Bad credentials" }];
     h.clock.advance(5 * 60_000);
     await pollPullRequests(h.ctx, project());
-    expect(project()).toMatchObject({ state: "paused", system_reason: "gh pr view failed: HTTP 401: Bad credentials" });
+    expect(project()).toMatchObject({ state: "paused", system_reason: "gh api graphql failed: HTTP 401: Bad credentials" });
     expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "pr_open", pr_checked_at: h.clock.t, pr_poll_json: null });
-    expect(h.host.callsTo("prState")).toHaveLength(1);
+    expect(h.host.callsTo("prBatch")).toHaveLength(1);
   });
 
   describe("when GitHub fails to answer a read", () => {
-    const BAD_GATEWAY = { outcome: "unavailable", message: "gh pr view failed: gh: HTTP 502", transient: "server" } as const;
-    const RATE_LIMITED = { outcome: "unavailable", message: "gh pr view failed: GraphQL: API rate limit exceeded for user ID 1234567.", transient: "rate_limit" } as const;
+    const BAD_GATEWAY = { outcome: "unavailable", message: "gh api graphql failed: gh: HTTP 502", transient: "server" } as const;
+    const RATE_LIMITED = { outcome: "unavailable", message: "gh api graphql failed: GraphQL: API rate limit exceeded for user ID 1234567.", transient: "rate_limit" } as const;
     const MINUTE = 60_000;
-    const reads = () => h.host.callsTo("prState").map((input) => input.url);
+    /** The pull requests of each GitHub read, one entry per call. */
+    const calls = () => h.host.callsTo("prBatch").map((input) => input.numbers.map((number) => `https://${input.host}/${input.owner}/${input.name}/pull/${number}`));
+    const reads = () => calls().flat();
     const pollIn = async (minutes: number, of = project()) => {
       h.clock.advance(minutes * MINUTE);
       await pollPullRequests(h.ctx, of);
@@ -748,7 +749,7 @@ describe("the pull request strategy", () => {
     const otherProject = async () => {
       h.bb.addThread("thr_plan2", "idle");
       const toml = specToml((doc) => {
-        doc.project = { slug: "inv", name: "Invoices", key: "INV", goal: "Send each customer an invoice by email." };
+        doc.project = { slug: "inv", name: "Invoices", key: "INV", goal: "Send each customer an invoice by email.", summary: "Send each customer an invoice by email." };
         pr()(doc);
       });
       await h.projects.propose({ toml, threadId: "thr_plan2", bbProjectId: "proj_1", hostId: "host_1" });
@@ -761,13 +762,13 @@ describe("the pull request strategy", () => {
 
     it("does not pause on a server error: each failure makes the next read wait longer, 5, 10, 20, then 30 minutes", async () => {
       await openOne();
-      h.host.scripted.prState = Array.from({ length: 4 }, () => BAD_GATEWAY);
+      h.host.scripted.prBatch = Array.from({ length: 4 }, () => BAD_GATEWAY);
       await pollIn(5);
       const first = h.clock.t;
       expect(project().state).toBe("running");
       expect(waitOf()).toEqual({ failures: 1, since: first, message: BAD_GATEWAY.message });
       expect(systemPosts()).toEqual([
-        "Reading the pull request failed with what looks like a temporary GitHub error: gh pr view failed: gh: HTTP 502. Loom reads it again in 5m, waiting longer after each failure up to 30m, and pauses the project only if the reads keep failing for 1h.",
+        "Reading the pull request failed with what looks like a temporary GitHub error: gh api graphql failed: gh: HTTP 502. Loom reads it again in 5m, waiting longer after each failure up to 30m, and pauses the project only if the reads keep failing for 1h.",
       ]);
 
       const expected: Array<[number, number]> = [
@@ -791,12 +792,12 @@ describe("the pull request strategy", () => {
 
     it("pauses the project once the reads have failed for an hour, naming the pull request, the error and how long", async () => {
       await openOne();
-      h.host.scripted.prState = Array.from({ length: 5 }, () => BAD_GATEWAY);
+      h.host.scripted.prBatch = Array.from({ length: 5 }, () => BAD_GATEWAY);
       for (const minutes of [5, 5, 10, 20, 30]) await pollIn(minutes);
       expect(reads()).toHaveLength(5);
       expect(project()).toMatchObject({
         state: "paused",
-        system_reason: "Reading the pull request https://github.com/acme/shop/pull/1 of CSV-1 failed 5 times in a row over 1h 5m: gh pr view failed: gh: HTTP 502. Resume once GitHub answers again.",
+        system_reason: "Reading the pull request https://github.com/acme/shop/pull/1 of CSV-1 failed 5 times in a row over 1h 5m: gh api graphql failed: gh: HTTP 502. Resume once GitHub answers again.",
         triage_pending: 1,
       });
       expect(ticketOf(h, "CSV-1").state).toBe("pr_open");
@@ -804,7 +805,7 @@ describe("the pull request strategy", () => {
 
     it("clears the wait on the next read that succeeds, so the one after comes 5 minutes later and a new failure starts over", async () => {
       await openOne();
-      h.host.scripted.prState = [BAD_GATEWAY, BAD_GATEWAY];
+      h.host.scripted.prBatch = [BAD_GATEWAY, BAD_GATEWAY];
       await pollIn(5);
       await pollIn(5);
       await pollIn(10);
@@ -813,44 +814,92 @@ describe("the pull request strategy", () => {
       await pollIn(5);
       expect(reads()).toHaveLength(4);
 
-      h.host.scripted.prState = [BAD_GATEWAY];
+      h.host.scripted.prBatch = [BAD_GATEWAY];
       await pollIn(5);
       expect(waitOf()).toEqual({ failures: 1, since: h.clock.t, message: BAD_GATEWAY.message });
       expect(systemPosts()).toHaveLength(2);
     });
 
-    it("stops every read to the host for the rest of the poll and 15 minutes after a rate limit, in every project, without pausing", async () => {
+    it("stops every read to the host for 15 minutes after a rate limit, in every project, without pausing", async () => {
       await openTwo();
       const other = await otherProject();
-      h.host.scripted.prState = [RATE_LIMITED];
+      h.host.scripted.prBatch = [RATE_LIMITED];
       await pollIn(5);
-      expect(reads()).toEqual(["https://github.com/acme/shop/pull/2"]);
+      // Both pull requests of acme/shop go in one call, so one rate limit covers them both and posts once, on the first.
+      expect(calls()).toEqual([["https://github.com/acme/shop/pull/2", "https://github.com/acme/shop/pull/1"]]);
       expect(project().state).toBe("running");
       expect(h.ctx.forgeBackoffs.get("github.com")).toEqual({ until: h.clock.t + 15 * MINUTE, delayMs: 15 * MINUTE, message: RATE_LIMITED.message });
       expect(systemPosts("CSV-1")).toEqual([
-        "GitHub rate-limited Loom's read of the pull request: gh pr view failed: GraphQL: API rate limit exceeded for user ID 1234567. Loom reads no pull request on github.com, in any project, for 15m, and does not pause the project.",
+        "GitHub rate-limited Loom's read of the pull request: gh api graphql failed: GraphQL: API rate limit exceeded for user ID 1234567. Loom reads no pull request on github.com, in any project, for 15m, and does not pause the project.",
       ]);
       expect(systemPosts("CSV-2")).toEqual([]);
-      expect(ticketOf(h, "CSV-2").pr_checked_at).toBe(ticketOf(h, "CSV-1").pr_checked_at! - 5 * MINUTE);
 
       await pollPullRequests(h.ctx, other());
       await pollIn(5);
       await pollIn(5, other());
       await pollIn(4);
-      expect(reads()).toHaveLength(1);
+      expect(calls()).toHaveLength(1);
       expect(other().state).toBe("running");
 
       await pollIn(1);
-      expect(reads()).toEqual(["https://github.com/acme/shop/pull/2", "https://github.com/acme/shop/pull/2", "https://github.com/acme/shop/pull/1"]);
+      expect(calls()).toEqual([
+        ["https://github.com/acme/shop/pull/2", "https://github.com/acme/shop/pull/1"],
+        ["https://github.com/acme/shop/pull/2", "https://github.com/acme/shop/pull/1"],
+      ]);
       expect(h.ctx.forgeBackoffs.has("github.com")).toBe(false);
       await pollPullRequests(h.ctx, other());
-      expect(reads().at(-1)).toBe("https://github.com/acme/billing/pull/9");
+      expect(calls().at(-1)).toEqual(["https://github.com/acme/billing/pull/9"]);
       expect(systemPosts("CSV-1")).toHaveLength(1);
+    });
+
+    it("waits out a server error GitHub gave for one pull request of an answer, and keeps a rate limit's backoff after the others read fine", async () => {
+      await openTwo();
+      const ok = { number: 2, state: "OPEN", draft: false, review: null, base: "main", feedback: null } as const;
+      h.host.scripted.prBatch = [{ outcome: "ok", pulls: [ok], missing: [{ number: 1, message: "GitHub did not answer for pull request #1 in acme/shop: Something went wrong", transient: "server" }] }];
+      await pollIn(5);
+      expect(project().state).toBe("running");
+      expect(waitOf("CSV-2")).toMatchObject({ failures: 1 });
+      expect(waitOf("CSV-1")).toBeNull();
+
+      h.host.scripted.prBatch = [{ outcome: "ok", pulls: [ok], missing: [{ number: 1, message: "API rate limit exceeded", transient: "rate_limit" }] }];
+      await pollIn(10);
+      expect(project().state).toBe("running");
+      expect(h.ctx.forgeBackoffs.get("github.com")).toMatchObject({ until: h.clock.t + 15 * MINUTE });
+    });
+
+    it("backs off once for an answer that rate-limited several pull requests, with the longest wait GitHub named", async () => {
+      await openTwo();
+      h.host.scripted.prBatch = [
+        {
+          outcome: "ok",
+          pulls: [],
+          missing: [
+            { number: 2, message: "API rate limit exceeded", transient: "rate_limit" },
+            { number: 1, message: "API rate limit exceeded", transient: "rate_limit", retryAfterMs: 20 * MINUTE },
+          ],
+        },
+      ];
+      await pollIn(5);
+      expect(h.ctx.forgeBackoffs.get("github.com")).toMatchObject({ delayMs: 15 * MINUTE, until: h.clock.t + 20 * MINUTE });
+      expect([...systemPosts("CSV-1"), ...systemPosts("CSV-2")]).toHaveLength(1);
+      expect(project().state).toBe("running");
+    });
+
+    it("makes each pull request of a read that hit a server error wait out its own failures", async () => {
+      await openTwo();
+      h.host.scripted.prBatch = [BAD_GATEWAY];
+      await pollIn(5);
+      expect(project().state).toBe("running");
+      expect([waitOf("CSV-1"), waitOf("CSV-2")]).toEqual([
+        { failures: 1, since: h.clock.t, message: BAD_GATEWAY.message },
+        { failures: 1, since: h.clock.t, message: BAD_GATEWAY.message },
+      ]);
+      expect([systemPosts("CSV-1"), systemPosts("CSV-2")].map((each) => each.length)).toEqual([1, 1]);
     });
 
     it("doubles the backoff to at most an hour while the limits go on, and waits until the time GitHub names", async () => {
       await openOne();
-      h.host.scripted.prState = [RATE_LIMITED, RATE_LIMITED, RATE_LIMITED, RATE_LIMITED];
+      h.host.scripted.prBatch = [RATE_LIMITED, RATE_LIMITED, RATE_LIMITED, RATE_LIMITED];
       const delays: number[] = [];
       for (const minutes of [5, 15, 30, 60]) {
         await pollIn(minutes);
@@ -863,7 +912,7 @@ describe("the pull request strategy", () => {
 
       await pollIn(60);
       expect(h.ctx.forgeBackoffs.has("github.com")).toBe(false);
-      h.host.scripted.prState = [{ ...RATE_LIMITED, retryAfterMs: 40 * MINUTE }];
+      h.host.scripted.prBatch = [{ ...RATE_LIMITED, retryAfterMs: 40 * MINUTE }];
       await pollIn(5);
       expect(h.ctx.forgeBackoffs.get("github.com")).toMatchObject({ until: h.clock.t + 40 * MINUTE, delayMs: 15 * MINUTE });
       await pollIn(39);
@@ -882,6 +931,103 @@ describe("the pull request strategy", () => {
     h.clock.advance(5 * 60_000);
     await pollPullRequests(h.ctx, project());
     expect(ticketOf(h, "CSV-1").state).toBe("done");
+  });
+});
+
+describe("reading open pull requests in batches", () => {
+  const pr = (doc: Doc) => (doc.merge = { strategy: "pr", describe: "loom", squash: false, max_fix_rounds: 0 });
+  /** CSV-1 to CSV-n, none depending on another. */
+  const withTickets = (n: number) => (doc: Doc) => {
+    pr(doc);
+    doc.ticket[1].depends_on = [];
+    for (let index = 3; index <= n; index += 1) doc.ticket.push({ ref: `csv-part-${index}`, title: `Part ${index}`, body: "Build it.", acceptance: ["WHEN it runs THE SYSTEM SHALL work"], scope: [`src/part${index}/**`] });
+  };
+  const seq = (key: string) => Number(key.split("-")[1]);
+  /** Every ticket's pull request is open, due, at the URL `url` gives for its number. */
+  const openAll = (url: (n: number) => string) => {
+    for (const ticket of h.store.tickets(project().id)) {
+      for (const to of ["working", "checking", "review", "approved", "merging", "pr_open"] as const) h.store.setTicketState(ticket.id, to, "loom");
+      h.store.updateTicket(ticket.id, { pr_url: url(seq(ticket.key)), pr_branch: `loom/csv/${ticket.key.toLowerCase()}`, pushed_sha: `sq${seq(ticket.key)}`, pr_checked_at: null });
+    }
+  };
+  const meta = (key: string) => JSON.parse(ticketOf(h, key).pr_meta_json!) as Record<string, unknown>;
+
+  it("reads 12 pull requests of one GitHub repository in two calls of 10 and 2, and stores what it read on each ticket", async () => {
+    await seedProject(h, withTickets(12));
+    openAll((n) => `https://github.com/acme/shop/pull/${100 + n}`);
+    h.host.prMeta.set("https://github.com/acme/shop/pull/103", { draft: true, review: "APPROVED", base: "main" });
+    await pollPullRequests(h.ctx, project());
+
+    expect(h.host.calls.map((call) => call.method)).toEqual(["prBatch", "prBatch"]);
+    expect(h.host.callsTo("prBatch")).toEqual([
+      { repo: "/repo", host: "github.com", owner: "acme", name: "shop", numbers: [101, 102, 103, 104, 105, 106, 107, 108, 109, 110], feedback: false },
+      { repo: "/repo", host: "github.com", owner: "acme", name: "shop", numbers: [111, 112], feedback: false },
+    ]);
+    expect(meta("CSV-3")).toEqual({ at: h.clock.t, draft: true, review: "APPROVED", base: "main", state: "OPEN" });
+    expect(meta("CSV-12")).toEqual({ at: h.clock.t, draft: false, review: null, base: null, state: "OPEN" });
+    expect(h.store.tickets(project().id).every((ticket) => ticket.state === "pr_open" && ticket.pr_checked_at === h.clock.t)).toBe(true);
+  });
+
+  it("makes one call per GitHub repository: 12 pull requests in 4 repositories take 4 calls", async () => {
+    await seedProject(h, withTickets(12));
+    openAll((n) => `https://github.com/acme/repo${n % 4}/pull/${n}`);
+    await pollPullRequests(h.ctx, project());
+    expect(h.host.callsTo("prBatch").map((call) => `${call.owner}/${call.name}: ${call.numbers.join(",")}`)).toEqual(["acme/repo1: 1,5,9", "acme/repo2: 2,6,10", "acme/repo3: 3,7,11", "acme/repo0: 4,8,12"]);
+    expect(h.host.calls).toHaveLength(4);
+  });
+
+  it("settles each pull request of a call on its own: merged, closed, missing and open", async () => {
+    await seedProject(h, withTickets(4));
+    openAll((n) => `https://github.com/acme/shop/pull/${n}`);
+    h.host.prStates.set("https://github.com/acme/shop/pull/1", "MERGED");
+    h.host.prStates.set("https://github.com/acme/shop/pull/2", "CLOSED");
+    h.host.missingPrs.add("https://github.com/acme/shop/pull/3");
+    await pollPullRequests(h.ctx, project());
+
+    expect(h.host.callsTo("prBatch")).toHaveLength(1);
+    expect(ticketOf(h, "CSV-1").state).toBe("done");
+    expect(meta("CSV-1")).toMatchObject({ state: "MERGED" });
+    expect(ticketOf(h, "CSV-2")).toMatchObject({ state: "blocked", blocked_reason: "the pull request was closed without merging" });
+    expect(meta("CSV-2")).toMatchObject({ state: "CLOSED" });
+    expect(ticketOf(h, "CSV-3")).toMatchObject({ state: "pr_open", pr_meta_json: null });
+    expect(project()).toMatchObject({ state: "paused", system_reason: "Reading the pull request of CSV-3 stopped: gh found no pull request #3 in acme/shop: Could not resolve to a PullRequest with the number of 3." });
+    expect(ticketOf(h, "CSV-4").state).toBe("pr_open");
+    expect(meta("CSV-4")).toMatchObject({ state: "OPEN" });
+  });
+
+  it("pauses with the error when the call fails, and settles none of its pull requests", async () => {
+    await seedProject(h, withTickets(2));
+    openAll((n) => `https://github.com/acme/shop/pull/${n}`);
+    h.host.prStates.set("https://github.com/acme/shop/pull/1", "MERGED");
+    h.host.scripted.prBatch = [new Error("host disconnected")];
+    await pollPullRequests(h.ctx, project());
+    expect(project()).toMatchObject({ state: "paused", system_reason: "Reading the pull requests of CSV-1 and CSV-2 stopped: host disconnected" });
+    expect(h.store.tickets(project().id).map((ticket) => [ticket.state, ticket.pr_meta_json, ticket.pr_checked_at])).toEqual([
+      ["pr_open", null, h.clock.t],
+      ["pr_open", null, h.clock.t],
+    ]);
+  });
+
+  it("pauses on a gh forge's pull request URL that is not GitHub's, and still reads the others", async () => {
+    await seedProject(h, withTickets(2));
+    openAll((n) => (n === 1 ? "https://review.example.com/shop/1" : `https://github.com/acme/shop/pull/${n}`));
+    await pollPullRequests(h.ctx, project());
+    expect(project()).toMatchObject({ state: "paused", system_reason: "CSV-1's pull request https://review.example.com/shop/1 is not a GitHub pull request URL, so gh cannot read it." });
+    expect(h.host.callsTo("prBatch")).toEqual([expect.objectContaining({ numbers: [2] })]);
+  });
+
+  it("reads a command forge's pull requests one at a time, and stores no draft flag, review or base for its state command", async () => {
+    await seedProject(h, (doc) => {
+      withTickets(2)(doc);
+      doc.merge.forge = { kind: "command", open: "review open", state: "review state" };
+    });
+    openAll((n) => `https://review.example.com/shop/${n}`);
+    h.host.prStates.set("https://review.example.com/shop/2", "MERGED");
+    await pollPullRequests(h.ctx, project());
+    expect(h.host.callsTo("prState").map((call) => call.url)).toEqual(["https://review.example.com/shop/1", "https://review.example.com/shop/2"]);
+    expect(h.host.callsTo("prBatch")).toEqual([]);
+    expect(meta("CSV-1")).toEqual({ at: h.clock.t, draft: null, review: null, base: null, state: "OPEN" });
+    expect(ticketOf(h, "CSV-2").state).toBe("done");
   });
 });
 

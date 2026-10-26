@@ -219,6 +219,12 @@ export function dependsOnLines(spec: Spec, tickets: readonly TicketRow[], ticket
   const only = up.open.length === 1 ? up.open[0]! : null;
   if (only?.pr_url != null) lines.push(`Stacked on ${only.pr_url} (${only.key}): merge that one first. Loom moves this pull request to ${repoSettings(spec, ticket.repo).base} when it merges.`);
   for (const dep of up.cross) if (dep.state !== "done" && dep.state !== "cancelled" && dep.pr_url !== null) lines.push(`Depends on ${dep.pr_url} (${dep.key}) in the repo ${JSON.stringify(dep.repo)}: merge that one first.`);
+  const byKey = new Map(tickets.map((row) => [row.key, row]));
+  for (const key of JSON.parse(ticket.merge_after_json) as string[]) {
+    const before = byKey.get(key);
+    if (before === undefined || before.state === "done" || before.state === "cancelled") continue;
+    lines.push(before.pr_url !== null ? `Merge after ${before.pr_url} (${before.key}).` : `Merge after ${before.key}, which has no pull request yet.`);
+  }
   return lines;
 }
 
@@ -772,7 +778,8 @@ export const SPEC_REVIEW_RUBRIC: readonly string[] = [
   "No speculation: configuration, flags, settings, abstraction layers, plugin points or generality that nothing in the goal uses now are findings, and so is work for possible future needs.",
   "Reuse: read the code the tickets touch. A ticket that rebuilds what the repository already has, such as a helper, component, command or test fixture, is a finding; name what to reuse.",
   "Completeness: a part of the goal that no ticket delivers, or an acceptance criterion no one could test, is a finding.",
-  "Checks and scope: a check command that does not exist in the repository, a scope far wider than the ticket's work, or a depends_on where no order is needed, is a finding.",
+  "Checks and scope: a check command that does not exist in the repository, a scope far wider than the ticket's work, or a depends_on or merge_after where no order is needed, is a finding.",
+  "Summary: project.summary tells someone who has not read the goal what the project changes and why. A summary that only names an issue or a task, or that promises what no ticket delivers, is a finding.",
 ];
 
 const SPEC_LIMIT = 60_000;
@@ -824,6 +831,7 @@ export function specReviewerBrief(a: { project: ProjectRow; spec: Spec; toml: st
     "The human's answers to the planner's Ask User Question rounds may be missing from that log. The goal and non-goals below record them, so treat those as the human's words unless the log contradicts them.",
     "",
     `Goal: ${spec.project.goal}`,
+    ...(spec.project.summary === undefined ? [] : [`Summary: ${spec.project.summary}`]),
     ...(spec.project.non_goals.length === 0 ? [] : ["Non-goals:", bullets(spec.project.non_goals)]),
     "",
     ...(inForce === null

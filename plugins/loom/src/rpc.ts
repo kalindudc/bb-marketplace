@@ -10,6 +10,7 @@ import { projectHealth } from "./health";
 import { homeView } from "./home";
 import { projectInsights } from "./insights";
 import { backedOffUntil, forgeHostOf, nextPollAt } from "./forge-waits";
+import { mergeOrderOf } from "./merge-order";
 import { askOf, forgeRoundsSinceRequeue, PR_TEXT_MINUTES, prTextFor, statusOf } from "./pull-requests";
 import { followsFeedback, prSettings, repoSettings } from "./repos";
 import { computeMetrics } from "./metrics";
@@ -280,6 +281,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       at: past?.eventId ?? null,
       specReview,
       openAsks: past === null && project.state !== "archived" ? (plannerAsk(store, project)?.steps.filter((step) => !step.done).length ?? 0) : 0,
+      mergeOrder: past === null && approved !== null ? mergeOrderOf(approved, tickets) : null,
     };
   };
 

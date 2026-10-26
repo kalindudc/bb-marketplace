@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { createCli } from "../src/cli";
-import { parseSpec } from "../src/spec";
+import { parseSpec, proposalErrorsOf } from "../src/spec";
 import { ORDINARY_TOOLS, PLANNER_TOOLS, REVIEWER_TOOLS, SKILLS, SPEC_REVIEWER_TOOLS, WORKER_TOOLS } from "../src/tools";
 import { makeHost } from "./helpers";
 
@@ -161,6 +161,8 @@ describe("the plugin's own documents", () => {
     const examples = [...spec.matchAll(/```toml\n([\s\S]*?)```/g)].map((match) => parseSpec(match[1]!));
     expect(examples.length).toBeGreaterThanOrEqual(2);
     for (const example of examples) expect(example.errors).toEqual([]);
+    // Planners copy these, so each one must be a spec loom_propose takes, summary included.
+    for (const example of examples) expect(proposalErrorsOf(example.spec!)).toEqual([]);
     const multi = examples.find((example) => (example.spec?.repo?.length ?? 0) >= 2)!.spec!;
     const repoOf = new Map(multi.ticket.map((ticket) => [ticket.ref, ticket.repo]));
     expect(multi.ticket.some((ticket) => ticket.depends_on.some((ref) => repoOf.get(ref) !== ticket.repo))).toBe(true);

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { ticketActivity } from "../src/activity";
 import { pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
 import type { SpawnArgs } from "../src/ports";
 import { boardCards } from "../src/rpc";
@@ -200,6 +201,72 @@ describe("catching up with the dependency", () => {
     await queue();
     expect(ticketOf(h, "CSV-2").state).toBe("pr_open");
     expect(h.host.callsTo("merge")).toEqual([]);
+  });
+});
+
+describe("a pull request that merged into another branch", () => {
+  const mergedElsewhere = (key: string) => h.store.posts(ticketOf(h, key).id).filter((post) => post.kind === "merge" && (JSON.parse(post.data_json) as { outcome?: string }).outcome === "merged_elsewhere");
+
+  it("blocks a stacked ticket whose pull request merged into its dependency's branch, naming that ticket, instead of completing it", async () => {
+    await openFirst();
+    const worker = await reachApproved(h, "CSV-2");
+    await queue();
+    const [first, second] = [ticketOf(h, "CSV-1"), ticketOf(h, "CSV-2")];
+    expect(second.pr_base).toBe(first.pr_branch);
+    h.host.prStates.set(second.pr_url!, "MERGED");
+    await poll();
+
+    const reason = `Its pull request merged into CSV-1's branch (${first.pr_branch}), not main, so its change is not on main. Merge CSV-1's pull request first, then put this change on main again.`;
+    const ticket = ticketOf(h, "CSV-2");
+    expect(ticket).toMatchObject({ state: "blocked", blocked_reason: reason, pr_branch: null, pushed_sha: null });
+    expect(JSON.parse(ticket.pr_meta_json!)).toEqual({ at: h.clock.t, draft: true, review: null, base: first.pr_branch, state: "MERGED" });
+    const [post] = mergedElsewhere("CSV-2");
+    expect(JSON.parse(post!.data_json)).toEqual({ outcome: "merged_elsewhere", url: second.pr_url, branch: first.pr_branch, base: "main", ticket: "CSV-1" });
+    expect(post!.body).toBe(`The pull request ${second.pr_url} merged into CSV-1's branch (${first.pr_branch}), not main, so Loom did not complete CSV-2.`);
+    expect(h.store.posts(ticket.id).filter((each) => each.kind === "block").map((each) => each.body)).toEqual([reason]);
+    expect(project().triage_pending).toBe(1);
+    expect(h.store.thread(worker.id)).toMatchObject({ state: "ended", end_reason: "blocked" });
+    expect(ticketOf(h, "CSV-1").state).toBe("pr_open");
+
+    const attempt = ticketActivity({ state: ticket.state, posts: h.store.posts(ticket.id), threads: h.store.threads({ ticketId: ticket.id }), runs: h.store.runs(ticket.id) }).attempts.at(-1)!;
+    expect(attempt).toMatchObject({ outcome: "blocked", line: `Blocked: Its pull request merged into CSV-1's branch (${first.pr_branch}), not main, so its change is not on main.` });
+    expect(attempt.pipeline.pr.at(-1)).toBe("fail");
+  });
+
+  it("names the branch alone when no ticket's pull request is on it", async () => {
+    await openFirst();
+    h.host.prMeta.set(URL1, { base: "release-2" });
+    h.host.prStates.set(URL1, "MERGED");
+    await poll();
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "blocked", blocked_reason: "Its pull request merged into the branch release-2, not main, so its change is not on main. Put this change on main again." });
+    expect(JSON.parse(mergedElsewhere("CSV-1")[0]!.data_json)).toMatchObject({ branch: "release-2", base: "main", ticket: null });
+  });
+
+  it("completes a stacked ticket whose pull request merged into main once Loom moved it there", async () => {
+    await openFirst();
+    await reachApproved(h, "CSV-2");
+    await queue();
+    h.host.prStates.set(URL1, "MERGED");
+    await poll();
+    await queue();
+    const second = ticketOf(h, "CSV-2");
+    expect(second.pr_base).toBe("main");
+    h.host.prStates.set(second.pr_url!, "MERGED");
+    await poll();
+    expect(ticketOf(h, "CSV-2").state).toBe("done");
+    expect(JSON.parse(ticketOf(h, "CSV-2").pr_meta_json!)).toMatchObject({ base: "main", state: "MERGED" });
+    expect(mergedElsewhere("CSV-2")).toEqual([]);
+  });
+
+  it("completes the ticket as before when the forge does not say which branch the pull request merged into", async () => {
+    await openFirst();
+    await reachApproved(h, "CSV-2");
+    await queue();
+    const second = ticketOf(h, "CSV-2");
+    h.host.prMeta.set(second.pr_url!, { base: null });
+    h.host.prStates.set(second.pr_url!, "MERGED");
+    await poll();
+    expect(ticketOf(h, "CSV-2").state).toBe("done");
   });
 });
 

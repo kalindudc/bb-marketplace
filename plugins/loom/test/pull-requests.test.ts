@@ -170,25 +170,28 @@ describe("following the pull request", () => {
     await openPr();
     h.host.feedback.set(URL, { checks: [{ key: "check:1", name: "lint", state: "passed", url: null }, { key: "check:2", name: "test", state: "pending", url: null }] });
     await poll();
-    expect(h.host.callsTo("prFeedback")).toEqual([{ repo: "/repo", url: URL, forge: { kind: "gh" } }]);
+    expect(h.host.callsTo("prBatch")).toEqual([{ repo: "/repo", host: "github.com", owner: "acme", name: "shop", numbers: [1], feedback: true }]);
+    expect(h.host.callsTo("prFeedback")).toEqual([]);
     expect(h.host.callsTo("prState")).toEqual([]);
     expect(JSON.parse(ticket().pr_status_json!)).toMatchObject({ passed: 1, pending: 1, failed: 0, at: h.clock.t });
+    expect(JSON.parse(ticket().pr_meta_json!)).toEqual({ at: h.clock.t, draft: true, review: null, base: "main", state: "OPEN" });
     expect(ticket().state).toBe("pr_open");
   });
 
   it("reads the feedback once per poll, falls back on no other read when GitHub fails it, and starts the fix round once a read succeeds", async () => {
     await openPr();
     h.host.feedback.set(URL, changesRequested);
-    h.host.scripted.prFeedback = [{ outcome: "unavailable", message: "gh api graphql failed: gh: HTTP 502", transient: "server" }];
+    h.host.scripted.prBatch = [{ outcome: "unavailable", message: "gh api graphql failed: gh: HTTP 502", transient: "server" }];
     await poll();
-    expect(h.host.callsTo("prFeedback")).toHaveLength(1);
+    expect(h.host.callsTo("prBatch").filter((call) => call.feedback)).toHaveLength(1);
     expect(h.host.callsTo("prState")).toEqual([]);
+    expect(h.host.callsTo("prFeedback")).toEqual([]);
     expect(project().state).toBe("running");
     expect(ticket()).toMatchObject({ state: "pr_open", pr_rounds: 0, pr_status_json: null });
     expect(JSON.parse(ticket().pr_poll_json!)).toMatchObject({ failures: 1 });
 
     await poll();
-    expect(h.host.callsTo("prFeedback")).toHaveLength(2);
+    expect(h.host.callsTo("prBatch").filter((call) => call.feedback)).toHaveLength(2);
     expect(ticket()).toMatchObject({ state: "working", pr_rounds: 1, pr_poll_json: null });
   });
 
@@ -392,6 +395,52 @@ describe("following the pull request", () => {
     expect(ticket()).toMatchObject({ state: "pr_open", pr_rounds: 1 });
   });
 
+  it("blocks a fix round whose pull request merged into another branch while the worker fixed it, and pushes nothing", async () => {
+    const worker = await openPr();
+    h.host.feedback.set(URL, changesRequested);
+    await poll();
+    await approveFix(worker);
+    await ask();
+    handInPrText(h.ctx, worker.thread_id!, { commit_message: "Rename the column" });
+    const pushes = h.host.callsTo("push").length;
+    h.host.prStates.set(URL, "MERGED");
+    h.host.prMeta.set(URL, { base: "loom/csv/csv-0" });
+    await queue();
+    expect(ticket()).toMatchObject({ state: "blocked", blocked_reason: "Its pull request merged into the branch loom/csv/csv-0, not main, so its change is not on main. Put this change on main again." });
+    expect(JSON.parse(ticket().pr_meta_json!)).toMatchObject({ state: "MERGED", base: "loom/csv/csv-0" });
+    expect(dataOf("merged_elsewhere")).toHaveLength(1);
+    expect(h.host.callsTo("push")).toHaveLength(pushes);
+  });
+
+  it("reads a command forge's base through its feedback command before a fix round's push, so a merge elsewhere blocks there too", async () => {
+    const worker = await openPr({ forge: { kind: "command", open: "review open", state: "review state", feedback: "review feedback --json" } });
+    h.host.feedback.set(URL, changesRequested);
+    await poll();
+    await approveFix(worker);
+    await ask();
+    handInPrText(h.ctx, worker.thread_id!, { commit_message: "Rename the column" });
+    const reads = h.host.callsTo("prFeedback").length;
+    h.host.prStates.set(URL, "MERGED");
+    h.host.feedback.set(URL, { ...changesRequested, base: "loom/csv/csv-0" });
+    await queue();
+    expect(h.host.callsTo("prFeedback")).toHaveLength(reads + 1);
+    expect(h.host.callsTo("prState")).toEqual([]);
+    expect(ticket()).toMatchObject({ state: "blocked" });
+    expect(dataOf("merged_elsewhere")).toHaveLength(1);
+  });
+
+  it("forgets what it read of a pull request it let go of once the ticket is requeued, and keeps it for one still open", async () => {
+    await openPr();
+    await poll();
+    expect(ticket().pr_meta_json).not.toBeNull();
+    h.store.updateTicket(ticket().id, { state: "blocked", blocked_reason: "Stuck." });
+    await requeueTicket(h.ctx, "CSV-1", { note: "Again.", actor: "human", author: "human" });
+    expect(ticket().pr_meta_json).not.toBeNull();
+    h.store.updateTicket(ticket().id, { state: "blocked", blocked_reason: "Closed.", pushed_sha: null, pr_branch: null });
+    await requeueTicket(h.ctx, "CSV-1", { note: "Again.", actor: "human", author: "human" });
+    expect(ticket().pr_meta_json).toBeNull();
+  });
+
   it("pushes an approved fix as one more commit on the pull request, after checking it is open, and opens no other pull request", async () => {
     const worker = await openPr();
     h.host.feedback.set(URL, changesRequested);
@@ -404,7 +453,9 @@ describe("following the pull request", () => {
     handInPrText(h.ctx, worker.thread_id!, { commit_message: "Rename the column\n\nAs alice asked." });
     await queue();
 
-    expect(h.host.callsTo("prState")).toEqual([{ repo: "/repo", url: URL, forge: { kind: "gh" } }]);
+    // The check before the push is one GitHub read of this pull request alone, for its state and its base.
+    expect(h.host.callsTo("prBatch").filter((call) => !call.feedback)).toEqual([{ repo: "/repo", host: "github.com", owner: "acme", name: "shop", numbers: [1], feedback: false }]);
+    expect(h.host.callsTo("prState")).toEqual([]);
     expect(h.host.callsTo("prCommit").at(-1)).toMatchObject({ message: "Rename the column\n\nAs alice asked.", pushed: "sq1" });
     expect(h.host.callsTo("push").at(-1)).toMatchObject({ src: "sq2", branch: ticket().pr_branch });
     expect(h.host.callsTo("prCreate")).toHaveLength(1);
@@ -611,7 +662,7 @@ describe("following the pull request", () => {
     h.host.feedback.set(URL, changesRequested);
     await poll();
     expect(h.host.callsTo("prFeedback")).toEqual([]);
-    expect(h.host.callsTo("prState")).toHaveLength(1);
+    expect(h.host.callsTo("prBatch")).toEqual([expect.objectContaining({ numbers: [1], feedback: false })]);
     expect(ticket().state).toBe("pr_open");
   });
 
@@ -645,6 +696,22 @@ describe("following the pull request", () => {
     await poll();
     expect(h.host.callsTo("prFeedback")).toEqual([]);
     expect(h.host.callsTo("prState")[0]).toMatchObject({ forge: { kind: "command", state: "review state" } });
+  });
+
+  it("stores the draft flag, review and base a command forge's feedback command prints, null for those it leaves out, and blocks a pull request it says merged elsewhere", async () => {
+    const forge = { kind: "command", open: "review open", state: "review state", feedback: "review feedback --json" };
+    await openPr({ forge });
+    await poll();
+    expect(JSON.parse(ticket().pr_meta_json!)).toEqual({ at: h.clock.t, draft: null, review: null, base: null, state: "OPEN" });
+
+    h.host.feedback.set(URL, { draft: false, review: "APPROVED", base: "main" });
+    await poll();
+    expect(JSON.parse(ticket().pr_meta_json!)).toEqual({ at: h.clock.t, draft: false, review: "APPROVED", base: "main", state: "OPEN" });
+
+    h.host.feedback.set(URL, { state: "MERGED", base: "staging" });
+    await poll();
+    expect(ticket()).toMatchObject({ state: "blocked", blocked_reason: "Its pull request merged into the branch staging, not main, so its change is not on main. Put this change on main again." });
+    expect(dataOf("merged_elsewhere")[0]!.data).toMatchObject({ branch: "staging", base: "main" });
   });
 
   it("completes a push-only forge's ticket once the remote base contains the commit Loom pushed", async () => {

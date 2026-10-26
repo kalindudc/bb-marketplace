@@ -104,13 +104,18 @@ export interface TicketRow {
   environment_json: string | null;
   /** PollWait: the pull request's reads failed with GitHub server errors in a row, so the next one waits longer; null once one succeeds. */
   pr_poll_json: string | null;
+  /** The keys of the tickets whose pull requests merge before this one's; unlike deps_json, they hold neither its start nor its stacking. */
+  merge_after_json: string;
+  /** PrMeta: the pull request's draft flag, review decision and base branch when Loom last read them; null before the first read. */
+  pr_meta_json: string | null;
   created_by: string;
   created_at: number;
   updated_at: number;
   state_at: number;
 }
 
-export type NewTicket = Pick<TicketRow, "project_id" | "seq" | "key" | "ref" | "title" | "body" | "acceptance_json" | "verify_json" | "scope_json" | "deps_json" | "priority"> & Partial<Pick<TicketRow, "repo" | "environment_json">>;
+export type NewTicket = Pick<TicketRow, "project_id" | "seq" | "key" | "ref" | "title" | "body" | "acceptance_json" | "verify_json" | "scope_json" | "deps_json" | "priority"> &
+  Partial<Pick<TicketRow, "repo" | "environment_json" | "merge_after_json">>;
 
 export interface PostRow {
   id: number;
@@ -419,10 +424,10 @@ export class Store {
       const now = this.now();
       const result = this.db
         .prepare(
-          `INSERT INTO tickets (project_id, seq, key, ref, title, body, acceptance_json, verify_json, scope_json, deps_json, priority, repo, environment_json, state, created_by, created_at, updated_at, state_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
+          `INSERT INTO tickets (project_id, seq, key, ref, title, body, acceptance_json, verify_json, scope_json, deps_json, priority, repo, environment_json, merge_after_json, state, created_by, created_at, updated_at, state_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
         )
-        .run(row.project_id, row.seq, row.key, row.ref, row.title, row.body, row.acceptance_json, row.verify_json, row.scope_json, row.deps_json, row.priority, row.repo ?? null, row.environment_json ?? null, actor, now, now, now);
+        .run(row.project_id, row.seq, row.key, row.ref, row.title, row.body, row.acceptance_json, row.verify_json, row.scope_json, row.deps_json, row.priority, row.repo ?? null, row.environment_json ?? null, row.merge_after_json ?? "[]", actor, now, now, now);
       const ticket = this.requireTicket(Number(result.lastInsertRowid));
       this.event(ticket.project_id, ticket.id, "ticket.created", actor, { key: ticket.key, ref: ticket.ref });
       return ticket;

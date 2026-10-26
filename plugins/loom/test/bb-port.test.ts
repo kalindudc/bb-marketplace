@@ -1,7 +1,7 @@
 import type { NewThreadRequest } from "@get-bb/plugin-sdk";
 import { createFakePluginHost, type FakeSdkOverrides } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
-import { createBbPort } from "../src/bb-port";
+import { createBbPort, createHostPort } from "../src/bb-port";
 import { SpawnRefusedError, SpawnUnavailableError, type SpawnArgs } from "../src/ports";
 
 const request: NewThreadRequest = {
@@ -266,6 +266,22 @@ describe("environment providers and plugins", () => {
     expect(await port.plugins()).toEqual([
       { id: "environment-git-worktree", enabled: true, builtin: true },
       { id: "example-trees", enabled: false, builtin: false },
+    ]);
+  });
+});
+
+describe("createHostPort", () => {
+  it("gives pull request reads the network deadline, since gh and a forge command may take 2 minutes", async () => {
+    const calls: Array<{ method: string; timeoutMs: number }> = [];
+    const bb = { hosts: { experimental_client: () => ({ call: async (method: string, _input: unknown, opts: { timeoutMs: number }) => (calls.push({ method, timeoutMs: opts.timeoutMs }), {}) }) } } as unknown as Parameters<typeof createHostPort>[0];
+    const port = createHostPort(bb);
+    const input = {} as never;
+    for (const method of ["prFeedback", "prBatch", "prState", "changedFiles"] as const) await port.call("host_1", method, input);
+    expect(calls).toEqual([
+      { method: "prFeedback", timeoutMs: 150_000 },
+      { method: "prBatch", timeoutMs: 150_000 },
+      { method: "prState", timeoutMs: 150_000 },
+      { method: "changedFiles", timeoutMs: 30_000 },
     ]);
   });
 });

@@ -16,6 +16,8 @@ A spec without `[[repo]]` tables is a single-repo project: every ticket runs in 
 | `name` | string | required | 1 to 80 characters |
 | `key` | string | required | `^[A-Z][A-Z0-9]{1,7}$`; the ticket key prefix (`CSV` gives `CSV-1`); unique across all projects, archived ones included |
 | `goal` | string | required | 20 to 4000 characters |
+| `summary` | string | required in every proposal | 20 to 300 characters; one or two plain sentences that say what the project changes and why, for the project page's About strip and Loom's home list. A spec stored before summaries existed still loads, and shows its goal's first paragraph instead, but its next revision must add one |
+| `done_when` | string array | none | at most 20, each up to 300 characters; what must be true for the project to be done, one line each, shown under the summary |
 | `non_goals` | string array | `[]` | at most 50, each up to 500 characters |
 | `base` | string | `"main"` | the branch work starts from; a plain git name; the default `base` of every `[[repo]]` |
 | `open_questions` | string array | `[]` | must be empty |
@@ -53,7 +55,7 @@ The server that hosts pull requests. Leave it out for GitHub: Loom opens and fol
 The commands run with `/bin/sh` in the repo's checkout, with a 2-minute limit (`after_open`: 5 minutes):
 
 - `open` gets `LOOM_REMOTE`, `LOOM_BASE`, `LOOM_HEAD` (the pushed branch), `LOOM_TITLE` and `LOOM_DRAFT` (`1` or `0`), and reads the body on standard input. Loom takes the last `http(s)://` URL it prints as the pull request. When one is already open for the branch, it must print that one: a restart can run it again.
-- `state` gets `LOOM_URL` and `LOOM_PR_NUMBER` (the last run of digits in the URL). The first word of its last non-empty line must be `open`, `merged` or `closed`, in any case. Merged completes the ticket; closed blocks it.
+- `state` gets `LOOM_URL` and `LOOM_PR_NUMBER` (the last run of digits in the URL). The first word of its last non-empty line must be `open`, `merged` or `closed`, in any case. Merged completes the ticket; closed blocks it. It tells Loom nothing else, so on a forge with only `state` the Merge order tab cannot say whether a pull request is a draft or approved, and a merge into another branch completes the ticket.
 - `after_open` gets `LOOM_URL`, `LOOM_PR_NUMBER`, `LOOM_HEAD` and `LOOM_BASE`.
 - `feedback` gets `LOOM_URL` and `LOOM_PR_NUMBER`, and prints one JSON object on its last non-empty line:
 
@@ -64,7 +66,7 @@ The commands run with `/bin/sh` in the repo's checkout, with a 2-minute limit (`
    "items": [{"id": "r7", "kind": "review", "author": "alice", "bot": false, "body": "Rename it.", "state": "changes_requested", "url": null, "path": null, "line": null}]}
   ```
 
-  `state` is `open`, `merged` or `closed`. A check's `state` is `pending`, `passed`, `failed` or `neutral`. An item's `kind` is `review`, `thread` (an unresolved review thread, with `path` and `line`, whose `author` is its latest comment's) or `comment`. A pending check may say whether it `started` (`false` while it waits in a queue) and how far it got as `progress`, 0 to 100; any check may give `started_at` and `completed_at` as ISO 8601 times, and the times of passed checks give Loom their usual durations. `author`, `checks`, `items`, `bot`, `url`, `state`, `path`, `line`, `started`, `started_at`, `completed_at` and `progress` may be left out. An `id` must stay the same while the thing it names does not change, and change when it does (a check that runs again, an edited comment, a new reply in a thread): Loom sends each id to the worker once.
+  `state` is `open`, `merged` or `closed`. A check's `state` is `pending`, `passed`, `failed` or `neutral`. An item's `kind` is `review`, `thread` (an unresolved review thread, with `path` and `line`, whose `author` is its latest comment's) or `comment`. A pending check may say whether it `started` (`false` while it waits in a queue) and how far it got as `progress`, 0 to 100; any check may give `started_at` and `completed_at` as ISO 8601 times, and the times of passed checks give Loom their usual durations. The object may also give the pull request's `draft` (`true` or `false`), its `review` decision (`approved`, `changes_requested` or `review_required`, in any case) and the `base` branch it targets; Loom shows the first two on the Merge order tab, and with `base` it blocks a ticket whose pull request merged into a branch other than the repo's base instead of completing it. `author`, `checks`, `items`, `bot`, `url`, `state`, `path`, `line`, `started`, `started_at`, `completed_at`, `progress`, `draft`, `review` and `base` may be left out, and a null `draft`, `review` or `base` means the forge cannot tell. An `id` must stay the same while the thing it names does not change, and change when it does (a check that runs again, an edited comment, a new reply in a thread): Loom sends each id to the worker once.
 
 With `kind = "none"`, Loom pushes the ticket's branch and says where; a person opens the pull request. The ticket is done when the remote's base branch contains the ticket's exact commit, so a squash or rebase merge is not seen: block or cancel that ticket by hand. On the integration strategy, `bb loom land` pushes the integration branch and opens nothing.
 
@@ -204,6 +206,7 @@ One to 200 entries.
 | `verify` | string array | `[]` | at most 10 commands |
 | `scope` | string array | required | 1 to 50 globs |
 | `depends_on` | string array | `[]` | at most 20 refs; the ticket starts once these are done, or on the pr strategy with `merge.stack` once their pull requests are open |
+| `merge_after` | string array | none | at most 20 refs, not the ticket's own; the tickets whose pull requests should merge before this one's, on top of its `depends_on`. It orders merges only: it never holds the ticket's start and never stacks its pull request. Use it for an order the rollout needs that the code does not, such as clients after the server they call is deployed. Loom shows it on the Merge order tab and names those pull requests in this one's description. With `depends_on` it must leave no cycle |
 | `priority` | integer | `2` | 0 (highest) to 3 |
 | `repo` | string | none | required when the spec has `[[repo]]` tables, and then one of their names; not allowed without them. The ticket changes only this repo: its `scope`, `verify` and protected paths are relative to the repo's root. `depends_on` may name a ticket in another repo. |
 | `environment` | table | none | `{ inputs = { … } }`: a merge patch over its repo's environment `inputs` for this ticket's workers and reviewers (see [environment]); only where the repo has an environment provider; `loom_edit_ticket` changes it, and an empty `inputs` removes it |
@@ -218,6 +221,7 @@ slug = "csv-export"
 name = "CSV export"
 key = "CSV"
 goal = "Let admins export the orders table as a CSV file from the orders page, with the same columns as the screen."
+summary = "Admins can download the orders table as a CSV file, so they stop copying it out of the screen by hand."
 non_goals = ["Scheduled exports", "Other file formats"]
 base = "main"
 
@@ -281,6 +285,7 @@ slug = "order-notes"
 name = "Order notes"
 key = "NOTE"
 goal = "Let staff add a note to an order through the orders API, and show the note on the order page of the web app."
+summary = "Staff can note an order through the API and read the note on the order page."
 non_goals = ["Editing notes from the web app", "Notes on other resources"]
 base = "main"
 
@@ -353,6 +358,7 @@ slug = "order-tags"
 name = "Order tags"
 key = "TAG"
 goal = "Let support staff tag an order with free-text labels and filter the order list by tag."
+summary = "Support staff can tag orders and filter the order list by tag."
 
 [merge]
 strategy = "pr"

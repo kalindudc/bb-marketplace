@@ -103,6 +103,8 @@ export const ticketSpecSchema = z
     verify: z.array(command).max(10).default([]),
     scope: z.array(glob).min(1).max(50),
     depends_on: z.array(z.string().min(1).max(40)).max(20).default([]),
+    // No default, so a spec without it hashes as it did before it existed.
+    merge_after: z.array(z.string().min(1).max(40)).max(20).optional(),
     priority: z.number().int().min(0).max(3).default(2),
     repo: z.string().min(1).max(24).optional(),
     environment: ticketEnvironmentSchema.optional(),
@@ -133,6 +135,7 @@ export const ticketPatchSchema = z
     verify: ticketSpecSchema.shape.verify.unwrap().optional(),
     scope: ticketSpecSchema.shape.scope.optional(),
     depends_on: ticketSpecSchema.shape.depends_on.unwrap().optional(),
+    merge_after: ticketSpecSchema.shape.merge_after,
     priority: ticketSpecSchema.shape.priority.unwrap().optional(),
     repo: ticketSpecSchema.shape.repo,
     environment: ticketSpecSchema.shape.environment,
@@ -147,6 +150,9 @@ export const specSchema = z
         name: z.string().trim().min(1).max(80),
         key: z.string().regex(/^[A-Z][A-Z0-9]{1,7}$/, "must be 2-8 capital letters or digits, starting with a letter (for example CSV)"),
         goal: z.string().trim().min(20).max(4000),
+        // Optional here so the specs stored before it existed still parse; a proposal without one is refused (proposalErrorsOf).
+        summary: z.string().trim().min(20).max(300).optional(),
+        done_when: z.array(z.string().trim().min(1).max(300)).max(20).optional(),
         non_goals: z.array(z.string().min(1).max(500)).max(50).default([]),
         base: gitName.default("main"),
         open_questions: z.array(z.string()).default([]),
@@ -277,6 +283,15 @@ function describeTomlError(error: unknown): string {
   return `TOML: ${error instanceof Error ? (error.message.split("\n")[0] ?? String(error)) : String(error)}. Fix the syntax and propose again.`;
 }
 
+/**
+ * What every new draft or revision must have, beyond what parses: a project summary. The schema leaves it optional so the
+ * specs stored before it existed still load, so this is checked where a spec is proposed, and only there.
+ */
+export function proposalErrorsOf(spec: Spec): string[] {
+  if (spec.project.summary !== undefined) return [];
+  return ["project.summary: required. Write one or two plain sentences, 20 to 300 characters, that say what the project changes and why; Loom shows it on the project page and in its home list."];
+}
+
 export function parseSpec(toml: string): SpecResult {
   let raw: unknown;
   try {
@@ -383,6 +398,21 @@ export function validateSemantics(spec: Spec, rawToml: string): { errors: string
   const cycle = dependencyCycle(spec.ticket);
   if (cycle !== null) {
     errors.push(`ticket[${indexOfRef.get(cycle[0]!)}].depends_on: dependency cycle ${cycle.join(" -> ")}. Remove one depends_on entry to break the cycle.`);
+  }
+
+  spec.ticket.forEach((ticket, index) => {
+    for (const ref of ticket.merge_after ?? []) {
+      if (ref === ticket.ref) errors.push(`ticket[${index}].merge_after: "${ref}" is this ticket's own ref. Remove it.`);
+      else if (!indexOfRef.has(ref)) {
+        const others = [...indexOfRef.keys()].filter((other) => other !== ticket.ref);
+        errors.push(`ticket[${index}].merge_after: "${ref}" is not a ticket ref. ${others.length > 0 ? `Use one of: ${others.join(", ")}.` : "This spec has no other ticket; remove it."}`);
+      } else if (ticket.depends_on.includes(ref)) warnings.push(`ticket[${index}].merge_after: "${ref}" is in depends_on too, which already merges it first. Remove it from merge_after.`);
+    }
+  });
+  // Only when depends_on has no cycle of its own, so one loop is not reported twice.
+  if (cycle === null && spec.ticket.some((ticket) => (ticket.merge_after ?? []).length > 0)) {
+    const order = dependencyCycle(spec.ticket.map((ticket) => ({ ref: ticket.ref, depends_on: [...ticket.depends_on, ...(ticket.merge_after ?? []).filter((ref) => ref !== ticket.ref)] })));
+    if (order !== null) errors.push(`ticket[${indexOfRef.get(order[0]!)}].merge_after: merge order cycle ${order.join(" -> ")} through depends_on and merge_after. Remove one merge_after entry to break the cycle.`);
   }
 
   const repos = spec.repo ?? [];

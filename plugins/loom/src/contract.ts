@@ -5,6 +5,7 @@ import type { ProjectHealth } from "./health";
 import type { HomeProject, HomeView, NeedItem } from "./home";
 import type { ActivityMark, Chip, CurrentItem, EventLine, InsightsFilter, InsightsNumbers, InsightsWindow, LineTone, Part, Phrase, ProjectInsights, StoryGroup, StoryItem } from "./insights";
 import type { ProjectMetrics } from "./metrics";
+import type { MergeEntry, MergeOrderView, MergeVerdict, MergeWait } from "./merge-order";
 import type { NextStep } from "./next-step";
 import type { BbProjectChoice, PlanningSession, ProjectOverview, RepoOverview } from "./projects";
 import { MAX_PLANNING_REPOS } from "./prompts";
@@ -23,6 +24,7 @@ import { MERGE_CHOICES } from "./states";
 export type ProjectSummary = ProjectOverview;
 export type { ActivityMark, Chip, CurrentItem, EventLine, InsightsFilter, InsightsNumbers, InsightsWindow, LineTone, Part, Phrase, ProjectInsights, StoryGroup, StoryItem };
 export type { ChangedFile, ChangeKind, ChangeRepo, ChangeSource, ChangesView, FilePatch };
+export type { MergeEntry, MergeOrderView, MergeVerdict, MergeWait };
 export type { SpecReviewRound };
 export type { AskStep, PlannerAction, PlannerAsk, PlannerStep, PlannerVersion, PlannerView, TurnStep, VersionChange };
 export type { ActivityItem, Attempt, BbProjectChoice, ChecksItem, CheckStep, PrFeedbackItem, PrTextItem, HomeProject, HomeView, Mark, MergeItem, Moment, MomentKind, NeedItem, NextStep, PlanningSession, ProjectHealth, ProjectTimeline, RepoOverview, ReviewItem, SentNote, SessionBar, SpecVersionView, TicketActivity, TicketBar };
@@ -124,6 +126,8 @@ export interface ProjectView {
   specReview: SpecReviewStatus | null;
   /** The steps the planner asked the human to take (loom_ask_human) that are not done yet; 0 in a rewound view. */
   openAsks: number;
+  /** The order the project's pull requests merge in, on the pull request strategy; null otherwise and in a rewound view, since what Loom read from the forge is kept only as it is now. */
+  mergeOrder: MergeOrderView | null;
 }
 
 export interface PostDto {

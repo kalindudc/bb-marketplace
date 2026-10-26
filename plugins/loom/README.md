@@ -166,6 +166,13 @@ because Loom needs a git checkout.
 
 ### A project
 
+Under its header, an About strip says what the project is for: the spec's
+summary, the issues and pull requests its goal links to, its repos, and "Done
+when" with the spec's `done_when` lines. Full goal opens the Spec tab, and
+Planner thread opens the planner. A project approved before every spec needed a
+summary shows its goal's first paragraph instead, until the planner's next
+revision adds one. The home list shows each project's summary under its name.
+
 Every project has a next-step bar under its header: the stages from Plan to
 Land with the current one marked, one sentence on what happens next, and the
 one button you need now, such as "Approve v1 · create 7 tickets" or "Start
@@ -184,8 +191,10 @@ for a slot.
 A tab that needs you carries a badge until the thing is resolved: Board counts
 the blocked tickets, Spec marks a draft or a pending version waiting for you,
 Planner shows "?" while the planner waits on a question and otherwise counts
-the steps it asked you to take, and Changes counts the files you have not
-marked viewed on a project ready to land.
+the steps it asked you to take, Changes counts the files you have not
+marked viewed on a project ready to land, and Merge order counts the pull
+requests with nothing before them, or turns red for one that merged into
+another ticket's branch.
 
 #### Board
 
@@ -303,6 +312,33 @@ diff viewer, unified or split. Viewed marks stay in your browser and clear when
 a file changes again. On the branch, a panel carries Land and "Land to <base>"
 with what each pushes. A done project still shows what it merged, from the
 merge commits Loom recorded.
+
+#### Merge order
+
+On the pull request strategy, the order to merge the project's pull requests
+in. A pull request is at step 1 when nothing it waits on is still open, and one
+step after the latest of those otherwise. It waits on the tickets it depends on
+and on those its `merge_after` names. It is stacked when it targets another
+ticket's pull request branch; merging it first would put it into that branch
+instead of the base, so the tab says to merge the other one first.
+
+Steps lists the pull requests step by step. Each row has its checks, whether it
+is a draft and its review decision, a verdict (Ready to merge, what still holds
+it, or what it waits for), and what it waits on and unblocks in plain words.
+By repo lays them out in one lane per repo and one column per step, with a
+solid line for a stack and a dashed one for a wait; hovering shows a pull
+request's whole chain, and a click says what to do with it. Warnings at the top
+name a stacked pull request the forge already shows approved while its parent
+is open, and one that merged into another ticket's branch.
+
+The tab reads what Loom stored from its last poll of the pull requests, so it
+never asks the forge itself. Drafts and reviews come from GitHub, or from a
+command forge's feedback command when it prints them. Ready to merge needs all
+of it said: checks that passed, not a draft, and approved. A pull request whose
+checks pass without that reads "Checks pass", one that targets a branch other
+than its base or another ticket's says so, and on a project with
+`max_fix_rounds = 0` Loom does not read checks, so they read "Checks not
+read".
 
 #### Agents
 
@@ -470,6 +506,16 @@ chasing reviews no longer holds up the work that builds on them.
   commit on it is posted on the dependent ticket and sent to its worker.
 - The board marks a stacked ticket with what it is stacked on, and an approved
   ticket whose pull request waits with what it waits for.
+- A stacked pull request merged before its parent lands in the parent's branch,
+  not the base. When Loom reads a pull request as merged into a branch other
+  than its repo's base, it blocks the ticket and names the branch, and the
+  ticket whose branch it is, instead of counting the work as done. The
+  [Merge order](#merge-order) tab warns before that happens.
+- `merge_after` on a ticket orders merges without holding its start or
+  stacking it, for an order the rollout needs and the code does not, such as
+  clients after the server they call. Its pull request's description names
+  those pull requests, and the Merge order tab puts it after them. The planner
+  can change it with `loom_edit_ticket` while the pull request is open.
 
 Some repositories run CI only on pull requests to the default branch. A stacked
 pull request's checks then start once Loom moves it to the base branch.
@@ -531,6 +577,9 @@ choice is found or ask; the planner asks you the ask items in one round, and
   `state` command for that server's CLI, plus optional `after_open` commands
   such as one that starts CI; or `kind = "none"`, where Loom only pushes the
   branch and completes the ticket when the remote's base branch contains it.
+  A `feedback` command that also prints `draft`, `review` and `base` gives
+  the Merge order tab the same drafts and reviews it reads from GitHub, and
+  lets Loom catch a merge into the wrong branch there too.
 - `[environment]` starts the threads Loom runs in a repository (workers,
   reviewers, the spec reviewer and the summary agent) in a bb environment
   provider, such as one a plugin adds, with `inputs` in which Loom fills

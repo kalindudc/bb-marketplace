@@ -159,6 +159,12 @@ function ProjectRow({ project, needs, now, go }: { project: HomeProject; needs: 
         <button type="button" className="cursor-pointer text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
           <span className="text-sm font-medium">{project.name}</span> <span className="text-xs text-muted-foreground">{project.key}</span>
         </button>
+        {/* A zero-minimum track, so the summary truncates at the cell's width instead of widening the table. */}
+        <span className="grid grid-cols-[minmax(0,1fr)]">
+          <span data-project-summary title={project.about.summary ?? project.about.lead} className="truncate text-xs text-muted-foreground">
+            {project.about.summary ?? project.about.lead}
+          </span>
+        </span>
         <span className="block text-xs text-muted-foreground">{mergeLabel(project)} · {countsLabel(project.ticketCounts)}</span>
         {project.reason !== null && <span className="block text-xs text-warning-text">{project.reason}</span>}
       </td>

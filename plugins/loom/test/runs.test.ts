@@ -70,6 +70,8 @@ describe("stepSummary", () => {
     expect(stepSummary("push", { outcome: "ok" })).toEqual({ ok: true, text: "Pushed." });
     expect(stepSummary("prCreate", { outcome: "ok", url: "https://github.com/o/r/pull/1" })).toEqual({ ok: true, text: "Opened https://github.com/o/r/pull/1." });
     expect(stepSummary("push", { outcome: "unavailable", message: "no remote" })).toEqual({ ok: false, text: "no remote" });
+    const read = { outcome: "ok", pulls: [{ number: 4, state: "MERGED", draft: false, review: null, base: "main", feedback: null }], missing: [{ number: 5, message: "gh found no pull request #5 in o/r" }] };
+    expect(stepSummary("prBatch", read)).toEqual({ ok: false, text: "#4 is merged on main.\ngh found no pull request #5 in o/r" });
     expect(stepSummary("ensureBranch", { sha: "base000", created: true })).toEqual({ ok: true, text: '{"sha":"base000","created":true}' });
   });
 });

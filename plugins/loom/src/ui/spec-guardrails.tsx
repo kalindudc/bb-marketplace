@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Markdown } from "@get-bb/plugin-sdk/app";
 import type { Spec } from "../spec";
-import { BUTTON, plural } from "./common";
+import { BUTTON, HEADING, plural } from "./common";
 import { CHANGED_TAG, Commentable, DiffList, WordDiff, changeAt, kept, useReview, type ListMark } from "./spec-review-kit";
 
 const LONG_GOAL = 700;
@@ -54,7 +54,7 @@ export function GuardrailsSection({ spec, toml, onShowAll }: { spec: Spec; toml:
   const goalChange = changeAt(review, "project.goal");
   const showDiff = goalChange?.kind === "text" && (diff ?? review.only);
   const parts = [
-    { id: "goal", paths: ["project.goal", "project.name", "project.key", "project.slug"] },
+    { id: "goal", paths: ["project.goal", "project.summary", "project.done_when", "project.name", "project.key", "project.slug"] },
     { id: "non-goals", paths: ["project.non_goals"] },
     { id: "rubric", paths: ["review.rubric"] },
     { id: "questions", paths: ["project.open_questions"] },
@@ -79,6 +79,17 @@ export function GuardrailsSection({ spec, toml, onShowAll }: { spec: Spec; toml:
               {project.slug}
             </Commentable>
           </p>
+          <Commentable target={{ paths: ["project.summary"], label: "Summary", kind: "text", ...(project.summary === undefined ? {} : { value: project.summary }) }} className="mb-1.5 p-1">
+            {project.summary === undefined ? (
+              <p data-spec-summary className="text-xs text-warning-text">
+                No summary: this version was written before every proposal needed one, so the planner's next revision adds it.
+              </p>
+            ) : (
+              <p data-spec-summary className="text-sm font-medium [overflow-wrap:anywhere]">
+                {project.summary}
+              </p>
+            )}
+          </Commentable>
           {goalChange !== undefined && <span className={`${CHANGED_TAG} mb-1 inline-block`}>rewritten</span>}
           <Commentable target={{ paths: ["project.goal"], label: "Goal", kind: "text" }} className="p-1" showWas={false}>
             {showDiff ? (
@@ -101,6 +112,12 @@ export function GuardrailsSection({ spec, toml, onShowAll }: { spec: Spec; toml:
               </button>
             )}
           </div>
+          {((project.done_when ?? []).length > 0 || changeAt(review, "project.done_when") !== undefined) && (
+            <div data-spec-done-when className="mt-2">
+              <h4 className={`${HEADING} mb-1 px-1`}>Done when</h4>
+              <Lines path="project.done_when" label="Done when" items={project.done_when ?? []} marker={() => "✓"} />
+            </div>
+          )}
         </Card>
       )}
       {(shown.has("non-goals") || shown.has("rubric")) && (

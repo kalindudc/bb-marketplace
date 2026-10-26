@@ -169,4 +169,8 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE tickets ADD COLUMN environment_json TEXT`,
   // PollWait: the ticket's pull request reads failed with GitHub server errors in a row; null once a read succeeds.
   `ALTER TABLE tickets ADD COLUMN pr_poll_json TEXT`,
+  // The keys of the tickets whose pull requests merge before this one's, without holding its start or stacking it.
+  `ALTER TABLE tickets ADD COLUMN merge_after_json TEXT NOT NULL DEFAULT '[]'`,
+  // PrMeta: the pull request's draft flag, review decision and base branch when Loom last read them.
+  `ALTER TABLE tickets ADD COLUMN pr_meta_json TEXT`,
 ];

@@ -6,7 +6,7 @@ import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-libra
 import { loadPluginApp, mountPluginContentScripts, renderSlot, type PluginRpcTestHandlers, type PluginSdkTestFakes, type RenderSlotOptions } from "@get-bb/plugin-sdk/testing/app";
 import { useLayoutEffect, useState, useSyncExternalStore } from "react";
 import { useComposers, type NewThreadRequest, type PluginComposerApi, type PluginNavPanelProps, type PluginSidebarThread, type PluginThreadHeaderActionProps } from "@get-bb/plugin-sdk/app";
-import type { Attempt, BbProjectChoice, InsightsWindow, ChangedFile, ChangeSource, ChangesView, ChecksItem, HomeProject, NextStep, PlannerView, PlanningSession, ProjectSummary, ProjectView, RepoOverview, SentNote, SpecVersionView, ThreadInfo, TicketDetail, rpcContract } from "../src/contract";
+import type { Attempt, BbProjectChoice, InsightsWindow, ChangedFile, ChangeSource, ChangesView, ChecksItem, HomeProject, MergeEntry, MergeOrderView, NextStep, PlannerView, PlanningSession, ProjectSummary, ProjectView, RepoOverview, SentNote, SpecVersionView, ThreadInfo, TicketDetail, rpcContract } from "../src/contract";
 import type { TicketRow } from "../src/db/store";
 import { repoOverviews } from "../src/projects";
 import { notesMessage } from "../src/prompts";
@@ -4361,5 +4361,148 @@ describe("repos", () => {
     await ticket.findByRole("heading", { name: /Export endpoint/ });
     expect(ticket.container.querySelector("[data-ticket-header] [data-repo-chip]")).toBeNull();
 
+  });
+});
+
+describe("merge order tab", () => {
+  const entry = (over: Partial<MergeEntry> & Pick<MergeEntry, "key">): MergeEntry => ({
+    title: `${over.key} title`,
+    repo: null,
+    state: "pr_open",
+    base: "main",
+    prUrl: `https://github.com/acme/shop/pull/${over.key.split("-")[1]}`,
+    prNumber: over.key.split("-")[1]!,
+    prOpen: over.state === undefined || over.state === "pr_open",
+    elsewhere: null,
+    step: 1,
+    stackedOn: null,
+    waitsOn: [],
+    unblocks: [],
+    checks: { passed: 4, failed: 0, pending: 0 },
+    draft: false,
+    review: "APPROVED",
+    reviewRead: true,
+    verdict: "ready",
+    holds: [],
+    trap: false,
+    mergedInto: null,
+    mergedIntoState: null,
+    blockedReason: null,
+    ...over,
+  });
+  const order = (over: Partial<MergeOrderView> = {}): MergeOrderView => ({
+    repos: [null],
+    steps: 2,
+    entries: [
+      entry({ key: "CSV-1", verdict: "first", holds: ["needs review"], review: "REVIEW_REQUIRED", unblocks: ["CSV-2"] }),
+      entry({ key: "CSV-2", step: 2, stackedOn: "CSV-1", waitsOn: [{ key: "CSV-1", why: "stacked", repo: null, prNumber: "1" }], verdict: "after", trap: true }),
+      entry({ key: "CSV-3", verdict: "merged", state: "done", step: 0, review: null }),
+    ],
+    counts: { open: 2, first: 1, ready: 0, wrong: 0 },
+    ...over,
+  });
+  const prView = (mergeOrder: MergeOrderView | null = order()) => projectView({ overview: overview({ strategy: "pr", branch: null }), mergeOrder });
+  const mountOrder = async (view = prView()) => {
+    const mounted = await mountPage("csv", { project: () => view });
+    await mounted.slot.findByRole("tab", { name: "Board" });
+    return mounted.slot;
+  };
+
+  it("is no tab on an integration project", async () => {
+    const { slot } = await mountPage("csv", { project: () => projectView() });
+    await slot.findByRole("tab", { name: "Board" });
+    expect(slot.queryByRole("tab", { name: /Merge order/ })).toBeNull();
+  });
+
+  it("is a tab on a pull request project that has started, with the count of pull requests that can go first", async () => {
+    const slot = await mountOrder();
+    const tab = await slot.findByRole("tab", { name: /Merge order/ });
+    expect(tab.querySelector("[data-tab-badge]")!.textContent).toBe("1");
+  });
+
+  it("opens on Steps: what to merge first, what each waits on, and a warning for the approved stacked one", async () => {
+    const slot = await mountOrder();
+    fireEvent.click(slot.getByRole("tab", { name: /Merge order/ }));
+    expect((await slot.findByText(/2 open pull requests merge in 2 steps\. 1 has nothing before it; none is ready yet: 1 needs a review\./)).hasAttribute("data-merge-lead")).toBe(true);
+    expect([...slot.container.querySelectorAll("[data-merge-step]")].map((node) => node.getAttribute("data-merge-step"))).toEqual(["step-1", "step-2", "merged"]);
+    const row = (key: string) => slot.container.querySelector<HTMLElement>(`[data-merge-row="${key}"]`)!;
+    expect(within(row("CSV-1")).getByText("Needs review").getAttribute("data-merge-verdict")).toBe("first");
+    expect(row("CSV-1").textContent).toContain("Unblocks CSV-2.");
+    expect(row("CSV-2").textContent).toContain("↳ Builds on CSV-1's branch (#1). When that merges, Loom moves it to main and runs its checks again.");
+    expect(slot.container.querySelector("[data-merge-trap]")!.textContent).toContain("#2 (CSV-2) targets CSV-1's branch. Merge #1 (CSV-1) first.");
+    fireEvent.click(within(row("CSV-2")).getByRole("button", { name: "CSV-2" }));
+    fireEvent.click(within(row("CSV-2")).getByRole("button", { name: "Open CSV-2's pull request" }));
+    expect(slot.inspection.navigateCalls.slice(-2)).toEqual([pushed("csv/CSV-2"), { method: "openUrl", url: "https://github.com/acme/shop/pull/2" }]);
+  });
+
+  it("lays the pull requests out by repo and step, and says what to do with the one clicked", async () => {
+    const slot = await mountOrder();
+    fireEvent.click(slot.getByRole("tab", { name: /Merge order/ }));
+    fireEvent.click(await slot.findByRole("button", { name: "By repo" }));
+    expect([...slot.container.querySelectorAll("[data-merge-card]")].map((node) => node.getAttribute("data-merge-card"))).toEqual(["CSV-3", "CSV-1", "CSV-2"]);
+    fireEvent.click(slot.container.querySelector<HTMLElement>('[data-merge-card="CSV-2"]')!);
+    const detail = slot.container.querySelector<HTMLElement>('[data-merge-detail="CSV-2"]')!;
+    expect(detail.textContent).toContain("⚠ After CSV-1");
+    fireEvent.click(within(detail).getByRole("button", { name: "Open ticket" }));
+    expect(slot.inspection.navigateCalls.at(-1)).toEqual(pushed("csv/CSV-2"));
+  });
+
+  it("turns red for a pull request that merged into another ticket's branch, and says so first", async () => {
+    const wrong = order({
+      entries: [entry({ key: "CSV-1", verdict: "first", holds: ["draft"] }), entry({ key: "CSV-2", state: "done", step: 0, verdict: "merged_elsewhere", mergedInto: "CSV-1", mergedIntoState: "pr_open" })],
+      counts: { open: 1, first: 1, ready: 0, wrong: 1 },
+    });
+    const slot = await mountOrder(prView(wrong));
+    const tab = slot.getByRole("tab", { name: /Merge order/ });
+    expect(tab.querySelector("[data-tab-badge]")!.className).toContain("bg-destructive");
+    fireEvent.click(tab);
+    const alert = await waitFor(() => {
+      const found = slot.container.querySelector<HTMLElement>('[data-merged-elsewhere="CSV-2"]');
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    expect(alert.textContent).toContain("CSV-2's pull request #2 merged into CSV-1's branch, not main.");
+    expect(alert.textContent).toContain("CSV-1 (#1) has not merged, so the change is not on main.");
+    expect(alert.textContent).toContain("Loom counted CSV-2 as done before it checked where a pull request merged.");
+  });
+});
+
+describe("about strip", () => {
+  const about = (over: Partial<ProjectSummary["about"]> = {}) => ({ summary: "Export orders as a CSV file, so finance can reconcile them.", lead: "Implement items 1 to 3 of the issue.", doneWhen: ["People can download the file", "Empty exports have a header row"], links: ["https://github.com/acme/shop/issues/42"], nonGoals: 3, ...over });
+
+  it("shows the summary, the goal's links and what done means, and opens the full goal and the planner", async () => {
+    const { slot } = await mountPage("csv", { project: () => projectView({ overview: overview({ about: about() }) }) });
+    const strip = await waitFor(() => {
+      const found = slot.container.querySelector<HTMLElement>("[data-about]");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    expect(strip.querySelector("[data-about-summary]")!.textContent).toBe("Export orders as a CSV file, so finance can reconcile them.");
+    expect(strip.textContent).toContain("3 non-goals");
+    fireEvent.click(within(strip).getByRole("button", { name: "shop#42" }));
+    fireEvent.click(within(strip).getByRole("button", { name: "Done when (2)" }));
+    expect([...strip.querySelectorAll("[data-about-done] li")].map((item) => item.textContent)).toEqual(["People can download the file", "Empty exports have a header row"]);
+    fireEvent.click(within(strip).getByRole("button", { name: "Planner thread" }));
+    expect(slot.inspection.navigateCalls.slice(-2)).toEqual([{ method: "openUrl", url: "https://github.com/acme/shop/issues/42" }, { method: "toThread", threadId: "thr_plan" }]);
+    fireEvent.click(within(strip).getByRole("button", { name: "Full goal" }));
+    await waitFor(() => expect(slot.getByRole("tab", { name: "Spec" }).getAttribute("aria-selected")).toBe("true"));
+  });
+
+  it("stands in the goal's first paragraph for a spec written before summaries, and says the next revision adds one", async () => {
+    const { slot } = await mountPage("csv", { project: () => projectView({ overview: overview({ about: about({ summary: null, doneWhen: [] }) }) }) });
+    const strip = await waitFor(() => {
+      const found = slot.container.querySelector<HTMLElement>("[data-about]");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    expect(strip.querySelector("[data-about-summary]")!.textContent).toBe("Implement items 1 to 3 of the issue.");
+    expect(strip.textContent).toContain("This spec has no summary, so this is the goal's first paragraph. The planner's next revision of the spec has to add one.");
+    expect(within(strip).queryByRole("button", { name: /Done when/ })).toBeNull();
+  });
+
+  it("puts each project's summary under its name on the home list", async () => {
+    const { slot } = await mountPage("", { home: () => homeView({ projects: [homeProject({ about: about() }), homeProject({ slug: "docs", name: "Docs", key: "DOC", about: about({ summary: null }) })] }) });
+    await waitFor(() => expect(slot.container.querySelectorAll("[data-project-summary]")).toHaveLength(2));
+    expect([...slot.container.querySelectorAll("[data-project-summary]")].map((node) => node.textContent)).toEqual(["Export orders as a CSV file, so finance can reconcile them.", "Implement items 1 to 3 of the issue."]);
   });
 });

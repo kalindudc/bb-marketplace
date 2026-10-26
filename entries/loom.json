@@ -1,7 +1,7 @@
 {
   "id": "loom",
   "displayName": "Loom",
-  "description": "Hand a goal to agents and keep the decisions. A planner turns it into a spec with tickets, acceptance criteria, checks and a merge plan, and a separate agent reviews the spec before you approve it. Workers then build each ticket in its own git worktree, Loom runs your checks, and reviewers on another model approve the work or send findings back. Approved work merges into an integration branch you land as one pull request, or opens as one pull request per ticket that Loom follows through CI. A full-screen Loom page shows what needs you, the board, every attempt and review, the changes before they land, insights on how the project went and a timeline you can rewind.",
+  "description": "Hand a goal to agents and keep the decisions. A planner turns it into a spec with tickets, acceptance criteria, checks and a merge plan, and a separate agent reviews the spec before you approve it. Workers then build each ticket in its own git worktree, Loom runs your checks, and reviewers on another model approve the work or send findings back. Approved work merges into an integration branch you land as one pull request, or opens as one pull request per ticket that Loom follows through CI. A full-screen Loom page shows what each project is for, what needs you, the board, every attempt and review, the order to merge stacked pull requests in, the changes before they land, insights on how the project went and a timeline you can rewind.",
   "icon": {
     "url": "plugins/loom/icons/loom.svg"
   },

@@ -2,6 +2,27 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.20.0 (2026-10-26)
+
+### Added
+
+- A Merge order tab on pull request projects: the order to merge the pull requests in, step by step, with each one's checks, draft flag, review decision, what still holds it, what it waits on and what it unblocks. By repo lays them out by repo and step, with a line for each stack and wait. Its badge counts the pull requests with nothing before them, or turns red for one that merged into another ticket's branch. It warns about a stacked pull request the forge shows approved while its parent is still open, since merging it would put it into the parent's branch instead of the base.
+- Every spec needs `project.summary`, one or two sentences on what the project changes and why, and may list `project.done_when`. An About strip under the project's header shows them with the issues and pull requests the goal links to, Full goal and the planner's thread, and the home list shows each summary under the project's name. The spec reviewer checks that the summary says what the project is for.
+- A command forge's `feedback` JSON may give `draft`, `review` and `base`. Loom keeps them as it does GitHub's, for the Merge order tab and the wrong-branch check.
+- A ticket takes `merge_after`, the refs of the tickets whose pull requests merge before its own (`loom_add_tickets` and `loom_edit_ticket` take keys too), without holding its start or stacking it. The pull request's description names them, and a patch of `merge_after` alone changes a ticket whose pull request is open.
+
+### Changed
+
+- A pull request that merged into a branch other than its repo's base, such as a stacked one merged into its parent's branch, blocks its ticket with the branch's name, and the ticket whose branch it is, instead of counting the work as done. This holds for a merge Loom finds when it polls and for one it finds before it pushes a fix round.
+- Loom reads the open pull requests of each GitHub repository in one GraphQL call per 10 pull requests, instead of one call each, and keeps each one's draft flag, review decision and base branch.
+
+### Fixed
+
+- A pull request read through a forge's `feedback` command no longer stops after 30 seconds and pauses the project. It gets the 150 seconds the `state` command and other network calls already had, over the command's own 2-minute limit; a slow Delta read paused a project this way.
+
+### Compatibility
+
+- A spec stored before `project.summary` existed still loads, runs and revises: the project page shows its goal's first paragraph in the summary's place, and only its next proposed revision must add a summary. Its hash is unchanged.
 ## 0.19.1 (2026-10-26)
 
 ### Fixed

@@ -4,6 +4,7 @@ import type { ControlAction, ProjectView, rpcContract } from "../contract";
 import { isMultiRepoProject } from "../format";
 import { readyToLand, specReviewBlocks } from "../format";
 import { STAGES } from "../next-step";
+import { AboutStrip } from "./about";
 import { AgentsView } from "./agents";
 import { Board } from "./board";
 import { ChangesTab, landingFiles, useViewed } from "./changes";
@@ -12,6 +13,7 @@ import { Guide } from "./guide";
 import { HealthStrip } from "./health";
 import { Home } from "./home";
 import { InsightsTab } from "./insights";
+import { MergeOrderTab } from "./merge-order";
 import { NewProject } from "./new-project";
 import { NextStepBar, repoLand } from "./next-step-bar";
 import { PlannerPage } from "./planner-page";
@@ -21,7 +23,7 @@ import { SpecPage, bbProjectNamesOf } from "./spec-page";
 import { TicketView } from "./ticket";
 import { TimelineStrip } from "./timeline-strip";
 
-type Tab = "board" | "agents" | "insights" | "spec" | "planner" | "changes";
+type Tab = "board" | "agents" | "insights" | "spec" | "planner" | "changes" | "merge";
 const TABS: ReadonlyArray<{ tab: Tab; label: string }> = [
   { tab: "board", label: "Board" },
   { tab: "agents", label: "Agents" },
@@ -29,6 +31,7 @@ const TABS: ReadonlyArray<{ tab: Tab; label: string }> = [
   { tab: "spec", label: "Spec" },
   { tab: "planner", label: "Planner" },
   { tab: "changes", label: "Changes" },
+  { tab: "merge", label: "Merge order" },
 ];
 
 /** A project shows its changes once it has started: before that no worker has changed anything. */
@@ -37,9 +40,9 @@ const hasChangesTab = (state: ProjectView["overview"]["state"]) => state !== "dr
 interface TabBadge {
   text: string;
   label: string;
-  tone: "destructive" | "warning";
+  tone: "destructive" | "warning" | "info";
 }
-const BADGE_TONES = { destructive: "bg-destructive text-destructive-foreground", warning: "bg-warning text-black" };
+const BADGE_TONES = { destructive: "bg-destructive text-destructive-foreground", warning: "bg-warning text-black", info: "bg-primary text-primary-foreground" };
 
 /**
  * What waits for the human on each tab. A badge is a state, not unread news, so it stays until the thing is resolved.
@@ -56,6 +59,9 @@ export function tabBadges(view: ProjectView, unviewed: number | null = null, pla
   if (plannerWaiting) badges.planner = { text: "?", label: "The planner asks you a question", tone: "warning" };
   else if (view.openAsks > 0) badges.planner = { text: String(view.openAsks), label: `The planner asks you to do ${plural(view.openAsks, "thing")}`, tone: "warning" };
   if (unviewed !== null && unviewed > 0 && readyToLand(overview)) badges.changes = { text: String(unviewed), label: `${plural(unviewed, "file")} to land you have not marked viewed`, tone: "warning" };
+  const order = view.mergeOrder?.counts;
+  if (order !== undefined && order.wrong > 0) badges.merge = { text: String(order.wrong), label: `${plural(order.wrong, "pull request")} merged into another ticket's branch`, tone: "destructive" };
+  else if (order !== undefined && order.first > 0) badges.merge = { text: String(order.first), label: `${plural(order.first, "pull request")} with nothing before ${order.first === 1 ? "it" : "them"}`, tone: "info" };
   return badges;
 }
 
@@ -171,7 +177,9 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek, go }: { slug: string; tab:
   // Either side counts: the shown view can still be the past one while the live view loads.
   const rewound = at !== null || view.at !== null;
   const changesTab = !rewound && hasChangesTab(overview.state);
-  const shownTab = (rewound && tab === "planner") || (!changesTab && tab === "changes") ? "board" : tab;
+  // The merge order is of the project now, so a rewound page leaves it out, as it does the changes.
+  const mergeTab = changesTab && view.mergeOrder !== null;
+  const shownTab = (rewound && tab === "planner") || (!changesTab && tab === "changes") || (!mergeTab && tab === "merge") ? "board" : tab;
   const landing = landingFiles(changes.data);
   const badges = rewound ? {} : tabBadges(view, landing === null ? null : viewed.unviewed(landing), plannerWaiting);
   const openChanges = (id: string | null) => {
@@ -196,6 +204,7 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek, go }: { slug: string; tab:
           <Controls view={view} busy={busy} primary={view.next?.action?.control ?? null} onControl={(action, version) => void control(action, version)} />
         )}
       </div>
+      <AboutStrip overview={overview} onGoal={() => onTab("spec")} />
       {rewound ? (
         <div className="px-4 pt-3">
           <RewindBar now={view.now} stage={view.next?.stage ?? null} onNow={() => onSeek(null)} />
@@ -234,7 +243,7 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek, go }: { slug: string; tab:
       {view.health !== null && <HealthStrip health={view.health} />}
       <TimelineStrip slug={slug} at={at} onSeek={onSeek} onTicket={(key) => go(`${slug}/${key}`)} />
       <div role="tablist" aria-label="Project" className="flex shrink-0 gap-1 border-b border-border-seam px-3 pt-1.5">
-        {TABS.filter((entry) => (entry.tab !== "planner" || (overview.plannerThreadId !== null && !rewound)) && (entry.tab !== "changes" || changesTab)).map((entry) => {
+        {TABS.filter((entry) => (entry.tab !== "planner" || (overview.plannerThreadId !== null && !rewound)) && (entry.tab !== "changes" || changesTab) && (entry.tab !== "merge" || mergeTab)).map((entry) => {
           const badge = badges[entry.tab];
           return (
             <button
@@ -278,6 +287,7 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek, go }: { slug: string; tab:
             onTicket={(key) => go(`${slug}/${key}`)}
           />
         )}
+        {shownTab === "merge" && <MergeOrderTab order={view.mergeOrder} onTicket={(key) => go(`${slug}/${key}`)} />}
         {shownTab === "changes" && (
           <ChangesTab changes={changes.data} error={changes.error} view={view} busy={busy} chosen={chosenChange} onChoose={setChosenChange} onControl={(action, repo) => void control(action, undefined, repo)} onReload={changes.reload} />
         )}

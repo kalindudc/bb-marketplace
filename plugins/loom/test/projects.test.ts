@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { Store } from "../src/db/store";
 import type { BbProjectInfo } from "../src/ports";
 import { LoomError, Projects } from "../src/projects";
+import { specSummary } from "../src/rpc";
 import { Clock, FakeHost, FakePort, makeDb, specToml, type Doc } from "./helpers";
 
 let clock: Clock;
@@ -1095,5 +1096,62 @@ describe("how the repos are reached", () => {
     expect((await failure(propose((doc) => (doc.merge.forge = { kind: "none" })))).message).toContain('merge.forge.kind: cannot change from "gh" to "none" after approval');
     expect((await failure(propose((doc) => (doc.merge.worktree = { command: "prep" })))).message).toContain("merge.worktree: cannot be added after approval");
     expect((await propose((doc) => (doc.environment = { provider: "git-worktree" }))).change).toBe("pending");
+  });
+});
+
+describe("summaries", () => {
+  const withoutSummary = (doc: Doc) => delete doc.project.summary;
+
+  it("refuses a proposal without a summary and creates nothing", async () => {
+    const error = await failure(propose(withoutSummary));
+    expect(error.message).toMatch(/Spec not saved\. Fix these and call loom_propose again:\n1\. project\.summary: required\./);
+    expect(store.projectBySlug("csv")).toBeNull();
+  });
+
+  it("keeps a project whose stored spec predates summaries working, and its next revision must add one", async () => {
+    // A project as it was stored before summaries existed: the approved spec has no project.summary.
+    const db = makeDb();
+    const old = new Store(db, clock.now);
+    const oldProjects = new Projects({ store: old, bb, now: clock.now, host });
+    const proposeOld = (edit?: (doc: Doc) => void) => oldProjects.propose({ toml: specToml(edit), threadId: "thr_plan", bbProjectId: "proj_1", hostId: "host_local" });
+    await proposeOld();
+    await oldProjects.approve("csv", "human");
+    const id = old.projectBySlug("csv")!.id;
+    db.prepare("UPDATE spec_versions SET toml = ?, spec_json = json_remove(spec_json, '$.project.summary') WHERE project_id = ?").run(specToml(withoutSummary), id);
+
+    expect(oldProjects.overview("csv").about).toEqual({ summary: null, lead: "Let people export their orders as a CSV file from the admin page.", doneWhen: [], links: [], nonGoals: 0 });
+    expect(specSummary(old.specVersion(id, 1)!.toml).tickets).toHaveLength(2);
+    expect((await oldProjects.start("csv", "human")).state).toBe("running");
+
+    const refused = await failure(
+      proposeOld((doc) => {
+        withoutSummary(doc);
+        doc.project.goal = "Export orders as CSV, with a delimiter the person can choose.";
+      }),
+    );
+    expect(refused.message).toContain("project.summary: required.");
+    expect(old.projectBySlug("csv")!.pending_version).toBeNull();
+
+    // Adding the summary is a revision like any other, and approving it leaves the running tickets alone.
+    expect(await proposeOld((doc) => (doc.project.summary = "Export orders as a CSV file, so finance can reconcile them."))).toMatchObject({ version: 2, pending: true });
+    await oldProjects.approve("csv", "human", 2);
+    expect(oldProjects.overview("csv").about.summary).toBe("Export orders as a CSV file, so finance can reconcile them.");
+    expect(old.tickets(id).map((ticket) => [ticket.key, ticket.state])).toEqual([
+      ["CSV-1", "queued"],
+      ["CSV-2", "queued"],
+    ]);
+  });
+
+  it("gives each ticket the keys of the tickets its merge_after names", async () => {
+    await propose((doc) => {
+      doc.ticket.push({ ref: "csv-docs", title: "Docs", body: "Write them.", acceptance: ["WHEN built THE SYSTEM SHALL list it"], scope: ["docs/**"], merge_after: ["csv-export", "csv-model"] });
+    });
+    await projects.approve("csv", "human");
+    const tickets = store.tickets(store.projectBySlug("csv")!.id);
+    expect(tickets.map((ticket) => [ticket.key, ticket.merge_after_json])).toEqual([
+      ["CSV-1", "[]"],
+      ["CSV-2", "[]"],
+      ["CSV-3", '["CSV-2","CSV-1"]'],
+    ]);
   });
 });

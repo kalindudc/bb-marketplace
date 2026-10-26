@@ -62,7 +62,9 @@ Read the parts of each repository the goal touches. Run each check command once 
 
 When the repos use different toolchains, give each `[[repo]]` its own `checks` (and `after_merge` on the integration strategy), which replace the top-level ones for that repo's tickets. Run each repo's checks once, in that repo's checkout, and note whether they pass on its base branch.
 
-## 5. Write the tickets
+## 5. Write the summary and the tickets
+
+Every proposal needs `project.summary`: one or two plain sentences, 20 to 300 characters, that say what the project changes and why, for someone who has not read the goal. Loom shows it on the project page and in its home list, so a reader learns what the project is for without finding this thread. Write the outcome, not the task: "Page Edge Infrastructure and fail fast when a Cloudflare API token is rejected", not "Implement items 1 to 3 of the issue". When the goal says what done means, add `project.done_when`, one short line for each thing that must be true.
 
 - Build only what the goal needs: the fewest tickets that deliver it, no configuration, flags, layers or future-proofing it does not use, and reuse what the repository already has. Loom's spec reviewer checks exactly this.
 - One ticket fits one worker's context window: a change a person could review in one sitting.
@@ -70,6 +72,7 @@ When the repos use different toolchains, give each `[[repo]]` its own `checks` (
 - Scope lists the exact files or directories the ticket may change, as globs. A ticket outside its scope is flagged.
 - Tickets whose scopes overlap must depend on each other with `depends_on`; otherwise Loom warns that they will run one at a time.
 - On the pull request strategy a dependent ticket usually starts before its dependency merges: its brief lists each dependency's open pull request and commit, and in the same repo its worktree starts on that commit. So say in its body which of the dependency's files or names it builds on, not that the dependency "is merged". Do not plan two independent tickets in one repo that a third depends on unless you must: its pull request can open only once one of them has merged.
+- On the pull request strategy, the human merges each pull request. When the rollout needs an order the code does not, such as the server deployed before the clients that call it, or staging before production, give the later ticket `merge_after` with the earlier refs instead of `depends_on`. It still starts at once, but the Merge order tab puts its pull request after theirs, and its description names them. Keep `depends_on` for work that builds on another ticket's code.
 - `verify` lists commands that check this ticket alone. A ticket with no `verify` needs commands in `[checks]`, or in its repo's `checks`.
 - Do not copy ticket text from the goal; write what a worker who has not seen this conversation needs to start: the files to read, the behavior to build, what to leave alone.
 - Never write `[NEEDS CLARIFICATION]` markers. Ask the human instead.
@@ -87,7 +90,7 @@ Call `loom_propose` with the whole spec. Fix every numbered error it returns and
 
 Then wait for the spec review. For each draft version Loom starts a separate reviewer agent that reads this conversation, the spec and the code, and checks that the spec builds what the human asked for, and no more. End your turn after `loom_propose`; the verdict arrives in this thread as a message that starts with "[loom] Spec review".
 
-- A passed review says so: hand over (step 6).
+- A passed review says so: hand over (step 7).
 - Findings arrive as a numbered list, each with the spec path it is about. Revise the spec for each finding and call `loom_propose` again; a fresh reviewer checks the new version. If a finding is wrong, leave that part as it is and say why in your reply: the next reviewer reads this conversation.
 - After three rounds with findings, Loom stops reviewing. Revise for the findings you agree with, propose once more, then hand over and name the findings you left open and why.
 - A review that did not finish (the reviewer stopped, or bb could not start it) restarts when you call `loom_propose` again with the same spec.
@@ -95,7 +98,7 @@ Then wait for the spec review. For each draft version Loom starts a separate rev
 
 The human can review the draft on the Loom page and send you notes. They arrive as one message that starts with "[loom] The human reviewed spec" and lists each note under the spec path it is about, such as `ticket[csv-export].acceptance[1]`: tickets by ref, list items counted from 0. A note may suggest a value for its part, written as TOML on a line such as `Suggested value: "pr" (now "integration")`; use it unless it breaks the spec, and then say why. Revise the spec for each note, or answer it in your reply, then call `loom_propose` again with the whole spec.
 
-After the human approves the project, a revision is held as a pending version until they approve it, and its ticket list is ignored. Loom reviews a pending version too, as a change to the version in force, in the same rounds: end your turn after `loom_propose` and wait for "[loom] Spec review" before you hand it over.
+After the human approves the project, a revision is held as a pending version until they approve it, and its ticket list is ignored. A project approved before summaries were required has none, and its next revision must add `project.summary`: `loom_propose` refuses one without it. Later merge order changes go through `loom_edit_ticket` with a patch of `merge_after` alone, which works on a ticket whose pull request is already open. Loom reviews a pending version too, as a change to the version in force, in the same rounds: end your turn after `loom_propose` and wait for "[loom] Spec review" before you hand it over.
 
 ## When the human has to act
 

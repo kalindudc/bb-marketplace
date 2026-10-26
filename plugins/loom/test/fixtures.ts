@@ -13,6 +13,7 @@ export const overview = (over: Partial<ProjectSummary> = {}): ProjectSummary => 
   key: "CSV",
   state: "running",
   goal: "Let people export their orders as a CSV file from the admin page.",
+  about: { summary: "Let people export their orders as a CSV file from the admin page.", lead: "Let people export their orders as a CSV file from the admin page.", doneWhen: [], links: [], nonGoals: 0 },
   base: "main",
   strategy: "integration",
   branch: "loom/csv",
@@ -183,6 +184,7 @@ export const projectView = (over: Partial<ProjectView> = {}): ProjectView => ({
   at: null,
   specReview: null,
   openAsks: 0,
+  mergeOrder: null,
   ...over,
 });
 

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import hostEntry from "../host";
-import { changedFiles, commitAll, diff, ensureBranch, ensureWorktree, exec, fetchBranch, filePatch, ghStatus, ghTransient, git, landedOn, merge, parseRemoteUrl, prCommit, prCreate, prFeedback, prRequestReview, prState, push, remotes, resetHard, stackBase, trialWorktree, worktreeState } from "../src/host/ops";
+import { batchQuery, changedFiles, commitAll, diff, ensureBranch, ensureWorktree, exec, fetchBranch, filePatch, ghStatus, ghTransient, git, landedOn, merge, parseRemoteUrl, prBatch, prCommit, prCreate, prFeedback, prRequestReview, prState, push, remotes, resetHard, stackBase, trialWorktree, worktreeState } from "../src/host/ops";
 
 const ENV: Record<string, string> = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
 const AUTHOR_VARS = ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"];
@@ -1181,6 +1181,9 @@ describe("prFeedback", () => {
       state: "OPEN",
       head: "abc123",
       author: "me",
+      draft: null,
+      review: null,
+      base: null,
       checks: [{ key: "check:7", name: "ci", state: "failed", url: "https://ci.example.com/7", started: null, startedAt: null, completedAt: null, progress: null, steps: null }],
       items: [
         { key: "review:r1", kind: "review", author: "alice", bot: false, body: "Rename it.", url: null, state: "changes_requested", path: null, line: null },
@@ -1209,6 +1212,17 @@ describe("prFeedback", () => {
     ]);
     const bad = await prFeedback({ repo: makeRepo(), url: "https://review.example.com/shop/42", forge: FEEDBACK(`echo '{"state":"open","head":"a","checks":[{"id":1,"name":"x","state":"pending","progress":150}]}'`) });
     expect(bad).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("checks.0.progress") });
+  });
+
+  it("reads the draft flag, the review decision in any case and the base branch a forge command prints", async () => {
+    const repo = makeRepo();
+    const url = "https://review.example.com/shop/42";
+    const json = JSON.stringify({ state: "merged", head: "abc123", draft: true, review: "Changes_Requested", base: "loom/x/csv-1" });
+    expect(await prFeedback({ repo, url, forge: FEEDBACK(`echo '${json}'`) })).toMatchObject({ outcome: "ok", state: "MERGED", draft: true, review: "CHANGES_REQUESTED", base: "loom/x/csv-1" });
+    const nulls = JSON.stringify({ state: "open", head: "abc123", draft: null, review: null, base: null });
+    expect(await prFeedback({ repo, url, forge: FEEDBACK(`echo '${nulls}'`) })).toMatchObject({ outcome: "ok", draft: null, review: null, base: null });
+    const bad = await prFeedback({ repo, url, forge: FEEDBACK(`echo '{"state":"open","head":"a","review":"lgtm"}'`) });
+    expect(bad).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("review:") });
   });
 
   it("is unavailable, naming the problem, when the command's last line is not that object or the command fails", async () => {
@@ -1360,5 +1374,168 @@ describe("prFeedback", () => {
       fakeGh({ data: { repository: { pullRequest: null } } });
       expect(await prFeedback({ repo: makeRepo(), url: "https://github.com/acme/shop/pull/3", forge: GH })).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("gh found no pull request") });
     });
+
+    it("reads the draft flag, review decision and base branch with the rest of the feedback", async () => {
+      fakeGh({ data: { repository: { pullRequest: { state: "OPEN", isDraft: true, reviewDecision: "REVIEW_REQUIRED", baseRefName: "main", headRefOid: "f00d", author: user("me"), commits: { nodes: [] }, reviews: { nodes: [] }, reviewThreads: { nodes: [] }, comments: { nodes: [] } } } } });
+      expect(await prFeedback({ repo: makeRepo(), url: "https://github.com/acme/shop/pull/3", forge: GH })).toMatchObject({ outcome: "ok", draft: true, review: "REVIEW_REQUIRED", base: "main" });
+      expect(readFileSync(join(bin, "args.txt"), "utf8")).toContain("number state isDraft reviewDecision baseRefName");
+    });
+  });
+});
+
+describe("prBatch", () => {
+  let bin: string;
+  let savedPath: string | undefined;
+  beforeAll(() => {
+    savedPath = process.env.PATH;
+  });
+  beforeEach(() => {
+    bin = join(scratch, `bin-${counter++}`);
+    mkdirSync(bin);
+    process.env.PATH = `${bin}:${savedPath}`;
+  });
+  afterAll(() => {
+    process.env.PATH = savedPath;
+  });
+  // gh prints GitHub's answer and exits 1 when it has errors, as it does for a number with no pull request.
+  const fakeGh = (json: unknown, exit = 0) => {
+    writeFileSync(join(bin, "response.json"), JSON.stringify(json));
+    writeFileSync(join(bin, "gh"), `#!/bin/sh\nprintf '%s\\n' "$@" > "${bin}/args.txt"\ncat "${bin}/response.json"\n${exit === 0 ? "" : `echo "gh: Could not resolve" >&2\nexit ${exit}\n`}`);
+    chmodSync(join(bin, "gh"), 0o755);
+  };
+  const args = () => readFileSync(join(bin, "args.txt"), "utf8");
+  const query = () => args().slice(args().indexOf("query=") + "query=".length);
+  const input = (numbers: number[], feedback: boolean) => ({ repo: makeRepo(), host: "github.example.com", owner: "acme", name: "shop", numbers, feedback });
+  const pull = (number: number, more: Record<string, unknown> = {}) => ({ number, state: "OPEN", isDraft: false, reviewDecision: null, baseRefName: "main", ...more });
+
+  it("asks for every number as an aliased pullRequest field over one fragment, light without the feedback", async () => {
+    fakeGh({ data: { repository: { p0: pull(123), p1: pull(7) } } });
+    await prBatch(input([123, 7], false));
+    expect(args().split("\n").slice(0, 4)).toEqual(["api", "graphql", "--hostname", "github.example.com"]);
+    expect(args()).toContain("owner=acme\n");
+    expect(args()).toContain("name=shop\n");
+    expect(query()).toBe(
+      [
+        "query($owner: String!, $name: String!) {",
+        "  repository(owner: $owner, name: $name) {",
+        "    p0: pullRequest(number: 123) { ...F }",
+        "    p1: pullRequest(number: 7) { ...F }",
+        "  }",
+        "}",
+        "fragment F on PullRequest { number state isDraft reviewDecision baseRefName }",
+        "",
+      ].join("\n"),
+    );
+    expect(batchQuery([1], true)).toContain("fragment F on PullRequest {\n  number state isDraft reviewDecision baseRefName headRefOid author { login }");
+    expect(batchQuery([1], true)).toContain("reviewThreads(last: 100)");
+  });
+
+  it("maps each pull request's state, draft flag, review decision and base, and lists a number GitHub did not answer for as missing", async () => {
+    fakeGh(
+      {
+        data: { repository: { p0: pull(12, { state: "MERGED", isDraft: true, reviewDecision: "APPROVED", baseRefName: "loom/x/csv-1" }), p1: null, p2: pull(14, { state: "CLOSED", reviewDecision: "CHANGES_REQUESTED" }) } },
+        errors: [{ type: "NOT_FOUND", path: ["repository", "p1"], message: "Could not resolve to a PullRequest with the number of 13." }],
+      },
+      1,
+    );
+    expect(await prBatch(input([12, 13, 14], false))).toEqual({
+      outcome: "ok",
+      pulls: [
+        { number: 12, state: "MERGED", draft: true, review: "APPROVED", base: "loom/x/csv-1", feedback: null },
+        { number: 14, state: "CLOSED", draft: false, review: "CHANGES_REQUESTED", base: "main", feedback: null },
+      ],
+      missing: [{ number: 13, message: "gh found no pull request #13 in acme/shop: Could not resolve to a PullRequest with the number of 13." }],
+    });
+  });
+
+  it("gives each pull request what prFeedback reads for it when the feedback is asked for", async () => {
+    const full = { ...pull(5, { reviewDecision: "REVIEW_REQUIRED" }), headRefOid: "f00d", author: { __typename: "User", login: "me" }, commits: { nodes: [] }, reviews: { nodes: [{ databaseId: 1, author: { __typename: "User", login: "alice" }, state: "COMMENTED", body: "Why?", url: "https://gh/r1" }] }, reviewThreads: { nodes: [] }, comments: { nodes: [] } };
+    fakeGh({ data: { repository: { p0: full } } });
+    const read = await prBatch(input([5], true));
+    fakeGh({ data: { repository: { pullRequest: full } } });
+    const single = await prFeedback({ repo: makeRepo(), url: "https://github.example.com/acme/shop/pull/5", forge: GH });
+    expect(read).toMatchObject({ outcome: "ok", pulls: [{ number: 5, state: "OPEN", draft: false, review: "REVIEW_REQUIRED", base: "main" }], missing: [] });
+    expect((read as Extract<typeof read, { outcome: "ok" }>).pulls[0]!.feedback).toEqual(single);
+    expect(single).toMatchObject({ outcome: "ok", head: "f00d", items: [{ kind: "review", author: "alice", state: "commented" }] });
+  });
+
+  it("is unavailable when gh fails with no answer, and when the repository is not there", async () => {
+    fakeGh({ message: "Bad credentials" }, 4);
+    expect(await prBatch(input([1], false))).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("gh api graphql failed") });
+    fakeGh({ data: { repository: null } });
+    expect(await prBatch(input([1], false))).toEqual({ outcome: "unavailable", message: expect.stringContaining("gh found no repository acme/shop on github.example.com") });
+  });
+
+  it("asks for no check run's steps, and asks for them only for a pull request with a failed check and others running", async () => {
+    const run = (id: number, status: string, conclusion: string | null = null) => ({ __typename: "CheckRun", id: `CR_${id}`, databaseId: id, name: `job-${id}`, status, conclusion, detailsUrl: null, startedAt: null, completedAt: null });
+    const withRuns = (number: number, runs: unknown[]) => ({ ...pull(number), headRefOid: "f00d", author: null, commits: { nodes: [{ commit: { statusCheckRollup: { contexts: { nodes: runs } } } }] }, reviews: { nodes: [] }, reviewThreads: { nodes: [] }, comments: { nodes: [] } });
+    const answer = { data: { repository: { p0: withRuns(1, [run(1, "COMPLETED", "FAILURE"), run(2, "IN_PROGRESS")]), p1: withRuns(2, [run(3, "IN_PROGRESS")]) } } };
+    writeFileSync(join(bin, "response.json"), JSON.stringify(answer));
+    writeFileSync(join(bin, "steps.json"), JSON.stringify({ data: { nodes: [{ id: "CR_2", steps: { totalCount: 4, nodes: [{ status: "COMPLETED" }, { status: "IN_PROGRESS" }] } }] } }));
+    writeFileSync(join(bin, "gh"), `#!/bin/sh\nprintf '%s\\n' "$*" >> "${bin}/calls.txt"\ncase "$*" in *"nodes(ids:"*) cat "${bin}/steps.json";; *) cat "${bin}/response.json";; esac\n`);
+    chmodSync(join(bin, "gh"), 0o755);
+    const read = await prBatch(input([1, 2], true));
+    const calls = readFileSync(join(bin, "calls.txt"), "utf8").split("\n").filter((line) => line.startsWith("api graphql"));
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).not.toContain("steps");
+    expect(calls[1]).toContain('nodes(ids: ["CR_2"])');
+    const pulls = (read as Extract<typeof read, { outcome: "ok" }>).pulls;
+    expect(pulls[0]!.feedback!.checks.map((check) => check.steps)).toEqual([null, { done: 1, total: 4 }]);
+    expect(pulls[1]!.feedback!.checks.map((check) => check.steps)).toEqual([null]);
+  });
+
+  it("keeps a server error or rate limit GitHub gave for one pull request of a partial answer worth waiting out", async () => {
+    const answer = {
+      data: { repository: { p0: pull(1), p1: null, p2: null, p3: null } },
+      errors: [
+        { path: ["repository", "p1"], message: "Something went wrong while executing your query. Please include `ABCD` when reporting this issue." },
+        { path: ["repository", "p2"], type: "RATE_LIMITED", message: "API rate limit exceeded for user ID 1234567." },
+        { path: ["repository", "p3"], type: "NOT_FOUND", message: "Could not resolve to a PullRequest with the number of 4." },
+      ],
+    };
+    fakeGh(answer, 1);
+    const read = await prBatch(input([1, 2, 3, 4], false));
+    expect(read).toMatchObject({ outcome: "ok", pulls: [{ number: 1 }] });
+    const missing = (read as Extract<typeof read, { outcome: "ok" }>).missing;
+    expect(missing.map((miss) => [miss.number, miss.transient ?? null])).toEqual([
+      [2, "server"],
+      [3, "rate_limit"],
+      [4, null],
+    ]);
+    expect(missing[2]!.message).toBe("gh found no pull request #4 in acme/shop: Could not resolve to a PullRequest with the number of 4.");
+  });
+
+  it("counts a pull request whose state came back but a field inside failed as a failed read, worth waiting out on a server error", async () => {
+    const broken = { ...pull(1), headRefOid: "f00d", author: null, commits: { nodes: [] }, reviews: null, reviewThreads: { nodes: [] }, comments: { nodes: [] } };
+    fakeGh({ data: { repository: { p0: broken } }, errors: [{ path: ["repository", "p0", "reviews"], message: "Something went wrong while executing your query." }] }, 1);
+    const read = await prBatch(input([1], true));
+    expect(read).toMatchObject({ outcome: "ok", pulls: [], missing: [{ number: 1, transient: "server", message: "GitHub did not answer for pull request #1 in acme/shop: Something went wrong while executing your query." }] });
+  });
+
+  it("fails the read of a pull request with any error under it, though the field GitHub could not fill came back null", async () => {
+    const run = { ...pull(1, { reviewDecision: "APPROVED" }), headRefOid: "f00d", author: null, commits: { nodes: [{ commit: { statusCheckRollup: null } }] }, reviews: { nodes: [] }, reviewThreads: { nodes: [] }, comments: { nodes: [] } };
+    fakeGh({ data: { repository: { p0: run, p1: { ...run, number: 2, commits: { nodes: [] } } } }, errors: [{ path: ["repository", "p0", "commits", "nodes", 0, "commit", "statusCheckRollup"], message: "Something went wrong while executing your query." }] }, 1);
+    const read = await prBatch(input([1, 2], true));
+    expect(read).toMatchObject({ outcome: "ok", missing: [{ number: 1, transient: "server" }] });
+    expect((read as Extract<typeof read, { outcome: "ok" }>).pulls.map((each) => each.number)).toEqual([2]);
+  });
+
+  it("marks a GitHub server error or rate limit as transient", async () => {
+    writeFileSync(join(bin, "gh"), `#!/bin/sh\necho "gh: HTTP 502" >&2\nexit 1\n`);
+    chmodSync(join(bin, "gh"), 0o755);
+    expect(await prBatch(input([1, 2], false))).toEqual({ outcome: "unavailable", message: "gh api graphql failed: gh: HTTP 502", transient: "server" });
+    writeFileSync(join(bin, "gh"), `#!/bin/sh\necho "GraphQL: API rate limit exceeded for user ID 1234567." >&2\nexit 1\n`);
+    expect(await prBatch(input([1], false))).toMatchObject({ outcome: "unavailable", transient: "rate_limit" });
+  });
+
+  it("is served through the contract, which refuses more than 10 numbers and a name that is not GitHub's", async () => {
+    const harness = experimental_createHostEntryHarness(hostEntry, { experimental_paths: { dataDir: join(tmpdir(), "loom-host-entry-data"), tempDir: tmpdir() } });
+    fakeGh({ data: { repository: { p0: pull(1) } } });
+    expect(await harness.experimental_call("prBatch", input([1], false))).toMatchObject({ outcome: "ok", pulls: [{ number: 1 }] });
+    const numbers = Array.from({ length: 11 }, (_, index) => index + 1);
+    await expect(harness.experimental_call("prBatch", input(numbers, false))).rejects.toThrow();
+    await expect(harness.experimental_call("prBatch", { ...input([1], false), owner: "--jq" })).rejects.toThrow();
+    await expect(harness.experimental_call("prBatch", { ...input([1], false), name: "shop) { x }" })).rejects.toThrow();
+    await expect(harness.experimental_call("prBatch", input([], false))).rejects.toThrow();
   });
 });

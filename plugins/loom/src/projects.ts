@@ -3,11 +3,12 @@
 import type { NewThreadRequest } from "@get-bb/plugin-sdk";
 import type { EventRow, PlanningRow, PostRow, ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { StoreError } from "./db/store";
+import { aboutOf, type ProjectAbout } from "./about";
 import { gatherFacts, reachErrors, specTargets } from "./discover";
 import { SectionNameConflictError, type BbPort, type BbProjectInfo, type HostPort } from "./ports";
 import { MAX_PLANNING_REPOS, notesMessage, planningKickoff, planningTitle, type PickedRepo } from "./prompts";
 import { isMultiRepo, repoSettings } from "./repos";
-import { numberErrors, parseSpec, specHash, type Spec } from "./spec";
+import { numberErrors, parseSpec, proposalErrorsOf, specHash, type Spec } from "./spec";
 import type { SpecNote } from "./spec-paths";
 import { PAUSE_NOW_REASON, TICKET_STATES, type AuthorKind, type MergeChoice, type ProjectState, type Role, type TicketState } from "./states";
 
@@ -54,6 +55,8 @@ export interface ProjectOverview {
   key: string;
   state: ProjectState;
   goal: string;
+  /** What the project is about, from the approved spec, or the draft's before approval. */
+  about: ProjectAbout;
   base: string;
   strategy: Spec["merge"]["strategy"];
   branch: string | null;
@@ -173,7 +176,7 @@ export class Projects {
   async propose(args: { toml: string; threadId: string; bbProjectId: string; hostId: string | null }): Promise<ProposeResult> {
     const parsed = parseSpec(args.toml);
     if (!parsed.ok || parsed.spec === null) throw rejected(parsed.errors);
-    const errors = [...this.proposalErrors(args.threadId, parsed.spec), ...(await this.providerErrors(parsed.spec)), ...(await this.repoErrors(parsed.spec, args.hostId))];
+    const errors = [...proposalErrorsOf(parsed.spec), ...this.proposalErrors(args.threadId, parsed.spec), ...(await this.providerErrors(parsed.spec)), ...(await this.repoErrors(parsed.spec, args.hostId))];
     if (errors.length === 0) errors.push(...(await this.reachErrorsOf(parsed.spec, args)));
     if (errors.length > 0) throw rejected(errors);
     const existing = this.store.projectBySlug(parsed.spec.project.slug);
@@ -399,6 +402,7 @@ export class Projects {
           verify_json: JSON.stringify(ticket.verify),
           scope_json: JSON.stringify(ticket.scope),
           deps_json: JSON.stringify(ticket.depends_on.map((ref) => keyOf.get(ref)!)),
+          merge_after_json: JSON.stringify((ticket.merge_after ?? []).map((ref) => keyOf.get(ref)!)),
           priority: ticket.priority,
           repo: ticket.repo ?? null,
           environment_json: ticket.environment === undefined ? null : JSON.stringify(ticket.environment.inputs),
@@ -748,6 +752,7 @@ export class Projects {
       key: project.key,
       state: project.state,
       goal: spec.project.goal,
+      about: aboutOf(spec),
       base: spec.project.base,
       strategy: spec.merge.strategy,
       branch: spec.merge.branch ?? null,

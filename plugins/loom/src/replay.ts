@@ -1,5 +1,6 @@
 // A project as it was at one event, rebuilt from its rows and the append-only event log, and the timeline the page
 // scrubs through. Pure functions over rows, so the views of a past moment run the same code as the live ones.
+import { aboutOf } from "./about";
 import type { EventRow, PostRow, ProjectRow, ReviewRow, RunRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { feedText } from "./feed-text";
 import type { ProjectOverview } from "./projects";
@@ -182,7 +183,7 @@ export function rewind(rows: ProjectRows, eventId: number): PastRows {
 export function overviewAt(
   past: PastRows,
   spec: Spec,
-): Pick<ProjectOverview, "state" | "approvedVersion" | "pendingVersion" | "reason" | "ticketCount" | "ticketCounts" | "goal" | "base" | "strategy" | "branch"> {
+): Pick<ProjectOverview, "state" | "approvedVersion" | "pendingVersion" | "reason" | "ticketCount" | "ticketCounts" | "goal" | "about" | "base" | "strategy" | "branch"> {
   const ticketCounts: Partial<Record<TicketState, number>> = {};
   for (const ticket of past.tickets) ticketCounts[ticket.state] = (ticketCounts[ticket.state] ?? 0) + 1;
   return {
@@ -193,6 +194,7 @@ export function overviewAt(
     ticketCount: past.tickets.length,
     ticketCounts,
     goal: spec.project.goal,
+    about: aboutOf(spec),
     base: spec.project.base,
     strategy: spec.merge.strategy,
     branch: spec.merge.branch ?? null,

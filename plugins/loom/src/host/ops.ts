@@ -5,7 +5,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
-import { prNumber, type HostInput, type HostOutput } from "../host-contract";
+import { githubPull, prNumber, REVIEW_DECISIONS, type HostInput, type HostOutput } from "../host-contract";
 
 const GIT_TIMEOUT_MS = 30_000;
 // Pushes, gh calls and the first checkout of the integration worktree can take a while on a slow link or a large repository.
@@ -528,30 +528,56 @@ const BODY_MAX = 2000;
 const digest = (text: string) => createHash("sha1").update(text).digest("hex").slice(0, 12);
 const clipBody = (text: string) => (text.length <= BODY_MAX ? text : `${text.slice(0, BODY_MAX - 1)}…`);
 
-const FEEDBACK_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) {
-    pullRequest(number: $number) {
-      state headRefOid author { login }
-      commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes { __typename
-        ... on CheckRun { id databaseId name status conclusion detailsUrl startedAt completedAt }
-        ... on StatusContext { context state targetUrl } } } } } } }
-      reviews(last: 50) { nodes { databaseId author { __typename login } state body url } }
-      reviewThreads(last: 100) { nodes { id isResolved path line comments(last: 20) { nodes { databaseId author { __typename login } body url } } } }
-      comments(last: 50) { nodes { databaseId author { __typename login } body url } }
-    }
-  }
+// What Loom reads of every pull request, and with the feedback the rest of what prFeedback answers. It asks for no check
+// run's steps, which made one pull request's read slow enough to time out at GitHub; runningSteps reads them when needed.
+const META_FIELDS = "number state isDraft reviewDecision baseRefName";
+const LIGHT_FRAGMENT = `fragment F on PullRequest { ${META_FIELDS} }`;
+const FEEDBACK_FRAGMENT = `fragment F on PullRequest {
+  ${META_FIELDS} headRefOid author { login }
+  commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes { __typename
+    ... on CheckRun { id databaseId name status conclusion detailsUrl startedAt completedAt }
+    ... on StatusContext { context state targetUrl } } } } } } }
+  reviews(last: 50) { nodes { databaseId author { __typename login } state body url } }
+  reviewThreads(last: 100) { nodes { id isResolved path line comments(last: 20) { nodes { databaseId author { __typename login } body url } } } }
+  comments(last: 50) { nodes { databaseId author { __typename login } body url } }
 }`;
+
+const FEEDBACK_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) { pullRequest(number: $number) { ...F } }
+}
+${FEEDBACK_FRAGMENT}`;
+
+/** One query for many pull requests of a repository: an aliased pullRequest field per number over the fragment F. The numbers are integers, so they go in the text. */
+export function batchQuery(numbers: readonly number[], feedback: boolean): string {
+  const fields = numbers.map((number, index) => `    p${index}: pullRequest(number: ${Math.trunc(number)}) { ...F }`).join("\n");
+  return `query($owner: String!, $name: String!) {\n  repository(owner: $owner, name: $name) {\n${fields}\n  }\n}\n${feedback ? FEEDBACK_FRAGMENT : LIGHT_FRAGMENT}`;
+}
 
 type GhAuthor = { __typename?: string; login?: string } | null;
 type GhSteps = { totalCount?: number; nodes?: Array<{ status?: string }> };
-interface GhPull {
+interface GhMeta {
+  number?: number;
   state: string;
+  isDraft?: boolean;
+  reviewDecision?: string | null;
+  baseRefName?: string;
+}
+interface GhPull extends GhMeta {
   headRefOid: string;
   author: GhAuthor;
   commits: { nodes: Array<{ commit: { statusCheckRollup: { contexts: { nodes: Array<Record<string, unknown>> } } | null } }> };
   reviews: { nodes: Array<{ databaseId: number; author: GhAuthor; state: string; body: string; url: string }> };
   reviewThreads: { nodes: Array<{ id: string; isResolved: boolean; path: string | null; line: number | null; comments: { nodes: Array<{ databaseId: number; author: GhAuthor; body: string; url: string }> } }> };
   comments: { nodes: Array<{ databaseId: number; author: GhAuthor; body: string; url: string }> };
+}
+
+const stateOf = (state: string): Feedback["state"] => (state === "MERGED" || state === "CLOSED" ? state : "OPEN");
+type Review = NonNullable<Feedback["review"]>;
+const reviewOf = (decision: unknown): Review | null => REVIEW_DECISIONS.find((each) => each === decision) ?? null;
+
+/** The draft flag, review decision and base branch GitHub reports; null for one the answer leaves out. */
+function ghMeta(pull: GhMeta): { draft: boolean | null; review: Review | null; base: string | null } {
+  return { draft: typeof pull.isDraft === "boolean" ? pull.isDraft : null, review: reviewOf(pull.reviewDecision), base: typeof pull.baseRefName === "string" ? pull.baseRefName : null };
 }
 
 const loginOf = (author: GhAuthor) => author?.login ?? "ghost";
@@ -607,8 +633,7 @@ function ghFeedback(pull: GhPull, steps: ReadonlyMap<string, GhSteps>): Feedback
   for (const comment of pull.comments.nodes) {
     items.push({ key: `comment:${comment.databaseId}:${digest(comment.body)}`, kind: "comment", author: loginOf(comment.author), bot: isBot(comment.author), body: clipBody(comment.body), url: comment.url, state: null, path: null, line: null });
   }
-  const state = pull.state === "MERGED" || pull.state === "CLOSED" ? pull.state : "OPEN";
-  return { outcome: "ok", state, head, author: loginOf(pull.author), checks, items };
+  return { outcome: "ok", state: stateOf(pull.state), head, author: loginOf(pull.author), ...ghMeta(pull), checks, items };
 }
 
 const contextsOf = (pull: GhPull) => pull.commits.nodes[0]?.commit.statusCheckRollup?.contexts.nodes ?? [];
@@ -638,13 +663,14 @@ async function runningSteps(repo: string, host: string, pull: GhPull, signal?: A
   return new Map(found.flatMap((node): Array<[string, GhSteps]> => (node != null && typeof node.id === "string" && node.steps != null ? [[node.id, node.steps]] : [])));
 }
 
-const PULL_URL = /^https?:\/\/([^/\s]+)\/([^/\s]+)\/([^/\s]+)\/pull\/(\d+)/u;
-
 // The feedback command's last line, as the spec reference documents it; fields a forge does not know may be left out.
 const commandFeedbackSchema = z.object({
   state: z.string().transform((state) => state.toUpperCase()).pipe(z.enum(["OPEN", "MERGED", "CLOSED"])),
   head: z.string().min(1).max(64),
   author: z.string().max(200).default(""),
+  draft: z.boolean().nullish(),
+  review: z.string().transform((review) => review.toUpperCase()).pipe(z.enum(REVIEW_DECISIONS)).nullish(),
+  base: z.string().min(1).max(200).nullish(),
   checks: z
     .array(
       z.object({
@@ -694,6 +720,9 @@ async function feedbackWithCommand(input: HostInput<"prFeedback">, command: stri
     state: data.state,
     head: data.head,
     author: data.author,
+    draft: data.draft ?? null,
+    review: data.review ?? null,
+    base: data.base ?? null,
     checks: data.checks.map((check) => ({
       key: `check:${check.id}`,
       name: check.name,
@@ -711,26 +740,89 @@ async function feedbackWithCommand(input: HostInput<"prFeedback">, command: stri
 
 export async function prFeedback(input: HostInput<"prFeedback">, signal?: AbortSignal): Promise<HostOutput<"prFeedback">> {
   if (input.forge.kind === "command") return feedbackWithCommand(input, input.forge.feedback, signal);
-  const match = PULL_URL.exec(input.url);
-  if (match === null) return { outcome: "unavailable", message: `${input.url} is not a GitHub pull request URL.` };
-  const [, host, owner, name, number] = match;
-  const asked = await ghRead(input.repo, ["api", "graphql", "--hostname", host!, "-f", `owner=${owner}`, "-f", `name=${name}`, "-F", `number=${number}`, "-f", `query=${FEEDBACK_QUERY}`], signal);
+  const pr = githubPull(input.url);
+  if (pr === null) return { outcome: "unavailable", message: `${input.url} is not a GitHub pull request URL.` };
+  const { host, owner, name, number } = pr;
+  const asked = await ghRead(input.repo, ["api", "graphql", "--hostname", host, "-f", `owner=${owner}`, "-f", `name=${name}`, "-F", `number=${number}`, "-f", `query=${FEEDBACK_QUERY}`], signal);
   if (asked === "missing") return { outcome: "unavailable", message: GH_MISSING };
   if (asked.code !== 0) return readFailed("gh api graphql", asked);
   const pull = parseJson<{ data?: { repository?: { pullRequest?: GhPull | null } | null } }>(asked.stdout)?.data?.repository?.pullRequest;
   if (pull == null) return { outcome: "unavailable", message: `gh found no pull request at ${input.url}: ${tail(asked.stdout, 300)}` };
-  return ghFeedback(pull, await runningSteps(input.repo, host!, pull, signal));
+  return ghFeedback(pull, await runningSteps(input.repo, host, pull, signal));
+}
+
+type GhAnswer = { data?: { repository?: Record<string, GhPull | null> | null } | null; errors?: Array<{ message?: string; path?: unknown[] }> };
+
+/**
+ * Reads up to PR_BATCH_MAX pull requests of one repository in one `gh api graphql` call. gh exits non-zero when GitHub
+ * answers with errors, as it does for a number with no pull request, so an answer that still has the repository counts,
+ * and each pull request it leaves out is missing with GitHub's message for it.
+ */
+export async function prBatch(input: HostInput<"prBatch">, signal?: AbortSignal): Promise<HostOutput<"prBatch">> {
+  const { repo, host, owner, name, feedback } = input;
+  const numbers = [...new Set(input.numbers)];
+  const asked = await ghRead(repo, ["api", "graphql", "--hostname", host, "-f", `owner=${owner}`, "-f", `name=${name}`, "-f", `query=${batchQuery(numbers, feedback)}`], signal);
+  if (asked === "missing") return { outcome: "unavailable", message: GH_MISSING };
+  const answer = parseJson<GhAnswer>(asked.stdout);
+  const found = answer?.data?.repository;
+  if (found == null) {
+    if (asked.code !== 0) return readFailed("gh api graphql", asked);
+    return { outcome: "unavailable", message: `gh found no repository ${owner}/${name} on ${host}: ${tail(asked.stdout, 300)}` };
+  }
+  const errorOf = (alias: string) => answer?.errors?.find((error) => Array.isArray(error.path) && error.path[1] === alias)?.message;
+  // A pull request GitHub failed to answer for, in an answer that still has the others, fails as a whole read would: a server
+  // error or a rate limit is worth waiting out, and only an error such as "Could not resolve to a PullRequest" means it is gone.
+  const transientOf = (alias: string) => {
+    const message = errorOf(alias);
+    if (message !== undefined) return ghTransient({ code: 1, stdout: "", stderr: message });
+    return asked.code === 0 ? null : ghTransient(asked);
+  };
+  const pulls: Extract<HostOutput<"prBatch">, { outcome: "ok" }>["pulls"] = [];
+  const missing: Extract<HostOutput<"prBatch">, { outcome: "ok" }>["missing"] = [];
+  const miss = (number: number, alias: string, a: { answered: boolean; broken?: string }) => {
+    const transient = transientOf(alias);
+    const message = errorOf(alias) ?? a.broken ?? (asked.code === 0 ? undefined : tail(asked.stderr || asked.stdout));
+    const what = transient === null && !a.answered ? `gh found no pull request #${number} in ${owner}/${name}` : `GitHub did not answer for pull request #${number} in ${owner}/${name}`;
+    missing.push({ number, message: `${what}${message === undefined ? "" : `: ${message}`}`, ...transient });
+  };
+  for (const [index, number] of numbers.entries()) {
+    const alias = `p${index}`;
+    const pull = found[alias];
+    if (pull == null || typeof pull.state !== "string") {
+      miss(number, alias, { answered: false });
+      continue;
+    }
+    // Any error under the alias fails its read, as gh fails a one-pull-request read: a field GitHub could not fill may come
+    // back null, such as a check rollup that would otherwise read as no checks at all.
+    if (errorOf(alias) !== undefined) {
+      miss(number, alias, { answered: true });
+      continue;
+    }
+    let read: Feedback | null = null;
+    if (feedback) {
+      // GitHub can answer the state and fail a field inside, such as `reviews: null` beside a server error; that read failed too.
+      try {
+        // runningSteps asks GitHub again only for a pull request with a failed check and others still running, as prFeedback does.
+        read = ghFeedback(pull, await runningSteps(repo, host, pull, signal));
+      } catch (error) {
+        miss(number, alias, { answered: true, broken: error instanceof Error ? error.message : String(error) });
+        continue;
+      }
+    }
+    pulls.push({ number, state: stateOf(pull.state), ...ghMeta(pull), feedback: read });
+  }
+  return { outcome: "ok", pulls, missing };
 }
 
 // GitHub re-requests a review from someone who already reviewed when they are requested again, as its Re-request button does.
 export async function prRequestReview(input: HostInput<"prRequestReview">, signal?: AbortSignal): Promise<HostOutput<"prRequestReview">> {
-  const match = PULL_URL.exec(input.url);
-  if (match === null) return { outcome: "unavailable", message: `${input.url} is not a GitHub pull request URL.` };
-  const [, host, owner, name, number] = match;
+  const pr = githubPull(input.url);
+  if (pr === null) return { outcome: "unavailable", message: `${input.url} is not a GitHub pull request URL.` };
+  const { host, owner, name, number } = pr;
   const requested: string[] = [];
   const failed: Array<{ login: string; message: string }> = [];
   for (const login of input.reviewers) {
-    const asked = await gh(input.repo, ["api", "--hostname", host!, "--method", "POST", `repos/${owner}/${name}/pulls/${number}/requested_reviewers`, "--input", "-", "--silent"], { stdin: JSON.stringify({ reviewers: [login] }), signal });
+    const asked = await gh(input.repo, ["api", "--hostname", host, "--method", "POST", `repos/${owner}/${name}/pulls/${number}/requested_reviewers`, "--input", "-", "--silent"], { stdin: JSON.stringify({ reviewers: [login] }), signal });
     if (asked === "missing") return { outcome: "unavailable", message: GH_MISSING };
     if (asked.code === 0) requested.push(login);
     else failed.push({ login, message: tail(asked.stderr || asked.stdout, 500) });

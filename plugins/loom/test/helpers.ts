@@ -294,6 +294,9 @@ export class FakePort implements BbPort {
   }
 }
 
+type PrFeedbackOk = Extract<HostOutput<"prFeedback">, { outcome: "ok" }>;
+type PrBatchPull = Extract<HostOutput<"prBatch">, { outcome: "ok" }>["pulls"][number];
+
 export interface FakeWorktree {
   branch: string | null;
   head: string;
@@ -337,6 +340,10 @@ export class FakeHost implements HostPort {
   foreign = new Set<string>();
   /** What prFeedback answers, by pull request URL; a missing entry is an open pull request with no checks or feedback. */
   feedback = new Map<string, Partial<Extract<HostOutput<"prFeedback">, { outcome: "ok" }>>>();
+  /** What prBatch reports of each pull request besides its state, by URL. prCreate keeps its base and draft flag and prRetarget its new base; the rest is not a draft, with no review decision and no base. */
+  prMeta = new Map<string, Partial<Pick<PrBatchPull, "draft" | "review" | "base">>>();
+  /** Pull requests prBatch leaves out of its answer, by URL. */
+  missingPrs = new Set<string>();
   private squashes = 0;
   private stacks = 0;
   /** Each branch stackBase pointed, at the commit it built. */
@@ -349,6 +356,10 @@ export class FakeHost implements HostPort {
 
   callsTo<M extends HostMethod>(method: M): Array<HostInput<M>> {
     return this.calls.filter((call) => call.method === method).map((call) => call.input as HostInput<M>);
+  }
+
+  private feedbackOf(url: string): PrFeedbackOk {
+    return { outcome: "ok", state: this.prStates.get(url) ?? "OPEN", head: "sq1", author: "kalindudc", checks: [], items: [], ...this.feedback.get(url) };
   }
 
   worktree(path: string): FakeWorktree {
@@ -450,8 +461,11 @@ export class FakeHost implements HostPort {
         this.stackBranches.set(branch, sha);
         return { outcome: "ok", sha, tip: base === undefined ? null : this.remoteBase };
       }
-      case "prRetarget":
+      case "prRetarget": {
+        const { url, base } = input as HostInput<"prRetarget">;
+        this.prMeta.set(url, { ...this.prMeta.get(url), base });
         return { outcome: "ok" };
+      }
       case "prRequestReview":
         return { outcome: "ok", requested: [...(input as HostInput<"prRequestReview">).reviewers], failed: [] };
       case "push": {
@@ -459,13 +473,28 @@ export class FakeHost implements HostPort {
         this.remoteBranches.set(branch, src);
         return { outcome: "ok" };
       }
-      case "prFeedback": {
-        const { url } = input as HostInput<"prFeedback">;
-        return { outcome: "ok", state: this.prStates.get(url) ?? "OPEN", head: "sq1", author: "kalindudc", checks: [], items: [], ...this.feedback.get(url) };
+      case "prFeedback":
+        return this.feedbackOf((input as HostInput<"prFeedback">).url);
+      case "prBatch": {
+        const { host, owner, name, numbers, feedback } = input as HostInput<"prBatch">;
+        const pulls: PrBatchPull[] = [];
+        const missing: Array<{ number: number; message: string }> = [];
+        for (const number of numbers) {
+          const url = `https://${host}/${owner}/${name}/pull/${number}`;
+          if (this.missingPrs.has(url)) {
+            missing.push({ number, message: `gh found no pull request #${number} in ${owner}/${name}: Could not resolve to a PullRequest with the number of ${number}.` });
+            continue;
+          }
+          const read = feedback ? this.feedbackOf(url) : null;
+          pulls.push({ number, state: read?.state ?? this.prStates.get(url) ?? "OPEN", draft: false, review: null, base: null, ...this.prMeta.get(url), feedback: read });
+        }
+        return { outcome: "ok", pulls, missing };
       }
       case "prCreate": {
+        const { base, draft } = input as HostInput<"prCreate">;
         const url = `https://github.com/acme/shop/pull/${++this.prs}`;
         this.prStates.set(url, "OPEN");
+        this.prMeta.set(url, { base, draft });
         return { outcome: "ok", url };
       }
       case "prState":
@@ -496,7 +525,7 @@ export type Doc = Record<string, any>;
 
 export function baseSpec(): Doc {
   return {
-    project: { slug: "csv", name: "CSV export", key: "CSV", goal: "Let people export their orders as a CSV file from the admin page." },
+    project: { slug: "csv", name: "CSV export", key: "CSV", goal: "Let people export their orders as a CSV file from the admin page.", summary: "Let people export their orders as a CSV file from the admin page." },
     merge: { strategy: "integration" },
     checks: { commands: ["npm test"] },
     agents: { worker: { provider: "claude", model: "sonnet" }, reviewer: { provider: "codex", model: "gpt" } },

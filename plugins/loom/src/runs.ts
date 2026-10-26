@@ -15,6 +15,7 @@ export const STEP_LABELS: Partial<Record<HostMethod, string>> = {
   merge: "git merge",
   resetHard: "git reset --hard",
   prState: "read the pull request",
+  prBatch: "read the pull requests",
   prCommit: "build the pull request's commit",
   push: "git push",
   prCreate: "open the pull request",
@@ -56,6 +57,12 @@ export function stepSummary(method: HostMethod, output: unknown): { ok: boolean;
     }
     case "prState":
       return { ok: true, text: `The pull request is ${(output as { state: string }).state.toLowerCase()}.` };
+    case "prBatch": {
+      const read = output as HostOutput<"prBatch">;
+      if (read.outcome !== "ok") return { ok: false, text: "unavailable" };
+      const lines = [...read.pulls.map((pull) => `#${pull.number} is ${pull.state.toLowerCase()}${pull.base === null ? "" : ` on ${pull.base}`}.`), ...read.missing.map((miss) => miss.message)];
+      return { ok: read.missing.length === 0, text: lines.join("\n") };
+    }
     case "prCommit": {
       const built = output as HostOutput<"prCommit">;
       if (built.outcome === "diverged") return { ok: false, text: `The branch has commits Loom did not push; its tip is ${sha12(built.tip)}.` };

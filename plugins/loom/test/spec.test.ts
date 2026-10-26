@@ -1,12 +1,15 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { prSettings } from "../src/repos";
-import { dependencyCycle, globsOverlap, numberErrors, parseSpec, scopeOverlaps, specHash, ticketPatchSchema } from "../src/spec";
+import { dependencyCycle, globsOverlap, numberErrors, parseSpec, proposalErrorsOf, scopeOverlaps, specHash, ticketPatchSchema } from "../src/spec";
 import { specToml, type Doc } from "./helpers";
 
 function run(edit?: (doc: Doc) => void) {
   return parseSpec(specToml(edit));
 }
+
+// The base spec as it was before project.summary existed, for the hashes computed then.
+const beforeSummaries = (doc: Doc) => delete doc.project.summary;
 
 describe("parseSpec", () => {
   it("accepts a valid spec and fills the documented defaults", () => {
@@ -307,7 +310,7 @@ describe("specHash", () => {
       `# a comment\n[[ticket]]\nscope = ["src/model/**"]\nbody = "Build the row mapper."\nref = "csv-model"\ntitle = "Order rows"\nacceptance = ["WHEN an order is mapped THE SYSTEM SHALL return one row"]\n\n` +
         `[[ticket]]\ndepends_on = ["csv-model"]\nscope = ["src/export/**"]\nbody = "Serve the file."\nref = "csv-export"\ntitle = "Export endpoint"\nacceptance = ["WHEN the endpoint is called THE SYSTEM SHALL stream a CSV", "WHEN there are no orders THE SYSTEM SHALL return a header row"]\n\n` +
         `[agents.reviewer]\nmodel = "gpt"\nprovider = "codex"\n[agents.worker]\nmodel = "sonnet"\nprovider = "claude"\n[checks]\ncommands = ["npm test"]\n[merge]\nstrategy = "integration"\n` +
-        `[project]\ngoal = "Let people export their orders as a CSV file from the admin page."\nkey = "CSV"\nname = "CSV export"\nslug = "csv"\n`,
+        `[project]\nsummary = "Let people export their orders as a CSV file from the admin page."\ngoal = "Let people export their orders as a CSV file from the admin page."\nkey = "CSV"\nname = "CSV export"\nslug = "csv"\n`,
     ).spec!;
     expect(specHash(reordered)).toBe(specHash(first));
     expect(specHash(first)).toMatch(/^[0-9a-f]{64}$/);
@@ -332,7 +335,7 @@ describe("[[repo]]", () => {
     });
 
   it("parses a spec without [[repo]] to the object and the hash it had before repos existed", () => {
-    const spec = run().spec!;
+    const spec = run(beforeSummaries).spec!;
     expect(Object.keys(spec)).not.toContain("repo");
     for (const ticket of spec.ticket) expect(Object.keys(ticket)).not.toContain("repo");
     // Computed by the spec.ts that came before [[repo]]; it changes only if the base spec or the schema's output does.
@@ -507,7 +510,7 @@ describe("skills/loom/references/spec.md", () => {
 
 describe("forges, integration worktrees and environments", () => {
   it("leaves them out of a spec that does not set them, so its hash is the one it had before", () => {
-    const spec = run().spec!;
+    const spec = run(beforeSummaries).spec!;
     expect(Object.keys(spec.merge)).not.toContain("forge");
     expect(Object.keys(spec.merge)).not.toContain("worktree");
     expect(Object.keys(spec)).not.toContain("environment");
@@ -590,5 +593,55 @@ describe("forges, integration worktrees and environments", () => {
     expect(run((doc) => (doc.merge = { strategy: "integration", stack: true })).errors).toEqual([
       'merge.stack: it applies to the pull request Loom opens for each ticket, but merge.strategy is "integration". Remove it, or use merge.strategy = "pr".',
     ]);
+  });
+});
+
+describe("project.summary, done_when and merge_after", () => {
+  it("parses a spec without a summary, as the specs stored before it existed, but a proposal needs one", () => {
+    const old = run(beforeSummaries);
+    expect(old.ok).toBe(true);
+    expect(Object.keys(old.spec!.project)).not.toContain("summary");
+    expect(proposalErrorsOf(old.spec!)).toEqual([expect.stringMatching(/^project\.summary: required\./)]);
+    expect(proposalErrorsOf(run().spec!)).toEqual([]);
+  });
+
+  it("keeps the summary between 20 and 300 characters, and done_when as a list of lines", () => {
+    expect(run((doc) => (doc.project.summary = "Too short.")).errors.join("\n")).toMatch(/project\.summary/);
+    expect(run((doc) => (doc.project.summary = "x".repeat(301))).errors.join("\n")).toMatch(/project\.summary/);
+    const spec = run((doc) => (doc.project.done_when = ["People can download the file", "Empty exports have a header row"])).spec!;
+    expect(spec.project.done_when).toEqual(["People can download the file", "Empty exports have a header row"]);
+    expect(Object.keys(run().spec!.project)).not.toContain("done_when");
+  });
+
+  const docs = (merge_after?: string[]) => ({ ref: "csv-docs", title: "Docs", body: "Write them.", acceptance: ["WHEN built THE SYSTEM SHALL list it"], scope: ["docs/**"], ...(merge_after === undefined ? {} : { merge_after }) });
+
+  it("keeps merge_after, and leaves it out of a ticket that does not set it", () => {
+    const spec = run((doc) => doc.ticket.push(docs(["csv-export"]))).spec!;
+    expect(spec.ticket[2]!.merge_after).toEqual(["csv-export"]);
+    expect(Object.keys(spec.ticket[0]!)).not.toContain("merge_after");
+  });
+
+  it("refuses a merge_after ref that is unknown or the ticket's own, and warns about one depends_on already orders", () => {
+    expect(run((doc) => doc.ticket.push(docs(["nope"]))).errors).toEqual([expect.stringMatching(/^ticket\[2\]\.merge_after: "nope" is not a ticket ref\. Use one of: csv-model, csv-export\./)]);
+    expect(run((doc) => doc.ticket.push(docs(["csv-docs"]))).errors).toEqual([expect.stringMatching(/^ticket\[2\]\.merge_after: "csv-docs" is this ticket's own ref/)]);
+    const twice = run((doc) => (doc.ticket[1].merge_after = ["csv-model"]));
+    expect(twice.ok).toBe(true);
+    expect(twice.warnings).toEqual([expect.stringMatching(/^ticket\[1\]\.merge_after: "csv-model" is in depends_on too/)]);
+  });
+
+  it("refuses a merge order cycle through depends_on and merge_after", () => {
+    // csv-export depends on csv-model, so csv-model merging after csv-export would never merge.
+    expect(run((doc) => (doc.ticket[0].merge_after = ["csv-export"])).errors).toEqual([
+      expect.stringMatching(/^ticket\[0\]\.merge_after: merge order cycle csv-model -> csv-export -> csv-model through depends_on and merge_after/),
+    ]);
+    const through = run((doc) => {
+      doc.ticket.push(docs(["csv-export"]));
+      doc.ticket[0].merge_after = ["csv-docs"];
+    });
+    expect(through.errors.join("\n")).toMatch(/merge order cycle .* through depends_on and merge_after/);
+  });
+
+  it("lets a ticket patch set merge_after", () => {
+    expect(ticketPatchSchema.parse({ merge_after: ["CSV-1"] })).toEqual({ merge_after: ["CSV-1"] });
   });
 });
