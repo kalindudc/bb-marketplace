@@ -2,7 +2,7 @@ import type { KeyboardEvent, ReactNode } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import type { PrView } from "../contract";
 import { NextButton } from "./actions";
-import { BUTTON_GHOST, Pill, onCardClick, type Tone } from "./common";
+import { BUTTON_GHOST, Pill, SELECTED_ROW, onCardClick, type Tone } from "./common";
 import { NEXT_ICONS, type Group } from "./constants";
 import { age, shortKey, sizeOf, tinyKey } from "./format";
 import { RowLabels } from "./manage";
@@ -31,7 +31,7 @@ function Row({ pr, layout, meta, pills }: { pr: PrView; layout: RowLayout; meta:
   };
   return (
     <li data-pr={pr.key} data-next={pr.next.kind} tabIndex={0} aria-current={selected ? "true" : undefined} onClick={onCardClick(() => layout.onSelect(pr.key))} onKeyDown={onKey}
-      className={`flex cursor-pointer items-center gap-2.5 border-t border-border px-3.5 py-2.5 first:border-t-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${selected ? "bg-accent shadow-[inset_3px_0_0_var(--primary)]" : "hover:bg-accent/50"}`}>
+      className={`flex cursor-pointer items-center gap-2.5 border-t border-border px-3.5 py-2.5 first:border-t-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${selected ? SELECTED_ROW : "hover:bg-accent/50"}`}>
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-1.5 text-[11.5px] text-muted-foreground">{meta}</div>
         <div className={`mb-1.5 mt-0.5 text-[13px] font-semibold ${layout.phone ? "line-clamp-2" : "truncate"}`}>{pr.title}</div>

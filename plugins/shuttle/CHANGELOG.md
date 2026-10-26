@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.7
+
+- **The open PR stands out.** The PR open in the panel beside a list now has a tint and a ring in your theme's primary colour, on Inbox cards and on the rows of My PRs, Reviews and Search alike. Before, an Inbox card had only a faint outline, and a row the same grey as a hovered one. Hovering no longer changes the open PR's look, and screen readers hear the open Inbox card as the current one.
+
 ## 0.3.6
 
 - **Delta syncs say why they failed.** When Delta was briefly down, for example while its host restarted (HTTP 503), `delta.sh` piped the failed `dt` call into `jq`. `jq` printed nothing and exited 0, so Shuttle saw a command that worked and said only "whoami did not print JSON: no output". Now `delta.sh` fails with `dt`'s own error and exit code. When Delta refuses your sign-in, it adds "run `dt auth login`". Any command that exits 0 without its JSON now fails with what it printed on stderr.

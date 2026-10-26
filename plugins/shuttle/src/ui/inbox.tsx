@@ -2,7 +2,7 @@ import { experimental_Icon as Icon, useSettings } from "@get-bb/plugin-sdk/app";
 import type { PrView } from "../contract";
 import { NextButtons, useActions } from "./actions";
 import { EventIcon } from "./activity";
-import { BUTTON, BUTTON_GHOST, CARD_GRID, ErrorNote, onCardClick, PAGE, PageHeading, STRIP, TONE_EDGE, TONE_TEXT } from "./common";
+import { BUTTON, BUTTON_GHOST, CARD_GRID, ErrorNote, onCardClick, PAGE, PageHeading, SELECTED_CARD, STRIP, TONE_EDGE, TONE_TEXT } from "./common";
 import { NEXT_ICONS } from "./constants";
 import { messageOf, useShuttleQuery } from "./data";
 import { age, plural, shortKey, tinyKey } from "./format";
@@ -17,8 +17,8 @@ function InboxCard({ pr, layout }: { pr: PrView; layout: RowLayout }) {
   const next = pr.next;
   const selected = layout.selected === pr.key;
   return (
-    <article data-card={pr.key} aria-label={pr.title} onClick={onCardClick(() => layout.onSelect(pr.key))}
-      className={`flex cursor-pointer flex-col rounded-lg border border-l-[3px] border-border bg-card px-3.5 py-2.5 transition-colors hover:bg-accent/40 ${TONE_EDGE[next.tone]} ${selected ? "shadow-[0_0_0_1px_color-mix(in_srgb,var(--primary)_60%,transparent)]" : ""}`}>
+    <article data-card={pr.key} aria-label={pr.title} aria-current={selected ? "true" : undefined} onClick={onCardClick(() => layout.onSelect(pr.key))}
+      className={`flex cursor-pointer flex-col rounded-lg border border-l-[3px] border-border px-3.5 py-2.5 transition-colors ${TONE_EDGE[next.tone]} ${selected ? SELECTED_CARD : "bg-card hover:bg-accent/40"}`}>
       <div className="flex items-start gap-2">
         <div className={`flex min-w-0 flex-1 items-center gap-1.5 pt-1 text-[10.5px] font-bold uppercase tracking-wider ${TONE_TEXT[next.tone]}`}>
           <Icon name={NEXT_ICONS[next.kind]} fallback="Circle" className="size-3.5 shrink-0" aria-hidden />

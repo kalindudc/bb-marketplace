@@ -36,8 +36,8 @@ const request = pr({
 });
 const quiet = mine({ number: 1, title: "Not a decision", next: next({ inbox: false }) });
 
-function inboxPage(rpc: Partial<Handlers> = {}, prs: PrView[] = [ready, nobody, request, quiet]) {
-  return page("", {
+function inboxPage(rpc: Partial<Handlers> = {}, prs: PrView[] = [ready, nobody, request, quiet], subPath = "") {
+  return page(subPath, {
     inbox: () => inbox({
       prs,
       agents: { open: 10, withAgent: 6, working: 1, waiting: 1, none: 4 },
@@ -52,6 +52,20 @@ function inboxPage(rpc: Partial<Handlers> = {}, prs: PrView[] = [ready, nobody, 
 const card = (slot: Awaited<ReturnType<typeof inboxPage>>["slot"], key: string) => find(slot.container, `[data-card="${key}"]`);
 
 describe("the Inbox", () => {
+  it("tints and rings the card of the PR open in the panel, and only that one", async () => {
+    const { slot } = await inboxPage({}, undefined, formatRoute({ view: "inbox", key: nobody.key }));
+    const open = await card(slot, nobody.key);
+    await find(slot.container, `[data-detail="${nobody.key}"]`);
+    expect(open.getAttribute("aria-current")).toBe("true");
+    expect(open.className).toContain("shadow-[0_0_0_2px_var(--primary)]");
+    expect(open.className).toContain("var(--primary)_12%");
+    expect(open.className).not.toContain("hover:bg-accent");
+    const other = await card(slot, ready.key);
+    expect(other.getAttribute("aria-current")).toBeNull();
+    expect(other.className).toContain("bg-card");
+    expect(other.className).not.toContain("var(--primary)");
+  });
+
   it("shows a card per decision in the server's order and words, with when it leaves", async () => {
     const { slot } = await inboxPage();
     const first = await card(slot, ready.key);

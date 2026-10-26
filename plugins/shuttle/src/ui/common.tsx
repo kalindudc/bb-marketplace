@@ -259,3 +259,11 @@ export function onCardClick(open: () => void) {
   };
 }
 export const STRIP = "my-1.5 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs";
+
+/**
+ * The PR open in the panel. Cards and rows share one tint and a ring in the primary colour, so the open
+ * PR stands out on every page and never looks like a hovered one, which only gets the accent colour.
+ */
+const SELECTED_TINT = "bg-[color-mix(in_srgb,var(--primary)_12%,var(--card))]";
+export const SELECTED_CARD = `${SELECTED_TINT} shadow-[0_0_0_2px_var(--primary)]`;
+export const SELECTED_ROW = `${SELECTED_TINT} shadow-[inset_4px_0_0_var(--primary),inset_0_0_0_1px_var(--primary)]`;

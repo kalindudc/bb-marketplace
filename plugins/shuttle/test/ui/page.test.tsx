@@ -31,7 +31,12 @@ describe("Shuttle page", () => {
   it("opens the PR its path selects beside the list, and closes it back to the list", async () => {
     const { slot } = await reviews(selected(second.key));
     const panel = await find(slot.container, `[data-panel] [data-detail="${second.key}"]`);
-    expect(slot.container.querySelector(`[data-pr="${second.key}"]`)!.getAttribute("aria-current")).toBe("true");
+    const open = slot.container.querySelector<HTMLElement>(`[data-pr="${second.key}"]`)!;
+    expect(open.getAttribute("aria-current")).toBe("true");
+    // The same tint as an Inbox card, with a bar and a ring, so it never reads as a hovered row.
+    expect(open.className).toContain("var(--primary)_12%");
+    expect(open.className).toContain("inset_4px_0_0_var(--primary)");
+    expect(open.className).not.toContain("hover:bg-accent");
     expect(callsTo(slot, "detail")).toEqual([{ key: second.key }]);
     fireEvent.click(within(panel).getByRole("button", { name: "Close details" }));
     expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: "reviews", replace: true } });
