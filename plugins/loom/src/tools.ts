@@ -64,6 +64,7 @@ async function run(fn: () => Promise<string> | string): Promise<PluginAgentToolR
 function reviewLines(version: number, review: SpecReviewStatus | null): string[] {
   switch (review?.kind) {
     case "reviewing":
+      if (review.waiting !== undefined) return [`Spec review: its reviewer for v${version} could not start (${review.waiting.reason}); Loom tries again by itself. Do not hand over yet: end your turn; Loom sends the verdict to this thread.`];
       return [`Spec review: a separate reviewer now checks v${version} against the human's request and for work the goal does not need (round ${review.round} of ${SPEC_REVIEW_ROUNDS}). Do not hand over yet: end your turn; Loom sends the verdict to this thread.`];
     case "changes":
       return [`Spec review: v${version} has ${review.findings.length === 1 ? "1 open finding" : `${review.findings.length} open findings`} from round ${review.round}. Revise the spec for them and call loom_propose again; do not hand over yet.`];

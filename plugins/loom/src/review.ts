@@ -5,16 +5,16 @@ import { randomBytes } from "node:crypto";
 import { delivers, workerOf } from "./checks";
 import { repoCheckout, ticketRepo } from "./checkouts";
 import type { ProjectRow, ReviewRow, Store, ThreadRow, TicketRow } from "./db/store";
-import { spawnEnvironment, threadBranch } from "./environments";
+import { spawnEnvironment, threadBranch, ticketInputsOf } from "./environments";
 import { plural } from "./format";
 import { changesRequestedText, findingsList, reviewerBrief, reviewerNudgeText } from "./prompts";
 import { openFeedback } from "./pull-requests";
-import { SpawnRefusedError } from "./ports";
+import { nextWait, provisioningFailure, startProblemOf, startWaits, unavailableReason, waitOf, waitPost, type StartProblem, type StartWait } from "./starts";
 import { LoomError } from "./projects";
 import { idleAction } from "./scheduler";
 import type { Spec } from "./spec";
 import { LOOM_ACTOR } from "./states";
-import { applyMove, baseOf, endLiveRows, endThread, freshBase, pauseProject, released, resolveEnvironment, resumeEnding, retryRateLimited, specOf, toWorking, type EndReason, type EngineCtx, type TurnFailure } from "./workers";
+import { applyMove, baseOf, endLiveRows, endThread, freshBase, otherCheckouts, pauseProject, released, resolveEnvironment, resumeEnding, retryRateLimited, specOf, toWorking, type EndReason, type EngineCtx, type TurnFailure } from "./workers";
 
 export interface Finding {
   severity: "blocking" | "should-fix";
@@ -29,10 +29,14 @@ const errText = (error: unknown) => (error instanceof Error ? error.message : St
 
 // ---------------------------------------------------------------- reading a round
 
-type Standing = "live" | "ending" | "dead";
+type Standing = "live" | "ending" | "dead" | "unstarted";
+
+/** A reviewer that did not start and waits to try again counts neither as live nor as one that ended without a verdict. */
+export const UNSTARTED = "unstarted";
 
 function standingOf(store: Store, review: ReviewRow): Standing {
   const row = review.thread_row_id === null ? null : store.thread(review.thread_row_id);
+  if (row?.state === "ended" && row.end_reason === UNSTARTED) return "unstarted";
   if (row === null || row.state === "ended") return "dead";
   return row.state === "ending" ? "ending" : "live";
 }
@@ -192,16 +196,19 @@ export async function spawnReviewers(ctx: EngineCtx, project: ProjectRow, spec: 
       await blockForReviewers(ctx, ticket, "reviewers ended without a verdict");
       continue;
     }
+    if (startWaits(ticket, "reviewer", ctx.now())) continue;
     spawned += await startReviewers(ctx, project, spec, ticket, spec.review.approvals - round.approved - round.live);
   }
   return spawned;
 }
 
 export const REVIEWER_REFUSED = "bb refused to start a reviewer";
+export const REVIEWER_UNAVAILABLE = "no reviewer could start";
 
-/** A blocked ticket whose last block was bb refusing its reviewer. Its work passed the checks at its head commit, and no worker has touched it since. */
+/** A blocked ticket whose last block was bb refusing its reviewer, or its provider staying unavailable. Its work passed the checks at its head commit, and no worker has touched it since. */
 export function blockedAtReview(ticket: TicketRow): boolean {
-  return ticket.state === "blocked" && ticket.head_sha !== null && (ticket.blocked_reason?.startsWith(`${REVIEWER_REFUSED}:`) ?? false);
+  const reason = ticket.blocked_reason ?? "";
+  return ticket.state === "blocked" && ticket.head_sha !== null && (reason.startsWith(`${REVIEWER_REFUSED}:`) || reason.startsWith(`${REVIEWER_UNAVAILABLE}:`));
 }
 
 /** Blocked back to review for the same head. The round is new, so the refused reviewer's pending review no longer counts as a reviewer that ended. */
@@ -232,9 +239,10 @@ async function startReviewers(ctx: EngineCtx, project: ProjectRow, spec: Spec, t
   if (needed <= 0 || ticket.head_sha === null) return 0;
   const diff = await readDiff(ctx, project, spec, ticket);
   if (diff === null) return 0;
+  const checkouts = await otherCheckouts(ctx, project, spec, ticket);
   let started = 0;
   for (let n = 0; n < needed; n++) {
-    if (!(await startReviewer(ctx, project.id, ticket, diff))) break;
+    if (!(await startReviewer(ctx, project.id, ticket, diff, checkouts))) break;
     started += 1;
   }
   return started;
@@ -251,20 +259,27 @@ async function readDiff(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket:
   }
 }
 
-async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow, diff: Diff): Promise<boolean> {
+async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow, diff: Diff, checkouts: ReadonlyMap<string, string>): Promise<boolean> {
   const { store } = ctx;
   const token = randomBytes(12).toString("hex");
   const round = seen.review_round;
 
-  // The final eligibility check and the reservation share one synchronous transaction, as for workers.
+  // The final eligibility check and the reservation share one synchronous transaction, as for workers. A reviewer that
+  // waits after a failed start tries again with its own row and pending review.
   const reserved = store.tx(() => {
     const project = store.project(projectId);
     const ticket = store.ticket(seen.id);
     if (project?.state !== "running" || ticket === null || ticket.state !== "review" || ticket.review_round !== round || ticket.head_sha !== seen.head_sha) return null;
+    if (startWaits(ticket, "reviewer", ctx.now())) return null;
     const spec = specOf(store, project);
     const current = tally(store, ticket, spec);
     const live = store.threads({ projectId, role: "reviewer", states: ["spawning", "active"] }).length;
     if (current.decided || current.approved + current.live >= spec.review.approvals || live >= spec.agents.max_reviewers) return null;
+    const waiting = store.threads({ ticketId: ticket.id, role: "reviewer", states: ["ended"] }).find((row) => row.end_reason === UNSTARTED && row.review_round === round);
+    if (waiting !== undefined) {
+      store.updateThread(waiting.id, { state: "spawning", spawn_token: token, thread_id: null, environment_id: null, ended_at: null, end_reason: null, clock_at: ctx.now(), idle_count: 0, rate_limit_retries: 0 });
+      return { row: store.thread(waiting.id)!, project, spec, ticket };
+    }
     const created = store.addThread({ project_id: projectId, ticket_id: ticket.id, role: "reviewer", state: "spawning", spawn_token: token });
     store.updateThread(created.id, { review_round: round, clock_at: ctx.now() });
     store.addReview({ ticket_id: ticket.id, round, thread_row_id: created.id });
@@ -274,14 +289,14 @@ async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow,
 
   const { row, project, spec, ticket } = reserved;
   const agent = spec.agents.reviewer;
-  const brief = reviewerBrief({ project, spec, ticket, round, diff, checkPost: store.posts(ticket.id).filter((post) => post.kind === "check").at(-1) ?? null, earlierReviews: store.reviews(ticket.id).filter((review) => review.round < round), prFeedback: openFeedback(store.posts(ticket.id)) });
+  const brief = reviewerBrief({ project, spec, ticket, round, diff, checkPost: store.posts(ticket.id).filter((post) => post.kind === "check").at(-1) ?? null, earlierReviews: store.reviews(ticket.id).filter((review) => review.round < round), prFeedback: openFeedback(store.posts(ticket.id)), checkouts });
   let spawned;
   try {
     spawned = await ctx.bb.spawnThread({
       bbProjectId: ticketRepo(spec, ticket).bbProjectId ?? project.bb_project_id,
       hostId: project.host_id!,
       baseBranch: ticket.branch ?? freshBase(spec, ticket.repo),
-      environment: spawnEnvironment(ticketRepo(spec, ticket), { branch: threadBranch(project.slug, ticket.key, `review-${round}-${row.id}`), base: ticket.branch ?? freshBase(spec, ticket.repo) }),
+      environment: spawnEnvironment(ticketRepo(spec, ticket), { branch: threadBranch(project.slug, ticket.key, `review-${round}-${row.id}`), base: ticket.branch ?? freshBase(spec, ticket.repo) }, "reviewer", ticketInputsOf(ticket)),
       title: `Review ${ticket.key} · round ${round}`,
       prompt: brief,
       sectionId: project.section_id,
@@ -292,8 +307,13 @@ async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow,
       permissionMode: agent.permission_mode,
     });
   } catch (error) {
-    failReviewerSpawn(ctx, row, errText(error));
-    if (error instanceof SpawnRefusedError) await blockForReviewers(ctx, ticket, `${REVIEWER_REFUSED}: ${errText(error)}`);
+    const problem = startProblemOf(error);
+    if (problem.kind === "refused") {
+      failReviewerSpawn(ctx, row, problem.message);
+      await blockForReviewers(ctx, ticket, `${REVIEWER_REFUSED}: ${problem.message}`);
+    } else {
+      await reviewerStartFailed(ctx, row, problem);
+    }
     return false;
   }
 
@@ -307,6 +327,32 @@ async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow,
   store.changed(project.id);
   if (staleReason(store, active) !== null || store.project(projectId)?.state === "archived") await endThread(ctx, active, "superseded", { commit: false, move: null });
   return true;
+}
+
+/**
+ * A reviewer that did not start, or whose environment could not be provisioned, for a reason other than bb refusing it.
+ * It waits and tries again (StartWait) with the same row and review; a failure counts as a reviewer that ended without a
+ * verdict only once it has happened START_GRACE times in a row, and one bb or the provider says cannot start now never does.
+ */
+export async function reviewerStartFailed(ctx: EngineCtx, row: ThreadRow, problem: StartProblem): Promise<void> {
+  const { store } = ctx;
+  const expired = store.tx((): StartWait | null => {
+    const ticket = row.ticket_id === null ? null : store.ticket(row.ticket_id);
+    const previous = ticket === null ? null : waitOf(ticket, "reviewer");
+    const wait = nextWait(previous, { role: "reviewer", row: row.id, problem, now: ctx.now() });
+    const counted = problem.kind === "broken" || wait.counted;
+    store.updateThread(row.id, { state: "ended", ended_at: ctx.now(), end_reason: counted ? "failed" : UNSTARTED });
+    if (ticket === null || ticket.state !== "review" || ticket.review_round !== row.review_round) return null;
+    store.updateTicket(ticket.id, { start_wait_json: wait.expired ? null : JSON.stringify({ ...wait, row: counted ? null : row.id }) });
+    if (wait.expired) return wait;
+    const text = counted ? `Could not start a reviewer: ${problem.message}` : waitPost("a reviewer", wait, previous, ctx.now());
+    if (text !== null) store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "system", body: text });
+    return null;
+  });
+  store.changed(row.project_id);
+  ctx.kick();
+  // A provider unavailable for the whole limit blocks the ticket, so triage hears of it.
+  if (expired !== null) await blockForReviewers(ctx, store.ticket(row.ticket_id!)!, `${REVIEWER_UNAVAILABLE}: ${unavailableReason(expired)}`);
 }
 
 /** A reviewer that never started: only its threads row ends. Its review stays pending and counts as a reviewer that ended without a verdict. */
@@ -419,13 +465,26 @@ export async function onReviewerIdle(ctx: EngineCtx, seen: ThreadRow, reason: En
   }
 }
 
-/** A failed turn: rate limits are retried at the window's reset, even while paused, since pausing never stops a reviewer; anything else counts like an idle. */
+/**
+ * A failed turn: rate limits are retried at the window's reset, even while paused, since pausing never stops a reviewer;
+ * a thread whose environment bb could not provision is a reviewer that did not start; anything else counts like an idle.
+ */
 export async function onReviewerTurnFailed(ctx: EngineCtx, event: TurnFailure): Promise<void> {
   const row = ctx.store.threadByThreadId(event.threadId);
   if (row === null || row.state !== "active" || row.role !== "reviewer") return;
   const project = ctx.store.project(row.project_id);
   if (project === null) return;
-  if (event.errorInfo?.category === "rate-limit" && (await retryRateLimited(ctx, row, project, event))) return;
+  if (event.errorInfo?.category === "rate-limit") {
+    if (await retryRateLimited(ctx, row, project, event)) return;
+  } else {
+    const failure = await ctx.bb.latestSystemError(event.threadId).catch(() => null);
+    if (failure?.code === "thread_provisioning_failed") {
+      if (!ctx.store.claimThread(row.id, UNSTARTED)) return;
+      if (row.thread_id !== null) await ctx.bb.archive(row.thread_id).catch((error) => ctx.bb.log("warn", `Could not archive ${row.thread_id}: ${errText(error)}`));
+      await reviewerStartFailed(ctx, ctx.store.thread(row.id)!, provisioningFailure(failure));
+      return;
+    }
+  }
   await onReviewerIdle(ctx, row, "failed");
 }
 

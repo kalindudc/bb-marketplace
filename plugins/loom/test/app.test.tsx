@@ -2217,6 +2217,18 @@ describe("board", () => {
     expect(queued.textContent).toContain("Waiting on CSV-2, CSV-3");
   });
 
+  it("says on the card when a ticket waits to start its worker or reviewer again, and why", async () => {
+    const now = projectView().now;
+    const waiting = [
+      card({ key: "CSV-3", title: "Docs", state: "queued", ready: true, startWait: { role: "worker", reason: "No free slot.", until: now + 4 * 60_000, tries: 3, unavailable: true } }),
+      card({ key: "CSV-4", title: "Guide", state: "review", ready: false, startWait: { role: "reviewer", reason: "The provider failed.", until: now + 60_000, tries: 2, unavailable: false } }),
+    ];
+    const { slot } = await mountPage("csv", { project: () => projectView({ board: waiting }) });
+    await slot.findByRole("tab", { name: "Board" });
+    expect(slot.container.querySelector('[data-card="CSV-3"] [data-start-wait]')!.textContent).toBe("Its worker could not start (No free slot.); Loom tries again in 4m; the wait counts no attempt.");
+    expect(slot.container.querySelector('[data-card="CSV-4"] [data-start-wait]')!.textContent).toBe("Its reviewer could not start (The provider failed.); Loom tries again in 1m (2 failed starts in a row).");
+  });
+
   it("shows each card's age in its state, attempt and review round", async () => {
     const slot = await mountBoard();
     const working = lane(slot, "working").querySelector('[data-card="CSV-2"]')!;
@@ -2603,6 +2615,11 @@ describe("ticket", () => {
     expect(within(pane).getByTestId("bb-markdown").textContent).toBe("Serve the file.\n\n## Notes\nStream it.");
     expect(pane.textContent).toContain("This is the brief the next worker reads.");
     expect(slot.container.querySelector("[data-attempt]")).toBeNull();
+  });
+
+  it("says in the summary that the worker could not start and when Loom tries again", async () => {
+    const slot = await mountTicket({ state: "queued", startWait: { role: "worker", reason: "No free slot.", until: Date.now() + 2 * 60_000, tries: 1, unavailable: true } });
+    expect(slot.container.querySelector("[data-ticket-summary]")!.textContent).toBe("Its worker could not start (No free slot.); Loom tries again in 2m; the wait counts no attempt.");
   });
 
   it("shows the planning row and the reply box for a ticket with no attempt yet", async () => {

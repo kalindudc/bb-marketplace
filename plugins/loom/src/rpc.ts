@@ -1,7 +1,7 @@
 // The page's server side: reads over the store and changes through the same engine methods the CLI calls.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { humanAction } from "./cli";
-import { rpcContract, type AgentRow, type BoardCard, type ProjectView, type SpecSummary, type ThreadInfo, type TicketDetail, type TicketPr } from "./contract";
+import { rpcContract, type AgentRow, type BoardCard, type ProjectView, type SpecSummary, type StartWaitView, type ThreadInfo, type TicketDetail, type TicketPr } from "./contract";
 import type { EventRow, PostRow, ProjectRow, ReviewRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { stripAnsi, ticketActivity } from "./activity";
 import { Changes } from "./changes";
@@ -17,11 +17,13 @@ import { nextStepOf } from "./next-step";
 import { LoomError, landsOf, namedRepos, repoOverviews, withRepoNames, type Projects } from "./projects";
 import { overviewAt, projectTimeline, rewind, rowsOf } from "./replay";
 import { projectMetrics } from "./reports";
-import { blockedAtReview } from "./review";
+import { UNSTARTED, blockedAtReview } from "./review";
 import { IN_FLIGHT, kinship, overlaps, readyTickets, startable, toLite, type TicketLite } from "./scheduler";
 import { holdOf, stacking, stackOf, upstreamOf } from "./stack";
 import { parseSpec, type Spec } from "./spec";
 import { specReviewStatus } from "./spec-review";
+import { isReleased } from "./release";
+import { waitOf } from "./starts";
 import { dismissAsk, plannerAsk } from "./asks";
 import { plannerView } from "./planner-view";
 import { specVersionView } from "./spec-view";
@@ -106,7 +108,7 @@ export function agentRows(threads: ThreadRow[], tickets: TicketRow[], spec: Spec
 function reviewStatus(review: ReviewRow, reviewer: ThreadRow | null): string {
   if (review.verdict !== "pending") return review.verdict.replace("_", " ");
   if (reviewer?.state !== "ended") return "pending";
-  return reviewer.thread_id === null ? "reviewer could not start" : "ended without a verdict";
+  return reviewer.thread_id === null || reviewer.end_reason === UNSTARTED ? "reviewer could not start" : "ended without a verdict";
 }
 
 /** The state a blocked or cancelled ticket was in when it stopped: the `from` of its last state event; null for any other state. `moves` are the ticket's `ticket.state` events. */
@@ -159,8 +161,25 @@ export function boardCards(tickets: TicketRow[], threads: ThreadRow[], spec: Spe
       blockedReason: ticket.blocked_reason,
       hasChanges: ticket.head_sha !== null || ((ticket.state === "working" || ticket.state === "checking") && ticket.environment_id !== null),
       ...stackFacts(tickets, ticket, stack),
+      startWait: startWaitView(ticket, threads),
     };
   });
+}
+
+/**
+ * The wait after a failed start, while nothing has started since: a queued ticket's worker, a released worker that could
+ * not come back, or a reviewer of a ticket in review with none running.
+ */
+export function startWaitView(ticket: TicketRow, threads: readonly ThreadRow[]): StartWaitView | null {
+  const wait = waitOf(ticket);
+  if (wait === null) return null;
+  const own = threads.filter((row) => row.ticket_id === ticket.id && row.role === wait.role);
+  const waiting =
+    wait.role === "worker"
+      ? ticket.state === "queued" || ((ticket.state === "working" || ticket.state === "pr_open") && own.some((row) => row.thread_id === ticket.worker_thread_id && isReleased(row)))
+      : ticket.state === "review" && !own.some((row) => row.review_round === ticket.review_round && (row.state === "spawning" || row.state === "active"));
+  if (!waiting) return null;
+  return { role: wait.role, reason: wait.reason, until: wait.until, tries: wait.tries, unavailable: wait.kind === "unavailable" };
 }
 
 function stackFacts(tickets: TicketRow[], ticket: TicketRow, stack: boolean): Pick<BoardCard, "stackedOn" | "holding"> {
@@ -204,6 +223,7 @@ export function draftCards(spec: Spec, at: number): BoardCard[] {
     hasChanges: false,
     stackedOn: [],
     holding: null,
+    startWait: null,
   }));
 }
 
@@ -331,6 +351,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       deps,
       depsDone: deps.filter((dep) => stateOf(dep) === "done"),
       blockedReason: ticket.blocked_reason,
+      startWait: startWaitView(ticket, threads),
       branch: ticket.branch,
       prUrl: ticket.pr_url,
       pr: ticketPr(project, ticket, posts, past === null),

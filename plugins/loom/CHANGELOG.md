@@ -2,6 +2,24 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.19.0 (2026-10-25)
+
+### Added
+
+- On the pull request strategy, an idle worker whose ticket's pull request is open no longer holds its environment. Once it has nothing in flight and its worktree holds exactly the reviewed commit, Loom archives its thread and bb frees the environment; the worker stays the ticket's worker. A fix round, your reply on the ticket or a stacked catch-up unarchives the same thread and has bb restore its environment on the worker's branch, so the worker keeps its whole conversation; the fix round's message says that files git ignores must be set up again. When bb cannot restore it, a new worker takes over from the branch, and its brief names the earlier workers' threads. `merge.release_workers = false` keeps every worker until its pull request merges, as before, and a spec version approved later may change it either way.
+- `[environment]` and a repo's `environment` take a `reviewer` table: another provider for reviewers, the spec reviewer and the summary agent, or a merge patch over the inputs for the same provider, so the threads that only read can use a lighter environment. In a provider's environment the reviewer brief says how to read any file at the ticket's commit with `git show`.
+- A ticket takes `environment = { inputs = { … } }`, a merge patch over its repo's environment inputs for its workers and reviewers, so it can ask for only what it touches. `loom_add_tickets` and `loom_edit_ticket` take it too, and `loom_propose` checks each ticket's patched inputs against the provider's schema.
+- The board card and the ticket page say when a ticket waits to start its worker or a reviewer again, why, and when Loom tries.
+- On a multi-repo project, a reviewer's brief lists the other repos with their checkout paths, as a worker's brief does.
+
+### Changed
+
+- A failed start no longer burns attempts within seconds. When the environment provider's availability check answers `unavailable`, or bb marks the error retryable, Loom waits and tries again (after 1 minute, doubling to every 15 minutes) and counts no attempt; after an hour of it the ticket blocks, with a reason that names the provider's unavailability, so triage hears of it, and approving a pending version requeues it. Any other failed start, a provisioning failure included, waits the same way and counts against `budget.max_attempts` only from the fourth failure in a row. A start bb refuses with a client error still blocks at once, and one Loom could not build counts at once.
+- A retried start keeps its attempt number, thread row and claim, so its retry asks the provider for the same `{branch}` and the ticket thread gets one post per reason instead of one per try.
+- A reviewer that could not start waits and tries again too, and counts as one that ended without a verdict only from the fourth failure in a row. The spec reviewer waits the same way, is retried by the engine, and fails after the fourth; proposing again tries at once. The summary agent tries again for up to 30 minutes before the full record goes to the done hook.
+- A failed start keeps the ticket's branch, unless bb could not find it and no pull request is open. A ticket whose pull request is open always keeps it, so a new worker no longer starts from the base without the pull request's work.
+- The post for a provisioning failure gives the provider's own message instead of "Provisioning thread failed".
+
 ## 0.18.0 (2026-10-24)
 
 ### Added

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import type { SpawnArgs } from "../src/ports";
+import { SpawnRefusedError, SpawnUnavailableError, type SpawnArgs } from "../src/ports";
 import { SPEC_REVIEW_RUBRIC } from "../src/prompts";
 import {
   approvalRefusal,
@@ -9,6 +9,7 @@ import {
   onSpecReviewerIdle,
   onSpecReviewerTurnFailed,
   reconcileSpecReviews,
+  retrySpecReviews,
   specReviewerOf,
   specReviewStatus,
   specVerdict,
@@ -75,12 +76,68 @@ describe("starting a spec review", () => {
     expect(spawns()[0]).toMatchObject({ bbProjectId: "proj_api", baseBranch: "upstream/trunk" });
   });
 
-  it("ends the review as failed when bb cannot start the reviewer, without a message: the tool reply tells the planner", async () => {
-    h.bb.spawnError = () => new Error("bb is restarting");
-    expect(await draft()).toEqual({ kind: "failed", version: 1, round: 1, reason: "bb could not start the reviewer: bb is restarting" });
+  it("ends the review as failed when bb refuses the reviewer, without a message: the tool reply tells the planner", async () => {
+    h.bb.spawnError = () => new SpawnRefusedError(400, "HTTP 400: Provider pi only supports full permission mode.");
+    expect(await draft()).toEqual({ kind: "failed", version: 1, round: 1, reason: "bb could not start the reviewer: HTTP 400: Provider pi only supports full permission mode." });
     expect(toPlanner()).toEqual([]);
     h.bb.spawnError = null;
     expect(await draft()).toEqual({ kind: "reviewing", version: 1, round: 1 });
+  });
+
+  it("waits when the reviewer cannot start, tries again from the tick, and fails only after four failures in a row", async () => {
+    h.bb.spawnError = () => new Error("bb is restarting");
+    expect(await draft()).toEqual({ kind: "reviewing", version: 1, round: 1, waiting: { reason: "bb is restarting", until: h.clock.t + 60_000 } });
+    expect(approvalRefusal("csv", status())?.message).toBe("Draft v1 of csv is still in its spec review (round 1 of 3): its reviewer could not start (bb is restarting), and Loom tries again.");
+    await retrySpecReviews(h.ctx);
+    expect(spawns()).toHaveLength(1);
+    // A restart keeps a review that waits.
+    await reconcileSpecReviews(h.ctx);
+    expect(rows()[0]).toMatchObject({ state: "reviewing", thread_id: null });
+
+    for (let n = 0; n < 3; n++) {
+      h.clock.advance(15 * 60_000);
+      await retrySpecReviews(h.ctx);
+    }
+    expect(spawns()).toHaveLength(4);
+    expect(status()).toMatchObject({ kind: "failed", reason: "bb could not start the reviewer: bb is restarting" });
+    expect(toPlanner().join("\n")).toContain("bb could not start the reviewer: bb is restarting");
+  });
+
+  it("starts the same review once the provider is available again, and fails it if the provider stays unavailable for an hour", async () => {
+    h.bb.spawnError = () => new SpawnUnavailableError("No free slot.");
+    await draft();
+    for (let n = 0; n < 3; n++) {
+      h.clock.advance(15 * 60_000);
+      await retrySpecReviews(h.ctx);
+    }
+    expect(status()).toMatchObject({ kind: "reviewing", waiting: { reason: "No free slot." } });
+    h.bb.spawnError = null;
+    h.clock.advance(15 * 60_000);
+    await retrySpecReviews(h.ctx);
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0]).toMatchObject({ state: "reviewing", thread_id: "thr_w1" });
+    await onSpecReviewerIdle(h.ctx, rows()[0]!);
+    expect(status()).toEqual({ kind: "reviewing", version: 1, round: 1 });
+
+    h = makeCtx();
+    h.bb.spawnError = () => new SpawnUnavailableError("No free slot.");
+    await draft();
+    for (let n = 0; n < 4; n++) {
+      h.clock.advance(15 * 60_000);
+      await retrySpecReviews(h.ctx);
+    }
+    expect(status()).toMatchObject({ kind: "failed", reason: "bb could not start the reviewer: the environment provider was unavailable for 1h: No free slot." });
+    expect(toPlanner().join("\n")).toContain("the environment provider was unavailable for 1h");
+  });
+
+  it("treats a reviewer whose environment could not be provisioned as one that did not start", async () => {
+    await draft();
+    h.bb.systemErrors.set("thr_w1", { code: "thread_provisioning_failed", message: "Provisioning thread failed", detail: "No free slot." });
+    await onSpecReviewerTurnFailed(h.ctx, rows()[0]!, { threadId: "thr_w1", requestId: "req_1", attemptNumber: 1, errorInfo: null, rateLimits: null });
+    expect(rows()[0]).toMatchObject({ state: "reviewing", thread_id: null });
+    expect(status()).toMatchObject({ kind: "reviewing", waiting: { reason: "No free slot." } });
+    expect(h.bb.sent("thr_w1")).toEqual([]);
+    expect(h.bb.callsTo("archive")).toEqual([["thr_w1"]]);
   });
 
   it("has nothing to wait for on a draft with no review", async () => {

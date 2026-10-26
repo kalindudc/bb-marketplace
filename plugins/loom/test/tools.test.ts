@@ -106,9 +106,9 @@ describe("loom_propose", () => {
     expect(host.harness.sdk.callsTo("threads.updatePluginMetadata")).toEqual([[{ threadId: "thr_plan", set: { project: "csv", role: "planner" }, pluginId: "loom" }]]);
   });
 
-  it("hands over once the spec review passed, and says when the review could not start", async () => {
+  it("hands over once the spec review passed, and says when the reviewer could not start yet", async () => {
     const failed = text(await propose());
-    expect(failed).toContain("Spec review: it did not finish: bb could not start the reviewer:");
+    expect(failed).toContain("Spec review: its reviewer for v1 could not start (");
     expect(failed).not.toContain("bb loom approve csv");
 
     stubSpawn();

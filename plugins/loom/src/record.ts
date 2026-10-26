@@ -8,6 +8,7 @@ import { spawnEnvironment, threadBranch } from "./environments";
 import { plural } from "./format";
 import { checkoutOf } from "./merge";
 import { SpawnRefusedError, type ThreadInfo } from "./ports";
+import { provisioningFailure, startProblemOf, type StartProblem } from "./starts";
 import { COMMENT_SIGNATURE, andList, clip, recordPrompt } from "./prompts";
 import { LoomError, landsOf, repoOverviews, type RepoOverview } from "./projects";
 import { freshBaseOf, isMultiRepo, repoSettings } from "./repos";
@@ -75,6 +76,8 @@ export const NO_HOOK: DoneSettings = { doneHook: "", doneRecord: "summary" };
 export const RECORD_MAX = 300_000;
 export const HOOK_TIMEOUT_MS = 120_000;
 export const SUMMARY_TIMEOUT_MS = 30 * 60_000;
+/** How long a summary agent that did not start waits before Loom tries again, within SUMMARY_TIMEOUT_MS of the first try. */
+const SUMMARY_RETRY_MS = 2 * 60_000;
 
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 const minute = (at: number) => `${new Date(at).toISOString().slice(0, 16).replace("T", " ")}Z`;
@@ -218,6 +221,7 @@ async function deliver(ctx: EngineCtx, row: RecordRow, settings: DoneSettings): 
   }
   if (row.state === "pending") {
     if (settings.doneRecord === "full") return runHook(ctx, row.id, project, settings, "full", projectRecord(store, project));
+    if (row.retry_at !== null && row.retry_at > ctx.now()) return;
     return startSummary(ctx, row, project, settings);
   }
   return pollSummary(ctx, row, project, settings);
@@ -226,8 +230,8 @@ async function deliver(ctx: EngineCtx, row: RecordRow, settings: DoneSettings): 
 async function startSummary(ctx: EngineCtx, row: RecordRow, project: ProjectRow, settings: DoneSettings): Promise<void> {
   const { store } = ctx;
   const spec = specOf(store, project);
-  // Marked before the spawn, so a restart during it sends the full record instead of starting a second agent.
-  store.updateRecord(row.id, { state: "summarizing", started_at: ctx.now() });
+  // Marked before the spawn, so a restart during it sends the full record instead of starting a second agent. A retry keeps the first try's time, which the time limit counts from.
+  store.updateRecord(row.id, { state: "summarizing", started_at: row.started_at ?? ctx.now(), retry_at: null });
   const agent = spec.agents.reviewer;
   const hostId = project.host_id;
   // A multi-repo project's agent starts in its first repo; it only reads the record, so any of them would do.
@@ -238,7 +242,7 @@ async function startSummary(ctx: EngineCtx, row: RecordRow, project: ProjectRow,
       bbProjectId: repoSettings(spec, repo).bbProjectId ?? project.bb_project_id,
       hostId,
       baseBranch: freshBaseOf(spec, repo),
-      environment: spawnEnvironment(repoSettings(spec, repo), { branch: threadBranch(project.slug, "record", String(row.id)), base: freshBaseOf(spec, repo) }),
+      environment: spawnEnvironment(repoSettings(spec, repo), { branch: threadBranch(project.slug, "record", String(row.id)), base: freshBaseOf(spec, repo) }, "reviewer"),
       title: `${project.key} · record`,
       prompt: recordPrompt(project),
       detail: projectRecord(store, project),
@@ -260,7 +264,7 @@ async function startSummary(ctx: EngineCtx, row: RecordRow, project: ProjectRow,
       ({ threadId } = await spawn(null));
     }
   } catch (error) {
-    return fullRecord(ctx, row.id, project, settings, `the summary agent could not start: ${errText(error)}`);
+    return summaryNotStarted(ctx, store.record(project.id)!, project, settings, startProblemOf(error));
   }
   store.updateRecord(row.id, { thread_id: threadId });
   store.changed(project.id);
@@ -271,7 +275,9 @@ async function pollSummary(ctx: EngineCtx, row: RecordRow, project: ProjectRow, 
   const thread = await ctx.bb.getThread(row.thread_id);
   if (thread === null || thread.archivedAt !== null || thread.deletedAt !== null) return fullRecord(ctx, row.id, project, settings, "the summary agent's thread is gone");
   if (thread.status === "error") {
+    const failure = await ctx.bb.latestSystemError(thread.id).catch(() => null);
     await endAgent(ctx, thread);
+    if (failure?.code === "thread_provisioning_failed") return summaryNotStarted(ctx, row, project, settings, provisioningFailure(failure));
     return fullRecord(ctx, row.id, project, settings, "the summary agent failed");
   }
   if (thread.status === "idle") {
@@ -285,6 +291,19 @@ async function pollSummary(ctx: EngineCtx, row: RecordRow, project: ProjectRow, 
     await endAgent(ctx, thread);
     return fullRecord(ctx, row.id, project, settings, "the summary agent took longer than 30 minutes");
   }
+}
+
+/**
+ * A summary agent that did not start, or whose environment could not be provisioned: Loom tries again every two minutes
+ * while the summary's time limit lasts, unless bb refused it, and then sends the full record, as for any other failure.
+ */
+async function summaryNotStarted(ctx: EngineCtx, row: RecordRow, project: ProjectRow, settings: DoneSettings, problem: StartProblem): Promise<void> {
+  const first = row.started_at ?? ctx.now();
+  if (problem.kind === "refused" || problem.kind === "broken" || ctx.now() + SUMMARY_RETRY_MS - first > SUMMARY_TIMEOUT_MS) {
+    return fullRecord(ctx, row.id, project, settings, `the summary agent could not start: ${problem.message}`);
+  }
+  ctx.store.updateRecord(row.id, { state: "pending", thread_id: null, started_at: first, retry_at: ctx.now() + SUMMARY_RETRY_MS });
+  ctx.store.changed(project.id);
 }
 
 /** Stops a live summary agent and archives it, so none keeps running after its record is sent. Cleanup never blocks the send. */

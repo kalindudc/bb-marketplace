@@ -1,9 +1,11 @@
+import { makeTurnFailedEvent } from "@get-bb/plugin-sdk/testing";
 import { beforeEach, describe, expect, it } from "vitest";
 import { settleChecks, submit } from "../src/checks";
 import type { PostRow, ReviewRow, ThreadRow } from "../src/db/store";
-import { SpawnRefusedError, type SpawnArgs } from "../src/ports";
+import { SpawnRefusedError, SpawnUnavailableError, type SpawnArgs } from "../src/ports";
+import { waitOf } from "../src/starts";
 import { afterMergeFailedText, changesRequestedText, conflictText, heldCheckResult, landBody, prBody, reviewerBrief, reviewerNudgeText } from "../src/prompts";
-import { approve, onReviewerGone, onReviewerIdle, requestChanges, settleReviews, spawnReviewers, type Finding } from "../src/review";
+import { approve, blockedAtReview, onReviewerGone, onReviewerIdle, onReviewerTurnFailed, requestChanges, settleReviews, spawnReviewers, type Finding } from "../src/review";
 import { endThread, requeueTicket, specOf } from "../src/workers";
 import { checkOutHead, makeCtx, reachReview, seedProject, seedRepoProject, startWorker, ticketOf, withDocsTicket, type Doc, type EngineHarness } from "./helpers";
 
@@ -94,7 +96,7 @@ describe("reviewerBrief", () => {
         "The checks of this repo, which ran after the ticket's verify commands:",
         '- "npm run web-test"',
         "",
-        "## Rubric",
+        "## Other repositories (read only)",
       ].join("\n"),
     );
     expect(brief("CSV-1")).not.toContain('"npm test"');
@@ -261,21 +263,80 @@ describe("spawnReviewers", () => {
     expect(h.bb.callsTo("spawnThread")).toHaveLength(1);
   });
 
-  it("ends only the row when a spawn fails, leaves the review pending, and blocks the ticket after approvals + 2 reviewers ended without a verdict", async () => {
+  it("waits after a failed reviewer spawn, with the same row and review, and counts reviewers that ended only after three failures in a row", async () => {
     await seedProject(h);
     const worker = await reachReview(h);
     h.bb.spawnError = (args) => (args.metadata.role === "reviewer" ? new Error("provider is down") : null);
-    for (let attempt = 0; attempt < 3; attempt++) expect(await spawn()).toBe(0);
-    expect(reviewers().map((row) => [row.state, row.end_reason])).toEqual([["ended", "failed"], ["ended", "failed"], ["ended", "failed"]]);
+    expect(await spawn()).toBe(0);
+    expect(reviewers().map((row) => [row.state, row.end_reason])).toEqual([["ended", "unstarted"]]);
+    expect(waitOf(ticketOf(h, "CSV-1"))).toMatchObject({ role: "reviewer", tries: 1, reason: "provider is down" });
+    expect(postsOf().at(-1)!.body).toBe("Could not start a reviewer: provider is down. Loom tries again in 1m; a start that fails 4 times in a row counts as a failed attempt.");
+    // Before the retry time nothing starts.
+    expect(await spawn()).toBe(0);
+    expect(h.bb.callsTo("spawnThread").filter(([args]) => (args as SpawnArgs).metadata.role === "reviewer")).toHaveLength(1);
+
+    const retry = async () => {
+      h.clock.advance(waitOf(ticketOf(h, "CSV-1"))!.until - h.clock.t);
+      return spawn();
+    };
+    for (let n = 0; n < 2; n++) await retry();
+    expect(reviewers()).toHaveLength(1);
+    expect(ticketOf(h, "CSV-1").state).toBe("review");
+    // From the fourth failure in a row, each one is a reviewer that ended without a verdict.
+    for (let n = 0; n < 3; n++) await retry();
+    expect(reviewers().map((row) => row.end_reason)).toEqual(["failed", "failed", "failed"]);
     expect(reviewsOf().every((review) => review.verdict === "pending")).toBe(true);
     expect(ticketOf(h, "CSV-1").state).toBe("review");
-    expect(postsOf().some((post) => post.kind === "system" && post.body.includes("provider is down"))).toBe(true);
 
-    await spawn();
+    await retry();
     expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "blocked", blocked_reason: "reviewers ended without a verdict", worker_thread_id: null });
     expect(h.store.thread(worker.id)).toMatchObject({ state: "ended", end_reason: "blocked" });
     expect(project().triage_pending).toBe(1);
     expect(postsOf().at(-1)).toMatchObject({ kind: "block", body: "reviewers ended without a verdict" });
+  });
+
+  it("waits without counting while the environment provider is unavailable, then starts the same reviewer", async () => {
+    await seedProject(h);
+    await reachReview(h);
+    h.bb.spawnError = (args) => (args.metadata.role === "reviewer" ? new SpawnUnavailableError("No free slot.") : null);
+    for (let n = 0; n < 7; n++) {
+      await spawn();
+      h.clock.advance(waitOf(ticketOf(h, "CSV-1"))!.until - h.clock.t);
+    }
+    expect(reviewers().map((row) => row.end_reason)).toEqual(["unstarted"]);
+    expect(ticketOf(h, "CSV-1").state).toBe("review");
+    h.bb.spawnError = null;
+    expect(await spawn()).toBe(1);
+    expect(reviewers()).toMatchObject([{ state: "active", end_reason: null }]);
+    expect(reviewsOf()).toHaveLength(1);
+  });
+
+  it("blocks the ticket when the provider stays unavailable for an hour, and approving a pending version sends it back to review", async () => {
+    await seedProject(h);
+    await reachReview(h);
+    h.bb.spawnError = (args) => (args.metadata.role === "reviewer" ? new SpawnUnavailableError("No free slot.") : null);
+    await spawn();
+    while (ticketOf(h, "CSV-1").state === "review") {
+      h.clock.advance(waitOf(ticketOf(h, "CSV-1"))!.until - h.clock.t);
+      await spawn();
+    }
+    const blocked = ticketOf(h, "CSV-1");
+    expect(blocked).toMatchObject({ state: "blocked", blocked_reason: "no reviewer could start: the environment provider was unavailable for 1h: No free slot." });
+    expect(blockedAtReview(blocked)).toBe(true);
+    expect(project().triage_pending).toBe(1);
+  });
+
+  it("treats a reviewer whose environment could not be provisioned as one that did not start", async () => {
+    await seedProject(h);
+    await reachReview(h);
+    await spawn();
+    const [row] = reviewers();
+    h.bb.systemErrors.set(row!.thread_id!, { code: "thread_provisioning_failed", message: "Provisioning thread failed", detail: "No free slot." });
+    await onReviewerTurnFailed(h.ctx, makeTurnFailedEvent({ threadId: row!.thread_id!, requestId: "req_1" }));
+    expect(h.store.thread(row!.id)).toMatchObject({ state: "ended", end_reason: "unstarted" });
+    expect(h.bb.sent(row!.thread_id!)).toEqual([]);
+    expect(h.bb.callsTo("archive")).toContainEqual([row!.thread_id!]);
+    expect(waitOf(ticketOf(h, "CSV-1"))).toMatchObject({ role: "reviewer", reason: "No free slot." });
   });
 
   it("blocks the ticket at once, ending its worker, when bb refuses a reviewer", async () => {
@@ -345,10 +406,22 @@ describe("reviewers on a multi-repo project", () => {
     await seedRepoProject(h);
     await reachReview(h, "CSV-1");
     expect(await spawn()).toBe(1);
-    expect(h.bb.callsTo("projectCheckout").at(-1)).toEqual(["proj_web", "host_1"]);
+    expect(h.bb.callsTo("projectCheckout")).toContainEqual(["proj_web", "host_1"]);
     expect(h.host.calls.filter((call) => call.method === "diff")).toEqual([{ hostId: "host_1", method: "diff", input: { repo: "/src/web", base: "loom/csv", head: "c1", maxBytes: 60_000 } }]);
     expect(spawnArgs(1)).toMatchObject({ bbProjectId: "proj_web", hostId: "host_1", baseBranch: ticketOf(h, "CSV-1").branch, metadata: { role: "reviewer", ticket: "CSV-1" } });
     expect(spawnArgs(1).prompt).toContain('This ticket is in the repo "web", the bb project proj_web,');
+    // The other repos' checkouts, as the worker's brief lists them, whatever environment the reviewer runs in.
+    expect(spawnArgs(1).prompt).toContain(
+      ["## Other repositories (read only)", "This project also works in these repos. You may read them for context, but never edit them: changes there belong to their own tickets.", '- "api" (bb project proj_api): /src/api', '- "docs" (bb project proj_docs): /src/docs'].join("\n"),
+    );
+  });
+
+  it("lists a repo with no checkout on the machine without a path", async () => {
+    await seedRepoProject(h);
+    await reachReview(h, "CSV-1");
+    h.bb.checkouts.set("proj_docs", {});
+    await spawn();
+    expect(spawnArgs(1).prompt).toContain('- "docs" (bb project proj_docs): no checkout was found on this machine');
   });
 
   it("uses the repo's remote base for the diff, for a reviewer without a branch and for the verdict's worktree check, on the pr strategy", async () => {

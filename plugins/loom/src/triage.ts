@@ -4,7 +4,7 @@ import type { PostRow, ProjectRow, ThreadRow, TicketRow } from "./db/store";
 import { briefBody, LoomError } from "./projects";
 import { clip, triageDigest } from "./prompts";
 import { isMultiRepo, repoSettings } from "./repos";
-import { dependencyCycle, fallsUnder, numberErrors, type Spec, type TicketPatch, type TicketSpec } from "./spec";
+import { dependencyCycle, fallsUnder, numberErrors, ticketEnvironmentErrors, type Spec, type TicketPatch, type TicketSpec } from "./spec";
 import { HUMAN_ACTOR, LOOM_ACTOR, TICKET_STATES, canMoveTicket, type TicketState } from "./states";
 import { endLiveRows, specOf, type EngineCtx } from "./workers";
 
@@ -82,6 +82,12 @@ const problemsOf = (spec: Spec, label: string, scope: readonly string[], verify:
   return problems;
 };
 
+// A repo the spec does not list has its own error from problemsOf.
+const environmentProblems = (spec: Spec, at: string, environment: { inputs: Record<string, unknown> } | undefined, repo: string | null): string[] => {
+  if (environment === undefined || repoError(spec, at, repo) !== null) return [];
+  return ticketEnvironmentErrors(environment, repoSettings(spec, repo).environment, at);
+};
+
 const refused = (errors: string[], what: string) => new LoomError("loom_invalid_input", `${what}:\n${numberErrors(errors)}`);
 
 function requireTicket(ctx: EngineCtx, key: string): TicketRow {
@@ -110,6 +116,7 @@ export function addTickets(ctx: EngineCtx, projectId: number, tickets: TicketSpe
       if (!keyOf.has(dep) && !known.has(dep)) errors.push(`${label}.depends_on: "${dep}" is not a ref in this batch or a ticket on this board.`);
     }
     errors.push(...problemsOf(spec, label, ticket.scope, ticket.verify, ticket.repo ?? null));
+    errors.push(...environmentProblems(spec, `${label}.environment`, ticket.environment, ticket.repo ?? null));
   });
   const cycle = dependencyCycle(tickets);
   if (cycle !== null) errors.push(`tickets: dependency cycle ${cycle.join(" -> ")}. Remove one depends_on entry.`);
@@ -131,6 +138,7 @@ export function addTickets(ctx: EngineCtx, projectId: number, tickets: TicketSpe
           deps_json: JSON.stringify(ticket.depends_on.map((dep) => keyOf.get(dep) ?? known.get(dep)!)),
           priority: ticket.priority,
           repo: ticket.repo ?? null,
+          environment_json: ticket.environment === undefined ? null : JSON.stringify(ticket.environment.inputs),
         },
         actor,
       );
@@ -181,6 +189,10 @@ export function editTicket(ctx: EngineCtx, key: string, patch: TicketPatch, acto
   const verify = patch.verify ?? (JSON.parse(ticket.verify_json) as string[]);
   // Moving to another repo checks the whole ticket against that repo's protected paths and checks.
   if (movesRepo || patch.scope !== undefined || patch.verify !== undefined) errors.push(...problemsOf(spec, "patch", movesRepo || patch.scope !== undefined ? scope : [], verify, repo));
+  if (patch.environment !== undefined || (movesRepo && ticket.environment_json !== null)) {
+    const environment = patch.environment ?? { inputs: JSON.parse(ticket.environment_json!) as Record<string, unknown> };
+    errors.push(...environmentProblems(spec, "patch.environment", environment, repo));
+  }
   if (errors.length > 0) throw refused(errors, `${key} not changed. Fix these and call loom_edit_ticket again`);
 
   const fields = (Object.keys(patch) as Array<keyof TicketPatch>).filter((field) => patch[field] !== undefined);
@@ -193,6 +205,8 @@ export function editTicket(ctx: EngineCtx, key: string, patch: TicketPatch, acto
     ...(patch.depends_on === undefined ? {} : { deps_json: JSON.stringify(deps) }),
     ...(patch.priority === undefined ? {} : { priority: patch.priority }),
     ...(patch.repo === undefined ? {} : { repo: patch.repo }),
+    // An empty patch leaves the ticket with its repo's inputs.
+    ...(patch.environment === undefined ? {} : { environment_json: Object.keys(patch.environment.inputs).length === 0 ? null : JSON.stringify(patch.environment.inputs) }),
   };
   // The old values let a rewind show the ticket as it was before the edit.
   const before = Object.fromEntries(Object.keys(changes).map((column) => [column, ticket[column as keyof TicketRow]]));

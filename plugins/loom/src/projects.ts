@@ -401,6 +401,7 @@ export class Projects {
           deps_json: JSON.stringify(ticket.depends_on.map((ref) => keyOf.get(ref)!)),
           priority: ticket.priority,
           repo: ticket.repo ?? null,
+          environment_json: ticket.environment === undefined ? null : JSON.stringify(ticket.environment.inputs),
         },
         actor,
       );

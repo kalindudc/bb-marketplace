@@ -159,4 +159,12 @@ export const MIGRATIONS: string[] = [
   `CREATE TABLE check_durations (repo_key TEXT NOT NULL, name TEXT NOT NULL, check_key TEXT NOT NULL, duration_ms INTEGER NOT NULL, at INTEGER NOT NULL,
     PRIMARY KEY (repo_key, check_key))`,
   `CREATE INDEX check_durations_name ON check_durations (repo_key, name, at)`,
+  // StartWait: the ticket waits to start its worker or a reviewer again after a failed start.
+  `ALTER TABLE tickets ADD COLUMN start_wait_json TEXT`,
+  // When Loom archived an idle worker of an open pull request to free its environment; kept while the thread comes back.
+  `ALTER TABLE threads ADD COLUMN released_at INTEGER`,
+  `ALTER TABLE spec_reviews ADD COLUMN wait_json TEXT`,
+  `ALTER TABLE records ADD COLUMN retry_at INTEGER`,
+  // The ticket's merge patch over its repo's environment inputs; null for none.
+  `ALTER TABLE tickets ADD COLUMN environment_json TEXT`,
 ];

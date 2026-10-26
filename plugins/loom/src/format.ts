@@ -46,5 +46,20 @@ export function reposHave(names: readonly string[]): string {
   return names.length === 1 ? `the repo ${list} has` : `the repos ${list} have`;
 }
 
-export const END_LABELS: Record<string, string> = { abandoned: "idle twice", verdict: "gave a verdict", merged: "merged", superseded: "superseded by a newer round", gone: "thread gone" };
+export const END_LABELS: Record<string, string> = {
+  abandoned: "idle twice",
+  verdict: "gave a verdict",
+  merged: "merged",
+  superseded: "superseded by a newer round",
+  gone: "thread gone",
+  released: "environment released while the pull request is open",
+  unstarted: "could not start; Loom tries again",
+};
 export const endLabel = (reason: string | null) => (reason === null ? "ended" : (END_LABELS[reason] ?? reason));
+
+/** "Its worker could not start (no free slot); Loom tries again in 4m." for a ticket that waits after a failed start. */
+export function startWaitText(wait: { role: "worker" | "reviewer"; reason: string; until: number; tries: number; unavailable: boolean }, now: number): string {
+  const again = wait.until > now ? `tries again in ${formatDuration(wait.until - now)}` : "tries again now";
+  const count = wait.unavailable ? "; the wait counts no attempt" : wait.tries > 1 ? ` (${plural(wait.tries, "failed start")} in a row)` : "";
+  return `Its ${wait.role} could not start (${wait.reason}); Loom ${again}${count}.`;
+}

@@ -12,6 +12,7 @@ import { feedbackList, prAskText, prBody, prFeedbackText, prNudgeText, type Feed
 import { prSettings, repoSettings } from "./repos";
 import type { Spec } from "./spec";
 import { LOOM_ACTOR } from "./states";
+import { advanceWake, isReleased, isWaking, releasedWorker, wakeRow } from "./release";
 import { applyMove, released, resumeEnding, signatureOf, specOf, toWorking, type EngineCtx } from "./workers";
 
 /** How long the worker has to hand in loom_pr before Loom's template stands in; paused time does not count. */
@@ -329,13 +330,14 @@ interface PrDelivery {
 /**
  * pr_open to working with the feedback (or to queued when the worker is gone), or blocked once the fix rounds are used
  * up, in one transaction. The message to the worker is stored with the move and sent after it, so a failed send or a
- * restart sends it again (deliverFixRounds). A worker that is ending owns the ticket's move, so the round waits.
+ * restart sends it again (deliverFixRounds). A worker that is ending owns the ticket's move, so the round waits. A
+ * worker Loom released comes back for the round: its environment is restored first, and the message waits for it.
  */
 async function startFixRound(ctx: EngineCtx, seen: TicketRow, a: Round): Promise<boolean> {
   const { store } = ctx;
   const spec = specOf(store, store.project(seen.project_id)!);
   const max = prSettings(spec).maxFixRounds;
-  const result = store.tx((): { kind: "working" } | { kind: "queued" } | { kind: "blocking"; worker: ThreadRow } | { kind: "blocked" } | null => {
+  const result = store.tx((): { kind: "working" } | { kind: "waking"; worker: ThreadRow } | { kind: "queued" } | { kind: "blocking"; worker: ThreadRow } | { kind: "blocked" } | null => {
     const ticket = store.ticket(seen.id);
     if (ticket?.state !== "pr_open") return null;
     const worker = workerOf(store, ticket);
@@ -359,11 +361,14 @@ async function startFixRound(ctx: EngineCtx, seen: TicketRow, a: Round): Promise
     const body = a.human ? `Your reply starts fix round ${round} on the pull request.` : `Pull request feedback for fix round ${round} (${counted} of ${max} the pull request may start):\n\n${feedbackList(a.checks, a.items, a.skipped)}`;
     post(ctx, ticket, { body, data: feedbackData(ticket, round, counted, a, false) });
     const move = { fixRound: round, ...(a.human ? { human: true } : {}) };
-    if (worker.standing === "active" && worker.row.thread_id !== null) {
-      const text = prFeedbackText({ key: ticket.key, url: ticket.pr_url, round, counted, max, checks: a.checks, items: a.items, skipped: a.skipped, diverged: a.diverged, signature: signatureOf(ctx) });
-      store.updateTicket(ticket.id, { pr_deliver_json: JSON.stringify({ thread: worker.row.thread_id, text } satisfies PrDelivery) });
-      toWorking(ctx, store.ticket(ticket.id)!, worker.row, move);
-      return { kind: "working" };
+    const asleep = releasedWorker(store, ticket);
+    const thread = worker.standing === "active" ? worker.row.thread_id : (asleep?.thread_id ?? null);
+    if (thread !== null) {
+      const text = prFeedbackText({ key: ticket.key, url: ticket.pr_url, round, counted, max, checks: a.checks, items: a.items, skipped: a.skipped, diverged: a.diverged, signature: signatureOf(ctx), restored: asleep !== null || (worker.standing === "active" && isWaking(worker.row)) });
+      store.updateTicket(ticket.id, { pr_deliver_json: JSON.stringify({ thread, text } satisfies PrDelivery) });
+      const row = asleep === null ? (worker.row as ThreadRow) : wakeRow(ctx, asleep);
+      toWorking(ctx, store.ticket(ticket.id)!, row, move);
+      return asleep === null ? { kind: "working" } : { kind: "waking", worker: row };
     }
     applyMove(ctx, store.ticket(ticket.id)!, { to: "queued", patch: released }, LOOM_ACTOR, { ...move, reason: "the worker is gone" });
     return { kind: "queued" };
@@ -373,6 +378,10 @@ async function startFixRound(ctx: EngineCtx, seen: TicketRow, a: Round): Promise
   ctx.kick();
   if (result.kind === "blocking") await resumeEnding(ctx, result.worker);
   else if (result.kind === "working") await deliver(ctx, store.ticket(seen.id)!);
+  else if (result.kind === "waking") {
+    await advanceWake(ctx, result.worker);
+    await deliver(ctx, store.ticket(seen.id)!);
+  }
   return true;
 }
 
@@ -385,6 +394,9 @@ async function deliver(ctx: EngineCtx, ticket: TicketRow): Promise<void> {
     return;
   }
   if (!delivers(ctx, ticket.project_id)) return;
+  // A worker coming back from a release reads it once its environment is back.
+  const row = ctx.store.threadByThreadId(pending.thread);
+  if (isWaking(row) || isReleased(row)) return;
   try {
     await ctx.bb.send(pending.thread, pending.text);
   } catch (error) {

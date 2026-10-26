@@ -47,6 +47,8 @@ const ticket = (n: number, state: TicketState, over: Partial<TicketRow> = {}): T
   pr_deliver_json: null,
   stack_json: null,
   pr_base: null,
+  start_wait_json: null,
+  environment_json: null,
   created_by: "human",
   created_at: NOW,
   updated_at: NOW,
@@ -73,6 +75,7 @@ const reviewer = (state: ThreadRow["state"]): ThreadRow => ({
   clock_at: null,
   ended_at: null,
   end_reason: null,
+  released_at: null,
 });
 
 const specWith = (edit?: (doc: Doc) => void): Spec => parseSpec(specToml(edit)).spec!;

@@ -518,7 +518,7 @@ describe("forges, integration worktrees and environments", () => {
     const result = run((doc) => {
       doc.merge.forge = { kind: "command", open: "review create", state: "review state", after_open: ["ci run"] };
       doc.merge.worktree = { plugin: "trees", command: "prepare loom" };
-      doc.environment = { provider: "trees", inputs: { pool: { branch: "{branch}", base: "{base}", zones: ["a"] } } };
+      doc.environment = { provider: "trees", inputs: { pool: { branch: "{branch}", base: "{base}", paths: ["a"] } } };
       doc.repo = [
         { name: "web", project: "proj_web", forge: { kind: "none" }, environment: { provider: "git-worktree" }, worktree: { command: "prep" } },
         { name: "api", project: "proj_api" },

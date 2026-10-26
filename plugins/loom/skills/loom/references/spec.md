@@ -34,6 +34,7 @@ A spec without `[[repo]]` tables is a single-repo project: every ticket runs in 
 | `squash` | boolean | `true` | pr strategy only; push the reviewed work as one commit, and each fix round as one more, instead of the worker's branch as it is |
 | `max_fix_rounds` | integer | `5` | pr strategy only; 0 to 20; fix rounds the pull request's checks and reviews may start before the ticket blocks, counted again from each requeue; the human's replies do not count; `0` follows only merged and closed |
 | `stack` | boolean | `true` | pr strategy only; a ticket starts once its dependencies' pull requests are open, on top of them in its own repo, and its pull request opens on its one open dependency's branch; `false` waits for each dependency to merge |
+| `release_workers` | boolean | `true` | pr strategy only; once a ticket's pull request is open and its worker is idle, Loom archives the worker's thread so bb frees its environment, and brings the same thread back with a new environment for a fix round or a catch-up; `false` keeps every worker and its environment until its pull request merges; a pending version may change it after approval. See [Releasing workers](#releasing-workers) |
 | `checks_queued_minutes` | integer | Loom's `checksQueuedMinutes` setting (`5`) | pr strategy only; 0 to 1440; a pending check that is still queued this many minutes after Loom first saw it, or after the push, no longer holds back the failed ones; `0` waits for queued checks too |
 | `checks_near_done_percent` | integer | Loom's `checksNearDonePercent` setting (`75`) | pr strategy only; 0 to 100; once a check has failed, a running check holds back the fix round only while it is at least this far along; a check Loom cannot measure, and every commit status, keeps holding it; `0` waits for every running check. See [When failed checks go to the worker](#when-failed-checks-go-to-the-worker) |
 
@@ -96,8 +97,35 @@ Where the threads Loom starts in the repository run: its workers and reviewers, 
 |---|---|---|---|
 | `provider` | string | required | the id of a bb environment provider that is available for the project on this machine (`bb environment providers --project <id> --machine <host> --json`) |
 | `inputs` | table | none | the provider's inputs, checked against its inputs schema; a provider that needs inputs refuses a spec without them |
+| `reviewer` | table | none | where reviewers, the spec reviewer and the summary agent start instead: `provider` (another provider; its own `inputs` then, none by default) or `inputs` alone, a merge patch over `inputs` for the same provider; checked against the provider's schema like `inputs` |
 
 In any string of `inputs`, Loom replaces `{branch}` with a new branch for that thread (`loom/<slug>/<key>-<attempt>` for a worker, `loom/<slug>/<key>-review-<round>-<n>` for a reviewer) and `{base}` with where the thread starts, the same base it would give a worktree. Any other `{name}` is an error.
+
+A merge patch works as in RFC 7396: a table merges key by key, and any other value, an array included, replaces the value it patches. TOML has no null, so a patch in the spec sets keys but cannot remove one.
+
+Reviewers judge the diff and the code around it at the ticket's commit; Loom runs the checks in the worker's worktree, never in a reviewer's. So a reviewer can use a lighter environment, such as fewer of a large repository's directories or no setup step. In a provider's environment, the reviewer brief says to read any file at the ticket's commit with `git show <commit>:<path>`, checked out or not, and the other repos of a multi-repo project stay at their checkouts on the machine.
+
+A ticket can narrow its repo's environment with its own `environment.inputs` (see [[ticket]]), for example to ask for only the directories it changes. Its workers and its reviewers get it, applied after the `reviewer` patch, when they use the repo's provider; a reviewer in another provider does not.
+
+#### When an environment provider has no room
+
+Loom tells a thread that bb or the provider cannot start now from one that failed:
+
+- When a provider's availability check answers `unavailable` for the machine, bb refuses the new thread with `environment_provider_rejected` and that status, and Loom waits and tries again without counting an attempt: after 1 minute, then twice as long each time, up to every 15 minutes. The same goes for any error bb marks `retryable`. The board says what the ticket waits for and when Loom tries again. A provider with a fixed amount of room can use this: answer `unavailable` while it has none. A ticket waits like this for at most an hour; then it blocks, with a reason that says the provider was unavailable and quotes its message, so triage hears of it. Its worker then counts as one that never started, so approving a pending spec version requeues it, and a ticket whose reviewer never started goes back to review.
+- Any other failed start, a provisioning failure included (bb reports it as `thread_provisioning_failed`, with the provider's message as its detail), waits the same way. It counts against `budget.max_attempts` only once it has failed 4 times in a row, so a provider that runs out of room while provisioning does not block the ticket at once, and one that is broken still blocks it.
+- A start bb refuses with another client error blocks the ticket at once, and a start that fails before Loom asks bb, such as a ticket whose repo the spec no longer lists, counts at once, as before.
+- This holds for workers, for a released worker coming back (see [Releasing workers](#releasing-workers)), for reviewers (a reviewer that did not start is not one that ended without a verdict), for the spec reviewer (it fails after 4 failures in a row or an hour of an unavailable provider, the planner hears why, and proposing again tries at once) and for the summary agent (it tries again for up to 30 minutes, then the full record goes to the done hook).
+- A worker that never started keeps its attempt number, its thread row and its claim on the ticket, so its retry asks for the same `{branch}`. A ticket resumed from a branch keeps that branch, unless bb could not find it and no pull request is open, and a ticket whose pull request is open always keeps it.
+
+### Releasing workers
+
+On the pull request strategy a pull request can wait days for a person, and an idle worker would hold its environment all that time. With `merge.release_workers` (on by default), Loom archives the worker's thread once the ticket is in `pr_open`, the thread is idle with no question waiting, no fix round is on its way to it, its branch does not have to catch up, and its worktree holds exactly the reviewed commit with nothing uncommitted. bb then frees the environment after its provider's grace period. The worker stays the ticket's worker.
+
+- When the pull request's feedback or your reply on the ticket starts a fix round, or the branch must take a dependency's new commits, Loom unarchives the same thread and asks bb to restore its environment on the worker's branch. Once it is ready, the worker gets the fix round with a note that files git ignores (installed dependencies, build output) are gone, and it keeps its whole conversation. A catch-up runs in the restored worktree with no message, and a check that fails there goes to the worker with the same note and counts no failure.
+- A restore that fails waits and tries again, as a failed start does; after 4 failures in a row, or when bb cannot restore the environment (its provider has no restore, or the thread was deleted), a new worker takes the ticket from its branch. A provider that stays unavailable for an hour blocks the ticket instead, and a requeue starts the new worker. Its brief names the earlier workers' threads, which it can read with `bb thread log <id> --all`.
+- Fix-round counting, `merge.max_fix_rounds`, `merge.describe`, stacking, tokens and the page work as before.
+- `merge.release_workers = false` keeps each worker and its worktree until its pull request merges, as Loom did before this setting; choose it when a worktree holds set-up state that takes long to build again and environments cost little.
+- A spec version approved after the project started may turn it on or off; it applies from Loom's next pass. A worker released before it was turned off still comes back for its pull request's next fix round.
 
 ### [checks]
 
@@ -178,6 +206,7 @@ One to 200 entries.
 | `depends_on` | string array | `[]` | at most 20 refs; the ticket starts once these are done, or on the pr strategy with `merge.stack` once their pull requests are open |
 | `priority` | integer | `2` | 0 (highest) to 3 |
 | `repo` | string | none | required when the spec has `[[repo]]` tables, and then one of their names; not allowed without them. The ticket changes only this repo: its `scope`, `verify` and protected paths are relative to the repo's root. `depends_on` may name a ticket in another repo. |
+| `environment` | table | none | `{ inputs = { … } }`: a merge patch over its repo's environment `inputs` for this ticket's workers and reviewers (see [environment]); only where the repo has an environment provider; `loom_edit_ticket` changes it, and an empty `inputs` removes it |
 
 Commands are up to 2000 characters each, globs up to 200, acceptance items up to 1000.
 
@@ -342,7 +371,9 @@ after_open = ['ci-cli run --pr "$LOOM_PR_NUMBER"']
 
 [environment]
 provider = "example-trees"
-inputs = { branch = "{branch}", base = "{base}", paths = ["services/orders"] }
+inputs = { branch = "{branch}", base = "{base}", paths = ["services/orders", "services/billing"] }
+# Reviewers read the diff; a lighter tree without the setup step is enough for them.
+reviewer = { inputs = { setup = false } }
 
 [checks]
 commands = ["make -C services/orders test"]
@@ -353,6 +384,8 @@ title = "Store tags on orders"
 body = "Add a tags column to orders in services/orders/db and expose it on the Order model."
 acceptance = ["WHEN an order is saved with tags THE SYSTEM SHALL return the same tags when it is read back"]
 scope = ["services/orders/db/**", "services/orders/model/**"]
+# This ticket only needs the orders service in its tree.
+environment = { inputs = { paths = ["services/orders"] } }
 ```
 
 ## Errors
@@ -370,9 +403,10 @@ A spec with any error is refused and nothing is saved. Errors are numbered, at m
 - A ticket has no `verify` command and `checks.commands` is empty.
 - `checks.after_merge` is set with strategy `"pr"`.
 - A forge with `kind = "command"` lacks `open` or `state`, a forge of another kind sets them or `feedback`, or `kind = "none"` sets `after_open`.
-- `merge.describe`, `merge.squash`, `merge.max_fix_rounds`, `merge.stack`, `merge.checks_queued_minutes` or `merge.checks_near_done_percent` on the integration strategy.
+- `merge.describe`, `merge.squash`, `merge.max_fix_rounds`, `merge.stack`, `merge.release_workers`, `merge.checks_queued_minutes` or `merge.checks_near_done_percent` on the integration strategy.
 - `merge.worktree` is set with strategy `"pr"`.
-- An `inputs` string holds a `{name}` other than `{branch}` or `{base}`.
+- An `inputs` string, in `[environment]`, its `reviewer` table or a ticket's `environment`, holds a `{name}` other than `{branch}` or `{base}`.
+- A ticket sets `environment` in a repo whose threads start in git worktrees, with no environment provider to patch.
 
 Repos add these errors:
 
@@ -394,7 +428,7 @@ Loom then checks how each repo is reached on the planner's machine (`loom_discov
 - The repo has no git remote named `remote`. The error lists its remotes.
 - The forge is `gh`, and `gh` is missing or not signed in to the push URL's host, or the push URL is not a repository URL.
 - A plugin offers an environment provider for the repo, and the spec names no `environment`.
-- The `environment` provider is not offered or not available there, or its `inputs` do not match its schema. The error quotes the provider's description and schema.
+- The `environment` provider, or its `reviewer.provider`, is not offered or not available there, or its `inputs`, the reviewer's inputs or a ticket's patched inputs do not match its schema. The error quotes the provider's description and schema.
 - On the integration strategy with no `worktree`, git refused Loom's own worktree. The error quotes git.
 - `worktree.plugin` is not installed or is turned off, or `bb plugin run <plugin> <first word> --help` fails.
 

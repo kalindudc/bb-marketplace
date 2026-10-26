@@ -19,6 +19,17 @@ export class SpawnRefusedError extends Error {
   }
 }
 
+/**
+ * bb cannot start the thread now but may later: the environment provider's availability check says it is unavailable on
+ * the machine, or bb marks the error retryable. Loom waits and tries again, and the wait counts no attempt.
+ */
+export class SpawnUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SpawnUnavailableError";
+  }
+}
+
 export interface BbPort {
   /** The host of the thread's environment, else the server's primary host. */
   threadHostId(threadId: string): Promise<string | null>;
@@ -39,6 +50,9 @@ export interface BbPort {
   /** Waits for the interrupt; read getThread before treating the stop as confirmed. */
   stop(threadId: string): Promise<void>;
   archive(threadId: string): Promise<void>;
+  unarchive(threadId: string): Promise<void>;
+  /** Asks the environment provider to build the thread's destroyed environment again; bb refuses unless the thread's canRestoreEnvironment is true. */
+  restoreEnvironment(threadId: string): Promise<void>;
   /** Null when bb no longer knows the thread. */
   getThread(threadId: string): Promise<ThreadInfo | null>;
   getEnvironment(environmentId: string): Promise<EnvironmentInfo | null>;
@@ -46,8 +60,8 @@ export interface BbPort {
   findSpawnedThread(spawnToken: string): Promise<string | null>;
   /** Cumulative tokens the thread has used, or null when its provider reports none. */
   threadTokens(threadId: string): Promise<number | null>;
-  /** The newest system/error event of the thread. */
-  latestSystemError(threadId: string): Promise<{ code: string | null; message: string } | null>;
+  /** The newest system/error event of the thread; `detail` is the cause bb recorded, such as the environment provider's message. */
+  latestSystemError(threadId: string): Promise<{ code: string | null; message: string; detail?: string | null } | null>;
   retryTurn(threadId: string, turnRequestId: string, sendAt: number): Promise<void>;
   /** "personal" is bb's "Don't work in a project"; null when bb does not know the project. */
   projectKind(bbProjectId: string): Promise<"standard" | "personal" | null>;
@@ -134,6 +148,8 @@ export interface ThreadInfo {
   archivedAt: number | null;
   deletedAt: number | null;
   environmentId: string | null;
+  /** bb can ask the environment provider to build the thread's destroyed environment again: an unarchived, settled thread whose provider can restore. */
+  canRestoreEnvironment?: boolean;
 }
 
 export interface EnvironmentInfo {

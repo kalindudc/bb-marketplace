@@ -60,18 +60,27 @@ export const forgeSchema = z
   })
   .strict();
 
+const providerId = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,99}$/, "must be a bb environment provider id, such as git-worktree");
+const inputsSchema = z.record(z.string(), z.unknown());
+
 // A bb environment provider for workers and reviewers, with inputs that may hold the {branch} and {base} placeholders.
+// `reviewer` lets reviewers, the spec reviewer and the summary agent start in another provider, or in the same one with
+// a merge patch over the inputs.
 export const environmentSchema = z
   .object({
-    provider: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,99}$/, "must be a bb environment provider id, such as git-worktree"),
-    inputs: z.record(z.string(), z.unknown()).optional(),
+    provider: providerId,
+    inputs: inputsSchema.optional(),
+    reviewer: z.object({ provider: providerId.optional(), inputs: inputsSchema.optional() }).strict().optional(),
   })
   .strict();
+
+// A ticket's own merge patch over its repo's environment inputs, for the threads that start in the repo's provider.
+export const ticketEnvironmentSchema = z.object({ inputs: inputsSchema }).strict();
 
 // A command, or a plugin's CLI command, that prepares the integration worktree and prints its path last.
 export const worktreeSchema = z
   .object({
-    plugin: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/, "must be a bb plugin id, such as world-tree").optional(),
+    plugin: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/, "must be a bb plugin id, such as example-trees").optional(),
     command,
   })
   .strict();
@@ -96,6 +105,7 @@ export const ticketSpecSchema = z
     depends_on: z.array(z.string().min(1).max(40)).max(20).default([]),
     priority: z.number().int().min(0).max(3).default(2),
     repo: z.string().min(1).max(24).optional(),
+    environment: ticketEnvironmentSchema.optional(),
   })
   .strict();
 
@@ -125,6 +135,7 @@ export const ticketPatchSchema = z
     depends_on: ticketSpecSchema.shape.depends_on.unwrap().optional(),
     priority: ticketSpecSchema.shape.priority.unwrap().optional(),
     repo: ticketSpecSchema.shape.repo,
+    environment: ticketSpecSchema.shape.environment,
   })
   .strict();
 
@@ -154,6 +165,7 @@ export const specSchema = z
         squash: z.boolean().optional(),
         max_fix_rounds: z.number().int().min(0).max(20).optional(),
         stack: z.boolean().optional(),
+        release_workers: z.boolean().optional(),
         // Unset: Loom's checksQueuedMinutes and checksNearDonePercent settings apply.
         checks_queued_minutes: z.number().int().min(0).max(1440).optional(),
         checks_near_done_percent: z.number().int().min(0).max(100).optional(),
@@ -427,12 +439,18 @@ export function validateSemantics(spec: Spec, rawToml: string): { errors: string
   });
 
   if (spec.merge.strategy === "integration") {
-    for (const key of ["describe", "squash", "max_fix_rounds", "stack", "checks_queued_minutes", "checks_near_done_percent"] as const) {
+    for (const key of ["describe", "squash", "max_fix_rounds", "stack", "release_workers", "checks_queued_minutes", "checks_near_done_percent"] as const) {
       if (spec.merge[key] !== undefined) errors.push(`merge.${key}: it applies to the pull request Loom opens for each ticket, but merge.strategy is "integration". Remove it, or use merge.strategy = "pr".`);
     }
   }
 
   errors.push(...forgeErrors(spec.merge.forge, "merge.forge"), ...worktreeErrors(spec, spec.merge.worktree, "merge.worktree"), ...environmentErrors(spec.environment, "environment"));
+  spec.ticket.forEach((ticket, index) => {
+    const repo = ticket.repo === undefined ? undefined : repos.find((entry) => entry.name === ticket.repo);
+    // A ticket whose repo is unknown has an error above.
+    if (ticket.repo !== undefined && repo === undefined) return;
+    errors.push(...ticketEnvironmentErrors(ticket.environment, repo?.environment ?? spec.environment ?? null, `ticket[${index}].environment`));
+  });
   repos.forEach((repo, index) => {
     errors.push(...forgeErrors(repo.forge, `repo[${index}].forge`), ...worktreeErrors(spec, repo.worktree, `repo[${index}].worktree`), ...environmentErrors(repo.environment, `repo[${index}].environment`));
   });
@@ -472,9 +490,21 @@ function worktreeErrors(spec: Spec, worktree: WorktreeSpec | undefined, at: stri
   return [`${at}: only the integration strategy has an integration worktree, and merge.strategy is "pr". Remove ${at}, or use merge.strategy = "integration".`];
 }
 
+function placeholderErrors(inputs: Record<string, unknown> | undefined, at: string): string[] {
+  if (inputs === undefined) return [];
+  return unknownPlaceholders(inputs).map((name) => `${at}: {${name}} is not a Loom placeholder. Use {branch} or {base}, or write the value out.`);
+}
+
 function environmentErrors(environment: EnvironmentSpec | undefined, at: string): string[] {
-  if (environment?.inputs === undefined) return [];
-  return unknownPlaceholders(environment.inputs).map((name) => `${at}.inputs: {${name}} is not a Loom placeholder. Use {branch} or {base}, or write the value out.`);
+  if (environment === undefined) return [];
+  return [...placeholderErrors(environment.inputs, `${at}.inputs`), ...placeholderErrors(environment.reviewer?.inputs, `${at}.reviewer.inputs`)];
+}
+
+/** A ticket's environment patch needs an environment provider in its repo to patch, and only Loom's placeholders. */
+export function ticketEnvironmentErrors(environment: { inputs: Record<string, unknown> } | undefined, repoEnvironment: EnvironmentSpec | null, at: string): string[] {
+  if (environment === undefined) return [];
+  if (repoEnvironment === null) return [`${at}: the ticket's repo starts its threads in git worktrees, with no environment inputs to patch. Remove ${at}, or set an [environment] with a provider for the repo.`];
+  return placeholderErrors(environment.inputs, `${at}.inputs`);
 }
 
 export interface ScopeOverlap {

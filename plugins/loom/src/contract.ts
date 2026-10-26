@@ -52,6 +52,19 @@ export interface BoardCard {
   stackedOn: string[];
   /** Why an approved ticket's pull request waits on its open dependencies, in a short sentence; null when it does not. */
   holding: string | null;
+  /** A queued ticket whose worker, or a ticket in review whose reviewer, did not start and waits to try again; null otherwise. */
+  startWait: StartWaitView | null;
+}
+
+export interface StartWaitView {
+  role: "worker" | "reviewer";
+  reason: string;
+  /** When Loom tries again. */
+  until: number;
+  /** Failed starts in a row. */
+  tries: number;
+  /** The environment provider said it cannot start one now, so the wait counts no attempt. */
+  unavailable: boolean;
 }
 
 /** What the draft card shows before a project has tickets on the board. */
@@ -189,6 +202,7 @@ export interface TicketDetail {
   /** The dependencies whose ticket is done. */
   depsDone: string[];
   blockedReason: string | null;
+  startWait: StartWaitView | null;
   branch: string | null;
   prUrl: string | null;
   /** Null on the integration strategy. */

@@ -3,7 +3,7 @@ import { land, pollPullRequests, runMergeQueue, settleMerges } from "../src/merg
 import type { SpawnArgs } from "../src/ports";
 import { spawnReviewers } from "../src/review";
 import { specOf } from "../src/workers";
-import { GIT_WORKTREE_PROVIDER, makeCtx, reachApproved, reachReview, seedProject, ticketOf, type Doc, type EngineHarness } from "./helpers";
+import { GIT_WORKTREE_PROVIDER, makeCtx, reachApproved, reachReview, seedProject, specToml, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;
 
@@ -128,7 +128,7 @@ describe("a prepared integration worktree", () => {
 });
 
 describe("an environment provider for workers and reviewers", () => {
-  const withTrees = (doc: Doc) => (doc.environment = { provider: "trees", inputs: { pool: { branch: "{branch}", base: "{base}", zones: ["services/orders"] } } });
+  const withTrees = (doc: Doc) => (doc.environment = { provider: "trees", inputs: { pool: { branch: "{branch}", base: "{base}", paths: ["services/orders"] } } });
 
   beforeEach(() => {
     h.bb.environmentProviderList = [GIT_WORKTREE_PROVIDER, { ...GIT_WORKTREE_PROVIDER, id: "trees", displayName: "Trees", pluginId: "trees", acceptsEmptyInputs: false, inputs: { type: "object", required: ["pool"] } }];
@@ -142,17 +142,50 @@ describe("an environment provider for workers and reviewers", () => {
     });
     await reachReview(h);
     const worker = h.bb.callsTo("spawnThread")[0]![0] as SpawnArgs;
-    expect(worker.environment).toEqual({ providerId: "trees", inputs: { pool: { branch: "loom/csv/csv-1-1", base: "origin/main", zones: ["services/orders"] } } });
+    expect(worker.environment).toEqual({ providerId: "trees", inputs: { pool: { branch: "loom/csv/csv-1-1", base: "origin/main", paths: ["services/orders"] } } });
 
     await spawnReviewers(h.ctx, project(), specOf(h.store, project()));
     const reviewer = h.bb.callsTo("spawnThread").at(-1)![0] as SpawnArgs;
     const row = h.store.threads({ ticketId: ticketOf(h, "CSV-1").id, role: "reviewer" }).at(-1)!;
-    expect(reviewer.environment).toEqual({ providerId: "trees", inputs: { pool: { branch: `loom/csv/csv-1-review-1-${row.id}`, base: reviewer.baseBranch, zones: ["services/orders"] } } });
+    expect(reviewer.environment).toEqual({ providerId: "trees", inputs: { pool: { branch: `loom/csv/csv-1-review-1-${row.id}`, base: reviewer.baseBranch, paths: ["services/orders"] } } });
   });
 
   it("keeps the managed worktree for git-worktree with no inputs", async () => {
     await seedProject(h, (doc) => (doc.environment = { provider: "git-worktree" }));
     await reachReview(h);
     expect((h.bb.callsTo("spawnThread")[0]![0] as SpawnArgs).environment).toBeUndefined();
+  });
+
+  it("starts reviewers in the environment's reviewer table, and each ticket's threads with its own inputs patch", async () => {
+    await seedProject(h, (doc) => {
+      doc.merge = { strategy: "pr" };
+      doc.environment = { provider: "trees", inputs: { pool: { branch: "{branch}", base: "{base}", paths: ["services/orders", "services/billing"] } }, reviewer: { inputs: { pool: { light: true } } } };
+      doc.ticket[0].environment = { inputs: { pool: { paths: ["services/orders"] } } };
+    });
+    await reachReview(h);
+    const worker = h.bb.callsTo("spawnThread")[0]![0] as SpawnArgs;
+    expect(worker.environment).toEqual({ providerId: "trees", inputs: { pool: { branch: "loom/csv/csv-1-1", base: "origin/main", paths: ["services/orders"] } } });
+    await spawnReviewers(h.ctx, project(), specOf(h.store, project()));
+    const reviewer = h.bb.callsTo("spawnThread").at(-1)![0] as SpawnArgs;
+    expect(reviewer.environment).toMatchObject({ providerId: "trees", inputs: { pool: { paths: ["services/orders"], light: true } } });
+    expect(reviewer.prompt).toContain("This worktree may hold only part of the repository. Read any file at that commit, checked out or not, with `git show");
+  });
+
+  it("checks a reviewer provider and each ticket's patched inputs against bb's providers when the spec is proposed", async () => {
+    const strict = { ...GIT_WORKTREE_PROVIDER, id: "trees", displayName: "Trees", pluginId: "trees", acceptsEmptyInputs: false, inputs: { $schema: "https://json-schema.org/draft/2020-12/schema", type: "object", properties: { pool: { type: "object", properties: { paths: { type: "array", minItems: 1, items: { type: "string" } } } } }, required: ["pool"] } };
+    h.bb.environmentProviderList = [GIT_WORKTREE_PROVIDER, strict];
+    const error = await h.projects
+      .propose({
+        toml: specToml((doc) => {
+          doc.environment = { provider: "trees", inputs: { pool: { paths: ["services/orders"] } }, reviewer: { provider: "readers" } };
+          doc.ticket[1].environment = { inputs: { pool: { paths: [] } } };
+        }),
+        threadId: "thr_plan",
+        bbProjectId: "proj_1",
+        hostId: "host_1",
+      })
+      .catch((caught: Error) => caught);
+    expect((error as Error).message).toContain('environment.reviewer.provider: bb has no environment provider "readers" for the project\'s repository on this machine.');
+    expect((error as Error).message).toContain("ticket[1].environment.inputs: pool.paths:");
   });
 });

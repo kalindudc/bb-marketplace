@@ -41,9 +41,47 @@ export function threadBranch(slug: string, key: string, suffix: string): string 
   return `loom/${slug}/${key.toLowerCase()}-${suffix}`;
 }
 
-/** The environment a worker or reviewer of `repo` spawns into; undefined keeps today's managed worktree. */
-export function spawnEnvironment(repo: RepoSettings, values: { branch: string; base: string }): SpawnArgs["environment"] {
+const isObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date);
+
+/**
+ * `patch` applied to `target` as a JSON merge patch (RFC 7396): a table merges key by key, a null removes the key, and
+ * any other value, an array included, replaces it.
+ */
+export function mergePatch(target: unknown, patch: unknown): unknown {
+  if (!isObject(patch)) return patch;
+  const merged: Record<string, unknown> = isObject(target) ? { ...target } : {};
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) delete merged[key];
+    else merged[key] = mergePatch(merged[key], value);
+  }
+  return merged;
+}
+
+/** Who a thread is: a worker, or a reviewer-like reader (a ticket's reviewer, the spec reviewer, the summary agent). */
+export type ThreadRole = "worker" | "reviewer";
+
+/**
+ * The provider and inputs a thread of `repo` starts in: the repo's environment; for a reviewer, its `reviewer` table on
+ * top (another provider, or a merge patch over the inputs); then the ticket's own inputs patch, when the thread uses the
+ * repo's provider. Null keeps today's managed worktree.
+ */
+export function environmentFor(repo: RepoSettings, role: ThreadRole, ticketInputs: Record<string, unknown> | null = null): { provider: string; inputs: Record<string, unknown> | undefined } | null {
   const environment = repo.environment;
+  if (environment === null) return null;
+  const reviewer = role === "reviewer" ? environment.reviewer : undefined;
+  if (reviewer?.provider !== undefined && reviewer.provider !== environment.provider) return { provider: reviewer.provider, inputs: reviewer.inputs };
+  let inputs = environment.inputs;
+  if (reviewer?.inputs !== undefined) inputs = mergePatch(inputs ?? {}, reviewer.inputs) as Record<string, unknown>;
+  if (ticketInputs !== null) inputs = mergePatch(inputs ?? {}, ticketInputs) as Record<string, unknown>;
+  return { provider: environment.provider, inputs };
+}
+
+/** A ticket's merge patch over its repo's environment inputs, or null. */
+export const ticketInputsOf = (ticket: { environment_json: string | null }): Record<string, unknown> | null => (ticket.environment_json === null ? null : (JSON.parse(ticket.environment_json) as Record<string, unknown>));
+
+/** The environment a worker or reviewer of `repo` spawns into; undefined keeps today's managed worktree. */
+export function spawnEnvironment(repo: RepoSettings, values: { branch: string; base: string }, role: ThreadRole = "worker", ticketInputs: Record<string, unknown> | null = null): SpawnArgs["environment"] {
+  const environment = environmentFor(repo, role, ticketInputs);
   if (environment === null || (environment.provider === GIT_WORKTREE && environment.inputs === undefined)) return undefined;
   return { providerId: environment.provider, inputs: environment.inputs === undefined ? null : fillInputs(environment.inputs, values) };
 }

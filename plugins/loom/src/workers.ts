@@ -3,15 +3,16 @@
 import { randomBytes } from "node:crypto";
 import { repoCheckout, ticketRepo } from "./checkouts";
 import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
-import { spawnEnvironment, threadBranch } from "./environments";
+import { spawnEnvironment, threadBranch, ticketInputsOf } from "./environments";
 import { plural } from "./format";
-import { SpawnRefusedError, type EnvironmentInfo, type HostPort } from "./ports";
+import type { EnvironmentInfo, HostPort } from "./ports";
 import { COMMENT_SIGNATURE, andList, latestChangesRequested, nudgeText, workerBrief } from "./prompts";
 import { LoomError, type Ctx } from "./projects";
 import { freshBaseOf, repoSettings } from "./repos";
 import { idleAction, spawnable, toLite, type TicketLite } from "./scheduler";
 import type { Spec } from "./spec";
 import { EMPTY_STACK, stackBranch, stacking, stackOf, upstreamOf, type Stack } from "./stack";
+import { nextWait, provisioningFailure, startProblemOf, startWaits, unavailableReason, waitOf, waitPost, type StartProblem } from "./starts";
 import { HUMAN_ACTOR, LOOM_ACTOR, PAUSE_NOW_REASON, canMoveTicket, type AuthorKind, type TicketState } from "./states";
 
 export interface EngineCtx extends Ctx {
@@ -29,7 +30,7 @@ export interface EngineCtx extends Ctx {
 
 export const signatureOf = (ctx: EngineCtx): string => ctx.commentSignature?.() ?? COMMENT_SIGNATURE;
 
-export type EndReason = "abandoned" | "timeout" | "failed" | "gone" | "blocked" | "cancelled" | "verdict" | "superseded" | "merged";
+export type EndReason = "abandoned" | "timeout" | "failed" | "gone" | "blocked" | "cancelled" | "verdict" | "superseded" | "merged" | "released";
 export type TicketMove = { to: TicketState; patch: Partial<TicketRow> };
 
 const ENDING_LIMIT_MS = 10 * 60_000;
@@ -77,6 +78,7 @@ export function ticketMoveFor(reason: EndReason, ticket: TicketRow, spec: Spec):
     case "verdict":
     case "superseded":
     case "merged":
+    case "released":
       return null;
   }
 }
@@ -117,12 +119,14 @@ export function toWorking(ctx: EngineCtx, ticket: TicketRow, row: ThreadRow | nu
 
 const isRefError = (error: unknown) => /\bref(erence)?s?\b|revision|not a valid object|unknown branch/iu.test(errText(error));
 
-/** `waiting` holds back tickets that may not start now, as it did when the caller picked this one. */
+/**
+ * `waiting` holds back tickets that may not start now, as it did when the caller picked this one. A ticket that waits
+ * after a failed start tries again with the same thread row, so the wait keeps one attempt and one claim on the ticket.
+ */
 export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow, waiting?: (ticket: TicketLite) => boolean): Promise<void> {
   const { store } = ctx;
   const token = randomBytes(12).toString("hex");
   const fromBranch = ticket.branch !== null;
-  const resume = ticket.attempt > 0;
   const stack = stacking(spec);
   let start: { branch: string | null; stack: Stack } | null = null;
   if (stack && !fromBranch) {
@@ -134,17 +138,26 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
   // The final eligibility check and the claim share one synchronous transaction, so nothing can change between them.
   const row = store.tx(() => {
     const current = store.ticket(ticket.id);
-    if (current === null || current.state !== "queued") return null;
+    if (current === null || current.state !== "queued" || startWaits(current, "worker", ctx.now())) return null;
     const fresh = store.project(project.id);
     if (fresh === null) return null;
     const tickets = store.tickets(project.id).map(toLite);
     const freshSpec = specOf(store, fresh);
     if (!spawnable(freshSpec.agents.max_workers, tickets, waiting, stacking(freshSpec)).some((lite) => lite.id === ticket.id)) return null;
+    const stackPatch = start === null ? {} : { stack_json: JSON.stringify(start.stack) };
+    const wait = waitOf(current, "worker");
+    const again = wait?.row == null ? null : store.thread(wait.row);
+    if (again !== null && again.state === "ended" && again.end_reason === "failed" && again.role === "worker" && again.ticket_id === ticket.id && again.attempt === current.attempt) {
+      store.updateThread(again.id, { state: "spawning", spawn_token: token, thread_id: null, environment_id: null, ended_at: null, end_reason: null, clock_at: ctx.now(), idle_count: 0, rate_limit_retries: 0 });
+      store.setTicketState(ticket.id, "working", LOOM_ACTOR, { attempt: current.attempt, retry: wait!.tries });
+      store.updateTicket(ticket.id, { ...released, ...stackPatch });
+      return store.thread(again.id)!;
+    }
     const attempt = current.attempt + 1;
     const created = store.addThread({ project_id: project.id, ticket_id: ticket.id, role: "worker", state: "spawning", spawn_token: token });
     store.updateThread(created.id, { clock_at: ctx.now(), attempt });
     store.setTicketState(ticket.id, "working", LOOM_ACTOR, { attempt });
-    store.updateTicket(ticket.id, { attempt, ...released, ...(start === null ? {} : { stack_json: JSON.stringify(start.stack) }) });
+    store.updateTicket(ticket.id, { attempt, ...released, ...stackPatch });
     store.addPost({ project_id: project.id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "claim", body: `Worker attempt ${attempt} is starting.` });
     return store.thread(created.id)!;
   });
@@ -159,18 +172,24 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
     return;
   }
 
+  // A wait's retry keeps its attempt number, so only an attempt after the first has an earlier worker to resume from.
+  const resume = (row.attempt ?? 1) > 1;
   const agent = spec.agents.worker;
   let spawned;
+  // Until bb is asked, a failure is Loom's own, such as a ticket whose repo the spec no longer lists: no wait helps it.
+  let asked = false;
   try {
     const repo = ticketRepo(spec, ticket);
     const checkouts = await otherCheckouts(ctx, project, spec, ticket);
-    const brief = workerBrief({ project, spec, ticket: store.ticket(ticket.id)!, posts: store.posts(ticket.id), resume, checkouts, tickets: store.tickets(project.id), signature: signatureOf(ctx) });
+    // A thread bb never gave an environment never ran, so it has no conversation to read.
+    const earlierThreads = store.threads({ ticketId: ticket.id, role: "worker" }).flatMap((other) => (other.id !== row.id && other.thread_id !== null && (other.environment_id !== null || other.released_at !== null) ? [other.thread_id] : []));
+    const brief = workerBrief({ project, spec, ticket: store.ticket(ticket.id)!, posts: store.posts(ticket.id), resume, checkouts, tickets: store.tickets(project.id), signature: signatureOf(ctx), earlierThreads });
     const spawn = (baseBranch: string) =>
       ctx.bb.spawnThread({
         bbProjectId: repo.bbProjectId ?? project.bb_project_id,
         hostId: project.host_id!,
         baseBranch,
-        environment: spawnEnvironment(repo, { branch: threadBranch(project.slug, ticket.key, String(row.attempt)), base: baseBranch }),
+        environment: spawnEnvironment(repo, { branch: threadBranch(project.slug, ticket.key, String(row.attempt)), base: baseBranch }, "worker", ticketInputsOf(ticket)),
         title: `${ticket.key} · ${ticket.title}`,
         prompt: brief,
         sectionId: project.section_id,
@@ -181,6 +200,7 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
         permissionMode: agent.permission_mode,
       });
     const base = start?.branch ?? ticket.branch ?? freshBase(spec, ticket.repo);
+    asked = true;
     try {
       spawned = await spawn(base);
     } catch (error) {
@@ -189,7 +209,7 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
       spawned = await spawn(repo.base);
     }
   } catch (error) {
-    await failSpawn(ctx, row, errText(error), { refused: error instanceof SpawnRefusedError });
+    await failSpawn(ctx, row, asked ? startProblemOf(error) : { kind: "broken", message: errText(error) });
     return;
   }
 
@@ -259,8 +279,8 @@ async function stackStart(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticke
   return { branch, stack: { deps, base: built.sha, synced, cross } };
 }
 
-/** The checkout path of each other repo of the project on its machine, by repo name. A repo without a checkout is left out, so the brief lists it without a path. */
-async function otherCheckouts(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow): Promise<Map<string, string>> {
+/** The checkout path of each other repo of the project on its machine, by repo name, for worker and reviewer briefs. A repo without a checkout is left out, so the brief lists it without a path. */
+export async function otherCheckouts(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: Pick<TicketRow, "key" | "repo">): Promise<Map<string, string>> {
   const others = (spec.repo ?? []).filter((repo) => repo.name !== ticket.repo);
   const found = await Promise.all(
     others.map(async ({ name }) => {
@@ -276,36 +296,78 @@ async function otherCheckouts(ctx: EngineCtx, project: ProjectRow, spec: Spec, t
 }
 
 /**
- * A worker that never started. The thread, when there is one, is archived. A ticket that was resumed from its branch
- * loses the branch and counts no failure, so the next try starts from the fresh base. A ticket bb refused blocks at once.
+ * A worker that never started. The thread, when there is one, is archived. A ticket bb refused blocks at once. Any other
+ * failed start waits and tries again (StartWait): one that bb or the provider says cannot happen now counts nothing, and
+ * a failure counts as a failed attempt only once it has happened START_GRACE times in a row. A ticket resumed from a
+ * branch bb could not find loses the branch and counts no failure, so the next try starts from the fresh base; a ticket
+ * whose pull request is open always keeps its branch, which has the pull request's work.
  */
-export async function failSpawn(ctx: EngineCtx, row: ThreadRow, error: string, opts: { archive?: boolean; refused?: boolean } = {}): Promise<void> {
+export async function failSpawn(ctx: EngineCtx, row: ThreadRow, problem: StartProblem, opts: { archive?: boolean } = {}): Promise<void> {
   const { store } = ctx;
   if (opts.archive === true && row.thread_id !== null) await ctx.bb.archive(row.thread_id).catch((e) => ctx.bb.log("warn", `Could not archive ${row.thread_id}: ${errText(e)}`));
+  const error = problem.message;
   store.tx(() => {
     store.updateThread(row.id, { state: "ended", ended_at: ctx.now(), end_reason: "failed" });
     const ticket = row.ticket_id === null ? null : store.ticket(row.ticket_id);
     if (ticket === null || ticket.state !== "working") return;
     const project = store.project(ticket.project_id)!;
-    store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "system", body: `Could not start a worker: ${error}` });
-    if (ticket.branch !== null) {
-      applyMove(ctx, ticket, { to: "queued", patch: { ...released, branch: null } }, LOOM_ACTOR, { reason: "the worker could not start from the earlier branch" });
+    const post = (body: string) => store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "system", body });
+    if (problem.kind === "refused") {
+      post(`Could not start a worker: ${error}`);
+      applyMove(ctx, ticket, { to: "blocked", patch: { ...released, failures: ticket.failures + 1, blocked_reason: `bb refused to start a worker: ${error}`, start_wait_json: null } }, LOOM_ACTOR, { reason: START_REFUSED });
       return;
     }
-    const failures = ticket.failures + 1;
-    if (opts.refused === true) {
-      applyMove(ctx, ticket, { to: "blocked", patch: { ...released, failures, blocked_reason: `bb refused to start a worker: ${error}` } }, LOOM_ACTOR, { reason: START_REFUSED });
+    if (problem.kind === "broken") {
+      const failures = ticket.failures + 1;
+      const blocked = failures >= specOf(store, project).budget.max_attempts;
+      post(`Could not start a worker: ${error}`);
+      const move: TicketMove = blocked ? { to: "blocked", patch: { ...released, failures, blocked_reason: `could not start a worker ${plural(failures, "time")}`, start_wait_json: null } } : { to: "queued", patch: { ...released, failures, start_wait_json: null } };
+      applyMove(ctx, ticket, move, LOOM_ACTOR, { reason: START_FAILED });
       return;
     }
-    const blocked = failures >= specOf(store, project).budget.max_attempts;
-    const move: TicketMove = blocked ? { to: "blocked", patch: { ...released, failures, blocked_reason: `could not start a worker ${plural(failures, "time")}` } } : { to: "queued", patch: { ...released, failures } };
-    applyMove(ctx, ticket, move, LOOM_ACTOR, { reason: START_FAILED });
+    if (ticket.branch !== null && ticket.pushed_sha === null && isRefError(error)) {
+      post(`Could not start a worker: ${error}`);
+      applyMove(ctx, ticket, { to: "queued", patch: { ...released, branch: null, start_wait_json: null } }, LOOM_ACTOR, { reason: "the worker could not start from the earlier branch" });
+      return;
+    }
+    const previous = waitOf(ticket, "worker");
+    const wait = nextWait(previous, { role: "worker", row: row.id, problem, now: ctx.now() });
+    if (wait.expired) {
+      const reason = `no worker could start: ${unavailableReason(wait)}`;
+      post(`Could not start a worker: ${error}. The ticket blocks, because ${unavailableReason(wait)}.`);
+      applyMove(ctx, ticket, { to: "blocked", patch: { ...released, blocked_reason: reason, start_wait_json: null } }, LOOM_ACTOR, { reason: START_UNAVAILABLE });
+      return;
+    }
+    const failures = ticket.failures + (wait.counted ? 1 : 0);
+    if (wait.counted && failures >= specOf(store, project).budget.max_attempts) {
+      post(`Could not start a worker: ${error}`);
+      applyMove(ctx, ticket, { to: "blocked", patch: { ...released, failures, blocked_reason: `could not start a worker ${plural(failures, "time")}; the last time: ${error}`, start_wait_json: null } }, LOOM_ACTOR, { reason: START_FAILED });
+      return;
+    }
+    const text = waitPost("a worker", wait, previous, ctx.now());
+    if (text !== null) post(text);
+    const reason = wait.kind === "unavailable" ? START_WAITS : START_FAILED;
+    applyMove(ctx, ticket, { to: "queued", patch: { ...released, failures, start_wait_json: JSON.stringify(wait) } }, LOOM_ACTOR, { reason, retryAt: wait.until });
   });
   store.changed(row.project_id);
+  ctx.kick();
 }
+
+export const RELEASED_TEXT =
+  "Loom archived the idle worker's thread to free its environment while the pull request waits. When the pull request needs a fix, or its branch must catch up with a dependency, Loom brings the same thread back with a new environment on its branch, so the worker keeps its conversation.";
 
 export const START_FAILED = "the worker could not start";
 export const START_REFUSED = "bb refused to start the worker";
+export const START_WAITS = "the environment provider cannot start a worker now";
+export const START_UNAVAILABLE = "the environment provider stayed unavailable";
+
+/** The thread ran, so the wait after a failed start is over and the next failed start begins a new count. */
+export function startedFine(ctx: EngineCtx, row: ThreadRow): void {
+  const ticket = row.ticket_id === null ? null : ctx.store.ticket(row.ticket_id);
+  if (ticket === null || ticket.start_wait_json === null) return;
+  const wait = waitOf(ticket);
+  if (wait?.role === row.role || (wait !== null && wait.row === row.id)) ctx.store.updateTicket(ticket.id, { start_wait_json: null });
+}
 
 /** A blocked ticket whose last move to blocked came from a worker that never started. */
 export function blockedAtStart(store: Store, ticket: TicketRow): boolean {
@@ -313,7 +375,7 @@ export function blockedAtStart(store: Store, ticket: TicketRow): boolean {
   const last = store.ticketEvents(ticket.id, ["ticket.state"]).at(-1);
   if (last === undefined) return false;
   const data = JSON.parse(last.data_json) as { to?: string; reason?: string };
-  return data.to === "blocked" && (data.reason === START_FAILED || data.reason === START_REFUSED);
+  return data.to === "blocked" && (data.reason === START_FAILED || data.reason === START_REFUSED || data.reason === START_UNAVAILABLE);
 }
 
 // ---------------------------------------------------------------- branch and WIP commit
@@ -398,10 +460,15 @@ async function finishEnding(ctx: EngineCtx, row: ThreadRow, reason: EndReason, o
     store.tx(() => {
       const current = store.thread(row.id);
       if (current === null || current.state !== "ending") return;
-      store.updateThread(row.id, { state: "ended", ended_at: ctx.now() });
+      store.updateThread(row.id, { state: "ended", ended_at: ctx.now(), ...(reason === "released" ? { released_at: ctx.now() } : {}) });
       const held = row.ticket_id === null ? null : store.ticket(row.ticket_id);
       if (held === null) return;
       const own = row.role === "worker" && held.worker_thread_id === row.thread_id;
+      // A released worker stays the ticket's worker, without an environment, so the pull request's next fix round brings it back.
+      if (reason === "released" && own) {
+        store.updateTicket(held.id, { environment_id: null });
+        store.addPost({ project_id: held.project_id, ticket_id: held.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "system", body: RELEASED_TEXT, data_json: JSON.stringify({ released: true }) });
+      }
       const move = opts.move !== undefined ? opts.move : own ? ticketMoveFor(reason, held, specOf(store, store.project(held.project_id)!)) : null;
       if (move !== null) applyMove(ctx, held, move, LOOM_ACTOR, { reason });
     });
@@ -435,7 +502,9 @@ async function stopAndArchive(ctx: EngineCtx, row: ThreadRow, force: boolean): P
 /** The first idle of a worker whose ticket is working gets a nudge; the next one ends the worker. */
 export async function onWorkerIdle(ctx: EngineCtx, seen: ThreadRow, reason: EndReason = "abandoned"): Promise<void> {
   const row = ctx.store.thread(seen.id);
-  if (row === null || row.state !== "active" || row.role !== "worker" || row.thread_id === null) return;
+  if (row === null || row.state !== "active" || row.role !== "worker" || row.thread_id === null || row.released_at !== null) return;
+  // An idle while Loom still holds a fix round for the worker is not the worker stopping: the message is on its way.
+  if (row.ticket_id !== null && ctx.store.ticket(row.ticket_id)?.pr_deliver_json != null) return;
   if (ctx.store.project(row.project_id)?.state !== "running") return;
   const ticket = row.ticket_id === null ? null : ctx.store.ticket(row.ticket_id);
   if (ticket === null || ticket.state !== "working" || ticket.worker_thread_id !== row.thread_id) return;
@@ -459,6 +528,8 @@ export interface TurnFailure {
 export async function onTurnFailed(ctx: EngineCtx, event: TurnFailure): Promise<void> {
   const row = ctx.store.threadByThreadId(event.threadId);
   if (row === null || row.state !== "active") return;
+  // A worker coming back from a release has no turn yet; the tick reads how its restore went (advanceWakes).
+  if (row.released_at !== null) return;
   const project = ctx.store.project(row.project_id);
   if (project === null) return;
   if (event.errorInfo?.category === "rate-limit") {
@@ -470,7 +541,7 @@ export async function onTurnFailed(ctx: EngineCtx, event: TurnFailure): Promise<
   if (event.errorInfo?.category !== "rate-limit") {
     const failure = await ctx.bb.latestSystemError(event.threadId).catch(() => null);
     if (failure?.code === "thread_provisioning_failed") {
-      if (ctx.store.claimThread(row.id, "failed")) await failSpawn(ctx, ctx.store.thread(row.id)!, failure.message, { archive: true });
+      if (ctx.store.claimThread(row.id, "failed")) await failSpawn(ctx, ctx.store.thread(row.id)!, provisioningFailure(failure), { archive: true });
       return;
     }
   }
@@ -558,7 +629,7 @@ export async function requeueTicket(ctx: EngineCtx, key: string, a: { note: stri
     ctx.store.setTicketState(ticket.id, "queued", a.actor, { requeued: true, failures: 0 });
     // A ticket whose pull request stays open comes back as a fix round on it, asked for its own text again.
     const fix = ticket.pushed_sha !== null ? { pr_rounds: ticket.pr_rounds + 1 } : {};
-    ctx.store.updateTicket(ticket.id, { failures: 0, check_failures: 0, blocked_reason: null, ...released, ...fix, pr_ask_json: null, pr_text_json: null, pr_deliver_json: null });
+    ctx.store.updateTicket(ticket.id, { failures: 0, check_failures: 0, blocked_reason: null, ...released, ...fix, pr_ask_json: null, pr_text_json: null, pr_deliver_json: null, start_wait_json: null });
     if (note !== "") {
       ctx.store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: a.author, author_thread_id: a.threadId ?? null, kind: "reply", body: note });
     }

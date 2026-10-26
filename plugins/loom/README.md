@@ -101,13 +101,21 @@ the Planner tab lists them under Needs you with a button for each.
 
 When bb refuses to start a worker or a reviewer with a client error (an HTTP
 4xx status other than 408, 409 and 429), the ticket blocks at once with bb's
-message as the reason, because the same request would fail again. Network
-errors, server errors and those three statuses are retried up to
-`budget.max_attempts` times. Approving a pending spec version queues again
-every blocked ticket whose worker never started, resets its failure counts and
-tells the planner which tickets it requeued. A ticket blocked because bb
-refused its reviewer goes back to review instead, in a new round for the same
-commit: its work already passed the checks.
+message as the reason, because the same request would fail again. Any other
+failed start waits and tries again: after 1 minute, then twice as long each
+time, up to every 15 minutes. When the environment provider says it cannot
+start one now (see [Environments with limited room](#environments-with-limited-room)),
+the wait counts no attempt; after an hour of it the ticket blocks, with a
+reason that names the provider's unavailability, so triage hears of it. Any
+other failure, such as a
+provisioning failure, counts against `budget.max_attempts` only once it has
+happened 4 times in a row. A waiting ticket stays queued, or in review for a
+reviewer, and its card says why and when Loom tries again; a retry keeps the
+worker's attempt number and its branch. Approving a pending spec version
+queues again every blocked ticket whose worker never started, resets its
+failure counts and tells the planner which tickets it requeued. A ticket
+blocked because bb refused its reviewer goes back to review instead, in a new
+round for the same commit: its work already passed the checks.
 
 ## The page
 
@@ -418,6 +426,16 @@ its own pull request.
   your account, so it ends each comment and reply with a signature line,
   "Posted by Loom" unless you change it (see [Settings](#settings)).
 - You merge the pull request, and Loom completes the ticket.
+- While the pull request waits, its idle worker does not hold an environment.
+  Once the worker has nothing in flight and its worktree holds exactly the
+  reviewed commit, Loom archives its thread, and bb frees the environment. A
+  fix round or a catch-up brings the same thread back: bb restores its
+  environment on the worker's branch and the worker keeps its whole
+  conversation, with a note that files git ignores must be set up again. When
+  bb cannot restore it, a new worker takes over from the branch and can read
+  the earlier worker's thread. `merge.release_workers = false` keeps every
+  worker until its pull request merges; a spec version approved later may
+  change it either way.
 
 ### Stacked pull requests
 
@@ -434,8 +452,10 @@ chasing reviews no longer holds up the work that builds on them.
 - When the dependency gets a new commit, after a fix round, Loom merges it into
   each ticket stacked on it, in that ticket's worker worktree, runs the
   ticket's checks and pushes, with no new worker turn and no new review. A
-  conflict or a failing check goes back to the ticket's worker. A ticket whose
-  worker worktree is gone catches up once a fix round gives it a new one.
+  conflict or a failing check goes back to the ticket's worker. A released
+  worker is brought back for it first; when it cannot come back, a new worker
+  takes the ticket. A ticket whose worker the human archived catches up once a
+  fix round gives it a new one.
 - When the dependency merges, Loom merges the remote base branch into each
   ticket stacked on it the same way, and moves its pull request to the base
   branch with `gh pr edit --base`. On another server, the ticket's post asks
@@ -469,8 +489,9 @@ with `depends_on`.
   machine with `bb project source add <id> --clone --machine <host>`, which it
   runs only after you agree. `loom_propose` refuses a repo without a checkout
   and names the same command.
-- Workers: one worker per ticket, in a worktree of its ticket's repo. Its brief
-  lists the other repos' checkout paths, to read but never edit. Scopes collide
+- Workers: one worker per ticket, in a worktree of its ticket's repo. Its brief,
+  and each reviewer's, lists the other repos' checkout paths, to read but never
+  edit. Scopes collide
   only within one repo, so tickets in different repos run side by side. Checks
   and review use the ticket's repo's own checks and protected paths.
 - Merging: `bb loom start` creates an integration branch of the same name in
@@ -513,7 +534,10 @@ choice is found or ask; the planner asks you the ask items in one round, and
 - `[environment]` starts the threads Loom runs in a repository (workers,
   reviewers, the spec reviewer and the summary agent) in a bb environment
   provider, such as one a plugin adds, with `inputs` in which Loom fills
-  `{branch}` and `{base}` for each thread.
+  `{branch}` and `{base}` for each thread. Its `reviewer` table gives
+  reviewers, the spec reviewer and the summary agent another provider, or a
+  merge patch over the inputs, because they only read; and a ticket's own
+  `environment.inputs` narrows the inputs for that ticket's threads.
 - `[merge.worktree]` prepares the integration worktree with a command, or with
   a plugin's CLI command (`plugin = "<id>"`), for repositories that refuse
   worktrees outside their own location. Without it, such a repository uses one
@@ -521,6 +545,35 @@ choice is found or ask; the planner asks you the ask items in one round, and
 
 Every key, with the commands' variables and output, is in the loom skill's
 `references/spec.md`.
+
+### Environments with limited room
+
+Some environment providers can run only so many threads at once, for example a
+pool of prepared checkouts. Loom knows none of them by name; it reads what bb
+reports:
+
+- A provider whose availability check answers `unavailable` on the machine
+  makes bb refuse the new thread with `environment_provider_rejected`. Loom
+  waits and tries again, and the wait counts no attempt. So does any error bb
+  marks `retryable`. This is the contract for a provider with no room: answer
+  `unavailable` until there is some. A ticket waits like this for at most an
+  hour, then blocks with a reason that says so, so triage hears of it. The same
+  holds for reviewers, the spec reviewer and a released worker coming back; the
+  summary agent gives up after 30 minutes and the full record goes out.
+- A provider can only fail its `create` or `restore` with a message, so a
+  provisioning failure looks like any other. Loom gives it a bounded wait
+  instead: it tries again with a backoff, and counts the failure only after 4
+  in a row.
+- Loom frees what it holds: an idle worker of an open pull request is released
+  (see [Pull requests](#pull-requests)), reviewers can use a lighter
+  environment, and each ticket can ask for only what it touches.
+
+What bb would need for Loom to tell "no room" apart while provisioning: a
+retryable failure from `create` and `restore`, such as
+`{ status: "failed", message, retry: { reason: "capacity", afterMs } }`,
+reported on the thread's provisioning error as a category (`capacity`) with
+`retryAfterMs`. Loom would then wait for that time and count nothing, as it
+does for an unavailable provider.
 
 ## Commands
 

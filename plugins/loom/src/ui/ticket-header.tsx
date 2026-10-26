@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { experimental_copyToClipboard, experimental_Icon as Icon, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import type { MergeItem, TicketAction, TicketDetail } from "../contract";
-import { formatDuration, plural } from "../format";
+import { formatDuration, plural, startWaitText } from "../format";
 import type { TicketState } from "../states";
 import { BUTTON, BUTTON_PRIMARY, ConfirmButton, FIELD, MoreMenu, RepoChip } from "./common";
 import { ago, checksText, GHOST } from "./ticket-cards";
@@ -49,6 +49,7 @@ function summaryOf(ticket: TicketDetail, now: number): string | null {
   const r = ticket.reviewRound;
   const pr = ticket.pr;
   const fixing = pr !== null && pr.pushedSha !== null;
+  if (ticket.startWait !== null) return startWaitText(ticket.startWait, now);
   switch (ticket.state) {
     case "queued":
       return newest === undefined ? "Waiting for a worker." : `Requeued after attempt ${n}; waiting for a worker.`;

@@ -223,7 +223,18 @@ export function dependsOnLines(spec: Spec, tickets: readonly TicketRow[], ticket
 }
 
 /** `checkouts` holds the checkout path of each other repo on a multi-repo project, by repo name; a repo missing from it is listed without a path. */
-export function workerBrief(a: { project: ProjectRow; spec: Spec; ticket: TicketRow; posts: PostRow[]; resume: boolean; checkouts?: ReadonlyMap<string, string>; tickets?: readonly TicketRow[]; signature?: string }): string {
+export function workerBrief(a: {
+  project: ProjectRow;
+  spec: Spec;
+  ticket: TicketRow;
+  posts: PostRow[];
+  resume: boolean;
+  checkouts?: ReadonlyMap<string, string>;
+  tickets?: readonly TicketRow[];
+  signature?: string;
+  /** The bb threads of the ticket's earlier workers, oldest first. */
+  earlierThreads?: readonly string[];
+}): string {
   const { project, spec, ticket, posts, resume } = a;
   const multi = isMultiRepo(spec);
   const repo = repoSettings(spec, ticket.repo);
@@ -275,6 +286,12 @@ export function workerBrief(a: { project: ProjectRow; spec: Spec; ticket: Ticket
         : `An earlier worker already worked on this ticket. This worktree starts from its branch ${JSON.stringify(ticket.branch)}, so continue from what is there instead of starting again.`,
     );
     if (ticket.pushed_sha !== null) lines.push(`This ticket's pull request${ticket.pr_url === null ? "" : ` ${ticket.pr_url}`} is open. Address what Loom's newest feedback post on the ticket lists; Loom pushes your fix to it as one more commit.`);
+    const earlier = a.earlierThreads ?? [];
+    if (earlier.length > 0) {
+      lines.push(
+        `The earlier ${earlier.length === 1 ? "worker's conversation is" : "workers' conversations are"} still in bb: ${andList(earlier.map((id) => `\`${id}\``))}. When you need ${earlier.length === 1 ? "its" : "their"} reasoning, read the newest with \`bb thread log ${earlier.at(-1)} --all\`; the ticket thread below has what ${earlier.length === 1 ? "it" : "they"} handed in.`,
+      );
+    }
     lines.push("Read the ticket thread below first: the human's replies and the planner's answers are instructions, and the last block post says why work stopped.", "", renderThread(posts, THREAD_LIMIT));
   }
   return lines.join("\n");
@@ -432,6 +449,8 @@ export function reviewerBrief(a: {
   earlierReviews: ReviewRow[];
   /** The fix round's feedback post when this review is of a fix for an open pull request. */
   prFeedback?: PostRow | null;
+  /** The checkout path of each other repo of a multi-repo project, by repo name. */
+  checkouts?: ReadonlyMap<string, string>;
 }): string {
   const { project, spec, ticket, round, diff, checkPost, earlierReviews } = a;
   const repo = repoSettings(spec, ticket.repo);
@@ -444,6 +463,7 @@ export function reviewerBrief(a: {
     "",
     "## First step",
     `Run \`git checkout --detach ${ticket.head_sha}\` in this worktree. That is the exact commit that passed the checks and the one that will merge; the worker's branch may have moved since. Your verdict tools refuse until this worktree is on that commit.`,
+    ...(repo.environment === null ? [] : [`This worktree may hold only part of the repository. Read any file at that commit, checked out or not, with \`git show ${ticket.head_sha}:<path>\`, and list a directory with \`git ls-tree --name-only ${ticket.head_sha} <path>/\`.`]),
     "",
     "## Ticket",
     `${ticket.key} · ${JSON.stringify(ticket.title)}`,
@@ -452,7 +472,7 @@ export function reviewerBrief(a: {
     "## Acceptance criteria",
     ...acceptance.map((line, index) => `${index + 1}. ${line}`),
     "",
-    ...(isMultiRepo(spec) ? reviewerRepositorySection(project, repo) : []),
+    ...(isMultiRepo(spec) ? [...reviewerRepositorySection(project, repo), ...otherReposSection(spec, repo, a.checkouts ?? new Map())] : []),
     "## Rubric",
     spec.review.rubric.length > 0 ? bullets(spec.review.rubric) : "- none; the acceptance criteria are the whole standard",
     "",
@@ -650,14 +670,23 @@ export function prNudgeText(key: string, fix: boolean): string {
 }
 
 /** A fix round: what the pull request's checks and reviews, or the human on the ticket, asked for. */
-export function prFeedbackText(a: { key: string; url: string | null; round: number; counted: number; max: number; checks: FeedbackCheck[]; items: FeedbackItem[]; skipped?: Skipped[]; diverged: { remote: string; branch: string } | null; signature?: string }): { summary: string; detail: string } {
+/** What a worker whose environment Loom released, and bb restored, must know before it runs anything. */
+export const RESTORED_NOTE =
+  "While the pull request waited, Loom released your worktree to free its environment, and bb has now built a new one on your branch: every commit is there, but files git ignores, such as installed dependencies and build output, are gone, and paths from earlier in this conversation may have moved. Set up what the checks need before you run them.";
+
+export function prFeedbackText(a: { key: string; url: string | null; round: number; counted: number; max: number; checks: FeedbackCheck[]; items: FeedbackItem[]; skipped?: Skipped[]; diverged: { remote: string; branch: string } | null; signature?: string; restored?: boolean }): { summary: string; detail: string } {
   const human = a.items.some((item) => item.kind === "reply");
   const what = human ? "The human replied on the ticket about its open pull request" : a.url === null ? "The pull request needs fixes" : `The pull request ${a.url} needs fixes`;
   const merge = a.diverged === null ? [] : [`The pull request's branch has commits Loom did not push. First run \`git fetch ${a.diverged.remote} ${a.diverged.branch}\` and \`git merge FETCH_HEAD\` in this worktree, so your fix builds on them.`];
   return {
     summary: `[loom] ${a.key}: ${what} (fix round ${a.round}${human ? "" : `; ${a.counted} of the ${a.max} the pull request may start`}). Address it, then call loom_submit({ summary }).`,
-    detail: [feedbackList(a.checks, a.items, a.skipped), ...merge, ...prRules(a.signature ?? COMMENT_SIGNATURE).map((rule) => `- ${rule}`)].join("\n\n"),
+    detail: [...(a.restored === true ? [RESTORED_NOTE] : []), feedbackList(a.checks, a.items, a.skipped), ...merge, ...prRules(a.signature ?? COMMENT_SIGNATURE).map((rule) => `- ${rule}`)].join("\n\n"),
   };
+}
+
+/** A message to a worker whose worktree bb restored since its last submit, with the note on what that means first. */
+export function withRestoredNote(text: { summary: string; detail: string }, restored: boolean): { summary: string; detail: string } {
+  return restored ? { ...text, detail: `${RESTORED_NOTE}\n\n${text.detail}` } : text;
 }
 
 export function prUnchangedText(key: string): string {

@@ -1,7 +1,7 @@
 // How each repo is reached, read from the machine and from bb: its remotes, whether gh serves them, the environment
 // providers bb offers for it, and whether Loom can add its own integration worktree. loom_discover reports these facts
 // to the planner as found or ask; loom_propose refuses a spec that leaves one of them unanswered.
-import { inputsProblems } from "./environments";
+import { environmentFor, inputsProblems } from "./environments";
 import type { HostOutput } from "./host-contract";
 import type { BbPort, EnvironmentProviderInfo, HostPort, PluginInfo } from "./ports";
 import { isMultiRepo, repoSettings, type RepoSettings } from "./repos";
@@ -24,6 +24,8 @@ export interface RepoTarget {
   index: number | null;
   bbProjectId: string;
   settings: RepoSettings | null;
+  /** The environment inputs patches of the spec's tickets in this repo, by spec path. */
+  tickets?: Array<{ at: string; inputs: Record<string, unknown> }>;
 }
 
 export interface RepoFacts extends RepoTarget {
@@ -37,10 +39,11 @@ export interface RepoFacts extends RepoTarget {
   pluginCommand: { ok: boolean; output: string } | null;
 }
 
-/** The repos a spec changes, with their settings. */
+/** The repos a spec changes, with their settings and their tickets' environment patches. */
 export function specTargets(spec: Spec, bbProjectId: string): RepoTarget[] {
-  if (!isMultiRepo(spec)) return [{ label: "the project's repository", index: null, bbProjectId, settings: repoSettings(spec, null) }];
-  return spec.repo!.map((repo, index) => ({ label: `the repo "${repo.name}"`, index, bbProjectId: repo.project, settings: repoSettings(spec, repo.name) }));
+  const tickets = (repo: string | null) => spec.ticket.flatMap((ticket, index) => ((ticket.repo ?? null) === repo && ticket.environment !== undefined ? [{ at: `ticket[${index}].environment`, inputs: ticket.environment.inputs }] : []));
+  if (!isMultiRepo(spec)) return [{ label: "the project's repository", index: null, bbProjectId, settings: repoSettings(spec, null), tickets: tickets(null) }];
+  return spec.repo!.map((repo, index) => ({ label: `the repo "${repo.name}"`, index, bbProjectId: repo.project, settings: repoSettings(spec, repo.name), tickets: tickets(repo.name) }));
 }
 
 export async function gatherFacts(ctx: { bb: BbPort; host: HostPort }, targets: readonly RepoTarget[], hostId: string): Promise<RepoFacts[]> {
@@ -178,12 +181,23 @@ function repoErrors(facts: RepoFacts, settings: RepoSettings): string[] {
     const plugins = pluginProviders(facts);
     if (plugins.length > 0) errors.push(`${at}: bb offers ${plugins.map(describeProvider).join("; ")} for ${facts.label} on this machine, besides its own git worktrees. ${environmentFix(facts, plugins)}`);
   } else {
-    const id = settings.environment.provider;
-    const provider = facts.providers.find((entry) => entry.id === id);
     const usable = facts.providers.filter((entry) => entry.available).map((entry) => entry.id);
-    if (provider === undefined) errors.push(`${at}.provider: bb has no environment provider "${id}" for ${facts.label} on this machine. Use one of: ${usable.join(", ") || "(none)"}.`);
-    else if (!provider.available) errors.push(`${at}.provider: ${describeProvider(provider)} is not available for ${facts.label} on this machine: ${provider.unavailableReason ?? "bb gave no reason"}. Use one of: ${usable.join(", ") || "(none)"}.`);
-    else errors.push(...inputsProblems(at, provider, settings.environment.inputs));
+    const usableAt = (path: string, id: string): EnvironmentProviderInfo | null => {
+      const provider = facts.providers.find((entry) => entry.id === id);
+      if (provider === undefined) errors.push(`${path}: bb has no environment provider "${id}" for ${facts.label} on this machine. Use one of: ${usable.join(", ") || "(none)"}.`);
+      else if (!provider.available) errors.push(`${path}: ${describeProvider(provider)} is not available for ${facts.label} on this machine: ${provider.unavailableReason ?? "bb gave no reason"}. Use one of: ${usable.join(", ") || "(none)"}.`);
+      else return provider;
+      return null;
+    };
+    const provider = usableAt(`${at}.provider`, settings.environment.provider);
+    if (provider !== null) {
+      errors.push(...inputsProblems(at, provider, settings.environment.inputs));
+      for (const ticket of facts.tickets ?? []) errors.push(...inputsProblems(ticket.at, provider, environmentFor(settings, "worker", ticket.inputs)!.inputs));
+    }
+    const reviewer = settings.environment.reviewer;
+    const other = reviewer?.provider !== undefined && reviewer.provider !== settings.environment.provider;
+    const reviewerProvider = other ? usableAt(`${at}.reviewer.provider`, reviewer.provider!) : provider;
+    if (reviewer !== undefined && reviewerProvider !== null) errors.push(...inputsProblems(`${at}.reviewer`, reviewerProvider, environmentFor(settings, "reviewer")!.inputs));
   }
 
   const worktree = settings.worktree;

@@ -98,7 +98,7 @@ export class FakePort implements BbPort {
   threads = new Map<string, ThreadInfo>();
   environments = new Map<string, EnvironmentInfo>();
   tokens = new Map<string, number | null>();
-  systemErrors = new Map<string, { code: string | null; message: string }>();
+  systemErrors = new Map<string, { code: string | null; message: string; detail?: string | null }>();
   spawnedTokens = new Map<string, string>();
   /** Return an error to make the spawn throw it. */
   spawnError: ((args: SpawnArgs) => Error | null) | null = null;
@@ -181,10 +181,36 @@ export class FakePort implements BbPort {
     const thread = this.threads.get(threadId);
     if (thread !== undefined) thread.archivedAt = 1;
   }
+  async unarchive(threadId: string) {
+    this.record("unarchive", threadId);
+    const thread = this.threads.get(threadId);
+    if (thread !== undefined) thread.archivedAt = null;
+  }
+  /** Whether the provider of a destroyed environment can build it again. */
+  restorable = true;
+  /** What restoreEnvironment leaves: a ready environment on an idle thread, one still provisioning on a starting thread, or an Error it throws. */
+  restoreResult: "ready" | "provisioning" | Error = "ready";
+  private restores = 0;
+  async restoreEnvironment(threadId: string) {
+    this.record("restoreEnvironment", threadId);
+    if (this.restoreResult instanceof Error) throw this.restoreResult;
+    const thread = this.threads.get(threadId);
+    if (thread === undefined || !this.canRestore(thread)) throw new Error("HTTP 409: Thread workspace cannot be restored");
+    const old = this.environments.get(thread.environmentId!)!;
+    const environmentId = `env_r${++this.restores}`;
+    const ready = this.restoreResult === "ready";
+    this.environments.set(environmentId, { path: `/wt/${environmentId}`, branchName: old.branchName, hostId: old.hostId, status: ready ? "ready" : "provisioning" });
+    thread.environmentId = environmentId;
+    thread.status = ready ? "idle" : "starting";
+  }
+  private canRestore(thread: ThreadInfo): boolean {
+    const environment = thread.environmentId === null ? undefined : this.environments.get(thread.environmentId);
+    return this.restorable && thread.archivedAt === null && thread.deletedAt === null && (thread.status === "idle" || thread.status === "error") && environment?.status === "destroyed";
+  }
   async getThread(threadId: string) {
     this.record("getThread", threadId);
     const thread = this.threads.get(threadId);
-    return thread === undefined ? null : { ...thread };
+    return thread === undefined ? null : { ...thread, canRestoreEnvironment: this.canRestore(thread) };
   }
   async getEnvironment(environmentId: string) {
     this.record("getEnvironment", environmentId);

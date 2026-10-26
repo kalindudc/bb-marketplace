@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { TicketSpec } from "../src/spec";
 import { addTickets, boardText, cancelTicket, editTicket, maybeSendTriage, onPlannerIdle } from "../src/triage";
 import { blockTicket, requeueTicket } from "../src/workers";
-import { makeCtx, seedProject, startWorker, ticketOf, workerRows, type Doc, type EngineHarness } from "./helpers";
+import { GIT_WORKTREE_PROVIDER, makeCtx, seedProject, startWorker, ticketOf, workerRows, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;
 
@@ -195,6 +195,21 @@ describe("editTicket", () => {
     editTicket(h.ctx, "CSV-2", { title: "Export endpoint v2", scope: ["src/other/**"] }, "thr_plan");
     const event = h.store.events(project().id).filter((row) => row.kind === "ticket.edited").at(-1)!;
     expect(JSON.parse(event.data_json)).toEqual({ fields: ["title", "scope"], before: { title: before.title, scope_json: before.scope_json } });
+  });
+
+  it("sets and clears a ticket's environment inputs patch, and refuses one in a repo with no environment provider", async () => {
+    h.bb.environmentProviderList = [GIT_WORKTREE_PROVIDER, { ...GIT_WORKTREE_PROVIDER, id: "example-pool", pluginId: "example", acceptsEmptyInputs: false, inputs: { type: "object" } }];
+    await seedProject(h, (doc) => (doc.environment = { provider: "example-pool", inputs: { paths: ["a", "b"] } }));
+    expect(editTicket(h.ctx, "CSV-2", { environment: { inputs: { paths: ["a"] } } }, "thr_plan").environment_json).toBe('{"paths":["a"]}');
+    expect(editTicket(h.ctx, "CSV-2", { environment: { inputs: {} } }, "thr_plan").environment_json).toBeNull();
+    expect(() => editTicket(h.ctx, "CSV-2", { environment: { inputs: { at: "{ticket}" } } }, "thr_plan")).toThrow("patch.environment.inputs: {ticket} is not a Loom placeholder");
+    const created = addTickets(h.ctx, project().id, [newTicket({ environment: { inputs: { paths: ["docs"] } } })], "thr_plan");
+    expect(created[0]!.environment_json).toBe('{"paths":["docs"]}');
+
+    h = makeCtx();
+    await seedProject(h);
+    expect(() => editTicket(h.ctx, "CSV-2", { environment: { inputs: { paths: ["a"] } } }, "thr_plan")).toThrow("patch.environment: the ticket's repo starts its threads in git worktrees, with no environment inputs to patch");
+    expect(() => addTickets(h.ctx, project().id, [newTicket({ environment: { inputs: { paths: ["docs"] } } })], "thr_plan")).toThrow("tickets[0].environment: the ticket's repo starts its threads in git worktrees");
   });
 
   it("refuses a ticket that is working, checking, in review or finished", async () => {

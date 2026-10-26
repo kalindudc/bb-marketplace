@@ -93,7 +93,7 @@ function reviewStep(slug: string, version: number, review: SpecReviewStatus | un
         stage,
         tone: "normal",
         title: `Loom is reviewing ${pending === null ? "draft " : ""}v${version}.`,
-        text: `A separate reviewer checks it against your request and for work the goal does not need. The planner revises it for each finding, and this bar asks you to approve once a review passes. To approve it now anyway, run \`${override}\`.`,
+        text: `${review.waiting === undefined ? "A separate reviewer checks it" : `Its reviewer could not start (${review.waiting.reason}), and Loom tries again by itself; the reviewer then checks it`} against your request and for work the goal does not need. The planner revises it for each finding, and this bar asks you to approve once a review passes. To approve it now anyway, run \`${override}\`.`,
         action: null,
       };
     case "changes":

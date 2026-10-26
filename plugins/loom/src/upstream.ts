@@ -46,7 +46,8 @@ export async function noteUpstreamChanges(ctx: EngineCtx, project: ProjectRow, s
     store.changed(project.id);
 
     const worker = workerOf(store, ticket);
-    if (changed.length === 0 || ticket.state !== "working" || worker.standing !== "active" || worker.row.thread_id === null || !delivers(ctx, project.id)) continue;
+    // A worker coming back from a release reads these posts with its fix round.
+    if (changed.length === 0 || ticket.state !== "working" || worker.standing !== "active" || worker.row.thread_id === null || worker.row.released_at !== null || !delivers(ctx, project.id)) continue;
     for (const dep of changed) {
       const path = await repoCheckout(ctx, project, spec, dep.repo).then(
         (checkout) => checkout.path,

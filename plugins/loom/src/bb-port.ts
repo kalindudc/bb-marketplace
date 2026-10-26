@@ -1,16 +1,23 @@
 // Adapts bb.sdk to Loom's BbPort. bb.sdk is read inside each call, never at load.
 import type { BbPluginApi, JsonValue } from "@get-bb/plugin-sdk";
 import { hostContract, type HostInput, type HostMethod, type HostOutput } from "./host-contract";
-import { SectionNameConflictError, SpawnRefusedError, type BbPort, type HostPort } from "./ports";
+import { SectionNameConflictError, SpawnRefusedError, SpawnUnavailableError, type BbPort, type HostPort } from "./ports";
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 const isNotFound = (error: unknown) => /\b404\b|not[ _]found/iu.test(message(error));
 const isNameConflict = (error: unknown) => /\b409\b|section_name_conflict/iu.test(message(error));
-/** bb's SDK throws BbHttpError, whose `status` is the HTTP status. */
-const refusedOr = (error: unknown): unknown => {
-  const status = (error as { status?: unknown } | null)?.status;
+/**
+ * bb's SDK throws BbHttpError, whose `status` is the HTTP status, `code` bb's error code and `body` the parsed error. A
+ * provider whose availability check answers "unavailable" makes bb refuse with 409 environment_provider_rejected and
+ * details.availabilityStatus; that, and any error bb marks retryable, is a wait rather than a failure.
+ */
+export function spawnErrorOf(error: unknown): unknown {
+  const http = (error ?? {}) as { status?: unknown; code?: unknown; body?: unknown };
+  const body = (http.body ?? {}) as { retryable?: unknown; details?: { availabilityStatus?: unknown } | null };
+  const status = http.status;
+  if (body.retryable === true || (status === 409 && http.code === "environment_provider_rejected" && body.details?.availabilityStatus === "unavailable")) return new SpawnUnavailableError(message(error));
   return typeof status === "number" && status >= 400 && status < 500 && status !== 408 && status !== 409 && status !== 429 ? new SpawnRefusedError(status, message(error)) : error;
-};
+}
 
 export function createBbPort(bb: BbPluginApi): BbPort {
   return {
@@ -71,7 +78,7 @@ export function createBbPort(bb: BbPluginApi): BbPort {
         ...(args.reasoningLevel === undefined ? {} : { reasoningLevel: args.reasoningLevel }),
         ...(args.permissionMode === undefined ? {} : { permissionMode: args.permissionMode }),
       }).catch((error: unknown) => {
-        throw refusedOr(error);
+        throw spawnErrorOf(error);
       });
       return { threadId: thread.id, environmentId: thread.environmentId };
     },
@@ -91,10 +98,25 @@ export function createBbPort(bb: BbPluginApi): BbPort {
     async archive(threadId) {
       await bb.sdk.threads.archive({ threadId });
     },
+    async unarchive(threadId) {
+      await bb.sdk.threads.unarchive({ threadId });
+    },
+    async restoreEnvironment(threadId) {
+      await bb.sdk.threads.restoreEnvironment({ threadId }).catch((error: unknown) => {
+        throw spawnErrorOf(error);
+      });
+    },
     async getThread(threadId) {
       try {
         const thread = await bb.sdk.threads.get({ threadId });
-        return { id: thread.id, status: thread.status, archivedAt: thread.archivedAt, deletedAt: thread.deletedAt, environmentId: thread.environmentId };
+        return {
+          id: thread.id,
+          status: thread.status,
+          archivedAt: thread.archivedAt,
+          deletedAt: thread.deletedAt,
+          environmentId: thread.environmentId,
+          canRestoreEnvironment: thread.canRestoreEnvironment === true,
+        };
       } catch (error) {
         if (isNotFound(error)) return null;
         throw error;
@@ -124,8 +146,8 @@ export function createBbPort(bb: BbPluginApi): BbPort {
     },
     async latestSystemError(threadId) {
       const rows = await bb.sdk.threads.events.list({ threadId, types: ["system/error"], order: "desc", limit: "1" });
-      const data = (rows[0] as { data?: { code?: string; message?: string } } | undefined)?.data;
-      return data === undefined ? null : { code: data.code ?? null, message: data.message ?? "" };
+      const data = (rows[0] as { data?: { code?: string; message?: string; detail?: string } } | undefined)?.data;
+      return data === undefined ? null : { code: data.code ?? null, message: data.message ?? "", detail: data.detail ?? null };
     },
     async retryTurn(threadId, turnRequestId, sendAt) {
       await bb.sdk.threads.retry({ threadId, turnRequestId, sendAt, reason: "Rate limited (Loom retry)" });

@@ -250,11 +250,40 @@ describe("sendRecords", () => {
     expect(eventsOf("record.sent")).toEqual([{ kind: "summary" }]);
   });
 
+  it("tries the agent again while it cannot start or get an environment, then sends the full record once the 30 minutes are up", async () => {
+    await finishedProject();
+    h.bb.spawnError = () => new Error("No free slot.");
+    await send(SUMMARY);
+    expect(row()).toMatchObject({ state: "pending", thread_id: null, retry_at: h.clock.t + 2 * 60_000 });
+    await send(SUMMARY);
+    expect(h.bb.callsTo("spawnThread")).toHaveLength(1);
+
+    // A thread whose environment bb could not provision is tried again too.
+    h.bb.spawnError = null;
+    h.clock.advance(2 * 60_000);
+    await send(SUMMARY);
+    const threadId = row()!.thread_id!;
+    h.bb.threads.get(threadId)!.status = "error";
+    h.bb.systemErrors.set(threadId, { code: "thread_provisioning_failed", message: "Provisioning thread failed", detail: "No free slot." });
+    await send(SUMMARY);
+    expect(row()).toMatchObject({ state: "pending", thread_id: null });
+    expect(h.bb.callsTo("archive").map(([id]) => id)).toContain(threadId);
+
+    h.bb.spawnError = () => new Error("No free slot.");
+    for (let n = 0; n < 20 && row()?.state === "pending"; n++) {
+      h.clock.advance(2 * 60_000);
+      await send(SUMMARY);
+    }
+    expect(row()?.state).toBe("sent");
+    expect(String(eventsOf("record.sent").at(-1)?.fallback)).toBe("the summary agent could not start: No free slot.");
+    expect(hookRuns()).toHaveLength(1);
+  });
+
   it("sends the full record when the agent cannot start, is gone, fails or takes 30 minutes, and ends a live agent", async () => {
     const fallbackOf = () => String(eventsOf("record.sent").at(-1)?.fallback);
 
     await finishedProject();
-    h.bb.spawnError = () => new Error("bb refused");
+    h.bb.spawnError = () => new SpawnRefusedError(400, "HTTP 400: bb refused");
     await send(SUMMARY);
     expect(fallbackOf()).toMatch(/could not start.*bb refused/);
 

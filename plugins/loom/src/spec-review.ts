@@ -10,6 +10,7 @@ import { specReviewFailedText, specReviewNudgeText, specReviewVerdictText, specR
 import { isMultiRepo, repoSettings } from "./repos";
 import type { Spec } from "./spec";
 import { SPEC_REVIEW_ROUNDS } from "./states";
+import { nextWait, provisioningFailure, startProblemOf, unavailableReason, type StartProblem, type StartWait } from "./starts";
 import { MAX_RATE_LIMIT_RETRIES, rateLimitRetryAt, type EngineCtx, type TurnFailure } from "./workers";
 
 export interface SpecFinding {
@@ -20,13 +21,15 @@ export interface SpecFinding {
 
 export type SpecReviewStatus =
   | { kind: "none" }
-  | { kind: "reviewing"; version: number; round: number }
+  | { kind: "reviewing"; version: number; round: number; waiting?: { reason: string; until: number } }
   | { kind: "approved"; version: number; round: number; summary: string }
   | { kind: "changes"; version: number; round: number; findings: SpecFinding[] }
   | { kind: "failed"; version: number; round: number; reason: string }
   | { kind: "limit"; version: number; findings: SpecFinding[] };
 
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
+/** The wait of a spec review whose reviewer did not start, while Loom has not started one since. */
+export const waitOfReview = (row: SpecReviewRow): StartWait | null => (row.wait_json === null ? null : (JSON.parse(row.wait_json) as StartWait));
 const findingsOf = (row: SpecReviewRow) => JSON.parse(row.findings_json) as SpecFinding[];
 const roundsWithFindings = (rows: readonly SpecReviewRow[]) => rows.filter((row) => row.state === "changes_requested");
 
@@ -61,8 +64,11 @@ export function specReviewStatus(store: Store, project: ProjectRow): SpecReviewS
     return { kind: "failed", version, round: changes.length + 1, reason: "no review ran for this version" };
   }
   switch (own.state) {
-    case "reviewing":
-      return { kind: "reviewing", version, round: own.round };
+    case "reviewing": {
+      // A reviewer that started since is no longer waiting, though its wait counts on until it runs.
+      const wait = own.thread_id === null ? waitOfReview(own) : null;
+      return wait === null ? { kind: "reviewing", version, round: own.round } : { kind: "reviewing", version, round: own.round, waiting: { reason: wait.reason, until: wait.until } };
+    }
     case "approved":
       return { kind: "approved", version, round: own.round, summary: own.summary ?? "" };
     case "changes_requested":
@@ -82,7 +88,7 @@ export function approvalRefusal(slug: string, status: SpecReviewStatus, pending 
     );
   switch (status.kind) {
     case "reviewing":
-      return refuse(status.version, `is still in its spec review (round ${status.round} of ${SPEC_REVIEW_ROUNDS})`);
+      return refuse(status.version, `is still in its spec review (round ${status.round} of ${SPEC_REVIEW_ROUNDS})${status.waiting === undefined ? "" : `: its reviewer could not start (${status.waiting.reason}), and Loom tries again`}`);
     case "changes":
       return refuse(status.version, `has ${status.findings.length === 1 ? "1 open finding" : `${status.findings.length} open findings`} from round ${status.round}, and the planner is revising it`);
     case "failed":
@@ -124,6 +130,9 @@ export async function ensureSpecReview(ctx: EngineCtx, slug: string): Promise<Sp
     if (row.state === "reviewing" && row.version < latest.version) await supersede(ctx, row);
   }
   const status = specReviewStatus(store, project);
+  // Proposing again tries a reviewer that waits to start at once, as it starts a review that failed again.
+  const waiting = status.kind === "reviewing" && status.waiting !== undefined ? store.specReviews(project.id).filter((row) => row.version === latest.version && row.state === "reviewing" && row.thread_id === null).at(-1) : undefined;
+  if (waiting !== undefined) return spawnReviewer(ctx, project, waiting, latest.toml, JSON.parse(latest.spec_json) as Spec, false);
   if (status.kind !== "none" && status.kind !== "failed") return status;
   return startReview(ctx, project, latest.version, latest.toml, JSON.parse(latest.spec_json) as Spec);
 }
@@ -131,11 +140,23 @@ export async function ensureSpecReview(ctx: EngineCtx, slug: string): Promise<Sp
 async function startReview(ctx: EngineCtx, project: ProjectRow, version: number, toml: string, spec: Spec): Promise<SpecReviewStatus> {
   const { store } = ctx;
   const earlier = cycleReviews(store, project);
-  const inForce = project.approved_version === null ? null : { version: project.approved_version, spec: JSON.parse(store.specVersion(project.id, project.approved_version)!.spec_json) as Spec };
   const round = roundsWithFindings(earlier).length + 1;
-  const token = randomBytes(12).toString("hex");
   // Reserved before the spawn, so a restart mid-spawn leaves a row that reconcile can fail.
-  const row = store.addSpecReview({ project_id: project.id, version, round, spawn_token: token });
+  const row = store.addSpecReview({ project_id: project.id, version, round, spawn_token: randomBytes(12).toString("hex") });
+  return spawnReviewer(ctx, project, row, toml, spec, false);
+}
+
+/**
+ * Starts the reviewer thread of a reviewing row with no thread: a new review, or one that waits after a failed start.
+ * `tell` sends the planner a failure, which loom_propose otherwise returns to it.
+ */
+async function spawnReviewer(ctx: EngineCtx, project: ProjectRow, row: SpecReviewRow, toml: string, spec: Spec, tell: boolean): Promise<SpecReviewStatus> {
+  const { store } = ctx;
+  const { version, round } = row;
+  const earlier = cycleReviews(store, project).filter((other) => other.id !== row.id);
+  const inForce = project.approved_version === null ? null : { version: project.approved_version, spec: JSON.parse(store.specVersion(project.id, project.approved_version)!.spec_json) as Spec };
+  const token = row.wait_json === null ? row.spawn_token : randomBytes(12).toString("hex");
+  if (token !== row.spawn_token) store.updateSpecReview(row.id, { spawn_token: token });
   // A multi-repo project's reviewer starts in its first repo. Not freshBaseOf: a draft has no integration branch yet.
   const settings = repoSettings(spec, isMultiRepo(spec) ? spec.repo![0]!.name : null);
   const agent = spec.agents.reviewer;
@@ -145,7 +166,7 @@ async function startReview(ctx: EngineCtx, project: ProjectRow, version: number,
       bbProjectId: settings.bbProjectId ?? project.bb_project_id,
       hostId: project.host_id,
       baseBranch: `${settings.remote}/${settings.base}`,
-      environment: spawnEnvironment(settings, { branch: threadBranch(project.slug, "spec", `review-${version}-${round}`), base: `${settings.remote}/${settings.base}` }),
+      environment: spawnEnvironment(settings, { branch: threadBranch(project.slug, "spec", `review-${version}-${round}`), base: `${settings.remote}/${settings.base}` }, "reviewer"),
       title: `${project.key} · spec review v${version}`,
       prompt: specReviewerBrief({ project, spec, toml, version, round, earlier, inForce }),
       sectionId: project.section_id,
@@ -158,12 +179,41 @@ async function startReview(ctx: EngineCtx, project: ProjectRow, version: number,
     // Configure may have bound the thread through its token already.
     if (store.specReview(row.id)!.thread_id === null) store.updateSpecReview(row.id, { thread_id: spawned.threadId });
   } catch (error) {
-    const reason = `bb could not start the reviewer: ${errText(error)}`;
-    store.endSpecReview(row.id, "failed", { reason });
-    return { kind: "failed", version, round, reason };
+    return reviewerStartFailed(ctx, store.specReview(row.id)!, startProblemOf(error), tell);
   }
   store.changed(project.id);
   return { kind: "reviewing", version, round };
+}
+
+/**
+ * A spec reviewer that did not start. It waits and tries again from the tick (retrySpecReviews), as a ticket's reviewer
+ * does: an unavailable provider never fails the review, and any other failure does once it has happened START_GRACE
+ * times in a row. bb refusing the reviewer fails it at once.
+ */
+async function reviewerStartFailed(ctx: EngineCtx, row: SpecReviewRow, problem: StartProblem, tell: boolean): Promise<SpecReviewStatus> {
+  const { store } = ctx;
+  const wait = problem.kind === "refused" || problem.kind === "broken" ? null : nextWait(waitOfReview(row), { role: "reviewer", row: null, problem, now: ctx.now() });
+  if (wait === null || wait.counted || wait.expired) {
+    const reason = `bb could not start the reviewer: ${wait?.expired === true ? unavailableReason(wait) : problem.message}`;
+    if (tell) await fail(ctx, row, reason);
+    else store.endSpecReview(row.id, "failed", { reason });
+    return { kind: "failed", version: row.version, round: row.round, reason };
+  }
+  store.updateSpecReview(row.id, { thread_id: null, wait_json: JSON.stringify(wait) });
+  store.changed(row.project_id);
+  return { kind: "reviewing", version: row.version, round: row.round, waiting: { reason: wait.reason, until: wait.until } };
+}
+
+/** The tick's step for spec reviews whose reviewer did not start: each one past its retry time starts again. */
+export async function retrySpecReviews(ctx: EngineCtx): Promise<void> {
+  for (const row of ctx.store.openSpecReviews()) {
+    const wait = waitOfReview(row);
+    if (row.thread_id !== null || wait === null || wait.until > ctx.now()) continue;
+    const project = ctx.store.project(row.project_id);
+    const version = project === null ? null : ctx.store.specVersion(project.id, row.version);
+    if (project === null || version === null) continue;
+    await spawnReviewer(ctx, project, row, version.toml, JSON.parse(version.spec_json) as Spec, true);
+  }
 }
 
 // ---------------------------------------------------------------- verdicts
@@ -191,6 +241,8 @@ export async function specVerdict(ctx: EngineCtx, threadId: string, findings: Sp
 export async function onSpecReviewerIdle(ctx: EngineCtx, seen: SpecReviewRow): Promise<void> {
   const row = ctx.store.specReview(seen.id);
   if (row === null || row.thread_id === null) return;
+  // The reviewer ran, so a wait after an earlier failed start is over.
+  if (row.wait_json !== null) ctx.store.updateSpecReview(row.id, { wait_json: null });
   if (row.state !== "reviewing") return endReviewerThread(ctx, row.thread_id);
   if (row.idle_count === 0) {
     ctx.store.updateSpecReview(row.id, { idle_count: 1 });
@@ -205,11 +257,23 @@ export async function onSpecReviewerGone(ctx: EngineCtx, seen: SpecReviewRow): P
   if (row?.state === "reviewing") await fail(ctx, row, "the reviewer's thread was archived or deleted");
 }
 
-/** A rate limit retries the turn at the window's reset, as for ticket reviewers; bb's attempt number is the cap. Anything else counts as an idle. */
+/**
+ * A rate limit retries the turn at the window's reset, as for ticket reviewers; bb's attempt number is the cap. A thread
+ * whose environment bb could not provision is a reviewer that did not start. Anything else counts as an idle.
+ */
 export async function onSpecReviewerTurnFailed(ctx: EngineCtx, row: SpecReviewRow, event: TurnFailure): Promise<void> {
   if (row.state === "reviewing" && event.errorInfo?.category === "rate-limit" && event.attemptNumber <= MAX_RATE_LIMIT_RETRIES) {
     await ctx.bb.retryTurn(event.threadId, event.requestId, rateLimitRetryAt(ctx.now(), event));
     return;
+  }
+  if (row.state === "reviewing" && event.errorInfo?.category !== "rate-limit") {
+    const failure = await ctx.bb.latestSystemError(event.threadId).catch(() => null);
+    if (failure?.code === "thread_provisioning_failed" && row.thread_id === event.threadId) {
+      // Unbound first, so the archive's event does not read as the human archiving a running reviewer.
+      await reviewerStartFailed(ctx, row, provisioningFailure(failure), true);
+      await endReviewerThread(ctx, event.threadId);
+      return;
+    }
   }
   await onSpecReviewerIdle(ctx, row);
 }
@@ -224,9 +288,10 @@ export async function endSpecReviews(ctx: EngineCtx, projectId: number, upTo = N
   }
 }
 
-/** After a restart: a review with no thread never started, one whose thread is gone failed, and an idle one missed its idle event. */
+/** After a restart: a review with no thread never started, unless it waits to try again; one whose thread is gone failed, and an idle one missed its idle event. */
 export async function reconcileSpecReviews(ctx: EngineCtx): Promise<void> {
   for (const row of ctx.store.openSpecReviews()) {
+    if (row.thread_id === null && row.wait_json !== null) continue;
     if (row.thread_id === null) {
       await fail(ctx, row, "Loom restarted before the reviewer started");
       continue;

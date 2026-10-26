@@ -5,7 +5,7 @@ import { delivers, workerOf, type CheckRun } from "./checks";
 import { repoCheckout, type RepoCheckout } from "./checkouts";
 import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { plural } from "./format";
-import { afterMergeChangedText, afterMergeFailedText, andList, clip, conflictText, dependsOnLines, landBody, prDivergedText, restackConflictText, restackFailedText, workerPrBody } from "./prompts";
+import { afterMergeChangedText, afterMergeFailedText, andList, clip, conflictText, dependsOnLines, landBody, prDivergedText, restackConflictText, restackFailedText, withRestoredNote, workerPrBody } from "./prompts";
 import { closedPrReset, followFeedback, inFixRound, prTextFor, prTextReady, reviewersToAsk, templatePr, type PrText } from "./pull-requests";
 import { prNumber, type HostInput, type HostOutput as HostOutputOf } from "./host-contract";
 import { LoomError } from "./projects";
@@ -14,6 +14,7 @@ import { recordingHost } from "./runs";
 import type { ForgeSpec, Spec } from "./spec";
 import { EMPTY_STACK, holdKey, holdOf, prBaseOf, restackOf, stackBranch, stacking, stackOf, type Hold, type Restack, type Stack } from "./stack";
 import { LOOM_ACTOR } from "./states";
+import { isWaking, restoredSinceSubmit } from "./release";
 import { applyMove, baseOf, endLiveRows, endThread, pauseProject, released, resolveEnvironment, specOf, toWorking, type EngineCtx } from "./workers";
 
 export const POLL_MS = 5 * 60_000;
@@ -130,7 +131,12 @@ function candidates(ctx: EngineCtx, projectId: number, spec: Spec): TicketRow[] 
   const stack = stacking(spec);
   const approved = tickets.filter((ticket) => ticket.state === "approved" && prTextReady(spec, ticket) && (!stack || holdOf(tickets, ticket) === null));
   if (!stack) return approved;
-  const behind = tickets.filter((ticket) => ticket.state === "pr_open" && holdOf(tickets, ticket) === null && restackOf(tickets, ticket) !== null && workerOf(store, ticket).standing === "active");
+  // A worker coming back from a release has no worktree yet (advanceWakes).
+  const behind = tickets.filter((ticket) => {
+    if (ticket.state !== "pr_open" || holdOf(tickets, ticket) !== null || restackOf(tickets, ticket) === null) return false;
+    const worker = workerOf(store, ticket);
+    return worker.standing === "active" && !isWaking(worker.row);
+  });
   return [...approved, ...behind];
 }
 
@@ -529,7 +535,7 @@ async function restack(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: 
   if (merged.outcome === "conflict") {
     await sendBack(ctx, ticket.id, {
       post: { kind: "merge", body: `Merging ${what} into ${ticket.key}'s branch conflicted in: ${merged.files.join(", ")}.`, data: { outcome: "conflict", files: merged.files, restack: true } },
-      text: restackConflictText(ticket.key, what, branch, merged.files),
+      text: withRestoredNote(restackConflictText(ticket.key, what, branch, merged.files), restoredSinceSubmit(store.posts(ticket.id))),
       countFailure: false,
       reason: "bringing the branch up to date conflicted",
     });
@@ -557,7 +563,9 @@ async function restack(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: 
       changed = changes.join(" and ");
     }
     store.updateTicket(ticket.id, { stack_json: JSON.stringify(stack) });
-    await sendBack(ctx, ticket.id, { post: afterMergePost(run, `${ticket.key}'s branch`, changed), text: restackFailedText(ticket.key, what, run, changed), countFailure: true, reason: "the checks failed after bringing the branch up to date" });
+    // A worktree bb restored since the worker last ran has none of the files git ignores, so its first failed check counts no failure.
+    const restored = restoredSinceSubmit(store.posts(ticket.id));
+    await sendBack(ctx, ticket.id, { post: afterMergePost(run, `${ticket.key}'s branch`, changed), text: withRestoredNote(restackFailedText(ticket.key, what, run, changed), restored), countFailure: !restored, reason: "the checks failed after bringing the branch up to date" });
     return null;
   }
   const passed = runs.length === 0 ? "" : `; its checks passed (${plural(runs.length, "command")})`;

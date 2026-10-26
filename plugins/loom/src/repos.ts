@@ -66,10 +66,12 @@ export interface PrSettings {
   maxFixRounds: number;
   /** A ticket starts once its dependencies' pull requests are open, on top of them in its own repo, instead of once they merged. */
   stack: boolean;
+  /** An idle worker of an open pull request has its thread archived, freeing its environment, and comes back with a new one when the pull request needs it. */
+  releaseWorkers: boolean;
 }
 
 export function prSettings(spec: Spec): PrSettings {
-  return { describe: spec.merge.describe ?? "worker", squash: spec.merge.squash ?? true, maxFixRounds: spec.merge.max_fix_rounds ?? 5, stack: spec.merge.stack ?? true };
+  return { describe: spec.merge.describe ?? "worker", squash: spec.merge.squash ?? true, maxFixRounds: spec.merge.max_fix_rounds ?? 5, stack: spec.merge.stack ?? true, releaseWorkers: spec.merge.release_workers ?? true };
 }
 
 /** Whether Loom can read a pull request's checks and reviews on this forge: gh, or a command forge with a feedback command. */

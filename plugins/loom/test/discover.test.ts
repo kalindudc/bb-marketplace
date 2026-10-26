@@ -37,16 +37,16 @@ describe("reachErrors", () => {
   });
 
   it("refuses a remote the repository does not have, listing the ones it has", async () => {
-    host.remoteList = [{ name: "delta", pushUrls: ["https://delta.example.com/shop/world.git"] }];
+    host.remoteList = [{ name: "forge", pushUrls: ["https://forge.example.com/shop/store.git"] }];
     const [error] = await errorsOf();
-    expect(error).toBe('merge.remote: the project\'s repository has no git remote "origin"; its remotes are delta (https://delta.example.com/shop/world.git). Ask the human which remote its pull requests go through, and set merge.remote.');
+    expect(error).toBe('merge.remote: the project\'s repository has no git remote "origin"; its remotes are forge (https://forge.example.com/shop/store.git). Ask the human which remote its pull requests go through, and set merge.remote.');
   });
 
   it("refuses gh where gh is not signed in, naming the host and the forge keys, and accepts a command or push-only forge there", async () => {
-    host.remoteList = [{ name: "origin", pushUrls: ["https://review.example.com/shop/world.git"] }];
+    host.remoteList = [{ name: "origin", pushUrls: ["https://review.example.com/shop/store.git"] }];
     host.ghState = "signed_out";
     const [error] = await errorsOf();
-    expect(error).toMatch(/^merge\.forge: the project's repository pushes to https:\/\/review\.example\.com\/shop\/world\.git, and gh is not signed in to review\.example\.com, so Loom cannot open its pull requests with gh\. Set merge\.forge to kind = "command"/u);
+    expect(error).toMatch(/^merge\.forge: the project's repository pushes to https:\/\/review\.example\.com\/shop\/store\.git, and gh is not signed in to review\.example\.com, so Loom cannot open its pull requests with gh\. Set merge\.forge to kind = "command"/u);
     expect(await errorsOf((doc) => (doc.merge.forge = { kind: "none" }))).toEqual([]);
     expect(await errorsOf((doc) => (doc.merge.forge = { kind: "command", open: "o", state: "s" }))).toEqual([]);
     expect(host.callsTo("ghStatus")).toHaveLength(1);
@@ -59,7 +59,7 @@ describe("reachErrors", () => {
     expect(error).toMatch(/^environment: bb offers Trees \(trees: Attach a thread to a tree\) for the project's repository on this machine, besides its own git worktrees\. Ask the human/u);
     expect(await errorsOf((doc) => (doc.environment = { provider: "git-worktree" }))).toEqual([]);
     expect(await errorsOf((doc) => (doc.environment = { provider: "trees", inputs: { tree: "loom-{branch}" } }))).toEqual([]);
-    const [inputs] = await errorsOf((doc) => (doc.environment = { provider: "trees", inputs: { zones: ["a"] } }));
+    const [inputs] = await errorsOf((doc) => (doc.environment = { provider: "trees", inputs: { paths: ["a"] } }));
     expect(inputs).toMatch(/^environment\.inputs: /u);
   });
 
@@ -116,10 +116,10 @@ describe("discoverText", () => {
     expect(text).not.toContain("ask:");
   });
 
-  it("reports a World-like repository's choices as ask, with each provider's schema and git's refusal", async () => {
+  it("reports a repository on another server's choices as ask, with each provider's schema and git's refusal", async () => {
     host.remoteList = [
-      { name: "delta", pushUrls: ["https://delta.example.com/shop/world.git"] },
-      { name: "github", pushUrls: ["https://github.com/shop/world.git"] },
+      { name: "forge", pushUrls: ["https://forge.example.com/shop/store.git"] },
+      { name: "github", pushUrls: ["https://github.com/shop/store.git"] },
     ];
     host.ghState = "signed_out";
     host.trial = { outcome: "refused", message: "fatal: outside the allowed worktree locations" };
@@ -127,7 +127,7 @@ describe("discoverText", () => {
     bb.pluginList = [...bb.pluginList, { id: "trees", enabled: true, builtin: false }];
     const text = await report();
     expect(text).toContain("- Remote: ask: there is no remote named origin.");
-    expect(text).toContain("- Forge for delta: ask: gh is not signed in to delta.example.com.");
+    expect(text).toContain("- Forge for forge: ask: gh is not signed in to forge.example.com.");
     expect(text).toContain("  - Trees (trees: Attach a thread to a tree). It needs inputs; inputs schema: {");
     expect(text).toContain("- Environment: ask:");
     expect(text).toContain("- Integration worktree: ask (only for merge.strategy = \"integration\"): git refused Loom's own worktree: fatal: outside the allowed worktree locations");

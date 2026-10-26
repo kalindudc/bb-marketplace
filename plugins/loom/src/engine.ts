@@ -10,14 +10,17 @@ import { isMultiRepo } from "./repos";
 import { CHECKS_NEAR_DONE_PERCENT, CHECKS_QUEUED_MINUTES } from "./check-wait";
 import { CHECKS_SETTLE_MINUTES } from "./pull-requests";
 import { NO_HOOK, sendRecords, type LoomSettings } from "./record";
-import { backToReview, blockedAtReview, failReviewerSpawn, onReviewerGone, onReviewerIdle, onReviewerTurnFailed, spawnReviewers } from "./review";
-import { approvalRefusal, endSpecReviews, onSpecReviewerGone, onSpecReviewerIdle, onSpecReviewerTurnFailed, reconcileSpecReviews, specReviewStatus } from "./spec-review";
+import { backToReview, blockedAtReview, onReviewerGone, onReviewerIdle, onReviewerTurnFailed, reviewerStartFailed, spawnReviewers } from "./review";
+import { approvalRefusal, endSpecReviews, onSpecReviewerGone, onSpecReviewerIdle, onSpecReviewerTurnFailed, reconcileSpecReviews, retrySpecReviews, specReviewStatus } from "./spec-review";
 import { budgetReason, spawnable, toLite, type TicketLite } from "./scheduler";
 import { conflictWaits, stacking } from "./stack";
+import { startWaits } from "./starts";
 import { noteUpstreamChanges } from "./upstream";
 import { LOOM_ACTOR, canMoveTicket } from "./states";
 import { askForPrTexts, deliverFixRounds, humanFixRound, onPrWriterIdle, resumePrAsks } from "./pull-requests";
 import { recordPlannerTurn } from "./planner-view";
+import { advanceWakes, releaseIdleWorkers, wakeForRestacks } from "./release";
+import type { Spec } from "./spec";
 import { cancelTicket, maybeSendTriage, onPlannerIdle } from "./triage";
 import {
   blockTicket,
@@ -32,6 +35,7 @@ import {
   resumeEnding,
   spawnWorker,
   specOf,
+  startedFine,
   type EngineCtx,
   type TurnFailure,
 } from "./workers";
@@ -122,6 +126,7 @@ export class Engine {
       await resumeEnding(this.ctx, row).catch((error) => this.warn(`ending ${row.thread_id}`, error));
     }
     resumeCheckingTickets(this.ctx);
+    if (store.openSpecReviews().some((row) => row.thread_id === null && row.wait_json !== null)) await retrySpecReviews(this.ctx).catch((error) => this.warn("spec reviews", error));
     for (const project of store.projects()) {
       if (this.disposed) return;
       try {
@@ -140,6 +145,7 @@ export class Engine {
   private async tickPaused(projectId: number): Promise<void> {
     const project = this.ctx.store.project(projectId);
     if (project?.state !== "paused") return;
+    await this.releaseAndWake(projectId, specOf(this.ctx.store, project), false);
     await pollPullRequests(this.ctx, project);
     finishIfComplete(this.ctx, this.ctx.store.project(projectId)!);
   }
@@ -173,6 +179,8 @@ export class Engine {
         await endThread(this.ctx, row, "timeout", { commit: true });
       }
       if (running() === null) return;
+      await this.releaseAndWake(projectId, spec, true);
+      if (running() === null) return;
       await noteUpstreamChanges(this.ctx, running()!, spec);
       if (running() === null) return;
       await deliverFixRounds(this.ctx, running()!);
@@ -194,6 +202,17 @@ export class Engine {
     await maybeSendTriage(this.ctx, store.project(projectId)!);
   }
 
+  /** Releases the idle workers of open pull requests and brings released ones back; `running` also wakes them for catch-ups. A project with none skips the steps. */
+  private async releaseAndWake(projectId: number, spec: Spec, running: boolean): Promise<void> {
+    const { store } = this.ctx;
+    if (spec.merge.strategy !== "pr") return;
+    if (store.threads({ projectId, role: "worker", states: ["active", "ended"] }).some((row) => row.released_at !== null)) await advanceWakes(this.ctx, projectId);
+    if (store.tickets(projectId, ["pr_open"]).length === 0) return;
+    const project = store.project(projectId)!;
+    await releaseIdleWorkers(this.ctx, project, spec);
+    if (running && store.project(projectId)?.state === "running") await wakeForRestacks(this.ctx, store.project(projectId)!, spec);
+  }
+
   private async refreshTokens(project: ProjectRow): Promise<void> {
     const { store, bb, now } = this.ctx;
     for (const row of store.threads({ projectId: project.id, states: ["active"] })) {
@@ -212,9 +231,11 @@ export class Engine {
       const spec = specOf(store, project);
       const rows = store.tickets(projectId);
       const stack = stacking(spec);
-      // A stacked start whose dependencies' commits conflicted waits until one of them changes.
-      const waiting = (ticket: TicketLite) =>
-        (spec.merge.strategy === "integration" && this.integrationMoving(projectId, ticket.repo)) || (stack && conflictWaits(rows, rows.find((row) => row.id === ticket.id)!));
+      // A stacked start whose dependencies' commits conflicted waits until one of them changes, and a failed start until its retry time.
+      const waiting = (ticket: TicketLite) => {
+        const row = rows.find((candidate) => candidate.id === ticket.id)!;
+        return (spec.merge.strategy === "integration" && this.integrationMoving(projectId, ticket.repo)) || (stack && conflictWaits(rows, row)) || startWaits(row, "worker", now());
+      };
       const lite = spawnable(spec.agents.max_workers, rows.map(toLite), waiting, stack).find((candidate) => !tried.has(candidate.id));
       return lite === undefined ? null : { project, spec, ticket: store.ticket(lite.id)!, waiting };
     };
@@ -251,8 +272,8 @@ export class Engine {
       if (row.role === "planner") continue;
       const threadId = row.thread_id ?? (row.spawn_token === null ? null : await bb.findSpawnedThread(row.spawn_token));
       if (threadId === null) {
-        if (row.role === "reviewer") failReviewerSpawn(this.ctx, row, "The plugin restarted before the reviewer started.");
-        else await failSpawn(this.ctx, row, "The plugin restarted before the worker started.");
+        if (row.role === "reviewer") await reviewerStartFailed(this.ctx, row, { kind: "failed", message: "The plugin restarted before the reviewer started." });
+        else await failSpawn(this.ctx, row, { kind: "failed", message: "The plugin restarted before the worker started." });
         rolledBack += 1;
       } else {
         await this.adopt(row, threadId);
@@ -260,7 +281,8 @@ export class Engine {
       }
     }
     for (const row of store.threads({ states: ["active"] })) {
-      if (row.thread_id === null) continue;
+      // A worker coming back from a release is archived until advanceWakes unarchives it.
+      if (row.thread_id === null || row.released_at !== null) continue;
       const thread = await bb.getThread(row.thread_id);
       if (thread !== null && thread.archivedAt === null && thread.deletedAt === null) continue;
       if (row.role === "planner") this.projects.threadGone(row.thread_id, "deleted");
@@ -382,6 +404,8 @@ export class Engine {
     const project = await this.projects.pause(slug, actor, { now });
     if (now) {
       for (const row of this.ctx.store.threads({ projectId: project.id, role: "worker", states: ["active"] })) {
+        // A worker coming back from a release runs no turn; stopping it would stop its restore.
+        if (row.released_at !== null) continue;
         await this.ctx.bb.stop(row.thread_id!).catch((error) => this.warn(`stop ${row.thread_id}`, error));
       }
     }
@@ -394,7 +418,7 @@ export class Engine {
     const project = await this.projects.resume(slug, actor);
     for (const row of store.threads({ projectId: project.id, role: "worker", states: ["active"] })) {
       const ticket = row.ticket_id === null ? null : store.ticket(row.ticket_id);
-      if (ticket?.state !== "working") continue;
+      if (ticket?.state !== "working" || row.released_at !== null) continue;
       store.updateThread(row.id, { clock_at: now() });
       const thread = await bb.getThread(row.thread_id!).catch(() => null);
       if (thread !== null && ["active", "starting", "pending"].includes(thread.status)) continue;
@@ -518,6 +542,9 @@ export class Engine {
     const planning = row === null ? store.planning(threadId) : null;
     if ((row?.role === "planner" && row.state === "active") || (planning !== null && planning.ended_at === null)) recordPlannerTurn(store, threadId, row?.project_id ?? null, lastText);
     if (row === null || row.state !== "active") return;
+    // The idle that ends a restore: the tick gives the worker its environment and its fix round (advanceWakes).
+    if (row.released_at !== null) return this.kick();
+    if (row.role !== "planner") startedFine(this.ctx, row);
     if (row.role === "planner") onPlannerIdle(this.ctx, row);
     else if (row.role === "worker") {
       if (!(await onPrWriterIdle(this.ctx, row))) await onWorkerIdle(this.ctx, row);

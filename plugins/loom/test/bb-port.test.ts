@@ -2,7 +2,7 @@ import type { NewThreadRequest } from "@get-bb/plugin-sdk";
 import { createFakePluginHost, type FakeSdkOverrides } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
 import { createBbPort } from "../src/bb-port";
-import { SpawnRefusedError, type SpawnArgs } from "../src/ports";
+import { SpawnRefusedError, SpawnUnavailableError, type SpawnArgs } from "../src/ports";
 
 const request: NewThreadRequest = {
   projectId: "proj_1",
@@ -60,10 +60,37 @@ describe("spawnThread", () => {
   });
 
   it("passes on a timeout, a conflict, a rate limit, a server error and an error without a status, so they are retried", async () => {
-    for (const error of [httpError(408, "timeout"), httpError(409, "machine_maintenance"), httpError(429, "slow down"), httpError(500, "boom"), new Error("socket hang up")]) {
+    const rejected = Object.assign(httpError(409, "The provider refused these inputs."), { code: "environment_provider_rejected", body: { code: "environment_provider_rejected", details: { environmentProviderId: "example" } } });
+    for (const error of [httpError(408, "timeout"), httpError(409, "machine_maintenance"), httpError(429, "slow down"), httpError(500, "boom"), new Error("socket hang up"), rejected]) {
       const caught = await refusing(error).spawnThread(args).catch((thrown: unknown) => thrown);
       expect(caught).toBe(error);
     }
+  });
+
+  it("turns a provider whose availability check says unavailable, and any error bb marks retryable, into a SpawnUnavailableError", async () => {
+    const unavailable = Object.assign(httpError(409, "No free slot on this machine."), {
+      code: "environment_provider_rejected",
+      body: { code: "environment_provider_rejected", message: "No free slot on this machine.", details: { environmentProviderId: "example", availabilityStatus: "unavailable" } },
+    });
+    const retryable = Object.assign(httpError(503, "The model catalog is loading."), { code: "model_catalog_unavailable", body: { code: "model_catalog_unavailable", retryable: true } });
+    for (const error of [unavailable, retryable]) {
+      const caught = await refusing(error).spawnThread(args).catch((thrown: unknown) => thrown);
+      expect(caught).toBeInstanceOf(SpawnUnavailableError);
+      expect((caught as Error).message).toBe((error as Error).message);
+    }
+    // Setup the human must do is not a wait: it fails, and counts, as before.
+    const setup = Object.assign(httpError(409, "Run setup first."), { code: "environment_provider_rejected", body: { details: { availabilityStatus: "setup-required" } } });
+    expect(await refusing(setup).spawnThread(args).catch((thrown: unknown) => thrown)).toBe(setup);
+  });
+
+  it("reads whether bb can restore a thread's environment, and asks for the restore and the unarchive", async () => {
+    const thread = { id: "thr_1", status: "idle", archivedAt: null, deletedAt: null, environmentId: "env_1", canRestoreEnvironment: true };
+    const { port, harness } = portWith({ threads: { get: async () => thread as never, unarchive: async () => ({ ok: true }) as never, restoreEnvironment: async () => thread as never } });
+    expect(await port.getThread("thr_1")).toEqual(thread);
+    await port.unarchive("thr_1");
+    await port.restoreEnvironment("thr_1");
+    expect(harness.sdk.callsTo("threads.unarchive")).toEqual([[{ threadId: "thr_1" }]]);
+    expect(harness.sdk.callsTo("threads.restoreEnvironment")).toEqual([[{ threadId: "thr_1" }]]);
   });
 });
 
@@ -216,29 +243,29 @@ describe("environment providers and plugins", () => {
   it("spawns into a managed worktree from baseBranch, or into the named provider on the project's machine", async () => {
     const { port, harness } = portWith({ threads: { spawn: async () => ({ id: "thr_w1", environmentId: null }) } });
     await port.spawnThread(args);
-    await port.spawnThread({ ...args, environment: { providerId: "world-tree", inputs: { tree: "loom-csv" } } });
+    await port.spawnThread({ ...args, environment: { providerId: "example-trees", inputs: { tree: "loom-csv" } } });
     const [managed, provider] = harness.sdk.callsTo("threads.spawn").map((call) => (call[0] as { environment: unknown }).environment);
     expect(managed).toEqual({ type: "host", hostId: "host_1", workspace: { type: "managed-worktree", baseBranch: { kind: "named", name: "origin/main" } } });
-    expect(provider).toEqual({ type: "provider", environmentProviderId: "world-tree", inputs: { tree: "loom-csv" }, machine: { type: "existing", hostId: "host_1" } });
+    expect(provider).toEqual({ type: "provider", environmentProviderId: "example-trees", inputs: { tree: "loom-csv" }, machine: { type: "existing", hostId: "host_1" } });
   });
 
   it("lists providers for the project and machine with that machine's availability, and plugins with whether bb ships them", async () => {
     const listed = [
       { id: "git-worktree", displayName: "Worktree", description: null, pluginId: "environment-git-worktree", acceptsEmptyInputs: true, inputs: null, availability: null, machineAvailability: {} },
-      { id: "world-tree", displayName: "World tree", description: "Trees.", pluginId: "world-tree", acceptsEmptyInputs: false, inputs: { type: "object" }, availability: { status: "available" }, machineAvailability: { host_1: { status: "unavailable", message: "No ~/world here." } } },
+      { id: "example-trees", displayName: "Example trees", description: "Trees.", pluginId: "example-trees", acceptsEmptyInputs: false, inputs: { type: "object" }, availability: { status: "available" }, machineAvailability: { host_1: { status: "unavailable", message: "No checkout pool here." } } },
     ];
     const { port, harness } = portWith({
       environments: { listProviders: async () => listed },
-      plugins: { list: async () => ({ plugins: [{ id: "environment-git-worktree", enabled: true, provenance: "builtin" }, { id: "world-tree", enabled: false, provenance: "catalog" }] }) },
+      plugins: { list: async () => ({ plugins: [{ id: "environment-git-worktree", enabled: true, provenance: "builtin" }, { id: "example-trees", enabled: false, provenance: "catalog" }] }) },
     } as FakeSdkOverrides);
     expect(await port.environmentProviders("proj_1", "host_1")).toEqual([
       { id: "git-worktree", displayName: "Worktree", description: null, pluginId: "environment-git-worktree", acceptsEmptyInputs: true, inputs: null, available: true, unavailableReason: null },
-      { id: "world-tree", displayName: "World tree", description: "Trees.", pluginId: "world-tree", acceptsEmptyInputs: false, inputs: { type: "object" }, available: false, unavailableReason: "No ~/world here." },
+      { id: "example-trees", displayName: "Example trees", description: "Trees.", pluginId: "example-trees", acceptsEmptyInputs: false, inputs: { type: "object" }, available: false, unavailableReason: "No checkout pool here." },
     ]);
     expect(harness.sdk.callsTo("environments.listProviders")).toEqual([[{ projectId: "proj_1", hostId: "host_1" }]]);
     expect(await port.plugins()).toEqual([
       { id: "environment-git-worktree", enabled: true, builtin: true },
-      { id: "world-tree", enabled: false, builtin: false },
+      { id: "example-trees", enabled: false, builtin: false },
     ]);
   });
 });

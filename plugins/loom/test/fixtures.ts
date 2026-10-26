@@ -89,6 +89,7 @@ export const card = (over: Partial<BoardCard> = {}): BoardCard => ({
   hasChanges: false,
   stackedOn: [],
   holding: null,
+  startWait: null,
   ...over,
 });
 
@@ -211,6 +212,7 @@ export const ticketDetail = (over: Partial<TicketDetail> = {}): TicketDetail => 
   reviewRound: 0,
   deps: ["CSV-1"],
   blockedReason: null,
+  startWait: null,
   branch: "loom/csv-2",
   prUrl: null,
   pr: null,

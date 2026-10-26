@@ -158,7 +158,15 @@ describe("tick: spawning", () => {
     h.bb.spawnError = () => new Error("provider down");
     await h.engine.tick();
     expect(spawned()).toEqual(["CSV-1"]);
-    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", failures: 1 });
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", failures: 0 });
+    // It waits for its retry time.
+    h.bb.spawnError = null;
+    await h.engine.tick();
+    expect(spawned()).toEqual(["CSV-1"]);
+    h.clock.advance(60_000);
+    await h.engine.tick();
+    expect(spawned()).toEqual(["CSV-1", "CSV-1"]);
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "working", attempt: 1 });
   });
 
   it("honors max_workers and frees a slot when a ticket reaches review", async () => {
@@ -713,7 +721,10 @@ describe("approve", () => {
     await seedProject(h);
     await reachReview(h);
     h.bb.spawnError = (args) => (args.metadata.role === "reviewer" ? new Error("provider is down") : null);
-    for (let pass = 0; pass < 4; pass++) await h.engine.tick();
+    for (let pass = 0; pass < 7; pass++) {
+      await h.engine.tick();
+      h.clock.advance(15 * 60_000);
+    }
     expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "blocked", blocked_reason: "reviewers ended without a verdict" });
     await proposeV2();
     expect(await h.engine.approve("csv", "human", 2)).toMatchObject({ requeued: [], backToReview: [] });
@@ -871,7 +882,7 @@ describe("reconcile", () => {
     expect(await h.engine.reconcile()).toEqual({ adopted: 1, rolledBack: 1, rechecked: 0 });
     expect(h.store.thread(adopt.id)).toMatchObject({ state: "active", thread_id: "thr_w1", environment_id: "env_1" });
     expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "working", worker_thread_id: "thr_w1" });
-    expect(ticketOf(h, "CSV-3")).toMatchObject({ state: "queued", failures: 1 });
+    expect(ticketOf(h, "CSV-3")).toMatchObject({ state: "queued", failures: 0 });
     expect(h.store.posts(three.id).at(-1)!.body).toContain("restarted");
   });
 
@@ -1256,7 +1267,7 @@ describe("reconcile: review and merge", () => {
 
     expect(await h.engine.reconcile()).toEqual({ adopted: 1, rolledBack: 1, rechecked: 0 });
     expect(h.store.thread(adopt.id)).toMatchObject({ state: "active", thread_id: "thr_w2", environment_id: "env_2" });
-    expect(h.store.thread(lost.id)).toMatchObject({ state: "ended", end_reason: "failed" });
+    expect(h.store.thread(lost.id)).toMatchObject({ state: "ended", end_reason: "unstarted" });
     expect(h.store.reviews(ticket.id).map((review) => review.verdict)).toEqual(["pending", "pending"]);
     expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "review", failures: 0 });
   });

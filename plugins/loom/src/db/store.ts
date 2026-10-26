@@ -98,13 +98,17 @@ export interface TicketRow {
   stack_json: string | null;
   /** The branch its pull request was opened on, or last retargeted to; null for the repo's base, as in every row from before stacking. */
   pr_base: string | null;
+  /** StartWait: the ticket waits to start its worker or a reviewer again after a failed start. */
+  start_wait_json: string | null;
+  /** The ticket's merge patch over its repo's environment inputs, from its spec's `environment.inputs`; null for none. */
+  environment_json: string | null;
   created_by: string;
   created_at: number;
   updated_at: number;
   state_at: number;
 }
 
-export type NewTicket = Pick<TicketRow, "project_id" | "seq" | "key" | "ref" | "title" | "body" | "acceptance_json" | "verify_json" | "scope_json" | "deps_json" | "priority"> & Partial<Pick<TicketRow, "repo">>;
+export type NewTicket = Pick<TicketRow, "project_id" | "seq" | "key" | "ref" | "title" | "body" | "acceptance_json" | "verify_json" | "scope_json" | "deps_json" | "priority"> & Partial<Pick<TicketRow, "repo" | "environment_json">>;
 
 export interface PostRow {
   id: number;
@@ -141,6 +145,8 @@ export interface ThreadRow {
   clock_at: number | null;
   ended_at: number | null;
   end_reason: string | null;
+  /** When Loom archived this idle worker of an open pull request to free its environment; kept until the thread has an environment again. */
+  released_at: number | null;
 }
 
 export type NewThread = Pick<ThreadRow, "project_id" | "role" | "state"> & Partial<Pick<ThreadRow, "thread_id" | "spawn_token" | "ticket_id" | "environment_id">>;
@@ -214,8 +220,10 @@ export interface RecordRow {
   state: RecordState;
   /** The summary agent's thread, once bb started it. */
   thread_id: string | null;
-  /** When the summary agent was asked for, for its time limit. */
+  /** When the summary agent was first asked for, for its time limit. */
   started_at: number | null;
+  /** When Loom tries to start the summary agent again after a failed start. */
+  retry_at: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -238,6 +246,8 @@ export interface SpecReviewRow {
   findings_json: string;
   /** Why a failed or superseded review ended. */
   reason: string | null;
+  /** SpecReviewWait: the reviewer did not start and Loom tries again; null once a reviewer thread runs. */
+  wait_json: string | null;
   started_at: number;
   ended_at: number | null;
 }
@@ -407,10 +417,10 @@ export class Store {
       const now = this.now();
       const result = this.db
         .prepare(
-          `INSERT INTO tickets (project_id, seq, key, ref, title, body, acceptance_json, verify_json, scope_json, deps_json, priority, repo, state, created_by, created_at, updated_at, state_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
+          `INSERT INTO tickets (project_id, seq, key, ref, title, body, acceptance_json, verify_json, scope_json, deps_json, priority, repo, environment_json, state, created_by, created_at, updated_at, state_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
         )
-        .run(row.project_id, row.seq, row.key, row.ref, row.title, row.body, row.acceptance_json, row.verify_json, row.scope_json, row.deps_json, row.priority, row.repo ?? null, actor, now, now, now);
+        .run(row.project_id, row.seq, row.key, row.ref, row.title, row.body, row.acceptance_json, row.verify_json, row.scope_json, row.deps_json, row.priority, row.repo ?? null, row.environment_json ?? null, actor, now, now, now);
       const ticket = this.requireTicket(Number(result.lastInsertRowid));
       this.event(ticket.project_id, ticket.id, "ticket.created", actor, { key: ticket.key, ref: ticket.ref });
       return ticket;
@@ -659,7 +669,7 @@ export class Store {
     const now = this.now();
     this.db
       .prepare(
-        "INSERT INTO records (project_id, state, created_at, updated_at) VALUES (?, 'pending', ?, ?) ON CONFLICT (project_id) DO UPDATE SET state = 'pending', thread_id = NULL, started_at = NULL, updated_at = excluded.updated_at",
+        "INSERT INTO records (project_id, state, created_at, updated_at) VALUES (?, 'pending', ?, ?) ON CONFLICT (project_id) DO UPDATE SET state = 'pending', thread_id = NULL, started_at = NULL, retry_at = NULL, updated_at = excluded.updated_at",
       )
       .run(projectId, now, now);
     this.changed(projectId);
@@ -674,7 +684,7 @@ export class Store {
     return this.db.prepare("SELECT * FROM records WHERE state IN ('pending', 'summarizing', 'sending') ORDER BY id").all() as RecordRow[];
   }
 
-  updateRecord(id: number, patch: Partial<Pick<RecordRow, "state" | "thread_id" | "started_at">>): void {
+  updateRecord(id: number, patch: Partial<Pick<RecordRow, "state" | "thread_id" | "started_at" | "retry_at">>): void {
     this.patch("records", id, patch);
   }
 
@@ -711,7 +721,7 @@ export class Store {
     return (this.db.prepare("SELECT * FROM spec_reviews WHERE spawn_token = ?").get(token) as SpecReviewRow | undefined) ?? null;
   }
 
-  updateSpecReview(id: number, patch: Partial<Pick<SpecReviewRow, "thread_id" | "idle_count">>): void {
+  updateSpecReview(id: number, patch: Partial<Pick<SpecReviewRow, "thread_id" | "idle_count" | "wait_json" | "spawn_token">>): void {
     // The table has no updated_at column.
     this.patch("spec_reviews", id, patch, false);
   }

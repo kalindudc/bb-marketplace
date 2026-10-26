@@ -2,7 +2,8 @@ import { makeTurnFailedEvent } from "@get-bb/plugin-sdk/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PostRow } from "../src/db/store";
 import { renderThread, workerBrief } from "../src/prompts";
-import { SpawnRefusedError, type SpawnArgs } from "../src/ports";
+import { SpawnRefusedError, SpawnUnavailableError, type SpawnArgs } from "../src/ports";
+import { waitOf } from "../src/starts";
 import { parseSpec } from "../src/spec";
 import {
   blockTicket,
@@ -17,6 +18,7 @@ import {
   resumeEnding,
   spawnWorker,
   specOf,
+  startedFine,
   ticketMoveFor,
   toWorking,
 } from "../src/workers";
@@ -172,25 +174,65 @@ describe("spawnWorker", () => {
     expect(ticketOf(h, "CSV-1").attempt).toBe(2);
   });
 
-  it("ends the row, posts the error and requeues with a failure when the spawn throws; persistent errors block at max_attempts", async () => {
+  it("waits after a failed spawn, with the same row and claim, and counts failures only after three in a row", async () => {
     await seedProject(h);
     h.bb.spawnError = () => new Error("host is unreachable");
     await startWorker(h).catch(() => undefined);
-    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", failures: 1, attempt: 1, worker_thread_id: null });
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", failures: 0, attempt: 1, worker_thread_id: null });
     expect(workerRows(h, "CSV-1")).toMatchObject([{ state: "ended", end_reason: "failed" }]);
+    expect(waitOf(ticketOf(h, "CSV-1"))).toMatchObject({ role: "worker", tries: 1, kind: "failed", reason: "host is unreachable", until: h.clock.t + 60_000, counted: false });
     const post = h.store.posts(ticketOf(h, "CSV-1").id).at(-1)!;
     expect(post).toMatchObject({ kind: "system", author_kind: "loom" });
-    expect(post.body).toContain("host is unreachable");
+    expect(post.body).toBe("Could not start a worker: host is unreachable. Loom tries again in 1m; a start that fails 4 times in a row counts as a failed attempt.");
 
+    // Before its retry time the ticket does not start.
     await startWorker(h).catch(() => undefined);
-    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", failures: 2 });
-    await startWorker(h).catch(() => undefined);
-    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "blocked", failures: 3, blocked_reason: "could not start a worker 3 times" });
+    expect(h.bb.callsTo("spawnThread")).toHaveLength(1);
+
+    const failures: number[] = [];
+    for (let n = 0; n < 5; n++) {
+      h.clock.advance(waitOf(ticketOf(h, "CSV-1"))!.until - h.clock.t);
+      await startWorker(h).catch(() => undefined);
+      failures.push(ticketOf(h, "CSV-1").failures);
+    }
+    expect(failures).toEqual([0, 0, 1, 2, 3]);
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "blocked", attempt: 1, start_wait_json: null, blocked_reason: "could not start a worker 3 times; the last time: host is unreachable" });
+    // One row and one claim for the whole attempt; the posts say what changed, not every retry.
+    expect(workerRows(h, "CSV-1")).toHaveLength(1);
+    expect(kinds("CSV-1").filter((kind) => kind === "claim")).toHaveLength(1);
+    expect(h.store.posts(ticketOf(h, "CSV-1").id).filter((p) => p.kind === "system").map((p) => p.body.slice(0, 60))).toHaveLength(3);
     expect(project().triage_pending).toBe(1);
     expect(blockedAtStart(h.store, ticketOf(h, "CSV-1"))).toBe(true);
 
     await requeueTicket(h.ctx, "CSV-1", { note: "", actor: "human", author: "human" });
     expect(blockedAtStart(h.store, ticketOf(h, "CSV-1"))).toBe(false);
+  });
+
+  it("waits without counting while the environment provider is unavailable, and starts the same attempt when it is back", async () => {
+    await seedProject(h, (doc) => (doc.budget = { max_attempts: 1 }));
+    h.bb.spawnError = () => new SpawnUnavailableError("HTTP 409: No room on this machine");
+    await startWorker(h);
+    for (let n = 0; n < 6; n++) {
+      h.clock.advance(waitOf(ticketOf(h, "CSV-1"))!.until - h.clock.t);
+      await startWorker(h);
+    }
+    const wait = waitOf(ticketOf(h, "CSV-1"))!;
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", failures: 0, attempt: 1 });
+    expect(wait).toMatchObject({ kind: "unavailable", tries: 7, counted: false, expired: false, since: h.clock.t - [1, 2, 4, 8, 15, 15].reduce((a, b) => a + b, 0) * 60_000 });
+    expect(wait.until - h.clock.t).toBe(15 * 60_000);
+    expect(h.store.posts(ticketOf(h, "CSV-1").id).filter((post) => post.kind === "system").map((post) => post.body)).toEqual([
+      "Could not start a worker: HTTP 409: No room on this machine. Loom tries again in 1m; waiting for the environment provider counts no attempt, and the ticket blocks if it stays unavailable for 1h.",
+    ]);
+
+    h.bb.spawnError = null;
+    h.clock.advance(wait.until - h.clock.t);
+    const row = await startWorker(h);
+    expect(workerRows(h, "CSV-1")).toHaveLength(1);
+    expect(row).toMatchObject({ state: "active", attempt: 1, thread_id: "thr_w1" });
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "working", attempt: 1, worker_thread_id: "thr_w1" });
+    expect(spawnArgs(7).prompt).not.toContain("## Earlier work");
+    startedFine(h.ctx, row);
+    expect(ticketOf(h, "CSV-1").start_wait_json).toBeNull();
   });
 
   it("does not count a queued ticket or one blocked for another reason as blocked at start", async () => {
@@ -704,18 +746,49 @@ describe("failed turns", () => {
     expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", failures: 1 });
   });
 
-  it("handles a provisioning failure once, as a failed spawn, even though bb reports it twice", async () => {
+  it("blocks a ticket whose environment provider stays unavailable for an hour, counting no attempt, and approval requeues it", async () => {
+    await seedProject(h);
+    h.bb.spawnError = () => new SpawnUnavailableError("No room on this machine.");
+    await startWorker(h);
+    while (ticketOf(h, "CSV-1").state === "queued") {
+      h.clock.advance(waitOf(ticketOf(h, "CSV-1"))!.until - h.clock.t);
+      await startWorker(h);
+    }
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "blocked", failures: 0, start_wait_json: null, blocked_reason: "no worker could start: the environment provider was unavailable for 1h: No room on this machine." });
+    expect(h.bb.callsTo("spawnThread")).toHaveLength(8);
+    expect(project().triage_pending).toBe(1);
+    expect(blockedAtStart(h.store, ticketOf(h, "CSV-1"))).toBe(true);
+  });
+
+  it("handles a provisioning failure once, as a failed start that waits, even though bb reports it twice", async () => {
     await seedProject(h);
     h.bb.provisionEnvironment = false;
     const row = await startWorker(h);
-    h.bb.systemErrors.set("thr_w1", { code: "thread_provisioning_failed", message: "The worktree could not be created." });
+    h.bb.systemErrors.set("thr_w1", { code: "thread_provisioning_failed", message: "Provisioning thread failed", detail: "The worktree could not be created." });
     await onTurnFailed(h.ctx, makeTurnFailedEvent({ threadId: "thr_w1", requestId: "req_1" }));
     await onTurnFailed(h.ctx, makeTurnFailedEvent({ threadId: "thr_w1", requestId: "req_1" }));
     expect(h.store.thread(row.id)).toMatchObject({ state: "ended", end_reason: "failed" });
-    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", failures: 1 });
-    expect(h.store.posts(ticketOf(h, "CSV-1").id).at(-1)!.body).toContain("The worktree could not be created.");
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", failures: 0 });
+    expect(waitOf(ticketOf(h, "CSV-1"))).toMatchObject({ tries: 1, kind: "failed", row: row.id });
+    expect(h.store.posts(ticketOf(h, "CSV-1").id).at(-1)!.body).toContain("Could not start a worker: The worktree could not be created.");
     expect(h.bb.callsTo("archive")).toEqual([["thr_w1"]]);
     expect(h.bb.sent("thr_w1")).toEqual([]);
+
+    // The retry starts the same row on a new thread, and asks for the same branch.
+    h.clock.advance(60_000);
+    h.bb.provisionEnvironment = true;
+    await startWorker(h);
+    expect(h.store.thread(row.id)).toMatchObject({ state: "active", thread_id: "thr_w2", attempt: 1 });
+  });
+
+  it("keeps the branch of a ticket whose pull request is open when its new worker cannot start", async () => {
+    await seedProject(h, (doc) => (doc.merge = { strategy: "pr" }));
+    h.store.updateTicket(ticketOf(h, "CSV-1").id, { branch: "wt-old", attempt: 1, pushed_sha: "abc", pr_branch: "wt-old" });
+    h.bb.provisionEnvironment = false;
+    await startWorker(h);
+    h.bb.systemErrors.set("thr_w1", { code: "thread_provisioning_failed", message: "Provisioning thread failed", detail: "fatal: bad ref" });
+    await onTurnFailed(h.ctx, makeTurnFailedEvent({ threadId: "thr_w1", requestId: "req_1" }));
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", branch: "wt-old", failures: 0 });
   });
 
   it("clears the branch of a resumed ticket whose thread failed before it had an environment", async () => {
@@ -723,9 +796,9 @@ describe("failed turns", () => {
     h.store.updateTicket(ticketOf(h, "CSV-1").id, { branch: "wt-old", attempt: 1 });
     h.bb.provisionEnvironment = false;
     await startWorker(h);
-    h.bb.systemErrors.set("thr_w1", { code: "thread_provisioning_failed", message: "fatal: bad ref" });
+    h.bb.systemErrors.set("thr_w1", { code: "thread_provisioning_failed", message: "Provisioning thread failed", detail: "fatal: bad ref" });
     await onTurnFailed(h.ctx, makeTurnFailedEvent({ threadId: "thr_w1", requestId: "req_1" }));
-    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", branch: null, failures: 0 });
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", branch: null, failures: 0, start_wait_json: null });
   });
 
   it("ignores turns of threads it does not know", async () => {

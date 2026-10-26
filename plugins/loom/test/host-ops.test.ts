@@ -821,11 +821,11 @@ describe("remotes", () => {
   it("lists each remote with its push URLs, credentials left out", async () => {
     const repo = makeRepo();
     sh(repo, "remote", "add", "origin", "https://user:secret@example.com/acme/shop.git");
-    sh(repo, "remote", "add", "delta", "https://delta.example.com/shop/world.git");
-    sh(repo, "remote", "set-url", "--push", "delta", "git@delta.example.com:shop/world.git");
+    sh(repo, "remote", "add", "forge", "https://forge.example.com/shop/store.git");
+    sh(repo, "remote", "set-url", "--push", "forge", "git@forge.example.com:shop/store.git");
     expect(await remotes({ repo })).toEqual({
       remotes: [
-        { name: "delta", pushUrls: ["git@delta.example.com:shop/world.git"] },
+        { name: "forge", pushUrls: ["git@forge.example.com:shop/store.git"] },
         { name: "origin", pushUrls: ["https://example.com/acme/shop.git"] },
       ],
     });
@@ -855,7 +855,7 @@ describe("ghStatus", () => {
     pathWith('[ "$1 $2 $3 $4" = "auth status --hostname github.com" ] && exit 0; exit 1');
     const repo = makeRepo();
     expect(await ghStatus({ repo, pushUrl: "https://github.com/acme/shop.git" })).toEqual({ status: "ready", host: "github.com" });
-    expect(await ghStatus({ repo, pushUrl: "git@delta.example.com:shop/world.git" })).toEqual({ status: "signed_out", host: "delta.example.com" });
+    expect(await ghStatus({ repo, pushUrl: "git@forge.example.com:shop/store.git" })).toEqual({ status: "signed_out", host: "forge.example.com" });
     expect(await ghStatus({ repo, pushUrl: "/srv/git/shop.git" })).toEqual({ status: "not_a_url", host: null });
   });
 
