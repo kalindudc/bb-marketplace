@@ -852,7 +852,7 @@ describe("host entry", () => {
   const harness = experimental_createHostEntryHarness(hostEntry, { experimental_paths: { dataDir: join(tmpdir(), "loom-host-entry-data"), tempDir: tmpdir() } });
 
   it("lets bb send again only the quick local reads that change nothing, so a new method that writes, or a slow forge read, is not retried", () => {
-    const retryable = Object.entries<{ experimental_retryable?: boolean }>(hostContract)
+    const retryable = Object.entries(hostContract as unknown as Record<string, { experimental_retryable?: boolean }>)
       .filter(([, method]) => method.experimental_retryable === true)
       .map(([name]) => name)
       .sort();

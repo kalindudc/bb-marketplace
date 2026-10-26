@@ -111,13 +111,17 @@ const changedFile = z
 // experimental_retryable marks the reads bb may cancel and send again when the host is slow to answer: they move no ref, change
 // no worktree and write no object. landedOn fetches, which writes objects, so it is not one. Nor are the forge reads: bb
 // resends at half the call's timeout, which would cut a slow pull request read short at 75 of its 150 seconds.
+// Spread rather than written out: the SDK this pins (0.6.75, the newest the package proxy serves) predates the flag in its
+// types, and bb 0.6.79 reads it from the contract at runtime.
+const RETRYABLE = { experimental_retryable: true } as const;
+
 export const hostContract = defineRpcContract({
   ensureBranch: {
     input: z.object({ repo: absPath, branch: ref, from: ref }).strict(),
     output: z.object({ sha, created: z.boolean() }).strict(),
   },
   worktreeState: {
-    experimental_retryable: true,
+    ...RETRYABLE,
     // trackedOnly leaves untracked files out of `dirty`: a build or a test run may leave some behind, and they cannot reach a commit.
     input: z.object({ worktree: absPath, base: ref, trackedOnly: z.boolean().optional() }).strict(),
     output: z.object({ branch: z.string().nullable(), head: sha, dirty: z.boolean(), changed: z.array(z.string()) }).strict(),
@@ -139,19 +143,19 @@ export const hostContract = defineRpcContract({
     output: z.object({ exitCode: z.number().int().nullable(), timedOut: z.boolean(), durationMs: z.number(), output: z.string() }).strict(),
   },
   diff: {
-    experimental_retryable: true,
+    ...RETRYABLE,
     input: z.object({ repo: absPath, base: ref, head: commit, maxBytes: z.number().int().min(1000).max(200_000) }).strict(),
     output: z.object({ stat: z.string(), patch: z.string(), truncated: z.boolean() }).strict(),
   },
   // The files that differ from base to head. mergeBase compares head with its merge base with base, as base...head does; landed,
   // for a head that base already contains, compares it with base as it was before the merge that brought it in.
   changedFiles: {
-    experimental_retryable: true,
+    ...RETRYABLE,
     input: z.object({ repo: absPath, base: ref, head: ref, mergeBase: z.boolean(), landed: z.boolean().optional(), maxFiles: z.number().int().min(1).max(5000) }).strict(),
     output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), base: sha, head: sha, files: z.array(changedFile), truncated: z.boolean() }).strict(), missing]),
   },
   filePatch: {
-    experimental_retryable: true,
+    ...RETRYABLE,
     input: z.object({ repo: absPath, base: commit, head: commit, path: z.string().min(1).max(4096), maxBytes: z.number().int().min(1000).max(400_000) }).strict(),
     output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), patch: z.string(), truncated: z.boolean() }).strict(), missing]),
   },
@@ -310,7 +314,7 @@ export const hostContract = defineRpcContract({
   },
   // Each git remote with its push URLs, in `git remote` order.
   remotes: {
-    experimental_retryable: true,
+    ...RETRYABLE,
     input: z.object({ repo: absPath }).strict(),
     output: z.object({ remotes: z.array(z.object({ name: z.string(), pushUrls: z.array(z.string()) }).strict()) }).strict(),
   },

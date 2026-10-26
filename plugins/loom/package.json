@@ -1,11 +1,11 @@
 {
   "name": "bb-plugin-loom",
-  "version": "0.21.0",
+  "version": "0.21.1",
   "private": true,
   "type": "module",
   "engines": {
     "bb": ">=0.47",
-    "bbPluginSdk": ">=0.6.79"
+    "bbPluginSdk": ">=0.6.75"
   },
   "bb": {
     "name": "Loom",
@@ -29,11 +29,11 @@
     "typecheck": "tsc"
   },
   "dependencies": {
+    "@get-bb/plugin-sdk": "0.6.75",
     "smol-toml": "^1.9.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@get-bb/plugin-sdk": "0.6.79",
     "@testing-library/react": "^16.3.3",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",

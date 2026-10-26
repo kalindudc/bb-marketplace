@@ -2,6 +2,12 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.21.1 (2026-10-26)
+
+### Fixed
+
+- 0.21.0 could not be installed or updated from git: bb installs a git plugin's `dependencies` only, and the host entry now runs git and `gh` through the SDK's VCS scheduler, which the host bundle carries itself. `@get-bb/plugin-sdk` is now a dependency, pinned at 0.6.75, the newest version some package proxies serve. Loom needs plugin SDK 0.6.75 or later in bb, and bb 0.47.
+
 ## 0.21.0 (2026-10-26)
 
 ### Added
