@@ -18,11 +18,11 @@ const worktreeKey = z.string().regex(/^[a-z][a-z0-9-]{1,39}(?:\.[a-z][a-z0-9-]{0
 const missing = z.object({ outcome: z.literal("missing"), message: z.string() }).strict();
 const forgeCommand = z.string().min(1).max(2000);
 const unavailable = z.object({ outcome: z.literal("unavailable"), message: z.string() }).strict();
-// A pull request read that failed. `transient` marks a GitHub failure worth waiting out instead of pausing: a server error or
-// timeout, or a rate limit; `retryAfterMs` is how long GitHub's answer said to wait, when it said. Optional, as from an older host.
-const readUnavailable = z
-  .object({ outcome: z.literal("unavailable"), message: z.string(), transient: z.enum(["server", "rate_limit"]).optional(), retryAfterMs: z.number().int().min(0).optional() })
-  .strict();
+// A pull request read that failed. `transient` marks a forge failure worth waiting out instead of pausing: a server error or
+// timeout, a rate limit, or a network failure such as a name that did not resolve; `retryAfterMs` is how long the forge's
+// answer said to wait, when it said. Optional, as from an older host.
+const transient = z.enum(["server", "rate_limit", "network"]);
+const readUnavailable = z.object({ outcome: z.literal("unavailable"), message: z.string(), transient: transient.optional(), retryAfterMs: z.number().int().min(0).optional() }).strict();
 
 /** A pull request's number as forge commands get it in LOOM_PR_NUMBER: the last run of digits in its URL, empty when there is none. */
 export function prNumber(url: string): string {
@@ -295,7 +295,7 @@ export const hostContract = defineRpcContract({
               .strict(),
           ),
           /** A number GitHub answered no pull request for; `transient` when its error is one worth waiting out, as for a whole failed read. */
-          missing: z.array(z.object({ number: z.number().int(), message: z.string(), transient: z.enum(["server", "rate_limit"]).optional(), retryAfterMs: z.number().int().min(0).optional() }).strict()),
+          missing: z.array(z.object({ number: z.number().int(), message: z.string(), transient: transient.optional(), retryAfterMs: z.number().int().min(0).optional() }).strict()),
         })
         .strict(),
       readUnavailable,

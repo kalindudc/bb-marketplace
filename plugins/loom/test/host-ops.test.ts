@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import hostEntry from "../host";
 import { batchQuery, changedFiles, commitAll, diff, ensureBranch, ensureWorktree, exec, fetchBranch, filePatch, ghStatus, ghTransient, git, landedOn, merge, parseRemoteUrl, prBatch, prCommit, prCreate, prFeedback, prRequestReview, prState, push, remotes, resetHard, stackBase, trialWorktree, worktreeState } from "../src/host/ops";
 
@@ -17,6 +17,17 @@ let counter = 0;
 
 const sh = (cwd: string, ...args: string[]) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
 const GH = { kind: "gh" } as const;
+// What the Delta CLI printed on 2026-10-26 while this machine's resolver lost names, and what gh prints when it cannot connect.
+const DT_OFFLINE = [
+  "Error: GET https://delta.shopify.io/api/v3/repos/shop/world/pulls/2313251",
+  "",
+  "Caused by:",
+  "    0: error sending request for url (https://delta.shopify.io/api/v3/repos/shop/world/pulls/2313251)",
+  "    1: client error (Connect)",
+  "    2: dns error",
+  "    3: failed to lookup address information: nodename nor servname provided, or not known",
+].join("\n");
+const GH_OFFLINE = "error connecting to api.github.com\ncheck your internet connection or https://githubstatus.com";
 const put = (root: string, path: string, content: string) => {
   mkdirSync(join(root, path, ".."), { recursive: true });
   writeFileSync(join(root, path), content);
@@ -729,6 +740,12 @@ describe("gh", () => {
     expect(await prState({ repo, url: "https://github.com/acme/shop/pull/7", forge: GH })).not.toHaveProperty("transient");
   });
 
+  it("marks gh pr view's failure to connect as a network failure, and runs it once", async () => {
+    fakeGh(`printf '%s\\n' "error connecting to api.github.com" "check your internet connection or https://githubstatus.com" 1>&2\nexit 1`);
+    expect(await prState({ repo: makeRepo(), url: "https://github.com/acme/shop/pull/7", forge: GH })).toEqual({ outcome: "unavailable", message: `gh pr view failed: ${GH_OFFLINE}`, transient: "network" });
+    expect(calls()).toHaveLength(1);
+  });
+
   it("asks each reviewer for a review in its own REST call, the login in the JSON on stdin, and reports the ones GitHub refused", async () => {
     fakeGh(`body=$(cat)\necho "$body" >> "$dir/stdin.txt"\ncase "$body" in *carol*) echo "gh: Reviews may only be requested from collaborators. (HTTP 422)" 1>&2; exit 1;; esac`);
     const repo = makeRepo();
@@ -798,6 +815,30 @@ describe("ghTransient", () => {
     ["gh: HTTP 401: Bad credentials, which no timeout fixes", "", 1],
   ] as const)("is not transient: %s", (stderr, stdout, code) => {
     expect(failed(`${stderr}\n`, stdout, code)).toBeNull();
+  });
+
+  it.each([
+    DT_OFFLINE,
+    GH_OFFLINE,
+    'Post "https://api.github.com/graphql": dial tcp: lookup api.github.com: no such host',
+    'Post "https://api.github.com/graphql": dial tcp: lookup api.github.com on 192.168.1.1:53: read udp 192.168.1.20:61234->192.168.1.1:53: i/o timeout',
+    'Post "https://api.github.com/graphql": dial tcp 140.82.112.6:443: connect: network is unreachable',
+    'Post "https://api.github.com/graphql": dial tcp 140.82.112.6:443: connect: no route to host',
+    'Post "https://api.github.com/graphql": dial tcp 140.82.112.6:443: connect: connection timed out',
+    "curl: (6) Could not resolve host: delta.shopify.io",
+    "getaddrinfo ENOTFOUND delta.shopify.io",
+    "ssh: Could not resolve hostname github.com: Temporary failure in name resolution",
+    "dial tcp: lookup delta.shopify.io: Name or service not known",
+  ])("is a network failure: %s", (stderr) => {
+    expect(failed(`${stderr}\n`)).toEqual({ transient: "network" });
+  });
+
+  it("is not a network failure for a missing login, an answer with a status, or a pull request's own text, whatever words they hold", () => {
+    expect(failed(`${GH_OFFLINE}\n`, "", 4)).toBeNull();
+    expect(failed("gh: HTTP 401: Bad credentials; check your internet connection\n")).toBeNull();
+    expect(failed("gh: HTTP 404: Not Found (dns error)\n")).toBeNull();
+    const body = JSON.stringify({ data: { repository: { pullRequest: { comments: { nodes: [{ body: "The deploy hit a dns error: could not resolve host" }] } } } }, errors: [{ type: "NOT_FOUND", message: "Could not resolve to a PullRequest with the number of 9." }] });
+    expect(failed("gh: Could not resolve to a PullRequest with the number of 9.\n", body)).toBeNull();
   });
 
   it("reads only the error fields of a JSON body, not the pull request text it carries", () => {
@@ -889,6 +930,69 @@ describe("the spec's forge commands", () => {
     expect(await prState({ repo, url, forge: { kind: "command", state } })).toEqual({ outcome: "ok", state: "MERGED" });
     expect(await prState({ repo, url, forge: { kind: "command", state: "echo open" } })).toEqual({ outcome: "ok", state: "OPEN" });
     expect(await prState({ repo, url, forge: { kind: "command", state: "echo pending" } })).toMatchObject({ outcome: "unavailable", message: expect.stringContaining('printed "pending", not open, merged or closed') });
+  });
+
+  describe("a failed read", () => {
+    const url = "https://delta.shopify.io/shop/world/pull/2313251";
+    let runs: string;
+    beforeEach(() => {
+      runs = join(scratch, `runs-${counter++}`);
+    });
+    /** A command that notes each run, prints `output` on stderr and exits with `exit`. */
+    const printing = (output: string, exit = 1) => {
+      const file = join(scratch, `output-${counter++}`);
+      writeFileSync(file, output);
+      return `echo run >> "${runs}"; cat "${file}" >&2; exit ${exit}`;
+    };
+    const state = async (command: string) => prState({ repo: makeRepo(), url, forge: { kind: "command", state: command } });
+
+    it("classifies a failed state command's output by gh's rules: a network failure, a server error or a rate limit waits, and the command runs once", async () => {
+      expect(await state(printing(DT_OFFLINE))).toEqual({ outcome: "unavailable", message: `The forge's state command failed (exit 1): ${DT_OFFLINE}`, transient: "network" });
+      expect(readFileSync(runs, "utf8")).toBe("run\n");
+      const bad = "Error: GET https://delta.shopify.io/api/v3/repos/shop/world/pulls/1\n\nCaused by:\n    HTTP status server error (502 Bad Gateway) for url (https://delta.shopify.io/api/v3/repos/shop/world/pulls/1)";
+      expect(await state(printing(bad))).toMatchObject({ outcome: "unavailable", transient: "server" });
+      expect(await state(printing("Error: GET https://delta.shopify.io/api/v3/repos/shop/world/pulls/1\n\nCaused by:\n    429 Too Many Requests"))).toMatchObject({ outcome: "unavailable", transient: "rate_limit" });
+      expect(readFileSync(runs, "utf8")).toBe("run\nrun\nrun\n");
+    });
+
+    it("pauses on a failed state command that is not worth waiting out, and on one that ran but printed no state", async () => {
+      expect(await state(printing("Error: GET https://delta.shopify.io/api/v3/repos/shop/world/pulls/1\n\nCaused by:\n    HTTP status client error (404 Not Found) for url (https://delta.shopify.io/api/v3/repos/shop/world/pulls/1)"))).not.toHaveProperty("transient");
+      expect(await state(printing("dt: you are not logged in; run dt auth login"))).not.toHaveProperty("transient");
+      expect(await state(printing(DT_OFFLINE, 4))).not.toHaveProperty("transient");
+      // A command that exits 0 after its CLI failed printed the wrong thing, which is its own bug, whatever the text says.
+      expect(await state(printing(DT_OFFLINE, 0))).toEqual({ outcome: "unavailable", message: `The forge's state command printed "3: failed to lookup address information: nodename nor servname provided, or not known", not open, merged or closed.` });
+    });
+
+    it("classifies a failed feedback command the same way, and still pauses when it prints no JSON object or the wrong one", async () => {
+      const feedback = async (command: string) => prFeedback({ repo: makeRepo(), url, forge: { kind: "command", feedback: command } });
+      expect(await feedback(printing(DT_OFFLINE))).toEqual({ outcome: "unavailable", message: `The forge's feedback command failed (exit 1): ${DT_OFFLINE}`, transient: "network" });
+      expect(readFileSync(runs, "utf8")).toBe("run\n");
+      const notJson = await feedback(printing(DT_OFFLINE, 0));
+      expect(notJson).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("must print a JSON object on its last line") });
+      expect(notJson).not.toHaveProperty("transient");
+      expect(await feedback(`echo '{"state":"open"}'`)).not.toHaveProperty("transient");
+    });
+
+    it("reads only the error fields of a JSON line in a failed command's output, not the pull request text it carries", async () => {
+      const feedback = async (command: string) => prFeedback({ repo: makeRepo(), url, forge: { kind: "command", feedback: command } });
+      const pull = JSON.stringify({ state: "open", head: "abc123", items: [{ id: 1, kind: "comment", author: "alice", body: "The deploy hit a dns error, could not resolve host" }] });
+      expect(await feedback(`echo '${pull}'; exit 1`)).not.toHaveProperty("transient");
+      expect(await feedback(`echo '{"message":"error connecting to delta.shopify.io"}'; exit 1`)).toMatchObject({ transient: "network" });
+    });
+
+    it("counts a state or feedback command that timed out as a failure worth waiting out", async () => {
+      const repo = makeRepo();
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        const reading = prState({ repo, url, forge: { kind: "command", state: "sleep 30" } });
+        const following = prFeedback({ repo, url, forge: { kind: "command", feedback: "echo 'HTTP 401: Bad credentials'; sleep 30" } });
+        await vi.advanceTimersByTimeAsync(2 * 60_000);
+        expect(await reading).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("The forge's state command took longer than 2 minutes"), transient: "server" });
+        expect(await following).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("The forge's feedback command took longer than 2 minutes"), transient: "server" });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });
 
@@ -1369,6 +1473,13 @@ describe("prFeedback", () => {
       expect(await prFeedback({ repo: makeRepo(), url: "https://github.com/acme/shop/pull/7", forge: GH })).toEqual({ outcome: "unavailable", message: "gh api graphql failed: gh: Could not resolve to a PullRequest with the number of 7." });
     });
 
+    it("marks gh's failure to connect as a network failure, and asks once", async () => {
+      writeFileSync(join(bin, "gh"), `#!/bin/sh\nprintf -- '--\\n' >> "${bin}/args.txt"\nprintf '%s\\n' "error connecting to api.github.com" "check your internet connection or https://githubstatus.com" >&2\nexit 1\n`);
+      chmodSync(join(bin, "gh"), 0o755);
+      expect(await prFeedback({ repo: makeRepo(), url: "https://github.com/acme/shop/pull/7", forge: GH })).toEqual({ outcome: "unavailable", message: `gh api graphql failed: ${GH_OFFLINE}`, transient: "network" });
+      expect(readFileSync(join(bin, "args.txt"), "utf8")).toBe("--\n");
+    });
+
     it("is unavailable for a URL that is not a GitHub pull request, and when gh finds none", async () => {
       expect(await prFeedback({ repo: makeRepo(), url: "https://github.com/acme/shop/issues/3", forge: GH })).toMatchObject({ outcome: "unavailable" });
       fakeGh({ data: { repository: { pullRequest: null } } });
@@ -1526,6 +1637,13 @@ describe("prBatch", () => {
     expect(await prBatch(input([1, 2], false))).toEqual({ outcome: "unavailable", message: "gh api graphql failed: gh: HTTP 502", transient: "server" });
     writeFileSync(join(bin, "gh"), `#!/bin/sh\necho "GraphQL: API rate limit exceeded for user ID 1234567." >&2\nexit 1\n`);
     expect(await prBatch(input([1], false))).toMatchObject({ outcome: "unavailable", transient: "rate_limit" });
+  });
+
+  it("marks a call that could not connect as one network failure for the whole batch, and asks once", async () => {
+    writeFileSync(join(bin, "gh"), `#!/bin/sh\necho run >> "${bin}/runs.txt"\nprintf '%s\\n' "error connecting to api.github.com" "check your internet connection or https://githubstatus.com" >&2\nexit 1\n`);
+    chmodSync(join(bin, "gh"), 0o755);
+    expect(await prBatch(input([1, 2, 3], true))).toEqual({ outcome: "unavailable", message: `gh api graphql failed: ${GH_OFFLINE}`, transient: "network" });
+    expect(readFileSync(join(bin, "runs.txt"), "utf8")).toBe("run\n");
   });
 
   it("is served through the contract, which refuses more than 10 numbers and a name that is not GitHub's", async () => {

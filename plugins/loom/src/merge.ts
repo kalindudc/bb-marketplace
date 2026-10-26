@@ -5,7 +5,7 @@ import { delivers, workerOf, type CheckRun } from "./checks";
 import { repoCheckout, type RepoCheckout } from "./checkouts";
 import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { plural } from "./format";
-import { backedOffUntil, backoffText, forgeHostOf, nextBackoff, nextPollAt, nextPollWait, pollWaitOf, pollWaitReason, pollWaitText, SERVER_ERROR_LIMIT_MS } from "./forge-waits";
+import { backedOffUntil, backoffText, forgeHostOf, networkWaitReason, networkWaitText, nextBackoff, nextNetworkBackoff, nextPollAt, nextPollWait, pollWaitOf, pollWaitReason, pollWaitText, SERVER_ERROR_LIMIT_MS } from "./forge-waits";
 import { afterMergeChangedText, afterMergeFailedText, andList, clip, conflictText, dependsOnLines, landBody, prDivergedText, restackConflictText, restackFailedText, withRestoredNote, workerPrBody } from "./prompts";
 import { closedPrReset, followFeedback, inFixRound, prTextFor, prTextReady, reviewersToAsk, templatePr, type PrText } from "./pull-requests";
 import { githubPull, prNumber, PR_BATCH_MAX, type HostInput, type HostOutput as HostOutputOf } from "./host-contract";
@@ -705,13 +705,13 @@ type Feedback = Extract<HostOutputOf<"prFeedback">, { outcome: "ok" }>;
 
 /**
  * One read of a pull request: its state, the PrMeta fields Loom stores (null for the push-only forge, which has no pull
- * request), and its feedback when Loom follows it; or why it failed, with `transient` for a GitHub failure worth waiting out.
+ * request), and its feedback when Loom follows it; or why it failed, with `transient` for a forge failure worth waiting out.
  */
 type PrRead =
   | { outcome: "ok"; state: "OPEN" | "MERGED" | "CLOSED"; meta: Pick<PrMeta, "draft" | "review" | "base"> | null; feedback: Feedback | null }
-  | { outcome: "unavailable"; message: string; transient?: "server" | "rate_limit"; retryAfterMs?: number };
+  | { outcome: "unavailable"; message: string; transient?: "server" | "rate_limit" | "network"; retryAfterMs?: number };
 
-/** The due GitHub pull requests of one repository, with the checkout gh runs in; `forgeHost` keys the host's rate-limit backoff. */
+/** The due GitHub pull requests of one repository, with the checkout gh runs in; `forgeHost` keys the host's backoff. */
 interface Batch {
   checkout: RepoCheckout;
   host: string;
@@ -725,9 +725,10 @@ interface Batch {
  * Reads every open pull request whose next read is due, every 5 minutes unless it waits longer: merged completes the
  * ticket, closed blocks it, and so does one merged into a branch other than its repo's base. GitHub's are read PR_BATCH_MAX
  * at a time in one call per repository; a command forge's and the push-only forge's one at a time. Each due ticket gets
- * one read, never repeated in the same poll. A GitHub server error or timeout makes each ticket it read wait longer and
- * pauses the project only after an hour of them; a rate limit stops every read to that host, in this poll and every
- * project's, for a while (forge-waits.ts). Any other failure pauses the project.
+ * one read, never repeated in the same poll. A server error or timeout makes each ticket it read wait longer and pauses
+ * the project only after an hour of them; a network failure or a rate limit stops every read to that forge host, in this
+ * poll and every project's, for a while (forge-waits.ts). A command forge's host is its pull request URL's. Any other
+ * failure pauses the project.
  */
 export async function pollPullRequests(ctx: EngineCtx, project: ProjectRow): Promise<void> {
   const { store } = ctx;
@@ -755,7 +756,7 @@ export async function pollPullRequests(ctx: EngineCtx, project: ProjectRow): Pro
     const forge = forgeOf(ticket);
     if (ticket.pr_url === null && forge.kind !== "none") continue;
     // Left due, so it is read in the first poll after the backoff ends.
-    const host = forge.kind === "gh" ? forgeHostOf(ticket.pr_url) : null;
+    const host = forge.kind === "none" ? null : forgeHostOf(ticket.pr_url);
     if (backedOffUntil(ctx.forgeBackoffs, host, ctx.now()) !== null) continue;
     const checkout = await checkoutOfRepo(ticket.repo);
     if (checkout === null) continue;
@@ -783,7 +784,7 @@ export async function pollPullRequests(ctx: EngineCtx, project: ProjectRow): Pro
   }
   for (const batch of batches.values()) {
     for (let start = 0; start < batch.tickets.length; start += PR_BATCH_MAX) {
-      // A rate limit in an earlier chunk leaves the rest due, for the first poll after the backoff ends.
+      // A rate limit or network failure in an earlier chunk, or another repository's, leaves the rest due for the first poll after the backoff ends.
       if (backedOffUntil(ctx.forgeBackoffs, batch.forgeHost, ctx.now()) !== null) break;
       await readBatch(ctx, project, spec, batch, batch.tickets.slice(start, start + PR_BATCH_MAX), follows);
     }
@@ -795,29 +796,48 @@ function addWaitPost(ctx: EngineCtx, ticket: TicketRow, body: string, data: obje
   ctx.store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "system", body, data_json: JSON.stringify(data) });
 }
 
-/** A read GitHub answered with a server error or that timed out: the ticket's next read waits longer, and an hour of them pauses the project. */
-function waitOutServerError(ctx: EngineCtx, ticket: TicketRow, message: string): void {
+/** A read the forge answered with a server error or that timed out: the ticket's next read waits longer, and an hour of them pauses the project. */
+function waitOutServerError(ctx: EngineCtx, ticket: TicketRow, message: string, forge = "GitHub"): void {
   const { store } = ctx;
   const now = ctx.now();
   const previous = pollWaitOf(ticket);
   const wait = nextPollWait(previous, { now, message });
   store.tx(() => {
     store.updateTicket(ticket.id, { pr_poll_json: JSON.stringify(wait) });
-    if (previous === null) addWaitPost(ctx, ticket, pollWaitText(wait), { prReadFailed: true, failures: wait.failures });
+    if (previous === null) addWaitPost(ctx, ticket, pollWaitText(wait, forge), { prReadFailed: true, failures: wait.failures });
   });
   store.changed(ticket.project_id);
   ctx.bb.log("warn", `Reading ${ticket.key}'s pull request failed ${plural(wait.failures, "time")} in a row: ${message}`);
-  if (now - wait.since >= SERVER_ERROR_LIMIT_MS) pauseProject(ctx, ticket.project_id, pollWaitReason(ticket, wait, now));
+  if (now - wait.since >= SERVER_ERROR_LIMIT_MS) pauseProject(ctx, ticket.project_id, pollWaitReason(ticket, wait, now, forge));
 }
 
 /** A read the forge host rate-limited: no read goes to that host, from any project, until the backoff ends. */
-function backOff(ctx: EngineCtx, ticket: TicketRow, host: string, failure: { message: string; retryAfterMs?: number }): void {
+function backOff(ctx: EngineCtx, ticket: TicketRow, host: string, failure: { message: string; retryAfterMs?: number }, forge = "GitHub"): void {
   const now = ctx.now();
   const backoff = nextBackoff(ctx.forgeBackoffs.get(host), { now, message: failure.message, retryAfterMs: failure.retryAfterMs });
   ctx.forgeBackoffs.set(host, backoff);
-  addWaitPost(ctx, ticket, backoffText(host, backoff, now), { rateLimited: true, host, until: backoff.until });
+  addWaitPost(ctx, ticket, backoffText(host, backoff, now, forge), { rateLimited: true, host, until: backoff.until });
   ctx.bb.log("warn", `${host} rate-limited Loom's pull request reads, so none goes there until ${new Date(backoff.until).toISOString()}: ${failure.message}`);
 
+}
+
+/**
+ * A read that never reached the forge host, such as one whose name did not resolve. That is the machine, not the pull
+ * request, so the whole host waits: no read goes there, from any project, for 5, 10, 20, then 30 minutes, and one failed
+ * call is one failure however many pull requests it asked for. The ticket whose read starts the streak gets its one post,
+ * and an hour of failures with no read there working in between pauses the project whose read failed.
+ */
+function waitOutNetworkError(ctx: EngineCtx, ticket: TicketRow, host: string, message: string): void {
+  const now = ctx.now();
+  const backoff = nextNetworkBackoff(ctx.forgeBackoffs.get(host), { now, message });
+  ctx.forgeBackoffs.set(host, backoff);
+  const { failures, since } = backoff.network;
+  if (failures === 1) {
+    addWaitPost(ctx, ticket, networkWaitText(host, backoff), { networkFailed: true, host, until: backoff.until });
+    ctx.store.changed(ticket.project_id);
+  }
+  ctx.bb.log("warn", `Reading pull requests on ${host} failed ${plural(failures, "time")} in a row with a network error, so none goes there until ${new Date(backoff.until).toISOString()}: ${message}`);
+  if (now - since >= SERVER_ERROR_LIMIT_MS) pauseProject(ctx, ticket.project_id, networkWaitReason(host, backoff, now));
 }
 
 /**
@@ -882,8 +902,9 @@ async function readBatch(ctx: EngineCtx, project: ProjectRow, spec: Spec, batch:
     return;
   }
   if (answer.outcome === "unavailable") {
-    // A rate limit stops the whole host once; a server error or timeout makes each ticket of the call wait out its own.
+    // A rate limit or a network failure stops the whole host once; a server error or timeout makes each ticket of the call wait out its own.
     if (answer.transient === "rate_limit") backOff(ctx, polled[0]!.ticket, batch.forgeHost, answer);
+    else if (answer.transient === "network") waitOutNetworkError(ctx, polled[0]!.ticket, batch.forgeHost, answer.message);
     else if (answer.transient === "server") for (const { ticket } of polled) waitOutServerError(ctx, ticket, answer.message);
     else pauseProject(ctx, project.id, answer.message);
     return;
@@ -892,8 +913,9 @@ async function readBatch(ctx: EngineCtx, project: ProjectRow, spec: Spec, batch:
   const answered = (number: number) => answer.pulls.some((each) => each.number === number);
   const missOf = (number: number) => answer.missing.find((each) => each.number === number);
   const limited = polled.filter(({ number }) => missOf(number)?.transient === "rate_limit");
+  const offline = polled.filter(({ number }) => missOf(number)?.transient === "network");
   for (const { ticket, number } of [...polled.filter((each) => answered(each.number)), ...polled.filter((each) => !answered(each.number))]) {
-    if (limited.some((each) => each.ticket.id === ticket.id)) continue;
+    if (limited.some((each) => each.ticket.id === ticket.id) || offline.some((each) => each.ticket.id === ticket.id)) continue;
     const pull = answer.pulls.find((each) => each.number === number);
     const read: PrRead =
       pull === undefined
@@ -906,6 +928,8 @@ async function readBatch(ctx: EngineCtx, project: ProjectRow, spec: Spec, batch:
     const misses = limited.map(({ number }) => missOf(number)!);
     const waits = misses.flatMap((each) => (each.retryAfterMs === undefined ? [] : [each.retryAfterMs]));
     backOff(ctx, limited[0]!.ticket, batch.forgeHost, { message: misses[0]!.message, ...(waits.length === 0 ? {} : { retryAfterMs: Math.max(...waits) }) });
+  } else if (offline.length > 0) {
+    waitOutNetworkError(ctx, offline[0]!.ticket, batch.forgeHost, missOf(offline[0]!.number)!.message);
   }
 }
 
@@ -923,8 +947,10 @@ function missedRead(ticket: TicketRow, miss: Extract<HostOutputOf<"prBatch">, { 
 async function settleRead(ctx: EngineCtx, project: ProjectRow, settings: RepoSettings, polled: TicketRow, read: PrRead, host: string | null): Promise<void> {
   const { store } = ctx;
   if (read.outcome === "unavailable") {
-    if (read.transient === "rate_limit" && host !== null) backOff(ctx, polled, host, read);
-    else if (read.transient === "server") waitOutServerError(ctx, polled, read.message);
+    const forge = settings.forge.kind === "gh" ? "GitHub" : (host ?? "the forge");
+    if (read.transient === "rate_limit" && host !== null) backOff(ctx, polled, host, read, forge);
+    else if (read.transient === "network" && host !== null) waitOutNetworkError(ctx, polled, host, read.message);
+    else if (read.transient === "server" || read.transient === "network") waitOutServerError(ctx, polled, read.message, forge);
     else pauseProject(ctx, project.id, read.message);
     return;
   }

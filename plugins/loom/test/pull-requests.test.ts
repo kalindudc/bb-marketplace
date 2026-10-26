@@ -195,6 +195,41 @@ describe("following the pull request", () => {
     expect(ticket()).toMatchObject({ state: "working", pr_rounds: 1, pr_poll_json: null });
   });
 
+  it("waits out a feedback read that could not reach GitHub for the whole host, and starts the fix round once a read succeeds", async () => {
+    await openPr();
+    h.host.feedback.set(URL, changesRequested);
+    h.host.scripted.prBatch = [{ outcome: "unavailable", message: "gh api graphql failed: error connecting to api.github.com\ncheck your internet connection or https://githubstatus.com", transient: "network" }];
+    await poll();
+    expect(project().state).toBe("running");
+    expect(ticket()).toMatchObject({ state: "pr_open", pr_rounds: 0, pr_status_json: null, pr_poll_json: null });
+    expect(h.ctx.forgeBackoffs.get("github.com")).toMatchObject({ delayMs: 5 * 60_000, network: { failures: 1 } });
+    expect(h.host.callsTo("prFeedback")).toEqual([]);
+
+    await poll();
+    expect(h.host.callsTo("prBatch").filter((call) => call.feedback)).toHaveLength(2);
+    expect(ticket()).toMatchObject({ state: "working", pr_rounds: 1 });
+    expect(h.ctx.forgeBackoffs.has("github.com")).toBe(false);
+  });
+
+  it("waits out a forge's feedback command that could not reach its host, backing off that host only", async () => {
+    const DELTA = "https://delta.shopify.io/shop/world/pull/2313251";
+    await openPr({ forge: { kind: "command", open: "delta open", state: "delta state", feedback: "delta feedback" } });
+    h.store.updateTicket(ticket().id, { pr_url: DELTA });
+    h.host.feedback.set(DELTA, changesRequested);
+    h.host.scripted.prFeedback = [{ outcome: "unavailable", message: "The forge's feedback command failed (exit 1): Error: GET https://delta.shopify.io/api/v3/repos/shop/world/pulls/2313251\n\nCaused by:\n    2: dns error", transient: "network" }];
+    await poll();
+    expect(h.host.callsTo("prFeedback")).toHaveLength(1);
+    expect(project().state).toBe("running");
+    expect(ticket()).toMatchObject({ state: "pr_open", pr_rounds: 0 });
+    expect(h.ctx.forgeBackoffs.get("delta.shopify.io")).toMatchObject({ network: { failures: 1 } });
+    expect(h.ctx.forgeBackoffs.has("github.com")).toBe(false);
+
+    await poll();
+    expect(h.host.callsTo("prFeedback")).toHaveLength(2);
+    expect(ticket()).toMatchObject({ state: "working", pr_rounds: 1 });
+    expect(h.ctx.forgeBackoffs.has("delta.shopify.io")).toBe(false);
+  });
+
   it("holds a failed check while others run, until 30 minutes after the push", async () => {
     await openPr();
     h.host.feedback.set(URL, { checks: [{ key: "check:1", name: "lint", state: "failed", url: "https://ci/1" }, { key: "status:reviews", name: "reviews", state: "pending", url: null }] });

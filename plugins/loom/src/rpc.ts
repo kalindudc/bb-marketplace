@@ -285,10 +285,10 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
     };
   };
 
-  /** When Loom reads an open pull request next: its own wait, or later while its forge host has rate-limited Loom. */
+  /** When Loom reads an open pull request next: its own wait, or later while its forge host has rate-limited Loom or could not be reached. */
   const nextCheck = (ticket: TicketRow, forge: string): number | null => {
     const next = nextPollAt(ticket);
-    const host = forge === "gh" ? forgeHostOf(ticket.pr_url) : null;
+    const host = forge === "none" ? null : forgeHostOf(ticket.pr_url);
     const until = backedOffUntil(engine.ctx.forgeBackoffs, host, now());
     return next === null ? null : Math.max(next, until ?? next);
   };

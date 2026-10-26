@@ -271,6 +271,31 @@ describe("reads", () => {
     expect(await nextCheck()).toBe(checked + 20 * 60_000);
   });
 
+  describe("while the pull request's forge host cannot be reached", () => {
+    const offline = (until: number) => ({ until, delayMs: 10 * 60_000, message: "error connecting to the host", network: { failures: 2, since: until - 15 * 60_000 } });
+    const nextCheck = async () => (await call<TicketDetail>("ticket", { key: "CSV-1" })).pr?.nextCheckAt;
+    const checked = () => Date.now() - 60_000;
+
+    it("ticket says Loom reads a GitHub pull request next when the host's wait ends", async () => {
+      await running((doc) => (doc.merge = { strategy: "pr", describe: "loom", squash: false }));
+      host.store.updateTicket(ticketId("CSV-1"), { state: "pr_open", pr_url: "https://github.com/acme/shop/pull/1", pr_checked_at: checked() });
+      const until = Date.now() + 10 * 60_000;
+      host.engine.ctx.forgeBackoffs.set("github.com", offline(until));
+      expect(await nextCheck()).toBe(until);
+    });
+
+    it("ticket says Loom reads a command forge's pull request next when its own host's wait ends, not GitHub's", async () => {
+      await running((doc) => (doc.merge = { strategy: "pr", describe: "loom", squash: false, forge: { kind: "command", open: "delta open", state: "delta state" } }));
+      const at = checked();
+      host.store.updateTicket(ticketId("CSV-1"), { state: "pr_open", pr_url: "https://delta.shopify.io/shop/world/pull/2313251", pr_checked_at: at });
+      const until = Date.now() + 10 * 60_000;
+      host.engine.ctx.forgeBackoffs.set("github.com", offline(until + 60_000));
+      expect(await nextCheck()).toBe(at + 5 * 60_000);
+      host.engine.ctx.forgeBackoffs.set("delta.shopify.io", offline(until));
+      expect(await nextCheck()).toBe(until);
+    });
+  });
+
   it("ticket puts a recorded run into its check card with the size of its output", async () => {
     await running();
     await host.engine.tick();

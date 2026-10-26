@@ -429,19 +429,28 @@ const GH_AUTH_EXIT = 4;
 const HTTP_STATUS = /\bHTTP (\d{3})\b/u;
 const RATE_LIMITED = /rate[-_ ]limit|abuse detection|too many requests/iu;
 const SERVER_TROUBLE = /\bserver error\b|bad gateway|service unavailable|gateway time-?out|\btime(?:d[- ]?|[- ]?)out|deadline exceeded|connection (?:reset|refused)|\bEOF\b|TLS handshake|something went wrong/iu;
+// The read never reached the forge: its name did not resolve or no connection opened. That is this machine's resolver or
+// network, not one pull request, so it is tested before SERVER_TROUBLE, whose timeouts would also match a connect timeout.
+const NETWORK_TROUBLE =
+  /could not resolve host|dns error|failed to lookup address|nodename nor servname|no such host|temporary failure in name resolution|getaddrinfo|name or service not known|error connecting to|client error \(connect\)|network is unreachable|host is unreachable|no route to host|connection timed out|i\/o timeout|check your internet connection/iu;
 const RETRY_AFTER_SECONDS = /retry[- ]after:?\s*(\d{1,6})\b/iu;
 const RATE_LIMIT_RESET = /x-ratelimit-reset:?\s*(\d{10})\b/iu;
 const TRY_AGAIN_IN = /(?:try again|retry) in (\d{1,4}) (second|minute|hour)s?\b/iu;
 const UNIT_MS: Record<string, number> = { second: 1000, minute: 60_000, hour: 3_600_000 };
 const LONGEST_RETRY_AFTER_MS = 24 * 3_600_000;
 
+/** The error fields of a JSON answer, null when `text` is not JSON. The rest of an answer can hold a pull request's own text. */
+function errorFields(text: string): string[] | null {
+  const body = parseJson<{ message?: unknown; errors?: unknown }>(text);
+  if (body === null || typeof body !== "object") return null;
+  const errors = Array.isArray(body.errors) ? (body.errors as Array<{ type?: unknown; message?: unknown } | null>) : [];
+  return [body.message, ...errors.flatMap((error) => [error?.type, error?.message])].filter((field): field is string => typeof field === "string");
+}
+
 // A failed read's stdout is the response body, which can hold the pull request's own text; only its error fields are read.
 function ghErrorText(run: GitRun): string {
-  const body = parseJson<{ message?: unknown; errors?: unknown }>(run.stdout);
-  if (body === null || typeof body !== "object") return `${run.stderr}\n${run.stdout.slice(0, 2000)}`;
-  const errors = Array.isArray(body.errors) ? (body.errors as Array<{ type?: unknown; message?: unknown } | null>) : [];
-  const fields = [body.message, ...errors.flatMap((error) => [error?.type, error?.message])].filter((field): field is string => typeof field === "string");
-  return [run.stderr, ...fields].join("\n");
+  const fields = errorFields(run.stdout);
+  return fields === null ? `${run.stderr}\n${run.stdout.slice(0, 2000)}` : [run.stderr, ...fields].join("\n");
 }
 
 function retryAfterMs(text: string): number | null {
@@ -454,8 +463,9 @@ function retryAfterMs(text: string): number | null {
 
 /**
  * Whether a failed gh read is worth waiting out: `rate_limit` when GitHub says it rate-limited the call (HTTP 403 or 429, or
- * GraphQL's RATE_LIMITED), `server` for its 500, 502, 503 and 504 answers, timeouts and dropped connections. Null for the
- * rest, such as a missing login, a 404 or a bad URL.
+ * GraphQL's RATE_LIMITED), `server` for its 500, 502, 503 and 504 answers, timeouts and dropped connections, and `network`
+ * when the call never reached it, such as a name lookup that failed. Null for the rest, such as a missing login, a 404 or a
+ * bad URL. A forge command's failed read is classified by the same rules.
  */
 export function ghTransient(run: GitRun): Transient | null {
   if (run.code === GH_AUTH_EXIT) return null;
@@ -466,6 +476,7 @@ export function ghTransient(run: GitRun): Transient | null {
     return wait === null ? { transient: "rate_limit" } : { transient: "rate_limit", retryAfterMs: wait };
   }
   if (status !== undefined) return /^50[0234]$/u.test(status) ? { transient: "server" } : null;
+  if (NETWORK_TROUBLE.test(text)) return { transient: "network" };
   return SERVER_TROUBLE.test(text) ? { transient: "server" } : null;
 }
 
@@ -706,8 +717,8 @@ const commandFeedbackSchema = z.object({
 
 async function feedbackWithCommand(input: HostInput<"prFeedback">, command: string, signal?: AbortSignal): Promise<HostOutput<"prFeedback">> {
   const result = await spawnCommand({ cwd: input.repo, command, timeoutMs: FORGE_COMMAND_MS, env: { LOOM_URL: input.url, LOOM_PR_NUMBER: prNumber(input.url) } }, signal);
-  const failed = commandFailure("feedback", result);
-  if (failed !== null) return { outcome: "unavailable", message: failed };
+  const failed = commandReadFailed("feedback", result);
+  if (failed !== null) return failed;
   const line = result.output.trim().split("\n").at(-1) ?? "";
   const parsed = commandFeedbackSchema.safeParse(parseJson(line));
   if (!parsed.success) {
@@ -840,6 +851,26 @@ function commandFailure(what: string, result: HostOutput<"exec">): string | null
   return null;
 }
 
+// The output mixes the command's stdout and stderr, and a JSON line can carry the pull request's own text, so only the error
+// fields of such a line count. The text is the tail the message shows.
+const commandErrorText = (output: string) =>
+  tail(output)
+    .split("\n")
+    .map((line) => errorFields(line.trim())?.join("\n") ?? line)
+    .join("\n");
+
+/**
+ * Why a forge's state or feedback command failed, with `transient` when its output reads as a failure worth waiting out by
+ * ghTransient's rules; a command that timed out always is. A command that ran but printed the wrong thing is not: that is
+ * the command's own bug. Nothing here runs the command again.
+ */
+function commandReadFailed(what: string, result: HostOutput<"exec">): ReadUnavailable | null {
+  const message = commandFailure(what, result);
+  if (message === null) return null;
+  const transient = ghTransient({ code: result.exitCode ?? -1, stdout: "", stderr: commandErrorText(result.output) }) ?? (result.timedOut ? { transient: "server" as const } : null);
+  return { outcome: "unavailable", message, ...transient };
+}
+
 async function openWithCommand(input: HostInput<"prCreate">, command: string, signal?: AbortSignal): Promise<HostOutput<"prCreate">> {
   const { repo, remote, base, head, title, body, draft } = input;
   const env = { LOOM_REMOTE: remote, LOOM_BASE: base, LOOM_HEAD: head, LOOM_TITLE: title, LOOM_DRAFT: draft ? "1" : "0" };
@@ -853,8 +884,8 @@ async function openWithCommand(input: HostInput<"prCreate">, command: string, si
 // The last non-empty line decides, so a warning a CLI prints first does not hide the state.
 async function stateWithCommand(input: HostInput<"prState">, command: string, signal?: AbortSignal): Promise<HostOutput<"prState">> {
   const result = await spawnCommand({ cwd: input.repo, command, timeoutMs: FORGE_COMMAND_MS, env: { LOOM_URL: input.url, LOOM_PR_NUMBER: prNumber(input.url) } }, signal);
-  const failed = commandFailure("state", result);
-  if (failed !== null) return { outcome: "unavailable", message: failed };
+  const failed = commandReadFailed("state", result);
+  if (failed !== null) return failed;
   const line = result.output.trim().split("\n").at(-1) ?? "";
   const word = line.trim().split(/\s+/u)[0]?.toUpperCase();
   if (word === "OPEN" || word === "MERGED" || word === "CLOSED") return { outcome: "ok", state: word };

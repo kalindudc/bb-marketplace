@@ -2,6 +2,17 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.20.2 (2026-10-26)
+
+### Fixed
+
+- A network or name lookup failure no longer pauses a project. When Loom's read of an open pull request cannot reach the forge, because the host's name did not resolve, no connection opened, or gh says it could not connect, Loom reads no pull request on that host, in any project, for 5 minutes, then 10, 20 and 30 while the failures go on. One failed call counts once, however many pull requests it asked for, so a machine whose resolver keeps losing names costs one failed read per wait instead of one per pull request. Loom never reads again to retry; it only waits longer between the reads it already makes. The first ticket whose read failed gets one post, the ticket page's next check time shows the wait, and the first read to that host that works clears it. The project pauses only after an hour of failed reads to the host with none working in between, with a reason that names the host, the error and how long it lasted.
+- A command forge's `state` and `feedback` commands now get the same waits as `gh`. When one fails or times out, Loom reads its output by the rules it uses for gh's errors. A network failure waits as above, for the pull request URL's host only, so a Delta failure stops reads to delta.shopify.io while GitHub keeps being read. A server error or a timeout makes that pull request's next read wait 5, 10, 20, then 30 minutes, as a GitHub server error does, and a rate limit stops reads to the host for 15 minutes or more. A command that fails for any other reason, such as a missing login or a pull request the forge cannot find, still pauses the project, and so does one that succeeds but prints no state or no feedback object, since that is a bug in the command. The posts and pause reasons name the forge's host instead of GitHub.
+
+### Changed
+
+- A connection that timed out ("connection timed out" or "i/o timeout") now counts as a network failure, which waits for the whole host, instead of a server error, which waited for each pull request on its own.
+
 ## 0.20.1 (2026-10-26)
 
 ### Fixed

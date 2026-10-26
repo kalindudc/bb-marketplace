@@ -1,14 +1,15 @@
-// How Loom waits out GitHub when a pull request read fails in a way worth waiting out. A server error or a timeout makes
+// How Loom waits out a forge when a pull request read fails in a way worth waiting out. A server error or a timeout makes
 // that ticket's next read wait longer, 5 minutes after the first failure and doubling to 30, and pauses the project only
-// once its reads have failed for an hour. A rate limit stops every read to that forge host, in every project, for 15
-// minutes, doubling to an hour, or longer when GitHub names a later time. No wait here ever reads sooner than the usual
-// 5 minutes, and nothing reads again within one poll.
+// once its reads have failed for an hour. A network failure, such as a name that did not resolve, stops every read to that
+// forge host, in every project, on the same 5 to 30 minute steps, and pauses only after an hour of them with no read there
+// working in between. A rate limit stops every read to the host for 15 minutes, doubling to an hour, or longer when the
+// forge names a later time. No wait here ever reads sooner than the usual 5 minutes, and nothing reads again within one poll.
 import type { TicketRow } from "./db/store";
 import { formatDuration, plural } from "./format";
 
 export const POLL_MS = 5 * 60_000;
 const LONGEST_POLL_MS = 30 * 60_000;
-/** How long a pull request's reads may keep failing with server errors before Loom pauses the project. */
+/** How long a pull request's reads may keep failing with server errors, or a host's with network errors, before Loom pauses the project. */
 export const SERVER_ERROR_LIMIT_MS = 60 * 60_000;
 const FIRST_BACKOFF_MS = 15 * 60_000;
 const LONGEST_BACKOFF_MS = 60 * 60_000;
@@ -39,22 +40,30 @@ export function nextPollWait(previous: PollWait | null, a: { now: number; messag
   return { failures: (previous?.failures ?? 0) + 1, since: previous?.since ?? a.now, message: a.message };
 }
 
-/** The ticket post that starts a streak of failed reads; later failures in it post nothing. */
-export function pollWaitText(wait: PollWait): string {
-  return `Reading the pull request failed with what looks like a temporary GitHub error: ${clause(wait.message)}. Loom reads it again in ${formatDuration(pollDelayMs(wait.failures))}, waiting longer after each failure up to ${formatDuration(LONGEST_POLL_MS)}, and pauses the project only if the reads keep failing for ${formatDuration(SERVER_ERROR_LIMIT_MS)}.`;
+/** The ticket post that starts a streak of failed reads; later failures in it post nothing. `forge` names who answered, GitHub or a command forge's host. */
+export function pollWaitText(wait: PollWait, forge = "GitHub"): string {
+  return `Reading the pull request failed with what looks like a temporary ${forge} error: ${clause(wait.message)}. Loom reads it again in ${formatDuration(pollDelayMs(wait.failures))}, waiting longer after each failure up to ${formatDuration(LONGEST_POLL_MS)}, and pauses the project only if the reads keep failing for ${formatDuration(SERVER_ERROR_LIMIT_MS)}.`;
 }
 
 /** Why the project pauses once the reads have failed for SERVER_ERROR_LIMIT_MS. */
-export function pollWaitReason(ticket: Pick<TicketRow, "key" | "pr_url">, wait: PollWait, now: number): string {
-  return `Reading the pull request ${ticket.pr_url ?? ""} of ${ticket.key} failed ${plural(wait.failures, "time")} in a row over ${formatDuration(now - wait.since)}: ${clause(wait.message)}. Resume once GitHub answers again.`;
+export function pollWaitReason(ticket: Pick<TicketRow, "key" | "pr_url">, wait: PollWait, now: number, forge = "GitHub"): string {
+  return `Reading the pull request ${ticket.pr_url ?? ""} of ${ticket.key} failed ${plural(wait.failures, "time")} in a row over ${formatDuration(now - wait.since)}: ${clause(wait.message)}. Resume once ${forge} answers again.`;
 }
 
-/** HostBackoff: no read goes to the forge host before `until`, after it rate-limited Loom; `delayMs` doubles with each limit until a read succeeds. */
+/**
+ * HostBackoff: no read goes to the forge host before `until`. After a rate limit, `delayMs` doubles with each limit until a
+ * read succeeds. After a network failure, `network` counts the failed reads to the host since the first, and `delayMs`
+ * follows pollDelayMs.
+ */
 export interface HostBackoff {
   until: number;
   delayMs: number;
   message: string;
+  network?: { failures: number; since: number };
 }
+
+/** The backoff of a host whose reads failed with network errors. */
+export type NetworkBackoff = HostBackoff & { network: { failures: number; since: number } };
 
 /** The engine's backoffs by forge host, shared by every project. */
 export type HostBackoffs = Map<string, HostBackoff>;
@@ -70,13 +79,39 @@ export function backedOffUntil(backoffs: HostBackoffs, host: string | null, now:
   return until !== undefined && until > now ? until : null;
 }
 
-/** 15 minutes for the first rate limit, doubling to an hour while no read succeeds in between, and never before the time GitHub named. */
+/**
+ * 15 minutes for the first rate limit, doubling to an hour while no read succeeds in between, and never before the time the
+ * forge named. A rate limit is an answer, so it ends a streak of network failures and starts at 15 minutes after one.
+ */
 export function nextBackoff(previous: HostBackoff | undefined, a: { now: number; message: string; retryAfterMs?: number }): HostBackoff {
-  const delayMs = previous === undefined ? FIRST_BACKOFF_MS : Math.min(LONGEST_BACKOFF_MS, previous.delayMs * 2);
+  const delayMs = previous === undefined || previous.network !== undefined ? FIRST_BACKOFF_MS : Math.min(LONGEST_BACKOFF_MS, previous.delayMs * 2);
   return { until: a.now + Math.max(delayMs, a.retryAfterMs ?? 0), delayMs, message: a.message };
 }
 
 /** The ticket post for a rate limit: one per backoff, since no read reaches the host again before it ends. */
-export function backoffText(host: string, backoff: HostBackoff, now: number): string {
-  return `GitHub rate-limited Loom's read of the pull request: ${clause(backoff.message)}. Loom reads no pull request on ${host}, in any project, for ${formatDuration(backoff.until - now)}, and does not pause the project.`;
+export function backoffText(host: string, backoff: HostBackoff, now: number, forge = "GitHub"): string {
+  return `${forge} rate-limited Loom's read of the pull request: ${clause(backoff.message)}. Loom reads no pull request on ${host}, in any project, for ${formatDuration(backoff.until - now)}, and does not pause the project.`;
+}
+
+/**
+ * The backoff after one more read to the host failed with a network error: 5, 10, 20, then 30 minutes, as a ticket's server
+ * errors wait. A streak whose wait ended more than 30 minutes before this failure is over, since nothing tried the host in
+ * between, as when the machine slept, so the failure starts a new one.
+ */
+export function nextNetworkBackoff(previous: HostBackoff | undefined, a: { now: number; message: string }): NetworkBackoff {
+  const ongoing = previous?.network !== undefined && a.now - previous.until <= LONGEST_POLL_MS ? previous.network : undefined;
+  const network = { failures: (ongoing?.failures ?? 0) + 1, since: ongoing?.since ?? a.now };
+  const delayMs = pollDelayMs(network.failures);
+  return { until: a.now + delayMs, delayMs, message: a.message, network };
+}
+
+/** The ticket post that starts a host's streak of network failures: one per host and streak, whichever project's read failed first. */
+export function networkWaitText(host: string, backoff: NetworkBackoff): string {
+  return `Reading the pull request failed because Loom could not reach ${host}: ${clause(backoff.message)}. That looks like a network or name lookup problem on this machine rather than the pull request, so Loom reads no pull request on ${host}, in any project, for ${formatDuration(backoff.delayMs)}, waiting longer after each failure up to ${formatDuration(LONGEST_POLL_MS)}, and pauses the project only if the reads there keep failing for ${formatDuration(SERVER_ERROR_LIMIT_MS)}.`;
+}
+
+/** Why the project pauses once the host's reads have failed with network errors for SERVER_ERROR_LIMIT_MS. */
+export function networkWaitReason(host: string, backoff: NetworkBackoff, now: number): string {
+  const { failures, since } = backoff.network;
+  return `Loom could not reach ${host} to read pull requests: its reads failed ${plural(failures, "time")} in a row over ${formatDuration(now - since)}, with none working in between: ${clause(backoff.message)}. Resume once this machine can reach ${host} again.`;
 }

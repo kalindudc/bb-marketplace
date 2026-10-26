@@ -722,6 +722,7 @@ describe("the pull request strategy", () => {
   describe("when GitHub fails to answer a read", () => {
     const BAD_GATEWAY = { outcome: "unavailable", message: "gh api graphql failed: gh: HTTP 502", transient: "server" } as const;
     const RATE_LIMITED = { outcome: "unavailable", message: "gh api graphql failed: GraphQL: API rate limit exceeded for user ID 1234567.", transient: "rate_limit" } as const;
+    const OFFLINE = { outcome: "unavailable", message: "gh api graphql failed: error connecting to api.github.com\ncheck your internet connection or https://githubstatus.com", transient: "network" } as const;
     const MINUTE = 60_000;
     /** The pull requests of each GitHub read, one entry per call. */
     const calls = () => h.host.callsTo("prBatch").map((input) => input.numbers.map((number) => `https://${input.host}/${input.owner}/${input.name}/pull/${number}`));
@@ -920,6 +921,184 @@ describe("the pull request strategy", () => {
       await pollIn(1);
       expect(reads()).toHaveLength(7);
     });
+
+    describe("when the read cannot reach the host", () => {
+      const backoff = () => h.ctx.forgeBackoffs.get("github.com");
+      /** Every host call since `mark`, by method: a wait never makes a call of its own. */
+      const methodsSince = (mark: number) => h.host.calls.slice(mark).map((call) => call.method);
+
+      it("stops every read to the host, in this poll and every project, for 5, 10, 20, then 30 minutes, one failed call per wait", async () => {
+        await openTwo();
+        // CSV-2's pull request in another repository of github.com, so the poll makes a second call to the host.
+        h.store.updateTicket(ticketOf(h, "CSV-2").id, { pr_url: "https://github.com/acme/api/pull/1" });
+        const other = await otherProject();
+        const mark = h.host.calls.length;
+        h.host.scripted.prBatch = Array.from({ length: 4 }, () => OFFLINE);
+        await pollIn(5);
+        const first = h.clock.t;
+        expect(calls()).toEqual([["https://github.com/acme/shop/pull/2"]]);
+        expect(project().state).toBe("running");
+        expect(backoff()).toEqual({ until: first + 5 * MINUTE, delayMs: 5 * MINUTE, message: OFFLINE.message, network: { failures: 1, since: first } });
+        expect(systemPosts("CSV-1")).toEqual([
+          "Reading the pull request failed because Loom could not reach github.com: gh api graphql failed: error connecting to api.github.com\ncheck your internet connection or https://githubstatus.com. That looks like a network or name lookup problem on this machine rather than the pull request, so Loom reads no pull request on github.com, in any project, for 5m, waiting longer after each failure up to 30m, and pauses the project only if the reads there keep failing for 1h.",
+        ]);
+        expect(systemPosts("CSV-2")).toEqual([]);
+        // The host waits, not the tickets: neither keeps a streak of its own.
+        expect([waitOf("CSV-1"), waitOf("CSV-2")]).toEqual([null, null]);
+
+        const expected: Array<[number, number]> = [
+          [4, 1],
+          [1, 2],
+          [9, 2],
+          [1, 3],
+          [19, 3],
+          [1, 4],
+          [29, 4],
+        ];
+        for (const [minutes, count] of expected) {
+          await pollIn(minutes);
+          await pollPullRequests(h.ctx, other());
+          expect(calls(), `after ${minutes} more minutes`).toHaveLength(count);
+        }
+        expect(calls().every((call) => call.length === 1 && call[0] === "https://github.com/acme/shop/pull/2")).toBe(true);
+        expect(backoff()).toMatchObject({ delayMs: 30 * MINUTE, network: { failures: 4, since: first } });
+        expect([project().state, other().state]).toEqual(["running", "running"]);
+        expect(systemPosts("CSV-1")).toHaveLength(1);
+        expect(posts("INV-1").filter((post) => post.kind === "system")).toEqual([]);
+        expect(methodsSince(mark)).toEqual(["prBatch", "prBatch", "prBatch", "prBatch"]);
+
+        // The first read that works clears the wait, and every pull request on the host is read in that poll.
+        await pollIn(1);
+        expect(calls().slice(4)).toEqual([["https://github.com/acme/shop/pull/2"], ["https://github.com/acme/api/pull/1"]]);
+        expect(backoff()).toBeUndefined();
+        await pollPullRequests(h.ctx, other());
+        expect(calls().at(-1)).toEqual(["https://github.com/acme/billing/pull/9"]);
+        expect(h.bb.calls.filter((call) => call.method === "log" && String(call.args[1]).includes("with a network error"))).toHaveLength(4);
+      });
+
+      it("pauses the project once the host's reads have failed for an hour, naming the host, the error and how long", async () => {
+        await openOne();
+        h.host.scripted.prBatch = Array.from({ length: 5 }, () => OFFLINE);
+        for (const minutes of [5, 5, 10, 20]) await pollIn(minutes);
+        expect(project().state).toBe("running");
+        await pollIn(30);
+        expect(reads()).toHaveLength(5);
+        expect(project()).toMatchObject({
+          state: "paused",
+          system_reason:
+            "Loom could not reach github.com to read pull requests: its reads failed 5 times in a row over 1h 5m, with none working in between: gh api graphql failed: error connecting to api.github.com\ncheck your internet connection or https://githubstatus.com. Resume once this machine can reach github.com again.",
+          triage_pending: 1,
+        });
+        expect(ticketOf(h, "CSV-1").state).toBe("pr_open");
+        expect(systemPosts()).toHaveLength(1);
+      });
+
+      it("clears the host's wait on a read that works, so a later failure starts a new streak with a new post", async () => {
+        await openOne();
+        h.host.scripted.prBatch = [OFFLINE];
+        await pollIn(5);
+        await pollIn(5);
+        expect(reads()).toHaveLength(2);
+        expect(backoff()).toBeUndefined();
+        expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "pr_open", pr_poll_json: null });
+
+        h.host.scripted.prBatch = [OFFLINE];
+        await pollIn(5);
+        expect(backoff()).toMatchObject({ delayMs: 5 * MINUTE, network: { failures: 1, since: h.clock.t } });
+        expect(systemPosts()).toHaveLength(2);
+      });
+
+      it("starts a new streak, without pausing, when nothing read the host for a while after its wait ended, as after the machine slept", async () => {
+        await openOne();
+        h.host.scripted.prBatch = [OFFLINE, OFFLINE, OFFLINE];
+        await pollIn(5);
+        await pollIn(5);
+        expect(backoff()).toMatchObject({ network: { failures: 2 } });
+        h.clock.advance(2 * 60 * MINUTE);
+        await pollPullRequests(h.ctx, project());
+        expect(project().state).toBe("running");
+        expect(backoff()).toMatchObject({ delayMs: 5 * MINUTE, network: { failures: 1, since: h.clock.t } });
+        expect(systemPosts()).toHaveLength(2);
+        expect(reads()).toHaveLength(3);
+      });
+
+      it("counts an answer that lost several pull requests to a network failure once, with one post", async () => {
+        await openTwo();
+        h.host.scripted.prBatch = [
+          {
+            outcome: "ok",
+            pulls: [],
+            missing: [
+              { number: 2, message: "GitHub did not answer for pull request #2 in acme/shop: error connecting to api.github.com", transient: "network" },
+              { number: 1, message: "GitHub did not answer for pull request #1 in acme/shop: error connecting to api.github.com", transient: "network" },
+            ],
+          },
+        ];
+        await pollIn(5);
+        expect(backoff()).toMatchObject({ network: { failures: 1 } });
+        expect([...systemPosts("CSV-1"), ...systemPosts("CSV-2")]).toHaveLength(1);
+        expect(project().state).toBe("running");
+      });
+
+      it("waits out a rate limit after network failures from its first 15 minutes, since GitHub answered", async () => {
+        await openOne();
+        h.host.scripted.prBatch = [OFFLINE, OFFLINE, RATE_LIMITED];
+        await pollIn(5);
+        await pollIn(5);
+        expect(backoff()).toMatchObject({ delayMs: 10 * MINUTE, network: { failures: 2 } });
+        await pollIn(10);
+        expect(backoff()).toEqual({ until: h.clock.t + 15 * MINUTE, delayMs: 15 * MINUTE, message: RATE_LIMITED.message });
+        expect(reads()).toHaveLength(3);
+      });
+
+      it("backs off only a command forge's own host, and GitHub keeps being read", async () => {
+        await seedProject(h, pr((doc) => {
+          doc.merge.forge = { kind: "command", open: "delta open", state: "delta state" };
+          doc.ticket[1].depends_on = [];
+        }));
+        for (const [key, number] of [["CSV-1", 11], ["CSV-2", 12]] as const) {
+          const id = ticketOf(h, key).id;
+          for (const to of ["working", "checking", "review", "approved", "merging", "pr_open"] as const) h.store.setTicketState(id, to, "loom");
+          h.store.updateTicket(id, { pr_url: `https://delta.shopify.io/shop/world/pull/${number}`, pr_branch: `loom/csv/${key.toLowerCase()}`, pushed_sha: `sq${number}`, pr_checked_at: null });
+        }
+        const other = await otherProject();
+        const offline = { outcome: "unavailable", message: "The forge's state command failed (exit 1): Error: GET https://delta.shopify.io/api/v3/repos/shop/world/pulls/11\n\nCaused by:\n    2: dns error", transient: "network" } as const;
+        h.host.scripted.prState = [offline];
+        await pollPullRequests(h.ctx, project());
+        expect(h.host.callsTo("prState").map((call) => call.url)).toEqual(["https://delta.shopify.io/shop/world/pull/11"]);
+        expect(h.ctx.forgeBackoffs.get("delta.shopify.io")).toMatchObject({ delayMs: 5 * MINUTE, network: { failures: 1 } });
+        expect(systemPosts("CSV-1")).toEqual([expect.stringMatching(/^Reading the pull request failed because Loom could not reach delta\.shopify\.io: The forge's state command failed/u)]);
+        expect(project().state).toBe("running");
+
+        await pollPullRequests(h.ctx, other());
+        expect(calls()).toEqual([["https://github.com/acme/billing/pull/9"]]);
+        expect(h.ctx.forgeBackoffs.has("github.com")).toBe(false);
+
+        await pollIn(5);
+        expect(h.host.callsTo("prState").map((call) => call.url)).toEqual(["https://delta.shopify.io/shop/world/pull/11", "https://delta.shopify.io/shop/world/pull/11", "https://delta.shopify.io/shop/world/pull/12"]);
+        expect(h.ctx.forgeBackoffs.has("delta.shopify.io")).toBe(false);
+      });
+
+      it("waits out a command forge's server error and rate limit as GitHub's, naming its host", async () => {
+        await seedProject(h, pr((doc) => (doc.merge.forge = { kind: "command", open: "delta open", state: "delta state" })));
+        const id = ticketOf(h, "CSV-1").id;
+        for (const to of ["working", "checking", "review", "approved", "merging", "pr_open"] as const) h.store.setTicketState(id, to, "loom");
+        h.store.updateTicket(id, { pr_url: "https://delta.shopify.io/shop/world/pull/11", pushed_sha: "sq11", pr_checked_at: null });
+        h.host.scripted.prState = [
+          { outcome: "unavailable", message: "The forge's state command failed (exit 1): 502 Bad Gateway", transient: "server" },
+          { outcome: "unavailable", message: "The forge's state command failed (exit 1): 429 Too Many Requests", transient: "rate_limit" },
+        ];
+        await pollPullRequests(h.ctx, project());
+        expect(waitOf()).toMatchObject({ failures: 1 });
+        await pollIn(5);
+        expect(h.ctx.forgeBackoffs.get("delta.shopify.io")).toMatchObject({ delayMs: 15 * MINUTE });
+        expect(systemPosts()).toEqual([
+          expect.stringMatching(/^Reading the pull request failed with what looks like a temporary delta\.shopify\.io error: /u),
+          expect.stringMatching(/^delta\.shopify\.io rate-limited Loom's read of the pull request: /u),
+        ]);
+        expect(project().state).toBe("running");
+      });
+    });
   });
 
   it("polls a paused project too", async () => {
@@ -993,6 +1172,20 @@ describe("reading open pull requests in batches", () => {
     expect(project()).toMatchObject({ state: "paused", system_reason: "Reading the pull request of CSV-3 stopped: gh found no pull request #3 in acme/shop: Could not resolve to a PullRequest with the number of 3." });
     expect(ticketOf(h, "CSV-4").state).toBe("pr_open");
     expect(meta("CSV-4")).toMatchObject({ state: "OPEN" });
+  });
+
+  it("counts a call of 10 that could not reach GitHub as one failure, posts once, and makes no other call to the host in that poll", async () => {
+    await seedProject(h, withTickets(12));
+    openAll((n) => `https://github.com/acme/shop/pull/${100 + n}`);
+    h.host.scripted.prBatch = [{ outcome: "unavailable", message: "gh api graphql failed: error connecting to api.github.com", transient: "network" }];
+    await pollPullRequests(h.ctx, project());
+    expect(h.host.calls.map((call) => call.method)).toEqual(["prBatch"]);
+    expect(h.host.callsTo("prBatch")[0]!.numbers).toHaveLength(10);
+    expect(h.ctx.forgeBackoffs.get("github.com")).toMatchObject({ network: { failures: 1 } });
+    const tickets = h.store.tickets(project().id);
+    expect(tickets.flatMap((ticket) => h.store.posts(ticket.id).filter((post) => post.kind === "system"))).toHaveLength(1);
+    expect(tickets.every((ticket) => ticket.state === "pr_open" && ticket.pr_poll_json === null)).toBe(true);
+    expect(project().state).toBe("running");
   });
 
   it("pauses with the error when the call fails, and settles none of its pull requests", async () => {
