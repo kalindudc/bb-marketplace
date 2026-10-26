@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.5
+
+- **GitHub syncs no longer fail on GitHub's time limit.** GitHub ends a GraphQL request that takes more than 10 seconds, and a search page of 50 PRs with everything Shuttle reads took 7 to 11 seconds. A sync then failed with `gh: HTTP 502`, `HTTP 504` or `unexpected end of JSON input`, and GitHub's PRs showed the last good data. Shuttle now asks for 25 PRs a page, still up to 300 per list. A page that times out is tried twice more from where it stopped, asking for 12 PRs and then 6. The empty-body error that gh reports as `unexpected end of JSON input` counts as a timeout too.
+
 ## 0.3.4
 
 - **Sort My PRs, or keep the groups.** My PRs has a Grouped and List switch and a Sort by menu: Recently updated, Newest first, Oldest first, Repository and Largest first. List shows every open PR in one list, each row with a pill for the group it would be in; Grouped keeps the sections and sorts the rows inside each. Merged and closed sorts too, by when each merged by default. A row shows the time its list is sorted by, such as "opened 3d ago".

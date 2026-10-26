@@ -8,9 +8,14 @@ import { AdapterError, changeOperation, type Adapter, type ListOptions, type Lis
 import { fillCommand, runProcess, shellQuote, tail, type RunResult, type Runner } from "./exec";
 
 const GH_TIMEOUT_MS = 45_000;
-const PAGE_SIZE = 50;
-/** Pages per list; past this a list is incomplete and keeps the reasons it did not see. */
-export const SEARCH_PAGES = 6;
+// GitHub ends a GraphQL request after 10s; a page of 50 full PRs took 7 to 11s.
+export const PAGE_SIZE = 25;
+/** PRs per list; past this a list is incomplete and keeps the reasons it did not see. */
+export const SEARCH_LIMIT = 300;
+/** Tries after the first, each asking for half as many PRs. */
+const TIMEOUT_RETRIES = 2;
+// gh reports a 5xx with an empty JSON body as a parse error, hiding the status (cli/cli#10579).
+const GITHUB_TIMEOUT = /HTTP 50[234]|unexpected end of JSON input|couldn't respond to your request in time/u;
 
 // Counts by state rather than the contexts themselves, so a list of 300 PRs stays light.
 const SUMMARY_FIELDS = `number title url isDraft state reviewDecision headRefOid headRefName baseRefName createdAt updatedAt closedAt mergedAt additions deletions changedFiles
@@ -459,22 +464,32 @@ export class GithubAdapter implements Adapter {
   }
 
   async list(operation: ListOperation, options: ListOptions, signal?: AbortSignal): Promise<ListResult> {
-    const query = `query($q: String!, $after: String) { search(query: $q, type: ISSUE, first: ${PAGE_SIZE}, after: $after) {
+    const query = `query($q: String!, $first: Int!, $after: String) { search(query: $q, type: ISSUE, first: $first, after: $after) {
       pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { ${listFields(operation)} } } } }`;
     const schema = z.object({
       search: z.object({ pageInfo: z.object({ hasNextPage: z.boolean(), endCursor: z.string().nullable() }), nodes: z.array(z.union([summaryNode, z.object({}).strict()])) }),
     });
     const rows: PrSummary[] = [];
     let after: string | null = null;
-    for (let page = 0; page < SEARCH_PAGES; page++) {
-      const vars: Record<string, string> = { q: searchQuery(operation, options), ...(after ? { after } : {}) };
-      // Search pages of 50 full PRs sometimes run past GitHub's own time limit; a second try usually lands.
-      const data = await this.graphql(operation, query, vars, schema, signal).catch((error: unknown) => {
-        if (!(error instanceof AdapterError) || !/HTTP 50[24]/u.test(error.message) || signal?.aborted) throw error;
-        return this.graphql(operation, query, vars, schema, signal);
-      });
+    let size = PAGE_SIZE;
+    let fetched = 0;
+    while (fetched < SEARCH_LIMIT) {
+      let data: z.output<typeof schema> | undefined;
+      for (let retry = 0; !data; retry++) {
+        const vars = { q: searchQuery(operation, options), first: Math.min(size, SEARCH_LIMIT - fetched), ...(after ? { after } : {}) };
+        try {
+          data = await this.graphql(operation, query, vars, schema, signal);
+        } catch (error) {
+          if (!(error instanceof AdapterError) || !GITHUB_TIMEOUT.test(error.message) || retry === TIMEOUT_RETRIES || signal?.aborted) throw error;
+          // Search cursors are offsets, so the same cursor with a smaller page carries on where it stopped.
+          size = Math.max(1, Math.floor(size / 2));
+        }
+      }
+      fetched += data.search.nodes.length;
       for (const node of data.search.nodes) if ("number" in node) rows.push(toSummary(node as SummaryNode));
       if (!data.search.pageInfo.hasNextPage || !data.search.pageInfo.endCursor) return { rows, complete: true };
+      // An empty page that claims more would never reach the limit.
+      if (data.search.nodes.length === 0) return { rows, complete: false };
       after = data.search.pageInfo.endCursor;
     }
     return { rows, complete: false };

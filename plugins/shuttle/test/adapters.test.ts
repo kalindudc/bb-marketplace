@@ -134,18 +134,32 @@ describe("GitHub summaries", () => {
     expect(calls[0]!.args).toContain("q=is:pr archived:false sort:updated-desc is:open reviewed-by:@me -author:@me");
   });
 
-  it("tries a search page again once when GitHub times out, and not for other errors", async () => {
-    const page = { json: { data: { search: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [node()] } } } };
-    const answers = [{ code: 1, stderr: "gh: HTTP 502" }, page];
+  it("tries a timed-out search page twice more from the same cursor, each time asking for half as many PRs", async () => {
+    const first = (call: Call) => call.args.find((a) => a.startsWith("first="));
+    const after = (call: Call) => call.args.find((a) => a.startsWith("after=")) ?? null;
+    const page = (hasNextPage: boolean) => ({ json: { data: { search: { pageInfo: { hasNextPage, endCursor: hasNextPage ? "Y3Vyc29yOjI1" : null }, nodes: [node()] } } } });
+    const answers = [page(true), { code: 1, stderr: "gh: HTTP 502" }, { code: 1, stderr: "unexpected end of JSON input" }, page(false)];
     const flaky = recorder(() => answers.shift());
-    expect((await new GithubAdapter(github(), flaky.run).list("mentioned", {})).rows).toHaveLength(1);
-    expect(flaky.calls).toHaveLength(2);
-    const down = recorder(() => ({ code: 1, stderr: "gh: HTTP 502" }));
-    await expect(new GithubAdapter(github(), down.run).list("mentioned", {})).rejects.toThrow(/HTTP 502/u);
-    expect(down.calls).toHaveLength(2);
+    expect((await new GithubAdapter(github(), flaky.run).list("team_requested", {})).rows).toHaveLength(2);
+    expect(flaky.calls.map(first)).toEqual(["first=25", "first=25", "first=12", "first=6"]);
+    expect(flaky.calls.map(after)).toEqual([null, "after=Y3Vyc29yOjI1", "after=Y3Vyc29yOjI1", "after=Y3Vyc29yOjI1"]);
+    const down = recorder(() => ({ code: 1, stderr: "gh: HTTP 504" }));
+    await expect(new GithubAdapter(github(), down.run).list("mentioned", {})).rejects.toThrow(/HTTP 504/u);
+    expect(down.calls).toHaveLength(3);
     const denied = recorder(() => ({ code: 1, stderr: "gh: HTTP 401" }));
     await expect(new GithubAdapter(github(), denied.run).list("mentioned", {})).rejects.toThrow(/HTTP 401/u);
     expect(denied.calls).toHaveLength(1);
+  });
+
+  it("stops a search at 300 PRs and says the list is incomplete", async () => {
+    const pages = recorder((call) => {
+      const size = Number(call.args.find((a) => a.startsWith("first="))!.slice("first=".length));
+      return { json: { data: { search: { pageInfo: { hasNextPage: true, endCursor: "next" }, nodes: Array.from({ length: size }, () => node()) } } } };
+    });
+    const list = await new GithubAdapter(github(), pages.run).list("review_requested", {});
+    expect(list).toMatchObject({ complete: false });
+    expect(list.rows).toHaveLength(300);
+    expect(pages.calls).toHaveLength(12);
   });
 });
 
