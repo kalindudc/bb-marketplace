@@ -1,7 +1,7 @@
 // The merge queue: approved tickets merge one at a time per project, either into the integration branch (with the
 // after_merge checks run on the merged result) or as one pull request each. Every host step is idempotent, so a ticket
 // left in `merging` by a pause or a restart simply runs again. Merges run in the background, like checks.
-import { delivers, workerOf, type CheckRun } from "./checks";
+import { workerOf, type CheckRun } from "./checks";
 import { repoCheckout, type RepoCheckout } from "./checkouts";
 import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { plural } from "./format";
@@ -17,7 +17,8 @@ import type { ForgeSpec, Spec } from "./spec";
 import { EMPTY_STACK, holdKey, holdOf, prBaseOf, restackOf, stackBranch, stacking, stackOf, type Hold, type Restack, type Stack } from "./stack";
 import { LOOM_ACTOR } from "./states";
 import { isWaking, restoredSinceSubmit } from "./release";
-import { applyMove, baseOf, endLiveRows, endThread, pauseProject, released, resolveEnvironment, specOf, toWorking, type EngineCtx } from "./workers";
+import { deliverHandBacks, handBack } from "./slots";
+import { applyMove, baseOf, endLiveRows, endThread, pauseProject, released, resolveEnvironment, specOf, type EngineCtx } from "./workers";
 
 const AFTER_OPEN_MS = 5 * 60_000;
 const PROVISION_MS = 10 * 60_000;
@@ -342,12 +343,12 @@ function complete(ctx: EngineCtx, ticketId: number, post: MergePost): void {
 
 /**
  * A merge that did not land goes back to the ticket's worker (or the queue when the worker is gone), in one transaction, so
- * the ticket leaves `merging` before the merge guard is released. A worker that is ending counts as gone: the only ways
- * it can be ending here leave the ticket alone, because block and cancel are refused while a ticket merges.
+ * the ticket leaves `merging` before the merge guard is released. The worker gets it as a hand-back, once a worker slot is
+ * free. A worker that is ending counts as gone: the only ways it can be ending here leave the ticket alone, because block
+ * and cancel are refused while a ticket merges.
  */
 async function sendBack(ctx: EngineCtx, ticketId: number, a: { post: MergePost; text: { summary: string; detail: string }; countFailure: boolean; reason: string }): Promise<void> {
   const { store } = ctx;
-  let worker: ReturnType<typeof workerOf> | null = null;
   let failures = 0;
   const applied = store.tx(() => {
     const ticket = store.ticket(ticketId);
@@ -357,8 +358,8 @@ async function sendBack(ctx: EngineCtx, ticketId: number, a: { post: MergePost; 
       failures = ticket.check_failures + 1;
       store.updateTicket(ticketId, { check_failures: failures });
     }
-    worker = workerOf(store, ticket);
-    if (worker.standing === "active") toWorking(ctx, store.ticket(ticketId)!, worker.row, { reason: a.reason });
+    const worker = workerOf(store, ticket);
+    if (worker.standing === "active" && worker.row.thread_id !== null) handBack(ctx, store.ticket(ticketId)!, worker.row, worker.row.thread_id, a.text, { reason: a.reason });
     else applyMove(ctx, store.ticket(ticketId)!, { to: "queued", patch: released }, LOOM_ACTOR, { reason: "the worker is gone" });
     return true;
   });
@@ -370,16 +371,13 @@ async function sendBack(ctx: EngineCtx, ticketId: number, a: { post: MergePost; 
   if (a.countFailure && failures >= limit) {
     const reason = `checks failed ${plural(failures, "time")}`;
     store.tx(() => {
-      store.updateTicket(ticketId, { blocked_reason: reason });
+      store.updateTicket(ticketId, { blocked_reason: reason, handback_json: null });
       store.addPost({ project_id: ticket.project_id, ticket_id: ticketId, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "block", body: reason, data_json: JSON.stringify({ reason, needs: "" }) });
     });
     await endLiveRows(ctx, store.ticket(ticketId)!, "blocked");
     return;
   }
-  const target = worker as ReturnType<typeof workerOf> | null;
-  if (target?.standing === "active" && target.row.thread_id !== null && delivers(ctx, ticket.project_id)) {
-    await ctx.bb.send(target.row.thread_id, a.text).catch((error) => ctx.bb.log("warn", `Could not message ${target.row.thread_id}: ${errText(error)}`));
-  }
+  await deliverHandBacks(ctx, ticket.project_id);
 }
 
 async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow): Promise<void> {

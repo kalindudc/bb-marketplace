@@ -195,9 +195,11 @@ export function nextStepOf(input: NextStepInput): NextStep | null {
   if (readyToLand(overview)) return landStep(overview);
 
   if (state === "running") {
-    const working = board.filter((card) => card.state === "working").map((card) => card.key);
+    const working = board.filter((card) => card.state === "working" && !card.waitsForSlot).map((card) => card.key);
+    const waiting = board.filter((card) => card.state === "working" && card.waitsForSlot).map((card) => card.key);
     const now = working.length === 0 ? "No worker is running now; tickets in checks, review or the merge queue move by themselves." : `${plural(working.length, "worker")} ${working.length === 1 ? "is" : "are"} on ${list(working)}.`;
-    return { stage: 4, tone: "normal", title: "Running.", text: `${now} Nothing needs you now; this bar turns yellow when something does.`, action: null };
+    const queue = waiting.length === 0 ? "" : ` ${list(waiting)} ${waiting.length === 1 ? "waits" : "wait"} for a worker slot.`;
+    return { stage: 4, tone: "normal", title: "Running.", text: `${now}${queue} Nothing needs you now; this bar turns yellow when something does.`, action: null };
   }
 
   return { stage: STAGES.length, tone: "normal", title: "Done.", text: "Every ticket is done or cancelled.", action: null };

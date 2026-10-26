@@ -4,9 +4,10 @@ import type { ThreadRow } from "../src/db/store";
 import type { HostOutput } from "../src/host-contract";
 import { Engine } from "../src/engine";
 import { pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
-import { askForPrTexts, deliverFixRounds, handInPrText, onPrWriterIdle, resumePrAsks } from "../src/pull-requests";
+import { askForPrTexts, handInPrText, onPrWriterIdle, resumePrAsks } from "../src/pull-requests";
 import type { LoomSettings } from "../src/record";
 import { approve, settleReviews, spawnReviewers } from "../src/review";
+import { deliverHandBacks } from "../src/slots";
 import { blockTicket, endThread, requeueTicket, resumeEnding, specOf } from "../src/workers";
 import { checkOutHead, makeCtx, makeEngine, reachApproved, seedProject, startWorker, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
@@ -685,11 +686,11 @@ describe("following the pull request", () => {
     h.bb.sendError = new Error("bb is restarting");
     await poll();
     expect(ticket()).toMatchObject({ state: "working" });
-    expect(JSON.parse(ticket().pr_deliver_json!)).toMatchObject({ thread: worker.thread_id, text: { summary: expect.stringContaining("fix round 1;") } });
+    expect(JSON.parse(ticket().handback_json!)).toMatchObject({ thread: worker.thread_id, text: { summary: expect.stringContaining("fix round 1;") } });
     h.bb.sendError = null;
-    await deliverFixRounds(h.ctx, project());
+    await deliverHandBacks(h.ctx, project().id);
     expect(h.bb.sent(worker.thread_id!).at(-1)).toContain("Rename the column.");
-    expect(ticket().pr_deliver_json).toBeNull();
+    expect(ticket().handback_json).toBeNull();
   });
 
   it("follows only merged and closed with max_fix_rounds = 0", async () => {

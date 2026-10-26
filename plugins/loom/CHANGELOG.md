@@ -2,6 +2,25 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.22.0 (2026-10-26)
+
+### Fixed
+
+- `agents.max_workers` holds when work goes back to workers. A pull request's fix round, a review's requested changes and a merge that did not land used to message the worker at once, so when several open pull requests got reviews or failed checks together, all of their workers started together: in one project with `max_workers = 2`, ten tickets went back to their workers within seven minutes. Each now moves its ticket to working and waits for a free worker slot, with a post on the ticket and "Waits for a free worker slot" on its card. A released worker is brought back only once it has a slot. Waiting work takes free slots before any new ticket starts, priority 0 first, then the work that has waited longest.
+- A worker writing its pull request holds a worker slot, and Loom asks for it only when a slot is free.
+
+### Changed
+
+- Only threads at work count against `max_workers` and `max_reviewers`. A worker or reviewer waiting for the human's answer to a question holds no slot, so other work runs in its place; Loom asks bb which threads wait only while every slot is held and work waits for one.
+- A worker's ticket timeout starts when its work gets a slot, not while it waits for one, and the Agents tab shows no countdown meanwhile.
+- A reply you post on a ticket whose work waits for a slot, and a cross-repo dependency's new commit, reach the worker together with that work instead of starting a turn on their own. The resume message skips such a worker: its work is its next turn.
+- A review's requested changes and a merge that did not land are kept until bb takes them and sent again after a failed send or a restart, as a fix round's message already was.
+- The health strip counts the workers that hold a slot, and the tickets waiting to go back to their workers. The next-step bar names the tickets that wait for a slot instead of counting them as workers at work.
+
+### Compatibility
+
+- The ticket column `pr_deliver_json` is renamed `handback_json`; a fix round's message stored before the upgrade is sent as before. Loom 0.21 does not know the new name, so going back to it needs the database from before the upgrade.
+
 ## 0.21.2 (2026-10-26)
 
 ### Changed

@@ -368,7 +368,7 @@ describe("reads", () => {
     expect((await call<ProjectView>("project", { slug: "csv" })).health).toBeNull();
     await host.projects.approve("csv", "human");
     const { health } = await call<ProjectView>("project", { slug: "csv" });
-    expect(health).toMatchObject({ progress: { done: 0, total: 2, inFlight: 0, blocked: 0, queued: 2 }, budget: null, deadline: null, capacity: { workers: 0, maxWorkers: 2, reviewers: 0, maxReviewers: 2, readyWaiting: 0 } });
+    expect(health).toMatchObject({ progress: { done: 0, total: 2, inFlight: 0, blocked: 0, queued: 2 }, budget: null, deadline: null, capacity: { workers: 0, maxWorkers: 2, reviewers: 0, maxReviewers: 2, readyWaiting: 0, handBacksWaiting: 0 } });
   });
 
   it("project lists its agents, the live ones first, with the spec's model and the worker's timeout", async () => {

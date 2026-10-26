@@ -6,6 +6,7 @@ import { workerOf } from "./checks";
 import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { formatDuration } from "./format";
 import { prSettings } from "./repos";
+import { waitsForSlot } from "./scheduler";
 import type { Spec } from "./spec";
 import { holdOf, restackOf, stacking } from "./stack";
 import { nextWait, provisioningFailure, startProblemOf, startWaits, UNAVAILABLE_LIMIT_MS, unavailableReason, waitOf, type StartProblem, type StartWait } from "./starts";
@@ -45,7 +46,7 @@ export async function releaseIdleWorkers(ctx: EngineCtx, project: ProjectRow, sp
   for (const seen of store.tickets(project.id, ["pr_open"])) {
     const tickets = store.tickets(project.id);
     const ticket = store.ticket(seen.id)!;
-    if (ticket.state !== "pr_open" || ticket.pr_deliver_json !== null || ticket.head_sha === null || restackDue(spec, tickets, ticket)) continue;
+    if (ticket.state !== "pr_open" || ticket.handback_json !== null || ticket.head_sha === null || restackDue(spec, tickets, ticket)) continue;
     const worker = workerOf(store, ticket);
     if (worker.standing !== "active" || worker.row.thread_id === null || worker.row.released_at !== null) continue;
     const threadId = worker.row.thread_id;
@@ -90,7 +91,8 @@ export async function wakeForRestacks(ctx: EngineCtx, project: ProjectRow, spec:
 
 /**
  * The tick's step: moves each waking worker of the project on, and wakes again a released worker whose fix round waits
- * after a failed restore, once its wait is over. A paused project finishes the restores in flight and starts none.
+ * after a failed restore, once its wait is over and while it has a worker slot. A paused project finishes the restores in
+ * flight and starts none.
  */
 export async function advanceWakes(ctx: EngineCtx, projectId: number): Promise<void> {
   const { store } = ctx;
@@ -104,7 +106,7 @@ export async function advanceWakes(ctx: EngineCtx, projectId: number): Promise<v
     const woken = store.tx(() => {
       const ticket = store.ticket(row.ticket_id!);
       const current = store.thread(row.id)!;
-      if (ticket?.state !== "working" || ticket.worker_thread_id !== current.thread_id || !isReleased(current) || startWaits(ticket, "worker", ctx.now())) return null;
+      if (ticket?.state !== "working" || ticket.worker_thread_id !== current.thread_id || !isReleased(current) || waitsForSlot(ticket) || startWaits(ticket, "worker", ctx.now())) return null;
       return wakeRow(ctx, current);
     });
     if (woken !== null) await advanceWake(ctx, woken);
@@ -218,7 +220,7 @@ async function cannotWake(ctx: EngineCtx, row: ThreadRow, why: string): Promise<
     const body = `The worker's thread cannot come back with an environment (${why}), so a new worker takes over from ${ticket.branch === null ? "the ticket's branch" : `its branch ${ticket.branch}`}; it can read the earlier worker's conversation.`;
     store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "system", body });
     if (ticket.state === "working" || ticket.state === "pr_open") {
-      applyMove(ctx, ticket, { to: "queued", patch: { ...released, pr_deliver_json: null, start_wait_json: null } }, LOOM_ACTOR, { reason: "the worker's thread cannot come back" });
+      applyMove(ctx, ticket, { to: "queued", patch: { ...released, handback_json: null, start_wait_json: null } }, LOOM_ACTOR, { reason: "the worker's thread cannot come back" });
     }
   });
   store.changed(row.project_id);
@@ -236,7 +238,7 @@ async function blockUnavailable(ctx: EngineCtx, row: ThreadRow, wait: StartWait)
     const ticket = row.ticket_id === null ? null : store.ticket(row.ticket_id);
     if (ticket === null || ticket.worker_thread_id !== row.thread_id) return;
     store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "block", body: reason, data_json: JSON.stringify({ reason, needs: "" }) });
-    applyMove(ctx, ticket, { to: "blocked", patch: { ...released, blocked_reason: reason, pr_deliver_json: null, start_wait_json: null } }, LOOM_ACTOR, { reason: "the environment provider stayed unavailable" });
+    applyMove(ctx, ticket, { to: "blocked", patch: { ...released, blocked_reason: reason, handback_json: null, start_wait_json: null } }, LOOM_ACTOR, { reason: "the environment provider stayed unavailable" });
   });
   store.changed(row.project_id);
   ctx.kick();

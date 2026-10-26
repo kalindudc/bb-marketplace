@@ -92,6 +92,7 @@ export const card = (over: Partial<BoardCard> = {}): BoardCard => ({
   stackedOn: [],
   holding: null,
   startWait: null,
+  waitsForSlot: false,
   ...over,
 });
 
@@ -137,7 +138,7 @@ export const health = (over: Partial<ProjectHealth> = {}): ProjectHealth => ({
   pace: { perHour: 0.5 / 24, remaining: 6, etaMs: 12 * 24 * HOUR },
   budget: { used: 12_000, max: 50_000 },
   deadline: { date: "2026-01-15", daysLeft: 6 },
-  capacity: { workers: 1, maxWorkers: 2, reviewers: 1, maxReviewers: 2, readyWaiting: 1 },
+  capacity: { workers: 1, maxWorkers: 2, reviewers: 1, maxReviewers: 2, readyWaiting: 1, handBacksWaiting: 0 },
   ...over,
 });
 

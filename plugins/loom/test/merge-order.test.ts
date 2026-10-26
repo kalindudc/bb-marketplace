@@ -57,7 +57,7 @@ function row(key: string, state: TicketState, over: Over = {}): TicketRow {
     pr_seen_json: "[]",
     pr_rounds: 0,
     pr_status_json: checks === undefined ? null : JSON.stringify({ at: 0, head: "h", ...checks }),
-    pr_deliver_json: null,
+    handback_json: null,
     stack_json: null,
     pr_base: null,
     start_wait_json: null,

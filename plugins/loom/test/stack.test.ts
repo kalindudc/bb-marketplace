@@ -42,7 +42,7 @@ function row(key: string, state: TicketState, over: Partial<TicketRow> & { deps?
     pr_seen_json: "[]",
     pr_rounds: 0,
     pr_status_json: null,
-    pr_deliver_json: null,
+    handback_json: null,
     stack_json: stack === undefined ? null : JSON.stringify({ deps: {}, base: null, synced: 0, cross: {}, ...stack }),
     pr_base: null,
     start_wait_json: null,

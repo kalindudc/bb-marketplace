@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { beforeEach, describe, expect, it } from "vitest";
 import { MIGRATIONS } from "../src/db/schema";
 import { Store, type NewTicket } from "../src/db/store";
+import { toLite } from "../src/scheduler";
 import { AUTHOR_KINDS, POST_KINDS, PROJECT_STATES, REVIEW_VERDICTS, ROLES, THREAD_STATES, TICKET_STATES, canMoveProject, canMoveTicket } from "../src/states";
 import { Clock, makeDb } from "./helpers";
 
@@ -225,6 +226,19 @@ describe("tickets", () => {
     old.prepare("INSERT INTO tickets (project_id, seq, key, ref, title, body, state, created_by, created_at, updated_at, state_at) VALUES (1, 1, 'CSV-1', 'one', 't', 'b', 'queued', 'x', 0, 0, 0)").run();
     for (const sql of MIGRATIONS.slice(added)) old.exec(sql);
     expect(new Store(old, clock.now).ticketByKey("CSV-1")).toMatchObject({ key: "CSV-1", repo: null });
+  });
+
+  it("keeps a fix round's message stored before hand-backs existed as the ticket's hand-back, which has its worker slot", () => {
+    const old = new Database(":memory:");
+    const renamed = MIGRATIONS.indexOf("ALTER TABLE tickets RENAME COLUMN pr_deliver_json TO handback_json");
+    expect(renamed).toBeGreaterThan(0);
+    for (const sql of MIGRATIONS.slice(0, renamed)) old.exec(sql);
+    const message = JSON.stringify({ thread: "thr_w1", text: { summary: "Fix it", detail: "The review." } });
+    old.prepare("INSERT INTO tickets (project_id, seq, key, ref, title, body, state, created_by, created_at, updated_at, state_at, pr_deliver_json) VALUES (1, 1, 'CSV-1', 'one', 't', 'b', 'working', 'x', 0, 0, 0, ?)").run(message);
+    for (const sql of MIGRATIONS.slice(renamed)) old.exec(sql);
+    const ticket = new Store(old, clock.now).ticketByKey("CSV-1")!;
+    expect(ticket.handback_json).toBe(message);
+    expect(toLite(ticket)).toMatchObject({ holds: true, waitsSince: null });
   });
 
   it("updateTicket patches columns without an event", () => {

@@ -85,6 +85,24 @@ provider id, such as `claude-code`, `codex` or `pi`. `loom_propose` refuses an
 unknown one and names the ids bb has; when bb's list cannot be read, the spec
 is accepted unchecked.
 
+### How many agents run at once
+
+`agents.max_workers` and `agents.max_reviewers` (2 each by default) cap the
+worker and reviewer threads that run at once in a project. A thread counts
+while it runs a turn Loom gave it: a worker on its ticket, while its checks run
+or while it writes its pull request, and a reviewer until its verdict. A worker
+waiting in review or on an open pull request holds no slot, and neither does a
+worker or reviewer waiting for your answer to its question.
+
+Work that goes back to a worker waits for a slot as a new ticket does: a pull
+request's fix round, a review's requested changes and a merge that did not
+land. Its ticket moves to working and its card says "Waits for a free worker
+slot"; the worker gets the message, and a released worker its environment
+back, once a slot is free. Waiting work takes free slots before new tickets
+start, priority 0 first, then the work that has waited longest. Its ticket
+timeout starts when it gets the slot, and a reply you post on the ticket
+reaches the worker together with that work.
+
 ### When a ticket gets stuck
 
 A ticket that gets stuck is blocked. The planner hears about it in a triage
@@ -198,8 +216,8 @@ changes, which opens the Changes tab; the header's "Land to <base>" lands with
 Once the spec is approved, a health strip shows progress, pace (tickets done in
 the last 14 days over the time the project ran in them, so paused days do not
 count), the time left at that pace, the token budget and the deadline when the
-spec sets them, and worker and reviewer capacity with the ready tickets waiting
-for a slot.
+spec sets them, and worker and reviewer capacity with the ready tickets and the
+work going back to workers that wait for a slot.
 
 A tab that needs you carries a badge until the thing is resolved: Board counts
 the blocked tickets, Spec marks a draft or a pending version waiting for you,
@@ -460,8 +478,9 @@ its own pull request.
   the branch as it is), never with force, and opens the pull request.
 - Loom then follows the pull request: its checks, reviews, unresolved review
   threads and comments. What needs a fix goes back to the worker as a fix
-  round, which passes the checks and a Loom review again and is pushed as one
-  more commit. After `merge.max_fix_rounds` rounds (5 by default) the ticket
+  round, once a worker slot is free (see
+  [How many agents run at once](#how-many-agents-run-at-once)), which passes
+  the checks and a Loom review again and is pushed as one more commit. After `merge.max_fix_rounds` rounds (5 by default) the ticket
   blocks and the pull request stays open.
 - Once a fix is pushed, Loom asks the people whose reviews and review threads
   it answered to review the pull request again, as GitHub's Re-request review
@@ -829,6 +848,8 @@ settings for that project.
   `src/cli.ts` is `bb loom`, and `src/bb-port.ts` is the one adapter over
   `bb.sdk`, faked in tests.
 - `src/scheduler.ts` is pure: which tickets are ready, how many slots are free.
+  `src/slots.ts` hands work back to workers as slots free up, and asks bb which
+  threads wait for you.
   `src/workers.ts`, `src/checks.ts`, `src/triage.ts`, `src/review.ts` and
   `src/merge.ts` are the engine's parts, and `src/engine.ts` is the control
   loop that ticks every 15 seconds, reconciles after a restart and handles bb's

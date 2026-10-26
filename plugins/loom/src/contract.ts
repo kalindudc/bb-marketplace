@@ -57,6 +57,8 @@ export interface BoardCard {
   holding: string | null;
   /** A queued ticket whose worker, or a ticket in review whose reviewer, did not start and waits to try again; null otherwise. */
   startWait: StartWaitView | null;
+  /** Work went back to the ticket's worker (a fix round, a review's changes, a merge that did not land), and it waits for a free worker slot. */
+  waitsForSlot: boolean;
 }
 
 export interface StartWaitView {

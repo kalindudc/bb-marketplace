@@ -44,7 +44,7 @@ const ticket = (n: number, state: TicketState, over: Partial<TicketRow> = {}): T
   pr_seen_json: "[]",
   pr_rounds: 0,
   pr_status_json: null,
-  pr_deliver_json: null,
+  handback_json: null,
   stack_json: null,
   pr_base: null,
   start_wait_json: null,
@@ -140,7 +140,7 @@ describe("projectHealth", () => {
     const tickets = [ticket(1, "working"), ticket(2, "checking"), ticket(3, "queued"), ticket(4, "queued"), ticket(5, "queued"), ticket(6, "review")];
     const threads = [reviewer("active"), reviewer("spawning"), reviewer("ended")];
     const spec = specWith((doc) => (doc.agents = { ...doc.agents, max_workers: 2, max_reviewers: 3 }));
-    expect(projectHealth({ tickets, threads, metrics: metrics(), spec, now: NOW }).capacity).toEqual({ workers: 2, maxWorkers: 2, reviewers: 2, maxReviewers: 3, readyWaiting: 3 });
+    expect(projectHealth({ tickets, threads, metrics: metrics(), spec, now: NOW }).capacity).toEqual({ workers: 2, maxWorkers: 2, reviewers: 2, maxReviewers: 3, readyWaiting: 3, handBacksWaiting: 0 });
     expect(projectHealth({ tickets: [ticket(1, "working"), ticket(3, "queued")], threads: [], metrics: metrics(), spec, now: NOW }).capacity.readyWaiting).toBe(0);
   });
 });

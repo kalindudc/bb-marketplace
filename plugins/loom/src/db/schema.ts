@@ -173,4 +173,6 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE tickets ADD COLUMN merge_after_json TEXT NOT NULL DEFAULT '[]'`,
   // PrMeta: the pull request's draft flag, review decision and base branch when Loom last read them.
   `ALTER TABLE tickets ADD COLUMN pr_meta_json TEXT`,
+  // HandBack: work going back to the ticket's worker, not sent yet; a review's changes and a merge that did not land use it as a fix round does.
+  `ALTER TABLE tickets RENAME COLUMN pr_deliver_json TO handback_json`,
 ];

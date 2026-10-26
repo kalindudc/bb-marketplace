@@ -123,10 +123,11 @@ export function toWorking(ctx: EngineCtx, ticket: TicketRow, row: ThreadRow | nu
 const isRefError = (error: unknown) => /\bref(erence)?s?\b|revision|not a valid object|unknown branch/iu.test(errText(error));
 
 /**
- * `waiting` holds back tickets that may not start now, as it did when the caller picked this one. A ticket that waits
- * after a failed start tries again with the same thread row, so the wait keeps one attempt and one claim on the ticket.
+ * `waiting` holds back tickets that may not start now, as it did when the caller picked this one, and `parked` names the
+ * tickets whose worker waits for the human, which hold no worker slot. A ticket that waits after a failed start tries
+ * again with the same thread row, so the wait keeps one attempt and one claim on the ticket.
  */
-export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow, waiting?: (ticket: TicketLite) => boolean): Promise<void> {
+export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow, waiting?: (ticket: TicketLite) => boolean, parked?: ReadonlySet<number>): Promise<void> {
   const { store } = ctx;
   const token = randomBytes(12).toString("hex");
   const fromBranch = ticket.branch !== null;
@@ -146,7 +147,7 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
     if (fresh === null) return null;
     const tickets = store.tickets(project.id).map(toLite);
     const freshSpec = specOf(store, fresh);
-    if (!spawnable(freshSpec.agents.max_workers, tickets, waiting, stacking(freshSpec)).some((lite) => lite.id === ticket.id)) return null;
+    if (!spawnable(freshSpec.agents.max_workers, tickets, waiting, stacking(freshSpec), parked).some((lite) => lite.id === ticket.id)) return null;
     const stackPatch = start === null ? {} : { stack_json: JSON.stringify(start.stack) };
     const wait = waitOf(current, "worker");
     const again = wait?.row == null ? null : store.thread(wait.row);
@@ -506,8 +507,8 @@ async function stopAndArchive(ctx: EngineCtx, row: ThreadRow, force: boolean): P
 export async function onWorkerIdle(ctx: EngineCtx, seen: ThreadRow, reason: EndReason = "abandoned"): Promise<void> {
   const row = ctx.store.thread(seen.id);
   if (row === null || row.state !== "active" || row.role !== "worker" || row.thread_id === null || row.released_at !== null) return;
-  // An idle while Loom still holds a fix round for the worker is not the worker stopping: the message is on its way.
-  if (row.ticket_id !== null && ctx.store.ticket(row.ticket_id)?.pr_deliver_json != null) return;
+  // An idle while Loom still holds work for the worker is not the worker stopping: the message is on its way, or waits for a slot.
+  if (row.ticket_id !== null && ctx.store.ticket(row.ticket_id)?.handback_json != null) return;
   if (ctx.store.project(row.project_id)?.state !== "running") return;
   const ticket = row.ticket_id === null ? null : ctx.store.ticket(row.ticket_id);
   if (ticket === null || ticket.state !== "working" || ticket.worker_thread_id !== row.thread_id) return;
@@ -634,7 +635,7 @@ export async function requeueTicket(ctx: EngineCtx, key: string, a: { note: stri
     const fix = ticket.pushed_sha !== null ? { pr_rounds: ticket.pr_rounds + 1 } : {};
     // A block that let go of the pull request leaves no commit pushed; what Loom last read of that pull request goes with it.
     const gone = ticket.pushed_sha === null ? { pr_meta_json: null } : {};
-    ctx.store.updateTicket(ticket.id, { failures: 0, check_failures: 0, blocked_reason: null, ...released, ...fix, ...gone, pr_ask_json: null, pr_text_json: null, pr_deliver_json: null, start_wait_json: null });
+    ctx.store.updateTicket(ticket.id, { failures: 0, check_failures: 0, blocked_reason: null, ...released, ...fix, ...gone, pr_ask_json: null, pr_text_json: null, handback_json: null, start_wait_json: null });
     if (note !== "") {
       ctx.store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: a.author, author_thread_id: a.threadId ?? null, kind: "reply", body: note });
     }

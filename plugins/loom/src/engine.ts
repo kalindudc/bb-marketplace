@@ -12,12 +12,13 @@ import { CHECKS_SETTLE_MINUTES } from "./pull-requests";
 import { NO_HOOK, sendRecords, type LoomSettings } from "./record";
 import { backToReview, blockedAtReview, onReviewerGone, onReviewerIdle, onReviewerTurnFailed, reviewerStartFailed, spawnReviewers } from "./review";
 import { approvalRefusal, endSpecReviews, onSpecReviewerGone, onSpecReviewerIdle, onSpecReviewerTurnFailed, reconcileSpecReviews, retrySpecReviews, specReviewStatus } from "./spec-review";
-import { budgetReason, spawnable, toLite, type TicketLite } from "./scheduler";
+import { NOT_PARKED, budgetReason, spawnable, toLite, waitsForSlot, type Parked, type TicketLite } from "./scheduler";
+import { deliverHandBacks, holdForWorker, parkedThreads } from "./slots";
 import { conflictWaits, stacking } from "./stack";
 import { startWaits } from "./starts";
 import { noteUpstreamChanges } from "./upstream";
 import { LOOM_ACTOR, canMoveTicket } from "./states";
-import { askForPrTexts, deliverFixRounds, humanFixRound, onPrWriterIdle, resumePrAsks } from "./pull-requests";
+import { askForPrTexts, humanFixRound, onPrWriterIdle, resumePrAsks } from "./pull-requests";
 import { recordPlannerTurn } from "./planner-view";
 import { advanceWakes, releaseIdleWorkers, wakeForRestacks } from "./release";
 import type { Spec } from "./spec";
@@ -176,7 +177,8 @@ export class Engine {
         if (running() === null) return;
         if (row.clock_at === null || now() - row.clock_at <= timeoutMs) continue;
         const ticket = row.ticket_id === null ? null : store.ticket(row.ticket_id);
-        if (ticket?.state !== "working" || ticket.worker_thread_id !== row.thread_id) continue;
+        // A hand-back waiting for a worker slot runs no turn; its clock starts once it has a slot.
+        if (ticket?.state !== "working" || ticket.worker_thread_id !== row.thread_id || waitsForSlot(ticket)) continue;
         await endThread(this.ctx, row, "timeout", { commit: true });
       }
       if (running() === null) return;
@@ -184,15 +186,18 @@ export class Engine {
       if (running() === null) return;
       await noteUpstreamChanges(this.ctx, running()!, spec);
       if (running() === null) return;
-      await deliverFixRounds(this.ctx, running()!);
+      // Work going back to a worker takes the free worker slots first, then a worker writing its pull request, then a new worker.
+      const parked = await parkedThreads(this.ctx, projectId, spec);
       if (running() === null) return;
-      await askForPrTexts(this.ctx, running()!, spec);
+      await deliverHandBacks(this.ctx, projectId, parked);
+      if (running() === null) return;
+      await askForPrTexts(this.ctx, running()!, spec, parked);
       if (running() === null) return;
       await runMergeQueue(this.ctx, running()!, spec);
       if (running() === null) return;
-      await spawnReviewers(this.ctx, running()!, spec);
+      await spawnReviewers(this.ctx, running()!, spec, parked);
       if (running() === null) return;
-      await this.spawnReady(projectId);
+      await this.spawnReady(projectId, parked);
     }
 
     const current = store.project(projectId)!;
@@ -224,7 +229,7 @@ export class Engine {
   }
 
   /** Spawns one worker at a time. Readiness and slots are computed again from fresh rows before each reservation, and a ticket is tried once per pass. */
-  private async spawnReady(projectId: number): Promise<void> {
+  private async spawnReady(projectId: number, parked: Parked = NOT_PARKED): Promise<void> {
     const { store, now } = this.ctx;
     const next = (tried: ReadonlySet<number>) => {
       const project = store.project(projectId);
@@ -237,7 +242,7 @@ export class Engine {
         const row = rows.find((candidate) => candidate.id === ticket.id)!;
         return (spec.merge.strategy === "integration" && this.integrationMoving(projectId, ticket.repo)) || (stack && conflictWaits(rows, row)) || startWaits(row, "worker", now());
       };
-      const lite = spawnable(spec.agents.max_workers, rows.map(toLite), waiting, stack).find((candidate) => !tried.has(candidate.id));
+      const lite = spawnable(spec.agents.max_workers, rows.map(toLite), waiting, stack, parked.workers).find((candidate) => !tried.has(candidate.id));
       return lite === undefined ? null : { project, spec, ticket: store.ticket(lite.id)!, waiting };
     };
 
@@ -250,7 +255,7 @@ export class Engine {
       const pick = next(tried);
       if (pick === null) return;
       tried.add(pick.ticket.id);
-      await spawnWorker(this.ctx, pick.project, pick.spec, pick.ticket, pick.waiting);
+      await spawnWorker(this.ctx, pick.project, pick.spec, pick.ticket, pick.waiting, parked.workers);
     }
   }
 
@@ -419,7 +424,8 @@ export class Engine {
     const project = await this.projects.resume(slug, actor);
     for (const row of store.threads({ projectId: project.id, role: "worker", states: ["active"] })) {
       const ticket = row.ticket_id === null ? null : store.ticket(row.ticket_id);
-      if (ticket?.state !== "working" || row.released_at !== null) continue;
+      // A hand-back not sent yet is the worker's next turn, which the tick sends once it has a worker slot.
+      if (ticket?.state !== "working" || row.released_at !== null || ticket.handback_json !== null) continue;
       store.updateThread(row.id, { clock_at: now() });
       const thread = await bb.getThread(row.thread_id!).catch(() => null);
       if (thread !== null && ["active", "starting", "pending"].includes(thread.status)) continue;
@@ -502,18 +508,22 @@ export class Engine {
     return project;
   }
 
-  /** The human's reply on a ticket. A worker that holds the ticket gets it as a message too; on a blocked ticket, the planner does. */
+  /**
+   * The human's reply on a ticket. A worker that holds the ticket gets it as a message too, with the work going back to it
+   * when that is not sent yet (it waits for a worker slot); on a blocked ticket, the planner does.
+   */
   async humanPost(key: string, body: string, parentId?: number): Promise<PostRow> {
     const { store, bb } = this.ctx;
     const post = this.projects.post(key, { body, parentId, author: "human" });
     const ticket = store.ticketByKey(key)!;
     if (await humanFixRound(this.ctx, ticket, post)) return post;
     const where = parentId === undefined ? "" : ` (answering #${parentId})`;
+    const message = { summary: `[loom] Reply on ${key} from the human`, detail: `${post.body}${where}` };
     const to = replyRecipient(store, ticket);
-    if (to?.role === "worker") {
-      await bb.send(to.threadId, { summary: `[loom] Reply on ${key} from the human`, detail: `${post.body}${where}` }).catch((error) => this.warn(`reply to ${to.threadId}`, error));
-    } else if (to?.role === "planner") {
+    if (to?.role === "planner") {
       await bb.send(to.threadId, blockedReplyText(key, `${post.body}${where}`)).catch((error) => this.warn(`reply to ${to.threadId}`, error));
+    } else if (!holdForWorker(store, ticket, message) && to?.role === "worker") {
+      await bb.send(to.threadId, message).catch((error) => this.warn(`reply to ${to.threadId}`, error));
     }
     this.kick();
     return post;

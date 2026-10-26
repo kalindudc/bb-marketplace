@@ -47,7 +47,7 @@ const ticket = (n: number, state: TicketState, over: Partial<TicketRow> = {}): T
   pr_seen_json: "[]",
   pr_rounds: 0,
   pr_status_json: null,
-  pr_deliver_json: null,
+  handback_json: null,
   stack_json: null,
   pr_base: null,
   start_wait_json: null,

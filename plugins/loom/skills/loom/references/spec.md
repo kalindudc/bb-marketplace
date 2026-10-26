@@ -150,8 +150,8 @@ On the pull request strategy a pull request can wait days for a person, and an i
 
 | Key | Type | Default | Rule |
 |---|---|---|---|
-| `max_workers` | integer | `2` | 1 to 8 |
-| `max_reviewers` | integer | `2` | 1 to 8 |
+| `max_workers` | integer | `2` | 1 to 8; worker threads running at once, fix rounds and other work sent back to a worker included |
+| `max_reviewers` | integer | `2` | 1 to 8; reviewer threads running at once |
 | `ticket_timeout_minutes` | integer | `120` | 10 to 1440 |
 | `triage` | boolean | `true` | |
 

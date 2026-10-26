@@ -2,7 +2,7 @@
 // from the reviewer row it started for the ticket's current round, and one transaction stores the verdict and
 // applies the round outcome, so a crash cannot leave a verdict without one. The tick replays what a crash cut short.
 import { randomBytes } from "node:crypto";
-import { delivers, workerOf } from "./checks";
+import { workerOf } from "./checks";
 import { repoCheckout, ticketRepo } from "./checkouts";
 import type { ProjectRow, ReviewRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { spawnEnvironment, threadBranch, ticketInputsOf } from "./environments";
@@ -11,10 +11,11 @@ import { changesRequestedText, findingsList, reviewerBrief, reviewerNudgeText } 
 import { openFeedback } from "./pull-requests";
 import { nextWait, provisioningFailure, startProblemOf, startWaits, unavailableReason, waitOf, waitPost, type StartProblem, type StartWait } from "./starts";
 import { LoomError } from "./projects";
-import { idleAction } from "./scheduler";
+import { NOT_PARKED, freeReviewerSlots, idleAction, type Parked } from "./scheduler";
+import { deliverHandBacks, handBack } from "./slots";
 import type { Spec } from "./spec";
 import { LOOM_ACTOR } from "./states";
-import { applyMove, baseOf, endLiveRows, endThread, freshBase, otherCheckouts, pauseProject, released, resolveEnvironment, resumeEnding, retryRateLimited, specOf, toWorking, type EndReason, type EngineCtx, type TurnFailure } from "./workers";
+import { applyMove, baseOf, endLiveRows, endThread, freshBase, otherCheckouts, pauseProject, released, resolveEnvironment, resumeEnding, retryRateLimited, specOf, type EndReason, type EngineCtx, type TurnFailure } from "./workers";
 
 export interface Finding {
   severity: "blocking" | "should-fix";
@@ -72,7 +73,7 @@ function changesRequestedSinceRequeue(store: Store, ticketId: number): number {
 
 type Outcome =
   | { kind: "approved" }
-  | { kind: "changes"; worker: ThreadRow; review: ReviewRow }
+  | { kind: "changes" }
   | { kind: "requeued" }
   | { kind: "blocking"; worker: ThreadRow }
   | { kind: "blocked" }
@@ -80,7 +81,8 @@ type Outcome =
 
 /**
  * Applies the outcome of a decided round, synchronously and idempotently: approvals reaching the requirement move the
- * ticket to approved; a changes-requested verdict sends it back to its worker (or the queue), or blocks it at max_rounds.
+ * ticket to approved; a changes-requested verdict hands it back to its worker, who gets the findings once a worker slot
+ * is free (or sends it to the queue), or blocks it at max_rounds.
  * A worker that is still ending owns the ticket's move, so the outcome waits ("deferred") and the tick tries again.
  */
 function decideRound(ctx: EngineCtx, ticketId: number): Outcome | null {
@@ -113,26 +115,20 @@ function changesOutcome(ctx: EngineCtx, ticket: TicketRow, spec: Spec, review: R
     applyMove(ctx, ticket, { to: "blocked", patch: { ...released, blocked_reason: reason } }, LOOM_ACTOR, { reason });
     return { kind: "blocked" };
   }
-  if (worker.standing === "active") {
-    toWorking(ctx, ticket, worker.row, { round: ticket.review_round });
-    return { kind: "changes", worker: worker.row, review };
+  if (worker.standing === "active" && worker.row.thread_id !== null) {
+    const text = changesRequestedText(ticket.key, review.round, review.summary ?? "", JSON.parse(review.findings_json) as Finding[]);
+    handBack(ctx, ticket, worker.row, worker.row.thread_id, text, { round: ticket.review_round });
+    return { kind: "changes" };
   }
   applyMove(ctx, ticket, { to: "queued", patch: released }, LOOM_ACTOR, { reason: "the worker is gone" });
   return { kind: "requeued" };
 }
 
-/** What follows a committed outcome: the message to the worker, the blocked worker's ending, and the reviewers the round no longer needs. */
+/** What follows a committed outcome: the findings to the worker once it has a slot, the blocked worker's ending, and the reviewers the round no longer needs. */
 async function afterOutcome(ctx: EngineCtx, ticketId: number, outcome: Outcome | null, exclude?: number): Promise<void> {
   const { store } = ctx;
   try {
-    if (outcome?.kind === "changes" && outcome.worker.thread_id !== null) {
-      const ticket = store.ticket(ticketId)!;
-      if (delivers(ctx, ticket.project_id)) {
-        const { review } = outcome;
-        const text = changesRequestedText(ticket.key, review.round, review.summary ?? "", JSON.parse(review.findings_json) as Finding[]);
-        await ctx.bb.send(outcome.worker.thread_id, text).catch((error) => ctx.bb.log("warn", `Could not message ${outcome.worker.thread_id}: ${errText(error)}`));
-      }
-    }
+    if (outcome?.kind === "changes") await deliverHandBacks(ctx, store.ticket(ticketId)!.project_id);
     if (outcome?.kind === "blocking") await resumeEnding(ctx, outcome.worker);
     await endStaleReviewers(ctx, { ticketId }, exclude);
   } finally {
@@ -178,8 +174,12 @@ export async function settleReviews(ctx: EngineCtx): Promise<void> {
 
 // ---------------------------------------------------------------- spawning
 
-/** The tick's review step: end stale reviewers, settle decided rounds, block a ticket whose reviewers keep ending, and start the reviewers a round still needs. */
-export async function spawnReviewers(ctx: EngineCtx, project: ProjectRow, spec: Spec): Promise<number> {
+/**
+ * The tick's review step: end stale reviewers, settle decided rounds, block a ticket whose reviewers keep ending, and
+ * start the reviewers a round still needs, within the reviewer slots. A reviewer that waits for the human (`parked`)
+ * holds no slot.
+ */
+export async function spawnReviewers(ctx: EngineCtx, project: ProjectRow, spec: Spec, parked: Parked = NOT_PARKED): Promise<number> {
   const { store } = ctx;
   await endStaleReviewers(ctx, { projectId: project.id });
   let spawned = 0;
@@ -197,7 +197,8 @@ export async function spawnReviewers(ctx: EngineCtx, project: ProjectRow, spec: 
       continue;
     }
     if (startWaits(ticket, "reviewer", ctx.now())) continue;
-    spawned += await startReviewers(ctx, project, spec, ticket, spec.review.approvals - round.approved - round.live);
+    if (freeReviewerSlots(spec.agents.max_reviewers, store.threads({ projectId: project.id, role: "reviewer" }), parked.reviewers) === 0) continue;
+    spawned += await startReviewers(ctx, project, spec, ticket, spec.review.approvals - round.approved - round.live, parked);
   }
   return spawned;
 }
@@ -235,14 +236,14 @@ async function blockForReviewers(ctx: EngineCtx, ticket: TicketRow, reason: stri
 
 type Diff = { stat: string; patch: string; truncated: boolean };
 
-async function startReviewers(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow, needed: number): Promise<number> {
+async function startReviewers(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow, needed: number, parked: Parked): Promise<number> {
   if (needed <= 0 || ticket.head_sha === null) return 0;
   const diff = await readDiff(ctx, project, spec, ticket);
   if (diff === null) return 0;
   const checkouts = await otherCheckouts(ctx, project, spec, ticket);
   let started = 0;
   for (let n = 0; n < needed; n++) {
-    if (!(await startReviewer(ctx, project.id, ticket, diff, checkouts))) break;
+    if (!(await startReviewer(ctx, project.id, ticket, diff, checkouts, parked))) break;
     started += 1;
   }
   return started;
@@ -259,7 +260,7 @@ async function readDiff(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket:
   }
 }
 
-async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow, diff: Diff, checkouts: ReadonlyMap<string, string>): Promise<boolean> {
+async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow, diff: Diff, checkouts: ReadonlyMap<string, string>, parked: Parked): Promise<boolean> {
   const { store } = ctx;
   const token = randomBytes(12).toString("hex");
   const round = seen.review_round;
@@ -273,8 +274,8 @@ async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow,
     if (startWaits(ticket, "reviewer", ctx.now())) return null;
     const spec = specOf(store, project);
     const current = tally(store, ticket, spec);
-    const live = store.threads({ projectId, role: "reviewer", states: ["spawning", "active"] }).length;
-    if (current.decided || current.approved + current.live >= spec.review.approvals || live >= spec.agents.max_reviewers) return null;
+    const free = freeReviewerSlots(spec.agents.max_reviewers, store.threads({ projectId, role: "reviewer" }), parked.reviewers);
+    if (current.decided || current.approved + current.live >= spec.review.approvals || free === 0) return null;
     const waiting = store.threads({ ticketId: ticket.id, role: "reviewer", states: ["ended"] }).find((row) => row.end_reason === UNSTARTED && row.review_round === round);
     if (waiting !== undefined) {
       store.updateThread(waiting.id, { state: "spawning", spawn_token: token, thread_id: null, environment_id: null, ended_at: null, end_reason: null, clock_at: ctx.now(), idle_count: 0, rate_limit_retries: 0 });

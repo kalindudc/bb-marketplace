@@ -92,8 +92,8 @@ export interface TicketRow {
   pr_rounds: number;
   /** PrStatus: the pull request's checks when Loom last read them. */
   pr_status_json: string | null;
-  /** PrDelivery: a fix round's message to its worker that bb has not taken yet; the tick sends it again. */
-  pr_deliver_json: string | null;
+  /** HandBack: work going back to the ticket's worker that bb has not taken yet, waiting for a worker slot or sent again by the tick. */
+  handback_json: string | null;
   /** Stack: what the ticket's branch is built on when its project stacks pull requests; null before its first worker started. */
   stack_json: string | null;
   /** The branch its pull request was opened on, or last retargeted to; null for the repo's base, as in every row from before stacking. */

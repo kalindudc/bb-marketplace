@@ -4,6 +4,7 @@ import { delivers, workerOf } from "./checks";
 import type { ProjectRow, TicketRow } from "./db/store";
 import { upstreamChangedText } from "./prompts";
 import { repoCheckout } from "./checkouts";
+import { holdForWorker } from "./slots";
 import type { Spec } from "./spec";
 import { stacking, stackOf, type Stack } from "./stack";
 import type { EngineCtx } from "./workers";
@@ -53,7 +54,10 @@ export async function noteUpstreamChanges(ctx: EngineCtx, project: ProjectRow, s
         (checkout) => checkout.path,
         () => null,
       );
-      await ctx.bb.send(worker.row.thread_id, upstreamChangedText(ticket.key, { key: dep.key, url: dep.pr_url, sha: dep.pushed_sha!, repo: dep.repo }, path)).catch((error) => ctx.bb.log("warn", `Could not message ${worker.row.thread_id}: ${errText(error)}`));
+      const text = upstreamChangedText(ticket.key, { key: dep.key, url: dep.pr_url, sha: dep.pushed_sha!, repo: dep.repo }, path);
+      // A worker whose hand-back is not sent yet reads it with that work, once it has a worker slot.
+      if (holdForWorker(store, ticket, text)) continue;
+      await ctx.bb.send(worker.row.thread_id, text).catch((error) => ctx.bb.log("warn", `Could not message ${worker.row.thread_id}: ${errText(error)}`));
     }
   }
 }

@@ -12,8 +12,10 @@ import { feedbackList, prAskText, prBody, prFeedbackText, prNudgeText, type Feed
 import { prSettings, repoSettings } from "./repos";
 import type { Spec } from "./spec";
 import { LOOM_ACTOR } from "./states";
-import { advanceWake, isReleased, isWaking, releasedWorker, wakeRow } from "./release";
-import { applyMove, released, resumeEnding, signatureOf, specOf, toWorking, type EngineCtx } from "./workers";
+import { isWaking, releasedWorker } from "./release";
+import { NOT_PARKED, toLite, workerSlots, type Parked } from "./scheduler";
+import { deliverHandBacks, handBack } from "./slots";
+import { applyMove, released, resumeEnding, signatureOf, specOf, type EngineCtx } from "./workers";
 
 /** How long the worker has to hand in loom_pr before Loom's template stands in; paused time does not count. */
 export const PR_TEXT_MINUTES = 30;
@@ -102,8 +104,11 @@ function useTemplate(ctx: EngineCtx, ticket: TicketRow, reason: string): void {
   ctx.kick();
 }
 
-/** The tick's step before the merge queue: ask each approved ticket's worker for its pull request, once per head, or let the template stand in. */
-export async function askForPrTexts(ctx: EngineCtx, project: ProjectRow, spec: Spec): Promise<void> {
+/**
+ * The tick's step before the merge queue: ask each approved ticket's worker for its pull request, once per head, or let
+ * the template stand in. Writing it is a turn, so the ask waits for a worker slot and holds one until the text is in.
+ */
+export async function askForPrTexts(ctx: EngineCtx, project: ProjectRow, spec: Spec, parked: Parked = NOT_PARKED): Promise<void> {
   if (spec.merge.strategy !== "pr" || prSettings(spec).describe === "loom") return;
   const { store } = ctx;
   for (const seen of store.tickets(project.id, ["approved"])) {
@@ -119,6 +124,7 @@ export async function askForPrTexts(ctx: EngineCtx, project: ProjectRow, spec: S
       if (ctx.now() - ask.at >= PR_TEXT_MS) useTemplate(ctx, ticket, `the worker did not hand it in within ${PR_TEXT_MINUTES} minutes`);
       continue;
     }
+    if (workerSlots(spec.agents.max_workers, store.tickets(project.id).map(toLite), parked.workers) === 0) continue;
     const fix = inFixRound(ticket);
     store.tx(() => {
       store.updateTicket(ticket.id, { pr_ask_json: JSON.stringify({ head: ticket.head_sha!, at: ctx.now(), fix, nudged: false } satisfies PrAsk) });
@@ -321,23 +327,18 @@ export function forgeRoundsSinceRequeue(store: EngineCtx["store"], ticketId: num
   return count;
 }
 
-/** A fix round's message waiting for bb to take it. */
-interface PrDelivery {
-  thread: string;
-  text: { summary: string; detail: string };
-}
-
 /**
  * pr_open to working with the feedback (or to queued when the worker is gone), or blocked once the fix rounds are used
- * up, in one transaction. The message to the worker is stored with the move and sent after it, so a failed send or a
- * restart sends it again (deliverFixRounds). A worker that is ending owns the ticket's move, so the round waits. A
- * worker Loom released comes back for the round: its environment is restored first, and the message waits for it.
+ * up, in one transaction. The message to the worker is stored with the move as a hand-back, which waits for a worker slot
+ * and is sent after it, so a failed send or a restart sends it again (deliverHandBacks). A worker that is ending owns the
+ * ticket's move, so the round waits. A worker Loom released comes back for the round once it has a slot: its environment
+ * is restored first, and the message waits for it.
  */
 async function startFixRound(ctx: EngineCtx, seen: TicketRow, a: Round): Promise<boolean> {
   const { store } = ctx;
   const spec = specOf(store, store.project(seen.project_id)!);
   const max = prSettings(spec).maxFixRounds;
-  const result = store.tx((): { kind: "working" } | { kind: "waking"; worker: ThreadRow } | { kind: "queued" } | { kind: "blocking"; worker: ThreadRow } | { kind: "blocked" } | null => {
+  const result = store.tx((): { kind: "working" } | { kind: "queued" } | { kind: "blocking"; worker: ThreadRow } | { kind: "blocked" } | null => {
     const ticket = store.ticket(seen.id);
     if (ticket?.state !== "pr_open") return null;
     const worker = workerOf(store, ticket);
@@ -365,10 +366,8 @@ async function startFixRound(ctx: EngineCtx, seen: TicketRow, a: Round): Promise
     const thread = worker.standing === "active" ? worker.row.thread_id : (asleep?.thread_id ?? null);
     if (thread !== null) {
       const text = prFeedbackText({ key: ticket.key, url: ticket.pr_url, round, counted, max, checks: a.checks, items: a.items, skipped: a.skipped, diverged: a.diverged, signature: signatureOf(ctx), restored: asleep !== null || (worker.standing === "active" && isWaking(worker.row)) });
-      store.updateTicket(ticket.id, { pr_deliver_json: JSON.stringify({ thread, text } satisfies PrDelivery) });
-      const row = asleep === null ? (worker.row as ThreadRow) : wakeRow(ctx, asleep);
-      toWorking(ctx, store.ticket(ticket.id)!, row, move);
-      return asleep === null ? { kind: "working" } : { kind: "waking", worker: row };
+      handBack(ctx, store.ticket(ticket.id)!, worker.standing === "active" ? worker.row : null, thread, text, move);
+      return { kind: "working" };
     }
     applyMove(ctx, store.ticket(ticket.id)!, { to: "queued", patch: released }, LOOM_ACTOR, { ...move, reason: "the worker is gone" });
     return { kind: "queued" };
@@ -377,38 +376,8 @@ async function startFixRound(ctx: EngineCtx, seen: TicketRow, a: Round): Promise
   store.changed(seen.project_id);
   ctx.kick();
   if (result.kind === "blocking") await resumeEnding(ctx, result.worker);
-  else if (result.kind === "working") await deliver(ctx, store.ticket(seen.id)!);
-  else if (result.kind === "waking") {
-    await advanceWake(ctx, result.worker);
-    await deliver(ctx, store.ticket(seen.id)!);
-  }
+  else if (result.kind === "working") await deliverHandBacks(ctx, seen.project_id);
   return true;
-}
-
-/** Sends a ticket's stored fix-round message; it stays stored, for the next tick, until bb takes it. */
-async function deliver(ctx: EngineCtx, ticket: TicketRow): Promise<void> {
-  const pending = parse<PrDelivery>(ticket.pr_deliver_json);
-  if (pending === null) return;
-  if (ticket.state !== "working" || ticket.worker_thread_id !== pending.thread) {
-    ctx.store.updateTicket(ticket.id, { pr_deliver_json: null });
-    return;
-  }
-  if (!delivers(ctx, ticket.project_id)) return;
-  // A worker coming back from a release reads it once its environment is back.
-  const row = ctx.store.threadByThreadId(pending.thread);
-  if (isWaking(row) || isReleased(row)) return;
-  try {
-    await ctx.bb.send(pending.thread, pending.text);
-  } catch (error) {
-    ctx.bb.log("warn", `Could not send ${ticket.key}'s fix round to ${pending.thread}; Loom tries again: ${errText(error)}`);
-    return;
-  }
-  if (ctx.store.ticket(ticket.id)?.pr_deliver_json === ticket.pr_deliver_json) ctx.store.updateTicket(ticket.id, { pr_deliver_json: null });
-}
-
-/** The tick's retry of fix-round messages bb did not take, after a failed send or a restart. */
-export async function deliverFixRounds(ctx: EngineCtx, project: ProjectRow): Promise<void> {
-  for (const ticket of ctx.store.tickets(project.id)) if (ticket.pr_deliver_json !== null) await deliver(ctx, ticket);
 }
 
 function feedbackData(ticket: TicketRow, round: number, counted: number, a: Round, overLimit: boolean): object {
@@ -469,4 +438,4 @@ export function unchangedFix(posts: readonly PostRow[], sha: string): boolean {
 }
 
 /** When a closed pull request blocks its ticket, a requeue starts a new one: one commit on a new branch, with fresh rounds. */
-export const closedPrReset = { pr_branch: null, pushed_sha: null, pushed_at: null, pr_ask_json: null, pr_text_json: null, pr_seen_json: "[]", pr_rounds: 0, pr_status_json: null, pr_deliver_json: null, pr_base: null } as const;
+export const closedPrReset = { pr_branch: null, pushed_sha: null, pushed_at: null, pr_ask_json: null, pr_text_json: null, pr_seen_json: "[]", pr_rounds: 0, pr_status_json: null, handback_json: null, pr_base: null } as const;

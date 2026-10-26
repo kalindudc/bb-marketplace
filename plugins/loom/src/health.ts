@@ -11,7 +11,8 @@ export interface ProjectHealth {
   pace: { perHour: number | null; remaining: number; etaMs: number | null };
   budget: { used: number; max: number } | null;
   deadline: { date: string; daysLeft: number } | null;
-  capacity: { workers: number; maxWorkers: number; reviewers: number; maxReviewers: number; readyWaiting: number };
+  /** `workers` hold a worker slot; `handBacksWaiting` are tickets whose work went back to their worker and waits for one. */
+  capacity: { workers: number; maxWorkers: number; reviewers: number; maxReviewers: number; readyWaiting: number; handBacksWaiting: number };
 }
 
 const DAY_MS = 86_400_000;
@@ -39,11 +40,12 @@ export function projectHealth(a: { tickets: TicketRow[]; threads: ThreadRow[]; m
     budget: maxTokens === undefined ? null : { used: metrics.tokens.total, max: maxTokens },
     deadline: deadline === undefined ? null : { date: deadline, daysLeft: Math.ceil((Date.parse(`${deadline}T00:00:00Z`) + DAY_MS - a.now) / DAY_MS) },
     capacity: {
-      workers: count("working") + count("checking"),
+      workers: lites.filter((lite) => lite.holds).length,
       maxWorkers,
       reviewers: a.threads.filter((thread) => thread.role === "reviewer" && (thread.state === "spawning" || thread.state === "active")).length,
       maxReviewers,
       readyWaiting: Math.max(0, readyTickets(lites, stacking(spec)).length - workerSlots(maxWorkers, lites)),
+      handBacksWaiting: lites.filter((lite) => lite.waitsSince !== null).length,
     },
   };
 }

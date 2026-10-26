@@ -5,10 +5,11 @@ import type { ThreadRow } from "../src/db/store";
 import { pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
 import { SpawnUnavailableError, type SpawnArgs } from "../src/ports";
 import { RESTORED_NOTE } from "../src/prompts";
-import { askForPrTexts, deliverFixRounds, handInPrText } from "../src/pull-requests";
+import { askForPrTexts, handInPrText } from "../src/pull-requests";
 import { advanceWakes, isReleased, isWaking, releaseIdleWorkers, wakeForRestacks } from "../src/release";
 import { approve, settleReviews, spawnReviewers } from "../src/review";
 import { boardCards } from "../src/rpc";
+import { deliverHandBacks } from "../src/slots";
 import { parseSpec } from "../src/spec";
 import { waitOf } from "../src/starts";
 import { onThreadGone, onTurnFailed, onWorkerIdle, RELEASED_TEXT, specOf } from "../src/workers";
@@ -126,9 +127,9 @@ describe("releasing the worker of an open pull request", () => {
     h.bb.waiting.add(worker.thread_id!);
     await kept();
     h.bb.waiting.clear();
-    h.store.updateTicket(ticket().id, { pr_deliver_json: JSON.stringify({ thread: worker.thread_id, text: { summary: "s", detail: "d" } }) });
+    h.store.updateTicket(ticket().id, { handback_json: JSON.stringify({ thread: worker.thread_id, text: { summary: "s", detail: "d" } }) });
     await kept();
-    h.store.updateTicket(ticket().id, { pr_deliver_json: null });
+    h.store.updateTicket(ticket().id, { handback_json: null });
     worktree.dirty = true;
     await kept();
     worktree.dirty = false;
@@ -157,7 +158,7 @@ describe("bringing the worker back for a fix round", () => {
     expect(ticket()).toMatchObject({ state: "working", pr_rounds: 1, worker_thread_id: worker.thread_id, environment_id: "env_r1" });
     expect(h.store.posts(ticket().id).at(-1)!.body).toBe(`The worker's thread is back, with a new environment on its branch ${ticket().branch}.`);
 
-    await deliverFixRounds(h.ctx, project());
+    await deliverHandBacks(h.ctx, project().id);
     const message = h.bb.sent(worker.thread_id!).at(-1)!;
     expect(message).toContain(RESTORED_NOTE);
     expect(message).toContain("Rename the column.");
@@ -186,7 +187,7 @@ describe("bringing the worker back for a fix round", () => {
     h.host.feedback.set(URL, changesRequested);
     await poll();
     expect(isWaking(row(worker.id))).toBe(true);
-    await deliverFixRounds(h.ctx, project());
+    await deliverHandBacks(h.ctx, project().id);
     await onWorkerIdle(h.ctx, row(worker.id));
     await onTurnFailed(h.ctx, makeTurnFailedEvent({ threadId: worker.thread_id!, requestId: "req_1" }));
     expect(h.bb.sent(worker.thread_id!).filter((text) => text.includes("Rename the column") || text.includes("your turn ended"))).toEqual([]);
@@ -195,7 +196,7 @@ describe("bringing the worker back for a fix round", () => {
     h.bb.environments.get("env_r1")!.status = "ready";
     h.bb.threads.get(worker.thread_id!)!.status = "idle";
     await advanceWakes(h.ctx, project().id);
-    await deliverFixRounds(h.ctx, project());
+    await deliverHandBacks(h.ctx, project().id);
     expect(h.bb.sent(worker.thread_id!).at(-1)).toContain("Rename the column.");
   });
 
@@ -215,7 +216,7 @@ describe("bringing the worker back for a fix round", () => {
     await e.engine.humanPost("CSV-1", "Please also rename the header.");
     expect(ticket()).toMatchObject({ state: "working", pr_rounds: 1 });
     expect(row(worker.id)).toMatchObject({ state: "active", released_at: null });
-    await deliverFixRounds(h.ctx, project());
+    await deliverHandBacks(h.ctx, project().id);
     expect(h.bb.sent(worker.thread_id!).at(-1)).toContain("Please also rename the header.");
   });
 
@@ -237,7 +238,7 @@ describe("bringing the worker back for a fix round", () => {
     }
     expect(h.bb.callsTo("restoreEnvironment")).toHaveLength(4);
     expect(row(worker.id)).toMatchObject({ state: "ended", end_reason: "gone" });
-    expect(ticket()).toMatchObject({ state: "queued", worker_thread_id: null, pr_deliver_json: null, failures: 0 });
+    expect(ticket()).toMatchObject({ state: "queued", worker_thread_id: null, handback_json: null, failures: 0 });
 
     const next = await startWorker(h);
     expect(next.thread_id).not.toBe(worker.thread_id);

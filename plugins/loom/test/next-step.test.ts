@@ -184,6 +184,11 @@ describe("nextStepOf", () => {
     expect(step).toMatchObject({ stage: 4, tone: "normal", title: "Running.", action: null });
     expect(step.text).toBe("2 workers are on CSV-2 and CSV-3. Nothing needs you now; this bar turns yellow when something does.");
 
+    const waiting = [card({ key: "CSV-2", state: "working", ready: false }), card({ key: "CSV-3", state: "working", ready: false, waitsForSlot: true }), card({ key: "CSV-4", state: "working", ready: false, waitsForSlot: true })];
+    expect(nextStepOf(input({ state: "running" }, waiting))!.text).toBe("1 worker is on CSV-2. CSV-3 and CSV-4 wait for a worker slot. Nothing needs you now; this bar turns yellow when something does.");
+    const allWaiting = [card({ key: "CSV-3", state: "working", ready: false, waitsForSlot: true })];
+    expect(nextStepOf(input({ state: "running" }, allWaiting))!.text).toBe("No worker is running now; tickets in checks, review or the merge queue move by themselves. CSV-3 waits for a worker slot. Nothing needs you now; this bar turns yellow when something does.");
+
     const idle = nextStepOf(input({ state: "running" }, [card({ state: "review", ready: false })]))!;
     expect(idle.text).toBe("No worker is running now; tickets in checks, review or the merge queue move by themselves. Nothing needs you now; this bar turns yellow when something does.");
   });

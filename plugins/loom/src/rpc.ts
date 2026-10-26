@@ -21,7 +21,7 @@ import { overviewAt, projectTimeline, rewind, rowsOf } from "./replay";
 import { changedTags } from "./rpc-tags";
 import { projectMetrics } from "./reports";
 import { UNSTARTED, blockedAtReview } from "./review";
-import { IN_FLIGHT, kinship, overlaps, readyTickets, startable, toLite, type TicketLite } from "./scheduler";
+import { IN_FLIGHT, kinship, overlaps, readyTickets, startable, toLite, waitsForSlot, type TicketLite } from "./scheduler";
 import { holdOf, stacking, stackOf, upstreamOf } from "./stack";
 import { parseSpec, type Spec } from "./spec";
 import { specReviewStatus } from "./spec-review";
@@ -84,7 +84,7 @@ export function specSummary(toml: string): SpecSummary {
 /** "provider / model" with only the parts that are set, or null when neither is. */
 const modelLabel = ({ provider, model }: { provider?: string; model?: string }) => [provider, model].filter((part) => part !== undefined).join(" / ") || null;
 
-/** Every thread row of a project: spawning, active and ending rows first, then the newest. A worker shows when it times out only while its ticket is being worked on, as the engine's timeout rule reads. */
+/** Every thread row of a project: spawning, active and ending rows first, then the newest. A worker shows when it times out only while its ticket is being worked on and not waiting for a worker slot, as the engine's timeout rule reads. */
 export function agentRows(threads: ThreadRow[], tickets: TicketRow[], spec: Spec | null): AgentRow[] {
   const byId = new Map(tickets.map((ticket) => [ticket.id, ticket]));
   const live = (row: ThreadRow) => Number(row.state !== "ended");
@@ -92,7 +92,7 @@ export function agentRows(threads: ThreadRow[], tickets: TicketRow[], spec: Spec
     .sort((a, b) => live(b) - live(a) || b.started_at - a.started_at || b.id - a.id)
     .map((row) => {
       const ticket = row.ticket_id === null ? null : (byId.get(row.ticket_id) ?? null);
-      const timing = spec !== null && row.role === "worker" && row.state === "active" && row.clock_at !== null && ticket?.state === "working" && ticket.worker_thread_id === row.thread_id;
+      const timing = spec !== null && row.role === "worker" && row.state === "active" && row.clock_at !== null && ticket?.state === "working" && ticket.worker_thread_id === row.thread_id && !waitsForSlot(ticket);
       return {
         threadId: row.thread_id,
         role: row.role,
@@ -169,6 +169,7 @@ export function boardCards(tickets: TicketRow[], threads: ThreadRow[], spec: Spe
       hasChanges: ticket.head_sha !== null || ((ticket.state === "working" || ticket.state === "checking") && ticket.environment_id !== null),
       ...stackFacts(tickets, ticket, stack),
       startWait: startWaitView(ticket, threads),
+      waitsForSlot: lite.waitsSince !== null,
     };
   });
 }
@@ -211,6 +212,8 @@ export function draftCards(spec: Spec, at: number): BoardCard[] {
     pushed: false,
     scope: ticket.scope,
     repo: ticket.repo ?? null,
+    holds: false,
+    waitsSince: null,
   }));
   const queue = queueOf(lites);
   return lites.map((lite, index) => ({
@@ -231,6 +234,7 @@ export function draftCards(spec: Spec, at: number): BoardCard[] {
     stackedOn: [],
     holding: null,
     startWait: null,
+    waitsForSlot: false,
   }));
 }
 

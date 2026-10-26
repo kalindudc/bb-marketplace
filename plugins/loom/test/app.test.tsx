@@ -2494,6 +2494,14 @@ describe("board", () => {
     expect(slot.container.querySelector('[data-card="CSV-4"] [data-start-wait]')!.textContent).toBe("Its reviewer could not start (The provider failed.); Loom tries again in 1m (2 failed starts in a row).");
   });
 
+  it("says on the card when work went back to a worker and waits for a free worker slot", async () => {
+    const board = [card({ key: "CSV-2", title: "Export endpoint", state: "working", ready: false, waitsForSlot: true }), card({ key: "CSV-3", title: "Docs", state: "working", ready: false })];
+    const { slot } = await mountPage("csv", { project: () => projectView({ board }) });
+    await slot.findByRole("tab", { name: "Board" });
+    expect(slot.container.querySelector('[data-card="CSV-2"] [data-slot-wait]')!.textContent).toBe("Waits for a free worker slot");
+    expect(slot.container.querySelector('[data-card="CSV-3"] [data-slot-wait]')).toBeNull();
+  });
+
   it("shows each card's age in its state, attempt and review round", async () => {
     const slot = await mountBoard();
     const working = lane(slot, "working").querySelector('[data-card="CSV-2"]')!;

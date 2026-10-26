@@ -69,7 +69,7 @@ export function HealthStrip({ health }: { health: ProjectHealth }) {
         id="capacity"
         title="Capacity"
         value={<>{capacity.workers}/{capacity.maxWorkers} {small("workers")}</>}
-        note={`${capacity.reviewers}/${capacity.maxReviewers} reviewers · ${plural(capacity.readyWaiting, "ready ticket")} waiting for a slot`}
+        note={`${capacity.reviewers}/${capacity.maxReviewers} reviewers · ${plural(capacity.readyWaiting, "ready ticket")} waiting for a slot${capacity.handBacksWaiting > 0 ? ` · ${plural(capacity.handBacksWaiting, "ticket")} waiting to go back to ${capacity.handBacksWaiting === 1 ? "its worker" : "their workers"}` : ""}`}
       />
     </div>
   );

@@ -176,12 +176,17 @@ describe("tick: spawning", () => {
     });
     await h.engine.tick();
     expect(spawned()).toEqual(["CSV-1"]);
-    h.store.setTicketState(ticketOf(h, "CSV-1").id, "checking", "loom");
     await h.engine.tick();
     expect(spawned()).toEqual(["CSV-1"]);
-    h.store.setTicketState(ticketOf(h, "CSV-1").id, "review", "loom");
+    // Checking holds the slot too (workerSlots); the tick would run the checks under the test, so it hands in and they finish first.
+    const worker = workerRows(h, "CSV-1")[0]!;
+    Object.assign(h.host.worktree(`/wt/${worker.environment_id}`), { dirty: true, changed: ["src/model/a.ts"] });
+    submit(h.ctx, worker.thread_id!, "Done");
+    await settleChecks(h.ctx);
+    expect(ticketOf(h, "CSV-1").state).toBe("review");
     await h.engine.tick();
-    expect(spawned()).toEqual(["CSV-1", "CSV-3"]);
+    const workers = h.bb.callsTo("spawnThread").filter(([args]) => (args as SpawnArgs).metadata.role === "worker");
+    expect(workers.map(([args]) => (args as SpawnArgs).metadata.ticket)).toEqual(["CSV-1", "CSV-3"]);
   });
 
   it("repairs the project's section before it spawns", async () => {
