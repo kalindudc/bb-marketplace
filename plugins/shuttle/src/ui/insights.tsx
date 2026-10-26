@@ -6,6 +6,9 @@ import { ActivityView, TONE_ICON } from "./activity";
 import { BUTTON, ErrorNote, PAGE, PageHeading, Segmented } from "./common";
 import { messageOf, useShuttleQuery } from "./data";
 import { duration, percent, settingsHref } from "./format";
+import { INSIGHTS_TABS, type InsightsTab } from "./route";
+import { INSIGHTS_TAB_LABELS } from "./constants";
+import { SyncView } from "./sync";
 
 type Range = Insights["range"];
 type Idea = Insights["ideas"][number];
@@ -210,13 +213,21 @@ function Overview({ data, phone, onAction }: { data: Insights; phone: boolean; o
 }
 
 /** How your PRs and reviews flow, with ideas that act on it; and the Automation log. */
-export function InsightsView({ tab, onTab, onAction, onOpenPr }: { tab: "overview" | "log"; onTab(tab: "overview" | "log"): void; onAction(action: IdeaAction): void; onOpenPr(key: string): void }) {
+export function InsightsView({ tab, onTab, onAction, onOpenPr }: { tab: InsightsTab; onTab(tab: InsightsTab): void; onAction(action: IdeaAction): void; onOpenPr(key: string): void }) {
   const actions = useActions();
   const [range, setRange] = useState<Range>("30d");
   const insights = useShuttleQuery("insights", { range }, tab === "overview");
   const data = insights.data;
   const servers = useShuttleQuery("overview", {}).data?.servers.filter((server) => server.enabled).map((server) => server.name) ?? [];
-  const tabs = <Segmented label="Insights" value={tab} onChange={onTab} options={[{ value: "overview" as const, label: "Overview" }, { value: "log" as const, label: "Automation log" }]} />;
+  const tabs = <Segmented label="Insights" value={tab} onChange={onTab} options={INSIGHTS_TABS.map((value) => ({ value, label: INSIGHTS_TAB_LABELS[value] }))} />;
+  if (tab === "sync") {
+    return (
+      <div className={PAGE}>
+        <PageHeading title="Insights" description="How each server syncs, and why a sync failed.">{tabs}</PageHeading>
+        <SyncView />
+      </div>
+    );
+  }
   if (tab === "log") {
     return (
       <div className={PAGE}>

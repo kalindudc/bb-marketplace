@@ -28,6 +28,7 @@ const EVENT_LOOKS: Record<string, Look> = {
   forward_failed: { icon: "AlertTriangle", tone: "bad" },
   sync_ok: { icon: "ArrowReloadHorizontal", tone: "neutral" },
   sync_failed: { icon: "AlertTriangle", tone: "bad" },
+  sync_partial: { icon: "AlertTriangle", tone: "warn" },
   section_failed: { icon: "AlertTriangle", tone: "bad" },
   linked: { icon: "Link", tone: "neutral" },
   unlinked: { icon: "Link", tone: "neutral" },

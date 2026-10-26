@@ -12,7 +12,8 @@ server.ts              wiring: database, settings, RPC, tools, CLI, events, the 
 app.tsx                the Shuttle page, thread panel tab, header chip and settings sections
 src/config.ts          servers, presets and automations (stored in the plugin database)
 src/adapters/          the built-in GitHub adapter (gh) and the command adapter
-src/sync.ts            one server sync and the auto reviews it calls for
+src/sync.ts            one server sync, step by step with bounded retries, and the auto reviews it calls for
+src/failures.ts        why a sync step failed, in plain words, for the UI, the CLI and the Automation log
 src/next.ts            the next-step rule every PR's Inbox card, row and banner show
 src/views.ts           PR rows as the UI sees them, and which area each belongs in
 src/agents.ts          a PR's agent thread, its mode, and auto agent

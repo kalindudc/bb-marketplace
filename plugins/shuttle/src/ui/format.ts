@@ -34,6 +34,20 @@ export function ago(at: number, now = Date.now()): string {
   return `${days}d ago`;
 }
 
+/** "11:38 AM" today, "Oct 25, 12:53 PM" on another day. */
+export function clock(at: number, now = Date.now()): string {
+  const date = new Date(at);
+  const time = date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return date.toDateString() === new Date(now).toDateString() ? time : `${date.toLocaleDateString(undefined, { month: "short", day: "numeric" })}, ${time}`;
+}
+
+/** "6.1s" or "1m 17s". */
+export function seconds(ms: number): string {
+  const total = ms / 1000;
+  if (total < 60) return `${total < 10 ? total.toFixed(1) : Math.round(total)}s`;
+  return `${Math.floor(total / 60)}m ${Math.round(total % 60)}s`;
+}
+
 /** A median such as "41m", "7.5h" or "2.6d"; null shows a dash. */
 export function duration(ms: number | null): string {
   if (ms === null) return "—";

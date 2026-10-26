@@ -17,6 +17,7 @@ describe("page routes", () => {
     expect(parseRoute("reviews~team")).toEqual({ view: "reviews", source: "team", key: null });
     expect(parseRoute("insights")).toEqual({ view: "insights", tab: "overview" });
     expect(parseRoute("insights/log")).toEqual({ view: "insights", tab: "log" });
+    expect(parseRoute("insights/sync")).toEqual({ view: "insights", tab: "sync" });
     expect(parseRoute("nonsense")).toEqual({ view: "inbox", key: null });
 
     expect(formatRoute({ view: "inbox", key: null })).toBe("inbox");
@@ -25,6 +26,7 @@ describe("page routes", () => {
     expect(formatRoute({ view: "reviews", source: "all", key })).toBe("reviews/delta/shop/world/2261179");
     expect(formatRoute({ view: "reviews", source: "asked", key: null })).toBe("reviews~asked");
     expect(formatRoute({ view: "insights", tab: "log" })).toBe("insights/log");
+    expect(formatRoute({ view: "insights", tab: "sync" })).toBe("insights/sync");
     expect(formatRoute({ view: "pr", key })).toBe("pr/delta/shop/world/2261179");
     for (const route of [
       { view: "inbox", key }, { view: "mine", key }, { view: "done", key }, { view: "reviews", source: "team", key }, { view: "reviews", source: "tracked", key: null },

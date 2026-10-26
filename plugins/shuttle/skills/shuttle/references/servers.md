@@ -64,8 +64,17 @@ the usual tool directories on `PATH`, and a 60-second limit. It gets:
 | `SHUTTLE_RESOLVED` | resolve: `1` to resolve the thread, `0` to reopen it |
 
 A command must exit 0 and print one JSON document. A non-zero exit, output that is not JSON or
-JSON in the wrong shape fails that operation, with the reason on the Servers page; the other
-operations still run, and the server's PRs keep their last good data.
+JSON in the wrong shape fails that operation; the other operations still run, and the PRs of
+the lists that failed keep their last good data. When a command fails, print the reason on
+stderr: Shuttle keeps the end of it, with the exit code, and shows it on Insights › Sync, in
+Settings › Servers and in `bb shuttle status`. An exit 0 that prints nothing counts as a failure
+too, with whatever went to stderr. A line such as ``run `dt auth login` `` on stderr becomes the
+fix Shuttle offers to copy. Do not pipe a server call straight into `jq`: without `pipefail`, a
+failed call leaves `jq` to print nothing and exit 0. Capture the answer first, as `delta.sh` does.
+
+Shuttle tries a failed list once more after a server error (HTTP 5xx), a network error or an empty
+answer, at most twice a sync per server, and never after a rate limit (HTTP 429) or a timeout.
+A command does not need retries of its own.
 
 ## What each command prints
 

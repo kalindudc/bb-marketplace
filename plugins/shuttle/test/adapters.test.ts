@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import type { Adapter } from "../src/adapters/adapter";
+import { AdapterError, type Adapter } from "../src/adapters/adapter";
 import { CommandAdapter, MERGE_DEFAULTS } from "../src/adapters/command";
 import { runProcess, shellQuote, type RunOptions, type RunResult } from "../src/adapters/exec";
 import { GithubAdapter, isPlacementError, listFields, searchQuery, toActivity, toMergeOptions, toSummary } from "../src/adapters/github";
@@ -144,7 +144,10 @@ describe("GitHub summaries", () => {
     expect(flaky.calls.map(first)).toEqual(["first=25", "first=25", "first=12", "first=6"]);
     expect(flaky.calls.map(after)).toEqual([null, "after=Y3Vyc29yOjI1", "after=Y3Vyc29yOjI1", "after=Y3Vyc29yOjI1"]);
     const down = recorder(() => ({ code: 1, stderr: "gh: HTTP 504" }));
-    await expect(new GithubAdapter(github(), down.run).list("mentioned", {})).rejects.toThrow(/HTTP 504/u);
+    const gaveUp = await new GithubAdapter(github(), down.run).list("mentioned", {}).catch((error: unknown) => error);
+    expect(gaveUp).toBeInstanceOf(AdapterError);
+    // A sync does not try again on top of these tries.
+    expect((gaveUp as AdapterError).detail).toEqual({ command: "gh api graphql", exit: 1, output: "gh: HTTP 504", retried: true });
     expect(down.calls).toHaveLength(3);
     const denied = recorder(() => ({ code: 1, stderr: "gh: HTTP 401" }));
     await expect(new GithubAdapter(github(), denied.run).list("mentioned", {})).rejects.toThrow(/HTTP 401/u);
@@ -484,7 +487,19 @@ const fs = require("node:fs");
 const args = process.argv.slice(2);
 const input = args.includes("--input") ? JSON.parse(fs.readFileSync(0, "utf8")) : undefined;
 fs.appendFileSync(process.env.FAKE_DT_LOG, JSON.stringify(input === undefined ? { args } : { args, input }) + "\\n");
+if (process.env.FAKE_DT_DOWN) {
+  console.error(process.env.FAKE_DT_DOWN);
+  process.exit(1);
+}
+if (process.env.FAKE_DT_QUIET) {
+  console.error(process.env.FAKE_DT_QUIET);
+  process.exit(0);
+}
 const path = args[0] === "api" ? args[1].replace(/^repos\\/[^/]+\\/[^/]+\\//, "") : "";
+if (process.env.FAKE_DT_PULL_DOWN && path === "pulls/7") {
+  console.error(process.env.FAKE_DT_PULL_DOWN);
+  process.exit(1);
+}
 const user = (login) => ({ login, type: "User" });
 const answers = {
   "pulls/7": { number: 7, head: { sha: "h2" } },
@@ -531,6 +546,31 @@ else if (path === "pulls/7/reviews") console.log("{}");
 
   it("is valid shell", () => {
     expect(spawnSync("sh", ["-n", DELTA]).status).toBe(0);
+  });
+
+  it("fails with dt's own error when dt fails, instead of printing nothing", async () => {
+    const down = (error: string) => {
+      const extra = `FAKE_DT_DOWN=${shellQuote(error)} SHUTTLE_DELTA_TEAMS=edge,web `;
+      return new CommandAdapter(forge({ whoami: command(extra), authored: command(extra), team_requested: command(extra), merge_options: command(extra), reply: command(extra) }), runProcess);
+    };
+    const restarting = "Error: 503: walgit: the host serving this repository is restarting; retry in a few seconds";
+    const adapter = down(restarting);
+    const attempts = [() => adapter.whoami(), () => adapter.list("authored", { state: "open" }), () => adapter.list("team_requested", {}), () => adapter.mergeOptions("shop/world", 7), () => adapter.reply("shop/world", 7, "t-1", "ok")];
+    for (const attempt of attempts) {
+      const error = await attempt().catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(AdapterError);
+      expect((error as AdapterError).detail).toMatchObject({ exit: 1, output: restarting });
+    }
+    const signedOut = await down("Error: 401: walgit: unauthorized").whoami().catch((e: unknown) => e as AdapterError);
+    expect((signedOut as AdapterError).detail.output).toBe("Error: 401: walgit: unauthorized\ndelta.sh: Delta did not accept your sign-in; run `dt auth login`, then sync again");
+    // One of activity's parallel reads fails: the others finish first, then the read fails with its error.
+    const pullDown = new CommandAdapter(forge({ activity: command("FAKE_DT_PULL_DOWN='Error: 503: walgit: restarting' ") }), runProcess);
+    const partial = await pullDown.activity("shop/world", 7).catch((e: unknown) => e as AdapterError);
+    expect((partial as AdapterError).detail).toMatchObject({ exit: 1, output: "Error: 503: walgit: restarting" });
+    // dt exits 0 but answers nothing: what it said on stderr still reaches Shuttle.
+    const quiet = new CommandAdapter(forge({ whoami: command("FAKE_DT_QUIET='warning: token refresh failed' ") }), runProcess);
+    await expect(quiet.whoami()).rejects.toThrow("whoami printed nothing: warning: token refresh failed");
+    calls();
   });
 
   it("works on the PR's own repository, and refuses one that is not owner/name", async () => {

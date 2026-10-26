@@ -1,10 +1,10 @@
 // Shuttle's operations, shared by the RPC handlers, the agent tools and the CLI.
 import { adapterFor, type Adapter } from "./adapters";
-import { runProcess, type Runner } from "./adapters/exec";
+import { runProcess, sleep, type Runner } from "./adapters/exec";
 import { configChanges, configFromToml, configToToml, ConfigError, parseConfig, serverSchema, type Config, type ServerConfig, type WatchMode } from "./config";
 import type {
   AgentMode, AgentTarget, Area, ConversationItem, EventView, InboxView, InsightsView, LinkRole, MergeMethod, MergeOptions, Outcome, Overview, PostFinding, PrChange, PrView, ReviewDraft,
-  ReviewInput, TestResult, ThreadOption, Verdict,
+  ReviewInput, ServerStatus, SyncHistory, SyncRun, SyncStep, SyncStepName, TestResult, ThreadOption, Verdict,
 } from "./contract";
 import { askAgent, runAutoAgent, setAgent, setAgentMode, type AgentChange } from "./agents";
 import { cancelAutoMerge, comment, Conversations, merge, mergeOptions, recordOutcomes, reply, resolve } from "./conversation";
@@ -12,7 +12,7 @@ import { draftView, saveDraft, setDraftState, submitReview, type DraftInput } fr
 import { insights, INSIGHTS_SINCE, snapshotCounts } from "./insights";
 import { agentActive, feedbackSignature, phaseOf } from "./next";
 import { errText, ShuttleError, type Ctx } from "./ctx";
-import type { EventRow, Store } from "./db/store";
+import type { EventRow, ServerRow, Store, SyncRunRow } from "./db/store";
 import type { BbPort, ProjectInfo } from "./ports";
 import { fetchPr, linkPr, lookup, rememberThread, requirePr, setWatch, shortKey, unlinkPr } from "./prs";
 import { parseKey } from "./keys";
@@ -21,12 +21,21 @@ import { archiveDoneReviewThreads, unarchiveForDraft } from "./review-threads";
 import { startReview } from "./reviews";
 import { searchPrs } from "./search";
 import type { Settings } from "./settings";
-import { runAutoReviews, syncServer } from "./sync";
+import { primaryStep } from "./failures";
+import { RECHECK_MS, runAutoReviews, syncServer } from "./sync";
 import { allViews, inArea, inboxOf, toView } from "./views";
 import { editOptions, editPr } from "./edit";
 import { deliver, pollWatches } from "./watch";
 
 const PROJECTS_TTL_MS = 5 * 60_000;
+const DAY_MS = 86_400_000;
+/** How far back the Sync tab's marks go. */
+const HISTORY_WINDOW_MS = 3 * 3_600_000;
+const FULL_SYNC_AT = "full_sync_at";
+
+const stepsOf = (run: SyncRunRow) => JSON.parse(run.steps) as SyncStep[];
+const toRun = (run: SyncRunRow): SyncRun => ({ id: run.id, at: run.at, durationMs: run.duration_ms, state: run.state, steps: stepsOf(run) });
+const kindsOf = (run: SyncRunRow | null) => (run === null ? [] : stepsOf(run).flatMap((step) => (step.failure ? [step.failure.kind] : [])));
 
 export interface ShuttleDeps {
   store: Store;
@@ -36,6 +45,8 @@ export interface ShuttleDeps {
   runner?: Runner;
   /** Aborts when the plugin stops: syncs started by the UI or the CLI end with it. */
   lifetime?: AbortSignal;
+  /** Waits before a retry; tests pass one that only moves their clock. */
+  pause?: (ms: number, signal?: AbortSignal) => Promise<void>;
 }
 
 /** Settles with `work`, or as soon as `signal` aborts; the abort listener goes either way. */
@@ -62,6 +73,8 @@ export class Shuttle implements Ctx {
   private readonly adapters = new Map<string, { json: string; adapter: Adapter }>();
   private projectCache: { at: number; projects: ProjectInfo[] } | null = null;
   private syncing: Promise<void> | null = null;
+  /** The servers the running sync covers; null for all of them. */
+  private syncingScope: readonly string[] | null = null;
   private deliveries: Promise<unknown> = Promise.resolve();
   private readonly conversations = new Conversations(this);
 
@@ -72,12 +85,14 @@ export class Shuttle implements Ctx {
     this.settings = deps.settings;
     this.runner = deps.runner;
     this.run = deps.runner ?? runProcess;
+    this.pause = deps.pause ?? ((ms, signal) => sleep(ms, signal ?? new AbortController().signal));
     this.lifetime = deps.lifetime;
     // Insights only trust Shuttle's own sightings from here on; rows copied over at the upgrade predate them.
     if (!this.store.kv(INSIGHTS_SINCE)) this.store.setKv(INSIGHTS_SINCE, String(this.now()));
   }
 
   readonly run: Runner;
+  readonly pause: (ms: number, signal?: AbortSignal) => Promise<void>;
 
   config(): Config {
     return this.store.config();
@@ -132,30 +147,95 @@ export class Shuttle implements Ctx {
       done: views.filter((v) => inArea(v, "done", this)).length,
       reviews: views.filter((v) => inArea(v, "reviews", this)).length,
     };
-    const servers = this.config().servers.map((server) => {
-      const row = this.store.server(server.id);
-      let operations: string[];
-      try {
-        operations = this.adapter(server.id).operations();
-      } catch {
-        operations = [];
-      }
-      return {
-        id: server.id,
-        name: server.name,
-        kind: server.kind,
-        enabled: server.enabled,
-        ok: row?.ok === null || row?.ok === undefined ? null : row.ok === 1,
-        login: row?.login ?? null,
-        error: row?.error ?? null,
-        lastOkAt: row?.last_ok_at ?? null,
-        lastSyncAt: row?.last_sync_at ?? null,
-        durationMs: row?.duration_ms ?? null,
-        operations,
-      };
-    });
+    const servers = this.config().servers.map((server) => this.serverStatus(server));
     const syncedAt = servers.reduce<number | null>((max, s) => (s.lastSyncAt !== null && (max === null || s.lastSyncAt > max) ? s.lastSyncAt : max), null);
     return { servers, counts, syncedAt, syncing: this.syncing !== null, paused: this.settings().pauseAutomations, autoAgent: this.settings().autoAgent };
+  }
+
+  private serverStatus(server: ServerConfig): ServerStatus {
+    const row = this.store.server(server.id);
+    let operations: string[];
+    try {
+      operations = this.adapter(server.id).operations();
+    } catch {
+      operations = [];
+    }
+    const unhealthy = row !== null && row.state !== null && row.state !== "ok";
+    const last = unhealthy ? this.store.lastSyncRun(server.id) : null;
+    const step = last ? primaryStep(stepsOf(last)) : undefined;
+    const failure = step?.failure ? { ...step.failure, operation: step.operation } : null;
+    const kinds = kindsOf(last);
+    const recheck = this.recheckAt(row, kinds);
+    const full = this.lastFullSync();
+    const nextFull = full === null ? this.now() : full + this.settings().syncMinutes * 60_000;
+    const lastFailed = this.store.failedSyncRuns(server.id, this.now() - DAY_MS, 1)[0] ?? null;
+    return {
+      id: server.id,
+      name: server.name,
+      kind: server.kind,
+      enabled: server.enabled,
+      ok: row?.ok === null || row?.ok === undefined ? null : row.ok === 1,
+      state: row?.state ?? null,
+      login: row?.login ?? null,
+      error: row?.error ?? null,
+      lastOkAt: row?.last_ok_at ?? null,
+      lastSyncAt: row?.last_sync_at ?? null,
+      durationMs: row?.duration_ms ?? null,
+      operations,
+      failures: row?.failures ?? 0,
+      failingSince: row?.failing_since ?? null,
+      failure,
+      failedSteps: unhealthy && row.failed_steps ? (JSON.parse(row.failed_steps) as SyncStepName[]) : [],
+      stepOkAt: row?.steps_ok_at ? (JSON.parse(row.steps_ok_at) as Partial<Record<SyncStepName, number>>) : {},
+      // One failed sync is often gone by the next; a sign-in is not, so it shows at once.
+      alert: unhealthy && ((row?.failures ?? 0) >= 2 || kinds.includes("auth")),
+      nextSyncAt: server.enabled ? Math.min(recheck ?? Infinity, nextFull) : null,
+      lastFailedAt: lastFailed?.at ?? null,
+    };
+  }
+
+  /**
+   * After a server's first failed sync, one more sync a minute later. Never sooner when any step of it was
+   * rate-limited, and a refused sign-in waits for the user.
+   */
+  private recheckAt(row: ServerRow | null, kinds: readonly string[]): number | null {
+    if (row === null || row.failures !== 1 || row.state === "ok" || row.last_sync_at === null) return null;
+    if (kinds.length === 0 || kinds.includes("rate_limit") || kinds.includes("auth")) return null;
+    return row.last_sync_at + RECHECK_MS;
+  }
+
+  /** When every server last synced together; a recheck of one server does not move it. */
+  private lastFullSync(): number | null {
+    const saved = Number(this.store.kv(FULL_SYNC_AT));
+    if (saved > 0) return saved;
+    // Before the first full sync that records it: the server that synced longest ago, so a sync of one
+    // server never puts off the others; a server that never synced makes a full sync due now.
+    const times = this.config().servers.filter((s) => s.enabled).map((s) => this.store.server(s.id)?.last_sync_at ?? null);
+    if (times.length === 0 || times.includes(null)) return null;
+    return Math.min(...(times as number[]));
+  }
+
+  /** Each server's syncs of the last three hours, its last failed sync step by step, and its failures of the week. */
+  syncHistory(): SyncHistory {
+    const now = this.now();
+    return {
+      windowMs: HISTORY_WINDOW_MS,
+      servers: this.config().servers.map((server) => {
+        const runs = this.store.syncRuns(server.id, now - HISTORY_WINDOW_MS);
+        const failed = this.store.failedSyncRuns(server.id, now - 7 * DAY_MS, 30);
+        const passing = runs.filter((run) => run.state === "ok");
+        return {
+          id: server.id,
+          runs: runs.map((run) => ({ at: run.at, state: run.state, durationMs: run.duration_ms })),
+          lastFailure: failed[0] ? toRun(failed[0]) : null,
+          failures: failed.map((run) => {
+            const step = primaryStep(stepsOf(run));
+            return { at: run.at, state: run.state, operation: step?.operation ?? "whoami", summary: step?.failure?.summary ?? "The sync failed", output: step?.failure?.output ?? null };
+          }),
+          averageMs: passing.length > 0 ? Math.round(passing.reduce((sum, run) => sum + run.duration_ms, 0) / passing.length) : null,
+        };
+      }),
+    };
   }
 
   list(area: Area): PrView[] {
@@ -505,20 +585,31 @@ export class Shuttle implements Ctx {
     return results;
   }
 
-  /** Syncs every enabled server, runs the auto reviews and checks watched PRs. One at a time. */
-  sync(signal: AbortSignal | undefined = this.lifetime): Promise<void> {
-    // The loop's tick must not wait out a sync the UI started once the loop itself is asked to stop.
-    if (this.syncing) return signal ? settleOrAbort(this.syncing, signal) : this.syncing;
+  /** Syncs every enabled server, or only those in `only`, runs the auto reviews and checks watched PRs. One sync at a time. */
+  sync(signal: AbortSignal | undefined = this.lifetime, only?: readonly string[]): Promise<void> {
+    if (only !== undefined) for (const id of only) if (!this.server(id)) throw new ShuttleError(`no server called ${id}`);
+    if (this.syncing) {
+      // A request for servers the running sync does not cover runs after it, rather than being answered by it.
+      const scope = this.syncingScope;
+      const covered = scope === null || (only !== undefined && only.every((id) => scope.includes(id)));
+      const after = covered ? this.syncing : this.syncing.then(() => this.sync(signal, only), () => this.sync(signal, only));
+      // The loop's tick must not wait out a sync the UI started once the loop itself is asked to stop.
+      return signal ? settleOrAbort(after, signal) : after;
+    }
+    this.syncingScope = only ?? null;
     this.syncing = (async () => {
       this.port.publish();
       try {
         for (const server of this.config().servers) {
-          if (!server.enabled || signal?.aborted) continue;
+          if (!server.enabled || signal?.aborted || (only !== undefined && !only.includes(server.id))) continue;
           const result = await syncServer(this, server, signal);
-          if (result.ok && !signal?.aborted) await runAutoReviews(this, server.id, signal);
-          if (!signal?.aborted) await pollWatches(this, server.id, signal);
+          // A partial sync still brought the lists that passed; only their requests start auto reviews.
+          if ((result.state === "ok" || result.state === "partial") && !signal?.aborted) await runAutoReviews(this, server.id, signal, new Set(result.passed));
+          // A server that rate-limited Shuttle or looks down is not asked about each watched PR too.
+          if (!signal?.aborted && result.backOff === null) await pollWatches(this, server.id, signal);
         }
         if (signal?.aborted) return;
+        if (only === undefined) this.store.setKv(FULL_SYNC_AT, String(this.now()));
         await this.refreshThreadTitles();
         await this.autoAgent(signal).catch((error: unknown) => this.port.log("warn", `auto agent: ${errText(error)}`));
         this.record();
@@ -527,6 +618,7 @@ export class Shuttle implements Ctx {
         if (!signal?.aborted) await this.archiveReviewThreads();
       } finally {
         this.syncing = null;
+        this.syncingScope = null;
         this.port.publish();
       }
     })();
@@ -535,9 +627,17 @@ export class Shuttle implements Ctx {
 
   /** The loop's step: a sync when one is due, and the batches whose window passed. */
   async tick(signal?: AbortSignal): Promise<void> {
-    const last = this.overview().syncedAt;
-    if (last === null || this.now() - last >= this.settings().syncMinutes * 60_000) await this.sync(signal);
-    else await this.deliver();
+    const last = this.lastFullSync();
+    if (last === null || this.now() - last >= this.settings().syncMinutes * 60_000) return this.sync(signal);
+    const due = this.config().servers.filter((server) => {
+      if (!server.enabled) return false;
+      const row = this.store.server(server.id);
+      const run = row?.failures === 1 ? this.store.lastSyncRun(server.id) : null;
+      const at = this.recheckAt(row, kindsOf(run));
+      return at !== null && this.now() >= at;
+    });
+    if (due.length > 0) return this.sync(signal, due.map((server) => server.id));
+    await this.deliver();
   }
 
   /** Titles and states of linked threads: bb's list has whether one waits on the user, a single read does not. */

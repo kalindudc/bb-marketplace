@@ -2,7 +2,7 @@ import { PluginCliError, cliCommand, defineCli, type PluginCliRegistration, type
 import { readFile } from "node:fs/promises";
 import { AGENT_MODES, AREAS, type AgentMode, type Area } from "./contract";
 import { errText } from "./ctx";
-import { prDetail, prList } from "./format";
+import { prDetail, prList, serverText } from "./format";
 import type { Shuttle } from "./shuttle";
 
 const json = { type: "boolean", description: "Print machine-readable JSON." } as const;
@@ -40,7 +40,7 @@ export function createCli(shuttle: Shuttle): PluginCliRegistration {
           guarded(() => {
             const overview = shuttle.overview();
             if (options.json) return out(toJson(overview));
-            const servers = overview.servers.map((s) => `${s.id}  ${!s.enabled ? "off" : s.ok === null ? "not synced yet" : s.ok ? `ok as ${s.login}` : `failing: ${s.error}`}`);
+            const servers = overview.servers.map((s) => serverText(s));
             return out([...servers, countsText(overview.counts), overview.paused ? "automations are paused" : "", overview.autoAgent ? "auto agent is on" : ""].filter(Boolean).join("\n"));
           }),
       }),
@@ -178,13 +178,16 @@ export function createCli(shuttle: Shuttle): PluginCliRegistration {
           }),
       }),
       sync: cliCommand({
-        summary: "Sync every server now, run due auto reviews and check watched PRs",
-        options: { json },
+        summary: "Sync every server now, or one with --server, run due auto reviews and check watched PRs",
+        options: { server: { type: "string", description: "Only this server, by id." }, json },
         run: ({ options }) =>
           guarded(async () => {
-            await shuttle.sync();
+            await shuttle.sync(undefined, options.server === undefined ? undefined : [options.server]);
             const overview = shuttle.overview();
-            return out(options.json ? toJson(overview) : `Synced. ${countsText(overview.counts)}`);
+            if (options.json) return out(toJson(overview));
+            const synced = overview.servers.filter((s) => s.enabled && (options.server === undefined || s.id === options.server));
+            const failing = synced.filter((s) => s.state !== "ok");
+            return out([failing.length === 0 ? "Synced." : "Synced, with failures:", ...failing.map((s) => serverText(s)), countsText(overview.counts)].join("\n"));
           }),
       }),
       "config-export": cliCommand({

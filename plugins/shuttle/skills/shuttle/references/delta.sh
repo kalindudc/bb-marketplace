@@ -10,6 +10,8 @@
 # The lists search SHUTTLE_DELTA_REPO (default shop/world); every operation on one PR works on that
 # PR's own repository, SHUTTLE_REPO.
 set -eu
+# Where sh has pipefail, a pipe fails with its first failing command; the dt calls below never rely on it.
+if (set -o pipefail) 2>/dev/null; then set -o pipefail; fi
 fail() { echo "delta.sh: $1" >&2; exit 2; }
 REPO="${SHUTTLE_REPO:-${SHUTTLE_DELTA_REPO:-shop/world}}"
 case "$REPO" in
@@ -19,14 +21,44 @@ case "$REPO" in
 esac
 HOST="https://delta.shopify.io"
 
-get() { dt api "$1" -X GET --host "$HOST" -R "$REPO"; }
+# Runs dt and prints its answer. A failed dt fails the script with dt's own error and exit code:
+# piped straight into jq, it would leave jq to print nothing and exit 0. What dt says on stderr is
+# passed on either way, so an answer that is not JSON still comes with its reason.
+dtq() {
+  dterr=$(mktemp)
+  if out=$(dt "$@" 2>"$dterr"); then code=0; else code=$?; fi
+  cat "$dterr" >&2
+  if [ "$code" -eq 0 ]; then
+    rm -f "$dterr"
+    printf '%s\n' "$out"
+    return 0
+  fi
+  if grep -Eiq '(^|[^0-9])401([^0-9]|$)|unauthori[sz]ed|not (logged|signed) in' "$dterr"; then
+    echo 'delta.sh: Delta did not accept your sign-in; run `dt auth login`, then sync again' >&2
+  fi
+  rm -f "$dterr"
+  exit "$code"
+}
+get() { dtq api "$1" -X GET --host "$HOST" -R "$REPO"; }
+# Waits for every background job named, then fails with the first failure's exit code. Stopping at
+# the first failure would leave the others running, still holding the stderr Shuttle reads.
+wait_all() {
+  first=0
+  for job in "$@"; do
+    if wait "$job"; then :; else
+      status=$?
+      if [ "$first" -eq 0 ]; then first=$status; fi
+    fi
+  done
+  return "$first"
+}
 pr() { dt pr "$@" --host "$HOST" -R "$REPO" >&2; }
 # Every page of a list endpoint as one array, up to 1000 items.
 all() {
   page=1
   acc='[]'
   while :; do
-    chunk=$(get "$1?per_page=100&page=$page")
+    chunk=$(get "$1?per_page=100&page=$page") || exit
     acc=$(printf '%s\n%s\n' "$acc" "$chunk" | jq -cs 'add')
     if [ "$(printf '%s' "$chunk" | jq 'length')" -lt 100 ] || [ "$page" -ge 10 ]; then break; fi
     page=$((page + 1))
@@ -108,20 +140,22 @@ MERGE_OPTIONS='([.viewer.allowed_methods[]? | select(. == "squash" or . == "merg
 
 search() {
   q=$(printf 'repo:%s is:pr %s' "$REPO" "$1" | jq -sRr @uri)
-  get "search/issues?q=$q&sort=updated&order=desc&per_page=100" \
-    | jq --arg repo "$REPO" "{items: [.items[]? | $SUMMARY], complete: ((.total_count // 0) <= ((.items // []) | length))}"
+  found=$(get "search/issues?q=$q&sort=updated&order=desc&per_page=100") || exit
+  printf '%s\n' "$found" | jq --arg repo "$REPO" "{items: [.items[]? | $SUMMARY], complete: ((.total_count // 0) <= ((.items // []) | length))}"
 }
 
 case "${SHUTTLE_OPERATION:?}" in
-  whoami) dt auth status --host "$HOST" -R "$REPO" --json | jq '{login: .principal}' ;;
+  whoami)
+    me=$(dtq auth status --host "$HOST" -R "$REPO" --json) || exit
+    printf '%s\n' "$me" | jq '{login: .principal}' ;;
   authored)
     if [ "${SHUTTLE_STATE:-open}" = closed ]; then search "author:@me is:closed updated:>=${SHUTTLE_SINCE:?}"
     else search "author:@me is:open"; fi ;;
   review_requested) search "is:open review-requested:@me" ;;
   team_requested)
-    for team in $(printf '%s' "${SHUTTLE_DELTA_TEAMS:?set SHUTTLE_DELTA_TEAMS to your team slugs}" | tr ',' ' '); do
-      search "is:open team-review-requested:$team"
-    done | jq -s '{items: ([.[].items[]] | unique_by(.number)), complete: all(.[]; .complete)}' ;;
+    teams=$(printf '%s' "${SHUTTLE_DELTA_TEAMS:?set SHUTTLE_DELTA_TEAMS to your team slugs}" | tr ',' ' ')
+    found=$(for team in $teams; do search "is:open team-review-requested:$team" || exit; done) || exit
+    printf '%s\n' "$found" | jq -s '{items: ([.[].items[]] | unique_by(.number)), complete: all(.[]; .complete)}' ;;
   reviewed) search "is:open reviewed-by:@me -author:@me" ;;
   view)
     n="${SHUTTLE_NUMBER:?}"
@@ -129,11 +163,13 @@ case "${SHUTTLE_OPERATION:?}" in
     trap 'rm -rf "$tmp"' EXIT
     get "repos/$REPO/pulls/$n" > "$tmp/pull" & pull=$!
     all "repos/$REPO/pulls/$n/reviews" > "$tmp/reviews" & reviews=$!
-    dt auth status --host "$HOST" -R "$REPO" --json > "$tmp/me" & me=$!
+    dtq auth status --host "$HOST" -R "$REPO" --json > "$tmp/me" & me=$!
     get "repos/$REPO/pulls/$n/merge-readiness" > "$tmp/gate" 2>/dev/null & gate=$!
-    wait "$pull"; wait "$reviews"; wait "$me"
+    failed=0
+    wait_all "$pull" "$reviews" "$me" || failed=$?
     # The merge gate only adds check counts; without it the view still stands.
     wait "$gate" || : > "$tmp/gate"
+    if [ "$failed" -ne 0 ]; then exit "$failed"; fi
     jq -n --arg repo "$REPO" --arg me "$(jq -r .principal "$tmp/me")" \
       --slurpfile pull "$tmp/pull" --slurpfile reviews "$tmp/reviews" --slurpfile gate "$tmp/gate" \
       "[\$pull[0], \$reviews[0]] as \$both | (\$pull[0] | $SUMMARY + {body: (.body // \"\")})
@@ -147,12 +183,16 @@ case "${SHUTTLE_OPERATION:?}" in
     all "repos/$REPO/pulls/$n/comments" > "$tmp/threads" & threads=$!
     all "repos/$REPO/issues/$n/comments" > "$tmp/comments" & comments=$!
     get "repos/$REPO/pulls/$n/merge-readiness" > "$tmp/gate" 2>/dev/null & gate=$!
-    wait "$pull"; wait "$reviews"; wait "$threads"; wait "$comments"
+    failed=0
+    wait_all "$pull" "$reviews" "$threads" "$comments" || failed=$?
     # Without the merge gate the reviews and comments still arrive; failed checks come with a later read.
     wait "$gate" || : > "$tmp/gate"
+    if [ "$failed" -ne 0 ]; then exit "$failed"; fi
     jq -n --slurpfile pull "$tmp/pull" --slurpfile reviews "$tmp/reviews" --slurpfile threads "$tmp/threads" \
       --slurpfile comments "$tmp/comments" --slurpfile gate "$tmp/gate" "$ACTIVITY" ;;
-  merge_options) get "repos/$REPO/pulls/${SHUTTLE_NUMBER:?}/merge-readiness" | jq "$MERGE_OPTIONS" ;;
+  merge_options)
+    gate=$(get "repos/$REPO/pulls/${SHUTTLE_NUMBER:?}/merge-readiness") || exit
+    printf '%s\n' "$gate" | jq "$MERGE_OPTIONS" ;;
   merge)
     : "${SHUTTLE_NUMBER:?}" "${SHUTTLE_HEAD:?}"
     if [ "${SHUTTLE_AUTO:-0}" = 1 ]; then fail "Delta has no auto-merge"; fi
@@ -202,7 +242,8 @@ case "${SHUTTLE_OPERATION:?}" in
   reply)
     n="${SHUTTLE_NUMBER:?}"
     # dt pr comment --reply-to takes a comment id; Shuttle names the thread, so reply to its first comment.
-    root=$(all "repos/$REPO/pulls/$n/comments" | jq -r --arg thread "${SHUTTLE_THREAD:?}" \
+    threads=$(all "repos/$REPO/pulls/$n/comments") || exit
+    root=$(printf '%s\n' "$threads" | jq -r --arg thread "${SHUTTLE_THREAD:?}" \
       '[.[] | select(.thread_id == $thread)] | ((map(select(.in_reply_to_id == null)) + .) | first | .id // empty)')
     if [ -z "$root" ]; then fail "no review comment in thread $SHUTTLE_THREAD"; fi
     pr comment "$n" --reply-to "$root" --body="${SHUTTLE_BODY:?}" ;;
@@ -223,7 +264,8 @@ case "${SHUTTLE_OPERATION:?}" in
     each --add-team-reviewer "${SHUTTLE_ADD_TEAMS:-}"
     if [ -n "${SHUTTLE_REMOVE_TEAMS:-}" ]; then
       # Withdrawing a team request takes its numeric id, not its slug.
-      ids=$(get "repos/$REPO/pulls/$SHUTTLE_NUMBER" | jq -r --arg slugs "$SHUTTLE_REMOVE_TEAMS" \
+      pull=$(get "repos/$REPO/pulls/$SHUTTLE_NUMBER") || exit
+      ids=$(printf '%s\n' "$pull" | jq -r --arg slugs "$SHUTTLE_REMOVE_TEAMS" \
         '($slugs | split("\n")) as $s | [.requested_teams[]? | select(.slug as $x | $s | index($x)) | .id | tostring] | join("\n")')
       each --remove-team-reviewer "$ids"
     fi ;;

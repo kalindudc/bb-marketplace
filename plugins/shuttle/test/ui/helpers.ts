@@ -97,6 +97,7 @@ export function pr(overrides: Partial<PrView> = {}): PrView {
     handled: false,
     autoMerge: false,
     stale: false,
+    staleSince: null,
     pendingItems: 0,
     labels: null,
     reviewers: null,
@@ -142,6 +143,7 @@ export function server(overrides: Partial<ServerStatus> = {}): ServerStatus {
     id: "github", name: "GitHub", kind: "github", enabled: true, ok: true, login: "kalindudc", error: null,
     lastOkAt: NOW - 60_000, lastSyncAt: NOW - 60_000, durationMs: 1100,
     operations: ["whoami", "authored", "review_requested", "team_requested", "mentioned", "view", "activity"],
+    state: "ok", failures: 0, failingSince: null, failure: null, failedSteps: [], stepOkAt: {}, alert: false, nextSyncAt: NOW + 120_000, lastFailedAt: null,
     ...overrides,
   };
 }
@@ -207,6 +209,7 @@ export function handlers(overrides: Partial<Handlers> = {}): Handlers {
     activity: () => ({ events: [] }),
     insights: () => insights(),
     sync: () => ({ ok: true }),
+    syncHistory: () => ({ windowMs: 3 * 3_600_000, servers: [] }),
     link: unexpected("link"),
     unlink: unexpected("unlink"),
     watch: unexpected("watch"),

@@ -40,14 +40,15 @@ that PR.
 
 ## CLI
 
-`bb shuttle status`, `bb shuttle list [--area inbox|mine|done|reviews]`, `bb shuttle search <words…>`
+`bb shuttle status` (each server's last sync, and when one failed, the step, why, what its command printed and
+what happens next), `bb shuttle list [--area inbox|mine|done|reviews]`, `bb shuttle search <words…>`
 (the PRs Shuttle already has; every word must match, and a quoted `"#123"` is a PR number), `bb shuttle show <pr>`,
 `bb shuttle link <pr> [--thread <id>] [--role owner|review|reference]`,
 `bb shuttle unlink <pr> [--thread <id>]`,
 `bb shuttle agent <pr> [--thread <id> | --new | --none] [--mode fix|notify|off]`,
 `bb shuttle track <pr> [--off]`, `bb shuttle watch <pr> [--mode act|forward] [--off]`,
 `bb shuttle review <pr> [--preset <id>] [--project <id>] [--note <text>] [--new-thread]` (the PR's last review
-thread of Shuttle's gets it, brought back from the archive when needed, unless `--new-thread`), `bb shuttle sync`,
+thread of Shuttle's gets it, brought back from the archive when needed, unless `--new-thread`), `bb shuttle sync [--server <id>]`,
 `bb shuttle config-export`, `bb shuttle config-import <file> [--apply]`. Every command takes
 `--json`, and `link`/`unlink` default to the calling thread.
 

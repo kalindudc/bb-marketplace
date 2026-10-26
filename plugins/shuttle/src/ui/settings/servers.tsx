@@ -1,11 +1,13 @@
 import { useState } from "react";
-import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
+import { experimental_Icon as Icon, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import type { Config, ServerConfig } from "../../config";
 import type { ServerStatus, TestResult } from "../../contract";
 import { BUTTON, BUTTON_GHOST, BUTTON_PRIMARY, CARD, ErrorNote, FIELD, Pill, ServerBadge, Toggle } from "../common";
-import { CONVERSATION_OPERATIONS, MANAGE_OPERATIONS, OPERATIONS, OPERATION_LABELS, READ_OPERATIONS } from "../constants";
+import { CONVERSATION_OPERATIONS, MANAGE_OPERATIONS, OPERATIONS, OPERATION_LABELS, PANEL_PATH, READ_OPERATIONS } from "../constants";
 import { messageOf, useShuttleMutation, useShuttleQuery } from "../data";
 import { ago } from "../format";
+import { formatRoute } from "../route";
+import { SyncFailureNote, SyncStatusPill } from "../sync";
 import { useConfig } from "./use-config";
 
 type Operation = (typeof OPERATIONS)[number];
@@ -132,9 +134,9 @@ function TestResults({ results }: { results: readonly TestResult[] }) {
 }
 
 function StatusPill({ status }: { status: ServerStatus | null }) {
-  if (status === null || status.ok === null) return <Pill>Not synced yet</Pill>;
-  if (status.ok) return <Pill tone="ok" icon="Check">{status.login ? `Signed in as ${status.login}` : "Synced"}</Pill>;
-  return <Pill tone="bad" icon="AlertTriangle" title={status.error ?? undefined}>{status.error ?? "The last sync failed"}</Pill>;
+  if (status === null || status.state === null) return <Pill>Not synced yet</Pill>;
+  if (status.state === "ok") return <Pill tone="ok" icon="Check">{status.login ? `Signed in as ${status.login}` : "Synced"}</Pill>;
+  return <SyncStatusPill server={status} />;
 }
 
 function ServerCard({ server, status, busy, onEnable, onEdit, onDelete }: {
@@ -145,6 +147,7 @@ function ServerCard({ server, status, busy, onEnable, onEdit, onDelete }: {
   onEdit(): void;
   onDelete(): void;
 }) {
+  const navigate = useBbNavigate();
   const testServer = useShuttleMutation("testServer");
   const testing = testServer.isPending;
   const [results, setResults] = useState<TestResult[] | null>(null);
@@ -165,8 +168,8 @@ function ServerCard({ server, status, busy, onEnable, onEdit, onDelete }: {
           </div>
         </div>
         <StatusPill status={status} />
-        {status?.durationMs != null && status.ok && <span className="text-xs text-muted-foreground">{(status.durationMs / 1000).toFixed(1)}s per sync</span>}
-        {status !== null && status.ok === false && status.lastOkAt !== null && <span className="text-xs text-muted-foreground">last good sync {ago(status.lastOkAt)}</span>}
+        {status?.durationMs != null && status.state === "ok" && <span className="text-xs text-muted-foreground">{(status.durationMs / 1000).toFixed(1)}s per sync</span>}
+        {status !== null && status.state !== null && status.state !== "ok" && status.lastOkAt !== null && <span className="text-xs text-muted-foreground">last good sync {ago(status.lastOkAt)}</span>}
         <button type="button" className={BUTTON} disabled={testing} onClick={() => void test()}>{testing ? "Testing…" : "Test"}</button>
         <Toggle on={server.enabled} label={`Enable ${server.name}`} disabled={busy} onChange={onEnable} />
         <button type="button" aria-label={`Edit ${server.name}`} className={BUTTON_GHOST} onClick={onEdit}>Edit</button>
@@ -181,6 +184,7 @@ function ServerCard({ server, status, busy, onEnable, onEdit, onDelete }: {
           </button>
         )}
       </div>
+      {status !== null && <SyncFailureNote server={status} onHistory={() => navigate.toPluginPanel(PANEL_PATH, { subPath: formatRoute({ view: "insights", tab: "sync" }) })} />}
       <div className="mt-2.5 flex flex-wrap gap-1">
         {OPERATIONS.map((op) => (
           <span key={op} title={OPERATION_LABELS[op]}><Pill tone={supported(op) ? "ok" : "neutral"} icon={supported(op) ? "Check" : undefined}>{op}</Pill></span>

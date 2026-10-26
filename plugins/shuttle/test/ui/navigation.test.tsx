@@ -63,6 +63,7 @@ describe("the page title", () => {
       ],
     });
     expect(await title("insights/log")).toEqual({ breadcrumbs: [{ label: "Insights", to: "/plugins/shuttle/shuttle/insights" }, { label: "Automation log" }] });
+    expect(await title("insights/sync")).toEqual({ breadcrumbs: [{ label: "Insights", to: "/plugins/shuttle/shuttle/insights" }, { label: "Sync" }] });
     expect(await title("activity")).toEqual({ breadcrumbs: [{ label: "Insights", to: "/plugins/shuttle/shuttle/insights" }, { label: "Automation log" }] });
     expect(await title(formatRoute({ view: "pr", key: "delta:shop/world#2261179" }))).toEqual({ breadcrumbs: [{ label: "Look up" }, { label: "shop/world#2261179" }] });
     expect(await title("search")).toEqual({ title: "Search" });
@@ -116,7 +117,14 @@ describe("the sidebar", () => {
     const slot = await sidebar("", {
       overview: () => overview({
         paused: true,
-        servers: [server(), server({ id: "gitlab", name: "GitLab", ok: false, error: "glab: command not found" }), server({ id: "off", name: "Off", enabled: false })],
+        servers: [
+          server(),
+          server({
+            id: "gitlab", name: "GitLab", ok: false, state: "failed", error: "whoami: whoami could not start", failures: 1,
+            failure: { operation: "whoami", kind: "failed", summary: "whoami could not start", message: "whoami could not start", output: null, exit: null, command: "glab auth status", fix: null },
+          }),
+          server({ id: "off", name: "Off", enabled: false }),
+        ],
       }),
     });
     const footer = await waitFor(() => {
@@ -124,8 +132,9 @@ describe("the sidebar", () => {
       if (found === null || found.querySelectorAll("[data-server]").length === 0) throw new Error("no footer yet");
       return found;
     });
-    expect([...footer.querySelectorAll("[data-server]")].map((node) => node.textContent)).toEqual(["GitHub · synced 1m ago", "GitLab · sync failed 1m ago"]);
-    expect(footer.querySelector("[data-server='gitlab']")!.getAttribute("title")).toBe("glab: command not found");
+    expect([...footer.querySelectorAll("[data-server]")].map((node) => node.textContent)).toEqual(["GitHub · synced 1m ago", "GitLab · sync failed 1m agowhoami could not start · why?"]);
+    fireEvent.click(footer.querySelector<HTMLElement>("[data-server='gitlab']")!);
+    expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: "insights/sync" } });
     expect(footer.textContent).toContain("Automations paused");
     expect(within(footer).getByRole("link", { name: "resume" }).getAttribute("href")).toBe("/settings/plugins/shuttle");
   });

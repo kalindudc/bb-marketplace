@@ -5,7 +5,7 @@ import type { CheckCounts, CheckState, MergeMethod, MergeOptions, MyReview, PrCh
 import { linkFor } from "../keys";
 import type { Activity, ActivityItem, EditOptions, PrSummary } from "../model";
 import { AdapterError, changeOperation, type Adapter, type ListOptions, type ListResult, type MergeInput, type ReviewComment, type ReviewPost, type ReviewPosted } from "./adapter";
-import { fillCommand, runProcess, shellQuote, tail, type RunResult, type Runner } from "./exec";
+import { fillCommand, outputTail, runProcess, shellQuote, tail, type RunResult, type Runner } from "./exec";
 
 const GH_TIMEOUT_MS = 45_000;
 // GitHub ends a GraphQL request after 10s; a page of 50 full PRs took 7 to 11s.
@@ -16,6 +16,9 @@ export const SEARCH_LIMIT = 300;
 const TIMEOUT_RETRIES = 2;
 // gh reports a 5xx with an empty JSON body as a parse error, hiding the status (cli/cli#10579).
 const GITHUB_TIMEOUT = /HTTP 50[234]|unexpected end of JSON input|couldn't respond to your request in time/u;
+
+/** `gh api graphql`: what ran, without its query or body. */
+const ghCommand = (args: readonly string[]) => ["gh", ...args.slice(0, 2)].join(" ");
 
 // Counts by state rather than the contexts themselves, so a list of 300 PRs stays light.
 const SUMMARY_FIELDS = `number title url isDraft state reviewDecision headRefOid headRefName baseRefName createdAt updatedAt closedAt mergedAt additions deletions changedFiles
@@ -421,22 +424,27 @@ export class GithubAdapter implements Adapter {
   }
 
   private async call(operation: Operation, args: string[], signal?: AbortSignal, stdin?: string): Promise<RunResult> {
+    const command = ghCommand(args);
     const result = await this.run("gh", args, { timeoutMs: GH_TIMEOUT_MS, signal, ...(stdin === undefined ? {} : { stdin }) }).catch((error: unknown) => {
       const missing = (error as NodeJS.ErrnoException).code === "ENOENT";
-      throw new AdapterError(operation, missing ? "gh is not installed or not on PATH" : `gh could not start: ${(error as Error).message}`);
+      throw new AdapterError(operation, missing ? "gh is not installed or not on PATH" : `gh could not start: ${(error as Error).message}`, { command });
     });
-    if (result.timedOut) throw new AdapterError(operation, `gh took longer than ${GH_TIMEOUT_MS / 1000}s`);
+    if (result.timedOut) throw new AdapterError(operation, `gh took longer than ${GH_TIMEOUT_MS / 1000}s`, { command, output: outputTail(result.stderr) });
     return result;
   }
 
-  private failure(operation: Operation, result: RunResult): AdapterError {
+  private failure(operation: Operation, result: RunResult, args: readonly string[]): AdapterError {
     const detail = apiDetail(result.stdout);
-    return new AdapterError(operation, `gh exited ${result.code}: ${tail(result.stderr || result.stdout) || "no output"}${detail ? ` (${detail})` : ""}`);
+    return new AdapterError(operation, `gh exited ${result.code}: ${tail(result.stderr || result.stdout) || "no output"}${detail ? ` (${detail})` : ""}`, {
+      command: ghCommand(args),
+      exit: result.code,
+      output: outputTail(result.stderr || result.stdout),
+    });
   }
 
   private async gh(operation: Operation, args: string[], signal?: AbortSignal, stdin?: string): Promise<string> {
     const result = await this.call(operation, args, signal, stdin);
-    if (result.code !== 0) throw this.failure(operation, result);
+    if (result.code !== 0) throw this.failure(operation, result, args);
     return result.stdout;
   }
 
@@ -480,7 +488,8 @@ export class GithubAdapter implements Adapter {
         try {
           data = await this.graphql(operation, query, vars, schema, signal);
         } catch (error) {
-          if (!(error instanceof AdapterError) || !GITHUB_TIMEOUT.test(error.message) || retry === TIMEOUT_RETRIES || signal?.aborted) throw error;
+          if (!(error instanceof AdapterError) || !GITHUB_TIMEOUT.test(error.message) || signal?.aborted) throw error;
+          if (retry === TIMEOUT_RETRIES) throw new AdapterError(operation, error.message, { ...error.detail, retried: true });
           // Search cursors are offsets, so the same cursor with a smaller page carries on where it stopped.
           size = Math.max(1, Math.floor(size / 2));
         }
@@ -612,9 +621,9 @@ export class GithubAdapter implements Adapter {
     const first = await this.call("review", args, signal, payload(post.body, inline));
     if (first.code === 0) return { placed: post.comments.length, inBody: 0 };
     // A line GitHub cannot find in the diff: the comments still reach the author in the body, on the same commit.
-    if (!post.comments.length || !/HTTP 422/u.test(first.stderr) || !isPlacementError(`${first.stderr} ${apiDetail(first.stdout)}`)) throw this.failure("review", first);
+    if (!post.comments.length || !/HTTP 422/u.test(first.stderr) || !isPlacementError(`${first.stderr} ${apiDetail(first.stdout)}`)) throw this.failure("review", first, args);
     const second = await this.call("review", args, signal, payload(commentsInBody(post.body, post.comments), []));
-    if (second.code !== 0) throw this.failure("review", second);
+    if (second.code !== 0) throw this.failure("review", second, args);
     return { placed: 0, inBody: post.comments.length };
   }
 

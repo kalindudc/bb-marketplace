@@ -28,6 +28,7 @@ describe("sync", () => {
     await h.shuttle.sync();
     expect(h.shuttle.list("reviews").map((p) => p.number)).toEqual([6]);
     h.lists.review_requested = new Error("boom") as unknown as unknown[];
+    h.clock.now += 180_000;
     await h.shuttle.sync();
     expect(h.shuttle.list("reviews").map((p) => p.number)).toEqual([6]);
     const status = h.shuttle.overview().servers[0]!;

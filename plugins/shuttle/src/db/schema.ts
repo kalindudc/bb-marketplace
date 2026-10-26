@@ -176,4 +176,21 @@ export const MIGRATIONS: string[] = [
   `UPDATE reviews SET own_thread = 1 WHERE id IN (SELECT MIN(id) FROM reviews GROUP BY thread_id)
     AND EXISTS (SELECT 1 FROM links l WHERE l.pr_id = reviews.pr_id AND l.thread_id = reviews.thread_id AND l.role = 'review')`,
   `UPDATE reviews SET own_thread = 1 WHERE thread_id IN (SELECT thread_id FROM reviews WHERE own_thread = 1)`,
+  // 0.3.6: a sync that failed only some lists is partial, and each sync keeps why each step failed.
+  `ALTER TABLE servers ADD COLUMN state TEXT`,
+  `UPDATE servers SET state = CASE ok WHEN 1 THEN 'ok' WHEN 0 THEN 'failed' END`,
+  `ALTER TABLE servers ADD COLUMN failures INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE servers ADD COLUMN failing_since INTEGER`,
+  `UPDATE servers SET failures = 1, failing_since = last_sync_at WHERE ok = 0`,
+  `ALTER TABLE servers ADD COLUMN steps_ok_at TEXT`,
+  `ALTER TABLE servers ADD COLUMN failed_steps TEXT`,
+  `CREATE TABLE sync_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    server TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    duration_ms INTEGER NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('ok', 'partial', 'failed')),
+    steps TEXT NOT NULL
+  )`,
+  `CREATE INDEX sync_runs_server ON sync_runs (server, at)`,
 ];

@@ -63,7 +63,27 @@ export interface ServerRow {
   last_sync_at: number | null;
   duration_ms: number | null;
   baseline_at: number | null;
+  state: "ok" | "partial" | "failed" | null;
+  /** Syncs in a row that did not pass in full. */
+  failures: number;
+  failing_since: number | null;
+  /** JSON {step: epoch ms}: when each step last passed. */
+  steps_ok_at: string | null;
+  /** JSON step names that failed or did not run in the last sync. */
+  failed_steps: string | null;
 }
+
+export interface SyncRunRow {
+  id: number;
+  server: string;
+  at: number;
+  duration_ms: number;
+  state: "ok" | "partial" | "failed";
+  /** JSON SyncStep[]. */
+  steps: string;
+}
+
+const DAY_MS = 86_400_000;
 
 export interface ReasonRow {
   pr_id: number;
@@ -217,11 +237,35 @@ export class Store {
   saveServer(row: ServerRow): void {
     this.db
       .prepare(
-        `INSERT INTO servers (id, ok, login, error, last_ok_at, last_sync_at, duration_ms, baseline_at) VALUES (@id, @ok, @login, @error, @last_ok_at, @last_sync_at, @duration_ms, @baseline_at)
+        `INSERT INTO servers (id, ok, login, error, last_ok_at, last_sync_at, duration_ms, baseline_at, state, failures, failing_since, steps_ok_at, failed_steps)
+         VALUES (@id, @ok, @login, @error, @last_ok_at, @last_sync_at, @duration_ms, @baseline_at, @state, @failures, @failing_since, @steps_ok_at, @failed_steps)
          ON CONFLICT (id) DO UPDATE SET ok = excluded.ok, login = excluded.login, error = excluded.error, last_ok_at = excluded.last_ok_at,
-         last_sync_at = excluded.last_sync_at, duration_ms = excluded.duration_ms, baseline_at = excluded.baseline_at`,
+         last_sync_at = excluded.last_sync_at, duration_ms = excluded.duration_ms, baseline_at = excluded.baseline_at, state = excluded.state,
+         failures = excluded.failures, failing_since = excluded.failing_since, steps_ok_at = excluded.steps_ok_at, failed_steps = excluded.failed_steps`,
       )
       .run(row);
+  }
+
+  /** Passing syncs stay a day and the others a week, enough for the Sync tab. */
+  addSyncRun(run: Omit<SyncRunRow, "id">): void {
+    this.db.prepare("INSERT INTO sync_runs (server, at, duration_ms, state, steps) VALUES (@server, @at, @duration_ms, @state, @steps)").run(run);
+    const now = this.now();
+    this.db.prepare("DELETE FROM sync_runs WHERE (state = 'ok' AND at < ?) OR at < ?").run(now - DAY_MS, now - 7 * DAY_MS);
+    this.db.prepare("DELETE FROM sync_runs WHERE id <= (SELECT MAX(id) - 5000 FROM sync_runs)").run();
+  }
+
+  /** Oldest first. */
+  syncRuns(server: string, since: number): SyncRunRow[] {
+    return this.db.prepare("SELECT * FROM sync_runs WHERE server = ? AND at >= ? ORDER BY at, id").all(server, since) as SyncRunRow[];
+  }
+
+  /** Newest first: the syncs that did not pass in full. */
+  failedSyncRuns(server: string, since: number, limit: number): SyncRunRow[] {
+    return this.db.prepare("SELECT * FROM sync_runs WHERE server = ? AND at >= ? AND state != 'ok' ORDER BY at DESC, id DESC LIMIT ?").all(server, since, limit) as SyncRunRow[];
+  }
+
+  lastSyncRun(server: string): SyncRunRow | null {
+    return (this.db.prepare("SELECT * FROM sync_runs WHERE server = ? ORDER BY at DESC, id DESC LIMIT 1").get(server) as SyncRunRow | undefined) ?? null;
   }
 
   /** Inserts or refreshes a PR from its server's summary. `mine` only ever turns on. */

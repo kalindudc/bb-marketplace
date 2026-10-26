@@ -108,3 +108,9 @@ export function fillCommand(template: string, repo: string, number: number, url:
 export function tail(text: string, lines = 4, chars = 600): string {
   return text.trim().split("\n").slice(-lines).join(" ").slice(-chars);
 }
+
+/** The end of what a failed command printed, with its lines kept, for the Sync tab. */
+export function outputTail(text: string): string | undefined {
+  const kept = text.trim().split("\n").slice(-12).join("\n").slice(-2000);
+  return kept === "" ? undefined : kept;
+}

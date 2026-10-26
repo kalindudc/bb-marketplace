@@ -1,6 +1,6 @@
 import { AUTO_TRIGGERS, CHANGE_OPERATIONS, OPERATIONS, WATCH_MODES, WORKSPACES, WRITE_OPERATIONS } from "../config";
 import { AREAS, LINK_ROLES, type AgentMode, type NextKind } from "../contract";
-import type { Area, Source } from "./route";
+import type { Area, InsightsTab, Source } from "./route";
 
 export { AREAS, AUTO_TRIGGERS, LINK_ROLES, OPERATIONS, WATCH_MODES, WORKSPACES };
 
@@ -13,6 +13,8 @@ export const AREA_META: Record<Area, { label: string; icon: string }> = {
   reviews: { label: "Reviews", icon: "UserRound" },
   insights: { label: "Insights", icon: "ChartColumn" },
 };
+
+export const INSIGHTS_TAB_LABELS: Record<InsightsTab, string> = { overview: "Overview", log: "Automation log", sync: "Sync" };
 
 export const SOURCE_META: Record<Source, { label: string; chip: string }> = {
   all: { label: "Everything", chip: "Everything" },

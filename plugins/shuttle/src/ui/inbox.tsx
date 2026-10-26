@@ -8,6 +8,7 @@ import { messageOf, useShuttleQuery } from "./data";
 import { age, plural, shortKey, tinyKey } from "./format";
 import { useFolding } from "./prefs";
 import type { Route } from "./route";
+import { StalePill } from "./pills";
 import { GroupHeader, type RowLayout } from "./row";
 
 /** One decision: why it is here, its buttons in the server's words, when it leaves, and Snooze. */
@@ -28,8 +29,9 @@ function InboxCard({ pr, layout }: { pr: PrView; layout: RowLayout }) {
         </button>
       </div>
       <button type="button" className="mb-px mt-0.5 block cursor-pointer text-left text-sm font-semibold hover:underline hover:underline-offset-2" onClick={() => layout.onSelect(pr.key)}>{pr.title}</button>
-      <div className="text-[11.5px] text-muted-foreground">
-        <span className="font-mono" title={shortKey(pr)}>{tinyKey(pr)}</span> · {pr.serverName}{!pr.mine && ` · ${pr.author}`}
+      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11.5px] text-muted-foreground">
+        <span><span className="font-mono" title={shortKey(pr)}>{tinyKey(pr)}</span> · {pr.serverName}{!pr.mine && ` · ${pr.author}`}</span>
+        <StalePill pr={pr} />
       </div>
       <div className="mb-2 mt-1 text-[13px]">{next.why}</div>
       <div className="mt-auto flex flex-wrap items-center gap-1.5">

@@ -5,7 +5,7 @@ import { linkFor } from "../keys";
 import type { MergeOptions, PrChange } from "../contract";
 import { activitySchema, editOptionsSchema, mergeOptionsInputSchema, prSummarySchema, reviewPostedSchema, toSummary, whoamiSchema, type Activity, type EditOptions, type PrSummary } from "../model";
 import { AdapterError, changeOperation, type Adapter, type ListOptions, type ListResult, type MergeInput, type ReviewPost, type ReviewPosted } from "./adapter";
-import { fillCommand, runProcess, shellQuote, tail, type Runner } from "./exec";
+import { fillCommand, outputTail, runProcess, shellQuote, tail, type RunResult, type Runner } from "./exec";
 
 export const COMMAND_TIMEOUT_MS = 60_000;
 
@@ -23,7 +23,7 @@ export class CommandAdapter implements Adapter {
     return OPERATIONS.filter((op) => Boolean(this.server.commands[op]));
   }
 
-  private async exec(operation: Operation, env: Record<string, string>, signal?: AbortSignal): Promise<string> {
+  private async exec(operation: Operation, env: Record<string, string>, signal?: AbortSignal): Promise<RunResult> {
     const command = this.server.commands[operation];
     if (!command) throw new AdapterError(operation, `${this.server.name} has no ${operation} command`);
     const result = await this.run("/bin/sh", ["-c", command], {
@@ -31,20 +31,34 @@ export class CommandAdapter implements Adapter {
       timeoutMs: COMMAND_TIMEOUT_MS,
       signal,
     }).catch((error: unknown) => {
-      throw new AdapterError(operation, `${operation} could not start: ${(error as Error).message}`);
+      throw new AdapterError(operation, `${operation} could not start: ${(error as Error).message}`, { command });
     });
-    if (result.timedOut) throw new AdapterError(operation, `${operation} took longer than ${COMMAND_TIMEOUT_MS / 1000}s`);
-    if (result.code !== 0) throw new AdapterError(operation, `${operation} exited ${result.code}: ${tail(result.stderr || result.stdout) || "no output"}`);
-    return result.stdout;
+    if (result.timedOut) throw new AdapterError(operation, `${operation} took longer than ${COMMAND_TIMEOUT_MS / 1000}s`, { command, output: outputTail(result.stderr) });
+    if (result.code !== 0) {
+      throw new AdapterError(operation, `${operation} exited ${result.code}: ${tail(result.stderr || result.stdout) || "no output"}`, {
+        command,
+        exit: result.code,
+        output: outputTail(result.stderr || result.stdout),
+      });
+    }
+    return result;
+  }
+
+  /** A command that exits 0 without the JSON it owes failed all the same; its stderr usually says why. */
+  private notJson(operation: Operation, result: RunResult, out: string): AdapterError {
+    const said = tail(result.stderr, 2, 300);
+    const message = out === "" ? `${operation} printed nothing${said ? `: ${said}` : ""}` : `${operation} did not print JSON: ${tail(out, 2, 200)}`;
+    return new AdapterError(operation, message, { command: this.server.commands[operation], exit: result.code, output: outputTail(result.stderr || out) });
   }
 
   private async json(operation: Operation, env: Record<string, string>, signal?: AbortSignal): Promise<unknown> {
-    const out = (await this.exec(operation, env, signal)).trim();
+    const result = await this.exec(operation, env, signal);
+    const out = result.stdout.trim();
     if (operation === "whoami" && out && !out.startsWith("{") && !out.startsWith("\"")) return { login: out.split("\n")[0]!.trim() };
     try {
       return JSON.parse(out);
     } catch {
-      throw new AdapterError(operation, `${operation} did not print JSON: ${tail(out, 2, 200) || "no output"}`);
+      throw this.notJson(operation, result, out);
     }
   }
 
@@ -131,19 +145,20 @@ export class CommandAdapter implements Adapter {
   }
 
   async review(repo: string, number: number, post: ReviewPost, signal?: AbortSignal): Promise<ReviewPosted> {
-    const out = (await this.exec("review", {
+    const result = await this.exec("review", {
       ...this.refEnv(repo, number),
       SHUTTLE_VERDICT: post.verdict,
       SHUTTLE_BODY: post.body,
       SHUTTLE_HEAD: post.head ?? "",
       SHUTTLE_COMMENTS: JSON.stringify(post.comments.map((c) => ({ path: c.path, line: c.line, body: c.body }))),
-    }, signal)).trim();
+    }, signal);
+    const out = result.stdout.trim();
     if (!out) return { placed: post.comments.length, inBody: 0 };
     let value: unknown;
     try {
       value = JSON.parse(out);
     } catch {
-      throw new AdapterError("review", `review did not print JSON: ${tail(out, 2, 200)}`);
+      throw this.notJson("review", result, out);
     }
     const posted = this.parse("review", reviewPostedSchema, value);
     return { placed: posted.placed ?? 0, inBody: posted.in_body ?? 0 };

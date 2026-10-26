@@ -17,6 +17,8 @@ export interface Ctx {
   projects(): Promise<ProjectInfo[]>;
   /** Runs a user-configured command, such as a server workspace command. */
   run: Runner;
+  /** Waits before a retry; resolves at once on abort. */
+  pause(ms: number, signal?: AbortSignal): Promise<void>;
 }
 
 export class ShuttleError extends Error {

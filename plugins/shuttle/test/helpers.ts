@@ -99,6 +99,11 @@ export class FakePort implements BbPort {
 
 export type Responder = (operation: string, env: Record<string, string>) => unknown;
 
+/** A command's whole result, such as an exit 0 that printed only to stderr. */
+export class RawRun {
+  constructor(readonly result: { code: number | null; stdout: string; stderr: string; timedOut?: boolean }) {}
+}
+
 /** A runner that answers command-server operations from a function of SHUTTLE_OPERATION and the env. */
 export function fakeRunner(respond: Responder): Runner & { calls: Array<{ operation: string; env: Record<string, string> }> } {
   const calls: Array<{ operation: string; env: Record<string, string> }> = [];
@@ -107,6 +112,7 @@ export function fakeRunner(respond: Responder): Runner & { calls: Array<{ operat
     const operation = env.SHUTTLE_OPERATION ?? "";
     calls.push({ operation, env });
     const value = respond(operation, env);
+    if (value instanceof RawRun) return { timedOut: false, ...value.result };
     if (value instanceof Error) return { code: 1, stdout: "", stderr: value.message, timedOut: false };
     return { code: 0, stdout: typeof value === "string" ? value : JSON.stringify(value), stderr: "", timedOut: false };
   };
@@ -143,6 +149,8 @@ export interface Harness {
   /** Answers for any other operation, such as the edit commands. */
   answers: Record<string, unknown>;
   runner: ReturnType<typeof fakeRunner>;
+  /** Every retry pause, in ms; each moves the clock. */
+  pauses: number[];
 }
 
 export function harness(config: Config = testConfig()): Harness {
@@ -156,14 +164,21 @@ export function harness(config: Config = testConfig()): Harness {
   const activity: Record<number, unknown> = {};
   const answers: Record<string, unknown> = {};
   const runner = fakeRunner((operation, env) => {
-    if (operation === "whoami") return { login: "me" };
-    if (operation === "authored") return (lists.authored as Array<{ state: string }>).filter((row) => (env.SHUTTLE_STATE === "closed" ? row.state === "merged" || row.state === "closed" : row.state === "open" || row.state === "draft"));
+    if (operation === "whoami") return answers.whoami ?? { login: "me" };
+    const authored = lists.authored;
+    if (operation === "authored" && !Array.isArray(authored)) return authored;
+    if (operation === "authored") return (authored as Array<{ state: string }>).filter((row) => (env.SHUTTLE_STATE === "closed" ? row.state === "merged" || row.state === "closed" : row.state === "open" || row.state === "draft"));
     if (operation in lists) return lists[operation];
     if (operation === "view") return views[Number(env.SHUTTLE_NUMBER)] ?? new Error("not found");
     if (operation === "activity") return activity[Number(env.SHUTTLE_NUMBER)] ?? { items: [] };
     if (operation in answers) return answers[operation];
     return new Error(`unexpected ${operation}`);
   });
-  const shuttle = new Shuttle({ store, port, now: () => clock.now, settings: () => settings, runner });
-  return { shuttle, store, port, clock, settings, lists, views, activity, answers, runner };
+  const pauses: number[] = [];
+  const pause = async (ms: number) => {
+    pauses.push(ms);
+    clock.now += ms;
+  };
+  const shuttle = new Shuttle({ store, port, now: () => clock.now, settings: () => settings, runner, pause });
+  return { shuttle, store, port, clock, settings, lists, views, activity, answers, runner, pauses };
 }

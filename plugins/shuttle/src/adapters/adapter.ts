@@ -80,11 +80,23 @@ export function changeOperation(change: PrChange): ChangeOperation {
   return change.kind;
 }
 
+/** What a failed command left behind, so the user can see why a sync failed. */
+export interface FailureDetail {
+  /** The end of what the command printed: stderr, or stdout when stderr is empty. */
+  output?: string;
+  exit?: number | null;
+  /** The command that ran, as the user configured it. */
+  command?: string;
+  /** The adapter already tried again, so a sync does not retry it on top. */
+  retried?: boolean;
+}
+
 export class AdapterError extends Error {
   override readonly name = "AdapterError";
   constructor(
     readonly operation: Operation,
     message: string,
+    readonly detail: FailureDetail = {},
   ) {
     super(message);
   }

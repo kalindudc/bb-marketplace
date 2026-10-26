@@ -31,10 +31,12 @@ export function registerRpc(bb: BbPluginApi, shuttle: Shuttle): void {
     activity: ({ limit }) => refusing(() => ({ events: shuttle.activity(limit) })),
     insights: ({ range }) => refusing(() => shuttle.insights(range)),
     // A sync can take a minute on a slow server; the page follows it through overview.syncing.
-    sync: () => {
-      shuttle.sync().catch((error: unknown) => bb.log.warn(`sync: ${error instanceof Error ? error.message : String(error)}`));
+    sync: ({ server }) => refusing(() => {
+      if (server !== undefined && !shuttle.server(server)) throw new ShuttleError(`no server called ${server}`);
+      shuttle.sync(undefined, server === undefined ? undefined : [server]).catch((error: unknown) => bb.log.warn(`sync: ${error instanceof Error ? error.message : String(error)}`));
       return { ok: true as const };
-    },
+    }),
+    syncHistory: () => refusing(() => shuttle.syncHistory()),
     link: ({ key, threadId, role }) => refusing(async () => ({ pr: await shuttle.link(key, threadId, role ?? "owner") })),
     unlink: ({ key, threadId }) => refusing(async () => ({ pr: await shuttle.unlink(key, threadId) })),
     watch: ({ key, mode }) => refusing(() => ({ pr: shuttle.watch(key, mode) })),

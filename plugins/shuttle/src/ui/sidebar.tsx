@@ -6,6 +6,7 @@ import { ago, settingsHref } from "./format";
 import { sourceCounts } from "./reviews";
 import { routeOf } from "./prefs";
 import { formatRoute, SOURCES, type Route } from "./route";
+import { sidebarReason } from "./sync";
 
 function NavItem({ icon, label, count, hot = false, on, sub = false, onClick }: { icon?: string; label: string; count: number | null; hot?: boolean; on: boolean; sub?: boolean; onClick(): void }) {
   return (
@@ -20,14 +21,29 @@ function NavItem({ icon, label, count, hot = false, on, sub = false, onClick }: 
   );
 }
 
-function Health({ server }: { server: ServerStatus }) {
-  const dot = server.ok === null ? "bg-muted-foreground" : server.ok ? "bg-success" : "bg-destructive";
-  const when = server.lastSyncAt === null ? "not synced yet" : server.ok === false ? `sync failed ${ago(server.lastSyncAt)}` : `synced ${ago(server.lastSyncAt)}`;
-  return (
-    <div data-server={server.id} title={server.error ?? (server.login ? `Signed in as ${server.login}` : undefined)} className="flex items-center gap-2">
+const DOT = { ok: "bg-success", partial: "bg-warning", failed: "bg-destructive" } as const;
+const REASON_TONE = { bad: "text-destructive", warn: "text-warning-text", neutral: "text-muted-foreground" } as const;
+
+/** A server's last sync; one that fails, or failed in the last hour, says why in a line and opens Insights › Sync. */
+function Health({ server, onOpen }: { server: ServerStatus; onOpen(): void }) {
+  const dot = server.state === null ? "bg-muted-foreground" : DOT[server.state];
+  const when = server.lastSyncAt === null ? "not synced yet" : server.state === "failed" ? `sync failed ${ago(server.lastSyncAt)}` : `synced ${ago(server.lastSyncAt)}`;
+  const reason = sidebarReason(server);
+  const line = (
+    <span className="flex min-w-0 items-center gap-2">
       <span aria-hidden className={`inline-block size-[7px] shrink-0 rounded-full ${dot}`} />
       <span className="truncate">{server.name} · {when}</span>
-    </div>
+    </span>
+  );
+  if (reason === null) return <div data-server={server.id} title={server.login ? `Signed in as ${server.login}` : undefined} className="flex items-center">{line}</div>;
+  return (
+    <button type="button" data-server={server.id} title="Open Insights › Sync" onClick={onOpen}
+      className="-mx-1 flex cursor-pointer flex-col items-start gap-px rounded px-1 py-0.5 text-left hover:bg-accent">
+      {line}
+      <span className={`line-clamp-2 pl-[15px] text-[11px] leading-snug ${REASON_TONE[reason.tone]}`}>
+        {reason.text} · <span className="text-primary">why?</span>
+      </span>
+    </button>
   );
 }
 
@@ -64,10 +80,11 @@ export function ShuttleSidebar({ subPath }: PluginNavPanelProps) {
         <>
           <NavItem sub label="Overview" count={null} on={route.tab === "overview"} onClick={() => go({ view: "insights", tab: "overview" })} />
           <NavItem sub label="Automation log" count={null} on={route.tab === "log"} onClick={() => go({ view: "insights", tab: "log" })} />
+          <NavItem sub label="Sync" count={null} on={route.tab === "sync"} onClick={() => go({ view: "insights", tab: "sync" })} />
         </>
       )}
       <div data-sidebar-footer className="mt-auto flex flex-col gap-1.5 border-t border-border px-2 pb-0.5 pt-2.5 text-[11.5px] text-muted-foreground">
-        {servers.map((server) => <Health key={server.id} server={server} />)}
+        {servers.map((server) => <Health key={server.id} server={server} onOpen={() => go({ view: "insights", tab: "sync" })} />)}
         {overview.data !== undefined && (
           <div className={`flex items-center gap-1.5 ${overview.data.paused ? "text-warning-text" : ""}`}>
             <Icon name={overview.data.paused ? "Pause" : "Bot"} fallback="Circle" className="size-3.5 shrink-0" aria-hidden />

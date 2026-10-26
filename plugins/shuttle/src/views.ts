@@ -1,10 +1,10 @@
 // PR rows as the UI, the tools and the CLI see them, and which area each one belongs in.
-import type { AgentView, Area, CheckCounts, MyReview, PrView } from "./contract";
+import type { AgentView, Area, CheckCounts, MyReview, PrView, Reason } from "./contract";
 import type { Ctx } from "./ctx";
-import type { LinkRow, PrRow } from "./db/store";
+import type { LinkRow, PrRow, ServerRow } from "./db/store";
 import { actionsOf, parseLabels, parseReviewers } from "./edit";
 import { agentActive, feedbackSignature, INBOX_ORDER, nextStep, stillHandled } from "./next";
-import { globMatch } from "./sync";
+import { globMatch, STEP_OF_REASON } from "./sync";
 
 const DAY = 86_400_000;
 const QUIET_MS = 30 * DAY;
@@ -12,6 +12,27 @@ const QUIET_MS = 30 * DAY;
 const BASELINE_SLACK_MS = 5 * 60_000;
 
 const isLive = (pr: PrRow) => pr.state === "open" || pr.state === "draft";
+
+/**
+ * Whether the server's last sync failed every list that brings this PR, and when one of them last
+ * passed. A PR read during that sync anyway, by its own refresh, is current. A PR no list brings is
+ * old only when Shuttle refreshes it and its read did not land.
+ */
+export function staleness(server: ServerRow | null, pr: { reasons: readonly Reason[]; fetchedAt: number; refreshed: boolean }): { stale: boolean; since: number | null } {
+  if (server === null || server.state === null || server.state === "ok") return { stale: false, since: null };
+  // A server that failed before Shuttle kept each step: all of its PRs may be old.
+  if (server.failed_steps === null) return { stale: server.state === "failed", since: server.last_ok_at };
+  const started = (server.last_sync_at ?? 0) - (server.duration_ms ?? 0);
+  if (pr.fetchedAt >= started) return { stale: false, since: null };
+  const failed = new Set<string>(JSON.parse(server.failed_steps) as string[]);
+  if (pr.reasons.length === 0) return pr.refreshed && failed.has("refresh") ? { stale: true, since: pr.fetchedAt } : { stale: false, since: null };
+  const { reasons } = pr;
+  const steps = [...new Set(reasons.map((reason) => STEP_OF_REASON[reason]))];
+  if (!steps.every((step) => failed.has(step))) return { stale: false, since: null };
+  const okAt = server.steps_ok_at ? (JSON.parse(server.steps_ok_at) as Record<string, number>) : {};
+  const times = steps.map((step) => okAt[step]).filter((at): at is number => at !== undefined);
+  return { stale: true, since: times.length > 0 ? Math.max(...times) : server.last_ok_at };
+}
 
 export function agentMode(watch: "act" | "forward" | null): AgentView["mode"] {
   return watch === "act" ? "fix" : watch === "forward" ? "notify" : "off";
@@ -71,6 +92,7 @@ export function toView(ctx: Ctx, pr: PrRow): PrView {
   const agent = agentOf(ctx, pr, owner);
   const reasonRows = ctx.store.reasons(pr.id);
   const reasons = reasonRows.map((r) => ({ reason: r.reason, teams: JSON.parse(r.teams) as string[] }));
+  const freshness = staleness(serverRow, { reasons: reasons.map((r) => r.reason), fetchedAt: pr.fetched_at, refreshed: pr.tracked === 1 || watch !== null || links.length > 0 });
   const teams = [...new Set(reasons.filter((r) => r.reason === "team").flatMap((r) => r.teams).map(normalizeTeam))];
   const reviewers = parseReviewers(pr.reviewers);
   const checkCounts = pr.check_counts ? (JSON.parse(pr.check_counts) as CheckCounts) : null;
@@ -191,7 +213,8 @@ export function toView(ctx: Ctx, pr: PrRow): PrView {
     snoozedUntil: snoozed ? (pr.snoozed_until ?? null) : null,
     handled,
     autoMerge: pr.auto_merge === 1,
-    stale: serverRow?.ok === 0,
+    stale: freshness.stale,
+    staleSince: freshness.since,
     pendingItems: watch ? ctx.store.pendingCount(pr.id) : 0,
     labels: parseLabels(pr.labels),
     reviewers,

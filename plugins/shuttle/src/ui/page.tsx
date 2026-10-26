@@ -16,6 +16,7 @@ import { InsightsView, type IdeaAction } from "./insights";
 import { LinkDialog, type LinkRequest } from "./link-dialog";
 import { MergeDialog } from "./merge-dialog";
 import { MineView } from "./mine";
+import { SyncBanner } from "./sync";
 import { isLive } from "./pills";
 import { ApproveDialog, PresetDialog } from "./review-button";
 import { ReviewDialog } from "./review-dialog";
@@ -322,6 +323,9 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
   const notices = (
     <>
       {overview.error !== null && <div className="px-4 pt-3"><ErrorNote>Could not load Shuttle's status: {messageOf(overview.error)}</ErrorNote></div>}
+      {overview.data !== undefined && !(route.view === "insights" && route.tab === "sync") && (
+        <SyncBanner servers={overview.data.servers} onSeeWhy={() => go({ view: "insights", tab: "sync" })} />
+      )}
       {phone && overview.data?.paused === true && (
         <div role="status" className="mx-4 mt-3 rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-xs text-warning-text">
           Automations are paused: no auto reviews, and nothing is sent to agents. Lists keep syncing.

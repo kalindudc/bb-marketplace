@@ -7,7 +7,7 @@ import { BUTTON, BUTTON_PRIMARY, ErrorNote, ICON_GHOST, Pill, SectionTitle, TONE
 import { NEXT_ICONS } from "./constants";
 import { ChecksSection, Conversation } from "./conversation";
 import { isNotFound, messageOf, useShuttleMutation, useShuttleQuery } from "./data";
-import { age, checkName, plural, shortKey, sizeOf } from "./format";
+import { age, checkName, clock, plural, shortKey, sizeOf } from "./format";
 import { LabelsAndReviewers, ManageCard } from "./manage";
 import { StatePill } from "./pills";
 import { YourReviewCard } from "./your-review";
@@ -222,7 +222,11 @@ function Header({ pr, phone, onClose }: { pr: PrView; phone: boolean; onClose?: 
       <div className="flex flex-wrap items-center gap-x-1 text-xs text-muted-foreground">
         {meta.flatMap((part, index) => (index === 0 ? [part] : [<span key={`dot${index}`} aria-hidden>·</span>, part]))}
       </div>
-      {pr.stale && <div className="mt-1.5 text-xs text-warning-text">{pr.serverName}'s last sync failed, so this may be out of date.</div>}
+      {pr.stale && (
+        <div className="mt-1.5 text-xs text-warning-text">
+          {pr.serverName}'s last sync could not read this PR, so this shows what Shuttle had {pr.staleSince === null ? "before" : `at ${clock(pr.staleSince)}`}.
+        </div>
+      )}
     </div>
   );
 }

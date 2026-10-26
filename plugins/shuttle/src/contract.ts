@@ -222,8 +222,10 @@ export const prViewSchema = z.object({
   handled: z.boolean(),
   /** GitHub's auto-merge is on: it merges when its checks pass. */
   autoMerge: z.boolean(),
-  /** The server's last sync failed, so this row may be out of date. */
+  /** The server's last sync failed every list that brings this PR, so it may be out of date. */
   stale: z.boolean(),
+  /** When one of those lists last passed: the age of what this row shows. */
+  staleSince: z.number().nullable(),
   /** Review items found on a PR with an agent and not yet sent. */
   pendingItems: z.number(),
   /** null until Shuttle has read them from the server. */
@@ -237,21 +239,94 @@ export const prViewSchema = z.object({
 });
 export type PrView = z.infer<typeof prViewSchema>;
 
+/** Why a step of a sync failed, in plain words and as the command left it. */
+export const SYNC_FAILURE_KINDS = ["unavailable", "timeout", "network", "rate_limit", "auth", "cut_short", "failed"] as const;
+export type SyncFailureKind = (typeof SYNC_FAILURE_KINDS)[number];
+export const syncFailureSchema = z.object({
+  kind: z.enum(SYNC_FAILURE_KINDS),
+  /** "Delta was restarting (HTTP 503)". */
+  summary: z.string(),
+  /** Shuttle's own message, as before. */
+  message: z.string(),
+  /** The end of what the command printed. */
+  output: z.string().nullable(),
+  exit: z.number().nullable(),
+  command: z.string().nullable(),
+  /** A command the user can run to fix it, such as `dt auth login`. */
+  fix: z.string().nullable(),
+});
+export type SyncFailure = z.infer<typeof syncFailureSchema>;
+
+/** A sync's steps, in order: who the user is, each list, then the linked and tracked PRs no list covered. */
+export const SYNC_STEPS = ["whoami", "authored", "review_requested", "team_requested", "mentioned", "reviewed", "refresh"] as const;
+export type SyncStepName = (typeof SYNC_STEPS)[number];
+export const syncStepSchema = z.object({
+  operation: z.enum(SYNC_STEPS),
+  status: z.enum(["ok", "failed", "skipped"]),
+  ms: z.number(),
+  attempts: z.number(),
+  /** What it brought ("63 PRs"), or why it did not run. */
+  detail: z.string().nullable(),
+  failure: syncFailureSchema.nullable(),
+});
+export type SyncStep = z.infer<typeof syncStepSchema>;
+
+/** partial: some lists failed and the rest are current. */
+export const SYNC_STATES = ["ok", "partial", "failed"] as const;
+export type SyncState = (typeof SYNC_STATES)[number];
+export const syncRunSchema = z.object({ id: z.number(), at: z.number(), durationMs: z.number(), state: z.enum(SYNC_STATES), steps: z.array(syncStepSchema) });
+export type SyncRun = z.infer<typeof syncRunSchema>;
+
 export const serverStatusSchema = z.object({
   id: z.string(),
   name: z.string(),
   kind: z.enum(["github", "command"]),
   enabled: z.boolean(),
-  /** null until the first sync. */
+  /** The last sync passed in full; null until the first sync. */
   ok: z.boolean().nullable(),
+  state: z.enum(SYNC_STATES).nullable(),
   login: z.string().nullable(),
   error: z.string().nullable(),
   lastOkAt: z.number().nullable(),
   lastSyncAt: z.number().nullable(),
   durationMs: z.number().nullable(),
   operations: z.array(z.string()),
+  /** Syncs in a row that did not pass in full, and when the first of them ran. */
+  failures: z.number(),
+  failingSince: z.number().nullable(),
+  /** The first step that failed in the last sync. */
+  failure: syncFailureSchema.extend({ operation: z.enum(SYNC_STEPS) }).nullable(),
+  /** Steps of the last sync that failed or did not run; their PRs show older data. */
+  failedSteps: z.array(z.enum(SYNC_STEPS)),
+  /** When each step last passed. */
+  stepOkAt: z.partialRecord(z.enum(SYNC_STEPS), z.number()),
+  /** Two syncs in a row failed, or the server needs the user to sign in: the page says so. */
+  alert: z.boolean(),
+  /** About when Shuttle syncs this server next. */
+  nextSyncAt: z.number().nullable(),
+  /** The last sync that did not pass in full, within a day. */
+  lastFailedAt: z.number().nullable(),
 });
 export type ServerStatus = z.infer<typeof serverStatusSchema>;
+
+export const syncHistorySchema = z.object({
+  /** How far back `runs` go. */
+  windowMs: z.number(),
+  servers: z.array(
+    z.object({
+      id: z.string(),
+      /** Oldest first. */
+      runs: z.array(z.object({ at: z.number(), state: z.enum(SYNC_STATES), durationMs: z.number() })),
+      /** The newest sync that did not pass in full, with every step. */
+      lastFailure: syncRunSchema.nullable(),
+      /** Newest first, a week at most. */
+      failures: z.array(z.object({ at: z.number(), state: z.enum(SYNC_STATES), operation: z.enum(SYNC_STEPS), summary: z.string(), output: z.string().nullable() })),
+      /** Over the passing syncs of `runs`. */
+      averageMs: z.number().nullable(),
+    }),
+  ),
+});
+export type SyncHistory = z.infer<typeof syncHistorySchema>;
 
 export const eventViewSchema = z.object({
   id: z.number(),
@@ -422,7 +497,10 @@ export const rpcContract = defineContract({
   lookup: { input: z.object({ query: z.string().min(1).max(500) }), output: prOut, invalidates: PRS },
   activity: { input: z.object({ limit: z.number().int().min(1).max(500).optional() }), output: z.object({ events: z.array(eventViewSchema) }), tags: PRS },
   insights: { input: z.object({ range: z.enum(["7d", "30d", "90d"]) }), output: insightsSchema, tags: PRS },
-  sync: { input: z.object({}), output: ok, invalidates: () => ["prs", "servers", "conversation"] },
+  /** Every enabled server, or only `server`. */
+  sync: { input: z.object({ server: z.string().min(1).max(100).optional() }), output: ok, invalidates: () => ["prs", "servers", "conversation"] },
+  /** Each server's syncs of the last three hours, its last failed sync in full and its failures of the last week. */
+  syncHistory: { input: z.object({}), output: syncHistorySchema, tags: () => ["servers"] },
   link: { input: z.object({ key, threadId, role: z.enum(LINK_ROLES).optional() }), output: prOut, invalidates: PRS },
   unlink: { input: z.object({ key, threadId }), output: prOut, invalidates: PRS },
   watch: { input: z.object({ key, mode: z.enum(WATCH_MODES).nullable() }), output: prOut, invalidates: PRS },

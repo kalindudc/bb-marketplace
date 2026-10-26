@@ -1,5 +1,6 @@
 // Plain-text views for agent tools and the CLI.
-import type { EventView, PrView } from "./contract";
+import type { EventView, PrView, ServerStatus } from "./contract";
+import { failureAdvice, STEP_LABELS } from "./failures";
 
 const REVIEW_TEXT = { approved: "approved", changes: "changes requested", required: "review required", none: "no review decision" } as const;
 
@@ -28,4 +29,35 @@ export function prDetail(pr: PrView, events: EventView[] = []): string {
 
 export function prList(prs: PrView[], empty: string): string {
   return prs.length ? prs.map(prLine).join("\n\n") : empty;
+}
+
+/** "11:38" in local time, with the day when it is not today. */
+function hhmm(at: number, now: number): string {
+  const date = new Date(at);
+  const time = date.toTimeString().slice(0, 5);
+  return date.toDateString() === new Date(now).toDateString() ? time : `${date.toDateString().slice(4, 10)} ${time}`;
+}
+
+/** A server's status for `bb shuttle status`: one line when it is fine, and why it failed on the lines below when not. */
+export function serverText(server: ServerStatus, now = Date.now()): string {
+  const id = server.id.padEnd(7);
+  if (!server.enabled) return `${id} off`;
+  if (server.state === null) return `${id} not synced yet`;
+  const synced = server.lastSyncAt === null ? "" : ` · synced ${hhmm(server.lastSyncAt, now)}`;
+  // A server that failed before Shuttle kept each step has only its stored error.
+  if (server.state !== "ok" && server.failure === null) return `${id} failing: ${server.error ?? "the last sync failed"}${synced}`;
+  if (server.state === "ok" || server.failure === null) {
+    const lastFailed = server.lastFailedAt !== null && now - server.lastFailedAt < 86_400_000 ? ` · last failed ${hhmm(server.lastFailedAt, now)}` : "";
+    return `${id} ok as ${server.login}${synced}${lastFailed}`;
+  }
+  const { failure } = server;
+  const head = server.state === "partial"
+    ? `synced, except ${server.failedSteps.map((step) => STEP_LABELS[step]).join(", ")}`
+    : `failing${server.failingSince === null ? "" : ` since ${hhmm(server.failingSince, now)}`}`;
+  const pad = " ".repeat(8);
+  const lines = [`${id} ${head}: ${failure.summary} (${failure.operation})`];
+  if (failure.output !== null) lines.push(...failure.output.split("\n").slice(-4).map((line) => `${pad}| ${line}`));
+  lines.push(`${pad}${server.lastOkAt === null ? "no good sync yet" : `last good sync ${hhmm(server.lastOkAt, now)}`}${server.failures > 1 ? ` · ${server.failures} syncs in a row` : ""}`);
+  lines.push(`${pad}${failureAdvice(failure, server.nextSyncAt === null ? null : hhmm(Math.max(server.nextSyncAt, now), now))}`);
+  return lines.join("\n");
 }

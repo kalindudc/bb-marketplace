@@ -1,7 +1,7 @@
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import type { PrView } from "../contract";
 import { Pill } from "./common";
-import { age, plural } from "./format";
+import { age, clock, plural } from "./format";
 
 export const isLive = (pr: Pick<PrView, "state">) => pr.state === "open" || pr.state === "draft";
 
@@ -88,7 +88,11 @@ export function SizeChip({ pr }: { pr: Pick<PrView, "additions" | "deletions"> &
   );
 }
 
-export function StalePill({ pr }: { pr: Pick<PrView, "stale"> }) {
+export function StalePill({ pr }: { pr: Pick<PrView, "stale" | "staleSince" | "serverName"> }) {
   if (!pr.stale) return null;
-  return <Pill tone="warn" icon="AlertTriangle" title="This server's last sync failed">May be out of date</Pill>;
+  return (
+    <Pill tone="warn" icon="Clock" title={`${pr.serverName}'s last sync could not read this PR, so this is what Shuttle had before`}>
+      {pr.staleSince === null ? "May be out of date" : `Data from ${clock(pr.staleSince)}`}
+    </Pill>
+  );
 }
