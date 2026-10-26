@@ -2,6 +2,12 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.20.1 (2026-10-26)
+
+### Fixed
+
+- A version that waits for your approval now shows its summary where you approve it. The About strip shows the summary it writes, or the one it changes to, with Review vN, instead of saying the spec has no summary; the home list shows it too. On the Spec tab, the Goal card labels the summary, marks one the version adds as new and shows a rewritten one as a word diff, as it does the goal. The Planner tab's card for the version quotes its summary when the version writes or changes it, and always for a draft.
+
 ## 0.20.0 (2026-10-26)
 
 ### Added

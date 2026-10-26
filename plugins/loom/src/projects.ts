@@ -3,7 +3,7 @@
 import type { NewThreadRequest } from "@get-bb/plugin-sdk";
 import type { EventRow, PlanningRow, PostRow, ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { StoreError } from "./db/store";
-import { aboutOf, type ProjectAbout } from "./about";
+import { aboutOf, pendingAboutOf, type PendingAbout, type ProjectAbout } from "./about";
 import { gatherFacts, reachErrors, specTargets } from "./discover";
 import { SectionNameConflictError, type BbPort, type BbProjectInfo, type HostPort } from "./ports";
 import { MAX_PLANNING_REPOS, notesMessage, planningKickoff, planningTitle, type PickedRepo } from "./prompts";
@@ -57,6 +57,8 @@ export interface ProjectOverview {
   goal: string;
   /** What the project is about, from the approved spec, or the draft's before approval. */
   about: ProjectAbout;
+  /** The pending version's summary and done_when, while it waits for approval and changes them; null otherwise and in a rewound view. */
+  aboutPending: PendingAbout | null;
   base: string;
   strategy: Spec["merge"]["strategy"];
   branch: string | null;
@@ -753,6 +755,7 @@ export class Projects {
       state: project.state,
       goal: spec.project.goal,
       about: aboutOf(spec),
+      aboutPending: project.pending_version === null || project.state === "archived" ? null : pendingAboutOf(aboutOf(spec), project.pending_version, this.specOf(project.id, project.pending_version)),
       base: spec.project.base,
       strategy: spec.merge.strategy,
       branch: spec.merge.branch ?? null,

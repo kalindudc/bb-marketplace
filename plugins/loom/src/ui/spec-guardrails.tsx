@@ -2,7 +2,7 @@ import { useState, type ReactNode } from "react";
 import { Markdown } from "@get-bb/plugin-sdk/app";
 import type { Spec } from "../spec";
 import { BUTTON, HEADING, plural } from "./common";
-import { CHANGED_TAG, Commentable, DiffList, WordDiff, changeAt, kept, useReview, type ListMark } from "./spec-review-kit";
+import { CHANGED_TAG, Commentable, DiffList, NEW_TAG, WordDiff, changeAt, kept, useReview, type ListMark } from "./spec-review-kit";
 
 const LONG_GOAL = 700;
 
@@ -52,6 +52,10 @@ export function GuardrailsSection({ spec, toml, onShowAll }: { spec: Spec; toml:
   const [whole, setWhole] = useState(false);
   const [diff, setDiff] = useState<boolean | null>(null);
   const goalChange = changeAt(review, "project.goal");
+  const summaryChange = changeAt(review, "project.summary");
+  // A summary this version adds reads as new; one it rewrites shows the words that changed, as the goal does.
+  const summaryNew = summaryChange?.kind === "text" && summaryChange.before === "";
+  const summaryDiff = summaryChange?.kind === "text" && summaryChange.before !== "" && summaryChange.after !== "";
   const showDiff = goalChange?.kind === "text" && (diff ?? review.only);
   const parts = [
     { id: "goal", paths: ["project.goal", "project.summary", "project.done_when", "project.name", "project.key", "project.slug"] },
@@ -79,18 +83,36 @@ export function GuardrailsSection({ spec, toml, onShowAll }: { spec: Spec; toml:
               {project.slug}
             </Commentable>
           </p>
-          <Commentable target={{ paths: ["project.summary"], label: "Summary", kind: "text", ...(project.summary === undefined ? {} : { value: project.summary }) }} className="mb-1.5 p-1">
-            {project.summary === undefined ? (
-              <p data-spec-summary className="text-xs text-warning-text">
-                No summary: this version was written before every proposal needed one, so the planner's next revision adds it.
-              </p>
-            ) : (
-              <p data-spec-summary className="text-sm font-medium [overflow-wrap:anywhere]">
-                {project.summary}
-              </p>
-            )}
-          </Commentable>
-          {goalChange !== undefined && <span className={`${CHANGED_TAG} mb-1 inline-block`}>rewritten</span>}
+          <div data-spec-summary-block className="mb-2">
+            <h4 className={`${HEADING} mb-1 flex items-center gap-1.5 px-1`}>
+              Summary
+              {summaryNew && <span className={`${NEW_TAG} normal-case tracking-normal`}>new</span>}
+              {summaryDiff && <span className={`${CHANGED_TAG} normal-case tracking-normal`}>rewritten</span>}
+            </h4>
+            <Commentable
+              target={{ paths: ["project.summary"], label: "Summary", kind: "text", ...(project.summary === undefined ? {} : { value: project.summary }) }}
+              className={`p-1 ${summaryNew ? "bg-success/15 ring-1 ring-success" : ""}`}
+              showWas={false}
+            >
+              {project.summary === undefined ? (
+                <p data-spec-summary className="text-xs text-warning-text">
+                  No summary: this version was written before every proposal needed one, so the planner's next revision adds it.
+                </p>
+              ) : summaryDiff ? (
+                <div data-spec-summary className="text-sm font-medium">
+                  <WordDiff before={summaryChange.before} after={summaryChange.after} />
+                </div>
+              ) : (
+                <p data-spec-summary className="text-sm font-medium [overflow-wrap:anywhere]">
+                  {project.summary}
+                </p>
+              )}
+            </Commentable>
+          </div>
+          <h4 className={`${HEADING} mb-1 flex items-center gap-1.5 px-1`}>
+            Goal
+            {goalChange !== undefined && <span className={`${CHANGED_TAG} normal-case tracking-normal`}>rewritten</span>}
+          </h4>
           <Commentable target={{ paths: ["project.goal"], label: "Goal", kind: "text" }} className="p-1" showWas={false}>
             {showDiff ? (
               <WordDiff before={goalChange.before} after={goalChange.after} />

@@ -51,7 +51,7 @@ export const touches = (change: Pick<SpecChange, "path">, path: string): boolean
 const isObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
 const isStringList = (value: unknown): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string");
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
-const isTextPath = (path: string) => path === "project.goal" || /^ticket\[[^\]]+\]\.body$/.test(path);
+const isTextPath = (path: string) => path === "project.goal" || path === "project.summary" || /^ticket\[[^\]]+\]\.body$/.test(path);
 
 /** The longest common subsequence of `a` and `b` as steps; on a tie a removal comes before the addition that replaces it. */
 function lcs<T>(a: readonly T[], b: readonly T[]): Array<{ op: ListStep["op"]; value: T; index: number }> {

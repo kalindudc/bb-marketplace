@@ -15,7 +15,7 @@ import { ConfirmButton, MoreMenu } from "../src/ui/common";
 import { repoLand } from "../src/ui/next-step-bar";
 import { questionsOf } from "../src/ui/questions";
 import { HOUR, NOW, agent, attempt, card, changeRepo, health, homeProject, homeView, metrics, overview, plannerViewOf, projectView, repoOverview, specV1, specVersionView, ticketDetail, timeline, withRepos } from "./fixtures";
-import { specToml } from "./helpers";
+import { specToml, type Doc } from "./helpers";
 import { at, story } from "./insights-rows";
 import { projectInsights } from "../src/insights";
 
@@ -981,7 +981,7 @@ describe("planner page", () => {
     await waitFor(() => expect(slot.container.querySelector("[data-planner-page]")).not.toBeNull());
     return slot;
   };
-  const v2 = { version: 2, status: "draft" as const, createdAt: NOW - HOUR, tickets: 2, change: { added: [], removed: ["csv-docs"], changed: [], settings: 0, guardrails: 0 }, review: { state: "approved" as const, round: 1, findings: 0 } };
+  const v2 = { version: 2, status: "draft" as const, createdAt: NOW - HOUR, tickets: 2, change: { added: [], removed: ["csv-docs"], changed: [], settings: 0, guardrails: 0 }, summary: null, summaryChanged: false, review: { state: "approved" as const, round: 1, findings: 0 } };
   const revised = () =>
     plannerViewOf({
       steps: [
@@ -991,7 +991,7 @@ describe("planner page", () => {
         { kind: "turn", at: NOW - 2 * HOUR, text: "I took out csv-docs.", actions: [{ kind: "proposed", version: 2, tickets: 2, change: v2.change }] },
         { kind: "review", at: NOW - HOUR, version: 2, round: 1, state: "approved", summary: "Fits.", findings: [], reason: null, startedAt: NOW - 2 * HOUR, endedAt: NOW - HOUR },
       ],
-      versions: [{ version: 1, status: "superseded", createdAt: NOW - 4 * HOUR, tickets: 3, change: null, review: null }, v2],
+      versions: [{ version: 1, status: "superseded", createdAt: NOW - 4 * HOUR, tickets: 3, change: null, summary: null, summaryChanged: false, review: null }, v2],
       review: { kind: "approved", version: 2, round: 1, summary: "Fits." },
     });
 
@@ -1012,6 +1012,23 @@ describe("planner page", () => {
     await waitFor(() => expect(slot.container.querySelector("[data-spec-page]")).not.toBeNull());
     expect(slot.getByRole("tab", { name: "Spec" }).getAttribute("aria-selected")).toBe("true");
     expect(calls(slot, "specVersion").at(-1)!.input).toEqual({ slug: "csv", version: 2 });
+  });
+
+  it("quotes the summary of a draft, and of a pending version only when it writes or changes it", async () => {
+    const withSummary = () => plannerViewOf({ ...revised(), versions: [revised().versions[0]!, { ...v2, summary: "Export orders as CSV for finance.", summaryChanged: false }] });
+    const slot = await openPlanner({ plannerView: withSummary }, { ...draft(), spec: { ...draft().spec, version: 2 } });
+    expect(page(slot).querySelector('[data-version-card="2"] [data-version-summary]')!.textContent).toBe("Summary: Export orders as CSV for finance.");
+    slot.lifecycle.unmount();
+
+    const pending = (summaryChanged: boolean) => () =>
+      plannerViewOf({ ...revised(), projectState: "running", approvedVersion: 1, pendingVersion: 2, versions: [{ ...revised().versions[0]!, status: "approved" }, { ...v2, status: "pending", summary: "Export orders as CSV for finance.", summaryChanged }] });
+    const running = projectView({ overview: overview({ pendingVersion: 2 }) });
+    const added = await openPlanner({ plannerView: pending(true) }, running);
+    expect(page(added).querySelector('[data-version-card="2"] [data-version-summary]')!.textContent).toBe("New summary: Export orders as CSV for finance.");
+    added.lifecycle.unmount();
+    const same = await openPlanner({ plannerView: pending(false) }, running);
+    expect(page(same).querySelector('[data-version-card="2"]')).not.toBeNull();
+    expect(page(same).querySelector("[data-version-summary]")).toBeNull();
   });
 
   it("tells the story in chapters, one per draft and one for the running project, newest first, with filters", async () => {
@@ -1039,7 +1056,7 @@ describe("planner page", () => {
           },
         },
       ],
-      versions: [{ version: 1, status: "superseded", createdAt: NOW - 4 * HOUR, tickets: 3, change: null, review: null }, { ...v2, status: "approved" }],
+      versions: [{ version: 1, status: "superseded", createdAt: NOW - 4 * HOUR, tickets: 3, change: null, summary: null, summaryChanged: false, review: null }, { ...v2, status: "approved" }],
       review: { kind: "none" },
     });
     const slot = await openPlanner({ plannerView: () => view, ticket: () => ticketDetail() });
@@ -1078,6 +1095,10 @@ describe("planner page", () => {
         approvedVersion: approved ? 2 : 1,
         pendingVersion: approved ? null : 2,
         review: approved ? { kind: "none" } : { kind: "approved", version: 2, round: 1, summary: "Holds." },
+        versions: [
+          { version: 1, status: approved ? "superseded" : "approved", createdAt: NOW - 4 * HOUR, tickets: 2, change: null, summary: null, summaryChanged: false, review: null },
+          { version: 2, status: approved ? "approved" : "pending", createdAt: NOW - HOUR, tickets: 2, change: null, summary: "Export orders as CSV for finance.", summaryChanged: true, review: null },
+        ],
         ask: {
           id: 7,
           at: NOW - 10 * 60_000,
@@ -1103,6 +1124,8 @@ describe("planner page", () => {
     const asks = () => page(slot).querySelector<HTMLElement>("[data-planner-asks]")!;
     expect(asks().textContent).toContain("Both tickets fail the same check.");
     expect([...asks().querySelectorAll("[data-ask-step]")].map((step) => step.getAttribute("data-ask-step"))).toEqual(["approve", "requeue", "other"]);
+    // The version to approve writes the summary, so the step quotes it where the human approves.
+    expect(asks().querySelector('[data-ask-step="approve"] [data-version-summary]')!.textContent).toBe("New summary: Export orders as CSV for finance.");
     const requeue = () => within(asks().querySelector<HTMLElement>('[data-ask-step="requeue"]')!).getByRole("button", { name: /Requeue/ }) as HTMLButtonElement;
     expect(requeue().disabled).toBe(true);
     expect(requeue().title).toBe("Approve v2 first");
@@ -4055,6 +4078,24 @@ describe("spec page", () => {
     expect(box(slot).textContent).toContain("Comment on Goal");
   });
 
+  it("labels the summary in the Goal card, marks one this version adds as new, and shows a rewritten one as a word diff", async () => {
+    const before = (doc: Doc) => delete doc.project.summary;
+    const added = specVersionView({ compared: { version: 1, status: "approved", spec: parseSpec(specToml(before)).spec! } });
+    const slot = await openPage({ specVersion: () => added });
+    const block = section(slot, "guardrails").querySelector<HTMLElement>("[data-spec-summary-block]")!;
+    expect(block.querySelector("h4")!.textContent).toBe("Summarynew");
+    expect(block.querySelector("[data-spec-summary]")!.textContent).toBe("Let people export their orders as a CSV file from the admin page.");
+    fireEvent.click(page(slot).querySelector('[data-change="project.summary"] button')!);
+    expect(target(slot, "project.summary")!.className).toContain("ring-success");
+    slot.lifecycle.unmount();
+
+    const rewritten = specVersionView({ compared: { version: 1, status: "approved", spec: parseSpec(specToml()).spec! } }, (doc) => (doc.project.summary = "Let people export their orders as a CSV file from the orders page."));
+    const again = await openPage({ specVersion: () => rewritten });
+    const diff = section(again, "guardrails").querySelector<HTMLElement>("[data-spec-summary-block]")!;
+    expect(diff.querySelector("h4")!.textContent).toBe("Summaryrewritten");
+    expect(diff.querySelector("[data-word-diff]")).not.toBeNull();
+  });
+
   it("files a planning-view note that has no section under its own section", async () => {
     localStorage.setItem("loom.notes.csv", JSON.stringify([{ version: 2, paths: ["ticket[csv-export].title"], body: "Say endpoint.", label: "csv-export › title" }]));
     const slot = await openPage();
@@ -4498,6 +4539,34 @@ describe("about strip", () => {
     expect(strip.querySelector("[data-about-summary]")!.textContent).toBe("Implement items 1 to 3 of the issue.");
     expect(strip.textContent).toContain("This spec has no summary, so this is the goal's first paragraph. The planner's next revision of the spec has to add one.");
     expect(within(strip).queryByRole("button", { name: /Done when/ })).toBeNull();
+  });
+
+  it("shows the summary of a version that waits for approval, says it is not in force yet, and opens it", async () => {
+    const pending = { version: 3, summary: "Export orders as CSV for finance.", doneWhen: ["The file downloads"] };
+    const { slot } = await mountPage("csv", { project: () => projectView({ overview: overview({ pendingVersion: 3, about: about({ summary: null, doneWhen: [] }), aboutPending: pending }) }), specVersion: () => specVersionView() });
+    const strip = await waitFor(() => {
+      const found = slot.container.querySelector<HTMLElement>("[data-about]");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    expect(strip.querySelector("[data-about-summary]")!.textContent).toBe("Export orders as CSV for finance.");
+    expect(strip.querySelector("[data-about-pending]")!.textContent).toContain("From v3, which waits for your approval; the version in force has no summary.");
+    expect(strip.textContent).not.toContain("This spec has no summary");
+    fireEvent.click(within(strip).getByRole("button", { name: "Done when (1)" }));
+    expect(strip.querySelector("[data-about-done]")!.textContent).toBe("The file downloads");
+    fireEvent.click(within(strip).getByRole("button", { name: "Review v3" }));
+    await waitFor(() => expect(slot.getByRole("tab", { name: "Spec" }).getAttribute("aria-selected")).toBe("true"));
+  });
+
+  it("keeps the summary in force and names the one a waiting version changes it to", async () => {
+    const { slot } = await mountPage("csv", { project: () => projectView({ overview: overview({ pendingVersion: 3, about: about(), aboutPending: { version: 3, summary: "Export orders for finance.", doneWhen: [] } }) }) });
+    const strip = await waitFor(() => {
+      const found = slot.container.querySelector<HTMLElement>("[data-about]");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    expect(strip.querySelector("[data-about-summary]")!.textContent).toBe("Export orders as a CSV file, so finance can reconcile them.");
+    expect(strip.querySelector("[data-about-pending]")!.textContent).toContain("v3, which waits for your approval, changes the summary to: Export orders for finance.");
   });
 
   it("puts each project's summary under its name on the home list", async () => {

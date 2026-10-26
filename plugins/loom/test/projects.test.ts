@@ -1133,9 +1133,13 @@ describe("summaries", () => {
     expect(old.projectBySlug("csv")!.pending_version).toBeNull();
 
     // Adding the summary is a revision like any other, and approving it leaves the running tickets alone.
+    expect(oldProjects.overview("csv").aboutPending).toBeNull();
     expect(await proposeOld((doc) => (doc.project.summary = "Export orders as a CSV file, so finance can reconcile them."))).toMatchObject({ version: 2, pending: true });
+    // Until it is approved, the page shows the summary the waiting version adds beside the version in force.
+    expect(oldProjects.overview("csv")).toMatchObject({ about: { summary: null }, aboutPending: { version: 2, summary: "Export orders as a CSV file, so finance can reconcile them.", doneWhen: [] } });
     await oldProjects.approve("csv", "human", 2);
     expect(oldProjects.overview("csv").about.summary).toBe("Export orders as a CSV file, so finance can reconcile them.");
+    expect(oldProjects.overview("csv").aboutPending).toBeNull();
     expect(old.tickets(id).map((ticket) => [ticket.key, ticket.state])).toEqual([
       ["CSV-1", "queued"],
       ["CSV-2", "queued"],

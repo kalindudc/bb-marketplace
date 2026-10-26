@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ThreadChat, experimental_useSidebarThreads, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
-import type { AskStep, ControlAction, PlannerAsk, PlannerView, ProjectView, rpcContract } from "../contract";
+import type { AskStep, ControlAction, PlannerAsk, PlannerVersion, PlannerView, ProjectView, rpcContract } from "../contract";
 import { specReviewBlocks } from "../format";
 import { changeLine, journey, workingOn, type Chapter, type JourneyStep, type QuestionRound } from "../planner-journey";
 import { SPEC_REVIEW_ROUNDS } from "../states";
@@ -114,8 +114,21 @@ function Strip({ view, status, questions, steps }: { view: PlannerView; status: 
   );
 }
 
+/**
+ * The summary a version brings, quoted where the human approves it: a draft's always, a later version's when it writes or
+ * rewrites it. The summary is what the project page and the home list say the project is for.
+ */
+function VersionSummary({ entry, draft }: { entry: PlannerVersion | undefined; draft: boolean }) {
+  if (entry?.summary == null || !(draft || entry.summaryChanged)) return null;
+  return (
+    <span data-version-summary>
+      {draft ? "Summary" : "New summary"}: <q className="font-medium">{entry.summary}</q>
+    </span>
+  );
+}
+
 /** The planner's asks from loom_ask_human as a checklist, a button on each step the page can take. */
-function AsksCard({ ask, project, busy, onControl, onSpec, onTicket, onDismiss }: { ask: PlannerAsk; project: ProjectView; busy: boolean; onDismiss(): void } & Pick<PlannerPageProps, "onControl" | "onSpec" | "onTicket">) {
+function AsksCard({ ask, project, versions, busy, onControl, onSpec, onTicket, onDismiss }: { ask: PlannerAsk; project: ProjectView; versions: readonly PlannerVersion[]; busy: boolean; onDismiss(): void } & Pick<PlannerPageProps, "onControl" | "onSpec" | "onTicket">) {
   const rpc = useRpc<typeof rpcContract>();
   const { busy: requeueing, error, run } = useRun();
   const blocked = new Set(project.board.filter((card) => card.state === "blocked").map((card) => card.key));
@@ -178,7 +191,14 @@ function AsksCard({ ask, project, busy, onControl, onSpec, onTicket, onDismiss }
             <span aria-hidden className={`inline-flex size-5 items-center justify-center rounded-full text-[10.5px] font-semibold ${step.done ? "bg-success text-success-foreground" : "bg-surface-selected"}`}>
               {step.done ? "✓" : index + 1}
             </span>
-            <span className="text-sm [overflow-wrap:anywhere]">{step.text}</span>
+            <span className="text-sm [overflow-wrap:anywhere]">
+              {step.text}
+              {step.action === "approve" && !step.done && (
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  <VersionSummary entry={versions.find((entry) => entry.version === step.version)} draft={project.overview.state === "draft"} />
+                </span>
+              )}
+            </span>
             <span className="flex flex-wrap justify-end gap-1.5">{action(step, index)}</span>
           </li>
         ))}
@@ -208,6 +228,7 @@ function VersionCard({ view, project, onSpec }: { view: PlannerView; project: Pr
     ]);
   else facts.push(["·", "No spec review ran for it."]);
   if (entry?.change != null) facts.push(["◆", `Since v${version - 1}: ${changeLine(entry.tickets, entry.change)}.`]);
+  if (entry?.summary != null && (draft || entry.summaryChanged)) facts.push(["¶", <VersionSummary key="summary" entry={entry} draft={draft} />]);
   if (comments > 0) facts.push(["✎", `You sent ${plural(comments, "comment")} on v${version - 1}; the Spec tab shows what v${version} did with each.`]);
   const barApproves = project.next?.action?.control === "approve";
   return (
@@ -320,7 +341,7 @@ export function PlannerPage({ threadId, project, busy = false, onControl, onSpec
       </h2>
       <PlannerQuestions threadId={threadId} rows={questions.rows} error={questions.error} respond={questions.respond} />
       {ask !== null && project !== null && (
-        <AsksCard ask={ask} project={project} busy={busy} onControl={onControl} onSpec={onSpec} onTicket={onTicket} onDismiss={() => void dismiss.run(async () => remote.set({ loaded: await rpc.call("dismissAsk", { slug: project.overview.slug, ask: ask.id, confirm: true }) }))} />
+        <AsksCard ask={ask} project={project} versions={view.versions} busy={busy} onControl={onControl} onSpec={onSpec} onTicket={onTicket} onDismiss={() => void dismiss.run(async () => remote.set({ loaded: await rpc.call("dismissAsk", { slug: project.overview.slug, ask: ask.id, confirm: true }) }))} />
       )}
       {versionCard && project !== null && <VersionCard view={view} project={project} onSpec={onSpec} />}
       {dismiss.error !== null && <p role="alert" className="text-xs text-destructive-text">{dismiss.error}</p>}

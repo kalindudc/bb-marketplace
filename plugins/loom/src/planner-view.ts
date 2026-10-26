@@ -63,6 +63,10 @@ export interface PlannerVersion {
   createdAt: number;
   tickets: number;
   change: VersionChange | null;
+  /** Its project.summary; null for a version written before summaries were required. */
+  summary: string | null;
+  /** It writes or rewrites the summary of the version before it; always true for a first version with one. */
+  summaryChanged: boolean;
   /** The newest review of the version that was not replaced. */
   review: { state: "reviewing" | "approved" | "changes_requested" | "failed"; round: number; findings: number } | null;
 }
@@ -231,6 +235,8 @@ function versionsOf(store: Store, projects: Projects, project: ProjectRow): Plan
       createdAt: row.created_at,
       tickets: spec.ticket.length,
       change: before === null ? null : versionChange(before, spec),
+      summary: spec.project.summary ?? null,
+      summaryChanged: spec.project.summary !== undefined && spec.project.summary !== before?.project.summary,
       review: review === undefined ? null : { state: review.state as "reviewing" | "approved" | "changes_requested" | "failed", round: review.round, findings: (JSON.parse(review.findings_json) as unknown[]).length },
     });
     before = spec;

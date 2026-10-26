@@ -171,7 +171,9 @@ summary, the issues and pull requests its goal links to, its repos, and "Done
 when" with the spec's `done_when` lines. Full goal opens the Spec tab, and
 Planner thread opens the planner. A project approved before every spec needed a
 summary shows its goal's first paragraph instead, until the planner's next
-revision adds one. The home list shows each project's summary under its name.
+revision adds one. While a version that writes or changes the summary waits for
+your approval, the strip shows that version's summary and links to it. The home
+list shows each project's summary under its name.
 
 Every project has a next-step bar under its header: the stages from Plan to
 Land with the current one marked, one sentence on what happens next, and the

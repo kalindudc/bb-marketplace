@@ -183,7 +183,7 @@ export function rewind(rows: ProjectRows, eventId: number): PastRows {
 export function overviewAt(
   past: PastRows,
   spec: Spec,
-): Pick<ProjectOverview, "state" | "approvedVersion" | "pendingVersion" | "reason" | "ticketCount" | "ticketCounts" | "goal" | "about" | "base" | "strategy" | "branch"> {
+): Pick<ProjectOverview, "state" | "approvedVersion" | "pendingVersion" | "reason" | "ticketCount" | "ticketCounts" | "goal" | "about" | "aboutPending" | "base" | "strategy" | "branch"> {
   const ticketCounts: Partial<Record<TicketState, number>> = {};
   for (const ticket of past.tickets) ticketCounts[ticket.state] = (ticketCounts[ticket.state] ?? 0) + 1;
   return {
@@ -195,6 +195,8 @@ export function overviewAt(
     ticketCounts,
     goal: spec.project.goal,
     about: aboutOf(spec),
+    // A rewound page shows the spec in force then, with nothing waiting.
+    aboutPending: null,
     base: spec.project.base,
     strategy: spec.merge.strategy,
     branch: spec.merge.branch ?? null,

@@ -51,6 +51,11 @@ describe("the planner view", () => {
       [1, "superseded", 2, "changes_requested"],
       [2, "approved", 1, null],
     ]);
+    // v1 brings the summary; v2 keeps it, so only v1 counts as writing it.
+    expect(versions.map((row) => [row.version, row.summary, row.summaryChanged])).toEqual([
+      [1, "Let people export their orders as a CSV file from the admin page.", true],
+      [2, "Let people export their orders as a CSV file from the admin page.", false],
+    ]);
   });
 
   it("answers a triage round with the planner's board changes, its asks and its words", async () => {

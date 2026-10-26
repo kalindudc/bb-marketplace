@@ -17,6 +17,19 @@ export interface ProjectAbout {
 const MAX_LINKS = 6;
 const LINK = /https?:\/\/[^\s)<>\]"'`]+\/(?:issues|pull|pulls|merge_requests)\/\d+/gu;
 
+/** What a version that waits for the human's approval says the project is about, when it says something else than the version in force. */
+export interface PendingAbout {
+  version: number;
+  summary: string | null;
+  doneWhen: string[];
+}
+
+export function pendingAboutOf(current: ProjectAbout, version: number, spec: Spec): PendingAbout | null {
+  const next = aboutOf(spec);
+  const same = next.summary === current.summary && next.doneWhen.length === current.doneWhen.length && next.doneWhen.every((line, index) => line === current.doneWhen[index]);
+  return same ? null : { version, summary: next.summary, doneWhen: next.doneWhen };
+}
+
 export function aboutOf(spec: Spec): ProjectAbout {
   const { goal } = spec.project;
   return {
