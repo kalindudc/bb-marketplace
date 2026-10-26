@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { experimental_usePluginId, useBbNavigate, type ExperimentalPageTitle, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import type { ControlAction, ProjectView } from "../contract";
 import { isMultiRepoProject } from "../format";
@@ -18,6 +18,7 @@ import { NewProject } from "./new-project";
 import { NextStepBar, repoLand } from "./next-step-bar";
 import { PlannerPage } from "./planner-page";
 import { PlanningView } from "./planning";
+import { createStored, createStoredMap, useScrollMemory, useStored } from "./remember";
 import { useWaiting } from "./questions";
 import { SpecPage, bbProjectNamesOf } from "./spec-page";
 import { TicketView } from "./ticket";
@@ -67,10 +68,14 @@ export function tabBadges(view: ProjectView, unviewed: number | null = null, pla
 
 export type Route = { view: "home" } | { view: "guide" } | { view: "new" } | { view: "plan"; threadId: string } | { view: "project"; slug: string } | { view: "ticket"; slug: string; key: string };
 
-/** The route remainder: "" is home, "_guide" the guide, "_new" New project, "_plan/<threadId>" a conversation, "<slug>" a project, "<slug>/<KEY>" a ticket. A slug never starts with "_". */
+/**
+ * The route remainder: "_home" is home, "_guide" the guide, "_new" New project, "_plan/<threadId>" a conversation,
+ * "<slug>" a project, "<slug>/<KEY>" a ticket. A slug never starts with "_". "" is where bb's rail opens the page, home
+ * here; the page reopens there on the route it was last left on (see `routeOf`).
+ */
 export function parseRoute(subPath: string): Route {
   const [first, second] = subPath.split("/").filter((part) => part !== "");
-  if (first === undefined) return { view: "home" };
+  if (first === undefined || first === "_home") return { view: "home" };
   if (first === "_guide") return { view: "guide" };
   if (first === "_new") return { view: "new" };
   if (first === "_plan") return second === undefined ? { view: "home" } : { view: "plan", threadId: second };
@@ -98,6 +103,34 @@ export function controlDone(action: ControlAction, version?: number, repo?: stri
     case "archive":
       return "Project archived";
   }
+}
+
+export function formatRoute(route: Route): string {
+  switch (route.view) {
+    case "home":
+      return "_home";
+    case "guide":
+      return "_guide";
+    case "new":
+      return "_new";
+    case "plan":
+      return `_plan/${route.threadId}`;
+    case "project":
+      return route.slug;
+    case "ticket":
+      return `${route.slug}/${route.key}`;
+  }
+}
+
+/** The route the page was last left on, on this device. */
+export const lastRoute = createStored<string | null>("lastRoute", null, (value) => (typeof value === "string" ? formatRoute(parseRoute(value)) : null));
+const TAB_NAMES: readonly string[] = TABS.map((entry) => entry.tab);
+/** The tab each project was last left on. */
+export const projectTabs = createStoredMap<Tab>("projectTab", 50, (value): value is Tab => typeof value === "string" && TAB_NAMES.includes(value));
+
+/** The route a subPath shows: at "", where bb's rail opens the page, the route it was last left on. */
+export function routeOf(subPath: string): Route {
+  return parseRoute(subPath === "" ? (lastRoute.get() ?? "") : subPath);
 }
 
 /** The header's secondary controls: the next-step bar's action is left out here, and Archive sits in the ⋯ menu. */
@@ -319,22 +352,32 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek, go }: { slug: string; tab:
 }
 
 export function LoomPage({ subPath }: PluginNavPanelProps) {
-  const route = parseRoute(subPath);
+  // bb's rail opens the page at its root. The page replaces that address with the place it was last left, home included,
+  // so Back never lands on the root again and resumes a newer place.
+  const remembered = useStored(lastRoute);
+  const resume = subPath === "" ? (remembered ?? formatRoute({ view: "home" })) : null;
+  const route = parseRoute(resume ?? subPath);
   const navigate = useBbNavigate();
   const go = useCallback((next: string) => navigate.toPluginPanel("loom", { subPath: next }), [navigate]);
-  // The tab belongs to the project it was chosen in, so opening another project starts on the board.
-  const [chosen, setChosen] = useState<{ slug: string | null; tab: Tab }>({ slug: null, tab: "board" });
+  useEffect(() => {
+    if (subPath !== "") lastRoute.set(formatRoute(parseRoute(subPath)));
+    else if (resume !== null) navigate.toPluginPanel("loom", { subPath: resume, replace: true });
+    // Only a change of place counts; `navigate` is a new object on each render.
+  }, [subPath, resume]);
+  // Each project opens on the tab it was last left on.
+  const tabs = useStored(projectTabs);
   const slug = route.view === "project" || route.view === "ticket" ? route.slug : null;
-  const tab = chosen.slug === slug ? chosen.tab : "board";
+  const tab = (slug === null ? undefined : tabs[slug]) ?? "board";
   // A planning conversation that proposed is its project's Planner tab from then on; the redirect replaces the
   // conversation's address, so Back does not land on it and bounce forward again.
   const openPlanner = useCallback(
     (next: string) => {
-      setChosen({ slug: next, tab: "planner" });
+      projectTabs.put(next, "planner");
       navigate.toPluginPanel("loom", { subPath: next, replace: true });
     },
     [navigate],
   );
+  const scroller = useScrollMemory(route.view === "project" ? `${formatRoute(route)}#${tab}` : formatRoute(route));
   // The ticket route reads the rewind too, so it lives here, with the project it belongs to.
   const [rewind, setRewind] = useState<{ slug: string; at: number } | null>(null);
   const at = rewind !== null && rewind.slug === slug ? rewind.at : null;
@@ -342,12 +385,12 @@ export function LoomPage({ subPath }: PluginNavPanelProps) {
 
   return (
     <section data-loom-page className="flex h-full min-h-0 min-w-0 flex-col bg-surface-recessed text-foreground">
-      <div data-loom-scroll className="min-h-0 flex-1 overflow-y-auto">
+      <div ref={scroller.ref} onScroll={scroller.onScroll} data-loom-scroll className="min-h-0 flex-1 overflow-y-auto">
         {route.view === "home" && <Home go={go} />}
         {route.view === "guide" && <Guide onStart={() => go("_new")} />}
         {route.view === "new" && <NewProject go={go} />}
         {route.view === "plan" && <PlanningView threadId={route.threadId} openProject={openPlanner} />}
-        {route.view === "project" && <ProjectPanel key={route.slug} slug={route.slug} tab={tab} onTab={(next) => setChosen({ slug: route.slug, tab: next })} at={at} onSeek={seek} go={go} />}
+        {route.view === "project" && <ProjectPanel key={route.slug} slug={route.slug} tab={tab} onTab={(next) => projectTabs.put(route.slug, next)} at={at} onSeek={seek} go={go} />}
         {route.view === "ticket" && <TicketView ticketKey={route.key} at={at} onNow={() => seek(null)} />}
       </div>
     </section>
@@ -357,7 +400,8 @@ export function LoomPage({ subPath }: PluginNavPanelProps) {
 /** bb's title bar on the Loom page: where the page is, with a ticket's project linking back to it. Home keeps bb's own "Loom". */
 export function useLoomPageTitle({ subPath }: PluginNavPanelProps): ExperimentalPageTitle | null {
   const pluginId = experimental_usePluginId();
-  const route = parseRoute(subPath);
+  useStored(lastRoute);
+  const route = routeOf(subPath);
   const slug = route.view === "project" || route.view === "ticket" ? route.slug : null;
   // The sidebar's reads of home and of the conversation, so the names cost no read of their own, even on a ticket, whose page reads no project.
   const name = useLoom("home", null, { enabled: slug !== null }).data?.projects.find((project) => project.slug === slug)?.name ?? slug ?? "";

@@ -129,9 +129,13 @@ done and archived projects folded away, How Loom works and New project. bb's
 title bar names the page, such as `Loom / CSV export › CSV-3`, with the project
 linking back to it. The page updates within about a second of an event,
 without a reload, catches up by itself after bb reconnects, and reopens a view
-seen before at once. Its addresses work after a reload:
-`/plugins/loom/loom/<slug>` opens a project, `/plugins/loom/loom/<slug>/<KEY>`
-a ticket and `/plugins/loom/loom/_plan/<threadId>` a planning conversation.
+seen before at once. It remembers where you left it on this device: the Loom
+icon in the rail reopens the page you were on, each project opens on the tab
+you left it on, each view scrolls back to where you were, and the sidebar keeps
+its Done and archived group open or folded. Its addresses work after a reload:
+`/plugins/loom/loom/_home` opens home, `/plugins/loom/loom/<slug>` a project,
+`/plugins/loom/loom/<slug>/<KEY>` a ticket and
+`/plugins/loom/loom/_plan/<threadId>` a planning conversation.
 
 ### Home
 

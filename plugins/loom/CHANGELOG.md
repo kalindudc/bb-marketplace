@@ -2,6 +2,12 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.21.2 (2026-10-26)
+
+### Changed
+
+- The Loom page remembers where you left it, on this device. Coming back from a thread or another page through the Loom icon in the rail reopens the page you were on, a ticket, a project or a planning conversation, instead of home; each project opens on the tab you left it on instead of the Board; each view scrolls back to where you were; and the sidebar keeps its Done and archived group open or folded. Home has its own address, `/plugins/loom/loom/_home`: the sidebar's Home opens it, and the page replaces the rail's bare `/plugins/loom/loom` with the place it reopens, home included, so Back walks back through the pages instead of bouncing forward. Clicking the sidebar item for the page already shown adds no history entry. A rewound Timeline moment is not kept: the page reopens at now.
+
 ## 0.21.1 (2026-10-26)
 
 ### Fixed

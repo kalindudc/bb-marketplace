@@ -1,11 +1,12 @@
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { experimental_Icon as Icon, useBbNavigate, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import type { BoardCard, HomeProject, PlanningSession } from "../contract";
 import type { TicketState } from "../states";
 import { HEADING, plural, stateTone, useLoom } from "./common";
 import { homeRows } from "./home";
-import { parseRoute } from "./page";
+import { formatRoute, lastRoute, parseRoute, routeOf } from "./page";
 import { useWaiting } from "./questions";
+import { sidebarFinished, useStored } from "./remember";
 
 // A ticket in one of these is not moving and needs nothing, so the sidebar leaves it to the board.
 const RESTING: readonly TicketState[] = ["queued", "done", "cancelled"];
@@ -85,11 +86,16 @@ function ProjectItem({ project, needs, open, ticket, go }: { project: HomeProjec
 /** Loom in place of bb's thread list while the Loom page is open: home, planning conversations, projects with what needs you, and the open project's tickets in flight. */
 export function LoomSidebar({ subPath }: PluginNavPanelProps) {
   const navigate = useBbNavigate();
-  const go = (next: string) => navigate.toPluginPanel("loom", { subPath: next });
-  const route = parseRoute(subPath);
+  useStored(lastRoute);
+  const route = routeOf(subPath);
+  // The page already shown stays one history entry, so Back after a second click on it still goes back.
+  const go = (next: string) => {
+    if (formatRoute(parseRoute(next)) !== formatRoute(route)) navigate.toPluginPanel("loom", { subPath: next });
+  };
   const home = useLoom("home", null).data;
   const planning = useLoom("planning", null).data;
-  const [showFinished, setShowFinished] = useState(false);
+  const showFinished = useStored(sidebarFinished);
+  const setShowFinished = sidebarFinished.set;
   const slug = route.view === "project" || route.view === "ticket" ? route.slug : null;
   const ticket = route.view === "ticket" ? route.key : null;
   const sessions = (planning ?? []).filter((session) => session.slug === null);
@@ -105,7 +111,7 @@ export function LoomSidebar({ subPath }: PluginNavPanelProps) {
       <Item
         label="Home"
         on={route.view === "home"}
-        onClick={() => go("")}
+        onClick={() => go("_home")}
         leading={<Icon name="Home" className="size-4 shrink-0" aria-hidden />}
         trailing={home !== undefined && home.needsYou.length > 0 ? <Hot count={home.needsYou.length} label={`${plural(home.needsYou.length, "thing")} need${home.needsYou.length === 1 ? "s" : ""} you`} /> : undefined}
       />

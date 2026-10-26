@@ -14,6 +14,7 @@ import { parseSpec } from "../src/spec";
 import { ConfirmButton, MoreMenu } from "../src/ui/common";
 import { repoLand } from "../src/ui/next-step-bar";
 import { controlDone } from "../src/ui/page";
+import { reloadRemembered } from "../src/ui/remember";
 import { questionsOf } from "../src/ui/questions";
 import { HOUR, NOW, agent, attempt, card, changeRepo, health, homeProject, homeView, metrics, overview, plannerViewOf, projectView, repoOverview, specV1, specVersionView, ticketDetail, timeline, withRepos } from "./fixtures";
 import { specToml, type Doc } from "./helpers";
@@ -63,6 +64,9 @@ afterEach(() => {
   for (const slot of mounts.splice(0)) slot.lifecycle.unmount();
   cleanup();
   document.body.replaceChildren();
+  // Where the page was left is remembered on the device; each case starts as a first visit.
+  localStorage.clear();
+  reloadRemembered();
 });
 
 describe("registration", () => {
@@ -389,6 +393,35 @@ describe("sidebar", () => {
     expect(slot.queryByRole("button", { name: /Proposed/ })).toBeNull();
   });
 
+  it("adds no history entry for the page already shown", async () => {
+    const slot = await mountSidebar("_home");
+    fireEvent.click(slot.getByRole("button", { name: /Home/ }));
+    fireEvent.click(slot.getByRole("button", { name: /Docs site/ }));
+    expect(slot.inspection.navigateCalls).toEqual([pushed("docs")]);
+  });
+
+  it("goes home on its own address, and keeps the Done and archived group open across visits", async () => {
+    const slot = await mountSidebar("csv");
+    fireEvent.click(slot.getByRole("button", { name: /Home/ }));
+    expect(slot.inspection.navigateCalls).toEqual([pushed("_home")]);
+    fireEvent.click(slot.getByRole("button", { name: /Done and archived/ }));
+    slot.lifecycle.unmount();
+    const again = await mountSidebar("csv");
+    expect(names(again)).toContain("Old workOLD");
+  });
+
+  it("marks the route the page reopens on, and names it in the title, while the address is still bb's root", async () => {
+    const page = await mountPage("docs", { project: () => projectView({ overview: overview({ slug: "docs", name: "Docs site", key: "DOC" }) }) });
+    await page.slot.findByRole("heading", { name: "Docs site" });
+    page.slot.lifecycle.unmount();
+    const app = await loadPluginApp(() => import("../app"));
+    const title = renderSlot<PluginNavPanelProps, typeof rpcContract>({ component: () => null, experimental_usePageTitle: app.navPanels[0]!.experimental_usePageTitle }, { subPath: "" }, { pluginId: "loom", rpc: handlers({ home: () => homeView({ projects: two, needsYou: needs }) }) });
+    mounts.push(title);
+    await waitFor(() => expect(title.inspection.experimental_pageTitle).toEqual({ title: "Docs site" }));
+    const slot = await mountSidebar("");
+    expect(slot.getByRole("button", { name: /Docs site/ }).getAttribute("aria-current")).toBe("page");
+  });
+
   it("follows the projects as they change", async () => {
     let projects = [homeProject()];
     const slot = await mountSidebar("", { home: () => homeView({ projects, needsYou: [] }) });
@@ -466,7 +499,7 @@ describe("project list", () => {
   const home = () => homeView({ projects: two });
 
   it("lists every project with its state, strategy, counts and the reason the plugin paused it", async () => {
-    const { slot } = await mountPage("", { home });
+    const { slot } = await mountPage("_home", { home });
     await slot.findByText("CSV export");
     const rows = [...slot.container.querySelectorAll("[data-project-row]")];
     expect(rows.map((row) => row.getAttribute("data-project-row"))).toEqual(["csv", "docs"]);
@@ -480,7 +513,7 @@ describe("project list", () => {
   });
 
   it("shows the guide when there are no projects and no planning conversations, and its button opens New project", async () => {
-    const { slot } = await mountPage("", { home: () => homeView({ projects: [], needsYou: [] }) });
+    const { slot } = await mountPage("_home", { home: () => homeView({ projects: [], needsYou: [] }) });
     expect(await slot.findByRole("heading", { name: "Welcome to Loom" })).toBeTruthy();
     const guide = slot.container.querySelector("[data-guide]")!;
     expect([...guide.querySelectorAll("[data-guide-step]")].map((step) => step.querySelector("b")!.textContent)).toEqual(["Plan.", "Approve.", "Start.", "Check and review.", "Merge and land."]);
@@ -492,7 +525,7 @@ describe("project list", () => {
   });
 
   it("opens a project on its address when its row is clicked", async () => {
-    const { slot } = await mountPage("", { home });
+    const { slot } = await mountPage("_home", { home });
     fireEvent.click(await slot.findByRole("button", { name: /Docs site/ }));
     expect(slot.inspection.navigateCalls).toEqual([pushed("docs")]);
   });
@@ -503,7 +536,7 @@ describe("project list", () => {
     const finished = (slot: Slot) => within(slot.container.querySelector<HTMLElement>("[data-finished]")!).getByRole("button", { name: /Finished · 2/ });
 
     it("folds done and archived projects into a Finished group it remembers opening", async () => {
-      const { slot } = await mountPage("", { home: three });
+      const { slot } = await mountPage("_home", { home: three });
       await slot.findByText("CSV export");
       expect(slugs(slot)).toEqual(["csv"]);
       expect(finished(slot).getAttribute("aria-expanded")).toBe("false");
@@ -512,7 +545,7 @@ describe("project list", () => {
       expect(localStorage.getItem("loom.home.showFinished")).toBe("true");
       slot.lifecycle.unmount();
 
-      const { slot: again } = await mountPage("", { home: three });
+      const { slot: again } = await mountPage("_home", { home: three });
       await again.findByText("CSV export");
       expect(slugs(again)).toEqual(["csv", "docs", "old"]);
       expect(finished(again).getAttribute("aria-expanded")).toBe("true");
@@ -524,14 +557,14 @@ describe("project list", () => {
 
     it("keeps a finished project that still needs you among the active rows", async () => {
       const needsYou = [{ kind: "land" as const, slug: "docs", project: "Docs site", key: null, text: "finished all 3 tickets; land the integration branch", at: NOW }];
-      const { slot } = await mountPage("", { home: () => ({ ...three(), needsYou }) });
+      const { slot } = await mountPage("_home", { home: () => ({ ...three(), needsYou }) });
       await slot.findByText("Docs site");
       expect(slugs(slot)).toEqual(["docs", "csv"]);
       expect(within(slot.container.querySelector<HTMLElement>("[data-finished]")!).getByRole("button", { name: /Finished · 1/ })).toBeTruthy();
     });
 
     it("filters the table by name, key or slug as the human types", async () => {
-      const { slot } = await mountPage("", { home: three });
+      const { slot } = await mountPage("_home", { home: three });
       await slot.findByText("CSV export");
       const search = slot.getByRole("searchbox", { name: "Search projects" });
       for (const [query, shown] of [["importer", ["old"]], ["legacy", ["old"]], ["docs", ["docs"]], ["  CSV ", ["csv"]]] as const) {
@@ -544,7 +577,7 @@ describe("project list", () => {
     });
 
     it("opens the Finished group and says so when every project is done or archived", async () => {
-      const { slot } = await mountPage("", { home: () => homeView({ projects: [homeProject({ state: "done" })], needsYou: [] }) });
+      const { slot } = await mountPage("_home", { home: () => homeView({ projects: [homeProject({ state: "done" })], needsYou: [] }) });
       await slot.findByText("CSV export");
       expect(slot.container.querySelector("[data-projects-empty]")!.textContent).toBe("Every project is done or archived.");
       expect(slugs(slot)).toEqual(["csv"]);
@@ -554,7 +587,7 @@ describe("project list", () => {
   });
 
   it("reads the list again when any project changes", async () => {
-    const { slot } = await mountPage("", { home });
+    const { slot } = await mountPage("_home", { home });
     await slot.findByText("CSV export");
     await slot.experimental_invalidateRpc(changedTags("docs"));
     await waitFor(() => expect(calls(slot, "home")).toHaveLength(2));
@@ -566,7 +599,7 @@ describe("home", () => {
   const homeTile = (slot: Slot, name: string) => slot.container.querySelector<HTMLElement>(`[data-home-tile="${name}"]`)!;
 
   it("reads the overview and the planning conversations, not the project list", async () => {
-    const { slot } = await mountPage("", { home: () => homeView() });
+    const { slot } = await mountPage("_home", { home: () => homeView() });
     await slot.findByText("CSV export");
     await waitFor(() => expect(calls(slot, "planning")).toHaveLength(1));
     expect(calls(slot, "home")).toEqual([{ method: "home", input: null }]);
@@ -574,7 +607,7 @@ describe("home", () => {
   });
 
   it("shows five tiles: running projects, agents against the slots, done in 7 days, what needs you, and tokens", async () => {
-    const { slot } = await mountPage("", { home: () => homeView() });
+    const { slot } = await mountPage("_home", { home: () => homeView() });
     await slot.findByText("CSV export");
     expect([...slot.container.querySelectorAll("[data-home-tile]")].map((tile) => tile.getAttribute("data-home-tile"))).toEqual(["running", "agents", "done", "needs", "tokens"]);
     expect(homeTile(slot, "running").textContent).toContain("2");
@@ -588,7 +621,7 @@ describe("home", () => {
     expect(homeTile(slot, "tokens").textContent).toContain("3,100,000");
     expect(homeTile(slot, "tokens").textContent).toContain("220,000 per done ticket");
 
-    const { slot: one } = await mountPage("", { home: () => ({ ...homeView(), totals: { ...homeView().totals, projects: 1, running: 1, paused: 0, workers: 1, reviewers: 1, slots: 4 } }) });
+    const { slot: one } = await mountPage("_home", { home: () => ({ ...homeView(), totals: { ...homeView().totals, projects: 1, running: 1, paused: 0, workers: 1, reviewers: 1, slots: 4 } }) });
     await waitFor(() => expect(homeTile(one, "running")).not.toBeNull());
     expect(homeTile(one, "running").textContent).toContain("of 1 project · 0 paused");
     expect(homeTile(one, "agents").textContent).toContain("1 worker · 1 reviewer");
@@ -609,7 +642,7 @@ describe("home", () => {
     const chips = (row: HTMLElement) => [...row.querySelectorAll<HTMLElement>("[data-project-needs] button")];
 
     it("puts rows that need you first, most urgent first, each with its chips and a coloured edge", async () => {
-      const { slot } = await mountPage("", { home: () => homeView({ needsYou, projects }) });
+      const { slot } = await mountPage("_home", { home: () => homeView({ needsYou, projects }) });
       await slot.findByText("Calm one");
       expect(rows(slot).map((row) => [row.getAttribute("data-project-row"), row.getAttribute("data-attention")])).toEqual([
         ["csv", "blocked"],
@@ -637,7 +670,7 @@ describe("home", () => {
     });
 
     it("opens a chip's ticket or project, and only that", async () => {
-      const { slot } = await mountPage("", { home: () => homeView({ needsYou, projects }) });
+      const { slot } = await mountPage("_home", { home: () => homeView({ needsYou, projects }) });
       await slot.findByText("Calm one");
       for (const row of rows(slot)) for (const chip of chips(row)) fireEvent.click(chip);
       expect(slot.inspection.navigateCalls).toEqual([pushed("csv/CSV-7"), pushed("csv"), pushed("bill"), pushed("audit"), pushed("srch")]);
@@ -645,7 +678,7 @@ describe("home", () => {
 
     it("shows three chips and a +N more that opens the project", async () => {
       const blocked = [7, 8, 9, 10].map((n) => ({ kind: "blocked" as const, slug: "csv", project: "CSV export", key: `CSV-${n}`, text: "stuck", at: NOW - n }));
-      const { slot } = await mountPage("", { home: () => homeView({ needsYou: [pending, ...blocked] }) });
+      const { slot } = await mountPage("_home", { home: () => homeView({ needsYou: [pending, ...blocked] }) });
       await slot.findByText("CSV export");
       expect(chips(rows(slot)[0]!).map((chip) => chip.textContent)).toEqual(["!CSV-7 blocked", "!CSV-8 blocked", "!CSV-9 blocked", "+2 more"]);
       fireEvent.click(slot.getByRole("button", { name: "+2 more" }));
@@ -653,7 +686,7 @@ describe("home", () => {
     });
 
     it("says on the tile how many projects need you and how many tickets are blocked", async () => {
-      const { slot } = await mountPage("", { home: () => homeView({ needsYou, projects }) });
+      const { slot } = await mountPage("_home", { home: () => homeView({ needsYou, projects }) });
       await slot.findByText("Calm one");
       const tile = slot.container.querySelector<HTMLElement>('[data-home-tile="needs"]')!;
       expect(tile.querySelector("[data-tile-value]")!.textContent).toBe("5");
@@ -661,7 +694,7 @@ describe("home", () => {
       expect(tile.className).toContain("border-warning");
 
       slot.lifecycle.unmount();
-      const { slot: none } = await mountPage("", { home: () => homeView({ needsYou: [] }) });
+      const { slot: none } = await mountPage("_home", { home: () => homeView({ needsYou: [] }) });
       await none.findByText("CSV export");
       const calm = none.container.querySelector<HTMLElement>('[data-home-tile="needs"]')!;
       expect(calm.textContent).toBe("Needs you0");
@@ -671,7 +704,7 @@ describe("home", () => {
 
   it("shows each project's progress, live agents, 14-day throughput, tokens against its budget and its last event", async () => {
     const projects = [homeProject(), homeProject({ slug: "docs", name: "Docs site", key: "DOC", state: "draft", progress: { done: 0, total: 0, inFlight: 0, blocked: 0 }, agents: 1, tokens: 800, maxTokens: null, lastEventAt: null })];
-    const { slot } = await mountPage("", { home: () => homeView({ projects }) });
+    const { slot } = await mountPage("_home", { home: () => homeView({ projects }) });
     await slot.findByText("CSV export");
     const row = (slug: string) => slot.container.querySelector<HTMLElement>(`[data-project-row="${slug}"]`)!;
     expect(row("csv").querySelector("div[role=img]")!.getAttribute("aria-label")).toBe("Progress: 1 of 4 done, 1 in flight, 2 queued");
@@ -685,7 +718,7 @@ describe("home", () => {
   });
 
   it("reads the overview again on any change", async () => {
-    const { slot } = await mountPage("", { home: () => homeView() });
+    const { slot } = await mountPage("_home", { home: () => homeView() });
     await slot.findByText("CSV export");
     await slot.experimental_invalidateRpc(changedTags("csv"));
     await waitFor(() => expect(calls(slot, "home")).toHaveLength(2));
@@ -695,7 +728,7 @@ describe("home", () => {
 
   it("lists the projects and only the conversations that have no project yet, and Continue opens one", async () => {
     const planning = () => [session(), session({ threadId: "thr_p2", title: "CSV export plan", slug: "csv", projectState: "draft" })];
-    const { slot } = await mountPage("", { home: () => homeView(), planning });
+    const { slot } = await mountPage("_home", { home: () => homeView(), planning });
     await slot.findByText("Rate limits for the public API");
     expect([...slot.container.querySelectorAll("[data-project-row]")].map((row) => row.getAttribute("data-project-row"))).toEqual(["csv"]);
     const rows = [...slot.container.querySelectorAll("[data-planning-row]")];
@@ -718,14 +751,14 @@ describe("home", () => {
   });
 
   it("shows a conversation instead of the guide when it is the only thing there is", async () => {
-    const { slot } = await mountPage("", { home: () => homeView({ projects: [], needsYou: [] }), planning: () => [session()] });
+    const { slot } = await mountPage("_home", { home: () => homeView({ projects: [], needsYou: [] }), planning: () => [session()] });
     await slot.findByText("Rate limits for the public API");
     expect(slot.container.querySelector("[data-guide]")).toBeNull();
     expect(slot.container.querySelector("[data-projects-empty]")).toBeNull();
   });
 
   it("opens the guide from How Loom works and New project from its button, and _guide shows the guide", async () => {
-    const { slot, goTo } = await mountPage("", { home: () => homeView() });
+    const { slot, goTo } = await mountPage("_home", { home: () => homeView() });
     fireEvent.click(await slot.findByRole("button", { name: "How Loom works" }));
     fireEvent.click(slot.getByRole("button", { name: "New project" }));
     expect(slot.inspection.navigateCalls).toEqual([pushed("_guide"), pushed("_new")]);
@@ -735,7 +768,7 @@ describe("home", () => {
   });
 
   it("reads the planning conversations again on a change outside any project", async () => {
-    const { slot } = await mountPage("", { home: () => homeView() });
+    const { slot } = await mountPage("_home", { home: () => homeView() });
     await slot.findByText("CSV export");
     await waitFor(() => expect(calls(slot, "planning")).toHaveLength(1));
     await slot.experimental_invalidateRpc(changedTags(null));
@@ -1563,14 +1596,84 @@ describe("routing", () => {
   });
 
   it("moves between the list, a project and a ticket when the address changes", async () => {
-    const { slot, goTo } = await mountPage("", { home: () => homeView(), project: () => projectView(), ticket: () => ticketDetail() });
+    const { slot, goTo } = await mountPage("_home", { home: () => homeView(), project: () => projectView(), ticket: () => ticketDetail() });
     await slot.findByText("CSV export");
     goTo("csv");
     await slot.findByRole("heading", { name: "CSV export" });
     goTo("csv/CSV-2");
     await waitFor(() => expect(calls(slot, "ticket")).toHaveLength(1));
-    goTo("");
+    goTo("_home");
     await waitFor(() => expect(calls(slot, "home")).toHaveLength(2));
+  });
+});
+
+describe("where the page was left", () => {
+  const rpc = { home: () => homeView(), project: () => projectView(), ticket: () => ticketDetail(), insights: () => projectInsights(story().rows(), { now: at(60), strategy: "integration", maxWorkers: 2, maxTokens: null }) };
+  const scroller = (slot: Slot) => slot.container.querySelector<HTMLElement>("[data-loom-scroll]")!;
+
+  it("reopens from bb's rail on the route it was left on, and puts that route in the address", async () => {
+    const first = await mountPage("csv/CSV-2", rpc);
+    await waitFor(() => expect(calls(first.slot, "ticket")).toHaveLength(1));
+    first.slot.lifecycle.unmount();
+    const { slot } = await mountPage("", rpc);
+    await waitFor(() => expect(calls(slot, "ticket")).toHaveLength(1));
+    expect(calls(slot, "home")).toEqual([]);
+    expect(slot.inspection.navigateCalls).toEqual([{ method: "toPluginPanel", path: "loom", options: { subPath: "csv/CSV-2", replace: true } }]);
+  });
+
+  it("opens on home the first time, and on home again once home was the last place, each time at home's own address", async () => {
+    const { slot, goTo } = await mountPage("", rpc);
+    await slot.findByText("CSV export");
+    expect(slot.inspection.navigateCalls).toEqual([{ method: "toPluginPanel", path: "loom", options: { subPath: "_home", replace: true } }]);
+    goTo("csv");
+    await slot.findByRole("heading", { name: "CSV export" });
+    goTo("_home");
+    await waitFor(() => expect(calls(slot, "home").length).toBeGreaterThan(1));
+    slot.lifecycle.unmount();
+    const again = await mountPage("", rpc);
+    await again.slot.findByText("CSV export");
+    expect(calls(again.slot, "project")).toEqual([]);
+    expect(again.slot.inspection.navigateCalls).toEqual([{ method: "toPluginPanel", path: "loom", options: { subPath: "_home", replace: true } }]);
+  });
+
+  it("opens each project on the tab it was left on, and another project on the board", async () => {
+    const first = await mountPage("csv", rpc);
+    fireEvent.click(await first.slot.findByRole("tab", { name: "Insights" }));
+    first.slot.lifecycle.unmount();
+    const { slot, goTo } = await mountPage("csv", rpc);
+    await waitFor(() => expect(slot.getByRole("tab", { name: "Insights" }).getAttribute("aria-selected")).toBe("true"));
+    goTo("docs");
+    await waitFor(() => expect(slot.getByRole("tab", { name: "Board" }).getAttribute("aria-selected")).toBe("true"));
+  });
+
+  it("scrolls back to where each view was left", async () => {
+    const first = await mountPage("csv", rpc);
+    await first.slot.findByRole("tab", { name: "Board" });
+    const node = scroller(first.slot);
+    let top = 0;
+    // jsdom lays nothing out, so the scroll position is a plain property here.
+    const fake = (element: HTMLElement) =>
+      Object.defineProperty(element, "scrollTop", {
+        configurable: true,
+        get: () => top,
+        set: (next: number) => void (top = next),
+      });
+    fake(node);
+    top = 420;
+    fireEvent.scroll(node);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    first.slot.lifecycle.unmount();
+    top = 0;
+    const originalDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTop");
+    Object.defineProperty(HTMLElement.prototype, "scrollTop", { configurable: true, get: () => top, set: (next: number) => void (top = next) });
+    try {
+      const { slot } = await mountPage("csv", rpc);
+      await slot.findByRole("tab", { name: "Board" });
+      expect(top).toBe(420);
+    } finally {
+      if (originalDescriptor === undefined) delete (HTMLElement.prototype as { scrollTop?: number }).scrollTop;
+      else Object.defineProperty(HTMLElement.prototype, "scrollTop", originalDescriptor);
+    }
   });
 });
 
@@ -4733,7 +4836,7 @@ describe("about strip", () => {
   });
 
   it("puts each project's summary under its name on the home list", async () => {
-    const { slot } = await mountPage("", { home: () => homeView({ projects: [homeProject({ about: about() }), homeProject({ slug: "docs", name: "Docs", key: "DOC", about: about({ summary: null }) })] }) });
+    const { slot } = await mountPage("_home", { home: () => homeView({ projects: [homeProject({ about: about() }), homeProject({ slug: "docs", name: "Docs", key: "DOC", about: about({ summary: null }) })] }) });
     await waitFor(() => expect(slot.container.querySelectorAll("[data-project-summary]")).toHaveLength(2));
     expect([...slot.container.querySelectorAll("[data-project-summary]")].map((node) => node.textContent)).toEqual(["Export orders as a CSV file, so finance can reconcile them.", "Implement items 1 to 3 of the issue."]);
   });
