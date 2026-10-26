@@ -3,21 +3,26 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
-import { loadPluginApp, mountPluginContentScripts, renderSlot, type PluginRpcTestHandlers, type PluginSdkTestFakes, type RenderSlotOptions } from "@get-bb/plugin-sdk/testing/app";
+import { loadPluginApp, renderSlot, type PluginRpcTestHandlers, type PluginSdkTestFakes, type RenderSlotOptions } from "@get-bb/plugin-sdk/testing/app";
 import { useLayoutEffect, useState, useSyncExternalStore } from "react";
 import { useComposers, type NewThreadRequest, type PluginComposerApi, type PluginNavPanelProps, type PluginSidebarThread, type PluginThreadHeaderActionProps } from "@get-bb/plugin-sdk/app";
-import type { Attempt, BbProjectChoice, InsightsWindow, ChangedFile, ChangeSource, ChangesView, ChecksItem, HomeProject, MergeEntry, MergeOrderView, NextStep, PlannerView, PlanningSession, ProjectSummary, ProjectView, RepoOverview, SentNote, SpecVersionView, ThreadInfo, TicketDetail, rpcContract } from "../src/contract";
+import type { Attempt, BadgeView, BbProjectChoice, InsightsWindow, ChangedFile, ChangeSource, ChangesView, ChecksItem, HomeProject, MergeEntry, MergeOrderView, NextStep, PlannerView, PlanningSession, ProjectSummary, ProjectView, RepoOverview, SentNote, SpecVersionView, ThreadInfo, TicketDetail, rpcContract } from "../src/contract";
 import type { TicketRow } from "../src/db/store";
 import { repoOverviews } from "../src/projects";
 import { notesMessage } from "../src/prompts";
 import { parseSpec } from "../src/spec";
 import { ConfirmButton, MoreMenu } from "../src/ui/common";
 import { repoLand } from "../src/ui/next-step-bar";
+import { controlDone } from "../src/ui/page";
 import { questionsOf } from "../src/ui/questions";
 import { HOUR, NOW, agent, attempt, card, changeRepo, health, homeProject, homeView, metrics, overview, plannerViewOf, projectView, repoOverview, specV1, specVersionView, ticketDetail, timeline, withRepos } from "./fixtures";
 import { specToml, type Doc } from "./helpers";
 import { at, story } from "./insights-rows";
 import { projectInsights } from "../src/insights";
+import { changedTags } from "../src/rpc-tags";
+import { toast } from "sonner";
+
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 type Handlers = PluginRpcTestHandlers<typeof rpcContract>;
 const unexpected = (): never => {
@@ -26,6 +31,7 @@ const unexpected = (): never => {
 const handlers = (over: Partial<Handlers> = {}): Handlers => ({
   projects: unexpected,
   home: unexpected,
+  badge: () => ({ needsYou: 0, blocked: false, threadIds: [] }),
   project: unexpected,
   ticket: unexpected,
   runOutput: unexpected,
@@ -52,6 +58,8 @@ const handlers = (over: Partial<Handlers> = {}): Handlers => ({
 type Slot = ReturnType<typeof renderSlot>;
 const mounts: Slot[] = [];
 afterEach(() => {
+  vi.mocked(toast.success).mockClear();
+  vi.mocked(toast.error).mockClear();
   for (const slot of mounts.splice(0)) slot.lifecycle.unmount();
   cleanup();
   document.body.replaceChildren();
@@ -61,8 +69,11 @@ describe("registration", () => {
   it("lists Loom in the left navigation with its spool icon", async () => {
     const app = await loadPluginApp(() => import("../app"));
     expect(app.navPanels.map(({ id, title, icon, path }) => ({ id, title, icon, path }))).toEqual([{ id: "loom", title: "Loom", icon: "loom/loom", path: "loom" }]);
+    expect(app.navPanels[0]).toMatchObject({ experimental_sidebar: expect.any(Function), experimental_useBadge: expect.any(Function), experimental_usePageTitle: expect.any(Function) });
     expect(app.threadHeaderActions.map(({ id, title }) => ({ id, title }))).toEqual([{ id: "ticket", title: "Loom" }]);
-    expect(app.contentScripts.map(({ id }) => id)).toEqual(["rail-badge"]);
+    expect(app.threadInfoRows.map(({ id, group, order }) => ({ id, group, order }))).toEqual([{ id: "loom", group: "1_thread", order: 40 }]);
+    // bb draws the rail's badge now, so nothing reaches into its DOM.
+    expect(app.contentScripts).toEqual([]);
   });
 
   it("is declared as the plugin's app entry", () => {
@@ -152,7 +163,7 @@ describe("thread header chip", () => {
     mounts.push(slot);
     expect((await slot.findByRole("button")).textContent).toBe("Planning");
     info = { role: "planner", slug: "csv", key: null, state: "draft" };
-    await slot.emitRealtime("loom:changed", { slug: "csv" });
+    await slot.experimental_invalidateRpc(changedTags("csv"));
     await waitFor(() => expect(slot.getByRole("button", { name: "Open csv in Loom" }).textContent).toBe("csv"));
     expect(slot.inspection.rpcCalls).toHaveLength(2);
   });
@@ -167,9 +178,9 @@ describe("thread header chip", () => {
     mounts.push(slot);
     expect((await slot.findByRole("button")).textContent).toBe("CSV-3 · review");
     state = "approved";
-    await slot.emitRealtime("loom:changed", { slug: "other" });
+    await slot.experimental_invalidateRpc(changedTags("other"));
     expect(slot.inspection.rpcCalls).toHaveLength(1);
-    await slot.emitRealtime("loom:changed", { slug: "csv" });
+    await slot.experimental_invalidateRpc(changedTags("csv"));
     await waitFor(() => expect(slot.getByRole("button").textContent).toBe("CSV-3 · approved"));
   });
 
@@ -177,18 +188,16 @@ describe("thread header chip", () => {
     const worker = (key: string): ThreadInfo => ({ role: "worker", slug: "csv", key, state: "working" });
     const mountSwitching = async () => {
       const app = await loadPluginApp(() => import("../app"));
+      // The first thread's read is still out when the header moves to another thread.
       const late: Array<(info: ThreadInfo | null) => void> = [];
-      let reads = 0;
       const threadInfo = ({ threadId }: { threadId: string }): ThreadInfo | null | Promise<ThreadInfo | null> => {
         if (threadId === "thr_other") return null;
         if (threadId === "thr_next") return worker("CSV-2");
-        reads += 1;
-        return reads === 1 ? worker("CSV-1") : new Promise((resolve) => late.push(resolve));
+        return new Promise((resolve) => late.push(resolve));
       };
       const slot = renderSlot<PluginThreadHeaderActionProps, typeof rpcContract>(app.threadHeaderActions[0]!, { threadId: "thr_loom", projectId: "proj_1", isCompactViewport: false }, { pluginId: "loom", rpc: handlers({ threadInfo }) });
       mounts.push(slot);
-      await slot.findByRole("button", { name: "Open CSV-1 in Loom" });
-      await slot.emitRealtime("loom:changed", { slug: "csv" });
+      await waitFor(() => expect(late).toHaveLength(1));
       const Chip = app.threadHeaderActions[0]!.component;
       const switchTo = (threadId: string) => slot.lifecycle.rerender(<Chip threadId={threadId} projectId="proj_1" isCompactViewport={false} />);
       return { slot, late, switchTo };
@@ -214,65 +223,178 @@ describe("thread header chip", () => {
 });
 
 describe("rail badge", () => {
-  let body: unknown;
-  const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => ({ ok: true, json: async () => body }) as unknown as Response);
-  const disposers: Array<() => Promise<void>> = [];
-  afterEach(async () => {
-    for (const dispose of disposers.splice(0)) await dispose();
-    vi.unstubAllGlobals();
-    fetchMock.mockClear();
-  });
-
-  const mountBadge = async (first: unknown) => {
-    body = first;
-    vi.stubGlobal("fetch", fetchMock);
-    document.body.innerHTML = '<nav><span data-nav-rail-item="loom/loom"><button aria-label="Loom"></button></span></nav>';
+  const mountBadge = async (badge: BadgeView, threads: Array<{ id: string; hasPendingInteraction: boolean }> = []) => {
     const app = await loadPluginApp(() => import("../app"));
-    const scripts = await mountPluginContentScripts(app, { pluginId: "loom" });
-    disposers.push(() => scripts.lifecycle.dispose());
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    return { scripts, button: () => document.querySelector<HTMLElement>('[data-nav-rail-item="loom/loom"] button')! };
+    const useBadge = app.navPanels[0]!.experimental_useBadge!;
+    const Probe = () => <output data-badge>{JSON.stringify(useBadge())}</output>;
+    const slot = renderSlot({ component: Probe }, {}, { pluginId: "loom", rpc: handlers({ badge: () => badge }), sidebarThreads: { threads: threads as unknown as PluginSidebarThread[] } });
+    mounts.push(slot);
+    return slot;
   };
-  const badge = (button: HTMLElement) => button.querySelector<HTMLElement>("[data-loom-badge]");
-  const pollNow = () => document.dispatchEvent(new Event("visibilitychange"));
+  const shown = (slot: Slot) => JSON.parse(slot.container.querySelector("[data-badge]")!.textContent!);
 
-  it("draws the route's count on the Loom rail button, as 9+ above 9, and nothing at 0", async () => {
-    const { button } = await mountBadge({ count: 2, label: "2 things need you in Loom" });
-    await waitFor(() => expect(badge(button())?.textContent).toBe("2"));
-    expect(badge(button())!.getAttribute("aria-hidden")).toBe("true");
-    expect(button().getAttribute("aria-description")).toBe("2 things need you in Loom");
-    expect(fetchMock).toHaveBeenCalledWith("/api/v1/plugins/loom/http/badge", expect.anything());
-
-    body = { count: 12, label: "12 things need you in Loom" };
-    pollNow();
-    await waitFor(() => expect(badge(button())?.textContent).toBe("9+"));
-
-    body = { count: 0, label: "Nothing needs you in Loom" };
-    pollNow();
-    await waitFor(() => expect(badge(button())).toBeNull());
-    expect(button().hasAttribute("aria-description")).toBe(false);
+  it("draws nothing while nothing needs you", async () => {
+    const slot = await mountBadge({ needsYou: 0, blocked: false, threadIds: ["thr_plan"] }, [{ id: "thr_plan", hasPendingInteraction: false }]);
+    await waitFor(() => expect(slot.inspection.rpcCalls).toEqual([{ method: "badge", input: null }]));
+    expect(shown(slot)).toBeNull();
   });
 
-  it("keeps the last count when the route fails, and draws it again when the rail re-renders", async () => {
-    const { button } = await mountBadge({ count: 3, label: "3 things need you in Loom" });
-    await waitFor(() => expect(badge(button())?.textContent).toBe("3"));
-    fetchMock.mockRejectedValueOnce(new Error("offline"));
-    pollNow();
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(badge(button())?.textContent).toBe("3");
-
-    document.querySelector("[data-nav-rail-item]")!.replaceChildren(document.createElement("button"));
-    await waitFor(() => expect(badge(button())?.textContent).toBe("3"));
+  it("counts the Needs you items and the Loom threads bb shows waiting on you, in amber", async () => {
+    const slot = await mountBadge({ needsYou: 1, blocked: false, threadIds: ["thr_plan", "thr_w1"] }, [
+      { id: "thr_plan", hasPendingInteraction: true },
+      { id: "thr_w1", hasPendingInteraction: false },
+      { id: "thr_other", hasPendingInteraction: true },
+    ]);
+    await waitFor(() => expect(shown(slot)).toEqual({ count: 2, tone: "warning", label: "2 things need you" }));
   });
 
-  it("removes the count, its description and the inline position when disposed", async () => {
-    const { scripts, button } = await mountBadge({ count: 2, label: "2 things need you in Loom" });
-    await waitFor(() => expect(badge(button())?.textContent).toBe("2"));
-    expect(button().style.position).toBe("relative");
-    await scripts.lifecycle.dispose();
-    expect(badge(button())).toBeNull();
-    expect(button().hasAttribute("aria-description")).toBe(false);
-    expect(button().style.position).toBe("");
+  it("turns red while a ticket is blocked, and reads again when a change refreshes it", async () => {
+    let badge: BadgeView = { needsYou: 1, blocked: true, threadIds: [] };
+    const app = await loadPluginApp(() => import("../app"));
+    const useBadge = app.navPanels[0]!.experimental_useBadge!;
+    const Probe = () => <output data-badge>{JSON.stringify(useBadge())}</output>;
+    const slot = renderSlot({ component: Probe }, {}, { pluginId: "loom", rpc: handlers({ badge: () => badge }) });
+    mounts.push(slot);
+    await waitFor(() => expect(shown(slot)).toEqual({ count: 1, tone: "critical", label: "1 thing needs you" }));
+    badge = { needsYou: 0, blocked: false, threadIds: [] };
+    await slot.experimental_invalidateRpc(changedTags("csv"));
+    await waitFor(() => expect(shown(slot)).toBeNull());
+  });
+});
+
+describe("title in bb's header", () => {
+  const titleOf = async (subPath: string, rpc: Partial<Handlers> = {}) => {
+    const app = await loadPluginApp(() => import("../app"));
+    const slot = renderSlot<PluginNavPanelProps, typeof rpcContract>({ component: () => null, experimental_usePageTitle: app.navPanels[0]!.experimental_usePageTitle }, { subPath }, { pluginId: "loom", rpc: handlers(rpc) });
+    mounts.push(slot);
+    return slot;
+  };
+  const home = () => homeView({ projects: [homeProject()] });
+
+  it("keeps bb's own title on the home page and names the other pages", async () => {
+    expect((await titleOf("")).inspection.experimental_pageTitle).toBeNull();
+    expect((await titleOf("_guide")).inspection.experimental_pageTitle).toEqual({ title: "How Loom works" });
+    expect((await titleOf("_new")).inspection.experimental_pageTitle).toEqual({ title: "New project" });
+    expect((await titleOf("_plan/thr_plan")).inspection.experimental_pageTitle).toEqual({ title: "Planning" });
+  });
+
+  it("names a planning conversation by its title once it loads", async () => {
+    const session: PlanningSession = { threadId: "thr_p2", title: "Search revamp", startedAt: NOW, slug: null, projectState: null };
+    const slot = await titleOf("_plan/thr_p2", { planningSession: () => session });
+    await waitFor(() => expect(slot.inspection.experimental_pageTitle).toEqual({ breadcrumbs: [{ label: "Planning" }, { label: "Search revamp" }] }));
+  });
+
+  it("names a project by its name, once home has it, and by its slug before", async () => {
+    const slot = await titleOf("csv", { home });
+    expect(slot.inspection.experimental_pageTitle).toEqual({ title: "csv" });
+    await waitFor(() => expect(slot.inspection.experimental_pageTitle).toEqual({ title: "CSV export" }));
+  });
+
+  it("puts a ticket under its project, which links back to the project", async () => {
+    const slot = await titleOf("csv/CSV-3", { home });
+    await waitFor(() =>
+      expect(slot.inspection.experimental_pageTitle).toEqual({ breadcrumbs: [{ label: "CSV export", to: "/plugins/loom/loom/csv" }, { label: "CSV-3" }] }),
+    );
+  });
+
+  it("leaves the breadcrumb row to bb", async () => {
+    const { slot } = await mountPage("_guide");
+    expect(slot.queryByRole("navigation", { name: "Loom" })).toBeNull();
+  });
+});
+
+describe("thread Info tab", () => {
+  const mountRow = async (info: ThreadInfo | null) => {
+    const app = await loadPluginApp(() => import("../app"));
+    const slot = renderSlot(app.threadInfoRows[0]!, { threadId: "thr_known", projectId: "proj_1", environment: null }, { pluginId: "loom", rpc: handlers({ threadInfo: () => info }) });
+    mounts.push(slot);
+    return slot;
+  };
+
+  it("shows a worker's ticket, its state and the project, and opens the ticket on the page", async () => {
+    const slot = await mountRow({ role: "worker", slug: "csv", key: "CSV-3", state: "pr_open" });
+    const link = await slot.findByRole("button", { name: "CSV-3" });
+    expect(slot.container.querySelector("[data-loom-info]")!.textContent).toBe("CSV-3pr open · Worker on csv");
+    fireEvent.click(link);
+    expect(slot.inspection.navigateCalls).toEqual([{ method: "toPluginPanel", path: "loom", options: { subPath: "csv/CSV-3" } }]);
+  });
+
+  it("shows a planner's project, and a planning conversation before it has a spec", async () => {
+    const planner = await mountRow({ role: "planner", slug: "csv", key: null, state: "running" });
+    expect((await planner.findByRole("button", { name: "csv" })).closest("[data-loom-info]")!.textContent).toBe("csvrunning · Planner");
+    document.body.replaceChildren();
+    const planning = await mountRow({ role: "planner", slug: null, key: null, state: "planning" });
+    fireEvent.click(await planning.findByRole("button", { name: "Planning conversation" }));
+    expect(planning.inspection.navigateCalls).toEqual([{ method: "toPluginPanel", path: "loom", options: { subPath: "_plan/thr_known" } }]);
+  });
+
+  it("shows nothing for a thread that is not a Loom thread", async () => {
+    const slot = await mountRow(null);
+    await waitFor(() => expect(slot.inspection.rpcCalls).toHaveLength(1));
+    expect(slot.container.textContent).toBe("");
+  });
+});
+
+describe("sidebar", () => {
+  const two = [homeProject(), homeProject({ slug: "docs", name: "Docs site", key: "DOC", state: "paused" }), homeProject({ slug: "old", name: "Old work", key: "OLD", state: "done" })];
+  const needs = homeView().needsYou.filter((need) => need.slug === "csv");
+  const mountSidebar = async (subPath: string, rpc: Partial<Handlers> = {}, sidebarThreads: Array<{ id: string; hasPendingInteraction: boolean }> = []) => {
+    const app = await loadPluginApp(() => import("../app"));
+    const slot = renderSlot<PluginNavPanelProps, typeof rpcContract>({ component: app.navPanels[0]!.experimental_sidebar! }, { subPath }, {
+      pluginId: "loom",
+      rpc: handlers({ home: () => homeView({ projects: two, needsYou: needs }), planning: () => [], ...rpc }),
+      sidebarThreads: { threads: sidebarThreads as unknown as PluginSidebarThread[] },
+    });
+    mounts.push(slot);
+    await slot.findByRole("button", { name: /CSV export/ });
+    return slot;
+  };
+  const names = (slot: Slot) => [...slot.container.querySelectorAll("nav > button")].map((button) => button.textContent);
+
+  it("lists home with what needs you, the live projects, the finished ones folded, and the guide and New project", async () => {
+    const slot = await mountSidebar("");
+    expect(names(slot)).toEqual(["Home1", "CSV export1", "Docs siteDOC", "Done and archived (1)", "How Loom works", "New project"]);
+    expect(slot.getByRole("button", { name: /Home/ }).getAttribute("aria-current")).toBe("page");
+    fireEvent.click(slot.getByRole("button", { name: /Done and archived/ }));
+    expect(names(slot)).toContain("Old workOLD");
+    fireEvent.click(slot.getByRole("button", { name: /Docs site/ }));
+    fireEvent.click(slot.getByRole("button", { name: "New project" }));
+    expect(slot.inspection.navigateCalls).toEqual([pushed("docs"), pushed("_new")]);
+  });
+
+  it("lists the open project's tickets that are moving or stuck, blocked first, and marks the open ticket", async () => {
+    const board = [card(), card({ key: "CSV-2", state: "working" }), card({ key: "CSV-3", state: "done" }), card({ key: "CSV-7", state: "blocked" })];
+    const slot = await mountSidebar("csv/CSV-2", { project: () => projectView({ board }) });
+    await slot.findByRole("button", { name: /CSV-7/ });
+    expect(names(slot).slice(1, 4)).toEqual(["CSV export1", "CSV-7blocked", "CSV-2working"]);
+    expect(slot.getByRole("button", { name: /CSV-2/ }).getAttribute("aria-current")).toBe("page");
+    fireEvent.click(slot.getByRole("button", { name: /CSV-7/ }));
+    expect(slot.inspection.navigateCalls).toEqual([pushed("csv/CSV-7")]);
+  });
+
+  it("keeps the project marked on a ticket it does not list, such as a done one", async () => {
+    const board = [card({ key: "CSV-2", state: "working" }), card({ key: "CSV-3", state: "done" })];
+    const slot = await mountSidebar("csv/CSV-3", { project: () => projectView({ board }) });
+    await slot.findByRole("button", { name: /CSV-2/ });
+    expect(slot.getByRole("button", { name: /CSV export/ }).getAttribute("aria-current")).toBe("page");
+    expect(slot.queryByRole("button", { name: /CSV-3/ })).toBeNull();
+  });
+
+  it("lists a planning conversation with no spec yet, and marks one whose planner asks you", async () => {
+    const session: PlanningSession = { threadId: "thr_p2", title: "Search revamp", startedAt: NOW, slug: null, projectState: null };
+    const slot = await mountSidebar("_plan/thr_p2", { planning: () => [session, { ...session, threadId: "thr_p3", title: "Proposed", slug: "csv" }] }, [{ id: "thr_p2", hasPendingInteraction: true }]);
+    const item = await slot.findByRole("button", { name: /Search revamp/ });
+    expect(item.getAttribute("aria-current")).toBe("page");
+    expect(within(item).getByLabelText("The planner asks you a question")).toBeTruthy();
+    expect(slot.queryByRole("button", { name: /Proposed/ })).toBeNull();
+  });
+
+  it("follows the projects as they change", async () => {
+    let projects = [homeProject()];
+    const slot = await mountSidebar("", { home: () => homeView({ projects, needsYou: [] }) });
+    projects = [...projects, homeProject({ slug: "docs", name: "Docs site", key: "DOC" })];
+    await slot.experimental_invalidateRpc(changedTags("docs"));
+    await slot.findByRole("button", { name: /Docs site/ });
   });
 });
 
@@ -328,7 +450,8 @@ describe("questionsOf", () => {
 
 async function mountPage(subPath: string, rpc: Partial<Handlers> = {}, options: Pick<RenderSlotOptions<typeof rpcContract>, "sdk" | "sidebarThreads"> = {}) {
   const app = await loadPluginApp(() => import("../app"));
-  const slot = renderSlot<PluginNavPanelProps, typeof rpcContract>(app.navPanels[0]!, { subPath }, { pluginId: "loom", rpc: handlers(rpc), ...options });
+  // The page alone: its title in bb's header has tests of its own.
+  const slot = renderSlot<PluginNavPanelProps, typeof rpcContract>({ component: app.navPanels[0]!.component }, { subPath }, { pluginId: "loom", rpc: handlers(rpc), ...options });
   mounts.push(slot);
   const Panel = app.navPanels[0]!.component;
   const goTo = (next: string) => slot.lifecycle.rerender(<Panel subPath={next} />);
@@ -433,7 +556,7 @@ describe("project list", () => {
   it("reads the list again when any project changes", async () => {
     const { slot } = await mountPage("", { home });
     await slot.findByText("CSV export");
-    await slot.emitRealtime("loom:changed", { slug: "docs" });
+    await slot.experimental_invalidateRpc(changedTags("docs"));
     await waitFor(() => expect(calls(slot, "home")).toHaveLength(2));
   });
 });
@@ -466,7 +589,7 @@ describe("home", () => {
     expect(homeTile(slot, "tokens").textContent).toContain("220,000 per done ticket");
 
     const { slot: one } = await mountPage("", { home: () => ({ ...homeView(), totals: { ...homeView().totals, projects: 1, running: 1, paused: 0, workers: 1, reviewers: 1, slots: 4 } }) });
-    await one.findByText("CSV export");
+    await waitFor(() => expect(homeTile(one, "running")).not.toBeNull());
     expect(homeTile(one, "running").textContent).toContain("of 1 project · 0 paused");
     expect(homeTile(one, "agents").textContent).toContain("1 worker · 1 reviewer");
   });
@@ -564,9 +687,9 @@ describe("home", () => {
   it("reads the overview again on any change", async () => {
     const { slot } = await mountPage("", { home: () => homeView() });
     await slot.findByText("CSV export");
-    await slot.emitRealtime("loom:changed", { slug: "csv" });
+    await slot.experimental_invalidateRpc(changedTags("csv"));
     await waitFor(() => expect(calls(slot, "home")).toHaveLength(2));
-    await slot.emitRealtime("loom:changed", { slug: null });
+    await slot.experimental_invalidateRpc(changedTags(null));
     await waitFor(() => expect(calls(slot, "home")).toHaveLength(3));
   });
 
@@ -608,7 +731,6 @@ describe("home", () => {
     expect(slot.inspection.navigateCalls).toEqual([pushed("_guide"), pushed("_new")]);
     goTo("_guide");
     expect(await slot.findByRole("heading", { name: "Welcome to Loom" })).toBeTruthy();
-    expect(slot.getByRole("navigation", { name: "Loom" }).textContent).toContain("How Loom works");
     expect(calls(slot, "project")).toEqual([]);
   });
 
@@ -616,7 +738,7 @@ describe("home", () => {
     const { slot } = await mountPage("", { home: () => homeView() });
     await slot.findByText("CSV export");
     await waitFor(() => expect(calls(slot, "planning")).toHaveLength(1));
-    await slot.emitRealtime("loom:changed", { slug: null });
+    await slot.experimental_invalidateRpc(changedTags(null));
     await waitFor(() => expect(calls(slot, "planning")).toHaveLength(2));
   });
 });
@@ -639,7 +761,6 @@ describe("new project", () => {
     const startPlanning = vi.fn(() => ({ threadId: "thr_p7" }));
     const { slot } = await mountPage("_new", { startPlanning });
     expect(await slot.findByRole("heading", { name: "What should exist when the project is done?" })).toBeTruthy();
-    expect(slot.getByRole("navigation", { name: "Loom" }).textContent).toContain("New project");
     expect(slot.container.querySelectorAll("[data-guide-step]")).toHaveLength(5);
     expect(slot.getByTestId("bb-new-thread-composer").getAttribute("data-default-permission-mode")).toBe("full");
     typeGoal(slot, "Let people export their orders as CSV.");
@@ -905,7 +1026,6 @@ describe("planning conversation", () => {
     await waitFor(() => expect(slot.container.querySelector("[data-planner-page]")).not.toBeNull());
     expect(slot.getByRole("heading", { name: "Export orders as CSV" })).toBeTruthy();
     expect(calls(slot, "plannerView")[0]!.input).toEqual({ threadId: "thr_p1" });
-    expect(slot.getByRole("navigation", { name: "Loom" }).textContent).toContain("Planning");
     const bar = slot.container.querySelector<HTMLElement>("[data-next-step]")!;
     expect(bar.textContent).toContain("Next: answer the planner.");
     expect(bar.querySelector('[aria-current="step"]')!.getAttribute("data-stage")).toBe("Plan");
@@ -931,7 +1051,7 @@ describe("planning conversation", () => {
     const { slot, goTo } = await mountPage("_plan/thr_p1", { planningSession: () => current, plannerView: () => plannerViewOf(), project: () => draft, specVersion: () => specVersionView() });
     await waitFor(() => expect(slot.container.querySelector("[data-planner-page]")).not.toBeNull());
     current = session({ slug: "csv", projectState: "draft" });
-    await slot.emitRealtime("loom:changed", { slug: null });
+    await slot.experimental_invalidateRpc(changedTags(null));
     await waitFor(() => expect(slot.inspection.navigateCalls).toContainEqual({ method: "toPluginPanel", path: "loom", options: { subPath: "csv", replace: true } }));
     goTo("csv");
     await waitFor(() => expect(slot.getByRole("tab", { name: "Planner" }).getAttribute("aria-selected")).toBe("true"));
@@ -1118,7 +1238,7 @@ describe("planner page", () => {
       return running;
     });
     const ticketAction = vi.fn(() => ticketDetail());
-    const dismissAsk = vi.fn(() => plannerViewOf({ ask: null }));
+    const dismissAsk = vi.fn(() => (current = plannerViewOf({ ask: null })));
     const slot = await openPlanner({ plannerView: () => current, control, ticketAction, dismissAsk }, running);
     expect(slot.container.querySelector('[data-tab-badge="planner"]')!.textContent).toBe("3");
     const asks = () => page(slot).querySelector<HTMLElement>("[data-planner-asks]")!;
@@ -1134,28 +1254,32 @@ describe("planner page", () => {
     fireEvent.click(within(asks()).getByRole("button", { name: "Approve v2" }));
     fireEvent.click(within(asks()).getByRole("button", { name: "Click again to approve v2" }));
     await waitFor(() => expect(control).toHaveBeenCalledWith({ slug: "csv", action: "approve", version: 2, confirm: true }));
-    await slot.emitRealtime("loom:changed", { slug: "csv" });
+    // The approve refreshes the project's reads, the planner's among them.
     await waitFor(() => expect(asks().querySelector('[data-ask-step="approve"]')!.hasAttribute("data-done")).toBe(true));
+    expect(toast.success).toHaveBeenCalledWith("Approved v2");
     expect(requeue().disabled).toBe(false);
     fireEvent.click(requeue());
     fireEvent.click(within(asks()).getByRole("button", { name: "Click again to requeue CSV-1" }));
     await waitFor(() => expect(ticketAction).toHaveBeenCalledWith({ key: "CSV-1", action: "requeue", note: "Requeued as the planner asked: Then requeue CSV-1.", confirm: true }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("CSV-1 requeued"));
 
     fireEvent.click(within(asks()).getByRole("button", { name: "Set aside" }));
     await waitFor(() => expect(dismissAsk).toHaveBeenCalledWith({ slug: "csv", ask: 7, confirm: true }));
     await waitFor(() => expect(page(slot).querySelector("[data-planner-asks]")).toBeNull());
+    expect(toast.success).toHaveBeenLastCalledWith("Set aside until the planner asks again");
   });
 
   it("sends the human's message to the planner and shows it in the story", async () => {
-    const messagePlanner = vi.fn(() => plannerViewOf({ steps: [...plannerViewOf().steps, { kind: "message", at: NOW, text: "Keep it to one ticket." }] }));
-    const slot = await openPlanner({ messagePlanner }, { ...draft(), spec: { ...draft().spec, version: 1 } });
+    let view = plannerViewOf();
+    const messagePlanner = vi.fn(() => (view = plannerViewOf({ steps: [...plannerViewOf().steps, { kind: "message", at: NOW, text: "Keep it to one ticket." }] })));
+    const slot = await openPlanner({ messagePlanner, plannerView: () => view }, { ...draft(), spec: { ...draft().spec, version: 1 } });
     const box = within(page(slot).querySelector<HTMLElement>("[data-message-planner]")!);
     expect((box.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(box.getByRole("textbox", { name: "Message to the planner" }), { target: { value: "  Keep it to one ticket. " } });
     fireEvent.click(box.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(messagePlanner).toHaveBeenCalledWith({ threadId: "thr_plan", text: "Keep it to one ticket.", confirm: true }));
     expect(await box.findByRole("status")).toBeTruthy();
-    expect(page(slot).querySelector("[data-planner-story]")!.textContent).toContain("You wrote to the planner");
+    await waitFor(() => expect(page(slot).querySelector("[data-planner-story]")!.textContent).toContain("You wrote to the planner"));
   });
 
   it("marks the Planner tab while the planner waits on you, and says what a working planner is on", async () => {
@@ -1448,13 +1572,6 @@ describe("routing", () => {
     goTo("");
     await waitFor(() => expect(calls(slot, "home")).toHaveLength(2));
   });
-
-  it("has breadcrumbs that go back up", async () => {
-    const { slot } = await mountPage("csv/CSV-2", { ticket: () => ticketDetail() });
-    fireEvent.click(await slot.findByRole("button", { name: "csv" }));
-    fireEvent.click(slot.getByRole("button", { name: "Loom" }));
-    expect(slot.inspection.navigateCalls).toEqual([pushed("csv"), pushed("")]);
-  });
 });
 
 describe("project controls", () => {
@@ -1548,15 +1665,21 @@ describe("project controls", () => {
     await waitFor(() => expect(control).toHaveBeenCalledWith({ slug: "csv", action: "start", confirm: true }));
   });
 
-  it("asks twice before it acts, then calls control with confirm: true and shows the refreshed project", async () => {
-    const control = vi.fn(() => projectView({ overview: overview({ state: "running" }) }));
-    const { slot } = await mountPage("csv", { project: () => withState("ready"), control });
+  it("asks twice before it acts, then calls control with confirm: true, says so in a toast and shows the refreshed project", async () => {
+    let state: ProjectView["overview"]["state"] = "ready";
+    const control = vi.fn(() => {
+      state = "running";
+      return withState(state);
+    });
+    const { slot } = await mountPage("csv", { project: () => withState(state), control });
     fireEvent.click(await slot.findByRole("button", { name: "Start" }));
     expect(control).not.toHaveBeenCalled();
     fireEvent.click(slot.getByRole("button", { name: "Click again to start" }));
     await waitFor(() => expect(control).toHaveBeenCalledWith({ slug: "csv", action: "start", confirm: true }));
     await waitFor(() => expect(slot.queryByRole("button", { name: "Start" })).toBeNull());
     expect(slot.getByRole("button", { name: "Pause" })).toBeTruthy();
+    expect(toast.success).toHaveBeenCalledWith("Project started");
+    expect(calls(slot, "project")).toHaveLength(2);
   });
 
   it("goes back to the plain label after five seconds", async () => {
@@ -1588,14 +1711,30 @@ describe("project controls", () => {
     await waitFor(() => expect(control).toHaveBeenLastCalledWith({ slug: "csv", action: "approve", version: 2, confirm: true }));
   });
 
-  it("shows a refusal under the header", async () => {
-    const control = () => {
+  // bb's query client shows its own toast for every failed write, so Loom adds none and says nothing went through.
+  it("leaves a refusal to bb's toast, says nothing went through, and keeps the controls", async () => {
+    const control = vi.fn(() => {
       throw new Error("Project csv is ready; pause needs a running project.");
-    };
+    });
     const { slot } = await mountPage("csv", { project: () => withState("ready"), control });
     fireEvent.click(await slot.findByRole("button", { name: "Start" }));
     fireEvent.click(slot.getByRole("button", { name: "Click again to start" }));
-    expect((await slot.findByRole("alert")).textContent).toContain("pause needs a running project");
+    await waitFor(() => expect(control).toHaveBeenCalled());
+    await waitFor(() => expect((slot.getByRole("button", { name: "Start" }) as HTMLButtonElement).disabled).toBe(false));
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(slot.queryByRole("alert")).toBeNull();
+    expect((slot.getByRole("button", { name: "Start" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("says in each control's toast what it did", () => {
+    expect(controlDone("approve")).toBe("Spec approved");
+    expect(controlDone("approve", 3)).toBe("Approved v3");
+    expect(controlDone("pause")).toBe("Paused: work in flight carries on, and nothing new starts");
+    expect(controlDone("pauseNow")).toBe("Paused, and its workers stopped");
+    expect(controlDone("land", undefined, "api")).toBe("api: Landed: the branch is pushed and its pull request is open");
+    expect(controlDone("landDirect")).toBe("Landed on the base branch");
+    expect(controlDone("archive")).toBe("Project archived");
   });
 
 });
@@ -1664,9 +1803,9 @@ describe("live updates", () => {
     const { slot } = await mountPage("csv", { project: () => projectView({ overview: overview({ state }) }) });
     await slot.findByRole("button", { name: "Start" });
     state = "running";
-    await slot.emitRealtime("loom:changed", { slug: "other" });
+    await slot.experimental_invalidateRpc(changedTags("other"));
     expect(calls(slot, "project")).toHaveLength(1);
-    await slot.emitRealtime("loom:changed", { slug: "csv" });
+    await slot.experimental_invalidateRpc(changedTags("csv"));
     await waitFor(() => expect(slot.getByRole("button", { name: "Pause" })).toBeTruthy());
     expect(calls(slot, "project")).toHaveLength(2);
   });
@@ -1762,7 +1901,7 @@ describe("spec tab", () => {
   it("keeps the chosen tab across a change of the project", async () => {
     const { slot } = await mountPage("csv", { project: () => projectView(), specVersion: () => specVersionView() });
     fireEvent.click(await slot.findByRole("tab", { name: "Spec" }));
-    await slot.emitRealtime("loom:changed", { slug: "csv" });
+    await slot.experimental_invalidateRpc(changedTags("csv"));
     await waitFor(() => expect(calls(slot, "project")).toHaveLength(2));
     expect(slot.getByRole("tab", { name: "Spec" }).getAttribute("aria-selected")).toBe("true");
   });
@@ -1899,7 +2038,7 @@ describe("changes tab", () => {
     expect(JSON.parse(localStorage.getItem("loom.viewed.csv")!)).toEqual(["src/a.ts\u0000blob-src/a.ts"]);
 
     view = changesView({ sources: [source({ files: [changed("src/a.ts", { fingerprint: "blob-new" }), changed("src/b.ts")] })] });
-    await slot.emitRealtime("loom:changed", { slug: "csv" });
+    await slot.experimental_invalidateRpc(changedTags("csv"));
     await waitFor(() => expect(slot.getByText("Viewed 0 of 2", { exact: false })).toBeTruthy());
   });
 
@@ -2293,7 +2432,7 @@ describe("board", () => {
     await slot.findByRole("tab", { name: "Board" });
     expect(slot.container.querySelector("[data-draft-note]")!.textContent).toBe("Draft v1: approving creates these 2 tickets. Dashed cards are not on the board yet.");
     const { slot: one } = await mountPage("csv", { project: () => ({ ...draft, board: draft.board.slice(0, 1) }) });
-    await one.findByRole("tab", { name: "Board" });
+    await waitFor(() => expect(one.container.querySelector("[data-draft-note]")).not.toBeNull());
     expect(one.container.querySelector("[data-draft-note]")!.textContent).toBe("Draft v1: approving creates this ticket. Its dashed card is not on the board yet.");
     const queued = lane(slot, "queued");
     const ready = queued.querySelector<HTMLElement>('[data-queue-group="ready"] [data-card="CSV-1"]')!;
@@ -2326,8 +2465,14 @@ describe("ticket", () => {
   const brief = { postId: 1, at: 1, edits: 0, fields: [] };
   const withItems = (items: Item[], over: Partial<Attempt> = {}) => ({ brief, before: [], attempts: [attempt({ claimPostId: 4, items, ...over })] });
   const mountTicket = async (over: Parameters<typeof ticketDetail>[0] = {}, rpc: Partial<Handlers> = {}) => {
-    const view = ticketDetail({ posts, activity: withItems([]), ...over });
-    const { slot } = await mountPage("csv/CSV-2", { ticket: () => view, ...rpc });
+    // As on the server, the ticket a change returns is the one the page reads after it.
+    let view = ticketDetail({ posts, activity: withItems([]), ...over });
+    const { slot } = await mountPage("csv/CSV-2", {
+      ticket: () => view,
+      ...rpc,
+      reply: async (input) => (view = await (rpc.reply ?? unexpected)(input)),
+      ticketAction: async (input) => (view = await (rpc.ticketAction ?? unexpected)(input)),
+    });
     await slot.findByRole("heading", { name: /Export endpoint/ });
     return slot;
   };
@@ -2465,6 +2610,7 @@ describe("ticket", () => {
     fireEvent.click(within(callout).getByRole("button", { name: "Click again to requeue" }));
     await waitFor(() => expect(ticketAction).toHaveBeenCalledWith({ key: "CSV-2", action: "requeue", note: "Use the v2 API", confirm: true }));
     await waitFor(() => expect(slot.container.querySelector("[data-ticket-header] [data-state-badge]")!.textContent).toBe("queued"));
+    expect(toast.success).toHaveBeenCalledWith("CSV-2 requeued");
     slot.lifecycle.unmount();
 
     const refused = await mountTicket({ ...blocked, posts, replyTo: null, blockedReason: "bb refused to start a worker: HTTP 400" });
@@ -2498,16 +2644,18 @@ describe("ticket", () => {
     await waitFor(() => expect(slot.container.querySelector("[data-more-menu]")).toBeNull());
     slot.lifecycle.unmount();
 
-    const refused = await mountTicket({}, {
-      ticketAction: () => {
-        throw new Error("The ticket is checking.");
-      },
+    const refusedAction = vi.fn(() => {
+      throw new Error("The ticket is checking.");
     });
+    const refused = await mountTicket({}, { ticketAction: refusedAction });
     fireEvent.click(refused.getByRole("button", { name: "More actions" }));
     fireEvent.change(refused.getByRole("textbox", { name: "Reason" }), { target: { value: "Wrong approach" } });
     fireEvent.click(refused.getByRole("button", { name: "Block" }));
     fireEvent.click(refused.getByRole("button", { name: "Click again to block" }));
-    expect((await refused.findByRole("alert")).textContent).toContain("The ticket is checking.");
+    await waitFor(() => expect(refusedAction).toHaveBeenCalled());
+    await waitFor(() => expect((refused.getByRole("button", { name: "Block" }) as HTMLButtonElement).disabled).toBe(false));
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(refused.queryByRole("alert")).toBeNull();
     expect((refused.getByRole("textbox", { name: "Reason" }) as HTMLTextAreaElement).value).toBe("Wrong approach");
     refused.lifecycle.unmount();
 
@@ -3053,7 +3201,7 @@ describe("ticket", () => {
 
   it("asks for the ticket again when its project changes", async () => {
     const slot = await mountTicket();
-    await slot.emitRealtime("loom:changed", { slug: "csv" });
+    await slot.experimental_invalidateRpc(changedTags("csv"));
     await waitFor(() => expect(calls(slot, "ticket")).toHaveLength(2));
   });
 
@@ -3425,21 +3573,22 @@ describe("insights tab", () => {
     const insights = vi.fn((input: { slug: string; window?: InsightsWindow }) => {
       if (fail) throw new Error("db is closed");
       const view = insightsView(input);
-      return { ...view, presets: { ...view.presets, run: runs } };
+      return { ...view, presets: { ...view.presets, run: runs, day: true } };
     });
     const slot = await openInsights(insights);
     fireEvent.click(slot.getByRole("button", { name: "Latest run" }));
     await waitFor(() => expect(pressed(slot, "[data-insights-window]")).toEqual(["Latest run"]));
     runs = false;
-    await slot.emitRealtime("loom:changed", { slug: "csv" });
+    await slot.experimental_invalidateRpc(changedTags("csv"));
     await waitFor(() => expect(pressed(slot, "[data-insights-window]")).toEqual(["Whole project"]));
     expect(calls(slot, "insights").at(-1)!.input).toEqual({ slug: "csv" });
 
     runs = true;
-    await slot.emitRealtime("loom:changed", { slug: "csv" });
+    await slot.experimental_invalidateRpc(changedTags("csv"));
     await waitFor(() => expect(slot.queryByRole("button", { name: "Latest run" })).not.toBeNull());
+    // A stretch read before reopens from bb's cache, so the failed read is of one not read yet.
     fail = true;
-    fireEvent.click(slot.getByRole("button", { name: "Latest run" }));
+    fireEvent.click(slot.getByRole("button", { name: "Last 24 hours" }));
     expect((await slot.findByRole("alert")).textContent).toContain("db is closed");
     fail = false;
     fireEvent.click(within(slot.getByRole("alert")).getByRole("button", { name: "Show the whole project" }));
@@ -3459,6 +3608,20 @@ describe("insights tab", () => {
     expect(slot.container.querySelector('[data-chapter="CSV-1"]')!.className).not.toContain("bg-primary/10");
   });
 
+  it("puts the half and most labels on either side of their lines when the two times are close", async () => {
+    const close = (input: { slug: string }) => {
+      const view = insightsView(input);
+      return { ...view, numbers: { ...view.numbers, cycle: [...view.numbers.cycle, { key: "CSV-99", ms: 10 * view.numbers.cycleP50! }], cycleP85: view.numbers.cycleP50! + 1000 } };
+    };
+    const slot = await openInsights(close);
+    const mark = (label: string) => slot.container.querySelector<HTMLElement>(`[data-cycle-mark="${label}"]`)!;
+    expect(mark("half").className).toContain("-translate-x-full");
+    expect(mark("most").className).not.toContain("-translate-x");
+    slot.lifecycle.unmount();
+    const apart = await openInsights();
+    expect(apart.container.querySelector<HTMLElement>('[data-cycle-mark="half"]')!.className).toContain("-translate-x-1/2");
+  });
+
   it("finds a ticket by its exact key, so CSV-1 does not find CSV-10", async () => {
     const rows = story();
     rows.ticket(10, 56, "Tenth").move(10, 57, "queued", "working");
@@ -3473,9 +3636,9 @@ describe("insights tab", () => {
     const insights = vi.fn(insightsView);
     const slot = await openInsights(insights);
     const before = calls(slot, "insights").length;
-    await slot.emitRealtime("loom:changed", { slug: "csv" });
+    await slot.experimental_invalidateRpc(changedTags("csv"));
     await waitFor(() => expect(calls(slot, "insights").length).toBe(before + 1));
-    await slot.emitRealtime("loom:changed", { slug: "other" });
+    await slot.experimental_invalidateRpc(changedTags("other"));
     expect(calls(slot, "insights").length).toBe(before + 1);
     slot.lifecycle.unmount();
 
@@ -3773,7 +3936,7 @@ describe("timeline", () => {
     fireEvent.click(within(slot.container.querySelector<HTMLElement>("[data-ticket-rewound]")!).getByRole("button", { name: "Back to now" }));
     await waitFor(() => expect(slot.container.querySelector("[data-ticket-rewound]")).toBeNull());
     expect(ticket).toHaveBeenLastCalledWith({ key: "CSV-2" });
-    expect(slot.getByRole("textbox", { name: "New reply" })).toBeTruthy();
+    expect(await slot.findByRole("textbox", { name: "New reply" })).toBeTruthy();
   });
 
   it("hides the Planner tab and the tab badges while rewound, and shows the spec in force with no notes", async () => {
@@ -4252,7 +4415,7 @@ describe("repos", () => {
 
     const draft = multi({ overview: overview({ state: "draft", approvedVersion: null, ticketCount: 0, ticketCounts: {}, repos: repos() }) });
     const { slot: dashed } = await mountPage("csv", { project: () => draft });
-    await dashed.findByRole("tab", { name: "Board" });
+    await waitFor(() => expect(dashed.container.querySelector('[data-card="CSV-1"][data-draft]')).not.toBeNull());
     expect(chipsIn(dashed.container.querySelector('[data-card="CSV-1"][data-draft]')!)).toEqual(["web"]);
   });
 
@@ -4322,7 +4485,7 @@ describe("repos", () => {
     await waitFor(() => expect(control).toHaveBeenCalledWith({ slug: "csv", action: "landDirect", confirm: true }));
 
     const { slot: bar } = await mountPage("csv", { project: () => multi({ overview: overview({ repos: partly, ticketCounts: { done: 2 } }), next: landing("Land · 1 repo") }) });
-    await bar.findByRole("heading", { name: "CSV export" });
+    await waitFor(() => expect(bar.container.querySelector("[data-next-step]")).not.toBeNull());
     const step = bar.container.querySelector<HTMLElement>("[data-next-step]")!;
     fireEvent.click(within(step).getByRole("button", { name: "Land · open the pull requests" }));
     expect(within(step).getByRole("button", { name: "Click again to land web and api" })).toBeTruthy();
@@ -4339,7 +4502,7 @@ describe("repos", () => {
 
     const landed = repos().map((repo) => ({ ...repo, landedAt: NOW - HOUR, toLand: false }));
     const { slot: done } = await mountPage("csv", { project: () => multi({ overview: overview({ repos: landed, ticketCounts: { done: 2 } }), next: landing("Land · finish the project") }) });
-    await done.findByRole("heading", { name: "CSV export" });
+    await waitFor(() => expect(done.container.querySelector("[data-next-step]")).not.toBeNull());
     const step = done.container.querySelector<HTMLElement>("[data-next-step]")!;
     fireEvent.click(within(step).getByRole("button", { name: "Land · finish the project" }));
     expect(within(step).getByRole("button", { name: "Click again to land web and api" })).toBeTruthy();

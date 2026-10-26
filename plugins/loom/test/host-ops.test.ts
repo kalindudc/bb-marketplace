@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import hostEntry from "../host";
+import { hostContract } from "../src/host-contract";
 import { batchQuery, changedFiles, commitAll, diff, ensureBranch, ensureWorktree, exec, fetchBranch, filePatch, ghStatus, ghTransient, git, landedOn, merge, parseRemoteUrl, prBatch, prCommit, prCreate, prFeedback, prRequestReview, prState, push, remotes, resetHard, stackBase, trialWorktree, worktreeState } from "../src/host/ops";
 
 const ENV: Record<string, string> = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
@@ -849,6 +850,14 @@ describe("ghTransient", () => {
 
 describe("host entry", () => {
   const harness = experimental_createHostEntryHarness(hostEntry, { experimental_paths: { dataDir: join(tmpdir(), "loom-host-entry-data"), tempDir: tmpdir() } });
+
+  it("lets bb send again only the quick local reads that change nothing, so a new method that writes, or a slow forge read, is not retried", () => {
+    const retryable = Object.entries<{ experimental_retryable?: boolean }>(hostContract)
+      .filter(([, method]) => method.experimental_retryable === true)
+      .map(([name]) => name)
+      .sort();
+    expect(retryable).toEqual(["changedFiles", "diff", "filePatch", "remotes", "worktreeState"]);
+  });
 
   it("serves the four operations through the contract", async () => {
     const repo = makeRepo();

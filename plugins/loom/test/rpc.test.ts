@@ -947,10 +947,32 @@ describe("sendNotes", () => {
   });
 });
 
-describe("live updates", () => {
-  const signals = () => host.harness.realtimeSignals.filter((signal) => signal.channel === "loom:changed");
+describe("refusals", () => {
+  it("answers a LoomError as a refusal that carries its message, not as a handler error", async () => {
+    await expect(call("project", { slug: "nope" })).rejects.toMatchObject({ code: "not_found", message: expect.stringContaining('No Loom project named "nope".') });
+    await propose();
+    await expect(call("control", { slug: "csv", action: "start", confirm: true })).rejects.toMatchObject({ code: "conflict" });
+    await expect(call("control", { slug: "csv", action: "pause", repo: "api", confirm: true })).rejects.toMatchObject({ code: "invalid" });
+  });
 
-  it("publishes one loom:changed message per project for a burst of events", () => {
+  it("refuses another plugin's change as forbidden", async () => {
+    await propose();
+    await expect(call("control", { slug: "csv", action: "approve", confirm: true }, { experimental_caller: { kind: "plugin", pluginId: "other" } })).rejects.toMatchObject({ code: "forbidden" });
+  });
+
+  it("leaves any other failure a handler error", async () => {
+    await propose();
+    vi.spyOn(host.store, "projectBySlug").mockImplementation(() => {
+      throw new Error("database is locked");
+    });
+    await expect(call("project", { slug: "csv" })).rejects.toMatchObject({ code: "handler_error" });
+  });
+});
+
+describe("live updates", () => {
+  const signals = () => host.harness.experimental_rpcInvalidations;
+
+  it("refreshes a project's reads, and the reads of no one project, once for a burst of its events", () => {
     vi.useFakeTimers();
     const stop = watchChanges(host.bb, host.store);
     const project = host.store.createProject({ slug: "csv", name: "CSV", key: "CSV", bb_project_id: "p" }, "human");
@@ -960,7 +982,7 @@ describe("live updates", () => {
     vi.advanceTimersByTime(299);
     expect(signals()).toEqual([]);
     vi.advanceTimersByTime(1);
-    expect(signals()).toEqual([{ channel: "loom:changed", payload: { slug: "csv" } }]);
+    expect(signals()).toEqual([["project:csv", "loom"]]);
 
     host.store.event(project.id, null, "c", "human");
     vi.advanceTimersByTime(300);
@@ -979,11 +1001,11 @@ describe("live updates", () => {
     host.store.event(one.id, null, "a", "human");
     host.store.event(two.id, null, "a", "human");
     vi.advanceTimersByTime(300);
-    expect(signals().map((signal) => (signal.payload as { slug: string }).slug).sort()).toEqual(["one", "two"]);
+    expect(signals().map((tags) => tags![0]).sort()).toEqual(["project:one", "project:two"]);
     stop();
   });
 
-  it("delivers a change that lands inside a window with that window's message, and the next one in its own", () => {
+  it("delivers a change that lands inside a window with that window's refresh, and the next one in its own", () => {
     vi.useFakeTimers();
     const stop = watchChanges(host.bb, host.store);
     const project = host.store.createProject({ slug: "csv", name: "CSV", key: "CSV", bb_project_id: "p" }, "human");
@@ -1001,33 +1023,33 @@ describe("live updates", () => {
     stop();
   });
 
-  it("publishes one { slug: null } message for a burst of changes outside any project", () => {
+  it("refreshes only the reads of no one project, once, for a burst of changes outside any project", () => {
     vi.useFakeTimers();
     const stop = watchChanges(host.bb, host.store);
     host.store.addPlanning({ thread_id: "thr_p1", bb_project_id: "proj_1", title: "Plan" });
     host.store.endPlanning("thr_p1", "archived");
     expect(signals()).toEqual([]);
     vi.advanceTimersByTime(300);
-    expect(signals()).toEqual([{ channel: "loom:changed", payload: { slug: null } }]);
+    expect(signals()).toEqual([["loom"]]);
     stop();
   });
 
-  it("publishes a row-only change that no event accompanies", () => {
+  it("refreshes for a row-only change that no event accompanies", () => {
     vi.useFakeTimers();
     const project = host.store.createProject({ slug: "csv", name: "CSV", key: "CSV", bb_project_id: "p" }, "human");
     const stop = watchChanges(host.bb, host.store);
     host.store.changed(project.id);
     vi.advanceTimersByTime(300);
-    expect(signals()).toEqual([{ channel: "loom:changed", payload: { slug: "csv" } }]);
+    expect(signals()).toEqual([["project:csv", "loom"]]);
     stop();
   });
 
-  it("publishes again when a slow spawn binds the worker's thread after the events were already sent", async () => {
+  it("refreshes again when a slow spawn binds the worker's thread after the events were already sent", async () => {
     vi.useFakeTimers();
     const h = makeCtx();
     const project = await seedProject(h);
-    const publish = vi.fn();
-    const stop = watchChanges({ realtime: { publish } } as unknown as BbPluginApi, h.store);
+    const invalidate = vi.fn();
+    const stop = watchChanges({ rpc: { experimental_invalidate: invalidate } } as unknown as BbPluginApi, h.store);
     let release!: () => void;
     let reserved!: () => void;
     const started = new Promise<void>((resolve) => (reserved = resolve));
@@ -1040,19 +1062,19 @@ describe("live updates", () => {
     const spawning = startWorker(h);
     await started;
     await vi.advanceTimersByTimeAsync(300);
-    expect(publish).toHaveBeenCalledTimes(1);
+    expect(invalidate).toHaveBeenCalledTimes(1);
     expect(boardCards(h.store.tickets(project.id), h.store.threadsForProject(project.id))[0]!.threadId).toBeNull();
 
-    publish.mockClear();
+    invalidate.mockClear();
     release();
     await spawning;
     await vi.advanceTimersByTimeAsync(300);
     expect(h.store.ticketByKey("CSV-1")!.worker_thread_id).toBe("thr_w1");
-    expect(publish.mock.calls).toEqual([["loom:changed", { slug: "csv" }]]);
+    expect(invalidate.mock.calls).toEqual([[["project:csv", "loom"]]]);
     stop();
   });
 
-  it("stops publishing once disposed, even for a timer already waiting", () => {
+  it("stops refreshing once disposed, even for a timer already waiting", () => {
     vi.useFakeTimers();
     const stop = watchChanges(host.bb, host.store);
     const project = host.store.createProject({ slug: "csv", name: "CSV", key: "CSV", bb_project_id: "p" }, "human");

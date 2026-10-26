@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { experimental_Icon as Icon, Markdown, useRpc } from "@get-bb/plugin-sdk/app";
-import type { rpcContract, TicketAction, TicketDetail } from "../contract";
+import { experimental_Icon as Icon, Markdown } from "@get-bb/plugin-sdk/app";
+import type { TicketAction, TicketDetail } from "../contract";
 import { plural } from "../format";
-import { BUTTON, momentLabel, useRemote, useRun } from "./common";
+import { BUTTON, momentLabel, useAction, useLoom, useLoomWrite, useRun } from "./common";
+
+const ACTION_DONE: Record<TicketAction, string> = { requeue: "requeued", block: "blocked", cancel: "cancelled" };
 import { TicketHeader } from "./ticket-header";
 import { GHOST } from "./ticket-cards";
 import { SideCards } from "./ticket-side";
@@ -75,17 +77,20 @@ function SideColumn({ children }: { children: ReactNode }) {
 }
 
 /** With `at`, the ticket as it was at that event, with every control disabled. */
-export function TicketView({ slug, ticketKey, at = null, onNow }: { slug: string; ticketKey: string; at?: number | null; onNow?(): void }) {
-  const rpc = useRpc<typeof rpcContract>();
-  const remote = useRemote((client) => client.call("ticket", at === null ? { key: ticketKey } : { key: ticketKey, at }), at === null ? `ticket:${ticketKey}` : `ticket:${ticketKey}@${at}`, slug);
-  const { busy, error, run } = useRun();
+export function TicketView({ ticketKey, at = null, onNow }: { ticketKey: string; at?: number | null; onNow?(): void }) {
+  const remote = useLoom("ticket", at === null ? { key: ticketKey } : { key: ticketKey, at });
+  const send = useLoomWrite("reply");
+  const change = useLoomWrite("ticketAction");
+  const { busy: sending, error, run } = useRun();
+  const { busy: acting, act: report } = useAction();
+  const busy = sending || acting;
   const now = useNow(30_000);
   const [tab, setTab] = useState<Tab>("activity");
   const [jumpTo, setJumpTo] = useState<{ postId: number; seq: number } | null>(null);
   const [sideOpen, setSideOpen] = useState(savedSideOpen);
-  const ticket: TicketDetail | null = remote.data;
+  const ticket: TicketDetail | undefined = remote.data;
 
-  if (ticket === null) {
+  if (ticket === undefined) {
     return remote.error === null ? <p role="status" className="p-4 text-sm text-muted-foreground">Loading…</p> : <p role="alert" className="p-4 text-sm text-destructive-text">Could not load {ticketKey}: {remote.error}</p>;
   }
   const past = ticket.at !== null;
@@ -93,12 +98,9 @@ export function TicketView({ slug, ticketKey, at = null, onNow }: { slug: string
   const locked = busy || past;
   const reply = (body: string, parentId?: number) =>
     run(async () => {
-      remote.set(await rpc.call("reply", { key: ticketKey, body, ...(parentId === undefined ? {} : { parentId }), confirm: true }));
+      await send({ key: ticketKey, body, ...(parentId === undefined ? {} : { parentId }), confirm: true });
     });
-  const act = (action: TicketAction, note: string) =>
-    run(async () => {
-      remote.set(await rpc.call("ticketAction", { key: ticketKey, action, note, confirm: true }));
-    });
+  const act = (action: TicketAction, note: string) => report(() => change({ key: ticketKey, action, note, confirm: true }), `${ticketKey} ${ACTION_DONE[action]}`);
   const choose = (next: Tab) => {
     setTab(next);
     setJumpTo(null);

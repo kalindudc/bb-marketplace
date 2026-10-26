@@ -1,10 +1,10 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { ThreadChat, experimental_useSidebarThreads, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
-import type { AskStep, ControlAction, PlannerAsk, PlannerVersion, PlannerView, ProjectView, rpcContract } from "../contract";
+import { ThreadChat, experimental_useSidebarThreads, useBbNavigate } from "@get-bb/plugin-sdk/app";
+import type { AskStep, ControlAction, PlannerAsk, PlannerVersion, PlannerView, ProjectView } from "../contract";
 import { specReviewBlocks } from "../format";
 import { changeLine, journey, workingOn, type Chapter, type JourneyStep, type QuestionRound } from "../planner-journey";
 import { SPEC_REVIEW_ROUNDS } from "../states";
-import { BUTTON, ConfirmButton, HEADING, plural, useRemote, useRun } from "./common";
+import { BUTTON, ConfirmButton, HEADING, plural, useAction, useLoom, useLoomWrite } from "./common";
 import { PlannerMark, timeLabel } from "./planner-kit";
 import { About, Decisions, MessageBox, Versions } from "./planner-side";
 import { PlannerStory } from "./planner-story";
@@ -129,8 +129,8 @@ function VersionSummary({ entry, draft }: { entry: PlannerVersion | undefined; d
 
 /** The planner's asks from loom_ask_human as a checklist, a button on each step the page can take. */
 function AsksCard({ ask, project, versions, busy, onControl, onSpec, onTicket, onDismiss }: { ask: PlannerAsk; project: ProjectView; versions: readonly PlannerVersion[]; busy: boolean; onDismiss(): void } & Pick<PlannerPageProps, "onControl" | "onSpec" | "onTicket">) {
-  const rpc = useRpc<typeof rpcContract>();
-  const { busy: requeueing, error, run } = useRun();
+  const requeue = useLoomWrite("ticketAction");
+  const { busy: requeueing, act } = useAction();
   const blocked = new Set(project.board.filter((card) => card.state === "blocked").map((card) => card.key));
   // A requeue waits for an approve step listed before it, as the planner ordered them.
   const approveBefore = (index: number) => ask.steps.slice(0, index).find((step) => step.action === "approve" && !step.done);
@@ -157,7 +157,7 @@ function AsksCard({ ask, project, versions, busy, onControl, onSpec, onTicket, o
             Requeue
           </button>
         ) : (
-          <ConfirmButton label="Requeue" confirmLabel={`Click again to requeue ${step.key}`} disabled={busy || requeueing} onConfirm={() => void run(async () => void (await rpc.call("ticketAction", { key: step.key!, action: "requeue", note: `Requeued as the planner asked: ${step.text}`, confirm: true })))} />
+          <ConfirmButton label="Requeue" confirmLabel={`Click again to requeue ${step.key}`} disabled={busy || requeueing} onConfirm={() => void act(() => requeue({ key: step.key!, action: "requeue", note: `Requeued as the planner asked: ${step.text}`, confirm: true }), `${step.key} requeued`)} />
         );
       }
       case "reply":
@@ -203,7 +203,6 @@ function AsksCard({ ask, project, versions, busy, onControl, onSpec, onTicket, o
           </li>
         ))}
       </ol>
-      {error !== null && <p role="alert" className="text-xs text-destructive-text">{error}</p>}
     </section>
   );
 }
@@ -296,12 +295,10 @@ const WIDE = 1024;
 
 /** The Planner page: what the planner needs from you, what it did step by step, and its chat one click away. */
 export function PlannerPage({ threadId, project, busy = false, onControl, onSpec, onTicket }: PlannerPageProps) {
-  const rpc = useRpc<typeof rpcContract>();
-  const slug = project?.overview.slug ?? null;
-  // Wrapped, so a thread that is not a planner (null) is told apart from one still loading.
-  const remote = useRemote((client) => client.call("plannerView", { threadId }).then((loaded) => ({ loaded })), `planner:${threadId}`, slug, true);
+  const remote = useLoom("plannerView", { threadId }, { keep: true });
+  const dismissAsk = useLoomWrite("dismissAsk");
   const status = useStatus(threadId);
-  const view = remote.data?.loaded ?? null;
+  const view = remote.data ?? null;
   const rounds = useQuestionRounds(threadId, `${status}:${view?.steps.length ?? 0}`);
   // bb's sidebar may leave the thread out, or lag behind the round its events show open: then the open questions are read anyway.
   const questions = usePendingQuestions(threadId, status === "missing" || rounds.some((round) => round.status === "open"));
@@ -310,9 +307,9 @@ export function PlannerPage({ threadId, project, busy = false, onControl, onSpec
   const [draft, setDraft] = useState("");
   const [wide, root] = useWide(WIDE);
   const needs = useRef<HTMLElement>(null);
-  const dismiss = useRun();
+  const dismiss = useAction();
 
-  if (remote.data === null) {
+  if (remote.data === undefined) {
     return remote.error === null ? <p role="status" className="p-4 text-sm text-muted-foreground">Loading the planner…</p> : <p role="alert" className="p-4 text-sm text-destructive-text">Could not load the planner: {remote.error}</p>;
   }
   if (view === null) return <p className="p-4 text-sm text-muted-foreground">This thread is not a Loom planner.</p>;
@@ -341,10 +338,9 @@ export function PlannerPage({ threadId, project, busy = false, onControl, onSpec
       </h2>
       <PlannerQuestions threadId={threadId} rows={questions.rows} error={questions.error} respond={questions.respond} />
       {ask !== null && project !== null && (
-        <AsksCard ask={ask} project={project} versions={view.versions} busy={busy} onControl={onControl} onSpec={onSpec} onTicket={onTicket} onDismiss={() => void dismiss.run(async () => remote.set({ loaded: await rpc.call("dismissAsk", { slug: project.overview.slug, ask: ask.id, confirm: true }) }))} />
+        <AsksCard ask={ask} project={project} versions={view.versions} busy={busy} onControl={onControl} onSpec={onSpec} onTicket={onTicket} onDismiss={() => void dismiss.act(() => dismissAsk({ slug: project.overview.slug, ask: ask.id, confirm: true }), "Set aside until the planner asks again")} />
       )}
       {versionCard && project !== null && <VersionCard view={view} project={project} onSpec={onSpec} />}
-      {dismiss.error !== null && <p role="alert" className="text-xs text-destructive-text">{dismiss.error}</p>}
       {needCount === 0 && (
         <div data-nothing-needed className={CALM}>
           <p className="text-sm font-semibold">Nothing needs you right now</p>
@@ -353,7 +349,7 @@ export function PlannerPage({ threadId, project, busy = false, onControl, onSpec
       )}
     </section>
   );
-  const message = <MessageBox threadId={threadId} live={live} text={draft} onText={setDraft} onSent={(next) => remote.set({ loaded: next })} />;
+  const message = <MessageBox threadId={threadId} live={live} text={draft} onText={setDraft} />;
   const story = <PlannerStory chapters={chapters} now={view.now} repos={repos} working={status === "working" ? workingOn(steps) : false} on={{ onSpec, onTicket, ...(pendingQuestions > 0 ? { onNeeds: toNeeds } : {}) }} />;
   const facts = (
     <>

@@ -7,11 +7,11 @@
   },
   "screenshots": [
     "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/loom/home.png",
-    "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/loom/spec.png",
     "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/loom/board.png",
     "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/loom/ticket.png",
+    "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/loom/spec.png",
     "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/loom/changes.png",
-    "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/loom/planner.png"
+    "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/loom/insights.png"
   ],
   "tags": [
     "parallel-agents",

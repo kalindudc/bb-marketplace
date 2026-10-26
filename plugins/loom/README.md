@@ -14,7 +14,7 @@ their role, and only Loom's own code moves a ticket, runs checks, merges, or
 decides that work is done. A project can stay in one repository or span
 several.
 
-![The Loom home page: tiles for running projects, agents at work, tickets done and what needs you, above a table with a draft to review, a planner asking questions and a project ready to land](../../screenshots/loom/home.png)
+![The Loom home page with Loom's sidebar: tiles for running projects, agents at work, tickets done and what needs you, above a table with a blocked ticket, a draft to review, a planner asking questions and a project ready to land](../../screenshots/loom/home.png)
 
 ## Install
 
@@ -121,8 +121,15 @@ round for the same commit: its work already passed the checks.
 
 Loom adds a full-screen page to bb's left navigation. The Loom icon in the
 navigation rail counts what needs you: the Needs you items and Loom threads
-waiting on a question or an approval. The page updates within about a second
-of an event, without a reload, and its addresses work after a reload:
+waiting on a question or an approval. The count is amber, and red while a
+ticket is blocked. While the page is open, bb's sidebar lists Loom instead of
+your threads: Home, the planning conversations, every project with what needs
+you in it, the open project's tickets that are moving or stuck (blocked first),
+done and archived projects folded away, How Loom works and New project. bb's
+title bar names the page, such as `Loom / CSV export › CSV-3`, with the project
+linking back to it. The page updates within about a second of an event,
+without a reload, catches up by itself after bb reconnects, and reopens a view
+seen before at once. Its addresses work after a reload:
 `/plugins/loom/loom/<slug>` opens a project, `/plugins/loom/loom/<slug>/<KEY>`
 a ticket and `/plugins/loom/loom/_plan/<threadId>` a planning conversation.
 
@@ -200,7 +207,7 @@ another ticket's branch.
 
 #### Board
 
-![The Board tab rewound with the Timeline to a moment when one ticket was working and another was in review, under the health strip](../../screenshots/loom/board.png)
+![The Board tab of a paused project: a blocked ticket under Needs you, two tickets in review and three waiting on their dependencies, beside the sidebar's list of the project's tickets in flight](../../screenshots/loom/board.png)
 
 A row per stage, stacked down the page, under a bar that counts the tickets
 done, shipping, in progress, up next and blocked:
@@ -217,7 +224,7 @@ tickets show as dashed cards with the keys approval will give them.
 
 #### Ticket
 
-![A ticket page: the stage tracker from Queued to Done, the worker's note and submit, the checks that passed and the reviewer's approval, beside the acceptance criteria and the files in scope](../../screenshots/loom/ticket.png)
+![A ticket page: the stage tracker from Queued to Done, the second attempt's note and submit, the checks that passed and the reviewer's approval, beside the acceptance criteria and the files in scope](../../screenshots/loom/ticket.png)
 
 A header with the state, a one-line summary, a stage tracker from Queued to
 Done, and chips for the attempts, review rounds, total time, dependencies, the
@@ -241,7 +248,7 @@ request, your reply starts a fix round.
 
 #### Spec
 
-![The Spec tab on version 2: the ticket a comment asked to split, with its brief rewritten word by word, a criterion replaced and a new dependency, and the sent comment marked as changed in v2](../../screenshots/loom/spec.png)
+![The Spec tab on version 3: what changed since v2, every change marked as answering a comment, and the two sent comments marked as changed in v3](../../screenshots/loom/spec.png)
 
 The spec as one page in three sections:
 
@@ -281,7 +288,7 @@ R1, R2… with Go to it.
 
 #### Planner
 
-![The Planner page while the planner waits on four questions, shown one at a time under Needs you](../../screenshots/loom/planner.png)
+![The Planner page while the planner waits on three questions, shown one at a time under Needs you, with the conversation named in bb's title bar](../../screenshots/loom/planner.png)
 
 The planner's work as a page, with its chat one click away under Conversation.
 A strip says whether it is working (and on what), waits on you or is idle, and,
@@ -352,7 +359,7 @@ reported".
 
 #### Insights
 
-![The Insights tab of a finished project: how it went in plain words with four figures, a chart of when the work happened, each ticket's story by run, and the numbers beside it](../../screenshots/loom/insights.png)
+![The Insights tab of a project ready to land: how it went in plain words with four figures, a chart of when the work happened with the quiet hour folded, each ticket's story, and how long a ticket takes](../../screenshots/loom/insights.png)
 
 How the project went, when its work happened and what happened to each
 ticket, on one page:
@@ -421,12 +428,19 @@ no failed attempts.
 Every button that changes something asks twice: the first click turns it amber
 with "Click again to ..." and a bar that drains over five seconds, beside a
 Cancel button. Each button calls the same engine method as the matching command
-and is logged as a `human.action` event. Archive sits in the ⋯ menu.
+and is logged as a `human.action` event. Archive sits in the ⋯ menu. A project
+control or a ticket action says in bb's toast what it did, such as "Project
+started" or "CSV-2 requeued"; the toasts stay in bb's notification center. A
+change Loom refuses shows in bb's own error toast, as every failed change in bb
+does, with Loom's reason. A reply, a message to the planner, spec comments and
+New project also keep their errors beside the text you wrote.
 
 A worker, reviewer or planner thread shows a header chip such as
 `CSV-3 · review` that opens its ticket, and a planning conversation shows
 "Planning", which opens it on the page. The chip is hidden on phone-sized
-screens.
+screens. The thread's Info tab has a Loom row on every screen size: the ticket
+(or project, or planning conversation), its state and the thread's role, with a
+link to the page.
 
 ## Pull requests
 
@@ -817,17 +831,31 @@ settings for that project.
   thread events.
 - `host.ts` and `src/host/ops.ts` run on the machine that owns the checkout:
   git through argv, the repo's server for pull requests (`gh`, the spec's own
-  commands, or none), and check commands in their own process group.
+  commands, or none), and check commands in their own process group. Every git
+  and `gh` process waits for a turn in bb's VCS scheduler, which caps how many
+  run at once: the Changes tab's reads go first, and Loom's own work runs in the
+  background. Check and forge shell commands do not wait. bb sends a quick local
+  git read (`worktreeState`, `diff`, `changedFiles`, `filePatch`, `remotes`)
+  again when the machine's answer is lost; a fetch, a write or a forge read is
+  never sent twice.
 - `src/metrics.ts`, `src/feed-text.ts`, `src/insights.ts` and `src/replay.ts`
   are pure; `src/reports.ts` reads them for the CLI, `src/insights.ts` builds
   the Insights tab, and `src/replay.ts` rewinds a project's rows to one event
   for the Timeline and for a rewound page. `src/rpc.ts` serves
-  the page and publishes `loom:changed` after a project's events and after any
-  change that writes no event (`Store.changed`), at most once every 300 ms per
-  project; a change outside any project publishes `{ slug: null }`.
+  the page. The page reads through bb's tagged query cache: each read carries
+  tags from `src/rpc-tags.ts` (`project:<slug>` for a live read of one project,
+  `loom` for the rest; a rewound read carries none), and each change declares
+  the tags it refreshes. After a project's events, and after any change that
+  writes no event (`Store.changed`), `src/rpc.ts` refreshes that project's tags
+  and `loom`, at most once every 300 ms per project; a change outside any
+  project refreshes `loom` alone. A `LoomError` reaches the page as a refusal
+  (`not_found`, `conflict`, `invalid` or `forbidden`) with its message, not as a
+  plugin error.
 - `app.tsx` and `src/ui/` are the page. The app imports only types from
-  `src/contract.ts`, so zod stays out of its bundle, and its charts are small
-  SVG components. `src/spec-view.ts` serves one spec version to the page,
+  `src/contract.ts`, so zod stays out of its bundle: `src/ui/contract-client.ts`
+  gives bb's query hooks the same methods and tags with schemas that pass every
+  value through, and the server checks them. Its charts are small SVG
+  components. `src/spec-view.ts` serves one spec version to the page,
   parsed and compared with the one before, and `src/activity.ts` groups a
   ticket's posts, runs and threads into worker attempts.
 

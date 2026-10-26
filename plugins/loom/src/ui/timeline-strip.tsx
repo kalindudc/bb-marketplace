@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, 
 import type { Moment, MomentKind, ProjectTimeline, SessionBar, TicketBar } from "../contract";
 import { formatDuration } from "../format";
 import type { ProjectState, TicketState } from "../states";
-import { HEADING, plural, useRemote } from "./common";
+import { HEADING, plural, useLoom } from "./common";
 import { axisOf, foldsOf, lastIndexAt, nearestIndex, stateAt, ticksOf, type Axis } from "./timeline-axis";
 
 const OPEN_KEY = "loom.timeline.open";
@@ -432,7 +432,7 @@ function partTotals(bar: TicketBar): string {
 
 /** A project's history under its health strip: a strip that rewinds the page to the moment chosen, and, open, a row per ticket. */
 export function TimelineStrip({ slug, at, onSeek, onTicket }: { slug: string; at: number | null; onSeek(at: number | null): void; onTicket(key: string): void }) {
-  const { data } = useRemote((rpc) => rpc.call("timeline", { slug }), `timeline:${slug}`, slug);
+  const data = useLoom("timeline", { slug }).data ?? null;
   const [open, setOpen] = useState(savedOpen);
   const [playing, setPlaying] = useState(false);
   const [playhead, setPlayhead] = useState(0);

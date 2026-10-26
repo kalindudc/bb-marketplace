@@ -2,7 +2,7 @@ import { useState, type ReactNode } from "react";
 import type { HomeProject, HomeView, NeedItem, PlanningSession } from "../contract";
 import { formatDuration, plural } from "../format";
 import { ShareBar, Spark, type Swatch } from "./charts";
-import { BUTTON, BUTTON_PRIMARY, CARD, FIELD, HEADING, StateBadge, countsLabel, mergeLabel, useRemote } from "./common";
+import { BUTTON, BUTTON_PRIMARY, CARD, FIELD, HEADING, StateBadge, countsLabel, mergeLabel, useLoom } from "./common";
 import { Guide } from "./guide";
 
 const DONE: Swatch = { fill: "var(--success, currentColor)" };
@@ -35,7 +35,7 @@ const count = (value: number) => value.toLocaleString("en-US");
 const CELL = "px-3 py-2 align-middle";
 const CHIP = "inline-flex max-w-full cursor-pointer items-center gap-1 rounded-full border border-current px-2 text-[11px] leading-[18px] whitespace-nowrap hover:bg-state-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
-type Row = { kind: "project"; project: HomeProject; needs: NeedItem[] } | { kind: "planning"; session: PlanningSession };
+export type Row = { kind: "project"; project: HomeProject; needs: NeedItem[] } | { kind: "planning"; session: PlanningSession };
 
 function Tile({ id, title, value, note, attention = false, children }: { id: string; title: string; value: ReactNode; note?: string; attention?: boolean; children?: ReactNode }) {
   return (
@@ -75,7 +75,7 @@ const rankOf = (row: Row) => (row.kind === "planning" ? RANK.planning : row.need
 const attentionOf = (row: Row): Attention | null => (row.kind === "planning" ? "planning" : (row.needs[0]?.kind ?? null));
 
 /** Rows that need you first, by their most urgent need, then the rest in the server's order; finished projects that need nothing apart. */
-function homeRows(home: HomeView, sessions: PlanningSession[]): { active: Row[]; finished: HomeProject[] } {
+export function homeRows(home: HomeView, sessions: PlanningSession[]): { active: Row[]; finished: HomeProject[] } {
   const active: Row[] = [];
   const finished: HomeProject[] = [];
   for (const project of home.projects) {
@@ -229,12 +229,12 @@ function saveShowFinished(show: boolean): void {
 
 /** The Loom page's start: the guide while there is nothing yet, else the tiles and one table of every project and planning conversation. */
 export function Home({ go }: { go(subPath: string): void }) {
-  const home = useRemote((rpc) => rpc.call("home"), "home", null);
-  const planning = useRemote((rpc) => rpc.call("planning"), "planning", null);
+  const home = useLoom("home", null);
+  const planning = useLoom("planning", null);
   const [showFinished, setShowFinished] = useState(savedShowFinished);
   const [query, setQuery] = useState("");
   const error = home.error ?? planning.error;
-  if (home.data === null || planning.data === null) {
+  if (home.data === undefined || planning.data === undefined) {
     return error === null ? <p role="status" className="p-4 text-sm text-muted-foreground">Loading projects…</p> : <p role="alert" className="p-4 text-sm text-destructive-text">Could not load the projects: {error}</p>;
   }
   // A conversation whose thread proposed already shows as its draft project.

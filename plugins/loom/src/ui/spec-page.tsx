@@ -4,7 +4,7 @@ import { sectionOf, specDiff, touches, type SpecChange, type SpecSection } from 
 import { WHOLE_SPEC, isUnder, specChanges } from "../spec-paths";
 import type { SpecFinding, SpecReviewStatus } from "../spec-review";
 import { SPEC_REVIEW_ROUNDS } from "../states";
-import { BUTTON, HEADING, plural, useRemote } from "./common";
+import { BUTTON, HEADING, plural, useLoom } from "./common";
 import { CommentBox, ReviewPanel } from "./spec-comments";
 import { GuardrailsSection } from "./spec-guardrails";
 import { MarksContext, type Marks } from "./spec-marks";
@@ -173,11 +173,11 @@ function Page({ slug, version: pinned, readOnly = false, bbProjectNames = {}, sp
   const [version, setVersion] = useState<number | null>(pinned ?? null);
   const [base, setBase] = useState<number | null>(null);
   const input = { slug, ...(version === null ? {} : { version }), ...(base === null ? {} : { base }) };
-  const remote = useRemote((rpc) => rpc.call("specVersion", input), `spec-page:${slug}:${version ?? "latest"}:${base ?? "auto"}`, slug);
+  const remote = useLoom("specVersion", input);
   // Here, above the version on screen, so notes kept only in memory survive a switch of version or compared version.
   const tray = useNoteTray(slug);
   const view = remote.data;
-  return view === null ? (
+  return view === undefined ? (
     remote.error === null ? (
       <p role="status" className="text-sm text-muted-foreground">Loading the spec…</p>
     ) : (
@@ -197,12 +197,10 @@ function Page({ slug, version: pinned, readOnly = false, bbProjectNames = {}, sp
         setVersion(next === view.versions.at(-1)!.version ? null : next);
       }}
       onBase={(next) => setBase(next)}
-      onSent={(next) => {
-        if (version === null && base === null) remote.set(next);
-        else {
-          setVersion(null);
-          setBase(null);
-        }
+      // The newest version refreshes when the server takes the notes; a page on another version goes back to the newest.
+      onSent={() => {
+        setVersion(null);
+        setBase(null);
       }}
     />
   );

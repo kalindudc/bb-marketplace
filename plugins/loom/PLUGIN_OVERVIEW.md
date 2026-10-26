@@ -11,7 +11,7 @@ Run a software project with agents. A planner turns your goal into a spec and a 
 - Projects across repos: list bb projects as `[[repo]]` tables, and each ticket runs in one, with that repo's checks and integration branch.
 - A Loom page: a home table that puts what needs you first, a next-step bar with the one button you need now, a board with a row per stage, a ticket page with every attempt, check, review and merge, an Agents tab, and an Insights tab that says how the project went, when its work happened and what happened to each ticket, with the numbers beside the story.
 - A timeline on every project: rewind the page to any moment or play it back.
-- Blocked tickets go to the planner in a triage round, and your reply on one reaches it at once. The Loom icon in the navigation rail counts what needs you.
+- Blocked tickets go to the planner in a triage round, and your reply on one reaches it at once. The Loom icon in the navigation rail counts what needs you, and the Loom page swaps bb's sidebar for its projects and the open project's tickets.
 - `bb loom metrics`, `feed` and `report` print the numbers, the events and a finished project's record. A done hook sends that record, or an agent's summary of it, to a command you choose.
 
 ## How it works

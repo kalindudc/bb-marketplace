@@ -11,6 +11,7 @@ import type { BbProjectChoice, PlanningSession, ProjectOverview, RepoOverview } 
 import { MAX_PLANNING_REPOS } from "./prompts";
 import type { Finding } from "./review";
 import type { Moment, MomentKind, ProjectTimeline, SessionBar, TicketBar } from "./replay";
+import { RPC_TAGS } from "./rpc-tags";
 import { repoSpecSchema } from "./spec";
 import type { SpecReviewStatus } from "./spec-review";
 import type { SentNote, SpecReviewRound, SpecVersionView } from "./spec-view";
@@ -247,6 +248,16 @@ export interface ThreadInfo {
   state: string;
 }
 
+/** What the badge on Loom's rail button counts, less the threads the page finds waiting on the human in bb's own thread state. */
+export interface BadgeView {
+  /** The home page's Needs you items. */
+  needsYou: number;
+  /** Whether one of them is a blocked ticket. */
+  blocked: boolean;
+  /** Live Loom threads and open planning conversations, each of which counts once while it waits on the human. */
+  threadIds: string[];
+}
+
 export const TICKET_ACTIONS = ["requeue", "block", "cancel"] as const;
 export const CONTROL_ACTIONS = ["approve", "start", "pause", "pauseNow", "resume", "land", "landDirect", "archive"] as const;
 export type TicketAction = (typeof TICKET_ACTIONS)[number];
@@ -263,28 +274,33 @@ const typed = <T>() => z.custom<T>();
 const isComposerRequest = (value: unknown) => typeof value === "object" && value !== null && typeof (value as { projectId?: unknown }).projectId === "string" && Array.isArray((value as { input?: unknown }).input);
 
 export const rpcContract = defineRpcContract({
-  projects: { input: z.null(), output: typed<ProjectSummary[]>() },
-  home: { input: z.null(), output: typed<HomeView>() },
-  project: { input: z.object({ slug, at: eventId.optional() }).strict(), output: typed<ProjectView>() },
-  ticket: { input: z.object({ key, at: eventId.optional() }).strict(), output: typed<TicketDetail>() },
-  runOutput: { input: z.object({ id: z.number().int().min(1) }).strict(), output: typed<{ output: string } | null>() },
+  projects: { input: z.null(), output: typed<ProjectSummary[]>(), ...RPC_TAGS.projects },
+  home: { input: z.null(), output: typed<HomeView>(), ...RPC_TAGS.home },
+  badge: { input: z.null(), output: typed<BadgeView>(), ...RPC_TAGS.badge },
+  project: { input: z.object({ slug, at: eventId.optional() }).strict(), output: typed<ProjectView>(), ...RPC_TAGS.project },
+  ticket: { input: z.object({ key, at: eventId.optional() }).strict(), output: typed<TicketDetail>(), ...RPC_TAGS.ticket },
+  runOutput: { input: z.object({ id: z.number().int().min(1) }).strict(), output: typed<{ output: string } | null>(), ...RPC_TAGS.runOutput },
   insights: {
     input: z.object({ slug, window: z.union([z.enum(["all", "run", "day"]), z.object({ from: z.number().int().min(0), to: z.number().int().min(0) }).strict()]).optional(), at: eventId.optional() }).strict(),
     output: typed<ProjectInsights>(),
+    ...RPC_TAGS.insights,
   },
-  timeline: { input: z.object({ slug }).strict(), output: typed<ProjectTimeline>() },
-  threadInfo: { input: z.object({ threadId: z.string().min(1).max(200) }).strict(), output: typed<ThreadInfo | null>() },
+  timeline: { input: z.object({ slug }).strict(), output: typed<ProjectTimeline>(), ...RPC_TAGS.timeline },
+  threadInfo: { input: z.object({ threadId: z.string().min(1).max(200) }).strict(), output: typed<ThreadInfo | null>(), ...RPC_TAGS.threadInfo },
   reply: {
     input: z.object({ key, body: z.string().min(1).max(20_000), parentId: z.number().int().min(1).optional(), confirm }).strict(),
     output: typed<TicketDetail>(),
+    ...RPC_TAGS.reply,
   },
   ticketAction: {
     input: z.object({ key, action: z.enum(TICKET_ACTIONS), note: z.string().min(1).max(4000), confirm }).strict(),
     output: typed<TicketDetail>(),
+    ...RPC_TAGS.ticketAction,
   },
   control: {
     input: z.object({ slug, action: z.enum(CONTROL_ACTIONS), version: z.number().int().min(1).optional(), repo: z.string().min(1).max(100).optional(), confirm }).strict(),
     output: typed<ProjectView>(),
+    ...RPC_TAGS.control,
   },
   sendNotes: {
     input: z
@@ -309,13 +325,14 @@ export const rpcContract = defineRpcContract({
       })
       .strict(),
     output: typed<SpecVersionView>(),
+    ...RPC_TAGS.sendNotes,
   },
-  planning: { input: z.null(), output: typed<PlanningSession[]>() },
-  planningSession: { input: z.object({ threadId: z.string().min(1).max(200) }).strict(), output: typed<PlanningSession | null>() },
-  plannerView: { input: z.object({ threadId: z.string().min(1).max(200) }).strict(), output: typed<PlannerView | null>() },
-  messagePlanner: { input: z.object({ threadId: z.string().min(1).max(200), text: z.string().trim().min(1).max(20_000), confirm }).strict(), output: typed<PlannerView | null>() },
-  dismissAsk: { input: z.object({ slug, ask: z.number().int().positive(), confirm }).strict(), output: typed<PlannerView | null>() },
-  bbProjects: { input: z.null(), output: typed<BbProjectChoice[]>() },
+  planning: { input: z.null(), output: typed<PlanningSession[]>(), ...RPC_TAGS.planning },
+  planningSession: { input: z.object({ threadId: z.string().min(1).max(200) }).strict(), output: typed<PlanningSession | null>(), ...RPC_TAGS.planningSession },
+  plannerView: { input: z.object({ threadId: z.string().min(1).max(200) }).strict(), output: typed<PlannerView | null>(), ...RPC_TAGS.plannerView },
+  messagePlanner: { input: z.object({ threadId: z.string().min(1).max(200), text: z.string().trim().min(1).max(20_000), confirm }).strict(), output: typed<PlannerView | null>(), ...RPC_TAGS.messagePlanner },
+  dismissAsk: { input: z.object({ slug, ask: z.number().int().positive(), confirm }).strict(), output: typed<PlannerView | null>(), ...RPC_TAGS.dismissAsk },
+  bbProjects: { input: z.null(), output: typed<BbProjectChoice[]>(), ...RPC_TAGS.bbProjects },
   startPlanning: {
     input: z
       .object({
@@ -327,11 +344,13 @@ export const rpcContract = defineRpcContract({
       })
       .strict(),
     output: typed<{ threadId: string }>(),
+    ...RPC_TAGS.startPlanning,
   },
-  specVersion: { input: z.object({ slug, version: z.number().int().min(1).optional(), base: z.number().int().min(1).optional() }).strict(), output: typed<SpecVersionView>() },
-  changes: { input: z.object({ slug }).strict(), output: typed<ChangesView>() },
+  specVersion: { input: z.object({ slug, version: z.number().int().min(1).optional(), base: z.number().int().min(1).optional() }).strict(), output: typed<SpecVersionView>(), ...RPC_TAGS.specVersion },
+  changes: { input: z.object({ slug }).strict(), output: typed<ChangesView>(), ...RPC_TAGS.changes },
   changePatch: {
     input: z.object({ slug, path: z.string().min(1).max(4096), base: commitHash.optional(), head: commitHash.optional(), key: key.optional(), repo: repoSpecSchema.shape.name.optional() }).strict(),
     output: typed<FilePatch>(),
+    ...RPC_TAGS.changePatch,
   },
 });

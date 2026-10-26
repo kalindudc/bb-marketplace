@@ -2,6 +2,33 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.21.0 (2026-10-26)
+
+### Added
+
+- While the Loom page is open, bb's sidebar lists Loom instead of your threads: Home with how many things need you, the planning conversations (marked while the planner asks you something), every project with its count of what needs you, the open project's tickets that are moving or stuck with blocked ones first, done and archived projects folded away, How Loom works and New project.
+- bb's title bar names the page, such as `Loom / CSV export › CSV-3` or `Loom / Planning › Search revamp`, with the project linking back to it, and the window title follows. Loom's own breadcrumb row under the title bar is gone.
+- A Loom worker, reviewer or planner thread's Info tab has a Loom row: its ticket, project or planning conversation, the state and the thread's role, with a link to the page. Unlike the header chip, it shows on phones too.
+- Project controls and ticket actions say in bb's toast what they did, such as "Project started", "Approved v2" or "CSV-2 requeued". The toasts stay in bb's notification center. A change Loom refuses shows in bb's own error toast with Loom's reason, as every failed change in bb does; a reply, a message to the planner, spec comments and New project also keep their errors beside the text you wrote.
+
+### Changed
+
+- On the Insights tab, the "half" and "most" labels under "How long does a ticket take?" no longer overlap when the two times are close.
+- The badge on Loom's rail icon is bb's own. It is amber, red while a ticket is blocked, and its label is in the icon's tooltip. It updates as soon as something changes, instead of every 15 seconds, and reads "waiting on you" from bb's live thread state, so the server no longer asks bb about each Loom thread.
+- The page reads through bb's query cache. Each view refreshes when a change to its project lands, as before, and also catches up by itself after bb reconnects, which it did not do before. A view seen before reopens at once. A page you cannot see stops reading. A read that drops on the network is tried again. After a change, the page reads its project again instead of showing what the change returned.
+- A refusal, such as an unknown project or a control that does not fit the project's state, reaches the page as a refusal with its message. bb no longer records it as a plugin error.
+- Every git and `gh` process Loom starts waits for a turn in bb's VCS scheduler, which caps how many run at once on the machine: at most two `gh` and a few git processes for Loom's background work, with the Changes tab's reads first. Check commands and forge shell commands do not wait.
+- bb sends a quick local git read (`worktreeState`, `diff`, `changedFiles`, `filePatch` and `remotes`) to the machine again when its answer is lost. Fetches, writes and pull request reads are never sent twice, so a slow GitHub read still gets its full 150 seconds.
+
+### Removed
+
+- The `GET /badge` route and the script that drew the rail count into bb's DOM. Nothing else read them.
+- The `loom:changed` realtime message. The page now refreshes through bb's query tags `project:<slug>` and `loom`.
+
+### Compatibility
+
+- Loom now needs bb 0.47 and plugin SDK 0.6.79.
+
 ## 0.20.2 (2026-10-26)
 
 ### Fixed

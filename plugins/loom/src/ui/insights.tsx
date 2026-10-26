@@ -4,7 +4,7 @@ import type { ActivityMark, CurrentItem, EventLine, InsightsFilter, InsightsNumb
 import { formatDuration, plural } from "../format";
 import type { TicketState } from "../states";
 import { STATE_COLORS } from "./charts";
-import { BUTTON, BUTTON_PRIMARY, CARD, CHIP, HEADING, useRemote } from "./common";
+import { BUTTON, BUTTON_PRIMARY, CARD, CHIP, HEADING, useLoom } from "./common";
 import { activityAxis, labelsOf, stepMax, type Bucket } from "./insights-axis";
 
 type Chapter = Extract<StoryItem, { type: "chapter" }>;
@@ -93,14 +93,8 @@ export function InsightsTab({ slug, at, onTicket }: { slug: string; at: number |
   const [found, setFound] = useState<{ key: string; seq: number } | null>(null);
   const [clock, setClock] = useState(() => Date.now());
   const story = useRef<HTMLElement>(null);
-  const windowId = typeof window === "string" ? window : `${window.from}-${window.to}`;
-  const remote = useRemote(
-    (rpc) => rpc.call("insights", { slug, ...(window === "all" ? {} : { window }), ...(at === null ? {} : { at }) }),
-    `insights:${slug}:${windowId}@${at ?? "live"}`,
-    slug,
-    true,
-  );
-  const view = remote.data;
+  const remote = useLoom("insights", { slug, ...(window === "all" ? {} : { window }), ...(at === null ? {} : { at }) }, { keep: true });
+  const view = remote.data ?? null;
   const live = at === null && view !== null && (view.state === "running" || view.state === "paused");
   // Elapsed times count on from when this view arrived, on the server's clock, so a skewed local clock does not matter.
   const received = useRef<{ view: ProjectInsights | null; at: number }>({ view: null, at: 0 });
@@ -1058,15 +1052,17 @@ function Numbers({ view, onFind, onLink }: { view: ProjectInsights; onFind(key: 
 function Dots({ cycle, p50, p85, onFind }: { cycle: InsightsNumbers["cycle"]; p50: number; p85: number; onFind(key: string): void }) {
   const most = Math.max(1, ...cycle.map((entry) => entry.ms));
   const left = (ms: number) => 3 + (ms / most) * 94;
+  // Close marks put their labels on either side of their lines, so the two words do not overlap.
+  const close = p85 !== p50 && left(p85) - left(p50) < 8;
   const stacked = new Map<number, number>();
   return (
     <div data-cycle-dots className="relative h-14">
       {[
-        { ms: p50, label: "half" },
-        ...(p85 === p50 ? [] : [{ ms: p85, label: "most" }]),
+        { ms: p50, label: "half", side: close ? "-translate-x-full pr-0.5" : "-translate-x-1/2" },
+        ...(p85 === p50 ? [] : [{ ms: p85, label: "most", side: close ? "pl-0.5" : "-translate-x-1/2" }]),
       ].map((mark) => (
         <span key={mark.label} aria-hidden className="absolute top-0 bottom-3 border-l border-dashed border-foreground/40" style={{ left: `${left(mark.ms)}%` }}>
-          <span className="absolute top-full -translate-x-1/2 text-[9.5px] text-muted-foreground">{mark.label}</span>
+          <span data-cycle-mark={mark.label} className={`absolute top-full ${mark.side} text-[9.5px] text-muted-foreground`}>{mark.label}</span>
         </span>
       ))}
       {cycle.map((entry) => {

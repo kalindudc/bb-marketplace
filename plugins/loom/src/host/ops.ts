@@ -4,6 +4,7 @@ import { execFile, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { experimental_runVcsProcess, type ExperimentalVcsProcessPriority } from "@get-bb/plugin-sdk/host";
 import { z } from "zod";
 import { githubPull, prNumber, REVIEW_DECISIONS, type HostInput, type HostOutput } from "../host-contract";
 
@@ -21,20 +22,32 @@ interface GitRun {
   stderr: string;
 }
 
-function run(cwd: string, args: readonly string[], signal?: AbortSignal, timeout = GIT_TIMEOUT_MS): Promise<GitRun> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      "git",
-      ["-C", cwd, ...args],
-      { env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C" }, maxBuffer: GIT_MAX_BUFFER, timeout, signal, encoding: "utf8" },
-      (error, stdout, stderr) => {
-        if (error === null) return resolve({ code: 0, stdout, stderr });
-        const failure = error as NodeJS.ErrnoException & { killed?: boolean };
-        if (typeof failure.code === "number") return resolve({ code: failure.code, stdout, stderr });
-        reject(new Error(failure.killed === true ? `git ${args[0]} took too long` : `git ${args[0]}: ${failure.message}`));
-      },
-    );
-  });
+// git and gh wait for a turn in bb's VCS scheduler, which caps how many run at once in this process. Loom's engine work is
+// background; the Changes tab's reads, which a person waits on, are interactive.
+type Priority = ExperimentalVcsProcessPriority;
+const INTERACTIVE: Priority = "interactive";
+
+function run(cwd: string, args: readonly string[], signal?: AbortSignal, timeout = GIT_TIMEOUT_MS, priority: Priority = "background"): Promise<GitRun> {
+  const argv = ["-C", cwd, ...args];
+  return experimental_runVcsProcess(
+    "git",
+    argv,
+    () =>
+      new Promise<GitRun>((resolve, reject) => {
+        execFile(
+          "git",
+          argv,
+          { env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C" }, maxBuffer: GIT_MAX_BUFFER, timeout, signal, encoding: "utf8" },
+          (error, stdout, stderr) => {
+            if (error === null) return resolve({ code: 0, stdout, stderr });
+            const failure = error as NodeJS.ErrnoException & { killed?: boolean };
+            if (typeof failure.code === "number") return resolve({ code: failure.code, stdout, stderr });
+            reject(new Error(failure.killed === true ? `git ${args[0]} took too long` : `git ${args[0]}: ${failure.message}`));
+          },
+        );
+      }),
+    { priority, signal },
+  );
 }
 
 function failure(args: readonly string[], result: GitRun): Error {
@@ -42,14 +55,14 @@ function failure(args: readonly string[], result: GitRun): Error {
 }
 
 /** Runs git in `cwd` and returns stdout; trimmed unless `raw` (NUL-separated listings). Throws when git exits non-zero. */
-export async function git(cwd: string, args: readonly string[], opts: { raw?: boolean; signal?: AbortSignal } = {}): Promise<string> {
-  const result = await run(cwd, args, opts.signal);
+export async function git(cwd: string, args: readonly string[], opts: { raw?: boolean; signal?: AbortSignal; priority?: Priority } = {}): Promise<string> {
+  const result = await run(cwd, args, opts.signal, GIT_TIMEOUT_MS, opts.priority);
   if (result.code !== 0) throw failure(args, result);
   return opts.raw === true ? result.stdout : result.stdout.trim();
 }
 
-async function tryGit(cwd: string, args: readonly string[], signal?: AbortSignal): Promise<string | null> {
-  const result = await run(cwd, args, signal);
+async function tryGit(cwd: string, args: readonly string[], signal?: AbortSignal, priority?: Priority): Promise<string | null> {
+  const result = await run(cwd, args, signal, GIT_TIMEOUT_MS, priority);
   return result.code === 0 ? result.stdout.trim() : null;
 }
 
@@ -99,8 +112,8 @@ const tail = (text: string, max = 2000) => text.trim().slice(-max);
 export async function diff(input: HostInput<"diff">, signal?: AbortSignal): Promise<HostOutput<"diff">> {
   const { repo, base, head, maxBytes } = input;
   const range = `${base}...${head}`;
-  const stat = await git(repo, ["diff", "--stat", "--no-color", range, "--"], { signal });
-  const patch = Buffer.from(await git(repo, ["diff", "--no-color", range, "--"], { raw: true, signal }));
+  const stat = await git(repo, ["diff", "--stat", "--no-color", range, "--"], { signal, priority: INTERACTIVE });
+  const patch = Buffer.from(await git(repo, ["diff", "--no-color", range, "--"], { raw: true, signal, priority: INTERACTIVE }));
   const truncated = patch.length > maxBytes;
   return { stat, patch: patch.subarray(0, maxBytes).toString("utf8"), truncated };
 }
@@ -113,35 +126,35 @@ const NO_BLOB = /^0+$/u;
 type ChangedFile = Extract<HostOutput<"changedFiles">, { outcome: "ok" }>["files"][number];
 const STATUS_OF: Record<string, ChangedFile["status"]> = { A: "added", D: "deleted", T: "type_changed" };
 
-const commitOf = (repo: string, ref: string, signal?: AbortSignal) => tryGit(repo, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], signal);
+const commitOf = (repo: string, ref: string, signal?: AbortSignal, priority?: Priority) => tryGit(repo, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], signal, priority);
 const missing = (message: string) => ({ outcome: "missing" as const, message });
 
 /** With `landed`, a head that base already contains is compared with base as it was before the merge that brought it in, on base's first-parent line. */
-async function compareFrom(repo: string, target: string, head: string, landed: boolean, signal?: AbortSignal): Promise<string | null> {
-  const base = await tryGit(repo, ["merge-base", target, head], signal);
+async function compareFrom(repo: string, target: string, head: string, landed: boolean, signal?: AbortSignal, priority?: Priority): Promise<string | null> {
+  const base = await tryGit(repo, ["merge-base", target, head], signal, priority);
   if (base === null || !landed || base !== head) return base;
-  const merge = (await git(repo, ["rev-list", "--first-parent", "--ancestry-path", `${head}..${target}`], { signal })).split("\n").filter((line) => line !== "").at(-1);
-  const before = merge === undefined ? null : await commitOf(repo, `${merge}^1`, signal);
-  return (before === null ? null : await tryGit(repo, ["merge-base", before, head], signal)) ?? base;
+  const merge = (await git(repo, ["rev-list", "--first-parent", "--ancestry-path", `${head}..${target}`], { signal, priority })).split("\n").filter((line) => line !== "").at(-1);
+  const before = merge === undefined ? null : await commitOf(repo, `${merge}^1`, signal, priority);
+  return (before === null ? null : await tryGit(repo, ["merge-base", before, head], signal, priority)) ?? base;
 }
 
 export async function changedFiles(input: HostInput<"changedFiles">, signal?: AbortSignal): Promise<HostOutput<"changedFiles">> {
   const { repo, maxFiles } = input;
-  const head = await commitOf(repo, input.head, signal);
+  const head = await commitOf(repo, input.head, signal, INTERACTIVE);
   if (head === null) return missing(`${input.head} is not in the repository.`);
-  const target = await commitOf(repo, input.base, signal);
+  const target = await commitOf(repo, input.base, signal, INTERACTIVE);
   if (target === null) return missing(`${input.base} is not in the repository.`);
-  const base = input.mergeBase ? await compareFrom(repo, target, head, input.landed === true, signal) : target;
+  const base = input.mergeBase ? await compareFrom(repo, target, head, input.landed === true, signal, INTERACTIVE) : target;
   if (base === null) return missing(`${input.head} and ${input.base} share no history.`);
 
   const counts = new Map<string, { additions: number; deletions: number; binary: boolean }>();
-  for (const entry of (await git(repo, ["diff", "--numstat", "-z", ...PLAIN_DIFF, base, head, "--"], { raw: true, signal })).split("\0")) {
+  for (const entry of (await git(repo, ["diff", "--numstat", "-z", ...PLAIN_DIFF, base, head, "--"], { raw: true, signal, priority: INTERACTIVE })).split("\0")) {
     const match = /^(-|\d+)\t(-|\d+)\t(.*)$/su.exec(entry);
     if (match === null) continue;
     const binary = match[1] === "-";
     counts.set(match[3]!, { additions: binary ? 0 : Number(match[1]), deletions: binary ? 0 : Number(match[2]), binary });
   }
-  const parts = (await git(repo, ["diff", "--raw", "-z", "--no-abbrev", ...PLAIN_DIFF, base, head, "--"], { raw: true, signal })).split("\0");
+  const parts = (await git(repo, ["diff", "--raw", "-z", "--no-abbrev", ...PLAIN_DIFF, base, head, "--"], { raw: true, signal, priority: INTERACTIVE })).split("\0");
   const files: ChangedFile[] = [];
   for (let index = 0; index + 1 < parts.length; index += 2) {
     const meta = parts[index]!;
@@ -157,9 +170,9 @@ export async function changedFiles(input: HostInput<"changedFiles">, signal?: Ab
 
 export async function filePatch(input: HostInput<"filePatch">, signal?: AbortSignal): Promise<HostOutput<"filePatch">> {
   const { repo, base, head, path, maxBytes } = input;
-  for (const ref of [base, head]) if ((await commitOf(repo, ref, signal)) === null) return missing(`${ref} is not in the repository.`);
+  for (const ref of [base, head]) if ((await commitOf(repo, ref, signal, INTERACTIVE)) === null) return missing(`${ref} is not in the repository.`);
   const args = ["--literal-pathspecs", "diff", ...PLAIN_DIFF, "--src-prefix=a/", "--dst-prefix=b/", base, head, "--", path];
-  const patch = Buffer.from(await git(repo, args, { raw: true, signal }));
+  const patch = Buffer.from(await git(repo, args, { raw: true, signal, priority: INTERACTIVE }));
   return { outcome: "ok", patch: patch.subarray(0, maxBytes).toString("utf8"), truncated: patch.length > maxBytes };
 }
 
@@ -292,30 +305,35 @@ export async function prCommit(input: HostInput<"prCommit">, signal?: AbortSigna
 
 // git commit-tree with the message on stdin, which execFile cannot give, so it runs through spawn.
 function commitTree(repo: string, tree: string, parents: readonly string[], message: string, signal?: AbortSignal): Promise<string> {
-  return identityArgs(repo, signal).then(
-    (identity) =>
-      new Promise((resolve, reject) => {
-        const args = ["-C", repo, ...identity, "commit-tree", tree, ...parents.flatMap((parent) => ["-p", parent]), "-F", "-"];
-        const child = spawn("git", args, { env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C" }, signal, stdio: ["pipe", "pipe", "pipe"] });
-        let stdout = "";
-        let stderr = "";
-        const timer = setTimeout(() => child.kill("SIGKILL"), NETWORK_TIMEOUT_MS);
-        child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString("utf8")));
-        child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
-        child.stdin.on("error", () => undefined);
-        child.stdin.end(message.endsWith("\n") ? message : `${message}\n`);
-        child.on("error", (error) => {
-          clearTimeout(timer);
-          reject(error);
-        });
-        child.on("close", (code) => {
-          clearTimeout(timer);
-          const sha = stdout.trim();
-          if (code === 0 && /^[0-9a-f]{40,64}$/u.test(sha)) resolve(sha);
-          else reject(new Error(`git commit-tree failed (${code ?? "killed"}): ${tail(stderr || stdout)}`));
-        });
-      }),
-  );
+  return identityArgs(repo, signal).then((identity) => {
+    const args = ["-C", repo, ...identity, "commit-tree", tree, ...parents.flatMap((parent) => ["-p", parent]), "-F", "-"];
+    return experimental_runVcsProcess(
+      "git",
+      args,
+      () =>
+        new Promise<string>((resolve, reject) => {
+          const child = spawn("git", args, { env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C" }, signal, stdio: ["pipe", "pipe", "pipe"] });
+          let stdout = "";
+          let stderr = "";
+          const timer = setTimeout(() => child.kill("SIGKILL"), NETWORK_TIMEOUT_MS);
+          child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString("utf8")));
+          child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
+          child.stdin.on("error", () => undefined);
+          child.stdin.end(message.endsWith("\n") ? message : `${message}\n`);
+          child.on("error", (error) => {
+            clearTimeout(timer);
+            reject(error);
+          });
+          child.on("close", (code) => {
+            clearTimeout(timer);
+            const sha = stdout.trim();
+            if (code === 0 && /^[0-9a-f]{40,64}$/u.test(sha)) resolve(sha);
+            else reject(new Error(`git commit-tree failed (${code ?? "killed"}): ${tail(stderr || stdout)}`));
+          });
+        }),
+      { priority: "background", signal },
+    );
+  });
 }
 
 /**
@@ -387,23 +405,29 @@ class GhTimedOut extends Error {}
 
 // gh never prompts: GH_PROMPT_DISABLED turns its prompts into errors.
 function gh(cwd: string, args: readonly string[], opts: { stdin?: string; signal?: AbortSignal } = {}): Promise<GhRun> {
-  return new Promise((resolve, reject) => {
-    const child = execFile(
-      "gh",
-      [...args],
-      { cwd, env: { ...process.env, GH_PROMPT_DISABLED: "1", GIT_TERMINAL_PROMPT: "0" }, maxBuffer: GIT_MAX_BUFFER, timeout: NETWORK_TIMEOUT_MS, signal: opts.signal, encoding: "utf8" },
-      (error, stdout, stderr) => {
-        if (error === null) return resolve({ code: 0, stdout, stderr });
-        const failed = error as NodeJS.ErrnoException & { killed?: boolean };
-        if (failed.code === "ENOENT") return resolve("missing");
-        if (typeof failed.code === "number") return resolve({ code: failed.code, stdout, stderr });
-        if (failed.killed === true && failed.name !== "AbortError") return reject(new GhTimedOut(`gh ${args[0]} took too long`));
-        reject(new Error(`gh ${args[0]}: ${failed.message}`));
-      },
-    );
-    child.stdin?.on("error", () => undefined);
-    child.stdin?.end(opts.stdin ?? "");
-  });
+  return experimental_runVcsProcess(
+    "gh",
+    args,
+    () =>
+      new Promise<GhRun>((resolve, reject) => {
+        const child = execFile(
+          "gh",
+          [...args],
+          { cwd, env: { ...process.env, GH_PROMPT_DISABLED: "1", GIT_TERMINAL_PROMPT: "0" }, maxBuffer: GIT_MAX_BUFFER, timeout: NETWORK_TIMEOUT_MS, signal: opts.signal, encoding: "utf8" },
+          (error, stdout, stderr) => {
+            if (error === null) return resolve({ code: 0, stdout, stderr });
+            const failed = error as NodeJS.ErrnoException & { killed?: boolean };
+            if (failed.code === "ENOENT") return resolve("missing");
+            if (typeof failed.code === "number") return resolve({ code: failed.code, stdout, stderr });
+            if (failed.killed === true && failed.name !== "AbortError") return reject(new GhTimedOut(`gh ${args[0]} took too long`));
+            reject(new Error(`gh ${args[0]}: ${failed.message}`));
+          },
+        );
+        child.stdin?.on("error", () => undefined);
+        child.stdin?.end(opts.stdin ?? "");
+      }),
+    { priority: "background", signal: opts.signal },
+  );
 }
 
 const GH_MISSING = "The gh CLI is not installed on this machine, or it is not on PATH.";

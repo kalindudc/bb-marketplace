@@ -1,27 +1,25 @@
 import { useState } from "react";
-import { useRpc } from "@get-bb/plugin-sdk/app";
-import type { PlannerVersion, PlannerView, rpcContract } from "../contract";
+import type { PlannerVersion, PlannerView } from "../contract";
 import { changeLine, type JourneyStep, type QuestionRound } from "../planner-journey";
-import { BUTTON_PRIMARY, CARD, FIELD, messageOf, plural } from "./common";
+import { BUTTON_PRIMARY, CARD, FIELD, messageOf, plural, useLoomWrite } from "./common";
 import { timeLabel } from "./planner-kit";
 
 const TITLE = "mb-2 flex items-baseline gap-2 text-sm font-semibold";
 
 /** A message to the planner from the page, sent as the human's own words. Changes to the spec go to the Spec tab instead, where the next version answers each comment. */
-export function MessageBox({ threadId, live, text, onText, onSent }: { threadId: string; live: boolean; text: string; onText(text: string): void; onSent(view: PlannerView | null): void }) {
-  const rpc = useRpc<typeof rpcContract>();
+export function MessageBox({ threadId, live, text, onText }: { threadId: string; live: boolean; text: string; onText(text: string): void }) {
+  const message = useLoomWrite("messagePlanner");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
   const send = () => {
     setBusy(true);
     setError(null);
-    rpc.call("messagePlanner", { threadId, text: text.trim(), confirm: true }).then(
-      (view) => {
+    message({ threadId, text: text.trim(), confirm: true }).then(
+      () => {
         onText("");
         setSent(true);
         setBusy(false);
-        onSent(view);
       },
       (failure: unknown) => {
         setError(messageOf(failure));

@@ -1,9 +1,8 @@
 import { memo, useCallback, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { experimental_NewThreadComposer as NewThreadComposer, useComposers, useRpc, type NewThreadRequest, type PluginComposerApi } from "@get-bb/plugin-sdk/app";
-import type { rpcContract } from "../contract";
+import { experimental_NewThreadComposer as NewThreadComposer, useComposers, type NewThreadRequest, type PluginComposerApi } from "@get-bb/plugin-sdk/app";
 import { MAX_PLANNING_REPOS } from "../prompts";
 import { MERGE_CHOICES, type MergeChoice } from "../states";
-import { BUTTON, CARD, CHIP, FIELD, HEADING, messageOf, useRemote } from "./common";
+import { BUTTON, CARD, CHIP, FIELD, HEADING, messageOf, useLoom, useLoomWrite } from "./common";
 import { GuideSteps } from "./guide";
 
 const MERGE_LABELS: Record<MergeChoice, string> = { ask: "Ask me", integration: "Integration branch", pr: "PR per ticket" };
@@ -34,7 +33,7 @@ function composerProjectOf(composers: readonly PluginComposerApi[]): string | nu
 
 /** bb's standard projects except `exclude`, filterable by name. A picked repo stays listed under any filter, so it can be unpicked. */
 function RepoPicker({ exclude, picked, onChange }: { exclude: string | null; picked: readonly string[]; onChange(next: string[]): void }) {
-  const choices = useRemote((rpc) => rpc.call("bbProjects"), "bbProjects", null);
+  const choices = useLoom("bbProjects", null);
   const [query, setQuery] = useState("");
   const offered = (choices.data ?? []).filter((choice) => choice.id !== exclude);
   const needle = query.trim().toLowerCase();
@@ -43,7 +42,7 @@ function RepoPicker({ exclude, picked, onChange }: { exclude: string | null; pic
   const note = (text: string, tone = "text-muted-foreground") => <p className={`text-xs ${tone}`}>{text}</p>;
 
   let list: ReactNode;
-  if (choices.data === null) list = choices.error === null ? note("Loading bb's projects…") : note(`Could not list bb's projects: ${choices.error}`, "text-destructive-text");
+  if (choices.data === undefined) list = choices.error === null ? note("Loading bb's projects…") : note(`Could not list bb's projects: ${choices.error}`, "text-destructive-text");
   else if (offered.length === 0) list = note("bb has no other projects.");
   else if (shown.length === 0) list = note(`No repo matches "${query.trim()}".`);
   else
@@ -91,7 +90,7 @@ const PlannerComposer = memo(function PlannerComposer({ projectId, onSubmit }: {
 
 /** bb's own new-thread composer, whose submit starts a Loom planner with the answers given up front. */
 export function NewProject({ go }: { go(subPath: string): void }) {
-  const rpc = useRpc<typeof rpcContract>();
+  const startPlanning = useLoomWrite("startPlanning");
   const reviewerId = useId();
   const [merge, setMerge] = useState<MergeChoice>("ask");
   const [reviewer, setReviewer] = useState("");
@@ -106,7 +105,7 @@ export function NewProject({ go }: { go(subPath: string): void }) {
   const submit: Submit = (request) => {
     setError(null);
     const extra = picked.filter((id) => id !== request.projectId);
-    const attempt = rpc.call("startPlanning", { request, merge, reviewer, repos: extra, confirm: true }).then(
+    const attempt = startPlanning({ request, merge, reviewer, repos: extra, confirm: true }).then(
       ({ threadId }) => {
         saveProjectId(request.projectId);
         go(`_plan/${threadId}`);

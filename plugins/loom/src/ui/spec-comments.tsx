@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { useRpc } from "@get-bb/plugin-sdk/app";
-import type { SentNote, SpecVersionView, rpcContract } from "../contract";
+import type { SentNote, SpecVersionView } from "../contract";
 import { notesMessage } from "../prompts";
 import { sectionOf, type SpecSection } from "../spec-diff";
 import { WHOLE_SPEC } from "../spec-paths";
-import { BUTTON, BUTTON_PRIMARY, ConfirmButton, FIELD, HEADING, plural, useRun } from "./common";
+import { BUTTON, BUTTON_PRIMARY, ConfirmButton, FIELD, HEADING, plural, useLoomWrite, useRun } from "./common";
 import { sentForm, type DraftNote } from "./spec-notes";
 import { Pin, formatValue, tomlLiteral, type CommentKind, type CommentTarget, type SpecValue } from "./spec-review-kit";
 
@@ -218,7 +217,7 @@ export function ReviewPanel({
   /** The Approve this panel offers when there is nothing to send; null when the page shows it elsewhere or it cannot be approved now. */
   approve: { label: string; busy: boolean; onApprove(): void } | null;
 }) {
-  const rpc = useRpc<typeof rpcContract>();
+  const sendNotes = useLoomWrite("sendNotes");
   const { busy, error, run } = useRun();
   const [open, setOpen] = useState(false);
   const [preview, setPreview] = useState(false);
@@ -229,7 +228,7 @@ export function ReviewPanel({
   const count = notes.length;
   const send = () =>
     void run(async () => {
-      onSent(await rpc.call("sendNotes", { slug: view.slug, notes: notes.map(sentForm), ...(older ? { includeOlder: true as const } : {}), confirm: true }));
+      onSent(await sendNotes({ slug: view.slug, notes: notes.map(sentForm), ...(older ? { includeOlder: true as const } : {}), confirm: true }));
       setGeneralText("");
     });
   const sendLabel = `Send ${plural(count, "comment")} · ask for v${newest.version + 1}`;

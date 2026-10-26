@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { useRealtime, useRpc, type PluginRpcClient } from "@get-bb/plugin-sdk/app";
+import { experimental_useRpcMutation, experimental_useRpcQuery, type StandardSchemaV1InferInput } from "@get-bb/plugin-sdk/app";
+import { toast } from "sonner";
 import type { ProjectSummary, rpcContract } from "../contract";
+import { contract } from "./contract-client";
 import { TICKET_STATES } from "../states";
 
-export type Rpc = PluginRpcClient<typeof rpcContract>;
 
 export const BUTTON = "inline-flex h-7 shrink-0 cursor-pointer items-center rounded-md border border-border-seam px-2.5 text-xs text-foreground hover:bg-state-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50";
 export const BUTTON_DANGER = `${BUTTON} text-destructive-text`;
@@ -57,9 +58,12 @@ const BADGE_TONES: Record<string, string> = {
   rewound: "text-warning-text",
 };
 
+/** The text colour a state is drawn in. */
+export const stateTone = (state: string) => BADGE_TONES[state] ?? "text-muted-foreground";
+
 export function StateBadge({ state }: { state: string }) {
   return (
-    <span data-state-badge className={`inline-flex shrink-0 items-center rounded-full border border-border-seam px-2 py-0.5 text-[11px] leading-none ${BADGE_TONES[state] ?? "text-muted-foreground"}`}>
+    <span data-state-badge className={`inline-flex shrink-0 items-center rounded-full border border-border-seam px-2 py-0.5 text-[11px] leading-none ${stateTone(state)}`}>
       {state.replace("_", " ")}
     </span>
   );
@@ -134,42 +138,27 @@ export function MoreMenu({ children }: { children: ReactNode | ((close: () => vo
   );
 }
 
-/** Loads a view through the RPC and loads it again when the project it belongs to changes (`slug` null: any project). With `keep`, the last data stays while a new id loads, so a scrubbed view does not flash "Loading…". Until `enabled`, it loads nothing. */
-export function useRemote<T>(fetcher: (rpc: Rpc) => Promise<T>, id: string, slug: string | null, keep = false, enabled = true) {
-  const rpc = useRpc<typeof rpcContract>();
-  const latest = useRef({ rpc, fetcher });
-  latest.current = { rpc, fetcher };
-  const seq = useRef(0);
-  const [state, setState] = useState<{ id: string; data: T | null; error: string | null }>({ id, data: null, error: null });
+type Contract = typeof rpcContract;
+export type Method = keyof Contract & string;
+type Input<M extends Method> = StandardSchemaV1InferInput<Contract[M]["input"]>;
 
-  const load = useCallback(() => {
-    if (!enabled) return;
-    seq.current += 1;
-    const mine = seq.current;
-    latest.current.fetcher(latest.current.rpc).then(
-      (data) => mine === seq.current && setState({ id, data, error: null }),
-      (error) => mine === seq.current && setState((before) => ({ id, data: before.id === id ? before.data : null, error: messageOf(error) })),
-    );
-  }, [id, enabled]);
-  useEffect(() => {
-    load();
-    return () => {
-      seq.current += 1;
-    };
-  }, [load]);
-  useRealtime("loom:changed", (payload) => {
-    if (slug === null || (payload as { slug?: string } | null)?.slug === slug) load();
-  });
+/**
+ * A live read through bb's query cache: it loads again when a change invalidates its tags (rpc-tags.ts) and after bb
+ * reconnects, and reopens from the cache. `data` is undefined until it first loads. With `keep`, the last data stays while
+ * another input loads, so a scrubbed view does not flash "Loading…", and goes once that input fails, so the page says
+ * why. Until `enabled`, it loads nothing.
+ */
+export function useLoom<M extends Method>(method: M, input: Input<M>, options: { keep?: boolean; enabled?: boolean } = {}) {
+  const query = experimental_useRpcQuery({ contract, method, input, enabled: options.enabled ?? true });
+  const last = useRef(query.data);
+  if (query.data !== undefined) last.current = query.data;
+  const data = query.data !== undefined || options.keep !== true || query.error !== null ? query.data : last.current;
+  return { data, error: query.error === null ? null : messageOf(query.error), reload: query.refetch };
+}
 
-  const set = useCallback(
-    (data: T) => {
-      seq.current += 1;
-      setState({ id, data, error: null });
-    },
-    [id],
-  );
-  const current = state.id === id || (keep && state.data !== null);
-  return { data: current ? state.data : null, error: current ? state.error : null, reload: load, set };
+/** A change: its reads refresh as soon as the server takes it, through the method's `invalidates`. */
+export function useLoomWrite<M extends Method>(method: M) {
+  return experimental_useRpcMutation({ contract, method }).mutate;
 }
 
 /** Runs a change: one at a time, with its refusal kept for the page to show. */
@@ -198,4 +187,32 @@ export function useRun() {
     }
   }, []);
   return { busy, error, run };
+}
+
+/**
+ * Runs a page action, one at a time, and says in bb's toast when it went through. A refusal needs no toast of Loom's: bb's
+ * query client shows one for every failed write. Resolves true when it went through.
+ */
+export function useAction() {
+  const [busy, setBusy] = useState(false);
+  const mounted = useRef(true);
+  useEffect(
+    () => () => {
+      mounted.current = false;
+    },
+    [],
+  );
+  const act = useCallback(async (fn: () => Promise<unknown>, done: string): Promise<boolean> => {
+    setBusy(true);
+    try {
+      await fn();
+      toast.success(done);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      if (mounted.current) setBusy(false);
+    }
+  }, []);
+  return { busy, act };
 }

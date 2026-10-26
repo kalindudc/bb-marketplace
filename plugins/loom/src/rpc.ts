@@ -1,5 +1,6 @@
 // The page's server side: reads over the store and changes through the same engine methods the CLI calls.
-import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { experimental_PluginRpcRefusal as PluginRpcRefusal, type BbPluginApi, type ExperimentalPluginRpcHandlersWithContext } from "@get-bb/plugin-sdk";
+import { badgeView } from "./badge";
 import { humanAction } from "./cli";
 import { rpcContract, type AgentRow, type BoardCard, type ProjectView, type SpecSummary, type StartWaitView, type ThreadInfo, type TicketDetail, type TicketPr } from "./contract";
 import type { EventRow, PostRow, ProjectRow, ReviewRow, Store, ThreadRow, TicketRow } from "./db/store";
@@ -15,8 +16,9 @@ import { askOf, forgeRoundsSinceRequeue, PR_TEXT_MINUTES, prTextFor, statusOf } 
 import { followsFeedback, prSettings, repoSettings } from "./repos";
 import { computeMetrics } from "./metrics";
 import { nextStepOf } from "./next-step";
-import { LoomError, landsOf, namedRepos, repoOverviews, withRepoNames, type Projects } from "./projects";
+import { LoomError, landsOf, namedRepos, repoOverviews, withRepoNames, type LoomErrorCode, type Projects } from "./projects";
 import { overviewAt, projectTimeline, rewind, rowsOf } from "./replay";
+import { changedTags } from "./rpc-tags";
 import { projectMetrics } from "./reports";
 import { UNSTARTED, blockedAtReview } from "./review";
 import { IN_FLIGHT, kinship, overlaps, readyTickets, startable, toLite, type TicketLite } from "./scheduler";
@@ -31,7 +33,6 @@ import { specVersionView } from "./spec-view";
 import { HUMAN_ACTOR, type TicketState } from "./states";
 import { blockedAtStart, specOf } from "./workers";
 
-export const CHANGED_CHANNEL = "loom:changed";
 const THROTTLE_MS = 300;
 
 export interface RpcDeps {
@@ -41,7 +42,12 @@ export interface RpcDeps {
   now: () => number;
 }
 
-/** Publishes `loom:changed` with the project's slug after each committed event or `store.changed` call, at most once per project every 300 ms; a call inside a window goes out when the window ends. A change outside any project publishes `{ slug: null }`, throttled the same way. This is the only thing that publishes to the page. Returns the stop function. */
+/**
+ * Refreshes the page's reads of a project, and every read of no one project, after each committed event or `store.changed`
+ * call, at most once per project every 300 ms; a call inside a window goes out when the window ends. A change outside any
+ * project refreshes only the reads of no one project, throttled the same way. Besides the writes' own `invalidates`, this
+ * is the only thing that refreshes the page. Returns the stop function.
+ */
 export function watchChanges(bb: BbPluginApi, store: Store): () => void {
   const timers = new Map<number | null, ReturnType<typeof setTimeout>>();
   store.setOnEvent((projectId) => {
@@ -51,7 +57,7 @@ export function watchChanges(bb: BbPluginApi, store: Store): () => void {
       setTimeout(() => {
         timers.delete(projectId);
         const slug = projectId === null ? null : store.project(projectId)?.slug;
-        if (slug !== undefined) bb.realtime.publish(CHANGED_CHANNEL, { slug });
+        if (slug !== undefined) bb.rpc.experimental_invalidate(changedTags(slug));
       }, THROTTLE_MS),
     );
   });
@@ -228,6 +234,35 @@ export function draftCards(spec: Spec, at: number): BoardCard[] {
   }));
 }
 
+// A refusal is an answer the page shows, not a crash bb records against the plugin.
+const REFUSALS: Record<LoomErrorCode, PluginRpcRefusal["code"]> = {
+  loom_not_found: "not_found",
+  loom_invalid_state: "conflict",
+  loom_invalid_spec: "invalid",
+  loom_invalid_input: "invalid",
+  loom_forbidden: "forbidden",
+  loom_no_checkout: "conflict",
+  loom_unavailable: "conflict",
+};
+
+type Handlers = ExperimentalPluginRpcHandlersWithContext<typeof rpcContract>;
+
+/** Each handler, with a LoomError turned into a refusal that carries its message. */
+export function refusing(handlers: Handlers): Handlers {
+  const wrapped = Object.entries(handlers).map(([method, handler]) => [
+    method,
+    async (...args: unknown[]) => {
+      try {
+        return await (handler as (...a: unknown[]) => unknown)(...args);
+      } catch (error) {
+        if (error instanceof LoomError) throw new PluginRpcRefusal({ code: REFUSALS[error.code], message: error.message });
+        throw error;
+      }
+    },
+  ]);
+  return Object.fromEntries(wrapped) as Handlers;
+}
+
 export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
   const { projects, engine, store, now } = deps;
   const changes = new Changes({ store, bb: engine.ctx.bb, host: engine.ctx.host });
@@ -391,12 +426,13 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
 
   // Every change is the human's: it runs through humanAction, which writes the human.action event (none for a change outside any project), and refuses any other plugin.
   const act = <T>(ctx: { experimental_caller: { kind: string } }, action: string, data: { slug?: string; key?: string; [extra: string]: unknown }, fn: () => Promise<T> | T): Promise<T> => {
-    if (ctx.experimental_caller.kind === "plugin") throw new Error("Loom's controls are for the human: another plugin cannot call them.");
+    if (ctx.experimental_caller.kind === "plugin") throw new PluginRpcRefusal({ code: "forbidden", message: "Loom's controls are for the human: another plugin cannot call them." });
     return humanAction({ projects, store }, {}, action, data, fn);
   };
 
-  bb.rpc.register(rpcContract, {
+  bb.rpc.register(rpcContract, refusing({
     projects: () => projects.namedList(),
+    badge: () => badgeView({ store, projects, now: now() }),
     home: async () => {
       const names = await projects.bbProjectNames();
       const view = homeView({ store, projects, now: now() });
@@ -493,5 +529,5 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       }
       return projectView(slug);
     },
-  });
+  }));
 }

@@ -1,6 +1,5 @@
 // Loom: wiring only. Behavior lives in src/.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { registerBadge } from "./src/badge";
 import { createBbPort, createHostPort } from "./src/bb-port";
 import { createCli } from "./src/cli";
 import { MIGRATIONS } from "./src/db/schema";
@@ -50,7 +49,6 @@ export function createLoomPlugin(deps: PluginDeps = {}) {
 
     registerTools(bb, projects, engine);
     registerRpc(bb, { projects, engine, store, now });
-    registerBadge(bb, { projects, store, port, now });
     bb.cli.register(createCli(projects, engine, store, now));
 
     // A failing handler never throws into bb, and a handler that outlives a reload stays quiet.

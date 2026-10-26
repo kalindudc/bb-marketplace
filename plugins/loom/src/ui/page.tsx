@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
-import { experimental_Icon as Icon, useBbNavigate, useRpc, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
-import type { ControlAction, ProjectView, rpcContract } from "../contract";
+import { experimental_usePluginId, useBbNavigate, type ExperimentalPageTitle, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
+import type { ControlAction, ProjectView } from "../contract";
 import { isMultiRepoProject } from "../format";
 import { readyToLand, specReviewBlocks } from "../format";
 import { STAGES } from "../next-step";
@@ -8,7 +8,7 @@ import { AboutStrip } from "./about";
 import { AgentsView } from "./agents";
 import { Board } from "./board";
 import { ChangesTab, landingFiles, useViewed } from "./changes";
-import { BUTTON_PRIMARY, ConfirmButton, HEADING, MoreMenu, RepoChip, StateBadge, countsLabel, listText, mergeLabel, momentLabel, plural, useRemote, useRun } from "./common";
+import { BUTTON_PRIMARY, ConfirmButton, MoreMenu, RepoChip, StateBadge, countsLabel, listText, mergeLabel, momentLabel, plural, useAction, useLoom, useLoomWrite } from "./common";
 import { Guide } from "./guide";
 import { HealthStrip } from "./health";
 import { Home } from "./home";
@@ -75,6 +75,29 @@ export function parseRoute(subPath: string): Route {
   if (first === "_new") return { view: "new" };
   if (first === "_plan") return second === undefined ? { view: "home" } : { view: "plan", threadId: second };
   return second === undefined ? { view: "project", slug: first } : { view: "ticket", slug: first, key: second };
+}
+
+/** What a control's toast says once it went through. */
+export function controlDone(action: ControlAction, version?: number, repo?: string): string {
+  const where = repo === undefined ? "" : `${repo}: `;
+  switch (action) {
+    case "approve":
+      return version === undefined ? "Spec approved" : `Approved v${version}`;
+    case "start":
+      return "Project started";
+    case "pause":
+      return "Paused: work in flight carries on, and nothing new starts";
+    case "pauseNow":
+      return "Paused, and its workers stopped";
+    case "resume":
+      return "Project resumed";
+    case "land":
+      return `${where}Landed: the branch is pushed and its pull request is open`;
+    case "landDirect":
+      return `${where}Landed on the base branch`;
+    case "archive":
+      return "Project archived";
+  }
 }
 
 /** The header's secondary controls: the next-step bar's action is left out here, and Archive sits in the ⋯ menu. */
@@ -157,20 +180,20 @@ function RewindBar({ now, stage, onNow }: { now: number; stage: number | null; o
 }
 
 function ProjectPanel({ slug, tab, onTab, at, onSeek, go }: { slug: string; tab: Tab; onTab(tab: Tab): void; at: number | null; onSeek(at: number | null): void; go(subPath: string): void }) {
-  const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
-  const remote = useRemote((client) => client.call("project", at === null ? { slug } : { slug, at }), at === null ? `project:${slug}` : `project:${slug}@${at}`, slug, true);
-  const { busy, error, run } = useRun();
+  const remote = useLoom("project", at === null ? { slug } : { slug, at }, { keep: true });
+  const send = useLoomWrite("control");
+  const { busy, act } = useAction();
   const [chosenChange, setChosenChange] = useState<string | null>(null);
   // The spec version the Planner page asked to open; a tab change by the human opens the spec's own default again.
   const [specVersion, setSpecVersion] = useState<number | null>(null);
   const plannerWaiting = useWaiting(remote.data?.overview.plannerThreadId ?? "");
   const loaded = remote.data;
-  const wantChanges = loaded !== null && at === null && loaded.at === null && hasChangesTab(loaded.overview.state) && (tab === "changes" || readyToLand(loaded.overview));
-  const changes = useRemote((client) => client.call("changes", { slug }), `changes:${slug}`, slug, true, wantChanges);
+  const wantChanges = loaded !== undefined && at === null && loaded.at === null && hasChangesTab(loaded.overview.state) && (tab === "changes" || readyToLand(loaded.overview));
+  const changes = useLoom("changes", { slug }, { keep: true, enabled: wantChanges });
   const viewed = useViewed(slug);
   const view = remote.data;
-  if (view === null) {
+  if (view === undefined) {
     return remote.error === null ? <p role="status" className="p-4 text-sm text-muted-foreground">Loading…</p> : <p role="alert" className="p-4 text-sm text-destructive-text">Could not load {slug}: {remote.error}</p>;
   }
   const { overview } = view;
@@ -180,14 +203,14 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek, go }: { slug: string; tab:
   // The merge order is of the project now, so a rewound page leaves it out, as it does the changes.
   const mergeTab = changesTab && view.mergeOrder !== null;
   const shownTab = (rewound && tab === "planner") || (!changesTab && tab === "changes") || (!mergeTab && tab === "merge") ? "board" : tab;
-  const landing = landingFiles(changes.data);
+  const landing = landingFiles(changes.data ?? null);
   const badges = rewound ? {} : tabBadges(view, landing === null ? null : viewed.unviewed(landing), plannerWaiting);
   const openChanges = (id: string | null) => {
     setChosenChange(id);
     onTab("changes");
   };
   const control = (action: ControlAction, version?: number, repo?: string) =>
-    run(async () => remote.set(await rpc.call("control", { slug, action, ...(version === undefined ? {} : { version }), ...(repo === undefined ? {} : { repo }), confirm: true })));
+    act(() => send({ slug, action, ...(version === undefined ? {} : { version }), ...(repo === undefined ? {} : { repo }), confirm: true }), controlDone(action, version, repo));
 
   return (
     <div className="flex min-h-full flex-col">
@@ -239,7 +262,6 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek, go }: { slug: string; tab:
           )}
         </p>
       )}
-      {error !== null && <p role="alert" className="border-b border-border-seam px-4 py-2 text-xs text-destructive-text">{error}</p>}
       {view.health !== null && <HealthStrip health={view.health} />}
       <TimelineStrip slug={slug} at={at} onSeek={onSeek} onTicket={(key) => go(`${slug}/${key}`)} />
       <div role="tablist" aria-label="Project" className="flex shrink-0 gap-1 border-b border-border-seam px-3 pt-1.5">
@@ -289,7 +311,7 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek, go }: { slug: string; tab:
         )}
         {shownTab === "merge" && <MergeOrderTab order={view.mergeOrder} onTicket={(key) => go(`${slug}/${key}`)} />}
         {shownTab === "changes" && (
-          <ChangesTab changes={changes.data} error={changes.error} view={view} busy={busy} chosen={chosenChange} onChoose={setChosenChange} onControl={(action, repo) => void control(action, undefined, repo)} onReload={changes.reload} />
+          <ChangesTab changes={changes.data ?? null} error={changes.error} view={view} busy={busy} chosen={chosenChange} onChoose={setChosenChange} onControl={(action, repo) => void control(action, undefined, repo)} onReload={changes.reload} />
         )}
       </div>
     </div>
@@ -317,43 +339,41 @@ export function LoomPage({ subPath }: PluginNavPanelProps) {
   const [rewind, setRewind] = useState<{ slug: string; at: number } | null>(null);
   const at = rewind !== null && rewind.slug === slug ? rewind.at : null;
   const seek = (next: number | null) => setRewind(next === null || slug === null ? null : { slug, at: next });
-  const crumb = "cursor-pointer rounded px-1 hover:bg-state-hover hover:text-foreground";
-  const trail: Array<{ label: string; to: string | null }> =
-    route.view === "guide"
-      ? [{ label: "How Loom works", to: null }]
-      : route.view === "new"
-        ? [{ label: "New project", to: null }]
-        : route.view === "plan"
-          ? [{ label: "Planning", to: null }]
-          : route.view === "project"
-            ? [{ label: route.slug, to: null }]
-            : route.view === "ticket"
-              ? [
-                  { label: route.slug, to: route.slug },
-                  { label: route.key, to: null },
-                ]
-              : [];
 
   return (
     <section data-loom-page className="flex h-full min-h-0 min-w-0 flex-col bg-surface-recessed text-foreground">
-      <nav aria-label="Loom" className="flex shrink-0 items-center gap-1.5 border-b border-border-seam px-4 py-2 text-xs text-muted-foreground">
-        <Icon name="loom/loom" className="size-3.5" aria-hidden />
-        <button type="button" className={crumb} onClick={() => go("")}>Loom</button>
-        {trail.map((step) => (
-          <span key={step.label} className="flex items-center gap-1.5">
-            <span aria-hidden>/</span>
-            {step.to === null ? <span className={HEADING}>{step.label}</span> : <button type="button" className={crumb} onClick={() => go(step.to!)}>{step.label}</button>}
-          </span>
-        ))}
-      </nav>
       <div data-loom-scroll className="min-h-0 flex-1 overflow-y-auto">
         {route.view === "home" && <Home go={go} />}
         {route.view === "guide" && <Guide onStart={() => go("_new")} />}
         {route.view === "new" && <NewProject go={go} />}
         {route.view === "plan" && <PlanningView threadId={route.threadId} openProject={openPlanner} />}
         {route.view === "project" && <ProjectPanel key={route.slug} slug={route.slug} tab={tab} onTab={(next) => setChosen({ slug: route.slug, tab: next })} at={at} onSeek={seek} go={go} />}
-        {route.view === "ticket" && <TicketView slug={route.slug} ticketKey={route.key} at={at} onNow={() => seek(null)} />}
+        {route.view === "ticket" && <TicketView ticketKey={route.key} at={at} onNow={() => seek(null)} />}
       </div>
     </section>
   );
+}
+
+/** bb's title bar on the Loom page: where the page is, with a ticket's project linking back to it. Home keeps bb's own "Loom". */
+export function useLoomPageTitle({ subPath }: PluginNavPanelProps): ExperimentalPageTitle | null {
+  const pluginId = experimental_usePluginId();
+  const route = parseRoute(subPath);
+  const slug = route.view === "project" || route.view === "ticket" ? route.slug : null;
+  // The sidebar's reads of home and of the conversation, so the names cost no read of their own, even on a ticket, whose page reads no project.
+  const name = useLoom("home", null, { enabled: slug !== null }).data?.projects.find((project) => project.slug === slug)?.name ?? slug ?? "";
+  const conversation = useLoom("planningSession", { threadId: route.view === "plan" ? route.threadId : "" }, { enabled: route.view === "plan" }).data?.title;
+  switch (route.view) {
+    case "home":
+      return null;
+    case "guide":
+      return { title: "How Loom works" };
+    case "new":
+      return { title: "New project" };
+    case "plan":
+      return conversation === undefined ? { title: "Planning" } : { breadcrumbs: [{ label: "Planning" }, { label: conversation }] };
+    case "project":
+      return { title: name };
+    case "ticket":
+      return { breadcrumbs: [{ label: name, to: `/plugins/${encodeURIComponent(pluginId)}/loom/${encodeURIComponent(route.slug)}` }, { label: route.key }] };
+  }
 }

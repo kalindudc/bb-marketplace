@@ -119,22 +119,23 @@ describe("Loom plugin", () => {
     expect(config.skills).toEqual(["loom-plan", "loom"]);
   });
 
-  it("serves the page's RPC and publishes loom:changed after a project's events", async () => {
+  it("serves the page's RPC and refreshes the project's reads after its events", async () => {
     const { harness } = await load();
     expect(await harness.behavior.callRpc("projects", null)).toEqual([]);
     await callPropose(harness);
     expect(await harness.behavior.callRpc("projects", null)).toMatchObject([{ slug: "csv", state: "draft" }]);
-    await until(() => harness.realtimeSignals.some((signal) => signal.channel === "loom:changed"));
-    expect(harness.realtimeSignals.filter((signal) => signal.channel === "loom:changed")).toEqual([{ channel: "loom:changed", payload: { slug: "csv" } }]);
+    await until(() => harness.experimental_rpcInvalidations.length > 0);
+    expect(harness.experimental_rpcInvalidations).toEqual([["project:csv", "loom"]]);
+    expect(harness.realtimeSignals).toEqual([]);
   });
 
-  it("registers its RPC again after a reload and keeps publishing", async () => {
+  it("registers its RPC again after a reload and keeps refreshing the page", async () => {
     const first = await load();
     await callPropose(first.harness);
     const reloaded = await first.harness.reload(createLoomPlugin());
     expect(await reloaded.harness.behavior.callRpc("projects", null)).toMatchObject([{ slug: "csv" }]);
     await reloaded.harness.behavior.callRpc("control", { slug: "csv", action: "archive", confirm: true });
-    await until(() => reloaded.harness.realtimeSignals.some((signal) => signal.channel === "loom:changed"));
+    await until(() => reloaded.harness.experimental_rpcInvalidations.length > 0);
   });
 
   it("keeps its data across a reload, and the database refuses to change events", async () => {
