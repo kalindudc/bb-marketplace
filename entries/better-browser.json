@@ -1,0 +1,21 @@
+{
+  "id": "better-browser",
+  "displayName": "Better Browser",
+  "description": "Makes bb's Browser follow your real browser. Sessions from the Chrome, Arc, Brave, Edge, Vivaldi or Firefox profile you pick flow into bb while that browser stays open, sign-in pages such as Okta, Google and Microsoft are handed to your real browser where passkeys and Okta Verify work, and Cmd+click (Ctrl+click) opens a link in your real browser.",
+  "icon": "Globe",
+  "tags": ["browser", "cookies", "sessions", "sign-in", "okta", "passkeys", "links"],
+  "author": {
+    "name": "Kalindu De Costa",
+    "github": "kalindudc"
+  },
+  "category": "thread-content",
+  "overview": "./plugins/better-browser/PLUGIN_OVERVIEW.md",
+  "source": {
+    "git": {
+      "url": "https://github.com/kalindudc/bb-marketplace.git",
+      "subdir": "plugins/better-browser",
+      "range": ">=0.1.0 <1.0.0",
+      "tagPrefix": "better-browser/"
+    }
+  }
+}

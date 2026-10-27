@@ -1,0 +1,49 @@
+{
+  "name": "bb-plugin-better-browser",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "bb": ">=0.47",
+    "bbPluginSdk": ">=0.6.75"
+  },
+  "bb": {
+    "name": "Better Browser",
+    "description": "Makes bb's Browser follow your real browser. Sessions from the Chrome, Arc, Brave, Edge, Vivaldi or Firefox profile you pick flow into bb while that browser stays open, sign-in pages such as Okta, Google and Microsoft are handed to your real browser where passkeys and Okta Verify work, and Cmd+click (Ctrl+click) opens a link in your real browser.",
+    "branding": {
+      "icon": "Globe"
+    },
+    "server": "./server.ts",
+    "app": "./app.tsx",
+    "host": "./host.ts",
+    "skills": [
+      "./skills"
+    ]
+  },
+  "scripts": {
+    "build": "bb plugin build",
+    "test": "vitest run",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.6.75",
+    "@radix-ui/react-popover": "^1.1.19",
+    "@testing-library/react": "^16.3.3",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "better-sqlite3": "12.10.0",
+    "cron-parser": "^5.5.0",
+    "hono": "^4.13.13",
+    "jsdom": "^27.0.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "sonner": "^1.7.4",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.12"
+  }
+}
