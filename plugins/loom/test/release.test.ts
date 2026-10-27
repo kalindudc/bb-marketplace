@@ -13,7 +13,7 @@ import { deliverHandBacks } from "../src/slots";
 import { parseSpec } from "../src/spec";
 import { waitOf } from "../src/starts";
 import { onThreadGone, onTurnFailed, onWorkerIdle, RELEASED_TEXT, specOf } from "../src/workers";
-import { checkOutHead, makeCtx, makeEngine, reachApproved, seedProject, specToml, startWorker, ticketOf, type Doc, type EngineHarness } from "./helpers";
+import { checkOutHead, makeCtx, makeEngine, reachApproved, seedMachineProject, seedProject, specToml, startWorker, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;
 beforeEach(() => {
@@ -386,5 +386,36 @@ describe("bringing the worker back to catch a stacked pull request up", () => {
     await wakeForRestacks(h.ctx, project(), spec());
     expect(row(worker.id).end_reason).toBe("gone");
     expect(ticket("CSV-2")).toMatchObject({ state: "queued", worker_thread_id: null });
+  });
+});
+
+describe("releasing a worker on a machine of its own", () => {
+  it("archives the idle worker whose worktree has the reviewed tree, though its commit has another id than the one brought home", async () => {
+    await seedMachineProject(h);
+    const worker = await reachApproved(h);
+    await askForPrTexts(h.ctx, project(), spec());
+    handInPrText(h.ctx, worker.thread_id!, { title: "Add order rows", body: "Why.", commit_message: "Add the order row mapper" });
+    await queue();
+    h.bb.threads.get(worker.thread_id!)!.status = "idle";
+    expect(ticket()).toMatchObject({ state: "pr_open", head_sha: "home1", head_tree: "c1" });
+    expect(h.host.worktree(`/wt/${worker.environment_id}`).head).toBe("c1");
+    await release();
+    expect(isReleased(row(worker.id))).toBe(true);
+  });
+
+  it("hands a fix round to a new worker that takes over from the work Loom brought home, since the removed machine cannot come back", async () => {
+    await seedMachineProject(h);
+    const worker = await reachApproved(h);
+    await askForPrTexts(h.ctx, project(), spec());
+    handInPrText(h.ctx, worker.thread_id!, { title: "Add order rows", body: "Why.", commit_message: "Add the order row mapper" });
+    await queue();
+    h.bb.threads.get(worker.thread_id!)!.status = "idle";
+    await release();
+    h.bb.environments.get(worker.environment_id!)!.status = "destroyed";
+    h.bb.restorable = false;
+    h.host.feedback.set(URL, changesRequested);
+    await poll();
+    expect(ticket()).toMatchObject({ state: "queued", worker_thread_id: null });
+    expect(h.store.posts(ticket().id).at(-1)!.body).toBe("The worker's thread cannot come back with an environment (bb cannot restore its environment), so a new worker takes over from the work Loom brought home; it can read the earlier worker's conversation.");
   });
 });

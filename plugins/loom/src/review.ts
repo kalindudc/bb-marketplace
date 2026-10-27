@@ -5,7 +5,7 @@ import { randomBytes } from "node:crypto";
 import { workerOf } from "./checks";
 import { repoCheckout, ticketRepo } from "./checkouts";
 import type { ProjectRow, ReviewRow, Store, ThreadRow, TicketRow } from "./db/store";
-import { spawnEnvironment, threadBranch, ticketInputsOf } from "./environments";
+import { spawnEnvironment, threadBranch, ticketInputsOf, usesNewMachine } from "./environments";
 import { plural } from "./format";
 import { changesRequestedText, findingsList, reviewerBrief, reviewerNudgeText } from "./prompts";
 import { openFeedback } from "./pull-requests";
@@ -15,7 +15,8 @@ import { NOT_PARKED, freeReviewerSlots, idleAction, type Parked } from "./schedu
 import { deliverHandBacks, handBack } from "./slots";
 import type { Spec } from "./spec";
 import { LOOM_ACTOR } from "./states";
-import { applyMove, baseOf, endLiveRows, endThread, freshBase, otherCheckouts, pauseProject, released, resolveEnvironment, resumeEnding, retryRateLimited, specOf, type EndReason, type EngineCtx, type TurnFailure } from "./workers";
+import { carryTo, homeBranch } from "./transport";
+import { applyMove, baseOf, endLiveRows, endThread, freshBase, machineMoved, otherCheckouts, pauseProject, released, resolveEnvironment, resumeEnding, retryRateLimited, specOf, type EndReason, type EngineCtx, type TurnFailure } from "./workers";
 
 export interface Finding {
   severity: "blocking" | "should-fix";
@@ -240,7 +241,8 @@ async function startReviewers(ctx: EngineCtx, project: ProjectRow, spec: Spec, t
   if (needed <= 0 || ticket.head_sha === null) return 0;
   const diff = await readDiff(ctx, project, spec, ticket);
   if (diff === null) return 0;
-  const checkouts = await otherCheckouts(ctx, project, spec, ticket);
+  const remote = usesNewMachine(ticketRepo(spec, ticket), "reviewer");
+  const checkouts = remote ? new Map<string, string>() : await otherCheckouts(ctx, project, spec, ticket);
   let started = 0;
   for (let n = 0; n < needed; n++) {
     if (!(await startReviewer(ctx, project.id, ticket, diff, checkouts, parked))) break;
@@ -278,7 +280,7 @@ async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow,
     if (current.decided || current.approved + current.live >= spec.review.approvals || free === 0) return null;
     const waiting = store.threads({ ticketId: ticket.id, role: "reviewer", states: ["ended"] }).find((row) => row.end_reason === UNSTARTED && row.review_round === round);
     if (waiting !== undefined) {
-      store.updateThread(waiting.id, { state: "spawning", spawn_token: token, thread_id: null, environment_id: null, ended_at: null, end_reason: null, clock_at: ctx.now(), idle_count: 0, rate_limit_retries: 0 });
+      store.updateThread(waiting.id, { state: "spawning", spawn_token: token, thread_id: null, environment_id: null, ended_at: null, end_reason: null, clock_at: ctx.now(), idle_count: 0, rate_limit_retries: 0, maintenance_seq: 0 });
       return { row: store.thread(waiting.id)!, project, spec, ticket };
     }
     const created = store.addThread({ project_id: projectId, ticket_id: ticket.id, role: "reviewer", state: "spawning", spawn_token: token });
@@ -290,14 +292,29 @@ async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow,
 
   const { row, project, spec, ticket } = reserved;
   const agent = spec.agents.reviewer;
-  const brief = reviewerBrief({ project, spec, ticket, round, diff, checkPost: store.posts(ticket.id).filter((post) => post.kind === "check").at(-1) ?? null, earlierReviews: store.reviews(ticket.id).filter((review) => review.round < round), prFeedback: openFeedback(store.posts(ticket.id)), checkouts });
+  const repo = ticketRepo(spec, ticket);
+  const onMachine = usesNewMachine(repo, "reviewer");
+  // The worker's branch of a ticket worked on another machine is there alone; its work came home on the home branch.
+  const base = onMachine ? freshBase(spec, ticket.repo) : usesNewMachine(repo, "worker") ? homeBranch(project.slug, ticket.key) : (ticket.branch ?? freshBase(spec, ticket.repo));
+  const brief = reviewerBrief({
+    project,
+    spec,
+    ticket,
+    round,
+    diff,
+    checkPost: store.posts(ticket.id).filter((post) => post.kind === "check").at(-1) ?? null,
+    earlierReviews: store.reviews(ticket.id).filter((review) => review.round < round),
+    prFeedback: openFeedback(store.posts(ticket.id)),
+    checkouts,
+    remote: onMachine,
+  });
   let spawned;
   try {
     spawned = await ctx.bb.spawnThread({
-      bbProjectId: ticketRepo(spec, ticket).bbProjectId ?? project.bb_project_id,
+      bbProjectId: repo.bbProjectId ?? project.bb_project_id,
       hostId: project.host_id!,
-      baseBranch: ticket.branch ?? freshBase(spec, ticket.repo),
-      environment: spawnEnvironment(ticketRepo(spec, ticket), { branch: threadBranch(project.slug, ticket.key, `review-${round}-${row.id}`), base: ticket.branch ?? freshBase(spec, ticket.repo) }, "reviewer", ticketInputsOf(ticket)),
+      baseBranch: base,
+      environment: spawnEnvironment(repo, { branch: threadBranch(project.slug, ticket.key, `review-${round}-${row.id}`), base }, "reviewer", ticketInputsOf(ticket)),
       title: `Review ${ticket.key} · round ${round}`,
       prompt: brief,
       sectionId: project.section_id,
@@ -432,16 +449,45 @@ async function verdict(ctx: EngineCtx, threadId: string, kind: "approved" | "cha
     : `Your request for changes on ${ticket.key} (round ${seen.review.round}) is recorded and goes to the worker. End your turn.`;
 }
 
-// The reviewer's worktree starts at the branch tip, which the live worker can move; the verdict must be about the commit that merges.
-async function requireHeadCheckedOut(ctx: EngineCtx, row: ThreadRow, ticket: TicketRow, spec: Spec): Promise<void> {
+async function reviewerWorktree(ctx: EngineCtx, row: ThreadRow) {
   const environment = await resolveEnvironment(ctx, row).catch((error) => {
     throw new LoomError("loom_unavailable", `Could not find your worktree: ${errText(error)}`);
   });
   if (environment?.path == null) throw new LoomError("loom_invalid_state", "Your worktree is not available yet. Try again in a moment.");
-  const state = await ctx.host.call(environment.hostId, "worktreeState", { worktree: environment.path, base: baseOf(spec, ticket) }).catch((error) => {
+  return environment;
+}
+
+/**
+ * The reviewer's worktree starts where the worker's branch was, or at the base on a machine of its own; the verdict must
+ * be about the work that merges. By tree, since that work carried to another machine is a commit with another id.
+ */
+async function requireHeadCheckedOut(ctx: EngineCtx, row: ThreadRow, ticket: TicketRow, spec: Spec): Promise<void> {
+  const environment = await reviewerWorktree(ctx, row);
+  const state = await ctx.host.call(environment.hostId, "worktreeState", { worktree: environment.path!, base: baseOf(spec, ticket) }).catch((error) => {
     throw new LoomError("loom_unavailable", `Could not read your worktree: ${errText(error)}`);
   });
-  if (state.head !== ticket.head_sha) throw new LoomError("loom_invalid_state", `Check out ${ticket.head_sha} first, then review again.`);
+  const reviewed = ticket.head_tree === null ? state.head === ticket.head_sha : state.tree === ticket.head_tree;
+  if (!reviewed) throw new LoomError("loom_invalid_state", `Call loom_checkout first: your worktree does not have the reviewed work of ${ticket.key} yet. Then review again.`);
+}
+
+/** loom_checkout: puts the work the ticket was submitted with in the reviewer's worktree, on its machine or carried to its own. */
+export async function checkOutReview(ctx: EngineCtx, threadId: string): Promise<string> {
+  const { store } = ctx;
+  const row = store.threadByThreadId(threadId);
+  if (row === null || row.role !== "reviewer") throw new LoomError("loom_forbidden", "loom_checkout is for a Loom reviewer thread.");
+  const ticket = row.ticket_id === null ? null : store.ticket(row.ticket_id);
+  if (row.state !== "active" || ticket === null || ticket.state !== "review" || ticket.review_round !== row.review_round || ticket.head_sha === null) {
+    throw new LoomError("loom_invalid_state", "This review round is over, so there is nothing to check out. End your turn.");
+  }
+  const environment = await reviewerWorktree(ctx, row);
+  const project = store.project(ticket.project_id)!;
+  let tree: string;
+  try {
+    ({ tree } = await carryTo(ctx, project, specOf(store, project), ticket, ticket.head_sha, environment));
+  } catch (error) {
+    throw new LoomError("loom_unavailable", `Loom could not put the reviewed work in your worktree: ${errText(error)}. Call loom_checkout again in a moment.`);
+  }
+  return `Your worktree now has the work ${ticket.key} was submitted with, the tree ${tree.slice(0, 12)}. Review it, then call loom_approve or loom_request_changes.`;
 }
 
 // ---------------------------------------------------------------- idle, failed turns, vanished threads
@@ -457,6 +503,7 @@ export async function onReviewerIdle(ctx: EngineCtx, seen: ThreadRow, reason: En
     await endThread(ctx, row, over, { commit: false, move: null });
     return;
   }
+  if (await machineMoved(ctx, row)) return;
   if (idleAction(row.idle_count) === "nudge") {
     store.updateThread(row.id, { idle_count: row.idle_count + 1 });
     const ticket = store.ticket(row.ticket_id!)!;

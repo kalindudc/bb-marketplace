@@ -2,6 +2,7 @@
 // and post change appends an event in the same transaction.
 import type Database from "better-sqlite3";
 import type { Finding } from "../review";
+import type { EnvironmentSpec, Spec } from "../spec";
 import { LOOM_ACTOR, canMoveProject, canMoveTicket, type AuthorKind, type PostKind, type ProjectState, type Role, type ReviewVerdict, type ThreadState, type TicketState } from "../states";
 
 export interface ProjectRow {
@@ -108,6 +109,8 @@ export interface TicketRow {
   merge_after_json: string;
   /** PrMeta: the pull request's draft flag, review decision and base branch when Loom last read them; null before the first read. */
   pr_meta_json: string | null;
+  /** The tree of head_sha; null in rows from before Loom kept it. */
+  head_tree: string | null;
   created_by: string;
   created_at: number;
   updated_at: number;
@@ -154,6 +157,10 @@ export interface ThreadRow {
   end_reason: string | null;
   /** When Loom archived this idle worker of an open pull request to free its environment; kept until the thread has an environment again. */
   released_at: number | null;
+  /** Resume: the earlier work this worker, on a machine of its own, carries in with loom_resume; null for none. */
+  resume_json: string | null;
+  /** The seq of the newest machine_maintenance event whose idle Loom did not count. */
+  maintenance_seq: number;
 }
 
 export type NewThread = Pick<ThreadRow, "project_id" | "role" | "state"> & Partial<Pick<ThreadRow, "thread_id" | "spawn_token" | "ticket_id" | "environment_id">>;
@@ -415,6 +422,18 @@ export class Store {
 
   latestSpecVersion(projectId: number): SpecVersionRow | null {
     return (this.db.prepare("SELECT * FROM spec_versions WHERE project_id = ? ORDER BY version DESC LIMIT 1").get(projectId) as SpecVersionRow | undefined) ?? null;
+  }
+
+  /** The environment each project's approved spec gives each of its repos that has one, with the repo's bb project, the newest approved spec first. */
+  pastEnvironments(): Array<{ slug: string; bbProjectId: string; environment: EnvironmentSpec }> {
+    const rows = this.db
+      .prepare("SELECT p.slug, p.bb_project_id, v.spec_json FROM projects p JOIN spec_versions v ON v.project_id = p.id AND v.version = p.approved_version ORDER BY v.created_at DESC, p.id DESC")
+      .all() as Array<{ slug: string; bb_project_id: string; spec_json: string }>;
+    return rows.flatMap((row) => {
+      const spec = JSON.parse(row.spec_json) as Spec;
+      const repos = (spec.repo ?? []).length === 0 ? [{ bbProjectId: row.bb_project_id, environment: spec.environment }] : spec.repo!.map((repo) => ({ bbProjectId: repo.project, environment: repo.environment ?? spec.environment }));
+      return repos.flatMap(({ bbProjectId, environment }) => (environment === undefined ? [] : [{ slug: row.slug, bbProjectId, environment }]));
+    });
   }
 
   // ---- tickets

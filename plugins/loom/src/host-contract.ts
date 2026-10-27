@@ -115,6 +115,23 @@ const changedFile = z
 // types, and bb 0.6.79 reads it from the contract at runtime.
 const RETRYABLE = { experimental_retryable: true } as const;
 
+/** The most bytes of a file one call carries: base64 makes it 5.6 MB, under bb's 8 MiB host payload. */
+export const CHUNK_BYTES = 4 * 1024 * 1024;
+/** The biggest file Loom carries between machines. */
+export const BLOB_MAX_BYTES = 100 * 1024 * 1024;
+const chunk = z.string().max(Math.ceil(CHUNK_BYTES / 3) * 4);
+// A path inside a repository as git lists it: relative, with no empty, "." or ".." part, and never into .git.
+const repoPath = z
+  .string()
+  .min(1)
+  .max(4096)
+  .refine((path) => !path.startsWith("/") && path.split("/").every((part) => part !== "" && part !== "." && part !== "..") && path.split("/")[0] !== ".git", "must be a path inside the repository");
+const fileMode = z.enum(["100644", "100755", "120000"]);
+// An author as git records it; date is git's raw form, seconds since the epoch and the zone, such as "1800000000 +0000".
+const author = z.object({ name: z.string().max(500), email: z.string().max(500), date: z.string().regex(/^\d{1,12} [+-]\d{4}$/, "must be git's raw date") }).strict();
+const uploadId = z.string().regex(/^[a-z0-9][a-z0-9.-]{0,199}$/, "must be an upload id");
+const fullRef = z.string().max(250).regex(/^refs\/[A-Za-z0-9._/-]+$/, "must be a full ref name").refine((value) => !value.includes("..") && !value.endsWith("/") && !value.endsWith(".lock"), "is not a safe git ref");
+
 export const hostContract = defineRpcContract({
   ensureBranch: {
     input: z.object({ repo: absPath, branch: ref, from: ref }).strict(),
@@ -124,7 +141,93 @@ export const hostContract = defineRpcContract({
     ...RETRYABLE,
     // trackedOnly leaves untracked files out of `dirty`: a build or a test run may leave some behind, and they cannot reach a commit.
     input: z.object({ worktree: absPath, base: ref, trackedOnly: z.boolean().optional() }).strict(),
-    output: z.object({ branch: z.string().nullable(), head: sha, dirty: z.boolean(), changed: z.array(z.string()) }).strict(),
+    output: z.object({ branch: z.string().nullable(), head: sha, tree: sha, dirty: z.boolean(), changed: z.array(z.string()) }).strict(),
+  },
+  // What one commit changed against its merge base with `base`, for carrying it to another machine: each changed file's
+  // status, and for one that is not deleted its mode, blob and size. head defaults to the worktree's HEAD.
+  exportChanges: {
+    input: z.object({ worktree: absPath, base: ref, head: commit.optional() }).strict(),
+    output: z
+      .object({
+        base: sha,
+        head: sha,
+        tree: sha,
+        message: z.string(),
+        author,
+        changes: z.array(z.object({ status: z.enum(["A", "M", "T", "D"]), path: z.string(), mode: fileMode.optional(), blob: sha.optional(), size: z.number().int().min(0).optional() }).strict()),
+      })
+      .strict(),
+  },
+  // Up to CHUNK_BYTES of a blob from offset, base64-encoded. A blob over BLOB_MAX_BYTES is refused.
+  readBlob: {
+    input: z.object({ repo: absPath, sha: commit, offset: z.number().int().min(0), length: z.number().int().min(0).max(CHUNK_BYTES) }).strict(),
+    output: z.object({ data: z.string() }).strict(),
+  },
+  // Appends one range of a file to the upload of that id in the data directory; offset 0 starts it again.
+  importChunk: {
+    input: z.object({ upload: uploadId, offset: z.number().int().min(0), data: chunk }).strict(),
+    output: z.object({ size: z.number().int() }).strict(),
+  },
+  // Removes the uploads of a transfer that failed before importCommit.
+  dropUploads: {
+    input: z.object({ uploads: z.array(uploadId).max(50_000) }).strict(),
+    output: z.object({}).strict(),
+  },
+  // The commit on `base` whose tree is `base` with the entries applied, built with a temporary index so no worktree moves,
+  // with the author as its committer too, so the same input gives the same commit. A missing base is fetched from
+  // remote's baseBranch, or by its sha. Each of refs is pointed at it only when its tree is `tree`; the uploads go.
+  importCommit: {
+    input: z
+      .object({
+        repo: absPath,
+        remote: ref,
+        baseBranch: ref,
+        base: commit,
+        tree: commit,
+        message: z.string().max(20_000),
+        author,
+        entries: z.array(z.union([z.object({ path: repoPath, mode: fileMode, upload: uploadId }).strict(), z.object({ path: repoPath, delete: z.literal(true) }).strict()])).max(50_000),
+        refs: z.array(fullRef).max(4),
+      })
+      .strict(),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), sha }).strict(), z.object({ outcome: z.literal("mismatch"), tree: sha }).strict(), unavailable]),
+  },
+  // The other way, into a thread's worktree on its own machine, whose git may refuse a temporary index: only worktree
+  // commands. carryStart resets a clean worktree to base, fetching base when it is missing, unless HEAD has the tree
+  // already (present) or commits a reset would drop; carryWrite and carryDelete change the files; carryFinish commits
+  // them as the author and checks the tree, and resets to base when it differs.
+  carryStart: {
+    input: z.object({ worktree: absPath, remote: ref, baseBranch: ref, base: commit, tree: commit }).strict(),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), present: z.boolean() }).strict(), unavailable]),
+  },
+  // Offset 0 starts the file again; a symlink comes in one range, its target as the data.
+  carryWrite: {
+    input: z.object({ worktree: absPath, path: repoPath, mode: fileMode, offset: z.number().int().min(0), data: chunk }).strict(),
+    output: z.object({ size: z.number().int() }).strict(),
+  },
+  carryDelete: {
+    input: z.object({ worktree: absPath, paths: z.array(repoPath).max(50_000) }).strict(),
+    output: z.object({}).strict(),
+  },
+  // Puts the worktree back at base after a carry that failed part-way, so the next carryStart finds it clean.
+  carryAbort: {
+    input: z.object({ worktree: absPath, base: commit }).strict(),
+    output: z.object({}).strict(),
+  },
+  // paths are the files carryWrite wrote, staged even where .gitignore matches them, as the commit had them.
+  carryFinish: {
+    input: z.object({ worktree: absPath, base: commit, message: z.string().max(20_000), author, tree: commit, paths: z.array(repoPath).max(50_000) }).strict(),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), head: sha, tree: sha }).strict(), z.object({ outcome: z.literal("mismatch"), tree: sha }).strict()]),
+  },
+  // The commit a ref points at, and its tree; with contains, whether that commit is it or one of its ancestors.
+  refTip: {
+    input: z.object({ repo: absPath, ref, contains: commit.optional() }).strict(),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), sha, tree: sha, contains: z.boolean().optional() }).strict(), missing]),
+  },
+  // git checkout --detach <sha> in a worktree that shares the checkout's objects, and the tree it then has.
+  detach: {
+    input: z.object({ worktree: absPath, sha: commit }).strict(),
+    output: z.object({ tree: sha }).strict(),
   },
   commitAll: {
     input: z.object({ worktree: absPath, message: z.string().min(1).max(500) }).strict(),

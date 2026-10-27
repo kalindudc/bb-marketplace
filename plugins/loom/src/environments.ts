@@ -3,6 +3,7 @@
 import { z } from "zod";
 import type { EnvironmentProviderInfo, SpawnArgs } from "./ports";
 import type { RepoSettings } from "./repos";
+import type { MachineSpec } from "./spec";
 
 const PLACEHOLDER = /\{([a-z_]+)\}/g;
 const KNOWN = new Set(["branch", "base"]);
@@ -61,20 +62,28 @@ export function mergePatch(target: unknown, patch: unknown): unknown {
 export type ThreadRole = "worker" | "reviewer";
 
 /**
- * The provider and inputs a thread of `repo` starts in: the repo's environment; for a reviewer, its `reviewer` table on
- * top (another provider, or a merge patch over the inputs); then the ticket's own inputs patch, when the thread uses the
- * repo's provider. Null keeps today's managed worktree.
+ * The provider, inputs and new machine a thread of `repo` starts in: the repo's environment; for a reviewer, its
+ * `reviewer` table on top (another provider, which drops the workers' machine, or a merge patch over the inputs, and its
+ * own machine); then the ticket's own inputs patch, when the thread uses the repo's provider. Null keeps today's managed
+ * worktree.
  */
-export function environmentFor(repo: RepoSettings, role: ThreadRole, ticketInputs: Record<string, unknown> | null = null): { provider: string; inputs: Record<string, unknown> | undefined } | null {
+export function environmentFor(
+  repo: RepoSettings,
+  role: ThreadRole,
+  ticketInputs: Record<string, unknown> | null = null,
+): { provider: string; inputs: Record<string, unknown> | undefined; machine: MachineSpec | undefined } | null {
   const environment = repo.environment;
   if (environment === null) return null;
   const reviewer = role === "reviewer" ? environment.reviewer : undefined;
-  if (reviewer?.provider !== undefined && reviewer.provider !== environment.provider) return { provider: reviewer.provider, inputs: reviewer.inputs };
+  if (reviewer?.provider !== undefined && reviewer.provider !== environment.provider) return { provider: reviewer.provider, inputs: reviewer.inputs, machine: reviewer.machine };
   let inputs = environment.inputs;
   if (reviewer?.inputs !== undefined) inputs = mergePatch(inputs ?? {}, reviewer.inputs) as Record<string, unknown>;
   if (ticketInputs !== null) inputs = mergePatch(inputs ?? {}, ticketInputs) as Record<string, unknown>;
-  return { provider: environment.provider, inputs };
+  return { provider: environment.provider, inputs, machine: reviewer?.machine ?? environment.machine };
 }
+
+/** Whether a worker or reviewer of `repo` starts on a new machine of its own, away from the project's checkout. */
+export const usesNewMachine = (repo: RepoSettings, role: ThreadRole): boolean => environmentFor(repo, role)?.machine !== undefined;
 
 /** A ticket's merge patch over its repo's environment inputs, or null. */
 export const ticketInputsOf = (ticket: { environment_json: string | null }): Record<string, unknown> | null => (ticket.environment_json === null ? null : (JSON.parse(ticket.environment_json) as Record<string, unknown>));
@@ -82,25 +91,35 @@ export const ticketInputsOf = (ticket: { environment_json: string | null }): Rec
 /** The environment a worker or reviewer of `repo` spawns into; undefined keeps today's managed worktree. */
 export function spawnEnvironment(repo: RepoSettings, values: { branch: string; base: string }, role: ThreadRole = "worker", ticketInputs: Record<string, unknown> | null = null): SpawnArgs["environment"] {
   const environment = environmentFor(repo, role, ticketInputs);
-  if (environment === null || (environment.provider === GIT_WORKTREE && environment.inputs === undefined)) return undefined;
-  return { providerId: environment.provider, inputs: environment.inputs === undefined ? null : fillInputs(environment.inputs, values) };
+  if (environment === null || (environment.provider === GIT_WORKTREE && environment.inputs === undefined && environment.machine === undefined)) return undefined;
+  const filled = (inputs: Record<string, unknown> | undefined) => (inputs === undefined ? null : fillInputs(inputs, values));
+  const { machine } = environment;
+  // bb refuses git-worktree without inputs; this is the base the managed worktree starts from.
+  const inputs = environment.provider === GIT_WORKTREE && environment.inputs === undefined ? { branch: { kind: "named", name: values.base } } : filled(environment.inputs);
+  return { providerId: environment.provider, inputs, ...(machine === undefined ? {} : { machine: { providerId: machine.provider, inputs: filled(machine.inputs) } }) };
 }
 
-const describe = (provider: EnvironmentProviderInfo) => `${provider.displayName} (${provider.id}${provider.description === null ? "" : `: ${provider.description.replace(/\.$/u, "")}`})`;
+/** What inputsProblems reads of an environment provider or a machine provider. */
+type InputsOwner = Pick<EnvironmentProviderInfo, "id" | "displayName" | "description" | "acceptsEmptyInputs" | "inputs">;
 
-function schemaText(provider: EnvironmentProviderInfo): string {
+const describe = (provider: InputsOwner) => `${provider.displayName} (${provider.id}${provider.description === null ? "" : `: ${provider.description.replace(/\.$/u, "")}`})`;
+
+function schemaText(provider: InputsOwner): string {
   const text = JSON.stringify(provider.inputs);
   return text.length <= MAX_SCHEMA_TEXT ? text : `${text.slice(0, MAX_SCHEMA_TEXT)}…`;
 }
 
-/** Why `inputs` would not start a thread in `provider`, checked against the provider's JSON Schema with sample placeholder values. */
-export function inputsProblems(at: string, provider: EnvironmentProviderInfo, inputs: Record<string, unknown> | undefined): string[] {
+/**
+ * Why `inputs` would not start a thread in `provider`, an environment provider or a machine provider as `what` says,
+ * checked against the provider's JSON Schema with sample placeholder values.
+ */
+export function inputsProblems(at: string, provider: InputsOwner, inputs: Record<string, unknown> | undefined, what = "environment provider"): string[] {
   const ask = "Ask the human for any value you cannot find in the goal, the repository or the provider's plugin skill.";
   if (inputs === undefined) {
     if (provider.acceptsEmptyInputs) return [];
-    return [`${at}.inputs: the environment provider ${describe(provider)} needs inputs, and its inputs schema is ${schemaText(provider)}. ${ask} Then set ${at}.inputs.`];
+    return [`${at}.inputs: the ${what} ${describe(provider)} needs inputs, and its inputs schema is ${schemaText(provider)}. ${ask} Then set ${at}.inputs.`];
   }
-  if (provider.inputs === null) return [`${at}.inputs: the environment provider ${describe(provider)} takes no inputs. Remove ${at}.inputs.`];
+  if (provider.inputs === null) return [`${at}.inputs: the ${what} ${describe(provider)} takes no inputs. Remove ${at}.inputs.`];
   let schema: z.ZodType;
   try {
     schema = z.fromJSONSchema(provider.inputs as Parameters<typeof z.fromJSONSchema>[0]);
@@ -111,5 +130,5 @@ export function inputsProblems(at: string, provider: EnvironmentProviderInfo, in
   const parsed = schema.safeParse(fillInputs(inputs, SAMPLE));
   if (parsed.success) return [];
   const issues = parsed.error.issues.map((issue) => `${issue.path.length === 0 ? "the inputs" : issue.path.join(".")}: ${issue.message}`).join("; ");
-  return [`${at}.inputs: ${issues}. They do not match the environment provider ${describe(provider)}, whose inputs schema is ${schemaText(provider)}. ${ask}`];
+  return [`${at}.inputs: ${issues}. They do not match the ${what} ${describe(provider)}, whose inputs schema is ${schemaText(provider)}. ${ask}`];
 }

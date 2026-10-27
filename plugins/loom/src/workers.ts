@@ -4,7 +4,7 @@ import { randomBytes } from "node:crypto";
 import { repoCheckout, ticketRepo } from "./checkouts";
 import type { HostBackoffs } from "./forge-waits";
 import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
-import { spawnEnvironment, threadBranch, ticketInputsOf } from "./environments";
+import { spawnEnvironment, threadBranch, ticketInputsOf, usesNewMachine } from "./environments";
 import { plural } from "./format";
 import type { EnvironmentInfo, HostPort } from "./ports";
 import { COMMENT_SIGNATURE, andList, latestChangesRequested, nudgeText, workerBrief } from "./prompts";
@@ -15,6 +15,7 @@ import type { Spec } from "./spec";
 import { EMPTY_STACK, stackBranch, stacking, stackOf, upstreamOf, type Stack } from "./stack";
 import { nextWait, provisioningFailure, startProblemOf, startWaits, unavailableReason, waitOf, waitPost, type StartProblem } from "./starts";
 import { HUMAN_ACTOR, LOOM_ACTOR, PAUSE_NOW_REASON, canMoveTicket, type AuthorKind, type TicketState } from "./states";
+import { bringHome, carryTo, homeBranch, isRemote } from "./transport";
 
 export interface EngineCtx extends Ctx {
   host: HostPort;
@@ -152,7 +153,7 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
     const wait = waitOf(current, "worker");
     const again = wait?.row == null ? null : store.thread(wait.row);
     if (again !== null && again.state === "ended" && again.end_reason === "failed" && again.role === "worker" && again.ticket_id === ticket.id && again.attempt === current.attempt) {
-      store.updateThread(again.id, { state: "spawning", spawn_token: token, thread_id: null, environment_id: null, ended_at: null, end_reason: null, clock_at: ctx.now(), idle_count: 0, rate_limit_retries: 0 });
+      store.updateThread(again.id, { state: "spawning", spawn_token: token, thread_id: null, environment_id: null, ended_at: null, end_reason: null, clock_at: ctx.now(), idle_count: 0, rate_limit_retries: 0, maintenance_seq: 0 });
       store.setTicketState(ticket.id, "working", LOOM_ACTOR, { attempt: current.attempt, retry: wait!.tries });
       store.updateTicket(ticket.id, { ...released, ...stackPatch });
       return store.thread(again.id)!;
@@ -184,10 +185,23 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
   let asked = false;
   try {
     const repo = ticketRepo(spec, ticket);
-    const checkouts = await otherCheckouts(ctx, project, spec, ticket);
+    // A worker on a machine of its own starts at the fresh base, which bb can make there, and carries in what earlier workers left with loom_resume.
+    const onMachine = usesNewMachine(repo, "worker");
+    let earlier: EarlierWork | null = null;
+    if (onMachine || resume) {
+      try {
+        earlier = await earlierWork(ctx, project, spec, ticket);
+      } catch (error) {
+        await failSpawn(ctx, row, { kind: "failed", message: `Loom could not read the work brought home for ${ticket.key}: ${errText(error)}` });
+        return;
+      }
+    }
+    const pending: Resume | null = onMachine && earlier !== null ? { sha: earlier.sha, tree: earlier.tree } : null;
+    if (onMachine) store.updateThread(row.id, { resume_json: pending === null ? null : JSON.stringify(pending) });
+    const checkouts = onMachine ? new Map<string, string>() : await otherCheckouts(ctx, project, spec, ticket);
     // A thread bb never gave an environment never ran, so it has no conversation to read.
     const earlierThreads = store.threads({ ticketId: ticket.id, role: "worker" }).flatMap((other) => (other.id !== row.id && other.thread_id !== null && (other.environment_id !== null || other.released_at !== null) ? [other.thread_id] : []));
-    const brief = workerBrief({ project, spec, ticket: store.ticket(ticket.id)!, posts: store.posts(ticket.id), resume, checkouts, tickets: store.tickets(project.id), signature: signatureOf(ctx), earlierThreads });
+    const brief = workerBrief({ project, spec, ticket: store.ticket(ticket.id)!, posts: store.posts(ticket.id), resume, checkouts, tickets: store.tickets(project.id), signature: signatureOf(ctx), earlierThreads, remote: onMachine, resumePending: pending !== null });
     const spawn = (baseBranch: string) =>
       ctx.bb.spawnThread({
         bbProjectId: repo.bbProjectId ?? project.bb_project_id,
@@ -203,13 +217,13 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
         reasoningLevel: agent.reasoning,
         permissionMode: agent.permission_mode,
       });
-    const base = start?.branch ?? ticket.branch ?? freshBase(spec, ticket.repo);
+    const base = onMachine ? freshBase(spec, ticket.repo) : (start?.branch ?? earlier?.branch ?? ticket.branch ?? freshBase(spec, ticket.repo));
     asked = true;
     try {
       spawned = await spawn(base);
     } catch (error) {
       // A stacked start never falls back to the base: its dependencies' work would be missing.
-      if (fromBranch || (start?.branch ?? null) !== null || spec.merge.strategy !== "pr" || !isRefError(error)) throw error;
+      if (onMachine || fromBranch || (start?.branch ?? null) !== null || spec.merge.strategy !== "pr" || !isRefError(error)) throw error;
       spawned = await spawn(repo.base);
     }
   } catch (error) {
@@ -233,6 +247,24 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
   } else if (now.project.state === "paused" && now.project.system_reason === PAUSE_NOW_REASON) {
     await ctx.bb.stop(spawned.threadId).catch((error) => ctx.bb.log("warn", `Could not stop ${spawned.threadId} after pause --now: ${errText(error)}`));
   }
+}
+
+type EarlierWork = Resume & { branch: string };
+
+/**
+ * The ticket's newest work on the project's checkout: the home branch, with the work Loom brought from other machines,
+ * unless the last worker's branch there builds on it, as one from the checkout's machine after a placement change does,
+ * or there is no home branch. A branch from another machine never builds on it, even where its provider copies it to
+ * the checkout. Null when neither is there.
+ */
+async function earlierWork(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow): Promise<EarlierWork | null> {
+  const checkout = await repoCheckout(ctx, project, spec, ticket.repo);
+  const home = homeBranch(project.slug, ticket.key);
+  const homeTip = await ctx.host.call(checkout.hostId, "refTip", { repo: checkout.path, ref: `refs/heads/${home}` });
+  const contains = homeTip.outcome === "ok" ? { contains: homeTip.sha } : {};
+  const ownTip = ticket.branch === null ? null : await ctx.host.call(checkout.hostId, "refTip", { repo: checkout.path, ref: `refs/heads/${ticket.branch}`, ...contains });
+  if (ownTip?.outcome === "ok" && (homeTip.outcome !== "ok" || ownTip.contains === true)) return { branch: ticket.branch!, sha: ownTip.sha, tree: ownTip.tree };
+  return homeTip.outcome === "ok" ? { branch: home, sha: homeTip.sha, tree: homeTip.tree } : null;
 }
 
 /**
@@ -407,17 +439,71 @@ export async function resolveEnvironment(ctx: EngineCtx, seen: ThreadRow): Promi
   return environmentId === null ? null : ctx.bb.getEnvironment(environmentId);
 }
 
-/** Stores the worker's real branch on the ticket. Always runs before the thread is archived. */
+/**
+ * Stores the worker's real branch on the ticket. Always runs before the thread is archived. A worker that never called
+ * loom_resume leaves the ticket's branch alone, since the earlier work it never carried in may be on that branch.
+ */
 export async function recordBranch(ctx: EngineCtx, row: ThreadRow): Promise<void> {
-  if (row.role !== "worker" || row.ticket_id === null) return;
+  if (row.role !== "worker" || row.ticket_id === null || row.resume_json !== null) return;
   const environment = await resolveEnvironment(ctx, row);
   if (environment?.branchName != null) ctx.store.updateTicket(row.ticket_id, { branch: environment.branchName });
 }
 
-export async function commitWip(ctx: EngineCtx, row: ThreadRow, message: string): Promise<void> {
+/** Resume: the work Loom brought home from a ticket's earlier workers, which a worker on a machine of its own carries in with loom_resume. */
+export interface Resume {
+  sha: string;
+  tree: string;
+}
+
+export const resumeOf = (row: Pick<ThreadRow, "resume_json">): Resume | null => (row.resume_json === null ? null : (JSON.parse(row.resume_json) as Resume));
+
+/** loom_resume: puts the work brought home from the ticket's earlier workers in this worker's worktree, as one commit with its tree. */
+export async function resumeWork(ctx: EngineCtx, threadId: string): Promise<string> {
+  const { store } = ctx;
+  const row = store.threadByThreadId(threadId);
+  if (row === null || row.role !== "worker") throw new LoomError("loom_forbidden", "loom_resume is for a Loom worker thread.");
+  const ticket = row.ticket_id === null ? null : store.ticket(row.ticket_id);
+  if (row.state !== "active" || ticket === null || ticket.state !== "working" || ticket.worker_thread_id !== threadId) {
+    throw new LoomError("loom_invalid_state", "You are not the live worker of a ticket in working state, so there is nothing to resume.");
+  }
+  const resume = resumeOf(row);
+  if (resume === null) return `Nothing to resume: ${ticket.key}'s earlier work is already in your worktree, or there was none. Go on with the ticket.`;
+  const environment = await resolveEnvironment(ctx, row);
+  if (environment?.path == null) throw new LoomError("loom_invalid_state", "Your worktree is not available yet. Try again in a moment.");
+  const project = store.project(row.project_id)!;
+  let tree: string;
+  try {
+    ({ tree } = await carryTo(ctx, project, specOf(store, project), ticket, resume.sha, environment));
+  } catch (error) {
+    throw new LoomError("loom_unavailable", `Loom could not put the earlier work in your worktree: ${errText(error)}. Call loom_resume again, or loom_block if it keeps failing.`);
+  }
+  store.updateThread(row.id, { resume_json: null });
+  return `Loom put ${ticket.key}'s earlier work in your worktree as one commit on the base, with the tree ${tree.slice(0, 12)}. Read the ticket thread in your brief, then continue from what is there.`;
+}
+
+/** The WIP commit was made on the worker's own machine and could not be brought home, so that machine has the only copy. */
+class NotBroughtHome extends Error {}
+
+/**
+ * Commits the worker's worktree; a worker on a machine of its own also has the commit brought home, since that machine
+ * goes when its thread ends. One that never called loom_resume does not: its worktree lacks the earlier work, and
+ * bringing it home would put the home branch where the next worker cannot resume that work.
+ */
+export async function commitWip(ctx: EngineCtx, row: ThreadRow, ticket: TicketRow, message: string): Promise<void> {
   const environment = await resolveEnvironment(ctx, row);
   if (environment?.path == null) return;
   await ctx.host.call(environment.hostId, "commitAll", { worktree: environment.path, message });
+  const project = ctx.store.project(row.project_id)!;
+  if (!isRemote(project, environment)) return;
+  if (resumeOf(row) !== null) {
+    ctx.bb.log("info", `${ticket.key}'s worker ended before loom_resume, so Loom kept the work brought home as it was; the worker's own changes stay committed on its machine.`);
+    return;
+  }
+  try {
+    await bringHome(ctx, project, specOf(ctx.store, project), ticket, environment, "wip");
+  } catch (error) {
+    throw new NotBroughtHome(errText(error));
+  }
 }
 
 // ---------------------------------------------------------------- ending a thread
@@ -454,9 +540,19 @@ async function finishEnding(ctx: EngineCtx, row: ThreadRow, reason: EndReason, o
     if (opts.commit && ticket !== null) {
       try {
         await recordBranch(ctx, row);
-        await commitWip(ctx, row, `WIP ${ticket.key} (attempt ${ticket.attempt})`);
+        await commitWip(ctx, row, ticket, `WIP ${ticket.key} (attempt ${ticket.attempt})`);
       } catch (error) {
-        ctx.bb.log("warn", `Could not save ${ticket.key}'s work before ending its thread: ${errText(error)}`);
+        if (!(error instanceof NotBroughtHome)) {
+          ctx.bb.log("warn", `Could not save ${ticket.key}'s work before ending its thread: ${errText(error)}`);
+        } else if (!force) {
+          // Archived, the thread no longer holds its machine, and bb removes it with the only copy; the tick tries again.
+          ctx.bb.log("warn", `Could not bring ${ticket.key}'s work home before ending its thread, so Loom keeps the thread and its machine and tries again: ${errText(error)}`);
+          if (row.thread_id !== null) await ctx.bb.stop(row.thread_id).catch((stopError) => ctx.bb.log("warn", `Could not stop ${row.thread_id}: ${errText(stopError)}`));
+          return;
+        } else {
+          const body = `Loom could not bring the worker's work home from its machine, so the next worker starts without the changes it made since it last submitted or saved: ${errText(error)}. Loom tried for ${ENDING_LIMIT_MS / 60_000} minutes before it ended the thread.`;
+          store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "system", body });
+        }
       }
     }
     if (!(await stopAndArchive(ctx, row, force))) return;
@@ -503,6 +599,21 @@ async function stopAndArchive(ctx: EngineCtx, row: ThreadRow, force: boolean): P
 
 // ---------------------------------------------------------------- idle, failed turns, vanished threads
 
+/**
+ * Whether this idle is the one bb caused by moving the thread's machine, which it reports as a machine_maintenance
+ * error. The event is consumed, so the next idle counts; only threads on machines of their own are asked about.
+ */
+export async function machineMoved(ctx: EngineCtx, row: ThreadRow): Promise<boolean> {
+  const { store } = ctx;
+  const project = store.project(row.project_id);
+  const ticket = row.ticket_id === null ? null : store.ticket(row.ticket_id);
+  if (row.thread_id === null || project === null || ticket === null || row.role === "planner" || !usesNewMachine(ticketRepo(specOf(store, project), ticket), row.role)) return false;
+  const error = await ctx.bb.latestSystemError(row.thread_id).catch(() => null);
+  if (error?.code !== "machine_maintenance" || error.seq <= row.maintenance_seq) return false;
+  store.updateThread(row.id, { maintenance_seq: error.seq });
+  return true;
+}
+
 /** The first idle of a worker whose ticket is working gets a nudge; the next one ends the worker. */
 export async function onWorkerIdle(ctx: EngineCtx, seen: ThreadRow, reason: EndReason = "abandoned"): Promise<void> {
   const row = ctx.store.thread(seen.id);
@@ -512,6 +623,7 @@ export async function onWorkerIdle(ctx: EngineCtx, seen: ThreadRow, reason: EndR
   if (ctx.store.project(row.project_id)?.state !== "running") return;
   const ticket = row.ticket_id === null ? null : ctx.store.ticket(row.ticket_id);
   if (ticket === null || ticket.state !== "working" || ticket.worker_thread_id !== row.thread_id) return;
+  if (await machineMoved(ctx, row)) return;
   if (idleAction(row.idle_count) === "nudge") {
     ctx.store.updateThread(row.id, { idle_count: row.idle_count + 1 });
     await ctx.bb.send(row.thread_id, nudgeText(ticket.key, latestChangesRequested(ctx.store.posts(ticket.id))));

@@ -55,6 +55,7 @@ const ticket = (n: number, state: TicketState, over: Partial<TicketRow> = {}): T
   pr_poll_json: null,
   merge_after_json: "[]",
   pr_meta_json: null,
+  head_tree: null,
   created_by: "human",
   created_at: at(1),
   updated_at: at(1),
@@ -120,6 +121,8 @@ const thread = (role: ThreadRow["role"], tokens: number | null, over: Partial<Th
   ended_at: null,
   end_reason: null,
   released_at: null,
+  resume_json: null,
+  maintenance_seq: 0,
   ...over,
 });
 

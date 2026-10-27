@@ -2,7 +2,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { createCli } from "../src/cli";
 import { parseSpec, proposalErrorsOf } from "../src/spec";
-import { ORDINARY_TOOLS, PLANNER_TOOLS, REVIEWER_TOOLS, SKILLS, SPEC_REVIEWER_TOOLS, WORKER_TOOLS } from "../src/tools";
+import { MACHINE_WORKER_TOOLS, ORDINARY_TOOLS, PLANNER_TOOLS, REVIEWER_TOOLS, SKILLS, SPEC_REVIEWER_TOOLS, WORKER_TOOLS } from "../src/tools";
 import { makeHost } from "./helpers";
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
@@ -166,6 +166,19 @@ describe("the plugin's own documents", () => {
     const multi = examples.find((example) => (example.spec?.repo?.length ?? 0) >= 2)!.spec!;
     const repoOf = new Map(multi.ticket.map((ticket) => [ticket.ref, ticket.repo]));
     expect(multi.ticket.some((ticket) => ticket.depends_on.some((ref) => repoOf.get(ref) !== ticket.repo))).toBe(true);
+  });
+
+  it("the spec reference, the skills and README describe threads on new machines, with their keys and tools", () => {
+    const spec = read("skills/loom/references/spec.md");
+    for (const phrase of ["| `machine` |", "### Threads on new machines", "`merge.stack = false`", "loom/<slug>/<key>-home", "refs/loom/<slug>/<key>/reviewed", "machine_provider_rejected", "machine_maintenance", "loom_resume", "loom_checkout"]) expect(spec, phrase).toContain(phrase);
+    const example = [...spec.matchAll(/```toml\n([\s\S]*?)```/g)].map((match) => parseSpec(match[1]!).spec!).find((each) => each.environment?.machine !== undefined);
+    expect(example?.environment?.machine).toBeDefined();
+    for (const tool of [...MACHINE_WORKER_TOOLS, ...REVIEWER_TOOLS]) {
+      expect(read("skills/loom/SKILL.md"), tool).toContain(tool);
+      expect(read("README.md"), tool).toContain(tool);
+    }
+    const plan = read("skills/loom-plan/SKILL.md");
+    for (const phrase of ["New machine per thread", "Earlier picks", "on every project", "confirm it with the human", "works on that machine"]) expect(plan, phrase).toContain(phrase);
   });
 
   it("the loom-plan skill says how to find repos, offers to clone a missing checkout, and splits cross-repo work per repo", () => {

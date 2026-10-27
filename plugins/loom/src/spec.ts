@@ -60,17 +60,22 @@ export const forgeSchema = z
   })
   .strict();
 
-const providerId = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,99}$/, "must be a bb environment provider id, such as git-worktree");
+const PROVIDER_ID = /^[a-z0-9][a-z0-9._-]{0,99}$/;
+const providerId = z.string().regex(PROVIDER_ID, "must be a bb environment provider id, such as git-worktree");
 const inputsSchema = z.record(z.string(), z.unknown());
 
-// A bb environment provider for workers and reviewers, with inputs that may hold the {branch} and {base} placeholders.
-// `reviewer` lets reviewers, the spec reviewer and the summary agent start in another provider, or in the same one with
-// a merge patch over the inputs.
+// A bb machine provider that gives each thread a new machine, with inputs that may hold the same placeholders.
+export const machineSchema = z.object({ provider: z.string().regex(PROVIDER_ID, "must be a bb machine provider id"), inputs: inputsSchema.optional() }).strict();
+
+// A bb environment provider for workers and reviewers, with inputs that may hold the {branch} and {base} placeholders,
+// and optionally a new machine per thread. `reviewer` lets reviewers, the spec reviewer and the summary agent start in
+// another provider, or in the same one with a merge patch over the inputs, and on a machine of their own.
 export const environmentSchema = z
   .object({
     provider: providerId,
     inputs: inputsSchema.optional(),
-    reviewer: z.object({ provider: providerId.optional(), inputs: inputsSchema.optional() }).strict().optional(),
+    machine: machineSchema.optional(),
+    reviewer: z.object({ provider: providerId.optional(), inputs: inputsSchema.optional(), machine: machineSchema.optional() }).strict().optional(),
   })
   .strict();
 
@@ -233,6 +238,7 @@ export type TicketPatch = z.output<typeof ticketPatchSchema>;
 export type RepoSpec = z.output<typeof repoSpecSchema>;
 export type ForgeSpec = z.output<typeof forgeSchema>;
 export type EnvironmentSpec = z.output<typeof environmentSchema>;
+export type MachineSpec = z.output<typeof machineSchema>;
 export type WorktreeSpec = z.output<typeof worktreeSchema>;
 
 export interface SpecResult {
@@ -484,6 +490,7 @@ export function validateSemantics(spec: Spec, rawToml: string): { errors: string
   repos.forEach((repo, index) => {
     errors.push(...forgeErrors(repo.forge, `repo[${index}].forge`), ...worktreeErrors(spec, repo.worktree, `repo[${index}].worktree`), ...environmentErrors(repo.environment, `repo[${index}].environment`));
   });
+  errors.push(...machineErrors(spec));
 
   const { worker, reviewer } = spec.agents;
   if (worker.provider === reviewer.provider && worker.model === reviewer.model) {
@@ -527,7 +534,27 @@ function placeholderErrors(inputs: Record<string, unknown> | undefined, at: stri
 
 function environmentErrors(environment: EnvironmentSpec | undefined, at: string): string[] {
   if (environment === undefined) return [];
-  return [...placeholderErrors(environment.inputs, `${at}.inputs`), ...placeholderErrors(environment.reviewer?.inputs, `${at}.reviewer.inputs`)];
+  return [
+    ...placeholderErrors(environment.inputs, `${at}.inputs`),
+    ...placeholderErrors(environment.machine?.inputs, `${at}.machine.inputs`),
+    ...placeholderErrors(environment.reviewer?.inputs, `${at}.reviewer.inputs`),
+    ...placeholderErrors(environment.reviewer?.machine?.inputs, `${at}.reviewer.machine.inputs`),
+  ];
+}
+
+/**
+ * A repo whose workers or reviewers run on new machines works only on the pr strategy without stacking: the integration
+ * branch and the commits stacked tickets start on are made on the project's machine, and Loom carries neither elsewhere.
+ * A repo without an environment of its own uses the top-level one, so its error names that path, once.
+ */
+function machineErrors(spec: Spec): string[] {
+  if (spec.merge.strategy === "pr" && spec.merge.stack === false) return [];
+  const used: Array<[EnvironmentSpec | undefined, string]> = (spec.repo ?? []).length === 0 ? [[spec.environment, "environment"]] : spec.repo!.map((repo, index) => (repo.environment === undefined ? [spec.environment, "environment"] : [repo.environment, `repo[${index}].environment`]));
+  const paths = used.flatMap(([environment, at]) => (environment?.machine !== undefined ? [`${at}.machine`] : environment?.reviewer?.machine !== undefined ? [`${at}.reviewer.machine`] : []));
+  return [...new Set(paths)].map(
+    (at) =>
+      `${at}: a thread on a new machine needs merge.strategy = "pr" and merge.stack = false, because Loom does not carry its integration branch or the bases of stacked pull requests, which live only on the project's machine, to other machines. Set both, or remove ${at}.`,
+  );
 }
 
 /** A ticket's environment patch needs an environment provider in its repo to patch, and only Loom's placeholders. */

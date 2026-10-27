@@ -1,11 +1,15 @@
 // How each repo is reached, read from the machine and from bb: its remotes, whether gh serves them, the environment
-// providers bb offers for it, and whether Loom can add its own integration worktree. loom_discover reports these facts
-// to the planner as found or ask; loom_propose refuses a spec that leaves one of them unanswered.
-import { environmentFor, inputsProblems } from "./environments";
+// providers bb offers for it, the machine providers that can give each thread a new machine, the environments earlier
+// projects chose for the same remote, and whether Loom can add its own integration worktree. loom_discover reports these
+// facts to the planner as found or ask; loom_propose refuses a spec that leaves one of them unanswered.
+import type { Store } from "./db/store";
+import { environmentFor, inputsProblems, usesNewMachine } from "./environments";
 import type { HostOutput } from "./host-contract";
-import type { BbPort, EnvironmentProviderInfo, HostPort, PluginInfo } from "./ports";
+import type { BbPort, EnvironmentProviderInfo, HostPort, MachineProviderInfo, PluginInfo } from "./ports";
 import { isMultiRepo, repoSettings, type RepoSettings } from "./repos";
-import type { Spec } from "./spec";
+import type { EnvironmentSpec, MachineSpec, Spec } from "./spec";
+
+const PAST_PICKS = 3;
 
 const PLUGIN_HELP_MS = 30_000;
 
@@ -28,11 +32,21 @@ export interface RepoTarget {
   tickets?: Array<{ at: string; inputs: Record<string, unknown> }>;
 }
 
+/** The environment an approved Loom project gives a repo with the same git remote. */
+export interface PastPick {
+  slug: string;
+  environment: EnvironmentSpec;
+}
+
 export interface RepoFacts extends RepoTarget {
   hostId: string;
   checkout: string | null;
   remotes: RemoteFacts[];
   providers: Array<EnvironmentProviderInfo & { builtin: boolean }>;
+  /** Empty when no target needs them: a spec whose threads start on no new machine. */
+  machineProviders: MachineProviderInfo[];
+  /** The newest first; empty without a store to read them from. */
+  pastPicks: PastPick[];
   plugins: PluginInfo[];
   worktreeTrial: HostOutput<"trialWorktree"> | null;
   /** `bb plugin run <plugin> <first word> --help` for a [merge.worktree] that names a plugin. */
@@ -46,15 +60,22 @@ export function specTargets(spec: Spec, bbProjectId: string): RepoTarget[] {
   return spec.repo!.map((repo, index) => ({ label: `the repo "${repo.name}"`, index, bbProjectId: repo.project, settings: repoSettings(spec, repo.name), tickets: tickets(repo.name) }));
 }
 
-export async function gatherFacts(ctx: { bb: BbPort; host: HostPort }, targets: readonly RepoTarget[], hostId: string): Promise<RepoFacts[]> {
+/** With a store, each repo also gets the environments earlier approved projects chose for its git remote. */
+export async function gatherFacts(ctx: { bb: BbPort; host: HostPort; store?: Store }, targets: readonly RepoTarget[], hostId: string): Promise<RepoFacts[]> {
   const plugins = await ctx.bb.plugins();
   const builtin = new Set(plugins.filter((plugin) => plugin.builtin).map((plugin) => plugin.id));
+  const machinesNeeded = targets.some(({ settings }) => settings === null || usesNewMachine(settings, "worker") || usesNewMachine(settings, "reviewer"));
+  const machineProviders = machinesNeeded ? await ctx.bb.machineProviders() : [];
+  const picksOf = await pastPicks(ctx);
   const facts: RepoFacts[] = [];
   for (const target of targets) {
     const settings = target.settings;
-    const providers = (await ctx.bb.environmentProviders(target.bbProjectId, hostId)).map((provider) => ({ ...provider, builtin: builtin.has(provider.pluginId) }));
+    const listed = await ctx.bb.environmentProviders(target.bbProjectId, hostId);
+    // bb lists the environments that make their own machine only when asked for no machine.
+    const composed = settings === null || settings.environment !== null ? (await ctx.bb.environmentCompositions(target.bbProjectId)).filter((entry) => !listed.some((provider) => provider.id === entry.id)) : [];
+    const providers = [...listed, ...composed].map((provider) => ({ ...provider, builtin: builtin.has(provider.pluginId) }));
     const checkout = await ctx.bb.projectCheckout(target.bbProjectId, hostId);
-    const known = { ...target, hostId, checkout, providers, plugins };
+    const known = { ...target, hostId, checkout, providers, plugins, machineProviders, pastPicks: picksOf(target.bbProjectId) };
     if (checkout === null) {
       facts.push({ ...known, remotes: [], worktreeTrial: null, pluginCommand: null });
       continue;
@@ -70,6 +91,19 @@ export async function gatherFacts(ctx: { bb: BbPort; host: HostPort }, targets: 
     facts.push({ ...known, remotes, worktreeTrial, pluginCommand: await pluginCommand(ctx, hostId, checkout, settings, plugins) });
   }
   return facts;
+}
+
+/** The newest PAST_PICKS environments approved specs give repos with the same git remote as a bb project. */
+async function pastPicks(ctx: { bb: BbPort; store?: Store }): Promise<(bbProjectId: string) => PastPick[]> {
+  if (ctx.store === undefined) return () => [];
+  const past = ctx.store.pastEnvironments();
+  if (past.length === 0) return () => [];
+  const remotes = new Map((await ctx.bb.listProjects()).map((project) => [project.id, project.gitRemoteUrl]));
+  return (bbProjectId) => {
+    const remote = remotes.get(bbProjectId) ?? null;
+    if (remote === null) return [];
+    return past.filter((pick) => remotes.get(pick.bbProjectId) === remote).slice(0, PAST_PICKS).map(({ slug, environment }) => ({ slug, environment }));
+  };
 }
 
 async function pluginCommand(ctx: { host: HostPort }, hostId: string, checkout: string, settings: RepoSettings | null, plugins: PluginInfo[]): Promise<RepoFacts["pluginCommand"]> {
@@ -89,8 +123,25 @@ const TOP: Record<Key, string> = { remote: "merge.remote", forge: "merge.forge",
 const pathOf = (facts: RepoTarget, key: Key) => (facts.index === null ? TOP[key] : `repo[${facts.index}].${key}`);
 
 const listRemotes = (remotes: readonly RemoteFacts[]) => (remotes.length === 0 ? "none" : remotes.map((remote) => `${remote.name} (${remote.pushUrls.join(", ") || "no push URL"})`).join(", "));
-const describeProvider = (provider: EnvironmentProviderInfo) => `${provider.displayName} (${provider.id}${provider.description === null ? "" : `: ${provider.description.replace(/\.$/u, "")}`})`;
+const describeProvider = (provider: Pick<EnvironmentProviderInfo, "id" | "displayName" | "description">) => `${provider.displayName} (${provider.id}${provider.description === null ? "" : `: ${provider.description.replace(/\.$/u, "")}`})`;
 const pluginProviders = (facts: RepoFacts) => facts.providers.filter((provider) => !provider.builtin && provider.available);
+const compositions = (facts: RepoFacts) => facts.providers.filter((provider) => provider.machineProviderId !== undefined && provider.available);
+const machineText = (machine: MachineSpec | undefined, inputs = machine?.inputs !== undefined) => (machine === undefined ? "" : `, machine = { provider = "${machine.provider}"${inputs ? ", inputs = { … }" : ""} }`);
+const pickText = (pick: PastPick) => `provider = "${pick.environment.provider}"${machineText(pick.environment.machine ?? pick.environment.reviewer?.machine, false)} in the Loom project ${pick.slug} (\`bb loom spec ${pick.slug}\` shows it)`;
+
+/** The environments that start each thread on a new machine: the compositions bb offers, and bb's git worktree on each machine provider. */
+function newMachineLines(facts: RepoFacts): string[] {
+  const schema = (provider: MachineProviderInfo | undefined) => (provider === undefined || provider.inputs === null ? "" : ` Machine inputs schema: ${JSON.stringify(provider.inputs)}`);
+  const needsInputs = (provider: MachineProviderInfo | undefined) => provider !== undefined && !provider.acceptsEmptyInputs;
+  const lines = compositions(facts).map((provider) => {
+    const machine = facts.machineProviders.find((entry) => entry.id === provider.machineProviderId);
+    return `  - provider = "${provider.id}"${machineText({ provider: provider.machineProviderId! }, needsInputs(machine))}: ${describeProvider(provider)}.${schema(machine)}`;
+  });
+  if (facts.providers.some((provider) => provider.id === "git-worktree" && provider.available)) {
+    for (const machine of facts.machineProviders) lines.push(`  - provider = "git-worktree"${machineText({ provider: machine.id }, needsInputs(machine))}: ${describeProvider(machine)}.${schema(machine)}`);
+  }
+  return lines;
+}
 
 function ghProblem(gh: GhStatus, url: string): string | null {
   switch (gh.status) {
@@ -139,12 +190,18 @@ function repoText(facts: RepoFacts): string {
 
   const own = facts.providers.filter((provider) => provider.builtin).map((provider) => provider.id);
   const plugins = pluginProviders(facts);
+  const listed = plugins.filter((provider) => provider.machineProviderId === undefined);
+  const machines = newMachineLines(facts);
   lines.push(`- Environments: bb's own providers here are ${own.join(", ") || "none"}; workers use git-worktree unless the spec names another.`);
-  if (plugins.length === 0) lines.push("- Environment: found: no plugin offers an environment for this repository, so plain git worktrees fit.");
-  else {
-    for (const provider of plugins) lines.push(`  - ${describeProvider(provider)}. It ${provider.acceptsEmptyInputs ? "accepts no inputs" : "needs inputs"}; inputs schema: ${JSON.stringify(provider.inputs)}`);
-    lines.push(`- Environment: ask: ${environmentFix(facts, plugins)} Fill the inputs from the provider's description and its plugin's skill, and use {branch} and {base} where each thread's branch and base go.`);
-  }
+  for (const provider of listed) lines.push(`  - ${describeProvider(provider)}. It ${provider.acceptsEmptyInputs ? "accepts no inputs" : "needs inputs"}; inputs schema: ${JSON.stringify(provider.inputs)}`);
+  if (machines.length > 0) lines.push("- New machine per thread: these start each worker and reviewer on a machine of its own, away from this checkout. Loom runs the checks there and brings each submitted commit back here.", ...machines);
+  if (facts.pastPicks.length > 0) lines.push(`- Earlier picks for this repository's remote: ${facts.pastPicks.map(pickText).join("; ")}.`);
+  if (machines.length > 0) {
+    lines.push(
+      `- Environment: ask: propose one of the new-machine environments above for this project in ${pathOf(facts, "environment")}, weighing the earlier picks, and confirm it with the human; or keep this machine with ${listed.length > 0 ? "one of the providers above or " : ""}{ provider = "git-worktree" } if the human prefers. On a new machine, make sure the checks work on that machine, and use merge.strategy = "pr" with merge.stack = false.`,
+    );
+  } else if (plugins.length === 0) lines.push("- Environment: found: no plugin offers an environment for this repository, so plain git worktrees fit.");
+  else lines.push(`- Environment: ask: ${environmentFix(facts, plugins)} Fill the inputs from the provider's description and its plugin's skill, and use {branch} and {base} where each thread's branch and base go.`);
 
   if (facts.worktreeTrial !== null) {
     lines.push(
@@ -189,15 +246,30 @@ function repoErrors(facts: RepoFacts, settings: RepoSettings): string[] {
       else return provider;
       return null;
     };
+    // A composition makes its own kind of machine, so the spec must name that machine provider for Loom to know.
+    const machineAt = (path: string, owner: EnvironmentProviderInfo, machine: MachineSpec | undefined) => {
+      if (owner.machineProviderId !== undefined && machine?.provider !== owner.machineProviderId) {
+        errors.push(`${path}: ${describeProvider(owner)} starts each thread on a new machine from the machine provider "${owner.machineProviderId}". Set ${path} = { provider = "${owner.machineProviderId}" }, with the inputs it needs.`);
+        return;
+      }
+      if (machine === undefined) return;
+      const found = facts.machineProviders.find((entry) => entry.id === machine.provider);
+      if (found === undefined) errors.push(`${path}.provider: bb has no machine provider "${machine.provider}". Use one of: ${facts.machineProviders.map((entry) => entry.id).join(", ") || "(none)"}.`);
+      else errors.push(...inputsProblems(path, found, machine.inputs, "machine provider"));
+    };
     const provider = usableAt(`${at}.provider`, settings.environment.provider);
     if (provider !== null) {
       errors.push(...inputsProblems(at, provider, settings.environment.inputs));
       for (const ticket of facts.tickets ?? []) errors.push(...inputsProblems(ticket.at, provider, environmentFor(settings, "worker", ticket.inputs)!.inputs));
+      machineAt(`${at}.machine`, provider, settings.environment.machine);
     }
     const reviewer = settings.environment.reviewer;
     const other = reviewer?.provider !== undefined && reviewer.provider !== settings.environment.provider;
     const reviewerProvider = other ? usableAt(`${at}.reviewer.provider`, reviewer.provider!) : provider;
-    if (reviewer !== undefined && reviewerProvider !== null) errors.push(...inputsProblems(`${at}.reviewer`, reviewerProvider, environmentFor(settings, "reviewer")!.inputs));
+    if (reviewer !== undefined && reviewerProvider !== null) {
+      errors.push(...inputsProblems(`${at}.reviewer`, reviewerProvider, environmentFor(settings, "reviewer")!.inputs));
+      if (other || reviewer.machine !== undefined) machineAt(`${at}.reviewer.machine`, reviewerProvider, environmentFor(settings, "reviewer")!.machine);
+    }
   }
 
   const worktree = settings.worktree;

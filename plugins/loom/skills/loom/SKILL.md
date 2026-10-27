@@ -1,6 +1,6 @@
 ---
 name: loom
-description: "Check or manage Loom, which runs a software project with agents. `bb loom list`, `show`, `spec`, `tickets`, `ticket`, `metrics` and `feed` read a project, its spec, its ticket board, its flow metrics and its events; `post`, `block`, `requeue`, `cancel`, `approve`, `start`, `pause`, `resume`, `archive` and `land` are the human's controls. Also the guide for a Loom worker (loom_note, loom_submit, loom_block, loom_pr), for a Loom reviewer (loom_approve, loom_request_changes), for Loom's spec reviewer (loom_spec_approve, loom_spec_request_changes) and for a planner answering a triage round (loom_board, loom_ticket, loom_post, loom_requeue, loom_edit_ticket, loom_add_tickets, loom_cancel_ticket) or asking the human to act (loom_ask_human). Use when the user asks about a Loom project, its tickets, its reviews, its metrics, the Loom page, how its work merges or how to land it, or when you are a Loom agent."
+description: "Check or manage Loom, which runs a software project with agents. `bb loom list`, `show`, `spec`, `tickets`, `ticket`, `metrics` and `feed` read a project, its spec, its ticket board, its flow metrics and its events; `post`, `block`, `requeue`, `cancel`, `approve`, `start`, `pause`, `resume`, `archive` and `land` are the human's controls. Also the guide for a Loom worker (loom_note, loom_submit, loom_block, loom_pr, and loom_resume on a machine of its own), for a Loom reviewer (loom_checkout, loom_approve, loom_request_changes), for Loom's spec reviewer (loom_spec_approve, loom_spec_request_changes) and for a planner answering a triage round (loom_board, loom_ticket, loom_post, loom_requeue, loom_edit_ticket, loom_add_tickets, loom_cancel_ticket) or asking the human to act (loom_ask_human). Use when the user asks about a Loom project, its tickets, its reviews, its metrics, the Loom page, how its work merges or how to land it, or when you are a Loom agent."
 ---
 
 # Loom
@@ -58,8 +58,8 @@ Each ticket is the root of a reply thread. Its first post is the brief: the body
 ## Roles
 
 - Planner: the thread that proposed the project. Before approval it revises the spec with `loom_propose`, after `loom_discover` has told it how each repo is reached (its remotes, whether `gh` serves them, the environment providers bb offers and whether Loom can add its own integration worktree). After approval it uses the board tools below, mostly to answer triage rounds. When the human has to act, it records the steps with `loom_ask_human` (below). It never approves, starts or pauses.
-- Worker: a thread the plugin starts for one ticket. It has `loom_note`, `loom_submit`, `loom_block` and `loom_pr`.
-- Reviewer: a thread the plugin starts to review a ticket. It has `loom_note`, `loom_approve` and `loom_request_changes`, and changes nothing.
+- Worker: a thread the plugin starts for one ticket. It has `loom_note`, `loom_submit`, `loom_block` and `loom_pr`, and on a machine of its own `loom_resume` too.
+- Reviewer: a thread the plugin starts to review a ticket. It has `loom_note`, `loom_checkout`, `loom_approve` and `loom_request_changes`, and changes nothing.
 - Spec reviewer: a thread the plugin starts for each draft version and each pending version. It has `loom_spec_approve` and `loom_spec_request_changes`, and changes nothing.
 - Any other thread has `loom_discover` and `loom_propose` and can start a new project.
 
@@ -82,11 +82,12 @@ The verdict reaches the planner as a message. Every finding blocks the handover;
 
 The plugin starts a worker for each ready ticket: a new thread in the project's sidebar section, in its own git worktree, on the provider and model the spec names for workers. A fresh ticket starts from the integration branch (or from the remote base when the project opens pull requests); a requeued ticket starts from the branch the earlier worker left. The worker's first message is the brief: the ticket, the acceptance criteria, the scope and protected paths, the checks the plugin will run, the rules and, for a requeued ticket, the whole ticket thread.
 
-A worker has four tools and no others:
+A worker has these tools and no others:
 
 - `loom_note({ text, reply_to? })`: record a milestone on the ticket. Use it once per milestone.
 - `loom_submit({ summary })`: hand the work in when every acceptance criterion holds, then end the turn. The call returns at once. The plugin commits the worktree (the worker never commits), lists the changed files, runs the ticket's verify commands and then the project's check commands, and stops at the first failure.
 - `loom_block({ reason, needs })`: say what is wrong and exactly what is needed, then end the turn. The work is saved on the ticket's branch and the ticket moves to blocked.
+- `loom_resume()`: only for a worker on a machine of its own (the repo's environment sets `machine`), whose brief starts with it as the first step. It carries in the work earlier workers left on the ticket, from the branch `loom/<slug>/<key>-home` on the project's machine (or, after a worker on the project's machine, from that worker's branch), as one commit on the base; `loom_submit` is refused until it has. It refuses a worktree with uncommitted changes or commits of its own, which it would drop: stash them or move them to another branch, then call it again. On a failure it returns the reason: call it again, or `loom_block`.
 - `loom_pr({ title, body, commit_message })`: only on the pull request strategy, and only after the plugin asks for it once the reviewers approve. Write the pull request's title and description and the commit's message the way you normally do, following your own instructions and skills for them, then end the turn. In a fix round the plugin asks for the `commit_message` alone. Change no files: the plugin pushes the commit the reviewers approved. A worker that ends its turn without it gets one nudge; after the second idle, or 30 minutes, the plugin uses its own template.
 
 What the plugin checks on a submit:
@@ -95,6 +96,7 @@ What the plugin checks on a submit:
 - The check commands must pass, and they must not write tracked files. The worker must not edit files while they run; if the worktree changed, the run fails.
 - The result is a `check` post on the ticket. On a pass the ticket moves to review. On a failure the failing command's output goes back to the same worker, who fixes it and submits again. After `budget.max_check_failures` failed runs the ticket is blocked. On the Loom page, the ticket's check cards keep every command's output, exit code and duration, and its merge rows every git step.
 - If the machine disconnects or a call times out, the worker is told to submit again, and no failure is counted.
+- A worker on a machine of its own (see "Threads on new machines" in `references/spec.md`) runs the checks there. On a pass the plugin carries its commit back to the project's checkout, checked by tree, and that commit is what reviewers and the pull request get; a work-in-progress save is carried back the same way when its thread ends.
 
 Limits that keep a ticket moving:
 
@@ -103,13 +105,15 @@ Limits that keep a ticket moving:
 - A worker whose ticket stays in working longer than `agents.ticket_timeout_minutes` is ended and the ticket requeued. Time paused, in checks or in review does not count.
 - A rate-limited turn is retried when the provider's window resets, at most three times, and no new worker starts until then.
 - A human who archives or deletes a worker thread sends the ticket back to the queue without counting a failure.
+- On a machine of its own, a turn bb stopped because it moved the machine (a `machine_maintenance` error) counts as no idle.
 
 ## Reviewers
 
-When a ticket reaches review the plugin starts `review.approvals` reviewer threads for it, within `agents.max_reviewers` across the project (a reviewer waiting for the human's answer holds no slot), on the provider and model of `agents.reviewer`. Use a different model than the workers: a model rates its own output higher than another's. Each reviewer gets its own worktree, in the environment's `reviewer` table when the spec sets one (a lighter environment: the checks run in the worker's worktree, never the reviewer's); in a partial checkout, read any file at the commit with `git show <head_sha>:<path>`. A reviewer that could not start waits and tries again, as a worker does, and does not count as one that ended without a verdict; an hour of an unavailable provider blocks the ticket, and approving a pending spec version sends it back to review. The brief holds the ticket and its numbered acceptance criteria, the rubric, the scope report and check results, the diff, the findings of earlier rounds and the rules.
+When a ticket reaches review the plugin starts `review.approvals` reviewer threads for it, within `agents.max_reviewers` across the project (a reviewer waiting for the human's answer holds no slot), on the provider and model of `agents.reviewer`. Use a different model than the workers: a model rates its own output higher than another's. Each reviewer gets its own worktree, in the environment's `reviewer` table when the spec sets one (a lighter environment: the checks run in the worker's worktree, never the reviewer's); in a partial checkout, read any file of the reviewed work with `git show HEAD:<path>` after `loom_checkout`. Reviewers follow the workers onto machines of their own unless the `reviewer` table names another provider. A reviewer that could not start waits and tries again, as a worker does, and does not count as one that ended without a verdict; an hour of an unavailable provider blocks the ticket, and approving a pending spec version sends it back to review. The brief holds the ticket and its numbered acceptance criteria, the rubric, the scope report and check results, the diff, the findings of earlier rounds and the rules.
 
-A reviewer has three tools and no others:
+A reviewer has four tools and no others:
 
+- `loom_checkout()`: the first step. It puts the exact work the ticket was submitted with in the reviewer's worktree: checked out on the project's machine, or carried as one commit with the same tree to a reviewer on a machine of its own. Calling it again once the worktree has that tree changes nothing.
 - `loom_note({ text, reply_to? })`: record what it checked.
 - `loom_approve({ summary })`: every acceptance criterion holds and no blocking finding remains.
 - `loom_request_changes({ summary, findings })`: send the ticket back. `findings` has 1 to 20 entries. Each is `{ severity, title, detail, file?, line? }`, where `severity` is `blocking` or `should-fix`, `title` is one line, and `detail` says what is wrong and how to fix it. Give a file and a line whenever you can.
@@ -117,7 +121,7 @@ A reviewer has three tools and no others:
 Rules for a reviewer:
 
 - Read and run anything, change nothing, commit nothing. Never push or merge.
-- First step: `git checkout --detach <head_sha>`, the commit named in the brief. The worker can move its branch, and the verdict tools refuse ("Check out <head_sha> first, then review again.") until the worktree is on that commit.
+- First step: `loom_checkout()`. The worker can move its branch, and the verdict tools refuse ("Call loom_checkout first …") until the worktree has the reviewed tree, the one named in the brief.
 - Judge each acceptance criterion. Approve only when every one holds and no blocking finding remains.
 - Give exactly one verdict per round, then end the turn. A reviewer that ends its turn without a verdict gets one nudge and is then replaced.
 

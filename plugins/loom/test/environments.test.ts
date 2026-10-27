@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { environmentFor, fillInputs, inputsProblems, mergePatch, spawnEnvironment, threadBranch, unknownPlaceholders } from "../src/environments";
+import { environmentFor, fillInputs, inputsProblems, mergePatch, spawnEnvironment, threadBranch, unknownPlaceholders, usesNewMachine } from "../src/environments";
 import type { EnvironmentProviderInfo } from "../src/ports";
 import { repoSettings } from "../src/repos";
 import { parseSpec } from "../src/spec";
@@ -130,5 +130,37 @@ describe("environmentFor: reviewers and tickets", () => {
     }));
     expect(ok.errors).toEqual([]);
     expect(ok.spec!.ticket[0]!.environment).toEqual({ inputs: { pool: { paths: ["services/orders"] } } });
+  });
+});
+
+describe("environmentFor: new machines", () => {
+  const values = { branch: "loom/csv/csv-1-1", base: "origin/main" };
+  const onBoxes = { provider: "git-worktree", machine: { provider: "boxes", inputs: { name: "{branch}" } } };
+  const settingsOn = (environment: Doc) => {
+    const parsed = parseSpec(specToml((doc) => ((doc.merge = { strategy: "pr", stack: false }), (doc.environment = environment))));
+    if (parsed.spec === null) throw new Error(parsed.errors.join("\n"));
+    return repoSettings(parsed.spec, null);
+  };
+
+  it("starts workers on a new machine from the repo's machine provider, with its inputs filled in", () => {
+    const settings = settingsOn(onBoxes);
+    // bb refuses null inputs for git-worktree; the named base is the one the managed worktree starts from.
+    expect(spawnEnvironment(settings, values, "worker")).toEqual({ providerId: "git-worktree", inputs: { branch: { kind: "named", name: values.base } }, machine: { providerId: "boxes", inputs: { name: values.branch } } });
+    expect(usesNewMachine(settings, "worker")).toBe(true);
+    expect(usesNewMachine(settingsWith(undefined), "worker")).toBe(false);
+    expect(usesNewMachine(settingsWith({ provider: "git-worktree" }), "reviewer")).toBe(false);
+  });
+
+  it("lets reviewers follow the workers' machine with no reviewer table or an inputs patch, drop it in another provider, and use their own", () => {
+    expect(environmentFor(settingsOn(onBoxes), "reviewer")!.machine).toEqual(onBoxes.machine);
+    expect(environmentFor(settingsOn({ ...onBoxes, reviewer: { inputs: { depth: 1 } } }), "reviewer")!.machine).toEqual(onBoxes.machine);
+    const other = settingsOn({ ...onBoxes, reviewer: { provider: "example-reader" } });
+    expect(environmentFor(other, "reviewer")!.machine).toBeUndefined();
+    expect(usesNewMachine(other, "reviewer")).toBe(false);
+    expect(usesNewMachine(other, "worker")).toBe(true);
+    const own = settingsOn({ provider: "git-worktree", reviewer: { machine: { provider: "readers" } } });
+    expect(spawnEnvironment(own, values, "reviewer")).toEqual({ providerId: "git-worktree", inputs: { branch: { kind: "named", name: values.base } }, machine: { providerId: "readers", inputs: null } });
+    expect(spawnEnvironment(own, values, "worker")).toBeUndefined();
+    expect(environmentFor(settingsOn({ ...onBoxes, reviewer: { provider: "example-reader", machine: { provider: "readers" } } }), "reviewer")!.machine).toEqual({ provider: "readers" });
   });
 });

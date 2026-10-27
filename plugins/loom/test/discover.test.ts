@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { discoverText, gatherFacts, reachErrors, specTargets } from "../src/discover";
-import type { EnvironmentProviderInfo } from "../src/ports";
+import type { EnvironmentProviderInfo, MachineProviderInfo } from "../src/ports";
 import { parseSpec, type Spec } from "../src/spec";
-import { FakeHost, FakePort, GIT_WORKTREE_PROVIDER, specToml, type Doc } from "./helpers";
+import { FakeHost, FakePort, GIT_WORKTREE_PROVIDER, makeCtx, seedProject, specToml, type Doc } from "./helpers";
 
 let bb: FakePort;
 let host: FakeHost;
@@ -136,5 +136,64 @@ describe("discoverText", () => {
   it("says a repository has no checkout here, with the clone command", async () => {
     bb.checkout = null;
     expect(await report()).toContain("- ask: it has no checkout on this machine (host_1). Clone it with `bb project source add proj_1 --clone --machine host_1`");
+  });
+});
+
+describe("new machines", () => {
+  const BOXES: MachineProviderInfo = { id: "boxes", displayName: "Boxes", description: "A box per thread.", pluginId: "boxes", acceptsEmptyInputs: false, inputs: { type: "object", properties: { zones: { type: "array", items: { type: "string" } } }, required: ["zones"], additionalProperties: false } };
+  const BOXED_TREES: EnvironmentProviderInfo = { ...TREES, id: "boxed-trees", displayName: "Trees on boxes", description: "A tree on a box of its own.", pluginId: "boxes", acceptsEmptyInputs: true, inputs: null, machineProviderId: "boxes" };
+  const onMachine = (environment: Doc) => (doc: Doc) => ((doc.merge = { strategy: "pr", stack: false }), (doc.environment = environment));
+
+  beforeEach(() => {
+    bb.machineProviderList = [BOXES];
+    bb.compositionList = [BOXED_TREES];
+    bb.pluginList = [...bb.pluginList, { id: "boxes", enabled: true, builtin: false }];
+  });
+
+  it("lists the environments that start each thread on a new machine, and asks for one", async () => {
+    const text = await report();
+    expect(text).toContain("- New machine per thread:");
+    expect(text).toContain('  - provider = "boxed-trees", machine = { provider = "boxes", inputs = { … } }: Trees on boxes (boxed-trees: A tree on a box of its own). Machine inputs schema: {');
+    expect(text).toContain('  - provider = "git-worktree", machine = { provider = "boxes", inputs = { … } }: Boxes (boxes: A box per thread). Machine inputs schema: {');
+    expect(text).not.toContain("  - Trees on boxes (boxed-trees");
+    expect(text).toMatch(/- Environment: ask: propose one of the new-machine environments above .*confirm it with the human.*make sure the checks work on that machine/u);
+    expect(bb.callsTo("environmentCompositions")).toEqual([["proj_1"]]);
+  });
+
+  it("lists the environments earlier approved projects chose for a repository with the same remote, newest first", async () => {
+    const h = makeCtx();
+    h.bb.machineProviderList = [BOXES];
+    h.bb.compositionList = [BOXED_TREES];
+    h.bb.pluginList = [...h.bb.pluginList, { id: "boxes", enabled: true, builtin: false }];
+    await seedProject(h, onMachine({ provider: "boxed-trees", machine: { provider: "boxes", inputs: { zones: ["areas/a"] } } }));
+    h.bb.addBbProject("proj_2", { host_1: "/repo2" }, { gitRemoteUrl: "git@github.com:acme/shop.git" });
+    h.bb.addBbProject("proj_3", { host_1: "/repo3" });
+    const facts = await gatherFacts(h.ctx, [{ label: "this thread's repository", index: null, bbProjectId: "proj_2", settings: null }, { label: "another", index: 0, bbProjectId: "proj_3", settings: null }], "host_1");
+    const [same, other] = discoverText(facts).split("\n\n");
+    expect(same).toContain('- Earlier picks for this repository\'s remote: provider = "boxed-trees", machine = { provider = "boxes" } in the Loom project csv (`bb loom spec csv` shows it).');
+    expect(other).not.toContain("Earlier picks");
+  });
+
+  it("accepts a machine provider bb has with inputs that fit it, and a composition with its own machine provider", async () => {
+    expect(await errorsOf(onMachine({ provider: "git-worktree", machine: { provider: "boxes", inputs: { zones: ["areas/a"] } } }))).toEqual([]);
+    expect(await errorsOf(onMachine({ provider: "boxed-trees", machine: { provider: "boxes", inputs: { zones: ["areas/a"] } } }))).toEqual([]);
+  });
+
+  it("asks bb for the environments that make their own machine only for a spec that names an environment", async () => {
+    expect(await errorsOf()).toEqual([]);
+    expect(bb.callsTo("environmentCompositions")).toEqual([]);
+    expect(bb.callsTo("machineProviders")).toEqual([]);
+  });
+
+  it("refuses an unknown machine provider, inputs that do not fit it, and a composition without its own machine provider", async () => {
+    expect(await errorsOf(onMachine({ provider: "git-worktree", machine: { provider: "crates" } }))).toEqual(['environment.machine.provider: bb has no machine provider "crates". Use one of: boxes.']);
+    const [inputs] = await errorsOf(onMachine({ provider: "git-worktree", machine: { provider: "boxes", inputs: { zones: "areas/a" } } }));
+    expect(inputs).toMatch(/^environment\.machine\.inputs: zones: .*They do not match the machine provider Boxes \(boxes: A box per thread\)/u);
+    const [missing] = await errorsOf(onMachine({ provider: "git-worktree", machine: { provider: "boxes" } }));
+    expect(missing).toMatch(/^environment\.machine\.inputs: the machine provider Boxes \(boxes: A box per thread\) needs inputs/u);
+    const wrong = 'Trees on boxes (boxed-trees: A tree on a box of its own) starts each thread on a new machine from the machine provider "boxes". Set';
+    expect(await errorsOf(onMachine({ provider: "boxed-trees", machine: { provider: "crates" } }))).toEqual([`environment.machine: ${wrong} environment.machine = { provider = "boxes" }, with the inputs it needs.`]);
+    expect(await errorsOf(onMachine({ provider: "boxed-trees" }))).toEqual([`environment.machine: ${wrong} environment.machine = { provider = "boxes" }, with the inputs it needs.`]);
+    expect(await errorsOf(onMachine({ provider: "git-worktree", reviewer: { machine: { provider: "crates" } } }))).toEqual(['environment.reviewer.machine.provider: bb has no machine provider "crates". Use one of: boxes.']);
   });
 });

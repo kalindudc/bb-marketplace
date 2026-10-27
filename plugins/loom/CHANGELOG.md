@@ -2,6 +2,27 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.23.0 (2026-10-27)
+
+### Added
+
+- Threads on new machines. `machine = { provider, inputs }` in an `[environment]`, or in its `reviewer` table, starts each worker and reviewer on a new machine of its own from any bb machine provider, including an environment that makes the machine itself. `loom_propose` checks the machine provider and its inputs against bb, and refuses an environment that makes its own machine unless the spec names that machine provider. Reviewers follow the workers unless the `reviewer` table names another provider. Such a repo needs `merge.strategy = "pr"` with `merge.stack = false`.
+- Loom carries commits between the project's checkout and those machines itself, through its host entry, checked by tree. A submit that passes is rebuilt on the checkout as one commit with the worker's tree, author and message, on `loom/<slug>/<key>-home`, with `refs/loom/<slug>/<key>/reviewed` keeping the reviewed one; it is the ticket's head for review, the pull request and the Changes tab. Only the tree the checks passed comes home: a commit made after the checks is refused, counting no failure. A file over 100 MiB is refused before anything is copied.
+- A work-in-progress save is carried back when the worker's thread ends. While that fails, Loom keeps the stopped thread, and so its machine, for up to 10 minutes, then ends it and says on the ticket that the work did not come home. A worker that ends before `loom_resume` commits on its machine but brings nothing home, so the next worker resumes the same work.
+- `loom_resume`, for a worker on a new machine: a worker that comes back starts at the fresh base and carries in the work on the home branch; `loom_submit` waits for it. A `machine` change between attempts keeps the work: a worker on a new machine after one on the project's machine resumes from that worker's branch, and a worker on the project's machine starts from the home branch, or from the last worker's branch once that builds on it. A released worker on a new machine cannot come back, and its post says the new worker takes over from the work Loom brought home.
+- `loom_resume` and `loom_checkout` refuse a worktree with uncommitted changes, or with commits that are not on the base, instead of dropping them, and say to stash them. A worktree that has the tree already is left as it is, and a carry that fails part-way puts the worktree back at the base. Files committed with `git add -f` over a `.gitignore` carry too.
+- `loom_discover` lists the environments that start each thread on a new machine, and the environments earlier approved projects chose for a repository with the same git remote. The loom-plan skill proposes one on every project and confirms it with the human.
+
+### Changed
+
+- Every reviewer calls `loom_checkout` first instead of running `git checkout --detach`: it checks the reviewed commit out on the project's machine, or carries its tree to a reviewer on a machine of its own. The verdict tools refuse until the worktree has the reviewed tree.
+- Loom compares trees instead of commit ids for the worktree check after the checks, an unchanged fix round, a reviewer's verdict and a worker's release.
+- A machine provider that cannot start a machine now (bb's `machine_provider_rejected`) is a wait, as an unavailable environment provider is, and an idle caused by bb moving a thread's machine (`machine_maintenance`) counts toward neither a nudge nor ending the thread.
+
+### Compatibility
+
+- A migration adds `tickets.head_tree`, `threads.resume_json` and `threads.maintenance_seq`. Projects without `machine` run as before, apart from reviewers calling `loom_checkout`.
+
 ## 0.22.0 (2026-10-26)
 
 ### Fixed

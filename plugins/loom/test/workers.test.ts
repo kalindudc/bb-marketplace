@@ -1,5 +1,6 @@
 import { makeTurnFailedEvent } from "@get-bb/plugin-sdk/testing";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { settleChecks, submit } from "../src/checks";
 import type { PostRow } from "../src/db/store";
 import { renderThread, workerBrief } from "../src/prompts";
 import { SpawnRefusedError, SpawnUnavailableError, type SpawnArgs } from "../src/ports";
@@ -16,13 +17,14 @@ import {
   requeueTicket,
   resolveEnvironment,
   resumeEnding,
+  resumeWork,
   spawnWorker,
   specOf,
   startedFine,
   ticketMoveFor,
   toWorking,
 } from "../src/workers";
-import { makeCtx, seedProject, specToml, startLateWorker, startWorker, ticketOf, workerRows, type Doc, type EngineHarness } from "./helpers";
+import { BOXES, makeCtx, seedMachineProject, seedProject, specToml, startLateWorker, startWorker, ticketOf, workerRows, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;
 
@@ -210,7 +212,7 @@ describe("spawnWorker", () => {
 
   it("waits without counting while the environment provider is unavailable, and starts the same attempt when it is back", async () => {
     await seedProject(h, (doc) => (doc.budget = { max_attempts: 1 }));
-    h.bb.spawnError = () => new SpawnUnavailableError("HTTP 409: No room on this machine");
+    h.bb.spawnError = () => new SpawnUnavailableError("HTTP 409: No room on this machine.");
     await startWorker(h);
     for (let n = 0; n < 6; n++) {
       h.clock.advance(waitOf(ticketOf(h, "CSV-1"))!.until - h.clock.t);
@@ -221,7 +223,7 @@ describe("spawnWorker", () => {
     expect(wait).toMatchObject({ kind: "unavailable", tries: 7, counted: false, expired: false, since: h.clock.t - [1, 2, 4, 8, 15, 15].reduce((a, b) => a + b, 0) * 60_000 });
     expect(wait.until - h.clock.t).toBe(15 * 60_000);
     expect(h.store.posts(ticketOf(h, "CSV-1").id).filter((post) => post.kind === "system").map((post) => post.body)).toEqual([
-      "Could not start a worker: HTTP 409: No room on this machine. Loom tries again in 1m; waiting for the environment provider counts no attempt, and the ticket blocks if it stays unavailable for 1h.",
+      "Could not start a worker: HTTP 409: No room on this machine. Loom tries again in 1m; waiting for its provider counts no attempt, and the ticket blocks if it stays unavailable for 1h.",
     ]);
 
     h.bb.spawnError = null;
@@ -549,6 +551,64 @@ describe("endThread", () => {
     await recordBranch(h.ctx, row);
     expect(ticketOf(h, "CSV-1").branch).toBe("wt-late");
     expect(h.store.thread(row.id)?.environment_id).toBe("env_late");
+  });
+});
+
+describe("ending a worker on a machine of its own", () => {
+  it("brings its WIP commit home on the home branch, leaving the reviewed ref alone, before the machine goes", async () => {
+    await seedMachineProject(h);
+    const row = await startWorker(h);
+    h.host.worktree(`/wt/${row.environment_id}`).dirty = true;
+    h.host.calls = [];
+    await endThread(h.ctx, row, "blocked", { commit: true });
+    expect(h.host.calls.map((call) => `${call.method}@${call.hostId}`)).toEqual(["commitAll@host_box1", "exportChanges@host_box1", "importCommit@host_1"]);
+    expect(h.host.refs.get("refs/heads/loom/csv/csv-1-home")).toBe("home1");
+    expect(h.host.refs.has("refs/loom/csv/csv-1/reviewed")).toBe(false);
+    expect(h.bb.callsTo("archive")).toHaveLength(1);
+  });
+
+  it("keeps the thread, stopped but not archived, while its work cannot be brought home, and ends it once the work comes home", async () => {
+    await seedMachineProject(h);
+    const row = await startWorker(h);
+    h.host.worktree(`/wt/${row.environment_id}`).dirty = true;
+    h.host.scripted.importCommit = [new Error("the project's machine is offline")];
+    await endThread(h.ctx, row, "blocked", { commit: true });
+    expect(h.store.thread(row.id)).toMatchObject({ state: "ending", end_reason: "blocked" });
+    expect(h.bb.callsTo("stop")).toEqual([[row.thread_id]]);
+    expect(h.bb.callsTo("archive")).toEqual([]);
+    expect(h.bb.callsTo("log").map(([, text]) => text)).toContain("Could not bring CSV-1's work home before ending its thread, so Loom keeps the thread and its machine and tries again: the project's machine is offline");
+
+    await resumeEnding(h.ctx, h.store.thread(row.id)!);
+    expect(h.store.thread(row.id)?.state).toBe("ended");
+    expect(h.host.refs.get("refs/heads/loom/csv/csv-1-home")).toBe("home1");
+    expect(h.bb.callsTo("archive")).toEqual([[row.thread_id]]);
+  });
+
+  it("ends the thread after ten minutes of failed bring-homes, and says on the ticket that the work did not come home", async () => {
+    await seedMachineProject(h);
+    const row = await startWorker(h);
+    h.host.errors.importCommit = new Error("the project's machine is offline");
+    await endThread(h.ctx, row, "blocked", { commit: true });
+    h.clock.advance(9 * 60_000);
+    await resumeEnding(h.ctx, h.store.thread(row.id)!);
+    expect(h.store.thread(row.id)?.state).toBe("ending");
+    expect(h.bb.callsTo("archive")).toEqual([]);
+
+    h.clock.advance(2 * 60_000);
+    await resumeEnding(h.ctx, h.store.thread(row.id)!);
+    expect(h.store.thread(row.id)?.state).toBe("ended");
+    expect(h.bb.callsTo("archive")).toEqual([[row.thread_id]]);
+    const note = h.store.posts(ticketOf(h, "CSV-1").id).find((post) => post.kind === "system" && post.body.startsWith("Loom could not bring"));
+    expect(note?.body).toBe("Loom could not bring the worker's work home from its machine, so the next worker starts without the changes it made since it last submitted or saved: the project's machine is offline. Loom tried for 10 minutes before it ended the thread.");
+  });
+
+  it("still ends the thread when its WIP commit fails, and says why in the log", async () => {
+    await seedMachineProject(h);
+    const row = await startWorker(h);
+    h.host.errors.commitAll = new Error("the disk is full");
+    await endThread(h.ctx, row, "blocked", { commit: true });
+    expect(h.store.thread(row.id)?.state).toBe("ended");
+    expect(h.bb.callsTo("log").map(([, text]) => text)).toContain("Could not save CSV-1's work before ending its thread: the disk is full");
   });
 });
 
@@ -899,5 +959,241 @@ describe("prompts", () => {
     expect(workerBrief({ project: project(), spec, ticket, posts: [], resume: true, signature: "" })).not.toContain("End every comment");
     const integration = parseSpec(specToml()).spec!;
     expect(workerBrief({ project: project(), spec: integration, ticket, posts: [], resume: false, signature: "Posted by Loom" })).not.toContain("End every comment");
+  });
+});
+
+describe("loom_resume on a machine of its own", () => {
+  async function pending() {
+    await seedMachineProject(h);
+    const row = await startWorker(h);
+    h.host.trees.set("home1", "t1");
+    h.store.updateThread(row.id, { resume_json: JSON.stringify({ sha: "home1", tree: "t1" }) });
+    h.host.calls = [];
+    return h.store.thread(row.id)!;
+  }
+
+  it("carries the work brought home into the worker's worktree and clears the resume, and loom_submit waits for it", async () => {
+    const row = await pending();
+    expect(() => submit(h.ctx, row.thread_id!, "Done")).toThrow(/Call loom_resume first/u);
+    const reply = await resumeWork(h.ctx, row.thread_id!);
+    expect(reply).toContain("Loom put CSV-1's earlier work in your worktree");
+    expect(h.store.thread(row.id)!.resume_json).toBeNull();
+    expect(h.host.calls.map((call) => `${call.method}@${call.hostId}`)).toEqual(["exportChanges@host_1", "carryStart@host_box1", "carryFinish@host_box1"]);
+    expect(h.host.callsTo("exportChanges")).toEqual([{ worktree: "/repo", base: "origin/main", head: "home1" }]);
+    const worktree = h.host.worktree(`/wt/${row.environment_id}`);
+    expect(h.host.trees.get(worktree.head)).toBe("t1");
+    expect(submit(h.ctx, row.thread_id!, "Done")).toContain("Submitted CSV-1");
+    await settleChecks(h.ctx);
+  });
+
+  it("says there is nothing to resume without pending work, and keeps the resume when the carry fails", async () => {
+    const row = await pending();
+    h.host.scripted.carryStart = [{ outcome: "unavailable", message: "The base commit base000 is not on this machine" }];
+    await expect(resumeWork(h.ctx, row.thread_id!)).rejects.toThrow("Loom could not put the earlier work in your worktree: The base commit base000 is not on this machine. Call loom_resume again, or loom_block if it keeps failing.");
+    expect(h.store.thread(row.id)!.resume_json).not.toBeNull();
+    await resumeWork(h.ctx, row.thread_id!);
+    expect(await resumeWork(h.ctx, row.thread_id!)).toContain("Nothing to resume");
+    await expect(resumeWork(h.ctx, "thr_plan")).rejects.toThrow(/loom_resume is for a Loom worker thread/u);
+  });
+});
+
+describe("a worker on a machine of its own after an earlier one", () => {
+  it("starts at the fresh base with the work brought home pending for loom_resume", async () => {
+    await seedMachineProject(h);
+    const first = await startWorker(h);
+    h.host.worktree(`/wt/${first.environment_id}`).dirty = true;
+    await blockTicket(h.ctx, ticketOf(h, "CSV-1"), { reason: "Need the schema", needs: "the schema", actor: "human" });
+    expect(h.host.refs.get("refs/heads/loom/csv/csv-1-home")).toBe("home1");
+    await requeueTicket(h.ctx, "CSV-1", { note: "Here it is", actor: "human", author: "human" });
+    const second = await startWorker(h);
+    expect(second.id).not.toBe(first.id);
+    expect(spawnArgs(1)).toMatchObject({ baseBranch: "origin/main", environment: { providerId: "git-worktree", machine: { providerId: "boxes" } } });
+    expect(h.host.callsTo("refTip")).toContainEqual({ repo: "/repo", ref: "refs/heads/loom/csv/csv-1-home" });
+    expect(JSON.parse(h.store.thread(second.id)!.resume_json!)).toEqual({ sha: "home1", tree: "c1" });
+  });
+
+  it("keeps the work brought home when a worker ends before loom_resume, so the next worker resumes from it", async () => {
+    await seedMachineProject(h);
+    const first = await startWorker(h);
+    h.host.worktree(`/wt/${first.environment_id}`).dirty = true;
+    await blockTicket(h.ctx, ticketOf(h, "CSV-1"), { reason: "Need the schema", needs: "the schema", actor: "human" });
+    await requeueTicket(h.ctx, "CSV-1", { note: "Here it is", actor: "human", author: "human" });
+    const second = await startWorker(h);
+    expect(JSON.parse(h.store.thread(second.id)!.resume_json!)).toEqual({ sha: "home1", tree: "c1" });
+
+    h.host.worktree(`/wt/${second.environment_id}`).dirty = true;
+    h.host.calls = [];
+    await blockTicket(h.ctx, ticketOf(h, "CSV-1"), { reason: "Still stuck", needs: "help", actor: "human" });
+    expect(h.host.calls.map((call) => `${call.method}@${call.hostId}`)).toEqual(["commitAll@host_box2"]);
+    expect(h.host.refs.get("refs/heads/loom/csv/csv-1-home")).toBe("home1");
+    expect(h.bb.callsTo("log").map(([, text]) => text)).toContain("CSV-1's worker ended before loom_resume, so Loom kept the work brought home as it was; the worker's own changes stay committed on its machine.");
+
+    await requeueTicket(h.ctx, "CSV-1", { note: "Try again", actor: "human", author: "human" });
+    const third = await startWorker(h);
+    expect(JSON.parse(h.store.thread(third.id)!.resume_json!)).toEqual({ sha: "home1", tree: "c1" });
+  });
+
+  it("starts with nothing pending when no work was brought home", async () => {
+    await seedMachineProject(h);
+    const row = await startWorker(h);
+    expect(spawnArgs(0).baseBranch).toBe("origin/main");
+    expect(h.store.thread(row.id)!.resume_json).toBeNull();
+  });
+
+  it("waits, counting nothing at first, when Loom cannot read the work brought home", async () => {
+    await seedMachineProject(h);
+    h.host.scripted.refTip = [new Error("the host is restarting")];
+    await spawnWorker(h.ctx, project(), specOf(h.store, project()), ticketOf(h, "CSV-1"));
+    expect(h.bb.callsTo("spawnThread")).toEqual([]);
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued", failures: 0 });
+    expect(waitOf(ticketOf(h, "CSV-1"), "worker")).toMatchObject({ kind: "failed", reason: "Loom could not read the work brought home for CSV-1: the host is restarting" });
+  });
+});
+
+describe("a placement change between a ticket's workers", () => {
+  async function placement(machine: boolean) {
+    h.bb.machineProviderList = [BOXES];
+    await h.projects.propose({
+      toml: specToml((doc) => {
+        doc.merge = { strategy: "pr", stack: false };
+        if (machine) doc.environment = { provider: "git-worktree", machine: { provider: "boxes" } };
+        else delete doc.environment;
+      }),
+      threadId: "thr_plan",
+      bbProjectId: "proj_1",
+      hostId: "host_1",
+    });
+    await h.projects.approve("csv", "human");
+  }
+  const block = (reason: string) => blockTicket(h.ctx, ticketOf(h, "CSV-1"), { reason, needs: "help", actor: "human" });
+  const requeue = () => requeueTicket(h.ctx, "CSV-1", { note: "Go on", actor: "human", author: "human" });
+
+  it("resumes a worker on a new machine from the branch a worker on the project's machine left, also after a worker that never resumed", async () => {
+    await seedProject(h, (doc) => (doc.merge = { strategy: "pr", stack: false }));
+    const first = await startWorker(h);
+    h.bb.environments.get(first.environment_id!)!.branchName = "loom/csv/csv-1-1";
+    h.host.worktree(`/wt/${first.environment_id}`).dirty = true;
+    await block("Need the schema");
+    h.host.refs.set("refs/heads/loom/csv/csv-1-1", "c1");
+    await placement(true);
+    await requeue();
+    const second = await startWorker(h);
+    expect(spawnArgs(1)).toMatchObject({ baseBranch: "origin/main", environment: { machine: { providerId: "boxes" } } });
+    expect(JSON.parse(h.store.thread(second.id)!.resume_json!)).toEqual({ sha: "c1", tree: "c1" });
+
+    h.host.worktree(`/wt/${second.environment_id}`).dirty = true;
+    await block("Still stuck");
+    expect(ticketOf(h, "CSV-1").branch).toBe("loom/csv/csv-1-1");
+    await requeue();
+    const third = await startWorker(h);
+    expect(JSON.parse(h.store.thread(third.id)!.resume_json!)).toEqual({ sha: "c1", tree: "c1" });
+  });
+
+  it("starts a worker on the project's machine from the work brought home when the last branch was on another machine, and from its own branch after that", async () => {
+    await seedMachineProject(h);
+    const first = await startWorker(h);
+    h.host.worktree(`/wt/${first.environment_id}`).dirty = true;
+    await block("Need the schema");
+    expect(h.host.refs.get("refs/heads/loom/csv/csv-1-home")).toBe("home1");
+    await placement(false);
+    await requeue();
+    const second = await startWorker(h);
+    expect(spawnArgs(1).baseBranch).toBe("loom/csv/csv-1-home");
+    expect(spawnArgs(1).environment?.machine).toBeUndefined();
+    expect(h.store.thread(second.id)!.resume_json).toBeNull();
+
+    h.bb.environments.get(second.environment_id!)!.branchName = "loom/csv/csv-1-2";
+    h.host.worktree(`/wt/${second.environment_id}`).dirty = true;
+    await block("Still stuck");
+    h.host.refs.set("refs/heads/loom/csv/csv-1-2", "c2");
+    h.host.ancestry.add("home1..c2");
+    await requeue();
+    await startWorker(h);
+    expect(spawnArgs(2).baseBranch).toBe("loom/csv/csv-1-2");
+  });
+
+  it("resumes from the work brought home, not from a copy of the last worker's branch that its provider synced to the checkout", async () => {
+    await seedMachineProject(h);
+    const first = await startWorker(h);
+    h.host.worktree(`/wt/${first.environment_id}`).dirty = true;
+    await block("Need the schema");
+    h.host.refs.set("refs/heads/wt-thr_w1", "synced1");
+    await requeue();
+    h.host.calls = [];
+    const second = await startWorker(h);
+    expect(JSON.parse(h.store.thread(second.id)!.resume_json!)).toEqual({ sha: "home1", tree: "c1" });
+    expect(h.host.callsTo("refTip")).toEqual([
+      { repo: "/repo", ref: "refs/heads/loom/csv/csv-1-home" },
+      { repo: "/repo", ref: "refs/heads/wt-thr_w1", contains: "home1" },
+    ]);
+  });
+});
+
+describe("idles a move of the thread's machine caused", () => {
+  const moved = (threadId: string, seq: number) => h.bb.systemErrors.set(threadId, { code: "machine_maintenance", message: "Machine preservation is interrupting this turn.", seq, at: 0 });
+
+  it("does not count the idle after a move, consumes the event, counts the next idle, and ignores a later move again", async () => {
+    await seedMachineProject(h);
+    const row = await startWorker(h);
+    moved(row.thread_id!, 7);
+    await onWorkerIdle(h.ctx, row);
+    expect(h.store.thread(row.id)).toMatchObject({ state: "active", idle_count: 0, maintenance_seq: 7 });
+    expect(h.bb.sent(row.thread_id!)).toEqual([]);
+
+    await onWorkerIdle(h.ctx, h.store.thread(row.id)!);
+    expect(h.store.thread(row.id)).toMatchObject({ idle_count: 1 });
+    expect(h.bb.sent(row.thread_id!)).toHaveLength(1);
+
+    moved(row.thread_id!, 12);
+    await onWorkerIdle(h.ctx, h.store.thread(row.id)!);
+    expect(h.store.thread(row.id)).toMatchObject({ state: "active", idle_count: 1, maintenance_seq: 12 });
+  });
+
+  it("counts the same idle as before on the project's machine, and asks bb nothing", async () => {
+    const row = await startBoth();
+    moved(row.thread_id!, 7);
+    await onWorkerIdle(h.ctx, row);
+    expect(h.store.thread(row.id)).toMatchObject({ idle_count: 1, maintenance_seq: 0 });
+    expect(h.bb.callsTo("latestSystemError")).toEqual([]);
+  });
+});
+
+describe("the brief of a worker on a machine of its own", () => {
+  const spec = (edit?: (doc: Doc) => void) =>
+    parseSpec(
+      specToml((doc) => {
+        doc.merge = { strategy: "pr", stack: false };
+        doc.environment = { provider: "git-worktree", machine: { provider: "boxes" } };
+        doc.repo = [{ name: "web", project: "proj_web" }, { name: "api", project: "proj_api" }];
+        doc.ticket[0].repo = "web";
+        doc.ticket[1].repo = "web";
+        edit?.(doc);
+      }),
+    ).spec!;
+
+  it("starts with loom_resume when earlier work is pending, and says where the earlier work comes from", async () => {
+    await seedProject(h);
+    const ticket = { ...ticketOf(h, "CSV-2"), repo: "web", branch: "loom/csv/csv-2-1" };
+    const brief = workerBrief({ project: project(), spec: spec(), ticket, posts: [], resume: true, remote: true, resumePending: true });
+    expect(brief.split("\n").slice(2, 4)).toEqual(["## First step", "Call loom_resume before anything else. It puts the work earlier workers left on this ticket in this worktree, as one commit on the base, carried from the project's machine; loom_submit is refused until you have."]);
+    expect(brief).toContain("An earlier worker already worked on this ticket, on another machine. loom_resume, your first step, brings its work here, so continue from it instead of starting again.");
+    expect(brief).not.toContain("loom/csv/csv-2-1");
+    const none = workerBrief({ project: project(), spec: spec(), ticket, posts: [], resume: true, remote: true, resumePending: false });
+    expect(none).not.toContain("## First step");
+    expect(none).toContain("none of its work was kept, so this worktree starts from the base");
+  });
+
+  it("names no path on the project's machine, and points an open dependency at its branch on the remote", async () => {
+    await seedProject(h);
+    const dep = { ...ticketOf(h, "CSV-1"), repo: "web", state: "pr_open" as const, pushed_sha: "abc1234567890", pr_branch: "loom/csv/csv-1-1", pr_url: "https://github.com/acme/web/pull/1" };
+    const ticket = { ...ticketOf(h, "CSV-2"), repo: "web" };
+    const checkouts = new Map([["api", "/src/api"]]);
+    const brief = workerBrief({ project: project(), spec: spec(), ticket, posts: [], resume: false, tickets: [dep, ticket], checkouts, remote: true });
+    expect(brief).not.toContain("/src/api");
+    expect(brief).toContain('- "api" (bb project proj_api): it is not on this machine');
+    expect(brief).toContain("Its branch is origin/loom/csv/csv-1-1: read its files with `git fetch origin loom/csv/csv-1-1` and then `git show FETCH_HEAD:<file>`.");
+    const local = workerBrief({ project: project(), spec: spec(), ticket, posts: [], resume: false, tickets: [dep, ticket], checkouts });
+    expect(local).toContain("/src/api");
+    expect(local).not.toContain("git fetch origin");
   });
 });

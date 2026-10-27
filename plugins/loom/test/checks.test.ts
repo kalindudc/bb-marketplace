@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { resumeCheckingTickets, runChecks, settleChecks, submit } from "../src/checks";
 import { PAUSE_NOW_REASON } from "../src/states";
 import { blockTicket, endThread, resumeEnding } from "../src/workers";
-import { makeCtx, seedProject, seedRepoProject, startLateWorker, startWorker, ticketOf, type Doc, type EngineHarness } from "./helpers";
+import { makeCtx, seedMachineProject, seedProject, seedRepoProject, startLateWorker, startWorker, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;
 
@@ -15,7 +15,7 @@ const project = () => h.store.projectBySlug("csv")!;
 const posts = (key = "CSV-1") => h.store.posts(ticketOf(h, key).id);
 const lastCheck = (key = "CSV-1") => posts(key).filter((post) => post.kind === "check").at(-1)!;
 const runs = (key = "CSV-1") => h.store.runs(ticketOf(h, key).id);
-const checkData = (key = "CSV-1") => JSON.parse(lastCheck(key).data_json) as { passed: boolean; runs: Array<{ command: string; exitCode: number | null }>; outside: string[]; protectedHits: string[] };
+const checkData = (key = "CSV-1") => JSON.parse(lastCheck(key).data_json) as { passed: boolean; head?: string; runs: Array<{ command: string; exitCode: number | null }>; outside: string[]; protectedHits: string[] };
 
 /** A started worker that changed `changed` and called loom_submit; the checks have finished. */
 async function submitted(edit?: (doc: Doc) => void, changed = ["src/model/a.ts"]) {
@@ -508,5 +508,72 @@ describe("a project that is not running", () => {
     expect(ticketOf(h, "CSV-1").state).toBe("working");
     expect(posts().at(-1)).toMatchObject({ kind: "system" });
     expect(h.bb.sent("thr_w1")).toEqual([]);
+  });
+});
+
+describe("a worker on a machine of its own", () => {
+  async function submittedOnBox() {
+    await seedMachineProject(h);
+    const row = await startWorker(h);
+    const worktree = h.host.worktree(`/wt/${row.environment_id}`);
+    worktree.dirty = true;
+    worktree.changed = ["src/model/a.ts"];
+    return { row, worktree };
+  }
+
+  it("brings the passed commit home, and reviews the home commit with its tree", async () => {
+    const { row } = await submittedOnBox();
+    expect(h.bb.environments.get(row.environment_id!)!.hostId).toBe("host_box1");
+    submit(h.ctx, row.thread_id!, "Mapped orders to rows");
+    await settleChecks(h.ctx);
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "review", head_sha: "home1", head_tree: "c1" });
+    expect(checkData()).toMatchObject({ passed: true, head: "home1" });
+    expect(h.host.refs.get("refs/heads/loom/csv/csv-1-home")).toBe("home1");
+    expect(h.host.refs.get("refs/loom/csv/csv-1/reviewed")).toBe("home1");
+    expect(h.host.calls.filter((call) => call.method === "exportChanges").map((call) => call.hostId)).toEqual(["host_box1"]);
+    expect(h.host.calls.filter((call) => call.method === "importCommit").map((call) => call.hostId)).toEqual(["host_1"]);
+    expect(runs().map((run) => run.label)).not.toContain("importCommit");
+  });
+
+  it("passes the worktree check when the machine moved during the checks and gave the same tree a new commit", async () => {
+    const { row, worktree } = await submittedOnBox();
+    h.host.onExec = () => {
+      worktree.head = "c1-moved";
+      h.host.trees.set("c1-moved", "c1");
+    };
+    submit(h.ctx, row.thread_id!, "Mapped orders to rows");
+    await settleChecks(h.ctx);
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "review", head_tree: "c1" });
+    expect(checkData().passed).toBe(true);
+  });
+
+  it("brings home only the tree the checks passed: a commit made after them is refused, and no ref moves", async () => {
+    const { row } = await submittedOnBox();
+    h.host.scripted.exportChanges = [{ base: "base000", head: "c2", tree: "t2", message: "late\n", author: { name: "Worker", email: "worker@example.com", date: "1800000000 +0000" }, changes: [{ status: "A", path: "src/model/late.ts", mode: "100644", blob: "b2", size: 3 }] }];
+    submit(h.ctx, row.thread_id!, "Mapped orders to rows");
+    await settleChecks(h.ctx);
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "working", check_failures: 0, head_sha: null, head_tree: null });
+    expect(posts().at(-1)!.body).toBe("The checks could not run: the worktree changed after the checks passed: its tree is t2, not the checked c1. Submit again.");
+    expect(h.host.callsTo("readBlob")).toEqual([]);
+    expect(h.host.callsTo("importCommit")).toEqual([]);
+    expect(h.host.refs.size).toBe(0);
+  });
+
+  it("brings nothing home when the checks fail", async () => {
+    const { row } = await submittedOnBox();
+    h.host.execResults.push({ exitCode: 1, output: "1 failing" });
+    submit(h.ctx, row.thread_id!, "Mapped orders to rows");
+    await settleChecks(h.ctx);
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "working", head_sha: null, head_tree: null });
+    expect(h.host.callsTo("importCommit")).toEqual([]);
+  });
+
+  it("is a host failure, counting no check failure, when the commit cannot be brought home", async () => {
+    const { row } = await submittedOnBox();
+    h.host.scripted.importCommit = [{ outcome: "unavailable", message: "git fetch from origin failed: offline" }];
+    submit(h.ctx, row.thread_id!, "Mapped orders to rows");
+    await settleChecks(h.ctx);
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "working", check_failures: 0 });
+    expect(posts().at(-1)!.body).toBe("The checks could not run: git fetch from origin failed: offline. Submit again.");
   });
 });

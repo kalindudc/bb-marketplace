@@ -50,6 +50,7 @@ function row(key: string, state: TicketState, over: Partial<TicketRow> & { deps?
     pr_poll_json: null,
     merge_after_json: "[]",
     pr_meta_json: null,
+    head_tree: null,
     created_by: "human",
     created_at: 0,
     updated_at: 0,

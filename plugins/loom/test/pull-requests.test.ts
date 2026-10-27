@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { settleChecks, submit } from "../src/checks";
-import type { ThreadRow } from "../src/db/store";
+import type { PostRow, ThreadRow } from "../src/db/store";
 import type { HostOutput } from "../src/host-contract";
 import { Engine } from "../src/engine";
 import { pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
-import { askForPrTexts, handInPrText, onPrWriterIdle, resumePrAsks } from "../src/pull-requests";
+import { askForPrTexts, handInPrText, onPrWriterIdle, resumePrAsks, unchangedFix } from "../src/pull-requests";
 import type { LoomSettings } from "../src/record";
 import { approve, settleReviews, spawnReviewers } from "../src/review";
 import { deliverHandBacks } from "../src/slots";
@@ -819,5 +819,19 @@ describe("a requeue of a ticket whose pull request stays open", () => {
     await poll();
     expect(ticket()).toMatchObject({ state: "working", pr_rounds: 3 });
     void worker;
+  });
+});
+
+describe("unchangedFix", () => {
+  const post = (data: object): PostRow => ({ id: 1, project_id: 1, ticket_id: 1, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "merge", body: "", data_json: JSON.stringify({ outcome: "pr_feedback", ...data }), at: 0 });
+
+  it("compares trees, so a fix that comes home as a new commit with the same files changed nothing", () => {
+    expect(unchangedFix([post({ head: "home1", tree: "t1" })], { sha: "c9", tree: "t1" })).toBe(true);
+    expect(unchangedFix([post({ head: "home1", tree: "t1" })], { sha: "home1", tree: "t2" })).toBe(false);
+  });
+
+  it("still reads a feedback post from before trees were kept, by its head", () => {
+    expect(unchangedFix([post({ head: "c1" })], { sha: "c1", tree: "t1" })).toBe(true);
+    expect(unchangedFix([post({ head: "c1", tree: null })], { sha: "c2", tree: "t1" })).toBe(false);
   });
 });

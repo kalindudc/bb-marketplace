@@ -65,6 +65,7 @@ function row(key: string, state: TicketState, over: Over = {}): TicketRow {
     pr_poll_json: null,
     merge_after_json: JSON.stringify(after),
     pr_meta_json: meta === undefined ? null : JSON.stringify({ at: 0, draft: null, review: null, base: null, ...meta }),
+    head_tree: null,
     created_by: "human",
     created_at: 0,
     updated_at: 0,

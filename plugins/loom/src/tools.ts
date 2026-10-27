@@ -5,6 +5,7 @@ import type { BbPluginApi, PluginAgentToolResult } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { ASK_ACTIONS, recordAsk } from "./asks";
 import { submit } from "./checks";
+import { ticketRepo } from "./checkouts";
 import { formatTicket } from "./cli";
 import { StoreError, type ThreadRow, type TicketRow } from "./db/store";
 import { discoverText, gatherFacts, type RepoTarget } from "./discover";
@@ -12,16 +13,19 @@ import type { Engine } from "./engine";
 import { LoomError, type ProposeResult, type Projects } from "./projects";
 import { specReviewBlocks } from "./format";
 import { handInPrText } from "./pull-requests";
-import { approve, requestChanges } from "./review";
+import { usesNewMachine } from "./environments";
+import { approve, checkOutReview, requestChanges } from "./review";
 import { ticketPatchSchema, ticketSpecSchema } from "./spec";
 import { ensureSpecReview, specReviewerOf, specVerdict, type SpecReviewStatus } from "./spec-review";
 import { SPEC_REVIEW_ROUNDS, TICKET_STATES } from "./states";
 import { addTickets, boardText, editTicket } from "./triage";
-import { blockTicket, requeueTicket } from "./workers";
+import { blockTicket, requeueTicket, resumeWork, specOf } from "./workers";
 
 export const PLANNER_TOOLS = ["loom_propose", "loom_discover", "loom_board", "loom_ticket", "loom_requeue", "loom_add_tickets", "loom_edit_ticket", "loom_cancel_ticket", "loom_post", "loom_ask_human"] as const;
 export const WORKER_TOOLS = ["loom_note", "loom_submit", "loom_block", "loom_pr"] as const;
-export const REVIEWER_TOOLS = ["loom_note", "loom_approve", "loom_request_changes"] as const;
+/** A worker on a machine of its own also has loom_resume, to carry in the work its ticket's earlier workers left. */
+export const MACHINE_WORKER_TOOLS = [...WORKER_TOOLS, "loom_resume"] as const;
+export const REVIEWER_TOOLS = ["loom_note", "loom_checkout", "loom_approve", "loom_request_changes"] as const;
 export const ORDINARY_TOOLS = ["loom_propose", "loom_discover"] as const;
 export const SPEC_REVIEWER_TOOLS = ["loom_spec_approve", "loom_spec_request_changes"] as const;
 export const SKILLS = { plan: "loom-plan", usage: "loom" } as const;
@@ -338,12 +342,30 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
     execute: (input, tool) => run(() => handInPrText(ctx, tool.threadId, input)),
   });
 
+  bb.agents.registerTool({
+    name: "loom_resume",
+    description:
+      "Your first step when your brief says so: Loom puts the work its earlier workers left on this ticket in your worktree, as one commit on the base, carried from the project's machine. Then continue from it. loom_submit is refused until you have.",
+    presentation: { label: { pending: "Carrying in the earlier work", completed: "Carried in the earlier work" } },
+    parameters: z.object({}),
+    execute: (_input, tool) => run(() => resumeWork(ctx, tool.threadId)),
+  });
+
   // ---- the reviewer's tools
+
+  bb.agents.registerTool({
+    name: "loom_checkout",
+    description:
+      "Your first step: Loom puts the exact work the ticket was submitted with, the work that merges, in your worktree, checked out on this machine or carried to it. The verdict tools are refused until your worktree has it.",
+    presentation: { label: { pending: "Checking out the reviewed work", completed: "Checked out the reviewed work" } },
+    parameters: z.object({}),
+    execute: (_input, tool) => run(() => checkOutReview(ctx, tool.threadId)),
+  });
 
   bb.agents.registerTool({
     name: "loom_approve",
     description:
-      "Approve the ticket you review: every acceptance criterion holds and no blocking finding remains. Give one verdict per round, then end your turn. Refused until your worktree is on the commit named in your brief.",
+      "Approve the ticket you review: every acceptance criterion holds and no blocking finding remains. Give one verdict per round, then end your turn. Refused until loom_checkout put the reviewed work in your worktree.",
     presentation: { label: { pending: "Approving the ticket", completed: "Approved the ticket" } },
     parameters: z.object({ summary: z.string().min(1).max(4000).describe("How each acceptance criterion holds.") }),
     execute: ({ summary }, tool) => run(() => approve(ctx, tool.threadId, summary)),
@@ -352,7 +374,7 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
   bb.agents.registerTool({
     name: "loom_request_changes",
     description:
-      "Send the ticket back to its worker with findings: each has a severity (blocking or should-fix), a title, a detail, and where you can, a file and a line. Give one verdict per round, then end your turn. Refused until your worktree is on the commit named in your brief.",
+      "Send the ticket back to its worker with findings: each has a severity (blocking or should-fix), a title, a detail, and where you can, a file and a line. Give one verdict per round, then end your turn. Refused until loom_checkout put the reviewed work in your worktree.",
     presentation: { label: { pending: "Requesting changes", completed: "Requested changes" } },
     parameters: z.object({ summary: z.string().min(1).max(4000).describe("What is wrong, in a few sentences."), findings: z.array(findingSchema).min(1).max(20) }),
     execute: ({ summary, findings }, tool) => run(() => requestChanges(ctx, tool.threadId, summary, findings)),
@@ -402,7 +424,14 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
     }
     if (row.role === "worker") {
       const ticket = row.ticket_id === null ? null : store.ticket(row.ticket_id);
-      return { tools: [...WORKER_TOOLS], skills: [SKILLS.usage], instructions: `You are a Loom worker on ${ticket?.key ?? "a ticket"}; follow the brief in your first message.` };
+      let remote = false;
+      try {
+        const project = projects.projectOf(row);
+        remote = ticket !== null && project?.approved_version != null && usesNewMachine(ticketRepo(specOf(store, project), ticket), "worker");
+      } catch (error) {
+        bb.log.warn(`agent configuration of ${context.thread.id}: ${errText(error)}`);
+      }
+      return { tools: [...(remote ? MACHINE_WORKER_TOOLS : WORKER_TOOLS)], skills: [SKILLS.usage], instructions: `You are a Loom worker on ${ticket?.key ?? "a ticket"}; follow the brief in your first message.` };
     }
     const ticket = row.ticket_id === null ? null : store.ticket(row.ticket_id);
     return {

@@ -142,16 +142,16 @@ function repositorySection(project: ProjectRow, repo: RepoSettings): string[] {
   ];
 }
 
-/** The project's other repos, read only, with their checkout paths on this machine; empty when the ticket's repo is the only one. */
-function otherReposSection(spec: Spec, repo: RepoSettings, checkouts: ReadonlyMap<string, string>): string[] {
+/** The project's other repos, read only, with their checkout paths on this machine; empty when the ticket's repo is the only one. On a machine of its own (`remote`), none of them is there. */
+function otherReposSection(spec: Spec, repo: RepoSettings, checkouts: ReadonlyMap<string, string>, remote = false): string[] {
   const others = (spec.repo ?? []).filter((entry) => entry.name !== repo.name);
   if (others.length === 0) return [];
   return [
     "## Other repositories (read only)",
     "This project also works in these repos. You may read them for context, but never edit them: changes there belong to their own tickets.",
     ...others.map((entry) => {
-      const path = checkouts.get(entry.name);
-      return `- ${JSON.stringify(entry.name)} (bb project ${entry.project}): ${path === undefined ? "no checkout was found on this machine" : path}`;
+      const path = remote ? undefined : checkouts.get(entry.name);
+      return `- ${JSON.stringify(entry.name)} (bb project ${entry.project}): ${remote ? "it is not on this machine" : path === undefined ? "no checkout was found on this machine" : path}`;
     }),
     ...(repo.branch === null ? [] : [`This project's merged work in them is on the branch ${JSON.stringify(repo.branch)}. Read a file from it with \`git -C <path> show ${repo.branch}:<file>\`.`]),
     "",
@@ -177,8 +177,9 @@ function pullRequestSection(spec: Spec, repo: RepoSettings, signature: string): 
 /**
  * On the pr strategy, what each of the ticket's dependencies is: merged, or a pull request still open, which this
  * worktree starts on when it is in the same repo and the worker can read from the other repo's checkout when it is not.
+ * A worker on a machine of its own (`remote`) reads a dependency in its repo from the dependency's branch on the remote.
  */
-function dependenciesSection(spec: Spec, ticket: TicketRow, tickets: readonly TicketRow[], checkouts: ReadonlyMap<string, string>): string[] {
+function dependenciesSection(spec: Spec, ticket: TicketRow, tickets: readonly TicketRow[], checkouts: ReadonlyMap<string, string>, remote = false): string[] {
   const keys = JSON.parse(ticket.deps_json) as string[];
   if (spec.merge.strategy !== "pr" || keys.length === 0) return [];
   const byKey = new Map(tickets.map((row) => [row.key, row]));
@@ -192,11 +193,14 @@ function dependenciesSection(spec: Spec, ticket: TicketRow, tickets: readonly Ti
     if (dep.state === "done") return [`- ${name}: merged.`];
     if (dep.state === "cancelled") return [`- ${name}: cancelled.`];
     if (dep.pushed_sha === null) return [`- ${name}: not merged, and it has no pull request yet.`];
-    const pr = dep.pr_url ?? `the branch ${repoSettings(spec, dep.repo).remote}/${dep.pr_branch ?? dep.branch ?? ""}`;
+    const { remote: from } = repoSettings(spec, dep.repo);
+    const branch = dep.pr_branch ?? dep.branch ?? "";
+    const pr = dep.pr_url ?? `the branch ${from}/${branch}`;
     const open = `- ${name}: its pull request ${pr} is open and not merged yet, at commit ${dep.pushed_sha.slice(0, 12)}.`;
+    if (!elsewhere && remote) return [`${open} Its branch is ${from}/${branch}: read its files with \`git fetch ${from} ${branch}\` and then \`git show FETCH_HEAD:<file>\`.`];
     if (!elsewhere) return [stack?.deps[dep.key] !== undefined ? `${open} This worktree starts on it, so its changes are already here.` : open];
     crossOpen = true;
-    const path = checkouts.get(dep.repo ?? "");
+    const path = remote ? undefined : checkouts.get(dep.repo ?? "");
     return [path === undefined ? open : `${open} Read its files with \`git -C ${path} show ${dep.pushed_sha}:<file>\`; that checkout's working tree does not have them.`];
   });
   const stacked = Object.keys(stack?.deps ?? {});
@@ -240,6 +244,10 @@ export function workerBrief(a: {
   signature?: string;
   /** The bb threads of the ticket's earlier workers, oldest first. */
   earlierThreads?: readonly string[];
+  /** The worker runs on a machine of its own, away from the project's checkout. */
+  remote?: boolean;
+  /** Work brought home from earlier workers waits for loom_resume. */
+  resumePending?: boolean;
 }): string {
   const { project, spec, ticket, posts, resume } = a;
   const multi = isMultiRepo(spec);
@@ -255,6 +263,13 @@ export function workerBrief(a: {
   const lines = [
     `You are a Loom worker on ${ticket.key} in the project ${JSON.stringify(project.name)} (${project.slug}). Loom is a plugin that runs this project with agents: you do this one ticket in this worktree, and the plugin decides when it is done.`,
     "",
+    ...(a.resumePending === true
+      ? [
+          "## First step",
+          "Call loom_resume before anything else. It puts the work earlier workers left on this ticket in this worktree, as one commit on the base, carried from the project's machine; loom_submit is refused until you have.",
+          "",
+        ]
+      : []),
     "## Ticket",
     `${ticket.key} · ${JSON.stringify(ticket.title)}`,
     ticket.body,
@@ -274,8 +289,8 @@ export function workerBrief(a: {
     commands.length > 0 ? bullets(commands) : "- none",
     "They run in this worktree, in this order, and stop at the first failure. They must not write tracked files, and you must not edit files while they run.",
     "",
-    ...(multi ? otherReposSection(spec, repo, a.checkouts ?? new Map()) : []),
-    ...dependenciesSection(spec, ticket, a.tickets ?? [], a.checkouts ?? new Map()),
+    ...(multi ? otherReposSection(spec, repo, a.checkouts ?? new Map(), a.remote) : []),
+    ...dependenciesSection(spec, ticket, a.tickets ?? [], a.checkouts ?? new Map(), a.remote),
     ...(spec.merge.strategy === "pr" ? pullRequestSection(spec, repo, a.signature ?? COMMENT_SIGNATURE) : []),
     "## Rules",
     "- Work only in this worktree. Never push, merge, or edit a protected path.",
@@ -287,9 +302,13 @@ export function workerBrief(a: {
   if (resume) {
     lines.push("", "## Earlier work");
     lines.push(
-      ticket.branch === null
-        ? "An earlier worker started this ticket, but no branch was kept, so this worktree starts from the base."
-        : `An earlier worker already worked on this ticket. This worktree starts from its branch ${JSON.stringify(ticket.branch)}, so continue from what is there instead of starting again.`,
+      a.remote === true
+        ? a.resumePending === true
+          ? "An earlier worker already worked on this ticket, on another machine. loom_resume, your first step, brings its work here, so continue from it instead of starting again."
+          : "An earlier worker started this ticket, but none of its work was kept, so this worktree starts from the base."
+        : ticket.branch === null
+          ? "An earlier worker started this ticket, but no branch was kept, so this worktree starts from the base."
+          : `An earlier worker already worked on this ticket. This worktree starts from its branch ${JSON.stringify(ticket.branch)}, so continue from what is there instead of starting again.`,
     );
     if (ticket.pushed_sha !== null) lines.push(`This ticket's pull request${ticket.pr_url === null ? "" : ` ${ticket.pr_url}`} is open. Address what Loom's newest feedback post on the ticket lists; Loom pushes your fix to it as one more commit.`);
     const earlier = a.earlierThreads ?? [];
@@ -457,6 +476,8 @@ export function reviewerBrief(a: {
   prFeedback?: PostRow | null;
   /** The checkout path of each other repo of a multi-repo project, by repo name. */
   checkouts?: ReadonlyMap<string, string>;
+  /** The reviewer runs on a machine of its own, away from the project's checkout. */
+  remote?: boolean;
 }): string {
   const { project, spec, ticket, round, diff, checkPost, earlierReviews } = a;
   const repo = repoSettings(spec, ticket.repo);
@@ -468,8 +489,8 @@ export function reviewerBrief(a: {
     `You are a Loom reviewer for ${ticket.key}, round ${round}, in the project ${JSON.stringify(project.name)} (${project.slug}). A worker finished this ticket and the plugin's checks passed. You judge the work; you do not change it.`,
     "",
     "## First step",
-    `Run \`git checkout --detach ${ticket.head_sha}\` in this worktree. That is the exact commit that passed the checks and the one that will merge; the worker's branch may have moved since. Your verdict tools refuse until this worktree is on that commit.`,
-    ...(repo.environment === null ? [] : [`This worktree may hold only part of the repository. Read any file at that commit, checked out or not, with \`git show ${ticket.head_sha}:<path>\`, and list a directory with \`git ls-tree --name-only ${ticket.head_sha} <path>/\`.`]),
+    `Call loom_checkout first; it puts the reviewed tree ${(ticket.head_tree ?? ticket.head_sha ?? "").slice(0, 12)} in your worktree. That is the exact work that passed the checks and the one that will merge; the worker's branch may have moved since. Your verdict tools refuse until this worktree has it.`,
+    ...(repo.environment === null ? [] : ["This worktree may hold only part of the repository. Read any file at that commit, checked out or not, with `git show HEAD:<path>` once loom_checkout has put it in, and list a directory with `git ls-tree --name-only HEAD <path>/`."]),
     "",
     "## Ticket",
     `${ticket.key} · ${JSON.stringify(ticket.title)}`,
@@ -478,7 +499,7 @@ export function reviewerBrief(a: {
     "## Acceptance criteria",
     ...acceptance.map((line, index) => `${index + 1}. ${line}`),
     "",
-    ...(isMultiRepo(spec) ? [...reviewerRepositorySection(project, repo), ...otherReposSection(spec, repo, a.checkouts ?? new Map())] : []),
+    ...(isMultiRepo(spec) ? [...reviewerRepositorySection(project, repo), ...otherReposSection(spec, repo, a.checkouts ?? new Map(), a.remote)] : []),
     "## Rubric",
     spec.review.rubric.length > 0 ? bullets(spec.review.rubric) : "- none; the acceptance criteria are the whole standard",
     "",

@@ -6,8 +6,45 @@ import { join } from "node:path";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import hostEntry from "../host";
-import { hostContract } from "../src/host-contract";
-import { batchQuery, changedFiles, commitAll, diff, ensureBranch, ensureWorktree, exec, fetchBranch, filePatch, ghStatus, ghTransient, git, landedOn, merge, parseRemoteUrl, prBatch, prCommit, prCreate, prFeedback, prRequestReview, prState, push, remotes, resetHard, stackBase, trialWorktree, worktreeState } from "../src/host/ops";
+import { hostContract, type HostInput, type HostOutput } from "../src/host-contract";
+import {
+  batchQuery,
+  carryDelete,
+  carryFinish,
+  carryStart,
+  carryWrite,
+  changedFiles,
+  commitAll,
+  diff,
+  ensureBranch,
+  ensureWorktree,
+  exec,
+  exportChanges,
+  fetchBranch,
+  filePatch,
+  ghStatus,
+  ghTransient,
+  git,
+  importChunk,
+  importCommit,
+  landedOn,
+  merge,
+  parseRemoteUrl,
+  prBatch,
+  prCommit,
+  prCreate,
+  prFeedback,
+  prRequestReview,
+  prState,
+  push,
+  readBlob,
+  refTip,
+  remotes,
+  resetHard,
+  stackBase,
+  trialWorktree,
+  worktreeState,
+} from "../src/host/ops";
 
 const ENV: Record<string, string> = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
 const AUTHOR_VARS = ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"];
@@ -146,10 +183,15 @@ describe("worktreeState", () => {
     const worktree = addWorktree(repo, "loom/csv-2");
     put(worktree, "src/a.ts", "a");
     const { sha } = await commitAll({ worktree, message: "a" });
-    expect(await worktreeState({ worktree, base: "main" })).toEqual({ branch: "loom/csv-2", head: sha, dirty: false, changed: ["src/a.ts"] });
+    expect(await worktreeState({ worktree, base: "main" })).toEqual({ branch: "loom/csv-2", head: sha, tree: sh(worktree, "rev-parse", "HEAD^{tree}"), dirty: false, changed: ["src/a.ts"] });
 
     sh(worktree, "checkout", "-q", "--detach");
     expect((await worktreeState({ worktree, base: "main" })).branch).toBeNull();
+  });
+
+  it("reports the tree of HEAD, which a commit carried to another machine keeps", async () => {
+    const repo = makeRepo();
+    expect((await worktreeState({ worktree: repo, base: "main" })).tree).toBe(sh(repo, "rev-parse", "HEAD^{tree}"));
   });
 
   it("fails clearly when the base is missing", async () => {
@@ -1664,5 +1706,406 @@ describe("prBatch", () => {
     await expect(harness.experimental_call("prBatch", { ...input([1], false), owner: "--jq" })).rejects.toThrow();
     await expect(harness.experimental_call("prBatch", { ...input([1], false), name: "shop) { x }" })).rejects.toThrow();
     await expect(harness.experimental_call("prBatch", input([], false))).rejects.toThrow();
+  });
+});
+
+describe("carrying a commit to the project's machine: exportChanges, readBlob, importChunk and importCommit", () => {
+  const MiB = 1024 * 1024;
+  let dataDir: string;
+
+  beforeEach(() => {
+    dataDir = join(scratch, `data-${counter++}`);
+  });
+
+  /** A bare "origin" with one commit on main, and a clone of it with an identity. */
+  function origin(): { remote: string; clone: () => string } {
+    const seed = makeRepo();
+    put(seed, "old.txt", "old\n");
+    put(seed, "script.sh", "#!/bin/sh\necho hi\n");
+    sh(seed, "add", "-A");
+    sh(seed, "commit", "-q", "-m", "seed");
+    const remote = join(scratch, `origin-${counter++}.git`);
+    execFileSync("git", ["clone", "-q", "--bare", seed, remote]);
+    const clone = () => {
+      const dir = join(scratch, `clone-${counter++}`);
+      execFileSync("git", ["clone", "-q", remote, dir]);
+      sh(dir, "config", "user.email", "worker@example.com");
+      sh(dir, "config", "user.name", "Worker");
+      return dir;
+    };
+    return { remote, clone };
+  }
+
+  /** What the transport does: every blob in 4 MiB ranges from `from`, then one importCommit into `to`. */
+  async function carry(from: string, to: string, exported: HostOutput<"exportChanges">, opts: { tree?: string; refs?: string[]; corrupt?: boolean } = {}) {
+    const ranges: Array<{ path: string; offset: number; bytes: number }> = [];
+    const entries: HostInput<"importCommit">["entries"] = [];
+    for (const change of exported.changes) {
+      if (change.status === "D") {
+        entries.push({ path: change.path, delete: true });
+        continue;
+      }
+      const upload = `csv-1-${change.blob}`;
+      for (let offset = 0; offset === 0 || offset < change.size!; offset += 4 * MiB) {
+        let { data } = await readBlob({ repo: from, sha: change.blob!, offset, length: Math.min(4 * MiB, change.size! - offset) || 0 });
+        if (opts.corrupt === true) data = Buffer.from("tampered").toString("base64");
+        ranges.push({ path: change.path, offset, bytes: Buffer.from(data, "base64").length });
+        await importChunk({ upload, offset, data }, dataDir);
+      }
+      entries.push({ path: change.path, mode: change.mode!, upload });
+    }
+    const result = await importCommit({ repo: to, remote: "origin", baseBranch: "main", base: exported.base, tree: opts.tree ?? exported.tree, message: exported.message, author: exported.author, entries, refs: opts.refs ?? ["refs/heads/loom/csv/csv-1-home"] }, dataDir);
+    return { result, ranges };
+  }
+
+  it("exports and imports through a checkout that is a subdirectory of its repository, as a bb project in a monorepo is", async () => {
+    const { clone } = origin();
+    const laptop = clone();
+    const worker = clone();
+    put(worker, "areas/zone/note.md", "zone\n");
+    put(worker, "elsewhere.txt", "outside the zone\n");
+    sh(worker, "add", "-A");
+    sh(worker, "commit", "-q", "-m", "a change in a zone");
+    put(laptop, "areas/zone/.keep", "");
+    const zone = join(laptop, "areas/zone");
+
+    const { result } = await carry(worker, zone, await exportChanges({ worktree: worker, base: "origin/main" }));
+    expect(result.outcome).toBe("ok");
+    const sha = (result as { sha: string }).sha;
+    expect(sh(laptop, "rev-parse", `${sha}^{tree}`)).toBe(sh(worker, "rev-parse", "HEAD^{tree}"));
+
+    const back = await exportChanges({ worktree: zone, base: "origin/main", head: sha });
+    expect(back.changes.map((change) => [change.path, change.blob])).toEqual([
+      ["areas/zone/note.md", sh(worker, "rev-parse", "HEAD:areas/zone/note.md")],
+      ["elsewhere.txt", sh(worker, "rev-parse", "HEAD:elsewhere.txt")],
+    ]);
+  });
+
+  it("rebuilds an added, a modified, a deleted and an executable file on the same base, with the worker's tree, author and message", async () => {
+    const { clone } = origin();
+    const laptop = clone();
+    const worker = clone();
+    put(worker, "src/new.txt", "new\n");
+    put(worker, "README.md", "changed\n");
+    rmSync(join(worker, "old.txt"));
+    chmodSync(join(worker, "script.sh"), 0o755);
+    sh(worker, "add", "-A");
+    sh(worker, "commit", "-q", "-m", "CSV-1: Order rows\n\nThe body.");
+    const base = sh(worker, "rev-parse", "origin/main");
+
+    const exported = await exportChanges({ worktree: worker, base: "origin/main" });
+    expect(exported).toMatchObject({ base, head: sh(worker, "rev-parse", "HEAD"), tree: sh(worker, "rev-parse", "HEAD^{tree}"), message: "CSV-1: Order rows\n\nThe body.\n", author: { name: "Worker", email: "worker@example.com" } });
+    expect(exported.author.date).toMatch(/^\d+ [+-]\d{4}$/u);
+    expect(exported.changes).toEqual([
+      { status: "M", path: "README.md", mode: "100644", blob: sh(worker, "rev-parse", "HEAD:README.md"), size: 8 },
+      { status: "D", path: "old.txt" },
+      { status: "M", path: "script.sh", mode: "100755", blob: sh(worker, "rev-parse", "HEAD:script.sh"), size: 18 },
+      { status: "A", path: "src/new.txt", mode: "100644", blob: sh(worker, "rev-parse", "HEAD:src/new.txt"), size: 4 },
+    ]);
+
+    const { result } = await carry(worker, laptop, exported, { refs: ["refs/heads/loom/csv/csv-1-home", "refs/loom/csv/csv-1/reviewed"] });
+    expect(result.outcome).toBe("ok");
+    const sha = (result as { sha: string }).sha;
+    expect(sh(laptop, "rev-parse", `${sha}^{tree}`)).toBe(exported.tree);
+    expect(sh(laptop, "rev-parse", `${sha}^`)).toBe(base);
+    expect(sh(laptop, "log", "-1", "--format=%an <%ae> %at|%cn <%ce> %ct|%B", sha)).toBe(`Worker <worker@example.com> ${exported.author.date.split(" ")[0]}|Worker <worker@example.com> ${exported.author.date.split(" ")[0]}|CSV-1: Order rows\n\nThe body.`);
+    expect(sh(laptop, "rev-parse", "loom/csv/csv-1-home")).toBe(sha);
+    expect(sh(laptop, "rev-parse", "refs/loom/csv/csv-1/reviewed")).toBe(sha);
+    expect(sh(laptop, "status", "--porcelain")).toBe("");
+    expect(existsSync(join(dataDir, "imports")) ? execFileSync("ls", [join(dataDir, "imports")], { encoding: "utf8" }) : "").toBe("");
+  });
+
+  it("moves a 6 MiB binary in two ranges, and gives the same commit when run again", async () => {
+    const { clone } = origin();
+    const laptop = clone();
+    const worker = clone();
+    const big = Buffer.alloc(6 * MiB);
+    for (let index = 0; index < big.length; index += 4096) big[index] = index % 251;
+    writeFileSync(join(worker, "big.bin"), big);
+    sh(worker, "add", "-A");
+    sh(worker, "commit", "-q", "-m", "big");
+
+    const exported = await exportChanges({ worktree: worker, base: "origin/main" });
+    const first = await carry(worker, laptop, exported);
+    expect(first.ranges).toEqual([
+      { path: "big.bin", offset: 0, bytes: 4 * MiB },
+      { path: "big.bin", offset: 4 * MiB, bytes: 2 * MiB },
+    ]);
+    expect(first.result.outcome).toBe("ok");
+    const again = await carry(worker, laptop, exported);
+    expect(again.result).toEqual(first.result);
+    expect(sh(laptop, "rev-parse", `${(first.result as { sha: string }).sha}^{tree}`)).toBe(exported.tree);
+  });
+
+  it("refuses a wrong chunk, a chunk out of order and a tree that does not match, and moves no ref", async () => {
+    const { clone } = origin();
+    const laptop = clone();
+    const worker = clone();
+    commitFile(worker, "a.txt", "a\n");
+    const exported = await exportChanges({ worktree: worker, base: "origin/main" });
+
+    const tampered = await carry(worker, laptop, exported, { corrupt: true });
+    expect(tampered.result).toEqual({ outcome: "mismatch", tree: expect.stringMatching(/^[0-9a-f]{40}$/u) });
+    const wrongTree = await carry(worker, laptop, exported, { tree: sh(laptop, "rev-parse", "HEAD^{tree}") });
+    expect(wrongTree.result).toEqual({ outcome: "mismatch", tree: exported.tree });
+    expect(sh(laptop, "branch", "--list", "loom/*")).toBe("");
+    await expect(importChunk({ upload: "csv-1-x", offset: 5, data: "eA==" }, dataDir)).rejects.toThrow(/has 0 bytes, not 5/u);
+  });
+
+  it("fetches a base the project's checkout does not have yet from its remote", async () => {
+    const { clone } = origin();
+    const laptop = clone();
+    const upstream = clone();
+    const newer = commitFile(upstream, "upstream.txt", "up\n");
+    sh(upstream, "push", "-q", "origin", "HEAD:main");
+    const worker = clone();
+    commitFile(worker, "a.txt", "a\n");
+    expect(() => execFileSync("git", ["-C", laptop, "cat-file", "-e", `${newer}^{commit}`], { stdio: "pipe" })).toThrow();
+
+    const exported = await exportChanges({ worktree: worker, base: "origin/main" });
+    expect(exported.base).toBe(newer);
+    const { result } = await carry(worker, laptop, exported);
+    expect(result.outcome).toBe("ok");
+    expect(sh(laptop, "rev-parse", `${(result as { sha: string }).sha}^`)).toBe(newer);
+    expect(sh(laptop, "rev-parse", "origin/main")).toBe(newer);
+  });
+
+  describe("with 500 changed files", () => {
+    let path: string | undefined;
+    let log: string;
+
+    beforeAll(() => {
+      const real = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+      const bin = join(scratch, "logging-bin");
+      log = join(scratch, "git-calls.log");
+      mkdirSync(bin, { recursive: true });
+      writeFileSync(join(bin, "git"), `#!/bin/sh\nprintf '%s\\n' "$*" >> "${log}"\nexec "${real}" "$@"\n`, { mode: 0o755 });
+      path = process.env.PATH;
+      process.env.PATH = `${bin}:${path}`;
+    });
+
+    afterAll(() => {
+      process.env.PATH = path;
+    });
+
+    const gitCalls = (pattern: RegExp) => readFileSync(log, "utf8").split("\n").filter((line) => pattern.test(line)).length;
+
+    it("reads every size with one git process and hashes every file with another, and rebuilds the tree", async () => {
+      const { clone } = origin();
+      const laptop = clone();
+      const worker = clone();
+      for (let index = 0; index < 500; index += 1) put(worker, `gen/${index}.txt`, `file ${index % 499}\n`);
+      sh(worker, "add", "-A");
+      sh(worker, "commit", "-q", "-m", "CSV-1: Generate");
+
+      writeFileSync(log, "");
+      const exported = await exportChanges({ worktree: worker, base: "origin/main" });
+      expect(exported.changes).toHaveLength(500);
+      expect(exported.changes.map((change) => change.size)).toEqual(exported.changes.map((change) => readFileSync(join(worker, change.path)).length));
+      expect(gitCalls(/ cat-file -s /u)).toBe(0);
+      expect(gitCalls(/ cat-file --batch-check/u)).toBe(1);
+
+      const uploads = new Map<string, string>();
+      for (const change of exported.changes) {
+        if (uploads.has(change.blob!)) continue;
+        uploads.set(change.blob!, `csv-1-${change.blob}`);
+        await importChunk({ upload: `csv-1-${change.blob}`, offset: 0, data: readFileSync(join(worker, change.path)).toString("base64") }, dataDir);
+      }
+      expect(uploads.size).toBe(499);
+      writeFileSync(log, "");
+      const entries = exported.changes.map((change) => ({ path: change.path, mode: change.mode!, upload: uploads.get(change.blob!)! }));
+      const made = await importCommit({ repo: laptop, remote: "origin", baseBranch: "main", base: exported.base, tree: exported.tree, message: exported.message, author: exported.author, entries, refs: ["refs/heads/loom/csv/csv-1-home"] }, dataDir);
+      expect(made.outcome).toBe("ok");
+      expect(sh(laptop, "rev-parse", "loom/csv/csv-1-home^{tree}")).toBe(exported.tree);
+      expect(gitCalls(/ hash-object /u)).toBe(1);
+    }, 60_000);
+  });
+
+  it("reads a ref's commit and tree, and whether it builds on another commit", async () => {
+    const repo = makeRepo();
+    const base = sh(repo, "rev-parse", "HEAD");
+    sh(repo, "switch", "-q", "-c", "loom/csv/csv-1-home");
+    const home = commitFile(repo, "a.txt", "a\n");
+    sh(repo, "switch", "-q", "-c", "loom/csv/csv-1-2");
+    const own = commitFile(repo, "b.txt", "b\n");
+    sh(repo, "switch", "-q", "-c", "synced", base);
+    commitFile(repo, "a.txt", "a\n", "a.txt, synced from another machine");
+
+    expect(await refTip({ repo, ref: "refs/heads/loom/csv/csv-1-2" })).toEqual({ outcome: "ok", sha: own, tree: sh(repo, "rev-parse", `${own}^{tree}`) });
+    expect(await refTip({ repo, ref: "refs/heads/loom/csv/csv-1-2", contains: home })).toMatchObject({ outcome: "ok", contains: true });
+    expect(await refTip({ repo, ref: "refs/heads/loom/csv/csv-1-home", contains: home })).toMatchObject({ outcome: "ok", contains: true });
+    expect(await refTip({ repo, ref: "refs/heads/synced", contains: home })).toMatchObject({ outcome: "ok", contains: false });
+    expect(await refTip({ repo, ref: "refs/heads/gone", contains: home })).toMatchObject({ outcome: "missing" });
+  });
+
+  it("exports a given commit of a checkout against its merge base with the base", async () => {
+    const { clone } = origin();
+    const laptop = clone();
+    sh(laptop, "switch", "-q", "-c", "work");
+    const sha = commitFile(laptop, "b.txt", "b\n");
+    sh(laptop, "switch", "-q", "main");
+    const exported = await exportChanges({ worktree: laptop, base: "origin/main", head: sha });
+    expect(exported).toMatchObject({ head: sha, base: sh(laptop, "rev-parse", "origin/main"), changes: [{ status: "A", path: "b.txt" }] });
+  });
+});
+
+describe("carrying a commit to a thread's own machine: carryStart, carryWrite, carryDelete and carryFinish", () => {
+  const REAL_GIT = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+  let path: string | undefined;
+  let bin: string;
+
+  // Like the git of a machine that keeps one index for the worktree: a temporary index allows only read-tree --empty, diff-tree --no-renames is missing, and add takes no --pathspec-from-file.
+  beforeAll(() => {
+    bin = join(scratch, "restricted-bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(
+      join(bin, "git"),
+      `#!/bin/sh
+for a in "$@"; do
+  case "$a" in
+    read-tree) if [ -n "$GIT_INDEX_FILE" ]; then case " $* " in *" --empty "*) ;; *) echo "wt git: read-tree with a temporary index is not implemented" >&2; exit 128;; esac; fi; break;;
+    diff-tree) case " $* " in *" --no-renames "*) echo "wt git: 'diff-tree --no-renames' is not yet implemented" >&2; exit 128;; esac; break;;
+    add) case " $* " in *" --pathspec-from-file"*) echo "wt git: unknown add option --pathspec-from-file=-" >&2; exit 129;; esac; break;;
+  esac
+done
+exec "${REAL_GIT}" "$@"
+`,
+      { mode: 0o755 },
+    );
+    path = process.env.PATH;
+    process.env.PATH = `${bin}:${path}`;
+  });
+
+  afterAll(() => {
+    process.env.PATH = path;
+  });
+
+  function setup() {
+    const seed = makeRepo();
+    put(seed, "old.txt", "old\n");
+    put(seed, "keep/run.sh", "#!/bin/sh\n");
+    sh(seed, "add", "-A");
+    sh(seed, "commit", "-q", "-m", "seed");
+    const remote = join(scratch, `origin-${counter++}.git`);
+    execFileSync("git", ["clone", "-q", "--bare", seed, remote]);
+    const clone = () => {
+      const dir = join(scratch, `clone-${counter++}`);
+      execFileSync("git", ["clone", "-q", remote, dir]);
+      sh(dir, "config", "user.email", "dev@example.com");
+      sh(dir, "config", "user.name", "Dev");
+      return dir;
+    };
+    return { remote, clone };
+  }
+
+  /** What the transport does toward a thread's machine, from the project's checkout. */
+  async function carryOut(checkout: string, worktree: string, exported: HostOutput<"exportChanges">, tree = exported.tree) {
+    const started = await carryStart({ worktree, remote: "origin", baseBranch: "main", base: exported.base, tree: exported.tree });
+    if (started.outcome !== "ok") return started;
+    await carryDelete({ worktree, paths: exported.changes.filter((change) => change.status === "D").map((change) => change.path) });
+    for (const change of exported.changes) {
+      if (change.status === "D") continue;
+      for (let offset = 0; offset === 0 || offset < change.size!; offset += 4 * 1024 * 1024) {
+        const { data } = await readBlob({ repo: checkout, sha: change.blob!, offset, length: Math.min(4 * 1024 * 1024, change.size! - offset) });
+        await carryWrite({ worktree, path: change.path, mode: change.mode!, offset, data });
+      }
+    }
+    const paths = exported.changes.filter((change) => change.status !== "D").map((change) => change.path);
+    return carryFinish({ worktree, base: exported.base, message: exported.message, author: exported.author, tree, paths });
+  }
+
+  it("puts the commit's tree in the worktree with worktree commands alone, where a temporary index is refused", async () => {
+    const { clone } = setup();
+    const checkout = clone();
+    sh(checkout, "switch", "-q", "-c", "loom/csv/csv-1-home");
+    put(checkout, "src/new.txt", "new\n");
+    put(checkout, "keep/run.sh", "#!/bin/sh\necho run\n");
+    chmodSync(join(checkout, "keep/run.sh"), 0o755);
+    symlinkSync("new.txt", join(checkout, "src/link.txt"));
+    rmSync(join(checkout, "old.txt"));
+    sh(checkout, "add", "-A");
+    sh(checkout, "commit", "-q", "-m", "CSV-1: Order rows");
+    const home = sh(checkout, "rev-parse", "HEAD");
+    const worktree = clone();
+    expect(() => execFileSync("git", ["-C", worktree, "read-tree", "HEAD"], { env: { ...process.env, GIT_INDEX_FILE: join(scratch, "tmp-index") }, stdio: "pipe" })).toThrow(/temporary index/u);
+
+    const exported = await exportChanges({ worktree: checkout, base: "origin/main", head: home });
+    const finished = await carryOut(checkout, worktree, exported);
+    expect(finished).toEqual({ outcome: "ok", head: sh(worktree, "rev-parse", "HEAD"), tree: exported.tree });
+    expect(sh(worktree, "rev-parse", "HEAD^")).toBe(exported.base);
+    expect(sh(worktree, "log", "-1", "--format=%an <%ae> %at %s")).toBe(`Dev <dev@example.com> ${exported.author.date.split(" ")[0]} CSV-1: Order rows`);
+    expect(sh(worktree, "status", "--porcelain")).toBe("");
+    expect(readFileSync(join(worktree, "src/link.txt"), "utf8")).toBe("new\n");
+  });
+
+  it("carries a file the commit force-added although .gitignore matches it", async () => {
+    const { clone } = setup();
+    const checkout = clone();
+    sh(checkout, "switch", "-q", "-c", "loom/csv/csv-1-home");
+    put(checkout, ".gitignore", "*.log\n");
+    put(checkout, "keep.log", "kept\n");
+    sh(checkout, "add", "-f", ".gitignore", "keep.log");
+    sh(checkout, "commit", "-q", "-m", "CSV-1: Keep the log");
+    const home = sh(checkout, "rev-parse", "HEAD");
+    const worktree = clone();
+
+    const exported = await exportChanges({ worktree: checkout, base: "origin/main", head: home });
+    expect(await carryOut(checkout, worktree, exported)).toEqual({ outcome: "ok", head: sh(worktree, "rev-parse", "HEAD"), tree: exported.tree });
+    expect(sh(worktree, "ls-files", "keep.log")).toBe("keep.log");
+  });
+
+  it("fetches a base the thread's machine does not have, and resets to the base when the tree does not match", async () => {
+    const { clone } = setup();
+    const worktree = clone();
+    const upstream = clone();
+    commitFile(upstream, "up.txt", "up\n");
+    sh(upstream, "push", "-q", "origin", "HEAD:main");
+    sh(upstream, "switch", "-q", "-c", "work");
+    const sha = commitFile(upstream, "a.txt", "a\n");
+    const exported = await exportChanges({ worktree: upstream, base: "origin/main", head: sha });
+
+    const finished = await carryOut(upstream, worktree, exported, sh(worktree, "rev-parse", "HEAD^{tree}"));
+    expect(finished).toEqual({ outcome: "mismatch", tree: exported.tree });
+    expect(sh(worktree, "rev-parse", "HEAD")).toBe(exported.base);
+    expect(sh(worktree, "status", "--porcelain")).toBe("");
+  });
+
+  it("refuses a worktree with uncommitted changes, and a path that leads out of it", async () => {
+    const { clone } = setup();
+    const worktree = clone();
+    put(worktree, "notes.txt", "mine\n");
+    const refused = await carryStart({ worktree, remote: "origin", baseBranch: "main", base: sh(worktree, "rev-parse", "HEAD"), tree: sh(worktree, "rev-parse", "HEAD:keep") });
+    expect(refused).toEqual({ outcome: "unavailable", message: expect.stringMatching(/has uncommitted changes, so Loom cannot put the work in it: notes\.txt\. Stash or discard them, then try again$/u) });
+    expect(readFileSync(join(worktree, "notes.txt"), "utf8")).toBe("mine\n");
+
+    symlinkSync(scratch, join(worktree, "out"));
+    await expect(carryWrite({ worktree, path: "out/escape.txt", mode: "100644", offset: 0, data: "eA==" })).rejects.toThrow(/leads out of the worktree/u);
+    expect(existsSync(join(scratch, "escape.txt"))).toBe(false);
+  });
+
+  it("refuses a worktree with commits of its own, and keeps them", async () => {
+    const { clone } = setup();
+    const worktree = clone();
+    const base = sh(worktree, "rev-parse", "origin/main");
+    const mine = commitFile(worktree, "mine.txt", "mine\n");
+    const refused = await carryStart({ worktree, remote: "origin", baseBranch: "main", base, tree: sh(worktree, "rev-parse", "origin/main^{tree}") });
+    expect(refused).toEqual({ outcome: "unavailable", message: expect.stringMatching(/has commits that are not on origin\/main, so putting the work in would drop them: [0-9a-f]{12}\. Stash them or move them to another branch, then try again$/u) });
+    expect(sh(worktree, "rev-parse", "HEAD")).toBe(mine);
+    expect(readFileSync(join(worktree, "mine.txt"), "utf8")).toBe("mine\n");
+  });
+
+  it("leaves a worktree that has the tree already as it is, so carrying it twice is harmless", async () => {
+    const { clone } = setup();
+    const checkout = clone();
+    sh(checkout, "switch", "-q", "-c", "loom/csv/csv-1-home");
+    const home = commitFile(checkout, "src/new.txt", "new\n");
+    const worktree = clone();
+    const exported = await exportChanges({ worktree: checkout, base: "origin/main", head: home });
+    expect(await carryOut(checkout, worktree, exported)).toMatchObject({ outcome: "ok", tree: exported.tree });
+    const carried = sh(worktree, "rev-parse", "HEAD");
+
+    expect(await carryStart({ worktree, remote: "origin", baseBranch: "main", base: exported.base, tree: exported.tree })).toEqual({ outcome: "ok", present: true });
+    expect(sh(worktree, "rev-parse", "HEAD")).toBe(carried);
+    expect(sh(worktree, "status", "--porcelain")).toBe("");
   });
 });

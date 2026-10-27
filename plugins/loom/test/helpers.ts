@@ -13,7 +13,7 @@ import { approve, settleReviews, spawnReviewers } from "../src/review";
 import { Projects } from "../src/projects";
 import type { DoneSettings } from "../src/record";
 import { specOf, spawnWorker, type EngineCtx } from "../src/workers";
-import { SectionNameConflictError, type BbPort, type BbProjectInfo, type EnvironmentFile, type EnvironmentFiles, type EnvironmentInfo, type EnvironmentPatch, type EnvironmentProviderInfo, type HostPort, type PluginInfo, type SpawnArgs, type ThreadInfo } from "../src/ports";
+import { SectionNameConflictError, type BbPort, type BbProjectInfo, type EnvironmentFile, type EnvironmentFiles, type EnvironmentInfo, type EnvironmentPatch, type EnvironmentProviderInfo, type HostPort, type MachineProviderInfo, type PluginInfo, type SpawnArgs, type ThreadInfo } from "../src/ports";
 
 export function makeDb(): Database.Database {
   const db = new Database(":memory:");
@@ -98,7 +98,8 @@ export class FakePort implements BbPort {
   threads = new Map<string, ThreadInfo>();
   environments = new Map<string, EnvironmentInfo>();
   tokens = new Map<string, number | null>();
-  systemErrors = new Map<string, { code: string | null; message: string; detail?: string | null }>();
+  /** A missing seq or at reads as 1 and 0. */
+  systemErrors = new Map<string, { code: string | null; message: string; detail?: string | null; seq?: number; at?: number }>();
   spawnedTokens = new Map<string, string>();
   /** Return an error to make the spawn throw it. */
   spawnError: ((args: SpawnArgs) => Error | null) | null = null;
@@ -150,7 +151,9 @@ export class FakePort implements BbPort {
     let environmentId: string | null = null;
     if (this.provisionEnvironment) {
       environmentId = `env_${n}`;
-      this.environments.set(environmentId, { path: `/wt/${environmentId}`, branchName: `wt-${threadId}`, hostId: args.hostId });
+      // A thread on a new machine gets a machine of its own.
+      const hostId = args.environment?.machine === undefined ? args.hostId : `host_box${n}`;
+      this.environments.set(environmentId, { path: `/wt/${environmentId}`, branchName: `wt-${threadId}`, hostId });
     }
     this.threads.set(threadId, { id: threadId, status: "active", archivedAt: null, deletedAt: null, environmentId });
     if (args.metadata.spawnToken !== undefined) this.spawnedTokens.set(args.metadata.spawnToken, threadId);
@@ -227,7 +230,8 @@ export class FakePort implements BbPort {
   }
   async latestSystemError(threadId: string) {
     this.record("latestSystemError", threadId);
-    return this.systemErrors.get(threadId) ?? null;
+    const error = this.systemErrors.get(threadId);
+    return error === undefined ? null : { seq: 1, at: 0, ...error };
   }
   async retryTurn(threadId: string, turnRequestId: string, sendAt: number) {
     this.record("retryTurn", threadId, turnRequestId, sendAt);
@@ -257,6 +261,18 @@ export class FakePort implements BbPort {
     this.record("environmentProviders", bbProjectId, hostId);
     if (this.environmentProviderList instanceof Error) throw this.environmentProviderList;
     return this.environmentProviderList.map((provider) => ({ ...provider }));
+  }
+  /** The environments that make a new machine per thread, which bb lists only without a machine. */
+  compositionList: EnvironmentProviderInfo[] = [];
+  async environmentCompositions(bbProjectId: string) {
+    this.record("environmentCompositions", bbProjectId);
+    return this.compositionList.map((provider) => ({ ...provider }));
+  }
+  /** The machine providers bb has. */
+  machineProviderList: MachineProviderInfo[] = [];
+  async machineProviders() {
+    this.record("machineProviders");
+    return this.machineProviderList.map((provider) => ({ ...provider }));
   }
   /** The installed plugins. */
   pluginList: PluginInfo[] = [{ id: "environment-git-worktree", enabled: true, builtin: true }];
@@ -350,9 +366,15 @@ export class FakeHost implements HostPort {
   stackBranches = new Map<string, string>();
   /** The tip fetchBranch reports for the remote's base branch. Every integration branch starts at base000, so base000 means it has not moved. */
   remoteBase = "base000";
+  /** The refs importCommit pointed on the checkout, at the commits it made. */
+  refs = new Map<string, string>();
+  /** "a..b" when commit a is an ancestor of commit b, for refTip's contains; a commit always contains itself. */
+  ancestry = new Set<string>();
   private commits = 0;
   private merged = 0;
   private prs = 0;
+  private homes = 0;
+  private carried = 0;
 
   callsTo<M extends HostMethod>(method: M): Array<HostInput<M>> {
     return this.calls.filter((call) => call.method === method).map((call) => call.input as HostInput<M>);
@@ -394,7 +416,49 @@ export class FakeHost implements HostPort {
       }
       case "worktreeState": {
         const state = this.worktree((input as HostInput<"worktreeState">).worktree);
-        return { branch: state.branch, head: state.head, dirty: state.dirty, changed: [...state.changed] };
+        return { branch: state.branch, head: state.head, tree: this.trees.get(state.head) ?? state.head, dirty: state.dirty, changed: [...state.changed] };
+      }
+      case "exportChanges": {
+        const { worktree, head } = input as HostInput<"exportChanges">;
+        const sha = head ?? this.worktree(worktree).head;
+        return { base: "base000", head: sha, tree: this.trees.get(sha) ?? sha, message: "CSV-1: Order rows\n", author: { name: "Worker", email: "worker@example.com", date: "1800000000 +0000" }, changes: [] };
+      }
+      case "readBlob":
+        return { data: "" };
+      case "importChunk":
+        return { size: 0 };
+      case "importCommit": {
+        const { tree, refs } = input as HostInput<"importCommit">;
+        const sha = `home${++this.homes}`;
+        this.trees.set(sha, tree);
+        for (const ref of refs) this.refs.set(ref, sha);
+        return { outcome: "ok", sha };
+      }
+      case "carryStart":
+        return { outcome: "ok", present: false };
+      case "carryWrite":
+        return { size: 0 };
+      case "carryDelete":
+      case "carryAbort":
+      case "dropUploads":
+        return {};
+      case "carryFinish": {
+        const { worktree, tree } = input as HostInput<"carryFinish">;
+        const state = this.worktree(worktree);
+        state.head = `carried${++this.carried}`;
+        this.trees.set(state.head, tree);
+        return { outcome: "ok", head: state.head, tree };
+      }
+      case "refTip": {
+        const { ref, contains } = input as HostInput<"refTip">;
+        const sha = this.refs.get(ref);
+        if (sha === undefined) return { outcome: "missing", message: "no such ref" };
+        return { outcome: "ok", sha, tree: this.trees.get(sha) ?? sha, ...(contains === undefined ? {} : { contains: contains === sha || this.ancestry.has(`${contains}..${sha}`) }) };
+      }
+      case "detach": {
+        const { worktree, sha } = input as HostInput<"detach">;
+        this.worktree(worktree).head = sha;
+        return { tree: this.trees.get(sha) ?? sha };
       }
       case "commitAll": {
         const state = this.worktree((input as HostInput<"commitAll">).worktree);
@@ -577,6 +641,7 @@ export function sdkStubs(state: SdkState): FakeSdkOverrides {
       listProviders: async () => [{ ...GIT_WORKTREE_PROVIDER, machineAvailability: {}, availability: null }],
     },
     plugins: { list: async () => ({ plugins: [{ id: "environment-git-worktree", enabled: true, provenance: "builtin" }] }) },
+    hosts: { experimental_listProviders: async () => [] },
     projects: { get: async ({ projectId }) => ({ id: projectId, sources: [{ hostId: state.environmentHost, path: "/repo", isDefault: true }] }) },
     system: { config: async () => ({ primaryHostId: state.primaryHostId }) },
   };
@@ -632,7 +697,7 @@ export async function seedProject(h: EngineHarness, edit?: (doc: Doc) => void, s
   await h.projects.propose({ toml: specToml(edit), threadId: "thr_plan", bbProjectId: "proj_1", hostId: "host_1" });
   await h.projects.approve("csv", "human");
   h.host.calls = [];
-  h.bb.calls = h.bb.calls.filter((call) => !["plugins", "environmentProviders", "projectCheckout"].includes(call.method));
+  h.bb.calls = h.bb.calls.filter((call) => !["plugins", "environmentProviders", "environmentCompositions", "machineProviders", "projectCheckout"].includes(call.method));
   const project = h.store.projectBySlug("csv")!;
   if (state !== "ready") h.store.setProjectState(project.id, "running", "human");
   if (state === "paused") h.store.setProjectState(project.id, "paused", "human");
@@ -657,6 +722,19 @@ export async function seedRepoProject(h: EngineHarness, edit?: (doc: Doc) => voi
     doc.ticket[0].repo = "web";
     doc.ticket[1].repo = "api";
     doc.ticket[1].depends_on = [];
+    edit?.(doc);
+  }, state);
+}
+
+/** A machine provider that gives each thread a machine of its own, which the fake bb names host_box<n>. */
+export const BOXES: MachineProviderInfo = { id: "boxes", displayName: "Boxes", description: "A box per thread.", pluginId: "boxes", acceptsEmptyInputs: true, inputs: null };
+
+/** The base spec with every worker and reviewer on a new machine from BOXES, on the pr strategy without stacking, as Loom needs there. */
+export async function seedMachineProject(h: EngineHarness, edit?: (doc: Doc) => void, state: "ready" | "running" | "paused" = "running"): Promise<ProjectRow> {
+  h.bb.machineProviderList = [BOXES];
+  return seedProject(h, (doc) => {
+    doc.merge = { strategy: "pr", stack: false };
+    doc.environment = { provider: "git-worktree", machine: { provider: "boxes" } };
     edit?.(doc);
   }, state);
 }

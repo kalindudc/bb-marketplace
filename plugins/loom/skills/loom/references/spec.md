@@ -101,9 +101,10 @@ Where the threads Loom starts in the repository run: its workers and reviewers, 
 |---|---|---|---|
 | `provider` | string | required | the id of a bb environment provider that is available for the project on this machine (`bb environment providers --project <id> --machine <host> --json`) |
 | `inputs` | table | none | the provider's inputs, checked against its inputs schema; a provider that needs inputs refuses a spec without them |
-| `reviewer` | table | none | where reviewers, the spec reviewer and the summary agent start instead: `provider` (another provider; its own `inputs` then, none by default) or `inputs` alone, a merge patch over `inputs` for the same provider; checked against the provider's schema like `inputs` |
+| `machine` | table | none | `{ provider = "<id>", inputs = { … } }`: start each thread on a new machine of its own from this bb machine provider (`bb machine providers --json`), with its inputs checked against its schema; required, with the composition's own machine provider, when `provider` is an environment that makes a new machine per thread. See [Threads on new machines](#threads-on-new-machines) |
+| `reviewer` | table | none | where reviewers, the spec reviewer and the summary agent start instead: `provider` (another provider; its own `inputs` then, none by default) or `inputs` alone, a merge patch over `inputs` for the same provider; checked against the provider's schema like `inputs`. Reviewers follow the workers' `machine`, unless the table names another provider, which drops it; its own `machine` replaces it |
 
-In any string of `inputs`, Loom replaces `{branch}` with a new branch for that thread (`loom/<slug>/<key>-<attempt>` for a worker, `loom/<slug>/<key>-review-<round>-<n>` for a reviewer) and `{base}` with where the thread starts, the same base it would give a worktree. Any other `{name}` is an error.
+In any string of `inputs`, or of a `machine`'s `inputs`, Loom replaces `{branch}` with a new branch for that thread (`loom/<slug>/<key>-<attempt>` for a worker, `loom/<slug>/<key>-review-<round>-<n>` for a reviewer) and `{base}` with where the thread starts, the same base it would give a worktree. Any other `{name}` is an error.
 
 A merge patch works as in RFC 7396: a table merges key by key, and any other value, an array included, replaces the value it patches. TOML has no null, so a patch in the spec sets keys but cannot remove one.
 
@@ -121,12 +122,28 @@ Loom tells a thread that bb or the provider cannot start now from one that faile
 - This holds for workers, for a released worker coming back (see [Releasing workers](#releasing-workers)), for reviewers (a reviewer that did not start is not one that ended without a verdict), for the spec reviewer (it fails after 4 failures in a row or an hour of an unavailable provider, the planner hears why, and proposing again tries at once) and for the summary agent (it tries again for up to 30 minutes, then the full record goes to the done hook).
 - A worker that never started keeps its attempt number, its thread row and its claim on the ticket, so its retry asks for the same `{branch}`. A ticket resumed from a branch keeps that branch, unless bb could not find it and no pull request is open, and a ticket whose pull request is open always keeps it.
 
+### Threads on new machines
+
+With `machine`, every worker and reviewer of the repo starts on a new machine of its own, from any bb machine provider, instead of on the machine with the project's checkout. `loom_discover` lists the choices under "New machine per thread": the environments that make a new machine themselves (a composition, such as `provider = "example-world"`, `machine = { provider = "example-world" }`), and bb's `git-worktree` on each machine provider. It also lists the environments earlier approved projects chose for a repository with the same git remote. Loom knows no provider by name; it tells a thread on another machine by its environment's host.
+
+- Only `merge.strategy = "pr"` with `merge.stack = false` works there: the integration branch and the bases of stacked pull requests are made on the project's machine, and Loom carries neither to other machines. `loom_propose` refuses any other combination, naming the `machine` path.
+- The checks run on the worker's machine, as they do in any worktree, so they must work there.
+- On a submit that passes, Loom carries the worker's commit back to the project's checkout itself, through its host entry: it reads the files the commit changed, rebuilds the same tree on the same base with a temporary index, refuses the result unless the tree matches, and commits it with the worker's author, date and message. That commit is the ticket's head: reviewers get its diff, and the pull request is built from it. It is on the branch `loom/<slug>/<key>-home`, which also gets each work-in-progress save, and `refs/loom/<slug>/<key>/reviewed` keeps the reviewed one. Only the tree the checks passed comes home: a commit the worker makes after the checks is refused, counting no failure, and the worker submits again. Files over 100 MiB cannot move between machines, and Loom refuses one before it copies anything.
+- A worker whose work-in-progress save cannot be brought home when its thread ends keeps its stopped thread, and so its machine, while Loom tries again for up to 10 minutes. Then Loom ends it anyway, and says on the ticket that the work did not come home and why.
+- Loom compares trees, not commit ids, wherever a commit crossed machines: the worktree check after the checks, an unchanged fix round, a reviewer's verdict and a worker's release. A machine that moves during the checks, and gives the same commit a new id, still passes.
+- A new machine is removed when its threads end, so it is never restored. A worker that comes back, after a block, a failed attempt or a release, starts at the fresh base on a new machine, and its first step is `loom_resume`, which carries in the work on the home branch. `loom_submit` is refused until it has. A worker that ends before it calls `loom_resume` commits its own changes on its machine, but Loom brings nothing home from it, so the next worker resumes the same work.
+- `loom_resume` and `loom_checkout` refuse a worktree with uncommitted changes, or with commits that are not on the base, since putting the work in would drop them; stash them or move them to another branch, then call again. A worktree that has the tree already is left as it is, so calling again is harmless, and a carry that fails part-way puts the worktree back at the base.
+- After a `machine` change in a pending version, the next worker, on either machine, continues from the ticket's newest work on the project's checkout: the last worker's branch when it builds on the home branch or there is no home branch, as after a worker on the project's machine, and the home branch otherwise. A branch that a provider copies to the checkout from another machine never counts.
+- Every reviewer's first step is `loom_checkout`: on another machine it carries the reviewed tree there with ordinary worktree commands, and on the project's machine it checks the head out. The verdict tools are refused until the reviewer's worktree has that tree. A reviewer on the project's machine of a ticket worked elsewhere starts from the home branch.
+- A machine provider that cannot start a machine now, because its pool is full or it is not set up, makes bb refuse with `machine_provider_rejected`; Loom waits as for an unavailable environment provider (see [When an environment provider has no room](#when-an-environment-provider-has-no-room)), posts bb's message on the ticket, and blocks after an hour.
+- When bb moves a thread's machine and stops its turn, it records a `machine_maintenance` error; that idle counts toward neither a nudge nor ending the thread, and the next one does.
+
 ### Releasing workers
 
 On the pull request strategy a pull request can wait days for a person, and an idle worker would hold its environment all that time. With `merge.release_workers` (on by default), Loom archives the worker's thread once the ticket is in `pr_open`, the thread is idle with no question waiting, no fix round is on its way to it, its branch does not have to catch up, and its worktree holds exactly the reviewed commit with nothing uncommitted. bb then frees the environment after its provider's grace period. The worker stays the ticket's worker.
 
 - When the pull request's feedback or your reply on the ticket starts a fix round, or the branch must take a dependency's new commits, Loom unarchives the same thread and asks bb to restore its environment on the worker's branch. Once it is ready, the worker gets the fix round with a note that files git ignores (installed dependencies, build output) are gone, and it keeps its whole conversation. A catch-up runs in the restored worktree with no message, and a check that fails there goes to the worker with the same note and counts no failure.
-- A restore that fails waits and tries again, as a failed start does; after 4 failures in a row, or when bb cannot restore the environment (its provider has no restore, or the thread was deleted), a new worker takes the ticket from its branch. A provider that stays unavailable for an hour blocks the ticket instead, and a requeue starts the new worker. Its brief names the earlier workers' threads, which it can read with `bb thread log <id> --all`.
+- A restore that fails waits and tries again, as a failed start does; after 4 failures in a row, or when bb cannot restore the environment (its provider has no restore, or the thread was deleted), a new worker takes the ticket from its branch. A worker on a new machine never comes back, since bb removes the machine; the new worker takes over from the work Loom brought home, with `loom_resume`. A provider that stays unavailable for an hour blocks the ticket instead, and a requeue starts the new worker. Its brief names the earlier workers' threads, which it can read with `bb thread log <id> --all`.
 - Fix-round counting, `merge.max_fix_rounds`, `merge.describe`, stacking, tokens and the page work as before.
 - `merge.release_workers = false` keeps each worker and its worktree until its pull request merges, as Loom did before this setting; choose it when a worktree holds set-up state that takes long to build again and environments cost little.
 - A spec version approved after the project started may turn it on or off; it applies from Loom's next pass. A worker released before it was turned off still comes back for its pull request's next fix round.
@@ -396,6 +413,42 @@ scope = ["services/orders/db/**", "services/orders/model/**"]
 environment = { inputs = { paths = ["services/orders"] } }
 ```
 
+## Example: a World project on new machines
+
+A project whose workers and reviewers each run on a new machine that a plugin's environment makes, opening its pull requests through a forge command. The provider ids and inputs come from `loom_discover` and the human; these are placeholders.
+
+```toml
+[project]
+slug = "route-timeouts"
+name = "Route timeouts"
+key = "RTO"
+goal = "Give every route of the routing controller a configurable upstream timeout, defaulting to the current value."
+summary = "Each route of the routing controller gets a configurable upstream timeout."
+
+[merge]
+strategy = "pr"
+stack = false
+
+[merge.forge]
+kind = "command"
+open = 'review-cli create --base "$LOOM_BASE" --head "$LOOM_HEAD" --title "$LOOM_TITLE" --body-file -'
+state = 'review-cli status "$LOOM_PR_NUMBER"'
+
+[environment]
+provider = "example-world"
+machine = { provider = "example-world", inputs = { zones = ["areas/infra/routing/controller"] } }
+
+[checks]
+commands = ["make -C areas/infra/routing/controller test"]
+
+[[ticket]]
+ref = "route-timeout"
+title = "Configurable upstream timeout"
+body = "Add an upstream_timeout setting to each route, read it where the controller builds the upstream, and keep today's value as the default."
+acceptance = ["WHEN a route sets upstream_timeout THE SYSTEM SHALL use it for that route's upstream", "WHEN a route sets none THE SYSTEM SHALL keep today's timeout"]
+scope = ["areas/infra/routing/controller/**"]
+```
+
 ## Errors
 
 A spec with any error is refused and nothing is saved. Errors are numbered, at most 20 shown.
@@ -413,6 +466,7 @@ A spec with any error is refused and nothing is saved. Errors are numbered, at m
 - A forge with `kind = "command"` lacks `open` or `state`, a forge of another kind sets them or `feedback`, or `kind = "none"` sets `after_open`.
 - `merge.describe`, `merge.squash`, `merge.max_fix_rounds`, `merge.stack`, `merge.release_workers`, `merge.checks_queued_minutes` or `merge.checks_near_done_percent` on the integration strategy.
 - `merge.worktree` is set with strategy `"pr"`.
+- An `environment` (top level or a repo's) or its `reviewer` sets `machine`, and the strategy is not `"pr"` or `merge.stack` is not `false`.
 - An `inputs` string, in `[environment]`, its `reviewer` table or a ticket's `environment`, holds a `{name}` other than `{branch}` or `{base}`.
 - A ticket sets `environment` in a repo whose threads start in git worktrees, with no environment provider to patch.
 
@@ -437,6 +491,7 @@ Loom then checks how each repo is reached on the planner's machine (`loom_discov
 - The forge is `gh`, and `gh` is missing or not signed in to the push URL's host, or the push URL is not a repository URL.
 - A plugin offers an environment provider for the repo, and the spec names no `environment`.
 - The `environment` provider, or its `reviewer.provider`, is not offered or not available there, or its `inputs`, the reviewer's inputs or a ticket's patched inputs do not match its schema. The error quotes the provider's description and schema.
+- A `machine.provider` is not a bb machine provider, or its `inputs` do not match its schema; or the environment makes a new machine per thread and `machine` is missing or names another machine provider than its own.
 - On the integration strategy with no `worktree`, git refused Loom's own worktree. The error quotes git.
 - `worktree.plugin` is not installed or is turned off, or `bb plugin run <plugin> <first word> --help` fails.
 

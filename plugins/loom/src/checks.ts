@@ -6,10 +6,12 @@ import { plural } from "./format";
 import { checkFailedText, clip, prUnchangedText } from "./prompts";
 import { unchangedFix } from "./pull-requests";
 import { LoomError } from "./projects";
+import type { EnvironmentInfo } from "./ports";
 import { recordingHost } from "./runs";
 import { scopeReport } from "./scope";
 import type { Spec } from "./spec";
 import { LOOM_ACTOR } from "./states";
+import { bringHome, isRemote } from "./transport";
 import { applyMove, baseOf, endThread, recordBranch, resolveEnvironment, specOf, ticketMoveFor, toWorking, type EngineCtx } from "./workers";
 
 export interface CheckRun {
@@ -57,6 +59,7 @@ export function submit(ctx: EngineCtx, threadId: string, summary: string): strin
   }
   const text = summary.trim();
   if (text === "") throw new LoomError("loom_invalid_input", "The summary is empty. Say what you did and how each acceptance criterion holds.");
+  if (row.resume_json !== null) throw new LoomError("loom_invalid_state", "Call loom_resume first: it puts the ticket's earlier work in your worktree, and your submit must build on it.");
   store.tx(() => {
     store.setTicketState(ticket.id, "checking", threadId, { submit: true });
     store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "worker", author_thread_id: threadId, kind: "submit", body: text });
@@ -92,7 +95,10 @@ export function resumeCheckingTickets(ctx: EngineCtx): number {
 }
 
 interface Outcome {
+  /** The commit that passed, on the project's checkout: the worker's own, or the one Loom brought home from its machine. */
   commitSha: string;
+  tree: string;
+  environment: EnvironmentInfo;
   /** A fix round that changed nothing: no checks, no review, nothing to push. */
   unchanged?: boolean;
   runs: CheckRun[];
@@ -117,6 +123,10 @@ async function pipeline(ctx: EngineCtx, ticketId: number): Promise<void> {
   let outcome: Outcome;
   try {
     outcome = await runPipeline({ ...ctx, host: recordingHost(ctx.store, ctx.host, ticket, "check") }, ticket, spec, worker.row);
+    const project = store.project(ticket.project_id)!;
+    if (outcome.failure === null && outcome.unchanged !== true && isRemote(project, outcome.environment)) {
+      outcome = { ...outcome, commitSha: (await bringHome(ctx, project, spec, ticket, outcome.environment, "submit", outcome.tree)).sha };
+    }
   } catch (error) {
     hostFailed(ctx, ticketId, errText(error));
     return;
@@ -131,12 +141,13 @@ async function runPipeline(ctx: EngineCtx, ticket: TicketRow, spec: Spec, worker
 
   const commit = await ctx.host.call(hostId, "commitAll", { worktree, message: `${ticket.key}: ${ticket.title}` });
   await recordBranch(ctx, worker);
-  if (unchangedFix(ctx.store.posts(ticket.id), commit.sha)) return { commitSha: commit.sha, unchanged: true, runs: [], failure: null, outside: [], protectedHits: [] };
   const repo = ticketRepo(spec, ticket);
   const base = baseOf(spec, ticket);
   const state = await ctx.host.call(hostId, "worktreeState", { worktree, base });
+  const kept = { commitSha: commit.sha, tree: state.tree, environment };
+  if (unchangedFix(ctx.store.posts(ticket.id), { sha: commit.sha, tree: state.tree })) return { ...kept, unchanged: true, runs: [], failure: null, outside: [], protectedHits: [] };
   const report = scopeReport(state.changed, JSON.parse(ticket.scope_json) as string[], repo.protected);
-  const outcome: Outcome = { commitSha: commit.sha, runs: [], failure: null, outside: report.outside, protectedHits: report.protectedHits };
+  const outcome: Outcome = { ...kept, runs: [], failure: null, outside: report.outside, protectedHits: report.protectedHits };
   const refuse = (command: string, output: string) => {
     outcome.failure = { command, exitCode: 1, timedOut: false, durationMs: 0, output };
     outcome.runs.push(outcome.failure);
@@ -160,8 +171,9 @@ async function runPipeline(ctx: EngineCtx, ticket: TicketRow, spec: Spec, worker
     }
   }
 
+  // By tree: a machine that moved during the checks gives the same commit a new id.
   const after = await ctx.host.call(hostId, "worktreeState", { worktree, base });
-  if (after.head !== commit.sha || after.dirty) {
+  if (after.tree !== state.tree || after.dirty) {
     return refuse("worktree check", "The worktree changed while the checks ran; the checks must not write tracked files and you must not edit during checks.");
   }
   return outcome;
@@ -179,7 +191,7 @@ function checkPost(outcome: Outcome, enforce: Spec["scope"]["enforce"]): { body:
   if (outcome.failure !== null) lines.push("", clip(outcome.failure.output.slice(-FAILURE_TAIL), FAILURE_TAIL));
   if (passed && outcome.outside.length > 0) lines.push("", `Outside the ticket's scope (scope.enforce is "${enforce}"): ${outcome.outside.join(", ")}`);
   const runs = outcome.runs.map(({ command, exitCode, timedOut, durationMs }) => ({ command, exitCode, timedOut, durationMs }));
-  return { body: lines.join("\n"), data: { passed, runs, outside: outcome.outside, protectedHits: outcome.protectedHits } };
+  return { body: lines.join("\n"), data: { passed, head: outcome.commitSha, runs, outside: outcome.outside, protectedHits: outcome.protectedHits } };
 }
 
 async function finish(ctx: EngineCtx, ticketId: number, spec: Spec, outcome: Outcome): Promise<void> {
@@ -205,7 +217,7 @@ async function finish(ctx: EngineCtx, ticketId: number, spec: Spec, outcome: Out
     if (failure === null) {
       const round = ticket.review_round + 1;
       store.setTicketState(ticket.id, "review", LOOM_ACTOR, { head: outcome.commitSha, round });
-      store.updateTicket(ticket.id, { head_sha: outcome.commitSha, review_round: round });
+      store.updateTicket(ticket.id, { head_sha: outcome.commitSha, head_tree: outcome.tree, review_round: round });
       if (worker !== null) store.updateThread((worker as ThreadRow).id, { idle_count: 0 });
       return true;
     }

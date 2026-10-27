@@ -574,7 +574,8 @@ async function restack(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: 
   }
   const passed = runs.length === 0 ? "" : `; its checks passed (${plural(runs.length, "command")})`;
   store.tx(() => {
-    store.updateTicket(ticket.id, { head_sha: merged.sha, stack_json: JSON.stringify(stack), ...keepText(merged.sha) });
+    // A restack happens only on the project's machine, where the head's own id is what to compare.
+    store.updateTicket(ticket.id, { head_sha: merged.sha, head_tree: null, stack_json: JSON.stringify(stack), ...keepText(merged.sha) });
     addMergePost(ctx, ticket, { body: `Merged ${what} into ${ticket.key}'s branch as ${merged.sha.slice(0, 12)}${passed}.`, data: { outcome: "restacked", sha: merged.sha, deps: need.deps, base: built.tip, runs: runs.map(({ command, exitCode, timedOut, durationMs }) => ({ command, exitCode, timedOut, durationMs })) } });
   });
   store.changed(project.id);

@@ -386,6 +386,7 @@ function feedbackData(ticket: TicketRow, round: number, counted: number, a: Roun
     round,
     counted: a.human ? null : counted,
     head: ticket.head_sha,
+    tree: ticket.head_tree,
     overLimit,
     human: a.human,
     replyId: a.replyId ?? null,
@@ -431,10 +432,16 @@ export function reviewersToAsk(posts: readonly PostRow[]): string[] {
   return [...reviewers];
 }
 
-/** Whether a fix round's submit changed nothing: its commit is still the head the open feedback was sent for. */
-export function unchangedFix(posts: readonly PostRow[], sha: string): boolean {
+/**
+ * Whether a fix round's submit changed nothing: its tree is still the one the open feedback was sent for. A commit
+ * carried from another machine comes back with a new id, so the tree decides; a post from before trees were kept has
+ * only the head.
+ */
+export function unchangedFix(posts: readonly PostRow[], head: { sha: string; tree: string }): boolean {
   const open = openFeedback(posts);
-  return open !== null && (JSON.parse(open.data_json) as { head?: string | null }).head === sha;
+  if (open === null) return false;
+  const data = JSON.parse(open.data_json) as { head?: string | null; tree?: string | null };
+  return data.tree != null ? data.tree === head.tree : data.head === head.sha;
 }
 
 /** When a closed pull request blocks its ticket, a requeue starts a new one: one commit on a new branch, with fresh rounds. */

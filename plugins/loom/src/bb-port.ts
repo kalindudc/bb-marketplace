@@ -9,13 +9,15 @@ const isNameConflict = (error: unknown) => /\b409\b|section_name_conflict/iu.tes
 /**
  * bb's SDK throws BbHttpError, whose `status` is the HTTP status, `code` bb's error code and `body` the parsed error. A
  * provider whose availability check answers "unavailable" makes bb refuse with 409 environment_provider_rejected and
- * details.availabilityStatus; that, and any error bb marks retryable, is a wait rather than a failure.
+ * details.availabilityStatus; a machine provider that cannot start a machine now, such as a full pool, makes it refuse
+ * with 409 machine_provider_rejected. Those, and any error bb marks retryable, are a wait rather than a failure.
  */
 export function spawnErrorOf(error: unknown): unknown {
   const http = (error ?? {}) as { status?: unknown; code?: unknown; body?: unknown };
   const body = (http.body ?? {}) as { retryable?: unknown; details?: { availabilityStatus?: unknown } | null };
   const status = http.status;
-  if (body.retryable === true || (status === 409 && http.code === "environment_provider_rejected" && body.details?.availabilityStatus === "unavailable")) return new SpawnUnavailableError(message(error));
+  const unavailable = status === 409 && ((http.code === "environment_provider_rejected" && body.details?.availabilityStatus === "unavailable") || http.code === "machine_provider_rejected");
+  if (body.retryable === true || unavailable) return new SpawnUnavailableError(message(error));
   return typeof status === "number" && status >= 400 && status < 500 && status !== 408 && status !== 409 && status !== 429 ? new SpawnRefusedError(status, message(error)) : error;
 }
 
@@ -66,7 +68,12 @@ export function createBbPort(bb: BbPluginApi): BbPort {
         environment:
           args.environment === undefined
             ? { type: "host", hostId: args.hostId, workspace: { type: "managed-worktree", baseBranch: { kind: "named", name: args.baseBranch } } }
-            : { type: "provider", environmentProviderId: args.environment.providerId, inputs: args.environment.inputs as JsonValue, machine: { type: "existing", hostId: args.hostId } },
+            : {
+                type: "provider",
+                environmentProviderId: args.environment.providerId,
+                inputs: args.environment.inputs as JsonValue,
+                machine: args.environment.machine === undefined ? { type: "existing", hostId: args.hostId } : { type: "new", machineProviderId: args.environment.machine.providerId, inputs: args.environment.machine.inputs as JsonValue },
+              },
         ...(args.detail === undefined
           ? { prompt: args.prompt }
           : { input: [{ type: "text" as const, text: args.prompt, mentions: [] }, { type: "text" as const, text: args.detail, mentions: [], visibility: "agent-only" as const }] }),
@@ -146,8 +153,9 @@ export function createBbPort(bb: BbPluginApi): BbPort {
     },
     async latestSystemError(threadId) {
       const rows = await bb.sdk.threads.events.list({ threadId, types: ["system/error"], order: "desc", limit: "1" });
-      const data = (rows[0] as { data?: { code?: string; message?: string; detail?: string } } | undefined)?.data;
-      return data === undefined ? null : { code: data.code ?? null, message: data.message ?? "", detail: data.detail ?? null };
+      const row = rows[0] as { seq: number; createdAt: number; data?: { code?: string; message?: string; detail?: string } } | undefined;
+      const data = row?.data;
+      return data === undefined ? null : { code: data.code ?? null, message: data.message ?? "", detail: data.detail ?? null, seq: row!.seq, at: row!.createdAt };
     },
     async retryTurn(threadId, turnRequestId, sendAt) {
       await bb.sdk.threads.retry({ threadId, turnRequestId, sendAt, reason: "Rate limited (Loom retry)" });
@@ -177,6 +185,24 @@ export function createBbPort(bb: BbPluginApi): BbPort {
     async providerIds() {
       return (await bb.sdk.providers.list()).map((provider) => provider.id);
     },
+    async environmentCompositions(bbProjectId) {
+      const providers = await bb.sdk.environments.listProviders({ projectId: bbProjectId });
+      return providers.flatMap((provider) =>
+        provider.machineProviderId == null
+          ? []
+          : [{
+              id: provider.id,
+              displayName: provider.displayName,
+              description: provider.description,
+              pluginId: provider.pluginId,
+              acceptsEmptyInputs: provider.acceptsEmptyInputs,
+              inputs: provider.inputs,
+              available: provider.availability === null || provider.availability.status === "available",
+              unavailableReason: provider.availability === null || provider.availability.status === "available" ? null : provider.availability.message,
+              machineProviderId: provider.machineProviderId,
+            }],
+      );
+    },
     async environmentProviders(bbProjectId, hostId) {
       return (await bb.sdk.environments.listProviders({ projectId: bbProjectId, hostId })).map((provider) => {
         // The machine's own answer wins; null from bb means nothing stands in the way.
@@ -190,8 +216,19 @@ export function createBbPort(bb: BbPluginApi): BbPort {
           inputs: provider.inputs,
           available: availability === null || availability.status === "available",
           unavailableReason: availability === null || availability.status === "available" ? null : availability.message,
+          ...(provider.machineProviderId == null ? {} : { machineProviderId: provider.machineProviderId }),
         };
       });
+    },
+    async machineProviders() {
+      return (await bb.sdk.hosts.experimental_listProviders()).map((provider) => ({
+        id: provider.id,
+        displayName: provider.displayName,
+        description: provider.description,
+        pluginId: provider.pluginId,
+        acceptsEmptyInputs: provider.acceptsEmptyInputs,
+        inputs: provider.inputs,
+      }));
     },
     async plugins() {
       return (await bb.sdk.plugins.list()).plugins.map((plugin) => ({ id: plugin.id, enabled: plugin.enabled, builtin: plugin.provenance === "builtin" }));
@@ -248,7 +285,8 @@ export function createBbPort(bb: BbPluginApi): BbPort {
 const HOST_CALL_MS = 30_000;
 const NETWORK_CALL_MS = 150_000;
 // prFeedback runs gh or a forge command for up to 2 minutes, so the 30-second default would cut a slow read short and pause the project.
-const NETWORK_METHODS: readonly HostMethod[] = ["fetchBranch", "push", "prCreate", "prState", "prFeedback", "prBatch", "ensureWorktree", "ghStatus", "landedOn"];
+// importCommit and carryStart may fetch a base, and exportChanges reads every changed file of a large commit.
+const NETWORK_METHODS: readonly HostMethod[] = ["fetchBranch", "push", "prCreate", "prState", "prFeedback", "prBatch", "ensureWorktree", "ghStatus", "landedOn", "exportChanges", "importCommit", "carryStart"];
 
 /** The host entry client. Git calls get 30 s; fetches, pushes, gh and ensureWorktree (a first checkout) get 150 s; exec gets its own timeout plus 30 s, under the 30-minute host call cap. */
 export function createHostPort(bb: BbPluginApi): HostPort {

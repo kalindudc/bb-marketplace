@@ -175,4 +175,10 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE tickets ADD COLUMN pr_meta_json TEXT`,
   // HandBack: work going back to the ticket's worker, not sent yet; a review's changes and a merge that did not land use it as a fix round does.
   `ALTER TABLE tickets RENAME COLUMN pr_deliver_json TO handback_json`,
+  // The tree of head_sha, which stays the same when a commit is carried between machines and its id does not.
+  `ALTER TABLE tickets ADD COLUMN head_tree TEXT`,
+  // Resume: the work a worker on a new machine must carry in with loom_resume before it submits; null for none.
+  `ALTER TABLE threads ADD COLUMN resume_json TEXT`,
+  // The seq of the newest machine_maintenance event whose idle Loom did not count.
+  `ALTER TABLE threads ADD COLUMN maintenance_seq INTEGER NOT NULL DEFAULT 0`,
 ];

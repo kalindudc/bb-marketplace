@@ -60,8 +60,8 @@ export interface BbPort {
   findSpawnedThread(spawnToken: string): Promise<string | null>;
   /** Cumulative tokens the thread has used, or null when its provider reports none. */
   threadTokens(threadId: string): Promise<number | null>;
-  /** The newest system/error event of the thread; `detail` is the cause bb recorded, such as the environment provider's message. */
-  latestSystemError(threadId: string): Promise<{ code: string | null; message: string; detail?: string | null } | null>;
+  /** The newest system/error event of the thread; `detail` is the cause bb recorded, such as the environment provider's message, and `seq` its place in the thread's events. */
+  latestSystemError(threadId: string): Promise<{ code: string | null; message: string; detail?: string | null; seq: number; at: number } | null>;
   retryTurn(threadId: string, turnRequestId: string, sendAt: number): Promise<void>;
   /** "personal" is bb's "Don't work in a project"; null when bb does not know the project. */
   projectKind(bbProjectId: string): Promise<"standard" | "personal" | null>;
@@ -73,6 +73,10 @@ export interface BbPort {
   providerIds(): Promise<string[]>;
   /** The environment providers bb offers for the project on that machine, with each one's availability there. */
   environmentProviders(bbProjectId: string, hostId: string): Promise<EnvironmentProviderInfo[]>;
+  /** The environments bb offers for the project that make a new machine for each thread; bb lists them only without a machine. */
+  environmentCompositions(bbProjectId: string): Promise<EnvironmentProviderInfo[]>;
+  /** The machine providers bb has, which can give a thread a new machine. */
+  machineProviders(): Promise<MachineProviderInfo[]>;
   /** Every installed plugin; builtin ones ship with bb. */
   plugins(): Promise<PluginInfo[]>;
   /** The ids among `threadIds` with a pending interaction (a question or an approval); unknown threads are left out. */
@@ -120,8 +124,8 @@ export interface SpawnArgs {
   permissionMode?: "accept-edits" | "auto" | "full";
   /** Text only the agent reads, after the prompt. */
   detail?: string;
-  /** A bb environment provider to start in, on hostId; absent keeps the managed worktree from baseBranch. */
-  environment?: { providerId: string; inputs: unknown };
+  /** A bb environment provider to start in, on hostId or on a new machine from `machine`; absent keeps the managed worktree from baseBranch. */
+  environment?: { providerId: string; inputs: unknown; machine?: { providerId: string; inputs: unknown } };
 }
 
 export interface EnvironmentProviderInfo {
@@ -134,6 +138,18 @@ export interface EnvironmentProviderInfo {
   inputs: unknown;
   available: boolean;
   unavailableReason: string | null;
+  /** Set on an environment that makes a new machine for each thread: the machine provider it makes it with. */
+  machineProviderId?: string;
+}
+
+export interface MachineProviderInfo {
+  id: string;
+  displayName: string;
+  description: string;
+  pluginId: string;
+  acceptsEmptyInputs: boolean;
+  /** The JSON Schema of its inputs; null when it takes none. */
+  inputs: unknown;
 }
 
 export interface PluginInfo {

@@ -596,6 +596,50 @@ describe("forges, integration worktrees and environments", () => {
   });
 });
 
+describe("threads on new machines", () => {
+  const pr = { strategy: "pr", stack: false };
+
+  it("parses a machine for workers and one for reviewers on the pr strategy without stacking", () => {
+    const result = run((doc) => {
+      doc.merge = pr;
+      doc.environment = { provider: "git-worktree", machine: { provider: "x" }, reviewer: { machine: { provider: "y", inputs: { size: "small" } } } };
+    });
+    expect(result.errors).toEqual([]);
+    expect(result.spec!.environment).toEqual({ provider: "git-worktree", machine: { provider: "x" }, reviewer: { machine: { provider: "y", inputs: { size: "small" } } } });
+    const plain = run((doc) => (doc.environment = { provider: "git-worktree" })).spec!;
+    expect(Object.keys(plain.environment!)).not.toContain("machine");
+  });
+
+  it("refuses the integration strategy, and stacking, for a repo whose workers or reviewers use a machine, naming the path", () => {
+    const why = 'a thread on a new machine needs merge.strategy = "pr" and merge.stack = false, because Loom does not carry its integration branch or the bases of stacked pull requests, which live only on the project\'s machine, to other machines. Set both, or remove';
+    expect(run((doc) => (doc.environment = { provider: "git-worktree", machine: { provider: "x" } })).errors).toEqual([`environment.machine: ${why} environment.machine.`]);
+    expect(run((doc) => {
+      doc.merge = { strategy: "pr" };
+      doc.environment = { provider: "git-worktree", reviewer: { machine: { provider: "x" } } };
+    }).errors).toEqual([`environment.reviewer.machine: ${why} environment.reviewer.machine.`]);
+    expect(run((doc) => {
+      doc.merge = { strategy: "pr", stack: true };
+      doc.repo = [
+        { name: "web", project: "proj_web", environment: { provider: "git-worktree", machine: { provider: "x" } } },
+        { name: "api", project: "proj_api" },
+      ];
+      doc.ticket[0].repo = "web";
+      doc.ticket[1].repo = "api";
+    }).errors).toEqual([`repo[0].environment.machine: ${why} repo[0].environment.machine.`]);
+    expect(run((doc) => {
+      doc.merge = pr;
+      doc.environment = { provider: "git-worktree", machine: { provider: "x" } };
+    }).errors).toEqual([]);
+  });
+
+  it("refuses a malformed machine provider id and an unknown placeholder in machine inputs", () => {
+    expect(run((doc) => ((doc.merge = pr), (doc.environment = { provider: "git-worktree", machine: { provider: "Big Box" } }))).errors[0]).toMatch(/^environment\.machine\.provider: must be a bb machine provider id/u);
+    expect(run((doc) => ((doc.merge = pr), (doc.environment = { provider: "git-worktree", machine: { provider: "x", inputs: { name: "{ticket}" } } }))).errors).toEqual([
+      "environment.machine.inputs: {ticket} is not a Loom placeholder. Use {branch} or {base}, or write the value out.",
+    ]);
+  });
+});
+
 describe("project.summary, done_when and merge_after", () => {
   it("parses a spec without a summary, as the specs stored before it existed, but a proposal needs one", () => {
     const old = run(beforeSummaries);

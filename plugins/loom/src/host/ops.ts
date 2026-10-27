@@ -2,11 +2,11 @@
 // commands in their own process group. host.ts wires these to RPC handlers; tests call them directly.
 import { execFile, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, realpathSync, rmdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { experimental_runVcsProcess, type ExperimentalVcsProcessPriority } from "@get-bb/plugin-sdk/host";
 import { z } from "zod";
-import { githubPull, prNumber, REVIEW_DECISIONS, type HostInput, type HostOutput } from "../host-contract";
+import { BLOB_MAX_BYTES, githubPull, prNumber, REVIEW_DECISIONS, type HostInput, type HostOutput } from "../host-contract";
 
 const GIT_TIMEOUT_MS = 30_000;
 // Pushes, gh calls and the first checkout of the integration worktree can take a while on a slow link or a large repository.
@@ -27,7 +27,9 @@ interface GitRun {
 type Priority = ExperimentalVcsProcessPriority;
 const INTERACTIVE: Priority = "interactive";
 
-function run(cwd: string, args: readonly string[], signal?: AbortSignal, timeout = GIT_TIMEOUT_MS, priority: Priority = "background"): Promise<GitRun> {
+type GitEnv = Record<string, string>;
+
+function run(cwd: string, args: readonly string[], signal?: AbortSignal, timeout = GIT_TIMEOUT_MS, priority: Priority = "background", env: GitEnv = {}): Promise<GitRun> {
   const argv = ["-C", cwd, ...args];
   return experimental_runVcsProcess(
     "git",
@@ -37,7 +39,7 @@ function run(cwd: string, args: readonly string[], signal?: AbortSignal, timeout
         execFile(
           "git",
           argv,
-          { env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C" }, maxBuffer: GIT_MAX_BUFFER, timeout, signal, encoding: "utf8" },
+          { env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C", ...env }, maxBuffer: GIT_MAX_BUFFER, timeout, signal, encoding: "utf8" },
           (error, stdout, stderr) => {
             if (error === null) return resolve({ code: 0, stdout, stderr });
             const failure = error as NodeJS.ErrnoException & { killed?: boolean };
@@ -55,8 +57,8 @@ function failure(args: readonly string[], result: GitRun): Error {
 }
 
 /** Runs git in `cwd` and returns stdout; trimmed unless `raw` (NUL-separated listings). Throws when git exits non-zero. */
-export async function git(cwd: string, args: readonly string[], opts: { raw?: boolean; signal?: AbortSignal; priority?: Priority } = {}): Promise<string> {
-  const result = await run(cwd, args, opts.signal, GIT_TIMEOUT_MS, opts.priority);
+export async function git(cwd: string, args: readonly string[], opts: { raw?: boolean; signal?: AbortSignal; priority?: Priority; env?: GitEnv } = {}): Promise<string> {
+  const result = await run(cwd, args, opts.signal, GIT_TIMEOUT_MS, opts.priority, opts.env);
   if (result.code !== 0) throw failure(args, result);
   return opts.raw === true ? result.stdout : result.stdout.trim();
 }
@@ -77,14 +79,14 @@ export async function ensureBranch(input: HostInput<"ensureBranch">, signal?: Ab
 
 export async function worktreeState(input: HostInput<"worktreeState">, signal?: AbortSignal): Promise<HostOutput<"worktreeState">> {
   const { worktree, base, trackedOnly } = input;
-  const head = await git(worktree, ["rev-parse", "HEAD"], { signal });
+  const [head = "", tree = ""] = (await git(worktree, ["rev-parse", "HEAD", "HEAD^{tree}"], { signal })).split("\n");
   const branch = (await tryGit(worktree, ["symbolic-ref", "--short", "-q", "HEAD"], signal)) || null;
   const dirty = (await git(worktree, ["status", "--porcelain", ...(trackedOnly === true ? ["--untracked-files=no"] : [])], { signal })) !== "";
   const mergeBase = await git(worktree, ["merge-base", base, "HEAD"], { signal });
   const tracked = await git(worktree, ["diff", "--name-only", "-z", "--no-renames", mergeBase], { raw: true, signal });
   const untracked = await git(worktree, ["ls-files", "--others", "--exclude-standard", "-z"], { raw: true, signal });
   const changed = [...new Set([...tracked.split("\0"), ...untracked.split("\0")].filter((path) => path !== ""))].sort();
-  return { branch, head, dirty, changed };
+  return { branch, head, tree, dirty, changed };
 }
 
 // Commits and merges need an author; the Loom identity is used only when git has none.
@@ -303,37 +305,43 @@ export async function prCommit(input: HostInput<"prCommit">, signal?: AbortSigna
   return { outcome: "ok", sha: await commitTree(repo, tree, parents, message, signal), created: true };
 }
 
-// git commit-tree with the message on stdin, which execFile cannot give, so it runs through spawn.
-function commitTree(repo: string, tree: string, parents: readonly string[], message: string, signal?: AbortSignal): Promise<string> {
-  return identityArgs(repo, signal).then((identity) => {
-    const args = ["-C", repo, ...identity, "commit-tree", tree, ...parents.flatMap((parent) => ["-p", parent]), "-F", "-"];
-    return experimental_runVcsProcess(
-      "git",
-      args,
-      () =>
-        new Promise<string>((resolve, reject) => {
-          const child = spawn("git", args, { env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C" }, signal, stdio: ["pipe", "pipe", "pipe"] });
-          let stdout = "";
-          let stderr = "";
-          const timer = setTimeout(() => child.kill("SIGKILL"), NETWORK_TIMEOUT_MS);
-          child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString("utf8")));
-          child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
-          child.stdin.on("error", () => undefined);
-          child.stdin.end(message.endsWith("\n") ? message : `${message}\n`);
-          child.on("error", (error) => {
-            clearTimeout(timer);
-            reject(error);
-          });
-          child.on("close", (code) => {
-            clearTimeout(timer);
-            const sha = stdout.trim();
-            if (code === 0 && /^[0-9a-f]{40,64}$/u.test(sha)) resolve(sha);
-            else reject(new Error(`git commit-tree failed (${code ?? "killed"}): ${tail(stderr || stdout)}`));
-          });
-        }),
-      { priority: "background", signal },
-    );
-  });
+/** Runs git with `input` on stdin, which execFile cannot give, so through spawn; returns stdout trimmed. Throws when git exits non-zero. */
+function gitInput(cwd: string, args: readonly string[], input: string, opts: { signal?: AbortSignal; env?: GitEnv; what?: string } = {}): Promise<string> {
+  const argv = ["-C", cwd, ...args];
+  return experimental_runVcsProcess(
+    "git",
+    argv,
+    () =>
+      new Promise<string>((resolve, reject) => {
+        const child = spawn("git", argv, { env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C", ...opts.env }, signal: opts.signal, stdio: ["pipe", "pipe", "pipe"] });
+        let stdout = "";
+        let stderr = "";
+        const timer = setTimeout(() => child.kill("SIGKILL"), NETWORK_TIMEOUT_MS);
+        child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString("utf8")));
+        child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
+        child.stdin.on("error", () => undefined);
+        child.stdin.end(input);
+        child.on("error", (error) => {
+          clearTimeout(timer);
+          reject(error);
+        });
+        child.on("close", (code) => {
+          clearTimeout(timer);
+          if (code === 0) resolve(stdout.trim());
+          else reject(new Error(`git ${opts.what ?? args[0]} failed (${code ?? "killed"}): ${tail(stderr || stdout)}`));
+        });
+      }),
+    { priority: "background", signal: opts.signal },
+  );
+}
+
+const SHA = /^[0-9a-f]{40,64}$/u;
+
+async function commitTree(repo: string, tree: string, parents: readonly string[], message: string, signal?: AbortSignal): Promise<string> {
+  const identity = await identityArgs(repo, signal);
+  const sha = await gitInput(repo, [...identity, "commit-tree", tree, ...parents.flatMap((parent) => ["-p", parent]), "-F", "-"], message.endsWith("\n") ? message : `${message}\n`, { signal, what: "commit-tree" });
+  if (!SHA.test(sha)) throw new Error(`git commit-tree failed (0): ${tail(sha)}`);
+  return sha;
 }
 
 /**
@@ -388,6 +396,307 @@ export async function fetchBranch(input: HostInput<"fetchBranch">, signal?: Abor
   const fetched = await run(worktree, ["fetch", "--no-tags", remote, `refs/heads/${branch}`], signal, NETWORK_TIMEOUT_MS);
   if (fetched.code !== 0) return { outcome: "unavailable", message: `git fetch from ${remote} failed: ${tail(fetched.stderr || fetched.stdout)}` };
   return { outcome: "ok", sha: await git(worktree, ["rev-parse", "--verify", "FETCH_HEAD^{commit}"], { signal }) };
+}
+
+// ---------------------------------------------------------------- carrying a commit between machines
+// The machine a thread runs on may share no git objects with the project's checkout, and a git there may refuse much
+// (a temporary index, diff-tree), so a commit moves as its changed files: read with diff, ls-tree and cat-file where it
+// was made, rebuilt here with a temporary index on the same base, and checked by its tree.
+
+type Author = HostOutput<"exportChanges">["author"];
+type Change = HostOutput<"exportChanges">["changes"][number];
+const PATH_BATCH = 500;
+
+const hasCommit = async (repo: string, sha: string, signal?: AbortSignal) => (await tryGit(repo, ["cat-file", "-e", `${sha}^{commit}`], signal)) !== null;
+
+/** The author line and the message of a raw commit object, as `git cat-file commit` prints it. */
+function parseCommit(raw: string): { author: Author; message: string } {
+  const split = raw.indexOf("\n\n");
+  const headers = split === -1 ? raw : raw.slice(0, split);
+  const match = /^author (.*) <([^>]*)> (\d+ [+-]\d{4})$/mu.exec(headers);
+  if (match === null) throw new Error("the commit has no author line git can read");
+  return { author: { name: match[1]!, email: match[2]!, date: match[3]! }, message: split === -1 ? "" : raw.slice(split + 2) };
+}
+
+const authorEnv = (author: Author): GitEnv => ({
+  GIT_AUTHOR_NAME: author.name,
+  GIT_AUTHOR_EMAIL: author.email,
+  GIT_AUTHOR_DATE: author.date,
+});
+
+export async function exportChanges(input: HostInput<"exportChanges">, signal?: AbortSignal): Promise<HostOutput<"exportChanges">> {
+  const { worktree } = input;
+  const head = await git(worktree, ["rev-parse", "--verify", `${input.head ?? "HEAD"}^{commit}`], { signal });
+  const base = await git(worktree, ["merge-base", input.base, head], { signal });
+  const tree = await git(worktree, ["rev-parse", `${head}^{tree}`], { signal });
+  const { author, message } = parseCommit(await git(worktree, ["cat-file", "commit", head], { raw: true, signal }));
+  const listed = (await git(worktree, ["diff", "--name-status", "--no-renames", "-z", base, head, "--"], { raw: true, signal })).split("\0");
+  const changes: Change[] = [];
+  for (let index = 0; index + 1 < listed.length; index += 2) {
+    const letter = listed[index]![0];
+    if (letter === "A" || letter === "M" || letter === "T" || letter === "D") changes.push({ status: letter, path: listed[index + 1]! });
+  }
+  const kept = changes.filter((change) => change.status !== "D");
+  const entries = new Map<string, { mode: string; type: string; blob: string }>();
+  for (let at = 0; at < kept.length; at += PATH_BATCH) {
+    const batch = kept.slice(at, at + PATH_BATCH).map((change) => change.path);
+    for (const line of (await git(worktree, ["ls-tree", "-z", "--full-tree", head, "--", ...batch], { raw: true, signal })).split("\0")) {
+      const match = /^(\d+) (\w+) ([0-9a-f]+)\t(.*)$/su.exec(line);
+      if (match !== null) entries.set(match[4]!, { mode: match[1]!, type: match[2]!, blob: match[3]! });
+    }
+  }
+  for (const change of kept) {
+    const entry = entries.get(change.path);
+    if (entry === undefined) throw new Error(`git ls-tree did not list ${change.path} in ${head}`);
+    if (entry.type !== "blob") throw new Error(`${change.path} is a submodule, which Loom cannot move between machines`);
+    change.mode = entry.mode as Change["mode"];
+    change.blob = entry.blob;
+  }
+  const sizes = new Map<string, number>();
+  const blobs = [...new Set(kept.map((change) => change.blob!))];
+  if (blobs.length > 0) {
+    for (const line of (await gitInput(worktree, ["cat-file", "--batch-check"], `${blobs.join("\n")}\n`, { signal })).split("\n")) {
+      const [blob = "", type, size] = line.split(" ");
+      if (type === "blob") sizes.set(blob, Number(size));
+    }
+  }
+  for (const change of kept) {
+    const size = sizes.get(change.blob!);
+    if (size === undefined) throw new Error(`git cat-file --batch-check did not size ${change.path} (${change.blob!.slice(0, 12)})`);
+    change.size = size;
+  }
+  changes.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return { base, head, tree, message, author, changes };
+}
+
+/** The bytes of a blob from offset, length of them at most, read as cat-file streams them; the rest is never read. */
+function blobRange(repo: string, sha: string, offset: number, length: number, signal?: AbortSignal): Promise<Buffer> {
+  const argv = ["-C", repo, "cat-file", "blob", sha];
+  return experimental_runVcsProcess(
+    "git",
+    argv,
+    () =>
+      new Promise<Buffer>((resolve, reject) => {
+        const child = spawn("git", argv, { env: { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL: "C" }, signal, stdio: ["ignore", "pipe", "pipe"] });
+        const parts: Buffer[] = [];
+        let seen = 0;
+        let kept = 0;
+        let stderr = "";
+        let done = false;
+        const finish = () => {
+          done = true;
+          child.kill("SIGKILL");
+          resolve(Buffer.concat(parts, kept));
+        };
+        const timer = setTimeout(() => child.kill("SIGKILL"), GIT_TIMEOUT_MS);
+        child.stdout.on("data", (chunk: Buffer) => {
+          if (done) return;
+          const from = Math.max(0, offset - seen);
+          const to = Math.min(chunk.length, offset + length - seen);
+          seen += chunk.length;
+          if (to > from) {
+            parts.push(chunk.subarray(from, to));
+            kept += to - from;
+          }
+          if (kept >= length) finish();
+        });
+        child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
+        child.on("error", (error) => {
+          clearTimeout(timer);
+          if (!done) reject(error);
+        });
+        child.on("close", (code) => {
+          clearTimeout(timer);
+          if (done) return;
+          if (code === 0) resolve(Buffer.concat(parts, kept));
+          else reject(new Error(`git cat-file blob ${sha} failed (${code ?? "killed"}): ${tail(stderr)}`));
+        });
+      }),
+    { priority: "background", signal },
+  );
+}
+
+export async function readBlob(input: HostInput<"readBlob">, signal?: AbortSignal): Promise<HostOutput<"readBlob">> {
+  const { repo, sha, offset, length } = input;
+  const size = Number(await git(repo, ["cat-file", "-s", sha], { signal }));
+  if (size > BLOB_MAX_BYTES) throw new Error(`the file ${sha.slice(0, 12)} is ${Math.ceil(size / 1024 / 1024)} MiB, and files over ${BLOB_MAX_BYTES / 1024 / 1024} MiB can't move between machines`);
+  if (length === 0) return { data: "" };
+  return { data: (await blobRange(repo, sha, offset, length, signal)).toString("base64") };
+}
+
+const uploadPath = (dataDir: string, upload: string) => join(dataDir, "imports", upload);
+
+export async function importChunk(input: HostInput<"importChunk">, dataDir: string): Promise<HostOutput<"importChunk">> {
+  const { upload, offset } = input;
+  const path = uploadPath(dataDir, upload);
+  const bytes = Buffer.from(input.data, "base64");
+  mkdirSync(dirname(path), { recursive: true });
+  if (offset === 0) writeFileSync(path, bytes);
+  else {
+    const size = existsSync(path) ? statSync(path).size : 0;
+    if (size !== offset) throw new Error(`the upload ${upload} has ${size} bytes, not ${offset}, so this range is out of order; send the file again from offset 0`);
+    appendFileSync(path, bytes);
+  }
+  return { size: offset + bytes.length };
+}
+
+export async function dropUploads(input: HostInput<"dropUploads">, dataDir: string): Promise<HostOutput<"dropUploads">> {
+  for (const upload of input.uploads) rmSync(uploadPath(dataDir, upload), { force: true });
+  return {};
+}
+
+/** Fetches what the remote has of `branch` into its remote-tracking ref, then `base` itself when the branch did not bring it. Null once the base is here, else why not. */
+async function fetchBase(repo: string, remote: string, branch: string, base: string, signal?: AbortSignal): Promise<string | null> {
+  const fetched = await run(repo, ["fetch", "--no-tags", "--no-write-fetch-head", remote, `+refs/heads/${branch}:refs/remotes/${remote}/${branch}`], signal, NETWORK_TIMEOUT_MS);
+  if (await hasCommit(repo, base, signal)) return null;
+  const bySha = await run(repo, ["fetch", "--no-tags", "--no-write-fetch-head", remote, base], signal, NETWORK_TIMEOUT_MS);
+  if (await hasCommit(repo, base, signal)) return null;
+  return `The base commit ${base.slice(0, 12)} is not in ${repo}, and git fetch from ${remote} did not bring it: ${tail(bySha.stderr || fetched.stderr || bySha.stdout)}`;
+}
+
+export async function importCommit(input: HostInput<"importCommit">, dataDir: string, signal?: AbortSignal): Promise<HostOutput<"importCommit">> {
+  const { repo, remote, baseBranch, tree, message, author, entries, refs } = input;
+  const index = join(dataDir, "imports", `index-${randomBytes(6).toString("hex")}`);
+  const uploads = entries.flatMap((entry) => ("upload" in entry ? [uploadPath(dataDir, entry.upload)] : []));
+  try {
+    const missing = await fetchBase(repo, remote, baseBranch, input.base, signal);
+    if (missing !== null) return { outcome: "unavailable", message: missing };
+    const base = await git(repo, ["rev-parse", "--verify", `${input.base}^{commit}`], { signal });
+    mkdirSync(dirname(index), { recursive: true });
+    const env = { GIT_INDEX_FILE: index };
+    await git(repo, ["read-tree", base], { signal, env });
+    const hashed = new Map<string, string>();
+    const files = [...new Set(entries.flatMap((entry) => ("upload" in entry ? [entry.upload] : [])))];
+    if (files.length > 0) {
+      const shas = (await gitInput(repo, ["hash-object", "-w", "--no-filters", "--stdin-paths"], `${files.map((upload) => uploadPath(dataDir, upload)).join("\n")}\n`, { signal })).split("\n");
+      files.forEach((upload, at) => hashed.set(upload, shas[at]!));
+    }
+    const records: string[] = [];
+    for (const entry of entries) {
+      if ("upload" in entry) records.push(`${entry.mode} ${hashed.get(entry.upload)!}\t${entry.path}`);
+      else records.push(`0 ${"0".repeat(base.length)}\t${entry.path}`);
+    }
+    if (records.length > 0) await gitInput(repo, ["update-index", "-z", "--index-info"], `${records.join("\0")}\0`, { signal, env });
+    const written = await git(repo, ["write-tree"], { signal, env });
+    if (written !== tree) return { outcome: "mismatch", tree: written };
+    const committer = { GIT_COMMITTER_NAME: author.name, GIT_COMMITTER_EMAIL: author.email, GIT_COMMITTER_DATE: author.date };
+    const sha = await gitInput(repo, ["commit-tree", written, "-p", base, "--no-gpg-sign", "-F", "-"], message, { signal, env: { ...authorEnv(author), ...committer }, what: "commit-tree" });
+    for (const name of refs) await git(repo, ["update-ref", name, sha], { signal });
+    return { outcome: "ok", sha };
+  } finally {
+    for (const path of [index, ...uploads]) rmSync(path, { force: true });
+  }
+}
+
+export async function refTip(input: HostInput<"refTip">, signal?: AbortSignal): Promise<HostOutput<"refTip">> {
+  const sha = await commitOf(input.repo, input.ref, signal);
+  if (sha === null) return missing(`${input.ref} is not in the repository.`);
+  const tree = await git(input.repo, ["rev-parse", `${sha}^{tree}`], { signal });
+  if (input.contains === undefined) return { outcome: "ok", sha, tree };
+  const args = ["merge-base", "--is-ancestor", input.contains, sha];
+  const ancestor = await run(input.repo, args, signal);
+  if (ancestor.code !== 0 && ancestor.code !== 1) throw failure(args, ancestor);
+  return { outcome: "ok", sha, tree, contains: ancestor.code === 0 };
+}
+
+export async function detach(input: HostInput<"detach">, signal?: AbortSignal): Promise<HostOutput<"detach">> {
+  await git(input.worktree, ["checkout", "-q", "--detach", input.sha], { signal });
+  return { tree: await git(input.worktree, ["rev-parse", "HEAD^{tree}"], { signal }) };
+}
+
+/** `path` in the worktree, once no symlink on the way leads out of it; with `create`, its directory is made. */
+function insideWorktree(worktree: string, path: string, create: boolean): string {
+  const root = realpathSync(worktree);
+  const file = join(root, path);
+  let existing = dirname(file);
+  while (!existsSync(existing)) existing = dirname(existing);
+  const real = realpathSync(existing);
+  if (real !== root && !real.startsWith(`${root}/`)) throw new Error(`${path} leads out of the worktree ${worktree}`);
+  if (create) mkdirSync(dirname(file), { recursive: true });
+  return file;
+}
+
+export async function carryStart(input: HostInput<"carryStart">, signal?: AbortSignal): Promise<HostOutput<"carryStart">> {
+  const { worktree, remote, baseBranch, base } = input;
+  const [head = "", tree = ""] = (await git(worktree, ["rev-parse", "HEAD", "HEAD^{tree}"], { signal })).split("\n");
+  if (tree === input.tree) return { outcome: "ok", present: true };
+  const dirty = (await git(worktree, ["status", "--porcelain"], { signal })).split("\n").filter((line) => line !== "");
+  if (dirty.length > 0) {
+    const files = dirty.map((line) => line.slice(3)).slice(0, 10);
+    return { outcome: "unavailable", message: `The worktree ${worktree} has uncommitted changes, so Loom cannot put the work in it: ${files.join(", ")}${dirty.length > files.length ? ", …" : ""}. Stash or discard them, then try again` };
+  }
+  // merge-base rather than --is-ancestor, which a machine's git may not have.
+  const tracking = `refs/remotes/${remote}/${baseBranch}`;
+  if (head !== base && (await tryGit(worktree, ["merge-base", head, tracking], signal)) !== head) {
+    return { outcome: "unavailable", message: `The worktree ${worktree} has commits that are not on ${remote}/${baseBranch}, so putting the work in would drop them: ${head.slice(0, 12)}. Stash them or move them to another branch, then try again` };
+  }
+  if (!(await hasCommit(worktree, base, signal))) {
+    const fetched = await run(worktree, ["fetch", "--no-tags", remote, base], signal, NETWORK_TIMEOUT_MS);
+    if (!(await hasCommit(worktree, base, signal))) {
+      return { outcome: "unavailable", message: `The base commit ${base.slice(0, 12)} is not on this machine, and git fetch ${remote} ${base.slice(0, 12)} did not bring it: ${tail(fetched.stderr || fetched.stdout)}` };
+    }
+  }
+  await git(worktree, ["reset", "-q", "--hard", base], { signal });
+  return { outcome: "ok", present: false };
+}
+
+export async function carryWrite(input: HostInput<"carryWrite">): Promise<HostOutput<"carryWrite">> {
+  const { worktree, path, mode, offset } = input;
+  const file = insideWorktree(worktree, path, true);
+  const bytes = Buffer.from(input.data, "base64");
+  if (mode === "120000") {
+    rmSync(file, { force: true });
+    symlinkSync(bytes.toString("utf8"), file);
+    return { size: bytes.length };
+  }
+  if (offset === 0) {
+    rmSync(file, { force: true });
+    writeFileSync(file, bytes);
+  } else {
+    const size = statSync(file).size;
+    if (size !== offset) throw new Error(`${path} has ${size} bytes, not ${offset}, so this range is out of order; send the file again from offset 0`);
+    appendFileSync(file, bytes);
+  }
+  chmodSync(file, mode === "100755" ? 0o755 : 0o644);
+  return { size: offset + bytes.length };
+}
+
+/** Deletes each path, and each directory that leaves empty, so a file may take a deleted directory's place. */
+export async function carryDelete(input: HostInput<"carryDelete">): Promise<HostOutput<"carryDelete">> {
+  const root = realpathSync(input.worktree);
+  for (const path of input.paths) {
+    const file = insideWorktree(input.worktree, path, false);
+    rmSync(file, { force: true });
+    for (let dir = dirname(file); dir !== root && existsSync(dir) && readdirSync(dir).length === 0; dir = dirname(dir)) rmdirSync(dir);
+  }
+  return {};
+}
+
+// Untracked files go too, but not ignored ones: carryStart found the worktree clean, so all of them are the carry's.
+async function resetCarry(worktree: string, base: string, signal?: AbortSignal): Promise<void> {
+  await git(worktree, ["reset", "-q", "--hard", base], { signal });
+  await git(worktree, ["clean", "-fdq"], { signal });
+}
+
+export async function carryAbort(input: HostInput<"carryAbort">, signal?: AbortSignal): Promise<HostOutput<"carryAbort">> {
+  await resetCarry(input.worktree, input.base, signal);
+  return {};
+}
+
+export async function carryFinish(input: HostInput<"carryFinish">, signal?: AbortSignal): Promise<HostOutput<"carryFinish">> {
+  const { worktree, base, message, author, tree, paths } = input;
+  await git(worktree, ["add", "-A"], { signal });
+  // As arguments: some machines' git has no --pathspec-from-file.
+  for (let at = 0; at < paths.length; at += PATH_BATCH) {
+    await git(worktree, ["add", "-f", "--", ...paths.slice(at, at + PATH_BATCH)], { signal, env: { GIT_LITERAL_PATHSPECS: "1" } });
+  }
+  const staged = await run(worktree, ["diff", "--cached", "--quiet"], signal);
+  if (staged.code !== 0 && staged.code !== 1) throw failure(["diff", "--cached", "--quiet"], staged);
+  if (staged.code === 1) await git(worktree, [...(await identityArgs(worktree, signal)), "commit", "--no-verify", "--no-gpg-sign", "-q", "-m", message], { signal, env: authorEnv(author) });
+  const [head = "", written = ""] = (await git(worktree, ["rev-parse", "HEAD", "HEAD^{tree}"], { signal })).split("\n");
+  if (written === tree) return { outcome: "ok", head, tree: written };
+  await resetCarry(worktree, base, signal);
+  return { outcome: "mismatch", tree: written };
 }
 
 /** `host/owner/repo` from an https, scp-style ssh or ssh:// remote URL, else null. */

@@ -2,9 +2,9 @@ import type { PluginAgentToolResult } from "@get-bb/plugin-sdk";
 import { makePluginAgentConfigurationContext } from "@get-bb/plugin-sdk/testing";
 import { beforeEach, describe, expect, it } from "vitest";
 import { specVerdict } from "../src/spec-review";
-import { ORDINARY_TOOLS, PLANNER_TOOLS, REVIEWER_TOOLS, SKILLS, SPEC_REVIEWER_TOOLS, WORKER_TOOLS, registerTools } from "../src/tools";
+import { MACHINE_WORKER_TOOLS, ORDINARY_TOOLS, PLANNER_TOOLS, REVIEWER_TOOLS, SKILLS, SPEC_REVIEWER_TOOLS, WORKER_TOOLS, registerTools } from "../src/tools";
 import { readFileSync } from "node:fs";
-import { Clock, FakePort, checkOutHead, makeHost, seedProject, specToml, type Doc, type EngineHarness } from "./helpers";
+import { Clock, FakePort, checkOutHead, makeHost, seedMachineProject, seedProject, specToml, type Doc, type EngineHarness } from "./helpers";
 
 let host: ReturnType<typeof makeHost>;
 
@@ -69,7 +69,7 @@ describe("agent configuration", () => {
     expect(worker.instructions).toBe("You are a Loom worker on a ticket; follow the brief in your first message.");
     const reviewer = await configure("thr_reviewer", { pluginMetadata: { spawnToken: "tok_1" } });
     expect(reviewer.tools.map((tool) => tool.name)).toEqual([...REVIEWER_TOOLS]);
-    expect(REVIEWER_TOOLS).toEqual(["loom_note", "loom_approve", "loom_request_changes"]);
+    expect(REVIEWER_TOOLS).toEqual(["loom_note", "loom_checkout", "loom_approve", "loom_request_changes"]);
     expect(reviewer.skills).toEqual([SKILLS.usage]);
     expect(reviewer.instructions).toBe("You are a Loom reviewer for a ticket, round 0; change nothing; follow the brief and call one verdict tool.");
     expect(host.store.threadBySpawnToken("tok_1")?.thread_id).toBe("thr_reviewer");
@@ -191,6 +191,29 @@ describe("loom_propose", () => {
     expect(isError(result)).toBe(true);
     expect(text(result)).toContain('A sidebar section named "Loom · CSV export (csv)" already exists.');
     expect(host.store.projects()).toEqual([]);
+  });
+});
+
+describe("tools of threads on machines of their own", () => {
+  it("gives a worker on a machine of its own loom_resume too, and the loom_resume tool carries the earlier work in", async () => {
+    const fake = new FakePort();
+    fake.addThread("thr_plan", "idle");
+    host = makeHost({ port: fake });
+    registerTools(host.bb, host.projects, host.engine);
+    const hh: EngineHarness = { ctx: host.engine.ctx, store: host.store, bb: fake, host: host.hostPort, projects: host.projects, clock: new Clock(), kicks: { count: 0 } };
+    await seedMachineProject(hh);
+    const { spawnWorker, specOf } = await import("../src/workers");
+    const project = host.store.projectBySlug("csv")!;
+    await spawnWorker(host.engine.ctx, project, specOf(host.store, project), host.store.ticketByKey("CSV-1")!);
+    const workerId = host.store.ticketByKey("CSV-1")!.worker_thread_id!;
+    expect((await configure(workerId)).tools.map((tool) => tool.name)).toEqual([...MACHINE_WORKER_TOOLS]);
+    expect(MACHINE_WORKER_TOOLS).toEqual([...WORKER_TOOLS, "loom_resume"]);
+    const row = host.store.threadByThreadId(workerId)!;
+    host.store.updateThread(row.id, { resume_json: JSON.stringify({ sha: "home1", tree: "home1" }) });
+    const result = await host.harness.callAgentTool("loom_resume", {}, { threadId: workerId, projectId: "proj_1" });
+    expect(isError(result)).toBe(false);
+    expect(text(result)).toContain("Loom put CSV-1's earlier work in your worktree");
+    expect(host.store.thread(row.id)!.resume_json).toBeNull();
   });
 });
 
@@ -463,7 +486,7 @@ describe("worker and planner tools", () => {
       host.hostPort.worktree(`/wt/${host.store.threadByThreadId(reviewerId)!.environment_id}`).head = "other";
       const result = await call("loom_approve", { summary: "ok" }, reviewerId);
       expect(isError(result)).toBe(true);
-      expect(text(result)).toContain("Check out c1 first, then review again.");
+      expect(text(result)).toContain("Call loom_checkout first: your worktree does not have the reviewed work of CSV-1 yet. Then review again.");
     });
 
     it("loom_note accepts a note from the live worker of a working ticket or from a reviewer of a ticket in review, and from nobody else", async () => {

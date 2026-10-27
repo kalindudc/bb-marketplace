@@ -65,7 +65,8 @@ Loom needs:
    `loom_block` when it needs help.
 6. Check. Loom commits the worktree and runs the ticket's and the project's
    check commands. A failure goes back to the worker.
-7. Review. Reviewer threads read the diff and call `loom_approve` or
+7. Review. Reviewer threads call `loom_checkout` to get the exact work that
+   passed the checks, read the diff and call `loom_approve` or
    `loom_request_changes`. Requested changes go back to the worker as numbered
    findings.
 8. Merge. On the integration strategy, Loom merges exactly the reviewed commit
@@ -634,6 +635,45 @@ choice is found or ask; the planner asks you the ask items in one round, and
 Every key, with the commands' variables and output, is in the loom skill's
 `references/spec.md`.
 
+### Threads on new machines
+
+`machine = { provider, inputs }` in a repo's `[environment]` starts each of its
+workers and reviewers on a new machine of its own, from any bb machine
+provider, instead of on the machine with the project's checkout. Loom names no
+provider; it tells a thread on another machine by its environment's host, and
+reads the machine providers and the environments that make a new machine
+themselves from bb. `loom_discover` lists them under "New machine per thread",
+with the environments earlier approved projects chose for a repository with
+the same remote, and the planner proposes one on every project and confirms it
+with you.
+
+- Only the pull request strategy without stacking (`merge.stack = false`)
+  works there; `loom_propose` refuses anything else, because the integration
+  branch and stacked bases are made on the project's machine.
+- The checks run on the worker's machine. On a pass, Loom carries the
+  worker's commit back to the project's checkout through its own host entry:
+  it rebuilds the same tree on the same base, refuses it unless the tree
+  matches, and commits it with the worker's author and message. That commit is
+  what reviewers judge and what the pull request is built from. It is on the
+  branch `loom/<slug>/<key>-home`, and `refs/loom/<slug>/<key>/reviewed` keeps
+  it. Only the tree the checks passed comes home, and files over 100 MiB
+  cannot move.
+- A worker's work in progress comes home when its thread ends. While that
+  fails, Loom keeps the thread and its machine for up to 10 minutes, then ends
+  it and says on the ticket that the work did not come home.
+- Loom compares trees where a commit crossed machines, since a machine that
+  moves or re-signs a commit changes its id.
+- A worker that comes back starts at the fresh base on a new machine and calls
+  `loom_resume` first, which carries in the work on the home branch (after a
+  `machine` change, the last worker's branch on the project's checkout when
+  that is newer). Every reviewer calls `loom_checkout` first, which carries the
+  reviewed tree to its machine or checks it out on the project's machine.
+  Neither drops uncommitted changes or commits in the worktree: they refuse
+  and say to stash them.
+- A machine provider that cannot start a machine now (`machine_provider_rejected`)
+  makes the ticket wait as for an unavailable environment provider, and an
+  idle caused by bb moving a thread's machine does not count.
+
 ### Environments with limited room
 
 Some environment providers can run only so many threads at once, for example a
@@ -700,8 +740,8 @@ ready or paused, starting or resuming it makes the section again.
 |---|---|
 | Any other thread | `loom_discover`, `loom_propose` |
 | Planner | `loom_discover`, `loom_propose`, `loom_board`, `loom_ticket`, `loom_post`, `loom_requeue`, `loom_edit_ticket`, `loom_add_tickets`, `loom_cancel_ticket`, `loom_ask_human` |
-| Worker | `loom_note`, `loom_submit`, `loom_block`, `loom_pr` |
-| Reviewer | `loom_note`, `loom_approve`, `loom_request_changes` |
+| Worker | `loom_note`, `loom_submit`, `loom_block`, `loom_pr`; on a machine of its own also `loom_resume` |
+| Reviewer | `loom_note`, `loom_checkout`, `loom_approve`, `loom_request_changes` |
 | Spec reviewer | `loom_spec_approve`, `loom_spec_request_changes` |
 
 ## Metrics

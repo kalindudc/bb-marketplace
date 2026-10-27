@@ -5,9 +5,9 @@ import type { PostRow, ReviewRow, ThreadRow } from "../src/db/store";
 import { SpawnRefusedError, SpawnUnavailableError, type SpawnArgs } from "../src/ports";
 import { waitOf } from "../src/starts";
 import { afterMergeFailedText, changesRequestedText, conflictText, heldCheckResult, landBody, prBody, reviewerBrief, reviewerNudgeText } from "../src/prompts";
-import { approve, blockedAtReview, onReviewerGone, onReviewerIdle, onReviewerTurnFailed, requestChanges, settleReviews, spawnReviewers, type Finding } from "../src/review";
+import { approve, blockedAtReview, checkOutReview, onReviewerGone, onReviewerIdle, onReviewerTurnFailed, requestChanges, settleReviews, spawnReviewers, type Finding } from "../src/review";
 import { endThread, requeueTicket, specOf } from "../src/workers";
-import { checkOutHead, makeCtx, reachReview, seedProject, seedRepoProject, startWorker, ticketOf, withDocsTicket, type Doc, type EngineHarness } from "./helpers";
+import { GIT_WORKTREE_PROVIDER, checkOutHead, makeCtx, reachReview, seedMachineProject, seedProject, seedRepoProject, startWorker, ticketOf, withDocsTicket, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;
 
@@ -47,7 +47,8 @@ describe("reviewerBrief", () => {
     const { project, spec, ticket } = await readyTicket((doc) => (doc.review = { rubric: ["Every public function has a test"] }));
     const brief = reviewerBrief({ project, spec, ticket, round: 1, diff: { stat: " src/a.ts | 2 +-", patch: "diff --git a/src/a.ts b/src/a.ts\n+x", truncated: false }, checkPost: checkPost(), earlierReviews: [] });
     expect(brief).toContain("You are a Loom reviewer for CSV-1, round 1");
-    expect(brief).toContain("git checkout --detach abc1234");
+    expect(brief).toContain("Call loom_checkout first; it puts the reviewed tree abc1234 in your worktree");
+    expect(brief).not.toContain("git checkout --detach");
     expect(brief).toContain('CSV-1 · "Order rows"');
     expect(brief).toContain("1. WHEN an order is mapped THE SYSTEM SHALL return one row");
     expect(brief).toContain('- "Every public function has a test"');
@@ -207,7 +208,7 @@ describe("spawnReviewers", () => {
     });
     expect(spawnArgs(2).metadata).toMatchObject({ role: "reviewer", round: "1", spawnToken: second!.spawn_token });
     expect(spawnArgs(1).prompt).toContain("You are a Loom reviewer for CSV-1, round 1");
-    expect(spawnArgs(1).prompt).toContain("git checkout --detach c1");
+    expect(spawnArgs(1).prompt).toContain("Call loom_checkout first; it puts the reviewed tree c1 in your worktree");
     expect(spawnArgs(1).prompt).toContain("src/a.ts | 2 +-");
     expect(spawnArgs(1).prompt).toContain("npm test (exit 0");
     expect(h.host.callsTo("diff")).toEqual([{ repo: "/repo", base: "loom/csv", head: "c1", maxBytes: 60_000 }]);
@@ -650,8 +651,8 @@ describe("verdicts", () => {
     await reachReview(h);
     await spawn();
     const reviewer = reviewers()[0]!;
-    await expect(approve(h.ctx, reviewer.thread_id!, "ok")).rejects.toThrow("Check out c1 first, then review again.");
-    await expect(requestChanges(h.ctx, reviewer.thread_id!, "no", findings)).rejects.toThrow("Check out c1 first, then review again.");
+    await expect(approve(h.ctx, reviewer.thread_id!, "ok")).rejects.toThrow("Call loom_checkout first: your worktree does not have the reviewed work of CSV-1 yet. Then review again.");
+    await expect(requestChanges(h.ctx, reviewer.thread_id!, "no", findings)).rejects.toThrow("Call loom_checkout first: your worktree does not have the reviewed work of CSV-1 yet. Then review again.");
     expect(reviewsOf()[0]!.verdict).toBe("pending");
     expect(h.host.callsTo("worktreeState").at(-1)).toEqual({ worktree: `/wt/${reviewer.environment_id}`, base: "loom/csv" });
 
@@ -752,5 +753,95 @@ describe("a reviewer that stalls", () => {
     await onReviewerIdle(h.ctx, reviewer);
     expect(h.bb.sent(reviewer.thread_id!)).toEqual([]);
     expect(h.store.thread(reviewer.id)).toMatchObject({ state: "ended", end_reason: "verdict" });
+  });
+});
+
+describe("loom_checkout", () => {
+  it("checks the reviewed commit out detached in a reviewer's worktree on the project's machine", async () => {
+    await seedProject(h);
+    await reachReview(h);
+    await spawn();
+    const reviewer = reviewers()[0]!;
+    await expect(approve(h.ctx, reviewer.thread_id!, "ok")).rejects.toThrow("Call loom_checkout first: your worktree does not have the reviewed work of CSV-1 yet. Then review again.");
+    expect(await checkOutReview(h.ctx, reviewer.thread_id!)).toContain("Your worktree now has the work CSV-1 was submitted with");
+    expect(h.host.callsTo("detach")).toEqual([{ worktree: `/wt/${reviewer.environment_id}`, sha: "c1" }]);
+    await approve(h.ctx, reviewer.thread_id!, "ok");
+    expect(reviewsOf()[0]!.verdict).toBe("approved");
+  });
+
+  it("carries the reviewed tree to a reviewer on a machine of its own, and accepts a verdict only on that tree", async () => {
+    await seedMachineProject(h);
+    await reachReview(h);
+    await spawn();
+    const reviewer = reviewers()[0]!;
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ head_sha: "home1", head_tree: "c1" });
+    expect(h.bb.environments.get(reviewer.environment_id!)!.hostId).toMatch(/^host_box/u);
+    await expect(approve(h.ctx, reviewer.thread_id!, "ok")).rejects.toThrow(/Call loom_checkout first/u);
+    h.host.calls = [];
+    await checkOutReview(h.ctx, reviewer.thread_id!);
+    expect(h.host.calls.map((call) => call.method)).toEqual(["exportChanges", "carryStart", "carryFinish"]);
+    expect(h.host.callsTo("exportChanges")).toEqual([{ worktree: "/repo", base: "origin/main", head: "home1" }]);
+    await approve(h.ctx, reviewer.thread_id!, "ok");
+    expect(reviewsOf()[0]!.verdict).toBe("approved");
+  });
+
+  it("is for the live reviewer of a ticket in review", async () => {
+    await seedProject(h);
+    const worker = await reachReview(h);
+    await expect(checkOutReview(h.ctx, worker.thread_id!)).rejects.toThrow(/loom_checkout is for a Loom reviewer thread/u);
+  });
+});
+
+describe("where reviewers of work from other machines start", () => {
+  it("starts a reviewer on a machine of its own at the fresh base", async () => {
+    await seedMachineProject(h);
+    await reachReview(h);
+    await spawn();
+    expect(spawnArgs(1)).toMatchObject({ baseBranch: "origin/main", environment: { machine: { providerId: "boxes" } } });
+  });
+
+  it("starts a reviewer on the project's machine from the ticket's home branch, since the worker's branch is on another machine", async () => {
+    h.bb.compositionList = [{ ...GIT_WORKTREE_PROVIDER, id: "boxed-trees", displayName: "Trees on boxes", pluginId: "boxes", machineProviderId: "boxes" }];
+    await seedMachineProject(h, (doc) => (doc.environment = { provider: "boxed-trees", machine: { provider: "boxes" }, reviewer: { provider: "git-worktree" } }));
+    await reachReview(h);
+    await spawn();
+    expect(spawnArgs(1)).toMatchObject({ baseBranch: "loom/csv/csv-1-home", environment: undefined });
+    const reviewer = reviewers()[0]!;
+    expect(h.bb.environments.get(reviewer.environment_id!)!.hostId).toBe("host_1");
+  });
+});
+
+describe("a reviewer whose machine moved", () => {
+  it("does not count the idle after a move, and nudges at the next one", async () => {
+    await seedMachineProject(h);
+    await reachReview(h);
+    await spawn();
+    const row = reviewers()[0]!;
+    h.bb.systemErrors.set(row.thread_id!, { code: "machine_maintenance", message: "Machine preservation is interrupting this turn.", seq: 3, at: 0 });
+    await onReviewerIdle(h.ctx, row);
+    expect(h.store.thread(row.id)).toMatchObject({ state: "active", idle_count: 0, maintenance_seq: 3 });
+    await onReviewerIdle(h.ctx, h.store.thread(row.id)!);
+    expect(h.store.thread(row.id)).toMatchObject({ state: "active", idle_count: 1 });
+    expect(h.bb.sent(row.thread_id!).at(-1)).toContain("your turn ended without a verdict");
+  });
+});
+
+describe("the brief of a reviewer of work from another machine", () => {
+  it("names the reviewed tree for loom_checkout, reads files from HEAD, and names no path on the project's machine", async () => {
+    h.bb.addBbProject("proj_web", { host_1: "/src/web" });
+    h.bb.addBbProject("proj_api", { host_1: "/src/api" });
+    await seedMachineProject(h, (doc) => {
+      doc.repo = [{ name: "web", project: "proj_web" }, { name: "api", project: "proj_api" }];
+      doc.ticket[0].repo = "web";
+      doc.ticket[1].repo = "api";
+      doc.ticket[1].depends_on = [];
+    });
+    await reachReview(h);
+    await spawn();
+    const brief = spawnArgs(1).prompt;
+    expect(brief).toContain("Call loom_checkout first; it puts the reviewed tree c1 in your worktree");
+    expect(brief).toContain("`git show HEAD:<path>`");
+    expect(brief).not.toContain("home1");
+    expect(brief).not.toContain("/src/api");
   });
 });

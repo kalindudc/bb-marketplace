@@ -83,6 +83,13 @@ describe("spawnThread", () => {
     expect(await refusing(setup).spawnThread(args).catch((thrown: unknown) => thrown)).toBe(setup);
   });
 
+  it("turns a machine provider bb says cannot start a machine now into a SpawnUnavailableError", async () => {
+    const full = Object.assign(httpError(409, "The pool has no free machine."), { code: "machine_provider_rejected", body: { code: "machine_provider_rejected", message: "The pool has no free machine." } });
+    const caught = await refusing(full).spawnThread(args).catch((thrown: unknown) => thrown);
+    expect(caught).toBeInstanceOf(SpawnUnavailableError);
+    expect((caught as Error).message).toBe(full.message);
+  });
+
   it("reads whether bb can restore a thread's environment, and asks for the restore and the unarchive", async () => {
     const thread = { id: "thr_1", status: "idle", archivedAt: null, deletedAt: null, environmentId: "env_1", canRestoreEnvironment: true };
     const { port, harness } = portWith({ threads: { get: async () => thread as never, unarchive: async () => ({ ok: true }) as never, restoreEnvironment: async () => thread as never } });
@@ -247,6 +254,44 @@ describe("environment providers and plugins", () => {
     const [managed, provider] = harness.sdk.callsTo("threads.spawn").map((call) => (call[0] as { environment: unknown }).environment);
     expect(managed).toEqual({ type: "host", hostId: "host_1", workspace: { type: "managed-worktree", baseBranch: { kind: "named", name: "origin/main" } } });
     expect(provider).toEqual({ type: "provider", environmentProviderId: "example-trees", inputs: { tree: "loom-csv" }, machine: { type: "existing", hostId: "host_1" } });
+  });
+
+  it("spawns on a new machine from the machine provider the environment names", async () => {
+    const { port, harness } = portWith({ threads: { spawn: async () => ({ id: "thr_w1", environmentId: null }) } });
+    await port.spawnThread({ ...args, environment: { providerId: "git-worktree", inputs: null, machine: { providerId: "boxes", inputs: { size: "large" } } } });
+    const [spawned] = harness.sdk.callsTo("threads.spawn").map((call) => (call[0] as { environment: unknown }).environment);
+    expect(spawned).toEqual({ type: "provider", environmentProviderId: "git-worktree", inputs: null, machine: { type: "new", machineProviderId: "boxes", inputs: { size: "large" } } });
+  });
+
+  it("keeps the machine provider of an environment that makes a new machine, and lists the machine providers", async () => {
+    const composition = { id: "boxes-trees", displayName: "Trees on boxes", description: null, pluginId: "boxes", acceptsEmptyInputs: true, inputs: null, availability: null, machineAvailability: {}, machineProviderId: "boxes" };
+    const machines = [{ id: "boxes", displayName: "Boxes", description: "A box per thread.", icon: "box", logoUrl: null, pluginId: "boxes", acceptsEmptyInputs: false, inputs: { type: "object" }, supportsSuspend: true }];
+    const { port } = portWith({ environments: { listProviders: async () => [composition] }, hosts: { experimental_listProviders: async () => machines } } as FakeSdkOverrides);
+    expect(await port.environmentProviders("proj_1", "host_1")).toEqual([
+      { id: "boxes-trees", displayName: "Trees on boxes", description: null, pluginId: "boxes", acceptsEmptyInputs: true, inputs: null, available: true, unavailableReason: null, machineProviderId: "boxes" },
+    ]);
+    expect(await port.machineProviders()).toEqual([{ id: "boxes", displayName: "Boxes", description: "A box per thread.", pluginId: "boxes", acceptsEmptyInputs: false, inputs: { type: "object" } }]);
+  });
+
+  it("lists the environments that make their own machine from bb's list for no machine, which is the only one that has them", async () => {
+    const plain = { id: "git-worktree", displayName: "Worktree", description: null, pluginId: "environment-git-worktree", acceptsEmptyInputs: true, inputs: null, availability: null, machineAvailability: {}, machineProviderId: null };
+    const composition = { ...plain, id: "boxes-trees", displayName: "Trees on boxes", pluginId: "boxes", machineProviderId: "boxes" };
+    const { port, harness } = portWith({ environments: { listProviders: async () => [plain, composition] } } as FakeSdkOverrides);
+    expect(await port.environmentCompositions("proj_1")).toEqual([
+      { id: "boxes-trees", displayName: "Trees on boxes", description: null, pluginId: "boxes", acceptsEmptyInputs: true, inputs: null, available: true, unavailableReason: null, machineProviderId: "boxes" },
+    ]);
+    expect(harness.sdk.callsTo("environments.listProviders")).toEqual([[{ projectId: "proj_1" }]]);
+  });
+});
+
+describe("latestSystemError", () => {
+  it("returns the newest system error with its sequence number and time, or null", async () => {
+    const row = { id: "ev_9", threadId: "thr_1", seq: 41, createdAt: 1_700_000_000_000, type: "system/error", scope: { kind: "thread" }, data: { code: "machine_maintenance", message: "Machine preservation is interrupting this turn." } };
+    const { port, harness } = portWith({ threads: { events: { list: async () => [row] } } } as FakeSdkOverrides);
+    expect(await port.latestSystemError("thr_1")).toEqual({ code: "machine_maintenance", message: "Machine preservation is interrupting this turn.", detail: null, seq: 41, at: 1_700_000_000_000 });
+    expect(harness.sdk.callsTo("threads.events.list")).toEqual([[{ threadId: "thr_1", types: ["system/error"], order: "desc", limit: "1" }]]);
+    const empty = portWith({ threads: { events: { list: async () => [] } } } as FakeSdkOverrides).port;
+    expect(await empty.latestSystemError("thr_1")).toBeNull();
   });
 
   it("lists providers for the project and machine with that machine's availability, and plugins with whether bb ships them", async () => {

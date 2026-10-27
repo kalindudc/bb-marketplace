@@ -98,7 +98,8 @@ export function startWaits(ticket: Pick<TicketRow, "start_wait_json">, role: Sta
 export function waitPost(who: string, wait: StartWait, previous: StartWait | null, now: number): string | null {
   if (previous !== null && previous.role === wait.role && previous.reason === wait.reason && previous.counted === wait.counted) return null;
   const again = `Loom tries again in ${formatDuration(wait.until - now)}`;
-  if (wait.kind === "unavailable") return `Could not start ${who}: ${wait.reason}. ${again}; waiting for the environment provider counts no attempt, and the ticket blocks if it stays unavailable for ${formatDuration(UNAVAILABLE_LIMIT_MS)}.`;
-  if (wait.counted) return `Could not start ${who}: ${wait.reason}. ${again}; it has failed ${wait.tries} times in a row, so this counts as a failed attempt.`;
-  return `Could not start ${who}: ${wait.reason}. ${again}; a start that fails ${START_GRACE + 1} times in a row counts as a failed attempt.`;
+  const reason = wait.reason.replace(/\.+$/u, "");
+  if (wait.kind === "unavailable") return `Could not start ${who}: ${reason}. ${again}; waiting for its provider counts no attempt, and the ticket blocks if it stays unavailable for ${formatDuration(UNAVAILABLE_LIMIT_MS)}.`;
+  if (wait.counted) return `Could not start ${who}: ${reason}. ${again}; it has failed ${wait.tries} times in a row, so this counts as a failed attempt.`;
+  return `Could not start ${who}: ${reason}. ${again}; a start that fails ${START_GRACE + 1} times in a row counts as a failed attempt.`;
 }
