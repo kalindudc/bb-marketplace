@@ -57,6 +57,17 @@ function blockedText(cards: BoardCard[], input: NextStepInput): string {
   ].join(" ");
 }
 
+/** The open pull requests whose CI is failing or pending, on repos that rely on it. */
+function ciText(board: readonly BoardCard[]): string {
+  const counts = (count: number, what: string) => (count === 0 ? [] : [`${plural(count, "check")} ${what}`]);
+  const lines = board.flatMap((card) => {
+    const parts = card.ci === null ? [] : [...counts(card.ci.failed, "failing"), ...counts(card.ci.pending, "pending")];
+    return parts.length === 0 ? [] : [`${card.key} has ${parts.join(" and ")}`];
+  });
+  if (lines.length === 0) return "";
+  return ` CI on the pull requests: ${lines.join("; ")}. Loom sends a failing check back to its worker as a fix round once no pending check holds it.`;
+}
+
 /** A multi-repo project names the repos with merged work that is not landed yet; landing with none left finishes the project. */
 function landStep(overview: ProjectOverview): NextStep {
   const step = { stage: 5, tone: "normal" as const, title: "Next: land the project." };
@@ -199,7 +210,7 @@ export function nextStepOf(input: NextStepInput): NextStep | null {
     const waiting = board.filter((card) => card.state === "working" && card.waitsForSlot).map((card) => card.key);
     const now = working.length === 0 ? "No worker is running now; tickets in checks, review or the merge queue move by themselves." : `${plural(working.length, "worker")} ${working.length === 1 ? "is" : "are"} on ${list(working)}.`;
     const queue = waiting.length === 0 ? "" : ` ${list(waiting)} ${waiting.length === 1 ? "waits" : "wait"} for a worker slot.`;
-    return { stage: 4, tone: "normal", title: "Running.", text: `${now}${queue} Nothing needs you now; this bar turns yellow when something does.`, action: null };
+    return { stage: 4, tone: "normal", title: "Running.", text: `${now}${queue}${ciText(board)} Nothing needs you now; this bar turns yellow when something does.`, action: null };
   }
 
   return { stage: STAGES.length, tone: "normal", title: "Done.", text: "Every ticket is done or cancelled.", action: null };

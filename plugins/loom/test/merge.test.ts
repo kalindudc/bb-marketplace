@@ -1054,6 +1054,7 @@ describe("the pull request strategy", () => {
       it("backs off only a command forge's own host, and GitHub keeps being read", async () => {
         await seedProject(h, pr((doc) => {
           doc.merge.forge = { kind: "command", open: "delta open", state: "delta state" };
+          doc.checks.ci = false;
           doc.ticket[1].depends_on = [];
         }));
         for (const [key, number] of [["CSV-1", 11], ["CSV-2", 12]] as const) {
@@ -1080,7 +1081,7 @@ describe("the pull request strategy", () => {
       });
 
       it("waits out a command forge's server error and rate limit as GitHub's, naming its host", async () => {
-        await seedProject(h, pr((doc) => (doc.merge.forge = { kind: "command", open: "delta open", state: "delta state" })));
+        await seedProject(h, pr((doc) => ((doc.merge.forge = { kind: "command", open: "delta open", state: "delta state" }), (doc.checks.ci = false))));
         const id = ticketOf(h, "CSV-1").id;
         for (const to of ["working", "checking", "review", "approved", "merging", "pr_open"] as const) h.store.setTicketState(id, to, "loom");
         h.store.updateTicket(id, { pr_url: "https://delta.shopify.io/shop/world/pull/11", pushed_sha: "sq11", pr_checked_at: null });
@@ -1213,6 +1214,7 @@ describe("reading open pull requests in batches", () => {
     await seedProject(h, (doc) => {
       withTickets(2)(doc);
       doc.merge.forge = { kind: "command", open: "review open", state: "review state" };
+      doc.checks.ci = false;
     });
     openAll((n) => `https://review.example.com/shop/${n}`);
     h.host.prStates.set("https://review.example.com/shop/2", "MERGED");

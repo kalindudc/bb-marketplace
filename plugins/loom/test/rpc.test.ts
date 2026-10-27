@@ -285,7 +285,7 @@ describe("reads", () => {
     });
 
     it("ticket says Loom reads a command forge's pull request next when its own host's wait ends, not GitHub's", async () => {
-      await running((doc) => (doc.merge = { strategy: "pr", describe: "loom", squash: false, forge: { kind: "command", open: "delta open", state: "delta state" } }));
+      await running((doc) => ((doc.merge = { strategy: "pr", describe: "loom", squash: false, forge: { kind: "command", open: "delta open", state: "delta state" } }), (doc.checks.ci = false)));
       const at = checked();
       host.store.updateTicket(ticketId("CSV-1"), { state: "pr_open", pr_url: "https://delta.shopify.io/shop/world/pull/2313251", pr_checked_at: at });
       const until = Date.now() + 10 * 60_000;

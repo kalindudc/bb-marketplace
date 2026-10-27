@@ -140,8 +140,10 @@ export const hostContract = defineRpcContract({
   worktreeState: {
     ...RETRYABLE,
     // trackedOnly leaves untracked files out of `dirty`: a build or a test run may leave some behind, and they cannot reach a commit.
-    input: z.object({ worktree: absPath, base: ref, trackedOnly: z.boolean().optional() }).strict(),
-    output: z.object({ branch: z.string().nullable(), head: sha, tree: sha, dirty: z.boolean(), changed: z.array(z.string()) }).strict(),
+    // baseTree measures `changed` from the newest commit on HEAD's first-parent line with that tree, which a machine that
+    // gives commits new ids keeps; onBase says whether there is one, and without one `changed` is measured from base.
+    input: z.object({ worktree: absPath, base: ref, trackedOnly: z.boolean().optional(), baseTree: commit.optional() }).strict(),
+    output: z.object({ branch: z.string().nullable(), head: sha, tree: sha, dirty: z.boolean(), changed: z.array(z.string()), onBase: z.boolean().optional() }).strict(),
   },
   // What one commit changed against its merge base with `base`, for carrying it to another machine: each changed file's
   // status, and for one that is not deleted its mode, blob and size. head defaults to the worktree's HEAD.
@@ -175,7 +177,8 @@ export const hostContract = defineRpcContract({
   },
   // The commit on `base` whose tree is `base` with the entries applied, built with a temporary index so no worktree moves,
   // with the author as its committer too, so the same input gives the same commit. A missing base is fetched from
-  // remote's baseBranch, or by its sha. Each of refs is pointed at it only when its tree is `tree`; the uploads go.
+  // remote's baseBranch, or by its sha. parent, a commit of this repository, takes base's place as the commit's parent.
+  // Each of refs is pointed at it only when its tree is `tree`; the uploads go.
   importCommit: {
     input: z
       .object({
@@ -188,16 +191,18 @@ export const hostContract = defineRpcContract({
         author,
         entries: z.array(z.union([z.object({ path: repoPath, mode: fileMode, upload: uploadId }).strict(), z.object({ path: repoPath, delete: z.literal(true) }).strict()])).max(50_000),
         refs: z.array(fullRef).max(4),
+        parent: commit.optional(),
       })
       .strict(),
     output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), sha }).strict(), z.object({ outcome: z.literal("mismatch"), tree: sha }).strict(), unavailable]),
   },
   // The other way, into a thread's worktree on its own machine, whose git may refuse a temporary index: only worktree
   // commands. carryStart resets a clean worktree to base, fetching base when it is missing, unless HEAD has the tree
-  // already (present) or commits a reset would drop; carryWrite and carryDelete change the files; carryFinish commits
-  // them as the author and checks the tree, and resets to base when it differs.
+  // already (present) or commits a reset would drop, which it may drop when HEAD has the tree `replaces`, one the
+  // project's machine keeps; carryWrite and carryDelete change the files; carryFinish commits them as the author on HEAD
+  // and checks the tree, and resets to base when it differs.
   carryStart: {
-    input: z.object({ worktree: absPath, remote: ref, baseBranch: ref, base: commit, tree: commit }).strict(),
+    input: z.object({ worktree: absPath, remote: ref, baseBranch: ref, base: commit, tree: commit, replaces: commit.optional() }).strict(),
     output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), present: z.boolean() }).strict(), unavailable]),
   },
   // Offset 0 starts the file again; a symlink comes in one range, its target as the data.
@@ -208,6 +213,11 @@ export const hostContract = defineRpcContract({
   carryDelete: {
     input: z.object({ worktree: absPath, paths: z.array(repoPath).max(50_000) }).strict(),
     output: z.object({}).strict(),
+  },
+  // The files of paths that still have a line git's conflict markers start, as a merge Loom carried in left them.
+  conflictMarkers: {
+    input: z.object({ worktree: absPath, paths: z.array(repoPath).max(5000) }).strict(),
+    output: z.object({ files: z.array(z.string()) }).strict(),
   },
   // Puts the worktree back at base after a carry that failed part-way, so the next carryStart finds it clean.
   carryAbort: {
@@ -311,9 +321,19 @@ export const hostContract = defineRpcContract({
       })
       .strict(),
     output: z.discriminatedUnion("outcome", [
-      z.object({ outcome: z.literal("ok"), sha, tip: sha.nullable() }).strict(),
+      z.object({ outcome: z.literal("ok"), sha, tip: sha.nullable(), tree: sha }).strict(),
       z.object({ outcome: z.literal("conflict"), files: z.array(z.string()) }).strict(),
       unavailable,
+    ]),
+  },
+  // Merges `ref` into `head` on the project's checkout with merge-tree, which touches no worktree, as one commit whose
+  // parents are head and ref, and points refs at it. A conflict is committed too, as the tree with conflict markers in
+  // the files it names, for a worker on another machine to resolve. A ref head already has is merged, and moves no ref.
+  mergeOnto: {
+    input: z.object({ repo: absPath, head: commit, ref: commit, message: z.string().min(1).max(500), refs: z.array(fullRef).max(4) }).strict(),
+    output: z.discriminatedUnion("outcome", [
+      z.object({ outcome: z.literal("merged"), sha, tree: sha, already: z.boolean() }).strict(),
+      z.object({ outcome: z.literal("conflict"), files: z.array(z.string()), sha, tree: sha }).strict(),
     ]),
   },
   // Moves an open pull request to another base branch: gh pr edit <url> --base <base>.

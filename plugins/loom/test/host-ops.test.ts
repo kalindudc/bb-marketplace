@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import hostEntry from "../host";
+import { restrictedGitBin } from "./restricted-git";
 import { hostContract, type HostInput, type HostOutput } from "../src/host-contract";
 import {
   batchQuery,
@@ -15,6 +16,7 @@ import {
   carryWrite,
   changedFiles,
   commitAll,
+  conflictMarkers,
   diff,
   ensureBranch,
   ensureWorktree,
@@ -29,6 +31,7 @@ import {
   importCommit,
   landedOn,
   merge,
+  mergeOnto,
   parseRemoteUrl,
   prBatch,
   prCommit,
@@ -1189,7 +1192,7 @@ describe("stackBase", () => {
 
   it("points the branch at the one commit given, with no new commit", async () => {
     const { repo, one } = setup();
-    expect(await stackBase(input(repo, [one]))).toEqual({ outcome: "ok", sha: one, tip: null });
+    expect(await stackBase(input(repo, [one]))).toEqual({ outcome: "ok", sha: one, tip: null, tree: sh(repo, "rev-parse", `${one}^{tree}`) });
     expect(sh(repo, "rev-parse", "loom/csv/csv-3-stack")).toBe(one);
   });
 
@@ -1208,7 +1211,7 @@ describe("stackBase", () => {
     // The base branch moved on the remote to a commit that contains `one`, as when its pull request merged.
     sh(repo, "push", "-q", remote, `${one}:refs/heads/main`);
     const built = await stackBase(input(repo, [one], true));
-    expect(built).toEqual({ outcome: "ok", sha: one, tip: one });
+    expect(built).toEqual({ outcome: "ok", sha: one, tip: one, tree: sh(repo, "rev-parse", `${one}^{tree}`) });
     expect(sh(repo, "rev-parse", "refs/remotes/origin/main")).toBe(one);
   });
 
@@ -1225,6 +1228,51 @@ describe("stackBase", () => {
     const built = await stackBase(input(repo, [one, two]));
     expect(built).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("is checked out in a worktree") });
     expect(sh(repo, "rev-parse", "loom/csv/csv-3-stack")).toBe(one);
+  });
+});
+
+describe("mergeOnto", () => {
+  const REFS = ["refs/heads/loom/csv/csv-2-home", "refs/loom/csv/csv-2/reviewed"];
+  // A ticket's head on one dependency commit, and the dependency's next commit; `clash` makes both change the same line.
+  const setup = (clash = false) => {
+    const repo = makeRepo();
+    sh(repo, "checkout", "-q", "-b", "dep", "main");
+    const dep = commitFile(repo, "dep.txt", "dep\n");
+    sh(repo, "checkout", "-q", "-b", "work", dep);
+    const head = commitFile(repo, clash ? "dep.txt" : "mine.txt", "mine\n");
+    sh(repo, "checkout", "-q", "dep");
+    const next = commitFile(repo, "dep.txt", "dep, fixed\n");
+    sh(repo, "checkout", "-q", "main");
+    return { repo, dep, head, next };
+  };
+  const input = (repo: string, head: string, ref: string) => ({ repo, head, ref, message: "Merge CSV-1's pull request into CSV-2 (Loom)", refs: REFS });
+
+  it("merges with merge-tree into a commit whose parents are the head and the new commit, touching no worktree, and points the refs at it", async () => {
+    const { repo, head, next } = setup();
+    const merged = await mergeOnto(input(repo, head, next));
+    expect(merged).toEqual({ outcome: "merged", sha: expect.stringMatching(/^[0-9a-f]{40}$/u), tree: expect.stringMatching(/^[0-9a-f]{40}$/u), already: false });
+    const { sha, tree } = merged as { sha: string; tree: string };
+    expect(sh(repo, "log", "-1", "--format=%P", sha).split(" ")).toEqual([head, next]);
+    expect(sh(repo, "rev-parse", `${sha}^{tree}`)).toBe(tree);
+    expect(sh(repo, "show", `${sha}:dep.txt`)).toBe("dep, fixed");
+    for (const ref of REFS) expect(sh(repo, "rev-parse", ref)).toBe(sha);
+    expect(sh(repo, "status", "--porcelain")).toBe("");
+  });
+
+  it("reports a commit the head already has as merged, and moves no ref", async () => {
+    const { repo, dep, head } = setup();
+    expect(await mergeOnto(input(repo, head, dep))).toEqual({ outcome: "merged", sha: head, tree: sh(repo, "rev-parse", `${head}^{tree}`), already: true });
+    expect(sh(repo, "for-each-ref", "refs/loom")).toBe("");
+  });
+
+  it("commits a conflict as the tree with conflict markers, on both parents, and names the files", async () => {
+    const { repo, head, next } = setup(true);
+    const conflicted = await mergeOnto(input(repo, head, next));
+    expect(conflicted).toMatchObject({ outcome: "conflict", files: ["dep.txt"] });
+    const { sha } = conflicted as { sha: string };
+    expect(sh(repo, "log", "-1", "--format=%P", sha).split(" ")).toEqual([head, next]);
+    expect(sh(repo, "show", `${sha}:dep.txt`)).toMatch(/^<<<<<<< .*\nmine\n=======\ndep, fixed\n>>>>>>> /u);
+    for (const ref of REFS) expect(sh(repo, "rev-parse", ref)).toBe(sha);
   });
 });
 
@@ -1737,7 +1785,7 @@ describe("carrying a commit to the project's machine: exportChanges, readBlob, i
   }
 
   /** What the transport does: every blob in 4 MiB ranges from `from`, then one importCommit into `to`. */
-  async function carry(from: string, to: string, exported: HostOutput<"exportChanges">, opts: { tree?: string; refs?: string[]; corrupt?: boolean } = {}) {
+  async function carry(from: string, to: string, exported: HostOutput<"exportChanges">, opts: { tree?: string; refs?: string[]; corrupt?: boolean; parent?: string } = {}) {
     const ranges: Array<{ path: string; offset: number; bytes: number }> = [];
     const entries: HostInput<"importCommit">["entries"] = [];
     for (const change of exported.changes) {
@@ -1754,7 +1802,7 @@ describe("carrying a commit to the project's machine: exportChanges, readBlob, i
       }
       entries.push({ path: change.path, mode: change.mode!, upload });
     }
-    const result = await importCommit({ repo: to, remote: "origin", baseBranch: "main", base: exported.base, tree: opts.tree ?? exported.tree, message: exported.message, author: exported.author, entries, refs: opts.refs ?? ["refs/heads/loom/csv/csv-1-home"] }, dataDir);
+    const result = await importCommit({ repo: to, remote: "origin", baseBranch: "main", base: exported.base, tree: opts.tree ?? exported.tree, message: exported.message, author: exported.author, entries, refs: opts.refs ?? ["refs/heads/loom/csv/csv-1-home"], ...(opts.parent === undefined ? {} : { parent: opts.parent }) }, dataDir);
     return { result, ranges };
   }
 
@@ -1850,6 +1898,23 @@ describe("carrying a commit to the project's machine: exportChanges, readBlob, i
     expect(wrongTree.result).toEqual({ outcome: "mismatch", tree: exported.tree });
     expect(sh(laptop, "branch", "--list", "loom/*")).toBe("");
     await expect(importChunk({ upload: "csv-1-x", offset: 5, data: "eA==" }, dataDir)).rejects.toThrow(/has 0 bytes, not 5/u);
+  });
+
+  it("commits a stacked ticket's tree on the commit it is stacked on, so its diff from there is its own", async () => {
+    const { clone } = origin();
+    const laptop = clone();
+    sh(laptop, "switch", "-q", "-c", "loom/csv/csv-2-stack");
+    const stacked = commitFile(laptop, "dep.txt", "dep\n", "Loom: CSV-1 for CSV-2");
+    sh(laptop, "switch", "-q", "main");
+    const worker = clone();
+    commitFile(worker, "dep.txt", "dep\n", "Loom: CSV-1 for CSV-2");
+    commitFile(worker, "mine.txt", "mine\n", "CSV-2: Export endpoint");
+
+    const { result } = await carry(worker, laptop, await exportChanges({ worktree: worker, base: "origin/main" }), { parent: stacked });
+    const sha = (result as { sha: string }).sha;
+    expect(sh(laptop, "rev-parse", `${sha}^@`)).toBe(stacked);
+    expect(sh(laptop, "rev-parse", `${sha}^{tree}`)).toBe(sh(worker, "rev-parse", "HEAD^{tree}"));
+    expect(sh(laptop, "diff", "--name-only", `${stacked}...${sha}`)).toBe("mine.txt");
   });
 
   it("fetches a base the project's checkout does not have yet from its remote", async () => {
@@ -1950,28 +2015,11 @@ describe("carrying a commit to the project's machine: exportChanges, readBlob, i
 });
 
 describe("carrying a commit to a thread's own machine: carryStart, carryWrite, carryDelete and carryFinish", () => {
-  const REAL_GIT = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
   let path: string | undefined;
   let bin: string;
 
-  // Like the git of a machine that keeps one index for the worktree: a temporary index allows only read-tree --empty, diff-tree --no-renames is missing, and add takes no --pathspec-from-file.
   beforeAll(() => {
-    bin = join(scratch, "restricted-bin");
-    mkdirSync(bin, { recursive: true });
-    writeFileSync(
-      join(bin, "git"),
-      `#!/bin/sh
-for a in "$@"; do
-  case "$a" in
-    read-tree) if [ -n "$GIT_INDEX_FILE" ]; then case " $* " in *" --empty "*) ;; *) echo "wt git: read-tree with a temporary index is not implemented" >&2; exit 128;; esac; fi; break;;
-    diff-tree) case " $* " in *" --no-renames "*) echo "wt git: 'diff-tree --no-renames' is not yet implemented" >&2; exit 128;; esac; break;;
-    add) case " $* " in *" --pathspec-from-file"*) echo "wt git: unknown add option --pathspec-from-file=-" >&2; exit 129;; esac; break;;
-  esac
-done
-exec "${REAL_GIT}" "$@"
-`,
-      { mode: 0o755 },
-    );
+    bin = restrictedGitBin(scratch);
     path = process.env.PATH;
     process.env.PATH = `${bin}:${path}`;
   });
@@ -2107,5 +2155,42 @@ exec "${REAL_GIT}" "$@"
     expect(await carryStart({ worktree, remote: "origin", baseBranch: "main", base: exported.base, tree: exported.tree })).toEqual({ outcome: "ok", present: true });
     expect(sh(worktree, "rev-parse", "HEAD")).toBe(carried);
     expect(sh(worktree, "status", "--porcelain")).toBe("");
+  });
+
+  it("lists the files that still have conflict markers, and leaves out resolved and deleted ones", async () => {
+    const { clone } = setup();
+    const worktree = clone();
+    put(worktree, "src/a.ts", "keep\n<<<<<<< ours\nmine\n=======\ntheirs\n>>>>>>> theirs\n");
+    put(worktree, "src/b.ts", "resolved\n");
+    put(worktree, "src/c.md", "a line of <<<<<<< in prose\n");
+    expect(await conflictMarkers({ worktree, paths: ["src/a.ts", "src/b.ts", "src/c.md", "src/gone.ts"] })).toEqual({ files: ["src/a.ts"] });
+  });
+
+  it("resets a worktree with commits of its own when HEAD has the tree the caller says the project's machine keeps", async () => {
+    const { clone } = setup();
+    const worktree = clone();
+    const base = sh(worktree, "rev-parse", "origin/main");
+    commitFile(worktree, "mine.txt", "mine\n");
+    const kept = sh(worktree, "rev-parse", "HEAD^{tree}");
+    expect(await carryStart({ worktree, remote: "origin", baseBranch: "main", base, tree: sh(worktree, "rev-parse", "origin/main^{tree}"), replaces: kept })).toEqual({ outcome: "ok", present: false });
+    expect(sh(worktree, "rev-parse", "HEAD")).toBe(base);
+
+    commitFile(worktree, "other.txt", "other\n");
+    const refused = await carryStart({ worktree, remote: "origin", baseBranch: "main", base, tree: sh(worktree, "rev-parse", "origin/main^{tree}"), replaces: kept });
+    expect(refused).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("has commits that are not on origin/main") });
+  });
+
+  it("measures the changes from the newest commit on HEAD's first-parent line with the given tree, and says when there is none", async () => {
+    const { clone } = setup();
+    const worktree = clone();
+    commitFile(worktree, "dep.txt", "the dependency's work\n", "Loom: CSV-1 for CSV-2");
+    const stacked = sh(worktree, "rev-parse", "HEAD^{tree}");
+    commitFile(worktree, "src/mine.txt", "mine\n");
+    put(worktree, "src/loose.txt", "loose\n");
+
+    expect(await worktreeState({ worktree, base: "origin/main", baseTree: stacked })).toMatchObject({ changed: ["src/loose.txt", "src/mine.txt"], onBase: true });
+    expect(await worktreeState({ worktree, base: "origin/main" })).toMatchObject({ changed: ["dep.txt", "src/loose.txt", "src/mine.txt"] });
+    const missing = await worktreeState({ worktree, base: "origin/main", baseTree: sh(worktree, "rev-parse", "HEAD:src") });
+    expect(missing).toMatchObject({ changed: ["dep.txt", "src/loose.txt", "src/mine.txt"], onBase: false });
   });
 });

@@ -75,6 +75,14 @@ describe("agent configuration", () => {
     expect(host.store.threadBySpawnToken("tok_1")?.thread_id).toBe("thr_reviewer");
   });
 
+  it("keeps loom_resume for a worker whose resume is pending, once a spec version moved new workers off machines", async () => {
+    await propose();
+    const project = host.store.projectBySlug("csv")!;
+    const row = host.store.addThread({ thread_id: "thr_worker", project_id: project.id, role: "worker", state: "active" });
+    host.store.updateThread(row.id, { resume_json: JSON.stringify({ sha: "home1", tree: "t1" }) });
+    expect((await configure("thr_worker")).tools.map((tool) => tool.name)).toEqual([...MACHINE_WORKER_TOOLS]);
+  });
+
   it("gives a spec reviewer bound by its spawn token exactly its two tools, the usage skill and the one-verdict instruction", async () => {
     await propose();
     const project = host.store.projectBySlug("csv")!;

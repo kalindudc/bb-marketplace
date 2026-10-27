@@ -15,6 +15,11 @@ export interface RepoSettings {
   protected: string[];
   /** Where its pull requests open; gh when the spec names none. */
   forge: ForgeSpec;
+  /**
+   * Loom relies on the pull requests' CI for every test the plugin checks do not run: on the pr strategy unless ci is
+   * false, and only on a forge that reports checks, which loom_propose requires of a spec that relies on it.
+   */
+  ci: boolean;
   /** The environment provider its workers and reviewers start in; null for today's managed worktree. */
   environment: EnvironmentSpec | null;
   /** The command that prepares its integration worktree; null for Loom's own git worktree. */
@@ -26,6 +31,7 @@ export function isMultiRepo(spec: Spec): boolean {
 }
 
 function settingsOf(spec: Spec, repo: RepoSpec | null): RepoSettings {
+  const forge = repo?.forge ?? spec.merge.forge ?? { kind: "gh" };
   return {
     name: repo?.name ?? null,
     bbProjectId: repo?.project ?? null,
@@ -36,7 +42,8 @@ function settingsOf(spec: Spec, repo: RepoSpec | null): RepoSettings {
     checks: [...(repo?.checks ?? spec.checks.commands)],
     afterMerge: [...(repo?.after_merge ?? spec.checks.after_merge)],
     protected: [...spec.scope.protected, ...(repo?.protected ?? [])],
-    forge: repo?.forge ?? spec.merge.forge ?? { kind: "gh" },
+    forge,
+    ci: spec.merge.strategy === "pr" && (repo?.ci ?? spec.checks.ci ?? true) && followsFeedback(forge),
     environment: repo?.environment ?? spec.environment ?? null,
     worktree: repo?.worktree ?? spec.merge.worktree ?? null,
   };

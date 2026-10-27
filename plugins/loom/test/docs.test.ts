@@ -35,6 +35,15 @@ describe("the plugin's own documents", () => {
     expect(readme).not.toMatch(/last step|third of four|comes in the last/);
   });
 
+  it("the spec reference, the skills and README describe relying on CI, its ci key and the forge it needs", () => {
+    const spec = read("skills/loom/references/spec.md");
+    for (const phrase of ["| `ci` | boolean | `true` |", "| `ci` | boolean | `checks.ci` |", "### Relying on CI", "`ci = false`", "feedback = \'\'\'", "dt pr checks"]) expect(spec, phrase).toContain(phrase);
+    for (const path of ["README.md", "skills/loom/SKILL.md", "skills/loom-plan/SKILL.md"]) {
+      const text = read(path);
+      for (const phrase of ["`ci = false`", "CI"]) expect(text, `${path}: ${phrase}`).toContain(phrase);
+    }
+  });
+
   it("README and the loom skill describe the report and the done hook", () => {
     for (const path of ["README.md", "skills/loom/SKILL.md"]) {
       const text = read(path);
@@ -170,7 +179,7 @@ describe("the plugin's own documents", () => {
 
   it("the spec reference, the skills and README describe threads on new machines, with their keys and tools", () => {
     const spec = read("skills/loom/references/spec.md");
-    for (const phrase of ["| `machine` |", "### Threads on new machines", "`merge.stack = false`", "loom/<slug>/<key>-home", "refs/loom/<slug>/<key>/reviewed", "machine_provider_rejected", "machine_maintenance", "loom_resume", "loom_checkout"]) expect(spec, phrase).toContain(phrase);
+    for (const phrase of ["| `machine` |", "### Threads on new machines", "`merge.stack = false`", "loom/<slug>/<key>-home", "refs/loom/<slug>/<key>/reviewed", "machine_provider_rejected", "machine_maintenance", "loom_resume", "loom_checkout", "#### Stacked pull requests on new machines", "#### Moving a running project onto machines, or off them", "conflict check"]) expect(spec, phrase).toContain(phrase);
     const example = [...spec.matchAll(/```toml\n([\s\S]*?)```/g)].map((match) => parseSpec(match[1]!).spec!).find((each) => each.environment?.machine !== undefined);
     expect(example?.environment?.machine).toBeDefined();
     for (const tool of [...MACHINE_WORKER_TOOLS, ...REVIEWER_TOOLS]) {

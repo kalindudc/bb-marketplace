@@ -1,7 +1,7 @@
 // The submit pipeline: the worker hands in, the plugin commits, checks scope and runs the commands, and only a
 // pass moves the ticket on. Runs are keyed by ticket, so a ticket is never checked twice at once.
-import { ticketRepo } from "./checkouts";
-import type { Store, ThreadRow, TicketRow } from "./db/store";
+import { repoCheckout, ticketRepo } from "./checkouts";
+import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { plural } from "./format";
 import { checkFailedText, clip, prUnchangedText } from "./prompts";
 import { unchangedFix } from "./pull-requests";
@@ -10,9 +10,10 @@ import type { EnvironmentInfo } from "./ports";
 import { recordingHost } from "./runs";
 import { scopeReport } from "./scope";
 import type { Spec } from "./spec";
+import { stackOf, type Stack } from "./stack";
 import { LOOM_ACTOR } from "./states";
-import { bringHome, isRemote } from "./transport";
-import { applyMove, baseOf, endThread, recordBranch, resolveEnvironment, specOf, ticketMoveFor, toWorking, type EngineCtx } from "./workers";
+import { bringHome, isRemote, worktreeBaseOf } from "./transport";
+import { applyMove, endThread, recordBranch, resolveEnvironment, specOf, ticketMoveFor, toWorking, type EngineCtx } from "./workers";
 
 export interface CheckRun {
   command: string;
@@ -142,8 +143,12 @@ async function runPipeline(ctx: EngineCtx, ticket: TicketRow, spec: Spec, worker
   const commit = await ctx.host.call(hostId, "commitAll", { worktree, message: `${ticket.key}: ${ticket.title}` });
   await recordBranch(ctx, worker);
   const repo = ticketRepo(spec, ticket);
-  const base = baseOf(spec, ticket);
-  const state = await ctx.host.call(hostId, "worktreeState", { worktree, base });
+  const project = ctx.store.project(ticket.project_id)!;
+  const base = worktreeBaseOf(project, spec, ticket, environment);
+  const stack = stackOf(ticket);
+  // On another machine the commit the ticket is stacked on has another id, so the scope is measured from its tree.
+  const baseTree = stack?.base == null || !isRemote(project, environment) ? null : await stackedTree(ctx, project, spec, ticket, stack.base);
+  const state = await ctx.host.call(hostId, "worktreeState", { worktree, base, ...(baseTree === null ? {} : { baseTree }) });
   const kept = { commitSha: commit.sha, tree: state.tree, environment };
   if (unchangedFix(ctx.store.posts(ticket.id), { sha: commit.sha, tree: state.tree })) return { ...kept, unchanged: true, runs: [], failure: null, outside: [], protectedHits: [] };
   const report = scopeReport(state.changed, JSON.parse(ticket.scope_json) as string[], repo.protected);
@@ -154,11 +159,19 @@ async function runPipeline(ctx: EngineCtx, ticket: TicketRow, spec: Spec, worker
     return outcome;
   };
 
+  if (state.onBase === false) {
+    return refuse("scope check", "Your branch no longer has the commit Loom put first in it, which holds the work this ticket is stacked on, so Loom cannot tell your changes from that work. Do not rebase, reset or squash over that commit; call loom_block if you cannot get it back.");
+  }
   if (report.protectedHits.length > 0) {
     return refuse("scope check", `This change touches protected paths, which a worker may never edit: ${report.protectedHits.join(", ")}. Revert them and submit again.`);
   }
   if (report.outside.length > 0 && spec.scope.enforce === "reject") {
     return refuse("scope check", `These files are outside the ticket's scope, and scope.enforce is "reject": ${report.outside.join(", ")}. Revert them, or call loom_block if the ticket needs a wider scope.`);
+  }
+
+  if ((stack?.markers?.length ?? 0) > 0) {
+    const { files } = await ctx.host.call(hostId, "conflictMarkers", { worktree, paths: stack!.markers! });
+    if (files.length > 0) return refuse("conflict check", `These files still have the conflict markers Loom left when it brought your branch up to date: ${files.join(", ")}. Resolve them so both sides' changes hold, then submit again.`);
   }
 
   for (const command of [...(JSON.parse(ticket.verify_json) as string[]), ...repo.checks]) {
@@ -177,6 +190,13 @@ async function runPipeline(ctx: EngineCtx, ticket: TicketRow, spec: Spec, worker
     return refuse("worktree check", "The worktree changed while the checks ran; the checks must not write tracked files and you must not edit during checks.");
   }
   return outcome;
+}
+
+async function stackedTree(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow, base: string): Promise<string> {
+  const checkout = await repoCheckout(ctx, project, spec, ticket.repo);
+  const tip = await ctx.host.call(checkout.hostId, "refTip", { repo: checkout.path, ref: base });
+  if (tip.outcome !== "ok") throw new Error(`the commit ${base.slice(0, 12)} this ticket is stacked on is not on the project's checkout: ${tip.message}`);
+  return tip.tree;
 }
 
 const seconds = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
@@ -217,7 +237,9 @@ async function finish(ctx: EngineCtx, ticketId: number, spec: Spec, outcome: Out
     if (failure === null) {
       const round = ticket.review_round + 1;
       store.setTicketState(ticket.id, "review", LOOM_ACTOR, { head: outcome.commitSha, round });
-      store.updateTicket(ticket.id, { head_sha: outcome.commitSha, head_tree: outcome.tree, review_round: round });
+      const stack = stackOf(ticket);
+      const resolved = stack?.markers === undefined ? {} : { stack_json: JSON.stringify({ ...stack, markers: undefined } satisfies Stack) };
+      store.updateTicket(ticket.id, { head_sha: outcome.commitSha, head_tree: outcome.tree, review_round: round, ...resolved });
       if (worker !== null) store.updateThread((worker as ThreadRow).id, { idle_count: 0 });
       return true;
     }

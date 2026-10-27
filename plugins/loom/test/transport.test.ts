@@ -10,11 +10,13 @@ import type { EnvironmentInfo, HostPort } from "../src/ports";
 import { bringHome, carryTo, homeBranch, reviewedRef } from "../src/transport";
 import { specOf, type EngineCtx } from "../src/workers";
 import { makeCtx, seedProject, ticketOf, type EngineHarness } from "./helpers";
+import { mergeCommitsSince, restrictedGitBin } from "./restricted-git";
 
 const ENV: Record<string, string> = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
 const saved: Record<string, string | undefined> = {};
 let scratch: string;
 let counter = 0;
+let restricted: string;
 
 const sh = (cwd: string, ...args: string[]) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
 const put = (root: string, path: string, content: string) => {
@@ -24,6 +26,7 @@ const put = (root: string, path: string, content: string) => {
 
 beforeAll(() => {
   scratch = realpathSync(mkdtempSync(join(tmpdir(), "loom-transport-")));
+  restricted = restrictedGitBin(scratch);
   for (const key of Object.keys(ENV)) saved[key] = process.env[key];
   Object.assign(process.env, ENV);
 });
@@ -36,7 +39,10 @@ afterAll(() => {
   rmSync(scratch, { recursive: true, force: true });
 });
 
-/** Loom's host entry on each machine, over real repositories, with a data directory of its own per host. */
+/**
+ * Loom's host entry on each machine, over real repositories, with a data directory of its own per host. Every machine but
+ * the project's (host_1) runs a git that refuses a temporary index and anything that would make a merge commit.
+ */
 class RepoHost implements HostPort {
   calls: Array<{ hostId: string; method: HostMethod; input: unknown }> = [];
   /** Throws once, at the call to `method` after `after` earlier calls to it. */
@@ -53,7 +59,14 @@ class RepoHost implements HostPort {
     const dataDir = join(scratch, `data-${hostId}`);
     const handlers = ops as unknown as Record<string, (input: unknown, extra?: unknown) => Promise<unknown>>;
     const extra = method === "importChunk" || method === "importCommit" || method === "dropUploads" ? dataDir : undefined;
-    const output = await handlers[method]!(input, extra);
+    const path = process.env.PATH;
+    if (hostId !== "host_1") process.env.PATH = `${restricted}:${path}`;
+    let output: unknown;
+    try {
+      output = await handlers[method]!(input, extra);
+    } finally {
+      process.env.PATH = path;
+    }
     return (this.rewrite?.method === method ? this.rewrite.change(output) : output) as HostOutput<M>;
   }
   methods(hostId: string): HostMethod[] {
@@ -235,5 +248,114 @@ describe("transport", () => {
     expect(sh(reviewer, "rev-parse", "HEAD")).toBe(home.sha);
     expect(host.calls.map((call) => call.method)).toEqual(["worktreeState", "detach"]);
     expect(sh(laptop, "branch", "--list", "loom/csv/csv-1-home")).toBe("");
+  });
+});
+
+describe("transport for a stacked ticket", () => {
+  let h: EngineHarness;
+  let host: RepoHost;
+  let ctx: EngineCtx;
+  let laptop: string;
+  let clone: () => string;
+
+  beforeEach(async () => {
+    h = makeCtx();
+    await seedProject(h, (doc) => (doc.merge = { strategy: "pr" }));
+    ({ clone } = repos());
+    laptop = clone();
+    h.bb.checkout = laptop;
+    host = new RepoHost();
+    ctx = { ...h.ctx, host };
+  });
+
+  const project = () => h.store.projectBySlug("csv")!;
+  const spec = () => specOf(h.store, project());
+  const on = (hostId: string, path: string): EnvironmentInfo => ({ path, branchName: "loom/csv/csv-2-1", hostId });
+  const commit = (repo: string, path: string, content: string, message: string) => {
+    put(repo, path, content);
+    sh(repo, "add", "-A");
+    sh(repo, "commit", "-q", "-m", message);
+    return sh(repo, "rev-parse", "HEAD");
+  };
+
+  /** CSV-2 stacked on a merge commit of two dependencies' pull requests, made on the checkout, with its own work on top. */
+  function stacked(): { base: string; head: string } {
+    const main = sh(laptop, "rev-parse", "HEAD");
+    sh(laptop, "switch", "-q", "-c", "one");
+    const one = commit(laptop, "one.txt", "one\n", "CSV-1: Order rows");
+    sh(laptop, "switch", "-q", "-c", "two", main);
+    const two = commit(laptop, "two.txt", "two\n", "CSV-3: Totals");
+    const tree = sh(laptop, "merge-tree", "--write-tree", one, two);
+    const base = execFileSync("git", ["-C", laptop, "commit-tree", tree, "-p", one, "-p", two, "-m", "Loom: CSV-1 and CSV-3 for CSV-2"], { encoding: "utf8" }).trim();
+    sh(laptop, "switch", "-q", "-c", "loom/csv/csv-2-home", base);
+    sh(laptop, "rm", "-q", "old.txt");
+    const head = commit(laptop, "src/b.ts", "export const b = 2;\n", "CSV-2: Export endpoint");
+    sh(laptop, "switch", "-q", "main");
+    h.store.updateTicket(ticketOf(h, "CSV-2").id, { stack_json: JSON.stringify({ deps: { "CSV-1": one, "CSV-3": two }, base, synced: 0, cross: {} }) });
+    return { base, head };
+  }
+
+  it("carries the commit it is stacked on as one linear commit, and the ticket's work as another on top, with no merge on the machine", async () => {
+    const { base, head } = stacked();
+    const worktree = clone();
+    const main = sh(worktree, "rev-parse", "HEAD");
+
+    const carried = await carryTo(ctx, project(), spec(), ticketOf(h, "CSV-2"), head, on("host_box", worktree));
+    expect(carried).toEqual({ tree: sh(laptop, "rev-parse", `${head}^{tree}`) });
+    expect(sh(worktree, "rev-parse", "HEAD^{tree}")).toBe(carried.tree);
+    expect(sh(worktree, "rev-parse", "HEAD~1^{tree}")).toBe(sh(laptop, "rev-parse", `${base}^{tree}`));
+    expect(sh(worktree, "rev-parse", "HEAD~2")).toBe(main);
+    expect(sh(worktree, "log", "--format=%s", `${main}..HEAD`).split("\n")).toEqual(["CSV-2: Export endpoint", "Loom: CSV-1 and CSV-3 for CSV-2"]);
+    expect(mergeCommitsSince(worktree, main)).toEqual([]);
+    expect(sh(worktree, "diff", "--name-only", "HEAD~1")).toBe("old.txt\nsrc/b.ts");
+    expect(host.methods("host_box")).toEqual(["carryStart", "carryWrite", "carryWrite", "carryFinish", "carryDelete", "carryWrite", "carryFinish"]);
+
+    host.calls = [];
+    expect(await carryTo(ctx, project(), spec(), ticketOf(h, "CSV-2"), head, on("host_box", worktree))).toEqual(carried);
+    expect(host.methods("host_box")).toEqual(["carryStart"]);
+  });
+
+  it("carries the commit it is stacked on alone when that is the commit asked for", async () => {
+    const { base } = stacked();
+    const worktree = clone();
+    const main = sh(worktree, "rev-parse", "HEAD");
+    await carryTo(ctx, project(), spec(), ticketOf(h, "CSV-2"), base, on("host_box", worktree));
+    expect(sh(worktree, "rev-parse", "HEAD^{tree}")).toBe(sh(laptop, "rev-parse", `${base}^{tree}`));
+    expect(sh(worktree, "rev-parse", "HEAD~1")).toBe(main);
+  });
+
+  it("replaces a worktree whose own commits have the tree the caller says the checkout keeps, and refuses one that has other work", async () => {
+    const { head } = stacked();
+    const worktree = clone();
+    commit(worktree, "src/b.ts", "the worker's own\n", "CSV-2: Export endpoint");
+    const own = sh(worktree, "rev-parse", "HEAD^{tree}");
+    await expect(carryTo(ctx, project(), spec(), ticketOf(h, "CSV-2"), head, on("host_box", worktree))).rejects.toThrow("has commits that are not on origin/main");
+
+    const carried = await carryTo(ctx, project(), spec(), ticketOf(h, "CSV-2"), head, on("host_box", worktree), { replaces: own });
+    expect(sh(worktree, "rev-parse", "HEAD^{tree}")).toBe(carried.tree);
+  });
+
+  it("carries a head that does not build on the commit it is stacked on as one commit, with its tree", async () => {
+    stacked();
+    sh(laptop, "switch", "-q", "-c", "elsewhere");
+    const head = commit(laptop, "c.txt", "c\n", "CSV-2: elsewhere");
+    sh(laptop, "switch", "-q", "main");
+    const worktree = clone();
+    const main = sh(worktree, "rev-parse", "HEAD");
+    expect(await carryTo(ctx, project(), spec(), ticketOf(h, "CSV-2"), head, on("host_box", worktree))).toEqual({ tree: sh(laptop, "rev-parse", `${head}^{tree}`) });
+    expect(sh(worktree, "rev-parse", "HEAD~1")).toBe(main);
+  });
+
+  it("brings the work home on the commit it is stacked on, so its diff from there is the ticket's own", async () => {
+    const { base, head } = stacked();
+    const worker = clone();
+    await carryTo(ctx, project(), spec(), ticketOf(h, "CSV-2"), base, on("host_box", worker));
+    commit(worker, "src/b.ts", "export const b = 2;\n", "CSV-2: Export endpoint");
+
+    const home = await bringHome(ctx, project(), spec(), ticketOf(h, "CSV-2"), on("host_box", worker), "submit");
+    expect(sh(laptop, "rev-parse", `${home.sha}^@`)).toBe(base);
+    expect(sh(laptop, "diff", "--name-only", `${base}...${home.sha}`)).toBe("src/b.ts");
+    expect(home.tree).not.toBe(sh(laptop, "rev-parse", `${head}^{tree}`));
+    expect(sh(laptop, "rev-parse", reviewedRef("csv", "CSV-2"))).toBe(home.sha);
   });
 });

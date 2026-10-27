@@ -58,6 +58,7 @@ describe("repoSettings", () => {
       afterMerge: ["npm run build"],
       protected: ["package-lock.json"],
       forge: { kind: "gh" },
+      ci: false,
       environment: null,
       worktree: null,
     });
@@ -74,6 +75,7 @@ describe("repoSettings", () => {
       afterMerge: ["npm run build"],
       protected: ["package-lock.json"],
       forge: { kind: "gh" },
+      ci: false,
       environment: null,
       worktree: null,
     });
@@ -90,6 +92,7 @@ describe("repoSettings", () => {
       afterMerge: ["make build"],
       protected: ["package-lock.json", "vendor/**"],
       forge: { kind: "gh" },
+      ci: false,
       environment: null,
       worktree: null,
     });
@@ -97,6 +100,28 @@ describe("repoSettings", () => {
 
   it("lets a repo replace the top-level commands with none", () => {
     expect(repoSettings(multi(), "docs")).toMatchObject({ checks: [], afterMerge: [] });
+  });
+
+  it("relies on the pull request's CI on the pr strategy unless the repo or the top level says ci = false, and never where its forge reports no checks", () => {
+    const pr = multi((doc) => {
+      doc.merge = { strategy: "pr" };
+      doc.checks.after_merge = [];
+      doc.repo[1].after_merge = [];
+      doc.repo[2].after_merge = [];
+    });
+    expect(["web", "api", "docs"].map((name) => repoSettings(pr, name).ci)).toEqual([true, true, true]);
+    const off = multi((doc) => {
+      doc.merge = { strategy: "pr" };
+      doc.checks = { commands: ["npm test"], ci: false };
+      doc.repo[1].after_merge = [];
+      doc.repo[1].ci = true;
+      doc.repo[2].after_merge = [];
+    });
+    expect(["web", "api", "docs"].map((name) => repoSettings(off, name).ci)).toEqual([false, true, false]);
+    // A spec approved before ci existed, on a forge that reports no checks, is not proposed again: there is no CI to rely on.
+    const stored = { ...spec((doc) => (doc.merge = { strategy: "pr", forge: { kind: "command", open: "x", state: "y" } }, doc.checks.ci = false)), checks: { commands: ["npm test"], after_merge: [], timeout_minutes: 15 } } as Spec;
+    expect(repoSettings(stored, null).ci).toBe(false);
+    expect(repoSettings(spec((doc) => (doc.merge = { strategy: "pr", forge: { kind: "command", open: "x", state: "y", feedback: "z" } })), null).ci).toBe(true);
   });
 
   it("has no integration branch on the pr strategy", () => {

@@ -133,7 +133,7 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
   const token = randomBytes(12).toString("hex");
   const fromBranch = ticket.branch !== null;
   const stack = stacking(spec);
-  let start: { branch: string | null; stack: Stack } | null = null;
+  let start: StackStart | null = null;
   if (stack && !fromBranch) {
     if (store.ticket(ticket.id)?.state !== "queued") return;
     start = await stackStart(ctx, project, spec, store.ticket(ticket.id)!);
@@ -196,7 +196,9 @@ export async function spawnWorker(ctx: EngineCtx, project: ProjectRow, spec: Spe
         return;
       }
     }
-    const pending: Resume | null = onMachine && earlier !== null ? { sha: earlier.sha, tree: earlier.tree } : null;
+    // A stacked first start on a machine of its own carries in the commit it is stacked on, which is on the checkout alone.
+    const stacked: Resume | null = start?.stack.base != null ? { sha: start.stack.base, tree: start.tree! } : null;
+    const pending: Resume | null = !onMachine ? null : earlier !== null ? { sha: earlier.sha, tree: earlier.tree } : stacked;
     if (onMachine) store.updateThread(row.id, { resume_json: pending === null ? null : JSON.stringify(pending) });
     const checkouts = onMachine ? new Map<string, string>() : await otherCheckouts(ctx, project, spec, ticket);
     // A thread bb never gave an environment never ran, so it has no conversation to read.
@@ -273,12 +275,14 @@ async function earlierWork(ctx: EngineCtx, project: ProjectRow, spec: Spec, tick
  * that commit; or at the fresh base when none is open. Null while it must wait: the commits conflict with each other, or
  * the machine cannot build the commit now.
  */
-async function stackStart(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow): Promise<{ branch: string | null; stack: Stack } | null> {
+type StackStart = { branch: string | null; stack: Stack; tree: string | null };
+
+async function stackStart(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow): Promise<StackStart | null> {
   const { store } = ctx;
   const up = upstreamOf(store.tickets(project.id), ticket);
   const cross = Object.fromEntries(up.cross.filter((dep) => dep.state !== "done" && dep.pushed_sha !== null).map((dep) => [dep.key, dep.pushed_sha!]));
   const open = up.open.filter((dep) => dep.pushed_sha !== null);
-  if (open.length === 0) return { branch: null, stack: { ...EMPTY_STACK, synced: ctx.now(), cross } };
+  if (open.length === 0) return { branch: null, stack: { ...EMPTY_STACK, synced: ctx.now(), cross }, tree: null };
   const deps = Object.fromEntries(open.map((dep) => [dep.key, dep.pushed_sha!]));
   const withBase = up.merged.length > 0;
   const settings = repoSettings(spec, ticket.repo);
@@ -312,7 +316,7 @@ async function stackStart(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticke
     return null;
   }
   const synced = withBase ? ctx.now() : Math.min(...open.map((dep) => stackOf(dep)?.synced ?? 0));
-  return { branch, stack: { deps, base: built.sha, synced, cross } };
+  return { branch, stack: { deps, base: built.sha, synced, cross }, tree: built.tree };
 }
 
 /** The checkout path of each other repo of the project on its machine, by repo name, for worker and reviewer briefs. A repo without a checkout is left out, so the brief lists it without a path. */
@@ -601,13 +605,15 @@ async function stopAndArchive(ctx: EngineCtx, row: ThreadRow, force: boolean): P
 
 /**
  * Whether this idle is the one bb caused by moving the thread's machine, which it reports as a machine_maintenance
- * error. The event is consumed, so the next idle counts; only threads on machines of their own are asked about.
+ * error. The event is consumed, so the next idle counts. Only threads on machines of their own are asked about, by
+ * their environment, since an approved spec version may have moved new threads elsewhere since this one started.
  */
 export async function machineMoved(ctx: EngineCtx, row: ThreadRow): Promise<boolean> {
   const { store } = ctx;
   const project = store.project(row.project_id);
-  const ticket = row.ticket_id === null ? null : store.ticket(row.ticket_id);
-  if (row.thread_id === null || project === null || ticket === null || row.role === "planner" || !usesNewMachine(ticketRepo(specOf(store, project), ticket), row.role)) return false;
+  if (row.thread_id === null || project === null || row.ticket_id === null || row.role === "planner") return false;
+  const environment = await resolveEnvironment(ctx, row).catch(() => null);
+  if (environment === null || !isRemote(project, environment)) return false;
   const error = await ctx.bb.latestSystemError(row.thread_id).catch(() => null);
   if (error?.code !== "machine_maintenance" || error.seq <= row.maintenance_seq) return false;
   store.updateThread(row.id, { maintenance_seq: error.seq });

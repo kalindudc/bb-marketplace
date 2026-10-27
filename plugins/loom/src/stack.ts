@@ -20,6 +20,8 @@ export interface Stack {
   conflict?: { on: Record<string, string>; files: string[] };
   /** The hold last posted on the ticket, so each hold is posted once. */
   held?: string;
+  /** Files Loom carried to the worker's machine with conflict markers, which a submit may not keep. */
+  markers?: string[];
 }
 
 export const EMPTY_STACK: Stack = { deps: {}, base: null, synced: 0, cross: {} };

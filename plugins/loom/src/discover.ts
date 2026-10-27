@@ -198,7 +198,7 @@ function repoText(facts: RepoFacts): string {
   if (facts.pastPicks.length > 0) lines.push(`- Earlier picks for this repository's remote: ${facts.pastPicks.map(pickText).join("; ")}.`);
   if (machines.length > 0) {
     lines.push(
-      `- Environment: ask: propose one of the new-machine environments above for this project in ${pathOf(facts, "environment")}, weighing the earlier picks, and confirm it with the human; or keep this machine with ${listed.length > 0 ? "one of the providers above or " : ""}{ provider = "git-worktree" } if the human prefers. On a new machine, make sure the checks work on that machine, and use merge.strategy = "pr" with merge.stack = false.`,
+      `- Environment: ask: propose one of the new-machine environments above for this project in ${pathOf(facts, "environment")}, weighing the earlier picks, and confirm it with the human; or keep this machine with ${listed.length > 0 ? "one of the providers above or " : ""}{ provider = "git-worktree" } if the human prefers. On a new machine, make sure the checks work on that machine, and use merge.strategy = "pr".`,
     );
   } else if (plugins.length === 0) lines.push("- Environment: found: no plugin offers an environment for this repository, so plain git worktrees fit.");
   else lines.push(`- Environment: ask: ${environmentFix(facts, plugins)} Fill the inputs from the provider's description and its plugin's skill, and use {branch} and {base} where each thread's branch and base go.`);

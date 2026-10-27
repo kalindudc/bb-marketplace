@@ -170,8 +170,14 @@ export function boardCards(tickets: TicketRow[], threads: ThreadRow[], spec: Spe
       ...stackFacts(tickets, ticket, stack),
       startWait: startWaitView(ticket, threads),
       waitsForSlot: lite.waitsSince !== null,
+      ci: ciOf(spec, ticket),
     };
   });
+}
+
+function ciOf(spec: Spec | null, ticket: TicketRow): BoardCard["ci"] {
+  const status = ticket.state === "pr_open" && spec !== null && repoSettings(spec, ticket.repo).ci ? statusOf(ticket) : null;
+  return status === null ? null : { failed: status.failed, pending: status.pending };
 }
 
 /**
@@ -235,6 +241,7 @@ export function draftCards(spec: Spec, at: number): BoardCard[] {
     holding: null,
     startWait: null,
     waitsForSlot: false,
+    ci: null,
   }));
 }
 

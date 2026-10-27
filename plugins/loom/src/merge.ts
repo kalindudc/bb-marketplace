@@ -6,18 +6,20 @@ import { repoCheckout, type RepoCheckout } from "./checkouts";
 import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { plural } from "./format";
 import { backedOffUntil, backoffText, forgeHostOf, networkWaitReason, networkWaitText, nextBackoff, nextNetworkBackoff, nextPollAt, nextPollWait, pollWaitOf, pollWaitReason, pollWaitText, SERVER_ERROR_LIMIT_MS } from "./forge-waits";
-import { afterMergeChangedText, afterMergeFailedText, andList, clip, conflictText, dependsOnLines, landBody, prDivergedText, restackConflictText, restackFailedText, withRestoredNote, workerPrBody } from "./prompts";
+import { afterMergeChangedText, afterMergeFailedText, andList, clip, conflictText, dependsOnLines, landBody, prDivergedText, restackConflictText, restackFailedText, restackMarkersText, restackRefusedText, withRestoredNote, workerPrBody } from "./prompts";
 import { closedPrReset, followFeedback, inFixRound, prTextFor, prTextReady, reviewersToAsk, templatePr, type PrText } from "./pull-requests";
 import { githubPull, prNumber, PR_BATCH_MAX, type HostInput, type HostOutput as HostOutputOf } from "./host-contract";
+import type { EnvironmentInfo } from "./ports";
 import type { PrMeta } from "./pr-meta";
 import { LoomError } from "./projects";
-import { followsFeedback, isMultiRepo, prSettings, repoSettings, type RepoSettings } from "./repos";
+import { followsFeedback, freshBaseOf, isMultiRepo, prSettings, repoSettings, type RepoSettings } from "./repos";
 import { recordingHost } from "./runs";
 import type { ForgeSpec, Spec } from "./spec";
 import { EMPTY_STACK, holdKey, holdOf, prBaseOf, restackOf, stackBranch, stacking, stackOf, type Hold, type Restack, type Stack } from "./stack";
 import { LOOM_ACTOR } from "./states";
 import { isWaking, restoredSinceSubmit } from "./release";
 import { deliverHandBacks, handBack } from "./slots";
+import { carryTo, homeBranch, isRemote, reviewedRef } from "./transport";
 import { applyMove, baseOf, endLiveRows, endThread, pauseProject, released, resolveEnvironment, specOf, type EngineCtx } from "./workers";
 
 const AFTER_OPEN_MS = 5 * 60_000;
@@ -501,9 +503,10 @@ function baseMoved(ctx: EngineCtx, settings: RepoSettings, ticket: TicketRow): b
 
 /**
  * Brings a stacked ticket's branch up to date before Loom pushes it: builds the commit it must take, merges that in its
- * worker's worktree and runs the ticket's checks on the result, with no new review. Returns the ticket as it is now and
- * what it took; "skipped" when its dependencies conflict with each other, so it is pushed as it is; null when the ticket
- * went back to its worker, or to the queue when the worker is gone.
+ * worker's worktree and runs the ticket's checks on the result, with no new review. A worker on another machine gets
+ * the merge made on the project's checkout instead, as linear commits (restackOnMachine). Returns the ticket as it is now
+ * and what it took; "skipped" when its dependencies conflict with each other, so it is pushed as it is; null when the
+ * ticket went back to its worker, or to the queue when the worker is gone.
  */
 async function restack(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow, need: Restack, checkout: RepoCheckout, text: PrText): Promise<{ ticket: TicketRow; what: string } | "skipped" | null> {
   const { store } = ctx;
@@ -534,6 +537,9 @@ async function restack(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: 
     store.changed(project.id);
     return "skipped";
   }
+  const { conflict: _gone, ...rest } = known;
+  const stack: Stack = { ...rest, deps: need.deps, base: built.sha, synced: need.withBase ? ctx.now() : known.synced };
+  if (isRemote(project, environment)) return restackOnMachine(ctx, { project, spec, ticket, what, checkout, text, environment: { ...environment, path: environment.path }, built: built.sha, stack });
 
   const merged = await ctx.host.call(environment.hostId, "merge", { worktree: environment.path, ref: built.sha, message: `Merge ${what} into ${ticket.key} (Loom)` });
   if (merged.outcome === "conflict") {
@@ -545,8 +551,6 @@ async function restack(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: 
     });
     return null;
   }
-  const { conflict: _gone, ...rest } = known;
-  const stack: Stack = { ...rest, deps: need.deps, base: built.sha, synced: need.withBase ? ctx.now() : known.synced };
   const keepText = (head: string) => (text.by === "worker" ? { pr_text_json: JSON.stringify({ ...text, head } satisfies PrText) } : {});
   if (merged.already) {
     store.updateTicket(ticket.id, { stack_json: JSON.stringify(stack) });
@@ -577,6 +581,76 @@ async function restack(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: 
     // A restack happens only on the project's machine, where the head's own id is what to compare.
     store.updateTicket(ticket.id, { head_sha: merged.sha, head_tree: null, stack_json: JSON.stringify(stack), ...keepText(merged.sha) });
     addMergePost(ctx, ticket, { body: `Merged ${what} into ${ticket.key}'s branch as ${merged.sha.slice(0, 12)}${passed}.`, data: { outcome: "restacked", sha: merged.sha, deps: need.deps, base: built.tip, runs: runs.map(({ command, exitCode, timedOut, durationMs }) => ({ command, exitCode, timedOut, durationMs })) } });
+  });
+  store.changed(project.id);
+  return { ticket: store.ticket(ticket.id)!, what };
+}
+
+/**
+ * restack for a worker on another machine, where a merge commit must never go: merges on the project's checkout with
+ * merge-tree, carries the result into the worker's worktree as linear commits, replacing the reviewed work there, which
+ * the checkout keeps, and runs the checks there. A conflict is carried in with its markers and goes back to the worker;
+ * so does a worktree that holds other work than the reviewed one, which Loom leaves alone.
+ */
+async function restackOnMachine(
+  ctx: EngineCtx,
+  a: { project: ProjectRow; spec: Spec; ticket: TicketRow; what: string; checkout: RepoCheckout; text: PrText; environment: EnvironmentInfo & { path: string }; built: string; stack: Stack },
+): Promise<{ ticket: TicketRow; what: string } | null> {
+  const { store } = ctx;
+  const { project, spec, ticket, what, environment, stack } = a;
+  const refs = [`refs/heads/${homeBranch(project.slug, ticket.key)}`, reviewedRef(project.slug, ticket.key)];
+  const merged = await ctx.host.call(a.checkout.hostId, "mergeOnto", { repo: a.checkout.path, head: ticket.head_sha!, ref: a.built, message: `Merge ${what} into ${ticket.key} (Loom)`, refs });
+  if (merged.outcome === "merged" && merged.already) {
+    store.updateTicket(ticket.id, { stack_json: JSON.stringify(stack) });
+    return { ticket: store.ticket(ticket.id)!, what };
+  }
+  const conflict = merged.outcome === "conflict" ? merged.files : null;
+  const carried: Stack = conflict === null ? stack : { ...stack, markers: conflict };
+  try {
+    await carryTo(ctx, project, spec, { ...ticket, stack_json: JSON.stringify(carried) }, merged.sha, environment, ticket.head_tree === null ? {} : { replaces: ticket.head_tree });
+  } catch (error) {
+    await sendBack(ctx, ticket.id, {
+      post: { kind: "merge", body: `${ticket.key} must take ${what} before Loom pushes it, and Loom could not put it in the worker's worktree: ${errText(error)}`, data: { outcome: "restack_waits" } },
+      text: restackRefusedText(ticket.key, what, errText(error)),
+      countFailure: false,
+      reason: "the worker's worktree holds work Loom has not seen",
+    });
+    return null;
+  }
+  if (conflict !== null) {
+    store.updateTicket(ticket.id, { stack_json: JSON.stringify(carried) });
+    await sendBack(ctx, ticket.id, {
+      post: { kind: "merge", body: `Merging ${what} into ${ticket.key}'s branch conflicted in: ${conflict.join(", ")}. Loom put the result, with conflict markers, in the worker's worktree.`, data: { outcome: "conflict", files: conflict, restack: true } },
+      text: restackMarkersText(ticket.key, what, conflict),
+      countFailure: false,
+      reason: "bringing the branch up to date conflicted",
+    });
+    return null;
+  }
+
+  const fresh = freshBaseOf(spec, ticket.repo);
+  const commands = [...(JSON.parse(ticket.verify_json) as string[]), ...a.checkout.settings.checks];
+  const runs: CheckRun[] = [];
+  for (const command of commands) {
+    const result = await ctx.host.call(environment.hostId, "exec", { cwd: environment.path, command, timeoutMs: spec.checks.timeout_minutes * 60_000 });
+    const run: CheckRun = { command, exitCode: result.exitCode, timedOut: result.timedOut, durationMs: result.durationMs, output: result.output };
+    runs.push(run);
+    let changed: string | undefined;
+    if (result.exitCode === 0 && !result.timedOut) {
+      // By tree: the machine may give the carried commit a new id.
+      const after = await ctx.host.call(environment.hostId, "worktreeState", { worktree: environment.path, base: fresh, trackedOnly: true });
+      const changes = [...(after.tree === merged.tree ? [] : [`changed HEAD's tree from ${merged.tree.slice(0, 12)} to ${after.tree.slice(0, 12)}`]), ...(after.dirty ? ["left tracked files modified"] : [])];
+      if (changes.length === 0) continue;
+      changed = changes.join(" and ");
+    }
+    store.updateTicket(ticket.id, { stack_json: JSON.stringify(stack) });
+    await sendBack(ctx, ticket.id, { post: afterMergePost(run, `${ticket.key}'s branch`, changed), text: restackFailedText(ticket.key, what, run, changed), countFailure: true, reason: "the checks failed after bringing the branch up to date" });
+    return null;
+  }
+  const passed = runs.length === 0 ? "" : `; its checks passed (${plural(runs.length, "command")})`;
+  store.tx(() => {
+    store.updateTicket(ticket.id, { head_sha: merged.sha, head_tree: merged.tree, stack_json: JSON.stringify(stack), ...(a.text.by === "worker" ? { pr_text_json: JSON.stringify({ ...a.text, head: merged.sha } satisfies PrText) } : {}) });
+    addMergePost(ctx, ticket, { body: `Merged ${what} into ${ticket.key}'s branch as ${merged.sha.slice(0, 12)} on the project's machine, and carried it to the worker's${passed}.`, data: { outcome: "restacked", sha: merged.sha, deps: stack.deps, base: a.built, runs: runs.map(({ command, exitCode, timedOut, durationMs }) => ({ command, exitCode, timedOut, durationMs })) } });
   });
   store.changed(project.id);
   return { ticket: store.ticket(ticket.id)!, what };

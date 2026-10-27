@@ -2,7 +2,7 @@
 // commands in their own process group. host.ts wires these to RPC handlers; tests call them directly.
 import { execFile, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, realpathSync, rmdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { experimental_runVcsProcess, type ExperimentalVcsProcessPriority } from "@get-bb/plugin-sdk/host";
 import { z } from "zod";
@@ -78,15 +78,30 @@ export async function ensureBranch(input: HostInput<"ensureBranch">, signal?: Ab
 }
 
 export async function worktreeState(input: HostInput<"worktreeState">, signal?: AbortSignal): Promise<HostOutput<"worktreeState">> {
-  const { worktree, base, trackedOnly } = input;
+  const { worktree, base, trackedOnly, baseTree } = input;
   const [head = "", tree = ""] = (await git(worktree, ["rev-parse", "HEAD", "HEAD^{tree}"], { signal })).split("\n");
   const branch = (await tryGit(worktree, ["symbolic-ref", "--short", "-q", "HEAD"], signal)) || null;
   const dirty = (await git(worktree, ["status", "--porcelain", ...(trackedOnly === true ? ["--untracked-files=no"] : [])], { signal })) !== "";
-  const mergeBase = await git(worktree, ["merge-base", base, "HEAD"], { signal });
+  const onBase = baseTree === undefined ? null : await firstParentWithTree(worktree, head, baseTree, signal);
+  const mergeBase = onBase ?? (await git(worktree, ["merge-base", base, "HEAD"], { signal }));
   const tracked = await git(worktree, ["diff", "--name-only", "-z", "--no-renames", mergeBase], { raw: true, signal });
   const untracked = await git(worktree, ["ls-files", "--others", "--exclude-standard", "-z"], { raw: true, signal });
   const changed = [...new Set([...tracked.split("\0"), ...untracked.split("\0")].filter((path) => path !== ""))].sort();
-  return { branch, head, tree, dirty, changed };
+  return { branch, head, tree, dirty, changed, ...(baseTree === undefined ? {} : { onBase: onBase !== null }) };
+}
+
+const FIRST_PARENT_LIMIT = 200;
+
+/** The newest commit from `head` down its first parents, at most FIRST_PARENT_LIMIT of them, whose tree is `tree`; read with cat-file, which a machine's git has. */
+async function firstParentWithTree(worktree: string, head: string, tree: string, signal?: AbortSignal): Promise<string | null> {
+  let sha: string | undefined = head;
+  for (let step = 0; sha !== undefined && step < FIRST_PARENT_LIMIT; step += 1) {
+    const raw = await git(worktree, ["cat-file", "commit", sha], { raw: true, signal });
+    const headers = raw.slice(0, raw.indexOf("\n\n") === -1 ? raw.length : raw.indexOf("\n\n"));
+    if (/^tree ([0-9a-f]+)$/mu.exec(headers)?.[1] === tree) return sha;
+    sha = /^parent ([0-9a-f]+)$/mu.exec(headers)?.[1];
+  }
+  return null;
 }
 
 // Commits and merges need an author; the Loom identity is used only when git has none.
@@ -388,7 +403,21 @@ export async function stackBase(input: HostInput<"stackBase">, signal?: AbortSig
     return { outcome: "unavailable", message: `The branch ${branch} is checked out in a worktree, so Loom cannot move it to the stacked commit. Switch that worktree to another branch.` };
   }
   await git(repo, ["update-ref", `refs/heads/${branch}`, sha], { signal });
-  return { outcome: "ok", sha, tip };
+  return { outcome: "ok", sha, tip, tree: await git(repo, ["rev-parse", `${sha}^{tree}`], { signal }) };
+}
+
+export async function mergeOnto(input: HostInput<"mergeOnto">, signal?: AbortSignal): Promise<HostOutput<"mergeOnto">> {
+  const { repo, message, refs } = input;
+  const head = await git(repo, ["rev-parse", "--verify", `${input.head}^{commit}`], { signal });
+  const ref = await git(repo, ["rev-parse", "--verify", `${input.ref}^{commit}`], { signal });
+  if (await isAncestor(repo, ref, head, signal)) return { outcome: "merged", sha: head, tree: await git(repo, ["rev-parse", `${head}^{tree}`], { signal }), already: true };
+  const merged = await run(repo, ["merge-tree", "--write-tree", "--name-only", "--no-messages", head, ref], signal);
+  const lines = merged.stdout.split("\n").filter((line) => line !== "");
+  if ((merged.code !== 0 && merged.code !== 1) || lines[0] === undefined) throw failure(["merge-tree", "--write-tree", head, ref], merged);
+  const tree = lines[0];
+  const sha = await commitTree(repo, tree, [head, ref], message, signal);
+  for (const name of refs) await git(repo, ["update-ref", name, sha], { signal });
+  return merged.code === 0 ? { outcome: "merged", sha, tree, already: false } : { outcome: "conflict", files: [...new Set(lines.slice(1))].sort(), sha, tree };
 }
 
 export async function fetchBranch(input: HostInput<"fetchBranch">, signal?: AbortSignal): Promise<HostOutput<"fetchBranch">> {
@@ -580,7 +609,8 @@ export async function importCommit(input: HostInput<"importCommit">, dataDir: st
     const written = await git(repo, ["write-tree"], { signal, env });
     if (written !== tree) return { outcome: "mismatch", tree: written };
     const committer = { GIT_COMMITTER_NAME: author.name, GIT_COMMITTER_EMAIL: author.email, GIT_COMMITTER_DATE: author.date };
-    const sha = await gitInput(repo, ["commit-tree", written, "-p", base, "--no-gpg-sign", "-F", "-"], message, { signal, env: { ...authorEnv(author), ...committer }, what: "commit-tree" });
+    const parent = input.parent === undefined ? base : await git(repo, ["rev-parse", "--verify", `${input.parent}^{commit}`], { signal });
+    const sha = await gitInput(repo, ["commit-tree", written, "-p", parent, "--no-gpg-sign", "-F", "-"], message, { signal, env: { ...authorEnv(author), ...committer }, what: "commit-tree" });
     for (const name of refs) await git(repo, ["update-ref", name, sha], { signal });
     return { outcome: "ok", sha };
   } finally {
@@ -627,7 +657,7 @@ export async function carryStart(input: HostInput<"carryStart">, signal?: AbortS
   }
   // merge-base rather than --is-ancestor, which a machine's git may not have.
   const tracking = `refs/remotes/${remote}/${baseBranch}`;
-  if (head !== base && (await tryGit(worktree, ["merge-base", head, tracking], signal)) !== head) {
+  if (head !== base && tree !== input.replaces && (await tryGit(worktree, ["merge-base", head, tracking], signal)) !== head) {
     return { outcome: "unavailable", message: `The worktree ${worktree} has commits that are not on ${remote}/${baseBranch}, so putting the work in would drop them: ${head.slice(0, 12)}. Stash them or move them to another branch, then try again` };
   }
   if (!(await hasCommit(worktree, base, signal))) {
@@ -659,6 +689,17 @@ export async function carryWrite(input: HostInput<"carryWrite">): Promise<HostOu
   }
   chmodSync(file, mode === "100755" ? 0o755 : 0o644);
   return { size: offset + bytes.length };
+}
+
+const MARKER = /^(?:<{7}|>{7})(?: |$)/mu;
+
+export async function conflictMarkers(input: HostInput<"conflictMarkers">): Promise<HostOutput<"conflictMarkers">> {
+  const files: string[] = [];
+  for (const path of input.paths) {
+    const file = insideWorktree(input.worktree, path, false);
+    if (existsSync(file) && statSync(file).isFile() && MARKER.test(readFileSync(file, "utf8"))) files.push(path);
+  }
+  return { files };
 }
 
 /** Deletes each path, and each directory that leaves empty, so a file may take a deleted directory's place. */

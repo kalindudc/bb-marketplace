@@ -2,6 +2,30 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.24.0 (2026-10-27)
+
+### Added
+
+- Stacked pull requests with threads on new machines. `merge.stack` now works with `environment.machine`; `loom_propose` refuses only the integration strategy there. Loom makes every stack merge on the project's checkout and puts only linear commits on a machine, which may keep no merge commit. A stacked ticket's first worker carries in the commit it is stacked on with `loom_resume`, as one commit on the fresh base. Its scope is measured from that commit's tree, and its work comes home rebuilt on the commit it is stacked on, so the reviewers' diff and its pull request, opened on the dependency's branch, are its own.
+- When a dependency's pull request changes or merges, Loom merges the dependent's head with the new commit on the checkout with `git merge-tree` (the new host call `mergeOnto`). It carries the result into the worker's worktree on its machine, replacing the reviewed work there, runs the checks there and pushes with no new review; after a merge it also moves the pull request to the base branch. A conflict is carried in with conflict markers, and a submit that still has them fails a "conflict check", so a commit with markers is never brought home as a submit or pushed. A worktree with other work than the reviewed tree is left alone and the ticket goes back to its worker.
+- A worker on a new machine is not released while its ticket has a dependency in its repo that has not merged, since its machine cannot come back and those merges run in its worktree.
+- `ci`, in `[checks]` for the project and on each `[[repo]]`: whether Loom relies on the pull request's CI for every test the plugin's checks do not run. Unset is `true` on the pull request strategy; the key is refused on the integration strategy.
+  - `ci = true`: the plugin's checks are the cheap ones that run where each thread runs. The worker brief says every other test runs in the pull request's CI, not to block, fail or loop on a test the environment cannot run, and to name the tests it did not run in `loom_submit`. The reviewer brief says not to request changes only because a test was not run there. A fix round for a failed CI check says CI may run tests the worker cannot. Pending and failing CI shows on a ticket's board card and on the next-step bar, as well as on the Merge order tab.
+  - `ci = false`: Loom ignores the repo's CI. Its plugin checks are the whole bar, the briefs say so, and a failed CI check starts no fix round; reviews, review threads, comments and your replies still do.
+  - `loom_propose` refuses a repo that relies on CI through a forge that reports no checks (`kind = "command"` without `feedback`, or `kind = "none"`), naming both fixes: add a `feedback` command, or set `ci = false` for it.
+- The spec reference's World example follows a Delta pull request's CI with a `feedback` command over `dt pr view` and `dt pr checks`, checked against a live pull request.
+
+### Changed
+
+- A spec version that adds or removes `machine` on a running project moves only new threads, and each ticket in flight has a defined behaviour (a table in the spec reference). Loom now decides about a thread that already runs by its environment's machine, not by the spec: a machine move's idle is still not counted after the spec moves workers off machines; `loom_resume` stays offered while it is pending; a reviewer on the project's machine starts from the home branch only when the head came home, else from the worker's branch; and a released worker's post says where the next worker takes over from by the same fact.
+- On another machine, the worktree checks of a stacked ticket (after the checks, a reviewer's verdict, a release) measure from the fresh base, since the commit it is stacked on exists only on the checkout.
+- `loom_checkout` carries a stacked ticket's reviewed work as two commits, the commit it is stacked on and then the ticket's own, so a reviewer on a machine reads its changes with `git diff HEAD~1`.
+
+### Compatibility
+
+- A spec without `ci` relies on CI. Compared with 0.23.0, a gh or `feedback` forge sends failed CI checks back as before, now with guidance in the briefs. A stored spec whose forge reports no checks keeps running as `ci = false`, but a revision of it is refused until it sets `ci = false` or adds a `feedback` command.
+- No migration. `stack_json` may hold `markers`. The host entry gains `mergeOnto` and `conflictMarkers`; `importCommit` takes `parent`, `worktreeState` takes `baseTree` and reports `onBase`, `carryStart` takes `replaces`, and `stackBase` reports the tree it built. Projects without `machine` run as before, apart from a reviewer's start reading the reviewed ref.
+
 ## 0.23.0 (2026-10-27)
 
 ### Added

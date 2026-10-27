@@ -59,6 +59,8 @@ export interface BoardCard {
   startWait: StartWaitView | null;
   /** Work went back to the ticket's worker (a fix round, a review's changes, a merge that did not land), and it waits for a free worker slot. */
   waitsForSlot: boolean;
+  /** An open pull request's failing and pending CI checks, as Loom last read them, on a repo that relies on CI; null otherwise. */
+  ci: { failed: number; pending: number } | null;
 }
 
 export interface StartWaitView {

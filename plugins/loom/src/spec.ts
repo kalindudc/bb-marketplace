@@ -124,6 +124,7 @@ export const repoSpecSchema = z
     remote: remoteName.optional(),
     checks: z.array(command).max(10).optional(),
     after_merge: z.array(command).max(10).optional(),
+    ci: z.boolean().optional(),
     protected: z.array(glob).max(100).optional(),
     forge: forgeSchema.optional(),
     environment: environmentSchema.optional(),
@@ -187,6 +188,8 @@ export const specSchema = z
         commands: z.array(command).max(10).default([]),
         after_merge: z.array(command).max(10).default([]),
         timeout_minutes: z.number().int().min(1).max(29).default(15),
+        // No default, so a spec without it hashes as it did before it existed; repoSettings reads unset as true.
+        ci: z.boolean().optional(),
       })
       .strict()
       .prefault({}),
@@ -478,6 +481,10 @@ export function validateSemantics(spec: Spec, rawToml: string): { errors: string
     for (const key of ["describe", "squash", "max_fix_rounds", "stack", "release_workers", "checks_queued_minutes", "checks_near_done_percent"] as const) {
       if (spec.merge[key] !== undefined) errors.push(`merge.${key}: it applies to the pull request Loom opens for each ticket, but merge.strategy is "integration". Remove it, or use merge.strategy = "pr".`);
     }
+    const ciPaths = [...(spec.checks.ci === undefined ? [] : ["checks.ci"]), ...repos.flatMap((repo, index) => (repo.ci === undefined ? [] : [`repo[${index}].ci`]))];
+    for (const at of ciPaths) errors.push(`${at}: it says whether Loom relies on the CI of the pull request it opens for each ticket, but merge.strategy is "integration". Remove it, or use merge.strategy = "pr".`);
+  } else {
+    errors.push(...ciForgeErrors(spec));
   }
 
   errors.push(...forgeErrors(spec.merge.forge, "merge.forge"), ...worktreeErrors(spec, spec.merge.worktree, "merge.worktree"), ...environmentErrors(spec.environment, "environment"));
@@ -499,6 +506,29 @@ export function validateSemantics(spec: Spec, rawToml: string): { errors: string
   warnings.push(...overlapWarnings(scopeOverlaps(spec.ticket)));
 
   return { errors, warnings };
+}
+
+/**
+ * A repo that relies on its pull requests' CI, which is every repo on the pr strategy unless its ci, or the top-level
+ * one, is false, needs a forge that reports checks: gh, or a command forge with a feedback command.
+ */
+function ciForgeErrors(spec: Spec): string[] {
+  const repos = spec.repo ?? [];
+  const entries: Array<{ name: string | null; forge: ForgeSpec; forgeAt: string; ciAt: string; ci: boolean | undefined }> =
+    repos.length === 0
+      ? [{ name: null, forge: spec.merge.forge ?? { kind: "gh" }, forgeAt: "merge.forge", ciAt: "checks.ci", ci: spec.checks.ci }]
+      : repos.map((repo, index) => ({ name: repo.name, forge: repo.forge ?? spec.merge.forge ?? { kind: "gh" }, forgeAt: repo.forge === undefined ? "merge.forge" : `repo[${index}].forge`, ciAt: `repo[${index}].ci`, ci: repo.ci ?? spec.checks.ci }));
+  return entries.flatMap(({ name, forge, forgeAt, ciAt, ci }) => {
+    if (ci === false || forge.kind === "gh" || (forge.kind === "command" && forge.feedback !== undefined)) return [];
+    const who = name === null ? "the repo" : `the repo ${JSON.stringify(name)}`;
+    const relies = `${who} relies on its pull requests' CI (${ciAt} is not false), but`;
+    const off = `set ${ciAt} = false so the plugin checks are the whole bar.`;
+    return [
+      forge.kind === "none"
+        ? `${forgeAt}: ${relies} kind = "none" opens no pull request and reports no checks. Use kind = "gh", or kind = "command" with a feedback command, or ${off}`
+        : `${forgeAt}: ${relies} this forge reports no checks, so Loom could never send a failed one back. Add a feedback command to ${forgeAt}, or ${off}`,
+    ];
+  });
 }
 
 function forgeErrors(forge: ForgeSpec | undefined, at: string): string[] {
@@ -543,17 +573,17 @@ function environmentErrors(environment: EnvironmentSpec | undefined, at: string)
 }
 
 /**
- * A repo whose workers or reviewers run on new machines works only on the pr strategy without stacking: the integration
- * branch and the commits stacked tickets start on are made on the project's machine, and Loom carries neither elsewhere.
- * A repo without an environment of its own uses the top-level one, so its error names that path, once.
+ * A repo whose workers or reviewers run on new machines works only on the pr strategy: the integration branch is made on
+ * the project's machine, and Loom does not carry it elsewhere. A repo without an environment of its own uses the top-level
+ * one, so its error names that path, once.
  */
 function machineErrors(spec: Spec): string[] {
-  if (spec.merge.strategy === "pr" && spec.merge.stack === false) return [];
+  if (spec.merge.strategy === "pr") return [];
   const used: Array<[EnvironmentSpec | undefined, string]> = (spec.repo ?? []).length === 0 ? [[spec.environment, "environment"]] : spec.repo!.map((repo, index) => (repo.environment === undefined ? [spec.environment, "environment"] : [repo.environment, `repo[${index}].environment`]));
   const paths = used.flatMap(([environment, at]) => (environment?.machine !== undefined ? [`${at}.machine`] : environment?.reviewer?.machine !== undefined ? [`${at}.reviewer.machine`] : []));
   return [...new Set(paths)].map(
     (at) =>
-      `${at}: a thread on a new machine needs merge.strategy = "pr" and merge.stack = false, because Loom does not carry its integration branch or the bases of stacked pull requests, which live only on the project's machine, to other machines. Set both, or remove ${at}.`,
+      `${at}: a thread on a new machine needs merge.strategy = "pr", because Loom does not carry the integration branch, which lives only on the project's machine, to other machines. Set merge.strategy = "pr", or remove ${at}.`,
   );
 }
 

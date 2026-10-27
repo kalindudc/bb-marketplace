@@ -498,6 +498,20 @@ its own pull request.
   checks Loom did not wait for. The spec's `merge.checks_queued_minutes` and
   `merge.checks_near_done_percent` change the two numbers for one project, and
   the settings change them for all (see [Settings](#settings)).
+- Loom relies on the pull request's CI for every test its own checks do not
+  run. The checks in `[checks]` and a repo's `checks` are the cheap ones that
+  run where each worker runs; tests that need containers or services, or take
+  too long for every submit, are left to CI. The briefs say so: a worker does
+  not block, fail or loop on a test it cannot run, and names the tests it did
+  not run when it submits, and a reviewer does not request changes only
+  because a test was not run. A failed CI check comes back as a fix round, as
+  above, and a ticket stacked on this one follows the pushed fix. Pending and
+  failing CI shows on the board card, the next-step bar and the Merge order
+  tab. This needs a server that reports checks (`gh`, or a command forge with
+  a `feedback` command); `loom_propose` refuses a repo on any other until it
+  has one, or until the spec sets `ci = false` for it. `ci = false`, in
+  `[checks]` or on a `[[repo]]`, makes Loom ignore that repo's CI: its own
+  checks are the whole bar, and a failed CI check starts no fix round.
 - The worker may answer review comments with the server's CLI. It posts from
   your account, so it ends each comment and reply with a signature line,
   "Posted by Loom" unless you change it (see [Settings](#settings)).
@@ -647,9 +661,22 @@ with the environments earlier approved projects chose for a repository with
 the same remote, and the planner proposes one on every project and confirms it
 with you.
 
-- Only the pull request strategy without stacking (`merge.stack = false`)
-  works there; `loom_propose` refuses anything else, because the integration
-  branch and stacked bases are made on the project's machine.
+- Only the pull request strategy works there, with or without stacking;
+  `loom_propose` refuses the integration strategy, because the integration
+  branch is made on the project's machine.
+- Stacked pull requests work there. Loom makes every stack merge on the
+  project's checkout and puts only linear commits on a machine, since a
+  machine may keep no merge commit. A stacked ticket's first worker calls
+  `loom_resume`, which puts the commit it is stacked on in as one commit on the
+  fresh base; its own work goes on top, its scope is measured from that
+  commit's tree, and its work comes home on the commit it is stacked on, so the
+  reviewers' diff and its pull request are its own. When a dependency's pull
+  request changes or merges, Loom merges on the checkout, carries the result
+  into the dependent's worktree, runs its checks there and pushes, with no new
+  review. A conflict arrives with conflict markers in its files, and a submit
+  that still has them is refused. A worker on a machine is not released while
+  its ticket has a dependency in its repo that has not merged, so the machine
+  stays for those merges.
 - The checks run on the worker's machine. On a pass, Loom carries the
   worker's commit back to the project's checkout through its own host entry:
   it rebuilds the same tree on the same base, refuses it unless the tree
@@ -673,6 +700,14 @@ with you.
 - A machine provider that cannot start a machine now (`machine_provider_rejected`)
   makes the ticket wait as for an unavailable environment provider, and an
   idle caused by bb moving a thread's machine does not count.
+- A spec version that adds or removes `machine` on a running project moves
+  only new threads. A thread that runs keeps its machine: a worker's submits
+  still come home from a machine or stay on the checkout, it keeps
+  `loom_resume` while that is pending, a move of its machine is still not
+  counted, and a restack runs where its worktree is. A reviewer on the
+  project's machine starts from the home branch when the head came home. A
+  released worker comes back on the project's machine; one on a removed
+  machine is taken over by a new worker from the ticket's newest work.
 
 ### Environments with limited room
 

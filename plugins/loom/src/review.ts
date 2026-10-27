@@ -15,7 +15,7 @@ import { NOT_PARKED, freeReviewerSlots, idleAction, type Parked } from "./schedu
 import { deliverHandBacks, handBack } from "./slots";
 import type { Spec } from "./spec";
 import { LOOM_ACTOR } from "./states";
-import { carryTo, homeBranch } from "./transport";
+import { carryTo, headCameHome, homeBranch, worktreeBaseOf } from "./transport";
 import { applyMove, baseOf, endLiveRows, endThread, freshBase, machineMoved, otherCheckouts, pauseProject, released, resolveEnvironment, resumeEnding, retryRateLimited, specOf, type EndReason, type EngineCtx, type TurnFailure } from "./workers";
 
 export interface Finding {
@@ -294,8 +294,6 @@ async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow,
   const agent = spec.agents.reviewer;
   const repo = ticketRepo(spec, ticket);
   const onMachine = usesNewMachine(repo, "reviewer");
-  // The worker's branch of a ticket worked on another machine is there alone; its work came home on the home branch.
-  const base = onMachine ? freshBase(spec, ticket.repo) : usesNewMachine(repo, "worker") ? homeBranch(project.slug, ticket.key) : (ticket.branch ?? freshBase(spec, ticket.repo));
   const brief = reviewerBrief({
     project,
     spec,
@@ -310,6 +308,7 @@ async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow,
   });
   let spawned;
   try {
+    const base = onMachine ? freshBase(spec, ticket.repo) : await localReviewBase(ctx, project, spec, ticket);
     spawned = await ctx.bb.spawnThread({
       bbProjectId: repo.bbProjectId ?? project.bb_project_id,
       hostId: project.host_id!,
@@ -345,6 +344,15 @@ async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow,
   store.changed(project.id);
   if (staleReason(store, active) !== null || store.project(projectId)?.state === "archived") await endThread(ctx, active, "superseded", { commit: false, move: null });
   return true;
+}
+
+/**
+ * Where a reviewer on the project's machine starts: the home branch when the head came home from another machine, which
+ * its reviewed ref says, since the worker's branch there is on that machine alone; else the worker's branch.
+ */
+async function localReviewBase(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow): Promise<string> {
+  if (await headCameHome(ctx, project, spec, ticket)) return homeBranch(project.slug, ticket.key);
+  return ticket.branch ?? freshBase(spec, ticket.repo);
 }
 
 /**
@@ -463,7 +471,8 @@ async function reviewerWorktree(ctx: EngineCtx, row: ThreadRow) {
  */
 async function requireHeadCheckedOut(ctx: EngineCtx, row: ThreadRow, ticket: TicketRow, spec: Spec): Promise<void> {
   const environment = await reviewerWorktree(ctx, row);
-  const state = await ctx.host.call(environment.hostId, "worktreeState", { worktree: environment.path!, base: baseOf(spec, ticket) }).catch((error) => {
+  const project = ctx.store.project(ticket.project_id)!;
+  const state = await ctx.host.call(environment.hostId, "worktreeState", { worktree: environment.path!, base: worktreeBaseOf(project, spec, ticket, environment) }).catch((error) => {
     throw new LoomError("loom_unavailable", `Could not read your worktree: ${errText(error)}`);
   });
   const reviewed = ticket.head_tree === null ? state.head === ticket.head_sha : state.tree === ticket.head_tree;

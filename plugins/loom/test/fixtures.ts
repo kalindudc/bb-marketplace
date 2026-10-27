@@ -93,6 +93,7 @@ export const card = (over: Partial<BoardCard> = {}): BoardCard => ({
   holding: null,
   startWait: null,
   waitsForSlot: false,
+  ci: null,
   ...over,
 });
 

@@ -2,18 +2,17 @@
 // pull request needs it again. A pull request can wait days for a person, and an idle worker holds its environment all
 // that time. Archiving its thread frees the environment; bb's restore later builds a new one on the worker's branch, so
 // the worker comes back with its whole conversation. When bb cannot restore it, a new worker takes over from the branch.
-import { ticketRepo } from "./checkouts";
 import { workerOf } from "./checks";
 import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
-import { usesNewMachine } from "./environments";
 import { formatDuration } from "./format";
 import { prSettings } from "./repos";
 import { waitsForSlot } from "./scheduler";
 import type { Spec } from "./spec";
-import { holdOf, restackOf, stacking } from "./stack";
+import { holdOf, restackOf, stacking, upstreamOf } from "./stack";
 import { nextWait, provisioningFailure, startProblemOf, startWaits, UNAVAILABLE_LIMIT_MS, unavailableReason, waitOf, type StartProblem, type StartWait } from "./starts";
 import { LOOM_ACTOR } from "./states";
-import { applyMove, baseOf, endThread, released, specOf, type EngineCtx } from "./workers";
+import { headCameHome, isRemote, worktreeBaseOf } from "./transport";
+import { applyMove, endThread, released, specOf, type EngineCtx } from "./workers";
 
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -40,7 +39,8 @@ function restackDue(spec: Spec, tickets: readonly TicketRow[], ticket: TicketRow
  * The tick's step on the pr strategy, unless the spec sets merge.release_workers = false: archives each idle worker
  * whose ticket's pull request is open, so bb frees its environment. Only a worker with nothing in flight goes: no fix
  * round waiting for it, no question waiting for the human, no catch-up due, and a worktree that holds exactly the
- * reviewed commit, so nothing in it can be lost.
+ * reviewed commit, so nothing in it can be lost. A worker on a machine of its own also stays while a dependency in its
+ * repo is open: its machine cannot come back, and the restacks that dependency causes run in its worktree.
  */
 export async function releaseIdleWorkers(ctx: EngineCtx, project: ProjectRow, spec: Spec): Promise<void> {
   if (spec.merge.strategy !== "pr" || !prSettings(spec).releaseWorkers) return;
@@ -57,7 +57,8 @@ export async function releaseIdleWorkers(ctx: EngineCtx, project: ProjectRow, sp
       if (thread?.status !== "idle" || (await bb.waitingOnUser([threadId])).length > 0) continue;
       const environment = thread.environmentId === null ? null : await bb.getEnvironment(thread.environmentId);
       if (environment?.path == null) continue;
-      const state = await ctx.host.call(environment.hostId, "worktreeState", { worktree: environment.path, base: baseOf(spec, ticket) });
+      if (isRemote(project, environment) && upstreamOf(tickets, ticket).open.length > 0) continue;
+      const state = await ctx.host.call(environment.hostId, "worktreeState", { worktree: environment.path, base: worktreeBaseOf(project, spec, ticket, environment) });
       // By tree, since the reviewed commit of a worker on its own machine was brought home with another id.
       if ((ticket.head_tree === null ? state.head !== ticket.head_sha : state.tree !== ticket.head_tree) || state.dirty) continue;
     } catch (error) {
@@ -216,12 +217,14 @@ async function wakeFailed(ctx: EngineCtx, row: ThreadRow, problem: StartProblem)
  */
 async function cannotWake(ctx: EngineCtx, row: ThreadRow, why: string): Promise<void> {
   const { store } = ctx;
+  const seen = row.ticket_id === null ? null : store.ticket(row.ticket_id);
+  // A worker's branch on a machine of its own went with the machine; its work is on the home branch.
+  const home = seen !== null && (await headCameHome(ctx, store.project(seen.project_id)!, specOf(store, store.project(seen.project_id)!), seen));
   store.tx(() => {
     store.updateThread(row.id, { state: "ended", ended_at: ctx.now(), end_reason: "gone" });
     const ticket = row.ticket_id === null ? null : store.ticket(row.ticket_id);
     if (ticket === null || ticket.worker_thread_id !== row.thread_id) return;
-    // A worker's branch on a machine of its own went with the machine; its work is on the home branch.
-    const from = usesNewMachine(ticketRepo(specOf(store, store.project(ticket.project_id)!), ticket), "worker") ? "the work Loom brought home" : ticket.branch === null ? "the ticket's branch" : `its branch ${ticket.branch}`;
+    const from = home ? "the work Loom brought home" : ticket.branch === null ? "the ticket's branch" : `its branch ${ticket.branch}`;
     const body = `The worker's thread cannot come back with an environment (${why}), so a new worker takes over from ${from}; it can read the earlier worker's conversation.`;
     store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "system", body });
     if (ticket.state === "working" || ticket.state === "pr_open") {

@@ -8,7 +8,7 @@ import { followsFeedback, isMultiRepo, prSettings, repoSettings, type RepoSettin
 import type { Finding } from "./review";
 import type { Spec } from "./spec";
 import { specDiff, type SpecChange } from "./spec-diff";
-import { stackOf, upstreamOf } from "./stack";
+import { restackOf, stacking, stackOf, upstreamOf } from "./stack";
 import type { SpecNote } from "./spec-paths";
 import type { SpecFinding } from "./spec-review";
 import { SPEC_REVIEW_ROUNDS, type MergeChoice, type TicketState } from "./states";
@@ -197,8 +197,9 @@ function dependenciesSection(spec: Spec, ticket: TicketRow, tickets: readonly Ti
     const branch = dep.pr_branch ?? dep.branch ?? "";
     const pr = dep.pr_url ?? `the branch ${from}/${branch}`;
     const open = `- ${name}: its pull request ${pr} is open and not merged yet, at commit ${dep.pushed_sha.slice(0, 12)}.`;
+    if (!elsewhere && stack?.deps[dep.key] !== undefined) return [remote ? `${open} This worktree starts on it once loom_resume has put it in.` : `${open} This worktree starts on it, so its changes are already here.`];
     if (!elsewhere && remote) return [`${open} Its branch is ${from}/${branch}: read its files with \`git fetch ${from} ${branch}\` and then \`git show FETCH_HEAD:<file>\`.`];
-    if (!elsewhere) return [stack?.deps[dep.key] !== undefined ? `${open} This worktree starts on it, so its changes are already here.` : open];
+    if (!elsewhere) return [open];
     crossOpen = true;
     const path = remote ? undefined : checkouts.get(dep.repo ?? "");
     return [path === undefined ? open : `${open} Read its files with \`git -C ${path} show ${dep.pushed_sha}:<file>\`; that checkout's working tree does not have them.`];
@@ -207,8 +208,11 @@ function dependenciesSection(spec: Spec, ticket: TicketRow, tickets: readonly Ti
   const notes: string[] = [];
   if (stacked.length > 0) {
     const one = stacked.length === 1;
+    const changes = one ? "that pull request changes or merges" : "those pull requests change or merge";
     notes.push(
-      `This worktree starts from the pull request ${one ? "commit" : "commits"} of ${andList(stacked)}. Those changes are not yours: do not change or redo them. The plugin measures your scope, and your reviewers' diff, from that commit. When ${one ? "that pull request changes or merges" : "those pull requests change or merge"}, Loom merges the new commits into your branch and runs your checks; a conflict or a failing check comes back to you as a message.`,
+      remote
+        ? `This worktree starts from the pull request ${one ? "commit" : "commits"} of ${andList(stacked)}, which loom_resume puts in as its first commit. Those changes are not yours: do not change or redo them. The plugin measures your scope, and your reviewers' diff, from that commit, so keep it: do not rebase, reset or squash over it, and do not merge or rebase onto the base branch yourself. When ${changes}, Loom merges the new commits on the project's machine and puts the result in this worktree as commits of its own, then runs your checks; a conflict or a failing check comes back to you as a message, a conflict with conflict markers in its files.`
+        : `This worktree starts from the pull request ${one ? "commit" : "commits"} of ${andList(stacked)}. Those changes are not yours: do not change or redo them. The plugin measures your scope, and your reviewers' diff, from that commit. When ${changes}, Loom merges the new commits into your branch and runs your checks; a conflict or a failing check comes back to you as a message.`,
     );
   }
   if (stacked.length > 1) notes.push(`A pull request builds on one other branch, so yours opens once all but one of ${andList(stacked)} have merged, on top of the one still open.`);
@@ -260,16 +264,15 @@ export function workerBrief(a: {
     spec.scope.enforce === "reject"
       ? "A change outside your scope makes loom_submit fail until you undo it."
       : "A change outside your scope does not stop your submit, but it is flagged to the reviewer, so keep to the scope.";
+  const stackedOn = stackOf(ticket)?.base == null ? [] : Object.keys(stackOf(ticket)!.deps);
+  const resumed =
+    stackedOn.length === 0
+      ? "It puts the work earlier workers left on this ticket in this worktree, as one commit on the base, carried from the project's machine; loom_submit is refused until you have."
+      : `It puts the pull ${stackedOn.length === 1 ? "request" : "requests"} of ${andList(stackedOn)}, which this ticket builds on, in this worktree as one commit on the base${resume ? ", with the work earlier workers left on this ticket as one more on top" : ""}, carried from the project's machine; loom_submit is refused until you have.`;
   const lines = [
     `You are a Loom worker on ${ticket.key} in the project ${JSON.stringify(project.name)} (${project.slug}). Loom is a plugin that runs this project with agents: you do this one ticket in this worktree, and the plugin decides when it is done.`,
     "",
-    ...(a.resumePending === true
-      ? [
-          "## First step",
-          "Call loom_resume before anything else. It puts the work earlier workers left on this ticket in this worktree, as one commit on the base, carried from the project's machine; loom_submit is refused until you have.",
-          "",
-        ]
-      : []),
+    ...(a.resumePending === true ? ["## First step", `Call loom_resume before anything else. ${resumed}`, ""] : []),
     "## Ticket",
     `${ticket.key} · ${JSON.stringify(ticket.title)}`,
     ticket.body,
@@ -288,6 +291,7 @@ export function workerBrief(a: {
     "## Checks the plugin runs when you submit",
     commands.length > 0 ? bullets(commands) : "- none",
     "They run in this worktree, in this order, and stop at the first failure. They must not write tracked files, and you must not edit files while they run.",
+    ...ciLines(spec, repo, WORKER_CI),
     "",
     ...(multi ? otherReposSection(spec, repo, a.checkouts ?? new Map(), a.remote) : []),
     ...dependenciesSection(spec, ticket, a.tickets ?? [], a.checkouts ?? new Map(), a.remote),
@@ -311,6 +315,9 @@ export function workerBrief(a: {
           : `An earlier worker already worked on this ticket. This worktree starts from its branch ${JSON.stringify(ticket.branch)}, so continue from what is there instead of starting again.`,
     );
     if (ticket.pushed_sha !== null) lines.push(`This ticket's pull request${ticket.pr_url === null ? "" : ` ${ticket.pr_url}`} is open. Address what Loom's newest feedback post on the ticket lists; Loom pushes your fix to it as one more commit.`);
+    if (ticket.pushed_sha !== null && stacking(spec) && restackOf(a.tickets ?? [], ticket) !== null) {
+      lines.push("Loom must bring this pull request up to date with its dependencies' new commits before it pushes again. Unless a post since the last push asks for a fix, check that the work still holds and call loom_submit with it as it is; after review, Loom merges those commits in, runs the checks and pushes.");
+    }
     const earlier = a.earlierThreads ?? [];
     if (earlier.length > 0) {
       lines.push(
@@ -452,14 +459,30 @@ function reviewerRepositorySection(project: ProjectRow, repo: RepoSettings): str
   ];
 }
 
+const WORKER_CI = {
+  rely: "These are the cheap checks that run where you are. Every other test of this repository runs in the pull request's CI once Loom opens it, and a check that fails there comes back to you as a fix round. Run what you can here; do not block, fail or loop on a test this environment cannot run, such as one that needs a container runtime, a service that will not start here, or more time than your turn has. Say in your loom_submit summary which tests you did not run, and why.",
+  ignore: "These checks are the whole bar: Loom does not read the pull request's CI for this repository, so run every test the ticket needs here before you submit.",
+};
+const REVIEWER_CI = {
+  rely: "Those are the plugin's cheap checks. Every other test runs in the pull request's CI once it opens, and a check that fails there goes back to the worker as a fix round. Do not request changes only because a test was not run here; the worker's summary says which it did not run. Request changes when the work lacks a test the ticket needs, or a test you ran shows a problem.",
+  ignore: "Loom does not read this repository's CI, so these checks are the whole bar: request changes when the ticket needs a test they do not run.",
+};
+
+/** What the plugin's checks are on the pr strategy: the cheap ones, with CI for the rest, or the whole bar when Loom ignores the repo's CI. */
+function ciLines(spec: Spec, repo: RepoSettings, text: { rely: string; ignore: string }): string[] {
+  if (spec.merge.strategy !== "pr") return [];
+  return [repo.ci ? text.rely : text.ignore];
+}
+
 /** A stacked ticket's reviewer sees its dependencies' changes in the worktree, which are not the ticket's to judge. */
-function stackedReviewSection(ticket: TicketRow): string[] {
+function stackedReviewSection(ticket: TicketRow, remote: boolean): string[] {
   const stack = stackOf(ticket);
   const keys = Object.keys(stack?.deps ?? {});
   if (stack?.base == null || keys.length === 0) return [];
   return [
     "## Stacked work",
     `This ticket builds on the open pull ${keys.length === 1 ? "request" : "requests"} of ${andList(keys)}, so ${keys.length === 1 ? "its" : "their"} changes are in this worktree too. They are reviewed on their own tickets: judge only the changes below, which are measured from ${stack.base.slice(0, 12)}, and read the rest for context.`,
+    ...(remote ? ["loom_checkout puts their work in as the commit before HEAD, so `git diff HEAD~1` shows the changes to judge."] : []),
     "",
   ];
 }
@@ -511,7 +534,7 @@ export function reviewerBrief(a: {
           clip(a.prFeedback.body, 12_000),
           "",
         ]),
-    ...stackedReviewSection(ticket),
+    ...stackedReviewSection(ticket, a.remote === true),
     "## Scope report",
     ...(outside.length === 0 && protectedHits.length === 0 ? ["Every changed file is inside the ticket's scope."] : []),
     ...(outside.length > 0 ? [`Changed files outside the ticket's scope: ${outside.join(", ")}`] : []),
@@ -519,6 +542,7 @@ export function reviewerBrief(a: {
     "",
     "## Check results",
     checkPost === null ? "No check result was recorded." : checkPost.body,
+    ...ciLines(spec, repo, REVIEWER_CI),
     "",
     "## Changes",
     diff.stat === "" ? "No changes against the base." : diff.stat,
@@ -701,13 +725,15 @@ export function prNudgeText(key: string, fix: boolean): string {
 export const RESTORED_NOTE =
   "While the pull request waited, Loom released your worktree to free its environment, and bb has now built a new one on your branch: every commit is there, but files git ignores, such as installed dependencies and build output, are gone, and paths from earlier in this conversation may have moved. Set up what the checks need before you run them.";
 
+const CI_FIX = "These checks ran in the pull request's CI, which may run tests you cannot run here: read each one's log at its link, fix the cause, and say in your loom_submit summary which of those tests you could not run here.";
+
 export function prFeedbackText(a: { key: string; url: string | null; round: number; counted: number; max: number; checks: FeedbackCheck[]; items: FeedbackItem[]; skipped?: Skipped[]; diverged: { remote: string; branch: string } | null; signature?: string; restored?: boolean }): { summary: string; detail: string } {
   const human = a.items.some((item) => item.kind === "reply");
   const what = human ? "The human replied on the ticket about its open pull request" : a.url === null ? "The pull request needs fixes" : `The pull request ${a.url} needs fixes`;
   const merge = a.diverged === null ? [] : [`The pull request's branch has commits Loom did not push. First run \`git fetch ${a.diverged.remote} ${a.diverged.branch}\` and \`git merge FETCH_HEAD\` in this worktree, so your fix builds on them.`];
   return {
     summary: `[loom] ${a.key}: ${what} (fix round ${a.round}${human ? "" : `; ${a.counted} of the ${a.max} the pull request may start`}). Address it, then call loom_submit({ summary }).`,
-    detail: [...(a.restored === true ? [RESTORED_NOTE] : []), feedbackList(a.checks, a.items, a.skipped), ...merge, ...prRules(a.signature ?? COMMENT_SIGNATURE).map((rule) => `- ${rule}`)].join("\n\n"),
+    detail: [...(a.restored === true ? [RESTORED_NOTE] : []), feedbackList(a.checks, a.items, a.skipped), ...(a.checks.length === 0 ? [] : [CI_FIX]), ...merge, ...prRules(a.signature ?? COMMENT_SIGNATURE).map((rule) => `- ${rule}`)].join("\n\n"),
   };
 }
 
@@ -742,6 +768,26 @@ export function restackConflictText(key: string, what: string, branch: string, f
       ...files.map((file) => `- ${file}`),
       `Your branch was left unchanged. In your worktree run \`git merge --no-edit ${branch}\`, resolve those files so both sides' changes hold, run the checks, and call loom_submit({ summary }). The plugin commits the merge with your fix, and the work goes through review again before Loom pushes it.`,
     ].join("\n"),
+  };
+}
+
+/** Loom merged what a stacked ticket's branch must take on the project's machine and put the result, with conflict markers, in the worktree of a worker on another machine. */
+export function restackMarkersText(key: string, what: string, files: readonly string[]): { summary: string; detail: string } {
+  return {
+    summary: `[loom] ${key}: Loom brought your branch up to date with ${what}, and ${plural(files.length, "file")} conflict. Resolve the conflict markers Loom left in them and call loom_submit again.`,
+    detail: [
+      `Loom merged ${what} into your branch on the project's machine and put the result in your worktree as one commit. These files have conflict markers where both sides changed the same lines:`,
+      ...files.map((file) => `- ${file}`),
+      "Resolve each so both sides' changes hold, without a merge commit or a rebase, run the checks, and call loom_submit({ summary }). A submit that still has the markers is refused, and the work goes through review again before Loom pushes it.",
+    ].join("\n"),
+  };
+}
+
+/** Loom could not put what a stacked ticket's branch must take in its worker's worktree on another machine, which holds work Loom has not seen. */
+export function restackRefusedText(key: string, what: string, why: string): { summary: string; detail: string } {
+  return {
+    summary: `[loom] ${key}: Loom must bring your branch up to date with ${what}, but left your worktree as it is: ${why}.`,
+    detail: "Your worktree holds work that is not the commit the reviewers approved. Keep what belongs to the ticket and discard the rest, then call loom_submit({ summary }); Loom brings the branch up to date once that work passes review.",
   };
 }
 

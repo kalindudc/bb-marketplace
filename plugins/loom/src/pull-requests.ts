@@ -265,12 +265,17 @@ export function newFeedback(ticket: TicketRow, feedback: Feedback, now: number, 
   return sorted;
 }
 
-/** Sends what the forge's latest answer asks for to the worker as a fix round, and marks everything it read as seen. */
+/**
+ * Sends what the forge's latest answer asks for to the worker as a fix round, and marks everything it read as seen. On a
+ * repo whose CI Loom ignores (ci = false), a failed check is counted on the ticket but never sent.
+ */
 export async function followFeedback(ctx: EngineCtx, project: ProjectRow, ticket: TicketRow, feedback: Feedback): Promise<void> {
   const { store } = ctx;
   const status = recordStatus(ctx, ticket, feedback);
   if (project.state !== "running") return;
   const spec = specOf(store, project);
+  const settings = repoSettings(spec, ticket.repo);
+  if (!settings.ci) feedback = { ...feedback, checks: [] };
   const pending = feedback.checks.filter((check) => check.state === "pending").map((check) => check.name);
   const durations = store.checkDurations(durationsKey(ticket.pr_url, ticket.project_id, ticket.repo), pending, USUAL_RUNS);
   const usual = new Map([...durations].map(([name, runs]) => [name, median(runs)!]));
@@ -279,7 +284,6 @@ export async function followFeedback(ctx: EngineCtx, project: ProjectRow, ticket
     if (found.ignored.keys.length > 0) markSeen(ctx, ticket, found.ignored.keys);
     return;
   }
-  const settings = repoSettings(spec, ticket.repo);
   const diverged = ticket.pushed_sha !== null && feedback.head !== ticket.pushed_sha ? { remote: settings.remote, branch: ticket.pr_branch ?? ticket.branch ?? "" } : null;
   await startFixRound(ctx, ticket, {
     checks: found.checks,

@@ -49,7 +49,7 @@ The server that hosts pull requests. Leave it out for GitHub: Loom opens and fol
 | `kind` | string | required | `"gh"`, `"command"` (the `open` and `state` commands below) or `"none"` (Loom only pushes the branch) |
 | `open` | string | none | required with `kind = "command"`, refused otherwise; a shell command that opens a pull request for a branch that is already pushed |
 | `state` | string | none | required with `kind = "command"`, refused otherwise; a shell command that prints the pull request's state |
-| `feedback` | string | none | `kind = "command"` only; a shell command that prints the pull request's checks and review feedback, so Loom can start fix rounds; without it Loom follows only merged and closed |
+| `feedback` | string | none | `kind = "command"` only; a shell command that prints the pull request's checks and review feedback, so Loom can start fix rounds; without it Loom follows only merged and closed, and a repo on this forge must set `ci = false` (see [Relying on CI](#relying-on-ci)) |
 | `after_open` | string array | none | at most 5; shell commands run once after a pull request opens, such as one that starts CI; a failure is posted and blocks nothing; not allowed with `kind = "none"` |
 
 The commands run with `/bin/sh` in the repo's checkout, with a 2-minute limit (`after_open`: 5 minutes):
@@ -126,7 +126,7 @@ Loom tells a thread that bb or the provider cannot start now from one that faile
 
 With `machine`, every worker and reviewer of the repo starts on a new machine of its own, from any bb machine provider, instead of on the machine with the project's checkout. `loom_discover` lists the choices under "New machine per thread": the environments that make a new machine themselves (a composition, such as `provider = "example-world"`, `machine = { provider = "example-world" }`), and bb's `git-worktree` on each machine provider. It also lists the environments earlier approved projects chose for a repository with the same git remote. Loom knows no provider by name; it tells a thread on another machine by its environment's host.
 
-- Only `merge.strategy = "pr"` with `merge.stack = false` works there: the integration branch and the bases of stacked pull requests are made on the project's machine, and Loom carries neither to other machines. `loom_propose` refuses any other combination, naming the `machine` path.
+- Only `merge.strategy = "pr"` works there, with `merge.stack` on or off: the integration branch is made on the project's machine, and Loom does not carry it to other machines. `loom_propose` refuses the integration strategy, naming the `machine` path. `merge.stack = false` makes each dependent wait for its dependencies to merge, as anywhere.
 - The checks run on the worker's machine, as they do in any worktree, so they must work there.
 - On a submit that passes, Loom carries the worker's commit back to the project's checkout itself, through its host entry: it reads the files the commit changed, rebuilds the same tree on the same base with a temporary index, refuses the result unless the tree matches, and commits it with the worker's author, date and message. That commit is the ticket's head: reviewers get its diff, and the pull request is built from it. It is on the branch `loom/<slug>/<key>-home`, which also gets each work-in-progress save, and `refs/loom/<slug>/<key>/reviewed` keeps the reviewed one. Only the tree the checks passed comes home: a commit the worker makes after the checks is refused, counting no failure, and the worker submits again. Files over 100 MiB cannot move between machines, and Loom refuses one before it copies anything.
 - A worker whose work-in-progress save cannot be brought home when its thread ends keeps its stopped thread, and so its machine, while Loom tries again for up to 10 minutes. Then Loom ends it anyway, and says on the ticket that the work did not come home and why.
@@ -134,16 +134,40 @@ With `machine`, every worker and reviewer of the repo starts on a new machine of
 - A new machine is removed when its threads end, so it is never restored. A worker that comes back, after a block, a failed attempt or a release, starts at the fresh base on a new machine, and its first step is `loom_resume`, which carries in the work on the home branch. `loom_submit` is refused until it has. A worker that ends before it calls `loom_resume` commits its own changes on its machine, but Loom brings nothing home from it, so the next worker resumes the same work.
 - `loom_resume` and `loom_checkout` refuse a worktree with uncommitted changes, or with commits that are not on the base, since putting the work in would drop them; stash them or move them to another branch, then call again. A worktree that has the tree already is left as it is, so calling again is harmless, and a carry that fails part-way puts the worktree back at the base.
 - After a `machine` change in a pending version, the next worker, on either machine, continues from the ticket's newest work on the project's checkout: the last worker's branch when it builds on the home branch or there is no home branch, as after a worker on the project's machine, and the home branch otherwise. A branch that a provider copies to the checkout from another machine never counts.
-- Every reviewer's first step is `loom_checkout`: on another machine it carries the reviewed tree there with ordinary worktree commands, and on the project's machine it checks the head out. The verdict tools are refused until the reviewer's worktree has that tree. A reviewer on the project's machine of a ticket worked elsewhere starts from the home branch.
+- Every reviewer's first step is `loom_checkout`: on another machine it carries the reviewed tree there with ordinary worktree commands, and on the project's machine it checks the head out. The verdict tools are refused until the reviewer's worktree has that tree. A reviewer on the project's machine of a ticket whose head came home starts from the home branch.
 - A machine provider that cannot start a machine now, because its pool is full or it is not set up, makes bb refuse with `machine_provider_rejected`; Loom waits as for an unavailable environment provider (see [When an environment provider has no room](#when-an-environment-provider-has-no-room)), posts bb's message on the ticket, and blocks after an hour.
 - When bb moves a thread's machine and stops its turn, it records a `machine_maintenance` error; that idle counts toward neither a nudge nor ending the thread, and the next one does.
+
+#### Stacked pull requests on new machines
+
+Loom makes every stack merge on the project's checkout and puts only linear commits on a thread's machine, since a machine may keep no merge commit (World's sandboxes neither sync one to the laptop nor survive a move with one).
+
+- A dependent starts once its dependency's pull request is open. The stack base, the commit it is stacked on, is built on the checkout as anywhere (one dependency's pull request commit, or a merge of several, on `loom/<slug>/<key>-stack`). The worker starts at the fresh base, and `loom_resume` puts the stack base in as one commit on it. On a machine, a stacked ticket's history is therefore the fresh base, one commit with the stack base's tree, and then its own work. `loom_resume` and `loom_checkout` carry earlier work, or the reviewed work, as one more commit on top.
+- The scope check on the machine measures the worker's changes from the newest commit on its first-parent line whose tree is the stack base's, since the machine may give that commit a new id. A branch that no longer has it, after a rebase, a reset or a squash over it, is refused as a scope check, and the worker's brief says to keep it.
+- Work brought home is rebuilt on the stack base itself, so the reviewers' diff, the pull request's commit and the Changes tab count only the ticket's own changes, and its pull request opens on its dependency's branch. A reviewer on another machine reads those changes with `git diff HEAD~1` after `loom_checkout`.
+- When a dependency's pull request gets a new commit or merges, Loom merges the new stack base into the dependent's head on the checkout with `git merge-tree`, without a worktree. It carries the result into the worker's worktree as linear commits, replacing the reviewed work there, which the checkout keeps. It then runs the ticket's checks there, compared by tree, and pushes with no new review. After a merge it also moves the pull request to the base branch.
+- A conflict is committed on the checkout as the tree with conflict markers and carried in the same way. The ticket goes back to the worker with the files to resolve, and `stack_json.markers` keeps them: a submit that still has a marker in one of them fails a "conflict check", so a commit with markers is never brought home as a submit or pushed. A check that fails on the carried result goes back to the worker too. A worktree that holds work other than the reviewed tree is left alone, and the ticket goes back to the worker with the reason.
+- A worker on a machine is not released while its ticket has a dependency in its repo that has not merged: a released worker's machine is removed, and the merges that dependency causes run in its worktree. Once every dependency in its repo has merged and its branch has taken the base branch, it is released as usual. `merge.release_workers = false` keeps every worker, and its machine, until its pull request merges.
+
+#### Moving a running project onto machines, or off them
+
+Approving a pending version that adds or removes `machine` moves only the threads that start after it. A thread that runs stays where it is, and Loom decides about it by its environment's machine, not by the spec:
+
+| Ticket state | Onto machines | Off machines |
+| --- | --- | --- |
+| working or checking | The live worker finishes on the project's machine, and nothing is carried. The next attempt starts on a new machine and resumes the last worker's branch with `loom_resume`. | The live worker keeps its machine. Its submits come home, `loom_resume` stays offered while it is pending, and a move of its machine is not counted. The next attempt starts on the project's machine from the home branch. |
+| review | Live reviewers finish their round. New ones start on new machines and carry the head with `loom_checkout`. | Live reviewers finish. A new reviewer on the project's machine starts from the home branch when the head came home (its reviewed ref says so), else from the worker's branch. |
+| approved | The pull request is built from the head on the checkout. A restack runs in the worker's own worktree. | The pull request is built from the commit that came home. A restack is merged on the checkout and carried to the worker's machine. |
+| pr_open, live worker | Fix rounds go to it where it runs. | The same. |
+| pr_open, released worker | bb restores its environment on the project's machine, where it ran. If it cannot, a new worker on a new machine resumes the last worker's branch. | Its machine was removed, so it cannot come back. A new worker on the project's machine starts from the home branch, and the post says so. |
+| stacked children | A child whose worker runs on the project's machine restacks there. A queued child starts on a new machine on its stack base. | A child on a machine restacks through the checkout. Its next worker starts on the project's machine from the home branch, which builds on the stack base. |
 
 ### Releasing workers
 
 On the pull request strategy a pull request can wait days for a person, and an idle worker would hold its environment all that time. With `merge.release_workers` (on by default), Loom archives the worker's thread once the ticket is in `pr_open`, the thread is idle with no question waiting, no fix round is on its way to it, its branch does not have to catch up, and its worktree holds exactly the reviewed commit with nothing uncommitted. bb then frees the environment after its provider's grace period. The worker stays the ticket's worker.
 
 - When the pull request's feedback or your reply on the ticket starts a fix round, or the branch must take a dependency's new commits, Loom unarchives the same thread and asks bb to restore its environment on the worker's branch. Once it is ready, the worker gets the fix round with a note that files git ignores (installed dependencies, build output) are gone, and it keeps its whole conversation. A catch-up runs in the restored worktree with no message, and a check that fails there goes to the worker with the same note and counts no failure.
-- A restore that fails waits and tries again, as a failed start does; after 4 failures in a row, or when bb cannot restore the environment (its provider has no restore, or the thread was deleted), a new worker takes the ticket from its branch. A worker on a new machine never comes back, since bb removes the machine; the new worker takes over from the work Loom brought home, with `loom_resume`. A provider that stays unavailable for an hour blocks the ticket instead, and a requeue starts the new worker. Its brief names the earlier workers' threads, which it can read with `bb thread log <id> --all`.
+- A restore that fails waits and tries again, as a failed start does; after 4 failures in a row, or when bb cannot restore the environment (its provider has no restore, or the thread was deleted), a new worker takes the ticket from its branch. A worker on a new machine never comes back, since bb removes the machine; the new worker takes over from the work Loom brought home, with `loom_resume`. So a worker on a new machine is not released while its ticket has a dependency in its repo that has not merged, whose new commits must reach its worktree. A provider that stays unavailable for an hour blocks the ticket instead, and a requeue starts the new worker. Its brief names the earlier workers' threads, which it can read with `bb thread log <id> --all`.
 - Fix-round counting, `merge.max_fix_rounds`, `merge.describe`, stacking, tokens and the page work as before.
 - `merge.release_workers = false` keeps each worker and its worktree until its pull request merges, as Loom did before this setting; choose it when a worktree holds set-up state that takes long to build again and environments cost little.
 - A spec version approved after the project started may turn it on or off; it applies from Loom's next pass. A worker released before it was turned off still comes back for its pull request's next fix round.
@@ -155,6 +179,20 @@ On the pull request strategy a pull request can wait days for a person, and an i
 | `commands` | string array | `[]` | at most 10; run on every submitted ticket, except in a repo whose `[[repo]]` table sets its own `checks` |
 | `after_merge` | string array | `[]` | at most 10; run on the merged integration branch, which they must leave as they found it (no new commit, no edited tracked file) or the merge is rolled back; not allowed with strategy `"pr"`; a repo that sets its own `after_merge` runs that instead |
 | `timeout_minutes` | integer | `15` | 1 to 29 |
+| `ci` | boolean | `true` | strategy `"pr"` only; `true` relies on the pull request's CI for every test the plugin's checks do not run, `false` ignores it and makes the plugin's checks the whole bar; a repo's own `ci` replaces it; see [Relying on CI](#relying-on-ci) |
+
+### Relying on CI
+
+On the pull request strategy, the plugin's checks (`commands`, a repo's `checks` and a ticket's `verify`) are the cheap ones that run where each worker runs, and the pull request's CI is the authority for every other test: one that needs a container runtime or a service the worker's machine does not have, or a suite too slow to run on every submit. `ci` says, per repo, whether Loom relies on it.
+
+- `ci = true`, the default: Loom relies on the pull request's CI.
+  - The worker brief says the plugin's checks are the cheap ones and every other test runs in the pull request's CI. It tells the worker to run what it can, not to block, fail or loop on a test its environment cannot run, and to name in its `loom_submit` summary the tests it did not run. The reviewer brief says not to request changes only because a test was not run where the reviewer is, and to request them when the work lacks a test the ticket needs.
+  - Once the pull request is open, a failed CI check goes to the worker as a fix round, as described in [When failed checks go to the worker](#when-failed-checks-go-to-the-worker), with a note that CI may run tests the worker cannot run. The fix goes through the checks and a review before Loom pushes it, and a ticket stacked on this one takes the pushed fix through its restack.
+  - A ticket's failing and pending CI checks show on its board card, on the next-step bar while the project runs, and on the Merge order tab.
+  - It needs a forge that reports checks: `gh`, or `kind = "command"` with a `feedback` command. `loom_propose` refuses a repo on any other forge, naming both fixes: add a `feedback` command, or set `ci = false` for that repo. With `merge.max_fix_rounds = 0` Loom reads no feedback at all, so no failed check comes back either.
+- `ci = false`: Loom ignores the repo's CI, and the plugin's checks are the whole bar; the briefs say so. A failed CI check starts no fix round, while the pull request's reviews, review threads and comments, and your replies on the ticket, still do. Loom still records the check counts it reads, so the Merge order tab shows them.
+
+Compared with 0.23.0: Loom already sent failed CI checks back as fix rounds whenever the forge reported them, but no brief said so, so workers and reviewers took the plugin's checks as the whole bar and could stall on a test they could not run. `ci = true` keeps those fix rounds and adds the guidance and the board's CI counts; `ci = false` stops them. A spec approved before 0.24.0 keeps running as it is, and a repo whose forge reports no checks counts as `ci = false`; proposing a revision of it needs a `feedback` command or `ci = false`.
 
 ### [scope]
 
@@ -205,6 +243,7 @@ Zero to 10 entries. Leave them out when the work stays in the planner thread's o
 | `remote` | string | `merge.remote` | a plain remote name; where this repo's pull requests open and its land pushes |
 | `checks` | string array | `checks.commands` | at most 10; replaces `checks.commands` for the tickets in this repo; an empty list runs no project checks there |
 | `after_merge` | string array | `checks.after_merge` | at most 10; replaces `checks.after_merge` on this repo's integration branch; not allowed with strategy `"pr"` |
+| `ci` | boolean | `checks.ci` | replaces `checks.ci` for the tickets in this repo; strategy `"pr"` only |
 | `protected` | string array | `[]` | at most 100 globs, relative to this repo's root; added to `scope.protected` for the tickets in this repo |
 | `forge` | table | `merge.forge` | like [merge.forge], for this repo's pull requests |
 | `environment` | table | `environment` | like [environment], for the threads Loom starts in this repo |
@@ -400,8 +439,10 @@ inputs = { branch = "{branch}", base = "{base}", paths = ["services/orders", "se
 # Reviewers read the diff; a lighter tree without the setup step is enough for them.
 reviewer = { inputs = { setup = false } }
 
+# review-cli cannot print checks, so Loom cannot rely on the pull request's CI: these checks are the whole bar.
 [checks]
 commands = ["make -C services/orders test"]
+ci = false
 
 [[ticket]]
 ref = "tag-model"
@@ -415,7 +456,9 @@ environment = { inputs = { paths = ["services/orders"] } }
 
 ## Example: a World project on new machines
 
-A project whose workers and reviewers each run on a new machine that a plugin's environment makes, opening its pull requests through a forge command. The provider ids and inputs come from `loom_discover` and the human; these are placeholders.
+A project whose workers and reviewers each run on a new machine that a plugin's environment makes, opening and following its pull requests through a forge command. The provider ids and inputs come from `loom_discover` and the human; these are placeholders. The forge is Delta, through its `dt` CLI, whose JSON follows GitHub's REST API.
+
+The zone's tests need a container runtime that the machines do not have, so the plugin's checks are only the static ones, and Loom relies on the pull request's CI (`ci` unset is `true`) for the rest. That needs the `feedback` command: it reads the pull request with `dt pr view`, and its check runs and commit statuses with `dt pr checks`, which exits 8 while checks are pending. The command turns them into the JSON object Loom reads, mapping each check run's `status` and `conclusion` to Loom's check states. It leaves out Delta's `reviews` check run, which is the approval gate rather than CI and would hold every failed check until the settle time. It reports no reviews or comments, so your replies on the ticket are what starts a fix round for a reviewer's request.
 
 ```toml
 [project]
@@ -427,19 +470,42 @@ summary = "Each route of the routing controller gets a configurable upstream tim
 
 [merge]
 strategy = "pr"
-stack = false
 
 [merge.forge]
 kind = "command"
-open = 'review-cli create --base "$LOOM_BASE" --head "$LOOM_HEAD" --title "$LOOM_TITLE" --body-file -'
-state = 'review-cli status "$LOOM_PR_NUMBER"'
+open = 'dt pr create --remote "$LOOM_REMOTE" --base "$LOOM_BASE" --head "$LOOM_HEAD" --title "$LOOM_TITLE" --body "$(cat)"'
+state = 'dt pr view "$LOOM_PR_NUMBER" --json | jq -r "if .merged == true then \"merged\" else .state end"'
+feedback = '''
+set -eu
+view=$(dt pr view "$LOOM_PR_NUMBER" --remote origin --json)
+checks=$(dt pr checks "$LOOM_PR_NUMBER" --remote origin --json) || [ $? -eq 8 ]
+jq -cn --argjson view "$view" --argjson checks "$checks" '{
+  state: (if $view.merged then "merged" else $view.state end),
+  head: $view.head.sha,
+  author: $view.user.login,
+  draft: $view.draft,
+  base: $view.base.ref,
+  review: ({"approved": "APPROVED", "changes_requested": "CHANGES_REQUESTED", "review_required": "REVIEW_REQUIRED"}[$view.merge_readiness.review_decision] // null),
+  checks: ([$checks.check_runs[] | select(.name != "reviews") | {
+    id: .id, name: .name, url: .html_url, started: (.status != "queued"), started_at: .started_at, completed_at: .completed_at,
+    state: (if .status != "completed" then "pending"
+      elif .conclusion == "success" then "passed"
+      elif (.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled" or .conclusion == "action_required") then "failed"
+      else "neutral" end)
+  }] + [$checks.statuses.statuses[] | {
+    id: ("status:" + .context), name: .context, url: .target_url,
+    state: (if .state == "success" then "passed" elif .state == "pending" then "pending" else "failed" end)
+  }])
+}'
+'''
 
 [environment]
 provider = "example-world"
 machine = { provider = "example-world", inputs = { zones = ["areas/infra/routing/controller"] } }
 
+# Cheap checks that run on the worker's machine; the zone's tests run in the pull request's CI.
 [checks]
-commands = ["make -C areas/infra/routing/controller test"]
+commands = ["git diff --check origin/main...HEAD"]
 
 [[ticket]]
 ref = "route-timeout"
@@ -466,7 +532,9 @@ A spec with any error is refused and nothing is saved. Errors are numbered, at m
 - A forge with `kind = "command"` lacks `open` or `state`, a forge of another kind sets them or `feedback`, or `kind = "none"` sets `after_open`.
 - `merge.describe`, `merge.squash`, `merge.max_fix_rounds`, `merge.stack`, `merge.release_workers`, `merge.checks_queued_minutes` or `merge.checks_near_done_percent` on the integration strategy.
 - `merge.worktree` is set with strategy `"pr"`.
-- An `environment` (top level or a repo's) or its `reviewer` sets `machine`, and the strategy is not `"pr"` or `merge.stack` is not `false`.
+- An `environment` (top level or a repo's) or its `reviewer` sets `machine`, and the strategy is not `"pr"`.
+- `checks.ci` or a repo's `ci` on the integration strategy.
+- A repo that relies on the pull request's CI (strategy `"pr"` with `ci` unset or `true`) whose forge reports no checks: `kind = "command"` without `feedback`, or `kind = "none"`. Add a `feedback` command, or set `ci = false` for that repo.
 - An `inputs` string, in `[environment]`, its `reviewer` table or a ticket's `environment`, holds a `{name}` other than `{branch}` or `{base}`.
 - A ticket sets `environment` in a repo whose threads start in git worktrees, with no environment provider to patch.
 

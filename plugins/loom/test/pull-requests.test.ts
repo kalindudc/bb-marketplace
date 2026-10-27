@@ -25,7 +25,11 @@ const spec = () => specOf(h.store, project());
 const ticket = () => ticketOf(h, "CSV-1");
 const posts = () => h.store.posts(ticket().id);
 const dataOf = (outcome: string) => posts().filter((post) => post.kind === "merge" && (JSON.parse(post.data_json) as { outcome?: string }).outcome === outcome).map((post) => ({ post, data: JSON.parse(post.data_json) as Record<string, any> }));
-const pr = (more: Doc = {}) => (doc: Doc) => (doc.merge = { strategy: "pr", ...more });
+// A forge that reports no checks has no CI for Loom to rely on.
+const pr = (more: Doc = {}) => (doc: Doc) => {
+  doc.merge = { strategy: "pr", ...more };
+  if (more.forge?.kind === "none" || (more.forge?.kind === "command" && more.forge.feedback === undefined)) doc.checks.ci = false;
+};
 const ask = () => askForPrTexts(h.ctx, project(), spec());
 const queue = async () => {
   await runMergeQueue(h.ctx, project(), spec());
@@ -240,6 +244,26 @@ describe("following the pull request", () => {
     await poll();
     expect(ticket().state).toBe("working");
     expect(dataOf("pr_feedback")[0]!.data).toMatchObject({ round: 1, checks: [{ name: "lint", url: "https://ci/1" }], items: [] });
+  });
+
+  it("sends no failed check back on a repo whose CI Loom ignores, and still sends its reviews and keeps the counts", async () => {
+    await seedProject(h, (doc) => ((doc.merge = { strategy: "pr" }), (doc.checks.ci = false)));
+    const worker = await reachApproved(h);
+    await ask();
+    handInPrText(h.ctx, worker.thread_id!, TEXT);
+    await queue();
+    h.host.feedback.set(URL, { checks: [{ key: "check:1", name: "lint", state: "failed", url: "https://ci/1" }] });
+    await poll();
+    h.clock.advance(40 * 60_000);
+    await poll();
+    expect(ticket()).toMatchObject({ state: "pr_open", pr_rounds: 0 });
+    expect(JSON.parse(ticket().pr_status_json!)).toMatchObject({ failed: 1 });
+    expect(dataOf("pr_feedback")).toEqual([]);
+
+    h.host.feedback.set(URL, { ...changesRequested, checks: [{ key: "check:1", name: "lint", state: "failed", url: "https://ci/1" }] });
+    await poll();
+    expect(ticket()).toMatchObject({ state: "working", pr_rounds: 1 });
+    expect(dataOf("pr_feedback")[0]!.data).toMatchObject({ checks: [], items: [{ author: "alice" }] });
   });
 
   it("holds a failed check only as long as Loom's checksSettleMinutes setting says", async () => {

@@ -318,6 +318,8 @@ export interface FakeWorktree {
   head: string;
   dirty: boolean;
   changed: string[];
+  /** Whether a worktreeState with baseTree finds that tree on HEAD's first-parent line; yes when unset. */
+  onBase?: boolean;
 }
 
 /** The host entry with scripted results. Worktrees keep a head, a dirty flag and a changed list that tests edit. */
@@ -415,8 +417,9 @@ export class FakeHost implements HostPort {
         return { sha: "base000", created };
       }
       case "worktreeState": {
-        const state = this.worktree((input as HostInput<"worktreeState">).worktree);
-        return { branch: state.branch, head: state.head, tree: this.trees.get(state.head) ?? state.head, dirty: state.dirty, changed: [...state.changed] };
+        const { worktree, baseTree } = input as HostInput<"worktreeState">;
+        const state = this.worktree(worktree);
+        return { branch: state.branch, head: state.head, tree: this.trees.get(state.head) ?? state.head, dirty: state.dirty, changed: [...state.changed], ...(baseTree === undefined ? {} : { onBase: state.onBase ?? true }) };
       }
       case "exportChanges": {
         const { worktree, head } = input as HostInput<"exportChanges">;
@@ -438,6 +441,8 @@ export class FakeHost implements HostPort {
         return { outcome: "ok", present: false };
       case "carryWrite":
         return { size: 0 };
+      case "conflictMarkers":
+        return { files: [] };
       case "carryDelete":
       case "carryAbort":
       case "dropUploads":
@@ -451,7 +456,8 @@ export class FakeHost implements HostPort {
       }
       case "refTip": {
         const { ref, contains } = input as HostInput<"refTip">;
-        const sha = this.refs.get(ref);
+        // A commit id names itself.
+        const sha = this.refs.get(ref) ?? (ref.startsWith("refs/") ? undefined : ref);
         if (sha === undefined) return { outcome: "missing", message: "no such ref" };
         return { outcome: "ok", sha, tree: this.trees.get(sha) ?? sha, ...(contains === undefined ? {} : { contains: contains === sha || this.ancestry.has(`${contains}..${sha}`) }) };
       }
@@ -523,7 +529,16 @@ export class FakeHost implements HostPort {
         const all = [...commits, ...(base === undefined ? [] : [this.remoteBase])];
         const sha = all.length === 1 ? all[0]! : `st${++this.stacks}`;
         this.stackBranches.set(branch, sha);
-        return { outcome: "ok", sha, tip: base === undefined ? null : this.remoteBase };
+        return { outcome: "ok", sha, tip: base === undefined ? null : this.remoteBase, tree: this.trees.get(sha) ?? sha };
+      }
+      case "mergeOnto": {
+        const { head, ref, refs } = input as HostInput<"mergeOnto">;
+        if (head === ref || this.ancestry.has(`${ref}..${head}`)) return { outcome: "merged", sha: head, tree: this.trees.get(head) ?? head, already: true };
+        const sha = `lm${++this.merged}`;
+        this.trees.set(sha, `${sha}-tree`);
+        this.ancestry.add(`${head}..${sha}`).add(`${ref}..${sha}`);
+        for (const name of refs) this.refs.set(name, sha);
+        return { outcome: "merged", sha, tree: `${sha}-tree`, already: false };
       }
       case "prRetarget": {
         const { url, base } = input as HostInput<"prRetarget">;

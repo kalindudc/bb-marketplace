@@ -596,6 +596,57 @@ describe("forges, integration worktrees and environments", () => {
   });
 });
 
+describe("relying on the pull request's CI", () => {
+  const command = { kind: "command", open: "review-cli create", state: "review-cli status" };
+
+  it("parses ci in [checks] and in a [[repo]] table, and leaves it out of a spec that does not set it", () => {
+    const result = run((doc) => {
+      doc.merge = { strategy: "pr" };
+      doc.checks = { commands: ["npm test"], ci: false };
+      doc.repo = [{ name: "web", project: "proj_web", ci: true }, { name: "api", project: "proj_api" }];
+      doc.ticket[0].repo = "web";
+      doc.ticket[1].repo = "api";
+    });
+    expect(result.errors).toEqual([]);
+    expect(result.spec!.checks.ci).toBe(false);
+    expect(result.spec!.repo![0]!.ci).toBe(true);
+    expect(Object.keys(run((doc) => (doc.merge = { strategy: "pr" })).spec!.checks)).not.toContain("ci");
+  });
+
+  it("refuses ci on the integration strategy, where no pull request runs CI", () => {
+    expect(run((doc) => (doc.checks = { commands: ["npm test"], ci: false })).errors).toEqual([
+      'checks.ci: it says whether Loom relies on the CI of the pull request it opens for each ticket, but merge.strategy is "integration". Remove it, or use merge.strategy = "pr".',
+    ]);
+  });
+
+  it("refuses a repo that relies on CI through a forge that reports no checks, naming both fixes", () => {
+    expect(run((doc) => (doc.merge = { strategy: "pr", forge: command })).errors).toEqual([
+      'merge.forge: the repo relies on its pull requests\' CI (checks.ci is not false), but this forge reports no checks, so Loom could never send a failed one back. Add a feedback command to merge.forge, or set checks.ci = false so the plugin checks are the whole bar.',
+    ]);
+    expect(run((doc) => (doc.merge = { strategy: "pr", forge: { kind: "none" } })).errors).toEqual([
+      'merge.forge: the repo relies on its pull requests\' CI (checks.ci is not false), but kind = "none" opens no pull request and reports no checks. Use kind = "gh", or kind = "command" with a feedback command, or set checks.ci = false so the plugin checks are the whole bar.',
+    ]);
+    expect(run((doc) => ((doc.merge = { strategy: "pr", forge: command }), (doc.checks = { commands: ["npm test"], ci: false }))).errors).toEqual([]);
+    expect(run((doc) => (doc.merge = { strategy: "pr", forge: { ...command, feedback: "review-cli checks" } })).errors).toEqual([]);
+  });
+
+  it("names the repo's own paths on a multi-repo spec, once per repo that relies on CI", () => {
+    const errors = run((doc) => {
+      doc.merge = { strategy: "pr", forge: command };
+      doc.repo = [
+        { name: "web", project: "proj_web", ci: false },
+        { name: "api", project: "proj_api" },
+        { name: "docs", project: "proj_docs", forge: { kind: "gh" } },
+      ];
+      doc.ticket[0].repo = "web";
+      doc.ticket[1].repo = "api";
+    }).errors;
+    expect(errors).toEqual([
+      'merge.forge: the repo "api" relies on its pull requests\' CI (repo[1].ci is not false), but this forge reports no checks, so Loom could never send a failed one back. Add a feedback command to merge.forge, or set repo[1].ci = false so the plugin checks are the whole bar.',
+    ]);
+  });
+});
+
 describe("threads on new machines", () => {
   const pr = { strategy: "pr", stack: false };
 
@@ -610,15 +661,19 @@ describe("threads on new machines", () => {
     expect(Object.keys(plain.environment!)).not.toContain("machine");
   });
 
-  it("refuses the integration strategy, and stacking, for a repo whose workers or reviewers use a machine, naming the path", () => {
-    const why = 'a thread on a new machine needs merge.strategy = "pr" and merge.stack = false, because Loom does not carry its integration branch or the bases of stacked pull requests, which live only on the project\'s machine, to other machines. Set both, or remove';
+  it("refuses the integration strategy for a repo whose workers or reviewers use a machine, naming the path, and accepts stacking", () => {
+    const why = 'a thread on a new machine needs merge.strategy = "pr", because Loom does not carry the integration branch, which lives only on the project\'s machine, to other machines. Set merge.strategy = "pr", or remove';
     expect(run((doc) => (doc.environment = { provider: "git-worktree", machine: { provider: "x" } })).errors).toEqual([`environment.machine: ${why} environment.machine.`]);
     expect(run((doc) => {
-      doc.merge = { strategy: "pr" };
+      doc.merge = { strategy: "integration" };
       doc.environment = { provider: "git-worktree", reviewer: { machine: { provider: "x" } } };
     }).errors).toEqual([`environment.reviewer.machine: ${why} environment.reviewer.machine.`]);
     expect(run((doc) => {
-      doc.merge = { strategy: "pr", stack: true };
+      doc.merge = { strategy: "pr" };
+      doc.environment = { provider: "git-worktree", reviewer: { machine: { provider: "x" } } };
+    }).errors).toEqual([]);
+    expect(run((doc) => {
+      doc.merge = { strategy: "integration" };
       doc.repo = [
         { name: "web", project: "proj_web", environment: { provider: "git-worktree", machine: { provider: "x" } } },
         { name: "api", project: "proj_api" },
@@ -627,7 +682,7 @@ describe("threads on new machines", () => {
       doc.ticket[1].repo = "api";
     }).errors).toEqual([`repo[0].environment.machine: ${why} repo[0].environment.machine.`]);
     expect(run((doc) => {
-      doc.merge = pr;
+      doc.merge = { strategy: "pr", stack: true };
       doc.environment = { provider: "git-worktree", machine: { provider: "x" } };
     }).errors).toEqual([]);
   });
