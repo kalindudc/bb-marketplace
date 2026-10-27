@@ -13,6 +13,7 @@ import type { EnvironmentInfo } from "./ports";
 import type { PrMeta } from "./pr-meta";
 import { LoomError } from "./projects";
 import { followsFeedback, freshBaseOf, isMultiRepo, prSettings, repoSettings, type RepoSettings } from "./repos";
+import { forgetClosedReads, noteAnswer, readGoesOut } from "./pr-sync";
 import { recordingHost } from "./runs";
 import type { ForgeSpec, Spec } from "./spec";
 import { EMPTY_STACK, holdKey, holdOf, prBaseOf, restackOf, restackWithBase, stackBranch, stacking, stackOf, type Hold, type Restack, type Stack } from "./stack";
@@ -946,15 +947,35 @@ interface Batch {
  * one read, never repeated in the same poll. A server error or timeout makes each ticket it read wait longer and pauses
  * the project only after an hour of them; a network failure or a rate limit stops every read to that forge host, in this
  * poll and every project's, for a while (forge-waits.ts). A command forge's host is its pull request URL's. Any other
- * failure pauses the project.
+ * failure pauses the project. A pull request the human synced (pr-sync.ts) is due now, whatever its own wait says.
  */
 export async function pollPullRequests(ctx: EngineCtx, project: ProjectRow): Promise<void> {
   const { store } = ctx;
   const spec = specOf(store, project);
   const forgeOf = (ticket: TicketRow) => repoSettings(spec, ticket.repo).forge;
-  const follows = prSettings(spec).maxFixRounds > 0;
-  const due = store.tickets(project.id, ["pr_open"]).filter((ticket) => (ticket.pr_url !== null || forgeOf(ticket).kind === "none") && (ticket.pr_checked_at === null || ctx.now() >= nextPollAt(ticket)!));
+  const reads = forgetClosedReads(ctx, project.id);
+  const due = store.tickets(project.id, ["pr_open"]).filter((ticket) => (ticket.pr_url !== null || forgeOf(ticket).kind === "none") && (ticket.pr_checked_at === null || ctx.now() >= nextPollAt(ticket)! || reads.asked.has(ticket.id)));
   if (due.length === 0) return;
+  const synced = due.some((ticket) => reads.asked.has(ticket.id));
+  try {
+    await readDue(ctx, project, spec, due);
+  } finally {
+    for (const ticket of due) reads.out.delete(ticket.id);
+    // A read that found nothing new writes no event, so the page that asked for it is told here.
+    if (synced) store.changed(project.id);
+  }
+}
+
+/** The read is going out: the ticket is not due again until its next wait, and a sync of it is answered by this read. */
+function markRead(ctx: EngineCtx, ticketId: number): void {
+  ctx.store.updateTicket(ticketId, { pr_checked_at: ctx.now() });
+  readGoesOut(ctx, ticketId);
+}
+
+async function readDue(ctx: EngineCtx, project: ProjectRow, spec: Spec, due: TicketRow[]): Promise<void> {
+  const { store } = ctx;
+  const forgeOf = (ticket: TicketRow) => repoSettings(spec, ticket.repo).forge;
+  const follows = prSettings(spec).maxFixRounds > 0;
   // Each repo's checkout is read once per poll; a repo without one pauses the project and leaves its pull requests for the next poll.
   const checkouts = new Map<string | null, RepoCheckout | null>();
   const checkoutOfRepo = async (name: string | null): Promise<RepoCheckout | null> => {
@@ -981,8 +1002,10 @@ export async function pollPullRequests(ctx: EngineCtx, project: ProjectRow): Pro
     if (forge.kind === "gh") {
       const pull = githubPull(ticket.pr_url!);
       if (pull === null) {
-        store.updateTicket(ticket.id, { pr_checked_at: ctx.now() });
-        pauseProject(ctx, project.id, `${ticket.key}'s pull request ${ticket.pr_url} is not a GitHub pull request URL, so gh cannot read it.`);
+        const message = `${ticket.key}'s pull request ${ticket.pr_url} is not a GitHub pull request URL, so gh cannot read it.`;
+        markRead(ctx, ticket.id);
+        noteAnswer(ctx, ticket.id, message);
+        pauseProject(ctx, project.id, message);
         continue;
       }
       const key = `${host}/${pull.owner}/${pull.name}`;
@@ -990,12 +1013,14 @@ export async function pollPullRequests(ctx: EngineCtx, project: ProjectRow): Pro
       batch.tickets.push({ id: ticket.id, number: pull.number });
       continue;
     }
-    store.updateTicket(ticket.id, { pr_checked_at: ctx.now() });
+    markRead(ctx, ticket.id);
     let read: PrRead;
     try {
       read = await readOne(ctx, checkout, ticket, forge, follows);
     } catch (error) {
-      pauseProject(ctx, project.id, `Reading the pull request of ${ticket.key} stopped: ${errText(error)}`);
+      const message = `Reading the pull request of ${ticket.key} stopped: ${errText(error)}`;
+      noteAnswer(ctx, ticket.id, message);
+      pauseProject(ctx, project.id, message);
       continue;
     }
     await settleRead(ctx, project, checkout.settings, ticket, read, host);
@@ -1109,14 +1134,16 @@ async function readBatch(ctx: EngineCtx, project: ProjectRow, spec: Spec, batch:
     return ticket?.state === "pr_open" ? [{ ticket, number }] : [];
   });
   if (polled.length === 0) return;
-  for (const { ticket } of polled) store.updateTicket(ticket.id, { pr_checked_at: ctx.now() });
+  for (const { ticket } of polled) markRead(ctx, ticket.id);
   const { checkout, host, owner, name } = batch;
   let answer: HostOutputOf<"prBatch">;
   try {
     answer = await ctx.host.call(checkout.hostId, "prBatch", { repo: checkout.path, host, owner, name, numbers: [...new Set(polled.map((each) => each.number))], feedback: follows });
   } catch (error) {
     const what = polled.length === 1 ? `the pull request of ${polled[0]!.ticket.key}` : `the pull requests of ${andList(polled.map(({ ticket }) => ticket.key))}`;
-    pauseProject(ctx, project.id, `Reading ${what} stopped: ${errText(error)}`);
+    const message = `Reading ${what} stopped: ${errText(error)}`;
+    for (const { ticket } of polled) noteAnswer(ctx, ticket.id, message);
+    pauseProject(ctx, project.id, message);
     return;
   }
   if (answer.outcome === "unavailable") {
@@ -1124,7 +1151,10 @@ async function readBatch(ctx: EngineCtx, project: ProjectRow, spec: Spec, batch:
     if (answer.transient === "rate_limit") backOff(ctx, polled[0]!.ticket, batch.forgeHost, answer);
     else if (answer.transient === "network") waitOutNetworkError(ctx, polled[0]!.ticket, batch.forgeHost, answer.message);
     else if (answer.transient === "server") for (const { ticket } of polled) waitOutServerError(ctx, ticket, answer.message);
-    else pauseProject(ctx, project.id, answer.message);
+    else {
+      for (const { ticket } of polled) noteAnswer(ctx, ticket.id, answer.message);
+      pauseProject(ctx, project.id, answer.message);
+    }
     return;
   }
   // Answered ones first: a read that worked clears the host's backoff, so a rate limit in the same answer must come after it.
@@ -1164,6 +1194,7 @@ function missedRead(ticket: TicketRow, miss: Extract<HostOutputOf<"prBatch">, { 
  */
 async function settleRead(ctx: EngineCtx, project: ProjectRow, settings: RepoSettings, polled: TicketRow, read: PrRead, host: string | null): Promise<void> {
   const { store } = ctx;
+  noteAnswer(ctx, polled.id, read.outcome === "ok" ? null : read.message);
   if (read.outcome === "unavailable") {
     const forge = settings.forge.kind === "gh" ? "GitHub" : (host ?? "the forge");
     if (read.transient === "rate_limit" && host !== null) backOff(ctx, polled, host, read, forge);

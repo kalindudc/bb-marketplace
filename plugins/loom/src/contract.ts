@@ -7,6 +7,7 @@ import type { ActivityMark, Chip, CurrentItem, EventLine, InsightsFilter, Insigh
 import type { ProjectMetrics } from "./metrics";
 import type { MergeEntry, MergeOrderView, MergeVerdict, MergeWait } from "./merge-order";
 import type { NextStep } from "./next-step";
+import type { PrSyncOutcome, PrSyncResult, PrSyncTicket } from "./pr-sync";
 import type { BbProjectChoice, PlanningSession, ProjectOverview, RepoOverview } from "./projects";
 import { MAX_PLANNING_REPOS } from "./prompts";
 import type { Finding } from "./review";
@@ -26,6 +27,7 @@ export type ProjectSummary = ProjectOverview;
 export type { ActivityMark, Chip, CurrentItem, EventLine, InsightsFilter, InsightsNumbers, InsightsWindow, LineTone, Part, Phrase, ProjectInsights, StoryGroup, StoryItem };
 export type { ChangedFile, ChangeKind, ChangeRepo, ChangeSource, ChangesView, FilePatch };
 export type { MergeEntry, MergeOrderView, MergeVerdict, MergeWait };
+export type { PrSyncOutcome, PrSyncResult, PrSyncTicket };
 export type { SpecReviewRound };
 export type { AskStep, PlannerAction, PlannerAsk, PlannerStep, PlannerVersion, PlannerView, TurnStep, VersionChange };
 export type { ActivityItem, Attempt, BbProjectChoice, ChecksItem, CheckStep, PrFeedbackItem, PrTextItem, HomeProject, HomeView, Mark, MergeItem, Moment, MomentKind, NeedItem, NextStep, PlanningSession, ProjectHealth, ProjectTimeline, RepoOverview, ReviewItem, SentNote, SessionBar, SpecVersionView, TicketActivity, TicketBar };
@@ -336,6 +338,8 @@ export const rpcContract = defineRpcContract({
   plannerView: { input: z.object({ threadId: z.string().min(1).max(200) }).strict(), output: typed<PlannerView | null>(), ...RPC_TAGS.plannerView },
   messagePlanner: { input: z.object({ threadId: z.string().min(1).max(200), text: z.string().trim().min(1).max(20_000), confirm }).strict(), output: typed<PlannerView | null>(), ...RPC_TAGS.messagePlanner },
   dismissAsk: { input: z.object({ slug, ask: z.number().int().positive(), confirm }).strict(), output: typed<PlannerView | null>(), ...RPC_TAGS.dismissAsk },
+  // A read of the project's open pull requests now; no human.action, since it changes nothing the human decides.
+  syncPullRequests: { input: z.object({ slug, key: key.optional(), confirm }).strict(), output: typed<PrSyncResult>(), ...RPC_TAGS.syncPullRequests },
   bbProjects: { input: z.null(), output: typed<BbProjectChoice[]>(), ...RPC_TAGS.bbProjects },
   startPlanning: {
     input: z

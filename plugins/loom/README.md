@@ -214,6 +214,12 @@ an integration project is done or cancelled, it offers Land beside Review
 changes, which opens the Changes tab; the header's "Land to <base>" lands with
 `--direct` instead.
 
+On the pull request strategy, while a pull request is open, the header also
+has Sync pull requests. It reads every open pull request now instead of at its
+next check, and acts on what each one says, as the regular check would (see
+[Syncing pull requests](#syncing-pull-requests)). A toast says what the reads
+found.
+
 Once the spec is approved, a health strip shows progress, pace (tickets done in
 the last 14 days over the time the project ran in them, so paused days do not
 count), the time left at that pace, the token budget and the deadline when the
@@ -251,8 +257,9 @@ tickets show as dashed cards with the keys approval will give them.
 
 A header with the state, a one-line summary, a stage tracker from Queued to
 Done, and chips for the attempts, review rounds, total time, dependencies, the
-branch and the pull request. A blocked ticket shows its reason, an answer box
-and Requeue; Block and Cancel ticket sit in the ⋯ menu, and each needs a
+branch and the pull request. While the pull request is open, Sync now beside it
+reads that one pull request now. A blocked ticket shows its reason, an answer
+box and Requeue; Block and Cancel ticket sit in the ⋯ menu, and each needs a
 reason.
 
 The Activity tab shows one card per worker attempt, newest first (Oldest first
@@ -451,9 +458,12 @@ no failed attempts.
 Every button that changes something asks twice: the first click turns it amber
 with "Click again to ..." and a bar that drains over five seconds, beside a
 Cancel button. Each button calls the same engine method as the matching command
-and is logged as a `human.action` event. Archive sits in the ⋯ menu. A project
-control or a ticket action says in bb's toast what it did, such as "Project
-started" or "CSV-2 requeued"; the toasts stay in bb's notification center. A
+and is logged as a `human.action` event. Sync pull requests and Sync now are
+the exception: they only read, so they take one click and log nothing, and a
+read that failed or still runs turns their toast into a warning. Archive sits
+in the ⋯ menu. A project control or a ticket action says in bb's toast what it
+did, such as "Project started" or "CSV-2 requeued"; the toasts stay in bb's
+notification center. A
 change Loom refuses shows in bb's own error toast, as every failed change in bb
 does, with Loom's reason. A reply, a message to the planner, spec comments and
 New project also keep their errors beside the text you wrote.
@@ -536,6 +546,31 @@ its own pull request.
   the earlier worker's thread. `merge.release_workers = false` keeps every
   worker until its pull request merges; a spec version approved later may
   change it either way.
+
+### Syncing pull requests
+
+Loom reads each open pull request every 5 minutes, and waits longer after a
+read that failed: up to 30 minutes after server errors or timeouts, and the
+same for every pull request on a host it could not reach. When you know a pull
+request merged, closed or got a review, you do not have to wait for that.
+Press Sync pull requests in the project's header, or Sync now on the ticket,
+or run `bb loom sync <slug>` (`--ticket <KEY>` for one).
+
+- The read happens in the engine's next pass, as an ordinary check, so a merge
+  completes the ticket, a close blocks it and new feedback starts a fix round,
+  exactly as the regular check would. A pull request Loom is reading at that
+  moment is not read again: the sync waits for that read's answer.
+- It goes past the wait after failed reads and past a host's network wait,
+  because you may have just fixed what failed. A read that fails again
+  continues the same streak, so the project still pauses after an hour of
+  failures.
+- It does not go past a rate limit, since another read would only make the
+  limit longer; it says how long the limit lasts instead.
+- It waits up to 30 seconds for the reads and then says what each one found,
+  which reads failed, and which are still going. The page updates when a slow
+  read finishes.
+- A sync changes nothing you decide, so the button needs one click, not two,
+  and it writes no `human.action` event: it does not count as an intervention.
 
 ### Stacked pull requests
 
@@ -777,6 +812,7 @@ bb loom cancel CSV-1 "reason"
 bb loom land <slug> [--title t] [--ready]    # integration strategy: push the branch, open one pull request
 bb loom land <slug> --direct                 # integration strategy: merge in the remote's base, check, push to it
 bb loom land <slug> --repo <name>            # multi-repo project: land only this repo
+bb loom sync <slug> [--ticket CSV-1]         # pull request strategy: read the open pull requests now
 bb loom archive <slug>
 ```
 
@@ -918,8 +954,9 @@ settings for that project.
   `permission_mode`, because some providers, such as pi, accept no other mode.
   An approved spec keeps the mode it was approved with.
 - The human's controls (`approve`, `start`, `pause`, `resume`, `archive`,
-  `post`, `block`, `requeue`, `cancel`, `land`, `report --send`) refuse Loom's
-  own planner, worker and reviewer threads with the code `loom_human_only`.
+  `post`, `block`, `requeue`, `cancel`, `land`, `report --send`, `sync`)
+  refuse Loom's own planner, worker and reviewer threads with the code
+  `loom_human_only`.
 - The page's RPC changes state, and starts a planner thread, only when the call
   carries `confirm: true`, and it refuses calls from other plugins. bb cannot
   tell the page from an agent running `bb plugin rpc`, so the skill tells

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { experimental_Icon as Icon, Markdown } from "@get-bb/plugin-sdk/app";
 import type { TicketAction, TicketDetail } from "../contract";
 import { plural } from "../format";
-import { BUTTON, momentLabel, useAction, useLoom, useLoomWrite, useRun } from "./common";
+import { BUTTON, momentLabel, useAction, useLoom, useLoomWrite, useRun, useSyncPullRequests } from "./common";
 
 const ACTION_DONE: Record<TicketAction, string> = { requeue: "requeued", block: "blocked", cancel: "cancelled" };
 import { TicketHeader } from "./ticket-header";
@@ -83,6 +83,7 @@ export function TicketView({ ticketKey, at = null, onNow }: { ticketKey: string;
   const change = useLoomWrite("ticketAction");
   const { busy: sending, error, run } = useRun();
   const { busy: acting, act: report } = useAction();
+  const { syncing, sync } = useSyncPullRequests(remote.data?.slug ?? "");
   const busy = sending || acting;
   const now = useNow(30_000);
   const [tab, setTab] = useState<Tab>("activity");
@@ -130,7 +131,7 @@ export function TicketView({ ticketKey, at = null, onNow }: { ticketKey: string;
         </p>
       )}
       <div data-ticket-grid className={`grid gap-4 ${sideOpen ? "@4xl:grid-cols-[minmax(0,1fr)_20rem] @6xl:grid-cols-[minmax(0,1fr)_24rem]" : ""}`}>
-        <TicketHeader ticket={ticket} now={shown} busy={locked} onAction={act} onJump={jump} />
+        <TicketHeader ticket={ticket} now={shown} busy={locked} onAction={act} onJump={jump} sync={{ syncing, onSync: () => void sync(ticketKey) }} />
         {error !== null && (
           <p role="alert" className="col-span-full text-xs text-destructive-text">
             {error}

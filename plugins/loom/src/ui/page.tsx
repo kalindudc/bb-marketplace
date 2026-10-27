@@ -8,7 +8,7 @@ import { AboutStrip } from "./about";
 import { AgentsView } from "./agents";
 import { Board } from "./board";
 import { ChangesTab, landingFiles, useViewed } from "./changes";
-import { BUTTON_PRIMARY, ConfirmButton, MoreMenu, RepoChip, StateBadge, countsLabel, listText, mergeLabel, momentLabel, plural, useAction, useLoom, useLoomWrite } from "./common";
+import { BUTTON_PRIMARY, ConfirmButton, MoreMenu, RepoChip, StateBadge, SyncButton, countsLabel, listText, mergeLabel, momentLabel, plural, useAction, useLoom, useLoomWrite, useSyncPullRequests } from "./common";
 import { Guide } from "./guide";
 import { HealthStrip } from "./health";
 import { Home } from "./home";
@@ -133,9 +133,13 @@ export function routeOf(subPath: string): Route {
   return parseRoute(subPath === "" ? (lastRoute.get() ?? "") : subPath);
 }
 
+/** Whether the header offers Sync pull requests: a running or paused project with a pull request per ticket and one open. */
+export const canSyncPullRequests = (overview: ProjectView["overview"]) => overview.strategy === "pr" && (overview.state === "running" || overview.state === "paused") && (overview.ticketCounts.pr_open ?? 0) > 0;
+
 /** The header's secondary controls: the next-step bar's action is left out here, and Archive sits in the ⋯ menu. */
 function Controls({ view, busy, primary, onControl }: { view: ProjectView; busy: boolean; primary: ControlAction | null; onControl(action: ControlAction, version?: number): void }) {
   const { overview } = view;
+  const { syncing, sync } = useSyncPullRequests(overview.slug);
   const live = overview.state === "running" || overview.state === "paused" || overview.state === "done";
   const landable = overview.strategy === "integration" && live && (overview.ticketCounts.done ?? 0) > 0;
   const land = repoLand(overview.repos);
@@ -146,6 +150,9 @@ function Controls({ view, busy, primary, onControl }: { view: ProjectView; busy:
     action === primary ? null : <ConfirmButton key={label} label={label} confirmLabel={confirm} disabled={busy} onConfirm={() => onControl(action, version)} />;
   return (
     <span data-controls className="ml-auto flex flex-wrap items-center gap-2">
+      {canSyncPullRequests(overview) && (
+        <SyncButton label="Sync pull requests" title="Read every open pull request now instead of at its next check, and act on what it says" syncing={syncing} disabled={busy} onSync={() => void sync()} />
+      )}
       {overview.state === "draft" && !specReviewBlocks(view.specReview) && act("Approve", "approve")}
       {overview.state !== "draft" && overview.state !== "archived" && overview.pendingVersion !== null && !specReviewBlocks(view.specReview) && act(`Approve v${overview.pendingVersion}`, "approve", overview.pendingVersion)}
       {overview.state === "ready" && act("Start", "start")}

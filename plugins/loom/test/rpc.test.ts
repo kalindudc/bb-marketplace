@@ -947,6 +947,28 @@ describe("sendNotes", () => {
   });
 });
 
+describe("syncPullRequests", () => {
+  const result = { slug: "csv", tickets: [{ key: "CSV-1", state: "done" as const, outcome: "merged" as const, detail: null }], message: "CSV-1's pull request merged, so CSV-1 is done.", problem: false };
+
+  it("reads through the engine, for the project or one ticket, and writes no human.action event", async () => {
+    await approved();
+    const sync = vi.spyOn(host.engine, "syncPullRequests").mockResolvedValue(result);
+    expect(await call("syncPullRequests", { slug: "csv", confirm: true })).toEqual(result);
+    expect(await call("syncPullRequests", { slug: "csv", key: "CSV-1", confirm: true })).toEqual(result);
+    expect(sync.mock.calls).toEqual([["csv", {}], ["csv", { key: "CSV-1" }]]);
+    expect(humanEvents()).toEqual([]);
+  });
+
+  it("needs the confirmation, refuses another plugin, and answers the engine's refusal with its message", async () => {
+    await approved();
+    const sync = vi.spyOn(host.engine, "syncPullRequests");
+    await expect(call("syncPullRequests", { slug: "csv" })).rejects.toThrow();
+    await expect(call("syncPullRequests", { slug: "csv", confirm: true }, { experimental_caller: { kind: "plugin", pluginId: "other" } })).rejects.toMatchObject({ code: "forbidden" });
+    expect(sync).not.toHaveBeenCalled();
+    await expect(call("syncPullRequests", { slug: "csv", confirm: true })).rejects.toMatchObject({ code: "conflict", message: "Project csv is ready; Loom reads pull requests only while a project is running or paused." });
+  });
+});
+
 describe("refusals", () => {
   it("answers a LoomError as a refusal that carries its message, not as a handler error", async () => {
     await expect(call("project", { slug: "nope" })).rejects.toMatchObject({ code: "not_found", message: expect.stringContaining('No Loom project named "nope".') });

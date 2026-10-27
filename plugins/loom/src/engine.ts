@@ -10,6 +10,7 @@ import { isMultiRepo } from "./repos";
 import { CHECKS_NEAR_DONE_PERCENT, CHECKS_QUEUED_MINUTES } from "./check-wait";
 import { CHECKS_SETTLE_MINUTES } from "./pull-requests";
 import { NO_HOOK, sendRecords, type LoomSettings } from "./record";
+import { newPrReads, requestSync, SYNC_WAIT_MS, syncResult, within, type PrSyncResult } from "./pr-sync";
 import { backToReview, blockedAtReview, onReviewerGone, onReviewerIdle, onReviewerTurnFailed, reviewerStartFailed, spawnReviewers } from "./review";
 import { approvalRefusal, endSpecReviews, onSpecReviewerGone, onSpecReviewerIdle, onSpecReviewerTurnFailed, reconcileSpecReviews, retrySpecReviews, specReviewStatus } from "./spec-review";
 import { NOT_PARKED, budgetReason, spawnable, toLite, waitsForSlot, type Parked, type TicketLite } from "./scheduler";
@@ -44,7 +45,7 @@ import {
 const TOKEN_REFRESH_MS = 60_000;
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-export type EngineDeps = Omit<EngineCtx, "kick" | "checksSettleMs" | "forgeBackoffs"> & { projects: Projects; settings?: () => LoomSettings };
+export type EngineDeps = Omit<EngineCtx, "kick" | "checksSettleMs" | "forgeBackoffs" | "prReads"> & { projects: Projects; settings?: () => LoomSettings };
 
 export interface Approved extends ApproveResult {
   requeued: string[];
@@ -84,6 +85,7 @@ export class Engine {
       host: deps.host,
       kick: () => this.kick(),
       forgeBackoffs: new Map(),
+      prReads: newPrReads(),
       checksSettleMs: settleMs,
       checksQueuedMinutes: () => this.settings().checksQueuedMinutes ?? CHECKS_QUEUED_MINUTES,
       checksNearDonePercent: () => this.settings().checksNearDonePercent ?? CHECKS_NEAR_DONE_PERCENT,
@@ -492,6 +494,16 @@ export class Engine {
     const result = await land(this.ctx, slug, { actor, ...opts });
     this.kick();
     return result;
+  }
+
+  /**
+   * The human's sync: the project's open pull requests, or only `key`'s, are read in the next pass instead of at their next
+   * poll (pr-sync.ts). Waits up to `waitMs` for that pass, then says what each read found or that it is still going.
+   */
+  async syncPullRequests(slug: string, opts: { key?: string; waitMs?: number } = {}): Promise<PrSyncResult> {
+    const request = requestSync(this.ctx, slug, opts.key);
+    const finished = request.tickets.length === 0 || (await within(this.tick(), opts.waitMs ?? SYNC_WAIT_MS));
+    return syncResult(this.ctx, request, finished);
   }
 
   /** The human's `report --send`: queues a finished project's record for the done hook again. */

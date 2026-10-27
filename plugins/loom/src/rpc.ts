@@ -435,9 +435,12 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
     };
   };
 
+  const refusePlugins = (ctx: { experimental_caller: { kind: string } }) => {
+    if (ctx.experimental_caller.kind === "plugin") throw new PluginRpcRefusal({ code: "forbidden", message: "Loom's controls are for the human: another plugin cannot call them." });
+  };
   // Every change is the human's: it runs through humanAction, which writes the human.action event (none for a change outside any project), and refuses any other plugin.
   const act = <T>(ctx: { experimental_caller: { kind: string } }, action: string, data: { slug?: string; key?: string; [extra: string]: unknown }, fn: () => Promise<T> | T): Promise<T> => {
-    if (ctx.experimental_caller.kind === "plugin") throw new PluginRpcRefusal({ code: "forbidden", message: "Loom's controls are for the human: another plugin cannot call them." });
+    refusePlugins(ctx);
     return humanAction({ projects, store }, {}, action, data, fn);
   };
 
@@ -478,6 +481,10 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       return project.planner_thread_id === null ? null : plannerView({ store, projects }, project.planner_thread_id, now());
     },
     specVersion: ({ slug, version, base }) => specVersionView({ store, projects }, slug, version, base),
+    syncPullRequests: ({ slug, key }, ctx) => {
+      refusePlugins(ctx);
+      return engine.syncPullRequests(slug, key === undefined ? {} : { key });
+    },
     bbProjects: () => projects.bbProjectChoices(),
     changes: ({ slug }) => changes.view(slug),
     changePatch: (input) => changes.patch(input),

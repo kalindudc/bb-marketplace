@@ -19,6 +19,17 @@ const KEY = { name: "key", description: "A ticket key such as CSV-1.", required:
 
 type HumanActionData = { slug?: string; key?: string; [extra: string]: unknown };
 
+/** Refuses a command from a Loom planner, worker, reviewer or spec reviewer thread: Loom's controls are the human's. */
+export function refuseAgents(deps: { projects: Projects; store: Store }, ctx: { threadId?: string }, action: string): void {
+  // A spec reviewer has no threads row, so roleOf cannot see it.
+  if (ctx.threadId !== undefined && (deps.projects.roleOf(ctx.threadId) !== null || deps.store.specReviewByThreadId(ctx.threadId) !== null)) {
+    throw new PluginCliError(`"${action}" is for the human: Loom planner, worker and reviewer threads cannot run it.`, {
+      code: "loom_human_only",
+      hint: "Tell the human what you need and let them run the command.",
+    });
+  }
+}
+
 // Every command that changes state runs through here, so the human-only rule and the intervention record live in one place.
 export async function humanAction<T>(
   deps: { projects: Projects; store: Store },
@@ -27,13 +38,7 @@ export async function humanAction<T>(
   data: HumanActionData,
   fn: () => Promise<T> | T,
 ): Promise<T> {
-  // A spec reviewer has no threads row, so roleOf cannot see it.
-  if (ctx.threadId !== undefined && (deps.projects.roleOf(ctx.threadId) !== null || deps.store.specReviewByThreadId(ctx.threadId) !== null)) {
-    throw new PluginCliError(`"${action}" is for the human: Loom planner, worker and reviewer threads cannot run it.`, {
-      code: "loom_human_only",
-      hint: "Tell the human what you need and let them run the command.",
-    });
-  }
+  refuseAgents(deps, ctx, action);
   const result = await fn();
   const ticket = data.key === undefined ? null : deps.store.ticketByKey(data.key);
   const project = data.slug !== undefined ? deps.store.projectBySlug(data.slug) : ticket === null ? null : deps.store.project(ticket.project_id);
@@ -355,6 +360,19 @@ export function createCli(projects: Projects, engine: Engine, store: Store, now:
             const reason = positionals.reason.join(" ");
             const ticket = await humanAction(deps, ctx, "cancel", { key: positionals.key }, () => engine.cancel(positionals.key, reason, HUMAN_ACTOR));
             return out(options.json ? toJson(projects.ticketView(ticket.key)) : `${ticket.key} is cancelled: ${reason}\n`);
+          }),
+      }),
+      sync: cliCommand({
+        summary:
+          "Read a project's open pull requests now instead of at their next poll, and act on what they say: merged, closed, or feedback for a fix round. It goes past the wait after failed reads, but not past a rate limit (human only)",
+        positionals: [SLUG],
+        options: { ticket: { type: "string", description: "Read only this ticket's pull request, such as CSV-1." }, json },
+        run: ({ options, positionals }, ctx) =>
+          guarded(async () => {
+            // A read changes nothing the human decides, so it writes no human.action event.
+            refuseAgents(deps, ctx, "sync");
+            const result = await engine.syncPullRequests(positionals.slug, options.ticket === undefined ? {} : { key: options.ticket });
+            return out(options.json ? toJson(result) : `${result.message}\n`);
           }),
       }),
       land: cliCommand({

@@ -7,6 +7,7 @@ import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { spawnEnvironment, threadBranch, ticketInputsOf, usesNewMachine } from "./environments";
 import { plural } from "./format";
 import type { EnvironmentInfo, HostPort } from "./ports";
+import type { PrReads } from "./pr-sync";
 import { COMMENT_SIGNATURE, andList, latestChangesRequested, nudgeText, workerBrief } from "./prompts";
 import { LoomError, type Ctx } from "./projects";
 import { freshBaseOf, repoSettings } from "./repos";
@@ -22,6 +23,8 @@ export interface EngineCtx extends Ctx {
   kick(): void;
   /** Forge hosts that rate-limited Loom's pull request reads, for every project; in memory only. */
   forgeBackoffs: HostBackoffs;
+  /** The pull request reads the human's syncs ask for and follow (pr-sync.ts); in memory only. */
+  prReads?: PrReads;
   /** How long a pull request's failed checks wait for the pending ones after a push; Loom's checksSettleMinutes setting. */
   checksSettleMs?: () => number;
   /** How long a queued check may hold the failed ones; Loom's checksQueuedMinutes setting, which the spec can override. */

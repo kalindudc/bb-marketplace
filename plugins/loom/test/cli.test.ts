@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createCli, formatMetrics } from "../src/cli";
 import { formatDuration, readyToLand } from "../src/format";
 import { ensureSpecReview } from "../src/spec-review";
@@ -711,6 +711,24 @@ describe("readyToLand", () => {
   });
 });
 
+describe("sync", () => {
+  it("prints what the reads found, reads one ticket's pull request with --ticket, and writes no human.action event", async () => {
+    await approved();
+    const result = { slug: "csv", tickets: [], message: "Read 2 pull requests: CSV-1 merged and 1 is still open.", problem: false };
+    const sync = vi.spyOn(host.engine, "syncPullRequests").mockResolvedValue(result);
+    expect((await run(["sync", "csv"])).stdout).toBe("Read 2 pull requests: CSV-1 merged and 1 is still open.\n");
+    expect(JSON.parse((await run(["sync", "csv", "--ticket", "CSV-1", "--json"])).stdout)).toEqual(result);
+    expect(sync.mock.calls).toEqual([["csv", {}], ["csv", { key: "CSV-1" }]]);
+    expect(humanEvents()).toEqual([]);
+  });
+
+  it("refuses a project that is not running or paused", async () => {
+    await approved();
+    const error = errorOf((await run(["sync", "csv", "--json"])).stdout);
+    expect(error).toMatchObject({ code: "loom_invalid_state", message: "Project csv is ready; Loom reads pull requests only while a project is running or paused." });
+  });
+});
+
 describe("loom_human_only", () => {
   async function setup() {
     await approved();
@@ -734,6 +752,7 @@ describe("loom_human_only", () => {
     ["cancel", "CSV-1", "why"],
     ["land", "csv"],
     ["report", "csv", "--send"],
+    ["sync", "csv"],
   ];
 
   it("refuses every state-changing command from a planner, worker, reviewer or spec reviewer thread", async () => {

@@ -2,6 +2,20 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.26.0 (2026-10-27)
+
+### Added
+
+- Sync pull requests, in a pull request project's header while one is open, reads every open pull request now instead of at its next check. Sync now on a ticket reads that one, and `bb loom sync <slug> [--ticket <KEY>]` does the same from the command line. Before, a pull request that merged or got a review waited for Loom's next check, which is every 5 minutes and up to 30 minutes after failed reads, and the only way to hurry it was to message the planner.
+  - The read happens in the engine's next pass as an ordinary check, so a merge completes the ticket, a close blocks it and new feedback starts a fix round, exactly as the regular check would. A pull request Loom is reading at that moment is not read again; the sync waits for that read's answer.
+  - It goes past a ticket's wait after server errors or timeouts, and past a host's wait after network failures, because the human may have just fixed what failed. A read that fails again continues the same streak, so the project still pauses after an hour of failures. It does not go past a rate limit, and says how long the limit lasts instead.
+  - It waits up to 30 seconds for the reads, then says in a toast what each one found: merged, blocked, a fix round, still open, a failed read with its error and when Loom reads it again, or still being read. A read that failed, waits or still runs makes the toast a warning. The page updates when a slow read finishes.
+  - A sync changes nothing the human decides, so its buttons need one click and it writes no `human.action` event; the command still refuses Loom's own agent threads with `loom_human_only`.
+
+### Compatibility
+
+- No migration. The page's RPC gains `syncPullRequests`, which takes `confirm: true` and refuses other plugins as every change does.
+
 ## 0.25.0 (2026-10-27)
 
 ### Fixed

@@ -3,7 +3,7 @@ import { experimental_copyToClipboard, experimental_Icon as Icon, useBbNavigate 
 import type { MergeItem, TicketAction, TicketDetail } from "../contract";
 import { formatDuration, plural, startWaitText } from "../format";
 import type { TicketState } from "../states";
-import { BUTTON, BUTTON_PRIMARY, ConfirmButton, FIELD, MoreMenu, RepoChip } from "./common";
+import { BUTTON, BUTTON_PRIMARY, ConfirmButton, FIELD, MoreMenu, RepoChip, SyncButton } from "./common";
 import { ago, checksText, GHOST } from "./ticket-cards";
 
 const STAGES = [
@@ -187,8 +187,25 @@ function PrFacts({ ticket, now }: { ticket: TicketDetail; now: number }) {
   );
 }
 
+/** Whether the ticket page offers Sync now: an open pull request Loom follows, on a running or paused project. */
+export const canSyncTicket = (ticket: TicketDetail) => ticket.at === null && ticket.state === "pr_open" && ticket.pr !== null && (ticket.projectState === "running" || ticket.projectState === "paused");
+
 /** The ticket at a glance: its key, state, title, a summary, the stage tracker and the facts, with the actions it needs. */
-export function TicketHeader({ ticket, now, busy, onAction, onJump }: { ticket: TicketDetail; now: number; busy: boolean; onAction(action: TicketAction, note: string): Promise<boolean>; onJump(postId: number): void }) {
+export function TicketHeader({
+  ticket,
+  now,
+  busy,
+  onAction,
+  onJump,
+  sync,
+}: {
+  ticket: TicketDetail;
+  now: number;
+  busy: boolean;
+  onAction(action: TicketAction, note: string): Promise<boolean>;
+  onJump(postId: number): void;
+  sync?: { syncing: boolean; onSync(): void };
+}) {
   const navigate = useBbNavigate();
   const [reason, setReason] = useState("");
   const final = ticket.state === "done" || ticket.state === "cancelled";
@@ -283,6 +300,9 @@ export function TicketHeader({ ticket, now, busy, onAction, onJump }: { ticket: 
           <button type="button" aria-label="Open the pull request" onClick={() => navigate.openUrl(ticket.prUrl!)} className={BUTTON}>
             Pull request
           </button>
+        )}
+        {sync !== undefined && canSyncTicket(ticket) && (
+          <SyncButton label="Sync now" title="Read this pull request now instead of at its next check, and act on what it says" syncing={sync.syncing} disabled={busy} onSync={sync.onSync} />
         )}
       </div>
     </header>

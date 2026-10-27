@@ -216,3 +216,47 @@ export function useAction() {
   }, []);
   return { busy, act };
 }
+
+/** Reads open pull requests now. A read changes nothing the human decides, so it needs one click, not two. */
+export function SyncButton({ label, title, syncing, disabled = false, onSync }: { label: string; title: string; syncing: boolean; disabled?: boolean; onSync(): void }) {
+  return (
+    <button type="button" data-sync-prs title={title} aria-busy={syncing} disabled={disabled || syncing} className={BUTTON} onClick={onSync}>
+      <span aria-hidden className={`mr-1 inline-block ${syncing ? "animate-spin" : ""}`}>
+        ↻
+      </span>
+      {syncing ? "Syncing…" : label}
+    </button>
+  );
+}
+
+/**
+ * Reads the project's open pull requests now, or only `key`'s, and says in bb's toast what the reads found: a warning when
+ * one failed, waits or is still going. A refusal gets bb's own toast, as every failed write does.
+ */
+export function useSyncPullRequests(slug: string) {
+  const sync = useLoomWrite("syncPullRequests");
+  const [syncing, setSyncing] = useState(false);
+  const mounted = useRef(true);
+  useEffect(
+    () => () => {
+      mounted.current = false;
+    },
+    [],
+  );
+  const run = useCallback(
+    async (key?: string): Promise<void> => {
+      setSyncing(true);
+      try {
+        const result = await sync({ slug, ...(key === undefined ? {} : { key }), confirm: true });
+        if (result.problem) toast.warning(result.message);
+        else toast.success(result.message);
+      } catch {
+        // bb's query client already showed the refusal.
+      } finally {
+        if (mounted.current) setSyncing(false);
+      }
+    },
+    [sync, slug],
+  );
+  return { syncing, sync: run };
+}

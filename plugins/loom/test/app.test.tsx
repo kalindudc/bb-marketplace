@@ -23,7 +23,7 @@ import { projectInsights } from "../src/insights";
 import { changedTags } from "../src/rpc-tags";
 import { toast } from "sonner";
 
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() } }));
 
 type Handlers = PluginRpcTestHandlers<typeof rpcContract>;
 const unexpected = (): never => {
@@ -49,6 +49,7 @@ const handlers = (over: Partial<Handlers> = {}): Handlers => ({
   plannerView: () => null,
   messagePlanner: unexpected,
   dismissAsk: unexpected,
+  syncPullRequests: unexpected,
   specVersion: unexpected,
   sendNotes: unexpected,
   changes: unexpected,
@@ -60,6 +61,7 @@ type Slot = ReturnType<typeof renderSlot>;
 const mounts: Slot[] = [];
 afterEach(() => {
   vi.mocked(toast.success).mockClear();
+  vi.mocked(toast.warning).mockClear();
   vi.mocked(toast.error).mockClear();
   for (const slot of mounts.splice(0)) slot.lifecycle.unmount();
   cleanup();
@@ -1714,6 +1716,28 @@ describe("project controls", () => {
     expect(await labels(bare("paused", { pendingVersion: 2, ticketCounts: {} }))).toEqual(["Approve v2", "Resume", "⋯"]);
   });
 
+  it("offers Sync pull requests on a running or paused pull request project with one open", async () => {
+    const open = { strategy: "pr" as const, ticketCounts: { pr_open: 1, queued: 1 } };
+    expect(await labels(bare("running", open))).toEqual(["↻Sync pull requests", "Pause", "Pause now", "⋯"]);
+    expect(await labels(bare("paused", open))).toEqual(["↻Sync pull requests", "Resume", "⋯"]);
+    expect(await labels(bare("done", { strategy: "pr", ticketCounts: { done: 2 } }))).toEqual(["⋯"]);
+  });
+
+  it("syncs on one click, says what the reads found in a toast, and warns when a read failed", async () => {
+    const found = { slug: "csv", tickets: [], message: "CSV-1's pull request merged, so CSV-1 is done.", problem: false };
+    const syncPullRequests = vi.fn(() => found);
+    const { slot } = await mountPage("csv", { project: () => bare("running", { strategy: "pr", ticketCounts: { pr_open: 1 } }), syncPullRequests });
+    fireEvent.click(await slot.findByRole("button", { name: "Sync pull requests" }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("CSV-1's pull request merged, so CSV-1 is done."));
+    expect(syncPullRequests).toHaveBeenCalledWith({ slug: "csv", confirm: true });
+
+    syncPullRequests.mockReturnValue({ ...found, message: "Could not read CSV-1's pull request: gh: HTTP 502.", problem: true });
+    await waitFor(() => expect((slot.getByRole("button", { name: "Sync pull requests" }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(slot.getByRole("button", { name: "Sync pull requests" }));
+    await waitFor(() => expect(toast.warning).toHaveBeenCalledWith("Could not read CSV-1's pull request: gh: HTTP 502."));
+    expect(syncPullRequests).toHaveBeenCalledTimes(2);
+  });
+
   it("lands to the base branch from the header after a second click", async () => {
     const control = vi.fn(() => bare("done", { ticketCounts: { done: 1 } }));
     const { slot } = await mountPage("csv", { project: () => bare("running", { ticketCounts: { done: 1 } }), control });
@@ -3344,6 +3368,21 @@ describe("ticket", () => {
       expect(slot.container.querySelector("[data-ticket-summary]")!.textContent).toBe("Approved in round 2. The worker is writing the pull request's title, description and commit message (4m); Loom uses its own template if they are not in within 30m.");
       expect(header(slot).querySelector("[data-fact='pr-writing']")!.textContent).toBe("Writing the pull request · 4m");
       expect(slot.container.querySelector("[data-live-row]")!.textContent).toContain("The worker is writing the pull request · for 4m");
+    });
+
+    it("syncs an open pull request from its ticket, and offers no sync once it is not open or the page is rewound", async () => {
+      const syncPullRequests = vi.fn(() => ({ slug: "csv", tickets: [], message: "Read CSV-2's pull request: nothing new, it is still open.", problem: false }));
+      const slot = await mountTicket({ state: "pr_open", prUrl: URL, pr: pr() }, { syncPullRequests });
+      fireEvent.click(within(header(slot)).getByRole("button", { name: "Sync now" }));
+      await waitFor(() => expect(syncPullRequests).toHaveBeenCalledWith({ slug: "csv", key: "CSV-2", confirm: true }));
+      await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Read CSV-2's pull request: nothing new, it is still open."));
+      slot.lifecycle.unmount();
+
+      for (const over of [{ state: "working" as const }, { state: "pr_open" as const, projectState: "archived" as const }, { state: "pr_open" as const, at: 7 }]) {
+        const other = await mountTicket({ prUrl: URL, pr: pr(), ...over });
+        expect(within(header(other)).queryByRole("button", { name: "Sync now" }), JSON.stringify(over)).toBeNull();
+        other.lifecycle.unmount();
+      }
     });
 
     it("shows an open pull request's commits, checks and fix rounds, and that a reply starts a fix round", async () => {
