@@ -122,8 +122,8 @@ describe("a stacked ticket's review and pull request", () => {
 });
 
 describe("catching up with the dependency", () => {
-  async function stacked() {
-    await openFirst();
+  async function stacked(edit?: (doc: Doc) => void) {
+    await openFirst(edit);
     const worker = await reachApproved(h, "CSV-2");
     await queue();
     expect(ticketOf(h, "CSV-2").state).toBe("pr_open");
@@ -165,6 +165,19 @@ describe("catching up with the dependency", () => {
     expect(ticket).toMatchObject({ state: "pr_open", pr_base: "main" });
     expect(stackOf(ticket)).toMatchObject({ deps: {}, base: "base001" });
     expect(outcomes("CSV-2").slice(-3)).toEqual(["restacked", "pr_pushed", "retargeted"]);
+  });
+
+  it("gives the base fetch, the pull request commit and the push the repo's git network timeout when the spec sets one", async () => {
+    await stacked((doc) => (doc.merge.git_network_timeout_seconds = 240));
+    h.host.prStates.set(URL1, "MERGED");
+    await poll();
+    h.host.remoteBase = "base001";
+    await queue();
+
+    expect(h.host.callsTo("stackBase").at(-1)).toMatchObject({ base: { remote: "origin", branch: "main" }, networkTimeoutMs: 240_000 });
+    expect(h.host.callsTo("prCommit").at(-1)).toMatchObject({ networkTimeoutMs: 240_000 });
+    expect(h.host.callsTo("push").at(-1)).toMatchObject({ networkTimeoutMs: 240_000 });
+    expect(ticketOf(h, "CSV-2")).toMatchObject({ state: "pr_open", pr_base: "main" });
   });
 
   it("sends a conflict back to the worker with the branch to merge, and pushes nothing", async () => {

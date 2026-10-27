@@ -10,7 +10,7 @@ import type { EnvironmentInfo, HostPort } from "./ports";
 import type { PrReads } from "./pr-sync";
 import { COMMENT_SIGNATURE, andList, latestChangesRequested, nudgeText, workerBrief } from "./prompts";
 import { LoomError, type Ctx } from "./projects";
-import { freshBaseOf, repoSettings } from "./repos";
+import { freshBaseOf, gitNetwork, repoSettings } from "./repos";
 import { idleAction, spawnable, toLite, type TicketLite } from "./scheduler";
 import type { Spec } from "./spec";
 import { EMPTY_STACK, stackBranch, stacking, stackOf, upstreamOf, type Stack } from "./stack";
@@ -299,6 +299,7 @@ async function stackStart(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticke
       commits: open.map((dep) => dep.pushed_sha!),
       ...(withBase ? { base: { remote: settings.remote, branch: settings.base } } : {}),
       message: `Loom: ${andList(open.map((dep) => dep.key))} for ${ticket.key}`,
+      ...gitNetwork(settings),
     });
   } catch (error) {
     ctx.bb.log("warn", `${ticket.key} cannot start on its dependencies' pull requests yet: ${errText(error)}`);

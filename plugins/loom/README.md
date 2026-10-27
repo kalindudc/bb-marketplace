@@ -572,6 +572,19 @@ or run `bb loom sync <slug>` (`--ticket <KEY>` for one).
 - A sync changes nothing you decide, so the button needs one click, not two,
   and it writes no `human.action` event: it does not count as an intervention.
 
+### Slow repositories
+
+Loom fetches, runs `ls-remote` and pushes in each repo's checkout: it fetches
+the base branch to bring a stacked pull request up to date, reads the pull
+request's branch to build its commit, and pushes. Each of these git steps may
+take `git_network_timeout_seconds`, 120 by default, set on a `[[repo]]` or on
+`[merge]`. On a monorepo where fetching main takes a minute or more, such as
+World, raise it (300 suits World); otherwise the project pauses with "host
+plugin call … exceeded its deadline" or a git timeout each time it catches a
+pull request up, and a resume pauses it again. A revision with a new value
+applies once it is approved. `gh`, the forge's commands and the first checkout
+of an integration worktree keep their own 2-minute limits.
+
 ### Stacked pull requests
 
 A ticket does not wait for the tickets it depends on to merge. It starts once
@@ -623,8 +636,9 @@ pull request's checks then start once Loom moves it to the base branch.
 
 A spec with `[[repo]]` tables spans several repositories. Each `[[repo]]` names
 a bb project with a checkout on the machine the planner runs on, where the
-workers run too, and can set its own base, remote, checks, `after_merge` checks
-and protected paths; what it leaves out comes from the top level. Every ticket
+workers run too, and can set its own base, remote, checks, `after_merge` checks,
+protected paths and `git_network_timeout_seconds`; what it leaves out comes from
+the top level. Every ticket
 names one repo and changes only that repo, with its scope relative to the
 repo's root, so work that spans repos is split into one ticket per repo, linked
 with `depends_on`.

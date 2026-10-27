@@ -316,17 +316,16 @@ describe("latestSystemError", () => {
 });
 
 describe("createHostPort", () => {
-  it("gives the calls that fetch a base or read the remote branch the network deadline, since fetching main of a monorepo takes about a minute", async () => {
+  it("gives the calls that fetch, run ls-remote or push two git network steps plus 30 seconds, from the spec's timeout when it sets one", async () => {
     const calls: Array<{ method: string; timeoutMs: number }> = [];
     const bb = { hosts: { experimental_client: () => ({ call: async (method: string, _input: unknown, opts: { timeoutMs: number }) => (calls.push({ method, timeoutMs: opts.timeoutMs }), {}) }) } } as unknown as Parameters<typeof createHostPort>[0];
     const port = createHostPort(bb);
-    const input = {} as never;
-    for (const method of ["stackBase", "fetchTip", "prCommit", "mergeOnto"] as const) await port.call("host_1", method, input);
+    for (const method of ["stackBase", "fetchTip", "prCommit", "push", "fetchBranch", "importCommit", "carryStart", "landedOn", "mergeOnto"] as const) await port.call("host_1", method, {} as never);
+    await port.call("host_1", "stackBase", { networkTimeoutMs: 300_000 } as never);
     expect(calls).toEqual([
-      { method: "stackBase", timeoutMs: 150_000 },
-      { method: "fetchTip", timeoutMs: 150_000 },
-      { method: "prCommit", timeoutMs: 150_000 },
+      ...["stackBase", "fetchTip", "prCommit", "push", "fetchBranch", "importCommit", "carryStart", "landedOn"].map((method) => ({ method, timeoutMs: 270_000 })),
       { method: "mergeOnto", timeoutMs: 30_000 },
+      { method: "stackBase", timeoutMs: 630_000 },
     ]);
   });
 

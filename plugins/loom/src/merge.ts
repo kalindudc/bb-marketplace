@@ -12,7 +12,7 @@ import { githubPull, prNumber, PR_BATCH_MAX, type HostInput, type HostOutput as 
 import type { EnvironmentInfo } from "./ports";
 import type { PrMeta } from "./pr-meta";
 import { LoomError } from "./projects";
-import { followsFeedback, freshBaseOf, isMultiRepo, prSettings, repoSettings, type RepoSettings } from "./repos";
+import { followsFeedback, freshBaseOf, gitNetwork, isMultiRepo, prSettings, repoSettings, type RepoSettings } from "./repos";
 import { forgetClosedReads, noteAnswer, readGoesOut } from "./pr-sync";
 import { recordingHost } from "./runs";
 import type { ForgeSpec, Spec } from "./spec";
@@ -438,7 +438,7 @@ async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
   if (prSettings(spec).squash) {
     const build = (head: TicketRow) => {
       const message = catchUp ? `${head.key}: merge ${caughtUp ?? "its new base"} (Loom)` : text.commit;
-      return ctx.host.call(hostId, "prCommit", { repo, remote, branch, base: baseOf(spec, head), head: head.head_sha!, message, ...(head.pushed_sha === null ? {} : { pushed: head.pushed_sha }) });
+      return ctx.host.call(hostId, "prCommit", { repo, remote, branch, base: baseOf(spec, head), head: head.head_sha!, message, ...(head.pushed_sha === null ? {} : { pushed: head.pushed_sha }), ...gitNetwork(settings) });
     };
     let built = await build(current);
     // Someone else pushed to the branch: their commits are merged in first, again if the branch moves meanwhile.
@@ -464,7 +464,7 @@ async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
   }
   const pushedNow = created || src !== current.pushed_sha;
   if (pushedNow) {
-    const pushed = await ctx.host.call(hostId, "push", { repo, remote, src, branch });
+    const pushed = await ctx.host.call(hostId, "push", { repo, remote, src, branch, ...gitNetwork(settings) });
     if (pushed.outcome === "unavailable") throw new Unavailable(pushed.message);
   }
   const at = ctx.now();
@@ -539,6 +539,7 @@ async function restack(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: 
     commits: need.commits,
     ...(need.withBase ? { base: { remote: settings.remote, branch: settings.base } } : {}),
     message: `Loom: ${what} for ${ticket.key}`,
+    ...gitNetwork(settings),
   });
   if (built.outcome === "unavailable") throw new Unavailable(built.message);
   const known = stackOf(ticket) ?? EMPTY_STACK;
@@ -1112,7 +1113,7 @@ async function readOne(ctx: EngineCtx, checkout: RepoCheckout, ticket: TicketRow
   const { hostId, path: repo, settings } = checkout;
   if (forge.kind === "none") {
     // The push-only forge has no pull request to ask: the ticket is done once the remote base contains the commit Loom pushed.
-    const landed = await ctx.host.call(hostId, "landedOn", { repo, remote: settings.remote, base: settings.base, sha: ticket.pushed_sha ?? ticket.head_sha! });
+    const landed = await ctx.host.call(hostId, "landedOn", { repo, remote: settings.remote, base: settings.base, sha: ticket.pushed_sha ?? ticket.head_sha!, ...gitNetwork(settings) });
     return landed.outcome === "ok" ? { outcome: "ok", state: landed.landed ? "MERGED" : "OPEN", meta: null, feedback: null } : landed;
   }
   if (follows && followsFeedback(forge)) {
@@ -1394,7 +1395,7 @@ async function pushIntegration(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
   const { hostId, repo, worktree, settings } = await landWorktree(ctx, project, spec, name);
   const { remote, base } = settings;
   const head = (await ctx.host.call(hostId, "worktreeState", { worktree, base })).head;
-  const pushed = await ctx.host.call(hostId, "push", { repo, remote, src: head, branch: settings.branch! });
+  const pushed = await ctx.host.call(hostId, "push", { repo, remote, src: head, branch: settings.branch!, ...gitNetwork(settings) });
   if (pushed.outcome === "unavailable") throw unavailable(pushed.message);
   if (settings.forge.kind === "none") return { sha: head, url: null };
   if (open !== null) return { sha: head, url: open };
@@ -1416,7 +1417,7 @@ async function pushToBase(ctx: EngineCtx, project: ProjectRow, spec: Spec, name:
   const target = `${remote}/${base}`;
   if ((await provisioningRepos(ctx, project.id)).has(name)) throw new LoomError("loom_invalid_state", `Cannot land yet: a worker's worktree is still being created from ${branch}; try again in a moment.`);
 
-  const fetched = await ctx.host.call(hostId, "fetchBranch", { worktree, remote, branch: base });
+  const fetched = await ctx.host.call(hostId, "fetchBranch", { worktree, remote, branch: base, ...gitNetwork(settings) });
   if (fetched.outcome === "unavailable") throw unavailable(fetched.message);
   const merged = await ctx.host.call(hostId, "merge", { worktree, ref: fetched.sha, message: `Merge ${target} into ${branch} (Loom)` });
   if (merged.outcome === "conflict") {
@@ -1437,7 +1438,7 @@ async function pushToBase(ctx: EngineCtx, project: ProjectRow, spec: Spec, name:
     throw new LoomError("loom_invalid_state", `Cannot land on ${target}: ${command} ${how}. Nothing was pushed, and ${branch} is back at ${merged.before.slice(0, 12)}.${output}`);
   }
 
-  const pushed = await ctx.host.call(hostId, "push", { repo, remote, src: merged.sha, branch: base });
+  const pushed = await ctx.host.call(hostId, "push", { repo, remote, src: merged.sha, branch: base, ...gitNetwork(settings) });
   if (pushed.outcome === "unavailable") throw unavailable(pushed.message);
   return merged.sha;
 }

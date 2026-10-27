@@ -24,6 +24,8 @@ export interface RepoSettings {
   environment: EnvironmentSpec | null;
   /** The command that prepares its integration worktree; null for Loom's own git worktree. */
   worktree: WorktreeSpec | null;
+  /** How long each git fetch, ls-remote or push for it may take; null when the spec sets none, so the host's default applies. */
+  gitNetworkTimeoutMs: number | null;
 }
 
 export function isMultiRepo(spec: Spec): boolean {
@@ -32,6 +34,7 @@ export function isMultiRepo(spec: Spec): boolean {
 
 function settingsOf(spec: Spec, repo: RepoSpec | null): RepoSettings {
   const forge = repo?.forge ?? spec.merge.forge ?? { kind: "gh" };
+  const seconds = repo?.git_network_timeout_seconds ?? spec.merge.git_network_timeout_seconds;
   return {
     name: repo?.name ?? null,
     bbProjectId: repo?.project ?? null,
@@ -46,7 +49,16 @@ function settingsOf(spec: Spec, repo: RepoSpec | null): RepoSettings {
     ci: spec.merge.strategy === "pr" && (repo?.ci ?? spec.checks.ci ?? true) && followsFeedback(forge),
     environment: repo?.environment ?? spec.environment ?? null,
     worktree: repo?.worktree ?? spec.merge.worktree ?? null,
+    gitNetworkTimeoutMs: seconds === undefined ? null : seconds * 1000,
   };
+}
+
+/**
+ * The networkTimeoutMs to give a host call that fetches, runs ls-remote or pushes in this repo. Empty when the spec sets none,
+ * so the call is what it was before the setting existed.
+ */
+export function gitNetwork(settings: Pick<RepoSettings, "gitNetworkTimeoutMs">): { networkTimeoutMs?: number } {
+  return settings.gitNetworkTimeoutMs === null ? {} : { networkTimeoutMs: settings.gitNetworkTimeoutMs };
 }
 
 /** Throws for a name the spec does not list, and for null in a multi-repo spec, where every ticket names its repo. */

@@ -3,6 +3,7 @@ import { TomlError, parse } from "smol-toml";
 import { z } from "zod";
 import { unknownPlaceholders } from "./environments";
 import { plural } from "./format";
+import { GIT_NETWORK_TIMEOUT_SECONDS } from "./git-network";
 import { matchesAny } from "./scope";
 
 const MAX_ERRORS = 20;
@@ -116,6 +117,9 @@ export const ticketSpecSchema = z
   })
   .strict();
 
+// How long each git fetch, ls-remote or push for a repo may take. No default, so a spec without it hashes as it did before it existed.
+const gitNetworkTimeoutSeconds = z.number().int().min(GIT_NETWORK_TIMEOUT_SECONDS.min).max(GIT_NETWORK_TIMEOUT_SECONDS.max);
+
 export const repoSpecSchema = z
   .object({
     name: z.string().regex(/^[a-z][a-z0-9-]{0,23}$/, "must be 1-24 lowercase letters, digits or dashes, starting with a letter (for example web)"),
@@ -129,6 +133,7 @@ export const repoSpecSchema = z
     forge: forgeSchema.optional(),
     environment: environmentSchema.optional(),
     worktree: worktreeSchema.optional(),
+    git_network_timeout_seconds: gitNetworkTimeoutSeconds.optional(),
   })
   .strict();
 
@@ -181,6 +186,8 @@ export const specSchema = z
         // Unset: Loom's checksQueuedMinutes and checksNearDonePercent settings apply.
         checks_queued_minutes: z.number().int().min(0).max(1440).optional(),
         checks_near_done_percent: z.number().int().min(0).max(100).optional(),
+        // Unset: GIT_NETWORK_TIMEOUT_MS. A [[repo]] table's own value replaces it.
+        git_network_timeout_seconds: gitNetworkTimeoutSeconds.optional(),
       })
       .strict(),
     checks: z

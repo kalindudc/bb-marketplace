@@ -2,6 +2,21 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.27.0 (2026-10-27)
+
+### Added
+
+- `git_network_timeout_seconds`, on a `[[repo]]` or on `[merge]` for every repo, sets how long each git fetch, `ls-remote` or push Loom runs in that repo may take: 30 to 600 seconds, 120 when unset, as before. 0.26.1 fixed a project on World that paused every time it brought a stacked pull request up to date, by giving the fetch 150 seconds; this lets a spec raise the limit again, with a revision, if a fetch grows slower than that.
+  - It covers fetching the base branch to restack or to start a stacked ticket, reading and fetching a pull request's branch to build its commit or to merge someone else's commits, pushing, the fetches that bring a machine's work home and carry it to a worker's machine, the push-only forge's check that a commit landed, and the direct land.
+  - Each of these host calls gets twice the timeout plus 30 seconds, because some run two git network steps in a row (`ls-remote` then a fetch). With the default that is 270 seconds instead of 150.
+  - A version approved after the project started applies from Loom's next pass.
+  - `gh`, the forge's commands and the first checkout of an integration worktree keep their 2-minute limits.
+- The spec reference has a new section, Slow repositories, and its World example sets `git_network_timeout_seconds = 300`. The planner skill tells the planner to set it on a repo whose base branch takes more than about a minute to fetch.
+
+### Compatibility
+
+- No migration. A spec without the key hashes and runs as before, and the host calls carry the new `networkTimeoutMs` input only when the spec sets it.
+
 ## 0.26.1 (2026-10-27)
 
 ### Fixed

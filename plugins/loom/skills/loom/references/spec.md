@@ -39,6 +39,7 @@ A spec without `[[repo]]` tables is a single-repo project: every ticket runs in 
 | `release_workers` | boolean | `true` | pr strategy only; once a ticket's pull request is open and its worker is idle, Loom archives the worker's thread so bb frees its environment, and brings the same thread back with a new environment for a fix round or a catch-up; `false` keeps every worker and its environment until its pull request merges; a pending version may change it after approval. See [Releasing workers](#releasing-workers) |
 | `checks_queued_minutes` | integer | Loom's `checksQueuedMinutes` setting (`5`) | pr strategy only; 0 to 1440; a pending check that is still queued this many minutes after Loom first saw it, or after the push, no longer holds back the failed ones; `0` waits for queued checks too |
 | `checks_near_done_percent` | integer | Loom's `checksNearDonePercent` setting (`75`) | pr strategy only; 0 to 100; once a check has failed, a running check holds back the fix round only while it is at least this far along; a check Loom cannot measure, and every commit status, keeps holding it; `0` waits for every running check. See [When failed checks go to the worker](#when-failed-checks-go-to-the-worker) |
+| `git_network_timeout_seconds` | integer | `120` | 30 to 600; how long each git fetch, `ls-remote` or push Loom runs in the repo may take, such as fetching the base branch to bring a stacked pull request up to date, building a pull request's commit, or pushing it; a host call that runs two of them in a row gets twice this plus 30 seconds; the default of every `[[repo]]`. Raise it for a large monorepo, where fetching main takes a minute or more; a version approved after the project started applies from Loom's next pass. See [Slow repositories](#slow-repositories) |
 
 ### [merge.forge]
 
@@ -173,6 +174,14 @@ On the pull request strategy a pull request can wait days for a person, and an i
 - `merge.release_workers = false` keeps each worker and its worktree until its pull request merges, as Loom did before this setting; choose it when a worktree holds set-up state that takes long to build again and environments cost little.
 - A spec version approved after the project started may turn it on or off; it applies from Loom's next pass. A worker released before it was turned off still comes back for its pull request's next fix round.
 
+### Slow repositories
+
+Loom runs git's network steps in a repo's checkout: it fetches the base branch before it brings a stacked pull request up to date, runs `ls-remote` and may fetch the branch when it builds a pull request's commit, and pushes. Each step may take `git_network_timeout_seconds` (120 by default), and the host call around it twice that plus 30 seconds. A step that runs longer is stopped and the project pauses with the git error, or with "host plugin call … exceeded its deadline", and resuming pauses it again while the fetch stays that slow.
+
+- Time the fetch in the repo's checkout, for example `time git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main`, and set `git_network_timeout_seconds` comfortably above it on that `[[repo]]`, or on `[merge]` for a single-repo project. Fetching main of the World monorepo takes 50 to 80 seconds, so 300 leaves room.
+- To change it on a running project, propose a revision with the new value; it applies once the version is approved. The project's pull requests, workers and tickets are unchanged.
+- The setting covers git only. `gh`, the forge's commands and the first checkout of an integration worktree keep their own 2-minute limits.
+
 ### [checks]
 
 | Key | Type | Default | Rule |
@@ -249,6 +258,7 @@ Zero to 10 entries. Leave them out when the work stays in the planner thread's o
 | `forge` | table | `merge.forge` | like [merge.forge], for this repo's pull requests |
 | `environment` | table | `environment` | like [environment], for the threads Loom starts in this repo |
 | `worktree` | table | `merge.worktree` | like [merge.worktree], for this repo's integration worktree |
+| `git_network_timeout_seconds` | integer | `merge.git_network_timeout_seconds` | 30 to 600; like `merge.git_network_timeout_seconds`, for this repo's git fetches, `ls-remote` and pushes |
 
 Each repo gets its own integration branch (`merge.branch`, from the repo's `base`) and its own Loom worktree. Tickets in different repos never share a file, so their scopes never overlap.
 
@@ -471,6 +481,8 @@ summary = "Each route of the routing controller gets a configurable upstream tim
 
 [merge]
 strategy = "pr"
+# Fetching main of World takes about a minute; see Slow repositories.
+git_network_timeout_seconds = 300
 
 [merge.forge]
 kind = "command"

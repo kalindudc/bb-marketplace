@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { freshBaseOf, isMultiRepo, repoSettings } from "../src/repos";
+import { freshBaseOf, gitNetwork, isMultiRepo, repoSettings } from "../src/repos";
 import { parseSpec, type Spec } from "../src/spec";
 import { freshBase } from "../src/workers";
 import { specToml, type Doc } from "./helpers";
@@ -61,6 +61,7 @@ describe("repoSettings", () => {
       ci: false,
       environment: null,
       worktree: null,
+      gitNetworkTimeoutMs: null,
     });
   });
 
@@ -78,6 +79,7 @@ describe("repoSettings", () => {
       ci: false,
       environment: null,
       worktree: null,
+      gitNetworkTimeoutMs: null,
     });
   });
 
@@ -95,7 +97,26 @@ describe("repoSettings", () => {
       ci: false,
       environment: null,
       worktree: null,
+      gitNetworkTimeoutMs: null,
     });
+  });
+
+  it("takes the git network timeout from the repo, else from merge, else leaves it to the host, and sends it only when set", () => {
+    const set = multi((doc) => {
+      doc.merge.git_network_timeout_seconds = 180;
+      doc.repo[1].git_network_timeout_seconds = 300;
+    });
+    expect(["web", "api", "docs"].map((name) => repoSettings(set, name).gitNetworkTimeoutMs)).toEqual([180_000, 300_000, 180_000]);
+    expect(gitNetwork(repoSettings(set, "api"))).toEqual({ networkTimeoutMs: 300_000 });
+    expect(repoSettings(spec((doc) => (doc.merge.git_network_timeout_seconds = 90)), null).gitNetworkTimeoutMs).toBe(90_000);
+    expect(gitNetwork(repoSettings(multi(), "web"))).toEqual({});
+  });
+
+  it("refuses a git network timeout outside 30 to 600 seconds", () => {
+    for (const seconds of [29, 601, 1.5]) {
+      const result = parseSpec(specToml((doc) => (doc.merge.git_network_timeout_seconds = seconds)));
+      expect(result.errors.join("\n")).toContain("git_network_timeout_seconds");
+    }
   });
 
   it("lets a repo replace the top-level commands with none", () => {

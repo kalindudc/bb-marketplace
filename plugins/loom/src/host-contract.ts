@@ -1,6 +1,7 @@
 // The calls the server makes on the machine that owns a project's checkout and worktrees.
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { GIT_NETWORK_TIMEOUT_SECONDS } from "./git-network";
 
 const absPath = z.string().min(1).max(4096).regex(/^\//, "must be an absolute path");
 
@@ -13,6 +14,13 @@ const ref = z
 
 const sha = z.string().min(1).max(64);
 const commit = z.string().regex(/^[0-9a-fA-F]{4,64}$/, "must be a commit hash");
+// Optional so a host that does not know it yet still accepts what it always got: the plugin sends it only when the spec sets one.
+const networkTimeoutMs = z
+  .number()
+  .int()
+  .min(GIT_NETWORK_TIMEOUT_SECONDS.min * 1000)
+  .max(GIT_NETWORK_TIMEOUT_SECONDS.max * 1000)
+  .optional();
 // A Loom worktree's key: the project slug, or the slug and a [[repo]] name joined by a dot. It names a directory, so nothing looser.
 const worktreeKey = z.string().regex(/^[a-z][a-z0-9-]{1,39}(?:\.[a-z][a-z0-9-]{0,23})?$/, "must be a project slug, or a project slug and a repo name joined by a dot");
 const missing = z.object({ outcome: z.literal("missing"), message: z.string() }).strict();
@@ -192,6 +200,7 @@ export const hostContract = defineRpcContract({
         entries: z.array(z.union([z.object({ path: repoPath, mode: fileMode, upload: uploadId }).strict(), z.object({ path: repoPath, delete: z.literal(true) }).strict()])).max(50_000),
         refs: z.array(fullRef).max(4),
         parent: commit.optional(),
+        networkTimeoutMs,
       })
       .strict(),
     output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), sha }).strict(), z.object({ outcome: z.literal("mismatch"), tree: sha }).strict(), unavailable]),
@@ -202,7 +211,7 @@ export const hostContract = defineRpcContract({
   // project's machine keeps; carryWrite and carryDelete change the files; carryFinish commits them as the author on HEAD
   // and checks the tree, and resets to base when it differs.
   carryStart: {
-    input: z.object({ worktree: absPath, remote: ref, baseBranch: ref, base: commit, tree: commit, replaces: commit.optional() }).strict(),
+    input: z.object({ worktree: absPath, remote: ref, baseBranch: ref, base: commit, tree: commit, replaces: commit.optional(), networkTimeoutMs }).strict(),
     output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), present: z.boolean() }).strict(), unavailable]),
   },
   // Offset 0 starts the file again; a symlink comes in one range, its target as the data.
@@ -293,7 +302,7 @@ export const hostContract = defineRpcContract({
   },
   // git fetch <remote> refs/heads/<branch> in the Loom worktree, whose FETCH_HEAD is its own; sha is the fetched tip.
   fetchBranch: {
-    input: z.object({ worktree: absPath, remote: ref, branch: ref }).strict(),
+    input: z.object({ worktree: absPath, remote: ref, branch: ref, networkTimeoutMs }).strict(),
     output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), sha }).strict(), z.object({ outcome: z.literal("unavailable"), message: z.string() }).strict()]),
   },
   // The commit to push to a ticket's pull request branch, with head's tree: on the remote branch's tip when it exists, else on
@@ -301,7 +310,7 @@ export const hostContract = defineRpcContract({
   // that it merged into head's work. A tip that is neither it nor in head's history has commits from someone else, which a
   // commit with head's tree would undo, so it is reported as diverged instead.
   prCommit: {
-    input: z.object({ repo: absPath, remote: ref, branch: ref, base: ref, head: commit, message: z.string().min(1).max(8000), pushed: commit.optional() }).strict(),
+    input: z.object({ repo: absPath, remote: ref, branch: ref, base: ref, head: commit, message: z.string().min(1).max(8000), pushed: commit.optional(), networkTimeoutMs }).strict(),
     output: z.discriminatedUnion("outcome", [
       z.object({ outcome: z.literal("ok"), sha, created: z.boolean() }).strict(),
       z.object({ outcome: z.literal("diverged"), tip: sha }).strict(),
@@ -319,6 +328,7 @@ export const hostContract = defineRpcContract({
         commits: z.array(commit).max(20),
         base: z.object({ remote: ref, branch: ref }).strict().optional(),
         message: z.string().min(1).max(500),
+        networkTimeoutMs,
       })
       .strict(),
     output: z.discriminatedUnion("outcome", [
@@ -342,7 +352,7 @@ export const hostContract = defineRpcContract({
   // A ticket's pull request branch where `git push` sends it: its tip fetched and `ref` pointed at it, and the remote's
   // base branch fetched into its remote-tracking ref. mainBase is the newest base commit the tip has; missing, no branch.
   fetchTip: {
-    input: z.object({ repo: absPath, remote: ref, branch: ref, base: ref, ref: fullRef }).strict(),
+    input: z.object({ repo: absPath, remote: ref, branch: ref, base: ref, ref: fullRef, networkTimeoutMs }).strict(),
     output: z.discriminatedUnion("outcome", [
       z.object({ outcome: z.literal("ok"), sha, tree: sha, mainBase: sha.nullable() }).strict(),
       z.object({ outcome: z.literal("missing") }).strict(),
@@ -360,7 +370,7 @@ export const hostContract = defineRpcContract({
     output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok") }).strict(), unavailable]),
   },
   push: {
-    input: z.object({ repo: absPath, remote: ref, src: ref, branch: ref }).strict(),
+    input: z.object({ repo: absPath, remote: ref, src: ref, branch: ref, networkTimeoutMs }).strict(),
     output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok") }).strict(), z.object({ outcome: z.literal("unavailable"), message: z.string() }).strict()]),
   },
   prCreate: {
@@ -471,7 +481,7 @@ export const hostContract = defineRpcContract({
   },
   // Whether the remote's base branch contains sha, for the push-only forge. Leaves no FETCH_HEAD behind.
   landedOn: {
-    input: z.object({ repo: absPath, remote: ref, base: ref, sha: commit }).strict(),
+    input: z.object({ repo: absPath, remote: ref, base: ref, sha: commit, networkTimeoutMs }).strict(),
     output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), landed: z.boolean() }).strict(), unavailable]),
   },
 });

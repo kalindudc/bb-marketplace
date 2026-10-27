@@ -7,6 +7,7 @@ import { repoCheckout, type RepoCheckout } from "./checkouts";
 import type { ProjectRow, TicketRow } from "./db/store";
 import type { HostOutput } from "./host-contract";
 import { isWaking } from "./release";
+import { gitNetwork } from "./repos";
 import { EMPTY_STACK, restackOf, stacking, stackOf, type Stack } from "./stack";
 import { carryTo, headCameHome, homeBranch, isRemote, reviewedRef } from "./transport";
 import { resolveEnvironment, specOf, type EngineCtx } from "./workers";
@@ -26,7 +27,7 @@ export async function readTip(ctx: EngineCtx, project: ProjectRow, checkout: Rep
   const branch = ticket.pr_branch ?? ticket.branch;
   if (branch === null) return null;
   const { remote, base } = checkout.settings;
-  const read = await ctx.host.call(checkout.hostId, "fetchTip", { repo: checkout.path, remote, branch, base, ref: tipRef(project.slug, ticket.key) });
+  const read = await ctx.host.call(checkout.hostId, "fetchTip", { repo: checkout.path, remote, branch, base, ref: tipRef(project.slug, ticket.key), ...gitNetwork(checkout.settings) });
   if (read.outcome === "unavailable") throw new Error(read.message);
   return read.outcome === "missing" ? null : read;
 }
