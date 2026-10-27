@@ -52,12 +52,16 @@ The server that hosts pull requests. Leave it out for GitHub: Loom opens and fol
 | `state` | string | none | required with `kind = "command"`, refused otherwise; a shell command that prints the pull request's state |
 | `feedback` | string | none | `kind = "command"` only; a shell command that prints the pull request's checks and review feedback, so Loom can start fix rounds; without it Loom follows only merged and closed, and a repo on this forge must set `ci = false` (see [Relying on CI](#relying-on-ci)) |
 | `after_open` | string array | none | at most 5; shell commands run once after a pull request opens, such as one that starts CI; a failure is posted and blocks nothing; not allowed with `kind = "none"` |
+| `retarget` | string | none | `kind = "command"` only; a shell command that moves an open pull request to another base branch, which Loom does when a stacked pull request's dependency merges; without it Loom asks you to move it by hand; a failure is posted, asks you to move it by hand and blocks nothing |
+| `after_push` | string array | none | at most 5; shell commands run after each push Loom makes to an open pull request (a fix round, a catch-up with a dependency or the base branch, someone else's commits merged in, a land's push) and after Loom moves one to another base, such as one that starts CI again or marks the pull request ready once it builds on the base branch; a failure is posted and blocks nothing; not allowed with `kind = "none"` |
 
-The commands run with `/bin/sh` in the repo's checkout, with a 2-minute limit (`after_open`: 5 minutes):
+The commands run with `/bin/sh` in the repo's checkout, with a 2-minute limit (`after_open`, `after_push` and `retarget`: 5 minutes):
 
 - `open` gets `LOOM_REMOTE`, `LOOM_BASE`, `LOOM_HEAD` (the pushed branch), `LOOM_TITLE` and `LOOM_DRAFT` (`1` or `0`), and reads the body on standard input. Loom takes the last `http(s)://` URL it prints as the pull request. When one is already open for the branch, it must print that one: a restart can run it again.
 - `state` gets `LOOM_URL` and `LOOM_PR_NUMBER` (the last run of digits in the URL). The first word of its last non-empty line must be `open`, `merged` or `closed`, in any case. Merged completes the ticket; closed blocks it. It tells Loom nothing else, so on a forge with only `state` the Merge order tab cannot say whether a pull request is a draft or approved, and a merge into another branch completes the ticket.
 - `after_open` gets `LOOM_URL`, `LOOM_PR_NUMBER`, `LOOM_HEAD` and `LOOM_BASE`.
+- `retarget` gets `LOOM_URL`, `LOOM_PR_NUMBER` and `LOOM_BASE`, the branch to move the pull request to.
+- `after_push` gets `LOOM_URL`, `LOOM_PR_NUMBER`, `LOOM_HEAD` (the pull request's branch), `LOOM_SHA` (the commit it now has) and `LOOM_BASE`, the branch it builds on now: its dependency's branch while it is stacked, the repo's base branch once that dependency merged and Loom moved it. So `[ "$LOOM_BASE" != main ] || dt pr ready "$LOOM_PR_NUMBER"` marks a stacked pull request ready once it builds on main; in `after_open` too, it marks one that opens on main ready right away, since `after_open`'s `LOOM_BASE` is also the branch the pull request opened on.
 - `feedback` gets `LOOM_URL` and `LOOM_PR_NUMBER`, and prints one JSON object on its last non-empty line:
 
   ```json
@@ -488,6 +492,9 @@ git_network_timeout_seconds = 300
 kind = "command"
 open = 'dt pr create --remote "$LOOM_REMOTE" --base "$LOOM_BASE" --head "$LOOM_HEAD" --title "$LOOM_TITLE" --body "$(cat)"'
 state = 'dt pr view "$LOOM_PR_NUMBER" --json | jq -r "if .merged == true then \"merged\" else .state end"'
+retarget = 'dt pr edit "$LOOM_PR_NUMBER" --base "$LOOM_BASE"'
+# Fresh CI after every push; a stacked pull request leaves draft once it builds on main.
+after_push = ['devx ci run -b "$LOOM_HEAD" -n', '[ "$LOOM_BASE" != main ] || dt pr ready "$LOOM_PR_NUMBER"']
 feedback = '''
 set -eu
 view=$(dt pr view "$LOOM_PR_NUMBER" --remote origin --json)

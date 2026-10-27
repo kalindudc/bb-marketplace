@@ -606,8 +606,9 @@ chasing reviews no longer holds up the work that builds on them.
   fix round gives it a new one.
 - When the dependency merges, Loom merges the remote base branch into each
   ticket stacked on it the same way, and moves its pull request to the base
-  branch with `gh pr edit --base`. On another server, the ticket's post asks
-  you to change the base by hand.
+  branch with `gh pr edit --base`. On another server it runs the forge's
+  `retarget` command; without one, the ticket's post asks you to change the
+  base by hand.
 - A ticket with two or more open dependencies in its repo starts on a merge of
   their commits. Its pull request waits until all but one of them have merged,
   because a pull request builds on one branch; Loom then merges the base branch
@@ -688,7 +689,10 @@ choice is found or ask; the planner asks you the ask items in one round, and
 
 - `[merge.forge]` names the server: `kind = "command"` with an `open` and a
   `state` command for that server's CLI, plus optional `after_open` commands
-  such as one that starts CI; or `kind = "none"`, where Loom only pushes the
+  such as one that starts CI, `after_push` commands that run after each push
+  to an open pull request (to start CI again, or to mark a stacked pull
+  request ready once it builds on the base branch), and a `retarget` command
+  that moves a pull request to another base; or `kind = "none"`, where Loom only pushes the
   branch and completes the ticket when the remote's base branch contains it.
   A `feedback` command that also prints `draft`, `review` and `base` gives
   the Merge order tab the same drafts and reviews it reads from GitHub, and

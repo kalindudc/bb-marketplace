@@ -50,6 +50,12 @@ describe("the plugin's own documents", () => {
     for (const path of ["README.md", "skills/loom-plan/SKILL.md"]) expect(read(path), path).toContain("git_network_timeout_seconds");
   });
 
+  it("the spec reference and README describe the forge's retarget and after_push commands", () => {
+    const spec = read("skills/loom/references/spec.md");
+    for (const phrase of ["| `retarget` | string | none |", "| `after_push` | string array | none |", "`LOOM_SHA`", 'retarget = \'dt pr edit "$LOOM_PR_NUMBER" --base "$LOOM_BASE"\'']) expect(spec, phrase).toContain(phrase);
+    for (const phrase of ["`after_push`", "`retarget`"]) expect(read("README.md"), phrase).toContain(phrase);
+  });
+
   it("README and the loom skill describe the report and the done hook", () => {
     for (const path of ["README.md", "skills/loom/SKILL.md"]) {
       const text = read(path);

@@ -180,6 +180,80 @@ describe("catching up with the dependency", () => {
     expect(ticketOf(h, "CSV-2")).toMatchObject({ state: "pr_open", pr_base: "main" });
   });
 
+  const COMMAND_FORGE = {
+    kind: "command",
+    open: "review create",
+    state: "review state",
+    retarget: 'review edit "$LOOM_PR_NUMBER" --base "$LOOM_BASE"',
+    after_push: ['ci run --branch "$LOOM_HEAD"', '[ "$LOOM_BASE" != main ] || review ready "$LOOM_PR_NUMBER"'],
+  };
+  const onCommandForge = (doc: Doc) => {
+    doc.merge.forge = COMMAND_FORGE;
+    doc.checks.ci = false;
+  };
+
+  it("moves the pull request with the forge's retarget command, then runs after_push on the new base", async () => {
+    await stacked(onCommandForge);
+    const url = ticketOf(h, "CSV-2").pr_url!;
+    const execs = h.host.callsTo("exec").length;
+    h.host.prStates.set(URL1, "MERGED");
+    await poll();
+    h.host.remoteBase = "base001";
+    await queue();
+
+    const ticket = ticketOf(h, "CSV-2");
+    expect(ticket).toMatchObject({ state: "pr_open", pr_base: "main" });
+    const ran = h.host.callsTo("exec").slice(execs).filter((call) => call.cwd === "/repo");
+    expect(ran.map((call) => call.command)).toEqual([COMMAND_FORGE.retarget, ...COMMAND_FORGE.after_push]);
+    expect(ran[0]!.env).toEqual({ LOOM_URL: url, LOOM_PR_NUMBER: "2", LOOM_BASE: "main" });
+    expect(ran[1]!.env).toEqual({ LOOM_URL: url, LOOM_PR_NUMBER: "2", LOOM_HEAD: ticket.pr_branch, LOOM_BASE: "main", LOOM_SHA: ticket.pushed_sha });
+    expect(h.host.callsTo("prRetarget")).toEqual([]);
+    expect(outcomes("CSV-2").slice(-3)).toEqual(["restacked", "pr_pushed", "retargeted"]);
+  });
+
+  it("runs after_push after a catch-up push while the pull request still builds on its dependency's branch", async () => {
+    await stacked(onCommandForge);
+    const execs = h.host.callsTo("exec").length;
+    h.store.updateTicket(ticketOf(h, "CSV-1").id, { pushed_sha: "sq7" });
+    await queue();
+
+    const ticket = ticketOf(h, "CSV-2");
+    const hooks = h.host.callsTo("exec").slice(execs).filter((call) => call.cwd === "/repo");
+    expect(hooks.map((call) => call.command)).toEqual(COMMAND_FORGE.after_push);
+    expect(hooks[0]!.env).toMatchObject({ LOOM_BASE: ticketOf(h, "CSV-1").pr_branch, LOOM_SHA: ticket.pushed_sha });
+  });
+
+  it("gives after_open the branch a stacked pull request opened on as LOOM_BASE, not the repo's base", async () => {
+    await stacked((doc) => {
+      onCommandForge(doc);
+      doc.merge.forge.after_open = ['[ "$LOOM_BASE" != main ] || review ready "$LOOM_PR_NUMBER"'];
+    });
+    const opened = h.host.callsTo("exec").filter((call) => call.command.startsWith('[ "$LOOM_BASE"') && call.env?.LOOM_PR_NUMBER !== undefined && call.env.LOOM_SHA === undefined);
+    expect(opened.map((call) => call.env!.LOOM_BASE)).toEqual(["main", ticketOf(h, "CSV-1").pr_branch]);
+  });
+
+  it("asks the human to move the pull request when the retarget command fails, and does not pause", async () => {
+    await stacked(onCommandForge);
+    h.host.onExec = (input) => {
+      if (input.command.startsWith("review edit")) h.host.execResults.unshift({ exitCode: 2, output: "delta is down" });
+      if (input.command.startsWith("ci run")) h.host.execResults.unshift({ exitCode: 1, output: "ci refused" });
+    };
+    h.host.prStates.set(URL1, "MERGED");
+    await poll();
+    h.host.remoteBase = "base001";
+    await queue();
+
+    expect(project().state).toBe("running");
+    expect(ticketOf(h, "CSV-2").state).toBe("pr_open");
+    const posts = h.store.posts(ticketOf(h, "CSV-2").id).filter((post) => post.kind === "merge").slice(-2);
+    expect(posts[0]!.body).toContain("but the retarget command `review edit");
+    expect(posts[0]!.body).toContain("delta is down");
+    expect(posts[0]!.body).toContain("Change its base to main by hand.");
+    expect(JSON.parse(posts[0]!.data_json!)).toMatchObject({ outcome: "retarget_failed", base: "main" });
+    expect(posts[1]!.body).toContain('The after_push command `ci run --branch "$LOOM_HEAD"` failed (exit 1)');
+    expect(JSON.parse(posts[1]!.data_json!)).toMatchObject({ outcome: "after_push_failed" });
+  });
+
   it("sends a conflict back to the worker with the branch to merge, and pushes nothing", async () => {
     const worker = await stacked();
     h.store.updateTicket(ticketOf(h, "CSV-1").id, { pushed_sha: "sq7" });

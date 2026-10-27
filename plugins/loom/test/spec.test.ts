@@ -541,6 +541,15 @@ describe("forges, integration worktrees and environments", () => {
     ]);
     expect(run((doc) => (doc.merge.forge = { kind: "gh", open: "x" })).errors).toEqual(['merge.forge.open: only kind = "command" runs it, and merge.forge.kind is "gh". Remove it, or set kind = "command".']);
     expect(run((doc) => (doc.merge.forge = { kind: "none", after_open: ["x"] })).errors).toEqual([expect.stringMatching(/^merge\.forge\.after_open: kind = "none" opens no pull request/u)]);
+    expect(run((doc) => (doc.merge.forge = { kind: "none", after_push: ["x"] })).errors).toEqual([expect.stringMatching(/^merge\.forge\.after_push: kind = "none" opens no pull request/u)]);
+    expect(run((doc) => (doc.merge.forge = { kind: "gh", retarget: "x" })).errors).toEqual(['merge.forge.retarget: only kind = "command" runs it, and merge.forge.kind is "gh". Remove it, or set kind = "command".']);
+  });
+
+  it("parses a command forge's retarget command and after_push commands, and gh's after_push", () => {
+    const command = run((doc) => (doc.merge.forge = { kind: "command", open: "review create", state: "review state", retarget: "review edit", after_push: ["ci run", "review ready"] }));
+    expect(command.errors).toEqual([]);
+    expect(command.spec!.merge.forge).toMatchObject({ retarget: "review edit", after_push: ["ci run", "review ready"] });
+    expect(run((doc) => (doc.merge.forge = { kind: "gh", after_push: ["ci run"] })).errors).toEqual([]);
   });
 
   it("refuses a worktree on the pull request strategy, an unknown placeholder, and malformed ids", () => {

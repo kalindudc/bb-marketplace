@@ -163,7 +163,7 @@ interface PostData {
   outside?: string[];
   review?: number;
   verdict?: string;
-  outcome?: MergeItem["outcome"] | "pr_text" | "pr_feedback" | "after_open_failed";
+  outcome?: MergeItem["outcome"] | "pr_text" | "pr_feedback" | "after_open_failed" | "after_push_failed";
   branch?: string;
   patch?: Record<string, unknown>;
   by?: "worker" | "loom";
@@ -341,7 +341,7 @@ export function ticketActivity(a: { state: TicketState; posts: readonly PostRow[
           if (data.outcome === "pr_feedback") {
             return [{ type: "pr_feedback", postId: post.id, at: post.at, round: data.round ?? 0, overLimit: data.overLimit === true, counted: data.counted ?? null, human: data.human === true, url: data.url ?? null, checks: data.checks ?? [], items: data.items ?? [], ignored: data.ignored ?? { bots: 0, own: 0 } }];
           }
-          const outcome = data.outcome === "after_open_failed" ? null : (data.outcome ?? null);
+          const outcome = data.outcome === "after_open_failed" || data.outcome === "after_push_failed" ? null : (data.outcome ?? null);
           return [{ type: "merge", postId: post.id, at: post.at, outcome, into: data.branch ?? null, running: false, steps: (mergeRuns.get(post.id) ?? []).map(runStep) }];
         }
         case "note": {

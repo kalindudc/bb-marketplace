@@ -489,6 +489,9 @@ async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
     const data = settings.forge.kind === "none" ? { pushed: where } : catchUp ? { url: current.pr_url, restack: true } : { url: current.pr_url, fixRound: current.pr_rounds };
     const posts = [post, moved, asked].filter((each): each is MergePost => each !== null);
     toPrOpen(ctx, current.id, { ...recorded, ...(moved === null ? {} : { pr_base: prBase }) }, posts, data);
+    if (current.pr_url !== null && (pushedNow || moved !== null)) {
+      await afterPush(ctx, { hostId, repo, settings, head: branch, base: prBase, sha: src, url: current.pr_url, projectId: project.id, ticketId: current.id });
+    }
     return;
   }
 
@@ -498,7 +501,7 @@ async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
   if (opened.outcome === "unavailable") throw new Unavailable(opened.message);
   const on = prBase === base ? "" : ` on ${prBase}`;
   toPrOpen(ctx, current.id, { ...recorded, pr_url: opened.url, pr_base: prBase, pr_meta_json: null }, { kind: "merge", body: `Opened pull request ${opened.url}${on}${commits}.`, data: { outcome: "pr_opened", url: opened.url, sha: src, base: prBase } }, { url: opened.url });
-  await afterOpen(ctx, { hostId, repo, settings, head: branch, url: opened.url, projectId: project.id, ticketId: current.id });
+  await afterOpen(ctx, { hostId, repo, settings, head: branch, base: prBase, url: opened.url, projectId: project.id, ticketId: current.id });
 }
 
 /** Whether the queue took this ticket from pr_open to catch up: its move to merging says so. */
@@ -809,7 +812,14 @@ async function checksOnMerge(
  */
 async function retarget(ctx: EngineCtx, a: { hostId: string; repo: string; settings: RepoSettings; ticket: TicketRow; base: string }): Promise<MergePost> {
   const url = a.ticket.pr_url!;
-  if (a.settings.forge.kind !== "gh") {
+  const { forge } = a.settings;
+  if (forge.kind === "command" && forge.retarget !== undefined) {
+    // A command forge's retarget that fails asks the human instead of pausing: the push already stands.
+    const problem = await runForgeCommand(ctx, { hostId: a.hostId, repo: a.repo, command: forge.retarget, env: { LOOM_URL: url, LOOM_PR_NUMBER: prNumber(url), LOOM_BASE: a.base } });
+    if (problem === null) return { kind: "merge", body: `Moved the pull request ${url} to ${a.base}.`, data: { outcome: "retargeted", url, base: a.base } };
+    return { kind: "merge", body: `The pull request ${url} now builds on ${a.base}, but the retarget command \`${forge.retarget}\` ${problem}\n\nChange its base to ${a.base} by hand.`, data: { outcome: "retarget_failed", url, base: a.base } };
+  }
+  if (forge.kind !== "gh") {
     return { kind: "merge", body: `The pull request ${url} now builds on ${a.base}. Loom cannot change its base through this forge, so change it to ${a.base} by hand.`, data: { outcome: "retarget_by_hand", url, base: a.base } };
   }
   const moved = await ctx.host.call(a.hostId, "prRetarget", { repo: a.repo, url, base: a.base });
@@ -893,24 +903,44 @@ async function blockPullRequest(ctx: EngineCtx, ticket: TicketRow, reason: strin
 const openForge = (forge: ForgeSpec): HostInput<"prCreate">["forge"] => (forge.kind === "command" ? { kind: "command", open: forge.open! } : { kind: "gh" });
 const stateForge = (forge: ForgeSpec): HostInput<"prState">["forge"] => (forge.kind === "command" ? { kind: "command", state: forge.state! } : { kind: "gh" });
 
-/** Runs the forge's after_open commands once a pull request is open. A failure is posted and blocks nothing: the pull request stays open. */
-async function afterOpen(ctx: EngineCtx, a: { hostId: string; repo: string; settings: RepoSettings; head: string; url: string; projectId: number; ticketId: number | null }): Promise<void> {
-  for (const command of a.settings.forge.after_open ?? []) {
-    let problem: string | null;
-    try {
-      const env = { LOOM_URL: a.url, LOOM_PR_NUMBER: prNumber(a.url), LOOM_HEAD: a.head, LOOM_BASE: a.settings.base };
-      const result = await ctx.host.call(a.hostId, "exec", { cwd: a.repo, command, timeoutMs: AFTER_OPEN_MS, env });
-      const output = result.output.trim() === "" ? "" : `\n\n${clip(result.output.slice(-2000), 2000)}`;
-      problem = result.timedOut ? `timed out after ${AFTER_OPEN_MS / 60_000} minutes${output}` : result.exitCode !== 0 ? `failed (exit ${result.exitCode})${output}` : null;
-    } catch (error) {
-      problem = `could not run: ${errText(error)}`;
-    }
+/** Runs one forge command in the repo's checkout; null when it exited 0, else what went wrong, with its output's tail. */
+async function runForgeCommand(ctx: EngineCtx, a: { hostId: string; repo: string; command: string; env: Record<string, string> }): Promise<string | null> {
+  try {
+    const result = await ctx.host.call(a.hostId, "exec", { cwd: a.repo, command: a.command, timeoutMs: AFTER_OPEN_MS, env: a.env });
+    const output = result.output.trim() === "" ? "" : `\n\n${clip(result.output.slice(-2000), 2000)}`;
+    return result.timedOut ? `timed out after ${AFTER_OPEN_MS / 60_000} minutes${output}` : result.exitCode !== 0 ? `failed (exit ${result.exitCode})${output}` : null;
+  } catch (error) {
+    return `could not run: ${errText(error)}`;
+  }
+}
+
+/** Runs the forge's after_open commands once a pull request is open; LOOM_BASE is the branch it opened on. A failure is posted and blocks nothing: the pull request stays open. */
+async function afterOpen(ctx: EngineCtx, a: { hostId: string; repo: string; settings: RepoSettings; head: string; base: string; url: string; projectId: number; ticketId: number | null }): Promise<void> {
+  const env = { LOOM_URL: a.url, LOOM_PR_NUMBER: prNumber(a.url), LOOM_HEAD: a.head, LOOM_BASE: a.base };
+  await forgeHooks(ctx, { ...a, commands: a.settings.forge.after_open ?? [], env, key: "after_open", done: `The pull request ${a.url} is open; nothing else changed.` });
+}
+
+/**
+ * Runs the forge's after_push commands after Loom pushed to an open pull request, or moved one to another base, such as to
+ * start its CI again or mark it ready. LOOM_BASE is the branch it builds on now. A failure is posted and blocks nothing.
+ */
+async function afterPush(ctx: EngineCtx, a: { hostId: string; repo: string; settings: RepoSettings; head: string; base: string; sha: string; url: string; projectId: number; ticketId: number | null }): Promise<void> {
+  const env = { LOOM_URL: a.url, LOOM_PR_NUMBER: prNumber(a.url), LOOM_HEAD: a.head, LOOM_BASE: a.base, LOOM_SHA: a.sha };
+  await forgeHooks(ctx, { ...a, commands: a.settings.forge.after_push ?? [], env, key: "after_push", done: `Loom's push to ${a.url} stands; nothing else changed.` });
+}
+
+async function forgeHooks(
+  ctx: EngineCtx,
+  a: { hostId: string; repo: string; url: string; projectId: number; ticketId: number | null; commands: readonly string[]; env: Record<string, string>; key: "after_open" | "after_push"; done: string },
+): Promise<void> {
+  for (const command of a.commands) {
+    const problem = await runForgeCommand(ctx, { hostId: a.hostId, repo: a.repo, command, env: a.env });
     if (problem === null) continue;
-    const body = `The after_open command \`${command}\` ${problem}\n\nThe pull request ${a.url} is open; nothing else changed.`;
-    const data = { outcome: "after_open_failed", command, url: a.url };
+    const body = `The ${a.key} command \`${command}\` ${problem}\n\n${a.done}`;
+    const data = { outcome: `${a.key}_failed`, command, url: a.url };
     // A land's pull request belongs to no ticket, so its failure is an event and a log line instead of a post.
     if (a.ticketId === null) {
-      ctx.store.event(a.projectId, null, "project.after_open_failed", LOOM_ACTOR, data);
+      ctx.store.event(a.projectId, null, `project.${a.key}_failed`, LOOM_ACTOR, data);
       ctx.bb.log("warn", body);
     } else {
       ctx.store.addPost({ project_id: a.projectId, ticket_id: a.ticketId, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "merge", body, data_json: JSON.stringify(data) });
@@ -1398,10 +1428,13 @@ async function pushIntegration(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
   const pushed = await ctx.host.call(hostId, "push", { repo, remote, src: head, branch: settings.branch!, ...gitNetwork(settings) });
   if (pushed.outcome === "unavailable") throw unavailable(pushed.message);
   if (settings.forge.kind === "none") return { sha: head, url: null };
-  if (open !== null) return { sha: head, url: open };
+  if (open !== null) {
+    await afterPush(ctx, { hostId, repo, settings, head: settings.branch!, base, sha: head, url: open, projectId: project.id, ticketId: null });
+    return { sha: head, url: open };
+  }
   const created = await ctx.host.call(hostId, "prCreate", { repo, remote, base, head: settings.branch!, title: clip(a.title ?? project.name, 256), body, draft: spec.merge.draft && !a.ready, forge: openForge(settings.forge) });
   if (created.outcome === "unavailable") throw unavailable(created.message);
-  await afterOpen(ctx, { hostId, repo, settings, head: settings.branch!, url: created.url, projectId: project.id, ticketId: null });
+  await afterOpen(ctx, { hostId, repo, settings, head: settings.branch!, base, url: created.url, projectId: project.id, ticketId: null });
   return { sha: head, url: created.url };
 }
 

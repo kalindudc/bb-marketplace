@@ -2,6 +2,24 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.28.0 (2026-10-27)
+
+### Added
+
+- `after_push` on `[merge.forge]`, or a `[[repo]]`'s `forge`: up to 5 shell commands Loom runs after each push to an open pull request, and after it moves one to another base. A push here is a fix round, a catch-up with a dependency or the base branch, someone else's commits merged in, or a land's push. Before, only `after_open` ran, once, so a forge whose CI does not start by itself on a draft, such as Delta, had no CI on Loom's later pushes until someone started it.
+  - The commands get `LOOM_URL`, `LOOM_PR_NUMBER`, `LOOM_HEAD`, `LOOM_SHA` (the commit the pull request now has) and `LOOM_BASE`, the branch it builds on now: its dependency's branch while it is stacked, the base branch once Loom moved it there. So `[ "$LOOM_BASE" != main ] || dt pr ready "$LOOM_PR_NUMBER"` marks a stacked pull request ready once its dependency merged.
+  - A failure is posted on the ticket and blocks nothing, as `after_open`'s does. `kind = "none"` refuses it.
+- `retarget` on a command forge: a shell command that moves an open pull request to another base, with `LOOM_URL`, `LOOM_PR_NUMBER` and `LOOM_BASE`. Loom runs it when a stacked pull request's dependency merges, as it runs `gh pr edit --base` on GitHub. Before, a command forge's ticket posted that the human must change the base by hand; that still happens without the command, or when it fails, and a failure does not pause the project. Only `kind = "command"` accepts it.
+- The spec reference's World example sets `retarget = 'dt pr edit …'` and an `after_push` that starts CI and marks a pull request ready once it builds on main.
+
+### Changed
+
+- `after_open`'s `LOOM_BASE` is now the branch the pull request opened on. For a stacked pull request that is its dependency's branch; before, it was always the repo's base branch.
+
+### Compatibility
+
+- No migration. A spec without the new keys runs as before.
+
 ## 0.27.0 (2026-10-27)
 
 ### Added

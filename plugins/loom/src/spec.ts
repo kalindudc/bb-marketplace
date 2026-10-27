@@ -57,7 +57,11 @@ export const forgeSchema = z
     open: command.optional(),
     state: command.optional(),
     feedback: command.optional(),
+    // Moves an open pull request to another base branch; gh does it itself.
+    retarget: command.optional(),
     after_open: z.array(command).max(5).optional(),
+    // Run after each push to an open pull request, and after Loom moves one to another base.
+    after_push: z.array(command).max(5).optional(),
   })
   .strict();
 
@@ -550,11 +554,13 @@ function forgeErrors(forge: ForgeSpec | undefined, at: string): string[] {
     }
     return errors;
   }
-  for (const key of ["open", "state", "feedback"] as const) {
+  for (const key of ["open", "state", "feedback", "retarget"] as const) {
     if (forge[key] !== undefined) errors.push(`${at}.${key}: only kind = "command" runs it, and ${at}.kind is "${forge.kind}". Remove it, or set kind = "command".`);
   }
-  if (forge.kind === "none" && forge.after_open !== undefined) {
-    errors.push(`${at}.after_open: kind = "none" opens no pull request, so nothing would run these. Remove after_open, or use kind = "gh" or "command".`);
+  for (const key of ["after_open", "after_push"] as const) {
+    if (forge.kind === "none" && forge[key] !== undefined) {
+      errors.push(`${at}.${key}: kind = "none" opens no pull request, so nothing would run these. Remove ${key}, or use kind = "gh" or "command".`);
+    }
   }
   return errors;
 }
