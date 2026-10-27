@@ -2,6 +2,17 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.26.1 (2026-10-27)
+
+### Fixed
+
+- Bringing a stacked pull request up to date with the base branch no longer pauses the project on a large repository. The host call that builds the stacked commit fetches the base branch first, but it had the 30-second deadline of a local git call. Fetching main of the World monorepo takes 50 to 80 seconds, so once a lower pull request merged, every attempt to restack the one above it ran out of time and paused the project with "host plugin call … exceeded its deadline". Resuming paused it again.
+  - `stackBase`, `fetchTip` and `prCommit` now get the 150-second network deadline, like the other host calls that fetch, run `ls-remote` or push. `stackBase` and `fetchTip` fetch the base branch, and `prCommit` runs `ls-remote` and may fetch the pull request's branch.
+
+### Compatibility
+
+- No migration.
+
 ## 0.26.0 (2026-10-27)
 
 ### Added

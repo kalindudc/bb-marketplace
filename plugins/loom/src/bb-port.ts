@@ -285,10 +285,11 @@ export function createBbPort(bb: BbPluginApi): BbPort {
 const HOST_CALL_MS = 30_000;
 const NETWORK_CALL_MS = 150_000;
 // prFeedback runs gh or a forge command for up to 2 minutes, so the 30-second default would cut a slow read short and pause the project.
-// importCommit and carryStart may fetch a base, and exportChanges reads every changed file of a large commit.
-const NETWORK_METHODS: readonly HostMethod[] = ["fetchBranch", "push", "prCreate", "prState", "prFeedback", "prBatch", "ensureWorktree", "ghStatus", "landedOn", "exportChanges", "importCommit", "carryStart"];
+// importCommit, carryStart, stackBase and fetchTip may fetch a base, prCommit runs ls-remote and may fetch the branch, and
+// exportChanges reads every changed file of a large commit. Fetching main of a monorepo such as World takes about a minute.
+const NETWORK_METHODS: readonly HostMethod[] = ["fetchBranch", "push", "prCreate", "prState", "prFeedback", "prBatch", "ensureWorktree", "ghStatus", "landedOn", "exportChanges", "importCommit", "carryStart", "stackBase", "fetchTip", "prCommit"];
 
-/** The host entry client. Git calls get 30 s; fetches, pushes, gh and ensureWorktree (a first checkout) get 150 s; exec gets its own timeout plus 30 s, under the 30-minute host call cap. */
+/** The host entry client. Git calls get 30 s; calls that fetch, ls-remote, push or run gh, and ensureWorktree (a first checkout), get 150 s; exec gets its own timeout plus 30 s, under the 30-minute host call cap. */
 export function createHostPort(bb: BbPluginApi): HostPort {
   const client = bb.hosts.experimental_client({ contract: hostContract });
   return {

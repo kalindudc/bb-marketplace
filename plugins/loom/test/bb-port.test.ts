@@ -316,6 +316,20 @@ describe("latestSystemError", () => {
 });
 
 describe("createHostPort", () => {
+  it("gives the calls that fetch a base or read the remote branch the network deadline, since fetching main of a monorepo takes about a minute", async () => {
+    const calls: Array<{ method: string; timeoutMs: number }> = [];
+    const bb = { hosts: { experimental_client: () => ({ call: async (method: string, _input: unknown, opts: { timeoutMs: number }) => (calls.push({ method, timeoutMs: opts.timeoutMs }), {}) }) } } as unknown as Parameters<typeof createHostPort>[0];
+    const port = createHostPort(bb);
+    const input = {} as never;
+    for (const method of ["stackBase", "fetchTip", "prCommit", "mergeOnto"] as const) await port.call("host_1", method, input);
+    expect(calls).toEqual([
+      { method: "stackBase", timeoutMs: 150_000 },
+      { method: "fetchTip", timeoutMs: 150_000 },
+      { method: "prCommit", timeoutMs: 150_000 },
+      { method: "mergeOnto", timeoutMs: 30_000 },
+    ]);
+  });
+
   it("gives pull request reads the network deadline, since gh and a forge command may take 2 minutes", async () => {
     const calls: Array<{ method: string; timeoutMs: number }> = [];
     const bb = { hosts: { experimental_client: () => ({ call: async (method: string, _input: unknown, opts: { timeoutMs: number }) => (calls.push({ method, timeoutMs: opts.timeoutMs }), {}) }) } } as unknown as Parameters<typeof createHostPort>[0];
