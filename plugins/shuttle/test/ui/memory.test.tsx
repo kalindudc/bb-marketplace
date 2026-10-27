@@ -129,3 +129,18 @@ describe("where the page was left", () => {
     expect(beside.scrollTop).toBe(300);
   });
 });
+
+describe("which PR each thread's tab shows in full", () => {
+  it("keeps the 50 threads opened last and forgets a thread sent back to its list", async () => {
+    const { panelPrs, rememberPanelPr } = await import("../../src/ui/prefs");
+    for (let i = 0; i < 55; i++) rememberPanelPr(`thr_${i}`, `github:a/b#${i}`);
+    const kept = Object.keys(panelPrs.get());
+    expect(kept).toHaveLength(50);
+    expect(kept[0]).toBe("thr_5");
+    rememberPanelPr("thr_5", "github:a/b#99");
+    expect(Object.keys(panelPrs.get()).at(-1)).toBe("thr_5");
+    rememberPanelPr("thr_5", null);
+    expect(panelPrs.get()).not.toHaveProperty("thr_5");
+    expect(JSON.parse(window.localStorage.getItem("bb-plugin-shuttle:panel-pr")!)).toEqual(panelPrs.get());
+  });
+});

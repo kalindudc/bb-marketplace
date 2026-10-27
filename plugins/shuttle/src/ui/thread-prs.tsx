@@ -6,6 +6,7 @@ import type { PrView } from "../contract";
 import type { Tone } from "./common";
 import { useShuttleQuery } from "./data";
 import { plural, shortKey } from "./format";
+import { rememberPanelPr } from "./prefs";
 import { useOpenShuttleTab } from "./tab";
 
 interface Attention {
@@ -37,6 +38,15 @@ function useThreadPrs(threadId: string): PrView[] {
   return useShuttleQuery("threadPrs", { threadId }).data?.prs ?? [];
 }
 
+/** Opens the Shuttle tab on one PR in full. */
+function useOpenPr(threadId: string) {
+  const openTab = useOpenShuttleTab();
+  return (pr: PrView) => {
+    rememberPanelPr(threadId, pr.key);
+    openTab(threadId);
+  };
+}
+
 function ChecksGlyph({ checks }: { checks: PrView["checks"] }) {
   if (checks === "passed") return <Icon name="Check" aria-label="Checks pass" className="size-3.5 text-success" />;
   if (checks === "failed") return <Icon name="X" aria-label="Checks fail" className="size-3.5 text-destructive" />;
@@ -64,7 +74,7 @@ const contextOf = (pr: PrView) => {
 /** The thread Info tab's "Pull requests": every PR linked to the thread. */
 export function PullRequestsInfo({ threadId }: ExperimentalThreadInfoProps) {
   const prs = useThreadPrs(threadId);
-  const openTab = useOpenShuttleTab();
+  const openPr = useOpenPr(threadId);
   if (prs.length === 0) return null;
   return (
     <InfoSection label="Pull requests" count={prs.length}>
@@ -76,7 +86,7 @@ export function PullRequestsInfo({ threadId }: ExperimentalThreadInfoProps) {
           title={pr.title}
           context={contextOf(pr)}
           trailing={<Trailing pr={pr} threadId={threadId} />}
-          onSelect={() => openTab(threadId)}
+          onSelect={() => openPr(pr)}
         />
       )} />
     </InfoSection>
@@ -111,14 +121,14 @@ export function PullRequestsSummary({ threadId, isExpanded, onToggle }: Experime
 
 export function PullRequestsDetails({ threadId }: ExperimentalThreadContextSegmentProps) {
   const prs = useThreadPrs(threadId);
-  const openTab = useOpenShuttleTab();
+  const openPr = useOpenPr(threadId);
   return (
     <ul aria-label="Linked pull requests" className="flex flex-col py-1">
       {prs.map((pr) => {
         const attention = attentionOf(pr);
         return (
           <li key={pr.key} data-pr={pr.key}>
-            <button type="button" onClick={() => openTab(threadId)} title={pr.title}
+            <button type="button" onClick={() => openPr(pr)} title={pr.title}
               className="flex w-full cursor-pointer items-center gap-2 rounded px-2 py-1 text-left text-xs hover:bg-accent">
               <span className="shrink-0 font-mono">{shortKey(pr)}</span>
               <span className="min-w-0 flex-1 truncate text-muted-foreground">{pr.title}</span>

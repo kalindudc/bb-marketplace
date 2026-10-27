@@ -13,7 +13,7 @@ import { insights, INSIGHTS_SINCE, snapshotCounts } from "./insights";
 import { agentActive, feedbackSignature, phaseOf } from "./next";
 import { errText, ShuttleError, type Ctx } from "./ctx";
 import type { EventRow, ServerRow, Store, SyncRunRow } from "./db/store";
-import type { BbPort, ProjectInfo } from "./ports";
+import { THREAD_SCAN, type BbPort, type ProjectInfo } from "./ports";
 import { fetchPr, linkPr, lookup, rememberThread, requirePr, setWatch, shortKey, unlinkPr } from "./prs";
 import { parseKey } from "./keys";
 import { matchProject } from "./projects";
@@ -28,6 +28,8 @@ import { editOptions, editPr } from "./edit";
 import { deliver, pollWatches } from "./watch";
 
 const PROJECTS_TTL_MS = 5 * 60_000;
+/** The link and agent dialogs list the most recent threads; a search reaches the rest. */
+const THREAD_OPTIONS = 200;
 const DAY_MS = 86_400_000;
 /** How far back the Sync tab's marks go. */
 const HISTORY_WINDOW_MS = 3 * 3_600_000;
@@ -515,12 +517,12 @@ export class Shuttle implements Ctx {
   }
 
   async threads(query?: string): Promise<ThreadOption[]> {
-    const threads = await this.port.listThreads(200);
+    const threads = await this.port.listThreads(THREAD_SCAN);
     const q = query?.trim().toLowerCase();
     return threads
       .filter((t) => !t.archived && (!q || t.title.toLowerCase().includes(q)))
       .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
-      .slice(0, 50)
+      .slice(0, THREAD_OPTIONS)
       .map((t) => ({ id: t.id, title: t.title, projectId: t.projectId, status: t.status, updatedAt: t.updatedAt }));
   }
 
@@ -642,13 +644,14 @@ export class Shuttle implements Ctx {
 
   /** Titles and states of linked threads: bb's list has whether one waits on the user, a single read does not. */
   private async refreshThreadTitles(): Promise<void> {
-    let listed = new Map<string, Awaited<ReturnType<BbPort["listThreads"]>>[number]>();
+    const linked = this.store.linkedThreadIds().slice(0, 100);
+    let listed = new Map<string, Awaited<ReturnType<BbPort["threadsById"]>>[number]>();
     try {
-      listed = new Map((await this.port.listThreads(200)).map((t) => [t.id, t]));
+      listed = new Map((await this.port.threadsById(linked)).map((t) => [t.id, t]));
     } catch {
       // Each linked thread is read on its own below.
     }
-    for (const threadId of this.store.linkedThreadIds().slice(0, 100)) {
+    for (const threadId of linked) {
       try {
         const thread = listed.get(threadId) ?? (await this.port.getThread(threadId));
         if (thread) this.store.saveThread(thread.id, thread.title, thread.archived, { status: thread.status, waiting: thread.waiting });

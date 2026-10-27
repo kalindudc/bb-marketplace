@@ -4,7 +4,7 @@ import type { WatchMode } from "./config";
 import type { AgentMode, AgentTarget } from "./contract";
 import { errText, ShuttleError, type Ctx } from "./ctx";
 import type { PrRow } from "./db/store";
-import type { ThreadInfo } from "./ports";
+import { THREAD_SCAN, type ThreadInfo } from "./ports";
 import { exactProject } from "./projects";
 import { linkPr, requirePr, setWatch, shortKey } from "./prs";
 import { startOwnerThread } from "./reviews";
@@ -104,7 +104,7 @@ export async function findOpener(ctx: Ctx, pr: PrRow, threads: () => Promise<Thr
 export async function runAutoAgent(ctx: Ctx, signal?: AbortSignal): Promise<Array<{ key: string; change: AgentChange }>> {
   const on = ctx.settings().autoAgent && !ctx.settings().pauseAutomations;
   let listed: ThreadInfo[] | null = null;
-  const threads = async () => (listed ??= await ctx.port.listThreads(200));
+  const threads = async () => (listed ??= await ctx.port.listThreads(THREAD_SCAN));
   const out: Array<{ key: string; change: AgentChange }> = [];
   const enabled = new Set(ctx.config().servers.filter((s) => s.enabled).map((s) => s.id));
   for (const pr of ctx.store.allPrs()) {

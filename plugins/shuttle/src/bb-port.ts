@@ -3,6 +3,8 @@ import type { BbPort, SpawnArgs, ThreadInfo } from "./ports";
 
 type ThreadSpawnArgs = Parameters<BbPluginApi["sdk"]["threads"]["spawn"]>[0];
 
+const THREAD_PAGE = 500;
+
 const isNotFound = (error: unknown) => /\b404\b|not[ _]found/iu.test(error instanceof Error ? error.message : String(error));
 
 type ThreadLike = {
@@ -113,7 +115,20 @@ export function createBbPort(bb: BbPluginApi, setSettings: BbPort["setSettings"]
       }
     },
     async listThreads(limit) {
-      const threads = (await bb.sdk.threads.list({ limit })) as ThreadLike[];
+      // Without `archived: false` bb mixes in archived threads. bb orders by project before date, so read every page:
+      // a single page could leave out the most recent threads.
+      const out: ThreadInfo[] = [];
+      for (let offset = 0; out.length < limit; offset += THREAD_PAGE) {
+        const size = Math.min(THREAD_PAGE, limit - out.length);
+        const threads = (await bb.sdk.threads.list({ archived: false, limit: size, offset })) as ThreadLike[];
+        out.push(...threads.map(toThread));
+        if (threads.length < size) break;
+      }
+      return out;
+    },
+    async threadsById(threadIds) {
+      if (threadIds.length === 0) return [];
+      const threads = (await bb.sdk.threads.list({ threadIds, limit: threadIds.length })) as ThreadLike[];
       return threads.map(toThread);
     },
     async listProjects() {

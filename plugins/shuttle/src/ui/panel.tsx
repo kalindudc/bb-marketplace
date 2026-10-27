@@ -5,15 +5,21 @@ import {
   type ExperimentalThreadActionTabProps,
 } from "@get-bb/plugin-sdk/app";
 import type { PrView } from "../contract";
-import { BUTTON, BUTTON_GHOST, CARD, ErrorNote, HEADING, Pill, Segmented, ServerBadge } from "./common";
+import { ActionsProvider } from "./actions";
+import { BUTTON, BUTTON_GHOST, BUTTON_PRIMARY, CARD, ErrorNote, HEADING, ICON_GHOST, Pill, Segmented, ServerBadge } from "./common";
 import { AGENT_MODE_META, PANEL_PATH, ROLE_LABELS } from "./constants";
-import { messageOf, openExternal, useShuttleMutation, useShuttleQuery } from "./data";
+import { messageOf, openExternal, threadsOf, useShuttleMutation, useShuttleQuery } from "./data";
+import { PrDetail } from "./detail";
 import { ago, plural, shortKey } from "./format";
 import { LookupInput } from "./header";
 import { AgentPill, ChecksPill, isLive, MyReviewPill, ReviewPill, StalePill, StatePill } from "./pills";
+import { panelPrs, rememberPanelPr } from "./prefs";
+import { useStored } from "./remember";
 import { formatRoute } from "./route";
+import { useSurface } from "./surface";
 import { GITHUB_PR_STATUS, githubPrStatus } from "./tab";
-import { usePrWrites, type PrWrites } from "./writes";
+import { useViewport } from "./viewport";
+import type { PrWrites } from "./writes";
 
 const MODES = (["fix", "notify", "off"] as const).map((value) => ({ value, label: AGENT_MODE_META[value].label }));
 
@@ -96,11 +102,12 @@ function AgentBlock({ pr, threadId, writes }: { pr: PrView; threadId: string; wr
   );
 }
 
-function PrCard({ pr, threadId, busy, writes, onUnlink }: {
+function PrCard({ pr, threadId, busy, writes, onView, onUnlink }: {
   pr: PrView;
   threadId: string;
   busy: boolean;
   writes: PrWrites;
+  onView(pr: PrView): void;
   onUnlink(pr: PrView): void;
 }) {
   const navigate = useBbNavigate();
@@ -116,7 +123,9 @@ function PrCard({ pr, threadId, busy, writes, onUnlink }: {
         <span className="min-w-0 truncate font-mono text-xs">{shortKey(pr)}</span>
         {role !== null && <Pill>{role}</Pill>}
       </div>
-      <div className="my-1.5 text-sm font-semibold leading-snug">{pr.title}</div>
+      <button type="button" className="my-1.5 block w-full cursor-pointer text-left text-sm font-semibold leading-snug hover:underline" title="View the whole PR here" onClick={() => onView(pr)}>
+        {pr.title}
+      </button>
       <div className="flex flex-wrap gap-1">
         <StatePill state={pr.state} />
         <ChecksPill pr={pr} />
@@ -132,7 +141,11 @@ function PrCard({ pr, threadId, busy, writes, onUnlink }: {
       )}
       <AgentBlock pr={pr} threadId={threadId} writes={writes} />
       <div className="mt-2.5 flex flex-wrap gap-1.5">
-        <button type="button" className={BUTTON} onClick={() => openExternal(navigate, pr.url)}>
+        <button type="button" className={BUTTON_PRIMARY} title="Its description, conversation, checks and actions, here in the tab" onClick={() => onView(pr)}>
+          <Icon name="PanelRightOpen" fallback="GitPullRequest" className="size-3.5" aria-hidden />
+          View PR
+        </button>
+        <button type="button" className={BUTTON} title={`Open on ${pr.serverName}`} onClick={() => openExternal(navigate, pr.url)}>
           <Icon name="ExternalLink" className="size-3.5" aria-hidden />
           Open
         </button>
@@ -146,17 +159,44 @@ function PrCard({ pr, threadId, busy, writes, onUnlink }: {
   );
 }
 
-/** The Shuttle tab beside a thread: every PR linked to it, its agent, what Shuttle sent here, and ways to link another. */
-export function ShuttlePanel({ threadId }: ExperimentalThreadActionTabProps) {
-  const data = useShuttleQuery("threadPrs", { threadId });
-  const writes = usePrWrites([threadId]);
+/** One PR in full inside the tab, as the Shuttle page shows it, with a way back to the thread's list. */
+function PanelPrView({ prKey, onBack }: { prKey: string; onBack(): void }) {
+  const navigate = useBbNavigate();
+  return (
+    <section data-shuttle-panel data-panel-pr={prKey} aria-label="Shuttle" className="flex h-full min-h-0 flex-col bg-background text-foreground">
+      <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border px-2">
+        <button type="button" aria-label="Back to this thread's pull requests" onClick={onBack}
+          className="inline-flex h-7 cursor-pointer items-center gap-1 rounded-md px-1.5 text-xs text-foreground hover:bg-accent">
+          <Icon name="ChevronLeft" className="size-4" aria-hidden />Pull requests
+        </button>
+        <span className="flex-1" />
+        <button type="button" aria-label="Show in Shuttle" title="Show in Shuttle" className={ICON_GHOST}
+          onClick={() => navigate.toPluginPanel(PANEL_PATH, { subPath: formatRoute({ view: "pr", key: prKey }) })}>
+          <Icon name="shuttle/shuttle" fallback="GitPullRequest" className="size-4" aria-hidden />
+        </button>
+      </div>
+      <div data-scroller className="min-h-0 flex-1 overflow-y-auto">
+        <PrDetail key={prKey} prKey={prKey} />
+      </div>
+    </section>
+  );
+}
+
+/** Every PR linked to the thread, its agent, what Shuttle sent here, and ways to link another. */
+function PanelList({ threadId, prs, data, writes, onView }: {
+  threadId: string;
+  prs: readonly PrView[] | undefined;
+  data: ReturnType<typeof useShuttleQuery<"threadPrs">>;
+  writes: PrWrites;
+  onView(key: string): void;
+}) {
   const link = useShuttleMutation("link");
   const unlink = useShuttleMutation("unlink");
   const sendUnread = useShuttleMutation("sendUnread");
   const busy = link.isPending || unlink.isPending || sendUnread.isPending;
   const navigate = useBbNavigate();
-  const prs = data.data?.prs;
   const pending = prs?.reduce((sum, pr) => sum + pr.pendingItems, 0) ?? 0;
+  const linked = new Set(prs?.map((pr) => pr.key));
 
   const onUnlink = async (pr: PrView) => {
     if (await unlink.run({ key: pr.key, threadId })) toast.success(`Unlinked ${shortKey(pr)}`);
@@ -169,6 +209,8 @@ export function ShuttlePanel({ threadId }: ExperimentalThreadActionTabProps) {
     const out = await link.run({ key, threadId, role: "owner" });
     if (out !== null) toast.success(`Linked ${shortKey(out.pr)} to this thread`);
   };
+  // A PR this thread no longer links to is shown on the Shuttle page instead.
+  const showEvent = (key: string) => (linked.has(key) ? onView(key) : navigate.toPluginPanel(PANEL_PATH, { subPath: formatRoute({ view: "pr", key }) }));
 
   return (
     <section data-shuttle-panel aria-label="Shuttle" className="flex h-full min-h-0 flex-col bg-background text-foreground">
@@ -183,7 +225,7 @@ export function ShuttlePanel({ threadId }: ExperimentalThreadActionTabProps) {
           <>
             <ul aria-label="Linked pull requests" className="flex flex-col gap-2.5">
               {prs.map((pr) => (
-                <PrCard key={pr.key} pr={pr} threadId={threadId} busy={busy} writes={writes} onUnlink={(item) => void onUnlink(item)} />
+                <PrCard key={pr.key} pr={pr} threadId={threadId} busy={busy} writes={writes} onView={(item) => onView(item.key)} onUnlink={(item) => void onUnlink(item)} />
               ))}
             </ul>
             <div className="mt-3 flex items-center gap-2">
@@ -208,8 +250,7 @@ export function ShuttlePanel({ threadId }: ExperimentalThreadActionTabProps) {
                     <div className="flex gap-2 text-xs text-muted-foreground">
                       <span>{ago(event.at)}</span>
                       {event.key !== null && (
-                        <button type="button" className="cursor-pointer font-mono hover:underline"
-                          onClick={() => navigate.toPluginPanel(PANEL_PATH, { subPath: formatRoute({ view: "pr", key: event.key! }) })}>
+                        <button type="button" className="cursor-pointer font-mono hover:underline" onClick={() => showEvent(event.key!)}>
                           {event.key}
                         </button>
                       )}
@@ -225,5 +266,32 @@ export function ShuttlePanel({ threadId }: ExperimentalThreadActionTabProps) {
         <LookupInput icon="Link" label="Link a pull request" placeholder={prs?.length ? "Link another PR: paste a link or key" : "Link a PR: paste a link or key"} onFound={linkPr} />
       </div>
     </section>
+  );
+}
+
+/**
+ * The Shuttle tab beside a thread: its PRs as cards, or one of them in full with everything the
+ * Shuttle page offers. The tab remembers, per thread, which PR it shows in full.
+ */
+export function ShuttlePanel({ threadId }: ExperimentalThreadActionTabProps) {
+  const phone = useViewport() === "phone";
+  const data = useShuttleQuery("threadPrs", { threadId });
+  const prs = data.data?.prs;
+  const remembered = useStored(panelPrs)[threadId] ?? null;
+  // Only a PR still linked here opens in full; an unlinked one leaves the tab on its list.
+  const openKey = remembered !== null && prs?.some((pr) => pr.key === remembered) === true ? remembered : null;
+  const select = (key: string) => rememberPanelPr(threadId, key);
+  const threadIds = [...new Set([threadId, ...threadsOf(prs ?? [])])];
+  const { actions, dialogs } = useSurface({ phone, sheetComposer: false, selected: openKey, select, threadIds });
+
+  return (
+    <ActionsProvider value={actions}>
+      {openKey !== null ? (
+        <PanelPrView prKey={openKey} onBack={() => rememberPanelPr(threadId, null)} />
+      ) : (
+        <PanelList threadId={threadId} prs={prs} data={data} writes={actions.writes} onView={select} />
+      )}
+      {dialogs}
+    </ActionsProvider>
   );
 }

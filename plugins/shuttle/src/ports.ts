@@ -2,6 +2,9 @@
 import type { JsonValue } from "@get-bb/plugin-sdk";
 import type { Workspace } from "./workspaces";
 
+/** At most how many unarchived threads Shuttle reads when it looks for one, such as for the link dialog or a PR's opener. */
+export const THREAD_SCAN = 5000;
+
 export interface SpawnArgs {
   projectId: string;
   title: string;
@@ -61,7 +64,10 @@ export interface BbPort {
   /** The id of the sidebar section with this name, created when there is none. */
   ensureSection(name: string): Promise<string>;
   getThread(threadId: string): Promise<ThreadInfo | null>;
+  /** Unarchived threads; bb's order is not by recency, so callers sort. */
   listThreads(limit: number): Promise<ThreadInfo[]>;
+  /** These threads, archived or not, at most 200 ids; unknown and deleted ids are left out. */
+  threadsById(threadIds: readonly string[]): Promise<ThreadInfo[]>;
   listProjects(): Promise<ProjectInfo[]>;
   listSkills(projectId: string): Promise<SkillInfo[]>;
   /** Changes Shuttle's own bb settings. */

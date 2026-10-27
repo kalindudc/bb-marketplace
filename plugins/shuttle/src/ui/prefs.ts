@@ -46,6 +46,23 @@ export function rememberScroll(key: string, top: number): void {
   scrolls.set(Object.fromEntries([...entries.slice(Math.max(0, entries.length - MAX_SCROLLS + 1)), [key, top]]));
 }
 
+const MAX_PANEL_PRS = 50;
+/** The PR each thread's Shuttle tab shows in full, by thread id; a thread without one shows its list. */
+export const panelPrs = createStored<Readonly<Record<string, string>>>("panel-pr", {}, (value) => {
+  if (!isRecord(value)) return null;
+  return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1] !== ""));
+});
+
+export function rememberPanelPr(threadId: string, key: string | null): void {
+  const current = panelPrs.get();
+  if ((current[threadId] ?? null) === key) return;
+  const { [threadId]: _old, ...rest } = current;
+  if (key === null) return panelPrs.set(rest);
+  // The thread opened last goes to the end, so the oldest drop first.
+  const entries = Object.entries(rest);
+  panelPrs.set(Object.fromEntries([...entries.slice(Math.max(0, entries.length - MAX_PANEL_PRS + 1)), [threadId, key]]));
+}
+
 /** The page's route; at the root, the route it was last left on. */
 export function routeOf(subPath: string): Route {
   return parseRoute(subPath === "" ? lastRoute.get() ?? "" : subPath);
@@ -81,5 +98,5 @@ export function useFolding(area: string): Folding {
 
 /** Tests clear localStorage between cases; this reads every remembered value again. */
 export function reloadPrefs(): void {
-  for (const stored of [lastRoute, mineLayout, mineSort, doneSort, reviewFilter, folds, scrolls]) stored.reload();
+  for (const stored of [lastRoute, mineLayout, mineSort, doneSort, reviewFilter, folds, scrolls, panelPrs]) stored.reload();
 }

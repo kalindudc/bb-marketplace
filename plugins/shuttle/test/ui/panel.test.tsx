@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, waitFor, within } from "@testing-library/react";
 import type { ExperimentalThreadActionTabProps, ExperimentalTabRegistration } from "@get-bb/plugin-sdk/app";
 import type { PrView } from "../../src/contract";
-import { agent, app, callsTo, event, handlers, link, mount, pr, unmountAll, type Handlers, type PullRequests } from "./helpers";
+import { agent, app, CAN_ALL, callsTo, event, find, handlers, item, link, mount, pr, unmountAll, type Handlers, type PullRequests } from "./helpers";
 
 const toasts = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn() }));
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), toasts) }));
@@ -14,7 +14,7 @@ afterEach(() => {
 });
 
 const THREAD = "thr_stack";
-const base = pr({ repo: "kalindudc/bb-marketplace", number: 118, title: "Loom: the ticket page", mine: true, reasons: [], links: [link({ threadId: THREAD, title: "Loom work", role: "owner" })], agent: agent({ threadId: THREAD, title: "Loom work" }), watch: "act", pendingItems: 2 });
+const base = pr({ repo: "kalindudc/bb-marketplace", number: 118, title: "Loom: the ticket page", mine: true, reasons: [], links: [link({ threadId: THREAD, title: "Loom work", role: "owner" })], agent: agent({ threadId: THREAD, title: "Loom work" }), watch: "act", pendingItems: 2, can: CAN_ALL });
 const middle = pr({ repo: "kalindudc/bb-marketplace", number: 119, title: "Loom: the side column", mine: true, reasons: [], links: [link({ threadId: THREAD, title: "Loom work", role: "owner" }), link({ threadId: "thr_review", title: "Review #119", role: "review" })], agent: agent({ threadId: "thr_other", title: "Loom: side column work" }) });
 const top = pr({ repo: "kalindudc/bb-marketplace", number: 120, title: "Loom: notes", mine: true, reasons: [], links: [link({ threadId: THREAD, title: "Loom work", role: "reference" })], pendingItems: 1 });
 
@@ -34,6 +34,8 @@ async function panel(rpc: Partial<Handlers> & { pullRequests?: PullRequests } = 
   return mount<ExperimentalThreadActionTabProps>(registration.component as never, { threadId: THREAD, params: { threadId: THREAD } }, {
     ...handlers({
       threadPrs: () => ({ prs, sent: [event({ id: 7, kind: "forwarded", text: "tomas approved: sent with the act prompt", key: base.key, threadId: THREAD })] }),
+      detail: ({ key }) => ({ pr: prs.find((item) => item.key === key) ?? base, events: [], body: "## Why\n\nThe ticket page shows **every** stage.", draft: null }),
+      conversation: () => ({ items: [item({ id: "c1", author: "tomas", body: "Can the stage list wrap?", thread: "PRRT_9" })], error: null, fetchedAt: Date.now() }),
       setAgentMode: ({ key, mode }) => change(key, (item) => ({ ...item, agent: item.agent === null ? null : { ...item.agent, mode } })),
       setAgent: ({ key, target }) => ({ ...change(key, (item) => ({ ...item, agent: target.kind === "existing" ? agent({ threadId: target.threadId, title: "Loom work" }) : null })), threadId: THREAD }),
       link: ({ key, threadId, role }) => change(key, (item) => ({ ...item, links: item.links.map((entry) => (entry.threadId === threadId ? { ...entry, role: role! } : entry)) })),
@@ -193,5 +195,86 @@ describe("the branch's GitHub pull request", () => {
     await slot.findByText(base.title);
     await waitFor(() => expect(callsTo(slot, "pullRequests")).toHaveLength(1));
     expect(slot.container.querySelector("[data-branch-pr]")).toBeNull();
+  });
+});
+
+describe("a PR in full inside the tab", () => {
+  const fullView = (slot: Awaited<ReturnType<typeof panel>>) => find(slot.container, `[data-panel-pr] [data-detail]`);
+  const view = async (slot: Awaited<ReturnType<typeof panel>>, key: string) => {
+    await slot.findByText(top.title);
+    fireEvent.click(within(card(slot, key)).getByRole("button", { name: "View PR" }));
+    return fullView(slot);
+  };
+
+  it("opens from its card with its description, conversation and next step, and goes back to the list", async () => {
+    const slot = await panel();
+    const detail = await view(slot, base.key);
+    expect(detail.getAttribute("data-detail")).toBe(base.key);
+    await within(detail).findByText("Can the stage list wrap?");
+    expect(within(detail).getByRole("region", { name: "Description" }).textContent).toContain("every");
+    expect(within(detail).getByRole("region", { name: "Threads" }).textContent).toContain("Loom work");
+    expect(callsTo(slot, "detail")).toContainEqual({ key: base.key });
+    expect(slot.container.querySelector("[data-pr]")).toBeNull();
+    fireEvent.click(slot.getByRole("button", { name: "Back to this thread's pull requests" }));
+    await waitFor(() => expect(slot.container.querySelectorAll("[data-pr]")).toHaveLength(3));
+    expect(slot.container.querySelector("[data-panel-pr]")).toBeNull();
+  });
+
+  it("opens from its title too", async () => {
+    const slot = await panel();
+    await slot.findByText(top.title);
+    fireEvent.click(within(card(slot, middle.key)).getByRole("button", { name: middle.title }));
+    expect((await fullView(slot)).getAttribute("data-detail")).toBe(middle.key);
+  });
+
+  it("comments on the PR and replies in its conversation without leaving the thread", async () => {
+    const slot = await panel({ comment: () => ({ pr: base }), reply: () => ({ ok: true }) });
+    const detail = await view(slot, base.key);
+    fireEvent.click(await within(detail).findByRole("button", { name: "Reply" }));
+    fireEvent.change(within(detail).getByRole("textbox", { name: "Reply to tomas" }), { target: { value: "It wraps now." } });
+    fireEvent.click(within(detail).getAllByRole("button", { name: "Reply" }).at(-1)!);
+    await waitFor(() => expect(callsTo(slot, "reply")).toEqual([{ key: base.key, thread: "PRRT_9", body: "It wraps now." }]));
+    fireEvent.change(within(detail).getByRole("textbox", { name: "Comment on bb-marketplace#118" }), { target: { value: "Ready for another look." } });
+    fireEvent.click(within(detail).getByRole("button", { name: "Comment" }));
+    await waitFor(() => expect(callsTo(slot, "comment")).toEqual([{ key: base.key, body: "Ready for another look." }]));
+  });
+
+  it("opens the same dialogs as the Shuttle page, such as linking another thread", async () => {
+    const slot = await panel({ threads: () => ({ threads: [{ id: "thr_notes", title: "Edge notes", projectId: null, status: "idle", updatedAt: Date.now() }] }) });
+    const detail = await view(slot, base.key);
+    fireEvent.click(within(detail).getByRole("button", { name: "Link a thread" }));
+    const dialog = await slot.findByRole("dialog", { name: `Link ${base.repo}#118 to a thread` });
+    await within(dialog).findByRole("radio", { name: /Edge notes/u });
+    expect(callsTo(slot, "threads")).toEqual([{}]);
+  });
+
+  it("remembers the PR it shows for each thread, and shows the list for another", async () => {
+    const first = await panel();
+    await view(first, middle.key);
+    first.lifecycle.unmount();
+    const again = await panel();
+    expect((await fullView(again)).getAttribute("data-detail")).toBe(middle.key);
+    again.lifecycle.unmount();
+    const registration = await tab();
+    const other = mount<ExperimentalThreadActionTabProps>(registration.component as never, { threadId: "thr_other", params: { threadId: "thr_other" } },
+      handlers({ threadPrs: () => ({ prs: [middle], sent: [] }) }), { sdk: { threads: { get: async () => ({ environmentId: null }) as never } } });
+    await other.findByText(middle.title);
+    expect(other.container.querySelector("[data-panel-pr]")).toBeNull();
+  });
+
+  it("shows the list when the PR it remembered is no longer linked to the thread", async () => {
+    window.localStorage.setItem("bb-plugin-shuttle:panel-pr", JSON.stringify({ [THREAD]: "github:gone/repo#1" }));
+    const { reloadPrefs } = await import("../../src/ui/prefs");
+    reloadPrefs();
+    const slot = await panel();
+    await slot.findByText(top.title);
+    expect(slot.container.querySelector("[data-panel-pr]")).toBeNull();
+  });
+
+  it("opens a PR named in what Shuttle sent to this thread", async () => {
+    const slot = await panel();
+    fireEvent.click(await slot.findByRole("button", { name: base.key }));
+    expect((await fullView(slot)).getAttribute("data-detail")).toBe(base.key);
+    expect(slot.inspection.navigateCalls).toEqual([]);
   });
 });

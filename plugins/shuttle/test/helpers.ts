@@ -80,8 +80,12 @@ export class FakePort implements BbPort {
   async getThread(threadId: string): Promise<ThreadInfo | null> {
     return this.threads.get(threadId) ?? null;
   }
-  async listThreads(): Promise<ThreadInfo[]> {
-    return [...this.threads.values()];
+  /** Like bb with `archived: false`: live threads only, in no useful order. */
+  async listThreads(limit: number): Promise<ThreadInfo[]> {
+    return [...this.threads.values()].filter((thread) => !thread.archived).slice(0, limit);
+  }
+  async threadsById(threadIds: readonly string[]): Promise<ThreadInfo[]> {
+    return threadIds.flatMap((id) => this.threads.get(id) ?? []);
   }
   async listProjects(): Promise<ProjectInfo[]> {
     return this.projects;

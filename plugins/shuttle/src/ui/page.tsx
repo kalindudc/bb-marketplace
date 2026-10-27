@@ -1,25 +1,17 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { toast } from "sonner";
+import { useEffect, useRef, type ReactNode } from "react";
 import { experimental_Icon as Icon, useBbNavigate, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
-import type { Overview, PrView } from "../contract";
-import { ActionsProvider, nudgeText, runNext, useActions, type Intent, type PageActions } from "./actions";
-import { AgentDialog } from "./agent";
-import { BUTTON, Dialog, ErrorNote, ICON_GHOST, PAGE, PageHeading } from "./common";
+import type { Overview } from "../contract";
+import { ActionsProvider, nudgeText, runNext, useActions } from "./actions";
+import { BUTTON, ErrorNote, ICON_GHOST, PAGE, PageHeading } from "./common";
 import { AREA_META, PANEL_PATH } from "./constants";
-import { Composer } from "./conversation";
-import { isNotFound, messageOf, openExternal, threadsOf, useShuttleMutation, useShuttleQuery } from "./data";
+import { isNotFound, messageOf, threadsOf, useShuttleMutation, useShuttleQuery } from "./data";
 import { PrDetail, TrackButton } from "./detail";
-import { useEditPrs } from "./edit";
-import { keyLabel, tinyKey } from "./format";
+import { keyLabel } from "./format";
 import { InboxView } from "./inbox";
 import { InsightsView, type IdeaAction } from "./insights";
-import { LinkDialog, type LinkRequest } from "./link-dialog";
-import { MergeDialog } from "./merge-dialog";
 import { MineView } from "./mine";
 import { SyncBanner } from "./sync";
 import { isLive } from "./pills";
-import { ApproveDialog, PresetDialog } from "./review-button";
-import { ReviewDialog } from "./review-dialog";
 import { lastRoute, reviewFilter } from "./prefs";
 import { useStored } from "./remember";
 import { ReviewsView } from "./reviews";
@@ -27,18 +19,8 @@ import { SearchView } from "./search";
 import { areaOf, formatRoute, parseRoute, type Area, type ListRoute, type Route } from "./route";
 import type { RowLayout } from "./row";
 import { useScrollMemory } from "./scroll";
+import { useSurface } from "./surface";
 import { useViewport } from "./viewport";
-import { usePrWrites } from "./writes";
-
-type DialogState =
-  | { kind: "link"; request: LinkRequest }
-  | { kind: "customize"; pr: PrView; thread: { threadId: string; title: string } | null }
-  | { kind: "preset"; pr: PrView }
-  | { kind: "merge"; pr: PrView }
-  | { kind: "agent"; pr: PrView; start?: "new" }
-  | { kind: "approve"; pr: PrView }
-  | { kind: "comment"; pr: PrView; text?: string }
-  | null;
 
 const AREAS: readonly Area[] = ["inbox", "mine", "reviews", "insights"];
 const AREA_ROUTES: Record<Area, Route> = {
@@ -161,12 +143,8 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
   const phone = viewport === "phone";
   const navigate = useBbNavigate();
   const overview = useShuttleQuery("overview", {});
-  const config = useShuttleQuery("getConfig", {});
-  const [dialog, setDialog] = useState<DialogState>(null);
-  const [intent, setIntent] = useState<Intent | null>(null);
   const filter = useStored(reviewFilter);
   const setFilter = reviewFilter.set;
-  const nonce = useRef(0);
 
   const selectedKey = route.view === "insights" ? null : route.key;
   const inbox = useShuttleQuery("inbox", {}, route.view === "inbox");
@@ -176,8 +154,6 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
   const lookup = useShuttleMutation("lookup");
   const known = [...(inbox.data?.prs ?? []), ...(list.data?.prs ?? []), ...(detail.data ? [detail.data.pr] : [])];
   const threadIds = threadsOf(known);
-  const writes = usePrWrites(threadIds);
-  const edits = useEditPrs(threadIds);
 
   // Opening a PR from a list pushes a history entry, so Back and the swipe return to the list;
   // switching between PRs replaces it. A page opened on a PR (a deep link) never pushed one.
@@ -217,49 +193,8 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
   const close = useRef(closeSelection);
   close.current = closeSelection;
 
-  const raise = (key: string, kind: Intent["kind"], fill?: { text: string } | { nudge: true }) => {
-    nonce.current += 1;
-    setIntent({ key, kind, nonce: nonce.current, ...fill });
-  };
-  const done = useCallback((handled: Intent) => setIntent((current) => (current?.nonce === handled.nonce ? null : current)), []);
-
-  const actions: PageActions = {
-    phone,
-    presets: config.data?.config.presets ?? null,
-    writes,
-    edits,
-    selected: selectedKey,
-    select,
-    open: (pr) => openExternal(navigate, pr.url),
-    openThread: (threadId) => navigate.toThread(threadId),
-    link: (pr, tab = "existing") => setDialog({ kind: "link", request: { pr, tab } }),
-    merge: (pr) => setDialog({ kind: "merge", pr }),
-    pickAgent: (pr, start) => setDialog({ kind: "agent", pr, ...(start === undefined ? {} : { start }) }),
-    startReview: (pr) => {
-      if (config.data === undefined) toast.error("Shuttle's presets have not loaded yet");
-      else setDialog({ kind: "preset", pr });
-    },
-    customize: (pr, threadId) => {
-      if (config.data === undefined) return void toast.error("Shuttle's presets have not loaded yet");
-      const thread = threadId === undefined ? null : { threadId, title: pr.lastReview?.threadId === threadId ? pr.lastReview.title : pr.links.find((entry) => entry.threadId === threadId)?.title ?? "its review thread" };
-      setDialog({ kind: "customize", pr, thread });
-    },
-    approve: (pr) => setDialog({ kind: "approve", pr }),
-    compose: (pr, text) => {
-      if (phone) {
-        if (selectedKey !== pr.key) select(pr.key);
-        return setDialog({ kind: "comment", pr, ...(text === undefined ? {} : { text }) });
-      }
-      if (selectedKey !== pr.key) select(pr.key);
-      raise(pr.key, "compose", text === undefined ? undefined : { text });
-    },
-    showDraft: (pr) => {
-      if (selectedKey !== pr.key) select(pr.key);
-      raise(pr.key, "draft");
-    },
-    intent,
-    done,
-  };
+  const { actions, dialogs, dialogOpen, raise } = useSurface({ phone, sheetComposer: phone, selected: selectedKey, select, threadIds });
+  const { writes } = actions;
 
   const onIdea = (action: IdeaAction) => {
     switch (action.id) {
@@ -284,7 +219,7 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
   const showDetail = selectedKey !== null && (route.view !== "pr" || detail.data !== undefined);
   const overlay = viewport === "narrow" && isListRoute(route) && showDetail;
   useEffect(() => {
-    if (!overlay || dialog !== null) return;
+    if (!overlay || dialogOpen) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
       // bb's "Back to app" also listens for Escape; while the panel is open, Escape closes the panel.
@@ -293,7 +228,7 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [overlay, dialog]);
+  }, [overlay, dialogOpen]);
 
   const layout: RowLayout = { selected: selectedKey, compact: phone || (showDetail && viewport === "wide"), phone, onSelect: select };
 
@@ -378,20 +313,7 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
     <ActionsProvider value={actions}>
       <div className="h-full min-h-0 min-w-0 bg-background text-foreground">
         {body}
-        {dialog?.kind === "link" && <LinkDialog request={dialog.request} onClose={() => setDialog(null)} />}
-        {dialog?.kind === "customize" && config.data !== undefined && <ReviewDialog pr={dialog.pr} presets={config.data.config.presets} thread={dialog.thread} onClose={() => setDialog(null)} />}
-        {dialog?.kind === "preset" && config.data !== undefined && (
-          <PresetDialog pr={dialog.pr} presets={config.data.config.presets} onClose={() => setDialog(null)}
-            onCustomize={() => setDialog({ kind: "customize", pr: dialog.pr, thread: dialog.pr.next.kind === "rereview" && dialog.pr.lastReview !== null ? { threadId: dialog.pr.lastReview.threadId, title: dialog.pr.lastReview.title } : null })} />
-        )}
-        {dialog?.kind === "merge" && <MergeDialog pr={dialog.pr} onClose={() => setDialog(null)} />}
-        {dialog?.kind === "agent" && <AgentDialog pr={dialog.pr} start={dialog.start} onClose={() => setDialog(null)} />}
-        {dialog?.kind === "approve" && <ApproveDialog pr={dialog.pr} onClose={() => setDialog(null)} />}
-        {dialog?.kind === "comment" && (
-          <Dialog title={`${dialog.pr.can.comment ? "Comment on" : !dialog.pr.mine && dialog.pr.can.review ? "Review" : "Ask the agent of"} ${tinyKey(dialog.pr)}`} leading={<Icon name="MessageSquare" className="size-4" aria-hidden />} onClose={() => setDialog(null)}>
-            <Composer pr={dialog.pr} autoFocus initialText={dialog.text ?? ""} onDone={() => setDialog(null)} />
-          </Dialog>
-        )}
+        {dialogs}
       </div>
     </ActionsProvider>
   );

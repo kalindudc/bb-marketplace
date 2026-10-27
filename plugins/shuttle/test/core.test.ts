@@ -242,6 +242,27 @@ describe("agents", () => {
   });
 });
 
+describe("threads to link", () => {
+  it("offers every live thread, newest first, and searches all of them by title", async () => {
+    const h = harness();
+    for (let i = 0; i < 300; i++) h.port.addThread(`thr_old${i}`, `Archived ${i}`, true, { updatedAt: 10_000 + i });
+    h.port.addThread("thr_a", "Fix the retry budget", false, { updatedAt: 2 });
+    h.port.addThread("thr_b", "Review shop/world#7", false, { updatedAt: 3 });
+    h.port.addThread("thr_c", "Loom plan: retry", false, { updatedAt: 1 });
+    expect((await h.shuttle.threads()).map((t) => t.id)).toEqual(["thr_b", "thr_a", "thr_c"]);
+    expect((await h.shuttle.threads("RETRY")).map((t) => t.id)).toEqual(["thr_a", "thr_c"]);
+  });
+
+  it("lists the 200 most recent and finds older ones by search", async () => {
+    const h = harness();
+    for (let i = 0; i < 250; i++) h.port.addThread(`thr_${i}`, `Thread number ${i}`, false, { updatedAt: i });
+    const all = await h.shuttle.threads();
+    expect(all).toHaveLength(200);
+    expect(all[0]!.id).toBe("thr_249");
+    expect((await h.shuttle.threads("number 3")).map((t) => t.id)).toContain("thr_3");
+  });
+});
+
 describe("the Inbox", () => {
   it("snoozes until 9:00 tomorrow, or until the PR changes", async () => {
     const h = harness();

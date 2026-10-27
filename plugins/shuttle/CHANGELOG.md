@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.8
+
+- **A thread's Shuttle tab shows a PR in full.** View PR on a card, or a click on its title, opens the PR inside the tab with everything its view on the Shuttle page has: where it stands, the next step and its buttons, the agent or your review, the description, the conversation with Reply, Resolve and the composer, checks, labels and reviewers, and its threads. Merge, Start AI review, Link a thread and the other dialogs open from there too, so you no longer leave the thread to act on its PR. Pull requests goes back to the list, and the tab reopens on the PR you left it on, for each thread. A PR clicked in the thread's Info tab or in the Pull requests segment above the composer opens the tab on that PR.
+- **Link a thread lists all your threads.** bb's thread list included archived threads unless asked not to, sorted by project before date, so the 200 threads Shuttle read were mostly archived ones and the dialog showed only a few live threads. Shuttle now asks for unarchived threads only, and reads every page of them. Link a thread and the agent picker list your 200 most recently active threads, and their search looks through all of them. Auto agent's search for the thread on a PR's branch had the same gap and now sees every live thread, and the title refresh reads linked threads by id.
+
 ## 0.3.7
 
 - **The open PR stands out.** The PR open in the panel beside a list now has a tint and a ring in your theme's primary colour, on Inbox cards and on the rows of My PRs, Reviews and Search alike. Before, an Inbox card had only a faint outline, and a row the same grey as a hovered one. Hovering no longer changes the open PR's look, and screen readers hear the open Inbox card as the current one.

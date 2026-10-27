@@ -21,6 +21,7 @@ Shuttle opens on the list and the PR you left it on, scrolled where you left it.
 - Start an AI review with a preset. The review thread hands its findings back as a draft: tick the ones to post, edit their text, pick a verdict and post one review with inline comments.
 - Once a review is done (its draft posted or discarded, you reviewed the PR, or it merged or closed), Shuttle archives its thread with the thread's child threads. The PR's next review brings that thread back, so it already knows the PR; its child threads stay archived.
 - A PR's view shows its description above the conversation; a long one is cut until you ask for the rest.
+- A thread's Shuttle tab opens any of its PRs in full.
 - Search every PR Shuttle already has from the header, by words in its title, repository, number, author, branches or labels. Paste a link there instead to look up or track any PR, whether or not you are part of it.
 
 **Settings** live on Shuttle's page in bb's Settings: servers (with a Test button), review presets, automations and agents, the sidebar section review threads go to, whether finished review threads are archived, auto agent, whether new requests come to the Inbox, bot authors, and import or export as TOML. Agents get the `shuttle_link`, `shuttle_unlink`, `shuttle_prs`, `shuttle_review_draft` and `shuttle_feedback_done` tools, and `bb shuttle` covers the same from the command line.

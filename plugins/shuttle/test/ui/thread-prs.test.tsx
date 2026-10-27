@@ -3,6 +3,7 @@ import { fireEvent, waitFor, within } from "@testing-library/react";
 import { experimental_THREAD_INFO_SECTION_GROUPS, type ExperimentalThreadContextSegmentProps, type ExperimentalThreadInfoProps } from "@get-bb/plugin-sdk/app";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { rpcContract, type PrView } from "../../src/contract";
+import { panelPrs } from "../../src/ui/prefs";
 import { agent, app, callsTo, handlers, link, mount, pr, unmountAll } from "./helpers";
 
 afterEach(unmountAll);
@@ -23,7 +24,7 @@ describe("the thread Info tab's Pull requests", () => {
     return mount<ExperimentalThreadInfoProps>(registration.component, { threadId: THREAD, projectId: "prj_bb", environment: null }, handlers({ threadPrs: () => ({ prs, sent: [] }) }));
   }
 
-  it("lists every PR linked to the thread, with state and checks, and opens the Shuttle tab", async () => {
+  it("lists every PR linked to the thread, with state and checks, and opens the Shuttle tab on the one clicked", async () => {
     const slot = await info([owned, failing]);
     const section = await slot.findByRole("region", { name: "Pull requests" });
     expect(within(section).getByRole("heading").textContent).toBe("Pull requests2");
@@ -37,6 +38,7 @@ describe("the thread Info tab's Pull requests", () => {
     expect(rows[1]!.querySelector("[data-icon='X']")).not.toBeNull();
     fireEvent.click(within(rows[1]!).getByRole("button", { name: "get-bb/bb#4412" }));
     expect(slot.inspection.experimental_tabOpenCalls).toEqual([SHUTTLE_TAB_OPEN]);
+    expect(panelPrs.get()).toEqual({ [THREAD]: failing.key });
   });
 
   it("shows nothing when no PR is linked", async () => {
@@ -99,7 +101,7 @@ describe("the context segment beside the composer", () => {
     slot.lifecycle.unmount();
   });
 
-  it("lists each PR in its details and opens the Shuttle tab from them and from its action", async () => {
+  it("lists each PR in its details, opens the Shuttle tab on the one clicked, and opens it as it was from its action", async () => {
     const registration = await segment();
     const details = mount<ExperimentalThreadContextSegmentProps>(registration.details!, { ...props, isExpanded: true }, handlers({ threadPrs: () => ({ prs: [owned, changes], sent: [] }) }));
     const rows = await waitFor(() => {
@@ -108,11 +110,13 @@ describe("the context segment beside the composer", () => {
       return found;
     });
     expect(rows[1]!.textContent).toContain("changes requested");
-    fireEvent.click(within(rows[0]!).getByRole("button"));
+    fireEvent.click(within(rows[1]!).getByRole("button"));
     expect(details.inspection.experimental_tabOpenCalls).toEqual([SHUTTLE_TAB_OPEN]);
+    expect(panelPrs.get()).toEqual({ [THREAD]: changes.key });
 
     const action = mount<ExperimentalThreadContextSegmentProps>(registration.action!, props, handlers());
     fireEvent.click(action.getByRole("button", { name: "Open the Shuttle tab" }));
     expect(action.inspection.experimental_tabOpenCalls).toEqual([SHUTTLE_TAB_OPEN]);
+    expect(panelPrs.get()).toEqual({ [THREAD]: changes.key });
   });
 });
