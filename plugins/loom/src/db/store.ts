@@ -80,7 +80,7 @@ export interface TicketRow {
   repo: string | null;
   /** The remote branch of the ticket's pull request, kept when a later worker works on a branch of its own. */
   pr_branch: string | null;
-  /** The commit Loom last pushed to pr_branch, and when. */
+  /** pr_branch's tip Loom accounts for, and when it did: its own last push, or commits someone else pushed that Loom merged into the ticket's work. */
   pushed_sha: string | null;
   pushed_at: number | null;
   /** PrAsk: Loom asked the worker to write the pull request for head_sha. */

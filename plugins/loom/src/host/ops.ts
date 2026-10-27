@@ -288,24 +288,34 @@ const isAncestor = async (repo: string, ancestor: string, of: string, signal?: A
 };
 
 /**
+ * A pull request branch's tip where `git push` sends it, which a remote that fetches from elsewhere does not show, with its
+ * commits fetched; null when the branch is not there.
+ */
+async function pushedTip(repo: string, remote: string, branch: string, signal?: AbortSignal): Promise<{ tip: string | null } | { unavailable: string }> {
+  const pushUrls = (await tryGit(repo, ["remote", "get-url", "--push", "--all", remote], signal))?.split("\n").filter((line) => line !== "");
+  if (pushUrls === undefined || pushUrls.length === 0) return { unavailable: `The git remote "${remote}" does not exist in ${repo}.` };
+  if (pushUrls.length > 1) return { unavailable: `The remote "${remote}" has ${pushUrls.length} push URLs, so Loom cannot tell which one holds the pull request's branch. Leave one with \`git remote set-url --push ${remote} <url>\`.` };
+  const target = pushUrls[0]!;
+  const listed = await run(repo, ["ls-remote", target, `refs/heads/${branch}`], signal, NETWORK_TIMEOUT_MS);
+  if (listed.code !== 0) return { unavailable: `git ls-remote ${remote} failed: ${tail(listed.stderr || listed.stdout)}` };
+  const tip = listed.stdout.trim().split(/\s+/u)[0] || null;
+  if (tip !== null && (await tryGit(repo, ["cat-file", "-e", `${tip}^{commit}`], signal)) === null) {
+    const fetched = await run(repo, ["fetch", "--no-tags", "--no-write-fetch-head", target, `refs/heads/${branch}`], signal, NETWORK_TIMEOUT_MS);
+    if (fetched.code !== 0) return { unavailable: `git fetch from ${remote} failed: ${tail(fetched.stderr || fetched.stdout)}` };
+  }
+  return { tip };
+}
+
+/**
  * The one commit Loom pushes for a ticket's pull request: head's tree on the remote branch's tip, or, when the branch is not
  * there yet, on head's merge base with `base`. When head also contains a newer base than the tip does, that base is a second
  * parent, so the pull request's diff stays the ticket's own. It signs as the user's git config says.
  */
 export async function prCommit(input: HostInput<"prCommit">, signal?: AbortSignal): Promise<HostOutput<"prCommit">> {
   const { repo, remote, branch, base, head, message, pushed } = input;
-  // The branch is read where `git push` sends it, which a remote that fetches from elsewhere does not show.
-  const pushUrls = (await tryGit(repo, ["remote", "get-url", "--push", "--all", remote], signal))?.split("\n").filter((line) => line !== "");
-  if (pushUrls === undefined || pushUrls.length === 0) return { outcome: "unavailable", message: `The git remote "${remote}" does not exist in ${repo}.` };
-  if (pushUrls.length > 1) return { outcome: "unavailable", message: `The remote "${remote}" has ${pushUrls.length} push URLs, so Loom cannot tell which one holds the pull request's branch. Leave one with \`git remote set-url --push ${remote} <url>\`.` };
-  const target = pushUrls[0]!;
-  const listed = await run(repo, ["ls-remote", target, `refs/heads/${branch}`], signal, NETWORK_TIMEOUT_MS);
-  if (listed.code !== 0) return { outcome: "unavailable", message: `git ls-remote ${remote} failed: ${tail(listed.stderr || listed.stdout)}` };
-  const tip = listed.stdout.trim().split(/\s+/u)[0] || null;
-  if (tip !== null && (await tryGit(repo, ["cat-file", "-e", `${tip}^{commit}`], signal)) === null) {
-    const fetched = await run(repo, ["fetch", "--no-tags", "--no-write-fetch-head", target, `refs/heads/${branch}`], signal, NETWORK_TIMEOUT_MS);
-    if (fetched.code !== 0) return { outcome: "unavailable", message: `git fetch from ${remote} failed: ${tail(fetched.stderr || fetched.stdout)}` };
-  }
+  const read = await pushedTip(repo, remote, branch, signal);
+  if ("unavailable" in read) return { outcome: "unavailable", message: read.unavailable };
+  const { tip } = read;
   const tree = await git(repo, ["rev-parse", "--verify", `${head}^{tree}`], { signal });
   const mergeBase = await git(repo, ["merge-base", head, base], { signal });
   const parents: string[] = [];
@@ -406,12 +416,35 @@ export async function stackBase(input: HostInput<"stackBase">, signal?: AbortSig
   return { outcome: "ok", sha, tip, tree: await git(repo, ["rev-parse", `${sha}^{tree}`], { signal }) };
 }
 
+/** The tip of a ticket's pull request branch on `ref`, for a merge on the checkout, and the newest base commit it has. */
+export async function fetchTip(input: HostInput<"fetchTip">, signal?: AbortSignal): Promise<HostOutput<"fetchTip">> {
+  const { repo, remote, branch, base } = input;
+  const read = await pushedTip(repo, remote, branch, signal);
+  if ("unavailable" in read) return { outcome: "unavailable", message: read.unavailable };
+  if (read.tip === null) return { outcome: "missing" };
+  const tip = await git(repo, ["rev-parse", "--verify", `${read.tip}^{commit}`], { signal });
+  await git(repo, ["update-ref", input.ref, tip], { signal });
+  const tracking = `refs/remotes/${remote}/${base}`;
+  const fetched = await run(repo, ["fetch", "--no-tags", "--no-write-fetch-head", remote, `+refs/heads/${base}:${tracking}`], signal, NETWORK_TIMEOUT_MS);
+  if (fetched.code !== 0) return { outcome: "unavailable", message: `git fetch from ${remote} failed: ${tail(fetched.stderr || fetched.stdout)}` };
+  const mainBase = await tryGit(repo, ["merge-base", tip, tracking], signal);
+  return { outcome: "ok", sha: tip, tree: await git(repo, ["rev-parse", `${tip}^{tree}`], { signal }), mainBase: mainBase === null || mainBase === "" ? null : mainBase };
+}
+
+export async function pointRefs(input: HostInput<"pointRefs">, signal?: AbortSignal): Promise<HostOutput<"pointRefs">> {
+  const sha = await git(input.repo, ["rev-parse", "--verify", `${input.sha}^{commit}`], { signal });
+  for (const name of input.refs) await git(input.repo, ["update-ref", name, sha], { signal });
+  return {};
+}
+
 export async function mergeOnto(input: HostInput<"mergeOnto">, signal?: AbortSignal): Promise<HostOutput<"mergeOnto">> {
   const { repo, message, refs } = input;
   const head = await git(repo, ["rev-parse", "--verify", `${input.head}^{commit}`], { signal });
   const ref = await git(repo, ["rev-parse", "--verify", `${input.ref}^{commit}`], { signal });
   if (await isAncestor(repo, ref, head, signal)) return { outcome: "merged", sha: head, tree: await git(repo, ["rev-parse", `${head}^{tree}`], { signal }), already: true };
-  const merged = await run(repo, ["merge-tree", "--write-tree", "--name-only", "--no-messages", head, ref], signal);
+  const base = input.base === undefined ? null : await git(repo, ["rev-parse", "--verify", `${input.base}^{commit}`], { signal });
+  const explicit = base !== null && (await isAncestor(repo, base, ref, signal)) ? [`--merge-base=${base}`] : [];
+  const merged = await run(repo, ["merge-tree", "--write-tree", "--name-only", "--no-messages", ...explicit, head, ref], signal);
   const lines = merged.stdout.split("\n").filter((line) => line !== "");
   if ((merged.code !== 0 && merged.code !== 1) || lines[0] === undefined) throw failure(["merge-tree", "--write-tree", head, ref], merged);
   const tree = lines[0];
@@ -660,6 +693,9 @@ export async function carryStart(input: HostInput<"carryStart">, signal?: AbortS
   if (head !== base && tree !== input.replaces && (await tryGit(worktree, ["merge-base", head, tracking], signal)) !== head) {
     return { outcome: "unavailable", message: `The worktree ${worktree} has commits that are not on ${remote}/${baseBranch}, so putting the work in would drop them: ${head.slice(0, 12)}. Stash them or move them to another branch, then try again` };
   }
+  // The base is a commit of the remote's base branch. One that branch lacks here, as after the pull request's branch took
+  // a newer base, moves it up, so the worker's changes are measured from that base and not from an older one.
+  if ((await tryGit(worktree, ["merge-base", base, tracking], signal)) !== base) await run(worktree, ["fetch", "--no-tags", remote, baseBranch], signal, NETWORK_TIMEOUT_MS);
   if (!(await hasCommit(worktree, base, signal))) {
     const fetched = await run(worktree, ["fetch", "--no-tags", remote, base], signal, NETWORK_TIMEOUT_MS);
     if (!(await hasCommit(worktree, base, signal))) {

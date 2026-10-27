@@ -15,6 +15,7 @@ import { LOOM_ACTOR } from "./states";
 import { isWaking, releasedWorker } from "./release";
 import { NOT_PARKED, toLite, workerSlots, type Parked } from "./scheduler";
 import { deliverHandBacks, handBack } from "./slots";
+import { takeForRound, type ForeignTip } from "./tips";
 import { applyMove, released, resumeEnding, signatureOf, specOf, type EngineCtx } from "./workers";
 
 /** How long the worker has to hand in loom_pr before Loom's template stands in; paused time does not count. */
@@ -284,14 +285,15 @@ export async function followFeedback(ctx: EngineCtx, project: ProjectRow, ticket
     if (found.ignored.keys.length > 0) markSeen(ctx, ticket, found.ignored.keys);
     return;
   }
-  const diverged = ticket.pushed_sha !== null && feedback.head !== ticket.pushed_sha ? { remote: settings.remote, branch: ticket.pr_branch ?? ticket.branch ?? "" } : null;
+  // Someone else pushed to the pull request's branch: Loom merges their commits into work it keeps, so the fix builds on them.
+  const foreign = ticket.pushed_sha !== null && feedback.head !== ticket.pushed_sha ? await takeForRound(ctx, project, ticket) : null;
   await startFixRound(ctx, ticket, {
     checks: found.checks,
     items: found.items,
     seen: [...found.checks, ...found.items].map((entry) => entry.key).concat(found.ignored.keys),
     ignored: found.ignored,
     skipped: found.skipped,
-    diverged,
+    foreign,
     human: false,
   });
 }
@@ -306,7 +308,7 @@ function markSeen(ctx: EngineCtx, ticket: TicketRow, keys: readonly string[]): v
 export async function humanFixRound(ctx: EngineCtx, ticket: TicketRow, reply: PostRow): Promise<boolean> {
   if (ticket.state !== "pr_open" || !delivers(ctx, ticket.project_id)) return false;
   const item: FeedbackItem = { kind: "reply", author: "the human", body: reply.body, url: null, state: null, path: null, line: null };
-  return startFixRound(ctx, ticket, { checks: [], items: [item], seen: [], ignored: { bots: 0, own: 0 }, skipped: [], diverged: null, human: true, replyId: reply.id });
+  return startFixRound(ctx, ticket, { checks: [], items: [item], seen: [], ignored: { bots: 0, own: 0 }, skipped: [], foreign: null, human: true, replyId: reply.id });
 }
 
 interface Round {
@@ -315,7 +317,7 @@ interface Round {
   seen: string[];
   ignored: { bots: number; own: number };
   skipped: Skipped[];
-  diverged: { remote: string; branch: string } | null;
+  foreign: ForeignTip | null;
   human: boolean;
   replyId?: number;
 }
@@ -369,7 +371,7 @@ async function startFixRound(ctx: EngineCtx, seen: TicketRow, a: Round): Promise
     const asleep = releasedWorker(store, ticket);
     const thread = worker.standing === "active" ? worker.row.thread_id : (asleep?.thread_id ?? null);
     if (thread !== null) {
-      const text = prFeedbackText({ key: ticket.key, url: ticket.pr_url, round, counted, max, checks: a.checks, items: a.items, skipped: a.skipped, diverged: a.diverged, signature: signatureOf(ctx), restored: asleep !== null || (worker.standing === "active" && isWaking(worker.row)) });
+      const text = prFeedbackText({ key: ticket.key, url: ticket.pr_url, round, counted, max, checks: a.checks, items: a.items, skipped: a.skipped, foreign: a.foreign, signature: signatureOf(ctx), restored: asleep !== null || (worker.standing === "active" && isWaking(worker.row)) });
       handBack(ctx, store.ticket(ticket.id)!, worker.standing === "active" ? worker.row : null, thread, text, move);
       return { kind: "working" };
     }
@@ -395,7 +397,8 @@ function feedbackData(ticket: TicketRow, round: number, counted: number, a: Roun
     human: a.human,
     replyId: a.replyId ?? null,
     url: ticket.pr_url,
-    diverged: a.diverged !== null,
+    diverged: a.foreign !== null,
+    ...(a.foreign?.kind === "took" ? { tip: a.foreign.tip } : {}),
     checks: a.checks.map((check) => ({ name: check.name, url: check.url })),
     skipped: a.skipped,
     items: a.items.map((item) => ({ kind: item.kind, author: item.author, bot: item.bot === true, body: item.body.slice(0, 2000), url: item.url, state: item.state, path: item.path, line: item.line })),

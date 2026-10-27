@@ -23,6 +23,7 @@ import {
   exec,
   exportChanges,
   fetchBranch,
+  fetchTip,
   filePatch,
   ghStatus,
   ghTransient,
@@ -33,6 +34,7 @@ import {
   merge,
   mergeOnto,
   parseRemoteUrl,
+  pointRefs,
   prBatch,
   prCommit,
   prCreate,
@@ -1273,6 +1275,82 @@ describe("mergeOnto", () => {
     expect(sh(repo, "log", "-1", "--format=%P", sha).split(" ")).toEqual([head, next]);
     expect(sh(repo, "show", `${sha}:dep.txt`)).toMatch(/^<<<<<<< .*\nmine\n=======\ndep, fixed\n>>>>>>> /u);
     for (const ref of REFS) expect(sh(repo, "rev-parse", ref)).toBe(sha);
+  });
+
+  // A head rebuilt from another machine's worktree shares no history with the pull request branch: Loom's push of it is a
+  // sibling with the same tree, and someone else's commit on the branch edits a line the ticket wrote.
+  const rebuilt = () => {
+    const repo = makeRepo();
+    const base = sh(repo, "rev-parse", "main");
+    sh(repo, "checkout", "-q", "-b", "home", base);
+    const head = commitFile(repo, "mine.txt", "one\ntwo\nthree\n");
+    const pushed = sh(repo, "commit-tree", `${head}^{tree}`, "-p", base, "-m", "CSV-1: Order rows");
+    sh(repo, "checkout", "-q", "-b", "pr", pushed);
+    put(repo, "theirs.txt", "theirs\n");
+    const theirs = commitFile(repo, "mine.txt", "one\nTWO\nthree\n", "Reviewer: capitals");
+    sh(repo, "checkout", "-q", "main");
+    return { repo, head, pushed, theirs };
+  };
+
+  it("merges against the base it is given, the commit Loom last pushed, so an edit of the ticket's own lines merges cleanly", async () => {
+    const { repo, head, pushed, theirs } = rebuilt();
+    expect(await mergeOnto({ ...input(repo, head, theirs), refs: [] })).toMatchObject({ outcome: "conflict", files: ["mine.txt"] });
+    const merged = await mergeOnto({ ...input(repo, head, theirs), refs: [], base: pushed });
+    expect(merged).toMatchObject({ outcome: "merged", already: false });
+    const { sha, tree } = merged as { sha: string; tree: string };
+    expect(tree).toBe(sh(repo, "rev-parse", `${theirs}^{tree}`));
+    expect(sh(repo, "log", "-1", "--format=%P", sha).split(" ")).toEqual([head, theirs]);
+  });
+
+  it("ignores a base that is not on the merged commit's history, as after a force push", async () => {
+    const { repo, head, theirs } = rebuilt();
+    const unrelated = commitFile(repo, "other.txt", "other\n");
+    expect(await mergeOnto({ ...input(repo, head, theirs), refs: [], base: unrelated })).toMatchObject({ outcome: "conflict", files: ["mine.txt"] });
+  });
+});
+
+describe("fetchTip and pointRefs", () => {
+  const setup = () => {
+    const repo = makeRepo();
+    const remote = join(scratch, `remote-${counter++}.git`);
+    execFileSync("git", ["init", "-q", "--bare", remote]);
+    sh(repo, "remote", "add", "origin", remote);
+    sh(repo, "push", "-q", "origin", "main");
+    const clone = join(scratch, `clone-${counter++}`);
+    execFileSync("git", ["clone", "-q", "-b", "main", remote, clone]);
+    sh(clone, "config", "user.email", "other@example.com");
+    sh(clone, "config", "user.name", "Other");
+    return { repo, remote, clone };
+  };
+  const input = (repo: string) => ({ repo, remote: "origin", branch: "loom/csv-1", base: "main", ref: "refs/loom/csv/csv-1/tip" });
+
+  it("fetches the branch's tip onto the ref and the base branch into its tracking ref, and names the newest base commit the tip has", async () => {
+    const { repo, clone } = setup();
+    sh(clone, "checkout", "-q", "-b", "loom/csv-1");
+    commitFile(clone, "a.txt", "a\n");
+    sh(clone, "checkout", "-q", "main");
+    const newer = commitFile(clone, "main.txt", "main\n");
+    sh(clone, "push", "-q", "origin", "main");
+    sh(clone, "checkout", "-q", "loom/csv-1");
+    sh(clone, "merge", "-q", "--no-edit", "main");
+    const tip = sh(clone, "rev-parse", "HEAD");
+    sh(clone, "push", "-q", "origin", "loom/csv-1");
+
+    const read = await fetchTip(input(repo));
+    expect(read).toEqual({ outcome: "ok", sha: tip, tree: sh(clone, "rev-parse", "HEAD^{tree}"), mainBase: newer });
+    expect(sh(repo, "rev-parse", "refs/loom/csv/csv-1/tip")).toBe(tip);
+    expect(sh(repo, "rev-parse", "refs/remotes/origin/main")).toBe(newer);
+    expect(existsSync(join(repo, ".git", "FETCH_HEAD"))).toBe(false);
+
+    await pointRefs({ repo, sha: newer, refs: ["refs/heads/loom/csv/csv-1-home", "refs/loom/csv/csv-1/reviewed"] });
+    expect(sh(repo, "rev-parse", "loom/csv/csv-1-home")).toBe(newer);
+    expect(sh(repo, "rev-parse", "refs/loom/csv/csv-1/reviewed")).toBe(newer);
+  });
+
+  it("reports a branch that is not on the remote as missing, and a remote it cannot read as unavailable", async () => {
+    const { repo } = setup();
+    expect(await fetchTip(input(repo))).toEqual({ outcome: "missing" });
+    expect(await fetchTip({ ...input(repo), remote: "nowhere" })).toMatchObject({ outcome: "unavailable", message: 'The git remote "nowhere" does not exist in ' + repo + "." });
   });
 });
 

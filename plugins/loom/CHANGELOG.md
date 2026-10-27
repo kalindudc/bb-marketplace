@@ -2,6 +2,20 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.25.0 (2026-10-27)
+
+### Fixed
+
+- Commits someone else pushed to a ticket's pull request branch, such as a reviewer's own fix or a forge's "update branch", no longer stall a worker on a machine of its own. Before, Loom told the worker to fetch the branch and merge it. An Aquifer World sandbox can fetch and keep merges of main only, so it could not. On any other machine the merge was lost when the work came home, because Loom rebuilds that work on the checkout as one commit; the push then found the branch diverged again and sent the worker back, with no limit.
+- Loom now merges those commits itself, on the project's checkout, using the commit it last pushed there as the merge base. git's own merge base, from before the ticket's work, would make an edit of a line the ticket wrote conflict.
+  - At the start of a fix round, for a ticket whose work came home from another machine, Loom fetches the branch onto `refs/loom/<slug>/<key>/tip` and merges it into the head. It then carries the result into a live worker's worktree as linear commits, or leaves it on the home branch for the next worker's `loom_resume`. The fix round's message says the merge is done, and the next push builds on that tip. A worker on the project's machine is still told to merge the commits itself, which works there.
+  - Commits that arrive while the worker fixes are merged before the push, for every worker, as a restack is: Loom puts the result in the worker's worktree, runs the ticket's checks there and pushes with no new review. On another machine a conflict arrives with conflict markers, which a submit may not keep. On the project's machine a conflict goes back to the worker to merge the fetched tip, and a worktree with other work is left alone. A push that finds the branch moved again merges up to three times, then sends the fix back.
+- When the pushed commits merged a newer base branch in, the worker's changes are still measured as its own. The carry starts the machine's worktree on that newer base and fetches the base branch there when it lacks it. A stacked ticket first merges the base branch into the commit it is stacked on.
+
+### Compatibility
+
+- No migration. A ticket's `pushed_sha` is now the pull request branch's tip that Loom accounts for, which can be a commit someone else pushed once Loom has merged it. The host entry gains `fetchTip` and `pointRefs`, `mergeOnto` takes an optional `base`, and `carryStart` fetches the remote's base branch when that branch lacks the base. A ticket post's `outcome` may be `tip_merged`. Merging needs git 2.40 or newer on the project's machine, for `git merge-tree --merge-base`.
+
 ## 0.24.0 (2026-10-27)
 
 ### Added

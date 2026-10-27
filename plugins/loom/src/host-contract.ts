@@ -197,8 +197,8 @@ export const hostContract = defineRpcContract({
     output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), sha }).strict(), z.object({ outcome: z.literal("mismatch"), tree: sha }).strict(), unavailable]),
   },
   // The other way, into a thread's worktree on its own machine, whose git may refuse a temporary index: only worktree
-  // commands. carryStart resets a clean worktree to base, fetching base when it is missing, unless HEAD has the tree
-  // already (present) or commits a reset would drop, which it may drop when HEAD has the tree `replaces`, one the
+  // commands. carryStart resets a clean worktree to base, fetching base, and the remote's base branch when it lacks base,
+  // unless HEAD has the tree already (present) or commits a reset would drop, which it may drop when HEAD has the tree `replaces`, one the
   // project's machine keeps; carryWrite and carryDelete change the files; carryFinish commits them as the author on HEAD
   // and checks the tree, and resets to base when it differs.
   carryStart: {
@@ -297,8 +297,9 @@ export const hostContract = defineRpcContract({
     output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), sha }).strict(), z.object({ outcome: z.literal("unavailable"), message: z.string() }).strict()]),
   },
   // The commit to push to a ticket's pull request branch, with head's tree: on the remote branch's tip when it exists, else on
-  // head's merge base with base. `pushed` is the commit Loom pushed there last; a tip that is neither it nor in head's history
-  // has commits from someone else, which a commit with head's tree would undo, so it is reported as diverged instead.
+  // head's merge base with base. `pushed` is the tip Loom last accounted for: its own push, or commits someone else pushed
+  // that it merged into head's work. A tip that is neither it nor in head's history has commits from someone else, which a
+  // commit with head's tree would undo, so it is reported as diverged instead.
   prCommit: {
     input: z.object({ repo: absPath, remote: ref, branch: ref, base: ref, head: commit, message: z.string().min(1).max(8000), pushed: commit.optional() }).strict(),
     output: z.discriminatedUnion("outcome", [
@@ -329,12 +330,29 @@ export const hostContract = defineRpcContract({
   // Merges `ref` into `head` on the project's checkout with merge-tree, which touches no worktree, as one commit whose
   // parents are head and ref, and points refs at it. A conflict is committed too, as the tree with conflict markers in
   // the files it names, for a worker on another machine to resolve. A ref head already has is merged, and moves no ref.
+  // `base`, when it is an ancestor of ref, is the merge base instead of git's own: a commit whose tree head builds on,
+  // which git cannot tell when head was rebuilt from a worktree on another machine.
   mergeOnto: {
-    input: z.object({ repo: absPath, head: commit, ref: commit, message: z.string().min(1).max(500), refs: z.array(fullRef).max(4) }).strict(),
+    input: z.object({ repo: absPath, head: commit, ref: commit, message: z.string().min(1).max(500), refs: z.array(fullRef).max(4), base: commit.optional() }).strict(),
     output: z.discriminatedUnion("outcome", [
       z.object({ outcome: z.literal("merged"), sha, tree: sha, already: z.boolean() }).strict(),
       z.object({ outcome: z.literal("conflict"), files: z.array(z.string()), sha, tree: sha }).strict(),
     ]),
+  },
+  // A ticket's pull request branch where `git push` sends it: its tip fetched and `ref` pointed at it, and the remote's
+  // base branch fetched into its remote-tracking ref. mainBase is the newest base commit the tip has; missing, no branch.
+  fetchTip: {
+    input: z.object({ repo: absPath, remote: ref, branch: ref, base: ref, ref: fullRef }).strict(),
+    output: z.discriminatedUnion("outcome", [
+      z.object({ outcome: z.literal("ok"), sha, tree: sha, mainBase: sha.nullable() }).strict(),
+      z.object({ outcome: z.literal("missing") }).strict(),
+      unavailable,
+    ]),
+  },
+  // Points each ref at sha, a commit of the repository.
+  pointRefs: {
+    input: z.object({ repo: absPath, sha: commit, refs: z.array(fullRef).min(1).max(4) }).strict(),
+    output: z.object({}).strict(),
   },
   // Moves an open pull request to another base branch: gh pr edit <url> --base <base>.
   prRetarget: {

@@ -33,6 +33,8 @@ export default experimental_defineHostEntry({
     prCommit: (input, { signal }) => ops.prCommit(input, signal),
     stackBase: (input, { signal }) => ops.stackBase(input, signal),
     mergeOnto: (input, { signal }) => ops.mergeOnto(input, signal),
+    fetchTip: (input, { signal }) => ops.fetchTip(input, signal),
+    pointRefs: (input, { signal }) => ops.pointRefs(input, signal),
     prRetarget: (input, { signal }) => ops.prRetarget(input, signal),
     push: (input, { signal }) => ops.push(input, signal),
     prCreate: (input, { signal }) => ops.prCreate(input, signal),

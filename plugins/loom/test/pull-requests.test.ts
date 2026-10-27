@@ -638,18 +638,82 @@ describe("following the pull request", () => {
     expect(h.bb.sent(worker.thread_id!).at(-1)).toContain("nothing changed since the pull request's last commit");
   });
 
-  it("sends the fix back to the worker when the pull request's branch has commits Loom did not push", async () => {
-    const worker = await openPr();
-    h.host.feedback.set(URL, changesRequested);
-    await poll();
-    await approveFix(worker);
-    await ask();
-    handInPrText(h.ctx, worker.thread_id!, { commit_message: "Rename" });
-    h.host.foreign.add(ticket().pr_branch!);
-    await queue();
-    expect(ticket().state).toBe("working");
-    expect(h.bb.sent(worker.thread_id!).at(-1)).toContain("has commits Loom did not push");
-    expect(h.host.callsTo("push")).toHaveLength(1);
+  describe("commits someone else pushed to the pull request's branch", () => {
+    /** A fix round approved and its text handed in; meanwhile someone pushed theirs1 on top of Loom's sq1. */
+    async function fixWithForeignTip(): Promise<ThreadRow> {
+      const worker = await openPr();
+      h.host.feedback.set(URL, changesRequested);
+      await poll();
+      await approveFix(worker);
+      await ask();
+      handInPrText(h.ctx, worker.thread_id!, { commit_message: "Rename" });
+      h.host.foreign.set(ticket().pr_branch!, "theirs1");
+      h.host.ancestry.add("sq1..theirs1");
+      return worker;
+    }
+
+    it("tells a worker on the project's machine to merge them itself at the start of a fix round", async () => {
+      const worker = await openPr();
+      h.host.foreign.set(ticket().pr_branch!, "theirs1");
+      h.host.feedback.set(URL, { ...changesRequested, head: "theirs1" });
+      await poll();
+      expect(ticket()).toMatchObject({ state: "working", pushed_sha: "sq1" });
+      expect(h.bb.sent(worker.thread_id!).at(-1)).toContain(`git fetch origin ${ticket().pr_branch}\` and \`git merge FETCH_HEAD\``);
+      expect(h.host.callsTo("mergeOnto")).toEqual([]);
+    });
+
+    it("merges them into the worker's branch before it pushes the fix, against its last push, and runs the checks on the result", async () => {
+      const worker = await fixWithForeignTip();
+      const worktree = `/wt/${worker.environment_id}`;
+      const head = ticket().head_sha!;
+      const execs = h.host.callsTo("exec").length;
+      await queue();
+
+      expect(h.host.callsTo("fetchTip").at(-1)).toEqual({ repo: "/repo", remote: "origin", branch: ticket().pr_branch, base: "main", ref: "refs/loom/csv/csv-1/tip" });
+      expect(h.host.callsTo("mergeOnto")).toEqual([{ repo: "/repo", head, ref: "theirs1", base: "sq1", message: "Merge the new commits on the pull request's branch into CSV-1 (Loom)", refs: [] }]);
+      const merged = ticket().head_sha!;
+      expect(merged).toMatch(/^lm/u);
+      expect(h.host.callsTo("resetHard").at(-1)).toEqual({ worktree, sha: merged });
+      expect(h.host.callsTo("exec").length).toBeGreaterThan(execs);
+      expect(h.host.callsTo("prCommit").at(-1)).toMatchObject({ head: merged, message: "Rename" });
+      expect(ticket()).toMatchObject({ state: "pr_open", pushed_sha: "sq2" });
+      expect(dataOf("restacked").at(-1)!.data).toMatchObject({ tip: "theirs1", sha: merged });
+      expect(dataOf("pr_pushed")).toHaveLength(1);
+      expect(h.host.callsTo("push")).toHaveLength(2);
+    });
+
+    it("sends a conflict back to the worker, who merges the tip Loom fetched", async () => {
+      const worker = await fixWithForeignTip();
+      h.host.scripted.mergeOnto = [{ outcome: "conflict", files: ["src/model/a.ts"], sha: "lmx", tree: "lmx-tree" }];
+      await queue();
+      expect(ticket()).toMatchObject({ state: "working", pushed_sha: "sq1" });
+      expect(dataOf("conflict").at(-1)!.data).toMatchObject({ files: ["src/model/a.ts"], tip: "theirs1" });
+      expect(h.bb.sent(worker.thread_id!).at(-1)).toContain("git merge --no-edit refs/loom/csv/csv-1/tip");
+      expect(h.host.callsTo("resetHard")).toEqual([]);
+      expect(h.host.callsTo("push")).toHaveLength(1);
+    });
+
+    it("leaves a worktree that holds other work alone", async () => {
+      const worker = await fixWithForeignTip();
+      h.host.worktree(`/wt/${worker.environment_id}`).dirty = true;
+      await queue();
+      expect(ticket().state).toBe("working");
+      expect(h.bb.sent(worker.thread_id!).at(-1)).toContain("left your worktree as it is: it has uncommitted changes");
+      expect(h.host.callsTo("resetHard")).toEqual([]);
+    });
+
+    it("sends the fix back after merging three times while the branch kept moving", async () => {
+      const worker = await fixWithForeignTip();
+      const branch = ticket().pr_branch!;
+      h.host.scripted.prCommit = ["theirs1", "theirs2", "theirs3", "theirs4"].map((tip) => ({ outcome: "diverged", tip }));
+      h.host.scripted.fetchTip = ["theirs1", "theirs2", "theirs3"].map((sha) => ({ outcome: "ok", sha, tree: sha, mainBase: null }));
+      h.host.foreign.set(branch, "theirs1");
+      await queue();
+      expect(h.host.callsTo("mergeOnto")).toHaveLength(3);
+      expect(ticket().state).toBe("working");
+      expect(h.bb.sent(worker.thread_id!).at(-1)).toContain("kept getting commits Loom did not push while Loom merged them");
+      expect(h.host.callsTo("push")).toHaveLength(1);
+    });
   });
 
   it("completes the ticket when the pull request merged during a fix round, and blocks it with a fresh start when it closed", async () => {

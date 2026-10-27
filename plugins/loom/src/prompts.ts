@@ -12,6 +12,7 @@ import { restackOf, stacking, stackOf, upstreamOf } from "./stack";
 import type { SpecNote } from "./spec-paths";
 import type { SpecFinding } from "./spec-review";
 import { SPEC_REVIEW_ROUNDS, type MergeChoice, type TicketState } from "./states";
+import type { ForeignTip } from "./tips";
 
 const minute = (at: number) => `${new Date(at).toISOString().slice(0, 16)}Z`;
 
@@ -727,10 +728,22 @@ export const RESTORED_NOTE =
 
 const CI_FIX = "These checks ran in the pull request's CI, which may run tests you cannot run here: read each one's log at its link, fix the cause, and say in your loom_submit summary which of those tests you could not run here.";
 
-export function prFeedbackText(a: { key: string; url: string | null; round: number; counted: number; max: number; checks: FeedbackCheck[]; items: FeedbackItem[]; skipped?: Skipped[]; diverged: { remote: string; branch: string } | null; signature?: string; restored?: boolean }): { summary: string; detail: string } {
+/** What a fix round's worker must know about commits someone else pushed to the pull request's branch. */
+function foreignTipLines(foreign: ForeignTip | null): string[] {
+  if (foreign === null) return [];
+  if (foreign.kind === "merge") return [`The pull request's branch has commits Loom did not push. First run \`git fetch ${foreign.remote} ${foreign.branch}\` and \`git merge FETCH_HEAD\` in this worktree, so your fix builds on them.`];
+  if (foreign.kind === "took") {
+    return [
+      `The pull request's branch had commits Loom did not push (its tip is ${foreign.tip.slice(0, 12)}). Loom merged them into your branch on the project's machine, and your worktree has the result, or gets it from loom_resume when your brief says to call it first. Build your fix on them, and do not fetch or merge the branch yourself.`,
+    ];
+  }
+  return ["The pull request's branch has commits Loom did not push. Do not fetch or merge them yourself: when Loom pushes your fix, it merges them into your branch first and runs your checks on the result, and a conflict comes back to you."];
+}
+
+export function prFeedbackText(a: { key: string; url: string | null; round: number; counted: number; max: number; checks: FeedbackCheck[]; items: FeedbackItem[]; skipped?: Skipped[]; foreign: ForeignTip | null; signature?: string; restored?: boolean }): { summary: string; detail: string } {
   const human = a.items.some((item) => item.kind === "reply");
   const what = human ? "The human replied on the ticket about its open pull request" : a.url === null ? "The pull request needs fixes" : `The pull request ${a.url} needs fixes`;
-  const merge = a.diverged === null ? [] : [`The pull request's branch has commits Loom did not push. First run \`git fetch ${a.diverged.remote} ${a.diverged.branch}\` and \`git merge FETCH_HEAD\` in this worktree, so your fix builds on them.`];
+  const merge = foreignTipLines(a.foreign);
   return {
     summary: `[loom] ${a.key}: ${what} (fix round ${a.round}${human ? "" : `; ${a.counted} of the ${a.max} the pull request may start`}). Address it, then call loom_submit({ summary }).`,
     detail: [...(a.restored === true ? [RESTORED_NOTE] : []), feedbackList(a.checks, a.items, a.skipped), ...(a.checks.length === 0 ? [] : [CI_FIX]), ...merge, ...prRules(a.signature ?? COMMENT_SIGNATURE).map((rule) => `- ${rule}`)].join("\n\n"),
@@ -746,11 +759,11 @@ export function prUnchangedText(key: string): string {
   return `[loom] ${key}: nothing changed since the pull request's last commit, so Loom pushes nothing and keeps following the pull request. End your turn and wait for a message.`;
 }
 
-/** The pull request's branch moved past Loom's last push to commits the worker's branch does not have. */
-export function prDivergedText(key: string, remote: string, branch: string): { summary: string; detail: string } {
+/** The pull request's branch kept getting commits Loom did not push while Loom merged them into the worker's branch. */
+export function prDivergedText(key: string): { summary: string; detail: string } {
   return {
-    summary: `[loom] ${key}: the pull request's branch has commits Loom did not push, so Loom did not push your fix. Merge them into your branch and call loom_submit again.`,
-    detail: `Run \`git fetch ${remote} ${branch}\` and \`git merge FETCH_HEAD\` in this worktree, resolve any conflicts, run the checks, and call loom_submit({ summary }). The fix then goes through review again.`,
+    summary: `[loom] ${key}: the pull request's branch kept getting commits Loom did not push while Loom merged them into your branch, so Loom did not push your fix. Call loom_submit again.`,
+    detail: "Your worktree has the commits Loom merged so far. Run the checks and call loom_submit({ summary }); before it pushes, Loom merges whatever the branch got since. Do not fetch or merge the branch yourself. The fix goes through review again.",
   };
 }
 

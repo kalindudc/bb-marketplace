@@ -106,6 +106,12 @@ export function restackOf(tickets: readonly TicketRow[], ticket: TicketRow): Res
   return { deps, commits: open.map((dep) => dep.pushed_sha!), withBase: merged || sync };
 }
 
+/** What a ticket's branch must take to have the base branch's tip as well as each open dependency's newest pull request commit. */
+export function restackWithBase(tickets: readonly TicketRow[], ticket: TicketRow): Restack {
+  const open = upstreamOf(tickets, ticket).open.filter((dep) => dep.pushed_sha !== null);
+  return { deps: Object.fromEntries(open.map((dep) => [dep.key, dep.pushed_sha!])), commits: open.map((dep) => dep.pushed_sha!), withBase: true };
+}
+
 const sameCommits = (a: Record<string, string>, b: Record<string, string>) => {
   const keys = Object.keys(a);
   return keys.length === Object.keys(b).length && keys.every((key) => a[key] === b[key]);

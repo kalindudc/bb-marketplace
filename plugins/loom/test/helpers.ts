@@ -354,8 +354,10 @@ export class FakeHost implements HostPort {
   remoteBranches = new Map<string, string>();
   /** The tree of each commit; a commit with none is its own tree. */
   trees = new Map<string, string>();
-  /** Remote branches someone else pushed to: prCommit reports them diverged. */
-  foreign = new Set<string>();
+  /** The tip someone else pushed to a remote branch, by branch: prCommit reports it diverged until head has it, and a push replaces it. */
+  foreign = new Map<string, string>();
+  /** The newest base-branch commit each tip has, as fetchTip reports it. */
+  tipBases = new Map<string, string>();
   /** What prFeedback answers, by pull request URL; a missing entry is an open pull request with no checks or feedback. */
   feedback = new Map<string, Partial<Extract<HostOutput<"prFeedback">, { outcome: "ok" }>>>();
   /** What prBatch reports of each pull request besides its state, by URL. prCreate keeps its base and draft flag and prRetarget its new base; the rest is not a draft, with no review decision and no base. */
@@ -515,11 +517,11 @@ export class FakeHost implements HostPort {
       case "fetchBranch":
         return { outcome: "ok", sha: this.remoteBase };
       case "prCommit": {
-        const { branch, head } = input as HostInput<"prCommit">;
-        const tip = this.remoteBranches.get(branch) ?? null;
+        const { branch, head, pushed } = input as HostInput<"prCommit">;
+        const tip = this.foreign.get(branch) ?? this.remoteBranches.get(branch) ?? null;
         const tree = this.trees.get(head) ?? head;
         if (tip !== null && (this.trees.get(tip) ?? tip) === tree) return { outcome: "ok", sha: tip, created: false };
-        if (tip !== null && this.foreign.has(branch)) return { outcome: "diverged", tip };
+        if (tip !== null && this.foreign.has(branch) && tip !== pushed && tip !== head && !this.ancestry.has(`${tip}..${head}`)) return { outcome: "diverged", tip };
         const sha = `sq${++this.squashes}`;
         this.trees.set(sha, tree);
         return { outcome: "ok", sha, created: true };
@@ -540,6 +542,18 @@ export class FakeHost implements HostPort {
         for (const name of refs) this.refs.set(name, sha);
         return { outcome: "merged", sha, tree: `${sha}-tree`, already: false };
       }
+      case "fetchTip": {
+        const { branch, ref } = input as HostInput<"fetchTip">;
+        const tip = this.foreign.get(branch) ?? this.remoteBranches.get(branch);
+        if (tip === undefined) return { outcome: "missing" };
+        this.refs.set(ref, tip);
+        return { outcome: "ok", sha: tip, tree: this.trees.get(tip) ?? tip, mainBase: this.tipBases.get(tip) ?? null };
+      }
+      case "pointRefs": {
+        const { sha, refs } = input as HostInput<"pointRefs">;
+        for (const name of refs) this.refs.set(name, sha);
+        return {};
+      }
       case "prRetarget": {
         const { url, base } = input as HostInput<"prRetarget">;
         this.prMeta.set(url, { ...this.prMeta.get(url), base });
@@ -550,6 +564,7 @@ export class FakeHost implements HostPort {
       case "push": {
         const { src, branch } = input as HostInput<"push">;
         this.remoteBranches.set(branch, src);
+        this.foreign.delete(branch);
         return { outcome: "ok" };
       }
       case "prFeedback":

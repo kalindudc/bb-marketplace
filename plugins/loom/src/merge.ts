@@ -15,7 +15,8 @@ import { LoomError } from "./projects";
 import { followsFeedback, freshBaseOf, isMultiRepo, prSettings, repoSettings, type RepoSettings } from "./repos";
 import { recordingHost } from "./runs";
 import type { ForgeSpec, Spec } from "./spec";
-import { EMPTY_STACK, holdKey, holdOf, prBaseOf, restackOf, stackBranch, stacking, stackOf, type Hold, type Restack, type Stack } from "./stack";
+import { EMPTY_STACK, holdKey, holdOf, prBaseOf, restackOf, restackWithBase, stackBranch, stacking, stackOf, type Hold, type Restack, type Stack } from "./stack";
+import { isForeign, readTip, TIP_WHAT, tipOutgrowsStack, tipRef, withMarkers, type Tip } from "./tips";
 import { LOOM_ACTOR } from "./states";
 import { isWaking, restoredSinceSubmit } from "./release";
 import { deliverHandBacks, handBack } from "./slots";
@@ -431,16 +432,27 @@ async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
     return;
   }
 
-  const commitMessage = catchUp ? `${current.key}: merge ${caughtUp ?? "its new base"} (Loom)` : text.commit;
   let src = current.head_sha!;
   let created = true;
   if (prSettings(spec).squash) {
-    const built = await ctx.host.call(hostId, "prCommit", { repo, remote, branch, base: baseOf(spec, current), head: current.head_sha!, message: commitMessage, ...(current.pushed_sha === null ? {} : { pushed: current.pushed_sha }) });
+    const build = (head: TicketRow) => {
+      const message = catchUp ? `${head.key}: merge ${caughtUp ?? "its new base"} (Loom)` : text.commit;
+      return ctx.host.call(hostId, "prCommit", { repo, remote, branch, base: baseOf(spec, head), head: head.head_sha!, message, ...(head.pushed_sha === null ? {} : { pushed: head.pushed_sha }) });
+    };
+    let built = await build(current);
+    // Someone else pushed to the branch: their commits are merged in first, again if the branch moves meanwhile.
+    for (let taken = 0; built.outcome === "diverged" && taken < TIP_TAKES; taken += 1) {
+      const took = await takeAtPush(ctx, project, spec, current, checkout, text);
+      if (took === null) return;
+      if (took.head_sha !== current.head_sha) caughtUp = caughtUp === null ? TIP_WHAT : `${caughtUp} and ${TIP_WHAT}`;
+      current = took;
+      built = await build(current);
+    }
     if (built.outcome === "unavailable") throw new Unavailable(built.message);
     if (built.outcome === "diverged") {
       await sendBack(ctx, current.id, {
-        post: { kind: "merge", body: `The pull request's branch ${branch} has commits Loom did not push (its tip is ${built.tip.slice(0, 12)}), so Loom pushed nothing.`, data: { outcome: "diverged", tip: built.tip, branch } },
-        text: prDivergedText(current.key, remote, branch),
+        post: { kind: "merge", body: `The pull request's branch ${branch} got commits Loom did not push while Loom merged the earlier ones (its tip is ${built.tip.slice(0, 12)}), so Loom pushed nothing.`, data: { outcome: "diverged", tip: built.tip, branch } },
+        text: prDivergedText(current.key),
         countFailure: false,
         reason: "the pull request's branch has commits Loom did not push",
       });
@@ -557,23 +569,12 @@ async function restack(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: 
     return { ticket: store.ticket(ticket.id)!, what };
   }
 
-  const commands = [...(JSON.parse(ticket.verify_json) as string[]), ...settings.checks];
-  const runs: CheckRun[] = [];
-  for (const command of commands) {
-    const result = await ctx.host.call(environment.hostId, "exec", { cwd: environment.path, command, timeoutMs: spec.checks.timeout_minutes * 60_000 });
-    const run: CheckRun = { command, exitCode: result.exitCode, timedOut: result.timedOut, durationMs: result.durationMs, output: result.output };
-    runs.push(run);
-    let changed: string | undefined;
-    if (result.exitCode === 0 && !result.timedOut) {
-      const after = await ctx.host.call(environment.hostId, "worktreeState", { worktree: environment.path, base: built.sha, trackedOnly: true });
-      const changes = [...(after.head === merged.sha ? [] : [`moved HEAD from ${merged.sha.slice(0, 12)} to ${after.head.slice(0, 12)}`]), ...(after.dirty ? ["left tracked files modified"] : [])];
-      if (changes.length === 0) continue;
-      changed = changes.join(" and ");
-    }
+  const { runs, failure } = await checksOnMerge(ctx, { spec, ticket, settings, environment: { ...environment, path: environment.path }, base: built.sha, expect: { head: merged.sha } });
+  if (failure !== null) {
     store.updateTicket(ticket.id, { stack_json: JSON.stringify(stack) });
     // A worktree bb restored since the worker last ran has none of the files git ignores, so its first failed check counts no failure.
     const restored = restoredSinceSubmit(store.posts(ticket.id));
-    await sendBack(ctx, ticket.id, { post: afterMergePost(run, `${ticket.key}'s branch`, changed), text: withRestoredNote(restackFailedText(ticket.key, what, run, changed), restored), countFailure: !restored, reason: "the checks failed after bringing the branch up to date" });
+    await sendBack(ctx, ticket.id, { post: afterMergePost(failure.run, `${ticket.key}'s branch`, failure.changed), text: withRestoredNote(restackFailedText(ticket.key, what, failure.run, failure.changed), restored), countFailure: !restored, reason: "the checks failed after bringing the branch up to date" });
     return null;
   }
   const passed = runs.length === 0 ? "" : `; its checks passed (${plural(runs.length, "command")})`;
@@ -628,23 +629,10 @@ async function restackOnMachine(
     return null;
   }
 
-  const fresh = freshBaseOf(spec, ticket.repo);
-  const commands = [...(JSON.parse(ticket.verify_json) as string[]), ...a.checkout.settings.checks];
-  const runs: CheckRun[] = [];
-  for (const command of commands) {
-    const result = await ctx.host.call(environment.hostId, "exec", { cwd: environment.path, command, timeoutMs: spec.checks.timeout_minutes * 60_000 });
-    const run: CheckRun = { command, exitCode: result.exitCode, timedOut: result.timedOut, durationMs: result.durationMs, output: result.output };
-    runs.push(run);
-    let changed: string | undefined;
-    if (result.exitCode === 0 && !result.timedOut) {
-      // By tree: the machine may give the carried commit a new id.
-      const after = await ctx.host.call(environment.hostId, "worktreeState", { worktree: environment.path, base: fresh, trackedOnly: true });
-      const changes = [...(after.tree === merged.tree ? [] : [`changed HEAD's tree from ${merged.tree.slice(0, 12)} to ${after.tree.slice(0, 12)}`]), ...(after.dirty ? ["left tracked files modified"] : [])];
-      if (changes.length === 0) continue;
-      changed = changes.join(" and ");
-    }
+  const { runs, failure } = await checksOnMerge(ctx, { spec, ticket, settings: a.checkout.settings, environment, base: freshBaseOf(spec, ticket.repo), expect: { tree: merged.tree } });
+  if (failure !== null) {
     store.updateTicket(ticket.id, { stack_json: JSON.stringify(stack) });
-    await sendBack(ctx, ticket.id, { post: afterMergePost(run, `${ticket.key}'s branch`, changed), text: restackFailedText(ticket.key, what, run, changed), countFailure: true, reason: "the checks failed after bringing the branch up to date" });
+    await sendBack(ctx, ticket.id, { post: afterMergePost(failure.run, `${ticket.key}'s branch`, failure.changed), text: restackFailedText(ticket.key, what, failure.run, failure.changed), countFailure: true, reason: "the checks failed after bringing the branch up to date" });
     return null;
   }
   const passed = runs.length === 0 ? "" : `; its checks passed (${plural(runs.length, "command")})`;
@@ -654,6 +642,163 @@ async function restackOnMachine(
   });
   store.changed(project.id);
   return { ticket: store.ticket(ticket.id)!, what };
+}
+
+/** How often one push merges the pull request branch's new commits before it gives up, when the branch keeps moving meanwhile. */
+const TIP_TAKES = 3;
+
+/**
+ * Merges the commits someone else pushed to a ticket's pull request branch into its head before Loom pushes, with the
+ * commit Loom last pushed there as the merge base, and runs the ticket's checks on the result in the worker's worktree,
+ * with no new review, as a restack does. On the checkout's machine the worktree's branch moves to the merge; a worker on
+ * another machine gets it as linear commits, and the checkout keeps the merge. A stacked ticket whose branch got base
+ * branch commits that the commit it is stacked on lacks takes the base branch first. Returns the ticket as it is now;
+ * null when it went back to its worker, or to the queue when the worker is gone.
+ */
+async function takeAtPush(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow, checkout: RepoCheckout, text: PrText): Promise<TicketRow | null> {
+  const { store } = ctx;
+  const { hostId, path: repo, settings } = checkout;
+  const what = TIP_WHAT;
+  const worker = workerOf(store, ticket);
+  if (worker.standing !== "active") {
+    await sendBack(ctx, ticket.id, { post: { kind: "merge", body: `${ticket.key} must take ${what} before Loom pushes it, and its worker is gone, so a new worker takes it.`, data: { outcome: "restack_waits" } }, text: { summary: "", detail: "" }, countFailure: false, reason: "the worker is gone" });
+    return null;
+  }
+  const found = await resolveEnvironment(ctx, worker.row);
+  if (found?.path == null) throw new Unavailable(`${ticket.key}'s worker has no worktree, so Loom cannot merge ${what} into its branch. Resume once bb shows the worktree again.`);
+  const environment = { ...found, path: found.path };
+  let tip: Tip | null;
+  try {
+    tip = await readTip(ctx, project, checkout, ticket);
+  } catch (error) {
+    throw new Unavailable(`Reading ${ticket.key}'s pull request branch stopped: ${errText(error)}`);
+  }
+  if (tip === null) throw new Unavailable(`${ticket.key}'s pull request branch is gone from ${settings.remote}, so Loom cannot push to it. Requeue the ticket for a new pull request, or cancel it.`);
+
+  let current = ticket;
+  if (stacking(spec) && (await tipOutgrowsStack(ctx, checkout, current, tip))) {
+    const result = await restack(ctx, project, spec, current, restackWithBase(store.tickets(project.id), current), checkout, text);
+    if (result === null) return null;
+    if (result !== "skipped") current = result.ticket;
+  }
+  if (!(await isForeign(ctx, checkout, current, tip))) return current;
+
+  const merged = await ctx.host.call(hostId, "mergeOnto", {
+    repo,
+    head: current.head_sha!,
+    ref: tip.sha,
+    ...(current.pushed_sha === null ? {} : { base: current.pushed_sha }),
+    message: `Merge ${what} into ${current.key} (Loom)`,
+    refs: [],
+  });
+  if (merged.outcome === "merged" && merged.already) return current;
+  const remote = isRemote(project, environment);
+  const home = `refs/heads/${homeBranch(project.slug, current.key)}`;
+  const keepText = (head: string) => (text.by === "worker" ? { pr_text_json: JSON.stringify({ ...text, head } satisfies PrText) } : {});
+
+  if (merged.outcome === "conflict" && !remote) {
+    await sendBack(ctx, current.id, {
+      post: { kind: "merge", body: `Merging ${what} into ${current.key}'s branch conflicted in: ${merged.files.join(", ")}.`, data: { outcome: "conflict", files: merged.files, tip: tip.sha } },
+      text: withRestoredNote(restackConflictText(current.key, what, tipRef(project.slug, current.key), merged.files), restoredSinceSubmit(store.posts(current.id))),
+      countFailure: false,
+      reason: "merging the pull request branch's new commits conflicted",
+    });
+    return null;
+  }
+  if (remote) {
+    const conflict = merged.outcome === "conflict" ? merged.files : null;
+    const carried = conflict === null ? current : { ...current, stack_json: JSON.stringify(withMarkers(current, conflict)) };
+    try {
+      await carryTo(ctx, project, spec, carried, merged.sha, environment, current.head_tree === null ? {} : { replaces: current.head_tree });
+    } catch (error) {
+      await sendBack(ctx, current.id, {
+        post: { kind: "merge", body: `${current.key} must take ${what} before Loom pushes it, and Loom could not put it in the worker's worktree: ${errText(error)}`, data: { outcome: "restack_waits" } },
+        text: restackRefusedText(current.key, what, errText(error)),
+        countFailure: false,
+        reason: "the worker's worktree holds work Loom has not seen",
+      });
+      return null;
+    }
+    // The worktree builds on the tip now, so the next merge of the branch uses it as its base.
+    store.updateTicket(current.id, { pushed_sha: tip.sha, pushed_at: ctx.now() });
+    if (conflict !== null) {
+      await ctx.host.call(hostId, "pointRefs", { repo, sha: merged.sha, refs: [home] });
+      store.updateTicket(current.id, { stack_json: carried.stack_json });
+      await sendBack(ctx, current.id, {
+        post: { kind: "merge", body: `Merging ${what} into ${current.key}'s branch conflicted in: ${conflict.join(", ")}. Loom put the result, with conflict markers, in the worker's worktree.`, data: { outcome: "conflict", files: conflict, tip: tip.sha } },
+        text: restackMarkersText(current.key, what, conflict),
+        countFailure: false,
+        reason: "merging the pull request branch's new commits conflicted",
+      });
+      return null;
+    }
+    await ctx.host.call(hostId, "pointRefs", { repo, sha: merged.sha, refs: [home, reviewedRef(project.slug, current.key)] });
+  } else {
+    const state = await ctx.host.call(environment.hostId, "worktreeState", { worktree: environment.path, base: baseOf(spec, current) });
+    if (state.head !== current.head_sha || state.dirty) {
+      const why = state.dirty ? "it has uncommitted changes" : `its HEAD is ${state.head.slice(0, 12)}, not the approved ${current.head_sha!.slice(0, 12)}`;
+      await sendBack(ctx, current.id, {
+        post: { kind: "merge", body: `${current.key} must take ${what} before Loom pushes it, and Loom left the worker's worktree as it is: ${why}.`, data: { outcome: "restack_waits" } },
+        text: restackRefusedText(current.key, what, why),
+        countFailure: false,
+        reason: "the worker's worktree holds work Loom has not seen",
+      });
+      return null;
+    }
+    await ctx.host.call(environment.hostId, "resetHard", { worktree: environment.path, sha: merged.sha });
+  }
+
+  const { runs, failure } = await checksOnMerge(ctx, { spec, ticket: current, settings, environment, base: remote ? freshBaseOf(spec, current.repo) : baseOf(spec, current), expect: remote ? { tree: merged.tree } : { head: merged.sha } });
+  if (failure !== null) {
+    const restored = !remote && restoredSinceSubmit(store.posts(current.id));
+    await sendBack(ctx, current.id, {
+      post: afterMergePost(failure.run, `${current.key}'s branch`, failure.changed),
+      text: withRestoredNote(restackFailedText(current.key, what, failure.run, failure.changed), restored),
+      countFailure: !restored,
+      reason: "the checks failed after merging the pull request branch's new commits",
+    });
+    return null;
+  }
+  const passed = runs.length === 0 ? "" : `; its checks passed (${plural(runs.length, "command")})`;
+  const where = remote ? " on the project's machine, and carried it to the worker's" : "";
+  store.tx(() => {
+    store.updateTicket(current.id, { head_sha: merged.sha, head_tree: remote ? merged.tree : null, ...keepText(merged.sha) });
+    addMergePost(ctx, current, { body: `Merged ${what} (${tip.sha.slice(0, 12)}) into ${current.key}'s branch as ${merged.sha.slice(0, 12)}${where}${passed}.`, data: { outcome: "restacked", sha: merged.sha, tip: tip.sha, runs: runs.map(({ command, exitCode, timedOut, durationMs }) => ({ command, exitCode, timedOut, durationMs })) } });
+  });
+  store.changed(project.id);
+  return store.ticket(current.id)!;
+}
+
+/**
+ * Runs the ticket's checks in its worker's worktree on a merge Loom put there, with no new review, and returns the first
+ * that failed, or passed but changed the worktree; null when all passed. The worktree must still have the merge: HEAD's
+ * id on the checkout's machine, its tree on another, which may give a carried commit a new id.
+ */
+async function checksOnMerge(
+  ctx: EngineCtx,
+  a: { spec: Spec; ticket: TicketRow; settings: RepoSettings; environment: EnvironmentInfo & { path: string }; base: string; expect: { head: string } | { tree: string } },
+): Promise<{ runs: CheckRun[]; failure: { run: CheckRun; changed?: string } | null }> {
+  const { environment } = a;
+  const commands = [...(JSON.parse(a.ticket.verify_json) as string[]), ...a.settings.checks];
+  const runs: CheckRun[] = [];
+  for (const command of commands) {
+    const result = await ctx.host.call(environment.hostId, "exec", { cwd: environment.path, command, timeoutMs: a.spec.checks.timeout_minutes * 60_000 });
+    const run: CheckRun = { command, exitCode: result.exitCode, timedOut: result.timedOut, durationMs: result.durationMs, output: result.output };
+    runs.push(run);
+    if (result.exitCode !== 0 || result.timedOut) return { runs, failure: { run } };
+    const after = await ctx.host.call(environment.hostId, "worktreeState", { worktree: environment.path, base: a.base, trackedOnly: true });
+    const moved =
+      "head" in a.expect
+        ? after.head === a.expect.head
+          ? []
+          : [`moved HEAD from ${a.expect.head.slice(0, 12)} to ${after.head.slice(0, 12)}`]
+        : after.tree === a.expect.tree
+          ? []
+          : [`changed HEAD's tree from ${a.expect.tree.slice(0, 12)} to ${after.tree.slice(0, 12)}`];
+    const changes = [...moved, ...(after.dirty ? ["left tracked files modified"] : [])];
+    if (changes.length > 0) return { runs, failure: { run, changed: changes.join(" and ") } };
+  }
+  return { runs, failure: null };
 }
 
 /**

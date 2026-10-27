@@ -483,6 +483,16 @@ its own pull request.
   [How many agents run at once](#how-many-agents-run-at-once)), which passes
   the checks and a Loom review again and is pushed as one more commit. After `merge.max_fix_rounds` rounds (5 by default) the ticket
   blocks and the pull request stays open.
+- When someone else pushes to the pull request's branch, such as a reviewer's
+  own fix or the server's "Update branch", Loom merges their commits into the
+  ticket's work itself, against the commit it last pushed there, so the next
+  push builds on them. A worker on the project's machine merges them at the
+  start of a fix round. A worker on a machine of its own, which cannot fetch
+  that branch or keep a merge of it, gets the merge from the project's checkout
+  as linear commits. If more commits arrive while the worker fixes, Loom
+  merges those before it pushes: it runs the ticket's checks on the result and
+  pushes with no new review. A conflict or a failing check goes back to the
+  worker.
 - Once a fix is pushed, Loom asks the people whose reviews and review threads
   it answered to review the pull request again, as GitHub's Re-request review
   button does. Bots, people who only left a top-level comment, and rounds of
@@ -677,6 +687,13 @@ with you.
   that still has them is refused. A worker on a machine is not released while
   its ticket has a dependency in its repo that has not merged, so the machine
   stays for those merges.
+- Commits someone else pushes to a ticket's pull request branch are merged on
+  the project's checkout the same way, against the commit Loom last pushed
+  there. The result goes into the worker's worktree as linear commits, or onto
+  the home branch for the next worker to resume from, so a worker never
+  fetches or merges that branch. When those commits merged a newer base branch
+  in, the worktree starts from that newer base, so the worker's changes are
+  still measured as its own.
 - The checks run on the worker's machine. On a pass, Loom carries the
   worker's commit back to the project's checkout through its own host entry:
   it rebuilds the same tree on the same base, refuses it unless the tree

@@ -65,6 +65,7 @@ export interface MergeItem {
     | "held"
     | "restack_conflict"
     | "restack_waits"
+    | "tip_merged"
     | "retargeted"
     | "retarget_failed"
     | "retarget_by_hand"
@@ -182,7 +183,7 @@ interface PostData {
 }
 
 // Stacking's holds, catch-ups that could not run and base moves are about the pull request, so they mark no merge either.
-const PR_STAGE: ReadonlySet<string> = new Set(["pr_opened", "pr_pushed", "pr_unchanged", "pr_merged", "merged_elsewhere", "branch_pushed", "branch_landed", "held", "restack_conflict", "restack_waits", "retargeted", "retarget_failed", "retarget_by_hand", "review_requested", "review_request_failed"]);
+const PR_STAGE: ReadonlySet<string> = new Set(["pr_opened", "pr_pushed", "pr_unchanged", "pr_merged", "merged_elsewhere", "branch_pushed", "branch_landed", "held", "restack_conflict", "restack_waits", "tip_merged", "retargeted", "retarget_failed", "retarget_by_hand", "review_requested", "review_request_failed"]);
 const isPrStage = (data: PostData) => data.outcome === "pr_text" || data.outcome === "pr_feedback";
 
 const LINE_MAX = 140;

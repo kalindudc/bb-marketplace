@@ -64,7 +64,7 @@ describe("the briefs on a repo that relies on CI", () => {
   });
 
   it("tells the worker in a fix round for a failed check that CI may run tests it cannot run here", () => {
-    const base = { key: "CSV-1", url: "https://github.com/acme/shop/pull/1", round: 1, counted: 1, max: 5, items: [], diverged: null };
+    const base = { key: "CSV-1", url: "https://github.com/acme/shop/pull/1", round: 1, counted: 1, max: 5, items: [], foreign: null };
     const line = "These checks ran in the pull request's CI, which may run tests you cannot run here: read each one's log at its link, fix the cause, and say in your loom_submit summary which of those tests you could not run here.";
     expect(prFeedbackText({ ...base, checks: [{ name: "test", url: "https://ci/1" }] }).detail).toContain(line);
     expect(prFeedbackText({ ...base, checks: [], items: [{ kind: "review", author: "alice", body: "Rename it.", url: null, state: "changes_requested", path: null, line: null }] }).detail).not.toContain(line);

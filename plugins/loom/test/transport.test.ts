@@ -232,6 +232,59 @@ describe("transport", () => {
     expect(sh(reviewer, "rev-parse", "HEAD^{tree}")).toBe(carried.tree);
   });
 
+  it("carries a merge of commits someone else pushed to the pull request's branch to a machine as linear commits on the newer base they took, and the next push builds on them", async () => {
+    const spec = specOf(h.store, project());
+    const ticket = ticketOf(h, "CSV-1");
+    const worker = clone();
+    put(worker, "src/a.ts", "one\ntwo\nthree\n");
+    sh(worker, "add", "-A");
+    sh(worker, "commit", "-q", "-m", "CSV-1: Order rows");
+    const home = await bringHome(ctx, project(), spec, ticket, on("host_box", worker), "submit");
+    const opened = (await host.call("host_1", "prCommit", { repo: laptop, remote: "origin", branch: "loom/csv-1", base: "origin/main", head: home.sha, message: "CSV-1: Order rows" })) as { sha: string };
+    await host.call("host_1", "push", { repo: laptop, remote: "origin", src: opened.sha, branch: "loom/csv-1" });
+
+    // A reviewer edits a line the ticket wrote, and the forge's "update branch" merges a newer main into the branch.
+    const other = clone();
+    put(other, "main.txt", "main\n");
+    sh(other, "add", "-A");
+    sh(other, "commit", "-q", "-m", "Someone else's change on main");
+    sh(other, "push", "-q", "origin", "main");
+    const newer = sh(other, "rev-parse", "HEAD");
+    sh(other, "fetch", "-q", "origin", "loom/csv-1");
+    sh(other, "switch", "-q", "-c", "pr", "origin/loom/csv-1");
+    put(other, "src/a.ts", "one\nTWO\nthree\n");
+    sh(other, "commit", "-q", "-am", "Reviewer: capitals");
+    sh(other, "merge", "-q", "--no-edit", "main");
+    sh(other, "push", "-q", "origin", "HEAD:loom/csv-1");
+    const theirs = sh(other, "rev-parse", "HEAD");
+
+    const tip = await host.call("host_1", "fetchTip", { repo: laptop, remote: "origin", branch: "loom/csv-1", base: "main", ref: "refs/loom/csv/csv-1/tip" });
+    expect(tip).toMatchObject({ outcome: "ok", sha: theirs, mainBase: newer });
+    const merged = await host.call("host_1", "mergeOnto", { repo: laptop, head: home.sha, ref: theirs, base: opened.sha, message: "Merge the new commits on the pull request's branch into CSV-1 (Loom)", refs: [] });
+    expect(merged).toMatchObject({ outcome: "merged", already: false, tree: sh(laptop, "rev-parse", `${theirs}^{tree}`) });
+    const { sha } = merged as { sha: string };
+
+    await carryTo(ctx, project(), spec, ticket, sha, on("host_box", worker), { replaces: home.tree });
+    expect(sh(worker, "rev-parse", "HEAD^{tree}")).toBe(sh(laptop, "rev-parse", `${sha}^{tree}`));
+    expect(sh(worker, "rev-parse", "HEAD~1")).toBe(newer);
+    expect(sh(worker, "rev-parse", "origin/main")).toBe(newer);
+    expect(mergeCommitsSince(worker, newer)).toEqual([]);
+
+    // The worker refines the reviewer's line on its machine; its work comes home on the newer base, as the ticket's own change.
+    put(worker, "src/a.ts", "one\nTwo!\nthree\n");
+    sh(worker, "commit", "-q", "-am", "CSV-1: Order rows");
+    const fixed = await bringHome(ctx, project(), spec, ticket, on("host_box", worker), "submit");
+    expect(sh(laptop, "log", "-1", "--format=%P", fixed.sha)).toBe(newer);
+    expect(sh(laptop, "diff", "--name-only", newer, fixed.sha)).toBe("src/a.ts");
+
+    const fix = (await host.call("host_1", "prCommit", { repo: laptop, remote: "origin", branch: "loom/csv-1", base: "origin/main", head: fixed.sha, message: "Capitalise properly", pushed: theirs })) as { outcome: string; sha: string };
+    expect(fix.outcome).toBe("ok");
+    expect(sh(laptop, "log", "-1", "--format=%P", fix.sha)).toBe(theirs);
+    expect(await host.call("host_1", "push", { repo: laptop, remote: "origin", src: fix.sha, branch: "loom/csv-1" })).toEqual({ outcome: "ok" });
+    expect(sh(laptop, "show", `${fix.sha}:src/a.ts`)).toBe("one\nTwo!\nthree");
+    expect(sh(laptop, "show", `${fix.sha}:main.txt`)).toBe("main");
+  }, 30_000);
+
   it("copies nothing for an environment on the checkout's own machine", async () => {
     sh(laptop, "worktree", "add", "-q", "-b", "loom/csv/csv-1-1", join(scratch, `wt-${counter}`), "main");
     const worktree = join(scratch, `wt-${counter++}`);
