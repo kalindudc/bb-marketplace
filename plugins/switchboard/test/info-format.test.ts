@@ -25,7 +25,8 @@ function status(mergeBase: { insertions: number; deletions: number; fileCount: n
     branch: { currentBranch: "b", defaultBranch: "main" },
     checkout: { kind: "branch", branchName: "b", headSha: null },
     mergeBase: mergeBase && { aheadCount: 0, behindCount: 0, baseRef: "abc", commits: [], files: [],
-      hasCommittedUnmergedChanges: mergeBase.fileCount > 0, lineStatsComplete: true, mergeBaseBranch: "origin/main", ...mergeBase },
+      hasCommittedUnmergedChanges: mergeBase.fileCount > 0, lineStatsComplete: true, squashMergeCheckComplete: true,
+      mergeBaseBranch: "origin/main", ...mergeBase },
     workingTree: { ...tree, ...workingTree },
   } };
 }

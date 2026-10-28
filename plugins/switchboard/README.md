@@ -21,6 +21,10 @@ Density choices are Compact (28 px), Comfortable (32 px) and Two lines (48 px). 
 
 Hover a row, or tab to it, to see an info card with the thread's model, context use, branch, changes and pull request. The Thread info card setting picks At a glance (the default), Briefing, which adds the first prompt and the latest reply, Full details, or Off. Cards never open on touch screens or in compact windows.
 
+Switchboard follows the active theme’s corner radii, fonts, surface shadows, and destructive foreground colors, including portalled cards and drag previews. Saved section colors are unchanged.
+
+This build requires bb Plugin SDK 0.6.79 or newer. PR numbers and card summaries come from the GitHub PR Status plugin, keyed by the thread’s environment. When that plugin is absent, disabled, or cannot provide current data, Switchboard omits the PR information without interrupting the thread list.
+
 ![The Briefing info card for a parent thread: first prompt, latest reply, model, context use, branch, uncommitted changes and its children](../../screenshots/switchboard/hover-card.png)
 
 The Archive button beside the view switch shows or hides an **Archived** shelf at the end of the list. It lists archived threads, most recently archived first, follows the filter box, and loads older ones with **Show more**. Each row offers Unarchive and bb's thread menu; archived rows never appear in sections and take no jump shortcuts.

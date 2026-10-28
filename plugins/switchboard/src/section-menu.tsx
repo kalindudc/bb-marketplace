@@ -122,7 +122,7 @@ export function SectionMenu({ group, unreadCount, hueOverride, onRename, onSetHu
           </AlertDialog.Description>
           <div className="mt-5 flex justify-end gap-2">
             <AlertDialog.Cancel className="sb-control rounded border border-border px-3 py-1.5 text-xs">Cancel</AlertDialog.Cancel>
-            <AlertDialog.Action className="sb-control rounded bg-destructive px-3 py-1.5 text-xs text-white" onClick={onArchiveStale}>
+            <AlertDialog.Action className="sb-control rounded bg-destructive px-3 py-1.5 text-xs text-destructive-foreground" onClick={onArchiveStale}>
               Archive stale threads
             </AlertDialog.Action>
           </div>
@@ -138,7 +138,7 @@ export function SectionMenu({ group, unreadCount, hueOverride, onRename, onSetHu
           </AlertDialog.Description>
           <div className="mt-5 flex justify-end gap-2">
             <AlertDialog.Cancel className="sb-control rounded border border-border px-3 py-1.5 text-xs">Cancel</AlertDialog.Cancel>
-            <AlertDialog.Action className="sb-control rounded bg-destructive px-3 py-1.5 text-xs text-white"
+            <AlertDialog.Action className="sb-control rounded bg-destructive px-3 py-1.5 text-xs text-destructive-foreground"
               onClick={onDelete}>Delete section</AlertDialog.Action>
           </div>
         </AlertDialog.Content>

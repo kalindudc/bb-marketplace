@@ -50,7 +50,7 @@ const hueClasses = (hue: HueId | null, sectionColour: SectionColour): string =>
 function EditingMain({ collapsed, hue, children }: { collapsed: boolean; hue: HueId | null; children: ReactNode }) {
   return <div className="sb-header-main flex h-full min-w-0 flex-1 items-center">
     <span aria-hidden className="sb-header-caret shrink-0 text-center text-2xs text-subtle-foreground">{collapsed ? "▸" : "▾"}</span>
-    {hue && <span aria-hidden className="size-2.5 shrink-0 rounded-[3px]" style={{ background: "var(--sb-hue)" }} />}
+    {hue && <span aria-hidden className="size-2.5 shrink-0 rounded-sm" style={{ background: "var(--sb-hue)" }} />}
     {children}
   </div>;
 }
@@ -101,7 +101,7 @@ function GroupHeaderView({ group, collapsed, sectionColour, onToggle, drag, rena
           className="sb-header-main flex h-full min-w-0 flex-1 items-center text-left">
           <span aria-hidden className="sb-header-caret shrink-0 text-center text-2xs text-subtle-foreground">{collapsed ? "▸" : "▾"}</span>
           {group.kind === "pinned" && <Icon name="Pin" className="size-3 shrink-0 text-subtle-foreground" aria-hidden />}
-          {group.hue && <span aria-hidden className="size-2.5 shrink-0 rounded-[3px]" style={{ background: "var(--sb-hue)" }} />}
+          {group.hue && <span aria-hidden className="size-2.5 shrink-0 rounded-sm" style={{ background: "var(--sb-hue)" }} />}
           <span className="sb-header-name min-w-0 truncate text-[11px] font-semibold uppercase tracking-[.06em]">{name}</span>
           {sortMode !== "manual" && <Hint label={`${SORT_LABEL[sortMode]}. Change it in Section actions.`}>
             <span role="img" aria-label={SORT_LABEL[sortMode]} className="inline-grid shrink-0 text-subtle-foreground">

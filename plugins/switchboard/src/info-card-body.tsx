@@ -1,6 +1,6 @@
 import { useMemo, type ReactElement, type ReactNode } from "react";
 import {
-  ThreadTitle, experimental_useProviders, experimental_useSidebarThreadPullRequest,
+  ThreadTitle, experimental_useProviders,
   experimental_useSidebarThreads, useSidebarThreadShortcut, type PluginBrowserBbSdk, type PluginSidebarThread,
 } from "@get-bb/plugin-sdk/app";
 import { infoLoaders, useCached, type Resource } from "./info-data";
@@ -11,11 +11,11 @@ import { lastActivity } from "./triage";
 import type { InfoCardMode } from "./settings";
 import { STATE_LABEL, type RowState } from "./status";
 
-type PullRequest = NonNullable<ReturnType<typeof experimental_useSidebarThreadPullRequest>["pullRequest"]>;
+import { usePullRequest, type PullRequest } from "./pull-request";
 const PR_STATE: Record<PullRequest["state"], string> = { open: "Open", draft: "Draft", merged: "Merged", closed: "Closed" };
-const PR_CHECKS: Partial<Record<PullRequest["experimental_checks"]["state"], string>> =
+const PR_CHECKS: Partial<Record<PullRequest["checks"]["state"], string>> =
   { passing: "Checks passing", pending: "Checks pending", failing: "Checks failing" };
-const PR_REVIEW: Partial<Record<PullRequest["experimental_review"]["state"], string>> =
+const PR_REVIEW: Partial<Record<PullRequest["review"]["state"], string>> =
   { review_requested: "Review requested", approved: "Approved", changes_requested: "Changes requested" };
 
 const count = (value: number, one: string, many: string) => `${value.toLocaleString()} ${value === 1 ? one : many}`;
@@ -61,14 +61,14 @@ function aheadBehind(status: format.WorkspaceStatus, withBase: boolean): string 
 }
 
 const pullRequestWords = (pr: PullRequest) =>
-  [`#${pr.number} ${PR_STATE[pr.state]}`, PR_CHECKS[pr.experimental_checks.state], PR_REVIEW[pr.experimental_review.state]]
+  [`#${pr.number} ${PR_STATE[pr.state]}`, PR_CHECKS[pr.checks.state], PR_REVIEW[pr.review.state]]
     .filter((word): word is string => word !== undefined);
 
 export function InfoCardBody({ thread, state, projectName, stale, now, mode, sdk }: { thread: PluginSidebarThread; state: RowState;
   projectName: string; stale: boolean; now: number; mode: Exclude<InfoCardMode, "off">; sdk: PluginBrowserBbSdk }): ReactElement {
   const sidebar = experimental_useSidebarThreads();
   const { providers } = experimental_useProviders();
-  const { pullRequest } = experimental_useSidebarThreadPullRequest(thread.id);
+  const pullRequest = usePullRequest(thread.environment?.id);
   const shortcut = useSidebarThreadShortcut(thread.id);
   const environmentId = thread.environment?.id ?? null;
   // The loaders read only these fields of the thread, so a streaming thread keeps its loaders.

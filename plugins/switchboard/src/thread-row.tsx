@@ -4,11 +4,12 @@ import type { PluginSidebarThread, PluginThreadActionTarget, PluginThreadActions
 import {
   ThreadTitle, experimental_Icon as Icon, experimental_THREAD_ACTION_GROUPS as ACTION_GROUPS, experimental_ThreadActionsContextMenu as ThreadActionsContextMenu,
   experimental_ThreadActionsMenu as ThreadActionsMenu, experimental_ThreadStatusGlyph as ThreadStatusGlyph,
-  experimental_useSidebarThreadPullRequest, experimental_useSidebarThreadSplit,
+  experimental_useSidebarThreadSplit,
   experimental_useThreadActions, useBbNavigate, useSidebarThreadDraft,
   useSidebarThreadRowStatus, useSidebarThreadShortcut,
 } from "@get-bb/plugin-sdk/app";
 import { InfoCard, useInfoCardMode } from "./info-card";
+import { usePullRequest } from "./pull-request";
 import type { CollapseKey, HueId } from "./layout";
 import type { RowModel } from "./rows";
 import type { SelectionRun } from "./selection";
@@ -51,8 +52,8 @@ export function toActionTarget(thread: PluginSidebarThread): PluginThreadActionT
     environment: environment?.id ? { id: environment.id, path: environment.path } : null };
 }
 
-function PullRequestTag({ threadId }: { threadId: string }) {
-  const { pullRequest } = experimental_useSidebarThreadPullRequest(threadId);
+function PullRequestTag({ environmentId }: { environmentId: string | null | undefined }) {
+  const pullRequest = usePullRequest(environmentId);
   return pullRequest && <span className="sb-pr-badge relative z-1 min-w-0 max-w-16 shrink truncate border border-sidebar-border font-mono text-muted-foreground">#{pullRequest.number}</span>;
 }
 
@@ -92,7 +93,7 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
     {row.crossProject && <span className="sb-meta relative z-1 min-w-0 max-w-20 shrink truncate font-mono text-subtle-foreground" title={row.crossProject}>{row.crossProject}</span>}
     {settings.density !== "two-line" && branch && <span className="sb-meta relative z-1 min-w-0 max-w-20 shrink truncate font-mono text-subtle-foreground" title={branch}>{branch}</span>}
     {settings.density !== "two-line" && count}
-    {!thread.parentThreadId && settings.showPullRequests && <PullRequestTag threadId={thread.id} />}
+    {!thread.parentThreadId && settings.showPullRequests && <PullRequestTag environmentId={thread.environment?.id} />}
   </>;
   const withQuickActions = variant === "tree" || variant === "archived";
   const withMenu = withQuickActions || variant === "lane";
@@ -156,7 +157,7 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
           const move = direction[event.key as keyof typeof direction];
           if (move) { event.preventDefault(); event.stopPropagation(); onKeyboardMove?.(thread.id, move); }
         }} /></InfoCard>
-      {hue && <span aria-hidden className={`sb-hue-${hue} relative z-1 size-2 shrink-0 rounded-[3px]`} style={{ background: "var(--sb-hue)" }} />}
+      {hue && <span aria-hidden className={`sb-hue-${hue} relative z-1 size-2 shrink-0 rounded-sm`} style={{ background: "var(--sb-hue)" }} />}
       {variant === "lane" && parentTitle && <span aria-hidden className="relative z-1 shrink-0 text-subtle-foreground">↳</span>}
       <span className="sb-leading-glyph pointer-events-none relative z-1 grid shrink-0 place-items-center">
         {variant === "archived" ? <span role="img" aria-label="Archived" className="inline-grid size-[14px] place-items-center text-subtle-foreground">
@@ -165,7 +166,7 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
           : <StatusGlyph state={state} label={label} spin={state === "running"} />}
       </span>
       {settings.density === "two-line" ? <span className="sb-two-line-stack pointer-events-none relative z-1 flex min-w-0 flex-1 flex-col">
-        <span className="sb-two-line-title sb-row-line flex min-w-0 items-center">{title}{!thread.parentThreadId && settings.showPullRequests && <PullRequestTag threadId={thread.id} />}{age}</span>
+        <span className="sb-two-line-title sb-row-line flex min-w-0 items-center">{title}{!thread.parentThreadId && settings.showPullRequests && <PullRequestTag environmentId={thread.environment?.id} />}{age}</span>
         <span className="sb-two-line-meta sb-row-line flex min-w-0 items-center truncate font-mono text-subtle-foreground">
           {variant === "lane" && parentTitle ? <span className="truncate" title={parentTitle}>{parentTitle}</span> :
             <span className="truncate">{projectName}</span>}{branch && <span className="truncate">{branch}</span>}

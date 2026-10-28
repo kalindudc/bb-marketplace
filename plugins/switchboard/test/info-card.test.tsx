@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { renderSlot, type PluginSdkTestFakes, type RenderSlotOptions } from "@get-bb/plugin-sdk/testing/app";
-import { useSdk, type PluginProvidersState, type PluginSidebarPullRequest, type PluginSidebarThread } from "@get-bb/plugin-sdk/app";
+import { useSdk, type PluginProvidersState, type PluginSidebarThread } from "@get-bb/plugin-sdk/app";
+import type { PullRequest } from "../src/pull-request";
 import { InfoCardProvider } from "../src/info-card";
 import { resetInfoCache } from "../src/info-data";
 import type { InfoCardMode } from "../src/settings";
@@ -22,9 +23,8 @@ const waiting = { ...thread, hasPendingInteraction: true, indicator: "waiting-fo
 const threads = [thread, sidebarThread({ id: "p", displayTitle: "Sidebar redesign", title: "Sidebar redesign", sectionId: "s" }),
   sidebarThread({ id: "c1", parentThreadId: "t", status: "active" }), sidebarThread({ id: "c2", parentThreadId: "t" })];
 const providers = [{ id: "pi", displayName: "Pi", reasoningLevels: [{ id: "xhigh", label: "Extra high" }] }] as unknown as PluginProvidersState["providers"];
-const pullRequest = { number: 12, title: "Card", url: "https://example.com/12", state: "open", attention: "review_requested",
-  experimental_autoMerge: false, experimental_inMergeQueue: null, experimental_checks: { state: "passing" },
-  experimental_review: { state: "approved" }, experimental_mergeability: { state: "mergeable" } } satisfies PluginSidebarPullRequest;
+const pullRequest = { number: 12, title: "Card", url: "https://example.com/12", state: "open",
+  checks: { state: "passing" }, review: { state: "approved" } } satisfies PullRequest;
 
 function deferred<T>() {
   let resolve!: (value: T) => void, reject!: (cause: unknown) => void;
@@ -77,7 +77,8 @@ function mount(mode: InfoCardMode, options: { row?: PluginSidebarThread; stale?:
     row: { thread: shown, state: rowState(shown), depth: 0, guides: "", isLast: true, childCount: 0, collapsed: false,
       rollup: null, rollupCount: 0, crossProject: null, dim: false } };
   const slot = renderSlot({ component: Harness }, props, { sidebarThreads: { threads, sections: [sidebarSection("s", "cortex")] },
-    providers: { status: "ready", providers }, sidebarPullRequests: { t: pullRequest }, sdk: options.sdk ?? sdkFakes().sdk });
+    providers: { status: "ready", providers }, rpc: { pullRequests: () => ({ e: { outcome: "available", pullRequest } }) },
+    sdk: options.sdk ?? sdkFakes().sdk });
   const link = screen.getByRole("link", { name: "Hover card" });
   return { slot, link, row: slot.container.querySelector<HTMLElement>("[data-sb-row]")! };
 }

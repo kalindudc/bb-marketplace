@@ -77,6 +77,7 @@ describe("organize in the sidebar", () => {
     await waitFor(() => expect(sdkCalls(slot, "threads.update")).toContainEqual(expect.objectContaining({
       args: [{ threadId: "b", parentThreadId: null }],
     })));
+    await screen.findByText("Move undone");
     fireEvent.keyDown(link("B"), { key: "ArrowUp", altKey: true });
     await waitFor(() => expect(slot.rpcCalls).toContainEqual(expect.objectContaining({
       method: "setOrder", input: { container: "loose", ids: ["b", "a"] },

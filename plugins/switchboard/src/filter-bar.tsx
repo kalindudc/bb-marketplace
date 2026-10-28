@@ -59,7 +59,7 @@ export function FilterBar(props: {
       {states.map((state) => (counts[state] > 0 || filter.states.has(state)) && <Hint key={state}
         label={chipHint(state, counts[state], filter.states)}><button
         type="button" aria-label={`${STATE_LABEL[state]}: ${counts[state]}`} aria-pressed={filter.states.has(state)}
-        className={`sb-control sb-chip inline-flex min-w-0 items-center rounded-full border border-sidebar-border font-mono text-[11px] ${filter.states.has(state) ? "bg-surface-selected text-sidebar-foreground" : "text-muted-foreground"}`}
+        className={`sb-control sb-chip inline-flex min-w-0 items-center rounded-md border border-sidebar-border font-mono text-[11px] ${filter.states.has(state) ? "bg-surface-selected text-sidebar-foreground" : "text-muted-foreground"}`}
         onClick={() => {
           const selected = new Set(filter.states);
           if (selected.has(state)) selected.delete(state); else selected.add(state);
