@@ -24,6 +24,11 @@
       "id": "tasks-and-workflows",
       "displayName": "Tasks & Workflows",
       "description": "Plan, track, route, schedule, or automate work."
+    },
+    {
+      "id": "utilities",
+      "displayName": "Utilities",
+      "description": "Small tools that make everyday work in bb smoother, such as keeping plugins up to date."
     }
   ],
   "plugins": [
@@ -203,6 +208,33 @@
           "subdir": "plugins/pi-services",
           "range": ">=0.1.0 <1.0.0",
           "tagPrefix": "pi-services/"
+        }
+      }
+    },
+    {
+      "id": "plugin-updates",
+      "displayName": "Plugin Updates",
+      "description": "Groups every plugin with a waiting update at the top of the Installed plugins page, with each one's changelog from its source and one-click Update or Update all.",
+      "icon": "Download",
+      "tags": [
+        "updates",
+        "plugins",
+        "changelog",
+        "release-notes",
+        "maintenance"
+      ],
+      "author": {
+        "name": "Kalindu De Costa",
+        "github": "kalindudc"
+      },
+      "category": "utilities",
+      "overview": "bb marks a plugin with a waiting update on its own card, but the Installed page has no filter or grouping, so the updates are easy to miss among dozens of cards. Plugin Updates adds one group to the top of that page instead of a separate view.\n\n## What you get\n\n- A **N plugins have updates** group above the Installed cards, listing every plugin with a waiting update and its installed and new version.\n- **What's new** on each row: the sections of the plugin's CHANGELOG.md newer than the version you run, read from the new release on GitHub. When the changelog has no entry, it lists the commits that changed the plugin since your version, with a link to the full comparison on GitHub.\n- **Update** on each row and **Update all** in the header (after one confirmation). Updates run through bb's own update queue, one at a time, with bb's compatibility checks and rollback.\n- Progress and failures on each row: queued, the phase bb reports while it updates, and the reason with a Retry when an update fails or is rolled back.\n\n## How it works\n\nThe backend reads the update state bb already keeps for each plugin, and the source bb records for it. Changelogs are read with the GitHub CLI when it is installed and signed in, so private repositories work; otherwise it falls back to GitHub's public API. A changelog is read only when you open What's new, and kept until the update changes.\n\n## Requirements\n\n- Changelogs come from GitHub sources only. Plugins from npm, other git hosts or a local path still show in the group and update normally, but What's new explains it has nothing to read.\n- Private repositories need the GitHub CLI (`gh`) signed in on the machine running bb.\n- bb has no plugin slot on the Installed page, so the group is placed next to the page's plugin cards by their markup. If a bb release changes that markup, the group stops appearing until this plugin is updated; bb's own page keeps working.",
+      "source": {
+        "git": {
+          "url": "https://github.com/kalindudc/bb-marketplace.git",
+          "subdir": "plugins/plugin-updates",
+          "range": ">=0.1.0 <1.0.0",
+          "tagPrefix": "plugin-updates/"
         }
       }
     },

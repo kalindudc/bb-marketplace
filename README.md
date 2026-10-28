@@ -12,6 +12,7 @@ bb plugin install better-browser@kalindudc
 bb plugin install follow-thinking@kalindudc
 bb plugin install lan-connect@kalindudc
 bb plugin install loom@kalindudc
+bb plugin install plugin-updates@kalindudc
 bb plugin install session-log@kalindudc
 bb plugin install shuttle@kalindudc
 bb plugin install switchboard@kalindudc
@@ -32,6 +33,7 @@ plugin store.
 | [Follow Thinking](plugins/follow-thinking) | `follow-thinking` | Opens thinking blocks in the timeline automatically and keeps live thinking scrolled to its newest line. Toggle it from the thread header, a thread's actions menu or the command palette. |
 | [Session Log](plugins/session-log) | `session-log` | Adds a thread side-panel tab with one flat, live, searchable log of everything the agent did: messages, thinking, commands with output and exit codes, tool calls, diffs and subagents. Open it with Mod+Shift+L. |
 | [Switchboard](plugins/switchboard) | `switchboard` | Replaces the sidebar thread list: your bb sections as coloured groups, children as trees, status at a glance, drag-and-drop organizing, status lanes and snooze. Choose it under Settings → Appearance → Sidebar. |
+| [Plugin Updates](plugins/plugin-updates) | `plugin-updates` | Groups every plugin with a waiting update at the top of bb's Installed plugins page, with each one's changelog read from its source on GitHub and one-click Update or Update all through bb's own update queue. No separate page: bb's cards, filters and Update dialog stay as they are. |
 | [Pi AI Services](plugins/pi-services) | `pi-services` | Writes bb's thread titles and commit messages with your own pi CLI setup — your credentials and model, no bb account. Adds a regenerate-title button to the thread header and its actions menu, and pi executable/model knobs in the plugin settings. |
 | [Vantage](plugins/vantage) | `vantage` | Adds a thread side-panel tab for parallel agents: every child worktree with status, branch and changes, a drill-in with diffs, commits, chat and a terminal, and a by-repository view of everything the thread tree changed. `bb vantage` prints the same for agents. A full-screen page in the left navigation covers every recent thread. |
 | [LAN Connect](plugins/lan-connect) | `lan-connect` | Opens this bb to phones and laptops on your home network: pair a device once with a code or QR code, then use bb in its browser at `<computer>.local`, its LAN IP or your own name. No bb account needed. |
