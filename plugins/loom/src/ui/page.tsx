@@ -424,7 +424,7 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek, go }: { slug: string; tab:
           />
         )}
         {shownTab === "merge" && <MergeOrderTab order={view.mergeOrder} onTicket={(key) => go(`${slug}/${key}`)} />}
-        {shownTab === "rollout" && <RolloutTab slug={slug} rollout={view.rollout} now={view.now} onTicket={(key) => go(`${slug}/${key}`)} />}
+        {shownTab === "rollout" && <RolloutTab slug={slug} rollout={view.rollout} mergeOrder={view.mergeOrder} now={view.now} onTicket={(key) => go(`${slug}/${key}`)} />}
         {shownTab === "changes" && (
           <ChangesTab changes={changes.data ?? null} error={changes.error} view={view} busy={busy} chosen={chosenChange} onChoose={setChosenChange} onControl={(action, repo) => void control(action, undefined, repo)} onReload={changes.reload} />
         )}

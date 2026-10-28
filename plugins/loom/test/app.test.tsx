@@ -4975,6 +4975,12 @@ describe("merge order tab", () => {
 });
 
 describe("rollout tab", () => {
+  // One page at a time: a case that mounts several takes the last one down first.
+  const unmountAll = () => {
+    for (const slot of mounts.splice(0)) slot.lifecycle.unmount();
+    cleanup();
+    document.body.replaceChildren();
+  };
   const step = (over: Partial<RolloutStep> & Pick<RolloutStep, "key">): RolloutStep => ({
     title: `${over.key} title`,
     repo: null,
@@ -5011,7 +5017,10 @@ describe("rollout tab", () => {
             key: "CSV-2",
             onMerge: true,
             how: "The actuator applies on merge",
-            requires: [{ target: "CSV-1", kind: "ticket", title: "CSV-1 title", live: false, cancelled: false, unknown: false, viaStage: false, prUrl: "https://github.com/acme/shop/pull/1", prNumber: "1", how: "Shipit deploys main" }],
+            requires: [
+              { target: "CSV-1", kind: "ticket", title: "CSV-1 title", live: false, cancelled: false, unknown: false, viaStage: false, prUrl: "https://github.com/acme/shop/pull/1", prNumber: "1", how: "Shipit deploys main" },
+              { target: "traffic-low", kind: "milestone", title: "Old traffic is near zero", live: true, cancelled: false, unknown: false, viaStage: false, prUrl: null, prNumber: null, how: null },
+            ],
           }),
         ],
         milestones: [],
@@ -5046,37 +5055,80 @@ describe("rollout tab", () => {
     expect(badge.className).toContain("bg-warning");
   });
 
-  it("leads with the next safe step, then the warnings, the windows, each stage's steps and the milestones", async () => {
-    const slot = await mountRollout();
+  const open = async (slot: Slot, key: string) => {
+    const row = await waitFor(() => {
+      const found = slot.container.querySelector<HTMLElement>(`[data-rollout-row="${key}"], [data-rollout-milestone="${key}"]`);
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    fireEvent.click(row.querySelector("button[aria-expanded]")!);
+    return row;
+  };
+  const showTab = async (slot: Slot) => {
     fireEvent.click(slot.getByRole("tab", { name: /Rollout/ }));
-    expect((await slot.findByText("Deploy CSV-1 (Shipit deploys main). 1 step waits on it.")).getAttribute("data-rollout-next")).toBe("deploy");
-    expect(slot.container.querySelector("[data-rollout-warning]")!.textContent).toContain("CSV-2 deploys when it merges, and CSV-1 is not live yet.");
-    expect(slot.container.querySelector('[data-rollout-window="Holiday freeze"]')!.textContent).toContain("Jan 9 – Jan 12 · on now");
-    const row = (key: string) => slot.container.querySelector<HTMLElement>(`[data-rollout-row="${key}"]`)!;
-    expect(row("CSV-1").querySelector("[data-rollout-merge]")!.textContent).toBe("merged");
-    expect(row("CSV-1").querySelector("[data-rollout-live]")!.textContent).toBe("not live");
-    expect(row("CSV-1").textContent).toContain("Rollback: Revert the commit");
-    expect(within(row("CSV-1")).getByText("Output").closest("details")!.textContent).toContain("curl: (22) 503");
-    expect(row("CSV-2").textContent).toContain("Deploys on merge: The actuator applies on merge");
-    expect(row("CSV-2").querySelector('[data-rollout-need="CSV-1"]')!.textContent).toBe("◌ CSV-1");
-    expect(slot.container.querySelector('[data-rollout-milestone="traffic-low"]')!.textContent).toContain("CSV-2 needs it.");
-    fireEvent.click(within(row("CSV-2")).getByRole("button", { name: "CSV-2" }));
-    fireEvent.click(within(row("CSV-2")).getByRole("button", { name: "Open CSV-2's pull request" }));
+    return waitFor(() => {
+      const found = slot.container.querySelector<HTMLElement>("[data-rollout]");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+  };
+
+  it("leads with the next step as a checklist, then what to hold off, the calendar and a column per stage", async () => {
+    const slot = await mountRollout();
+    const tab = await showTab(slot);
+    const next = tab.querySelector<HTMLElement>('[data-rollout-next="deploy"]')!;
+    expect(within(next).getByRole("heading", { name: "Deploy CSV-1" })).toBeTruthy();
+    expect([...next.querySelectorAll("[data-rollout-plan]")].map((row) => row.getAttribute("data-rollout-plan"))).toEqual(["merge", "deploy", "verify"]);
+    expect(next.querySelector('[data-rollout-plan="merge"]')!.textContent).toContain("✓");
+    expect(next.querySelector('[data-rollout-plan="deploy"]')!.textContent).toContain("Shipit deploys main");
+    expect(next.querySelector('[data-rollout-plan="verify"] code')!.textContent).toBe("curl -f https://shop.example.com/health");
+    expect(next.querySelector("[data-rollout-then]")!.textContent).toBe("When it is live: 1 more step in Expand after this: CSV-2. CSV-2 waits on it.");
+    const hold = tab.querySelector<HTMLElement>('[data-rollout-hold="CSV-2"]')!;
+    expect(hold.getAttribute("data-rollout-hold-kind")).toBe("dont_merge");
+    expect(hold.textContent).toContain("Don't merge CSV-2 yet");
+    expect(hold.textContent).toContain("⚡ merging deploys it");
+    expect(hold.textContent).toContain("CSV-1 is not live yet");
+    expect(tab.querySelector("[data-rollout-calendar]")!.textContent).toContain("The Holiday freeze is on now, until Jan 12");
+    expect(tab.querySelector('[data-rollout-window="Holiday freeze"]')!.textContent).toBe("Holiday freeze");
+    const stage = tab.querySelector<HTMLElement>('[data-rollout-stage="expand"]')!;
+    expect(stage.textContent).toContain("0 of 2 live");
+    expect(stage.textContent).toContain("2 steps left, then it soaks 1 day");
+    // CSV-1 goes first; CSV-2 needs it, so it sits under a "then" line; the milestone CSV-2 needs sits in its stage.
+    expect([...stage.querySelectorAll("[data-rollout-row], [data-rollout-milestone]")].map((tile) => tile.getAttribute("data-rollout-row") ?? tile.getAttribute("data-rollout-milestone"))).toEqual(["traffic-low", "CSV-1", "CSV-2"]);
+    expect(stage.querySelector('[data-rollout-row="CSV-1"] [data-rollout-status]')!.getAttribute("data-rollout-status")).toBe("deploy");
+    expect(stage.querySelector('[data-rollout-row="CSV-2"] [data-rollout-status]')!.textContent).toContain("Don't merge yet");
+    expect(stage.querySelector('[data-rollout-milestone="traffic-low"]')!.getAttribute("data-rollout-holds")).toBe("yes");
+    expect(tab.querySelector("[data-rollout-repos]")!.textContent).toContain("after mergeShipit deploys main");
+  });
+
+  it("opens a step's details in place: needs, deploy, verify with its output and rollback, and its ticket and pull request", async () => {
+    const slot = await mountRollout();
+    await showTab(slot);
+    const one = await open(slot, "CSV-1");
+    const detail = one.querySelector<HTMLElement>("[data-rollout-detail]")!;
+    expect(detail.textContent).toContain("nothing first");
+    expect(detail.textContent).toContain("After merge. Shipit deploys main");
+    expect(detail.textContent).toContain("Revert the commit");
+    expect(detail.textContent).toContain("Unblocks");
+    expect(within(detail).getByText("Output").closest("details")!.textContent).toContain("curl: (22) 503");
+    const two = await open(slot, "CSV-2");
+    expect(one.querySelector("[data-rollout-detail]")).toBeNull();
+    expect(two.querySelector('[data-rollout-need="CSV-1"]')!.textContent).toBe("○ CSV-1 not live");
+    expect(two.querySelector("[data-rollout-detail]")!.textContent).toContain("⚡ On merge. The actuator applies on merge");
+    fireEvent.click(within(two).getByRole("button", { name: "Open ticket" }));
+    fireEvent.click(within(two).getByRole("button", { name: "Open #2, CSV-2's pull request" }));
     expect(slot.inspection.navigateCalls.slice(-2)).toEqual([pushed("csv/CSV-2"), { method: "openUrl", url: "https://github.com/acme/shop/pull/2" }]);
   });
 
   it("marks a step live, and undoes a milestone's mark, with two clicks and a toast", async () => {
     const slot = await mountRollout({ markLive: () => prView() });
-    fireEvent.click(slot.getByRole("tab", { name: /Rollout/ }));
-    const row = await waitFor(() => {
-      const found = slot.container.querySelector<HTMLElement>('[data-rollout-row="CSV-1"]');
-      expect(found).not.toBeNull();
-      return found!;
-    });
+    await showTab(slot);
+    const row = await open(slot, "CSV-1");
     fireEvent.click(within(row).getByRole("button", { name: "Mark live" }));
     fireEvent.click(within(row).getByRole("button", { name: "Click again to mark CSV-1 live" }));
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Marked CSV-1 live"));
-    const milestone = slot.container.querySelector<HTMLElement>('[data-rollout-milestone="traffic-low"]')!;
+    const milestone = await open(slot, "traffic-low");
+    expect(milestone.querySelector("[data-rollout-detail]")!.textContent).toContain("No command: mark it live once it holds.");
     fireEvent.click(within(milestone).getByRole("button", { name: "Undo live" }));
     fireEvent.click(within(milestone).getByRole("button", { name: "Click again to undo traffic-low's live mark" }));
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith("traffic-low is no longer marked live"));
@@ -5085,27 +5137,378 @@ describe("rollout tab", () => {
       { slug: "csv", target: "traffic-low", undo: true, confirm: true },
     ]);
   });
-  it("keeps each row's title its own width on a narrow page, with its chips, requirements and long text wrapping under it", async () => {
+
+  it("highlights what a step needs and what waits on it on hover, and a remembered switch turns hovering off", async () => {
     const slot = await mountRollout();
-    fireEvent.click(slot.getByRole("tab", { name: /Rollout/ }));
-    const row = await waitFor(() => {
-      const found = slot.container.querySelector<HTMLElement>('[data-rollout-row="CSV-1"]');
-      expect(found).not.toBeNull();
-      return found!;
+    const tab = await showTab(slot);
+    const row = (key: string) => tab.querySelector<HTMLElement>(`[data-rollout-row="${key}"]`)!;
+    const links = () => [...tab.querySelectorAll("[data-rollout-link]")].map((link) => link.getAttribute("data-rollout-link"));
+    fireEvent.pointerEnter(row("CSV-2"), { pointerType: "mouse" });
+    expect(row("CSV-1").textContent).toContain("needed first");
+    expect(tab.querySelector('[data-rollout-milestone="traffic-low"]')!.textContent).toContain("needed first");
+    expect(links().sort()).toEqual(["CSV-1>CSV-2", "traffic-low>CSV-2"]);
+    fireEvent.pointerLeave(row("CSV-2"), { pointerType: "mouse" });
+    fireEvent.pointerEnter(row("CSV-1"), { pointerType: "mouse" });
+    expect(row("CSV-2").textContent).toContain("waits on it");
+    fireEvent.pointerLeave(row("CSV-1"), { pointerType: "mouse" });
+    expect(links()).toEqual([]);
+
+    const hover = within(tab).getByRole("switch", { name: "Highlight on hover" });
+    expect(hover.getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(hover);
+    expect(hover.getAttribute("aria-checked")).toBe("false");
+    expect(localStorage.getItem("loom.rollout.hover")).toBe("false");
+    fireEvent.pointerEnter(row("CSV-2"), { pointerType: "mouse" });
+    expect(row("CSV-1").textContent).not.toContain("needed first");
+    expect(links()).toEqual([]);
+    // A step opened by a click still shows its links.
+    fireEvent.click(row("CSV-2").querySelector("button[aria-expanded]")!);
+    expect(row("CSV-1").textContent).toContain("needed first");
+    fireEvent.click(row("CSV-2").querySelector("button[aria-expanded]")!);
+
+    fireEvent.click(within(tab).getByRole("switch", { name: "Show every link" }));
+    expect(localStorage.getItem("loom.rollout.links")).toBe("true");
+    expect(links().sort()).toEqual(["CSV-1>CSV-2", "traffic-low>CSV-2"]);
+  });
+
+  it("reads each open pull request's review and checks from the merge order, on the tiles and in the checklist", async () => {
+    const liveOne = rollout({
+      stages: [
+        {
+          ...rollout().stages[0]!,
+          steps: [
+            step({ key: "CSV-1", state: "done", merge: "merged", live: { at: NOW - HOUR, by: "verify", evidence: null }, soakedAt: NOW + 23 * HOUR }),
+            step({ key: "CSV-2", how: "Shipit deploys main", requires: [{ target: "CSV-1", kind: "ticket", title: "CSV-1 title", live: true, cancelled: false, unknown: false, viaStage: false, prUrl: null, prNumber: "1", how: null }] }),
+          ],
+        },
+      ],
+      milestones: [],
+      windows: [],
+      warnings: [],
+      next: { kind: "merge", keys: ["CSV-2"], stage: "expand", until: null, text: "Merge CSV-2 (#2), then deploy it (Shipit deploys main)." },
+      counts: { steps: 2, live: 1, soaked: 0 },
     });
+    const entry: MergeEntry = {
+      key: "CSV-2",
+      title: "CSV-2 title",
+      repo: null,
+      state: "pr_open",
+      base: "main",
+      prUrl: "https://github.com/acme/shop/pull/2",
+      prNumber: "2",
+      prOpen: true,
+      elsewhere: null,
+      step: 1,
+      stackedOn: null,
+      waitsOn: [],
+      unblocks: [],
+      checks: { passed: 20, failed: 0, pending: 1 },
+      draft: false,
+      review: "REVIEW_REQUIRED",
+      reviewRead: true,
+      conflicts: false,
+      behind: null,
+      refreshBehind: null,
+      verdict: "first",
+      holds: ["needs review"],
+      trap: false,
+      mergedInto: null,
+      mergedIntoState: null,
+      blockedReason: null,
+    };
+    const view = projectView({ overview: overview({ strategy: "pr", branch: null }), rollout: liveOne, mergeOrder: { repos: [null], steps: 1, entries: [entry], counts: { open: 1, first: 1, ready: 0, wrong: 0 } } });
+    const slot = await mountRollout({}, view);
+    const tab = await showTab(slot);
+    const next = tab.querySelector<HTMLElement>('[data-rollout-next="merge"]')!;
+    expect(within(next).getByRole("heading", { name: "Merge CSV-2, then deploy it" })).toBeTruthy();
+    expect(next.querySelector('[data-rollout-plan="review"]')!.textContent).toContain("#2 needs review · 1 pending · ✓ 20 checks");
+    expect(next.querySelector("[data-rollout-then]")!.textContent).toContain("Expand is all live and soaks 1 day");
+    expect(tab.querySelector('[data-rollout-row="CSV-2"]')!.textContent).toContain("needs review · 1 pending · ✓ 20 checks");
+    expect(tab.querySelector('[data-rollout-row="CSV-1"] [data-rollout-status]')!.getAttribute("data-rollout-status")).toBe("soaking");
+    expect(tab.querySelector("[data-rollout-hold-off]")).toBeNull();
+    expect(tab.querySelector("[data-rollout-calendar]")).toBeNull();
+  });
+
+  const nextCard = async (next: RolloutView["next"]) => (await showTab(await mountRollout({}, prView(rollout({ next }))))).querySelector<HTMLElement>("[data-rollout-next]")!;
+
+  it("names a soak as what comes next, with when it ends", async () => {
+    const base = rollout();
+    const free = rollout({ stages: [{ ...base.stages[0]!, steps: [step({ key: "CSV-2" })] }], next: { kind: "soak", keys: ["CSV-2"], stage: "expand", until: NOW + 2 * HOUR, text: "" } });
+    const card = (await showTab(await mountRollout({}, prView(free)))).querySelector<HTMLElement>("[data-rollout-next]")!;
+    expect(within(card).getByRole("heading", { name: "Wait for Expand to soak" })).toBeTruthy();
+    expect(card.textContent).toContain("2h from now. Then CSV-2 can go.");
+  });
+
+  it("names a milestone as what comes next, with its check and a Mark live", async () => {
+    const card = await nextCard({ kind: "milestone", keys: ["traffic-low"], stage: "expand", until: null, text: "" });
+    expect(within(card).getByRole("heading", { name: "Wait for traffic-low to hold" })).toBeTruthy();
+    expect(card.textContent).toContain("Old traffic is near zero");
+    expect(card.textContent).toContain("CSV-2 needs it.");
+    expect(within(card).getByRole("button", { name: "Mark live" })).toBeTruthy();
+  });
+
+  it("says when everything is live", async () => {
+    const card = await nextCard({ kind: "done", keys: [], stage: null, until: null, text: "Everything is live." });
+    expect(within(card).getByRole("heading", { name: "Everything is live" })).toBeTruthy();
+  });
+
+  it("names each step's button by what it shows, and flips aria-expanded as it opens its details", async () => {
+    const slot = await mountRollout();
+    const tab = await showTab(slot);
+    const button = within(tab).getByRole("button", { name: "CSV-2 deploys on merge #2 CSV-2 title Don't merge yet merging deploys it; needs CSV-1", expanded: false });
+    expect(within(tab).getByRole("button", { name: "Milestone traffic-low Old traffic is near zero holds" })).toBeTruthy();
+    fireEvent.click(button);
+    expect(button.getAttribute("aria-expanded")).toBe("true");
+    expect(tab.querySelector(`#${button.getAttribute("aria-controls")}`)!.querySelector("[data-rollout-detail]")).not.toBeNull();
+    expect(within(tab).getAllByRole("separator", { name: "Then, after the steps above" }).length).toBeGreaterThan(0);
+  });
+
+  it("highlights on keyboard focus, never on a touch, and reads the switch back as it was left", async () => {
+    const slot = await mountRollout();
+    const tab = await showTab(slot);
+    const row = (key: string) => tab.querySelector<HTMLElement>(`[data-rollout-row="${key}"]`)!;
+    fireEvent.pointerEnter(row("CSV-2"), { pointerType: "touch" });
+    expect(row("CSV-1").textContent).not.toContain("needed first");
+    // A key press first, so the browser shows the focus ring a keyboard user sees.
+    const keyboard = (button: HTMLElement) => {
+      fireEvent.keyDown(document.body, { key: "Tab" });
+      act(() => button.focus());
+      fireEvent.focus(button);
+    };
+    keyboard(row("CSV-2").querySelector<HTMLElement>("button[aria-expanded]")!);
+    expect(row("CSV-1").textContent).toContain("needed first");
+    fireEvent.blur(row("CSV-2").querySelector<HTMLElement>("button[aria-expanded]")!);
+    expect(row("CSV-1").textContent).not.toContain("needed first");
+
+    unmountAll();
+    localStorage.setItem("loom.rollout.hover", "false");
+    reloadRemembered();
+    const again = await showTab(await mountRollout());
+    expect(within(again).getByRole("switch", { name: "Highlight on hover" }).getAttribute("aria-checked")).toBe("false");
+    expect(again.textContent).not.toContain("Hover a step");
+    keyboard(again.querySelector<HTMLElement>('[data-rollout-row="CSV-2"] button[aria-expanded]')!);
+    expect(again.querySelector('[data-rollout-row="CSV-1"]')!.textContent).not.toContain("needed first");
+  });
+
+  it("fades the links off the chain when every link shows", async () => {
+    localStorage.setItem("loom.rollout.links", "true");
+    reloadRemembered();
+    const tab = await showTab(await mountRollout());
+    const link = (id: string) => tab.querySelector(`[data-rollout-link="${id}"]`)!;
+    expect(link("CSV-1>CSV-2").getAttribute("class")).toContain("opacity-35");
+    fireEvent.pointerEnter(tab.querySelector('[data-rollout-row="CSV-1"]')!, { pointerType: "mouse" });
+    expect(link("CSV-1>CSV-2").getAttribute("class")).not.toContain("opacity-35");
+    expect(link("traffic-low>CSV-2").getAttribute("class")).toContain("opacity-35");
+  });
+
+  it("copies a command, and says so when the page has no clipboard", async () => {
+    const slot = await mountRollout();
+    await showTab(slot);
+    const row = await open(slot, "CSV-1");
+    fireEvent.click(within(row).getByRole("button", { name: "Copy the command curl -f https://shop.example.com/health" }));
+    await waitFor(() => expect(within(row).getByText("Copy failed")).toBeTruthy());
+    expect(within(row).getByRole("status").textContent).toBe("Could not copy the command");
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    try {
+      fireEvent.click(within(row).getByRole("button", { name: /^Copy the command/ }));
+      await waitFor(() => expect(within(row).getByText("Copied")).toBeTruthy());
+      expect(writeText).toHaveBeenCalledWith("curl -f https://shop.example.com/health");
+    } finally {
+      Reflect.deleteProperty(navigator, "clipboard");
+    }
+  });
+
+  it("forgets an opened step that leaves the view, so nothing stays dimmed", async () => {
+    let view = prView();
+    const mounted = await mountPage("csv", { project: () => view });
+    const slot = mounted.slot;
+    await slot.findByRole("tab", { name: "Board" });
+    await showTab(slot);
+    await open(slot, "CSV-1");
+    const only = rollout();
+    view = prView(rollout({ stages: [{ ...only.stages[0]!, steps: [only.stages[0]!.steps[1]!] }], next: { kind: "merge", keys: ["CSV-2"], stage: "expand", until: null, text: "" } }));
+    await slot.experimental_invalidateRpc(changedTags("csv"));
+    await waitFor(() => expect(slot.container.querySelector('[data-rollout-row="CSV-1"]')).toBeNull());
+    expect(slot.container.querySelector('[data-rollout-row="CSV-2"]')!.getAttribute("class")).not.toContain("opacity-30");
+  });
+
+  const plan = (over: Partial<RolloutStep>, next: RolloutView["next"]["kind"], merge?: Partial<MergeEntry>) => {
+    const base = rollout();
+    const view = rollout({
+      stages: [{ ...base.stages[0]!, steps: [step({ key: "CSV-1", ...over })] }],
+      milestones: [],
+      windows: [],
+      warnings: [],
+      next: { kind: next, keys: ["CSV-1"], stage: "expand", until: null, text: "" },
+    });
+    const entry: MergeEntry | undefined =
+      merge === undefined
+        ? undefined
+        : {
+            key: "CSV-1",
+            title: "CSV-1 title",
+            repo: null,
+            state: "pr_open",
+            base: "main",
+            prUrl: "https://github.com/acme/shop/pull/1",
+            prNumber: "1",
+            prOpen: true,
+            elsewhere: null,
+            step: 1,
+            stackedOn: null,
+            waitsOn: [],
+            unblocks: [],
+            checks: null,
+            draft: false,
+            review: "APPROVED",
+            reviewRead: true,
+            conflicts: false,
+            behind: null,
+            refreshBehind: null,
+            verdict: "ready",
+            holds: [],
+            trap: false,
+            mergedInto: null,
+            mergedIntoState: null,
+            blockedReason: null,
+            ...merge,
+          };
+    return projectView({ overview: overview({ strategy: "pr", branch: null }), rollout: view, mergeOrder: entry === undefined ? null : { repos: [null], steps: 1, entries: [entry], counts: { open: 1, first: 1, ready: 0, wrong: 0 } } });
+  };
+  const card = async (view: ProjectView) => {
+    unmountAll();
+    return (await showTab(await mountRollout({}, view))).querySelector<HTMLElement>("[data-rollout-next]")!;
+  };
+
+  it("ticks Review only when the merge order calls the pull request ready", async () => {
+    const draft = await card(plan({}, "merge", { draft: true, verdict: "first", holds: ["draft"] }));
+    expect(draft.querySelector('[data-rollout-plan="review"]')!.textContent).toBe("1Review#1 draft · approved");
+    const ready = await card(plan({}, "merge", { verdict: "ready", checks: { passed: 3, failed: 0, pending: 0 } }));
+    expect(ready.querySelector('[data-rollout-plan="review"]')!.textContent).toContain("✓");
+    expect(ready.querySelector('[data-rollout-plan="review"]')!.textContent).toContain("The Merge order calls it ready to merge.");
+    const unnumbered = await card(plan({ prNumber: null }, "merge", { prNumber: null, review: "REVIEW_REQUIRED", verdict: "first" }));
+    expect(unnumbered.querySelector('[data-rollout-plan="review"]')!.textContent).toContain("Its pull request: needs review");
+  });
+
+  it("says a deploy-on-merge step goes live on merge, not when its verify passes", async () => {
+    const merge = await card(plan({ onMerge: true, verify: "dig +short edge.example.com" }, "merge"));
+    expect(within(merge).getByRole("heading", { name: "Merge CSV-1: merging deploys it" })).toBeTruthy();
+    expect([...merge.querySelectorAll("[data-rollout-plan]")].map((row) => row.getAttribute("data-rollout-plan"))).toEqual(["merge", "verify"]);
+    expect(merge.querySelector('[data-rollout-plan="verify"]')!.textContent).toContain("Loom marks CSV-1 live when it merges, without waiting for this command");
+    const deploy = await card(plan({ state: "done", merge: "merged", verify: "curl -f https://shop.example.com/health" }, "deploy"));
+    expect(deploy.querySelector('[data-rollout-plan="verify"]')!.textContent).toContain("Loom runs it every 15 minutes and marks CSV-1 live when it passes.");
+  });
+
+  it("names a blocked step, a step with no pull request and a step to wait for", async () => {
+    const blocked = await card(plan({ state: "blocked" }, "blocked"));
+    expect(within(blocked).getByRole("heading", { name: "CSV-1 is next, and it is blocked" })).toBeTruthy();
+    const none = await card(plan({ merge: "no_pr", prUrl: null, prNumber: null, state: "queued" }, "pr"));
+    expect(within(none).getByRole("heading", { name: "CSV-1 is next" })).toBeTruthy();
+    expect(none.querySelector('[data-rollout-plan="review"]')!.textContent).toContain("Its pull request is not open yet");
+    const wait = await card(plan({}, "wait"));
+    expect(within(wait).getByRole("heading", { name: "Wait for CSV-1 to go live" })).toBeTruthy();
+  });
+
+  it("promises nothing after a soak for a step that still needs a milestone", async () => {
+    const base = rollout();
+    const needing = step({ key: "CSV-2", requires: [{ target: "traffic-low", kind: "milestone", title: "Old traffic is near zero", live: false, cancelled: false, unknown: false, viaStage: false, prUrl: null, prNumber: null, how: null }] });
+    const view = prView(rollout({ stages: [{ ...base.stages[0]!, steps: [needing] }], next: { kind: "soak", keys: ["CSV-2"], stage: "expand", until: NOW + HOUR, text: "" } }));
+    const soak = await card(view);
+    expect(soak.textContent).toContain("Then the next stage starts, once what its steps need is live.");
+    expect(soak.textContent).not.toContain("CSV-2 can go");
+  });
+
+  it("puts a freeze that is on now before one that starts later, whatever the spec's order", async () => {
+    const windows: RolloutView["windows"] = [
+      { title: "Launch freeze", from: "2026-01-20", to: "2026-01-25", note: null, active: false, startsIn: 10, past: false },
+      { title: "Holiday freeze", from: "2026-01-09", to: "2026-01-12", note: "Ask the release manager", active: true, startsIn: null, past: false },
+    ];
+    const base = rollout();
+    const view = rollout({
+      stages: [{ ...base.stages[0]!, steps: [step({ key: "CSV-2", onMerge: true })] }],
+      windows,
+      warnings: [
+        { kind: "window", tone: "info", keys: ["CSV-2"], text: "CSV-2 deploys on merge and has 10 days before the Launch freeze (Jan 20 to Jan 25)." },
+        { kind: "window", tone: "warning", keys: ["CSV-2"], text: "CSV-2 deploys on merge, and the Holiday freeze is on until Jan 12." },
+      ],
+      next: { kind: "merge", keys: ["CSV-2"], stage: "expand", until: null, text: "" },
+    });
+    const tab = await showTab(await mountRollout({}, prView(view)));
+    expect(tab.querySelector('[data-rollout-hold="CSV-2"]')!.textContent).toContain("CSV-2 deploys on merge during the Holiday freeze");
+    expect(tab.querySelector("[data-rollout-calendar]")!.textContent).toContain("The Holiday freeze is on now, until Jan 12");
+    expect(tab.querySelector('[data-rollout-window-row="Holiday freeze"]')!.textContent).toContain("Ask the release manager");
+  });
+
+  it("titles each kind of hold off by what to do", async () => {
+    const base = rollout();
+    const need = (target: string, kind: "ticket" | "milestone") => ({ target, kind, title: null, live: false, cancelled: false, unknown: false, viaStage: false, prUrl: null, prNumber: null, how: null });
+    const view = rollout({
+      stages: [
+        { ...base.stages[0]!, name: "expand", steps: [step({ key: "CSV-1" })] },
+        { ...base.stages[0]!, name: "migrate", steps: [step({ key: "CSV-2", stage: "migrate", state: "done", merge: "merged", requires: [need("CSV-1", "ticket")] }), step({ key: "CSV-3", stage: "migrate", requires: [need("traffic-low", "milestone")] }), step({ key: "CSV-4", stage: "migrate", state: "done", merge: "merged" })] },
+      ],
+      milestones: [{ ...base.milestones[0]!, live: null, neededBy: ["CSV-3"] }],
+      windows: [],
+      warnings: [
+        { kind: "deploy_early", tone: "warning", keys: ["CSV-2"], text: "" },
+        { kind: "milestone", tone: "info", keys: ["CSV-3"], text: "" },
+        { kind: "soak", tone: "warning", keys: ["CSV-4"], text: "" },
+      ],
+      next: { kind: "merge", keys: ["CSV-1"], stage: "expand", until: null, text: "" },
+    });
+    const tab = await showTab(await mountRollout({}, prView(view)));
+    const hold = (key: string) => tab.querySelector(`[data-rollout-hold="${key}"]`)!;
+    expect(hold("CSV-2").textContent).toContain("Don't deploy CSV-2 yet");
+    expect(hold("CSV-3").textContent).toContain("CSV-3 waits for traffic-low");
+    expect(hold("CSV-3").textContent).toContain("Old traffic is near zero");
+    expect(hold("CSV-4").textContent).toContain("CSV-4 is ahead of its stage");
+    expect(hold("CSV-4").textContent).toContain("Expand is not all live yet, and CSV-4 is in Migrate");
+  });
+
+  it("folds a long stage goal to two lines, and opens it with a click", async () => {
+    const tab = await showTab(await mountRollout());
+    const goal = tab.querySelector<HTMLElement>('[data-rollout-stage="expand"] [data-rollout-goal]')!;
+    expect(goal.getAttribute("aria-expanded")).toBe("false");
+    // The clamp sits inside the button, whose own display would win over it.
+    expect(goal.getAttribute("class")).not.toContain("line-clamp-2");
+    expect(goal.querySelector(".line-clamp-2")!.textContent).toBe("Goal: Servers accept the header");
+    fireEvent.click(goal);
+    expect(goal.getAttribute("aria-expanded")).toBe("true");
+    expect(goal.querySelector(".line-clamp-2")).toBeNull();
+  });
+
+  it("says a live step in a stage with no soak is live, not soaked, and that the next stage starts once it is all live", async () => {
+    const base = rollout();
+    const view = rollout({
+      stages: [
+        { ...base.stages[0]!, soak: null, steps: [step({ key: "CSV-1", state: "done", merge: "merged", live: { at: NOW - HOUR, by: "verify", evidence: null }, soakedAt: NOW - HOUR, soaked: true }), step({ key: "CSV-3" })] },
+        { ...base.stages[0]!, name: "migrate", soak: null, steps: [step({ key: "CSV-2", stage: "migrate" })] },
+      ],
+      milestones: [],
+      windows: [],
+      warnings: [],
+      next: { kind: "merge", keys: ["CSV-3"], stage: "expand", until: null, text: "" },
+    });
+    const tab = await showTab(await mountRollout({}, prView(view)));
+    expect(tab.querySelector('[data-rollout-row="CSV-1"] [data-rollout-status]')!.textContent).toBe(" live");
+    expect(tab.querySelector('[data-rollout-stage="migrate"]')!.textContent).toContain("Starts once Expand is all live");
+  });
+
+  it("stacks its parts on a narrow page and lets long text wrap", async () => {
+    const slot = await mountRollout();
+    const tab = await showTab(slot);
     const classes = (element: Element | null) => (element?.getAttribute("class") ?? "").split(/\s+/);
-    expect(classes(row.querySelector("[data-rollout-title]"))).toEqual(expect.arrayContaining(["min-w-[min(100%,14rem)]", "flex-1", "[overflow-wrap:anywhere]"]));
-    expect(classes(row.querySelector("[data-rollout-title]")!.parentElement)).toContain("flex-wrap");
-    expect(classes(row.querySelector("[data-rollout-merge]"))).toEqual(expect.arrayContaining(["max-w-full", "truncate"]));
-    expect(classes(row.querySelector("[data-rollout-check]"))).toContain("[overflow-wrap:anywhere]");
-    expect(classes(row.querySelector("[data-rollout-check] pre"))).toEqual(expect.arrayContaining(["overflow-auto", "whitespace-pre-wrap", "[overflow-wrap:anywhere]"]));
-    const needs = slot.container.querySelector('[data-rollout-row="CSV-2"] [data-rollout-needs]')!;
-    expect(classes(needs)).toEqual(expect.arrayContaining(["flex", "flex-wrap", "min-w-0"]));
-    expect(classes(needs.querySelector('[data-rollout-need="CSV-1"]'))).toEqual(expect.arrayContaining(["max-w-full", "truncate"]));
-    expect(classes(slot.container.querySelector('[data-rollout-milestone="traffic-low"] span.flex-1'))).toContain("min-w-[min(100%,14rem)]");
-    expect(classes(slot.container.querySelector('[data-rollout-window="Holiday freeze"]'))).toEqual(expect.arrayContaining(["min-w-0", "max-w-full", "[overflow-wrap:anywhere]"]));
-    expect(classes(slot.container.querySelector("[data-rollout-windows]"))).toContain("flex-wrap");
-    expect(classes(slot.container.querySelector("[data-rollout-warning] span:last-child"))).toEqual(expect.arrayContaining(["min-w-0", "[overflow-wrap:anywhere]"]));
+    expect(classes(tab)).toContain("@container/rollout");
+    // The cards and the stages stack until the tab is wide enough for them side by side.
+    expect(classes(tab.querySelector("[data-rollout-next]")!.parentElement)).toContain("@3xl/rollout:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]");
+    expect(classes(tab.querySelector("[data-rollout-columns]"))).toEqual(expect.arrayContaining(["grid", "@3xl/rollout:grid-cols-[repeat(var(--rollout-stages),minmax(12.5rem,1fr))]"]));
+    expect((tab.querySelector("[data-rollout-columns]") as HTMLElement).style.getPropertyValue("--rollout-stages")).toBe("1");
+    const two = tab.querySelector('[data-rollout-row="CSV-2"]')!;
+    expect(classes(two.querySelector("[data-rollout-title]"))).toContain("[overflow-wrap:anywhere]");
+    const detail = (await open(slot, "CSV-1")).querySelector("[data-rollout-detail] dl");
+    expect(classes(detail)).toEqual(expect.arrayContaining(["grid-cols-[4rem_minmax(0,1fr)]", "@max-xl/loom:grid-cols-1"]));
+    expect(classes(tab.querySelector("[data-rollout-check] pre"))).toEqual(expect.arrayContaining(["overflow-auto", "whitespace-pre-wrap", "[overflow-wrap:anywhere]"]));
   });
 });
 

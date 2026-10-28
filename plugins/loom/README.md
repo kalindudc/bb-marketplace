@@ -499,23 +499,47 @@ read".
 
 On the pull request strategy, when the spec or a ticket has a rollout (see
 [Deploy order](#deploy-order)), the order to deploy the project's changes in.
-It opens with the next safe step in one sentence, such as "Deploy CSV-4
-(the deploy pipeline: canary, then production). 6 steps wait on it." or "Wait for the
-expand stage to soak until Oct 29 14:00 UTC.", then the warnings, the freeze
-windows as a dated strip, one section per stage and the milestones.
+The tab reads top to bottom: what to do, what to hold off, when, and the whole
+order.
 
-Each step's row has its pull request, whether it merged, whether it is live and
-by what, how it deploys and whether its merge does it, a chip for each thing
-that must be live first, its release, its verify command's last result with
-the output behind a disclosure, and its rollback. A step opens its ticket. Mark
-live, with a second click to confirm, marks a step or a milestone live for a
-deploy Loom has no command to check, and Undo live takes it back.
+- Do next is the next safe step as a checklist. For a pull request that is
+  next it lists the review and checks Loom last read (from the Merge order
+  data), the merge (and whether merging deploys it), the deploy and the verify
+  command, then says what going live opens: "Staging is all live and soaks
+  1 day, until about Thu 11:56 AM. Then OTLP-2 and OTLP-12 can go in
+  Production dark." When nothing can go yet it says what to wait for: a stage
+  to soak, a milestone to hold, or another step to go live.
+- Hold off lists each step a warning names, once, with its reasons as a short
+  list: "Don't merge OTLP-10 yet" because a milestone does not hold, the stage
+  before is not all live, and a freeze starts in 12 days. Warnings name a
+  deploy-on-merge pull request that is open while something it needs is not
+  live, a merged step that should wait to deploy, a deploy-on-merge pull
+  request inside a window or with one starting within 14 days, a step whose
+  earlier stage has not soaked, and one that needs a milestone that does not
+  hold. They are advice for you: none of them holds a start, a review or a
+  merge.
+- Calendar puts the freeze windows on a dated strip with today marked, and the
+  earliest date each stage could be done if every step went live as soon as it
+  could. A stage that waits on a milestone that does not hold has no date.
+- Deploy order has one column per stage, stacked on a narrow page, with a
+  progress bar, how many steps are live, and when the stage can start or how
+  long it soaks. Steps above a "then" line go first. Each step has one status:
+  Live (with the soak time left), Deploy now, Merge now, Merge, then deploy,
+  Ready after the stage before, Waiting (and for what), Don't merge yet, Don't
+  deploy yet, No pull request yet, or Blocked. ⚡ marks a step whose merge
+  deploys it. A milestone sits in the stage that first needs it, or at the top
+  of the stage it gates. Hovering a step highlights what it needs and what
+  waits on it, with a line from each; Highlight on hover turns that off, and
+  Show every link draws every line. Both switches are remembered on the
+  device. Opening a step shows what it needs, how it deploys, its release, its
+  verify command's last result with Copy and the output, its rollback (and the
+  live steps a rollback would break), what it unblocks, and Mark live, Open
+  ticket and its pull request.
+- How each repo deploys says once per repo whether merging deploys its changes
+  and how, instead of on every step.
 
-Warnings name a deploy-on-merge pull request that is open while something it
-needs is not live, a merged step that should wait to deploy, a deploy-on-merge
-pull request inside a window or with one starting within 14 days, a step whose
-earlier stage has not soaked, and one that needs a milestone that does not
-hold. They are advice for you: none of them holds a start, a review or a merge.
+Mark live, with a second click to confirm, marks a step or a milestone live for
+a deploy Loom has no command to check, and Undo live takes it back.
 
 #### Agents
 

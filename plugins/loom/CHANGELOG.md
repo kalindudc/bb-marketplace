@@ -2,6 +2,23 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.30.0 (2026-10-28)
+
+### Changed
+
+- The Rollout tab reads as a plan instead of a wall of text. Before, it was one sentence for the next step, a banner per warning, and a block of four to six lines of prose per step, with the same deploy text on every step of a repo, full command paths, two status chips per step to read together, steps sorted by ticket key and the milestones at the bottom. Now it shows, top to bottom:
+  - Do next: the next safe step as a checklist (review and checks from the Merge order data, merge, deploy, verify), and what its going live opens, such as the stage soaking for a day and the steps that can go after it. When nothing can go, it says what to wait for.
+  - Hold off: each step a warning names, once, with its reasons as a short list, such as "Don't merge OTLP-10 yet" because a milestone does not hold, the stage before is not all live and a freeze starts in 12 days.
+  - Calendar: the freeze windows on a dated strip with today marked, and the earliest each stage could be done if every step went live as soon as it could.
+  - Deploy order: a column per stage with a progress bar, in deploy order with "then" lines, and one status per step (Live with the soak time left, Merge now, Merge, then deploy, Ready after the stage before, Waiting, Don't merge yet, Don't deploy yet and others). ⚡ marks a step whose merge deploys it, and milestones sit in the stage that needs them. A step opens in place to its needs, deploy, release, verify result with Copy and its output, rollback, what it unblocks, and Mark live.
+  - Hovering a step highlights what it needs and what waits on it, with a line from each. Highlight on hover turns that off, Show every link draws every line, and both are remembered on the device.
+  - How each repo deploys, once per repo.
+- On a phone the cards and the stages stack, the Do next buttons share the card's width, and nothing scrolls sideways at 390 px. A touch never leaves a step highlighted, and the hover switch is hidden on touch screens; keyboard focus highlights like hovering. Each step's button reads its whole tile to a screen reader, and Copy falls back to selecting the text where the page has no clipboard, as over plain HTTP.
+
+### Compatibility
+
+- No migration. The page's Rollout tab also reads the Merge order view the project page already loads. `bb loom rollout` prints the same sentences as before.
+
 ## 0.29.4 (2026-10-28)
 
 ### Fixed

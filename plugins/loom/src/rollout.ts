@@ -192,7 +192,7 @@ export interface RolloutView {
 }
 
 const DAY_MS = 86_400_000;
-const WINDOW_NOTICE_DAYS = 14;
+export const WINDOW_NOTICE_DAYS = 14;
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 const numberOf = (url: string | null) => (url === null ? null : (/\/(\d+)\/?$/u.exec(url)?.[1] ?? null));

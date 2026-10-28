@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { LiveBy, RolloutMarkRow, TicketRow } from "../src/db/store";
 import type { PrMeta } from "../src/pr-meta";
 import { rolloutOf, rolloutSection, type RolloutView, type TicketRollout } from "../src/rollout";
+import { byUrgency, chainOf, columnsOf, earliestOf, holdsOf, milestoneBlockers, milestoneStatus, pullRequestNote, readyToMerge, repoDeploys, shortCommand, stepStatus } from "../src/ui/rollout-plan";
+import type { MergeEntry } from "../src/merge-order";
 import { parseSpec, type Spec } from "../src/spec";
 import type { TicketState } from "../src/states";
 import { HOUR, NOW } from "./fixtures";
@@ -296,5 +298,143 @@ describe("the pull request's Rollout section", () => {
     const plain = row("CSV-1", "pr_open", { repo: null });
     expect(rolloutSection(staged, [plain], plain, [], NOW).slice(2, 3)).toEqual(["This change is in no rollout stage. Loom follows the project's deploy order on its Rollout tab."]);
     expect(rolloutSection(parseSpec(specToml((doc) => (doc.merge = { strategy: "pr" }))).spec!, [plain], plain, [], NOW)).toEqual([]);
+  });
+});
+
+describe("the Rollout tab's reading of the order", () => {
+  const statuses = (view: RolloutView, now = NOW) => Object.fromEntries(view.stages.flatMap((stage) => stage.steps).map((step) => [step.key, [stepStatus(view, step, now).kind, stepStatus(view, step, now).label, stepStatus(view, step, now).why]]));
+
+  it("gives each step one status: what to do next, what it waits for, or that it is live", () => {
+    expect(statuses(rolloutOf(specOf(), board(), [], NOW)!)).toEqual({
+      "LANE-1": ["deploy", "Deploy now", null],
+      "LANE-2": ["merge", "Merge now", "merging deploys it"],
+      "LANE-3": ["waiting", "Waiting", "for LANE-1"],
+      "LANE-4": ["no_pr", "No pull request yet", "then waits for LANE-1 and LANE-2"],
+      "LANE-5": ["no_pr", "No pull request yet", "then waits for old-traffic-zero"],
+      "LANE-6": ["no_pr", "No pull request yet", null],
+    });
+    const marks = [live("LANE-1", "verify", NOW - 2 * HOUR)];
+    expect(statuses(rolloutOf(specOf(), board(), marks, NOW)!)).toMatchObject({ "LANE-1": ["soaking", "Live", "soaking"], "LANE-3": ["ready_after", "Ready after expand", null] });
+    expect(statuses(rolloutOf(specOf(), board(), [live("LANE-1", "verify", NOW - 2 * DAY)], NOW)!)["LANE-1"]).toEqual(["live", "Live", null]);
+  });
+
+  it("says not to merge a deploy-on-merge step, or deploy a merged one, before what it needs; and names a blocked one", () => {
+    const early = rolloutOf(specOf(), board({ "LANE-2": { rollout: { stage: "expand", requires_live: ["LANE-1"] } }, "LANE-3": { state: "done" } }), [], NOW)!;
+    expect(statuses(early)).toMatchObject({ "LANE-2": ["merge_early", "Don't merge yet", "merging deploys it; needs LANE-1"], "LANE-3": ["deploy_early", "Don't deploy yet", "needs LANE-1"] });
+    const after = rolloutOf(specOf(), board({ "LANE-3": { state: "done" } }), [live("LANE-1", "verify", NOW - HOUR)], NOW)!;
+    expect(statuses(after)["LANE-3"]).toEqual(["deploy_after", "Deploy after expand", null]);
+    expect(statuses(rolloutOf(specOf(), board({ "LANE-3": { state: "blocked" } }), [], NOW)!)["LANE-3"]).toEqual(["blocked", "Blocked", "its ticket is blocked"]);
+  });
+
+  it("lays each stage out in layers, with a milestone in the stage that first needs it and one that gates a stage atop it", () => {
+    const edit = (doc: Doc) => doc.rollout.milestone.push({ ref: "cache-warm", title: "The cache is warm" }, { ref: "unused", title: "Nobody needs it" });
+    const rows = board({ "LANE-3": { rollout: { stage: "migrate", requires_live: ["LANE-1", "cache-warm"] } }, "LANE-4": { rollout: { stage: "migrate", requires_live: ["LANE-3"] } } });
+    const { columns, others } = columnsOf(rolloutOf(specOf(edit), rows, [], NOW)!);
+    const keys = (layer: Array<{ step: { key: string } } | { milestone: { ref: string } }>) => layer.map((item) => ("step" in item ? item.step.key : item.milestone.ref));
+    expect(columns.map((column) => [column.stage.name, column.gates.map((gate) => gate.ref), column.layers.map(keys)])).toEqual([
+      ["expand", [], [["LANE-1", "LANE-2"]]],
+      ["migrate", [], [["cache-warm"], ["LANE-3"], ["LANE-4"]]],
+      ["contract", ["old-traffic-zero"], [["LANE-5"]]],
+      [null, [], [["LANE-6"]]],
+    ]);
+    expect(others.map((milestone) => milestone.ref)).toEqual(["unused"]);
+  });
+
+  it("groups the warnings by step, with what each waits for", () => {
+    const view = rolloutOf(specOf(), board({ "LANE-2": { rollout: { stage: "expand", requires_live: ["LANE-1"] } }, "LANE-3": { state: "done" } }), [], NOW)!;
+    expect(holdsOf(view).map((hold) => [hold.step.key, hold.kind, hold.tone, hold.needs.map((need) => need.target), hold.stage?.name ?? null])).toEqual([
+      ["LANE-2", "dont_merge", "hold", ["LANE-1"], null],
+      ["LANE-3", "dont_deploy", "hold", ["LANE-1"], "expand"],
+    ]);
+    const windows = (doc: Doc) => {
+      doc.rollout.window = [
+        { title: "Holiday freeze", from: "2026-01-09", to: "2026-01-12" },
+        { title: "Launch freeze", from: "2026-01-20", to: "2026-01-25" },
+        { title: "Summer freeze", from: "2026-07-01", to: "2026-07-05" },
+      ];
+    };
+    const calendar = holdsOf(rolloutOf(specOf(windows), board(), [], NOW)!);
+    expect(calendar.map((hold) => [hold.step.key, hold.kind, hold.windows.map((window) => window.title)])).toEqual([["LANE-2", "calendar", ["Holiday freeze", "Launch freeze"]]]);
+  });
+
+  it("finds the earliest each stage could be done, and stops at a milestone that does not hold", () => {
+    const view = rolloutOf(specOf(), board(), [live("LANE-1", "verify", NOW - 2 * HOUR)], NOW)!;
+    expect(earliestOf(view, NOW).map((each) => [each.stage.name, each.at, each.waitsFor])).toEqual([
+      ["expand", NOW + DAY, []],
+      ["migrate", NOW + DAY, []],
+      ["contract", null, ["old-traffic-zero"]],
+    ]);
+    const warm = (doc: Doc) => doc.rollout.milestone.push({ ref: "cache-warm", title: "The cache is warm" });
+    const waiting = rolloutOf(specOf(warm), board({ "LANE-3": { rollout: { stage: "migrate", requires_live: ["LANE-1", "cache-warm"] } } }), [], NOW)!;
+    expect(earliestOf(waiting, NOW).map((each) => [each.stage.name, each.at, each.waitsFor])).toEqual([
+      ["expand", NOW + DAY, []],
+      ["migrate", null, ["cache-warm"]],
+      ["contract", null, ["cache-warm", "old-traffic-zero"]],
+    ]);
+  });
+
+  it("keeps the time of a stage that is all live, even when a gate it had stopped holding, and goes on to the next", () => {
+    const gateExpand = (doc: Doc) => (doc.rollout.milestone[0].stage = "expand");
+    const marks = [live("LANE-1", "verify", NOW - 3 * DAY), live("LANE-2", "merge", NOW - 3 * DAY)];
+    const view = rolloutOf(specOf(gateExpand), board(), marks, NOW)!;
+    expect(view.next).toMatchObject({ kind: "merge", keys: ["LANE-3", "LANE-4"] });
+    expect(earliestOf(view, NOW).map((each) => [each.stage.name, each.at, each.waitsFor])).toEqual([
+      ["expand", NOW - 2 * DAY, []],
+      ["migrate", NOW, []],
+      ["contract", NOW, []],
+    ]);
+  });
+
+  it("finds a milestone a step waits for through a step with no stage", () => {
+    const warm = (doc: Doc) => doc.rollout.milestone.push({ ref: "cache-warm", title: "The cache is warm" });
+    const rows = board({ "LANE-3": { rollout: { stage: "migrate", requires_live: ["LANE-6"] } }, "LANE-6": { rollout: { requires_live: ["cache-warm"] } } });
+    const view = rolloutOf(specOf(warm), rows, [], NOW)!;
+    expect(milestoneBlockers(view, view.stages[1]!.steps.find((step) => step.key === "LANE-3")!)).toEqual(["cache-warm"]);
+    expect(earliestOf(view, NOW).map((each) => [each.stage.name, each.waitsFor])).toEqual([
+      ["expand", []],
+      ["migrate", ["cache-warm"]],
+      ["contract", ["cache-warm", "old-traffic-zero"]],
+    ]);
+  });
+
+  it("puts a milestone that gates a stage with no steps beside the earliest step that needs it", () => {
+    const empty = (doc: Doc) => {
+      doc.rollout.stage.splice(1, 0, { name: "warmup", goal: "Caches fill" });
+      doc.rollout.milestone.push({ ref: "warm", title: "Caches are warm", stage: "warmup" });
+    };
+    const view = rolloutOf(specOf(empty), board({ "LANE-3": { rollout: { stage: "migrate", requires_live: ["LANE-1", "warm"] } } }), [], NOW)!;
+    const { columns, others } = columnsOf(view);
+    expect(columns.find((column) => column.stage.name === "migrate")!.layers.map((layer) => layer.map((item) => ("milestone" in item ? item.milestone.ref : item.step.key)))).toEqual([["warm", "LANE-4"], ["LANE-3"]]);
+    expect(others).toEqual([]);
+  });
+
+  it("orders windows by what is on now, then what starts first, and calls only a pull request the merge order calls ready ready", () => {
+    const window = (title: string, active: boolean, startsIn: number | null) => ({ title, from: "2026-01-01", to: "2026-01-02", note: null, active, startsIn, past: false });
+    expect(byUrgency([window("later", false, 20), window("now", true, null), window("soon", false, 3)]).map((each) => each.title)).toEqual(["now", "soon", "later"]);
+    expect(readyToMerge({ verdict: "ready" } as MergeEntry)).toBe(true);
+    expect(readyToMerge({ verdict: "first", review: "APPROVED", draft: true } as MergeEntry)).toBe(false);
+    expect(readyToMerge(undefined)).toBe(false);
+  });
+
+  it("names what a step needs and what waits on it, through any chain", () => {
+    const view = rolloutOf(specOf(), board(), [], NOW)!;
+    expect(chainOf(view, "LANE-4")).toEqual({ up: new Set(["LANE-1", "LANE-2"]), down: new Set() });
+    expect(chainOf(view, "LANE-1")).toEqual({ up: new Set(), down: new Set(["LANE-3", "LANE-4"]) });
+  });
+
+  it("reads a milestone's state, a command short, each repo's deploy and a pull request's review in a few words", () => {
+    const view = rolloutOf(specOf(), board(), [], NOW)!;
+    expect(milestoneStatus(view.milestones[0]!)).toEqual({ kind: "waiting", tone: "wait", label: "Not checked yet", why: "Loom runs its check every 15 minutes" });
+    expect(milestoneStatus({ ...view.milestones[0]!, lastCheck: { at: NOW, exitCode: 1, output: "" } })).toMatchObject({ tone: "hold", label: "Does not hold", why: "its check exited 1" });
+    expect(shortCommand("/bin/bash /Users/kim/.local/share/forge/check.sh gate staging")).toBe("check.sh gate staging");
+    expect(shortCommand("./scripts/zero.sh --prod")).toBe("zero.sh --prod");
+    expect(shortCommand("curl -f https://core.example.com/health")).toBe("curl -f https://core.example.com/health");
+    expect(repoDeploys(view)).toEqual([
+      { repo: "core", how: "Shipit deploys main", onMerge: false },
+      { repo: "edge", how: "The actuator applies on merge", onMerge: true },
+    ]);
+    const entry = { prOpen: true, reviewRead: true, draft: true, review: "REVIEW_REQUIRED", conflicts: false, base: "main", checks: { passed: 20, failed: 1, pending: 0 } } as MergeEntry;
+    expect(pullRequestNote(entry)).toEqual({ text: "draft · needs review · ✗ 1 failing · ✓ 20 checks", tone: "hold" });
+    expect(pullRequestNote({ ...entry, prOpen: false })).toBeNull();
   });
 });
