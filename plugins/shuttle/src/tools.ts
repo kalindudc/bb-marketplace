@@ -2,7 +2,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { errText } from "./ctx";
-import { prDetail, prList } from "./format";
+import { boardDetailText, boardLine, boardList, prDetail, prList } from "./format";
 import type { Shuttle } from "./shuttle";
 
 const pr = z.string().min(3).max(500).describe("The PR: its link, or a Shuttle key such as github:owner/repo#123 or delta:shop/world#2261179.");
@@ -14,6 +14,19 @@ async function run(fn: () => Promise<string> | string) {
     return { content: [{ type: "text" as const, text: `Shuttle: ${errText(error)}` }], isError: true };
   }
 }
+
+const boardId = z.string().trim().min(1).max(100).describe("The board id from shuttle_boards.");
+const boardName = z.string().trim().min(1).max(80).describe("The board name.");
+const boardDescription = z.string().trim().max(300).optional().describe("A short description of what belongs in the board.");
+const boardPrs = z.array(pr).min(1).max(200);
+const boardPrsOptional = z.array(pr).max(200).optional();
+const boardKey = z.string().trim().min(3).max(400).optional().describe("A canonical PR key such as github:owner/repo#123; when set, only boards containing that PR are returned.");
+const boardKeysLine = (label: string, keys: string[], empty: string) => {
+  if (keys.length === 0) return `${label}: ${empty}`;
+  const shown = keys.slice(0, 20);
+  const more = keys.length > shown.length ? ` (+${keys.length - shown.length} more)` : "";
+  return `${label}: ${shown.join(", ")}${more}`;
+};
 
 export function registerTools(bb: BbPluginApi, shuttle: Shuttle): void {
   bb.agents.registerTool({
@@ -47,6 +60,56 @@ export function registerTools(bb: BbPluginApi, shuttle: Shuttle): void {
           return prDetail(view, shuttle.detail(view.key).events);
         }
         return prList(shuttle.threadPrs(tool.threadId).prs, "No pull request is linked to this thread. Link one with shuttle_link.");
+      }),
+  });
+  bb.agents.registerTool({
+    name: "shuttle_boards",
+    description: "Find Shuttle boards by name, optionally including archived boards or filtering by a member PR key.",
+    presentation: { label: { pending: "Checking boards", completed: "Checked boards" } },
+    parameters: z.object({ query: z.string().max(200).optional(), archived: z.enum(["exclude", "include", "only"]).optional(), key: boardKey }),
+    execute: ({ query, archived, key }) => run(() => boardList(shuttle.boards({ query, archived, key }).boards.slice(0, 50), "No board matches that filter.")),
+  });
+  bb.agents.registerTool({
+    name: "shuttle_board",
+    description: "Inspect one Shuttle board: its summary, saved PRs with live status, and recent board activity.",
+    presentation: { label: { pending: "Checking board", completed: "Checked board" } },
+    parameters: z.object({ id: boardId }),
+    execute: ({ id }) => run(() => boardDetailText(shuttle.board(id), { prLimit: 20, activityLimit: 10 })),
+  });
+  bb.agents.registerTool({
+    name: "shuttle_board_create",
+    description: "Create a Shuttle board, optionally seeding it with explicit PR links or keys. This does not claim PR ownership, change agents or alter feedback delivery.",
+    presentation: { label: { pending: "Creating board", completed: "Created board" } },
+    parameters: z.object({ name: boardName, description: boardDescription, prs: boardPrsOptional }),
+    execute: ({ name, description, prs }, tool) => run(async () => boardDetailText(await shuttle.boardCreate({ name, description, prs }, tool.threadId), { prLimit: 10, activityLimit: 5 })),
+  });
+  bb.agents.registerTool({
+    name: "shuttle_board_update",
+    description: "Rename, describe, archive or restore a Shuttle board by id.",
+    presentation: { label: { pending: "Updating board", completed: "Updated board" } },
+    parameters: z.object({ id: boardId, name: boardName.optional(), description: boardDescription, archived: z.boolean().optional() }),
+    execute: ({ id, name, description, archived }, tool) => run(() => boardLine(shuttle.boardUpdate({ id, name, description, archived }, tool.threadId).board)),
+  });
+  bb.agents.registerTool({
+    name: "shuttle_board_add",
+    description: "Add explicit PR links or keys to a Shuttle board by id. Adding is idempotent, and it never changes PR ownership, agents or feedback delivery.",
+    presentation: { label: { pending: "Adding pull requests to board", completed: "Added pull requests to board" } },
+    parameters: z.object({ id: boardId, prs: boardPrs }),
+    execute: ({ id, prs }, tool) =>
+      run(async () => {
+        const out = await shuttle.boardAdd({ id, prs }, tool.threadId);
+        return [boardLine(out.board), boardKeysLine("Added", out.added, "none"), boardKeysLine("Already present", out.alreadyPresent, "none")].join("\n");
+      }),
+  });
+  bb.agents.registerTool({
+    name: "shuttle_board_remove",
+    description: "Remove explicit PR links or keys from a Shuttle board by id. Removing is idempotent and does not affect the PR anywhere else.",
+    presentation: { label: { pending: "Removing pull requests from board", completed: "Removed pull requests from board" } },
+    parameters: z.object({ id: boardId, prs: boardPrs }),
+    execute: ({ id, prs }, tool) =>
+      run(() => {
+        const out = shuttle.boardRemove({ id, prs }, tool.threadId);
+        return [boardLine(out.board), boardKeysLine("Removed", out.removed, "none")].join("\n");
       }),
   });
   bb.agents.registerTool({

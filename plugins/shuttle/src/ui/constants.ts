@@ -11,6 +11,7 @@ export const AREA_META: Record<Area, { label: string; icon: string }> = {
   inbox: { label: "Inbox", icon: "BellDot" },
   mine: { label: "My PRs", icon: "GitPullRequest" },
   reviews: { label: "Reviews", icon: "UserRound" },
+  boards: { label: "Boards", icon: "LayoutGrid" },
   insights: { label: "Insights", icon: "ChartColumn" },
 };
 

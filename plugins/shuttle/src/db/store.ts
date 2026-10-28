@@ -1,7 +1,7 @@
 // Typed repository over the plugin database.
 import type Database from "better-sqlite3";
 import { DEFAULT_CONFIG, parseConfig, type Config, type WatchMode } from "../config";
-import type { CheckState, LinkRole, PrState, Reason, ReviewState } from "../contract";
+import type { BoardArchived, CheckState, LinkRole, PrState, Reason, ReviewState } from "../contract";
 import { prKey, type PrRef } from "../keys";
 import type { ActivityItem, PrSummary } from "../model";
 
@@ -194,6 +194,25 @@ export interface EventRow {
   pr_id: number | null;
   thread_id: string | null;
   key: string | null;
+}
+
+export interface BoardRow {
+  id: string;
+  name: string;
+  name_key: string;
+  description: string;
+  created_at: number;
+  updated_at: number;
+  archived_at: number | null;
+  created_by: string | null;
+}
+
+export interface BoardActivityRow {
+  id: number;
+  board_id: string;
+  at: number;
+  text: string;
+  thread_id: string | null;
 }
 
 export interface PendingRow {
@@ -482,6 +501,60 @@ export class Store {
 
   threadTitle(id: string): string | null {
     return (this.db.prepare("SELECT title FROM threads WHERE id = ?").get(id) as { title: string } | undefined)?.title ?? null;
+  }
+
+  board(id: string): BoardRow | null {
+    return (this.db.prepare("SELECT * FROM boards WHERE id = ?").get(id) as BoardRow | undefined) ?? null;
+  }
+
+  boardByNameKey(nameKey: string): BoardRow | null {
+    return (this.db.prepare("SELECT * FROM boards WHERE name_key = ?").get(nameKey) as BoardRow | undefined) ?? null;
+  }
+
+  boards(filter: { archived: BoardArchived; prId?: number } = { archived: "include" }): BoardRow[] {
+    const where = filter.archived === "exclude" ? "b.archived_at IS NULL" : filter.archived === "only" ? "b.archived_at IS NOT NULL" : "1 = 1";
+    const join = filter.prId === undefined ? "" : "JOIN board_members m ON m.board_id = b.id AND m.pr_id = ?";
+    return this.db.prepare(`SELECT DISTINCT b.* FROM boards b ${join} WHERE ${where} ORDER BY b.created_at DESC, b.id DESC`).all(...(filter.prId === undefined ? [] : [filter.prId])) as BoardRow[];
+  }
+
+  addBoard(row: BoardRow): void {
+    this.db.prepare("INSERT INTO boards (id, name, name_key, description, created_at, updated_at, archived_at, created_by) VALUES (@id, @name, @name_key, @description, @created_at, @updated_at, @archived_at, @created_by)").run(row);
+  }
+
+  saveBoard(row: BoardRow): void {
+    this.db.prepare("UPDATE boards SET name = @name, name_key = @name_key, description = @description, updated_at = @updated_at, archived_at = @archived_at, created_by = @created_by WHERE id = @id").run(row);
+  }
+
+  boardPrIds(boardId: string): number[] {
+    return (this.db.prepare("SELECT pr_id FROM board_members WHERE board_id = ? ORDER BY position, rowid").all(boardId) as Array<{ pr_id: number }>).map((row) => row.pr_id);
+  }
+
+  boardPrs(boardId: string): PrRow[] {
+    return this.db.prepare("SELECT p.* FROM prs p JOIN board_members m ON m.pr_id = p.id WHERE m.board_id = ? ORDER BY m.position, m.rowid").all(boardId) as PrRow[];
+  }
+
+  maxBoardPosition(boardId: string): number {
+    return (this.db.prepare("SELECT COALESCE(MAX(position), 0) AS n FROM board_members WHERE board_id = ?").get(boardId) as { n: number }).n;
+  }
+
+  addBoardMember(boardId: string, prId: number, position: number): boolean {
+    return this.db.prepare("INSERT OR IGNORE INTO board_members (board_id, pr_id, position, added_at) VALUES (?, ?, ?, ?)").run(boardId, prId, position, this.now()).changes > 0;
+  }
+
+  removeBoardMember(boardId: string, prId: number): boolean {
+    return this.db.prepare("DELETE FROM board_members WHERE board_id = ? AND pr_id = ?").run(boardId, prId).changes > 0;
+  }
+
+  prInActiveBoard(prId: number): boolean {
+    return this.db.prepare("SELECT 1 FROM board_members m JOIN boards b ON b.id = m.board_id WHERE m.pr_id = ? AND b.archived_at IS NULL LIMIT 1").get(prId) !== undefined;
+  }
+
+  addBoardActivity(boardId: string, text: string, threadId: string | null = null): void {
+    this.db.prepare("INSERT INTO board_activity (board_id, at, text, thread_id) VALUES (?, ?, ?, ?)").run(boardId, this.now(), text, threadId);
+  }
+
+  boardActivity(boardId: string, limit: number): BoardActivityRow[] {
+    return this.db.prepare("SELECT * FROM board_activity WHERE board_id = ? ORDER BY id DESC LIMIT ?").all(boardId, limit) as BoardActivityRow[];
   }
 
   watch(prId: number): WatchRow | null {

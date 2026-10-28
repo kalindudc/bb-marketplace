@@ -5,12 +5,28 @@ Every pull request that needs you, from any server, in one place. See
 [skills/shuttle/references/servers.md](skills/shuttle/references/servers.md) for the command
 adapter contract and a working Delta adapter.
 
+## Boards
+
+Save a specific set of PRs as a board, across repositories and servers. Create an empty board,
+save a selection from a PR list, or add PR links to an existing board. PR status stays live;
+merged and closed PRs stay in the saved set until removed. A PR can belong to multiple boards.
+
+Archive a board to hide it from active navigation without losing its PRs. Restore it before
+changing membership. Boards uses the same sidebar navigation as the other areas: its board links
+appear only while Boards is open. Board membership never assigns an agent or changes feedback
+delivery. The board's compact, timestamped activity log can be folded to its heading; Shuttle
+remembers that choice separately for each board on this device.
+
+Threads can find, inspect, create, update, and curate boards with the `shuttle_board*` tools.
+See the bundled [Shuttle skill](skills/shuttle/SKILL.md) for the inputs and CLI commands.
+
 ## Layout
 
 ```
 server.ts              wiring: database, settings, RPC, tools, CLI, events, the sync service
 app.tsx                the Shuttle page, thread panel tab, header chip and settings sections
 src/config.ts          servers, presets and automations (stored in the plugin database)
+src/boards.ts          saved PR sets, board activity, archive guards and membership operations
 src/adapters/          the built-in GitHub adapter (gh) and the command adapter
 src/sync.ts            one server sync, step by step with bounded retries, and the auto reviews it calls for
 src/failures.ts        why a sync step failed, in plain words, for the UI, the CLI and the Automation log

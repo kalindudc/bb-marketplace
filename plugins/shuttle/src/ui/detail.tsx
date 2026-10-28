@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { experimental_Icon as Icon, Markdown } from "@get-bb/plugin-sdk/app";
 import type { ConversationItem, PrView } from "../contract";
 import { AgentCard } from "./agent";
+import { BoardMemberships } from "./boards";
 import { NextButtons, runNext, useActions } from "./actions";
 import { BUTTON, BUTTON_PRIMARY, ErrorNote, ICON_GHOST, Pill, SectionTitle, TONE_PANEL, TONE_TEXT, type Tone } from "./common";
 import { NEXT_ICONS } from "./constants";
@@ -263,6 +264,7 @@ export function PrDetail({ prKey, onClose, phone = false }: { prKey: string; onC
           </button>
         </div>
       )}
+      <BoardMemberships pr={pr} />
       <Strip pr={pr} items={items} />
       {pr.mine ? (
         <>

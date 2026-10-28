@@ -72,6 +72,6 @@ export interface BbPort {
   listSkills(projectId: string): Promise<SkillInfo[]>;
   /** Changes Shuttle's own bb settings. */
   setSettings(patch: { autoAgent?: boolean; inboxRequests?: boolean }): Promise<void>;
-  publish(): void;
+  publish(tags?: string[]): void;
   log(level: "info" | "warn" | "error", text: string): void;
 }

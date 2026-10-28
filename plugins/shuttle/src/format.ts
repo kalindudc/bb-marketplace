@@ -1,5 +1,5 @@
 // Plain-text views for agent tools and the CLI.
-import type { EventView, PrView, ServerStatus } from "./contract";
+import type { BoardDetail, BoardSummary, EventView, PrView, ServerStatus } from "./contract";
 import { failureAdvice, STEP_LABELS } from "./failures";
 
 const REVIEW_TEXT = { approved: "approved", changes: "changes requested", required: "review required", none: "no review decision" } as const;
@@ -29,6 +29,36 @@ export function prDetail(pr: PrView, events: EventView[] = []): string {
 
 export function prList(prs: PrView[], empty: string): string {
   return prs.length ? prs.map(prLine).join("\n\n") : empty;
+}
+
+export function boardLine(board: BoardSummary): string {
+  const counts = `${board.prCount} PR${board.prCount === 1 ? "" : "s"}, ${board.attention} need attention, ${board.ready} ready, ${board.merged} merged`;
+  const lines = [`${board.id}  ${board.name}${board.archivedAt === null ? "" : " (archived)"}`, `  ${counts}`];
+  if (board.description) lines.push(`  ${board.description}`);
+  if (board.preview.length) lines.push(`  preview: ${board.preview.map((pr) => `${pr.key} — ${pr.title}`).join(" · ")}`);
+  return lines.join("\n");
+}
+
+export function boardList(boards: BoardSummary[], empty: string): string {
+  return boards.length ? boards.map(boardLine).join("\n\n") : empty;
+}
+
+export function boardDetailText(detail: BoardDetail, options: { prLimit?: number; activityLimit?: number } = {}): string {
+  const prLimit = options.prLimit ?? 20;
+  const activityLimit = options.activityLimit ?? 10;
+  const lines = [boardLine(detail.board)];
+  if (detail.prs.length) {
+    lines.push("", ...detail.prs.slice(0, prLimit).map(prLine));
+    if (detail.prs.length > prLimit) lines.push(`... ${detail.prs.length - prLimit} more PR${detail.prs.length - prLimit === 1 ? "" : "s"}`);
+  } else {
+    lines.push("", "No PRs are saved in this board.");
+  }
+  if (detail.activity.length) {
+    lines.push("", "Activity:");
+    for (const item of detail.activity.slice(0, activityLimit)) lines.push(`  ${new Date(item.at).toISOString().slice(0, 16)}Z ${item.text}${item.threadId ? ` (${item.threadId})` : ""}`);
+    if (detail.activity.length > activityLimit) lines.push(`... ${detail.activity.length - activityLimit} more activity item${detail.activity.length - activityLimit === 1 ? "" : "s"}`);
+  }
+  return lines.join("\n");
 }
 
 /** "11:38" in local time, with the day when it is not today. */

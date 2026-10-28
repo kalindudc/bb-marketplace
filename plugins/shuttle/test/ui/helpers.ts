@@ -243,6 +243,12 @@ export function handlers(overrides: Partial<Handlers> = {}): Handlers {
     restoreDraft: unexpected("restoreDraft"),
     reply: unexpected("reply"),
     resolve: unexpected("resolve"),
+    boards: () => ({ boards: [] }),
+    board: unexpected("board"),
+    boardCreate: unexpected("boardCreate"),
+    boardUpdate: unexpected("boardUpdate"),
+    boardAdd: unexpected("boardAdd"),
+    boardRemove: unexpected("boardRemove"),
     ...overrides,
   };
 }

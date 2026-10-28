@@ -67,7 +67,7 @@ describe("the PR view of your own PR", () => {
     const banner = panel.querySelector<HTMLElement>("[data-banner]")!;
     expect(banner.textContent).toContain("The agent is on it");
     expect(banner.textContent).toContain("“CF token containment 2” is fixing 4 items");
-    expect([...panel.querySelectorAll("section[aria-label]")].map((node) => node.getAttribute("aria-label"))).toEqual(["Agent", "Description", "Conversation", "Checks", "Details", "Threads"]);
+    expect([...panel.querySelectorAll("section[aria-label]")].map((node) => node.getAttribute("aria-label"))).toEqual(["Boards", "Agent", "Description", "Conversation", "Checks", "Details", "Threads"]);
     expect(panel.querySelector("[data-your-review]")).toBeNull();
     const card = panel.querySelector<HTMLElement>("[data-agent-card]")!;
     expect(card.textContent).toContain("CF token containment 2: retry WAF deletes");

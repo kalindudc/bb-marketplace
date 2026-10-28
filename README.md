@@ -30,20 +30,20 @@ plugin store.
 
 | Plugin | ID | What it does |
 |---|---|---|
-| [Better Browser](plugins/better-browser) | `better-browser` | Makes bb's Browser follow your real browser: sessions from the Chrome, Arc, Brave, Edge, Vivaldi or Firefox profile you pick flow into bb while that browser stays open, Okta, Google and Microsoft sign-in pages finish in your real browser where passkeys and Okta Verify work, and Cmd+click opens a link there. |
 | [Agent Commands](plugins/agent-commands) | `agent-commands` | Runs your prompt files from `~/.agents/commands` in any thread: type `!` for a menu of them, or type `/name` as in pi. Codex and Claude Code agents learn the typed form; pi expands it itself. |
+| [Better Browser](plugins/better-browser) | `better-browser` | Makes bb's Browser follow your real browser: sessions from the Chrome, Arc, Brave, Edge, Vivaldi or Firefox profile you pick flow into bb while that browser stays open, Okta, Google and Microsoft sign-in pages finish in your real browser where passkeys and Okta Verify work, and Cmd+click opens a link there. |
 | [Follow Thinking](plugins/follow-thinking) | `follow-thinking` | Opens thinking blocks in the timeline automatically and keeps live thinking scrolled to its newest line. Toggle it from the thread header, a thread's actions menu or the command palette. |
 | [Forage](plugins/forage) | `forage` | Gives every agent web search and web fetch as bb's own tools, so a pi, Codex, Claude Code or ACP thread gets results in a real timeline row instead of a raw tool call. Keyless DuckDuckGo and Exa, Brave or SearXNG with a key, batch queries, recency and domain filters, readable markdown, GitHub-aware fetching, paging and passage search. |
 | [Gruve](plugins/gruve) | `gruve` | A gruvbox theme for coding: 0px corners, flat surfaces, a JetBrains Mono interface and a composer styled as a terminal prompt. Dark mode is gruvbox soft; light mode keeps gruvbox's ink on neutral paper instead of yellow. Pick it under Settings → Appearance. |
-| [Session Log](plugins/session-log) | `session-log` | Adds a thread side-panel tab with one flat, live, searchable log of everything the agent did: messages, thinking, commands with output and exit codes, tool calls, diffs and subagents. Open it with Mod+Shift+L. |
-| [Switchboard](plugins/switchboard) | `switchboard` | Replaces the sidebar thread list: your bb sections as coloured groups, children as trees, status at a glance, drag-and-drop organizing, status lanes and snooze. Choose it under Settings → Appearance → Sidebar. |
-| [Update Shelf](plugins/update-shelf) | `update-shelf` | Groups every plugin with a waiting update at the top of bb's Installed plugins page, with each one's changelog read from its source on GitHub and one-click Update or Update all through bb's own update queue. No separate page: bb's cards, filters and Update dialog stay as they are. |
-| [Pi AI Services](plugins/pi-services) | `pi-services` | Writes bb's thread titles and commit messages with your own pi CLI setup — your credentials and model, no bb account. Adds a regenerate-title button to the thread header and its actions menu, and pi executable/model knobs in the plugin settings. |
-| [Vantage](plugins/vantage) | `vantage` | Adds a thread side-panel tab for parallel agents: every child worktree with status, branch and changes, a drill-in with diffs, commits, chat and a terminal, and a by-repository view of everything the thread tree changed. `bb vantage` prints the same for agents. A full-screen page in the left navigation covers every recent thread. |
 | [LAN Connect](plugins/lan-connect) | `lan-connect` | Opens this bb to phones and laptops on your home network: pair a device once with a code or QR code, then use bb in its browser at `<computer>.local`, its LAN IP or your own name. No bb account needed. |
 | [Loom](plugins/loom) | `loom` | Run a software project with agents: a planner turns a goal into a validated spec and tickets, workers pick up tickets in their own worktrees, separate reviewers approve or request changes, and approved work merges into an integration branch or opens a pull request. |
+| [Pi AI Services](plugins/pi-services) | `pi-services` | Writes bb's thread titles and commit messages with your own pi CLI setup — your credentials and model, no bb account. Adds a regenerate-title button to the thread header and its actions menu, and pi executable/model knobs in the plugin settings. |
 | [Retitle](plugins/retitle) | `retitle` | Titles threads that bb's automatic titling left untitled (it gives up after 8 seconds), using the Shopify AI proxy and only the text you typed, so `!plan` threads get a title for the work. `bb retitle` titles any thread again or backfills untitled ones. |
-| [Shuttle](plugins/shuttle) | `shuttle` | Every pull request that needs you, from any server, in one place: your PRs, review requests, team requests and mentions on GitHub, Delta or any server you add with a few commands. One-click reviews from presets (skill, model, thinking level), auto review when you are requested by name, PRs linked to the threads that own them (a thread can own several), and new reviews on watched PRs sent to those threads. |
+| [Session Log](plugins/session-log) | `session-log` | Adds a thread side-panel tab with one flat, live, searchable log of everything the agent did: messages, thinking, commands with output and exit codes, tool calls, diffs and subagents. Open it with Mod+Shift+L. |
+| [Shuttle](plugins/shuttle) | `shuttle` | Your PRs and reviews across GitHub, Delta and custom servers, saved PR boards for releases and handoffs, one-click reviews from presets, and agent threads that handle new feedback. |
+| [Switchboard](plugins/switchboard) | `switchboard` | Replaces the sidebar thread list: your bb sections as coloured groups, children as trees, status at a glance, drag-and-drop organizing, status lanes and snooze. Choose it under Settings → Appearance → Sidebar. |
+| [Update Shelf](plugins/update-shelf) | `update-shelf` | Groups every plugin with a waiting update at the top of bb's Installed plugins page, with each one's changelog read from its source on GitHub and one-click Update or Update all through bb's own update queue. No separate page: bb's cards, filters and Update dialog stay as they are. |
+| [Vantage](plugins/vantage) | `vantage` | Adds a thread side-panel tab for parallel agents: every child worktree with status, branch and changes, a drill-in with diffs, commits, chat and a terminal, and a by-repository view of everything the thread tree changed. `bb vantage` prints the same for agents. A full-screen page in the left navigation covers every recent thread. |
 
 ## Layout
 
@@ -65,7 +65,7 @@ marketplace.json        generated; bb reads this file, so commit it
 2. Add `entries/<id>.json` by copying an existing entry. For a plugin in this
    repository, `source.git` uses this repository's URL,
    `"subdir": "plugins/<id>"` and `"tagPrefix": "<id>/"`.
-3. Add a row to the table above.
+3. Add a row to the table above, in alphabetical order by plugin name.
 4. Run `npm run build` and commit `marketplace.json` with the change. The
    build stops and lists every problem it finds. CI runs `npm test` and
    `npm run check` on every push to `main` and every pull request.

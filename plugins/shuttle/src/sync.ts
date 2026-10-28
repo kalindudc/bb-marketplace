@@ -220,12 +220,12 @@ function saveRun(ctx: Ctx, server: ServerConfig, before: ServerRow | null, run: 
   if (ok && !wasOk) ctx.store.addEvent("sync_ok", `${server.name} syncs again.`);
 }
 
-/** Linked, watched and tracked open PRs that no list covered this round, such as someone else's PR you track. */
+/** Linked, watched, tracked and active-board open PRs that no list covered this round, such as someone else's PR you track. */
 async function refreshTracked(ctx: Ctx, server: ServerConfig, seen: Set<number>, steps: Steps, signal?: AbortSignal): Promise<void> {
   const tracked = ctx.store
     .allPrs()
     .filter((pr) => pr.server === server.id && !seen.has(pr.id) && (pr.state === "open" || pr.state === "draft"))
-    .filter((pr) => pr.tracked === 1 || ctx.store.watch(pr.id) !== null || ctx.store.linksOf(pr.id).length > 0)
+    .filter((pr) => pr.tracked === 1 || ctx.store.watch(pr.id) !== null || ctx.store.linksOf(pr.id).length > 0 || ctx.store.prInActiveBoard(pr.id))
     .sort((a, b) => a.fetched_at - b.fetched_at)
     .slice(0, REFRESH_CAP);
   if (tracked.length === 0) return;

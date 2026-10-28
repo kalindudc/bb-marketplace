@@ -35,7 +35,7 @@ describe("on a phone", () => {
     const { slot } = await layoutPage("mine", { overview: () => overview({ counts: { inbox: 7, mine: 1, done: 0, reviews: 1 } }) });
     const row = await find(slot.container, `[data-pr="${first.key}"]`);
     const tabs = slot.getByRole("navigation", { name: "Areas" });
-    expect(within(tabs).getAllByRole("button").map((button) => button.textContent)).toEqual(["Inbox7", "My PRs", "Reviews", "Insights"]);
+    expect(within(tabs).getAllByRole("button").map((button) => button.textContent)).toEqual(["Inbox7", "My PRs", "Reviews", "Boards", "Insights"]);
     expect(within(tabs).getByRole("button", { name: /My PRs/u }).getAttribute("aria-current")).toBe("page");
     expect(row.querySelector("[data-icon='ChevronRight']")).not.toBeNull();
     expect(row.querySelector("[data-label='bug']")).not.toBeNull();
@@ -137,7 +137,7 @@ describe("in a narrow window", () => {
     setViewport(1000);
     const { slot } = await layoutPage("mine");
     const chips = await waitFor(() => slot.getByRole("navigation", { name: "Areas" }));
-    await waitFor(() => expect(within(chips).getAllByRole("button").map((button) => button.textContent)).toEqual(["Inbox2", "My PRs3", "Reviews12", "Insights"]));
+    await waitFor(() => expect(within(chips).getAllByRole("button").map((button) => button.textContent)).toEqual(["Inbox2", "My PRs3", "Reviews12", "Boards", "Insights"]));
     fireEvent.click(within(chips).getByRole("button", { name: /Insights/u }));
     expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: "insights" } });
   });

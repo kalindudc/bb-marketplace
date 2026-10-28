@@ -38,6 +38,7 @@ function toThread(thread: ThreadLike): ThreadInfo {
 
 export function createBbPort(bb: BbPluginApi, setSettings: BbPort["setSettings"] = async () => {}): BbPort {
   let publishTimer: ReturnType<typeof setTimeout> | null = null;
+  let pendingInvalidations = new Set<string>();
   /** A managed worktree is made on a machine: the one with the project's default checkout, else bb's primary machine. */
   const hostFor = async (projectId: string): Promise<string> => {
     const project = await bb.sdk.projects.get({ projectId });
@@ -140,12 +141,15 @@ export function createBbPort(bb: BbPluginApi, setSettings: BbPort["setSettings"]
       return result.skills.map((skill) => ({ id: skill.id, name: skill.name, description: skill.description ?? "" }));
     },
     setSettings,
-    publish() {
+    publish(tags = ["prs", "servers", "conversation", "boards"]) {
       // Many changes land together during a sync; one signal is enough.
+      for (const tag of tags) pendingInvalidations.add(tag);
       if (publishTimer) return;
       publishTimer = setTimeout(() => {
         publishTimer = null;
-        bb.rpc.experimental_invalidate(["prs", "servers", "conversation"]);
+        const invalidate = [...pendingInvalidations];
+        pendingInvalidations = new Set<string>();
+        bb.rpc.experimental_invalidate(invalidate);
       }, 150);
     },
     log(level, text) {
