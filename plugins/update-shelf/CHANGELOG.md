@@ -2,6 +2,19 @@
 
 Notable changes to Update Shelf, newest first. Releases are tagged `update-shelf/vX.Y.Z` in this repository.
 
+## 0.2.0 (2026-10-28)
+
+### Fixed
+
+- **Update all** no longer looks stuck. bb clears a plugin's waiting update as soon as it starts activating the new version, then watches that version for 30 seconds before it keeps it. The group listed only plugins with a waiting update, so the update that was running disappeared and only the queued ones were left, unchanged for a minute at a time. The group now keeps a row for every update in bb's queue and every update that finished in the last ten minutes.
+- The group asks bb for the list one request at a time. It used to ask every 2 seconds whether or not the last answer had come back, so while bb was busy building an update the requests piled up.
+
+### Added
+
+- While updates run, the header shows how many are done ("Updating plugins · 3 of 7 done") with a progress bar, and explains why each takes about a minute.
+- Each row says where its update is: "Queued · next" or "Queued · 3rd in line"; "Downloading and building", "Starting the new version" or "Checking the new version · 12 of 30 s" with the seconds so far; then "Updated", "Already up to date", "Rolled back" or "Failed" with the reason and a Retry.
+- **Clear finished** removes the finished rows for the rest of the session.
+
 ## 0.1.0 (2026-10-28)
 
 ### Added

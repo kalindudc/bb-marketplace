@@ -16,11 +16,16 @@ bb plugin update update-shelf               # after a new release is tagged
 | Which plugins have an update | `bb.sdk.plugins.list()`: the same `updateState.availableVersion` bb uses for each card's Update signal |
 | Version labels | The installed package version, and the release tag of the candidate (a short commit id when it tracks a branch) |
 | What's new | The candidate's `CHANGELOG.md` sections newer than the installed version, otherwise the commits that touched the plugin's directory since the installed commit |
-| Progress | `bb.sdk.plugins.experimental_updateJobs.list()`: queued, running with its phase, or failed with the reason |
+| Progress | `bb.sdk.plugins.experimental_updateJobs.list()`: each job's place in the queue, its phase with the seconds so far, and how it finished. bb keeps finished jobs for ten minutes, and so does the group |
 
 Updates start with `bb.sdk.plugins.experimental_startUpdate`, so they go through bb's own queue (one at a time),
 its compatibility checks and its rollback. **Update all** asks once, then starts every update that is not already
 running; this plugin is always updated last, because updating it reloads its backend.
+
+bb runs one update at a time, and each takes about a minute: it downloads and builds the new version, activates it,
+then watches it for 30 seconds (`checking`) and rolls back if it fails. bb clears the plugin's waiting update when it
+starts activating, so the group keeps each job's versions from when it was queued and keeps its row until bb forgets
+the job.
 
 ## Changelogs
 

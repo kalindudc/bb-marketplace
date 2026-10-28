@@ -56,7 +56,7 @@ describe("update-shelf backend", () => {
     const { harness } = setup();
     const result = (await harness.behavior.callRpc("list", null)) as { updates: Array<{ id: string; job: unknown }> };
     expect(result.updates.map((update) => [update.id, update.job])).toEqual([
-      ["burn", { state: "queued", detail: null }],
+      ["burn", { id: "j1", state: "queued", phase: null, queuePosition: 1, outcome: null, error: null }],
       ["genui", null],
     ]);
   });

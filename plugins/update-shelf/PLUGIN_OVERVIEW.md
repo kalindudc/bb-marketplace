@@ -5,7 +5,7 @@ bb marks a plugin with a waiting update on its own card, but the Installed page 
 - A **N plugins have updates** group above the Installed cards, listing every plugin with a waiting update and its installed and new version.
 - **What's new** on each row: the sections of the plugin's CHANGELOG.md newer than the version you run, read from the new release on GitHub. When the changelog has no entry, it lists the commits that changed the plugin since your version, with a link to the full comparison on GitHub.
 - **Update** on each row and **Update all** in the header (after one confirmation). Updates run through bb's own update queue, one at a time, with bb's compatibility checks and rollback.
-- Progress and failures on each row: queued, the phase bb reports while it updates, and the reason with a Retry when an update fails or is rolled back.
+- Progress you can follow: the header counts the updates done, and each row shows its place in bb's queue, what bb is doing with the seconds so far, then Updated, or the reason with a Retry when an update fails or is rolled back. bb updates one plugin at a time and watches each new version for 30 seconds, so each takes about a minute.
 
 ## How it works
 

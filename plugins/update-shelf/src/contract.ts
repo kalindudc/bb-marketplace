@@ -12,11 +12,23 @@ const versionSchema = z.object({
   label: z.string(),
 });
 
-const jobSchema = z.object({
-  state: z.enum(["queued", "running", "failed"]),
-  detail: z.string().nullable(),
-});
+export const updatePhaseSchema = z.enum(["preparing", "activating", "checking", "rolling-back"]);
+export type UpdatePhase = z.infer<typeof updatePhaseSchema>;
 
+/** The plugin's latest update job in bb's queue, which keeps finished jobs for ten minutes. */
+const jobSchema = z.object({
+  id: z.string(),
+  state: z.enum(["queued", "running", "completed", "failed"]),
+  phase: updatePhaseSchema.nullable(),
+  /** 1 for the next job to run. */
+  queuePosition: z.number().int().positive().nullable(),
+  /** How a completed job ended; "rolled-back" means the new version failed its check and the old one is back. */
+  outcome: z.enum(["updated", "current", "rolled-back"]).nullable(),
+  error: z.string().nullable(),
+});
+export type UpdateJob = z.infer<typeof jobSchema>;
+
+/** A plugin with a waiting update, an update in bb's queue, or one that finished in the last ten minutes. */
 export const pendingUpdateSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -24,6 +36,8 @@ export const pendingUpdateSchema = z.object({
   imageUrl: z.string().nullable(),
   installed: versionSchema,
   candidate: versionSchema,
+  /** bb still offers the candidate. bb clears this as soon as it starts activating the new version. */
+  updateAvailable: z.boolean(),
   lastFailure: z.string().nullable(),
   job: jobSchema.nullable(),
 });

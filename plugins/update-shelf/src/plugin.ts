@@ -1,7 +1,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { rpcContract, type Changelog } from "./contract";
 import type { GitHub } from "./github";
-import { pendingUpdates } from "./pending";
+import { updateRows, type LabelMemory } from "./pending";
 import { releaseNotes } from "./release-notes";
 import { isCommit, refFromDisplay, semverFromRef } from "./versions";
 
@@ -16,15 +16,20 @@ export function createPlugin(deps: PluginDeps) {
     const plugins = bb.sdk.plugins;
     // Keyed by both commits, so a cached changelog is never shown for another update.
     const changelogs = new Map<string, Promise<Changelog>>();
+    const labels: LabelMemory = new Map();
+
+    const rows = async () => {
+      const [list, results, jobs] = await Promise.all([
+        plugins.list(),
+        plugins.listUpdateResults(),
+        plugins.experimental_updateJobs.list(),
+      ]);
+      return updateRows(list.plugins, results, jobs, labels);
+    };
 
     bb.rpc.register(rpcContract, {
       async list() {
-        const [list, results, jobs] = await Promise.all([
-          plugins.list(),
-          plugins.listUpdateResults(),
-          plugins.experimental_updateJobs.list(),
-        ]);
-        return { updates: pendingUpdates(list.plugins, results, jobs) };
+        return { updates: await rows() };
       },
 
       async changelog({ id }) {
@@ -81,11 +86,14 @@ export function createPlugin(deps: PluginDeps) {
       async update({ ids }) {
         // Updating this plugin reloads this backend, so it goes last.
         const ordered = [...new Set(ids)].sort((a, b) => Number(a === bb.pluginId) - Number(b === bb.pluginId));
+        const before = new Map((await rows()).filter((row) => row.updateAvailable).map((row) => [row.id, row]));
         const started: string[] = [];
         const failed: Array<{ id: string; error: string }> = [];
         for (const id of ordered) {
           try {
-            await plugins.experimental_startUpdate({ pluginId: id });
+            const job = await plugins.experimental_startUpdate({ pluginId: id });
+            const row = before.get(id);
+            if (row !== undefined) labels.set(job.id, { installed: row.installed, candidate: row.candidate });
             started.push(id);
           } catch (error) {
             failed.push({ id, error: error instanceof Error ? error.message : String(error) });
