@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { findBrowser, parseLocalState, parseProfilesIni, profileRoot } from "../src/browsers";
+import { dataDirectory, findBrowser, linuxDefaultBrowser, parseLocalState, parseProfilesIni, profileRoot } from "../src/browsers";
 import { defaultHttpsHandler, openCommand } from "../src/open-url";
 
 describe("Chromium Local State", () => {
@@ -44,23 +44,40 @@ describe("Firefox profiles.ini", () => {
 describe("profileRoot", () => {
   it("resolves a profile inside the browser's data directory and refuses one outside it", () => {
     const chrome = findBrowser("chrome")!;
-    expect(profileRoot(chrome, "/Users/me", "Profile 2")).toBe("/Users/me/Library/Application Support/Google/Chrome/Profile 2");
-    expect(profileRoot(chrome, "/Users/me", "../../Secrets")).toBeUndefined();
-    expect(profileRoot(chrome, "/Users/me", ".")).toBeUndefined();
-    expect(profileRoot(findBrowser("safari")!, "/Users/me", "Default")).toBeUndefined();
+    expect(profileRoot(chrome, "/Users/me", "darwin", "Profile 2")).toBe("/Users/me/Library/Application Support/Google/Chrome/Profile 2");
+    expect(profileRoot(chrome, "/Users/me", "darwin", "../../Secrets")).toBeUndefined();
+    expect(profileRoot(chrome, "/Users/me", "darwin", ".")).toBeUndefined();
+    expect(profileRoot(findBrowser("safari")!, "/Users/me", "darwin", "Default")).toBeUndefined();
+    expect(profileRoot(chrome, "/home/me", "linux", "Profile 2")).toBe("/home/me/.config/google-chrome/Profile 2");
+    expect(profileRoot(chrome, "/home/me", "linux", "../Secrets")).toBeUndefined();
+    expect(dataDirectory(findBrowser("firefox")!, "/home/me", "linux")).toBe("/home/me/.mozilla/firefox");
+    expect(dataDirectory(findBrowser("chrome")!, "/home/me", "linux")).toBe("/home/me/.config/google-chrome");
+    expect(dataDirectory(findBrowser("safari")!, "/home/me", "linux")).toBeUndefined();
   });
 });
 
 describe("opening links", () => {
   it("relaunches a Chrome-style browser into the synced profile and opens others by bundle id", () => {
-    expect(openCommand("darwin", findBrowser("chrome")!, "https://a.test/", "Profile 1")).toEqual({
+    expect(openCommand("darwin", findBrowser("chrome")!, "https://a.test/", { profile: "Profile 1" })).toEqual({
       file: "/usr/bin/open", args: ["-n", "-b", "com.google.Chrome", "--args", "--profile-directory=Profile 1", "https://a.test/"],
     });
-    expect(openCommand("darwin", findBrowser("arc")!, "https://a.test/", "Default")).toEqual({
+    expect(openCommand("darwin", findBrowser("arc")!, "https://a.test/", { profile: "Default" })).toEqual({
       file: "/usr/bin/open", args: ["-b", "company.thebrowser.Browser", "https://a.test/"],
     });
-    expect(openCommand("linux", findBrowser("chrome")!, "https://a.test/")).toEqual({ file: "xdg-open", args: ["https://a.test/"] });
     expect(openCommand("win32", findBrowser("chrome")!, "https://a.test/")).toBeNull();
+  });
+
+  it("on Linux launches the browser binary with the synced profile", () => {
+    expect(openCommand("linux", findBrowser("chrome")!, "https://a.test/", { executable: "/usr/bin/google-chrome-stable", profile: "Profile 1" })).toEqual({
+      file: "/usr/bin/google-chrome-stable", args: ["--profile-directory=Profile 1", "https://a.test/"],
+    });
+    expect(openCommand("linux", findBrowser("brave")!, "https://a.test/", { executable: "/usr/bin/brave-browser" })).toEqual({
+      file: "/usr/bin/brave-browser", args: ["https://a.test/"],
+    });
+    expect(openCommand("linux", findBrowser("firefox")!, "https://a.test/", { executable: "/usr/bin/firefox", profile: "Profiles/abc.default-release" })).toEqual({
+      file: "/usr/bin/firefox", args: ["https://a.test/"],
+    });
+    expect(openCommand("linux", findBrowser("chrome")!, "https://a.test/")).toEqual({ file: "xdg-open", args: ["https://a.test/"] });
   });
 
   it("finds the https handler in LaunchServices' list", () => {
@@ -72,5 +89,14 @@ describe("opening links", () => {
     });
     expect(defaultHttpsHandler(json)).toBe("com.google.chrome");
     expect(defaultHttpsHandler("[]")).toBeNull();
+  });
+
+  it("names the browser xdg-settings reports as Linux's default", () => {
+    expect(linuxDefaultBrowser("google-chrome.desktop\n")).toBe("chrome");
+    expect(linuxDefaultBrowser("Brave-browser.desktop")).toBe("brave");
+    expect(linuxDefaultBrowser("vivaldi-stable.desktop")).toBe("vivaldi");
+    expect(linuxDefaultBrowser("org.mozilla.firefox.desktop")).toBe("firefox");
+    expect(linuxDefaultBrowser("org.gnome.Epiphany.desktop")).toBeNull();
+    expect(linuxDefaultBrowser("\n")).toBeNull();
   });
 });

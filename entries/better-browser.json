@@ -1,7 +1,7 @@
 {
   "id": "better-browser",
   "displayName": "Better Browser",
-  "description": "Makes bb's Browser follow your real browser. Sessions from the Chrome, Arc, Brave, Edge, Vivaldi or Firefox profile you pick flow into bb while that browser stays open, sign-in pages such as Okta, Google and Microsoft are handed to your real browser where passkeys and Okta Verify work, and Cmd+click (Ctrl+click) opens a link in your real browser.",
+  "description": "Makes bb's Browser follow your real browser. Sessions from the Chrome, Brave, Edge, Vivaldi or Firefox profile you pick flow into bb while that browser stays open, on macOS and Linux; sign-in pages such as Okta, Google and Microsoft are handed to your real browser where passkeys and Okta Verify work, and Cmd+click (Ctrl+click) opens a link in your real browser.",
   "icon": "Globe",
   "tags": ["browser", "cookies", "sessions", "sign-in", "okta", "passkeys", "links"],
   "author": {

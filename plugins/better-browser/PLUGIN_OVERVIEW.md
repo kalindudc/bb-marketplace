@@ -10,11 +10,11 @@ Make bb's Browser follow the browser you already use, so you stop re-importing c
 
 ## Browsers
 
-Sessions sync from Google Chrome, Chromium, Arc, Dia, Brave, Microsoft Edge, Vivaldi, Opera, Helium, Firefox and Zen on macOS. Safari can open links, but its sessions do not sync yet. On Linux, Cmd+click opens links in your default browser and nothing syncs.
+Sessions sync from Google Chrome, Chromium, Arc, Dia, Brave, Microsoft Edge, Vivaldi, Opera, Helium, Firefox and Zen on macOS, and from Google Chrome, Chromium, Brave, Microsoft Edge, Vivaldi, Opera, Firefox and Zen on Linux. Safari can open links, but its sessions do not sync yet.
 
 ## How it works
 
-The plugin runs on the computer with the bb app. It reads a private copy of the profile's cookie database, so the browser can stay open, and decrypts Chromium cookies with the browser's "Safe Storage" key. The first sync shows a Keychain prompt; choose Always Allow. It writes cookies into bb's Browser through a hidden tab it borrows for a moment and closes again.
+The plugin runs on the computer with the bb app. It reads a private copy of the profile's cookie database, so the browser can stay open, and decrypts Chromium cookies with the browser's "Safe Storage" key. On macOS the first sync shows a Keychain prompt; choose Always Allow. On Linux the secret comes from the Secret Service or KWallet, falling back to the basic password store, and cookies that none of those can decrypt are reported as unreadable. It writes cookies into bb's Browser through a hidden tab it borrows for a moment and closes again.
 
 Only cookies that changed in your browser since the last sync are written. A cookie a site changed inside bb is never overwritten with an older copy, and a cookie your browser dropped is removed from bb only while bb still holds the copy the plugin wrote. Cookie values never leave your computer; the plugin stores only hashes of what it synced.
 

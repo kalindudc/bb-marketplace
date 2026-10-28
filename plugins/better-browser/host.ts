@@ -1,19 +1,21 @@
 import { createHash } from "node:crypto";
+import type { DatabaseSync } from "node:sqlite";
 import { chmod, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { experimental_defineHostEntry, type ExperimentalHostRpcContext, type ExperimentalHostWatchSubscription } from "@get-bb/plugin-sdk";
 import {
-  BROWSERS, cookieDatabaseCandidates, dataDirectory, findBrowser, findBrowserByBundleId, parseLocalState, parseProfilesIni, profileRoot,
+  BROWSERS, cookieDatabaseCandidates, dataDirectory, findBrowser, findBrowserByBundleId, linuxDefaultBrowser, parseLocalState, parseProfilesIni, profileRoot,
   type BrowserDefinition, type ProfileList,
 } from "./src/browsers";
 import { withLeasedPage } from "./src/cdp";
-import { needsKey, readChromiumCookies } from "./src/chromium";
+import { deriveLinuxKey, encryptedSamples, needsKey, readChromiumCookies, schemaVersion, workingKey } from "./src/chromium";
 import { MAX_CHANGED_HOSTS, hostContract, hostSignals, type BrowserInfo } from "./src/contract";
 import { planSync, sourceChanged, toCdpParam, type JarCookie, type SourceCookie, type SyncMemory } from "./src/cookies";
 import { SyncError, describeError } from "./src/errors";
 import { readFirefoxCookies } from "./src/firefox";
 import { createKeychain, runCommand } from "./src/keychain";
+import { createLinuxKeyring } from "./src/keyring";
 import { defaultHttpsHandler, openCommand } from "./src/open-url";
 import { withSnapshot } from "./src/snapshot";
 
@@ -21,6 +23,11 @@ type Context = ExperimentalHostRpcContext<typeof hostSignals>;
 
 const home = homedir();
 const keychain = createKeychain();
+const keyring = createLinuxKeyring();
+
+function syncSupported(): boolean {
+  return process.platform === "darwin" || process.platform === "linux";
+}
 const SET_BATCH = 200;
 /** Profile subdirectories that churn constantly and never hold cookies. */
 const WATCH_IGNORES = [
@@ -53,9 +60,18 @@ async function readText(path: string): Promise<string | undefined> {
   }
 }
 
+async function linuxExecutable(browser: BrowserDefinition): Promise<string | undefined> {
+  for (const binary of browser.linux?.binaries ?? []) {
+    const result = await runCommand("which", [binary]);
+    if (result.code === 0 && result.stdout.trim()) return result.stdout.trim();
+  }
+  return undefined;
+}
+
 async function isInstalled(browser: BrowserDefinition): Promise<boolean> {
-  const data = dataDirectory(browser, home);
+  const data = dataDirectory(browser, home, process.platform);
   if (data && (await isDirectory(data))) return true;
+  if (process.platform === "linux") return (await linuxExecutable(browser)) !== undefined;
   for (const app of browser.appNames) {
     if ((await isDirectory(join("/Applications", app))) || (await isDirectory(join(home, "Applications", app)))) return true;
   }
@@ -63,14 +79,14 @@ async function isInstalled(browser: BrowserDefinition): Promise<boolean> {
 }
 
 async function cookieDatabase(browser: BrowserDefinition, directory: string): Promise<string | undefined> {
-  const root = profileRoot(browser, home, directory);
+  const root = profileRoot(browser, home, process.platform, directory);
   if (!root) return undefined;
   for (const candidate of cookieDatabaseCandidates(browser, root)) if (await isFile(candidate)) return candidate;
   return undefined;
 }
 
 async function listProfiles(browser: BrowserDefinition): Promise<ProfileList> {
-  const root = dataDirectory(browser, home);
+  const root = dataDirectory(browser, home, process.platform);
   if (!root || browser.engine === "safari") return { profiles: [] };
   const listed = browser.engine === "chromium"
     ? parseLocalState((await readText(join(root, "Local State"))) ?? "")
@@ -83,6 +99,11 @@ async function listProfiles(browser: BrowserDefinition): Promise<ProfileList> {
 }
 
 async function defaultBrowserId(): Promise<string | null> {
+  if (process.platform === "linux") {
+    const result = await runCommand("xdg-settings", ["get", "default-web-browser"]);
+    return result.code === 0 ? linuxDefaultBrowser(result.stdout) : null;
+  }
+  if (process.platform !== "darwin") return null;
   const plist = join(home, "Library", "Preferences", "com.apple.LaunchServices", "com.apple.launchservices.secure.plist");
   if (!(await isFile(plist))) return null;
   const result = await runCommand("/usr/bin/plutil", ["-convert", "json", "-o", "-", plist]);
@@ -100,7 +121,7 @@ interface ResolvedSource {
 }
 
 async function resolveSource(browserId: string, requested: string | undefined): Promise<ResolvedSource> {
-  if (process.platform !== "darwin") throw new SyncError("unsupportedPlatform", "Session sync works on macOS only for now");
+  if (!syncSupported()) throw new SyncError("unsupportedPlatform", `Session sync does not support ${process.platform} yet`);
   const browser = findBrowser(browserId);
   if (!browser) throw new SyncError("unsupportedBrowser", `Better Browser does not know the browser "${browserId}"`);
   if (browser.engine === "safari") {
@@ -125,14 +146,30 @@ interface SourceRead {
   partitioned: number;
 }
 
+/**
+ * The Chromium key that decrypts this database, derived from the passwords the platform keeps the browser's Safe
+ * Storage under. Linux cannot know which store a browser used, so each candidate proves itself against real
+ * ciphertext; macOS has exactly one, so a missing or refused Keychain item is an error the user can act on.
+ */
+async function chromiumKey(browser: BrowserDefinition, database: DatabaseSync): Promise<Buffer | null> {
+  if (process.platform === "darwin") {
+    if (!browser.keychainService || !browser.keychainAccount) throw new Error("No Keychain item is known for this browser");
+    return await keychain.key(browser.keychainService, browser.keychainAccount);
+  }
+  const samples = encryptedSamples(database);
+  if (samples.length === 0) return null;
+  const secrets = await keyring.secrets(browser.linux?.keyringApps ?? [], browser.keychainService ?? browser.name);
+  const candidates = secrets.map(deriveLinuxKey);
+  return workingKey(samples, schemaVersion(database), candidates);
+}
+
 async function readSource(source: ResolvedSource, context: Context): Promise<SourceRead> {
   const { browser } = source;
   try {
     return await withSnapshot(source.database, context.experimental_paths.tempDir, async (database) => {
       if (browser.engine === "firefox") return { cookies: readFirefoxCookies(database), undecryptable: 0, partitioned: 0 };
       if (!needsKey(database)) return readChromiumCookies(database, null);
-      if (!browser.keychainService || !browser.keychainAccount) throw new Error("No Keychain item is known for this browser");
-      return readChromiumCookies(database, await keychain.key(browser.keychainService, browser.keychainAccount));
+      return readChromiumCookies(database, await chromiumKey(browser, database));
     });
   } catch (error) {
     if (error instanceof SyncError) throw error;
@@ -205,7 +242,7 @@ export default experimental_defineHostEntry({
   experimental_signals: hostSignals,
   handlers: {
     async browsers() {
-      const supported = process.platform === "darwin";
+      const supported = syncSupported();
       if (!supported) return { supported, defaultBrowserId: null, browsers: [] };
       const browsers: BrowserInfo[] = [];
       for (const browser of BROWSERS) {
@@ -296,7 +333,11 @@ export default experimental_defineHostEntry({
     async openUrl({ url, browserId, profile }) {
       const browser = findBrowser(browserId);
       if (!browser) return failure(new SyncError("unsupportedBrowser", `Better Browser does not know the browser "${browserId}"`));
-      const command = openCommand(process.platform, browser, url, profile);
+      const executable = process.platform === "linux" ? await linuxExecutable(browser) : undefined;
+      const command = openCommand(process.platform, browser, url, {
+        ...(profile ? { profile } : {}),
+        ...(executable ? { executable } : {}),
+      });
       if (!command) return failure(new SyncError("unsupportedPlatform", "Opening links in another browser works on macOS and Linux"));
       const result = await runCommand(command.file, command.args);
       if (result.code !== 0) {
@@ -310,5 +351,6 @@ export default experimental_defineHostEntry({
     watched = null;
     await current?.subscription.dispose();
     keychain.forget();
+    keyring.forget();
   },
 });

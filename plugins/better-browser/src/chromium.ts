@@ -12,10 +12,21 @@ export function deriveMacKey(password: string): Buffer {
   return pbkdf2Sync(password, "saltysalt", 1003, 16, "sha1");
 }
 
+/**
+ * Linux Chromium browsers derive it the same way, except PBKDF2 runs one round instead of 1003, the password comes
+ * from the Secret Service or KWallet (or the hardcoded "peanuts" of the basic store), and v11 means keyring-sourced
+ * rather than a different cipher: Linux encrypts both v10 and v11 with AES-128-CBC.
+ */
+export function deriveLinuxKey(password: string): Buffer {
+  return pbkdf2Sync(password, "saltysalt", 1, 16, "sha1");
+}
+
+const PREFIXES = new Set(["v10", "v11"]);
+
 export function decryptValue(encrypted: Uint8Array, key: Buffer, host: string, schemaVersion: number): string | null {
   const buffer = Buffer.from(encrypted);
   if (buffer.length === 0) return "";
-  if (buffer.subarray(0, 3).toString("latin1") !== "v10") return null;
+  if (!PREFIXES.has(buffer.subarray(0, 3).toString("latin1"))) return null;
   let plaintext: Buffer;
   try {
     const decipher = createDecipheriv("aes-128-cbc", key, AES_CBC_IV);
@@ -32,12 +43,12 @@ export function decryptValue(encrypted: Uint8Array, key: Buffer, host: string, s
 }
 
 /** The inverse of decryptValue, for tests and fixtures. */
-export function encryptValue(value: string, key: Buffer, host: string, schemaVersion: number): Buffer {
+export function encryptValue(value: string, key: Buffer, host: string, schemaVersion: number, prefix: "v10" | "v11" = "v10"): Buffer {
   const body = schemaVersion >= DOMAIN_BOUND_SCHEMA_VERSION
     ? Buffer.concat([createHash("sha256").update(host).digest(), Buffer.from(value, "utf8")])
     : Buffer.from(value, "utf8");
   const cipher = createCipheriv("aes-128-cbc", key, AES_CBC_IV);
-  return Buffer.concat([Buffer.from("v10", "latin1"), cipher.update(body), cipher.final()]);
+  return Buffer.concat([Buffer.from(prefix, "latin1"), cipher.update(body), cipher.final()]);
 }
 
 const SAME_SITE: Record<number, SameSite> = { 0: "None", 1: "Lax", 2: "Strict" };
@@ -77,9 +88,33 @@ export function schemaVersion(database: DatabaseSync): number {
   return version;
 }
 
-/** True when any cookie value is encrypted, so the Keychain key is needed. */
+/** True when any cookie value is encrypted, so the platform's Safe Storage key is needed. */
 export function needsKey(database: DatabaseSync): boolean {
-  return database.prepare("select 1 from cookies where substr(encrypted_value, 1, 3) = x'763130' limit 1").get() !== undefined;
+  return database.prepare("select 1 from cookies where substr(encrypted_value, 1, 3) in (x'763130', x'763131') limit 1").get() !== undefined;
+}
+
+/**
+ * A handful of stored ciphertexts to test candidate keys against, so the wrong key source is never silently chosen.
+ * Each sample keeps the host its cookie belongs to, because the plaintext is bound to that host from schema 24 on.
+ */
+export interface EncryptedSample {
+  host: string;
+  encrypted: Uint8Array;
+}
+
+export function encryptedSamples(database: DatabaseSync, limit = 5): EncryptedSample[] {
+  const rows = database.prepare(
+    "select host_key, encrypted_value from cookies where length(encrypted_value) > 0 limit ?",
+  ).all(limit) as { host_key: string; encrypted_value: Uint8Array }[];
+  return rows.map((row) => ({ host: row.host_key, encrypted: row.encrypted_value })).filter((sample) => sample.encrypted.length > 0);
+}
+
+/** The first candidate that decrypts a sample; null when none does, which leaves those cookies unreadable. */
+export function workingKey(samples: readonly EncryptedSample[], schemaVersion: number, candidates: readonly Buffer[]): Buffer | null {
+  for (const key of candidates) {
+    if (samples.some((sample) => decryptValue(sample.encrypted, key, sample.host, schemaVersion) !== null)) return key;
+  }
+  return null;
 }
 
 export function readChromiumCookies(database: DatabaseSync, key: Buffer | null): ChromiumRead {

@@ -15,6 +15,9 @@ const HINTS: Partial<Record<NonNullable<Status["error"]>["code"], string>> = {
   noProfile: "Choose a profile below.",
 };
 
+/** True when this bb app runs on macOS, which names the Keychain in the hints and the note below. */
+const isMac = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent);
+
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -87,7 +90,7 @@ export function SettingsSection() {
             Sync now
           </button>
         </div>
-        {!status.supported ? <p className="text-muted-foreground">Session sync works on macOS only for now. Cmd+click still opens links in your browser.</p> : null}
+        {!status.supported ? <p className="text-muted-foreground">Session sync works on macOS and Linux for now. Ctrl+click still opens links in your browser.</p> : null}
         {status.lastSync ? <p className="text-muted-foreground">{describeSync(status.lastSync, browserName)}. {status.lastSync.cookies} cookies in the profile{status.lastSync.undecryptable ? `, ${status.lastSync.undecryptable} unreadable` : ""}.</p> : null}
         {problem ? (
           <p className="flex gap-2 text-foreground">
@@ -139,8 +142,10 @@ export function SettingsSection() {
       </fieldset>
 
       <p className="text-xs text-muted-foreground">
-        The first sync from a Chromium browser asks macOS for its "Safe Storage" key in the Keychain. Choose Always Allow so later
-        syncs run without asking. Cookie values stay on this computer; the plugin keeps only hashes of what it synced.
+        {isMac
+          ? 'The first sync from a Chromium browser asks macOS for its "Safe Storage" key in the Keychain. Choose Always Allow so later syncs run without asking.'
+          : "On Linux, cookie values are read with the browser's \"Safe Storage\" secret from the Secret Service or KWallet, falling back to the basic password store."}
+        {" "}Cookie values stay on this computer; the plugin keeps only hashes of what it synced.
       </p>
     </div>
   );

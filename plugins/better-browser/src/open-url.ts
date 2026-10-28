@@ -5,19 +5,30 @@ export interface OpenCommand {
   args: string[];
 }
 
+export interface OpenOptions {
+  profile?: string;
+  /** On Linux, the browser binary to launch, which the host resolves on PATH; without it xdg-open opens the system default. */
+  executable?: string;
+}
+
 /**
  * The command that opens `url` in the chosen browser. On macOS a Chrome-style browser is relaunched with
  * --profile-directory, which its single-instance check forwards to the running browser, so the link opens in the same
- * profile the plugin syncs from; other browsers get the URL through `open -b`.
+ * profile the plugin syncs from; other browsers get the URL through `open -b`. On Linux the browser binary is launched
+ * the same way, its single-instance check forwarding the arguments the same way.
  */
-export function openCommand(platform: NodeJS.Platform, browser: BrowserDefinition, url: string, profile?: string): OpenCommand | null {
+export function openCommand(platform: NodeJS.Platform, browser: BrowserDefinition, url: string, options: OpenOptions = {}): OpenCommand | null {
   if (platform === "darwin") {
-    if (browser.profileArgument && profile) {
-      return { file: "/usr/bin/open", args: ["-n", "-b", browser.bundleId, "--args", `--profile-directory=${profile}`, url] };
+    if (browser.profileArgument && options.profile) {
+      return { file: "/usr/bin/open", args: ["-n", "-b", browser.bundleId, "--args", `--profile-directory=${options.profile}`, url] };
     }
     return { file: "/usr/bin/open", args: ["-b", browser.bundleId, url] };
   }
-  if (platform === "linux") return { file: "xdg-open", args: [url] };
+  if (platform === "linux") {
+    if (!options.executable) return { file: "xdg-open", args: [url] };
+    const args = browser.profileArgument && options.profile ? [`--profile-directory=${options.profile}`, url] : [url];
+    return { file: options.executable, args };
+  }
   return null;
 }
 

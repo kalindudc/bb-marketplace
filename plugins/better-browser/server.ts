@@ -11,7 +11,7 @@ function describeStatus(status: Status): string {
   const lines = [
     `Browser:   ${status.browser ? `${status.browser.name}${status.profile ? ` (profile ${status.profile})` : ""}` : "none found"}`,
   ];
-  if (!status.supported) lines.push("Sessions:  sync works on macOS only");
+  if (!status.supported) lines.push("Sessions:  sync works on macOS and Linux");
   if (status.syncing) lines.push("Sessions:  syncing now");
   if (status.lastSync) {
     const sync = status.lastSync;

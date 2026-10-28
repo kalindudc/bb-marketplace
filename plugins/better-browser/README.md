@@ -27,6 +27,8 @@ bb plugin install better-browser@kalindudc
 Then open the plugin's page in Settings and pick a browser and profile, or
 leave it on your default browser. The first sync from a Chromium browser shows
 a macOS Keychain prompt for "<Browser> Safe Storage"; choose **Always Allow**.
+On Linux the "Safe Storage" secret is read from the Secret Service or KWallet
+without a prompt; if neither answers, the basic password store is tried.
 
 ## Settings
 
@@ -58,7 +60,7 @@ that rather than replacing the view:
 
 | Part | Where it runs | What it does |
 | --- | --- | --- |
-| `host.ts` | The host daemon on the machine with the bb app | Finds browsers and profiles, reads a private copy of a profile's cookie database (`VACUUM INTO`, or a file copy when the browser holds an exclusive lock), decrypts Chromium values with the Keychain "Safe Storage" key, watches the cookie file, writes cookies over CDP, and opens links with `open -b`. |
+| `host.ts` | The host daemon on the machine with the bb app | Finds browsers and profiles, reads a private copy of a profile's cookie database (`VACUUM INTO`, or a file copy when the browser holds an exclusive lock), decrypts Chromium values with the "Safe Storage" key, watches the cookie file, writes cookies over CDP, and opens links with `open -b` or the browser binary. |
 | `server.ts` and `src/engine.ts` | The bb server | Decides when to sync, finds the desktop app's Browser, creates a hidden `about:blank` tab, takes a short control lease on it, hands the CDP endpoint to the host, then releases and closes the tab. |
 | `app.tsx` and `src/ui/` | The bb app | The Browser toolbar control: heartbeats, the Cmd+click handler it installs in each page's isolated world, the sign-in handoff, and the settings picker. |
 
@@ -79,7 +81,16 @@ lapses on its own when the plugin is disabled or the tab is hidden.
 
 ## Limits
 
-- Session sync works on macOS only. Safari opens links but does not sync.
+- Session sync works on macOS and Linux. Safari opens links but does not sync.
+- On Linux, cookie values are decrypted with the browser's "Safe Storage"
+  secret: from the Secret Service (`secret-tool`, both `chrome_libsecret_os_crypt_password_v1` and `v2` schemas),
+  then KWallet (`kwallet-query`, the "<Product> Keys" folder), then the basic
+  password store. Each candidate is proved against real ciphertext, so the
+  wrong source never silently reads garbage; cookies it cannot decrypt are
+  reported as unreadable. Portal-encrypted values (Chromium's `v12`, used
+  inside Flatpak sandboxes) are not supported yet.
+- On Linux a link opens in the browser binary the plugin finds on `PATH` with
+  `--profile-directory`, falling back to `xdg-open` when no binary is found.
 - Partitioned (CHIPS) cookies are skipped, as bb's own import skips them.
 - Cookies a browser binds to the device cannot be copied by anything.
 - The sign-in handoff waits for a visible sign-in form, so the Okta dashboard
