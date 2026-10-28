@@ -870,6 +870,23 @@ describe("gh", () => {
     expect(calls()).toHaveLength(2);
   });
 
+  it("leaves a pull request alone when GitHub already moved it to the base, since GitHub refuses any base edit on a stacked pull request", async () => {
+    const url = "https://github.com/acme/shop/pull/7";
+    fakeGh(`case "$2" in view) echo '{"baseRefName":"main"}';; edit) echo "GraphQL: Cannot change the base branch because the pull request is part of a stack. (updatePullRequest)" 1>&2; exit 1;; esac`);
+    expect(await prRetarget({ repo: makeRepo(), url, base: "main", forge: GH })).toEqual({ outcome: "ok" });
+    expect(calls()).toEqual([["pr", "view", url, "--json", "baseRefName"]]);
+  });
+
+  it("moves a pull request with gh pr edit when its base differs, and still edits when the base cannot be read", async () => {
+    const url = "https://github.com/acme/shop/pull/7";
+    const repo = makeRepo();
+    fakeGh(`case "$2" in view) echo '{"baseRefName":"loom/csv-1"}';; esac`);
+    expect(await prRetarget({ repo, url, base: "main", forge: GH })).toEqual({ outcome: "ok" });
+    expect(calls().slice(-1)).toEqual([["pr", "edit", url, "--base", "main"]]);
+    fakeGh(`case "$2" in view) echo "HTTP 502: Bad Gateway" 1>&2; exit 1;; edit) echo "GraphQL: Cannot change the base branch because the pull request is part of a stack. (updatePullRequest)" 1>&2; exit 1;; esac`);
+    expect(await prRetarget({ repo, url, base: "main", forge: GH })).toEqual({ outcome: "unavailable", message: "gh pr edit failed: GraphQL: Cannot change the base branch because the pull request is part of a stack. (updatePullRequest)" });
+  });
+
   it("sets a pull request's title and description with gh pr edit, the body on stdin, and classifies a failure as a read's", async () => {
     fakeGh(`cat > "$dir/stdin.txt"\necho "https://github.com/acme/shop/pull/7"`);
     const input = { repo: makeRepo(), url: "https://github.com/acme/shop/pull/7", title: "Add order rows", body: "Why\n\n<!-- loom:begin -->\nOpened by Loom for CSV-1.\n<!-- loom:end -->", forge: GH };

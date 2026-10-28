@@ -2,6 +2,16 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.30.2 (2026-10-28)
+
+### Fixed
+
+- Moving a pull request to the branch it now builds on no longer pauses the project when GitHub has already moved it. GitHub moves a pull request in one of its stacks itself when the one below merges, and refuses any base edit on it, even one to the base it already has: "Cannot change the base branch because the pull request is part of a stack". Loom now reads the pull request's base first and edits it only when the base differs. If the base cannot be read, Loom still edits, and a failed edit stops as before.
+
+### Compatibility
+
+- No migration.
+
 ## 0.30.1 (2026-10-28)
 
 ### Fixed

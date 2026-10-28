@@ -1063,6 +1063,10 @@ export async function prCreate(input: HostInput<"prCreate">, signal?: AbortSigna
 
 export async function prRetarget(input: HostInput<"prRetarget">, signal?: AbortSignal): Promise<HostOutput<"prRetarget">> {
   if (input.forge?.kind === "command") return retargetWithCommand(input, input.forge.retarget, signal);
+  // GitHub moves a stacked pull request itself when the one below merges, and refuses any base edit on it, even a no-op.
+  const viewed = await ghCall(input.repo, ["pr", "view", input.url, "--json", "baseRefName"], { signal });
+  if (viewed === "missing") return { outcome: "unavailable", message: GH_MISSING };
+  if (viewed.code === 0 && parseJson<{ baseRefName?: unknown }>(viewed.stdout)?.baseRefName === input.base) return { outcome: "ok" };
   const edited = await ghCall(input.repo, ["pr", "edit", input.url, "--base", input.base], { signal });
   if (edited === "missing") return { outcome: "unavailable", message: GH_MISSING };
   if (edited.code !== 0) return readFailed("gh pr edit", edited);
