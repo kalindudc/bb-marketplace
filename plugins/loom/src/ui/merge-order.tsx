@@ -151,9 +151,9 @@ function Callouts({ order, onOpen }: { order: MergeOrderView; onOpen(url: string
         const tone = since ? "bg-warning/10 text-warning-text shadow-[inset_3px_0_0_var(--warning)]" : "bg-destructive/10 text-destructive-text shadow-[inset_3px_0_0_var(--destructive-text)]";
         const how = entry.state === "done" ? `Loom counted ${entry.key} as done before it checked where a pull request merged.` : `Loom blocked ${entry.key}.`;
         return (
-          <div key={entry.key} role={since ? "note" : "alert"} data-merged-elsewhere={entry.key} className={`mt-2.5 flex items-start gap-2.5 rounded-lg px-3 py-2.5 text-xs ${tone}`}>
+          <div key={entry.key} role={since ? "note" : "alert"} data-merged-elsewhere={entry.key} className={`mt-2.5 flex flex-wrap items-start gap-2.5 rounded-lg px-3 py-2.5 text-xs ${tone}`}>
             <span aria-hidden>{since ? "⚠" : "!"}</span>
-            <div className="min-w-0 flex-1">
+            <div className="min-w-[min(100%,16rem)] flex-1 [overflow-wrap:anywhere]">
               <p className="font-semibold">
                 {entry.key}'s pull request{entry.prNumber === null ? "" : ` #${entry.prNumber}`} merged into {into === null ? "another branch" : `${into.key}'s branch`}, not {entry.base}.
               </p>
@@ -174,7 +174,7 @@ function Callouts({ order, onOpen }: { order: MergeOrderView; onOpen(url: string
       {traps.length > 0 && (
         <div role="alert" data-merge-trap className="mt-2.5 flex items-start gap-2.5 rounded-lg bg-warning/10 px-3 py-2.5 text-xs text-warning-text shadow-[inset_3px_0_0_var(--warning)]">
           <span aria-hidden>⚠</span>
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1 [overflow-wrap:anywhere]">
             <p className="font-semibold">
               The forge shows {traps.length === 1 ? `${prName(traps[0]!.prNumber)} (${traps[0]!.key})` : `${traps.length} stacked pull requests`} as approved. Don't merge {traps.length === 1 ? "it" : "them"} yet.
             </p>
@@ -238,7 +238,7 @@ function StepRow({ entry, byKey, onTicket, onOpen }: { entry: MergeEntry; byKey:
           </button>
         )}
       </div>
-      <span title={entry.title} className="min-w-0 @3xl:truncate">
+      <span title={entry.title} className="min-w-0 [overflow-wrap:anywhere] @3xl:truncate">
         {entry.title}
       </span>
       <span className="flex flex-wrap gap-1 @3xl:justify-end">
@@ -247,7 +247,7 @@ function StepRow({ entry, byKey, onTicket, onOpen }: { entry: MergeEntry; byKey:
       <span data-merge-verdict={entry.verdict} className={`font-medium ${TONES[verdict.tone]}`}>
         {verdict.text}
       </span>
-      {relation !== "" && <p className="text-[11.5px] text-muted-foreground @3xl:col-start-2 @3xl:col-end-5">{relation}</p>}
+      {relation !== "" && <p className="text-[11.5px] text-muted-foreground [overflow-wrap:anywhere] @3xl:col-start-2 @3xl:col-end-5">{relation}</p>}
     </div>
   );
 }
@@ -278,7 +278,7 @@ function StepsView({ order, ...actions }: { order: MergeOrderView } & Actions) {
     <div data-merge-steps>
       {groups.map((group) => (
         <section key={group.id} data-merge-step={group.id} aria-label={group.title} className="mt-4">
-          <div className="flex items-baseline gap-2 border-b border-border-seam pb-1">
+          <div className="flex flex-wrap items-baseline gap-x-2 border-b border-border-seam pb-1">
             <h3 className={HEADING}>{group.title}</h3>
             {group.hint !== "" && <span className="text-[11px] text-subtle-foreground">{group.hint}</span>}
             <span className="ml-auto text-[11px] text-subtle-foreground">{countLabel(group.entries)}</span>
@@ -456,10 +456,10 @@ function GraphView({ order, onTicket, onOpen }: { order: MergeOrderView } & Acti
           <p className="flex flex-wrap items-baseline gap-1.5">
             <b className="font-semibold">{picked.key}</b>
             {picked.repo !== null && <RepoChip name={picked.repo} />}
-            <span>{picked.title}</span>
+            <span className="min-w-0 [overflow-wrap:anywhere]">{picked.title}</span>
           </p>
           <p className={`mt-1.5 font-medium ${TONES[verdictOf(picked).tone]}`}>{verdictOf(picked).text}</p>
-          {relationOf(picked, byKey) !== "" && <p className="mt-0.5 text-muted-foreground">{relationOf(picked, byKey)}</p>}
+          {relationOf(picked, byKey) !== "" && <p className="mt-0.5 text-muted-foreground [overflow-wrap:anywhere]">{relationOf(picked, byKey)}</p>}
           <div className="mt-2 flex flex-wrap gap-1.5">
             {picked.prUrl !== null && (
               <button type="button" className={BUTTON} onClick={() => onOpen(picked.prUrl!)}>

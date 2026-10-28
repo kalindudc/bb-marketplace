@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { experimental_usePluginId, useBbNavigate, type ExperimentalPageTitle, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import type { ControlAction, ProjectView } from "../contract";
 import { isMultiRepoProject } from "../format";
@@ -36,6 +36,34 @@ const TABS: ReadonlyArray<{ tab: Tab; label: string }> = [
   { tab: "merge", label: "Merge order" },
   { tab: "rollout", label: "Rollout" },
 ];
+
+// 36rem, where Tailwind's @xl starts: under it the page's container queries (`@max-xl/loom:`) switch to the phone layout.
+const NARROW_PX = 576;
+
+/** Whether the Loom page measured itself narrower than NARROW_PX; bb's title bar over it reads this to shorten its crumbs. */
+export const narrowPage = (() => {
+  let narrow = false;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => narrow,
+    set(next: boolean): void {
+      if (next === narrow) return;
+      narrow = next;
+      for (const listener of [...listeners]) listener();
+    },
+    subscribe(listener: () => void): () => void {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+  };
+})();
+
+/** The scrollLeft that brings `tab` wholly into `bar`'s view, with `margin` to spare; null when it is in view already. */
+export function sidewaysInto(bar: Pick<DOMRect, "left" | "right">, tab: Pick<DOMRect, "left" | "right">, scrollLeft: number, margin = 16): number | null {
+  if (tab.left < bar.left) return Math.max(0, scrollLeft - (bar.left - tab.left) - margin);
+  if (tab.right > bar.right) return scrollLeft + (tab.right - bar.right) + margin;
+  return null;
+}
 
 /** A project shows its changes once it has started: before that no worker has changed anything. */
 const hasChangesTab = (state: ProjectView["overview"]["state"]) => state !== "draft" && state !== "ready";
@@ -212,7 +240,7 @@ function RewindBar({ now, stage, onNow }: { now: number; stage: number | null; o
         ))}
       </ol>
       <div className="flex flex-wrap items-center gap-3">
-        <p className="min-w-0 flex-1 text-sm text-warning-text">
+        <p className="min-w-[min(100%,18rem)] flex-1 text-sm text-warning-text">
           <b>Rewound to {momentLabel(now)}.</b> You are seeing the project as it was then; nothing here can change it, and its controls come back at now.
         </p>
         <button type="button" className={BUTTON_PRIMARY} onClick={onNow}>
@@ -220,6 +248,63 @@ function RewindBar({ now, stage, onNow }: { now: number; stage: number | null; o
         </button>
       </div>
     </section>
+  );
+}
+
+/**
+ * The project's tabs in one row that scrolls sideways by itself when the tabs do not fit, with the chosen tab scrolled
+ * into view, sideways only. On a narrow page it stays at the top while the page scrolls; `onHeight` tells the spec
+ * page's own sticky bar how far below it to stop.
+ */
+function TabBar({ tabs, selected, badges, onTab, onHeight }: { tabs: ReadonlyArray<{ tab: Tab; label: string }>; selected: Tab; badges: Partial<Record<Tab, TabBadge>>; onTab(tab: Tab): void; onHeight(px: number): void }) {
+  const bar = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const element = bar.current;
+    const chosen = element?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+    if (element == null || chosen == null) return;
+    const left = sidewaysInto(element.getBoundingClientRect(), chosen.getBoundingClientRect(), element.scrollLeft);
+    if (left !== null) element.scrollLeft = left;
+  }, [selected, tabs.length]);
+  useLayoutEffect(() => {
+    const element = bar.current;
+    if (element === null || typeof ResizeObserver === "undefined") return;
+    const measure = () => onHeight(element.offsetHeight);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [onHeight]);
+  return (
+    <div
+      ref={bar}
+      role="tablist"
+      aria-label="Project"
+      data-tab-bar
+      className="flex min-w-0 shrink-0 flex-nowrap gap-1 overflow-x-auto border-b border-border-seam px-3 pt-1.5 [scrollbar-width:none] @max-xl/loom:sticky @max-xl/loom:top-0 @max-xl/loom:z-20 @max-xl/loom:bg-surface-recessed/95 @max-xl/loom:backdrop-blur"
+    >
+      {tabs.map((entry) => {
+        const badge = badges[entry.tab];
+        return (
+          <button
+            key={entry.tab}
+            type="button"
+            role="tab"
+            aria-selected={selected === entry.tab}
+            aria-description={badge?.label}
+            title={badge?.label}
+            onClick={() => onTab(entry.tab)}
+            className={`inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-t-md px-3 py-1.5 text-xs whitespace-nowrap ${selected === entry.tab ? "bg-surface-selected text-foreground" : "text-muted-foreground hover:bg-state-hover"}`}
+          >
+            {entry.label}
+            {badge !== undefined && (
+              <span data-tab-badge={entry.tab} aria-hidden className={`inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-none font-semibold ${BADGE_TONES[badge.tone]}`}>
+                {badge.text}
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -231,6 +316,7 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek, go }: { slug: string; tab:
   const [chosenChange, setChosenChange] = useState<string | null>(null);
   // The spec version the Planner page asked to open; a tab change by the human opens the spec's own default again.
   const [specVersion, setSpecVersion] = useState<number | null>(null);
+  const [tabsHeight, setTabsHeight] = useState(0);
   const plannerWaiting = useWaiting(remote.data?.overview.plannerThreadId ?? "");
   const loaded = remote.data;
   const wantChanges = loaded !== undefined && at === null && loaded.at === null && hasChangesTab(loaded.overview.state) && (tab === "changes" || readyToLand(loaded.overview));
@@ -258,9 +344,9 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek, go }: { slug: string; tab:
     act(() => send({ slug, action, ...(version === undefined ? {} : { version }), ...(repo === undefined ? {} : { repo }), confirm: true }), controlDone(action, version, repo));
 
   return (
-    <div className="flex min-h-full flex-col">
+    <div className="flex min-h-full flex-col" style={tabsHeight > 0 ? ({ "--loom-tabs": `${tabsHeight}px` } as CSSProperties) : undefined}>
       <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-border-seam px-4 py-2.5">
-        <h1 className="text-sm font-semibold">{overview.name}</h1>
+        <h1 className="min-w-0 text-sm font-semibold [overflow-wrap:anywhere]">{overview.name}</h1>
         <span className="text-xs text-muted-foreground">{overview.key}</span>
         <StateBadge state={overview.state} />
         <span className="text-xs text-muted-foreground">{mergeLabel(overview)} · {countsLabel(overview.ticketCounts)}</span>
@@ -287,7 +373,7 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek, go }: { slug: string; tab:
       )}
       {view.prUrl !== null && (
         <p className="border-b border-border-seam px-4 py-2 text-xs text-muted-foreground">
-          Pull request <button type="button" className="underline" onClick={() => navigate.openUrl(view.prUrl!)}>{view.prUrl}</button>
+          Pull request <button type="button" className="text-left underline [overflow-wrap:anywhere]" onClick={() => navigate.openUrl(view.prUrl!)}>{view.prUrl}</button>
         </p>
       )}
       {isMultiRepoProject(overview) && overview.repos.some((repo) => repo.prUrl !== null) && (
@@ -309,33 +395,16 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek, go }: { slug: string; tab:
       )}
       {view.health !== null && <HealthStrip health={view.health} />}
       <TimelineStrip slug={slug} at={at} onSeek={onSeek} onTicket={(key) => go(`${slug}/${key}`)} />
-      <div role="tablist" aria-label="Project" className="flex shrink-0 gap-1 border-b border-border-seam px-3 pt-1.5">
-        {TABS.filter((entry) => (entry.tab !== "planner" || (overview.plannerThreadId !== null && !rewound)) && (entry.tab !== "changes" || changesTab) && (entry.tab !== "merge" || mergeTab) && (entry.tab !== "rollout" || rolloutTab)).map((entry) => {
-          const badge = badges[entry.tab];
-          return (
-            <button
-              key={entry.tab}
-              type="button"
-              role="tab"
-              aria-selected={shownTab === entry.tab}
-              aria-description={badge?.label}
-              title={badge?.label}
-              onClick={() => {
-                setSpecVersion(null);
-                onTab(entry.tab);
-              }}
-              className={`inline-flex cursor-pointer items-center gap-1.5 rounded-t-md px-3 py-1.5 text-xs ${shownTab === entry.tab ? "bg-surface-selected text-foreground" : "text-muted-foreground hover:bg-state-hover"}`}
-            >
-              {entry.label}
-              {badge !== undefined && (
-                <span data-tab-badge={entry.tab} aria-hidden className={`inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] leading-none font-semibold ${BADGE_TONES[badge.tone]}`}>
-                  {badge.text}
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
+      <TabBar
+        tabs={TABS.filter((entry) => (entry.tab !== "planner" || (overview.plannerThreadId !== null && !rewound)) && (entry.tab !== "changes" || changesTab) && (entry.tab !== "merge" || mergeTab) && (entry.tab !== "rollout" || rolloutTab))}
+        selected={shownTab}
+        badges={badges}
+        onTab={(next) => {
+          setSpecVersion(null);
+          onTab(next);
+        }}
+        onHeight={setTabsHeight}
+      />
       <div role="tabpanel" className="min-h-0 flex-1">
         {shownTab === "board" && <Board slug={slug} cards={view.board} strategy={overview.strategy} now={view.now} draftVersion={overview.state === "draft" ? view.spec.version : null} onChanges={changesTab ? openChanges : undefined} />}
         {shownTab === "agents" && <AgentsView agents={view.agents} byRole={view.metrics.tokens.byRole} unreported={view.metrics.tokens.unreported} now={view.now} />}
@@ -391,6 +460,26 @@ export function LoomPage({ subPath }: PluginNavPanelProps) {
     [navigate],
   );
   const scroller = useScrollMemory(route.view === "project" ? `${formatRoute(route)}#${tab}` : formatRoute(route));
+  const [root, setRoot] = useState<HTMLElement | null>(null);
+  const scrollerRef = scroller.ref;
+  const rootRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      scrollerRef(node);
+      setRoot(node);
+    },
+    [scrollerRef],
+  );
+  useLayoutEffect(() => {
+    if (root === null || typeof ResizeObserver === "undefined") return;
+    const measure = () => narrowPage.set(root.clientWidth > 0 && root.clientWidth < NARROW_PX);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(root);
+    return () => {
+      observer.disconnect();
+      narrowPage.set(false);
+    };
+  }, [root]);
   // The ticket route reads the rewind too, so it lives here, with the project it belongs to.
   const [rewind, setRewind] = useState<{ slug: string; at: number } | null>(null);
   const at = rewind !== null && rewind.slug === slug ? rewind.at : null;
@@ -398,7 +487,8 @@ export function LoomPage({ subPath }: PluginNavPanelProps) {
 
   return (
     <section data-loom-page className="flex h-full min-h-0 min-w-0 flex-col bg-surface-recessed text-foreground">
-      <div ref={scroller.ref} onScroll={scroller.onScroll} data-loom-scroll className="min-h-0 flex-1 overflow-y-auto">
+      {/* The page's narrow layouts (`@max-xl/loom:`) ask this box by name, not a part's own container; it never scrolls sideways. */}
+      <div ref={rootRef} onScroll={scroller.onScroll} data-loom-scroll className="@container/loom min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
         {route.view === "home" && <Home go={go} />}
         {route.view === "guide" && <Guide onStart={() => go("_new")} />}
         {route.view === "new" && <NewProject go={go} />}
@@ -410,14 +500,19 @@ export function LoomPage({ subPath }: PluginNavPanelProps) {
   );
 }
 
-/** bb's title bar on the Loom page: where the page is, with a ticket's project linking back to it. Home keeps bb's own "Loom". */
+/**
+ * bb's title bar on the Loom page: where the page is, with a ticket's project linking back to it. Home keeps bb's own
+ * "Loom". On a narrow page a ticket's project goes by its key, as bb does not shorten that crumb.
+ */
 export function useLoomPageTitle({ subPath }: PluginNavPanelProps): ExperimentalPageTitle | null {
   const pluginId = experimental_usePluginId();
   useStored(lastRoute);
+  const narrow = useSyncExternalStore(narrowPage.subscribe, narrowPage.get, narrowPage.get);
   const route = routeOf(subPath);
   const slug = route.view === "project" || route.view === "ticket" ? route.slug : null;
   // The sidebar's reads of home and of the conversation, so the names cost no read of their own, even on a ticket, whose page reads no project.
-  const name = useLoom("home", null, { enabled: slug !== null }).data?.projects.find((project) => project.slug === slug)?.name ?? slug ?? "";
+  const project = useLoom("home", null, { enabled: slug !== null }).data?.projects.find((entry) => entry.slug === slug);
+  const name = project?.name ?? slug ?? "";
   const conversation = useLoom("planningSession", { threadId: route.view === "plan" ? route.threadId : "" }, { enabled: route.view === "plan" }).data?.title;
   switch (route.view) {
     case "home":
@@ -431,6 +526,6 @@ export function useLoomPageTitle({ subPath }: PluginNavPanelProps): Experimental
     case "project":
       return { title: name };
     case "ticket":
-      return { breadcrumbs: [{ label: name, to: `/plugins/${encodeURIComponent(pluginId)}/loom/${encodeURIComponent(route.slug)}` }, { label: route.key }] };
+      return { breadcrumbs: [{ label: narrow ? (project?.key ?? name) : name, to: `/plugins/${encodeURIComponent(pluginId)}/loom/${encodeURIComponent(route.slug)}` }, { label: route.key }] };
   }
 }

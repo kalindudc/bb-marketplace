@@ -225,6 +225,17 @@ its Done and archived group open or folded. Its addresses work after a reload:
 `/plugins/loom/loom/<slug>/<KEY>` a ticket and
 `/plugins/loom/loom/_plan/<threadId>` a planning conversation.
 
+On a phone, or any page narrower than 36rem (576 pixels), every view fits the
+screen and the page never scrolls sideways. A project's tabs stay in one row
+that scrolls sideways by itself, with the chosen tab in view, and stick to the
+top while the page scrolls. The health strip folds into one row of its main
+numbers and the Timeline into one row, each opening its full view with one
+click and folding back with another, and the About strip keeps the summary's first lines, so the tabs show on the first
+screen. The next-step bar's button goes under its sentence. Home draws each
+project as a card with its name, summary, state, what needs you and progress,
+the Agents tab stacks each thread's facts, and bb's title bar names a ticket's
+project by its key.
+
 ### Home
 
 A first visit, before any project exists, shows a guide: the five steps from
@@ -353,12 +364,22 @@ request, your reply starts a fix round.
 
 The spec as one page in three sections:
 
-- How it runs: the settings as cards. Merging, workers and reviewers, the checks
-  before review and after each merge, the scope guard and its protected paths,
-  each repo, and the limits and triage.
+- How it runs: the settings as cards. Merging (with stacking, releasing idle
+  workers, `refresh_behind`, the git time limit and the forge, each of its
+  commands in words and folded to its first line, or to the lines a version
+  changed), workers and reviewers with
+  their environment and machine, the checks before review and after each merge
+  and whether Loom relies on CI, the scope guard and its protected paths, each
+  repo, its other settings behind a Settings line that opens by itself when one
+  of them changed, the deploy order when the spec has one (how changes deploy,
+  the stages with their soak and tickets, the milestones and the windows), and
+  the limits and triage. Every setting the spec can hold is drawn there, and
+  what a version removes stays drawn, struck through, so "What changed" can
+  jump to any change and you can comment on it.
 - Tickets: List + detail shows the tickets by wave beside the picked one, with
-  its brief, criteria, files, verify commands, dependencies and priority, and
-  any files it shares with a ticket nothing orders it against. Map draws the
+  its brief, criteria, files, verify commands, dependencies, merge order,
+  priority, environment inputs and rollout, and any files it shares with a
+  ticket nothing orders it against. Map draws the
   waves from left to right with an arrow to each ticket that waits. Files lists
   the Shared files and every path by folder.
 - Goal & guardrails: the goal, the non-goals, the reviewer rubric, the open
@@ -402,7 +423,10 @@ the review policy, or adding a repo. A pending version is compared with the
 version in force; a draft with the draft before it, and only when that draft's
 review passed or was skipped; the first version is always reviewed. Loom
 records the skip with the paths that changed, writes it to the feed, and tells
-the planner to hand over, as a passed review does.
+the planner to hand over, as a passed review does. The next-step bar and the
+Planner tab's version card say how many settings changed and what they belong
+to, such as "6 operational settings: the forge on 4 repos and web's
+refresh_behind", with each setting listed behind a disclosure.
 
 #### Planner
 

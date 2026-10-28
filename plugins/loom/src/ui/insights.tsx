@@ -542,7 +542,7 @@ function Row({ icon, children, side, className = "", ...rest }: { icon: ReactNod
   return (
     <li className={`grid grid-cols-[1.25rem_minmax(0,1fr)_auto] gap-x-2.5 border-b border-border-seam/60 py-2 last:border-b-0 ${className}`} {...rest}>
       {icon}
-      <div className="min-w-0">{children}</div>
+      <div className="min-w-0 [overflow-wrap:anywhere]">{children}</div>
       <div className="text-right text-xs whitespace-nowrap text-muted-foreground">{side}</div>
     </li>
   );

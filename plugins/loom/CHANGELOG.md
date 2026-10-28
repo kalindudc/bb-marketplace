@@ -2,6 +2,34 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.29.3 (2026-10-28)
+
+### Fixed
+
+- Every Loom view fits a phone. On a page narrower than about 36rem:
+  - The project tabs scroll sideways in their own row, which stays at the top. Before, eight tabs made the whole project page scroll sideways.
+  - The health strip and the Timeline fold to one row each, and one click opens the full view and folds it back. The About strip keeps its summary's first lines, so the first screen reaches the tabs.
+  - The next-step bar's button goes under its text, and a Planner tab step's buttons go under its text instead of squeezing it to one letter per line.
+  - Home shows each project as a card, and the Agents tab stacks the ended threads' rows.
+  - bb's title bar names a ticket's project by its key.
+  - Long names, paths and links wrap instead of running off the screen: Insights, What changed, the Planner story, the home cards and New project's choices.
+- The Spec tab draws every setting the spec can hold, so a version can be reviewed on the page, not only as paths in What changed:
+  - the forge's commands (`open`, `state`, `feedback`, `edit`, `reply`, `retarget`, `after_open`, `after_push`) folded to their first line, and `ignore_checks`;
+  - `stack`, `release_workers`, `refresh_behind`, `git_network_timeout_seconds` and `checks.ci`;
+  - each environment's inputs, machine and reviewer table;
+  - each repo's forge, environment, CI, deploy, freshness, git time limit and worktree, behind a disclosure that opens by itself when something in it changed;
+  - a Deploy order card for `[rollout]` (deploy, stages, milestones and windows);
+  - each ticket's rollout and environment inputs.
+  Every value can be commented on, every What changed row jumps to it, and a removed setting is drawn struck through with the value Loom now uses in its place. A test walks the spec schema, so a key added later fails it until the page draws it.
+
+### Changed
+
+- A version whose spec review was skipped names how many operational settings changed and which ones ("6 operational settings: the forge on 4 repos and web's refresh_behind"), with the full list behind a disclosure, in the next-step bar and on the Planner tab.
+
+### Compatibility
+
+- No migration. The page's `NextStep` view gains an optional `paths`.
+
 ## 0.29.2 (2026-10-28)
 
 ### Fixed

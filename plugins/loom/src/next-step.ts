@@ -15,6 +15,8 @@ export interface NextStep {
   title: string;
   text: string;
   action: { control: ControlAction; version?: number; label: string; confirm: string } | null;
+  /** The setting paths a skipped spec review changed, which `text` sums up and the bar lists behind a disclosure. */
+  paths?: string[];
 }
 
 export interface NextStepInput {
@@ -128,23 +130,52 @@ function reviewStep(slug: string, version: number, review: SpecReviewStatus | un
   }
 }
 
-function reviewedNote(review: SpecReviewStatus | undefined): string {
+const ARTICLED = new Set(["forge", "environment", "worktree", "deploy"]);
+
+/**
+ * "7 operational settings: the forge on 4 repos and web's refresh_behind": a skipped review's paths, grouped by the
+ * setting and what it belongs to. `repos` names each [[repo]] by index.
+ */
+export function operationalSummary(paths: readonly string[], repos: readonly string[]): string {
+  const groups = new Map<string, { setting: string; kind: "repo" | "ticket" | null; owners: Set<string> }>();
+  for (const path of paths) {
+    const repo = /^repo\[(\d+)\]\.(\w+)/u.exec(path);
+    const ticket = /^ticket\[([^\]]+)\]\.(\w+)/u.exec(path);
+    const owned = repo !== null ? { kind: "repo" as const, owner: repos[Number(repo[1])] ?? `repo ${Number(repo[1]) + 1}`, setting: repo[2]! } : ticket !== null ? { kind: "ticket" as const, owner: ticket[1]!, setting: ticket[2]! } : null;
+    const setting = owned?.setting ?? (path.startsWith("environment") ? "the environment" : path.split(/[.[]/u).slice(0, 2).join("."));
+    const id = `${owned?.kind ?? "project"}:${setting}`;
+    const group = groups.get(id) ?? { setting, kind: owned?.kind ?? null, owners: new Set<string>() };
+    if (owned !== null) group.owners.add(owned.owner);
+    groups.set(id, group);
+  }
+  const parts = [...groups.values()].map(({ setting, kind, owners }) => {
+    if (kind === null) return setting;
+    if (owners.size === 1) return `${[...owners][0]}'s ${setting}`;
+    return `${ARTICLED.has(setting) ? `the ${setting}` : setting} ${kind === "repo" ? "on" : "of"} ${plural(owners.size, kind)}`;
+  });
+  return `${plural(paths.length, "operational setting")}: ${list(parts)}`;
+}
+
+function reviewedNote(review: SpecReviewStatus | undefined, repos: readonly string[]): string {
   switch (review?.kind) {
     case "approved":
       return "Loom's spec review passed it. ";
     case "limit":
       return `Loom stopped reviewing it after ${SPEC_REVIEW_ROUNDS} rounds; the planner's chat lists the findings it left open. `;
     case "skipped":
-      return `Loom skipped its spec review, because against v${review.against} it changes only operational settings: ${review.paths.join(", ")}. `;
+      return `Loom skipped its spec review, because against v${review.against} it changes only ${operationalSummary(review.paths, repos)}. `;
     default:
       return "";
   }
 }
 
+const skippedPaths = (review: SpecReviewStatus | undefined) => (review?.kind === "skipped" ? { paths: review.paths } : {});
+
 export function nextStepOf(input: NextStepInput): NextStep | null {
   const { overview, board, version } = input;
   const { state, pendingVersion, reason } = overview;
   const blocked = board.filter((card) => card.state === "blocked");
+  const repoNames = overview.repos.flatMap((repo) => (repo.name === null ? [] : [repo.name]));
   if (state === "archived") return null;
 
   if (state === "draft") {
@@ -155,8 +186,9 @@ export function nextStepOf(input: NextStepInput): NextStep | null {
       stage: 1,
       tone: "normal",
       title: `Next: review draft v${version}.`,
-      text: `${reviewedNote(input.specReview)}Read its tickets and checks, and ask the planner in its chat for any change, or approve it as it is. Approving creates ${tickets} on the board; nothing runs until you start.`,
+      text: `${reviewedNote(input.specReview, repoNames)}Read its tickets and checks, and ask the planner in its chat for any change, or approve it as it is. Approving creates ${tickets} on the board; nothing runs until you start.`,
       action: { control: "approve", version, label: `Approve v${version} · create ${tickets}`, confirm: `Click again to approve v${version}` },
+      ...skippedPaths(input.specReview),
     };
   }
 
@@ -170,13 +202,14 @@ export function nextStepOf(input: NextStepInput): NextStep | null {
       stage,
       tone: "normal",
       title: `Next: approve v${pendingVersion}.`,
-      text: `The planner proposed spec v${pendingVersion}; it changes the spec, not the tickets on the board. ${reviewedNote(input.specReview)}${moves.length === 0 ? "Approving tells the planner." : `Approving ${moves.join(", ")}, and tells the planner.`}`,
+      text: `The planner proposed spec v${pendingVersion}; it changes the spec, not the tickets on the board. ${reviewedNote(input.specReview, repoNames)}${moves.length === 0 ? "Approving tells the planner." : `Approving ${moves.join(", ")}, and tells the planner.`}`,
       action: {
         control: "approve",
         version: pendingVersion,
         label: `Approve v${pendingVersion}${moved === 0 ? "" : ` · requeue ${plural(moved, "ticket")}`}`,
         confirm: `Click again to approve v${pendingVersion}`,
       },
+      ...skippedPaths(input.specReview),
     };
   }
 

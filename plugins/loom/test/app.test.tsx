@@ -15,7 +15,8 @@ import { notesMessage } from "../src/prompts";
 import { parseSpec } from "../src/spec";
 import { ConfirmButton, MoreMenu } from "../src/ui/common";
 import { repoLand } from "../src/ui/next-step-bar";
-import { controlDone } from "../src/ui/page";
+import { controlDone, narrowPage, sidewaysInto } from "../src/ui/page";
+import { nextStepOf } from "../src/next-step";
 import { reloadRemembered } from "../src/ui/remember";
 import { questionsOf } from "../src/ui/questions";
 import { HOUR, NOW, agent, attempt, card, changeRepo, health, homeProject, homeView, metrics, overview, plannerViewOf, projectView, repoOverview, specV1, specVersionView, ticketDetail, timeline, withRepos } from "./fixtures";
@@ -1305,6 +1306,55 @@ describe("planner page", () => {
     await waitFor(() => expect(dismissAsk).toHaveBeenCalledWith({ slug: "csv", ask: 7, confirm: true }));
     await waitFor(() => expect(page(slot).querySelector("[data-planner-asks]")).toBeNull());
     expect(toast.success).toHaveBeenLastCalledWith("Set aside until the planner asks again");
+  });
+
+  it("keeps an ask's text the width of its step, with the step's buttons under the text on a narrow page and beside it on a wide one", async () => {
+    const view = plannerViewOf({
+      projectState: "running",
+      approvedVersion: 1,
+      pendingVersion: 2,
+      review: { kind: "approved", version: 2, round: 1, summary: "Holds." },
+      ask: { id: 3, at: NOW - 60_000, why: "", open: true, steps: [{ action: "approve", version: 2, text: "Approve spec v10: the web repo's forge gains edit and reply.", done: false }, { action: "other", text: "Watch the alert.", done: false }] },
+    });
+    const slot = await openPlanner({ plannerView: () => view }, projectView({ overview: overview({ pendingVersion: 2 }) }));
+    const step = await waitFor(() => {
+      const found = page(slot).querySelector<HTMLElement>('[data-ask-step="approve"]');
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    const classes = (element: Element | null) => (element?.getAttribute("class") ?? "").split(/\s+/);
+    expect(classes(step)).toEqual(expect.arrayContaining(["grid-cols-[1.25rem_minmax(0,1fr)]", "@xl:grid-cols-[1.25rem_minmax(0,1fr)_auto]"]));
+    const actions = step.querySelector("[data-ask-actions]")!;
+    expect(classes(actions)).toEqual(expect.arrayContaining(["col-start-2", "@xl:col-start-auto", "@xl:justify-end", "empty:hidden"]));
+    expect(within(actions as HTMLElement).getAllByRole("button").map((button) => button.textContent)).toEqual(["See what changed", "Approve v2"]);
+    expect(page(slot).querySelector('[data-ask-step="other"] [data-ask-actions]')!.childElementCount).toBe(0);
+    // A story step's title breaks a long link or name rather than run off the page.
+    expect(classes(page(slot).querySelector("[data-story-step] span.font-medium"))).toEqual(expect.arrayContaining(["min-w-0", "[overflow-wrap:anywhere]"]));
+  });
+
+  it("sums up a skipped review's settings on the version card, and lists them behind a disclosure", async () => {
+    const paths = ["repo[0].forge.edit", "repo[0].forge.reply", "repo[1].forge.kind"];
+    const view = plannerViewOf({
+      projectState: "running",
+      approvedVersion: 1,
+      pendingVersion: 2,
+      versions: [
+        { version: 1, status: "approved", createdAt: NOW - 4 * HOUR, tickets: 2, change: null, summary: null, summaryChanged: false, review: null },
+        { version: 2, status: "pending", createdAt: NOW - HOUR, tickets: 2, change: null, summary: null, summaryChanged: false, review: null },
+      ],
+      review: { kind: "skipped", version: 2, against: 1, paths },
+    });
+    const repos = [repoOverview({ name: "web" }), repoOverview({ name: "infra", bbProjectId: "proj_infra" })];
+    const slot = await openPlanner({ plannerView: () => view }, projectView({ overview: overview({ pendingVersion: 2, repos }) }));
+    const card = await waitFor(() => {
+      const found = page(slot).querySelector<HTMLElement>('[data-version-card="2"]');
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    expect(card.textContent).toContain("Loom skipped its spec review: against v1, it changes only 3 operational settings: the forge on 2 repos.");
+    expect(card.textContent).not.toContain("repo[0].forge.edit,");
+    expect([...card.querySelectorAll("[data-setting-path]")].map((item) => item.textContent)).toEqual(["web › forge › edit", "web › forge › reply", "infra › forge › kind"]);
+    expect(card.querySelector<HTMLDetailsElement>("[data-setting-paths]")!.open).toBe(false);
   });
 
   it("sends the human's message to the planner and shows it in the story", async () => {
@@ -4410,6 +4460,24 @@ describe("spec page", () => {
     expect(panel(again).querySelector("[data-sent-note]")!.textContent).toContain("✓ v2 changed this");
   });
 
+  it("puts a change's tags beside it, or under it when the row is narrow, never over its name, and breaks a long value", async () => {
+    const answered = specVersionView({ notes: [{ version: 1, paths: ["checks.commands[0]"], body: "Run the plain tests.", sentAt: NOW, answeredIn: 2, changed: true }] });
+    const slot = await openPage({ specVersion: () => answered });
+    const classes = (element: Element | null) => (element?.getAttribute("class") ?? "").split(/\s+/);
+    const row = page(slot).querySelector<HTMLElement>('[data-change="ticket[csv-export].acceptance"]')!;
+    const tag = row.querySelector("[data-change-tag]")!;
+    expect(tag.textContent).toBe("not from your comments");
+    const box = tag.parentElement!;
+    expect(classes(box)).toEqual(expect.arrayContaining(["flex", "flex-wrap", "min-w-0", "flex-1"]));
+    const go = box.querySelector("button")!;
+    expect(classes(go)).toEqual(expect.arrayContaining(["min-w-[min(100%,12rem)]", "flex-1"]));
+    expect(classes(go.firstElementChild)).toEqual(expect.arrayContaining(["min-w-0", "[overflow-wrap:anywhere]"]));
+    expect(classes(go.firstElementChild)).not.toContain("shrink-0");
+    expect(classes(go.querySelector("[data-change-line]"))).toEqual(expect.arrayContaining(["[overflow-wrap:anywhere]", "@3xl:truncate"]));
+    // The sections bar stops under the project's tab bar, which sticks at the top of a narrow page too.
+    expect(classes(page(slot).querySelector("[data-spec-sections]"))).toEqual(expect.arrayContaining(["sticky", "top-0", "@max-xl/loom:top-[var(--loom-tabs,0px)]"]));
+  });
+
   it("reads another version from the switcher, and compares the newest with an older version", async () => {
     const versions = [
       { version: 1, status: "superseded" as const },
@@ -5017,6 +5085,28 @@ describe("rollout tab", () => {
       { slug: "csv", target: "traffic-low", undo: true, confirm: true },
     ]);
   });
+  it("keeps each row's title its own width on a narrow page, with its chips, requirements and long text wrapping under it", async () => {
+    const slot = await mountRollout();
+    fireEvent.click(slot.getByRole("tab", { name: /Rollout/ }));
+    const row = await waitFor(() => {
+      const found = slot.container.querySelector<HTMLElement>('[data-rollout-row="CSV-1"]');
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    const classes = (element: Element | null) => (element?.getAttribute("class") ?? "").split(/\s+/);
+    expect(classes(row.querySelector("[data-rollout-title]"))).toEqual(expect.arrayContaining(["min-w-[min(100%,14rem)]", "flex-1", "[overflow-wrap:anywhere]"]));
+    expect(classes(row.querySelector("[data-rollout-title]")!.parentElement)).toContain("flex-wrap");
+    expect(classes(row.querySelector("[data-rollout-merge]"))).toEqual(expect.arrayContaining(["max-w-full", "truncate"]));
+    expect(classes(row.querySelector("[data-rollout-check]"))).toContain("[overflow-wrap:anywhere]");
+    expect(classes(row.querySelector("[data-rollout-check] pre"))).toEqual(expect.arrayContaining(["overflow-auto", "whitespace-pre-wrap", "[overflow-wrap:anywhere]"]));
+    const needs = slot.container.querySelector('[data-rollout-row="CSV-2"] [data-rollout-needs]')!;
+    expect(classes(needs)).toEqual(expect.arrayContaining(["flex", "flex-wrap", "min-w-0"]));
+    expect(classes(needs.querySelector('[data-rollout-need="CSV-1"]'))).toEqual(expect.arrayContaining(["max-w-full", "truncate"]));
+    expect(classes(slot.container.querySelector('[data-rollout-milestone="traffic-low"] span.flex-1'))).toContain("min-w-[min(100%,14rem)]");
+    expect(classes(slot.container.querySelector('[data-rollout-window="Holiday freeze"]'))).toEqual(expect.arrayContaining(["min-w-0", "max-w-full", "[overflow-wrap:anywhere]"]));
+    expect(classes(slot.container.querySelector("[data-rollout-windows]"))).toContain("flex-wrap");
+    expect(classes(slot.container.querySelector("[data-rollout-warning] span:last-child"))).toEqual(expect.arrayContaining(["min-w-0", "[overflow-wrap:anywhere]"]));
+  });
 });
 
 describe("about strip", () => {
@@ -5084,5 +5174,248 @@ describe("about strip", () => {
     const { slot } = await mountPage("_home", { home: () => homeView({ projects: [homeProject({ about: about() }), homeProject({ slug: "docs", name: "Docs", key: "DOC", about: about({ summary: null }) })] }) });
     await waitFor(() => expect(slot.container.querySelectorAll("[data-project-summary]")).toHaveLength(2));
     expect([...slot.container.querySelectorAll("[data-project-summary]")].map((node) => node.textContent)).toEqual(["Export orders as a CSV file, so finance can reconcile them.", "Implement items 1 to 3 of the issue."]);
+  });
+});
+
+describe("on a narrow page", () => {
+  const classes = (element: Element | null) => (element?.getAttribute("class") ?? "").split(/\s+/);
+  // jsdom lays nothing out, so a page measures as `width` wide with a ResizeObserver that never reports again.
+  const measuring = async <T,>(width: number, run: () => Promise<T>): Promise<T> => {
+    const observer = (globalThis as { ResizeObserver?: unknown }).ResizeObserver;
+    const clientWidth = Object.getOwnPropertyDescriptor(Element.prototype, "clientWidth")!;
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    Object.defineProperty(Element.prototype, "clientWidth", { configurable: true, get: () => width });
+    try {
+      return await run();
+    } finally {
+      Object.defineProperty(Element.prototype, "clientWidth", clientWidth);
+      vi.stubGlobal("ResizeObserver", observer);
+    }
+  };
+
+  it("brings a tab into the bar's view sideways only, and leaves one in view alone", () => {
+    expect(sidewaysInto({ left: 0, right: 200 }, { left: 180, right: 260 }, 0)).toBe(76);
+    expect(sidewaysInto({ left: 0, right: 200 }, { left: -50, right: 30 }, 120)).toBe(54);
+    expect(sidewaysInto({ left: 0, right: 200 }, { left: -10, right: 70 }, 5)).toBe(0);
+    expect(sidewaysInto({ left: 0, right: 200 }, { left: 20, right: 100 }, 40)).toBeNull();
+  });
+
+  it("names its page as the container the narrow layouts ask, and never scrolls it sideways", async () => {
+    const { slot } = await mountPage("csv", { project: () => projectView() });
+    await slot.findByRole("tab", { name: "Board" });
+    const scroller = slot.container.querySelector("[data-loom-scroll]");
+    expect(classes(scroller)).toEqual(expect.arrayContaining(["@container/loom", "overflow-x-hidden", "overflow-y-auto"]));
+  });
+
+  it("keeps the tabs in one row that scrolls sideways by itself, stuck to the top, and scrolls the chosen tab into view", async () => {
+    const lefts = new WeakMap<Element, number>();
+    Object.defineProperty(HTMLElement.prototype, "scrollLeft", { configurable: true, get: function (this: Element) { return lefts.get(this) ?? 0; }, set: function (this: Element, next: number) { lefts.set(this, next); } });
+    const rect = (left: number, right: number) => ({ left, right, top: 0, bottom: 28, width: right - left, height: 28, x: left, y: 0, toJSON: () => ({}) }) as DOMRect;
+    // The bar is 200 pixels wide and each tab 80, 10 apart: Insights, the third, ends at 260.
+    const boxes = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+      if (this.matches('[role="tablist"][aria-label="Project"]')) return rect(0, 200);
+      const bar = this.parentElement;
+      if (this.getAttribute("role") === "tab" && bar?.matches('[aria-label="Project"]')) {
+        const index = [...bar.children].indexOf(this);
+        return rect(index * 90, index * 90 + 80);
+      }
+      return rect(0, 0);
+    });
+    try {
+      const rpc = { project: () => projectView(), insights: () => projectInsights(story().rows(), { now: at(60), strategy: "integration", maxWorkers: 2, maxTokens: null }) };
+      const first = await mountPage("csv", rpc);
+      const bar = await first.slot.findByRole("tablist", { name: "Project" });
+      expect(classes(bar)).toEqual(expect.arrayContaining(["flex", "flex-nowrap", "min-w-0", "overflow-x-auto", "[scrollbar-width:none]", "@max-xl/loom:sticky", "@max-xl/loom:top-0"]));
+      for (const tab of within(bar).getAllByRole("tab")) expect(classes(tab)).toEqual(expect.arrayContaining(["shrink-0", "whitespace-nowrap"]));
+      expect(bar.scrollLeft).toBe(0);
+      fireEvent.click(within(bar).getByRole("tab", { name: "Insights" }));
+      await waitFor(() => expect(bar.scrollLeft).toBe(76));
+      fireEvent.click(within(bar).getByRole("tab", { name: "Board" }));
+      expect(bar.scrollLeft).toBe(76);
+      fireEvent.click(within(bar).getByRole("tab", { name: "Insights" }));
+      first.slot.lifecycle.unmount();
+      // Opened again on the tab it was left on, the bar starts scrolled to it.
+      const again = await mountPage("csv", rpc);
+      const reopened = await again.slot.findByRole("tablist", { name: "Project" });
+      await waitFor(() => expect(within(reopened).getByRole("tab", { name: "Insights" }).getAttribute("aria-selected")).toBe("true"));
+      expect(reopened.scrollLeft).toBe(76);
+    } finally {
+      boxes.mockRestore();
+      delete (HTMLElement.prototype as { scrollLeft?: number }).scrollLeft;
+    }
+  });
+
+  it("folds the health cards and the timeline into one row each, a click from the full view, and keeps the summary's first lines", async () => {
+    const long = "Export orders as a CSV file from the admin page, so finance can reconcile them each month without asking an engineer.";
+    const { slot } = await mountPage("csv", { project: () => projectView({ overview: overview({ about: { summary: long, lead: long, doneWhen: [], links: ["https://github.com/acme/shop/issues/12"], nonGoals: 0 } }) }) });
+    await slot.findByRole("tab", { name: "Board" });
+    const summary = slot.container.querySelector<HTMLElement>("[data-health-summary]")!;
+    const strip = () => slot.container.querySelector("[data-health-strip]");
+    expect(classes(summary)).toEqual(expect.arrayContaining(["hidden", "@max-xl/loom:flex"]));
+    expect(summary.textContent).toContain("8 of 14 done");
+    expect(summary.textContent).toContain("1 blocked");
+    expect(summary.textContent).toContain("1/2 workers");
+    expect(classes(strip())).toContain("@max-xl/loom:hidden");
+    fireEvent.click(summary);
+    expect(summary.getAttribute("aria-expanded")).toBe("true");
+    expect(classes(strip())).not.toContain("@max-xl/loom:hidden");
+
+    const folded = await waitFor(() => {
+      const found = slot.container.querySelector<HTMLElement>("[data-timeline-folded]");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    expect(classes(folded)).toEqual(expect.arrayContaining(["hidden", "@max-xl/loom:flex"]));
+    expect(folded.textContent).toContain("Live");
+    expect(classes(slot.container.querySelector("[data-timeline-strip]"))).toContain("@max-xl/loom:hidden");
+    // Both fold above the tabs, so the tabs come up on a phone's first screen.
+    expect(folded.compareDocumentPosition(slot.getByRole("tablist", { name: "Project" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(slot.container.querySelector("[data-timeline-open]")).toBeNull();
+    // One click opens the whole Timeline on a narrow page, its moment controls and rows included, though the wide
+    // page's remembered choice is closed and stays so.
+    fireEvent.click(folded);
+    const strip2 = slot.container.querySelector<HTMLElement>("[data-timeline-strip]")!;
+    expect(slot.container.querySelector("[data-timeline-folded]")).toBeNull();
+    expect(classes(strip2)).not.toContain("@max-xl/loom:hidden");
+    const full = strip2.querySelector<HTMLElement>("[data-timeline-open]")!;
+    expect(full).not.toBeNull();
+    expect(classes(full)).toContain("@xl/loom:hidden");
+    expect(within(full).getByRole("button", { name: "Previous moment" })).toBeTruthy();
+    expect(within(full).getByRole("combobox", { name: "Playback speed" })).toBeTruthy();
+    expect(within(full).getByRole("group", { name: "Rows" })).toBeTruthy();
+    expect(full.querySelector("[data-timeline-lanes-plot]")).not.toBeNull();
+    expect(classes(within(strip2).getByRole("button", { name: "Timeline" }))).toContain("@max-xl/loom:hidden");
+    expect(localStorage.getItem("loom.timeline.open")).toBeNull();
+    // Another click folds it back to the row.
+    const fold = within(strip2).getByRole("button", { name: "Fold the Timeline" });
+    expect(classes(fold)).toEqual(expect.arrayContaining(["hidden", "@max-xl/loom:inline-flex"]));
+    fireEvent.click(fold);
+    expect(slot.container.querySelector("[data-timeline-open]")).toBeNull();
+    expect(classes(slot.container.querySelector("[data-timeline-strip]"))).toContain("@max-xl/loom:hidden");
+    expect(slot.container.querySelector("[data-timeline-folded]")).not.toBeNull();
+    expect(localStorage.getItem("loom.timeline.open")).toBeNull();
+
+    const about = slot.container.querySelector<HTMLElement>("[data-about]")!;
+    expect(classes(about.querySelector("[data-about-summary]"))).toContain("@max-xl/loom:line-clamp-3");
+    expect(about.querySelector("[data-about-link]")!.textContent).toContain("shop#12");
+    const more = about.querySelector<HTMLElement>("[data-about-more]")!;
+    expect(classes(more)).toEqual(expect.arrayContaining(["hidden", "@max-xl/loom:inline"]));
+    fireEvent.click(more);
+    expect(more.textContent).toBe("Less");
+    expect(classes(about.querySelector("[data-about-summary]"))).not.toContain("@max-xl/loom:line-clamp-3");
+  });
+
+  it("puts the next-step bar's button under its text when they do not fit, and lists a skipped review's settings behind a disclosure", async () => {
+    const repos = [repoOverview({ name: "web" }), repoOverview({ name: "api", bbProjectId: "proj_api" })];
+    const paths = ["repo[0].forge.kind", "repo[1].forge.kind", "repo[0].refresh_behind"];
+    const summary = overview({ pendingVersion: 2, repos });
+    const next = nextStepOf({ overview: summary, board: [], version: 1, maxWorkers: 2, triage: true, startFailed: [], reviewRefused: [], specReview: { kind: "skipped", version: 2, against: 1, paths } })!;
+    const { slot } = await mountPage("csv", { project: () => projectView({ overview: summary, next }) });
+    const bar = await waitFor(() => {
+      const found = slot.container.querySelector<HTMLElement>("[data-next-step]");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    const text = bar.querySelector("[data-next-text]")!;
+    expect(classes(text)).toEqual(expect.arrayContaining(["min-w-[min(100%,18rem)]", "flex-1", "[overflow-wrap:anywhere]"]));
+    expect(text.textContent).toContain("Loom skipped its spec review, because against v1 it changes only 3 operational settings: the forge on 2 repos and web's refresh_behind.");
+    expect(text.textContent).not.toContain("repo[0]");
+    const list = bar.querySelector<HTMLDetailsElement>("[data-setting-paths]")!;
+    expect(list.open).toBe(false);
+    expect(list.querySelector("summary")!.textContent).toBe("The 3 settings it changes");
+    expect([...list.querySelectorAll("[data-setting-path]")].map((item) => [item.getAttribute("data-setting-path"), item.textContent])).toEqual([
+      ["repo[0].forge.kind", "web › forge › kind"],
+      ["repo[1].forge.kind", "api › forge › kind"],
+      ["repo[0].refresh_behind", "web › refresh behind"],
+    ]);
+    expect(within(bar).getByRole("button", { name: "Approve v2" })).toBeTruthy();
+  });
+
+  it("draws the home projects as cards of name, summary, state, what needs you and progress, and keeps the table's other columns for a wide page", async () => {
+    const needsYou = [{ kind: "blocked" as const, slug: "csv", project: "CSV export", key: "CSV-2", text: "The checks fail.", at: NOW }];
+    // The spec allows an 80-character name with no space in it.
+    const unbroken = `${"Export".repeat(13)}Cs`;
+    const { slot } = await mountPage("_home", {
+      home: () => homeView({ projects: [homeProject(), homeProject({ slug: "docs", name: "Docs site", key: "DOC", progress: { done: 0, total: 0, inFlight: 0, blocked: 0 } }), homeProject({ slug: "long", name: unbroken, key: "LONG" })], needsYou }),
+    });
+    await slot.findByText("Docs site");
+    const name = slot.container.querySelector('[data-project-row="long"] [data-project-name]')!;
+    expect(name.textContent).toContain(unbroken);
+    expect(unbroken).toHaveLength(80);
+    expect(classes(name)).toEqual(expect.arrayContaining(["min-w-0", "max-w-full", "[overflow-wrap:anywhere]"]));
+    const table = slot.container.querySelector("[data-projects-table]")!;
+    expect(classes(table)).toEqual(expect.arrayContaining(["min-w-[860px]", "@max-xl/loom:block", "@max-xl/loom:min-w-0"]));
+    expect(classes(table.querySelector("thead"))).toContain("@max-xl/loom:hidden");
+    const row = slot.container.querySelector('[data-project-row="csv"]')!;
+    expect(classes(row)).toEqual(expect.arrayContaining(["@max-xl/loom:grid", "@max-xl/loom:grid-cols-[minmax(0,1fr)_auto]", "@max-xl/loom:shadow-[inset_3px_0_0_var(--destructive)]"]));
+    expect(classes(row.querySelector("[data-project-needs]"))).toContain("@max-xl/loom:col-span-2");
+    expect(classes(row.querySelector("[data-project-progress]"))).toEqual(expect.arrayContaining(["@max-xl/loom:col-span-2", "@max-xl/loom:min-w-0"]));
+    expect(classes(row.querySelector("[data-project-summary]"))).toEqual(expect.arrayContaining(["truncate", "@max-xl/loom:line-clamp-2", "@max-xl/loom:whitespace-normal"]));
+    for (const hidden of ["[data-project-agents]", "[data-project-tokens]"]) expect(classes(row.querySelector(hidden))).toContain("@max-xl/loom:hidden");
+    // A card leaves out what has nothing to say: no need, no tickets yet.
+    const docs = slot.container.querySelector('[data-project-row="docs"]')!;
+    expect(classes(docs.querySelector("[data-project-needs]"))).toContain("@max-xl/loom:hidden");
+    expect(classes(docs.querySelector("[data-project-progress]"))).toContain("@max-xl/loom:hidden");
+  });
+
+  it("stacks each agent's row, its facts named by their columns", async () => {
+    const agents = [agent(), agent({ threadId: "thr_w0", state: "ended", startedAt: NOW - 9 * HOUR, endedAt: NOW - 7 * HOUR, endReason: "abandoned", timeoutAt: null })];
+    const { slot } = await mountPage("csv", { project: () => projectView({ agents }) });
+    fireEvent.click(await slot.findByRole("tab", { name: "Agents" }));
+    for (const id of ["thr_w1", "thr_w0"]) {
+      const row = slot.container.querySelector(`[data-agent-row="${id}"]`)!;
+      expect(classes(row)).toEqual(expect.arrayContaining(["@max-xl/loom:flex", "@max-xl/loom:flex-wrap"]));
+      expect(classes(row.closest("table"))).toEqual(expect.arrayContaining(["@max-xl/loom:block", "@max-xl/loom:min-w-0"]));
+      expect(classes(row.closest("table")!.querySelector("thead"))).toContain("@max-xl/loom:hidden");
+    }
+    const labels = (id: string) => [...slot.container.querySelectorAll(`[data-agent-row="${id}"] [data-label]`)].map((cell) => cell.getAttribute("data-label"));
+    expect(labels("thr_w1")).toEqual(["Model", "Running for", "Tokens", "Retries"]);
+    expect(labels("thr_w0")).toEqual(["Model", "Ran for", "Ended", "Tokens", "Retries"]);
+    expect(classes(slot.container.querySelector('[data-agent-row="thr_w0"] [data-label="Ended"]'))).toContain("@max-xl/loom:before:content-[attr(data-label)]");
+  });
+
+  it("breaks a long name in an Insights row rather than run off the page", async () => {
+    const { slot } = await mountPage("csv", { project: () => projectView(), insights: () => projectInsights(story().rows(), { now: at(60), strategy: "integration", maxWorkers: 2, maxTokens: null }) });
+    fireEvent.click(await slot.findByRole("tab", { name: "Insights" }));
+    const rows = await waitFor(() => {
+      const found = [...slot.container.querySelectorAll("[data-insights-story] li[data-chapter], [data-insights-story] li[data-current]")];
+      expect(found.length).toBeGreaterThan(0);
+      return found;
+    });
+    for (const row of rows) expect(classes(row.children[1]!)).toEqual(expect.arrayContaining(["min-w-0", "[overflow-wrap:anywhere]"]));
+  });
+
+  it("wraps New project's merge plan choices", async () => {
+    const { slot } = await mountPage("_new");
+    const group = await slot.findByRole("group", { name: "Merge plan" });
+    expect(classes(group)).toContain("flex-wrap");
+    expect(classes(group.querySelector("[data-merge-choices]"))).toContain("flex-wrap");
+    expect(within(group).getAllByRole("button").map((button) => button.textContent)).toEqual(["Ask me", "Integration branch", "PR per ticket"]);
+  });
+
+  it("names a ticket's project by its key in bb's title bar, and by its name on a wide page", async () => {
+    const app = await loadPluginApp(() => import("../app"));
+    const titled = (width: number) =>
+      measuring(width, async () => {
+        const slot = renderSlot<PluginNavPanelProps, typeof rpcContract>(
+          { component: app.navPanels[0]!.component, experimental_usePageTitle: app.navPanels[0]!.experimental_usePageTitle },
+          { subPath: "csv/CSV-3" },
+          { pluginId: "loom", rpc: handlers({ home: () => homeView({ projects: [homeProject()] }), ticket: () => ticketDetail() }) },
+        );
+        mounts.push(slot);
+        await waitFor(() => expect(slot.inspection.experimental_pageTitle).not.toEqual({ breadcrumbs: [{ label: "csv", to: "/plugins/loom/loom/csv" }, { label: "CSV-3" }] }));
+        const title = slot.inspection.experimental_pageTitle;
+        slot.lifecycle.unmount();
+        return title;
+      });
+    expect(await titled(360)).toEqual({ breadcrumbs: [{ label: "CSV", to: "/plugins/loom/loom/csv" }, { label: "CSV-3" }] });
+    expect(narrowPage.get()).toBe(false);
+    expect(await titled(1300)).toEqual({ breadcrumbs: [{ label: "CSV export", to: "/plugins/loom/loom/csv" }, { label: "CSV-3" }] });
   });
 });

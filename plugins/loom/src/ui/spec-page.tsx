@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ProjectView, SpecReviewRound, SpecVersionView } from "../contract";
 import { sectionOf, specDiff, touches, type SpecChange, type SpecSection } from "../spec-diff";
-import { WHOLE_SPEC, isUnder, specChanges } from "../spec-paths";
+import { WHOLE_SPEC, isUnder, pathNamesOf, specChanges } from "../spec-paths";
 import type { SpecFinding, SpecReviewStatus } from "../spec-review";
 import { SPEC_REVIEW_ROUNDS } from "../states";
 import { BUTTON, HEADING, plural, useLoom } from "./common";
@@ -99,7 +99,7 @@ function LoomReview({ rounds, status, version, labelFor, onGo }: { rounds: reado
     </ol>
   );
   if (latest === undefined) {
-    if (status?.kind === "failed" && status.version === version) return box("border-destructive-text/40 bg-destructive-text/5", <p><b>Loom's spec review of v{version} did not finish:</b> {status.reason}.</p>);
+    if (status?.kind === "failed" && status.version === version) return box("border-destructive-text/40 bg-destructive-text/5", <p className="[overflow-wrap:anywhere]"><b>Loom's spec review of v{version} did not finish:</b> {status.reason}.</p>);
     if (stopped) return box("border-warning/50 bg-warning/10", <><p><b>Loom stopped reviewing after {SPEC_REVIEW_ROUNDS} rounds</b>; these findings of the last round are still open.</p>{list(status.findings)}</>);
     return null;
   }
@@ -129,7 +129,7 @@ function LoomReview({ rounds, status, version, labelFor, onGo }: { rounds: reado
         </>,
       );
     case "failed":
-      return box("border-destructive-text/40 bg-destructive-text/5", <><p><b>Loom's spec review of v{version} did not finish:</b> {latest.reason ?? "no reason recorded"}.</p>{earlier}</>);
+      return box("border-destructive-text/40 bg-destructive-text/5", <><p className="[overflow-wrap:anywhere]"><b>Loom's spec review of v{version} did not finish:</b> {latest.reason ?? "no reason recorded"}.</p>{earlier}</>);
     case "skipped":
       return box(
         "border-border-seam bg-card",
@@ -258,8 +258,8 @@ function Loaded({
   boxNow.current = box;
   const [jump, setJump] = useState<{ path: string; nonce: number } | null>(null);
   const [edit, setEdit] = useState<{ index: number; anchor: HTMLElement } | null>(null);
-  const repoNames = (view.spec.repo ?? []).map((repo) => repo.name);
-  const labelFor = (path: string) => labelOf(path, repoNames);
+  const names = pathNamesOf(view.spec);
+  const labelFor = (path: string) => labelOf(path, names);
   const ownRounds = view.reviews.filter((round) => round.version === view.version);
   const lastRound = ownRounds.at(-1);
   const findings: ReviewFinding[] = lastRound?.state === "changes_requested" ? lastRound.findings.map((finding, index) => ({ n: index + 1, path: finding.path ?? null, title: finding.title, detail: finding.detail })) : [];
@@ -437,7 +437,8 @@ function Loaded({
         )}
       </header>
 
-      <nav aria-label="Spec sections" data-spec-sections className="sticky top-0 z-20 -mx-4 flex flex-wrap items-center gap-1 border-b border-border-seam bg-surface-recessed/95 px-4 py-1.5 backdrop-blur">
+      {/* On a narrow page the project's tab bar sticks at the top too, so this bar stops under it. */}
+      <nav aria-label="Spec sections" data-spec-sections className="sticky top-0 z-20 @max-xl/loom:top-[var(--loom-tabs,0px)] -mx-4 flex flex-wrap items-center gap-1 border-b border-border-seam bg-surface-recessed/95 px-4 py-1.5 backdrop-blur">
         {SECTIONS.map(({ section, title }, index) => {
           const count = countIn(section);
           const done = marks.reviewed.has(section);
@@ -504,28 +505,31 @@ function Loaded({
                           const seen = marks.seen.has(changeKey(change));
                           const why = answers(change);
                           return (
-                            <div key={changeKey(change)} data-change={change.path} data-seen={seen || undefined} className={`flex items-center gap-2 rounded-md px-2 py-1 text-sm hover:bg-state-hover ${seen ? "opacity-60" : ""} ${index === cursor ? "bg-surface-selected" : ""}`}>
-                              <span aria-hidden className={`inline-flex size-4 shrink-0 items-center justify-center rounded text-[11px] font-bold text-white ${change.kind === "ticket-added" ? "bg-success" : change.kind === "ticket-removed" ? "bg-destructive-text" : "bg-primary"}`}>
+                            <div key={changeKey(change)} data-change={change.path} data-seen={seen || undefined} className={`flex items-start gap-2 rounded-md px-2 py-1 text-sm hover:bg-state-hover ${seen ? "opacity-60" : ""} ${index === cursor ? "bg-surface-selected" : ""}`}>
+                              <span aria-hidden className={`mt-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded text-[11px] font-bold text-white ${change.kind === "ticket-added" ? "bg-success" : change.kind === "ticket-removed" ? "bg-destructive-text" : "bg-primary"}`}>
                                 {change.kind === "ticket-added" ? "+" : change.kind === "ticket-removed" ? "−" : "~"}
                               </span>
-                              <button type="button" className="flex min-w-0 flex-1 cursor-pointer flex-wrap items-baseline gap-x-3 text-left" onClick={() => goChange(index)}>
-                                <span className={`shrink-0 font-medium ${change.ref === null ? "" : "font-mono text-xs"}`}>{labelFor(change.path)}</span>
-                                <span className="min-w-0 truncate text-xs text-muted-foreground">
-                                  <ChangeLine change={change} />
-                                </span>
-                              </button>
-                              {why.length > 0 && (
-                                <span className="shrink-0 text-[11px] text-warning-text" title={why.map((note) => note.body).join("\n")}>
-                                  answers your comment
-                                </span>
-                              )}
-                              {why.length === 0 && answered.length > 0 && <span className="shrink-0 text-[11px] text-subtle-foreground">not from your comments</span>}
-                              {answersFinding(change).length > 0 && (
-                                <span className="shrink-0 text-[11px] text-foreground" title={answersFinding(change).map((finding) => finding.title).join("\n")}>
-                                  answers Loom's review
-                                </span>
-                              )}
-                              <button type="button" aria-label={seen ? `Mark ${labelFor(change.path)} not seen` : `Mark ${labelFor(change.path)} seen`} aria-pressed={seen} className={`inline-flex size-4.5 shrink-0 cursor-pointer items-center justify-center rounded-full border text-[10px] ${seen ? "border-success bg-success text-success-foreground" : "border-border-seam text-transparent hover:text-muted-foreground"}`} onClick={() => (seen ? marks.unsee(changeKey(change)) : marks.see([changeKey(change)]))}>
+                              {/* The tags go under the change when the row is too narrow for both, never over it. */}
+                              <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-3 gap-y-0.5">
+                                <button type="button" className="flex min-w-[min(100%,12rem)] flex-1 cursor-pointer flex-wrap items-baseline gap-x-3 text-left" onClick={() => goChange(index)}>
+                                  <span className={`min-w-0 font-medium [overflow-wrap:anywhere] ${change.ref === null ? "" : "font-mono text-xs"}`}>{labelFor(change.path)}</span>
+                                  <span data-change-line className="min-w-0 text-xs text-muted-foreground [overflow-wrap:anywhere] @3xl:truncate">
+                                    <ChangeLine change={change} />
+                                  </span>
+                                </button>
+                                {why.length > 0 && (
+                                  <span className="ml-auto shrink-0 text-[11px] text-warning-text" title={why.map((note) => note.body).join("\n")}>
+                                    answers your comment
+                                  </span>
+                                )}
+                                {why.length === 0 && answered.length > 0 && <span data-change-tag className="ml-auto shrink-0 text-[11px] text-subtle-foreground">not from your comments</span>}
+                                {answersFinding(change).length > 0 && (
+                                  <span className="ml-auto shrink-0 text-[11px] text-foreground" title={answersFinding(change).map((finding) => finding.title).join("\n")}>
+                                    answers Loom's review
+                                  </span>
+                                )}
+                              </div>
+                              <button type="button" aria-label={seen ? `Mark ${labelFor(change.path)} not seen` : `Mark ${labelFor(change.path)} seen`} aria-pressed={seen} className={`mt-px inline-flex size-4.5 shrink-0 cursor-pointer items-center justify-center rounded-full border text-[10px] ${seen ? "border-success bg-success text-success-foreground" : "border-border-seam text-transparent hover:text-muted-foreground"}`} onClick={() => (seen ? marks.unsee(changeKey(change)) : marks.see([changeKey(change)]))}>
                                 ✓
                               </button>
                             </div>
@@ -545,7 +549,7 @@ function Loaded({
             const done = marks.reviewed.has(section);
             const showAll = () => setShown(new Set([...shown, section]));
             return (
-              <section key={section} id={domId(section)} data-spec-section={section} aria-label={title} className="scroll-mt-14 space-y-3">
+              <section key={section} id={domId(section)} data-spec-section={section} aria-label={title} className="scroll-mt-14 space-y-3 @max-xl/loom:scroll-mt-40">
                 <div className="flex items-start gap-2.5">
                   <span className={`inline-flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${done ? "bg-success text-success-foreground" : "bg-foreground text-background"}`}>{done ? "✓" : index + 1}</span>
                   <div className="min-w-0 flex-1">

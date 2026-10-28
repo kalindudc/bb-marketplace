@@ -1,7 +1,8 @@
 import type { ControlAction, NextStep, RepoOverview } from "../contract";
 import { isMultiRepoProject } from "../format";
 import { STAGES } from "../next-step";
-import { BUTTON, ConfirmButton, listText } from "./common";
+import { BUTTON, ConfirmButton, listText, plural } from "./common";
+import { labelOf } from "./spec-review-kit";
 
 const STAGE_TONES = { done: "text-muted-foreground", current: "font-semibold text-foreground", todo: "text-subtle-foreground" } as const;
 
@@ -17,7 +18,26 @@ export function repoLand(repos: readonly RepoOverview[]): { names: string[]; lab
   return { names, label: repos.some((repo) => repo.toLand) ? "Land · open the pull requests" : null, confirm: `Click again to land ${listText(names)}` };
 }
 
-/** The stages with the current one marked, one sentence on what happens next, and at most one button. `repos` gives a multi-repo land its own label. */
+/** The settings a skipped spec review changed, behind a disclosure, each as the Spec tab names it, such as "web › forge › kind". */
+export function SettingPaths({ paths, repos }: { paths: readonly string[]; repos: readonly string[] }) {
+  return (
+    <details data-setting-paths className="mt-1 text-xs text-muted-foreground">
+      <summary className="cursor-pointer">The {plural(paths.length, "setting")} it changes</summary>
+      <ul className="mt-1 list-disc space-y-0.5 pl-5 font-mono text-[11px] [overflow-wrap:anywhere]">
+        {paths.map((path) => (
+          <li key={path} data-setting-path={path} title={path}>
+            {labelOf(path, repos)}
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
+/**
+ * The stages with the current one marked, one sentence on what happens next, and at most one button, which goes under the
+ * text when the bar is too narrow for both. `repos` gives a multi-repo land its own label and names the settings of a skipped review.
+ */
 export function NextStepBar({ next, busy, onAct, onReviewChanges, repos = [] }: { next: NextStep; busy: boolean; onAct(action: ControlAction, version?: number): void; onReviewChanges?: () => void; repos?: readonly RepoOverview[] }) {
   const warning = next.tone === "warning";
   const land = next.action?.control === "land" ? repoLand(repos) : null;
@@ -35,9 +55,12 @@ export function NextStepBar({ next, busy, onAct, onReviewChanges, repos = [] }: 
         })}
       </ol>
       <div className="flex flex-wrap items-center gap-3">
-        <p className={`min-w-0 flex-1 text-sm ${warning ? "text-warning-text" : ""}`}>
-          <b>{next.title}</b> {next.text}
-        </p>
+        <div data-next-text className={`min-w-[min(100%,18rem)] flex-1 text-sm [overflow-wrap:anywhere] ${warning ? "text-warning-text" : ""}`}>
+          <p>
+            <b>{next.title}</b> {next.text}
+          </p>
+          {next.paths !== undefined && next.paths.length > 0 && <SettingPaths paths={next.paths} repos={repos.flatMap((repo) => (repo.name === null ? [] : [repo.name]))} />}
+        </div>
         {action?.control === "land" && onReviewChanges !== undefined && (
           <button type="button" className={BUTTON} onClick={onReviewChanges}>
             Review changes

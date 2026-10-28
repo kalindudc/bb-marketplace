@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { BoardCard, ProjectSummary } from "../src/contract";
-import { STAGES, nextStepOf, type NextStepInput } from "../src/next-step";
+import { STAGES, nextStepOf, operationalSummary, type NextStepInput } from "../src/next-step";
 import { clockTime } from "../src/format";
 import { PAUSE_NOW_REASON } from "../src/states";
 import { card, overview } from "./fixtures";
@@ -68,7 +68,8 @@ describe("nextStepOf", () => {
     expect(draft({ kind: "limit", version: 4, findings: [] }).text.startsWith("Loom stopped reviewing it after 3 rounds; the planner's chat lists the findings it left open. Read")).toBe(true);
     const skipped = draft({ kind: "skipped", version: 2, against: 1, paths: ["merge.forge.feedback"] });
     expect(skipped).toMatchObject({ stage: 1, title: "Next: review draft v1.", action: { control: "approve", version: 1 } });
-    expect(skipped.text.startsWith("Loom skipped its spec review, because against v1 it changes only operational settings: merge.forge.feedback. Read")).toBe(true);
+    expect(skipped.text.startsWith("Loom skipped its spec review, because against v1 it changes only 1 operational setting: merge.forge. Read")).toBe(true);
+    expect(skipped.paths).toEqual(["merge.forge.feedback"]);
   });
 
   it("asks to approve a pending version, and names the tickets it requeues", () => {
@@ -104,8 +105,20 @@ describe("nextStepOf", () => {
     expect(passed.text).toContain("Loom's spec review passed it.");
     expect(passed.action).toMatchObject({ control: "approve", version: 2 });
     const skipped = pending({ kind: "skipped", version: 2, against: 1, paths: ["merge.forge.feedback", "budget.max_tokens"] });
-    expect(skipped.text).toContain("Loom skipped its spec review, because against v1 it changes only operational settings: merge.forge.feedback, budget.max_tokens. Approving tells the planner.");
+    expect(skipped.text).toContain("Loom skipped its spec review, because against v1 it changes only 2 operational settings: merge.forge and budget.max_tokens. Approving tells the planner.");
+    expect(skipped.paths).toEqual(["merge.forge.feedback", "budget.max_tokens"]);
     expect(skipped.action).toMatchObject({ control: "approve", version: 2 });
+    expect(passed.paths).toBeUndefined();
+  });
+
+  it("sums up a skipped review's settings by what they belong to, naming each repo by its name", () => {
+    const repos = ["web", "infra", "api", "docs"];
+    const paths = ["repo[0].forge.edit", "repo[0].forge.reply", "repo[0].refresh_behind", "repo[1].forge.kind", "repo[1].forge.ignore_checks", "repo[2].forge.kind", "repo[3].forge.kind"];
+    expect(operationalSummary(paths, repos)).toBe("7 operational settings: the forge on 4 repos and web's refresh_behind");
+    expect(operationalSummary(["repo[1].environment.machine", "ticket[api].environment", "ticket[web].environment", "agents.worker.model", "agents.max_workers", "checks.ci"], repos)).toBe(
+      "6 operational settings: infra's environment, the environment of 2 tickets, agents.worker, agents.max_workers and checks.ci",
+    );
+    expect(operationalSummary(["ticket[api].environment.machine", "environment.machine", "repo[7].ci"], repos)).toBe("3 operational settings: api's environment, the environment and repo 8's ci");
   });
 
   it("says who paused the project and offers Resume", () => {

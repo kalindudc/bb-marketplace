@@ -74,7 +74,7 @@ function RepoPicker({ exclude, picked, onChange }: { exclude: string | null; pic
         <span className="text-xs text-muted-foreground">
           {picked.length} of up to {MAX_PLANNING_REPOS} picked, besides the composer's project
         </span>
-        <input type="search" aria-label="Filter repos" placeholder="Filter by name" value={query} onChange={(event) => setQuery(event.target.value)} className={`${FIELD} ml-auto max-w-56`} />
+        <input type="search" aria-label="Filter repos" placeholder="Filter by name" value={query} onChange={(event) => setQuery(event.target.value)} className={`${FIELD} ml-auto min-w-0 max-w-56`} />
       </div>
       {list}
     </div>
@@ -133,9 +133,9 @@ export function NewProject({ go }: { go(subPath: string): void }) {
         <section className={CARD}>
           <h2 className={HEADING}>Optional: answer up front</h2>
           <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-            <div role="group" aria-label="Merge plan" className="flex items-center gap-2">
+            <div role="group" aria-label="Merge plan" className="flex flex-wrap items-center gap-2">
               <span>Merge plan</span>
-              <span className="flex gap-1">
+              <span data-merge-choices className="flex flex-wrap gap-1">
                 {MERGE_CHOICES.map((choice) => (
                   <button key={choice} type="button" aria-pressed={merge === choice} onClick={() => setMerge(choice)} className={`${BUTTON} ${merge === choice ? "bg-surface-selected" : ""}`}>
                     {MERGE_LABELS[choice]}
@@ -143,7 +143,7 @@ export function NewProject({ go }: { go(subPath: string): void }) {
                 ))}
               </span>
             </div>
-            <div className="flex min-w-56 flex-1 items-center gap-2">
+            <div className="flex min-w-[min(100%,14rem)] flex-1 items-center gap-2">
               <label htmlFor={reviewerId} className="shrink-0">Reviewer model</label>
               <input id={reviewerId} type="text" value={reviewer} maxLength={200} placeholder="for example: codex, gpt-5" onChange={(event) => setReviewer(event.target.value)} className={FIELD} />
             </div>

@@ -434,6 +434,9 @@ function partTotals(bar: TicketBar): string {
 export function TimelineStrip({ slug, at, onSeek, onTicket }: { slug: string; at: number | null; onSeek(at: number | null): void; onTicket(key: string): void }) {
   const data = useLoom("timeline", { slug }).data ?? null;
   const [open, setOpen] = useState(savedOpen);
+  // A narrow page starts with the strip folded into one row, so the tabs show on the first screen; unfolded there, it
+  // shows everything, and `open`, the wide page's remembered choice, stays as it was.
+  const [unfolded, setUnfolded] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [playhead, setPlayhead] = useState(0);
   const [speed, setSpeed] = useState<number>(SPEEDS[1].times);
@@ -562,6 +565,10 @@ export function TimelineStrip({ slug, at, onSeek, onTicket }: { slug: string; at
   const toggle = () => {
     saveOpen(!open);
     setOpen(!open);
+    setHover(null);
+  };
+  const unfold = (next: boolean) => {
+    setUnfolded(next);
     setHover(null);
   };
   const onKey = (event: KeyboardEvent<HTMLElement>) => {
@@ -769,164 +776,192 @@ export function TimelineStrip({ slug, at, onSeek, onTicket }: { slug: string; at
   const ticketRows = rows.filter((row) => row.key !== null).length;
 
   return (
-    <section
-      ref={section}
-      data-timeline-strip
-      data-rewound={past || undefined}
-      tabIndex={0}
-      aria-label="Timeline"
-      onKeyDown={onKey}
-      style={frameStyle}
-      className={`relative mx-4 my-3 shrink-0 rounded-[9px] border border-dashed px-3 pt-2 pb-2.5 select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 ${past ? "border-warning/75" : "border-foreground/35"}`}
-    >
-      {/* The container query lives on this wrapper: a query container is a stacking context, and the tooltip must not be in it. */}
-      <div className="@container">
-        <p data-timeline-announce aria-live="polite" className="sr-only">
-          {!spoken || playing ? "" : past ? `${clock(shownAt)}: ${caption.text}` : "Back at the live page"}
-        </p>
-        <div className={HEAD_ROW}>
-          <div className="flex items-center justify-between gap-1.5 @max-xl:justify-start @max-xl:gap-2.5">
-            <button type="button" aria-expanded={open} onClick={toggle} className={`${HEADING} inline-flex cursor-pointer items-center gap-1 rounded py-0.5 pr-1 hover:bg-state-hover ${FOCUS}`}>
-              <span aria-hidden className={`inline-block transition-transform ${open ? "rotate-90" : ""}`}>
-                {icon(<path d="m9 18 6-6-6-6" />, 12)}
-              </span>
-              Timeline
-            </button>
-            <button type="button" aria-label={playing ? "Pause" : "Play"} title={playing ? "Pause (Space)" : "Play the project back (Space)"} onClick={play} className={`inline-grid size-[26px] shrink-0 cursor-pointer place-items-center rounded-full border ${FOCUS} ${playing ? "border-foreground/40 text-foreground hover:bg-state-hover" : "border-transparent bg-foreground text-background"}`}>
-              {playing ? PAUSE : PLAY}
-            </button>
-          </div>
-          <div className="min-w-0 @max-xl:col-span-2 @max-xl:row-start-2">
-            <div ref={trackRef} data-timeline-track className="relative cursor-pointer touch-none" {...plotEvents("track")}>
-              <Track moments={moments} folds={folds} axis={trackAxis} width={trackWidth} />
-              {overlay(trackAxis, TRACK_PX)}
-              {past ? (
-                <span aria-hidden className="pointer-events-none absolute size-[9px] -translate-x-1/2 -translate-y-1/2 rounded-full border-2 bg-foreground" style={{ left: trackAxis.x(shownAt), top: BASE_Y + 0.5, borderColor: FRAME }} />
-              ) : (
-                <span aria-hidden className="pointer-events-none absolute size-2 -translate-x-1/2 -translate-y-1/2 rounded-full border-2" style={{ left: trackWidth - 1, top: BASE_Y + 0.5, background: SUCCESS, borderColor: FRAME }} />
-              )}
-            </div>
-            <AxisLabels data={data} folds={folds} axis={trackAxis} width={trackWidth} />
-          </div>
-          <div data-timeline-status className="flex flex-col items-end gap-0.5 text-right @max-xl:col-start-2 @max-xl:row-start-1 @max-xl:flex-row @max-xl:items-baseline @max-xl:gap-2">
-            {status}
-          </div>
-        </div>
-
-        {open && (
-          <div data-timeline-open className="mt-2 grid gap-2 border-t border-dotted border-foreground/20 pt-2">
-            <div className={MOMENT_ROW}>
-              <div className="@max-xl:hidden">
-                <p className={HEADING}>Moment</p>
-                <p data-timeline-count className="text-[11px] text-muted-foreground tabular-nums">
-                  {at === null && !playing ? "now" : `${index + 1} of ${n}`}
-                </p>
-              </div>
-              <div className="flex min-w-0 items-center gap-2">
-                <button type="button" className={STEP} aria-label="Previous moment" title="Previous moment (←)" aria-disabled={position === 0} onClick={() => position > 0 && seekPosition(position - 1)}>
-                  {icon(<path d="m15 18-6-6 6-6" />)}
-                </button>
-                <button type="button" className={STEP} aria-label="Next moment" title="Next moment (→)" aria-disabled={position === nowPosition} onClick={() => position < nowPosition && seekPosition(position + 1)}>
-                  {icon(<path d="m9 18 6-6-6-6" />)}
-                </button>
-                <Dot style={KIND_DOT[caption.kind]} />
-                <p data-timeline-moment title={shownMoment.lines.map((line) => line.text).join("\n")} className="min-w-0 truncate text-[12.5px]">
-                  <b className="mr-1.5 tabular-nums">{clock(shownMoment.at)}</b>
-                  {caption.text}
-                  {shownMoment.lines.length > 1 && <span className="ml-1 text-[11.5px] text-muted-foreground">+{shownMoment.lines.length - 1} more</span>}
-                </p>
-              </div>
-              <select aria-label="Playback speed" value={speed} onChange={(event) => setSpeed(Number(event.target.value))} className={`h-6 max-w-full justify-self-end rounded-md border border-border-seam bg-transparent px-1 text-[11.5px] text-foreground ${FOCUS}`}>
-                {SPEEDS.map((entry) => (
-                  <option key={entry.times} value={entry.times}>
-                    Play at {entry.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className={CONTROLS_ROW}>
-              <div role="group" aria-label="Rows" className="inline-flex w-fit gap-0.5 rounded-md border border-border-seam p-0.5">
-                {(["tickets", "agents"] as const).map((entry) => (
-                  <button key={entry} type="button" aria-pressed={lanes === entry} onClick={() => setLanes(entry)} className={`${CHOICE} ${lanes === entry ? "bg-surface-selected font-semibold text-foreground" : "text-muted-foreground"}`}>
-                    {entry === "tickets" ? "Tickets" : "Agents"}
-                  </button>
-                ))}
-              </div>
-              <Legend lanes={lanes} hatch={hatch} />
-              <button type="button" role="switch" aria-checked={troubleOnly} onClick={() => setTroubleOnly(!troubleOnly)} className={`inline-flex cursor-pointer items-center gap-1.5 justify-self-end whitespace-nowrap rounded text-[11.5px] @max-xl:ml-auto ${FOCUS}`}>
-                <span aria-hidden className={`relative h-3.5 w-6 shrink-0 rounded-full transition-colors ${troubleOnly ? "bg-destructive" : "bg-foreground/25"}`}>
-                  <span className={`absolute top-0.5 size-2.5 rounded-full bg-background transition-[left] ${troubleOnly ? "left-3" : "left-0.5"}`} />
+    <>
+      {!unfolded && (
+        <button
+          type="button"
+          data-timeline-folded
+          aria-expanded={false}
+          onClick={() => unfold(true)}
+          className={`mx-4 mt-3 mb-1 hidden shrink-0 cursor-pointer items-center gap-2 rounded-[9px] border border-dashed px-3 py-1.5 text-left hover:bg-state-hover @max-xl/loom:flex ${past ? "border-warning/75" : "border-foreground/35"} ${FOCUS}`}
+        >
+          <span aria-hidden>{icon(<path d="m9 18 6-6-6-6" />, 12)}</span>
+          <span className={HEADING}>Timeline</span>
+          {past ? (
+            <span className="ml-auto text-xs font-semibold text-warning-text tabular-nums">{clock(shownAt)}</span>
+          ) : (
+            <span className="ml-auto inline-flex items-center gap-1.5 text-xs font-semibold">
+              <Dot style={{ background: SUCCESS }} />
+              {data.state === "running" ? "Live" : "Now"}
+            </span>
+          )}
+        </button>
+      )}
+      <section
+        ref={section}
+        data-timeline-strip
+        data-rewound={past || undefined}
+        tabIndex={0}
+        aria-label="Timeline"
+        onKeyDown={onKey}
+        style={frameStyle}
+        className={`relative mx-4 my-3 shrink-0 rounded-[9px] border border-dashed px-3 pt-2 pb-2.5 select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 ${past ? "border-warning/75" : "border-foreground/35"} ${unfolded ? "" : "@max-xl/loom:hidden"}`}
+      >
+        {/* The container query lives on this wrapper: a query container is a stacking context, and the tooltip must not be in it. */}
+        <div className="@container">
+          <p data-timeline-announce aria-live="polite" className="sr-only">
+            {!spoken || playing ? "" : past ? `${clock(shownAt)}: ${caption.text}` : "Back at the live page"}
+          </p>
+          <div className={HEAD_ROW}>
+            <div className="flex items-center justify-between gap-1.5 @max-xl:justify-start @max-xl:gap-2.5">
+              <button type="button" aria-expanded={open} onClick={toggle} className={`${HEADING} inline-flex cursor-pointer items-center gap-1 rounded py-0.5 pr-1 hover:bg-state-hover @max-xl/loom:hidden ${FOCUS}`}>
+                <span aria-hidden className={`inline-block transition-transform ${open ? "rotate-90" : ""}`}>
+                  {icon(<path d="m9 18 6-6-6-6" />, 12)}
                 </span>
-                Only trouble · {troubleRows}
+                Timeline
+              </button>
+              <button type="button" data-timeline-fold aria-label="Fold the Timeline" aria-expanded onClick={() => unfold(false)} className={`${HEADING} hidden cursor-pointer items-center gap-1 rounded py-0.5 pr-1 hover:bg-state-hover @max-xl/loom:inline-flex ${FOCUS}`}>
+                <span aria-hidden className="inline-block rotate-90">
+                  {icon(<path d="m9 18 6-6-6-6" />, 12)}
+                </span>
+                Timeline
+              </button>
+              <button type="button" aria-label={playing ? "Pause" : "Play"} title={playing ? "Pause (Space)" : "Play the project back (Space)"} onClick={play} className={`inline-grid size-[26px] shrink-0 cursor-pointer place-items-center rounded-full border ${FOCUS} ${playing ? "border-foreground/40 text-foreground hover:bg-state-hover" : "border-transparent bg-foreground text-background"}`}>
+                {playing ? PAUSE : PLAY}
               </button>
             </div>
-
-            <div className="overflow-x-hidden overflow-y-auto" style={{ maxHeight: (ROWS_SHOWN + 1) * ROW_PX + 2 }} onScroll={() => setHover(null)}>
-              <div className={LANES_ROW}>
-                <ul aria-label={lanes === "tickets" ? "Tickets" : "Tickets with agent sessions"} className="grid auto-rows-[20px] text-[11px]">
-                  <li className={`${HEADING} flex items-center pl-0.5`}>Project</li>
-                  {rows.map((row, rowIndex) => {
-                    const state = row.bar === null ? null : stateAt(row.bar, stateTime);
-                    return (
-                      <li key={row.key ?? ""} className="min-w-0">
-                        <button
-                          type="button"
-                          disabled={row.key === null}
-                          aria-label={row.key === null ? "No ticket" : `Open ${row.key}`}
-                          aria-describedby={`${hatch}-row-${rowIndex}`}
-                          title={row.key === null ? undefined : `${row.key}${row.title === "" ? "" : ` · ${row.title}`}${state === null ? "" : `, ${STATE_WORD[state]}`}`}
-                          onClick={() => row.key !== null && onTicket(row.key)}
-                          className={`flex h-5 w-full min-w-0 cursor-pointer items-center gap-1.5 rounded pl-0.5 text-left font-mono hover:bg-state-hover disabled:cursor-default ${FOCUS} ${spot?.row === rowIndex + 1 ? "bg-state-hover" : ""}`}
-                        >
-                          <Dot style={state === null ? {} : STATE_DOT[state]} />
-                          <span className="truncate">{row.key ?? "no ticket"}</span>
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-                <div ref={lanesRef} data-timeline-lanes-plot className="relative cursor-pointer touch-pan-y" {...plotEvents("lanes")}>
-                  {spot !== null && spot.row !== null && <span aria-hidden className="pointer-events-none absolute -inset-x-1 h-5 rounded bg-state-hover" style={{ top: spot.row * ROW_PX }} />}
-                  <LanesArt rows={rows} lanes={lanes} data={data} folds={folds} axis={lanesAxis} width={lanesWidth} hatch={hatch} />
-                  {overlay(lanesAxis, (rows.length + 1) * ROW_PX)}
-                </div>
-                <div className="grid auto-rows-[20px] text-[11px] text-muted-foreground tabular-nums @max-xl:hidden">
-                  <span aria-hidden />
-                  {rows.map((row, rowIndex) => (
-                    <span key={row.key ?? ""} id={`${hatch}-row-${rowIndex}`} data-timeline-summary className={`flex items-center justify-end gap-1.5 whitespace-nowrap rounded pr-0.5 ${spot?.row === rowIndex + 1 ? "bg-state-hover" : ""}`}>
-                      {rowSummary(row, lanes, stateTime)}
-                    </span>
-                  ))}
-                </div>
+            <div className="min-w-0 @max-xl:col-span-2 @max-xl:row-start-2">
+              <div ref={trackRef} data-timeline-track className="relative cursor-pointer touch-none" {...plotEvents("track")}>
+                <Track moments={moments} folds={folds} axis={trackAxis} width={trackWidth} />
+                {overlay(trackAxis, TRACK_PX)}
+                {past ? (
+                  <span aria-hidden className="pointer-events-none absolute size-[9px] -translate-x-1/2 -translate-y-1/2 rounded-full border-2 bg-foreground" style={{ left: trackAxis.x(shownAt), top: BASE_Y + 0.5, borderColor: FRAME }} />
+                ) : (
+                  <span aria-hidden className="pointer-events-none absolute size-2 -translate-x-1/2 -translate-y-1/2 rounded-full border-2" style={{ left: trackWidth - 1, top: BASE_Y + 0.5, background: SUCCESS, borderColor: FRAME }} />
+                )}
               </div>
+              <AxisLabels data={data} folds={folds} axis={trackAxis} width={trackWidth} />
             </div>
-
-            <div className={FOOT_ROW}>
-              <p data-timeline-note className="text-[11px] text-subtle-foreground">
-                {plural(ticketRows, "ticket")}
-                {lanes === "tickets" && !troubleOnly && data.ticketCount > data.tickets.length && ` · ${data.ticketCount - data.tickets.length} not started`}
-              </p>
-              <AxisLabels data={data} folds={folds} axis={lanesAxis} width={lanesWidth} />
-              <span className="@max-xl:hidden" />
-            </div>
-            <div className={`${FOOT_ROW} @max-xl:hidden`}>
-              <span />
-              <p className="text-[11px] text-subtle-foreground">
-                Hover to read a moment, click to see the page then. <Key>←</Key>
-                <Key>→</Key> step · <Key>Space</Key> play · <Key>Esc</Key> back to now
-              </p>
-              <span />
+            <div data-timeline-status className="flex flex-col items-end gap-0.5 text-right @max-xl:col-start-2 @max-xl:row-start-1 @max-xl:flex-row @max-xl:items-baseline @max-xl:gap-2">
+              {status}
             </div>
           </div>
-        )}
-      </div>
-      {tipBody !== null && (
-        <div ref={tip} data-timeline-tip role="tooltip" className="pointer-events-none absolute z-10 w-max max-w-[min(340px,calc(100%-12px))] min-w-[200px] rounded-lg border border-border bg-popover px-2.5 py-2 text-xs text-popover-foreground shadow-lg [overflow-wrap:anywhere]">
-          {tipBody}
+
+          {(open || unfolded) && (
+            <div data-timeline-open className={`mt-2 grid gap-2 border-t border-dotted border-foreground/20 pt-2 ${open ? "" : "@xl/loom:hidden"}`}>
+              <div className={MOMENT_ROW}>
+                <div className="@max-xl:hidden">
+                  <p className={HEADING}>Moment</p>
+                  <p data-timeline-count className="text-[11px] text-muted-foreground tabular-nums">
+                    {at === null && !playing ? "now" : `${index + 1} of ${n}`}
+                  </p>
+                </div>
+                <div className="flex min-w-0 items-center gap-2">
+                  <button type="button" className={STEP} aria-label="Previous moment" title="Previous moment (←)" aria-disabled={position === 0} onClick={() => position > 0 && seekPosition(position - 1)}>
+                    {icon(<path d="m15 18-6-6 6-6" />)}
+                  </button>
+                  <button type="button" className={STEP} aria-label="Next moment" title="Next moment (→)" aria-disabled={position === nowPosition} onClick={() => position < nowPosition && seekPosition(position + 1)}>
+                    {icon(<path d="m9 18 6-6-6-6" />)}
+                  </button>
+                  <Dot style={KIND_DOT[caption.kind]} />
+                  <p data-timeline-moment title={shownMoment.lines.map((line) => line.text).join("\n")} className="min-w-0 truncate text-[12.5px]">
+                    <b className="mr-1.5 tabular-nums">{clock(shownMoment.at)}</b>
+                    {caption.text}
+                    {shownMoment.lines.length > 1 && <span className="ml-1 text-[11.5px] text-muted-foreground">+{shownMoment.lines.length - 1} more</span>}
+                  </p>
+                </div>
+                <select aria-label="Playback speed" value={speed} onChange={(event) => setSpeed(Number(event.target.value))} className={`h-6 max-w-full justify-self-end rounded-md border border-border-seam bg-transparent px-1 text-[11.5px] text-foreground ${FOCUS}`}>
+                  {SPEEDS.map((entry) => (
+                    <option key={entry.times} value={entry.times}>
+                      Play at {entry.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className={CONTROLS_ROW}>
+                <div role="group" aria-label="Rows" className="inline-flex w-fit gap-0.5 rounded-md border border-border-seam p-0.5">
+                  {(["tickets", "agents"] as const).map((entry) => (
+                    <button key={entry} type="button" aria-pressed={lanes === entry} onClick={() => setLanes(entry)} className={`${CHOICE} ${lanes === entry ? "bg-surface-selected font-semibold text-foreground" : "text-muted-foreground"}`}>
+                      {entry === "tickets" ? "Tickets" : "Agents"}
+                    </button>
+                  ))}
+                </div>
+                <Legend lanes={lanes} hatch={hatch} />
+                <button type="button" role="switch" aria-checked={troubleOnly} onClick={() => setTroubleOnly(!troubleOnly)} className={`inline-flex cursor-pointer items-center gap-1.5 justify-self-end whitespace-nowrap rounded text-[11.5px] @max-xl:ml-auto ${FOCUS}`}>
+                  <span aria-hidden className={`relative h-3.5 w-6 shrink-0 rounded-full transition-colors ${troubleOnly ? "bg-destructive" : "bg-foreground/25"}`}>
+                    <span className={`absolute top-0.5 size-2.5 rounded-full bg-background transition-[left] ${troubleOnly ? "left-3" : "left-0.5"}`} />
+                  </span>
+                  Only trouble · {troubleRows}
+                </button>
+              </div>
+
+              <div className="overflow-x-hidden overflow-y-auto" style={{ maxHeight: (ROWS_SHOWN + 1) * ROW_PX + 2 }} onScroll={() => setHover(null)}>
+                <div className={LANES_ROW}>
+                  <ul aria-label={lanes === "tickets" ? "Tickets" : "Tickets with agent sessions"} className="grid auto-rows-[20px] text-[11px]">
+                    <li className={`${HEADING} flex items-center pl-0.5`}>Project</li>
+                    {rows.map((row, rowIndex) => {
+                      const state = row.bar === null ? null : stateAt(row.bar, stateTime);
+                      return (
+                        <li key={row.key ?? ""} className="min-w-0">
+                          <button
+                            type="button"
+                            disabled={row.key === null}
+                            aria-label={row.key === null ? "No ticket" : `Open ${row.key}`}
+                            aria-describedby={`${hatch}-row-${rowIndex}`}
+                            title={row.key === null ? undefined : `${row.key}${row.title === "" ? "" : ` · ${row.title}`}${state === null ? "" : `, ${STATE_WORD[state]}`}`}
+                            onClick={() => row.key !== null && onTicket(row.key)}
+                            className={`flex h-5 w-full min-w-0 cursor-pointer items-center gap-1.5 rounded pl-0.5 text-left font-mono hover:bg-state-hover disabled:cursor-default ${FOCUS} ${spot?.row === rowIndex + 1 ? "bg-state-hover" : ""}`}
+                          >
+                            <Dot style={state === null ? {} : STATE_DOT[state]} />
+                            <span className="truncate">{row.key ?? "no ticket"}</span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  <div ref={lanesRef} data-timeline-lanes-plot className="relative cursor-pointer touch-pan-y" {...plotEvents("lanes")}>
+                    {spot !== null && spot.row !== null && <span aria-hidden className="pointer-events-none absolute -inset-x-1 h-5 rounded bg-state-hover" style={{ top: spot.row * ROW_PX }} />}
+                    <LanesArt rows={rows} lanes={lanes} data={data} folds={folds} axis={lanesAxis} width={lanesWidth} hatch={hatch} />
+                    {overlay(lanesAxis, (rows.length + 1) * ROW_PX)}
+                  </div>
+                  <div className="grid auto-rows-[20px] text-[11px] text-muted-foreground tabular-nums @max-xl:hidden">
+                    <span aria-hidden />
+                    {rows.map((row, rowIndex) => (
+                      <span key={row.key ?? ""} id={`${hatch}-row-${rowIndex}`} data-timeline-summary className={`flex items-center justify-end gap-1.5 whitespace-nowrap rounded pr-0.5 ${spot?.row === rowIndex + 1 ? "bg-state-hover" : ""}`}>
+                        {rowSummary(row, lanes, stateTime)}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className={FOOT_ROW}>
+                <p data-timeline-note className="text-[11px] text-subtle-foreground">
+                  {plural(ticketRows, "ticket")}
+                  {lanes === "tickets" && !troubleOnly && data.ticketCount > data.tickets.length && ` · ${data.ticketCount - data.tickets.length} not started`}
+                </p>
+                <AxisLabels data={data} folds={folds} axis={lanesAxis} width={lanesWidth} />
+                <span className="@max-xl:hidden" />
+              </div>
+              <div className={`${FOOT_ROW} @max-xl:hidden`}>
+                <span />
+                <p className="text-[11px] text-subtle-foreground">
+                  Hover to read a moment, click to see the page then. <Key>←</Key>
+                  <Key>→</Key> step · <Key>Space</Key> play · <Key>Esc</Key> back to now
+                </p>
+                <span />
+              </div>
+            </div>
+          )}
         </div>
-      )}
-    </section>
+        {tipBody !== null && (
+          <div ref={tip} data-timeline-tip role="tooltip" className="pointer-events-none absolute z-10 w-max max-w-[min(340px,calc(100%-12px))] min-w-[200px] rounded-lg border border-border bg-popover px-2.5 py-2 text-xs text-popover-foreground shadow-lg [overflow-wrap:anywhere]">
+            {tipBody}
+          </div>
+        )}
+      </section>
+    </>
   );
 }
 

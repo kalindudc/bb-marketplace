@@ -48,7 +48,7 @@ function DraftCard({ card }: { card: BoardCard }) {
     <div data-card={card.key} data-draft className="min-w-0 rounded-md border border-dashed border-border-seam p-2.5">
       <span className="text-xs font-medium text-muted-foreground">{card.key} · draft</span>
       {card.repo !== null && <RepoChip name={card.repo} className="ml-1.5" />}
-      <span className="mt-0.5 block text-sm">{card.title}</span>
+      <span className="mt-0.5 block text-sm [overflow-wrap:anywhere]">{card.title}</span>
       {!card.ready && card.waitingOn.length > 0 && <p className="mt-1 text-xs text-muted-foreground">Waits on {card.waitingOn.join(", ")}</p>}
     </div>
   );

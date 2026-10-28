@@ -42,7 +42,7 @@ function Entry({ actor, title, at, now, live = false, pending = false, children 
       <ActorMark actor={actor} />
       <div className="min-w-0">
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
-          <span className={`text-sm font-medium ${live ? "text-primary" : ""}`}>
+          <span className={`min-w-0 text-sm font-medium [overflow-wrap:anywhere] ${live ? "text-primary" : ""}`}>
             {live && <span aria-hidden className="mr-1.5 inline-block size-1.5 animate-pulse rounded-full bg-primary align-middle" />}
             {title}
           </span>
@@ -247,7 +247,7 @@ function StepRow({ step, now, repos, on }: { step: JourneyStep; now: number; rep
         <Entry actor="loom" title={`Triage round ${step.round}: ${plural(step.blocked.length, "ticket")} blocked`} at={step.at} now={now}>
           <ul className="mt-1 space-y-1">
             {step.blocked.map((ticket) => (
-              <li key={ticket.key} className="rounded-md border border-border-seam bg-card px-2.5 py-1.5 text-sm">
+              <li key={ticket.key} className="rounded-md border border-border-seam bg-card px-2.5 py-1.5 text-sm [overflow-wrap:anywhere]">
                 {on.onTicket === undefined ? (
                   <b className="mr-1.5 text-destructive-text">{ticket.key}</b>
                 ) : (
@@ -265,7 +265,7 @@ function StepRow({ step, now, repos, on }: { step: JourneyStep; now: number; rep
           ) : (
             <div className="mt-1.5">
               <p className={HEADING}>What the planner did</p>
-              {step.response.actions.length === 0 && step.response.text !== null && <p className="text-sm">{leadOf(step.response.text)}</p>}
+              {step.response.actions.length === 0 && step.response.text !== null && <p className="text-sm [overflow-wrap:anywhere]">{leadOf(step.response.text)}</p>}
               <Actions actions={step.response.actions} on={on} />
               {step.response.text !== null && <More label="The planner's message" text={step.response.text} />}
             </div>

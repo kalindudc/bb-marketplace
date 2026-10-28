@@ -333,7 +333,7 @@ function SourceIntro({ changes, source, view, busy, onControl }: { changes: Chan
 
   const title = (
     <div className="flex flex-wrap items-center gap-2">
-      <h2 className="text-sm font-semibold">
+      <h2 className="min-w-0 text-sm font-semibold [overflow-wrap:anywhere]">
         {source.key} · {source.title}
       </h2>
       <StateBadge state={source.kind === "merge" ? "merged" : source.state!} />

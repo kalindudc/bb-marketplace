@@ -2,9 +2,11 @@ import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ThreadChat, experimental_useSidebarThreads, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import type { AskStep, ControlAction, PlannerAsk, PlannerVersion, PlannerView, ProjectView } from "../contract";
 import { specReviewBlocks } from "../format";
+import { operationalSummary } from "../next-step";
 import { changeLine, journey, workingOn, type Chapter, type JourneyStep, type QuestionRound } from "../planner-journey";
 import { SPEC_REVIEW_ROUNDS } from "../states";
 import { BUTTON, ConfirmButton, HEADING, plural, useAction, useLoom, useLoomWrite } from "./common";
+import { SettingPaths } from "./next-step-bar";
 import { PlannerMark, timeLabel } from "./planner-kit";
 import { About, Decisions, MessageBox, Versions } from "./planner-side";
 import { PlannerStory } from "./planner-story";
@@ -187,7 +189,7 @@ function AsksCard({ ask, project, versions, busy, onControl, onSpec, onTicket, o
       {ask.why !== "" && <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">{ask.why}</p>}
       <ol className="space-y-1.5">
         {ask.steps.map((step, index) => (
-          <li key={index} data-ask-step={step.action} data-done={step.done ? "" : undefined} className={`grid grid-cols-[1.25rem_minmax(0,1fr)_auto] items-start gap-2.5 rounded-md border border-border-seam bg-surface-recessed px-2.5 py-2 ${step.done ? "opacity-60" : ""}`}>
+          <li key={index} data-ask-step={step.action} data-done={step.done ? "" : undefined} className={`grid grid-cols-[1.25rem_minmax(0,1fr)] items-start gap-x-2.5 gap-y-1.5 @xl:grid-cols-[1.25rem_minmax(0,1fr)_auto] rounded-md border border-border-seam bg-surface-recessed px-2.5 py-2 ${step.done ? "opacity-60" : ""}`}>
             <span aria-hidden className={`inline-flex size-5 items-center justify-center rounded-full text-[10.5px] font-semibold ${step.done ? "bg-success text-success-foreground" : "bg-surface-selected"}`}>
               {step.done ? "✓" : index + 1}
             </span>
@@ -199,7 +201,9 @@ function AsksCard({ ask, project, versions, busy, onControl, onSpec, onTicket, o
                 </span>
               )}
             </span>
-            <span className="flex flex-wrap justify-end gap-1.5">{action(step, index)}</span>
+            <span data-ask-actions className="col-start-2 flex flex-wrap gap-1.5 empty:hidden @xl:col-start-auto @xl:justify-end">
+              {action(step, index)}
+            </span>
           </li>
         ))}
       </ol>
@@ -217,7 +221,10 @@ function VersionCard({ view, project, onSpec }: { view: PlannerView; project: Pr
   const comments = view.steps.filter((step) => step.kind === "notes" && step.version === version - 1).reduce((sum, step) => sum + (step.kind === "notes" ? step.notes.length : 0), 0);
   const facts: Array<[string, ReactNode]> = [];
   if (review.kind === "approved") facts.push(["✓", `Passed Loom's spec review in round ${review.round}.`]);
-  else if (review.kind === "skipped") facts.push(["✓", `Loom skipped its spec review: against v${review.against}, it changes only operational settings (${review.paths.join(", ")}).`]);
+  else if (review.kind === "skipped") {
+    const repos = project.overview.repos.flatMap((repo) => (repo.name === null ? [] : [repo.name]));
+    facts.push(["✓", <>Loom skipped its spec review: against v{review.against}, it changes only {operationalSummary(review.paths, repos)}.<SettingPaths paths={review.paths} repos={repos} /></>]);
+  }
   else if (review.kind === "limit") facts.push(["!", `Loom stopped reviewing after ${SPEC_REVIEW_ROUNDS} rounds, with ${plural(review.findings.length, "finding")} still open.`]);
   else if (review.kind === "failed")
     facts.push([

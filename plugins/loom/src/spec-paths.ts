@@ -22,6 +22,21 @@ export interface SpecNote {
 /** The path of a note on the spec as a whole; any change answers it. */
 export const WHOLE_SPEC = "spec";
 
+/** The names of a spec's listed tables, by index, for naming their paths: each [[repo]] and stage by name, each milestone by ref and each window by title. */
+export interface PathNames {
+  repo: readonly string[];
+  stage: readonly string[];
+  milestone: readonly string[];
+  window: readonly string[];
+}
+
+export const pathNamesOf = (spec: Pick<Spec, "repo" | "rollout">): PathNames => ({
+  repo: (spec.repo ?? []).map((repo) => repo.name),
+  stage: (spec.rollout?.stage ?? []).map((stage) => stage.name),
+  milestone: (spec.rollout?.milestone ?? []).map((milestone) => milestone.ref),
+  window: (spec.rollout?.window ?? []).map((window) => window.title),
+});
+
 /** True when `path` names a part inside `above`, such as ticket[a].scope[0] inside ticket[a]. */
 export const isUnder = (path: string, above: string) => path.startsWith(`${above}.`) || path.startsWith(`${above}[`);
 

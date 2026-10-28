@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type { ProjectHealth } from "../contract";
 import { ShareBar, type Swatch } from "./charts";
 import { formatDuration } from "../format";
@@ -30,47 +30,77 @@ function Part({ id, title, value, note, children }: { id: string; title: string;
   );
 }
 
-/** The project's health above its tabs. Pace is over the time the project ran in the last 14 days; the budget and deadline show only when the spec sets them. */
+const paceValue = (perHour: number | null, small: (text: string) => ReactNode) =>
+  perHour === null ? "none yet" : perHour >= 1 ? <>{perHour.toFixed(1)}{small("/hour")}</> : <>{(perHour * 24).toFixed(1)}{small("/day")}</>;
+
+/**
+ * The project's health above its tabs. Pace is over the time the project ran in the last 14 days; the budget and deadline
+ * show only when the spec sets them. On a narrow page the cards fold into one row that opens them.
+ */
 export function HealthStrip({ health }: { health: ProjectHealth }) {
   const { progress, pace, budget, deadline, capacity } = health;
+  const [open, setOpen] = useState(false);
   const small = (text: string) => <span className="text-xs font-normal text-muted-foreground">{text}</span>;
   return (
-    <div data-health-strip className="grid shrink-0 grid-cols-2 gap-3 border-b border-border-seam px-4 py-3 lg:grid-cols-5">
-      <Part id="progress" title="Progress" value={<>{progress.done} {small(`of ${progress.total} done`)}</>}>
-        <ShareBar
-          label="Progress"
-          parts={[
-            { label: `${progress.done} done`, value: progress.done, swatch: DONE },
-            { label: `${progress.inFlight} in flight`, value: progress.inFlight, swatch: IN_FLIGHT },
-            { label: `${progress.blocked} blocked`, value: progress.blocked, swatch: BLOCKED },
-            { label: `${progress.queued} queued`, value: progress.queued, swatch: WAITING },
-          ]}
-        />
-      </Part>
-      <Part
-        id="pace"
-        title="Pace"
-        value={pace.perHour === null ? "none yet" : pace.perHour >= 1 ? <>{pace.perHour.toFixed(1)}{small("/hour")}</> : <>{(pace.perHour * 24).toFixed(1)}{small("/day")}</>}
-        note={paceNote(pace)}
-      />
-      {budget !== null && (
-        <Part id="budget" title="Token budget" value={`${Math.round((budget.used / budget.max) * 100)}%`} note={`${count(budget.used)} of ${count(budget.max)} (sampled)`}>
+    <>
+      <button
+        type="button"
+        data-health-summary
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+        className="hidden w-full shrink-0 cursor-pointer flex-wrap items-baseline gap-x-3 gap-y-0.5 border-b border-border-seam px-4 py-2 text-left text-xs hover:bg-state-hover @max-xl/loom:flex"
+      >
+        <span>
+          <b className="font-semibold">{progress.done}</b> {small(`of ${progress.total} done`)}
+        </span>
+        {progress.blocked > 0 && <span className="text-destructive-text">{progress.blocked} blocked</span>}
+        <span>{paceValue(pace.perHour, small)}</span>
+        <span>
+          {capacity.workers}/{capacity.maxWorkers} {small("workers")}
+        </span>
+        {budget !== null && <span>{Math.round((budget.used / budget.max) * 100)}% {small("of the budget")}</span>}
+        {deadline !== null && <span>{deadline.daysLeft > 0 ? `${plural(deadline.daysLeft, "day")} left` : "deadline passed"}</span>}
+        <span aria-hidden className="ml-auto text-muted-foreground">
+          {open ? "▾" : "▸"}
+        </span>
+      </button>
+      <div data-health-strip className={`grid shrink-0 grid-cols-2 gap-3 border-b border-border-seam px-4 py-3 lg:grid-cols-5 ${open ? "" : "@max-xl/loom:hidden"}`}>
+        <Part id="progress" title="Progress" value={<>{progress.done} {small(`of ${progress.total} done`)}</>}>
           <ShareBar
-            label="Token budget"
+            label="Progress"
             parts={[
-              { label: `${count(budget.used)} used`, value: Math.min(budget.used, budget.max), swatch: USED },
-              { label: `${count(Math.max(0, budget.max - budget.used))} left`, value: Math.max(0, budget.max - budget.used), swatch: WAITING },
+              { label: `${progress.done} done`, value: progress.done, swatch: DONE },
+              { label: `${progress.inFlight} in flight`, value: progress.inFlight, swatch: IN_FLIGHT },
+              { label: `${progress.blocked} blocked`, value: progress.blocked, swatch: BLOCKED },
+              { label: `${progress.queued} queued`, value: progress.queued, swatch: WAITING },
             ]}
           />
         </Part>
-      )}
-      {deadline !== null && <Part id="deadline" title="Deadline" value={deadline.daysLeft > 0 ? plural(deadline.daysLeft, "day") : "passed"} note={deadline.date} />}
-      <Part
-        id="capacity"
-        title="Capacity"
-        value={<>{capacity.workers}/{capacity.maxWorkers} {small("workers")}</>}
-        note={`${capacity.reviewers}/${capacity.maxReviewers} reviewers · ${plural(capacity.readyWaiting, "ready ticket")} waiting for a slot${capacity.handBacksWaiting > 0 ? ` · ${plural(capacity.handBacksWaiting, "ticket")} waiting to go back to ${capacity.handBacksWaiting === 1 ? "its worker" : "their workers"}` : ""}`}
-      />
-    </div>
+        <Part
+          id="pace"
+          title="Pace"
+          value={paceValue(pace.perHour, small)}
+          note={paceNote(pace)}
+        />
+        {budget !== null && (
+          <Part id="budget" title="Token budget" value={`${Math.round((budget.used / budget.max) * 100)}%`} note={`${count(budget.used)} of ${count(budget.max)} (sampled)`}>
+            <ShareBar
+              label="Token budget"
+              parts={[
+                { label: `${count(budget.used)} used`, value: Math.min(budget.used, budget.max), swatch: USED },
+                { label: `${count(Math.max(0, budget.max - budget.used))} left`, value: Math.max(0, budget.max - budget.used), swatch: WAITING },
+              ]}
+            />
+          </Part>
+        )}
+        {deadline !== null && <Part id="deadline" title="Deadline" value={deadline.daysLeft > 0 ? plural(deadline.daysLeft, "day") : "passed"} note={deadline.date} />}
+        <Part
+          id="capacity"
+          title="Capacity"
+          value={<>{capacity.workers}/{capacity.maxWorkers} {small("workers")}</>}
+          note={`${capacity.reviewers}/${capacity.maxReviewers} reviewers · ${plural(capacity.readyWaiting, "ready ticket")} waiting for a slot${capacity.handBacksWaiting > 0 ? ` · ${plural(capacity.handBacksWaiting, "ticket")} waiting to go back to ${capacity.handBacksWaiting === 1 ? "its worker" : "their workers"}` : ""}`}
+        />
+      </div>
+    </>
   );
 }

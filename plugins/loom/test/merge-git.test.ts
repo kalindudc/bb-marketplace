@@ -206,6 +206,7 @@ describe("the integration merge against a real repository", () => {
     expect(existsSync(join(dataDir, "worktrees", "csv"))).toBe(false);
   });
 
+  // Real git across two repos and their remotes: about 3.5 s on an idle machine, so vitest's 5 s limit fails it under load.
   it("lands a multi-repo project directly: each repo's merged work, with its remote base merged in and its after_merge run on the result, reaches that repo's remote base", async () => {
     const web = makeRepo();
     const api = makeRepo("trunk");
@@ -252,5 +253,5 @@ describe("the integration merge against a real repository", () => {
     expect(sh(apiRemote, "ls-tree", "--name-only", "trunk").split("\n")).toEqual(["README.md", "api.txt", "upstream.txt"]);
     expect(sh(api, "rev-parse", "loom/csv^2")).toBe(moved);
     expect(readFileSync(checked, "utf8").trim().split("\n").at(-1)).toBe(apiHead);
-  });
+  }, 30_000);
 });

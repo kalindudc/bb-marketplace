@@ -28,11 +28,24 @@ const ACCENT: Record<Attention, string> = {
   planning: "border-l-warning",
   land: "border-l-success",
 };
+// The accent of a row's most urgent need, along the left of its card on a narrow page.
+const CARD_ACCENT: Record<Attention, string> = {
+  blocked: "@max-xl/loom:shadow-[inset_3px_0_0_var(--destructive)]",
+  paused: "@max-xl/loom:shadow-[inset_3px_0_0_var(--warning)]",
+  approve: "@max-xl/loom:shadow-[inset_3px_0_0_var(--warning)]",
+  pending: "@max-xl/loom:shadow-[inset_3px_0_0_var(--warning)]",
+  planning: "@max-xl/loom:shadow-[inset_3px_0_0_var(--warning)]",
+  land: "@max-xl/loom:shadow-[inset_3px_0_0_var(--success)]",
+};
 const MAX_CHIPS = 3;
 const CALM = 9;
 const COLUMNS = ["Project", "State", "Needs you", "Progress", "Agents", "Throughput 14d", "Tokens", "Last event"];
 const count = (value: number) => value.toLocaleString("en-US");
-const CELL = "px-3 py-2 align-middle";
+const CELL = "px-3 py-2 align-middle @max-xl/loom:block @max-xl/loom:p-0";
+// On a narrow page: a card of name and summary beside the state, then what needs you and the progress; the rest hides.
+const CARD_ROW = "@max-xl/loom:grid @max-xl/loom:grid-cols-[minmax(0,1fr)_auto] @max-xl/loom:gap-x-3 @max-xl/loom:gap-y-1.5 @max-xl/loom:px-3 @max-xl/loom:py-2.5";
+const FULL = "@max-xl/loom:col-span-2";
+const WIDE_ONLY = "@max-xl/loom:hidden";
 const CHIP = "inline-flex max-w-full cursor-pointer items-center gap-1 rounded-full border border-current px-2 text-[11px] leading-[18px] whitespace-nowrap hover:bg-state-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
 export type Row = { kind: "project"; project: HomeProject; needs: NeedItem[] } | { kind: "planning"; session: PlanningSession };
@@ -141,7 +154,8 @@ function NeedChips({ project, needs, go }: { project: HomeProject; needs: NeedIt
   );
 }
 
-const accentOf = (attention: Attention | null) => `border-l-[3px] ${attention === null ? "border-l-transparent" : ACCENT[attention]}`;
+const accentOf = (attention: Attention | null) => `border-l-[3px] @max-xl/loom:border-l-0 ${attention === null ? "border-l-transparent" : ACCENT[attention]}`;
+const cardAccentOf = (attention: Attention | null) => (attention === null ? "" : CARD_ACCENT[attention]);
 
 function ProjectRow({ project, needs, now, go }: { project: HomeProject; needs: NeedItem[]; now: number; go(subPath: string): void }) {
   const { progress } = project;
@@ -154,33 +168,33 @@ function ProjectRow({ project, needs, now, go }: { project: HomeProject; needs: 
     { label: `${queued} queued`, value: queued, swatch: WAITING },
   ].filter((part, index) => index === 0 || part.value > 0);
   return (
-    <tr data-project-row={project.slug} data-attention={attention ?? undefined} onClick={() => go(project.slug)} className="cursor-pointer border-t border-border-seam hover:bg-state-hover">
+    <tr data-project-row={project.slug} data-attention={attention ?? undefined} onClick={() => go(project.slug)} className={`cursor-pointer border-t border-border-seam hover:bg-state-hover ${CARD_ROW} ${cardAccentOf(attention)}`}>
       <td className={`${CELL} ${accentOf(attention)}`}>
-        <button type="button" className="cursor-pointer text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
+        <button type="button" data-project-name className="max-w-full min-w-0 cursor-pointer text-left [overflow-wrap:anywhere] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
           <span className="text-sm font-medium">{project.name}</span> <span className="text-xs text-muted-foreground">{project.key}</span>
         </button>
         {/* A zero-minimum track, so the summary truncates at the cell's width instead of widening the table. */}
         <span className="grid grid-cols-[minmax(0,1fr)]">
-          <span data-project-summary title={project.about.summary ?? project.aboutPending?.summary ?? project.about.lead} className="truncate text-xs text-muted-foreground">
+          <span data-project-summary title={project.about.summary ?? project.aboutPending?.summary ?? project.about.lead} className="truncate text-xs text-muted-foreground @max-xl/loom:line-clamp-2 @max-xl/loom:whitespace-normal">
             {project.about.summary ?? project.aboutPending?.summary ?? project.about.lead}
           </span>
         </span>
         <span className="block text-xs text-muted-foreground">{mergeLabel(project)} · {countsLabel(project.ticketCounts)}</span>
-        {project.reason !== null && <span className="block text-xs text-warning-text">{project.reason}</span>}
+        {project.reason !== null && <span className="block text-xs text-warning-text [overflow-wrap:anywhere]">{project.reason}</span>}
       </td>
-      <td className={CELL}>
+      <td className={`${CELL} @max-xl/loom:self-start`}>
         <StateBadge state={project.state} />
       </td>
-      <td data-project-needs className={`${CELL} max-w-72`}>
+      <td data-project-needs className={`${CELL} max-w-72 @max-xl/loom:max-w-none ${FULL} ${needs.length === 0 ? WIDE_ONLY : ""}`}>
         <NeedChips project={project} needs={needs} go={go} />
       </td>
-      <td className={`${CELL} min-w-40`}>{progress.total === 0 ? <span className="text-xs text-muted-foreground">—</span> : <ShareBar label="Progress" parts={parts} />}</td>
-      <td data-project-agents className={`${CELL} tabular-nums`}>{project.agents}</td>
-      <td className={CELL}>
+      <td data-project-progress className={`${CELL} min-w-40 @max-xl/loom:min-w-0 ${FULL} ${progress.total === 0 ? WIDE_ONLY : ""}`}>{progress.total === 0 ? <span className="text-xs text-muted-foreground">—</span> : <ShareBar label="Progress" parts={parts} />}</td>
+      <td data-project-agents className={`${CELL} tabular-nums ${WIDE_ONLY}`}>{project.agents}</td>
+      <td className={`${CELL} ${WIDE_ONLY}`}>
         <Spark values={project.throughput} label={`${project.name}: tickets done per day, last 14 days`} />
       </td>
-      <td data-project-tokens className={`${CELL} whitespace-nowrap tabular-nums`}>{project.maxTokens === null ? count(project.tokens) : `${count(project.tokens)} / ${count(project.maxTokens)}`}</td>
-      <td className={`${CELL} whitespace-nowrap text-xs text-muted-foreground`}>{project.lastEventAt === null ? "—" : `${formatDuration(now - project.lastEventAt)} ago`}</td>
+      <td data-project-tokens className={`${CELL} whitespace-nowrap tabular-nums ${WIDE_ONLY}`}>{project.maxTokens === null ? count(project.tokens) : `${count(project.tokens)} / ${count(project.maxTokens)}`}</td>
+      <td className={`${CELL} whitespace-nowrap text-xs text-muted-foreground ${WIDE_ONLY}`}>{project.lastEventAt === null ? "—" : `${formatDuration(now - project.lastEventAt)} ago`}</td>
     </tr>
   );
 }
@@ -190,19 +204,19 @@ function PlanningRow({ session, go }: { session: PlanningSession; go(subPath: st
   const open = () => go(`_plan/${session.threadId}`);
   const none = <span className="text-xs text-muted-foreground">—</span>;
   return (
-    <tr data-planning-row={session.threadId} data-attention="planning" onClick={open} className="cursor-pointer border-t border-border-seam hover:bg-state-hover">
+    <tr data-planning-row={session.threadId} data-attention="planning" onClick={open} className={`cursor-pointer border-t border-border-seam hover:bg-state-hover ${CARD_ROW} ${cardAccentOf("planning")}`}>
       <td className={`${CELL} ${accentOf("planning")}`}>
-        <span className="block text-sm font-medium">{session.title}</span>
+        <span className="block text-sm font-medium [overflow-wrap:anywhere]">{session.title}</span>
         <span className="block text-xs text-muted-foreground">planner is asking questions · started {formatDuration(Math.max(0, Date.now() - session.startedAt))} ago</span>
       </td>
-      <td className={CELL}>
+      <td className={`${CELL} @max-xl/loom:self-start`}>
         <StateBadge state="planning" />
       </td>
-      <td data-project-needs className={CELL}>
+      <td data-project-needs className={`${CELL} ${FULL}`}>
         <Chip kind="planning" label="Continue planning" title="The planner is asking questions before it proposes a spec" onClick={open} />
       </td>
       {[0, 1, 2, 3, 4].map((index) => (
-        <td key={index} className={CELL}>
+        <td key={index} className={`${CELL} ${WIDE_ONLY}`}>
           {none}
         </td>
       ))}
@@ -268,18 +282,18 @@ export function Home({ go }: { go(subPath: string): void }) {
         <div className="flex flex-wrap items-center gap-3 border-b border-border-seam px-3 py-2">
           <input type="search" aria-label="Search projects" placeholder="Search projects" value={query} onChange={(event) => setQuery(event.target.value)} className={`${FIELD} max-w-64`} />
         </div>
-        <table className="w-full min-w-[860px] text-left text-sm">
-          <thead className="text-xs text-muted-foreground">
+        <table data-projects-table className="w-full min-w-[860px] text-left text-sm @max-xl/loom:block @max-xl/loom:min-w-0">
+          <thead className={`text-xs text-muted-foreground ${WIDE_ONLY}`}>
             <tr>
               {COLUMNS.map((heading) => (
                 <th key={heading} className={`${CELL} font-normal`}>{heading}</th>
               ))}
             </tr>
           </thead>
-          <tbody>
+          <tbody className="@max-xl/loom:block">
             {empty !== null && (
-              <tr>
-                <td colSpan={COLUMNS.length} data-projects-empty className={`${CELL} text-xs text-muted-foreground`}>
+              <tr className={CARD_ROW}>
+                <td colSpan={COLUMNS.length} data-projects-empty className={`${CELL} ${FULL} text-xs text-muted-foreground`}>
                   {empty}
                 </td>
               </tr>
@@ -289,9 +303,9 @@ export function Home({ go }: { go(subPath: string): void }) {
             )}
           </tbody>
           {finished.length > 0 && (
-            <tbody data-finished>
-              <tr className="border-t border-border-seam">
-                <td colSpan={COLUMNS.length} className={CELL}>
+            <tbody data-finished className="@max-xl/loom:block">
+              <tr className={`border-t border-border-seam ${CARD_ROW}`}>
+                <td colSpan={COLUMNS.length} className={`${CELL} ${FULL}`}>
                   {forced ? (
                     <span className={HEADING}>Finished · {finished.length}</span>
                   ) : (

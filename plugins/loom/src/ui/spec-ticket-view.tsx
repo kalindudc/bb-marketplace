@@ -7,7 +7,8 @@ import { repoSettings } from "../repos";
 import { wavesOf } from "../spec-paths";
 import { BUTTON, CHIP, HEADING, RepoChip, listText, plural } from "./common";
 import { FilesPane } from "./spec-panes";
-import { CHANGED_TAG, Commentable, DiffList, NEW_TAG, REMOVED_TAG, ReviewContext, WordDiff, changeAt, kept, useReview, type ListMark } from "./spec-review-kit";
+import { CHANGED_TAG, Commentable, DiffList, NEW_TAG, REMOVED_TAG, ReviewContext, WordDiff, changeAt, changedAt, kept, useReview, type ListMark } from "./spec-review-kit";
+import { Command, Inputs, Prose } from "./spec-settings";
 import { PRIORITY_COLOURS, TicketMap, type TicketMark } from "./spec-ticket-map";
 
 export type TicketLayout = "list" | "map" | "files";
@@ -37,9 +38,82 @@ function markOf(changes: readonly SpecChange[], compared: boolean, ref: string):
 
 /** The parts of a ticket that changed, for its list row: "criteria, files". */
 function changedParts(changes: readonly SpecChange[], ref: string): string[] {
-  const names: Record<string, string> = { title: "title", body: "brief", acceptance: "criteria", scope: "files", verify: "verify", depends_on: "order", merge_after: "merge order", priority: "priority", repo: "repo" };
+  const names: Record<string, string> = { title: "title", body: "brief", acceptance: "criteria", scope: "files", verify: "verify", depends_on: "order", merge_after: "merge order", priority: "priority", repo: "repo", environment: "environment", rollout: "deploy" };
   const parts = changes.filter((change) => change.ref === ref && change.kind !== "ticket-added").map((change) => names[/^ticket\[[^\]]+\]\.(\w+)/.exec(change.path)?.[1] ?? ""] ?? "");
   return [...new Set(parts.filter((part) => part !== ""))];
+}
+
+/** Where the ticket's change sits in the deploy order: its stage, what must be live first, how it ships, how Loom knows it is live, and how to undo it. */
+function TicketRollout({ ticket, spec, base, onSelect }: { ticket: TicketSpec; spec: Spec; base: string; onSelect(ref: string): void }) {
+  const review = useReview();
+  const at = `${base}.rollout`;
+  const rollout = ticket.rollout ?? {};
+  const shown = (key: keyof typeof rollout) => rollout[key] !== undefined || changedAt(review, `${at}.${key}`);
+  const refs = new Set(spec.ticket.map((entry) => entry.ref));
+  const milestones = new Map((spec.rollout?.milestone ?? []).map((milestone) => [milestone.ref, milestone.title]));
+  const target = (key: string, kind: "text" | "bool" | "deps" = "text", current?: string | boolean) => ({ paths: [`${at}.${key}`], label: `${ticket.ref} › rollout › ${key.replace(/_/g, " ")}`, kind, ...(current === undefined ? {} : { value: current }) });
+  const need = (ref: string, mark: ListMark) =>
+    mark === "removed" ? (
+      <span data-removed className="rounded-full border border-dashed border-destructive-text/40 px-2 font-mono text-[11px] leading-5 text-destructive-text line-through">
+        {ref}
+      </span>
+    ) : refs.has(ref) ? (
+      <button type="button" onClick={() => onSelect(ref)} className={`cursor-pointer rounded-full border px-2 font-mono text-[11px] leading-5 hover:border-primary ${mark === "added" ? "border-success bg-success/15" : "border-border-seam"}`}>
+        {ref}
+      </button>
+    ) : (
+      <span data-milestone-chip={ref} title={milestones.has(ref) ? `Milestone: ${milestones.get(ref)}` : "Not a ticket or milestone of this spec"} className={`rounded-full border border-dashed px-2 font-mono text-[11px] leading-5 [overflow-wrap:anywhere] ${mark === "added" ? "border-success bg-success/15" : "border-border-seam"}`}>
+        {ref} <span className="font-sans text-[10px] text-subtle-foreground">{milestones.has(ref) ? "milestone" : "unknown"}</span>
+      </span>
+    );
+  return (
+    <div data-ticket-rollout className="min-w-0">
+      <Label>Deploy</Label>
+      <div className="space-y-1.5 text-sm">
+        <p className="flex flex-wrap items-center gap-1.5">
+          <Commentable as="span" target={target("stage", "text", rollout.stage)} className={`${CHIP} px-2`}>
+            {rollout.stage === undefined ? "no stage" : `stage ${rollout.stage}`}
+          </Commentable>
+          {shown("release") && (
+            <Commentable as="span" target={target("release", "text", rollout.release)} className={`${CHIP} px-2 [overflow-wrap:anywhere]`}>
+              {rollout.release === undefined ? "no release" : `release ${rollout.release}`}
+            </Commentable>
+          )}
+          {shown("dark") && (
+            <Commentable as="span" target={target("dark", "bool", rollout.dark ?? false)} className={`${CHIP} px-2`}>
+              {rollout.dark === true ? "ships dark: its gate starts off" : "ships with its gate on"}
+            </Commentable>
+          )}
+        </p>
+        {shown("requires_live") && (
+          <p className="flex flex-wrap items-center gap-1.5">
+            <Commentable as="span" target={target("requires_live", "deps")} className="px-1 text-muted-foreground" showWas={false}>
+              Needs live first
+            </Commentable>
+            <DiffList path={`${at}.requires_live`} items={rollout.requires_live ?? []} compact={false} render={need} />
+          </p>
+        )}
+        {shown("how") && (
+          <p className="px-1">
+            <span className="text-xs text-muted-foreground">Ships: </span>
+            <Prose path={`${at}.how`} label={`${ticket.ref} › rollout › how`} text={rollout.how} fallback="as its repo's changes do" />
+          </p>
+        )}
+        {shown("verify") && (
+          <div className="min-w-0">
+            <p className="px-1 text-[11px] text-muted-foreground">Live once this passes after the merge</p>
+            <Command path={`${at}.verify`} label={`${ticket.ref} › rollout › verify`} command={rollout.verify} />
+          </div>
+        )}
+        {shown("rollback") && (
+          <p className="px-1 whitespace-pre-wrap">
+            <span className="text-xs text-muted-foreground">Rollback: </span>
+            <Prose path={`${at}.rollback`} label={`${ticket.ref} › rollout › rollback`} text={rollout.rollback} fallback="not said" />
+          </p>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function Brief({ ticket, base }: { ticket: TicketSpec; base: string }) {
@@ -135,11 +209,12 @@ function TicketDetail({ ticket, spec, view, onSelect }: { ticket: TicketSpec; sp
       {has("verify") && (
         <>
           <Label>Verify</Label>
-          {ticket.verify.length === 0 && changeAt(review, `${base}.verify`) === undefined ? (
+          {ticket.verify.length === 0 && (
             <Commentable target={{ paths: [`${base}.verify`], label: `${ticket.ref} › verify`, kind: "command" }} className="p-1 text-sm text-muted-foreground">
               No command of its own; only {listText(checks)} {checks.length === 1 ? "runs" : "run"}.
             </Commentable>
-          ) : (
+          )}
+          {(ticket.verify.length > 0 || changeAt(review, `${base}.verify`) !== undefined) && (
             <div className="space-y-1">
               <DiffList path={`${base}.verify`} items={ticket.verify} compact={trim} render={item("command", "verify", (index) => `${ticket.ref} › verify ${index + 1}`)} />
             </div>
@@ -168,6 +243,14 @@ function TicketDetail({ ticket, spec, view, onSelect }: { ticket: TicketSpec; sp
           </Commentable>
           <DiffList path={`${base}.merge_after`} items={ticket.merge_after ?? []} compact={false} render={(ref, mark) => chip(ref, mark)} />
         </p>
+      )}
+      {has("rollout") && (ticket.rollout !== undefined || changedAt(review, `${base}.rollout`)) && <TicketRollout ticket={ticket} spec={spec} base={base} onSelect={onSelect} />}
+      {has("environment") && (ticket.environment !== undefined || changedAt(review, `${base}.environment`)) && (
+        <div data-ticket-environment className="min-w-0">
+          <Label>Environment</Label>
+          <p className="mb-1 text-xs text-muted-foreground">Its workers' and reviewers' inputs, over {ticket.repo === undefined ? "the project's" : `${ticket.repo}'s`}:</p>
+          <Inputs path={`${base}.environment.inputs`} label={`${ticket.ref} › environment › inputs`} inputs={ticket.environment?.inputs} />
+        </div>
       )}
       {(trim || whole) && (
         <button type="button" className={`${BUTTON} mt-3`} onClick={() => setWhole(!whole)}>

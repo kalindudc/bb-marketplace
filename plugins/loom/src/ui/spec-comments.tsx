@@ -272,7 +272,7 @@ export function ReviewPanel({
                       </button>
                     </div>
                     {note.suggest !== undefined && <Suggestion suggest={note.suggest} />}
-                    {note.body !== "" && <p className="mt-1 text-xs whitespace-pre-wrap">{note.body}</p>}
+                    {note.body !== "" && <p className="mt-1 text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">{note.body}</p>}
                     {note.version < newest.version && <p className="mt-1 text-[11px] text-warning-text">Written on v{note.version}; v{newest.version} is newer</p>}
                   </div>
                 ))}
@@ -334,7 +334,7 @@ export function ReviewPanel({
                       {note.paths[0] === WHOLE_SPEC ? "The whole spec" : labelFor(note.paths[0]!)} · written on v{note.version}
                     </p>
                     {note.suggest !== undefined && <Suggestion suggest={note.suggest} />}
-                    {note.body !== "" && <p className="mt-0.5 text-xs whitespace-pre-wrap">{note.body}</p>}
+                    {note.body !== "" && <p className="mt-0.5 text-xs whitespace-pre-wrap [overflow-wrap:anywhere]">{note.body}</p>}
                     <p className={`mt-0.5 text-[11px] ${state.tone}`}>{state.text}</p>
                   </div>
                 );

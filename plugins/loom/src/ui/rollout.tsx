@@ -5,6 +5,10 @@ import { CHIP, CHIP_TONES, PR_LINK, TONES, type Tone } from "./merge-order";
 
 // The deploy order of a pull request project: the next safe step, warnings, the stages with one row per step, the
 // milestones and the windows. It is advice for the human; the Mark live buttons record what is live and move nothing.
+// A row's title keeps TITLE's width and its chips wrap under it, so a narrow page never squeezes the title to a column.
+
+const TITLE = "min-w-[min(100%,14rem)] flex-1 [overflow-wrap:anywhere]";
+const NOTE = "text-[11.5px] text-muted-foreground [overflow-wrap:anywhere]";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const dayLabel = (day: string) => `${MONTHS[Number(day.slice(5, 7)) - 1]} ${Number(day.slice(8, 10))}`;
@@ -12,7 +16,7 @@ const BY: Record<RolloutLive["by"], string> = { merge: "merged", verify: "verify
 
 function Chip({ tone, text, title, data }: { tone: Tone; text: string; title?: string; data?: Record<string, string> }) {
   return (
-    <span title={title} className={`${CHIP} ${CHIP_TONES[tone]}`} {...data}>
+    <span title={title} className={`${CHIP} max-w-full truncate ${CHIP_TONES[tone]}`} {...data}>
       {text}
     </span>
   );
@@ -56,13 +60,13 @@ function checkLabel(check: RolloutCheckResult): { tone: Tone; text: string } {
 function LastCheck({ command, check, label }: { command: string; check: RolloutCheckResult | null; label: string }) {
   const result = check === null ? null : checkLabel(check);
   return (
-    <div data-rollout-check className="text-[11.5px] text-muted-foreground">
+    <div data-rollout-check className={NOTE}>
       {label} <code className="font-mono text-foreground [overflow-wrap:anywhere]">{command}</code>
       {result === null ? <span> · not run yet; Loom runs it every 15 minutes</span> : <span className={TONES[result.tone]}> · {result.text}</span>}
       {check !== null && check.output !== "" && (
         <details className="mt-0.5">
           <summary className="cursor-pointer text-subtle-foreground">Output</summary>
-          <pre className="mt-1 max-h-48 overflow-auto rounded bg-surface-recessed p-2 font-mono text-[11px] whitespace-pre-wrap">{check.output}</pre>
+          <pre className="mt-1 max-h-48 overflow-auto rounded bg-surface-recessed p-2 font-mono text-[11px] whitespace-pre-wrap [overflow-wrap:anywhere]">{check.output}</pre>
         </details>
       )}
     </div>
@@ -97,20 +101,22 @@ function StepRow({ step, now, onTicket, onOpen, ...mark }: { step: RolloutStep; 
             #{step.prNumber ?? "PR"}
           </button>
         )}
-        <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{step.title}</span>
+        <span data-rollout-title className={TITLE}>
+          {step.title}
+        </span>
         <Chip tone={merge.tone} text={merge.text} data={{ "data-rollout-merge": step.merge }} />
         <Chip tone={live.tone} text={live.text} title={live.title} data={{ "data-rollout-live": step.live === null ? "no" : step.live.by }} />
         {step.dark && <Chip tone="muted" text="dark" title="Ships with its gate off" />}
         <MarkButton target={step.key} live={step.live !== null} {...mark} />
       </div>
-      <p className="text-[11.5px] text-muted-foreground">
+      <p className={NOTE}>
         {step.onMerge ? <b className="font-medium text-foreground">Deploys on merge</b> : <span>Deploys</span>}
         {step.how === null ? (step.onMerge ? "." : " the way its repo does.") : `: ${step.how}`}
         {step.release !== null && ` Release ${step.release}${step.releaseWith.length === 0 ? "" : ` with ${listText(step.releaseWith)}`}.`}
         {step.liveConsumers.length > 0 && <span className={TONES.warn}> Rolling it back now breaks {listText(step.liveConsumers)}, which {step.liveConsumers.length === 1 ? "is" : "are"} live.</span>}
       </p>
       {step.requires.length > 0 && (
-        <p className="flex flex-wrap items-baseline gap-1 text-[11.5px] text-muted-foreground">
+        <p data-rollout-needs className="flex min-w-0 flex-wrap items-baseline gap-1 text-[11.5px] text-muted-foreground">
           Needs live first
           {step.requires.map((need) => {
             const chip = needChip(need);
@@ -119,7 +125,7 @@ function StepRow({ step, now, onTicket, onOpen, ...mark }: { step: RolloutStep; 
         </p>
       )}
       {step.verify !== null && <LastCheck command={step.verify} check={step.lastCheck} label="Verify" />}
-      {step.rollback !== null && <p className="text-[11.5px] text-muted-foreground">Rollback: {step.rollback}</p>}
+      {step.rollback !== null && <p className={NOTE}>Rollback: {step.rollback}</p>}
     </div>
   );
 }
@@ -131,7 +137,7 @@ function StageSection({ stage, now, ...rest }: { stage: RolloutStage; now: numbe
     <section data-rollout-stage={stage.name ?? "none"} aria-label={stage.name ?? "No stage"} className="mt-4">
       <div className="flex flex-wrap items-baseline gap-2 border-b border-border-seam pb-1">
         <h3 className={HEADING}>{stage.name ?? "No stage"}</h3>
-        {stage.goal !== null && <span className="text-[11.5px] text-muted-foreground">{stage.goal}</span>}
+        {stage.goal !== null && <span className={`min-w-0 ${NOTE}`}>{stage.goal}</span>}
         {stage.soak !== null && <Chip tone="muted" text={`soak ${stage.soak}`} />}
         {stage.milestones.map((milestone) => (
           <Chip key={milestone.ref} tone={milestone.live === null ? "warn" : "good"} text={`${milestone.live === null ? "◌" : "✓"} ${milestone.ref}`} title={`${milestone.title}: gates this stage`} />
@@ -153,13 +159,13 @@ function MilestoneRow({ milestone, ...mark }: { milestone: RolloutMilestone } & 
     <div data-rollout-milestone={milestone.ref} className="flex flex-col gap-1 border-b border-border-seam px-1.5 py-2 text-xs">
       <div className="flex flex-wrap items-baseline gap-1.5">
         <b className="font-mono font-semibold">{milestone.ref}</b>
-        <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{milestone.title}</span>
+        <span className={TITLE}>{milestone.title}</span>
         {milestone.stage !== null && <Chip tone="muted" text={`gates ${milestone.stage}`} />}
         <Chip tone={milestone.live === null ? "warn" : "good"} text={milestone.live === null ? "does not hold" : `holds · ${BY[milestone.live.by]}`} data={{ "data-rollout-holds": milestone.live === null ? "no" : "yes" }} />
         <MarkButton target={milestone.ref} live={milestone.live !== null} {...mark} />
       </div>
-      {milestone.neededBy.length > 0 && <p className="text-[11.5px] text-muted-foreground">{listText(milestone.neededBy)} {milestone.neededBy.length === 1 ? "needs" : "need"} it.</p>}
-      {milestone.check === null ? <p className="text-[11.5px] text-muted-foreground">No check command: mark it live when it holds.</p> : <LastCheck command={milestone.check} check={milestone.lastCheck} label="Check" />}
+      {milestone.neededBy.length > 0 && <p className={NOTE}>{listText(milestone.neededBy)} {milestone.neededBy.length === 1 ? "needs" : "need"} it.</p>}
+      {milestone.check === null ? <p className={NOTE}>No check command: mark it live when it holds.</p> : <LastCheck command={milestone.check} check={milestone.lastCheck} label="Check" />}
     </div>
   );
 }
@@ -171,7 +177,7 @@ function WindowStrip({ windows }: { windows: readonly RolloutWindow[] }) {
         const tone: Tone = window.active ? "bad" : window.startsIn !== null && window.startsIn <= 14 ? "warn" : "muted";
         const state = window.active ? "on now" : window.past ? "over" : `in ${plural(window.startsIn!, "day")}`;
         return (
-          <div key={`${window.title}-${window.from}`} data-rollout-window={window.title} title={window.note ?? undefined} className={`rounded-md border px-2.5 py-1.5 text-xs ${CHIP_TONES[tone]} ${window.past ? "opacity-60" : ""}`}>
+          <div key={`${window.title}-${window.from}`} data-rollout-window={window.title} title={window.note ?? undefined} className={`max-w-full min-w-0 rounded-md border px-2.5 py-1.5 text-xs [overflow-wrap:anywhere] ${CHIP_TONES[tone]} ${window.past ? "opacity-60" : ""}`}>
             <b className="font-semibold">{window.title}</b>
             <span className="block font-mono text-[11px]">
               {dayLabel(window.from)} – {dayLabel(window.to)} · {state}
@@ -194,7 +200,7 @@ export function RolloutTab({ slug, rollout, now, onTicket }: { slug: string; rol
   return (
     <div data-rollout className="px-4 pt-3.5 pb-5">
       <h2 className="text-sm font-semibold">Rollout</h2>
-      <p data-rollout-next={rollout.next.kind} className="mt-0.5 max-w-[70rem] text-xs text-foreground">
+      <p data-rollout-next={rollout.next.kind} className="mt-0.5 max-w-[70rem] text-xs text-foreground [overflow-wrap:anywhere]">
         {rollout.next.text}
       </p>
       <p className="mt-0.5 text-[11px] text-subtle-foreground">Advice for you: Loom starts, reviews and opens every pull request whatever this says, and holds no merge for it.</p>
@@ -208,7 +214,7 @@ export function RolloutTab({ slug, rollout, now, onTicket }: { slug: string; rol
               className={`flex items-start gap-2 rounded-lg px-3 py-1.5 text-xs ${warning.tone === "warning" ? "bg-warning/10 text-warning-text shadow-[inset_3px_0_0_var(--warning)]" : "bg-primary/10 text-foreground shadow-[inset_3px_0_0_var(--primary)]"}`}
             >
               <span aria-hidden>{warning.tone === "warning" ? "⚠" : "i"}</span>
-              <span>{warning.text}</span>
+              <span className="min-w-0 [overflow-wrap:anywhere]">{warning.text}</span>
             </li>
           ))}
         </ul>

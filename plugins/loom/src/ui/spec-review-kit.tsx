@@ -1,6 +1,6 @@
 import { Fragment, createContext, useContext, useMemo, type ElementType, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { textSteps, touches, type SpecChange } from "../spec-diff";
-import { isUnder } from "../spec-paths";
+import { isUnder, type PathNames } from "../spec-paths";
 import type { DraftNote } from "./spec-notes";
 
 /** What the comment box offers for a part: a choice, a number or a switch can take a suggested value; the rest take quick picks. */
@@ -83,7 +83,11 @@ const LABELS: Record<string, string> = {
   "merge.max_fix_rounds": "Fix rounds",
   "merge.checks_queued_minutes": "Stop waiting for queued checks",
   "merge.checks_near_done_percent": "Wait for running checks this far along",
-  "merge.forge": "Pull request server",
+  "merge.forge": "Forge",
+  "merge.stack": "Stacked pull requests",
+  "merge.release_workers": "Release idle workers",
+  "merge.refresh_behind": "Keep pull requests fresh",
+  "merge.git_network_timeout_seconds": "Git network time limit",
   "merge.worktree": "Integration worktree",
   "project.base": "Base branch",
   "project.goal": "Goal",
@@ -117,6 +121,7 @@ const LABELS: Record<string, string> = {
   "checks.commands": "Ticket checks",
   "checks.after_merge": "After-merge checks",
   "checks.timeout_minutes": "Check time limit",
+  "checks.ci": "Rely on CI",
   scope: "Scope guard",
   "scope.enforce": "Scope enforcement",
   "scope.protected": "Protected paths",
@@ -126,8 +131,17 @@ const LABELS: Record<string, string> = {
   "budget.max_tokens": "Token budget",
   "budget.deadline": "Deadline",
   environment: "Environment",
+  "environment.reviewer": "Reviewers' environment",
   repo: "Repos",
+  rollout: "Deploy order",
+  "rollout.deploy": "How changes deploy",
+  "rollout.deploy.on_merge": "Merging deploys",
+  "rollout.deploy.how": "How changes reach traffic",
+  "rollout.stage": "Deploy stages",
+  "rollout.milestone": "Milestones",
+  "rollout.window": "Deploy windows",
 };
+const ROLLOUT_ITEMS = { stage: "Deploy stage", milestone: "Milestone", window: "Deploy window" } as const;
 const TICKET_PARTS: Record<string, [one: string, many: string]> = {
   title: ["title", "title"],
   body: ["brief", "brief"],
@@ -153,11 +167,23 @@ const ITEM_NOUNS: Record<string, [one: string, many: string]> = {
   non_goals: ["non-goal", "non-goals"],
   rubric: ["rubric line", "rubric lines"],
   open_questions: ["question", "questions"],
+  after_open: ["command", "commands"],
+  after_push: ["command", "commands"],
+  ignore_checks: ["pattern", "patterns"],
+  requires_live: ["prerequisite", "prerequisites"],
 };
-const humanize = (path: string) => path.replace(/\./g, " › ").replace(/_/g, " ");
+const humanize = (path: string) =>
+  path
+    .replace(/(\w+)\[(\d+)\]/g, (_, key: string, index: string) => `${key} › ${ITEM_NOUNS[key]?.[0] ?? "item"} ${Number(index) + 1}`)
+    .replace(/\./g, " › ")
+    .replace(/_/g, " ");
 
-/** A part's name for a person, such as "Merge strategy", "csv-export › criterion 2" or "web › checks". `repos` names each [[repo]] by index. */
-export function labelOf(path: string, repos: readonly string[] = []): string {
+/**
+ * A part's name for a person, such as "Merge strategy", "csv-export › criterion 2", "web › checks" or "Deploy stage
+ * expand › soak". `names` names each [[repo]] by index, or each repo, stage, milestone and window.
+ */
+export function labelOf(path: string, names: readonly string[] | PathNames = []): string {
+  const { repo: repos, ...listed } = "stage" in names ? names : { repo: names, stage: [], milestone: [], window: [] };
   const ticket = /^ticket\[([^\]]+)\](?:\.(\w+)(?:\[(\d+)\])?)?(.*)$/.exec(path);
   if (ticket !== null) {
     const [, ref, part, index, rest] = ticket;
@@ -170,12 +196,22 @@ export function labelOf(path: string, repos: readonly string[] = []): string {
     const name = repos[Number(repo[1])] ?? `repo ${Number(repo[1]) + 1}`;
     return repo[2] === undefined ? `Repo ${name}` : `${name} › ${humanize(repo[2])}`;
   }
+  const rollout = /^rollout\.(stage|milestone|window)\[(\d+)\](?:\.(.+))?$/.exec(path);
+  if (rollout !== null) {
+    const list = rollout[1] as keyof typeof ROLLOUT_ITEMS;
+    const head = `${ROLLOUT_ITEMS[list]} ${listed[list][Number(rollout[2])] ?? Number(rollout[2]) + 1}`;
+    return rollout[3] === undefined ? head : `${head} › ${humanize(rollout[3])}`;
+  }
   const item = /^(.+)\[(\d+)\]$/.exec(path);
   if (item !== null) {
     const noun = ITEM_NOUNS[item[1]!.split(".").at(-1)!]?.[0] ?? "item";
-    return `${LABELS[item[1]!] ?? humanize(item[1]!)} › ${noun} ${Number(item[2]) + 1}`;
+    return `${labelOf(item[1]!, names)} › ${noun} ${Number(item[2]) + 1}`;
   }
-  return LABELS[path] ?? humanize(path);
+  if (LABELS[path] !== undefined) return LABELS[path];
+  const above = Object.keys(LABELS)
+    .filter((key) => path.startsWith(`${key}.`))
+    .sort((a, b) => b.length - a.length)[0];
+  return above === undefined ? humanize(path) : `${LABELS[above]} › ${humanize(path.slice(above.length + 1))}`;
 }
 
 const nounsOf = (path: string) => ITEM_NOUNS[path.replace(/\[\d+\]$/, "").split(".").at(-1)!] ?? ["item", "items"];
@@ -219,7 +255,7 @@ export function FindingPin({ finding }: { finding: ReviewFinding }) {
 
 export function WasBadge({ before }: { before: unknown }) {
   return (
-    <span data-was className="ml-1.5 inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-1.5 align-[1px] text-[10.5px] leading-4 whitespace-nowrap text-primary">
+    <span data-was className="ml-1.5 inline-flex max-w-full shrink-0 items-center gap-1 rounded-full bg-primary/10 px-1.5 align-[1px] text-[10.5px] leading-4 text-primary [overflow-wrap:anywhere]">
       <span aria-hidden className="size-1.5 rounded-full bg-primary" />
       was {formatValue(before)}
     </span>

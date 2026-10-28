@@ -12,7 +12,10 @@ const ROLE_SWATCHES: Record<Role, Swatch> = {
 };
 const count = (value: number) => value.toLocaleString("en-US");
 const tokensText = (tokens: number | null) => (tokens === null ? "not reported" : count(tokens));
-const CELL = "py-1 pr-3 align-top";
+const CELL = "py-1 pr-3 align-top @max-xl/loom:p-0";
+// On a narrow page each row stacks: the role and ticket on one line, then its facts, each named by its column.
+const STACKED_ROW = "@max-xl/loom:flex @max-xl/loom:flex-wrap @max-xl/loom:items-baseline @max-xl/loom:gap-x-3 @max-xl/loom:gap-y-0.5 @max-xl/loom:py-2";
+const FACT = "@max-xl/loom:text-xs @max-xl/loom:before:mr-1 @max-xl/loom:before:text-muted-foreground @max-xl/loom:before:content-[attr(data-label)]";
 
 function ticketText(row: AgentRow): string {
   if (row.ticketKey === null) return "the project's planner";
@@ -23,28 +26,36 @@ function AgentTable({ rows, now, ended }: { rows: AgentRow[]; now: number; ended
   const navigate = useBbNavigate();
   return (
     <div className="overflow-x-auto">
-      <table className="mt-1 w-full min-w-[560px] text-left text-sm">
-        <thead className="text-xs text-muted-foreground">
+      <table className="mt-1 w-full min-w-[560px] text-left text-sm @max-xl/loom:block @max-xl/loom:min-w-0">
+        <thead className="text-xs text-muted-foreground @max-xl/loom:hidden">
           <tr>
             {["Role", "Ticket", "Model", ended ? "Ran for" : "Running for", ...(ended ? ["Ended"] : []), "Tokens", "Retries", ""].map((heading) => (
               <th key={heading} className={`${CELL} font-normal`}>{heading}</th>
             ))}
           </tr>
         </thead>
-        <tbody>
+        <tbody className="@max-xl/loom:block">
           {rows.map((row, index) => (
-            <tr key={row.threadId ?? `${row.role}-${index}`} data-agent-row={row.threadId ?? row.role} className="border-t border-border-seam">
-              <td className={CELL}>{row.role}</td>
-              <td className={CELL}>{ticketText(row)}</td>
-              <td className={`${CELL} text-muted-foreground`}>{row.model ?? "default"}</td>
-              <td className={CELL}>
+            <tr key={row.threadId ?? `${row.role}-${index}`} data-agent-row={row.threadId ?? row.role} className={`border-t border-border-seam ${STACKED_ROW}`}>
+              <td className={`${CELL} @max-xl/loom:font-medium`}>{row.role}</td>
+              <td className={`${CELL} @max-xl/loom:min-w-0 @max-xl/loom:flex-1 @max-xl/loom:basis-[60%] [overflow-wrap:anywhere]`}>{ticketText(row)}</td>
+              <td data-label="Model" className={`${CELL} ${FACT} text-muted-foreground`}>{row.model ?? "default"}</td>
+              <td data-label={ended ? "Ran for" : "Running for"} className={`${CELL} ${FACT}`}>
                 {formatDuration((row.endedAt ?? now) - row.startedAt)}
                 {row.timeoutAt !== null && <span className="text-warning-text"> · timeout at {formatDuration(row.timeoutAt - row.startedAt)}</span>}
               </td>
-              {ended && <td className={CELL}>{endLabel(row.endReason)}</td>}
-              <td className={CELL}>{tokensText(row.tokens)}</td>
-              <td className={CELL}>{row.rateLimitRetries === 0 ? "0" : plural(row.rateLimitRetries, "rate limit")}</td>
-              <td className={CELL}>
+              {ended && (
+                <td data-label="Ended" className={`${CELL} ${FACT}`}>
+                  {endLabel(row.endReason)}
+                </td>
+              )}
+              <td data-label="Tokens" className={`${CELL} ${FACT}`}>
+                {tokensText(row.tokens)}
+              </td>
+              <td data-label="Retries" className={`${CELL} ${FACT}`}>
+                {row.rateLimitRetries === 0 ? "0" : plural(row.rateLimitRetries, "rate limit")}
+              </td>
+              <td className={`${CELL} @max-xl/loom:ml-auto`}>
                 {row.threadId !== null && (
                   <button type="button" className={BUTTON} onClick={() => navigate.toThread(row.threadId!)}>
                     Thread
