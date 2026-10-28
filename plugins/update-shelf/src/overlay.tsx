@@ -27,16 +27,24 @@ function InstalledUpdates({ pluginId }: { pluginId: string }) {
   rpcRef.current = rpc;
   const [updates, setUpdates] = useState<readonly PendingUpdate[]>([]);
   const [listError, setListError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [checking, setChecking] = useState(true);
+  const [checkedAt, setCheckedAt] = useState<number | null>(null);
   const [starting, setStarting] = useState<ReadonlySet<string>>(() => new Set());
   const [dismissed, setDismissed] = useDismissedJobs(pluginId);
 
   const refresh = useCallback(async () => {
+    setChecking(true);
     try {
       const result = await rpcRef.current.call("list");
       setUpdates(result.updates);
       setListError(null);
+      setCheckedAt(Date.now());
     } catch (error) {
       setListError(message(error));
+    } finally {
+      setLoaded(true);
+      setChecking(false);
     }
   }, []);
 
@@ -102,6 +110,9 @@ function InstalledUpdates({ pluginId }: { pluginId: string }) {
   return (
     <UpdatesGroup
       updates={updates}
+      loading={!loaded}
+      checking={checking}
+      checkedAt={checkedAt}
       starting={starting}
       dismissed={dismissed}
       onUpdate={(ids) => void onUpdate(ids)}

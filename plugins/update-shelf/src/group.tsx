@@ -4,9 +4,16 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 import type { Changelog, PendingUpdate, UpdateJob, UpdatePhase } from "./contract";
+import { useDelayedOn } from "./delayed-on";
 
 export interface UpdatesGroupProps {
   updates: readonly PendingUpdate[];
+  /** The first read hasn't answered yet, so nothing here is known: draw placeholders instead. */
+  loading?: boolean;
+  /** A read is in flight now; the group says so once it takes a moment. */
+  checking?: boolean;
+  /** When the last read answered, on the `now` clock; null before the first answer. */
+  checkedAt?: number | null;
   /** Ids whose update was asked for and not yet acknowledged by bb. */
   starting: ReadonlySet<string>;
   /** Finished jobs the person cleared from the group. */
@@ -20,6 +27,12 @@ export interface UpdatesGroupProps {
 
 /** bb keeps a new version only after watching it this long without an error (DEFAULT_STABILIZATION_WINDOW_MS). */
 export const CHECK_SECONDS = 30;
+
+/** A read this quick never says "Checking…", so the label doesn't flicker on every poll. */
+export const CHECKING_DELAY_MS = 300;
+
+/** A first read that answers inside this never shows a skeleton, so the page doesn't flash one. */
+export const SKELETON_DELAY_MS = 200;
 
 const PHASE_TEXT: Record<UpdatePhase, string> = {
   preparing: "Downloading and building",
@@ -40,10 +53,32 @@ export function ordinal(position: number): string {
   return `${position}${suffix} in line`;
 }
 
+/** How long ago the last read answered: "checked just now", "checked 8 s ago", "checked 2 min ago". */
+export function checkedAgo(elapsedMs: number): string {
+  const seconds = Math.floor(Math.max(0, elapsedMs) / 1000);
+  if (seconds < 2) return "checked just now";
+  if (seconds < 60) return `checked ${seconds} s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `checked ${minutes} min ago`;
+  return `checked ${Math.floor(minutes / 60)} h ago`;
+}
+
 /** The plugins with a waiting update or an update in progress, grouped above the Installed page's cards. */
-export function UpdatesGroup({ updates, starting, dismissed, onUpdate, onClear, loadChangelog, now = Date.now }: UpdatesGroupProps) {
+export function UpdatesGroup({
+  updates,
+  loading = false,
+  checking = false,
+  checkedAt = null,
+  starting,
+  dismissed,
+  onUpdate,
+  onClear,
+  loadChangelog,
+  now = Date.now,
+}: UpdatesGroupProps) {
   const [confirming, setConfirming] = useState(false);
   const elapsed = usePhaseClock(updates, now);
+  const skeleton = useDelayedOn(loading, SKELETON_DELAY_MS);
 
   const visible = updates.filter((update) => !(update.job !== null && !update.updateAvailable && dismissed.has(update.job.id)));
   const busy = (update: PendingUpdate) => starting.has(update.id) || isActiveJob(update.job);
@@ -55,7 +90,10 @@ export function UpdatesGroup({ updates, starting, dismissed, onUpdate, onClear, 
   useEffect(() => {
     if (ready.length < 2) setConfirming(false);
   }, [ready.length]);
-  if (visible.length === 0) return null;
+  // Every hook above runs before either early return, so the hook order holds when a read answers.
+  // Nothing is drawn before the skeleton's delay: a quiet page beats one that claims nothing is waiting.
+  if (loading) return skeleton ? <CheckingSkeleton /> : null;
+  if (visible.length === 0) return <NothingWaiting checking={checking} checkedAt={checkedAt} now={now} />;
 
   const total = active.length + finished.length;
   const title =
@@ -77,6 +115,7 @@ export function UpdatesGroup({ updates, starting, dismissed, onUpdate, onClear, 
             aria-hidden
           />
           <h2 className="min-w-0 flex-1 text-sm font-medium">{title}</h2>
+          <CheckState checking={checking} checkedAt={checkedAt} now={now} />
           {clearable.length > 0 && active.length === 0 ? (
             <Button
               type="button"
@@ -145,6 +184,75 @@ export function UpdatesGroup({ updates, starting, dismissed, onUpdate, onClear, 
         ))}
       </ul>
     </section>
+  );
+}
+
+/** Placeholders for the group while the first read is still out, so the page shows it is being read. */
+function CheckingSkeleton() {
+  return (
+    <section
+      aria-label="Checking for plugin updates"
+      aria-busy="true"
+      className="rounded-xl border border-border bg-card text-card-foreground"
+    >
+      <header className="px-3 py-2">
+        <div className="flex min-h-7 items-center gap-2">
+          <Icon name="Spinner" className="size-4 shrink-0 animate-spin text-muted-foreground" aria-hidden />
+          <h2 className="min-w-0 flex-1 text-sm font-medium text-muted-foreground">Checking plugins for updates…</h2>
+        </div>
+      </header>
+      <ul className="divide-y divide-border/60 border-t border-border/60">
+        {[0, 1, 2].map((index) => (
+          <li key={index} aria-hidden className="flex items-center gap-3 px-3 py-2">
+            <span className="size-6 shrink-0 animate-pulse rounded border border-border bg-muted/40" />
+            <span className="min-w-0 flex-1 space-y-1.5">
+              <span className="block h-3 w-32 max-w-full animate-pulse rounded bg-muted" />
+              <span className="block h-2.5 w-20 max-w-full animate-pulse rounded bg-muted/70" />
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/** The group with nothing in it: says the page was read and when, rather than leaving the page silent. */
+function NothingWaiting({ checking, checkedAt, now }: { checking: boolean; checkedAt: number | null; now: () => number }) {
+  return (
+    <section
+      aria-label="Plugin updates"
+      className="flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 text-xs text-card-foreground"
+    >
+      <Icon name="Download" className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+      <p className="min-w-0 flex-1 truncate text-muted-foreground">No plugin has an update waiting</p>
+      <CheckState checking={checking} checkedAt={checkedAt} now={now} />
+    </section>
+  );
+}
+
+/** "Checking…" while a read is out, otherwise how long ago the last one answered; ticks once a second. */
+function CheckState({ checking, checkedAt, now }: { checking: boolean; checkedAt: number | null; now: () => number }) {
+  const [, setTick] = useState(0);
+  const slow = useDelayedOn(checking, CHECKING_DELAY_MS);
+  useEffect(() => {
+    if (slow) return;
+    const timer = setInterval(() => setTick((value) => value + 1), 1000);
+    return () => clearInterval(timer);
+  }, [slow]);
+  if (slow) {
+    return (
+      <span role="status" className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground tabular-nums">
+        <Icon name="Spinner" className="size-3.5 animate-spin" aria-hidden />
+        Checking…
+      </span>
+    );
+  }
+  if (checkedAt === null) return null;
+  return (
+    <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground tabular-nums">
+      <Icon name="Check" className="size-3.5" aria-hidden />
+      {checkedAgo(now() - checkedAt)}
+    </span>
   );
 }
 

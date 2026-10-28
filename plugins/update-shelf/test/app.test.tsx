@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { Changelog, PendingUpdate, UpdateJob } from "../src/contract";
-import { UpdatesGroup, ordinal } from "../src/group";
+import { checkedAgo, UpdatesGroup, ordinal } from "../src/group";
 import { IDLE_REFRESH_MS } from "../src/overlay";
 import { renderInstalledPage } from "./dom";
 
@@ -144,12 +144,27 @@ describe("plugin app", () => {
     slot.lifecycle.unmount();
   });
 
-  it("draws nothing when no plugin has an update or a recent one", async () => {
+  it("says the page was read when no plugin has an update or a recent one", async () => {
     const app = await loadPluginApp(() => import("../app"));
     renderInstalledPage();
     const slot = renderSlot(app.appOverlays[0]!, {}, { pluginId: "update-shelf", rpc: { list: () => ({ updates: [] }) } });
     await waitFor(() => expect(slot.inspection.rpcCalls.length).toBeGreaterThan(0));
-    expect(screen.queryByRole("region", { name: "Plugin updates" })).toBeNull();
+    const group = await screen.findByRole("region", { name: "Plugin updates" });
+    expect(within(group).getByText("No plugin has an update waiting")).toBeTruthy();
+    expect(within(group).getByText("checked just now")).toBeTruthy();
+    expect(group.querySelectorAll("li")).toHaveLength(0);
+    slot.lifecycle.unmount();
+  });
+
+  it("draws placeholders until the first read answers, and none when it answers at once", async () => {
+    const app = await loadPluginApp(() => import("../app"));
+    renderInstalledPage();
+    const slot = renderSlot(app.appOverlays[0]!, {}, { pluginId: "update-shelf", rpc: { list: () => new Promise(() => {}) } });
+    expect(screen.queryByRole("region", { name: "Checking for plugin updates" })).toBeNull();
+    const skeleton = await screen.findByRole("region", { name: "Checking for plugin updates" });
+    expect(skeleton.getAttribute("aria-busy")).toBe("true");
+    expect(within(skeleton).getByText("Checking plugins for updates…")).toBeTruthy();
+    expect(skeleton.querySelectorAll("li")).toHaveLength(3);
     slot.lifecycle.unmount();
   });
 
@@ -182,6 +197,29 @@ describe("plugin app", () => {
     await vi.advanceTimersByTimeAsync(IDLE_REFRESH_MS + 500);
     expect(reads).toBe(2);
     slot.lifecycle.unmount();
+  });
+});
+
+describe("feedback while it reads", () => {
+  it("says when the page was last read, and that a read is out now", async () => {
+    await loadPluginApp(() => import("../app"));
+    const at = 1_000_000;
+    const props = { updates: [update("genui", "Generative UI")], starting: new Set<string>(), dismissed: new Set<string>(), onUpdate: () => {}, onClear: () => {}, loadChangelog: async () => CHANGELOG };
+    const view = render(<UpdatesGroup {...props} checkedAt={at - 12_000} now={() => at} />);
+    expect(screen.getByText("checked 12 s ago")).toBeTruthy();
+    view.rerender(<UpdatesGroup {...props} checking checkedAt={at} now={() => at} />);
+    expect(await screen.findByText("Checking…")).toBeTruthy();
+  });
+
+  it("says how long ago it checked", () => {
+    expect([0, 1_500, 12_400, 60_000, 185_000, 7_200_000].map(checkedAgo)).toEqual([
+      "checked just now",
+      "checked just now",
+      "checked 12 s ago",
+      "checked 1 min ago",
+      "checked 3 min ago",
+      "checked 2 h ago",
+    ]);
   });
 });
 
@@ -252,7 +290,8 @@ describe("update progress", () => {
         loadChangelog={async () => CHANGELOG}
       />,
     );
-    expect(screen.queryByRole("region", { name: "Plugin updates" })).toBeNull();
+    const empty = screen.getByRole("region", { name: "Plugin updates" });
+    expect(within(empty).getByText("No plugin has an update waiting")).toBeTruthy();
   });
 
   it("reads the changelog again when bb offers a newer version while it is open", async () => {

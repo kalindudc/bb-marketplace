@@ -17,6 +17,8 @@ bb plugin update update-shelf               # after a new release is tagged
 | Version labels | The installed package version, and the release tag of the candidate (a short commit id when it tracks a branch) |
 | What's new | The candidate's `CHANGELOG.md` sections newer than the installed version, otherwise the commits that touched the plugin's directory since the installed commit |
 | Progress | `bb.sdk.plugins.experimental_updateJobs.list()`: each job's place in the queue, its phase with the seconds so far, and how it finished. bb keeps finished jobs for ten minutes, and so does the group |
+| That it is reading | A skeleton in place of the group while the first read is out (after 200 ms, so a fast read never flashes one), then **checked 12 s ago** beside the title, ticking once a second, and **Checking…** while a read takes longer than 300 ms |
+| That nothing is waiting | One quiet line — **No plugin has an update waiting · checked just now** — instead of an empty space, so the page says it was read |
 
 Updates start with `bb.sdk.plugins.experimental_startUpdate`, so they go through bb's own queue (one at a time),
 its compatibility checks and its rollback. **Update all** asks once, then starts every update that is not already

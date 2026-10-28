@@ -2,6 +2,16 @@
 
 Notable changes to Update Shelf, newest first. Releases are tagged `update-shelf/vX.Y.Z` in this repository.
 
+## 0.3.0 (2026-10-28)
+
+### Added
+
+- The Installed page now shows that the group is reading, so a page with nothing to report no longer looks like a plugin that isn't working:
+  - A skeleton in the group's place while the first read is out. It appears only if that read takes longer than 200 ms, so a fast one never flashes it.
+  - **checked just now**, then **checked 12 s ago** and **checked 2 min ago**, beside the title, ticking once a second.
+  - **Checking…** with a spinner while a read is in flight, shown only once it takes 300 ms so the label doesn't flicker on every poll.
+  - With nothing waiting, one quiet line — **No plugin has an update waiting · checked just now** — in place of the group, instead of the page looking as though this plugin were absent.
+
 ## 0.2.1 (2026-10-28)
 
 ### Fixed
