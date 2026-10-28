@@ -257,6 +257,31 @@ describe("catching up with the dependency on a machine", () => {
     expect(h.host.callsTo("push")).toHaveLength(pushes);
   });
 
+  it("resolves marker paths stored relative to a checkout in a subdirectory, as Loom before 0.29.0 wrote them, and stores them again", async () => {
+    const worker = await stacked();
+    h.host.scripted.mergeOnto = [{ outcome: "conflict", files: ["src/export/a.ts"], sha: "cf1", tree: "cf1-tree" }];
+    h.store.updateTicket(ticketOf(h, "CSV-1").id, { pushed_sha: "sq7" });
+    await queue();
+    const ticket = ticketOf(h, "CSV-2");
+    const legacy = ["../../web/a.ts", "src/export/b.ts", "../../../../outside.ts"];
+    h.store.updateTicket(ticket.id, { stack_json: JSON.stringify({ ...stackOf(ticket), markers: legacy }) });
+    h.host.scripted.repoPrefix = [{ prefix: "areas/infra/routing/" }];
+    h.host.scripted.conflictMarkers = [{ files: ["areas/web/a.ts"] }];
+
+    h.host.worktree(worktreeOf(worker)).dirty = true;
+    await submitted(worker);
+    expect(h.host.callsTo("repoPrefix")).toEqual([{ repo: "/repo" }]);
+    expect(h.host.callsTo("conflictMarkers").at(-1)).toEqual({ worktree: worktreeOf(worker), paths: ["areas/web/a.ts", "src/export/b.ts"] });
+    expect(stackOf(ticketOf(h, "CSV-2"))!.markers).toEqual(["areas/web/a.ts", "src/export/b.ts"]);
+    expect(h.store.posts(ticket.id).filter((post) => post.kind === "check").at(-1)!.body).toContain("FAIL conflict check");
+
+    h.host.worktree(worktreeOf(worker)).dirty = true;
+    await submitted(worker);
+    expect(h.host.callsTo("repoPrefix")).toHaveLength(1);
+    expect(ticketOf(h, "CSV-2").state).toBe("review");
+    expect(stackOf(ticketOf(h, "CSV-2"))!.markers).toBeUndefined();
+  });
+
   it("sends a failing check on the carried result back to the worker, and pushes nothing", async () => {
     const worker = await stacked();
     const pushes = h.host.callsTo("push").length;

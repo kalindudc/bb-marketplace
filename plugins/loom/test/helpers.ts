@@ -466,6 +466,8 @@ export class FakeHost implements HostPort {
         return { size: 0 };
       case "conflictMarkers":
         return { files: [] };
+      case "repoPrefix":
+        return { prefix: "" };
       case "carryDelete":
       case "carryAbort":
       case "dropUploads":

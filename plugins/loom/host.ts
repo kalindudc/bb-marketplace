@@ -16,6 +16,7 @@ export default experimental_defineHostEntry({
     refTip: (input, { signal }) => ops.refTip(input, signal),
     detach: (input, { signal }) => ops.detach(input, signal),
     carryStart: (input, { signal }) => ops.carryStart(input, signal),
+    repoPrefix: (input, { signal }) => ops.repoPrefix(input, signal),
     conflictMarkers: (input) => ops.conflictMarkers(input),
     carryWrite: (input) => ops.carryWrite(input),
     carryDelete: (input) => ops.carryDelete(input),

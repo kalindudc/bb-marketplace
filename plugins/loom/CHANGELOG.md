@@ -2,6 +2,16 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.29.2 (2026-10-28)
+
+### Fixed
+
+- A ticket whose stored conflict-marker paths came from Loom before 0.29.0 can submit again. 0.29.0 made new paths relative to the repository's top level, but a ticket in a checkout that is a subdirectory of its repository kept its old paths, relative to that subdirectory, such as `../../../clients/web/a.ts`, and every submit failed with "must be a path inside the repository". The submit now resolves such a path from the checkout's place in the repository, stores it again, and drops one that points outside the repository.
+
+### Compatibility
+
+- No migration. The host entry gains `repoPrefix`.
+
 ## 0.29.1 (2026-10-28)
 
 ### Fixed

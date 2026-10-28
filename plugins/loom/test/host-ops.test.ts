@@ -18,6 +18,7 @@ import {
   changedFiles,
   commitAll,
   conflictMarkers,
+  repoPrefix,
   diff,
   ensureBranch,
   ensureWorktree,
@@ -1027,7 +1028,7 @@ describe("host entry", () => {
       .filter(([, method]) => method.experimental_retryable === true)
       .map(([name]) => name)
       .sort();
-    expect(retryable).toEqual(["changedFiles", "diff", "filePatch", "remotes", "worktreeState"]);
+    expect(retryable).toEqual(["changedFiles", "diff", "filePatch", "remotes", "repoPrefix", "worktreeState"]);
   });
 
   it("serves the four operations through the contract", async () => {
@@ -2672,6 +2673,13 @@ describe("carrying a commit to a thread's own machine: carryStart, carryWrite, c
 
     put(worktree, "src/new.txt", "<<<<<<< ours\nmine\n=======\ntheirs\n>>>>>>> theirs\n");
     expect(await conflictMarkers({ worktree: zone, paths: ["src/new.txt"] })).toEqual({ files: ["src/new.txt"] });
+  });
+
+  it("names a checkout's directory inside its repository, and none at the top level", async () => {
+    const repo = makeRepo();
+    mkdirSync(join(repo, "areas/infra/routing"), { recursive: true });
+    expect(await repoPrefix({ repo: join(repo, "areas/infra/routing") })).toEqual({ prefix: "areas/infra/routing/" });
+    expect(await repoPrefix({ repo })).toEqual({ prefix: "" });
   });
 
   it("lists the files that still have conflict markers, and leaves out resolved and deleted ones", async () => {

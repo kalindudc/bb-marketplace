@@ -811,6 +811,10 @@ export async function carryWrite(input: HostInput<"carryWrite">): Promise<HostOu
 
 const MARKER = /^(?:<{7}|>{7})(?: |$)/mu;
 
+export async function repoPrefix(input: HostInput<"repoPrefix">, signal?: AbortSignal): Promise<HostOutput<"repoPrefix">> {
+  return { prefix: await git(input.repo, ["rev-parse", "--show-prefix"], { signal }) };
+}
+
 export async function conflictMarkers(input: HostInput<"conflictMarkers">): Promise<HostOutput<"conflictMarkers">> {
   const files: string[] = [];
   const top = await topLevel(input.worktree);

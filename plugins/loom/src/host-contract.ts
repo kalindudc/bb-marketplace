@@ -242,6 +242,12 @@ export const hostContract = defineRpcContract({
     output: z.object({}).strict(),
   },
   // The files of paths that still have a line git's conflict markers start, as a merge Loom carried in left them.
+  // The checkout's directory inside its repository, such as "services/web/", or "" at the top level: git rev-parse --show-prefix.
+  repoPrefix: {
+    ...RETRYABLE,
+    input: z.object({ repo: absPath }).strict(),
+    output: z.object({ prefix: z.string() }).strict(),
+  },
   conflictMarkers: {
     input: z.object({ worktree: absPath, paths: z.array(repoPath).max(5000) }).strict(),
     output: z.object({ files: z.array(z.string()) }).strict(),

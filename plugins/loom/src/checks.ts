@@ -1,5 +1,6 @@
 // The submit pipeline: the worker hands in, the plugin commits, checks scope and runs the commands, and only a
 // pass moves the ticket on. Runs are keyed by ticket, so a ticket is never checked twice at once.
+import { posix } from "node:path";
 import { repoCheckout, ticketRepo } from "./checkouts";
 import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { plural } from "./format";
@@ -146,6 +147,22 @@ async function pipeline(ctx: EngineCtx, ticketId: number): Promise<void> {
   await finish(ctx, ticketId, spec, outcome);
 }
 
+/**
+ * The files a submit may not keep conflict markers in, relative to the repository's top level. Loom before 0.29.0 named
+ * them relative to the project's checkout, which may be a subdirectory, so such a path is resolved from the checkout's
+ * prefix once and stored again; one that still points outside the repository is dropped.
+ */
+async function markerPaths(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow, stack: Stack): Promise<string[]> {
+  const stored = stack.markers ?? [];
+  const inside = (path: string) => !path.startsWith("/") && path.split("/").every((part) => part !== "" && part !== "." && part !== "..");
+  if (stored.every(inside)) return stored;
+  const checkout = await repoCheckout(ctx, project, spec, ticket.repo);
+  const { prefix } = await ctx.host.call(checkout.hostId, "repoPrefix", { repo: checkout.path });
+  const markers = [...new Set(stored.map((path) => (inside(path) ? path : posix.normalize(`${prefix}${path}`))).filter(inside))];
+  ctx.store.updateTicket(ticket.id, { stack_json: JSON.stringify({ ...stack, markers } satisfies Stack) });
+  return markers;
+}
+
 async function runPipeline(ctx: EngineCtx, ticket: TicketRow, spec: Spec, worker: ThreadRow): Promise<Outcome> {
   const environment = await resolveEnvironment(ctx, worker);
   if (environment?.path == null) throw new Error("the worker's worktree is not available");
@@ -186,8 +203,9 @@ async function runPipeline(ctx: EngineCtx, ticket: TicketRow, spec: Spec, worker
     return refuse("scope check", `These files are outside the ticket's scope, and scope.enforce is "reject": ${report.outside.join(", ")}. Revert them, or call loom_block if the ticket needs a wider scope.`);
   }
 
-  if ((stack?.markers?.length ?? 0) > 0) {
-    const { files } = await ctx.host.call(hostId, "conflictMarkers", { worktree, paths: stack!.markers! });
+  const markers = stack?.markers === undefined ? [] : await markerPaths(ctx, project, spec, ticket, stack);
+  if (markers.length > 0) {
+    const { files } = await ctx.host.call(hostId, "conflictMarkers", { worktree, paths: markers });
     if (files.length > 0) return refuse("conflict check", `These files still have the conflict markers Loom left when it brought your branch up to date: ${files.join(", ")}. Resolve them so both sides' changes hold, then submit again.`);
   }
 
