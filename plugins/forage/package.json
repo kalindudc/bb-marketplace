@@ -1,0 +1,43 @@
+{
+  "name": "bb-plugin-forage",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "bb": ">=0.46",
+    "bbPluginSdk": ">=0.6.49"
+  },
+  "bb": {
+    "name": "Forage",
+    "description": "Gives every agent in bb web search and web fetch as bb's own tools, so results render in the timeline instead of as a raw tool call. Keyless DuckDuckGo and Exa, Brave and SearXNG when you configure them, batch queries, recency and domain filters, readable markdown, paging and passage search.",
+    "branding": {
+      "icon": "./icons/forage.svg",
+      "experimental_icons": {
+        "search": "./icons/search.svg",
+        "fetch": "./icons/fetch.svg"
+      }
+    },
+    "server": "./server.ts",
+    "skills": [
+      "./skills"
+    ]
+  },
+  "scripts": {
+    "build": "bb plugin build",
+    "test": "vitest run",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.6.79",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.3.0",
+    "better-sqlite3": "^12.10.0",
+    "hono": "^4.13.13",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.12"
+  }
+}

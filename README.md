@@ -10,6 +10,7 @@ bb marketplace add git:github.com/kalindudc/bb-marketplace@main
 bb plugin install agent-commands@kalindudc
 bb plugin install better-browser@kalindudc
 bb plugin install follow-thinking@kalindudc
+bb plugin install forage@kalindudc
 bb plugin install gruve@kalindudc
 bb plugin install lan-connect@kalindudc
 bb plugin install loom@kalindudc
@@ -32,6 +33,7 @@ plugin store.
 | [Better Browser](plugins/better-browser) | `better-browser` | Makes bb's Browser follow your real browser: sessions from the Chrome, Arc, Brave, Edge, Vivaldi or Firefox profile you pick flow into bb while that browser stays open, Okta, Google and Microsoft sign-in pages finish in your real browser where passkeys and Okta Verify work, and Cmd+click opens a link there. |
 | [Agent Commands](plugins/agent-commands) | `agent-commands` | Runs your prompt files from `~/.agents/commands` in any thread: type `!` for a menu of them, or type `/name` as in pi. Codex and Claude Code agents learn the typed form; pi expands it itself. |
 | [Follow Thinking](plugins/follow-thinking) | `follow-thinking` | Opens thinking blocks in the timeline automatically and keeps live thinking scrolled to its newest line. Toggle it from the thread header, a thread's actions menu or the command palette. |
+| [Forage](plugins/forage) | `forage` | Gives every agent web search and web fetch as bb's own tools, so a pi, Codex, Claude Code or ACP thread gets results in a real timeline row instead of a raw tool call. Keyless DuckDuckGo and Exa, Brave or SearXNG with a key, batch queries, recency and domain filters, readable markdown, GitHub-aware fetching, paging and passage search. |
 | [Gruve](plugins/gruve) | `gruve` | A gruvbox theme for coding: 0px corners, flat surfaces, a JetBrains Mono interface and a composer styled as a terminal prompt. Dark mode is gruvbox soft; light mode keeps gruvbox's ink on neutral paper instead of yellow. Pick it under Settings → Appearance. |
 | [Session Log](plugins/session-log) | `session-log` | Adds a thread side-panel tab with one flat, live, searchable log of everything the agent did: messages, thinking, commands with output and exit codes, tool calls, diffs and subagents. Open it with Mod+Shift+L. |
 | [Switchboard](plugins/switchboard) | `switchboard` | Replaces the sidebar thread list: your bb sections as coloured groups, children as trees, status at a glance, drag-and-drop organizing, status lanes and snooze. Choose it under Settings → Appearance → Sidebar. |
