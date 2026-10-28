@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { BLOB_MAX_BYTES, type HostInput, type HostMethod, type HostOutput } from "../src/host-contract";
 import * as ops from "../src/host/ops";
 import type { EnvironmentInfo, HostPort } from "../src/ports";
@@ -11,6 +11,9 @@ import { bringHome, carryTo, homeBranch, reviewedRef } from "../src/transport";
 import { specOf, type EngineCtx } from "../src/workers";
 import { makeCtx, seedProject, ticketOf, type EngineHarness } from "./helpers";
 import { mergeCommitsSince, restrictedGitBin } from "./restricted-git";
+
+// Real git in temporary repositories: a few seconds each when the machine is idle, so vitest's 5 s limit fails them under load.
+vi.setConfig({ testTimeout: 30_000 });
 
 const ENV: Record<string, string> = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
 const saved: Record<string, string | undefined> = {};

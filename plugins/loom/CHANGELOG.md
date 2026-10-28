@@ -2,6 +2,16 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.29.4 (2026-10-28)
+
+### Fixed
+
+- Loom can carry work onto a machine whose git serves the repository from elsewhere, with `.git` a file and no git directory behind it, such as an emulated git. 0.29.0 kept a carry's restart mark where `git rev-parse --git-path loom-carry` points, and on such a machine that is `.git/loom-carry` inside a file, so every carry there failed with `ENOTDIR`, `loom_resume` included. The mark now goes to the machine's temporary directory, keyed by the worktree, whenever the git directory is not a directory, so a carry that was cut short still starts again there.
+
+### Compatibility
+
+- No migration.
+
 ## 0.29.3 (2026-10-28)
 
 ### Fixed

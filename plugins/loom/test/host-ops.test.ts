@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -56,6 +57,9 @@ import {
   trialWorktree,
   worktreeState,
 } from "../src/host/ops";
+
+// Real git in temporary repositories: a few seconds each when the machine is idle, so vitest's 5 s limit fails them under load.
+vi.setConfig({ testTimeout: 30_000 });
 
 const ENV: Record<string, string> = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
 const AUTHOR_VARS = ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"];
@@ -2611,6 +2615,51 @@ describe("carrying a commit to a thread's own machine: carryStart, carryWrite, c
     put(worktree, "notes.txt", "mine\n");
     expect(await carryStart({ ...start, tree: sh(worktree, "rev-parse", "HEAD:keep") })).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("has uncommitted changes") });
     expect(readFileSync(join(worktree, "notes.txt"), "utf8")).toBe("mine\n");
+  });
+
+  it("keeps its mark outside the worktree on a machine whose git has no git directory, with .git a file, and still starts again over a carry cut short", async () => {
+    const { clone } = setup();
+    const checkout = clone();
+    sh(checkout, "switch", "-q", "-c", "loom/csv/csv-1-home");
+    put(checkout, "src/one.txt", "one\n");
+    const home = commitFile(checkout, "src/two.txt", "two\n");
+    const exported = await exportChanges({ worktree: checkout, base: "origin/main", head: home });
+    // A worktree whose .git is a file, under a git that names its git directory .git, as an emulated git does.
+    const owner = clone();
+    const worktree = join(scratch, `emulated-${counter++}`);
+    sh(owner, "worktree", "add", "-q", "--detach", worktree, "origin/main");
+    const emulated = join(scratch, `emulated-bin-${counter++}`);
+    mkdirSync(emulated);
+    writeFileSync(
+      join(emulated, "git"),
+      `#!/bin/sh
+if [ "$1" = -C ]; then cd "$2" || exit 128; shift 2; fi
+if [ "$1" = rev-parse ]; then case " $* " in *" --git-path "*)
+  shift
+  while [ $# -gt 0 ]; do
+    if [ "$1" = --git-path ]; then echo ".git/$2"; shift 2; else "${join(bin, "git")}" rev-parse "$1" || exit $?; shift; fi
+  done
+  exit 0;;
+esac; fi
+exec "${join(bin, "git")}" "$@"
+`,
+      { mode: 0o755 },
+    );
+    const outer = process.env.PATH;
+    process.env.PATH = `${emulated}:${outer}`;
+    try {
+      expect(sh(worktree, "rev-parse", "--git-path", "loom-carry")).toBe(".git/loom-carry");
+      const mark = join(tmpdir(), "loom-carry", createHash("sha256").update(realpathSync(worktree)).digest("hex"));
+      const start = { worktree, remote: "origin", baseBranch: "main", base: exported.base, tree: exported.tree };
+      expect(await carryStart(start)).toEqual({ outcome: "ok", present: false });
+      expect(existsSync(mark)).toBe(true);
+      await carryWrite({ worktree, path: "src/one.txt", mode: "100644", offset: 0, data: Buffer.from("one\n").toString("base64") });
+      expect(await carryStart(start)).toEqual({ outcome: "ok", present: false });
+      expect(await carryOut(checkout, worktree, exported)).toMatchObject({ outcome: "ok", tree: exported.tree });
+      expect(existsSync(mark)).toBe(false);
+    } finally {
+      process.env.PATH = outer;
+    }
   });
 
   it("starts again over a stacked carry cut short after its first commit, partly written or not, until its last tree is in", async () => {

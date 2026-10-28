@@ -3,6 +3,7 @@
 import { execFile, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { experimental_runVcsProcess, type ExperimentalVcsProcessPriority } from "@get-bb/plugin-sdk/host";
 import { z } from "zod";
@@ -740,13 +741,28 @@ function insideWorktree(worktree: string, path: string, create: boolean): string
 // Where a carry marks the worktree from the moment it resets it to the base until the tree it carries is in: that base,
 // that tree, and the commits it has made on the way, as a stacked ticket's carry makes two. What is uncommitted then, and
 // those commits, are the carry's own, so a carry that starts again after one was cut short, as by a host call that got no
-// answer, may reset them. In the worktree's git directory, which no commit reaches.
+// answer, may reset them. In the worktree's git directory, which no commit reaches, or, on a machine whose git serves
+// the repository from elsewhere with `.git` a file and no git directory behind it, in that machine's temporary directory,
+// keyed by the worktree, where a carry that starts again there finds it.
 interface CarryMark {
   base: string;
   tree: string;
   heads: string[];
 }
-const carryMarkOf = async (worktree: string, signal?: AbortSignal) => resolve(worktree, await git(worktree, ["rev-parse", "--git-path", "loom-carry"], { signal }));
+const carryMarkOf = async (worktree: string, signal?: AbortSignal): Promise<string> => {
+  const inGitDir = resolve(worktree, await git(worktree, ["rev-parse", "--git-path", "loom-carry"], { signal }));
+  if (isDirectory(dirname(inGitDir))) return inGitDir;
+  const dir = join(tmpdir(), "loom-carry");
+  mkdirSync(dir, { recursive: true });
+  return join(dir, createHash("sha256").update(realpathSync(worktree)).digest("hex"));
+};
+const isDirectory = (path: string): boolean => {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+};
 const readCarryMark = (path: string): CarryMark | null => (existsSync(path) ? parseJson<CarryMark>(readFileSync(path, "utf8")) : null);
 
 export async function carryStart(input: HostInput<"carryStart">, signal?: AbortSignal): Promise<HostOutput<"carryStart">> {

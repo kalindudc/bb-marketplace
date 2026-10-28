@@ -4,12 +4,15 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import * as ops from "../src/host/ops";
 import { land, runMergeQueue, settleMerges } from "../src/merge";
 import type { HostPort } from "../src/ports";
 import { specOf } from "../src/workers";
 import { makeCtx, reachApproved, seedProject, seedRepoProject, ticketOf, type Doc, type EngineHarness } from "./helpers";
+
+// Real git in temporary repositories: a few seconds each when the machine is idle, so vitest's 5 s limit fails them under load.
+vi.setConfig({ testTimeout: 30_000 });
 
 const saved: Record<string, string | undefined> = {};
 const sh = (cwd: string, ...args: string[]) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
@@ -206,7 +209,6 @@ describe("the integration merge against a real repository", () => {
     expect(existsSync(join(dataDir, "worktrees", "csv"))).toBe(false);
   });
 
-  // Real git across two repos and their remotes: about 3.5 s on an idle machine, so vitest's 5 s limit fails it under load.
   it("lands a multi-repo project directly: each repo's merged work, with its remote base merged in and its after_merge run on the result, reaches that repo's remote base", async () => {
     const web = makeRepo();
     const api = makeRepo("trunk");
@@ -253,5 +255,5 @@ describe("the integration merge against a real repository", () => {
     expect(sh(apiRemote, "ls-tree", "--name-only", "trunk").split("\n")).toEqual(["README.md", "api.txt", "upstream.txt"]);
     expect(sh(api, "rev-parse", "loom/csv^2")).toBe(moved);
     expect(readFileSync(checked, "utf8").trim().split("\n").at(-1)).toBe(apiHead);
-  }, 30_000);
+  });
 });
