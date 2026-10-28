@@ -26,6 +26,11 @@
       "description": "Plan, track, route, schedule, or automate work."
     },
     {
+      "id": "themes-and-appearance",
+      "displayName": "Themes & Appearance",
+      "description": "Personalize how bb looks and feels."
+    },
+    {
       "id": "utilities",
       "displayName": "Utilities",
       "description": "Small tools that make everyday work in bb smoother, such as keeping plugins up to date."

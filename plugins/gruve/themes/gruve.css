@@ -1,0 +1,233 @@
+/* Gruve: gruvbox for coding. Sharp corners, flat surfaces, monospace UI.
+   Dark is gruvbox "soft" (#32302f), a step lighter than stock gruvbox.
+   Light keeps gruvbox ink and accents on a neutral paper base instead of
+   the yellow #fbf1c7, with accents darkened to clear 4.5:1 as text.
+   It sets bb's tokens and styles bb's own composer; it never targets
+   another plugin's markup, so plugins such as Switchboard keep their UI
+   and only pick the colours up through bb's variables. */
+
+:root,
+.light {
+  --canvas: #f4f1e8;
+  --ink: #3c3836;
+
+  --card: #faf8f1;
+  --popover: #faf8f1;
+  --sidebar: #ebe7db;
+  --sidebar-accent: #e1dccd;
+  --secondary: #e6e1d3;
+  --accent: #e6e1d3;
+  --muted: #e1dccd;
+
+  --border: #d3ccba;
+  --border-hairline: #d8d2c2;
+  --border-seam: #d3ccba;
+  --sidebar-border: #d3ccba;
+  --input: #b3aa96;
+  --surface-recessed: rgba(60, 56, 54, 0.05);
+  --surface-recessed-solid: #ece8dc;
+
+  --primary: #7d520b;
+  --primary-foreground: #faf8f1;
+  --timeline-accent: #076678;
+  --file-accent: var(--timeline-accent);
+
+  --muted-foreground: #59524b;
+  --readback-foreground: #605951;
+  --subtle-foreground: #676057;
+
+  --destructive: #c8241d;
+  --destructive-foreground: #faf8f1;
+  --destructive-text: #9d0006;
+  --warning: #a63c06;
+  --warning-text: #a63c06;
+  --attention: #7e5719;
+  --attention-foreground: #faf8f1;
+  --success: #67620a;
+  --diff-added: #66620a;
+  --diff-removed: #9d0006;
+  --pr-merged: #8f3f71;
+
+  /* The terminal paints on --sidebar. Gruvbox's faded colours, darkened
+     where needed so every colour but black clears 4.5:1 on paper. */
+  --ansi-0: #1d2021;  --ansi-bg-fg-0: #faf8f1;
+  --ansi-1: #9d0006;  --ansi-bg-fg-1: #faf8f1;
+  --ansi-2: #6e6a10;  --ansi-bg-fg-2: #faf8f1;
+  --ansi-3: #8c5f18;  --ansi-bg-fg-3: #faf8f1;
+  --ansi-4: #076678;  --ansi-bg-fg-4: #faf8f1;
+  --ansi-5: #8f3f71;  --ansi-bg-fg-5: #faf8f1;
+  --ansi-6: #3e7252;  --ansi-bg-fg-6: #faf8f1;
+  --ansi-7: #5f574f;  --ansi-bg-fg-7: #faf8f1;
+  --ansi-8: #72665d;  --ansi-bg-fg-8: #faf8f1;
+  --ansi-9: #c8241d;  --ansi-bg-fg-9: #faf8f1;
+  --ansi-10: #6a6b1d; --ansi-bg-fg-10: #faf8f1;
+  --ansi-11: #836321; --ansi-bg-fg-11: #faf8f1;
+  --ansi-12: #3d7072; --ansi-bg-fg-12: #faf8f1;
+  --ansi-13: #925471; --ansi-bg-fg-13: #faf8f1;
+  --ansi-14: #4d7050; --ansi-bg-fg-14: #faf8f1;
+  --ansi-15: #3c3836; --ansi-bg-fg-15: #faf8f1;
+
+  /* bb's base .dark block also sets these; this sheet loads last, so these
+     win in both modes. */
+  --font-sans: "JetBrainsMono Nerd Font", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-mono: "JetBrainsMono Nerd Font", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-terminal: "JetBrainsMono Nerd Font Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --radius: 0px;
+  --radius-xs: 0px;
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+
+  /* Tailwind composes shadows into one box-shadow list, so "none" would
+     void the whole declaration; a zero transparent shadow is safe. */
+  --shadow-x: 0px;
+  --shadow-y: 0px;
+  --shadow-blur: 0px;
+  --shadow-spread: 0px;
+  --shadow-opacity: 0;
+  --shadow-color: transparent;
+  --shadow-2xs: 0 0 #0000;
+  --shadow-xs: 0 0 #0000;
+  --shadow-sm: 0 0 #0000;
+  --shadow: 0 0 #0000;
+  --shadow-md: 0 0 #0000;
+  --shadow-lg: 0 0 #0000;
+  --shadow-xl: 0 0 #0000;
+  --shadow-2xl: 0 0 #0000;
+  --shadow-lift: 0 0 #0000;
+  --pill-shadow: 0 0 #0000;
+}
+
+.dark {
+  --canvas: #32302f;
+  --ink: #ebdbb2;
+
+  --card: #3c3836;
+  --popover: #3c3836;
+  --sidebar: #2b2928;
+  --sidebar-accent: #3a3634;
+  --secondary: #433e3a;
+  --accent: #433e3a;
+  --muted: #45403c;
+
+  /* Corners are square and there are no shadows, so borders and the card
+     step carry all the separation: gruvbox bg1 cards, bg2 seams. */
+  --border: #5a524b;
+  --border-hairline: #504945;
+  --border-seam: #504945;
+  --sidebar-border: #504945;
+  --input: #6b6159;
+  --state-hover: color-mix(in oklab, var(--ink) 8%, transparent);
+  --surface-recessed: rgba(29, 32, 33, 0.35);
+  --surface-recessed-solid: #2a2827;
+
+  --primary: #fabd2f;
+  --primary-foreground: #282828;
+  --timeline-accent: #8fb3a5;
+  --file-accent: var(--timeline-accent);
+
+  --muted-foreground: #ccbfa0;
+  --readback-foreground: #c1b49a;
+  --subtle-foreground: #b9aa93;
+
+  --destructive: #fb7c61;
+  --destructive-foreground: #1d2021;
+  --destructive-text: #fd9d85;
+  --warning: #fe8019;
+  --warning-text: #fda14b;
+  --attention: #fabd2f;
+  --attention-foreground: #1d2021;
+  --success: #c3c440;
+  --diff-added: #b8bb26;
+  --diff-removed: #fd8270;
+  --pr-merged: #e5b1b2;
+
+  /* Normal colours are gruvbox-material's softer set, bright ones are
+     gruvbox's own, lifted where needed to clear 4.5:1. */
+  --ansi-0: #3c3836;  --ansi-bg-fg-0: #ebdbb2;
+  --ansi-1: #eb746a;  --ansi-bg-fg-1: #1d2021;
+  --ansi-2: #a9b665;  --ansi-bg-fg-2: #1d2021;
+  --ansi-3: #d8a657;  --ansi-bg-fg-3: #1d2021;
+  --ansi-4: #7daea3;  --ansi-bg-fg-4: #1d2021;
+  --ansi-5: #d3869b;  --ansi-bg-fg-5: #1d2021;
+  --ansi-6: #89b482;  --ansi-bg-fg-6: #1d2021;
+  --ansi-7: #a89984;  --ansi-bg-fg-7: #1d2021;
+  --ansi-8: #a49682;  --ansi-bg-fg-8: #1d2021;
+  --ansi-9: #fb6950;  --ansi-bg-fg-9: #1d2021;
+  --ansi-10: #b8bb26; --ansi-bg-fg-10: #1d2021;
+  --ansi-11: #fabd2f; --ansi-bg-fg-11: #1d2021;
+  --ansi-12: #83a598; --ansi-bg-fg-12: #1d2021;
+  --ansi-13: #e09fb0; --ansi-bg-fg-13: #1d2021;
+  --ansi-14: #8ec07c; --ansi-bg-fg-14: #1d2021;
+  --ansi-15: #ebdbb2; --ansi-bg-fg-15: #1d2021;
+}
+
+/* --radius: 0 squares every radius-derived utility; these use fixed radii.
+   rounded-full stays round on purpose: avatars, spinners, dots and pills. */
+:root :is(
+  .rounded,
+  .rounded-xl,
+  .sm\:rounded-xl,
+  .rounded-\[1px\],
+  .rounded-\[2px\],
+  .rounded-\[3px\],
+  .rounded-\[5px\],
+  .rounded-\[7px\],
+  .data-\[panel-shelf\=full\]\:rounded,
+  .data-\[sidebar-shelf\=open\]\:rounded
+) {
+  border-radius: 0;
+}
+
+:root .after\:rounded::after {
+  border-radius: 0;
+}
+
+/* The composer as a terminal prompt: a ❯ before the first line, an accent
+   rail and border while it has focus, and an outlined send button. The
+   hooks are the bundled composer's data-promptbox attributes; scoping to
+   its plugin root leaves a replacement composer plugin alone. */
+[data-bb-plugin="bb--composer"] form[data-promptbox]:focus-within {
+  border-color: var(--primary);
+  box-shadow: inset 2px 0 0 var(--primary);
+}
+
+[data-bb-plugin="bb--composer"] [data-promptbox-editor-scroll] {
+  padding-left: 2.125rem;
+}
+
+[data-bb-plugin="bb--composer"] [data-promptbox-editor-content] {
+  position: relative;
+}
+
+[data-bb-plugin="bb--composer"] [data-promptbox-editor-content]::before {
+  content: "❯";
+  position: absolute;
+  top: 0;
+  left: -1.125rem;
+  line-height: 1.7;
+  color: var(--primary);
+  pointer-events: none;
+}
+
+[data-bb-plugin="bb--composer"] [data-promptbox-editor-content] .ProseMirror {
+  caret-color: var(--primary);
+}
+
+[data-bb-plugin="bb--composer"] [data-promptbox-submit-action] {
+  border: 1px solid var(--primary);
+  background: transparent;
+  color: var(--primary);
+}
+
+[data-bb-plugin="bb--composer"] [data-promptbox-submit-action]:hover:not(:disabled) {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+[data-bb-plugin="bb--composer"] [data-promptbox-submit-action]:disabled {
+  border-color: var(--border);
+  color: var(--muted-foreground);
+}
