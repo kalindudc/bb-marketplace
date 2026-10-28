@@ -720,11 +720,12 @@ export async function refTip(input: HostInput<"refTip">, signal?: AbortSignal): 
   const sha = await commitOf(input.repo, input.ref, signal);
   if (sha === null) return missing(`${input.ref} is not in the repository.`);
   const tree = await git(input.repo, ["rev-parse", `${sha}^{tree}`], { signal });
-  if (input.contains === undefined) return { outcome: "ok", sha, tree };
+  const parents = input.parents === true ? { parents: (await git(input.repo, ["rev-list", "--parents", "-n", "1", sha], { signal })).split(/\s+/u).slice(1) } : {};
+  if (input.contains === undefined) return { outcome: "ok", sha, tree, ...parents };
   const args = ["merge-base", "--is-ancestor", input.contains, sha];
   const ancestor = await run(input.repo, args, signal);
   if (ancestor.code !== 0 && ancestor.code !== 1) throw failure(args, ancestor);
-  return { outcome: "ok", sha, tree, contains: ancestor.code === 0 };
+  return { outcome: "ok", sha, tree, contains: ancestor.code === 0, ...parents };
 }
 
 export async function detach(input: HostInput<"detach">, signal?: AbortSignal): Promise<HostOutput<"detach">> {

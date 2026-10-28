@@ -978,7 +978,7 @@ describe("loom_resume on a machine of its own", () => {
     const reply = await resumeWork(h.ctx, row.thread_id!);
     expect(reply).toContain("Loom put CSV-1's earlier work in your worktree");
     expect(h.store.thread(row.id)!.resume_json).toBeNull();
-    expect(h.host.calls.map((call) => `${call.method}@${call.hostId}`)).toEqual(["exportChanges@host_1", "carryStart@host_box1", "carryFinish@host_box1"]);
+    expect(h.host.calls.map((call) => `${call.method}@${call.hostId}`)).toEqual(["refTip@host_1", "refTip@host_1", "exportChanges@host_1", "carryStart@host_box1", "carryFinish@host_box1"]);
     expect(h.host.callsTo("exportChanges")).toEqual([{ worktree: "/repo", base: "origin/main", head: "home1" }]);
     const worktree = h.host.worktree(`/wt/${row.environment_id}`);
     expect(h.host.trees.get(worktree.head)).toBe("t1");

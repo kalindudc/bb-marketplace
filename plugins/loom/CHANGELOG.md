@@ -2,6 +2,16 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.30.3 (2026-10-28)
+
+### Fixed
+
+- Work brought home from another machine is measured from the base its worker had, not from the checkout's remote-tracking base branch. When the forge refuses the checkout's fetch of the base branch, for being too far behind, that ref stays hours old while each worker starts from a fresh one, and measuring from it counted every base commit in between as the ticket's. A reviewer's `loom_checkout` then carried thousands of files, ran past the 5-minute limit of its call and failed with "fetch failed" again and again; the reviewers' diff showed other people's changes; and the pull request's commit would have been built on the old base. The carry, the reviewers' diff and the pull request's commit now start from the parent of a head that came home, one commit on its worker's base. A stacked ticket, and a merge Loom made of commits someone else pushed, are measured as before.
+
+### Compatibility
+
+- No migration. `refTip` takes an optional `parents` and then returns the commit's parents.
+
 ## 0.30.2 (2026-10-28)
 
 ### Fixed

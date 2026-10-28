@@ -17,8 +17,8 @@ import { NOT_PARKED, freeReviewerSlots, idleAction, type Parked } from "./schedu
 import { deliverHandBacks, handBack } from "./slots";
 import type { Spec } from "./spec";
 import { LOOM_ACTOR } from "./states";
-import { carryTo, headCameHome, homeBranch, worktreeBaseOf } from "./transport";
-import { applyMove, baseOf, endLiveRows, endThread, freshBase, keptWorker, machineMoved, otherCheckouts, pauseProject, released, resolveEnvironment, resumeEnding, retryRateLimited, specOf, type EndReason, type EngineCtx, type TurnFailure } from "./workers";
+import { carryTo, headCameHome, homeBranch, workBaseOf, worktreeBaseOf } from "./transport";
+import { applyMove, endLiveRows, endThread, freshBase, keptWorker, machineMoved, otherCheckouts, pauseProject, released, resolveEnvironment, resumeEnding, retryRateLimited, specOf, type EndReason, type EngineCtx, type TurnFailure } from "./workers";
 
 export interface Finding {
   severity: "blocking" | "should-fix";
@@ -283,7 +283,7 @@ async function readDiff(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket:
   if (previous !== null && previous.until > ctx.now()) return null;
   try {
     const checkout = await repoCheckout(ctx, project, spec, ticket.repo);
-    const diff = await ctx.host.call(checkout.hostId, "diff", { repo: checkout.path, base: baseOf(spec, ticket), head: ticket.head_sha!, maxBytes: PATCH_BYTES });
+    const diff = await ctx.host.call(checkout.hostId, "diff", { repo: checkout.path, base: await workBaseOf(ctx, project, spec, ticket, ticket.head_sha!), head: ticket.head_sha!, maxBytes: PATCH_BYTES });
     waits.delete(ticket.id);
     return diff;
   } catch (error) {

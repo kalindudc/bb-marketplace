@@ -262,10 +262,11 @@ export const hostContract = defineRpcContract({
     input: z.object({ worktree: absPath, base: commit, message: z.string().max(20_000), author, tree: commit, paths: z.array(repoPath).max(50_000) }).strict(),
     output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), head: sha, tree: sha }).strict(), z.object({ outcome: z.literal("mismatch"), tree: sha }).strict()]),
   },
-  // The commit a ref points at, and its tree; with contains, whether that commit is it or one of its ancestors.
+  // The commit a ref points at, and its tree; with contains, whether that commit is it or one of its ancestors; with
+  // parents, that commit's parents.
   refTip: {
-    input: z.object({ repo: absPath, ref, contains: commit.optional() }).strict(),
-    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), sha, tree: sha, contains: z.boolean().optional() }).strict(), missing]),
+    input: z.object({ repo: absPath, ref, contains: commit.optional(), parents: z.boolean().optional() }).strict(),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), sha, tree: sha, contains: z.boolean().optional(), parents: z.array(sha).optional() }).strict(), missing]),
   },
   // git checkout --detach <sha> in a worktree that shares the checkout's objects, and the tree it then has.
   detach: {

@@ -28,6 +28,26 @@ export async function headCameHome(ctx: EngineCtx, project: ProjectRow, spec: Sp
   return reviewed.outcome === "ok" && reviewed.sha === ticket.head_sha;
 }
 
+/**
+ * What the ticket's work at `sha` is measured from on the project's checkout, for a carry, the reviewers' diff and the
+ * pull request's commit: the commit it is stacked on, else its repo's fresh base, except for work brought home from
+ * another machine, which is one commit on the base that machine had, so its parent. The checkout's remote-tracking base
+ * can be far older than that base when the forge refuses to fetch so far behind, and measuring from it would count every
+ * base commit in between as the ticket's.
+ */
+export async function workBaseOf(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow, sha: string): Promise<string> {
+  const stacked = stackOf(ticket)?.base ?? null;
+  if (stacked !== null) return stacked;
+  const fresh = freshBaseOf(spec, ticket.repo);
+  const checkout = await repoCheckout(ctx, project, spec, ticket.repo);
+  for (const ref of [reviewedRef(project.slug, ticket.key), `refs/heads/${homeBranch(project.slug, ticket.key)}`]) {
+    const tip = await ctx.host.call(checkout.hostId, "refTip", { repo: checkout.path, ref, parents: true });
+    // A merge Loom made there of commits someone else pushed has two parents and is measured from the fresh base.
+    if (tip.outcome === "ok" && tip.sha === sha) return tip.parents?.length === 1 ? tip.parents[0]! : fresh;
+  }
+  return fresh;
+}
+
 /** Whether the environment is on another machine than the project's checkout. */
 export const isRemote = (project: Pick<ProjectRow, "host_id">, environment: Pick<EnvironmentInfo, "hostId">): boolean => project.host_id !== null && environment.hostId !== project.host_id;
 
@@ -117,7 +137,7 @@ export async function carryTo(ctx: EngineCtx, project: ProjectRow, spec: Spec, t
   const fresh = freshBaseOf(spec, ticket.repo);
   const exportOf = (base: string, head: string): Promise<Exported> => ctx.host.call(checkout.hostId, "exportChanges", { worktree: checkout.path, base, head });
   const stacked = stackOf(ticket)?.base ?? null;
-  let steps = [await exportOf(fresh, sha)];
+  let steps = [await exportOf(stacked === null ? await workBaseOf(ctx, project, spec, ticket, sha) : fresh, sha)];
   if (stacked !== null && stacked !== sha) {
     const own = await exportOf(stacked, sha);
     if (own.base === stacked) steps = [await exportOf(fresh, stacked), own];

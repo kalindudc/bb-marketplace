@@ -7,7 +7,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { BLOB_MAX_BYTES, type HostInput, type HostMethod, type HostOutput } from "../src/host-contract";
 import * as ops from "../src/host/ops";
 import type { EnvironmentInfo, HostPort } from "../src/ports";
-import { bringHome, carryTo, homeBranch, reviewedRef } from "../src/transport";
+import { bringHome, carryTo, homeBranch, reviewedRef, workBaseOf } from "../src/transport";
 import { specOf, type EngineCtx } from "../src/workers";
 import { makeCtx, seedProject, ticketOf, type EngineHarness } from "./helpers";
 import { mergeCommitsSince, restrictedGitBin } from "./restricted-git";
@@ -143,6 +143,37 @@ describe("transport", () => {
     expect(sh(laptop, "rev-parse", reviewedRef("csv", "CSV-1"))).toBe(home.sha);
   });
 
+  it("measures work brought home from the base its worker had, not from the checkout's older remote-tracking ref, so a carry moves only the ticket's files", async () => {
+    const stale = sh(laptop, "rev-parse", "origin/main");
+    const other = clone();
+    put(other, "src/later.ts", "export const later = 1;\n");
+    sh(other, "add", "-A");
+    sh(other, "commit", "-q", "-m", "Main moves on");
+    sh(other, "push", "-q", "origin", "main");
+    const worker = clone();
+    const workerBase = sh(worker, "rev-parse", "HEAD");
+    put(worker, "src/a.ts", "export const a = 1;\n");
+    sh(worker, "add", "-A");
+    sh(worker, "commit", "-q", "-m", "CSV-1: Order rows");
+
+    const spec = specOf(h.store, project());
+    const home = await bringHome(ctx, project(), spec, ticketOf(h, "CSV-1"), on("host_box", worker), "submit");
+    expect(sh(laptop, "rev-parse", `${home.sha}^`)).toBe(workerBase);
+    // The forge refused the checkout's fetch of main, so its remote-tracking ref stays where it was.
+    sh(laptop, "update-ref", "refs/remotes/origin/main", stale);
+    expect(await workBaseOf(ctx, project(), spec, ticketOf(h, "CSV-1"), home.sha)).toBe(workerBase);
+    expect(await workBaseOf(ctx, project(), spec, ticketOf(h, "CSV-1"), stale)).toBe("origin/main");
+
+    const reviewer = clone();
+    host.calls = [];
+    const carried = await carryTo(ctx, project(), spec, ticketOf(h, "CSV-1"), home.sha, on("host_box", reviewer));
+    expect(carried).toEqual({ tree: home.tree });
+    expect(sh(reviewer, "rev-parse", "HEAD^{tree}")).toBe(home.tree);
+    const inputs = <M extends HostMethod>(method: M) => host.calls.filter((call) => call.method === method).map((call) => call.input as HostInput<M>);
+    expect(inputs("carryStart").map((input) => input.base)).toEqual([workerBase]);
+    expect(inputs("carryWrite").map((input) => input.path)).toEqual(["src/a.ts"]);
+  });
+
   it("names each transfer's uploads apart, so two bring-homes of one ticket never share a file", async () => {
     const worker = clone();
     put(worker, "src/a.ts", "export const a = 1;\n");
@@ -202,7 +233,7 @@ describe("transport", () => {
     const carried = await carryTo(ctx, project(), specOf(h.store, project()), ticketOf(h, "CSV-1"), sha, on("host_box", reviewer));
     expect(carried).toEqual({ tree: sh(laptop, "rev-parse", `${sha}^{tree}`) });
     expect(sh(reviewer, "rev-parse", "HEAD^{tree}")).toBe(carried.tree);
-    expect(host.methods("host_1")).toEqual(["exportChanges", "readBlob"]);
+    expect(host.methods("host_1")).toEqual(["refTip", "refTip", "exportChanges", "readBlob"]);
     expect(host.methods("host_box")).toEqual(["carryStart", "carryWrite", "carryFinish"]);
 
     host.calls = [];

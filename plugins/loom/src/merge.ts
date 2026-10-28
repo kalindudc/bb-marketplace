@@ -49,7 +49,7 @@ import { isForeign, readTip, TIP_WHAT, tipOutgrowsStack, tipRef, withMarkers, ty
 import { LOOM_ACTOR } from "./states";
 import { isWaking, releasedWorker, restoredSinceSubmit } from "./release";
 import { deliverHandBacks, handBack } from "./slots";
-import { carryTo, homeBranch, isRemote, reviewedRef } from "./transport";
+import { carryTo, homeBranch, isRemote, reviewedRef, workBaseOf } from "./transport";
 import { applyMove, baseOf, endLiveRows, endThread, pauseProject, released, resolveEnvironment, specOf, type EngineCtx } from "./workers";
 
 const AFTER_OPEN_MS = 5 * 60_000;
@@ -573,9 +573,9 @@ async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
   let src = current.head_sha!;
   let created = true;
   if (prSettings(spec).squash) {
-    const build = (head: TicketRow) => {
+    const build = async (head: TicketRow) => {
       const message = catchUp ? `${head.key}: merge ${caughtUp ?? "its new base"} (Loom)` : text.commit;
-      return ctx.host.call(hostId, "prCommit", { repo, remote, branch, base: baseOf(spec, head), head: head.head_sha!, message, ...(head.pushed_sha === null ? {} : { pushed: head.pushed_sha }), ...gitNetwork(settings) });
+      return ctx.host.call(hostId, "prCommit", { repo, remote, branch, base: await workBaseOf(ctx, project, spec, head, head.head_sha!), head: head.head_sha!, message, ...(head.pushed_sha === null ? {} : { pushed: head.pushed_sha }), ...gitNetwork(settings) });
     };
     let built = await build(current);
     // Someone else pushed to the branch: their commits are merged in first, again if the branch moves meanwhile.

@@ -779,7 +779,7 @@ describe("loom_checkout", () => {
     await expect(approve(h.ctx, reviewer.thread_id!, "ok")).rejects.toThrow(/Call loom_checkout first/u);
     h.host.calls = [];
     await checkOutReview(h.ctx, reviewer.thread_id!);
-    expect(h.host.calls.map((call) => call.method)).toEqual(["exportChanges", "carryStart", "carryFinish"]);
+    expect(h.host.calls.map((call) => call.method)).toEqual(["refTip", "exportChanges", "carryStart", "carryFinish"]);
     expect(h.host.callsTo("exportChanges")).toEqual([{ worktree: "/repo", base: "origin/main", head: "home1" }]);
     await approve(h.ctx, reviewer.thread_id!, "ok");
     expect(reviewsOf()[0]!.verdict).toBe("approved");
