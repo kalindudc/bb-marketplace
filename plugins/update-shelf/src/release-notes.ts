@@ -23,6 +23,8 @@ const empty = (unavailable: string | null): Changelog => ({
   commits: [],
   moreCommits: 0,
   commitsCapped: false,
+  changelogError: null,
+  commitsError: null,
   compareUrl: null,
   unavailable,
 });
@@ -55,11 +57,11 @@ export async function releaseNotes(input: ReleaseNotesInput, github: GitHub): Pr
   const relevant = touched.status === "fulfilled" && touched.value !== null ? touched.value : null;
   const commits = (relevant?.commits ?? []).slice(0, SHOWN_COMMITS);
 
-  const failures = [changelogFile, touched]
-    .filter((result): result is PromiseRejectedResult => result.status === "rejected")
-    .map((result) => (result.reason instanceof Error ? result.reason.message : String(result.reason)));
+  const changelogError = reason(changelogFile) ?? reason(packageFile);
+  const commitsError = reason(touched);
+  const firstError = changelogError ?? commitsError;
+  // With nothing to show, a part that failed means the answer is unknown, not that nothing changed.
   const nothingRead = notes.length === 0 && commits.length === 0;
-  const allFailed = changelogFile.status === "rejected" && (installed === null || touched.status === "rejected");
 
   return {
     toVersion,
@@ -67,12 +69,24 @@ export async function releaseNotes(input: ReleaseNotesInput, github: GitHub): Pr
     commits,
     moreCommits: (relevant?.commits.length ?? 0) - commits.length,
     commitsCapped: relevant?.capped ?? false,
+    changelogError,
+    commitsError,
     compareUrl:
       installed === null
         ? `${repoUrl(repo)}/commits/${input.candidateCommit}`
         : `${repoUrl(repo)}/compare/${installed}...${input.candidateCommit}`,
-    unavailable: nothingRead && allFailed ? `Couldn't read ${repo.owner}/${repo.name}: ${failures[0]}` : null,
+    unavailable: nothingRead && firstError !== null ? `Couldn't read ${repo.owner}/${repo.name}: ${firstError}` : null,
   };
+}
+
+/** Whether every part of a changelog was read, so it can be kept until the update changes. */
+export function isComplete(changelog: Changelog): boolean {
+  return changelog.unavailable === null && changelog.changelogError === null && changelog.commitsError === null;
+}
+
+function reason(result: PromiseSettledResult<unknown>): string | null {
+  if (result.status === "fulfilled") return null;
+  return result.reason instanceof Error ? result.reason.message : String(result.reason);
 }
 
 /** The commits that touched the plugin since the installed commit, newest first. */

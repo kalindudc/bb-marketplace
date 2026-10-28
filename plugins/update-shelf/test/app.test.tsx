@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
@@ -35,6 +36,8 @@ const CHANGELOG: Changelog = {
   commits: [],
   moreCommits: 0,
   commitsCapped: false,
+  changelogError: null,
+  commitsError: null,
   compareUrl: "https://github.com/o/r/compare/a...b",
   unavailable: null,
 };
@@ -250,6 +253,48 @@ describe("update progress", () => {
       />,
     );
     expect(screen.queryByRole("region", { name: "Plugin updates" })).toBeNull();
+  });
+
+  it("reads the changelog again when bb offers a newer version while it is open", async () => {
+    // Review finding: an open What's new kept the first candidate's notes after bb found a newer release.
+    await loadPluginApp(() => import("../app"));
+    const load = vi.fn(async () => CHANGELOG);
+    let setUpdates: (updates: PendingUpdate[]) => void = () => {};
+    function Harness() {
+      const [updates, set] = useState<PendingUpdate[]>([update("genui", "Generative UI")]);
+      setUpdates = set;
+      return (
+        <UpdatesGroup updates={updates} starting={new Set()} dismissed={new Set()} onUpdate={() => {}} onClear={() => {}} loadChangelog={load} />
+      );
+    }
+    const slot = renderSlot({ component: Harness }, {}, { pluginId: "update-shelf" });
+    fireEvent.click(screen.getByRole("button", { name: /What’s new/u }));
+    await screen.findByText("0.2.0 (2026-10-28)");
+    expect(load).toHaveBeenCalledTimes(1);
+    act(() => setUpdates([update("genui", "Generative UI", { candidate: { version: "genui-newer", label: "0.3.0" } })]));
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("button", { name: /What’s new/u }).getAttribute("aria-expanded")).toBe("true");
+    slot.lifecycle.unmount();
+  });
+
+  it("offers Try again when part of the changelog couldn't be read", async () => {
+    await loadPluginApp(() => import("../app"));
+    const partial: Changelog = { ...CHANGELOG, notes: [], commits: [{ sha: "c".repeat(40), title: "Fix it", url: "https://github.com/o/r/commit/c" }], changelogError: "rate limited" };
+    const load = vi.fn(async () => partial);
+    const slot = renderSlot(
+      {
+        component: () => (
+          <UpdatesGroup updates={[update("genui", "Generative UI")]} starting={new Set()} dismissed={new Set()} onUpdate={() => {}} onClear={() => {}} loadChangelog={load} />
+        ),
+      },
+      {},
+      { pluginId: "update-shelf" },
+    );
+    fireEvent.click(screen.getByRole("button", { name: /What’s new/u }));
+    expect(await screen.findByText(/Couldn’t read the changelog: rate limited Commits that changed this plugin:/u)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+    slot.lifecycle.unmount();
   });
 
   it("says where each update is in line", () => {

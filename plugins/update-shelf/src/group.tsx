@@ -226,7 +226,15 @@ function UpdateRow({
           <span className="min-w-0 break-words">{failure}</span>
         </p>
       ) : null}
-      {open ? <ChangelogView id={update.id} fromLabel={update.installed.label} load={loadChangelog} /> : null}
+      {open ? (
+        // Keyed by both versions: when bb offers a newer release while this is open, its changelog is read again.
+        <ChangelogView
+          key={`${update.installed.version}\u0000${update.candidate.version}`}
+          id={update.id}
+          fromLabel={update.installed.label}
+          load={loadChangelog}
+        />
+      ) : null}
     </li>
   );
 }
@@ -325,10 +333,25 @@ function ChangelogView({ id, fromLabel, load }: { id: string; fromLabel: string;
   }
 
   const { changelog } = loaded;
+  const partial = changelog.changelogError !== null || changelog.commitsError !== null;
+  const retry = partial ? (
+    <Button type="button" variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => setAttempt((n) => n + 1)}>
+      Try again
+    </Button>
+  ) : null;
   if (changelog.unavailable !== null) {
-    return <div className={cn(frame, "text-muted-foreground")}>{changelog.unavailable}</div>;
+    return (
+      <div className={cn(frame, "flex items-center gap-2 text-muted-foreground")}>
+        <span className="min-w-0 flex-1 break-words">{changelog.unavailable}</span>
+        {retry}
+      </div>
+    );
   }
   const commitCount = changelog.commits.length + changelog.moreCommits;
+  const lead =
+    changelog.changelogError !== null
+      ? `Couldn’t read the changelog: ${changelog.changelogError}`
+      : `No changelog entry since ${fromLabel}.`;
   const counted = `${commitCount}${changelog.commitsCapped ? "+" : ""} commit${commitCount === 1 && !changelog.commitsCapped ? "" : "s"}`;
   return (
     <div className={cn(frame, "space-y-3")}>
@@ -339,11 +362,12 @@ function ChangelogView({ id, fromLabel, load }: { id: string; fromLabel: string;
         </article>
       ))}
       {changelog.notes.length === 0 ? (
-        <p className="text-muted-foreground">
-          {commitCount === 0
-            ? `No changelog entry or commits since ${fromLabel}.`
-            : `No changelog entry since ${fromLabel}. Commits that changed this plugin:`}
+        <p className="break-words text-muted-foreground">
+          {commitCount === 0 ? `No changelog entry or commits since ${fromLabel}.` : `${lead} Commits that changed this plugin:`}
         </p>
+      ) : null}
+      {changelog.notes.length > 0 && changelog.commitsError !== null ? (
+        <p className="break-words text-muted-foreground">Couldn’t read the commits: {changelog.commitsError}</p>
       ) : null}
       {changelog.notes.length === 0 && changelog.commits.length > 0 ? (
         <ul className="space-y-1">
@@ -357,15 +381,18 @@ function ChangelogView({ id, fromLabel, load }: { id: string; fromLabel: string;
           ))}
         </ul>
       ) : null}
-      {changelog.compareUrl === null ? null : (
-        <UrlLink
-          href={changelog.compareUrl}
-          className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground hover:underline"
-        >
-          {commitCount > 0 ? `View ${counted} on GitHub` : "View on GitHub"}
-          <Icon name="ExternalLink" className="size-3" aria-hidden />
-        </UrlLink>
-      )}
+      <div className="flex items-center gap-2">
+        {changelog.compareUrl === null ? null : (
+          <UrlLink
+            href={changelog.compareUrl}
+            className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground hover:underline"
+          >
+            {commitCount > 0 ? `View ${counted} on GitHub` : "View on GitHub"}
+            <Icon name="ExternalLink" className="size-3" aria-hidden />
+          </UrlLink>
+        )}
+        {retry}
+      </div>
     </div>
   );
 }

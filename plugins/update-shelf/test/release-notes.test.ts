@@ -108,6 +108,42 @@ describe("releaseNotes", () => {
     expect(result.notes).toHaveLength(1);
     expect(result.commits).toEqual([]);
     expect(result.unavailable).toBeNull();
+    expect(result.commitsError).toBe("rate limited");
+    expect(result.changelogError).toBeNull();
+  });
+
+  it("says it couldn't read the commits, rather than that there are none, when the changelog has no entry", async () => {
+    // Review finding: a 404 for the changelog (null) plus a failed commit lookup read as "No changelog entry or
+    // commits since", and that false answer was cached. This happens for a private repository without gh.
+    const github = fakeGitHub(
+      {},
+      {
+        async commitDate() {
+          throw new Error("gh: Not Found (HTTP 404)");
+        },
+      },
+    );
+    const result = await releaseNotes(INPUT, github);
+    expect(result.notes).toEqual([]);
+    expect(result.commits).toEqual([]);
+    expect(result.commitsError).toBe("gh: Not Found (HTTP 404)");
+    expect(result.unavailable).toBe("Couldn't read o/r: gh: Not Found (HTTP 404)");
+  });
+
+  it("reports a changelog it couldn't read beside the commits it could", async () => {
+    const github = fakeGitHub(
+      {},
+      {
+        async file() {
+          throw new Error("rate limited");
+        },
+      },
+    );
+    const result = await releaseNotes(INPUT, github);
+    expect(result.commits).toHaveLength(2);
+    expect(result.changelogError).toBe("rate limited");
+    expect(result.commitsError).toBeNull();
+    expect(result.unavailable).toBeNull();
   });
 
   it("says why when nothing could be read", async () => {

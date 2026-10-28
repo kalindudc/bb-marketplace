@@ -2,6 +2,18 @@
 
 Notable changes to Update Shelf, newest first. Releases are tagged `update-shelf/vX.Y.Z` in this repository.
 
+## 0.2.1 (2026-10-28)
+
+### Fixed
+
+- What's new no longer says "No changelog entry or commits" when it couldn't read them. When the commits couldn't be read (for example in a private repository without the GitHub CLI signed in), or the changelog couldn't be read, it now says so with the reason and a Try again, and the partial result is no longer kept until bb restarts.
+- Only a source whose host is github.com itself is read from GitHub. A host or path that merely contains `github.com`, such as `notgithub.com` or `git.example.com/mirrors/github.com/…`, was read as a GitHub repository, which could show another project's changelog.
+- An open What's new reads the changelog again when bb offers a newer version while the page is open, instead of keeping the previous version's notes.
+
+### Changed
+
+- One runtime dependency, pinned: `zod` 4.6.6. `@radix-ui/react-slot` is gone; nothing used it.
+
 ## 0.2.0 (2026-10-28)
 
 ### Fixed

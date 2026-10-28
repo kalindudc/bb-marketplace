@@ -2,7 +2,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { rpcContract, type Changelog } from "./contract";
 import type { GitHub } from "./github";
 import { updateRows, type LabelMemory } from "./pending";
-import { releaseNotes } from "./release-notes";
+import { isComplete, releaseNotes } from "./release-notes";
 import { isCommit, refFromDisplay, semverFromRef } from "./versions";
 
 export interface PluginDeps {
@@ -47,6 +47,8 @@ export function createPlugin(deps: PluginDeps) {
             commits: [],
             moreCommits: 0,
             commitsCapped: false,
+            changelogError: null,
+            commitsError: null,
             compareUrl: null,
             unavailable: "No update is waiting for this plugin.",
           };
@@ -73,9 +75,10 @@ export function createPlugin(deps: PluginDeps) {
           );
           changelogs.set(key, pending);
           if (changelogs.size > CHANGELOG_CACHE_LIMIT) changelogs.delete(changelogs.keys().next().value!);
+          // Keep only a changelog read in full; anything that failed is read again next time.
           pending.then(
             (value) => {
-              if (value.unavailable !== null) changelogs.delete(key);
+              if (!isComplete(value)) changelogs.delete(key);
             },
             () => changelogs.delete(key),
           );

@@ -36,11 +36,43 @@ export class NotFoundError extends Error {}
 /** Signals that a transport cannot be used at all, so the next one should be tried. */
 export class TransportUnavailableError extends Error {}
 
-/** owner and name from any of bb's git source forms, or null when the source is not on github.com. */
+const GITHUB_OWNER = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/u;
+const GITHUB_REPO = /^[A-Za-z0-9._-]+$/u;
+
+/**
+ * owner and name from any of bb's git source forms, or null unless the source's host is github.com itself.
+ * Handles URLs (https, ssh, git), scp-style "git@github.com:owner/repo", a bare "github.com/owner/repo", bb's "git:"
+ * prefix, and the "@ref (commit)" bb appends when it shows a resolved source.
+ */
 export function parseGitHubRepo(source: string): GitHubRepo | null {
-  const match = /github\.com[/:]([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+?)(?:\.git)?(?=$|[@\s#?/])/u.exec(source);
-  if (match === null) return null;
-  return { owner: match[1]!, name: match[2]! };
+  let text = source.trim().split(/\s/u)[0] ?? "";
+  if (/^git:(?!\/\/)/iu.test(text)) text = text.slice("git:".length);
+
+  let host: string;
+  let path: string;
+  const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//iu.test(text);
+  if (hasScheme || /^github\.com\//iu.test(text)) {
+    let url: URL;
+    try {
+      url = new URL(hasScheme ? text : `https://${text}`);
+    } catch {
+      return null;
+    }
+    host = url.hostname;
+    path = url.pathname;
+  } else {
+    const scp = /^(?:[^@/:\s]+@)?([^@/:\s]+):(.+)$/u.exec(text);
+    if (scp === null) return null;
+    host = scp[1]!;
+    path = scp[2]!;
+  }
+  if (host.toLowerCase() !== "github.com") return null;
+
+  const [owner, repo] = path.replace(/^\/+/u, "").split("/");
+  const name = repo?.split(/[@#?]/u)[0]?.replace(/\.git$/u, "");
+  if (owner === undefined || name === undefined || !GITHUB_OWNER.test(owner) || !GITHUB_REPO.test(name)) return null;
+  if (name === "." || name === "..") return null;
+  return { owner, name };
 }
 
 export function repoUrl(repo: GitHubRepo): string {

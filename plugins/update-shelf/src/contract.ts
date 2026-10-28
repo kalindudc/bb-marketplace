@@ -54,8 +54,12 @@ export const changelogSchema = z.object({
   moreCommits: z.number().int().nonnegative(),
   /** GitHub returned a full page, so there may be more commits than were counted. */
   commitsCapped: z.boolean(),
+  /** Why the release's CHANGELOG.md or package.json couldn't be read; the rest is still shown. */
+  changelogError: z.string().nullable(),
+  /** Why the plugin's commits couldn't be read; the rest is still shown. */
+  commitsError: z.string().nullable(),
   compareUrl: z.string().nullable(),
-  /** Why nothing could be read, when nothing could. */
+  /** Why there is nothing to show: the source isn't on GitHub, or nothing could be read. */
   unavailable: z.string().nullable(),
 });
 export type Changelog = z.infer<typeof changelogSchema>;

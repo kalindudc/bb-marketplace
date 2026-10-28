@@ -19,9 +19,34 @@ describe("parseGitHubRepo", () => {
     expect(parseGitHubRepo("https://github.com/acme/notes")).toEqual({ owner: "acme", name: "notes" });
   });
 
+  it("reads the other git URL forms", () => {
+    const expected = { owner: "acme", name: "notes" };
+    expect(parseGitHubRepo("ssh://git@github.com/acme/notes.git")).toEqual(expected);
+    expect(parseGitHubRepo("git://github.com/acme/notes.git")).toEqual(expected);
+    expect(parseGitHubRepo("git:github.com/acme/notes@main")).toEqual(expected);
+    expect(parseGitHubRepo("https://GitHub.com/acme/notes")).toEqual(expected);
+    expect(parseGitHubRepo("https://user@github.com/acme/notes.git")).toEqual(expected);
+  });
+
   it("ignores sources that are not on GitHub", () => {
     expect(parseGitHubRepo("npm:bb-plugin-notes@1.0.0")).toBeNull();
     expect(parseGitHubRepo("git:https://gitlab.com/acme/notes.git@main")).toBeNull();
+  });
+
+  it("only takes github.com itself as the host, not a host or path that contains it", () => {
+    // Review finding: the pattern matched github.com anywhere, so these read as github.com/acme/notes and the
+    // changelog came from an unrelated public repository.
+    expect(parseGitHubRepo("https://notgithub.com/acme/notes.git")).toBeNull();
+    expect(parseGitHubRepo("git@internal-github.com:acme/notes.git")).toBeNull();
+    expect(parseGitHubRepo("https://github.com.evil.example/acme/notes")).toBeNull();
+    expect(parseGitHubRepo("https://git.example.com/github.com/acme/notes.git")).toBeNull();
+    expect(parseGitHubRepo("git:https://git.example.com/mirrors/github.com/acme/notes.git@v1.0.0 (0123456789ab)")).toBeNull();
+  });
+
+  it("refuses a path that is not an owner and a repository", () => {
+    expect(parseGitHubRepo("https://github.com/acme")).toBeNull();
+    expect(parseGitHubRepo("https://github.com/-acme/notes")).toBeNull();
+    expect(parseGitHubRepo("not a url")).toBeNull();
   });
 });
 

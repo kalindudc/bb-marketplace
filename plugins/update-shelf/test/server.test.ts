@@ -96,6 +96,28 @@ describe("update-shelf backend", () => {
     expect(read.notes).toHaveLength(1);
   });
 
+  it("reads the commits again when they failed, though the changelog read fine", async () => {
+    let fail = true;
+    const { harness } = setup({
+      github: {
+        async file() {
+          return "## [0.2.6]\n- Animations.\n";
+        },
+        async commitDate() {
+          if (fail) throw new Error("gh: Not Found (HTTP 404)");
+          return "2026-10-21T12:00:00Z";
+        },
+      },
+    });
+    const failed = (await harness.behavior.callRpc("changelog", { id: "genui" })) as { commits: unknown[]; commitsError: string | null };
+    expect(failed.commits).toEqual([]);
+    expect(failed.commitsError).toMatch(/404/u);
+    fail = false;
+    const read = (await harness.behavior.callRpc("changelog", { id: "genui" })) as { commits: unknown[]; commitsError: string | null };
+    expect(read.commitsError).toBeNull();
+    expect(read.commits).toHaveLength(1);
+  });
+
   it("answers plainly for a plugin with no waiting update", async () => {
     const { harness } = setup();
     const result = (await harness.behavior.callRpc("changelog", { id: "loom" })) as { unavailable: string };
