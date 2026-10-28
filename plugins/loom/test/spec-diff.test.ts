@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseSpec } from "../src/spec";
-import { listSteps, sectionOf, specDiff, textSteps, touches, type SpecChange } from "../src/spec-diff";
+import { listSteps, operationalChanges, sectionOf, specDiff, textSteps, touches, type SpecChange } from "../src/spec-diff";
 import { specChanges } from "../src/spec-paths";
 import { specToml, type Doc } from "./helpers";
 
@@ -135,5 +135,81 @@ describe("specDiff", () => {
 describe("sectionOf", () => {
   it("puts tickets, the goal and guardrails, and everything else in their sections", () => {
     expect(["ticket[a].scope[0]", "project.goal", "project.non_goals[2]", "review.rubric", "project.base", "review.approvals", "merge.strategy"].map(sectionOf)).toEqual(["tickets", "guardrails", "guardrails", "guardrails", "settings", "settings", "settings"]);
+  });
+});
+
+describe("operationalChanges", () => {
+  const repos = (doc: Doc) => {
+    doc.merge = { strategy: "pr" };
+    doc.repo = [
+      { name: "web", project: "proj_web" },
+      { name: "api", project: "proj_api", base: "trunk" },
+    ];
+    doc.ticket[0].repo = "web";
+    doc.ticket[1].repo = "api";
+    doc.ticket[1].depends_on = [];
+  };
+  const multi = spec(repos);
+  const onPr = (doc: Doc) => {
+    doc.merge = { strategy: "pr" };
+    doc.environment = { provider: "example-env", inputs: { size: "small" } };
+  };
+  const prBase = spec(onPr);
+  const changed = (edit: (doc: Doc) => void, from = base, setup?: (doc: Doc) => void) =>
+    operationalChanges(
+      from,
+      spec((doc) => {
+        setup?.(doc);
+        edit(doc);
+      }),
+    );
+
+  it("lists the paths of a version that changes only forge, environments, agents, budget, merge settings other than the strategy, branch and remote, the checks' timeout and CI", () => {
+    expect(changed((doc) => (doc.merge.forge = { kind: "command", open: "open.sh", state: "state.sh", feedback: "feedback.sh" }))).toEqual(["merge.forge.kind", "merge.forge.open", "merge.forge.state", "merge.forge.feedback"]);
+    expect(changed((doc) => Object.assign(doc.agents, { max_workers: 4, worker: { provider: "pi", model: "m" } }))).toEqual(["agents.max_workers", "agents.worker.provider", "agents.worker.model"]);
+    expect(changed((doc) => (doc.budget = { max_tokens: 9_000_000, deadline: "2030-01-01" }))).toEqual(["budget.max_tokens", "budget.deadline"]);
+    expect(changed((doc) => (doc.environment = { provider: "git-worktree", inputs: { size: "large" } }))).toEqual(["environment.provider", "environment.inputs.size"]);
+    expect(changed((doc) => Object.assign(doc.merge, { draft: false, max_fix_rounds: 8, checks_queued_minutes: 10 }), prBase, onPr)).toEqual(["merge.draft", "merge.max_fix_rounds", "merge.checks_queued_minutes"]);
+    expect(changed((doc) => (doc.merge.worktree = { command: "prepare.sh" }))).toEqual(["merge.worktree.command"]);
+    expect(changed((doc) => Object.assign(doc.checks, { timeout_minutes: 25, ci: false }), prBase, onPr)).toEqual(["checks.timeout_minutes", "checks.ci"]);
+    expect(changed((doc) => (doc.ticket[1].environment = { inputs: { size: "large" } }), prBase, onPr)).toEqual(["ticket[csv-export].environment.inputs.size"]);
+    expect(changed((doc) => Object.assign(doc.repo[1], { forge: { kind: "gh" }, ci: false, environment: { provider: "git-worktree" } }), multi, repos)).toEqual(["repo[1].ci", "repo[1].forge.kind", "repo[1].environment.provider"]);
+    expect(changed((doc) => Object.assign(doc.merge, { refresh_behind: 5000 }), multi, repos)).toEqual(["merge.refresh_behind"]);
+    expect(changed((doc) => (doc.repo[0].refresh_behind = 200), multi, repos)).toEqual(["repo[0].refresh_behind"]);
+    expect(changed((doc) => (doc.merge.git_network_timeout_seconds = 300))).toEqual(["merge.git_network_timeout_seconds"]);
+    expect(changed((doc) => (doc.repo[1].git_network_timeout_seconds = 300), multi, repos)).toEqual(["repo[1].git_network_timeout_seconds"]);
+  });
+
+  it("is null when anything else changed, or nothing did", () => {
+    expect(operationalChanges(base, base)).toBeNull();
+    for (const edit of [
+      (doc: Doc) => (doc.merge.strategy = "pr"),
+      (doc: Doc) => (doc.merge.branch = "loom/other"),
+      (doc: Doc) => (doc.merge.remote = "upstream"),
+      (doc: Doc) => (doc.project.goal = "Let people export their orders as a CSV file, and more."),
+      (doc: Doc) => (doc.project.done_when = ["The export works"]),
+      (doc: Doc) => (doc.checks.commands = ["npm run lint"]),
+      (doc: Doc) => (doc.checks.after_merge = ["npm test"]),
+      (doc: Doc) => (doc.scope = { protected: ["db/**"] }),
+      (doc: Doc) => (doc.review = { approvals: 2 }),
+      (doc: Doc) => (doc.ticket[0].title = "Rows"),
+      (doc: Doc) => doc.ticket.push({ ref: "csv-docs", title: "Docs", body: "Write them.", acceptance: ["WHEN built THE SYSTEM SHALL list it"], scope: ["docs/**"] }),
+      (doc: Doc) => {
+        doc.agents.max_workers = 4;
+        doc.ticket[0].priority = 0;
+      },
+    ]) {
+      expect(changed(edit), edit.toString()).toBeNull();
+    }
+    for (const edit of [
+      (doc: Doc) => (doc.repo[1].base = "main"),
+      (doc: Doc) => (doc.repo[1].project = "proj_other"),
+      (doc: Doc) => (doc.repo[1].checks = ["make test"]),
+      (doc: Doc) => (doc.repo[1].protected = ["vendor/**"]),
+      (doc: Doc) => doc.repo.push({ name: "docs", project: "proj_docs" }),
+      (doc: Doc) => doc.repo.reverse(),
+    ]) {
+      expect(changed(edit, multi, repos), edit.toString()).toBeNull();
+    }
   });
 });

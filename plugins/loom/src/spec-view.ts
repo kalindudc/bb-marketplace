@@ -1,5 +1,5 @@
 // One spec version as the Spec page reads it: the parsed spec, what it changed, the notes the human sent on it and Loom's reviews.
-import type { Store } from "./db/store";
+import type { SpecReviewSkip, Store } from "./db/store";
 import { LoomError, type Projects, type SpecView } from "./projects";
 import { scopeOverlaps, validateSemantics, type Spec } from "./spec";
 import { changedAt, specChanges, type SpecChanges, type SpecNote } from "./spec-paths";
@@ -39,10 +39,12 @@ export interface SpecVersionView {
 export interface SpecReviewRound {
   version: number;
   round: number;
-  state: "reviewing" | "approved" | "changes_requested" | "failed";
+  state: "reviewing" | "approved" | "changes_requested" | "failed" | "skipped";
   summary: string | null;
   findings: SpecFinding[];
   reason: string | null;
+  /** Why a skipped review skipped: the version it was compared with and the operational paths it changed. */
+  skip: SpecReviewSkip | null;
   startedAt: number;
   endedAt: number | null;
 }
@@ -96,6 +98,7 @@ export function specVersionView(deps: { store: Store; projects: Projects }, slug
         summary: row.summary,
         findings: JSON.parse(row.findings_json) as SpecFinding[],
         reason: row.reason,
+        skip: row.skip_json === null ? null : (JSON.parse(row.skip_json) as SpecReviewSkip),
         startedAt: row.started_at,
         endedAt: row.ended_at,
       })),

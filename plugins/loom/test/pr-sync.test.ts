@@ -217,6 +217,31 @@ describe("syncing a project's pull requests", () => {
     expect(both.message).toBe("Read 2 pull requests: CSV-1 merged and 1 is still open.");
   });
 
+  it("says a stacked pull request the forge closed with the branch it built on waits for its new one, and reads that ticket again only once it has one", async () => {
+    await seedProject(h, pr);
+    await open("CSV-1");
+    await open("CSV-2");
+    const first = ticketOf(h, "CSV-1");
+    expect(ticketOf(h, "CSV-2").pr_base).toBe(first.pr_branch);
+    h.host.prStates.set(URL, "MERGED");
+    h.host.prStates.set("https://github.com/acme/shop/pull/2", "CLOSED");
+    h.host.remoteBranches.delete(first.pr_branch!);
+
+    const result = await h.engine.syncPullRequests("csv");
+    expect(ticketOf(h, "CSV-2")).toMatchObject({ state: "pr_open", pr_url: null });
+    expect(result).toEqual({
+      slug: "csv",
+      tickets: [
+        { key: "CSV-1", state: "done", outcome: "merged", detail: null },
+        { key: "CSV-2", state: "pr_open", outcome: "replacing", detail: null },
+      ],
+      message: "Read 2 pull requests: CSV-1 merged and CSV-2's pull request closed with the branch it built on, and Loom opens a new one.",
+      problem: false,
+    });
+    expect(syncMessage([{ key: "CSV-2", state: "pr_open", outcome: "replacing", detail: null }])).toBe("CSV-2's pull request closed with the branch it built on, so Loom let go of it and opens a new one.");
+    expect((await refusal(() => h.engine.syncPullRequests("csv", { key: "CSV-2" }))).message).toBe("CSV-2 has no pull request for Loom to read: Loom let go of the one the forge closed with the branch it built on, and opens a new one.");
+  });
+
   it("refuses a project it cannot read pull requests for, and a ticket without an open pull request", async () => {
     expect((await refusal(() => h.engine.syncPullRequests("nope"))).code).toBe("loom_not_found");
 

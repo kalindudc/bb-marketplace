@@ -1158,4 +1158,15 @@ describe("summaries", () => {
       ["CSV-3", '["CSV-2","CSV-1"]'],
     ]);
   });
+
+  it("keeps each ticket's rollout with its ticket refs turned into keys and its milestone refs as they are", async () => {
+    await propose((doc) => {
+      doc.merge = { strategy: "pr" };
+      doc.rollout = { milestone: [{ ref: "traffic-low", title: "Old traffic is near zero" }] };
+      doc.ticket[1].rollout = { stage: "migrate", requires_live: ["csv-model", "traffic-low"], dark: true };
+    });
+    await projects.approve("csv", "human");
+    const tickets = store.tickets(store.projectBySlug("csv")!.id);
+    expect(tickets.map((ticket) => ticket.rollout_json)).toEqual([null, JSON.stringify({ stage: "migrate", requires_live: ["CSV-1", "traffic-low"], dark: true })]);
+  });
 });

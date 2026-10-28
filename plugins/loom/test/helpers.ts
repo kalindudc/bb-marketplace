@@ -320,6 +320,8 @@ export interface FakeWorktree {
   changed: string[];
   /** Whether a worktreeState with baseTree finds that tree on HEAD's first-parent line; yes when unset. */
   onBase?: boolean;
+  /** A merge someone began in it and did not finish. */
+  unfinishedMerge?: boolean;
 }
 
 /** The host entry with scripted results. Worktrees keep a head, a dirty flag and a changed list that tests edit. */
@@ -334,6 +336,8 @@ export class FakeHost implements HostPort {
   onExec: ((input: HostInput<"exec">, worktree: FakeWorktree) => void) | null = null;
   /** Results for any method, used in order before the defaults; an Error is thrown. */
   scripted: Partial<Record<HostMethod, unknown[]>> = {};
+  /** Errors thrown, in order, after the call did its work, as when its answer got lost on the way back. */
+  lost: Partial<Record<HostMethod, Error[]>> = {};
   /** The merges made in each worktree, oldest first: what `merge` reports as already merged, and what `resetHard` undoes. */
   merges = new Map<string, Array<{ ref: string; before: string; sha: string }>>();
   prStates = new Map<string, "OPEN" | "MERGED" | "CLOSED">();
@@ -361,15 +365,21 @@ export class FakeHost implements HostPort {
   /** What prFeedback answers, by pull request URL; a missing entry is an open pull request with no checks or feedback. */
   feedback = new Map<string, Partial<Extract<HostOutput<"prFeedback">, { outcome: "ok" }>>>();
   /** What prBatch reports of each pull request besides its state, by URL. prCreate keeps its base and draft flag and prRetarget its new base; the rest is not a draft, with no review decision and no base. */
-  prMeta = new Map<string, Partial<Pick<PrBatchPull, "draft" | "review" | "base">>>();
+  prMeta = new Map<string, Partial<Pick<PrBatchPull, "draft" | "review" | "base" | "mergeable">>>();
   /** Pull requests prBatch leaves out of its answer, by URL. */
   missingPrs = new Set<string>();
+  /** Each pull request's title and description as the forge has them, by URL: prCreate and prEdit set them, and prBatch and prFeedback read them. */
+  texts = new Map<string, { title: string | null; body: string | null }>();
   private squashes = 0;
+  /** The base each commit prCommit built was given, for its same-tree shortcut: a tip built on another base lacks this one. */
+  private builtOn = new Map<string, string>();
   private stacks = 0;
   /** Each branch stackBase pointed, at the commit it built. */
   stackBranches = new Map<string, string>();
   /** The tip fetchBranch reports for the remote's base branch. Every integration branch starts at base000, so base000 means it has not moved. */
   remoteBase = "base000";
+  /** How many commits of the remote's base branch behindBase counts each commit lacking; a missing entry lacks none. */
+  behind = new Map<string, number | null>();
   /** The refs importCommit pointed on the checkout, at the commits it made. */
   refs = new Map<string, string>();
   /** "a..b" when commit a is an ancestor of commit b, for refTip's contains; a commit always contains itself. */
@@ -385,7 +395,7 @@ export class FakeHost implements HostPort {
   }
 
   private feedbackOf(url: string): PrFeedbackOk {
-    return { outcome: "ok", state: this.prStates.get(url) ?? "OPEN", head: "sq1", author: "kalindudc", checks: [], items: [], ...this.feedback.get(url) };
+    return { outcome: "ok", state: this.prStates.get(url) ?? "OPEN", head: "sq1", author: "kalindudc", checks: [], items: [], ...this.texts.get(url), ...this.feedback.get(url) };
   }
 
   worktree(path: string): FakeWorktree {
@@ -406,7 +416,10 @@ export class FakeHost implements HostPort {
       if (next instanceof Error) throw next;
       return next as HostOutput<M>;
     }
-    return (await this.handle(method, input)) as HostOutput<M>;
+    const output = (await this.handle(method, input)) as HostOutput<M>;
+    const lost = this.lost[method]?.shift();
+    if (lost !== undefined) throw lost;
+    return output;
   }
 
   private async handle(method: HostMethod, input: unknown): Promise<unknown> {
@@ -421,7 +434,15 @@ export class FakeHost implements HostPort {
       case "worktreeState": {
         const { worktree, baseTree } = input as HostInput<"worktreeState">;
         const state = this.worktree(worktree);
-        return { branch: state.branch, head: state.head, tree: this.trees.get(state.head) ?? state.head, dirty: state.dirty, changed: [...state.changed], ...(baseTree === undefined ? {} : { onBase: state.onBase ?? true }) };
+        return {
+          branch: state.branch,
+          head: state.head,
+          tree: this.trees.get(state.head) ?? state.head,
+          dirty: state.dirty,
+          changed: [...state.changed],
+          ...(state.unfinishedMerge === true ? { unfinishedMerge: true } : {}),
+          ...(baseTree === undefined ? {} : { onBase: state.onBase ?? true }),
+        };
       }
       case "exportChanges": {
         const { worktree, head } = input as HostInput<"exportChanges">;
@@ -517,13 +538,15 @@ export class FakeHost implements HostPort {
       case "fetchBranch":
         return { outcome: "ok", sha: this.remoteBase };
       case "prCommit": {
-        const { branch, head, pushed } = input as HostInput<"prCommit">;
+        const { branch, base, head, pushed } = input as HostInput<"prCommit">;
         const tip = this.foreign.get(branch) ?? this.remoteBranches.get(branch) ?? null;
         const tree = this.trees.get(head) ?? head;
-        if (tip !== null && (this.trees.get(tip) ?? tip) === tree) return { outcome: "ok", sha: tip, created: false };
+        const hasBase = tip === null || !this.builtOn.has(tip) || this.builtOn.get(tip) === base;
+        if (tip !== null && hasBase && (this.trees.get(tip) ?? tip) === tree) return { outcome: "ok", sha: tip, created: false };
         if (tip !== null && this.foreign.has(branch) && tip !== pushed && tip !== head && !this.ancestry.has(`${tip}..${head}`)) return { outcome: "diverged", tip };
         const sha = `sq${++this.squashes}`;
         this.trees.set(sha, tree);
+        this.builtOn.set(sha, base);
         return { outcome: "ok", sha, created: true };
       }
       case "stackBase": {
@@ -549,6 +572,12 @@ export class FakeHost implements HostPort {
         this.refs.set(ref, tip);
         return { outcome: "ok", sha: tip, tree: this.trees.get(tip) ?? tip, mainBase: this.tipBases.get(tip) ?? null };
       }
+      case "behindBase": {
+        const { shas } = input as HostInput<"behindBase">;
+        return { outcome: "ok", tip: this.remoteBase, behind: shas.map((sha) => ({ sha, commits: this.behind.has(sha) ? this.behind.get(sha)! : 0 })) };
+      }
+      case "remoteBranch":
+        return { outcome: "ok", sha: this.remoteBranches.get((input as HostInput<"remoteBranch">).branch) ?? null };
       case "pointRefs": {
         const { sha, refs } = input as HostInput<"pointRefs">;
         for (const name of refs) this.refs.set(name, sha);
@@ -580,16 +609,26 @@ export class FakeHost implements HostPort {
             continue;
           }
           const read = feedback ? this.feedbackOf(url) : null;
-          pulls.push({ number, state: read?.state ?? this.prStates.get(url) ?? "OPEN", draft: false, review: null, base: null, ...this.prMeta.get(url), feedback: read });
+          pulls.push({ number, state: read?.state ?? this.prStates.get(url) ?? "OPEN", draft: false, review: null, base: null, ...this.prMeta.get(url), ...this.texts.get(url), feedback: read });
         }
         return { outcome: "ok", pulls, missing };
       }
       case "prCreate": {
-        const { base, draft } = input as HostInput<"prCreate">;
+        const { base, draft, title, body } = input as HostInput<"prCreate">;
         const url = `https://github.com/acme/shop/pull/${++this.prs}`;
         this.prStates.set(url, "OPEN");
         this.prMeta.set(url, { base, draft });
+        this.texts.set(url, { title, body });
         return { outcome: "ok", url };
+      }
+      case "prEdit": {
+        const { url, title, body } = input as HostInput<"prEdit">;
+        this.texts.set(url, { title, body });
+        return { outcome: "ok" };
+      }
+      case "prReply": {
+        const { url, kind, resolve } = input as HostInput<"prReply">;
+        return { outcome: "ok", url: `${url}#reply`, resolved: resolve && kind === "thread" };
       }
       case "prState":
         return { outcome: "ok", state: this.prStates.get((input as HostInput<"prState">).url) ?? "OPEN" };
@@ -707,16 +746,18 @@ export interface EngineHarness {
   kicks: { count: number };
 }
 
-export function makeCtx(): EngineHarness {
+/** `db` is the store's database, for a test that opens a second store over it, as a reload does. */
+export function makeCtx(): EngineHarness & { db: Database.Database } {
   const clock = new Clock();
-  const store = new Store(makeDb(), clock.now);
+  const db = makeDb();
+  const store = new Store(db, clock.now);
   const bb = new FakePort();
   bb.addThread("thr_plan", "idle");
   const host = new FakeHost();
   const projects = new Projects({ store, bb, now: clock.now, host });
   const kicks = { count: 0 };
   const ctx: EngineCtx = { store, bb, now: clock.now, host, kick: () => void (kicks.count += 1), forgeBackoffs: new Map() };
-  return { ctx, clock, store, bb, host, projects, kicks };
+  return { ctx, clock, db, store, bb, host, projects, kicks };
 }
 
 /**
@@ -790,7 +831,7 @@ export async function startLateWorker(h: EngineHarness, key = "CSV-1"): Promise<
 }
 
 /** The whole engine over the fakes. kick() is a no-op spy, so a test decides when the loop runs by calling engine.tick(). */
-export function makeEngine(): EngineHarness & { engine: Engine; kick: MockInstance<() => void> } {
+export function makeEngine(): EngineHarness & { db: Database.Database; engine: Engine; kick: MockInstance<() => void> } {
   const harness = makeCtx();
   const engine = new Engine({ store: harness.store, bb: harness.bb, now: harness.clock.now, host: harness.host, projects: harness.projects });
   const kick = vi.spyOn(engine, "kick").mockImplementation(() => undefined);

@@ -377,7 +377,7 @@ describe("spawnWorker on a multi-repo project", () => {
     expect(prompt).toContain('Protected paths you must never edit:\n- "db/**"\nA change');
     expect(prompt).toContain('## Checks the plugin runs when you submit\n- "npm test"\nThey run');
     expect(prompt).toContain(otherRepos('- "web" (bb project proj_web): /src/web', '- "docs" (bb project proj_docs): /src/docs', "", "## The pull request"));
-    expect(prompt).toContain("Loom asks you to write the pull request with loom_pr");
+    expect(prompt).toContain("Loom asks you for the commit message with loom_pr");
     expect(prompt).not.toContain("merged work");
   });
 
@@ -954,11 +954,11 @@ describe("prompts", () => {
     await seedProject(h);
     const spec = parseSpec(specToml((doc: Doc) => (doc.merge = { strategy: "pr" }))).spec!;
     const ticket = ticketOf(h, "CSV-1");
-    const sign = "End every comment and reply you post on the pull request with a blank line and then this line, exactly as written:\n  Posted by Loom";
+    const sign = "Loom ends each reply with a blank line and this line:\n  Posted by Loom";
     expect(workerBrief({ project: project(), spec, ticket, posts: [], resume: true, signature: "Posted by Loom" })).toContain(sign);
-    expect(workerBrief({ project: project(), spec, ticket, posts: [], resume: true, signature: "" })).not.toContain("End every comment");
+    expect(workerBrief({ project: project(), spec, ticket, posts: [], resume: true, signature: "" })).not.toContain("Loom ends each reply");
     const integration = parseSpec(specToml()).spec!;
-    expect(workerBrief({ project: project(), spec: integration, ticket, posts: [], resume: false, signature: "Posted by Loom" })).not.toContain("End every comment");
+    expect(workerBrief({ project: project(), spec: integration, ticket, posts: [], resume: false, signature: "Posted by Loom" })).not.toContain("Loom ends each reply");
   });
 });
 

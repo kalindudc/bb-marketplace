@@ -2,8 +2,8 @@
 // the handlers for bb's thread events. Behavior lives in workers.ts, checks.ts and triage.ts; this wires it together.
 import { resumeCheckingTickets } from "./checks";
 import { repoCheckout, type RepoCheckout } from "./checkouts";
-import { finishIfComplete, holdMerge, land, mergeHeld, pollPullRequests, runMergeQueue, type LandResult } from "./merge";
-import type { PostRow, ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
+import { finishIfComplete, holdMerge, land, mergeHeld, pollPullRequests, runMergeQueue, stopMerge, type LandResult } from "./merge";
+import type { PostRow, ProjectRow, RolloutMarkRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { COMMENT_SIGNATURE, approvedText, blockedReplyText, heldCheckResult, resumeText, reviewRequeueNote, startRequeueNote } from "./prompts";
 import { LoomError, type ApproveResult, type Projects } from "./projects";
 import { isMultiRepo } from "./repos";
@@ -21,6 +21,8 @@ import { noteUpstreamChanges } from "./upstream";
 import { LOOM_ACTOR, canMoveTicket } from "./states";
 import { askForPrTexts, humanFixRound, onPrWriterIdle, resumePrAsks } from "./pull-requests";
 import { recordPlannerTurn } from "./planner-view";
+import { fenceRolloutChecks, followRollout, markLiveByHuman } from "./rollout-live";
+import { readBehind } from "./fresh";
 import { advanceWakes, releaseIdleWorkers, wakeForRestacks } from "./release";
 import type { Spec } from "./spec";
 import { cancelTicket, maybeSendTriage, onPlannerIdle } from "./triage";
@@ -136,6 +138,8 @@ export class Engine {
       try {
         if (project.state === "running") await this.tickProject(project.id);
         else if (project.state === "paused") await this.tickPaused(project.id);
+        // The last merge finishes a project, and its deploys come after; their verify and check commands keep running.
+        else if (project.state === "done") followRollout(this.ctx, project);
         // Read again: the tick may have finished it, and a land or an archive may have moved it since the list was read.
         await this.projects.removeFinishedSection(store.project(project.id)!);
       } catch (error) {
@@ -151,6 +155,7 @@ export class Engine {
     if (project?.state !== "paused") return;
     await this.releaseAndWake(projectId, specOf(this.ctx.store, project), false);
     await pollPullRequests(this.ctx, project);
+    followRollout(this.ctx, this.ctx.store.project(projectId)!);
     finishIfComplete(this.ctx, this.ctx.store.project(projectId)!);
   }
 
@@ -184,6 +189,8 @@ export class Engine {
         await endThread(this.ctx, row, "timeout", { commit: true });
       }
       if (running() === null) return;
+      await readBehind(this.ctx, running()!, spec);
+      if (running() === null) return;
       await this.releaseAndWake(projectId, spec, true);
       if (running() === null) return;
       await noteUpstreamChanges(this.ctx, running()!, spec);
@@ -205,6 +212,7 @@ export class Engine {
     const current = store.project(projectId)!;
     if (current.state === "running" || current.state === "paused") {
       await pollPullRequests(this.ctx, current);
+      followRollout(this.ctx, store.project(projectId)!);
       finishIfComplete(this.ctx, store.project(projectId)!);
     }
     await maybeSendTriage(this.ctx, store.project(projectId)!);
@@ -215,7 +223,7 @@ export class Engine {
     const { store } = this.ctx;
     if (spec.merge.strategy !== "pr") return;
     if (store.threads({ projectId, role: "worker", states: ["active", "ended"] }).some((row) => row.released_at !== null)) await advanceWakes(this.ctx, projectId);
-    if (store.tickets(projectId, ["pr_open"]).length === 0) return;
+    if (store.tickets(projectId, ["pr_open", "approved"]).length === 0) return;
     const project = store.project(projectId)!;
     await releaseIdleWorkers(this.ctx, project, spec);
     if (running && store.project(projectId)?.state === "running") await wakeForRestacks(this.ctx, store.project(projectId)!, spec);
@@ -330,6 +338,7 @@ export class Engine {
   async dispose(): Promise<void> {
     this.disposed = true;
     await this.currentTick?.catch(() => undefined);
+    fenceRolloutChecks(this.ctx);
   }
 
   // ---------------------------------------------------------------- the human's lifecycle commands
@@ -450,13 +459,17 @@ export class Engine {
 
   // ---------------------------------------------------------------- the human's ticket commands
 
-  async requeue(key: string, note: string, actor: string): Promise<TicketRow> {
-    const ticket = await requeueTicket(this.ctx, key, { note, actor, author: "human" });
+  /** With `review`, the ticket goes back as it is: to review for the commit whose checks passed, or to its open pull request. */
+  async requeue(key: string, note: string, actor: string, opts: { review?: boolean } = {}): Promise<TicketRow> {
+    const ticket = await requeueTicket(this.ctx, key, { note, actor, author: "human", ...(opts.review === true ? { review: true } : {}) });
     this.kick();
     return ticket;
   }
 
-  /** Runs a human block or cancel under the project's merge guard, so no ticket can enter merging halfway through it. */
+  /**
+   * Runs a human block or cancel under the project's merge guard, so no ticket can enter merging halfway through it. A
+   * merge that runs holds the guard, so a ticket in merging here waits, after a failure or a pause, and may be stopped.
+   */
   private async whileNoMergeRuns<T>(key: string, what: string, fn: () => Promise<T>): Promise<T> {
     const ticket = this.ctx.store.ticketByKey(key);
     const release = ticket === null ? () => undefined : holdMerge(this.ctx, ticket.project_id);
@@ -474,9 +487,9 @@ export class Engine {
       if (ticket === null) throw new LoomError("loom_not_found", `No ticket ${key}.`, "Run `bb loom tickets <slug>` to see the ticket keys.");
       const text = reason.trim();
       if (text === "") throw new LoomError("loom_invalid_input", "The block reason is empty.");
-      if (ticket.state === "merging") throw new LoomError("loom_invalid_state", `${key} is merging; try again when the merge finishes.`);
       if (!canMoveTicket(ticket.state, "blocked")) throw new LoomError("loom_invalid_state", `${key} is ${ticket.state}; it cannot be blocked.`);
-      await blockTicket(this.ctx, ticket, { reason: text, needs: "", actor });
+      if (ticket.state === "merging") await stopMerge(this.ctx, ticket);
+      await blockTicket(this.ctx, this.ctx.store.ticket(ticket.id)!, { reason: text, needs: "", actor });
       return this.ctx.store.ticket(ticket.id)!;
     });
     this.kick();
@@ -484,7 +497,11 @@ export class Engine {
   }
 
   async cancel(key: string, reason: string, actor: string): Promise<TicketRow> {
-    const ticket = await this.whileNoMergeRuns(key, "cancel", () => cancelTicket(this.ctx, key, reason, actor));
+    const ticket = await this.whileNoMergeRuns(key, "cancel", async () => {
+      const seen = this.ctx.store.ticketByKey(key);
+      if (seen?.state === "merging") await stopMerge(this.ctx, seen);
+      return cancelTicket(this.ctx, key, reason, actor, seen?.state === "merging");
+    });
     this.kick();
     return ticket;
   }
@@ -504,6 +521,11 @@ export class Engine {
     const request = requestSync(this.ctx, slug, opts.key);
     const finished = request.tickets.length === 0 || (await within(this.tick(), opts.waitMs ?? SYNC_WAIT_MS));
     return syncResult(this.ctx, request, finished);
+  }
+
+  /** The human's Mark live on a rollout step or milestone, or its undo. Deploy order is advice, so nothing else moves. */
+  markLive(slug: string, target: string, opts: { note?: string; undo?: boolean }, actor: string): RolloutMarkRow | null {
+    return markLiveByHuman(this.ctx, slug, target, opts, actor);
   }
 
   /** The human's `report --send`: queues a finished project's record for the done hook again. */

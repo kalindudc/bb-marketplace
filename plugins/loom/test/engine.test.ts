@@ -578,6 +578,17 @@ describe("spec review", () => {
     expect(project()).toMatchObject({ approved_version: 2, pending_version: null });
   });
 
+  it("approves a pending version that skipped its review, which changes only operational settings, without skipReview", async () => {
+    await draft();
+    await specVerdict(h.ctx, "thr_w1", [], "Fits the request.");
+    await h.engine.approve("csv", "human");
+    await h.projects.propose({ toml: specToml((doc) => (doc.agents.max_workers = 3)), threadId: "thr_plan", bbProjectId: "proj_1", hostId: "host_1" });
+    expect(await ensureSpecReview(h.ctx, "csv")).toMatchObject({ kind: "skipped", version: 2, against: 1, paths: ["agents.max_workers"] });
+    expect(await h.engine.approve("csv", "human", 2)).toMatchObject({ applied: "pending", version: 2 });
+    expect(h.store.specReviews(project().id).at(-1)!.state).toBe("skipped");
+    expect(project()).toMatchObject({ approved_version: 2, pending_version: null });
+  });
+
   it("approves a draft once its review passed, and ends a live review when the project is archived", async () => {
     await draft();
     await specVerdict(h.ctx, "thr_w1", [], "Fits the request.");
@@ -763,11 +774,14 @@ describe("human ticket commands", () => {
     expect(h.bb.callsTo("archive")).toEqual([["thr_w1"]]);
   });
 
-  it("refuses to block or cancel a ticket that is merging, and a ticket that cannot move", async () => {
+  it("refuses to block or cancel a ticket while a merge runs, and a ticket that cannot move", async () => {
     await seedProject(h);
     for (const state of ["working", "checking", "review", "approved", "merging"] as const) h.store.setTicketState(ticketOf(h, "CSV-1").id, state, "loom");
-    await expect(h.engine.block("CSV-1", "stop", "human")).rejects.toMatchObject({ code: "loom_invalid_state", message: "CSV-1 is merging; try again when the merge finishes." });
+    const running = holdMerge(h.ctx, h.store.projectBySlug("csv")!.id)!;
+    await expect(h.engine.block("CSV-1", "stop", "human")).rejects.toMatchObject({ code: "loom_invalid_state", message: "Cannot block CSV-1: a merge is running; try again in a moment." });
     await expect(h.engine.cancel("CSV-1", "stop", "human")).rejects.toMatchObject({ code: "loom_invalid_state" });
+    running();
+    expect((await h.engine.block("CSV-1", "stop", "human")).state).toBe("blocked");
     await h.engine.cancel("CSV-2", "x", "human");
     await expect(h.engine.block("CSV-2", "stop", "human")).rejects.toMatchObject({ code: "loom_invalid_state" });
     await expect(h.engine.block("CSV-9", "stop", "human")).rejects.toMatchObject({ code: "loom_not_found" });

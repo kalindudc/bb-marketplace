@@ -109,8 +109,18 @@ export interface TicketRow {
   merge_after_json: string;
   /** PrMeta: the pull request's draft flag, review decision and base branch when Loom last read them; null before the first read. */
   pr_meta_json: string | null;
-  /** The tree of head_sha; null in rows from before Loom kept it. */
+  /** The tree of head_sha; null in rows from before Loom kept it and after a merge Loom made on the project's machine, until a reviewer's verdict reads it. */
   head_tree: string | null;
+  /** TicketRolloutSpec: the ticket's place in the deploy order, with ticket keys in requires_live; null for none. */
+  rollout_json: string | null;
+  /** MergeWait: the merge failed in a way worth waiting out, so the ticket stays in merging and the queue waits until it runs again; null otherwise. */
+  merge_wait_json: string | null;
+  /** MergeStep: a merge Loom put in the worker's worktree whose checks have not passed yet, which the next run of the merge finishes instead of merging again; null otherwise. */
+  merge_step_json: string | null;
+  /** PrProposal: the pull request's title and description as the worker proposed them with loom_submit, for the reviewers to judge; null for none. */
+  pr_proposal_json: string | null;
+  /** PrApplied: the title and description Loom last set on the open pull request, and an edit still to make; null before it opened one, and for one opened before Loom kept it. */
+  pr_applied_json: string | null;
   created_by: string;
   created_at: number;
   updated_at: number;
@@ -118,7 +128,7 @@ export interface TicketRow {
 }
 
 export type NewTicket = Pick<TicketRow, "project_id" | "seq" | "key" | "ref" | "title" | "body" | "acceptance_json" | "verify_json" | "scope_json" | "deps_json" | "priority"> &
-  Partial<Pick<TicketRow, "repo" | "environment_json" | "merge_after_json">>;
+  Partial<Pick<TicketRow, "repo" | "environment_json" | "merge_after_json" | "rollout_json">>;
 
 export interface PostRow {
   id: number;
@@ -242,7 +252,13 @@ export interface RecordRow {
   updated_at: number;
 }
 
-export type SpecReviewState = "reviewing" | "approved" | "changes_requested" | "failed" | "superseded";
+export type SpecReviewState = "reviewing" | "approved" | "changes_requested" | "failed" | "superseded" | "skipped";
+
+/** SpecReviewSkip: why a version skipped its review, the version it was compared with and the operational paths it changed. */
+export interface SpecReviewSkip {
+  against: number;
+  paths: string[];
+}
 
 /** One automatic review of one draft spec version; a version reviewed again after a failure has several rows. */
 export interface SpecReviewRow {
@@ -262,8 +278,33 @@ export interface SpecReviewRow {
   reason: string | null;
   /** SpecReviewWait: the reviewer did not start and Loom tries again; null once a reviewer thread runs. */
   wait_json: string | null;
+  /** SpecReviewSkip of a skipped review; null for any other. */
+  skip_json: string | null;
   started_at: number;
   ended_at: number | null;
+}
+
+export type LiveBy = "merge" | "verify" | "check" | "human";
+
+/** Whether one ticket key or milestone ref of a project's rollout is live, kept apart from the ticket's state. */
+export interface RolloutMarkRow {
+  project_id: number;
+  /** A ticket key or a [[rollout.milestone]] ref. */
+  target: string;
+  /** When it went live; null while it is not live. */
+  live_at: number | null;
+  live_by: LiveBy | null;
+  /** The tail of the output of the command that marked it live, or the human's note. */
+  evidence: string | null;
+  /** When the human last undid its live mark: a merge does not mark it live again after that. */
+  undone_at: number | null;
+  /** The last run of its verify or check command; check_exit is null when it did not exit: it timed out, or Loom could not run it. */
+  checked_at: number | null;
+  check_exit: number | null;
+  check_output: string | null;
+  /** The run of its command going now, and when it started; null when none is. */
+  run_token: string | null;
+  run_at: number | null;
 }
 
 export class StoreError extends Error {}
@@ -443,10 +484,10 @@ export class Store {
       const now = this.now();
       const result = this.db
         .prepare(
-          `INSERT INTO tickets (project_id, seq, key, ref, title, body, acceptance_json, verify_json, scope_json, deps_json, priority, repo, environment_json, merge_after_json, state, created_by, created_at, updated_at, state_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
+          `INSERT INTO tickets (project_id, seq, key, ref, title, body, acceptance_json, verify_json, scope_json, deps_json, priority, repo, environment_json, merge_after_json, rollout_json, state, created_by, created_at, updated_at, state_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
         )
-        .run(row.project_id, row.seq, row.key, row.ref, row.title, row.body, row.acceptance_json, row.verify_json, row.scope_json, row.deps_json, row.priority, row.repo ?? null, row.environment_json ?? null, row.merge_after_json ?? "[]", actor, now, now, now);
+        .run(row.project_id, row.seq, row.key, row.ref, row.title, row.body, row.acceptance_json, row.verify_json, row.scope_json, row.deps_json, row.priority, row.repo ?? null, row.environment_json ?? null, row.merge_after_json ?? "[]", row.rollout_json ?? null, actor, now, now, now);
       const ticket = this.requireTicket(Number(result.lastInsertRowid));
       this.event(ticket.project_id, ticket.id, "ticket.created", actor, { key: ticket.key, ref: ticket.ref });
       return ticket;
@@ -726,6 +767,18 @@ export class Store {
     });
   }
 
+  /** A version that skips its review: an ended row with no reviewer, and its spec.review.skipped event. */
+  skipSpecReview(row: Pick<SpecReviewRow, "project_id" | "version" | "round" | "spawn_token" | "summary"> & { skip: SpecReviewSkip }): SpecReviewRow {
+    return this.tx(() => {
+      const now = this.now();
+      const result = this.db
+        .prepare("INSERT INTO spec_reviews (project_id, version, round, state, spawn_token, summary, skip_json, started_at, ended_at) VALUES (?, ?, ?, 'skipped', ?, ?, ?, ?, ?)")
+        .run(row.project_id, row.version, row.round, row.spawn_token, row.summary, JSON.stringify(row.skip), now, now);
+      this.event(row.project_id, null, "spec.review.skipped", LOOM_ACTOR, { version: row.version, round: row.round, ...row.skip });
+      return this.db.prepare("SELECT * FROM spec_reviews WHERE id = ?").get(Number(result.lastInsertRowid)) as SpecReviewRow;
+    });
+  }
+
   specReviews(projectId: number): SpecReviewRow[] {
     return this.db.prepare("SELECT * FROM spec_reviews WHERE project_id = ? ORDER BY id").all(projectId) as SpecReviewRow[];
   }
@@ -753,7 +806,7 @@ export class Store {
   }
 
   /** Ends a review that is still running, with its spec.review.ended event; false when it had already ended. */
-  endSpecReview(id: number, state: Exclude<SpecReviewState, "reviewing">, data: { summary?: string; findings?: readonly unknown[]; reason?: string } = {}): boolean {
+  endSpecReview(id: number, state: Exclude<SpecReviewState, "reviewing" | "skipped">, data: { summary?: string; findings?: readonly unknown[]; reason?: string } = {}): boolean {
     return this.tx(() => {
       const findings = data.findings ?? [];
       const changed = this.db
@@ -764,6 +817,62 @@ export class Store {
       this.event(row.project_id, null, "spec.review.ended", LOOM_ACTOR, { version: row.version, round: row.round, state, findings: findings.length, ...(data.reason === undefined ? {} : { reason: data.reason }) });
       return true;
     });
+  }
+
+  // ---- rollout marks
+
+  rolloutMarks(projectId: number): RolloutMarkRow[] {
+    return this.db.prepare("SELECT * FROM rollout_marks WHERE project_id = ? ORDER BY target").all(projectId) as RolloutMarkRow[];
+  }
+
+  rolloutMark(projectId: number, target: string): RolloutMarkRow | null {
+    return (this.db.prepare("SELECT * FROM rollout_marks WHERE project_id = ? AND target = ?").get(projectId, target) as RolloutMarkRow | undefined) ?? null;
+  }
+
+  /** Marks a ticket key or milestone ref live with a rollout.live event, in one transaction; `ticketId` puts the event on a ticket's history. */
+  markLive(projectId: number, ticketId: number | null, target: string, mark: { by: LiveBy; at?: number; evidence?: string | null }, actor: string): RolloutMarkRow {
+    return this.tx(() => {
+      const at = mark.at ?? this.now();
+      this.db
+        .prepare("INSERT INTO rollout_marks (project_id, target, live_at, live_by, evidence) VALUES (?, ?, ?, ?, ?) ON CONFLICT (project_id, target) DO UPDATE SET live_at = excluded.live_at, live_by = excluded.live_by, evidence = excluded.evidence")
+        .run(projectId, target, at, mark.by, mark.evidence ?? null);
+      this.event(projectId, ticketId, "rollout.live", actor, { target, by: mark.by, ...(mark.at === undefined ? {} : { liveAt: at }), ...(mark.evidence == null ? {} : { evidence: mark.evidence }) });
+      return this.rolloutMark(projectId, target)!;
+    });
+  }
+
+  /** The human's undo of a live mark, with a rollout.unlive event. */
+  markNotLive(projectId: number, ticketId: number | null, target: string, actor: string, note: string | null = null): void {
+    this.tx(() => {
+      this.db.prepare("UPDATE rollout_marks SET live_at = NULL, live_by = NULL, evidence = NULL, undone_at = ? WHERE project_id = ? AND target = ?").run(this.now(), projectId, target);
+      this.event(projectId, ticketId, "rollout.unlive", actor, { target, ...(note === null ? {} : { note }) });
+    });
+  }
+
+  /** Claims the run of a target's verify or check command; false while another run's claim, made before `expiredBefore`'s time or after it, is younger. */
+  claimRolloutRun(projectId: number, target: string, token: string, expiredBefore: number): boolean {
+    return (
+      this.db
+        .prepare("INSERT INTO rollout_marks (project_id, target, run_token, run_at) VALUES (?, ?, ?, ?) ON CONFLICT (project_id, target) DO UPDATE SET run_token = excluded.run_token, run_at = excluded.run_at WHERE run_token IS NULL OR run_at < ?")
+        .run(projectId, target, token, this.now(), expiredBefore).changes === 1
+    );
+  }
+
+  /** Lets go of a run's claim with no result, as when its command changed while it ran. */
+  releaseRolloutRun(projectId: number, target: string, token: string): void {
+    this.db.prepare("UPDATE rollout_marks SET run_token = NULL, run_at = NULL WHERE project_id = ? AND target = ? AND run_token = ?").run(projectId, target, token);
+  }
+
+  /**
+   * The result of one run of a verify or check command, which ends its claim. False, writing nothing, when the claim is
+   * no longer the run's. A run writes no event: only going live does.
+   */
+  finishRolloutRun(projectId: number, target: string, token: string, run: { exitCode: number | null; output: string }): boolean {
+    const changes = this.db
+      .prepare("UPDATE rollout_marks SET checked_at = ?, check_exit = ?, check_output = ?, run_token = NULL, run_at = NULL WHERE project_id = ? AND target = ? AND run_token = ?")
+      .run(this.now(), run.exitCode, run.output, projectId, target, token).changes;
+    if (changes === 1) this.changed(projectId);
+    return changes === 1;
   }
 
   // ----

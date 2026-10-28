@@ -7,11 +7,11 @@ import { BUTTON, HEADING, RepoChip, listText, plural } from "./common";
 // waits on and unblocks; By repo lays them out as one lane per repo and one column per step, with a line from each pull
 // request to what waits on it. Both read what Loom stored from its last poll, so the tab never asks the forge.
 
-type Tone = "good" | "warn" | "bad" | "muted";
-const TONES: Record<Tone, string> = { good: "text-success", warn: "text-warning-text", bad: "text-destructive-text", muted: "text-muted-foreground" };
-const CHIP_TONES: Record<Tone, string> = { good: "border-success/45 text-success", warn: "border-warning/45 text-warning-text", bad: "border-destructive/45 text-destructive-text", muted: "border-border-seam text-muted-foreground" };
-const CHIP = "inline-block whitespace-nowrap rounded-full border px-1.5 text-[10.5px] leading-4";
-const PR_LINK = "cursor-pointer whitespace-nowrap font-mono text-[11.5px] text-primary hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+export type Tone = "good" | "warn" | "bad" | "muted";
+export const TONES: Record<Tone, string> = { good: "text-success", warn: "text-warning-text", bad: "text-destructive-text", muted: "text-muted-foreground" };
+export const CHIP_TONES: Record<Tone, string> = { good: "border-success/45 text-success", warn: "border-warning/45 text-warning-text", bad: "border-destructive/45 text-destructive-text", muted: "border-border-seam text-muted-foreground" };
+export const CHIP = "inline-block whitespace-nowrap rounded-full border px-1.5 text-[10.5px] leading-4";
+export const PR_LINK = "cursor-pointer whitespace-nowrap font-mono text-[11.5px] text-primary hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
 const finished = (entry: MergeEntry) => entry.state === "done" || entry.verdict === "merged_elsewhere";
 const keyOrder = (a: MergeEntry, b: MergeEntry) => a.key.localeCompare(b.key, undefined, { numeric: true });
@@ -33,6 +33,12 @@ function signalsOf(entry: MergeEntry): Signal[] {
     if (failed > 0) out.push({ tone: "bad", text: `✗ ${failed} failing` });
   }
   if (entry.prUrl === null || finished(entry)) return out;
+  if (entry.conflicts) out.push({ tone: "bad", text: `conflicts with ${entry.base}` });
+  if (entry.behind !== null && entry.behind > 0) {
+    const due = entry.refreshBehind !== null && entry.behind >= entry.refreshBehind;
+    const title = entry.refreshBehind === null ? undefined : `Loom merges ${entry.base} into a pull request that lacks ${entry.refreshBehind.toLocaleString("en-US")} of its commits.`;
+    out.push({ tone: due ? "warn" : "muted", text: `${entry.behind.toLocaleString("en-US")} ${entry.behind === 1 ? "commit" : "commits"} behind ${entry.base}`, title });
+  }
   if (!entry.reviewRead) return [...out, { tone: "muted", text: "review not read", title: "This forge does not tell Loom whether a pull request is a draft or approved." }];
   if (entry.draft === true) out.push({ tone: "muted", text: "draft" });
   if (entry.review === "APPROVED") out.push({ tone: "good", text: "approved" });
@@ -106,6 +112,7 @@ export function mergeLead(order: MergeOrderView): string {
   const reasons = (
     [
       [holding((hold) => hold.startsWith("targets ")), (n: number) => `${n} ${n === 1 ? "targets" : "target"} a branch other than ${its(n)} base`],
+      [holding((hold) => hold.startsWith("conflicts with ")), (n: number) => `${n} ${n === 1 ? "conflicts" : "conflict"} with ${its(n)} base`],
       [holding((hold) => hold === "needs review" || hold === "changes requested"), (n: number) => `${n} need${n === 1 ? "s" : ""} a review`],
       [holding((hold) => hold === "draft"), (n: number) => `${n} ${n === 1 ? "is a draft" : "are drafts"}`],
       [holding((hold) => hold.endsWith("pending")), (n: number) => `${n} wait${n === 1 ? "s" : ""} on checks`],

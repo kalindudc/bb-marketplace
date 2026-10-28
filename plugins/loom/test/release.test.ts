@@ -3,17 +3,18 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { settleChecks, submit } from "../src/checks";
 import type { ThreadRow } from "../src/db/store";
 import { pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
-import { SpawnUnavailableError, type SpawnArgs } from "../src/ports";
+import { SpawnRefusedError, SpawnUnavailableError, type SpawnArgs } from "../src/ports";
 import { RESTORED_NOTE } from "../src/prompts";
 import { askForPrTexts, handInPrText } from "../src/pull-requests";
 import { advanceWakes, isReleased, isWaking, releaseIdleWorkers, wakeForRestacks } from "../src/release";
-import { approve, settleReviews, spawnReviewers } from "../src/review";
+import { approve, requestChanges, settleReviews, spawnReviewers } from "../src/review";
 import { boardCards } from "../src/rpc";
 import { deliverHandBacks } from "../src/slots";
 import { parseSpec } from "../src/spec";
 import { waitOf } from "../src/starts";
-import { onThreadGone, onTurnFailed, onWorkerIdle, RELEASED_TEXT, specOf } from "../src/workers";
-import { checkOutHead, makeCtx, makeEngine, reachApproved, seedMachineProject, seedProject, specToml, startWorker, ticketOf, type Doc, type EngineHarness } from "./helpers";
+import { stackOf } from "../src/stack";
+import { blockTicket, onThreadGone, onTurnFailed, onWorkerIdle, RELEASED_TEXT, requeueTicket, specOf } from "../src/workers";
+import { checkOutHead, makeCtx, makeEngine, reachApproved, reachReview, seedMachineProject, seedProject, specToml, startWorker, ticketOf, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;
 beforeEach(() => {
@@ -359,11 +360,12 @@ describe("bringing the worker back to catch a stacked pull request up", () => {
     restoredWorktree(worker);
     await queue();
 
-    expect(h.host.callsTo("merge").at(-1)).toMatchObject({ worktree: "/wt/env_r1", ref: "sq7" });
-    expect(ticket("CSV-2")).toMatchObject({ state: "pr_open", head_sha: "m1" });
+    expect(h.host.callsTo("mergeOnto").at(-1)).toMatchObject({ ref: "sq7" });
+    expect(h.host.callsTo("resetHard").at(-1)).toMatchObject({ worktree: "/wt/env_r1" });
+    expect(ticket("CSV-2")).toMatchObject({ state: "pr_open", head_sha: "lm1" });
     expect(h.bb.sent(worker.thread_id!)).toHaveLength(sent);
     // Caught up, the worker is released again.
-    h.host.worktree("/wt/env_r1").head = "m1";
+    expect(h.host.worktree("/wt/env_r1").head).toBe("lm1");
     await release();
     expect(isReleased(row(worker.id))).toBe(true);
   });
@@ -386,6 +388,254 @@ describe("bringing the worker back to catch a stacked pull request up", () => {
     await wakeForRestacks(h.ctx, project(), spec());
     expect(row(worker.id).end_reason).toBe("gone");
     expect(ticket("CSV-2")).toMatchObject({ state: "queued", worker_thread_id: null });
+  });
+});
+
+describe("a stacked pull request sent back as it is", () => {
+  const stackedPr = (doc: Doc) => (doc.merge = { strategy: "pr", describe: "loom" });
+  const URL1 = "https://github.com/acme/shop/pull/1";
+  const again = () => requeueTicket(h.ctx, "CSV-2", { note: "", actor: "human", author: "human", review: true });
+
+  /** CSV-2's pull request is stacked on CSV-1's; its worker was released, or still held it, when the human blocked CSV-2 and sent it back as it is. */
+  async function sentBack(worker: "released" | "ended"): Promise<ThreadRow> {
+    await seedProject(h, stackedPr);
+    await reachApproved(h, "CSV-1");
+    await queue();
+    const row0 = await reachApproved(h, "CSV-2");
+    await queue();
+    expect(ticket("CSV-2").state).toBe("pr_open");
+    h.bb.threads.get(row0.thread_id!)!.status = "idle";
+    if (worker === "released") {
+      await release();
+      expect(isReleased(row(row0.id))).toBe(true);
+    }
+    await blockTicket(h.ctx, ticket("CSV-2"), { reason: "A status no fix can clear", needs: "", actor: "human" });
+    expect(ticket("CSV-2")).toMatchObject({ state: "blocked", worker_thread_id: null });
+    expect(row(row0.id)).toMatchObject({ state: "ended", end_reason: worker === "released" ? "released" : "blocked" });
+    expect(h.bb.threads.get(row0.thread_id!)!.archivedAt).not.toBeNull();
+    h.bb.environments.get(row0.environment_id!)!.status = "destroyed";
+    h.host.refs.set(`refs/heads/${ticket("CSV-2").branch}`, ticket("CSV-2").head_sha!);
+    expect(await again()).toMatchObject({ state: "pr_open", worker_thread_id: row0.thread_id, environment_id: null });
+    expect(isReleased(row(row0.id))).toBe(true);
+    return row(row0.id);
+  }
+
+  for (const worker of ["released", "ended"] as const) {
+    it(`catches up with its dependency's new commit through the same thread, which ${worker === "ended" ? "an ended" : "a released"} worker had`, async () => {
+      const kept = await sentBack(worker);
+      h.store.updateTicket(ticket("CSV-1").id, { pushed_sha: "sq7" });
+      await wakeForRestacks(h.ctx, project(), spec());
+      expect(h.bb.callsTo("unarchive")).toContainEqual([kept.thread_id]);
+      expect(row(kept.id)).toMatchObject({ state: "active", released_at: null, environment_id: "env_r1" });
+      restoredWorktree(kept);
+      await queue();
+      expect(h.host.callsTo("mergeOnto").at(-1)).toMatchObject({ ref: "sq7" });
+    expect(h.host.callsTo("resetHard").at(-1)).toMatchObject({ worktree: "/wt/env_r1" });
+      expect(ticket("CSV-2")).toMatchObject({ state: "pr_open", head_sha: "lm1", worker_thread_id: kept.thread_id });
+      expect(stackOf(ticket("CSV-2"))).toMatchObject({ deps: { "CSV-1": "sq7" } });
+    });
+
+    it(`takes the base branch through the same thread once its dependency merges, which ${worker === "ended" ? "an ended" : "a released"} worker had`, async () => {
+      const kept = await sentBack(worker);
+      h.host.prStates.set(URL1, "MERGED");
+      await poll();
+      expect(ticket("CSV-1").state).toBe("done");
+      h.host.remoteBase = "base001";
+      await wakeForRestacks(h.ctx, project(), spec());
+      restoredWorktree(kept);
+      await queue();
+      expect(h.host.callsTo("mergeOnto").at(-1)).toMatchObject({ ref: "base001" });
+      expect(h.host.callsTo("resetHard").at(-1)).toMatchObject({ worktree: "/wt/env_r1" });
+      expect(h.host.callsTo("prRetarget")).toEqual([{ repo: "/repo", url: "https://github.com/acme/shop/pull/2", base: "main", forge: { kind: "gh" } }]);
+      expect(ticket("CSV-2")).toMatchObject({ state: "pr_open", pr_base: "main", worker_thread_id: kept.thread_id });
+    });
+  }
+
+  it("hands the catch-up to a new worker from the branch when bb cannot restore the thread", async () => {
+    const kept = await sentBack("ended");
+    h.bb.restorable = false;
+    h.store.updateTicket(ticket("CSV-1").id, { pushed_sha: "sq7" });
+    await wakeForRestacks(h.ctx, project(), spec());
+    expect(row(kept.id).end_reason).toBe("gone");
+    expect(ticket("CSV-2")).toMatchObject({ state: "queued", worker_thread_id: null });
+    expect(h.store.posts(ticket("CSV-2").id).at(-1)!.body).toContain("so a new worker takes over from its branch");
+  });
+
+  it("brings the same thread back for a fix round", async () => {
+    const kept = await sentBack("ended");
+    h.host.feedback.set("https://github.com/acme/shop/pull/2", changesRequested);
+    await poll();
+    expect(ticket("CSV-2")).toMatchObject({ state: "working", pr_rounds: 1, worker_thread_id: kept.thread_id });
+    expect(h.bb.callsTo("unarchive")).toContainEqual([kept.thread_id]);
+    expect(row(kept.id)).toMatchObject({ state: "active", released_at: null, environment_id: "env_r1" });
+  });
+
+  it("refuses while the branch may still have to catch up and the human archived the worker's thread, and a plain requeue still works", async () => {
+    await seedProject(h, stackedPr);
+    await reachApproved(h, "CSV-1");
+    await queue();
+    const worker = await reachApproved(h, "CSV-2");
+    await queue();
+    await onThreadGone(h.ctx, worker.thread_id!);
+    expect(row(worker.id).end_reason).toBe("gone");
+    await blockTicket(h.ctx, ticket("CSV-2"), { reason: "A status no fix can clear", needs: "", actor: "human" });
+    h.host.refs.set(`refs/heads/${ticket("CSV-2").branch}`, ticket("CSV-2").head_sha!);
+    await expect(again()).rejects.toMatchObject({ code: "loom_invalid_state", message: expect.stringContaining("CSV-2 is stacked on a pull request it may still have to catch up with, and its worker's thread cannot come back to do it") });
+    expect(ticket("CSV-2").state).toBe("blocked");
+    expect(await requeueTicket(h.ctx, "CSV-2", { note: "", actor: "human", author: "human" })).toMatchObject({ state: "queued" });
+  });
+});
+
+describe("a stacked ticket sent back to review after an approval", () => {
+  const stackedPr = (doc: Doc) => (doc.merge = { strategy: "pr", describe: "loom" });
+  const findings = [{ severity: "blocking" as const, title: "Column name", detail: "Rename the total column." }];
+
+  /** CSV-2 is back in review after bb refused its reviewer and the human approved v2, its worker's thread kept as a released worker whose environment is gone. */
+  async function sentBackToReview(): Promise<ThreadRow> {
+    const e = makeEngine();
+    h = e;
+    await seedProject(h, stackedPr);
+    await reachApproved(h, "CSV-1");
+    await queue();
+    const worker = await reachReview(h, "CSV-2");
+    h.bb.spawnError = (args) => (args.metadata.role === "reviewer" ? new SpawnRefusedError(400, "HTTP 400: Unsupported provider claude") : null);
+    await spawnReviewers(h.ctx, project(), spec());
+    h.bb.spawnError = null;
+    await h.projects.propose({ toml: specToml((doc) => {
+      stackedPr(doc);
+      doc.agents.max_workers = 3;
+    }), threadId: "thr_plan", bbProjectId: "proj_1", hostId: "host_1" });
+    await e.engine.approve("csv", "human", 2);
+    expect(ticket("CSV-2")).toMatchObject({ state: "review", worker_thread_id: worker.thread_id });
+    h.bb.environments.get(worker.environment_id!)!.status = "destroyed";
+    return row(worker.id);
+  }
+
+  /** CSV-2's new reviewer asks for changes. */
+  async function changesAsked(key = "CSV-2"): Promise<void> {
+    await spawnReviewers(h.ctx, project(), spec());
+    const reviewer = h.store.threads({ ticketId: ticket(key).id, role: "reviewer" }).at(-1)!;
+    checkOutHead(h, reviewer);
+    await requestChanges(h.ctx, reviewer.thread_id!, "Rename the column", findings);
+    await settleReviews(h.ctx);
+  }
+
+  it("brings that thread back with the findings when the new reviewers ask for changes", async () => {
+    const worker = await sentBackToReview();
+    await changesAsked();
+    expect(ticket("CSV-2")).toMatchObject({ state: "working", worker_thread_id: worker.thread_id, handback_json: null });
+    expect(h.bb.callsTo("unarchive")).toContainEqual([worker.thread_id]);
+    expect(row(worker.id)).toMatchObject({ state: "active", released_at: null, environment_id: "env_r1" });
+    const sent = h.bb.sent(worker.thread_id!).at(-1)!;
+    expect(sent).toContain(RESTORED_NOTE);
+    expect(sent).toContain("Rename the total column.");
+  });
+
+  it("brings the thread back the same way for a ticket sent back to review as it is", async () => {
+    await seedProject(h, stackedPr);
+    await reachApproved(h, "CSV-1");
+    await queue();
+    const worker = await reachReview(h, "CSV-2");
+    await blockTicket(h.ctx, ticket("CSV-2"), { reason: "Wait for the API review", needs: "", actor: "human" });
+    expect(row(worker.id)).toMatchObject({ state: "ended", end_reason: "blocked" });
+    h.host.refs.set(`refs/heads/${ticket("CSV-2").branch}`, ticket("CSV-2").head_sha!);
+    h.bb.environments.get(worker.environment_id!)!.status = "destroyed";
+    expect(await requeueTicket(h.ctx, "CSV-2", { note: "", actor: "human", author: "human", review: true })).toMatchObject({ state: "review", worker_thread_id: worker.thread_id });
+
+    await changesAsked();
+    expect(ticket("CSV-2")).toMatchObject({ state: "working", worker_thread_id: worker.thread_id });
+    expect(row(worker.id)).toMatchObject({ state: "active", released_at: null, environment_id: "env_r1" });
+    expect(h.bb.sent(worker.thread_id!).at(-1)).toContain("Rename the total column.");
+  });
+
+  it("still hands the findings to a new worker when the human archived the worker's thread", async () => {
+    await seedProject(h, (doc) => (doc.merge = { strategy: "pr", describe: "loom", stack: false }));
+    const worker = await reachReview(h, "CSV-1");
+    await onThreadGone(h.ctx, worker.thread_id!);
+    expect(row(worker.id).end_reason).toBe("gone");
+    await blockTicket(h.ctx, ticket("CSV-1"), { reason: "Wait for the API review", needs: "", actor: "human" });
+    h.host.refs.set(`refs/heads/${ticket("CSV-1").branch}`, ticket("CSV-1").head_sha!);
+    expect(await requeueTicket(h.ctx, "CSV-1", { note: "", actor: "human", author: "human", review: true })).toMatchObject({ state: "review", worker_thread_id: null });
+
+    await changesAsked("CSV-1");
+    expect(ticket("CSV-1")).toMatchObject({ state: "queued", worker_thread_id: null });
+    expect(h.bb.callsTo("unarchive")).not.toContainEqual([worker.thread_id]);
+  });
+
+  it("keeps its newest worker thread, so the merge queue can bring it back to catch up once the pull request is open and its dependency changes", async () => {
+    const e = makeEngine();
+    h = e;
+    await seedProject(h, stackedPr);
+    await reachApproved(h, "CSV-1");
+    await queue();
+    const worker = await reachReview(h, "CSV-2");
+    h.bb.spawnError = (args) => (args.metadata.role === "reviewer" ? new SpawnRefusedError(400, "HTTP 400: Unsupported provider claude") : null);
+    await spawnReviewers(h.ctx, project(), spec());
+    h.bb.spawnError = null;
+    expect(ticket("CSV-2")).toMatchObject({ state: "blocked", worker_thread_id: null });
+    expect(row(worker.id)).toMatchObject({ state: "ended", end_reason: "blocked" });
+    await h.projects.propose({ toml: specToml((doc) => {
+      stackedPr(doc);
+      doc.agents.max_workers = 3;
+    }), threadId: "thr_plan", bbProjectId: "proj_1", hostId: "host_1" });
+
+    expect(await e.engine.approve("csv", "human", 2)).toMatchObject({ applied: "pending", backToReview: ["CSV-2"] });
+    expect(ticket("CSV-2")).toMatchObject({ state: "review", worker_thread_id: worker.thread_id, environment_id: null });
+    expect(isReleased(row(worker.id))).toBe(true);
+
+    await spawnReviewers(h.ctx, project(), spec());
+    const reviewer = h.store.threads({ ticketId: ticket("CSV-2").id, role: "reviewer" }).at(-1)!;
+    checkOutHead(h, reviewer);
+    await approve(h.ctx, reviewer.thread_id!, "Looks good");
+    await settleReviews(h.ctx);
+    await queue();
+    expect(ticket("CSV-2")).toMatchObject({ state: "pr_open", pr_base: ticket("CSV-1").pr_branch, worker_thread_id: worker.thread_id });
+
+    h.bb.environments.get(worker.environment_id!)!.status = "destroyed";
+    h.store.updateTicket(ticket("CSV-1").id, { pushed_sha: "sq7" });
+    await wakeForRestacks(h.ctx, project(), spec());
+    expect(h.bb.callsTo("unarchive")).toContainEqual([worker.thread_id]);
+    expect(row(worker.id)).toMatchObject({ state: "active", released_at: null, environment_id: "env_r1" });
+    restoredWorktree(worker);
+    await queue();
+    expect(h.host.callsTo("mergeOnto").at(-1)).toMatchObject({ ref: "sq7" });
+    expect(h.host.callsTo("resetHard").at(-1)).toMatchObject({ worktree: "/wt/env_r1" });
+    expect(ticket("CSV-2")).toMatchObject({ state: "pr_open", worker_thread_id: worker.thread_id });
+    expect(stackOf(ticket("CSV-2"))).toMatchObject({ deps: { "CSV-1": "sq7" } });
+  });
+
+  it("waits for that thread to come back when its branch must catch up before the pull request opens", async () => {
+    const e = makeEngine();
+    h = e;
+    await seedProject(h, stackedPr);
+    await reachApproved(h, "CSV-1");
+    await queue();
+    const worker = await reachReview(h, "CSV-2");
+    h.bb.spawnError = (args) => (args.metadata.role === "reviewer" ? new SpawnRefusedError(400, "HTTP 400: Unsupported provider claude") : null);
+    await spawnReviewers(h.ctx, project(), spec());
+    h.bb.spawnError = null;
+    await h.projects.propose({ toml: specToml((doc) => {
+      stackedPr(doc);
+      doc.agents.max_workers = 3;
+    }), threadId: "thr_plan", bbProjectId: "proj_1", hostId: "host_1" });
+    await e.engine.approve("csv", "human", 2);
+    await spawnReviewers(h.ctx, project(), spec());
+    const reviewer = h.store.threads({ ticketId: ticket("CSV-2").id, role: "reviewer" }).at(-1)!;
+    checkOutHead(h, reviewer);
+    await approve(h.ctx, reviewer.thread_id!, "Looks good");
+    await settleReviews(h.ctx);
+    h.bb.environments.get(worker.environment_id!)!.status = "destroyed";
+    h.store.updateTicket(ticket("CSV-1").id, { pushed_sha: "sq7" });
+
+    await queue();
+    expect(ticket("CSV-2").state).toBe("approved");
+    await wakeForRestacks(h.ctx, project(), spec());
+    expect(row(worker.id)).toMatchObject({ state: "active", released_at: null, environment_id: "env_r1" });
+    restoredWorktree(worker);
+    await queue();
+    expect(h.host.callsTo("mergeOnto").at(-1)).toMatchObject({ ref: "sq7" });
+    expect(h.host.callsTo("resetHard").at(-1)).toMatchObject({ worktree: "/wt/env_r1" });
+    expect(ticket("CSV-2")).toMatchObject({ state: "pr_open", worker_thread_id: worker.thread_id });
   });
 });
 

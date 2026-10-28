@@ -12,7 +12,7 @@ import { discoverText, gatherFacts, type RepoTarget } from "./discover";
 import type { Engine } from "./engine";
 import { LoomError, type ProposeResult, type Projects } from "./projects";
 import { specReviewBlocks } from "./format";
-import { handInPrText } from "./pull-requests";
+import { handInPrText, REPLIES_PER_ROUND, replyToItem } from "./pull-requests";
 import { usesNewMachine } from "./environments";
 import { approve, checkOutReview, requestChanges } from "./review";
 import { ticketPatchSchema, ticketSpecSchema } from "./spec";
@@ -22,7 +22,7 @@ import { addTickets, boardText, editTicket } from "./triage";
 import { blockTicket, requeueTicket, resumeWork, specOf } from "./workers";
 
 export const PLANNER_TOOLS = ["loom_propose", "loom_discover", "loom_board", "loom_ticket", "loom_requeue", "loom_add_tickets", "loom_edit_ticket", "loom_cancel_ticket", "loom_post", "loom_ask_human"] as const;
-export const WORKER_TOOLS = ["loom_note", "loom_submit", "loom_block", "loom_pr"] as const;
+export const WORKER_TOOLS = ["loom_note", "loom_submit", "loom_block", "loom_pr", "loom_pr_reply"] as const;
 /** A worker on a machine of its own also has loom_resume, to carry in the work its ticket's earlier workers left. */
 export const MACHINE_WORKER_TOOLS = [...WORKER_TOOLS, "loom_resume"] as const;
 export const REVIEWER_TOOLS = ["loom_note", "loom_checkout", "loom_approve", "loom_request_changes"] as const;
@@ -76,6 +76,8 @@ function reviewLines(version: number, review: SpecReviewStatus | null): string[]
       return [`Spec review: it did not finish: ${review.reason}. Call loom_propose again with the same spec to retry; do not hand over until a review passes.`];
     case "approved":
       return [`Spec review: v${version} passed.`];
+    case "skipped":
+      return [`Spec review: Loom skipped it, because against v${review.against} v${version} changes only operational settings (${review.paths.join(", ")}). You may hand over now.`];
     case "limit":
       return [`Spec review: Loom stopped reviewing after ${SPEC_REVIEW_ROUNDS} rounds; tell the human which findings you left open.`];
     default:
@@ -191,13 +193,20 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
 
   bb.agents.registerTool({
     name: "loom_requeue",
-    description: "Send a blocked ticket back to the queue. Post your answer first (loom_post) or pass it as the note: the next worker starts from the previous branch and reads the whole thread.",
+    description:
+      "Send a blocked ticket back to the queue. Post your answer first (loom_post) or pass it as the note: the next worker starts from the previous branch and reads the whole thread. With review: true the ticket goes back as it is, with no new worker: to review for the commit whose checks passed last, or to its open pull request when its branch has nothing the pull request lacks. Use it when the work is right and only needs to be reviewed again or followed again, such as after a reviewer outage or a status no fix can clear; it is refused when the branch changed since.",
     presentation: { label: { pending: "Requeueing a Loom ticket", completed: "Requeued a Loom ticket" } },
-    parameters: z.object({ key: z.string().min(1).max(40), note: z.string().max(20_000).describe("Your answer or instruction for the next worker. May be empty when you already posted it.") }),
-    execute: ({ key, note }, tool) =>
+    parameters: z.object({
+      key: z.string().min(1).max(40),
+      note: z.string().max(20_000).describe("Your answer or instruction for the next worker. May be empty when you already posted it."),
+      review: z.boolean().optional().describe("Review again as is instead of starting a new worker."),
+    }),
+    execute: ({ key, note, review }, tool) =>
       run(async () => {
         planner(tool.threadId, key);
-        await requeueTicket(ctx, key, { note, actor: tool.threadId, author: "planner", threadId: tool.threadId });
+        const ticket = await requeueTicket(ctx, key, { note, actor: tool.threadId, author: "planner", threadId: tool.threadId, ...(review === true ? { review: true } : {}) });
+        if (ticket.state === "review") return `${key} is back in review as it is, in round ${ticket.review_round}: new reviewers judge the commit whose checks passed last.`;
+        if (ticket.state === "pr_open") return `${key} is back on its pull request as it is; Loom follows it again and sends a new worker any feedback that needs a fix.`;
         return `${key} is queued again. A new worker starts from its branch and reads the whole ticket thread.`;
       }),
   });
@@ -205,7 +214,7 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
   bb.agents.registerTool({
     name: "loom_add_tickets",
     description:
-      "Add tickets to the board, for example to split a blocked ticket or add a missing dependency. Same fields as the spec's [[ticket]] tables. On a project whose spec has [[repo]] tables, every ticket sets repo to one of those repo names, and its scope and verify are checked against that repo's protected paths and checks; on a single-repo project, leave repo out. depends_on may name refs in this batch or tickets already on the board (key or ref); the cycle check covers the batch. merge_after works the same way: the tickets whose pull requests merge before this one's, without holding its start or stacking it. Nothing is added when any ticket is refused.",
+      "Add tickets to the board, for example to split a blocked ticket or add a missing dependency. Same fields as the spec's [[ticket]] tables. On a project whose spec has [[repo]] tables, every ticket sets repo to one of those repo names, and its scope and verify are checked against that repo's protected paths and checks; on a single-repo project, leave repo out. depends_on may name refs in this batch or tickets already on the board (key or ref); the cycle check covers the batch. merge_after works the same way: the tickets whose pull requests merge before this one's, without holding its start or stacking it. rollout (pull request strategy only) places the ticket in the deploy order: its stage, requires_live (refs in this batch, tickets on the board, or the spec's milestone refs), release, dark, how, verify and rollback; it is advice for the human and holds nothing back. Nothing is added when any ticket is refused.",
     presentation: { label: { pending: "Adding Loom tickets", completed: "Added Loom tickets" } },
     parameters: z.object({ tickets: z.array(ticketSpecSchema).min(1).max(50) }),
     execute: ({ tickets }, tool) =>
@@ -219,7 +228,7 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
   bb.agents.registerTool({
     name: "loom_edit_ticket",
     description:
-      "Change a queued or blocked ticket. Only the fields in the patch change: title, body, acceptance, verify, scope, depends_on, merge_after, priority, repo. A patch of merge_after alone changes any ticket that has not finished, for example one whose pull request is open, since the merge order holds nothing a worker does. repo moves the ticket to another of the spec's [[repo]] tables, and only while it has no branch, because a branch lives in one repository; otherwise cancel the ticket and add a new one in the other repo. A ticket a worker holds cannot be edited; cancel it or reply on it.",
+      "Change a queued or blocked ticket. Only the fields in the patch change: title, body, acceptance, verify, scope, depends_on, merge_after, priority, repo, rollout. A patch of merge_after alone changes any ticket that has not finished, for example one whose pull request is open, since the merge order holds nothing a worker does. A patch of rollout alone, or with merge_after, does too, and rollout alone also changes a done ticket, whose deploy can come after its merge; it replaces the whole rollout, requires_live by key, ref or milestone ref, and rollout = {} removes it. repo moves the ticket to another of the spec's [[repo]] tables, and only while it has no branch, because a branch lives in one repository; otherwise cancel the ticket and add a new one in the other repo. A ticket a worker holds cannot be edited; cancel it or reply on it.",
     presentation: { label: { pending: "Editing a Loom ticket", completed: "Edited a Loom ticket" } },
     parameters: z.object({ key: z.string().min(1).max(40), patch: ticketPatchSchema }),
     execute: ({ key, patch }, tool) =>
@@ -232,7 +241,7 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
 
   bb.agents.registerTool({
     name: "loom_cancel_ticket",
-    description: "Cancel a ticket that should not be done. A live worker or reviewer is stopped. A ticket that is merging cannot be cancelled until the merge finishes.",
+    description: "Cancel a ticket that should not be done. A live worker or reviewer is stopped. A ticket whose merge is running cannot be cancelled until that run ends; one whose merge waits to run again can.",
     presentation: { label: { pending: "Cancelling a Loom ticket", completed: "Cancelled a Loom ticket" } },
     parameters: z.object({ key: z.string().min(1).max(40), reason: z.string().min(1).max(2000) }),
     execute: ({ key, reason }, tool) =>
@@ -308,10 +317,20 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
   bb.agents.registerTool({
     name: "loom_submit",
     description:
-      "Hand your work in when every acceptance criterion holds, then end your turn. The plugin commits your worktree, checks the changed files against your scope and the protected paths, and runs the ticket's and the project's checks. You get the result as a message: a failure to fix, or a note that the ticket waits for review.",
+      "Hand your work in when every acceptance criterion holds, then end your turn. The plugin commits your worktree, checks the changed files against your scope and the protected paths, and runs the ticket's and the project's checks. You get the result as a message: a failure to fix, or a note that the ticket waits for review. On a project that opens a pull request per ticket, pr is the pull request's title and description as they should read: the reviewers judge them with the work, and once they approve, Loom opens the pull request with them, or sets them on the one that is open. A pr replaces only the fields it gives; leave it out to keep the earlier proposal. A fix round that changes only pr still goes to review, and Loom pushes nothing for it.",
     presentation: { label: { pending: "Submitting work", completed: "Submitted work" } },
-    parameters: z.object({ summary: z.string().min(1).max(20_000).describe("What you did and how each acceptance criterion holds.") }),
-    execute: ({ summary }, tool) => run(() => submit(ctx, tool.threadId, summary)),
+    parameters: z.object({
+      summary: z.string().min(1).max(20_000).describe("What you did and how each acceptance criterion holds."),
+      pr: z
+        .object({
+          title: z.string().min(1).max(256).optional().describe("The pull request's title."),
+          body: z.string().min(1).max(50_000).optional().describe("The pull request's description, in Markdown. Loom adds its own sections after it, such as the Rollout section."),
+        })
+        .strict()
+        .optional()
+        .describe("The pull request as it should read, for the reviewers to judge."),
+    }),
+    execute: ({ summary, pr }, tool) => run(() => submit(ctx, tool.threadId, summary, pr)),
   });
 
   bb.agents.registerTool({
@@ -332,14 +351,26 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
   bb.agents.registerTool({
     name: "loom_pr",
     description:
-      "Hand in the pull request Loom asked you for once your ticket is approved: its title, its description and the message of the one commit Loom pushes. In a fix round, hand in only the commit_message of the fix commit. Write them as you normally write a pull request and commit message. Then end your turn: Loom pushes and opens the pull request.",
+      "Hand in the pull request Loom asked you for once your ticket is approved: the message of the one commit Loom pushes, and the title and description you did not propose with loom_submit. In a fix round, hand in the commit_message of the fix commit. Write them as you normally write a pull request and commit message. A title or body you give wins over the proposed one, and in a fix round Loom sets it on the pull request. Then end your turn: Loom pushes and opens or updates the pull request.",
     presentation: { label: { pending: "Handing in the pull request", completed: "Handed in the pull request" } },
     parameters: z.object({
-      title: z.string().min(1).max(256).optional().describe("The pull request's title. Required unless Loom asked for a fix round's commit message."),
-      body: z.string().min(1).max(50_000).optional().describe("The pull request's description, in Markdown. Required unless Loom asked for a fix round's commit message."),
+      title: z.string().min(1).max(256).optional().describe("The pull request's title. Required to open one unless you proposed it with loom_submit."),
+      body: z.string().min(1).max(50_000).optional().describe("The pull request's description, in Markdown. Required to open one unless you proposed it with loom_submit."),
       commit_message: z.string().min(1).max(8000).describe("The commit's message: a subject line, a blank line, then a short body."),
     }),
     execute: (input, tool) => run(() => handInPrText(ctx, tool.threadId, input)),
+  });
+
+  bb.agents.registerTool({
+    name: "loom_pr_reply",
+    description: `In a fix round on your ticket's open pull request, answer one item of the feedback Loom sent you: a review, a review thread or a comment, named by its key as the fix round's message lists it. Loom posts the reply through the forge from the project's machine, ends it with the comment signature, and with resolve: true resolves a review thread. It answers with what happened, or the forge's error. At most ${REPLIES_PER_ROUND} replies per fix round; your replies never count as new feedback.`,
+    presentation: { label: { pending: "Replying on the pull request", completed: "Replied on the pull request" } },
+    parameters: z.object({
+      item: z.string().min(1).max(500).describe("The item's key, such as thread:…, review:… or comment:…, exactly as the fix round's message lists it."),
+      text: z.string().min(1).max(20_000).describe("The reply, in Markdown."),
+      resolve: z.boolean().optional().describe("Resolve the review thread after replying; only a review thread can be resolved."),
+    }),
+    execute: ({ item, text, resolve }, tool) => run(() => replyToItem(ctx, tool.threadId, { item, text, ...(resolve === undefined ? {} : { resolve }) })),
   });
 
   bb.agents.registerTool({

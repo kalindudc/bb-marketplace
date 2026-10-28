@@ -54,7 +54,11 @@ Loom needs:
 2. Spec review. Loom starts a fresh agent that checks the draft against your
    request and for work the goal does not need. It approves with
    `loom_spec_approve` or sends numbered findings back to the planner with
-   `loom_spec_request_changes`, for up to three rounds.
+   `loom_spec_request_changes`, for up to three rounds. Its rubric also traces
+   each `done_when` item to the tickets that make it true, and flags a ticket
+   whose criteria could be met by explaining why the goal cannot be met. A
+   version that only changes operational settings skips it (see
+   [Operational versions](#operational-versions)).
 3. Approve. You read the spec and approve it, and the tickets appear on the
    board. `bb loom approve <slug> --skip-review` approves a draft whose spec
    review has not passed, and `--version N --skip-review` a pending version.
@@ -112,6 +116,26 @@ round and answers with its board tools (`loom_board`, `loom_ticket`,
 `loom_cancel_ticket`), or you answer on the ticket. Your reply on a blocked
 ticket goes to the planner at once, as a message that names the ticket.
 
+When the work is right and only needs another look, such as after reviewers
+that ended without a verdict or a status no fix can clear, `bb loom requeue
+CSV-1 --review` (Review again as is on the ticket page, or the planner's
+`loom_requeue` with `review: true`) sends it back with no new worker. Loom
+reads the ticket's branch first. When its open pull request already has all
+of it, the ticket goes straight back to following that pull request, with its
+fix rounds counted afresh; when the branch is still the commit whose checks
+passed last, it goes back to review for that commit in a new round. On the
+pull request strategy its worker's thread stays the ticket's released worker,
+so a review's requested changes, a later fix round or a catch-up with a
+dependency brings it back, or a new worker from the branch when bb cannot
+restore it. Anything else is refused
+with the reason, such as a stacked ticket whose worker's thread cannot come
+back, and a plain requeue is the way on.
+
+Triage rounds go to the planner for blocked tickets, and when Loom paused the
+project for its token budget or deadline, which a new spec version can change.
+A pause for anything else, such as a forge or host error, sends no round: the
+next-step bar says why and offers Resume.
+
 A spec version the planner proposes after approval waits for your approval,
 and Loom's spec review checks it first, as a change to the version in force.
 When you have to act, for example approve that version and then requeue the
@@ -134,7 +158,52 @@ worker's attempt number and its branch. Approving a pending spec version
 queues again every blocked ticket whose worker never started, resets its
 failure counts and tells the planner which tickets it requeued. A ticket
 blocked because bb refused its reviewer goes back to review instead, in a new
-round for the same commit: its work already passed the checks.
+round for the same commit: its work already passed the checks. On the pull
+request strategy it keeps its newest worker's thread, as Review again as is
+does, so requested changes, or a fix round or a catch-up once its pull request
+is open, bring that thread back.
+
+### When the machine or the server does not answer
+
+Loom waits out a failure that looks temporary instead of pausing the project:
+a call to the project's machine that got no answer (it ran out of time, or
+the machine's Loom worker exited, as it does while the plugin updates), a
+server error, a rate limit, a timeout or a network failure, from `gh`, `git`
+or a command forge's `open`, `state` or `feedback` command.
+
+- A merge that fails that way keeps its ticket in merging and runs again
+  after 1, 2, 5 and 10 minutes, then every 15 minutes; after a rate limit it
+  waits at least 15 minutes, or longer when the server names a later time. The
+  merge queue waits with it, and on the integration strategy so does a new
+  worker in that repo, whose worktree would start from the branch the merge
+  moves. The ticket gets one post when the failures
+  start, and its card, its page and the next-step bar say when Loom tries
+  again. The project pauses only after an hour of failures, with a reason
+  that names the ticket, the error and how long it lasted. This holds for
+  every step of a merge or a push to a pull request, and each step is safe to
+  run again: a merge, a push or a pull request that already happened is found,
+  not made twice. A merge Loom has put in a worker's worktree, to bring its
+  branch up to date or to take commits someone else pushed, is kept until its
+  checks pass, so the next run finishes that merge, and Loom pushes nothing
+  and counts no commit as pushed before then.
+- Asking reviewers to review again and running `after_open` and `after_push`
+  commands are not tried again, because a second run could repeat what the
+  first did, such as starting CI twice. A failure is posted once and the merge
+  completes.
+- Setting a pull request's title and description, or refreshing its Rollout
+  section, waits the same way, but on the ticket's pull request instead of the
+  merge queue: the ticket gets one post, the edit runs again on a later read
+  of the pull request, and nothing pauses.
+- While its merge waits, or after a pause left it in merging, you can block or
+  cancel the ticket. On the integration strategy Loom first takes a merge whose
+  `after_merge` checks have not passed back out of the integration branch.
+- Reading the diff for a ticket's reviewers waits on the same steps.
+- Reading an open pull request waits as described in
+  [Syncing pull requests](#syncing-pull-requests); a call to the project's
+  machine that got no answer counts as a server error.
+- Anything else still pauses the project at once with the reason, such as a
+  missing login, a repo without a checkout, a forge command that runs but
+  prints the wrong thing, or a call the machine refuses as invalid.
 
 ## The page
 
@@ -230,9 +299,9 @@ A tab that needs you carries a badge until the thing is resolved: Board counts
 the blocked tickets, Spec marks a draft or a pending version waiting for you,
 Planner shows "?" while the planner waits on a question and otherwise counts
 the steps it asked you to take, Changes counts the files you have not
-marked viewed on a project ready to land, and Merge order counts the pull
+marked viewed on a project ready to land, Merge order counts the pull
 requests with nothing before them, or turns red for one that merged into
-another ticket's branch.
+another ticket's branch, and Rollout counts its warnings.
 
 #### Board
 
@@ -260,7 +329,9 @@ Done, and chips for the attempts, review rounds, total time, dependencies, the
 branch and the pull request. While the pull request is open, Sync now beside it
 reads that one pull request now. A blocked ticket shows its reason, an answer
 box and Requeue; Block and Cancel ticket sit in the ⋯ menu, and each needs a
-reason.
+reason. Beside Requeue, Review again as is appears when Loom may send the
+ticket back as it is: to review for the commit whose checks passed, or to its
+open pull request.
 
 The Activity tab shows one card per worker attempt, newest first (Oldest first
 switches the order). Inside an attempt, posts are cards with their replies, each
@@ -314,7 +385,24 @@ Approve.
 
 Loom's spec review shows above the version and stays after approval: its
 verdict, the reviewer's summary, and each finding pinned to its part as
-R1, R2… with Go to it.
+R1, R2… with Go to it. A version that skipped the review says so, against
+which version, and lists the operational settings it changed.
+
+##### Operational versions
+
+A version whose changes against the version before it touch only operational
+settings skips the spec review, and you still approve it: `bb loom approve`
+and the page's Approve need no `--skip-review`. Operational settings say how
+Loom runs the project, not what it builds: the forge (`merge.forge`, a repo's
+`forge`), environments (`environment`, a repo's or a ticket's), `agents`,
+`budget`, every `[merge]` key but `strategy`, `branch` and `remote`,
+`checks.timeout_minutes`, `checks.ci` and a repo's `ci`. Any other change keeps
+the review, such as a ticket's fields, the goal, the scope, the check commands,
+the review policy, or adding a repo. A pending version is compared with the
+version in force; a draft with the draft before it, and only when that draft's
+review passed or was skipped; the first version is always reviewed. Loom
+records the skip with the paths that changed, writes it to the feed, and tells
+the planner to hand over, as a passed review does.
 
 #### Planner
 
@@ -362,8 +450,12 @@ ticket's pull request branch; merging it first would put it into that branch
 instead of the base, so the tab says to merge the other one first.
 
 Steps lists the pull requests step by step. Each row has its checks, whether it
-is a draft and its review decision, a verdict (Ready to merge, what still holds
-it, or what it waits for), and what it waits on and unblocks in plain words.
+conflicts with its base ("conflicts with main"), how many commits behind its
+base it is on a repo that sets `refresh_behind` ("12,374 commits behind main",
+a warning once it is due a refresh), whether it is a draft and its review
+decision, a verdict (Ready to merge, what still holds it, or what it waits for),
+and what it waits on and unblocks in plain words. A pull request that conflicts
+with its base is not ready to merge.
 By repo lays them out in one lane per repo and one column per step, with a
 solid line for a stack and a dashed one for a wait; hovering shows a pull
 request's whole chain, and a click says what to do with it. Warnings at the top
@@ -378,6 +470,28 @@ checks pass without that reads "Checks pass", one that targets a branch other
 than its base or another ticket's says so, and on a project with
 `max_fix_rounds = 0` Loom does not read checks, so they read "Checks not
 read".
+
+#### Rollout
+
+On the pull request strategy, when the spec or a ticket has a rollout (see
+[Deploy order](#deploy-order)), the order to deploy the project's changes in.
+It opens with the next safe step in one sentence, such as "Deploy CSV-4
+(the deploy pipeline: canary, then production). 6 steps wait on it." or "Wait for the
+expand stage to soak until Oct 29 14:00 UTC.", then the warnings, the freeze
+windows as a dated strip, one section per stage and the milestones.
+
+Each step's row has its pull request, whether it merged, whether it is live and
+by what, how it deploys and whether its merge does it, a chip for each thing
+that must be live first, its release, its verify command's last result with
+the output behind a disclosure, and its rollback. A step opens its ticket. Mark
+live, with a second click to confirm, marks a step or a milestone live for a
+deploy Loom has no command to check, and Undo live takes it back.
+
+Warnings name a deploy-on-merge pull request that is open while something it
+needs is not live, a merged step that should wait to deploy, a deploy-on-merge
+pull request inside a window or with one starting within 14 days, a step whose
+earlier stage has not soaked, and one that needs a milestone that does not
+hold. They are advice for you: none of them holds a start, a review or a merge.
 
 #### Agents
 
@@ -480,11 +594,22 @@ link to the page.
 On the pull request strategy (`merge.strategy = "pr"`), each ticket ships as
 its own pull request.
 
-- Once the reviewers approve a ticket, its worker writes the pull request with
-  `loom_pr`: the title, the description and the commit message, the way its own
-  instructions and skills say. A worker that ends its turn twice without it, or
-  takes more than 30 minutes, gets Loom's template instead, and
-  `merge.describe = "loom"` always uses the template.
+- The worker proposes the pull request's title and description with
+  `loom_submit`'s `pr = { title, body }`, written as the pull request should
+  read, and the reviewers judge that text with the work: they may request
+  changes to it as to the code. A later `pr` replaces only the fields it gives.
+- Once the reviewers approve a ticket, its worker writes the rest of the pull
+  request with `loom_pr`: the commit message, and the title and description if
+  it proposed none, the way its own instructions and skills say. A title or a
+  body it gives there wins over the proposed one. A worker that ends its turn
+  twice without it, or takes more than 30 minutes, gets Loom's template
+  instead for what it did not propose, and `merge.describe = "loom"` always
+  uses the template.
+- The worker's description comes first. Loom's own sections follow it between
+  `<!-- loom:begin -->` and `<!-- loom:end -->`: the pull requests it depends on,
+  the Rollout section and the line that says who opened it, so Loom can find
+  and replace them later. Loom takes those markers, and anything between them,
+  out of the worker's text, so a description has one block of Loom's.
 - Loom pushes the reviewed work as one commit (`merge.squash = false` pushes
   the branch as it is), never with force, and opens the pull request.
 - Loom then follows the pull request: its checks, reviews, unresolved review
@@ -502,7 +627,9 @@ its own pull request.
   as linear commits. If more commits arrive while the worker fixes, Loom
   merges those before it pushes: it runs the ticket's checks on the result and
   pushes with no new review. A conflict or a failing check goes back to the
-  worker.
+  worker. So does a worktree with a merge its worker began and did not finish:
+  Loom leaves it as it is, and the worker finishes it with `git commit` or
+  aborts it with `git merge --abort`, then submits.
 - Once a fix is pushed, Loom asks the people whose reviews and review threads
   it answered to review the pull request again, as GitHub's Re-request review
   button does. Bots, people who only left a top-level comment, and rounds of
@@ -532,10 +659,41 @@ its own pull request.
   has one, or until the spec sets `ci = false` for it. `ci = false`, in
   `[checks]` or on a `[[repo]]`, makes Loom ignore that repo's CI: its own
   checks are the whole bar, and a failed CI check starts no fix round.
-- The worker may answer review comments with the server's CLI. It posts from
-  your account, so it ends each comment and reply with a signature line,
-  "Posted by Loom" unless you change it (see [Settings](#settings)).
+- A fix round can change the pull request's text: the worker passes `pr`
+  to `loom_submit` again, or a title or body to `loom_pr`. A fix whose only
+  change is the proposed text still goes through review, so the reviewer who
+  asked can judge it; once it is approved, Loom sets it and pushes nothing. A
+  fix with code and text is pushed, then Loom sets the text. Loom sets it with
+  the server's edit (`gh pr edit`, or a command forge's `edit` command) on the
+  project's machine, so a worker on a machine of its own needs no access to the
+  server. A server Loom cannot edit through gets the text posted on the ticket
+  for you to set. An edit that fails with what looks like a temporary error is
+  tried again on a later read of the pull request, unless a newer approved
+  text replaces it first, even one that keeps the description as it is; any
+  other failure is posted, and the pull request keeps its text. Neither blocks
+  the ticket.
+- The worker answers review comments with `loom_pr_reply({ item, text,
+  resolve })`, naming each review, review thread or comment by the key the fix
+  round's message gives it, on every machine and never with the server's CLI.
+  Loom posts the reply from the project's machine (with `gh`, a reply in the
+  review thread, which `resolve` resolves, or a comment that quotes a review
+  or comment; or a command forge's `reply` command), and posts it on the
+  ticket. It ends each reply with a signature line, "Posted by Loom" unless you
+  change it (see [Settings](#settings)), and a hidden mark, so a later read
+  never counts the worker's reply as new feedback. A fix round takes at most
+  30 replies.
+- When a ticket or milestone an open pull request requires goes live, Loom
+  rewrites that pull request's Rollout section on its next read of it,
+  replacing only what lies between its markers and keeping the rest of the
+  description as it is. It never cuts a description short. A description Loom
+  cannot read, one without exactly one pair of its markers (such as one from
+  before Loom added them), or one the new section would make longer than a
+  pull request takes, is left alone, and Loom says so once on the ticket; the
+  Rollout tab stays the source of truth.
 - You merge the pull request, and Loom completes the ticket.
+- An open pull request can fall behind its base while it waits for a person,
+  and some CI systems fail every pipeline once a branch is far enough behind.
+  See [Keeping pull requests fresh](#keeping-pull-requests-fresh).
 - While the pull request waits, its idle worker does not hold an environment.
   Once the worker has nothing in flight and its worktree holds exactly the
   reviewed commit, Loom archives its thread, and bb frees the environment. A
@@ -546,6 +704,32 @@ its own pull request.
   the earlier worker's thread. `merge.release_workers = false` keeps every
   worker until its pull request merges; a spec version approved later may
   change it either way.
+
+### Keeping pull requests fresh
+
+`merge.refresh_behind = <commits>`, or `refresh_behind` on a `[[repo]]`, keeps
+that repo's open pull requests up to date with their base. It is counted in
+commits behind the base, not in time, and is off unless set.
+
+- While the repo has open pull requests, Loom fetches its remote base on the
+  project's checkout at most every 30 minutes and counts the commits of the
+  base each pull request's pushed commit lacks. The Merge order tab shows the
+  count.
+- An open pull request on the base that lacks at least `refresh_behind`
+  commits, or that the server says conflicts with the base (gh reads it; a
+  command forge's `feedback` prints `mergeable`), goes through the merge queue
+  as a stacked pull request that must catch up does, after every approved
+  ticket and restack. Loom merges the base tip it counted against, with no
+  fetch of its own, into the ticket's branch in its worker's worktree, runs the ticket's
+  checks there and pushes, with no new review, and posts, for example, "CSV-4's
+  branch lacked 12,374 commits of origin/main, so Loom merged origin/main into
+  it, ran its checks and pushed abc123." A released worker comes back first, and
+  a worker on a machine of its own gets the merge as linear commits.
+- Loom never rebases or force-pushes. A conflict goes back to the worker with
+  the files named, and so does a check that fails on the result.
+- A stacked pull request is not refreshed itself: its parent's refresh reaches
+  it through the merge that brings it up to date with its parent. A ticket in a
+  fix round waits until its pull request is open again.
 
 ### Syncing pull requests
 
@@ -578,12 +762,15 @@ Loom fetches, runs `ls-remote` and pushes in each repo's checkout: it fetches
 the base branch to bring a stacked pull request up to date, reads the pull
 request's branch to build its commit, and pushes. Each of these git steps may
 take `git_network_timeout_seconds`, 120 by default, set on a `[[repo]]` or on
-`[merge]`. On a monorepo where fetching main takes a minute or more, such as
-World, raise it (300 suits World); otherwise the project pauses with "host
-plugin call … exceeded its deadline" or a git timeout each time it catches a
-pull request up, and a resume pauses it again. A revision with a new value
-applies once it is approved. `gh`, the forge's commands and the first checkout
-of an integration worktree keep their own 2-minute limits.
+`[merge]`. On a large monorepo where fetching main takes a minute or more,
+raise it (300 leaves room for a fetch of 50 to 80 seconds). A step that runs
+out of time is waited out like any temporary failure (see
+[When the machine or the server does not answer](#when-the-machine-or-the-server-does-not-answer)),
+but while the fetch stays that slow every try runs out of time, and the project
+pauses after an hour. A revision with a new value applies once it is approved,
+and one that changes only it skips the spec review. `gh`, the forge's commands
+and the first checkout of an integration worktree keep their own 2-minute
+limits.
 
 ### Stacked pull requests
 
@@ -608,7 +795,9 @@ chasing reviews no longer holds up the work that builds on them.
   ticket stacked on it the same way, and moves its pull request to the base
   branch with `gh pr edit --base`. On another server it runs the forge's
   `retarget` command; without one, the ticket's post asks you to change the
-  base by hand.
+  base by hand. A `retarget` that fails in a way worth waiting out runs again
+  with the merge; any other failure is posted, asks you to move it by hand
+  and pauses nothing.
 - A ticket with two or more open dependencies in its repo starts on a merge of
   their commits. Its pull request waits until all but one of them have merged,
   because a pull request builds on one branch; Loom then merges the base branch
@@ -619,6 +808,18 @@ chasing reviews no longer holds up the work that builds on them.
   commit on it is posted on the dependent ticket and sent to its worker.
 - The board marks a stacked ticket with what it is stacked on, and an approved
   ticket whose pull request waits with what it waits for.
+- When the server closes a stacked pull request because the branch it built on
+  is gone, as GitHub does when the pull request it was stacked on merged and
+  its branch was deleted, Loom does not block the ticket. It lets go of the
+  closed pull request, says why on the ticket, keeps the ticket's branch and
+  the title and description the reviewers approved last, and the merge queue
+  brings the branch up to date and opens a new pull request on the branch the
+  ticket builds on now, with that text and Loom's own sections as they are now. When the dependency merged into yet
+  another branch, which blocks that dependency, the ticket waits for the
+  dependency's new pull request. A closed stacked pull request whose branch is
+  still there blocks the ticket, as any closed pull request does, since a
+  person closed it. Until the new one opens, the board card says so, Sync
+  pull requests reports it, and Sync now is not offered for that ticket.
 - A stacked pull request merged before its parent lands in the parent's branch,
   not the base. When Loom reads a pull request as merged into a branch other
   than its repo's base, it blocks the ticket and names the branch, and the
@@ -632,6 +833,54 @@ chasing reviews no longer holds up the work that builds on them.
 
 Some repositories run CI only on pull requests to the default branch. A stacked
 pull request's checks then start once Loom moves it to the base branch.
+
+### Deploy order
+
+Loom orders three things. `depends_on` orders the work: when a ticket can
+start. `merge_after` and stacks order the merges, so git history is right. A
+ticket's `rollout` orders the deploys: when its change may reach traffic, and
+what must be live first. Merges and deploys differ both ways: a change can
+merge early and stay dark behind a gate, a repo can deploy on merge, one
+release can carry several merges, and some prerequisites are no ticket at all,
+such as a metric reaching zero.
+
+Deploy order is advice for you. Loom never holds, delays or reorders a start, a
+review, a merge or a push because of it, and posts nothing to the forge for it
+apart from the Rollout section of each pull request's description.
+
+- `[rollout]` in the spec has `deploy` (how changes reach traffic, and
+  `on_merge` when merging deploys them; a `[[repo]]` can set its own),
+  `[[rollout.stage]]` tables in order, each with a goal and an optional soak,
+  `[[rollout.milestone]]` tables for prerequisites no ticket delivers, with an
+  optional check command, and `[[rollout.window]]` tables for freezes. Each
+  ticket's `rollout` names its stage, what it `requires_live`, its release,
+  whether it ships dark, how it deploys, a `verify` command and its rollback.
+  The spec reference lists every field.
+- A ticket's rollout status runs from not merged to merged, live and soaked,
+  apart from its ticket state. A ticket in a repo that deploys on merge is live
+  once its pull request merges. A merged ticket with `verify` is live once that
+  command exits 0: Loom runs it on the project's machine, in the ticket's repo
+  checkout, every 15 minutes with a 2-minute timeout. A milestone's check runs
+  the same way from when the project starts. A run that fails is kept with its
+  output and tried again at the next interval; it never pauses the project.
+  One command runs per step or milestone at a time, across a plugin reload too,
+  and a run keeps no result when the project was archived or its command
+  changed while it ran. Loom keeps checking after the project is done, until
+  you archive it.
+  Anything else waits for you: Mark live on the Rollout tab, or
+  `bb loom live <slug> <KEY or milestone>`.
+- Each going live is a `rollout.live` event, and your undo a `rollout.unlive`
+  event, so the feed shows them. A check's last result stays on its row; it
+  writes no event.
+- The description Loom opens a pull request with, the worker's or its
+  template, gets a `## Rollout` section when the ticket has a rollout or the
+  project has stages: the stage and its goal, what must be live first with each
+  pull request and how it deploys, how this change deploys and whether merging
+  does it, its release, whether it is dark, verify and rollback. Workers are
+  told not to write deploy order into the description, and reviewers not to
+  ask for a draft or a deploy order description; a reviewer who thinks the
+  order is wrong says so in a should-fix finding.
+- `bb loom rollout <slug>` prints the same view as the tab, as sentences.
 
 ## Multi-repo projects
 
@@ -694,9 +943,34 @@ choice is found or ask; the planner asks you the ask items in one round, and
   request ready once it builds on the base branch), and a `retarget` command
   that moves a pull request to another base; or `kind = "none"`, where Loom only pushes the
   branch and completes the ticket when the remote's base branch contains it.
-  A `feedback` command that also prints `draft`, `review` and `base` gives
-  the Merge order tab the same drafts and reviews it reads from GitHub, and
-  lets Loom catch a merge into the wrong branch there too.
+  A `feedback` command that also prints `draft`, `review`, `base` and
+  `mergeable` gives the Merge order tab the same drafts, reviews and conflicts
+  it reads from GitHub, and lets Loom catch a merge into the wrong branch and
+  keep pull requests fresh there too; one that prints `title` and `body` lets
+  Loom refresh the Rollout section. An `edit` command
+  lets Loom change a pull request's title and description, and a `reply`
+  command lets workers answer its reviews and comments through Loom.
+- `after_push` commands, on `gh` or a command forge, run on the project's
+  machine after each push to an open pull request (a fix round, a catch-up
+  with what it is stacked on or with the base branch, a refresh, one that takes
+  commits someone else pushed, or a land's push to the integration pull
+  request already open) and after Loom moves one to another base, as
+  `after_open` runs after opening, for example to start CI or to mark a
+  stacked pull request ready once it builds on the base branch. They get
+  `LOOM_URL`, `LOOM_PR_NUMBER`, `LOOM_HEAD`, `LOOM_SHA` and `LOOM_BASE`, the
+  branch the pull request builds on now. A push and a move in one step run them
+  once, after the move, on the new base. When the move fails or waits, they run
+  at once for the push, on the base the pull request still has, and a move that
+  succeeds later runs them again on the new base. They run at most once per
+  push and once per move, also when the merge runs again after a failure. A
+  failure is posted on the ticket and pauses or blocks nothing.
+- `ignore_checks = ["<glob>", …]`, on `gh` or a command forge, drops the
+  checks whose names match from what Loom reads: they start no fix round and
+  count on neither the board, the ticket page nor the Merge order tab. A glob
+  matches the whole name, case-sensitively: `*` matches any run of characters,
+  `?` one character, and everything else is literal, such as
+  `"Review Bot*"`. Use it for advisory statuses, such as a review bot's.
+  `bb loom forge check` lists what it drops.
 - `[environment]` starts the threads Loom runs in a repository (workers,
   reviewers, the spec reviewer and the summary agent) in a bb environment
   provider, such as one a plugin adds, with `inputs` in which Loom fills
@@ -711,6 +985,18 @@ choice is found or ask; the planner asks you the ask items in one round, and
 
 Every key, with the commands' variables and output, is in the loom skill's
 `references/spec.md`.
+
+`bb loom forge check <slug> <CSV-1 or pull request URL>` tests a repo's forge
+against a live pull request. It runs the repo's own forge read on the
+project's machine, as a poll would (gh's read, or the spec's `feedback`
+command, else its `state` command), and prints what Loom reads: the state,
+draft flag, review, base and whether it is mergeable, each check with its state, the checks
+`ignore_checks` drops, each item with its kind, author, key and first line, and
+whether the description has Loom's markers. A failed read prints the error, how a poll
+treats it, and any field the host contract refused. `--version N` runs that
+spec version's forge, so a pending version's commands can be tried before you
+approve it, and `--repo <name>` picks the repo of a URL on a multi-repo
+project. It changes nothing in Loom, so planners may run it too.
 
 ### Threads on new machines
 
@@ -817,7 +1103,7 @@ bb loom spec <slug> [--version N]            # the spec as TOML
 bb loom tickets <slug> [--state s,s]         # the board
 bb loom ticket CSV-1                         # a ticket and its reply thread
 bb loom metrics <slug> [--days N] [--json]   # flow and agent metrics; --days sets the window (default 14)
-bb loom feed <slug> [--after <id>] [--json]  # the newest events as sentences
+bb loom feed <slug> [--after <id>] [--json]  # the newest 200 events as sentences; --after pages forward from an id
 bb loom report <slug> [--send]               # the project's record as Markdown; --send runs the done hook again
 bb loom approve <slug> [--version N] [--skip-review]  # approve a draft (creates the tickets) or a pending version
 bb loom start <slug>                         # workers start by themselves
@@ -826,11 +1112,15 @@ bb loom resume <slug>
 bb loom post CSV-1 "text" --reply-to <id>    # your reply; the ticket's worker gets it, or the planner when it is blocked
 bb loom block CSV-1 "reason"
 bb loom requeue CSV-1 --note "answer"        # a blocked ticket back to the queue
+bb loom requeue CSV-1 --review               # review again as is: back to review or to its open pull request, no new worker
 bb loom cancel CSV-1 "reason"
 bb loom land <slug> [--title t] [--ready]    # integration strategy: push the branch, open one pull request
 bb loom land <slug> --direct                 # integration strategy: merge in the remote's base, check, push to it
 bb loom land <slug> --repo <name>            # multi-repo project: land only this repo
 bb loom sync <slug> [--ticket CSV-1]         # pull request strategy: read the open pull requests now
+bb loom forge check <slug> CSV-1 [--version N]  # read a live pull request through the repo's forge, as a poll would
+bb loom rollout <slug>                       # the deploy order: next safe step, warnings, stages, milestones
+bb loom live <slug> CSV-1 [--note t] [--undo]  # mark a rollout step or milestone live, or take the mark back
 bb loom archive <slug>
 ```
 
@@ -846,7 +1136,7 @@ ready or paused, starting or resuming it makes the section again.
 |---|---|
 | Any other thread | `loom_discover`, `loom_propose` |
 | Planner | `loom_discover`, `loom_propose`, `loom_board`, `loom_ticket`, `loom_post`, `loom_requeue`, `loom_edit_ticket`, `loom_add_tickets`, `loom_cancel_ticket`, `loom_ask_human` |
-| Worker | `loom_note`, `loom_submit`, `loom_block`, `loom_pr`; on a machine of its own also `loom_resume` |
+| Worker | `loom_note`, `loom_submit`, `loom_block`, `loom_pr`, `loom_pr_reply`; on a machine of its own also `loom_resume` |
 | Reviewer | `loom_note`, `loom_checkout`, `loom_approve`, `loom_request_changes` |
 | Spec reviewer | `loom_spec_approve`, `loom_spec_request_changes` |
 
@@ -947,7 +1237,7 @@ bb plugin config loom set commentSignature '<sub>Posted by Loom</sub>'
 - `checksNearDonePercent` is how far along a running check must be to hold
   back the failed ones. It is 75 by default, and 0 waits for every running
   check.
-- `commentSignature` is the line a worker ends every comment and reply on a
+- `commentSignature` is the line Loom ends every reply a worker posts on a
   pull request with, so people can tell an agent wrote it from your account.
   It is "Posted by Loom" by default, takes Markdown (on GitHub, `<sub>…</sub>`
   makes it small), and an empty value turns it off.

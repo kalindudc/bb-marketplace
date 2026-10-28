@@ -3,12 +3,13 @@
 // it. Its row lives in spec_reviews, not in threads, so the worker and ticket reviewer machinery never sees it. bb's thread
 // events and loom_propose drive it, not the tick.
 import { randomBytes } from "node:crypto";
-import type { ProjectRow, SpecReviewRow, Store } from "./db/store";
+import type { ProjectRow, SpecReviewRow, SpecReviewSkip, Store } from "./db/store";
 import { spawnEnvironment, threadBranch } from "./environments";
 import { LoomError } from "./projects";
-import { specReviewFailedText, specReviewNudgeText, specReviewVerdictText, specReviewerBrief } from "./prompts";
+import { specReviewFailedText, specReviewNudgeText, specReviewSkippedText, specReviewVerdictText, specReviewerBrief } from "./prompts";
 import { isMultiRepo, repoSettings } from "./repos";
 import type { Spec } from "./spec";
+import { operationalChanges } from "./spec-diff";
 import { SPEC_REVIEW_ROUNDS } from "./states";
 import { nextWait, provisioningFailure, startProblemOf, unavailableReason, type StartProblem, type StartWait } from "./starts";
 import { MAX_RATE_LIMIT_RETRIES, rateLimitRetryAt, type EngineCtx, type TurnFailure } from "./workers";
@@ -25,7 +26,9 @@ export type SpecReviewStatus =
   | { kind: "approved"; version: number; round: number; summary: string }
   | { kind: "changes"; version: number; round: number; findings: SpecFinding[] }
   | { kind: "failed"; version: number; round: number; reason: string }
-  | { kind: "limit"; version: number; findings: SpecFinding[] };
+  | { kind: "limit"; version: number; findings: SpecFinding[] }
+  /** The version changes only operational settings against the version before it, `against`, so no reviewer ran. */
+  | ({ kind: "skipped"; version: number } & SpecReviewSkip);
 
 const errText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 /** The wait of a spec review whose reviewer did not start, while Loom has not started one since. */
@@ -73,6 +76,8 @@ export function specReviewStatus(store: Store, project: ProjectRow): SpecReviewS
       return { kind: "approved", version, round: own.round, summary: own.summary ?? "" };
     case "changes_requested":
       return atLimit ? { kind: "limit", version, findings: findingsOf(own) } : { kind: "changes", version, round: own.round, findings: findingsOf(own) };
+    case "skipped":
+      return { kind: "skipped", version, ...(JSON.parse(own.skip_json!) as SpecReviewSkip) };
     default:
       return { kind: "failed", version, round: own.round, reason: own.reason ?? "the review did not finish" };
   }
@@ -134,7 +139,42 @@ export async function ensureSpecReview(ctx: EngineCtx, slug: string): Promise<Sp
   const waiting = status.kind === "reviewing" && status.waiting !== undefined ? store.specReviews(project.id).filter((row) => row.version === latest.version && row.state === "reviewing" && row.thread_id === null).at(-1) : undefined;
   if (waiting !== undefined) return spawnReviewer(ctx, project, waiting, latest.toml, JSON.parse(latest.spec_json) as Spec, false);
   if (status.kind !== "none" && status.kind !== "failed") return status;
-  return startReview(ctx, project, latest.version, latest.toml, JSON.parse(latest.spec_json) as Spec);
+  const spec = JSON.parse(latest.spec_json) as Spec;
+  const skip = operationalSkip(store, project, latest.version, spec);
+  if (skip !== null) return skipReview(ctx, project, latest.version, skip);
+  return startReview(ctx, project, latest.version, latest.toml, spec);
+}
+
+/** Whether the newest review of a version that nothing replaced passed or was skipped. */
+const cleared = (store: Store, projectId: number, version: number) => {
+  const own = store.specReviews(projectId).filter((row) => row.version === version && row.state !== "superseded").at(-1);
+  return own?.state === "approved" || own?.state === "skipped";
+};
+
+/**
+ * Why `version` needs no review: against the version before it, it changes only operational settings. The version
+ * before a draft is the draft before it, which must have cleared its own review, so open findings never skip one; the
+ * version before a pending version is the version in force. The first version is always reviewed. Null when it is.
+ */
+export function operationalSkip(store: Store, project: ProjectRow, version: number, spec: Spec): SpecReviewSkip | null {
+  const against = project.state === "draft" ? version - 1 : project.approved_version;
+  if (against === null || against < 1 || against >= version) return null;
+  if (project.state === "draft" && !cleared(store, project.id, against)) return null;
+  const before = store.specVersion(project.id, against);
+  if (before === null) return null;
+  const paths = operationalChanges(JSON.parse(before.spec_json) as Spec, spec);
+  return paths === null ? null : { against, paths };
+}
+
+/** Records the skip, with its feed event, and hands the version over through the planner as a passed review would. */
+async function skipReview(ctx: EngineCtx, project: ProjectRow, version: number, skip: SpecReviewSkip): Promise<SpecReviewStatus> {
+  const { store } = ctx;
+  const round = roundsWithFindings(cycleReviews(store, project)).length + 1;
+  const summary = `v${version} changes only operational settings against v${skip.against}: ${skip.paths.join(", ")}.`;
+  store.skipSpecReview({ project_id: project.id, version, round, spawn_token: randomBytes(12).toString("hex"), summary, skip });
+  store.changed(project.id);
+  await tellPlanner(ctx, project, specReviewSkippedText({ slug: project.slug, version, ...skip, pending: project.approved_version !== null }));
+  return { kind: "skipped", version, ...skip };
 }
 
 async function startReview(ctx: EngineCtx, project: ProjectRow, version: number, toml: string, spec: Spec): Promise<SpecReviewStatus> {

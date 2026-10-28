@@ -56,6 +56,11 @@ const ticket = (n: number, state: TicketState, over: Partial<TicketRow> = {}): T
   merge_after_json: "[]",
   pr_meta_json: null,
   head_tree: null,
+  rollout_json: null,
+  merge_wait_json: null,
+  merge_step_json: null,
+  pr_proposal_json: null,
+  pr_applied_json: null,
   created_by: "human",
   created_at: at(1),
   updated_at: at(1),
@@ -546,8 +551,19 @@ describe("feedText", () => {
     expect(ended({ state: "changes_requested", findings: 1 })).toBe("The spec review found 1 problem in version 2 in round 1.");
     expect(ended({ state: "failed", reason: "the reviewer's thread was archived or deleted" })).toBe("The spec review of version 2 did not finish: the reviewer's thread was archived or deleted.");
     expect(ended({ state: "superseded" })).toBe("The spec review of version 2 stopped: a newer version or an approval replaced it.");
+    expect(text(event(at(1), "spec.review.skipped", null, { version: 3, round: 1, against: 2, paths: ["merge.forge.feedback", "agents.max_workers"] }, "loom"))).toBe(
+      "Loom skipped the spec review of version 3: against version 2, it changes only operational settings (merge.forge.feedback, agents.max_workers).",
+    );
     expect(text(human(at(1), "approve", { pending: false, skipReview: true }))).toBe("The human approved the spec without a passed spec review.");
     expect(text(human(at(1), "approve", { pending: false }))).toBe("The human ran approve.");
+  });
+
+  it("says what went live and by what, and the human's undo", () => {
+    expect(text(event(at(1), "rollout.live", 1, { target: "CSV-1", by: "merge", evidence: "https://github.com/a/b/pull/1" }, "loom"))).toBe("CSV-1 is live: its pull request merged.");
+    expect(text(event(at(1), "rollout.live", 1, { target: "CSV-1", by: "verify" }, "loom"))).toBe("CSV-1 is live: its verify passed.");
+    expect(text(event(at(1), "rollout.live", null, { target: "traffic-low", by: "check" }, "loom"))).toBe("traffic-low is live: its check passed.");
+    expect(text(event(at(1), "rollout.live", null, { target: "traffic-low", by: "human" }, "human"))).toBe("The human marked traffic-low live.");
+    expect(text(event(at(1), "rollout.unlive", 1, { target: "CSV-1" }, "human"))).toBe("The human undid CSV-1's live mark.");
   });
 
   it("names an event kind it does not know", () => {

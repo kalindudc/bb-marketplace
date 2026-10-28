@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { experimental_copyToClipboard, experimental_Icon as Icon, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import type { MergeItem, TicketAction, TicketDetail } from "../contract";
-import { formatDuration, plural, startWaitText } from "../format";
+import { formatDuration, mergeRetryText, plural, startWaitText } from "../format";
 import type { TicketState } from "../states";
 import { BUTTON, BUTTON_PRIMARY, ConfirmButton, FIELD, MoreMenu, RepoChip, SyncButton } from "./common";
 import { ago, checksText, GHOST } from "./ticket-cards";
@@ -50,6 +50,7 @@ function summaryOf(ticket: TicketDetail, now: number): string | null {
   const pr = ticket.pr;
   const fixing = pr !== null && pr.pushedSha !== null;
   if (ticket.startWait !== null) return startWaitText(ticket.startWait, now);
+  if (ticket.mergeWait !== null) return mergeRetryText(ticket.mergeWait, now);
   switch (ticket.state) {
     case "queued":
       return newest === undefined ? "Waiting for a worker." : `Requeued after attempt ${n}; waiting for a worker.`;
@@ -139,8 +140,14 @@ function BlockedCallout({ ticket, busy, onAction, onJump }: { ticket: TicketDeta
       <textarea aria-label="Note" value={note} rows={2} placeholder="Your answer for the next worker (required)" onChange={(event) => setNote(event.target.value)} className={FIELD} />
       <div className="flex flex-wrap items-center gap-2">
         <ConfirmButton label="Requeue" disabled={busy || note.trim() === ""} onConfirm={() => void onAction("requeue", note.trim()).then((done) => done && setNote(""))} />
+        {ticket.reviewAgain && <ConfirmButton label="Review again as is" disabled={busy} onConfirm={() => void onAction("review", note.trim()).then((done) => done && setNote(""))} />}
         {ticket.replyTo === "planner" && <span className="text-[11px] text-subtle-foreground">Or reply on the post: the planner gets it now and can requeue the ticket itself.</span>}
       </div>
+      {ticket.reviewAgain && (
+        <p data-review-again className="text-[11px] text-subtle-foreground">
+          Review again as is starts no worker: the ticket goes back to review for the commit whose checks passed last, or back on its pull request when that has all of its work. Your note, if any, goes on the ticket.
+        </p>
+      )}
     </div>
   );
 }
@@ -187,8 +194,9 @@ function PrFacts({ ticket, now }: { ticket: TicketDetail; now: number }) {
   );
 }
 
-/** Whether the ticket page offers Sync now: an open pull request Loom follows, on a running or paused project. */
-export const canSyncTicket = (ticket: TicketDetail) => ticket.at === null && ticket.state === "pr_open" && ticket.pr !== null && (ticket.projectState === "running" || ticket.projectState === "paused");
+/** Whether the ticket page offers Sync now: an open pull request Loom follows, or the push-only forge's branch, on a running or paused project. */
+export const canSyncTicket = (ticket: TicketDetail) =>
+  ticket.at === null && ticket.state === "pr_open" && ticket.pr !== null && (ticket.pr.url !== null || ticket.pr.forge === "none") && (ticket.projectState === "running" || ticket.projectState === "paused");
 
 /** The ticket at a glance: its key, state, title, a summary, the stage tracker and the facts, with the actions it needs. */
 export function TicketHeader({

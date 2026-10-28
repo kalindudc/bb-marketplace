@@ -8,6 +8,7 @@ import type { ProjectMetrics } from "./metrics";
 import type { MergeEntry, MergeOrderView, MergeVerdict, MergeWait } from "./merge-order";
 import type { NextStep } from "./next-step";
 import type { PrSyncOutcome, PrSyncResult, PrSyncTicket } from "./pr-sync";
+import type { RolloutCheckResult, RolloutLive, RolloutMerge, RolloutMilestone, RolloutNext, RolloutRequirement, RolloutStage, RolloutStep, RolloutView, RolloutWarning, RolloutWindow } from "./rollout";
 import type { BbProjectChoice, PlanningSession, ProjectOverview, RepoOverview } from "./projects";
 import { MAX_PLANNING_REPOS } from "./prompts";
 import type { Finding } from "./review";
@@ -28,6 +29,7 @@ export type { ActivityMark, Chip, CurrentItem, EventLine, InsightsFilter, Insigh
 export type { ChangedFile, ChangeKind, ChangeRepo, ChangeSource, ChangesView, FilePatch };
 export type { MergeEntry, MergeOrderView, MergeVerdict, MergeWait };
 export type { PrSyncOutcome, PrSyncResult, PrSyncTicket };
+export type { RolloutCheckResult, RolloutLive, RolloutMerge, RolloutMilestone, RolloutNext, RolloutRequirement, RolloutStage, RolloutStep, RolloutView, RolloutWarning, RolloutWindow };
 export type { SpecReviewRound };
 export type { AskStep, PlannerAction, PlannerAsk, PlannerStep, PlannerVersion, PlannerView, TurnStep, VersionChange };
 export type { ActivityItem, Attempt, BbProjectChoice, ChecksItem, CheckStep, PrFeedbackItem, PrTextItem, HomeProject, HomeView, Mark, MergeItem, Moment, MomentKind, NeedItem, NextStep, PlanningSession, ProjectHealth, ProjectTimeline, RepoOverview, ReviewItem, SentNote, SessionBar, SpecVersionView, TicketActivity, TicketBar };
@@ -55,10 +57,12 @@ export interface BoardCard {
   hasChanges: boolean;
   /** The open pull requests, by ticket key, whose commits this ticket's branch is built on. */
   stackedOn: string[];
-  /** Why an approved ticket's pull request waits on its open dependencies, in a short sentence; null when it does not. */
+  /** Why an approved ticket's pull request waits on its open dependencies, or that an open ticket waits for the new pull request Loom opens in place of a closed stacked one, in a short sentence; null otherwise. */
   holding: string | null;
   /** A queued ticket whose worker, or a ticket in review whose reviewer, did not start and waits to try again; null otherwise. */
   startWait: StartWaitView | null;
+  /** A ticket in merging whose merge failed in a way worth waiting out, and waits to run again; null otherwise. */
+  mergeWait: MergeWaitView | null;
   /** Work went back to the ticket's worker (a fix round, a review's changes, a merge that did not land), and it waits for a free worker slot. */
   waitsForSlot: boolean;
   /** An open pull request's failing and pending CI checks, as Loom last read them, on a repo that relies on CI; null otherwise. */
@@ -74,6 +78,16 @@ export interface StartWaitView {
   tries: number;
   /** The environment provider said it cannot start one now, so the wait counts no attempt. */
   unavailable: boolean;
+}
+
+export interface MergeWaitView {
+  /** Failed merges in a row, the first at `since`. */
+  failures: number;
+  since: number;
+  /** When Loom tries again. */
+  until: number;
+  /** What the last one failed with. */
+  message: string;
 }
 
 /** What the draft card shows before a project has tickets on the board. */
@@ -135,6 +149,8 @@ export interface ProjectView {
   openAsks: number;
   /** The order the project's pull requests merge in, on the pull request strategy; null otherwise and in a rewound view, since what Loom read from the forge is kept only as it is now. */
   mergeOrder: MergeOrderView | null;
+  /** The project's deploy order, advice for the human, when its spec or a ticket has one; null otherwise and in a rewound view. */
+  rollout: RolloutView | null;
 }
 
 export interface PostDto {
@@ -214,6 +230,7 @@ export interface TicketDetail {
   depsDone: string[];
   blockedReason: string | null;
   startWait: StartWaitView | null;
+  mergeWait: MergeWaitView | null;
   branch: string | null;
   prUrl: string | null;
   /** Null on the integration strategy. */
@@ -229,6 +246,8 @@ export interface TicketDetail {
   replyTo: "worker" | "planner" | null;
   /** The state a blocked or cancelled ticket left; null otherwise. */
   stoppedFrom: TicketState | null;
+  /** Whether Review again as is may take a blocked ticket, from what Loom stored; running it also checks the ticket's branch. */
+  reviewAgain: boolean;
   activity: TicketActivity;
   /** The event the ticket was rewound to, and the time it shows; `at` is null for the live ticket. */
   at: number | null;
@@ -264,7 +283,8 @@ export interface BadgeView {
   threadIds: string[];
 }
 
-export const TICKET_ACTIONS = ["requeue", "block", "cancel"] as const;
+// "review" is review again as is: a requeue with no new worker, whose note may be empty.
+export const TICKET_ACTIONS = ["requeue", "review", "block", "cancel"] as const;
 export const CONTROL_ACTIONS = ["approve", "start", "pause", "pauseNow", "resume", "land", "landDirect", "archive"] as const;
 export type TicketAction = (typeof TICKET_ACTIONS)[number];
 export type ControlAction = (typeof CONTROL_ACTIONS)[number];
@@ -299,7 +319,7 @@ export const rpcContract = defineRpcContract({
     ...RPC_TAGS.reply,
   },
   ticketAction: {
-    input: z.object({ key, action: z.enum(TICKET_ACTIONS), note: z.string().min(1).max(4000), confirm }).strict(),
+    input: z.object({ key, action: z.enum(TICKET_ACTIONS), note: z.string().max(4000), confirm }).strict(),
     output: typed<TicketDetail>(),
     ...RPC_TAGS.ticketAction,
   },
@@ -338,6 +358,12 @@ export const rpcContract = defineRpcContract({
   plannerView: { input: z.object({ threadId: z.string().min(1).max(200) }).strict(), output: typed<PlannerView | null>(), ...RPC_TAGS.plannerView },
   messagePlanner: { input: z.object({ threadId: z.string().min(1).max(200), text: z.string().trim().min(1).max(20_000), confirm }).strict(), output: typed<PlannerView | null>(), ...RPC_TAGS.messagePlanner },
   dismissAsk: { input: z.object({ slug, ask: z.number().int().positive(), confirm }).strict(), output: typed<PlannerView | null>(), ...RPC_TAGS.dismissAsk },
+  // The human's Mark live on a rollout step or milestone, or with undo its undo.
+  markLive: {
+    input: z.object({ slug, target: z.string().min(1).max(100), note: z.string().trim().max(2000).optional(), undo: z.literal(true).optional(), confirm }).strict(),
+    output: typed<ProjectView>(),
+    ...RPC_TAGS.markLive,
+  },
   // A read of the project's open pull requests now; no human.action, since it changes nothing the human decides.
   syncPullRequests: { input: z.object({ slug, key: key.optional(), confirm }).strict(), output: typed<PrSyncResult>(), ...RPC_TAGS.syncPullRequests },
   bbProjects: { input: z.null(), output: typed<BbProjectChoice[]>(), ...RPC_TAGS.bbProjects },

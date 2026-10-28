@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { TomlError, parse } from "smol-toml";
 import { z } from "zod";
 import { unknownPlaceholders } from "./environments";
+import { deploysOnMerge, SOAK_PATTERN } from "./rollout";
 import { plural } from "./format";
 import { GIT_NETWORK_TIMEOUT_SECONDS } from "./git-network";
 import { matchesAny } from "./scope";
@@ -50,6 +51,38 @@ function isRealDate(text: string): boolean {
 // TOML reads an unquoted 2026-12-31 as a date object, not a string.
 const isoDate = z.preprocess((value) => (value instanceof Date ? value.toISOString().slice(0, 10) : value), z.string().refine(isRealDate, "must be a real date such as 2026-12-31"));
 
+const stageName = z.string().regex(/^[a-z][a-z0-9-]{0,23}$/, "must be 1-24 lowercase letters, digits or dashes, starting with a letter (for example expand)");
+const rolloutRef = z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/, "must be 1-40 lowercase letters, digits or dashes, starting with a letter or digit (for example old-traffic-zero)");
+const deployHow = z.string().trim().min(1).max(300);
+
+// How a repo's merged changes reach traffic; a [[repo]]'s fields override the [rollout] table's.
+export const deploySchema = z.object({ on_merge: z.boolean().optional(), how: deployHow.optional() }).strict();
+
+// Where a ticket's change sits in the deploy order. Advice for the human: nothing here holds a start, a review or a merge.
+export const ticketRolloutSchema = z
+  .object({
+    stage: stageName.optional(),
+    requires_live: z.array(z.string().min(1).max(40)).max(20).optional(),
+    release: rolloutRef.optional(),
+    dark: z.boolean().optional(),
+    how: deployHow.optional(),
+    verify: command.optional(),
+    rollback: z.string().trim().min(1).max(1000).optional(),
+  })
+  .strict();
+
+export const rolloutSchema = z
+  .object({
+    deploy: deploySchema.optional(),
+    stage: z
+      .array(z.object({ name: stageName, goal: z.string().trim().min(1).max(300), soak: z.string().regex(SOAK_PATTERN, "must be a duration such as 30m, 2h or 1d").optional() }).strict())
+      .max(12)
+      .optional(),
+    milestone: z.array(z.object({ ref: rolloutRef, title: z.string().trim().min(1).max(200), check: command.optional(), stage: stageName.optional() }).strict()).max(30).optional(),
+    window: z.array(z.object({ title: z.string().trim().min(1).max(120), from: isoDate, to: isoDate, note: z.string().trim().min(1).max(500).optional() }).strict()).max(20).optional(),
+  })
+  .strict();
+
 // The server that hosts a repo's pull requests: gh, the spec's own commands, or none (Loom only pushes the branch).
 export const forgeSchema = z
   .object({
@@ -57,11 +90,15 @@ export const forgeSchema = z
     open: command.optional(),
     state: command.optional(),
     feedback: command.optional(),
+    edit: command.optional(),
+    reply: command.optional(),
     // Moves an open pull request to another base branch; gh does it itself.
     retarget: command.optional(),
     after_open: z.array(command).max(5).optional(),
     // Run after each push to an open pull request, and after Loom moves one to another base.
     after_push: z.array(command).max(5).optional(),
+    // Globs, not regular expressions: a pattern from a spec must never be able to stall the plugin's thread.
+    ignore_checks: z.array(z.string().max(200).refine((pattern) => pattern.trim() !== "", "must not be blank")).max(20).optional(),
   })
   .strict();
 
@@ -118,6 +155,7 @@ export const ticketSpecSchema = z
     priority: z.number().int().min(0).max(3).default(2),
     repo: z.string().min(1).max(24).optional(),
     environment: ticketEnvironmentSchema.optional(),
+    rollout: ticketRolloutSchema.optional(),
   })
   .strict();
 
@@ -137,6 +175,8 @@ export const repoSpecSchema = z
     forge: forgeSchema.optional(),
     environment: environmentSchema.optional(),
     worktree: worktreeSchema.optional(),
+    deploy: deploySchema.optional(),
+    refresh_behind: z.number().int().min(1).max(1_000_000).optional(),
     git_network_timeout_seconds: gitNetworkTimeoutSeconds.optional(),
   })
   .strict();
@@ -154,6 +194,7 @@ export const ticketPatchSchema = z
     priority: ticketSpecSchema.shape.priority.unwrap().optional(),
     repo: ticketSpecSchema.shape.repo,
     environment: ticketSpecSchema.shape.environment,
+    rollout: ticketSpecSchema.shape.rollout,
   })
   .strict();
 
@@ -187,6 +228,8 @@ export const specSchema = z
         max_fix_rounds: z.number().int().min(0).max(20).optional(),
         stack: z.boolean().optional(),
         release_workers: z.boolean().optional(),
+        // Commits an open pull request's branch may lack of its remote base before Loom merges the base into it; unset is off.
+        refresh_behind: z.number().int().min(1).max(1_000_000).optional(),
         // Unset: Loom's checksQueuedMinutes and checksNearDonePercent settings apply.
         checks_queued_minutes: z.number().int().min(0).max(1440).optional(),
         checks_near_done_percent: z.number().int().min(0).max(100).optional(),
@@ -242,6 +285,7 @@ export const specSchema = z
     // No default: a spec without [[repo]] must parse, and hash, exactly as it did before repos existed.
     environment: environmentSchema.optional(),
     repo: z.array(repoSpecSchema).max(10).optional(),
+    rollout: rolloutSchema.optional(),
     ticket: z.array(ticketSpecSchema).min(1).max(200),
   })
   .strict();
@@ -254,6 +298,8 @@ export type ForgeSpec = z.output<typeof forgeSchema>;
 export type EnvironmentSpec = z.output<typeof environmentSchema>;
 export type MachineSpec = z.output<typeof machineSchema>;
 export type WorktreeSpec = z.output<typeof worktreeSchema>;
+export type TicketRolloutSpec = z.output<typeof ticketRolloutSchema>;
+export type RolloutSpec = z.output<typeof rolloutSchema>;
 
 export interface SpecResult {
   ok: boolean;
@@ -430,10 +476,15 @@ export function validateSemantics(spec: Spec, rawToml: string): { errors: string
     }
   });
   // Only when depends_on has no cycle of its own, so one loop is not reported twice.
+  let looped = cycle !== null;
   if (cycle === null && spec.ticket.some((ticket) => (ticket.merge_after ?? []).length > 0)) {
     const order = dependencyCycle(spec.ticket.map((ticket) => ({ ref: ticket.ref, depends_on: [...ticket.depends_on, ...(ticket.merge_after ?? []).filter((ref) => ref !== ticket.ref)] })));
     if (order !== null) errors.push(`ticket[${indexOfRef.get(order[0]!)}].merge_after: merge order cycle ${order.join(" -> ")} through depends_on and merge_after. Remove one merge_after entry to break the cycle.`);
+    looped = order !== null;
   }
+  const rollout = rolloutProblems(spec, indexOfRef, looped);
+  errors.push(...rollout.errors);
+  warnings.push(...rollout.warnings);
 
   const repos = spec.repo ?? [];
   const repoIndex = new Map<string, number>();
@@ -489,9 +540,12 @@ export function validateSemantics(spec: Spec, rawToml: string): { errors: string
   });
 
   if (spec.merge.strategy === "integration") {
-    for (const key of ["describe", "squash", "max_fix_rounds", "stack", "release_workers", "checks_queued_minutes", "checks_near_done_percent"] as const) {
+    for (const key of ["describe", "squash", "max_fix_rounds", "stack", "release_workers", "refresh_behind", "checks_queued_minutes", "checks_near_done_percent"] as const) {
       if (spec.merge[key] !== undefined) errors.push(`merge.${key}: it applies to the pull request Loom opens for each ticket, but merge.strategy is "integration". Remove it, or use merge.strategy = "pr".`);
     }
+    repos.forEach((repo, index) => {
+      if (repo.refresh_behind !== undefined) errors.push(`repo[${index}].refresh_behind: it applies to the pull request Loom opens for each ticket, but merge.strategy is "integration". Remove it, or use merge.strategy = "pr".`);
+    });
     const ciPaths = [...(spec.checks.ci === undefined ? [] : ["checks.ci"]), ...repos.flatMap((repo, index) => (repo.ci === undefined ? [] : [`repo[${index}].ci`]))];
     for (const at of ciPaths) errors.push(`${at}: it says whether Loom relies on the CI of the pull request it opens for each ticket, but merge.strategy is "integration". Remove it, or use merge.strategy = "pr".`);
   } else {
@@ -516,6 +570,106 @@ export function validateSemantics(spec: Spec, rawToml: string): { errors: string
   }
   warnings.push(...overlapWarnings(scopeOverlaps(spec.ticket)));
 
+  return { errors, warnings };
+}
+
+/**
+ * The rollout's own checks. Deploy order is advice for each ticket's pull request, so the integration strategy refuses it;
+ * on the pr strategy every name must resolve, stages must not run backwards, and the work, merge and deploy orders
+ * together must not loop. `looped` says a depends_on or merge order cycle was reported already.
+ */
+function rolloutProblems(spec: Spec, indexOfRef: ReadonlyMap<string, number>, looped: boolean): { errors: string[]; warnings: string[] } {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const repos = spec.repo ?? [];
+  if (spec.merge.strategy === "integration") {
+    const why = (at: string, what: string) =>
+      `${at}: deploy order is advice for the pull requests Loom opens for each ticket, but merge.strategy is "integration", where every ticket lands together. Remove ${what}, or use merge.strategy = "pr".`;
+    if (spec.rollout !== undefined) errors.push(why("rollout", "[rollout]"));
+    repos.forEach((repo, index) => repo.deploy !== undefined && errors.push(why(`repo[${index}].deploy`, "deploy")));
+    spec.ticket.forEach((ticket, index) => ticket.rollout !== undefined && errors.push(why(`ticket[${index}].rollout`, "rollout")));
+    return { errors, warnings };
+  }
+
+  const stages = spec.rollout?.stage ?? [];
+  const milestones = spec.rollout?.milestone ?? [];
+  const stageIndex = new Map<string, number>();
+  stages.forEach((stage, index) => {
+    const first = stageIndex.get(stage.name);
+    if (first === undefined) stageIndex.set(stage.name, index);
+    else errors.push(`rollout.stage[${index}].name: "${stage.name}" is also the name of rollout.stage[${first}]. Give every stage a unique name.`);
+  });
+  const milestoneIndex = new Map<string, number>();
+  milestones.forEach((milestone, index) => {
+    const first = milestoneIndex.get(milestone.ref);
+    if (first !== undefined) errors.push(`rollout.milestone[${index}].ref: "${milestone.ref}" is also the ref of rollout.milestone[${first}]. Give every milestone a unique ref.`);
+    else if (indexOfRef.has(milestone.ref)) errors.push(`rollout.milestone[${index}].ref: "${milestone.ref}" is also the ref of ticket[${indexOfRef.get(milestone.ref)}]. A milestone is a prerequisite no ticket delivers: give it another ref, or name the ticket in requires_live instead.`);
+    else milestoneIndex.set(milestone.ref, index);
+  });
+
+  const stageNames = [...stageIndex.keys()].join(", ");
+  const unnamed = new Set<string>();
+  const stageProblem = (at: string, name: string | undefined) => {
+    if (name === undefined || stageIndex.has(name)) return;
+    if (stages.length === 0) unnamed.add(name);
+    else errors.push(`${at}: "${name}" is not a [[rollout.stage]] name. Use one of: ${stageNames}.`);
+  };
+  milestones.forEach((milestone, index) => stageProblem(`rollout.milestone[${index}].stage`, milestone.stage));
+  spec.ticket.forEach((ticket, index) => stageProblem(`ticket[${index}].rollout.stage`, ticket.rollout?.stage));
+
+  const known = [...new Set([...indexOfRef.keys(), ...milestones.map((milestone) => milestone.ref)])];
+  spec.ticket.forEach((ticket, index) => {
+    for (const ref of ticket.rollout?.requires_live ?? []) {
+      if (ref === ticket.ref) errors.push(`ticket[${index}].rollout.requires_live: "${ref}" is this ticket's own ref. Remove it.`);
+      else if (!indexOfRef.has(ref) && !milestoneIndex.has(ref)) {
+        const others = known.filter((other) => other !== ticket.ref);
+        errors.push(`ticket[${index}].rollout.requires_live: "${ref}" is not a ticket ref or a [[rollout.milestone]] ref. ${others.length > 0 ? `Use one of: ${others.join(", ")}.` : "Remove it."}`);
+      }
+    }
+  });
+
+  (spec.rollout?.window ?? []).forEach((window, index) => {
+    if (window.from > window.to) errors.push(`rollout.window[${index}]: from (${window.from}) is after to (${window.to}). Swap them.`);
+  });
+
+  if (!looped && spec.ticket.some((ticket) => (ticket.rollout?.requires_live ?? []).length > 0)) {
+    const order = dependencyCycle(
+      spec.ticket.map((ticket) => ({ ref: ticket.ref, depends_on: [...ticket.depends_on, ...(ticket.merge_after ?? []), ...(ticket.rollout?.requires_live ?? [])].filter((ref) => ref !== ticket.ref) })),
+    );
+    if (order !== null) {
+      errors.push(`ticket[${indexOfRef.get(order[0]!)}].rollout.requires_live: rollout order cycle ${order.join(" -> ")} through depends_on, merge_after and requires_live. Remove one requires_live entry to break the cycle.`);
+    }
+  }
+
+  const stageOfRef = new Map<string, string>([
+    ...spec.ticket.flatMap((ticket) => (ticket.rollout?.stage === undefined ? [] : [[ticket.ref, ticket.rollout.stage] as const])),
+    ...milestones.flatMap((milestone) => (milestone.stage === undefined ? [] : [[milestone.ref, milestone.stage] as const])),
+  ]);
+  spec.ticket.forEach((ticket, index) => {
+    const own = ticket.rollout?.stage === undefined ? undefined : stageIndex.get(ticket.rollout.stage);
+    if (own === undefined) return;
+    for (const ref of ticket.rollout?.requires_live ?? []) {
+      const theirs = stageOfRef.get(ref);
+      const at = theirs === undefined ? undefined : stageIndex.get(theirs);
+      if (at === undefined || at <= own) continue;
+      errors.push(
+        `ticket[${index}].rollout.requires_live: "${ref}" is in the stage "${theirs}", which comes after this ticket's stage "${ticket.rollout!.stage}". Require only what the same or an earlier stage delivers, or move one of them to another stage.`,
+      );
+    }
+  });
+
+  if (unnamed.size > 0) {
+    const names = [...unnamed];
+    const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+    warnings.push(
+      `rollout: tickets name the ${names.length === 1 ? "stage" : "stages"} ${list}, but the spec has no [[rollout.stage]] tables, so the stages have no goal or soak and Loom orders them by the first ticket that names each. Add a [[rollout.stage]] table for each, in order.`,
+    );
+  }
+  spec.ticket.forEach((ticket, index) => {
+    if (ticket.rollout?.verify === undefined || !deploysOnMerge(spec, ticket.repo ?? null)) return;
+    const where = ticket.repo === undefined ? "the project's repo" : `the repo ${JSON.stringify(ticket.repo)}`;
+    warnings.push(`ticket[${index}].rollout.verify: ${where} deploys on merge, so Loom marks this ticket live when its pull request merges and never runs verify. Remove verify, or set deploy.on_merge = false.`);
+  });
   return { errors, warnings };
 }
 
@@ -554,13 +708,14 @@ function forgeErrors(forge: ForgeSpec | undefined, at: string): string[] {
     }
     return errors;
   }
-  for (const key of ["open", "state", "feedback", "retarget"] as const) {
+  for (const key of ["open", "state", "feedback", "edit", "reply", "retarget"] as const) {
     if (forge[key] !== undefined) errors.push(`${at}.${key}: only kind = "command" runs it, and ${at}.kind is "${forge.kind}". Remove it, or set kind = "command".`);
   }
-  for (const key of ["after_open", "after_push"] as const) {
-    if (forge.kind === "none" && forge[key] !== undefined) {
-      errors.push(`${at}.${key}: kind = "none" opens no pull request, so nothing would run these. Remove ${key}, or use kind = "gh" or "command".`);
+  if (forge.kind === "none") {
+    for (const key of ["after_open", "after_push"] as const) {
+      if (forge[key] !== undefined) errors.push(`${at}.${key}: kind = "none" opens no pull request, so nothing would run these. Remove ${key}, or use kind = "gh" or "command".`);
     }
+    if (forge.ignore_checks !== undefined) errors.push(`${at}.ignore_checks: kind = "none" reads no checks, so there is nothing to ignore. Remove ignore_checks, or use kind = "gh" or "command".`);
   }
   return errors;
 }

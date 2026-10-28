@@ -146,3 +146,20 @@ export function specDiff(before: Spec, after: Spec): SpecChange[] {
   const order: SpecSection[] = ["settings", "tickets", "guardrails"];
   return out.map((change, index) => ({ change, index })).sort((a, b) => order.indexOf(a.change.section) - order.indexOf(b.change.section) || a.index - b.index).map(({ change }) => change);
 }
+
+// Settings that say how Loom runs the project, not what it builds: forge, environments, agents, budget, every merge
+// setting but the strategy, branch and remote, a repo's refresh_behind and git_network_timeout_seconds, and the checks'
+// timeout and CI.
+const OPERATIONAL = [
+  /^merge\.(?!(?:strategy|branch|remote)(?:$|[.[]))/u,
+  /^(?:environment|agents|budget)(?:$|[.[])/u,
+  /^checks\.(?:timeout_minutes|ci)$/u,
+  /^repo\[\d+\]\.(?:forge|environment|ci|refresh_behind|git_network_timeout_seconds)(?:$|[.[])/u,
+  /^ticket\[[^\]]+\]\.environment(?:$|[.[])/u,
+];
+
+/** The paths `after` changed from `before` when each is an operational setting; null when anything else changed, or nothing did. */
+export function operationalChanges(before: Spec, after: Spec): string[] | null {
+  const paths = specDiff(before, after).map((change) => change.path);
+  return paths.length > 0 && paths.every((path) => OPERATIONAL.some((rule) => rule.test(path))) ? paths : null;
+}

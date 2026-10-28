@@ -1,12 +1,15 @@
 import { PluginCliError, cliCommand, defineCli, type PluginCliRegistration, type PluginCliResult } from "@get-bb/plugin-sdk";
 import type { Store } from "./db/store";
 import type { Approved, Engine } from "./engine";
+import { forgeCheck, formatForgeCheck } from "./forge-check";
 import { formatDuration, isMultiRepoProject, its, noTokenUsage, plural, readyToLand, reposHave } from "./format";
 import type { ProjectMetrics } from "./metrics";
 import { LoomError, type ProjectOverview, type Projects, type RepoOverview, type SpecView, type TicketSummary, type TicketView } from "./projects";
 import type { LandResult } from "./merge";
 import { projectRecord } from "./record";
 import { projectFeed, projectMetrics } from "./reports";
+import { rolloutLines } from "./rollout";
+import { projectRollout } from "./rollout-live";
 import { HUMAN_ACTOR, TICKET_STATES } from "./states";
 
 const json = { type: "boolean", description: "Print machine-readable JSON." } as const;
@@ -303,6 +306,32 @@ export function createCli(projects: Projects, engine: Engine, store: Store, now:
             return out(feed.rows.length === 0 ? "No events.\n" : `${feed.rows.map((row) => `${minute(row.at)}  ${row.text}`).join("\n")}\n`);
           }),
       }),
+      "forge check": cliCommand({
+        summary:
+          "Read a live pull request through a repo's forge on the project's machine, as a poll would, and print what Loom reads: state, draft, review, base, checks and items. It runs the repo's own forge commands (gh, or the spec's feedback or state command) and changes nothing in Loom",
+        positionals: [SLUG, { name: "target", description: "A ticket key such as CSV-1, for its pull request, or a pull request URL.", required: true }],
+        options: {
+          repo: { type: "string", description: "On a multi-repo project, the repo whose forge reads a pull request URL: one of the spec's [[repo]] names." },
+          version: { ...version, description: "Use this spec version's forge, such as a pending version's, instead of the version in force." },
+          json,
+        },
+        run: ({ options, positionals }) =>
+          guarded(async () => {
+            const check = await forgeCheck(engine.ctx, { slug: positionals.slug, target: positionals.target, ...(options.repo === undefined ? {} : { repo: options.repo }), ...(options.version === undefined ? {} : { version: options.version }) });
+            return { exitCode: check.failure === null ? 0 : 1, stdout: options.json ? toJson(check) : formatForgeCheck(check) };
+          }),
+      }),
+      rollout: cliCommand({
+        summary: "Print a project's deploy order as sentences: the next safe step, warnings, each stage's steps with how they deploy and whether they are live, milestones and windows. Advice only: Loom holds nothing back for it",
+        positionals: [SLUG],
+        options: { json },
+        run: ({ options, positionals }) =>
+          guarded(() => {
+            const view = projectRollout(store, projects.require(positionals.slug), now());
+            if (options.json) return out(toJson(view));
+            return out(view === null ? `${positionals.slug} has no rollout: its spec has no [rollout] table, no repo deploy and no ticket rollout.\n` : `${rolloutLines(view).join("\n")}\n`);
+          }),
+      }),
       report: cliCommand({
         summary: "Print a project's record as Markdown: goal, outcome, and each ticket's submits, reviews, merges, blocks and replies; --send runs Loom's done hook with it again (human only)",
         positionals: [SLUG],
@@ -342,13 +371,25 @@ export function createCli(projects: Projects, engine: Engine, store: Store, now:
           }),
       }),
       requeue: cliCommand({
-        summary: "Send a blocked ticket back to the queue, with an optional note for the next worker (human only)",
+        summary: "Send a blocked ticket back to the queue, with an optional note for the next worker; --review sends it back as it is, with no new worker (human only)",
         positionals: [KEY],
-        options: { note: { type: "string", description: "Your answer or instruction; it is added to the ticket's thread and the next worker reads it." }, json },
+        options: {
+          note: { type: "string", description: "Your answer or instruction; it is added to the ticket's thread and the next worker reads it." },
+          review: {
+            type: "boolean",
+            description: "Review again as is: back to review for the commit whose checks passed last, or back to its open pull request when the ticket's branch has nothing the pull request lacks. Refused when the branch changed since.",
+          },
+          json,
+        },
         run: ({ options, positionals }, ctx) =>
           guarded(async () => {
-            const ticket = await humanAction(deps, ctx, "requeue", { key: positionals.key }, () => engine.requeue(positionals.key, options.note ?? "", HUMAN_ACTOR));
-            return out(options.json ? toJson(projects.ticketView(ticket.key)) : `${ticket.key} is queued again. A new worker starts from its branch when a slot is free.\n`);
+            const review = options.review === true;
+            const data = { key: positionals.key, ...(review ? { review: true } : {}) };
+            const ticket = await humanAction(deps, ctx, "requeue", data, () => engine.requeue(positionals.key, options.note ?? "", HUMAN_ACTOR, { review }));
+            if (options.json) return out(toJson(projects.ticketView(ticket.key)));
+            if (ticket.state === "review") return out(`${ticket.key} is back in review as it is: new reviewers judge the commit whose checks passed last, in round ${ticket.review_round}.\n`);
+            if (ticket.state === "pr_open") return out(`${ticket.key} is back on its pull request as it is. Loom pushed nothing and follows the pull request again.\n`);
+            return out(`${ticket.key} is queued again. A new worker starts from its branch when a slot is free.\n`);
           }),
       }),
       cancel: cliCommand({
@@ -360,6 +401,21 @@ export function createCli(projects: Projects, engine: Engine, store: Store, now:
             const reason = positionals.reason.join(" ");
             const ticket = await humanAction(deps, ctx, "cancel", { key: positionals.key }, () => engine.cancel(positionals.key, reason, HUMAN_ACTOR));
             return out(options.json ? toJson(projects.ticketView(ticket.key)) : `${ticket.key} is cancelled: ${reason}\n`);
+          }),
+      }),
+      live: cliCommand({
+        summary: "Mark a rollout step (a ticket key) or a milestone live, for one Loom has no command to check; --undo takes the mark back. It moves no ticket (human only)",
+        positionals: [SLUG, { name: "target", description: "A ticket key such as CSV-1, or a milestone's ref from the spec's [[rollout.milestone]] tables.", required: true }],
+        options: { note: { type: "string", description: "How you know, such as a dashboard or a deploy link; it is kept as the evidence." }, undo: { type: "boolean", description: "Take back a live mark, for example one made by mistake." }, json },
+        run: ({ options, positionals }, ctx) =>
+          guarded(async () => {
+            const { slug, target } = positionals;
+            const undo = options.undo === true;
+            const project = projects.require(slug);
+            const which = store.ticketByKey(target)?.project_id === project.id ? { key: target } : { milestone: target };
+            const data = { slug, ...which, ...(options.note === undefined ? {} : { note: options.note }) };
+            const mark = await humanAction(deps, ctx, undo ? "unlive" : "live", data, () => engine.markLive(slug, target, { note: options.note, undo }, HUMAN_ACTOR));
+            return out(options.json ? toJson(mark) : undo ? `${target} is no longer marked live.\n` : `${target} is live.\n`);
           }),
       }),
       sync: cliCommand({

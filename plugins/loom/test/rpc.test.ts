@@ -527,6 +527,23 @@ describe("changes", () => {
     await expect(call("ticketAction", { key: "CSV-2", action: "requeue", note: "go", confirm: true })).rejects.toThrow(/only a blocked ticket/);
   });
 
+  it("ticketAction review sends a blocked ticket back as it is, with or without a note, and the detail says when it may", async () => {
+    await running();
+    await host.engine.block("CSV-1", "Reviewers are down", "human");
+    expect((await call<TicketDetail>("ticket", { key: "CSV-1" })).reviewAgain).toBe(false);
+    await expect(call("ticketAction", { key: "CSV-1", action: "review", note: "", confirm: true })).rejects.toThrow(/no commit that passed its checks/);
+    await expect(call("ticketAction", { key: "CSV-1", action: "requeue", note: " ", confirm: true })).rejects.toThrow(/The note is empty/);
+
+    const ticket = host.store.ticketByKey("CSV-1")!;
+    host.store.updateTicket(ticket.id, { head_sha: "abc1234", branch: "loom/csv/csv-1-1", review_round: 1 });
+    host.store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "check", body: "Checks passed.", data_json: JSON.stringify({ passed: true, head: "abc1234" }) });
+    host.hostPort.refs.set("refs/heads/loom/csv/csv-1-1", "abc1234");
+    expect((await call<TicketDetail>("ticket", { key: "CSV-1" })).reviewAgain).toBe(true);
+    const back = await call<TicketDetail>("ticketAction", { key: "CSV-1", action: "review", note: "", confirm: true });
+    expect(back).toMatchObject({ state: "review", reviewRound: 2, reviewAgain: false });
+    expect(humanEvents().filter((event) => event.action !== "start")).toEqual([{ actor: "human", action: "requeue", slug: "csv", key: "CSV-1", review: true }]);
+  });
+
   it("reply adds the human's post under its parent and delivers it to a live worker as the CLI does", async () => {
     await running();
     await host.engine.tick();
@@ -966,6 +983,38 @@ describe("syncPullRequests", () => {
     await expect(call("syncPullRequests", { slug: "csv", confirm: true }, { experimental_caller: { kind: "plugin", pluginId: "other" } })).rejects.toMatchObject({ code: "forbidden" });
     expect(sync).not.toHaveBeenCalled();
     await expect(call("syncPullRequests", { slug: "csv", confirm: true })).rejects.toMatchObject({ code: "conflict", message: "Project csv is ready; Loom reads pull requests only while a project is running or paused." });
+  });
+});
+
+describe("rollout and markLive", () => {
+  const rollout = (doc: Doc) => {
+    doc.merge = { strategy: "pr" };
+    doc.rollout = { stage: [{ name: "expand", goal: "The model is live" }], milestone: [{ ref: "traffic-low", title: "Old traffic is near zero" }] };
+    doc.ticket[0].rollout = { stage: "expand" };
+    doc.ticket[1].rollout = { requires_live: ["csv-model", "traffic-low"] };
+  };
+
+  it("puts the rollout in the project view, and none for a project without one", async () => {
+    await approved();
+    expect((await call<ProjectView>("project", { slug: "csv" })).rollout).toBeNull();
+  });
+
+  it("marks a step or a milestone live for the human, with a human.action, and answers with the project view", async () => {
+    await approved(rollout);
+    expect((await call<ProjectView>("project", { slug: "csv" })).rollout).toMatchObject({ counts: { steps: 2, live: 0 }, next: { kind: "pr", keys: ["CSV-1"] } });
+    const view = await call<ProjectView>("markLive", { slug: "csv", target: "CSV-1", note: "Deployed by hand", confirm: true });
+    expect(view.rollout).toMatchObject({ counts: { live: 1 } });
+    await call("markLive", { slug: "csv", target: "traffic-low", confirm: true });
+    await call("markLive", { slug: "csv", target: "traffic-low", undo: true, confirm: true });
+    expect(humanEvents()).toEqual([
+      { actor: "human", action: "live", slug: "csv", key: "CSV-1", note: "Deployed by hand" },
+      { actor: "human", action: "live", slug: "csv", milestone: "traffic-low" },
+      { actor: "human", action: "unlive", slug: "csv", milestone: "traffic-low" },
+    ]);
+    await expect(call("markLive", { slug: "csv", target: "CSV-1", confirm: true })).rejects.toMatchObject({ code: "conflict", message: expect.stringMatching(/^CSV-1 is already live/) });
+    await expect(call("markLive", { slug: "csv", target: "CSV-2" })).rejects.toThrow();
+    await expect(call("markLive", { slug: "csv", target: "CSV-2", confirm: true }, { experimental_caller: { kind: "plugin", pluginId: "other" } })).rejects.toMatchObject({ code: "forbidden" });
+    expect(host.store.rolloutMark(host.store.projectBySlug("csv")!.id, "CSV-2")).toBeNull();
   });
 });
 

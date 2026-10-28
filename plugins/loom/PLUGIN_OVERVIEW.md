@@ -8,6 +8,7 @@ Run a software project with agents. A planner turns your goal into a spec and a 
 - Workers that start by themselves, one per ready ticket in its own worktree, once its dependencies are done and its files clear the work in flight. Loom, not the agent, commits, runs your checks and decides whether the work passed.
 - Reviewers on their own model that approve or send numbered findings back. A ticket merges only after the review you asked for and the `after_merge` checks on the merged result.
 - Two ways to ship: an integration branch you read on the Changes tab and land as one pull request, or straight onto the base with `--direct`; or one pull request per ticket that the worker writes and Loom follows through CI and review. A dependent ticket stacks on its dependency's open pull request instead of waiting for the merge, and a worker frees its environment while its pull request waits.
+- Deploy order as advice: a Rollout tab and a section in each pull request show the next safe step and what must be live first.
 - Projects across repos: list bb projects as `[[repo]]` tables, and each ticket runs in one, with that repo's checks and integration branch.
 - A Loom page: a home table that puts what needs you first, a next-step bar with the one button you need now, a board with a row per stage, a ticket page with every attempt, check, review and merge, an Agents tab, and an Insights tab that says how the project went, when its work happened and what happened to each ticket, with the numbers beside the story.
 - A timeline on every project: rewind the page to any moment or play it back.
@@ -16,10 +17,10 @@ Run a software project with agents. A planner turns your goal into a spec and a 
 
 ## How it works
 
-Every change appends an event, in the same transaction, to a log that refuses edits, so the metrics computed from it are exact. Agents get narrow tools for their role and never merge or push. On the integration strategy the branch stays local until you land it; on the pull request strategy Loom pushes the reviewed work, never with force, and you merge. A worker's pull request comments come from your account, so each ends with a signature line, "Posted by Loom" unless you change it in Loom's settings. Every button that changes something asks for a second click and is logged as your action.
+Every change appends an event, in the same transaction, to a log that refuses edits, so metrics from it are exact. Agents get narrow tools for their role and never merge or push. On the integration strategy the branch stays local until you land it; on the pull request strategy Loom pushes the reviewed work, never with force, and you merge. A worker's pull request comments come from your account, so each ends with a signature line, "Posted by Loom" unless you change it in Loom's settings. Every button that changes something asks for a second click and is logged as your action.
 
 ## Requirements
 
 - `git` on the machine that has the project's checkouts.
 - `gh`, signed in, for GitHub pull requests; for another server, the commands you set in the spec's `[merge.forge]`.
-- Provider usage: every planner, worker and reviewer is an ordinary bb thread, so your providers' limits apply to them. A token budget or a deadline in the spec has Loom pause the project for you.
+- Provider usage: every planner, worker and reviewer is an ordinary bb thread, so your providers' limits apply. A token budget or a deadline in the spec has Loom pause the project for you.

@@ -48,12 +48,15 @@ export interface TurnStep {
   actions: PlannerAction[];
 }
 
+/** A spec review row's state as the planner's story shows it; superseded rows are left out. */
+export type ReviewRoundState = "reviewing" | "approved" | "changes_requested" | "failed" | "skipped";
+
 export type PlannerStep =
   | { kind: "started"; at: number; text: string }
   | { kind: "message"; at: number; text: string }
   | TurnStep
   | { kind: "notes"; at: number; version: number; notes: SpecNote[] }
-  | { kind: "review"; at: number; version: number; round: number; state: "reviewing" | "approved" | "changes_requested" | "failed"; summary: string | null; findings: SpecFinding[]; reason: string | null; startedAt: number; endedAt: number | null }
+  | { kind: "review"; at: number; version: number; round: number; state: ReviewRoundState; summary: string | null; findings: SpecFinding[]; reason: string | null; startedAt: number; endedAt: number | null }
   | { kind: "control"; at: number; action: (typeof CONTROLS)[number]; version: number | null; pending: boolean; skipReview: boolean }
   | { kind: "triage"; at: number; round: number; blocked: Array<{ key: string; title: string; reason: string }>; response: TurnStep | null };
 
@@ -68,7 +71,7 @@ export interface PlannerVersion {
   /** It writes or rewrites the summary of the version before it; always true for a first version with one. */
   summaryChanged: boolean;
   /** The newest review of the version that was not replaced. */
-  review: { state: "reviewing" | "approved" | "changes_requested" | "failed"; round: number; findings: number } | null;
+  review: { state: ReviewRoundState; round: number; findings: number } | null;
 }
 
 export interface PlannerView {
@@ -106,7 +109,7 @@ function stepsOf(store: Store, project: ProjectRow | null, threadId: string, sta
   if (project !== null) {
     for (const row of store.specReviews(project.id)) {
       if (row.state === "superseded") continue;
-      const step: PlannerStep = { kind: "review", at: row.ended_at ?? now, version: row.version, round: row.round, state: row.state, summary: row.summary, findings: JSON.parse(row.findings_json) as SpecFinding[], reason: row.reason, startedAt: row.started_at, endedAt: row.ended_at };
+      const step: PlannerStep = { kind: "review", at: row.ended_at ?? now, version: row.version, round: row.round, state: row.state as ReviewRoundState, summary: row.summary, findings: JSON.parse(row.findings_json) as SpecFinding[], reason: row.reason, startedAt: row.started_at, endedAt: row.ended_at };
       items.push({ type: "step", step, at: step.at, order: 1 });
     }
   }
@@ -180,7 +183,7 @@ function stepsOf(store: Store, project: ProjectRow | null, threadId: string, sta
       case "ticket.state": {
         const key = keyOf(event);
         if (!byPlanner || key === null) break;
-        if (data.from === "blocked" && data.to === "queued") act(event.at, { kind: "requeue", key });
+        if (data.from === "blocked" && (data.to === "queued" || data.requeued === true)) act(event.at, { kind: "requeue", key });
         else if (data.to === "cancelled") act(event.at, { kind: "cancel", key });
         break;
       }
@@ -237,7 +240,7 @@ function versionsOf(store: Store, projects: Projects, project: ProjectRow): Plan
       change: before === null ? null : versionChange(before, spec),
       summary: spec.project.summary ?? null,
       summaryChanged: spec.project.summary !== undefined && spec.project.summary !== before?.project.summary,
-      review: review === undefined ? null : { state: review.state as "reviewing" | "approved" | "changes_requested" | "failed", round: review.round, findings: (JSON.parse(review.findings_json) as unknown[]).length },
+      review: review === undefined ? null : { state: review.state as ReviewRoundState, round: review.round, findings: (JSON.parse(review.findings_json) as unknown[]).length },
     });
     before = spec;
   }

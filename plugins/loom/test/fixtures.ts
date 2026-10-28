@@ -92,6 +92,7 @@ export const card = (over: Partial<BoardCard> = {}): BoardCard => ({
   stackedOn: [],
   holding: null,
   startWait: null,
+  mergeWait: null,
   waitsForSlot: false,
   ci: null,
   ...over,
@@ -188,6 +189,7 @@ export const projectView = (over: Partial<ProjectView> = {}): ProjectView => ({
   specReview: null,
   openAsks: 0,
   mergeOrder: null,
+  rollout: null,
   ...over,
 });
 
@@ -218,6 +220,7 @@ export const ticketDetail = (over: Partial<TicketDetail> = {}): TicketDetail => 
   deps: ["CSV-1"],
   blockedReason: null,
   startWait: null,
+  mergeWait: null,
   branch: "loom/csv-2",
   prUrl: null,
   pr: null,
@@ -231,6 +234,7 @@ export const ticketDetail = (over: Partial<TicketDetail> = {}): TicketDetail => 
   depsDone: [],
   replyTo: "worker",
   stoppedFrom: null,
+  reviewAgain: false,
   activity: { brief: { postId: 1, at: NOW - 6 * HOUR, edits: 0, fields: [] }, before: [], attempts: [attempt()] },
   at: null,
   now: NOW,

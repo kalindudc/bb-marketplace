@@ -4,9 +4,11 @@ import type { Skipped } from "./check-wait";
 import type { CheckRun } from "./checks";
 import type { PostRow, ProjectRow, ReviewRow, SpecReviewRow, TicketRow } from "./db/store";
 import { its, plural } from "./format";
-import { followsFeedback, isMultiRepo, prSettings, repoSettings, type RepoSettings } from "./repos";
+import type { PrApplied, PrProposal } from "./pull-requests";
+import { canEdit, canReply, followsFeedback, isMultiRepo, prSettings, repoSettings, type RepoSettings } from "./repos";
 import type { Finding } from "./review";
-import type { Spec } from "./spec";
+import { rolloutFacts } from "./rollout";
+import type { ForgeSpec, Spec } from "./spec";
 import { specDiff, type SpecChange } from "./spec-diff";
 import { restackOf, stacking, stackOf, upstreamOf } from "./stack";
 import type { SpecNote } from "./spec-paths";
@@ -159,20 +161,27 @@ function otherReposSection(spec: Spec, repo: RepoSettings, checkouts: ReadonlyMa
   ];
 }
 
+const PROPOSE =
+  "Propose the pull request's title and description with loom_submit's pr = { title, body }, written as the pull request should read: the reviewers judge them with the work and may ask for changes to them as to the code. Loom adds its own sections after your description, such as the pull requests it depends on and the Rollout section.";
+
 /** What a worker on the pr strategy is told about the pull request Loom opens and follows for its ticket. */
 function pullRequestSection(spec: Spec, repo: RepoSettings, signature: string): string[] {
   const pr = prSettings(spec);
   if (repo.forge.kind === "none") {
-    return ["## The pull request", "When the reviewers approve, Loom pushes the reviewed work to the ticket's branch and a person opens the pull request.", ""];
+    return ["## The pull request", `When the reviewers approve, Loom pushes the reviewed work to the ticket's branch and a person opens the pull request.${pr.describe === "worker" ? ` ${PROPOSE} Loom posts them on the ticket for that person.` : ""}`, ""];
   }
   const write =
     pr.describe === "worker"
-      ? "When the reviewers approve, Loom asks you to write the pull request with loom_pr: its title, its description and the commit message."
+      ? `${PROPOSE} When the reviewers approve, Loom asks you for the commit message with loom_pr, and for the title and description too if you did not propose them.`
       : "When the reviewers approve, Loom writes the pull request from this ticket.";
   const push = pr.squash ? "Loom pushes the reviewed work as one commit and opens the pull request; the human merges it." : "Loom pushes the reviewed branch and opens the pull request; the human merges it.";
   const following = pr.maxFixRounds > 0 && followsFeedback(repo.forge);
   const follows = following ? [`While it is open, Loom follows its checks and reviews and sends you what needs a fix. Each fix goes through the checks and a review again and is pushed as ${pr.squash ? "one more commit" : "more commits"}.`] : [];
-  return ["## The pull request", [write, push, ...follows].join(" "), ...(following ? signRule(signature) : []), ""];
+  const text =
+    pr.describe !== "worker"
+      ? []
+      : [canEdit(repo.forge) ? "To change its title or description in a fix round, pass pr to loom_submit again; once the reviewers approve, Loom sets it on the pull request." : "This forge cannot change an open pull request's text, so a new title or description you pass to loom_submit in a fix round goes, once approved, on the ticket for the human to set."];
+  return ["## The pull request", [write, push, ...follows, ...(following ? text : [])].join(" "), ...(following ? replyRules(repo.forge, signature) : []), ""];
 }
 
 /**
@@ -297,6 +306,7 @@ export function workerBrief(a: {
     ...(multi ? otherReposSection(spec, repo, a.checkouts ?? new Map(), a.remote) : []),
     ...dependenciesSection(spec, ticket, a.tickets ?? [], a.checkouts ?? new Map(), a.remote),
     ...(spec.merge.strategy === "pr" ? pullRequestSection(spec, repo, a.signature ?? COMMENT_SIGNATURE) : []),
+    ...rolloutBriefSection(spec, a.tickets ?? [ticket], ticket, WORKER_ROLLOUT),
     "## Rules",
     "- Work only in this worktree. Never push, merge, or edit a protected path.",
     "- Call loom_note({ text }) once for each milestone, so the human can follow along on the ticket.",
@@ -315,7 +325,10 @@ export function workerBrief(a: {
           ? "An earlier worker started this ticket, but no branch was kept, so this worktree starts from the base."
           : `An earlier worker already worked on this ticket. This worktree starts from its branch ${JSON.stringify(ticket.branch)}, so continue from what is there instead of starting again.`,
     );
-    if (ticket.pushed_sha !== null) lines.push(`This ticket's pull request${ticket.pr_url === null ? "" : ` ${ticket.pr_url}`} is open. Address what Loom's newest feedback post on the ticket lists; Loom pushes your fix to it as one more commit.`);
+    if (ticket.pushed_sha !== null) {
+      const replies = ticket.pr_url !== null && canReply(repo.forge) ? " Answer its reviews and comments with loom_pr_reply, by the keys that post gives them." : "";
+      lines.push(`This ticket's pull request${ticket.pr_url === null ? "" : ` ${ticket.pr_url}`} is open. Address what Loom's newest feedback post on the ticket lists; Loom pushes your fix to it as one more commit.${replies}`);
+    }
     if (ticket.pushed_sha !== null && stacking(spec) && restackOf(a.tickets ?? [], ticket) !== null) {
       lines.push("Loom must bring this pull request up to date with its dependencies' new commits before it pushes again. Unless a post since the last push asks for a fix, check that the work still holds and call loom_submit with it as it is; after review, Loom merges those commits in, runs the checks and pushes.");
     }
@@ -378,7 +391,7 @@ export function resumeText(key: string, held: PostRow | null): string | { summar
   return { summary, detail: `The last result of the checks on ${key} came in while the project was paused, so you may not have seen it:\n${clip(held.body, CHECK_TAIL + 500)}` };
 }
 
-export function triageDigest(a: { project: ProjectRow; round: number; counts: Record<TicketState, number>; blocked: TicketRow[]; lastPosts: Map<number, PostRow[]> }): string {
+export function triageDigest(a: { project: ProjectRow; round: number; counts: Record<TicketState, number>; blocked: TicketRow[]; lastPosts: Map<number, PostRow[]>; budgetPaused?: boolean }): string {
   const { project, round, counts, blocked, lastPosts } = a;
   const board = Object.entries(counts)
     .filter(([, count]) => count > 0)
@@ -390,6 +403,12 @@ export function triageDigest(a: { project: ProjectRow; round: number; counts: Re
     "",
   ];
   if (blocked.length === 0) lines.push("No ticket is blocked.");
+  if (a.budgetPaused === true) {
+    lines.push(
+      "Loom paused the project for its budget. If the work should go on, propose a new spec version with loom_propose that raises budget.max_tokens or moves budget.deadline, then record with loom_ask_human that the human approves it and resumes the project.",
+      "",
+    );
+  }
   for (const ticket of blocked) {
     const posts = lastPosts.get(ticket.id) ?? [];
     const block = [...posts].reverse().find((post) => post.kind === "block");
@@ -502,6 +521,8 @@ export function reviewerBrief(a: {
   checkouts?: ReadonlyMap<string, string>;
   /** The reviewer runs on a machine of its own, away from the project's checkout. */
   remote?: boolean;
+  /** The project's tickets, for the Rollout section's prerequisites. */
+  tickets?: readonly TicketRow[];
 }): string {
   const { project, spec, ticket, round, diff, checkPost, earlierReviews } = a;
   const repo = repoSettings(spec, ticket.repo);
@@ -527,6 +548,8 @@ export function reviewerBrief(a: {
     "## Rubric",
     spec.review.rubric.length > 0 ? bullets(spec.review.rubric) : "- none; the acceptance criteria are the whole standard",
     "",
+    ...rolloutBriefSection(spec, a.tickets ?? [ticket], ticket, REVIEWER_ROLLOUT),
+    ...prTextReviewSection(spec, repo, ticket),
     ...(a.prFeedback == null
       ? []
       : [
@@ -563,11 +586,40 @@ export function reviewerBrief(a: {
   lines.push(
     "",
     "## Rules",
-    "Rules: read and run anything, change nothing, commit nothing; judge each acceptance criterion; approve only when every one holds and no blocking finding remains; call exactly one verdict tool, then end your turn.",
+    "Rules: read and run anything, change nothing, commit nothing; judge each acceptance criterion, and the pull request's text when this brief shows it; approve only when every one holds and no blocking finding remains; call exactly one verdict tool, then end your turn.",
     "- loom_approve({ summary }) approves.",
     "- loom_request_changes({ summary, findings }) sends the ticket back; each finding has a severity (blocking or should-fix), a title, a detail, and where you can, a file and a line.",
   );
   return lines.join("\n");
+}
+
+const shownText = (title: string | null, body: string | null) => [`Title: ${title ?? "(none proposed)"}`, "Description:", body === null ? "(none proposed)" : clip(body, 12_000)];
+
+/**
+ * What the reviewer of a ticket on the pr strategy judges of its pull request's text: the title and description as it will
+ * open, or in a fix round the text Loom last set beside the one the worker proposes. Nothing on describe = "loom".
+ */
+function prTextReviewSection(spec: Spec, repo: RepoSettings, ticket: TicketRow): string[] {
+  if (spec.merge.strategy !== "pr" || prSettings(spec).describe !== "worker") return [];
+  const proposal = ticket.pr_proposal_json === null ? null : (JSON.parse(ticket.pr_proposal_json) as PrProposal);
+  const judge = "Judge this text as you judge the code, against the rubric and the ticket: request changes to it with a finding when it is wrong, unclear or leaves out what the rubric asks of a pull request. Loom adds its own sections after the description, such as the Rollout section, so do not ask for those.";
+  if (ticket.pushed_sha === null) {
+    if (proposal === null) {
+      return ["## The pull request as it will open", "The worker proposed no title or description; it writes them after approval, unreviewed. If the rubric asks something of the pull request's description, request changes so the worker proposes it with loom_submit's pr.", ""];
+    }
+    const where = repo.forge.kind === "none" ? " A person opens it here, with the text Loom posts on the ticket." : "";
+    return ["## The pull request as it will open", `The worker proposes this title and description; Loom opens the pull request with them once the reviewers approve.${where}`, ...shownText(proposal.title, proposal.body), judge, ""];
+  }
+  const applied = ticket.pr_applied_json === null ? null : (JSON.parse(ticket.pr_applied_json) as PrApplied);
+  const unknown = repo.forge.kind === "none" ? "Loom opens no pull request on this forge; a person opened it with the text the ticket's posts show." : "Loom has no record of the text it set; read it on the pull request.";
+  const current = applied === null ? [unknown] : [`${applied.byHand === true ? "Loom last posted this text on the ticket for the human to set" : "Loom last set"}:`, ...shownText(applied.title, applied.body ?? "(Loom's template from the ticket)")];
+  // An approved edit still waiting to be set is what the pull request is to read, so a proposal is judged against it.
+  const waiting = applied?.want === undefined ? [] : ["", "An approved text Loom has not set yet, after a failed edit, which it sets unless a newer approved text replaces it:", ...shownText(applied.want.title, applied.want.body ?? "(Loom's template from the ticket)")];
+  const target = applied?.want ?? applied;
+  const changes = proposal !== null && (target == null || (proposal.title !== null && proposal.title !== target.title) || (proposal.body !== null && proposal.body !== target.body));
+  const proposed = changes ? ["The worker proposes:", ...shownText(proposal.title ?? target?.title ?? null, proposal.body ?? target?.body ?? null)] : ["The worker proposes no change to it."];
+  const how = canEdit(repo.forge) ? "Once the reviewers approve, Loom sets the proposed text on the pull request." : "This forge cannot change the pull request's text, so once the reviewers approve, Loom posts the proposed text on the ticket for the human to set.";
+  return ["## The pull request's text", ...current, ...waiting, "", ...proposed, ...(changes ? [how, judge] : []), ""];
 }
 
 export function reviewerNudgeText(key: string, round: number): string {
@@ -604,9 +656,13 @@ export function afterMergeChangedText(key: string, run: CheckRun, changed: strin
   };
 }
 
-export function prBody(a: { ticket: TicketRow; approvals: ReviewRow[]; dependsOn?: string[] }): string {
-  const { ticket, approvals } = a;
-  const dependsOn = a.dependsOn ?? [];
+/** Loom's template description of a ticket's pull request, followed by Loom's own sections. */
+export function prBody(a: { ticket: TicketRow; approvals: ReviewRow[]; dependsOn?: string[]; rollout?: readonly string[] }): string {
+  return `${prTemplateText(a.ticket, a.approvals)}\n\n${loomBlock(a.ticket.key, a.dependsOn, a.rollout)}`;
+}
+
+/** The part of Loom's template a worker's description takes the place of: the ticket, its criteria and its review. */
+export function prTemplateText(ticket: TicketRow, approvals: readonly ReviewRow[]): string {
   const acceptance = JSON.parse(ticket.acceptance_json) as string[];
   return [
     ticket.body,
@@ -616,10 +672,44 @@ export function prBody(a: { ticket: TicketRow; approvals: ReviewRow[]; dependsOn
     "",
     `Review: approved by ${approvals.length} ${approvals.length === 1 ? "reviewer" : "reviewers"}.`,
     ...approvals.map((review) => `- ${review.summary ?? ""}`),
-    "",
-    ...(dependsOn.length > 0 ? [...dependsOn, ""] : []),
-    `Opened by Loom for ${ticket.key}.`,
   ].join("\n");
+}
+
+/** What starts and ends Loom's own sections at the end of a pull request's description, so Loom can find and replace them later. */
+export const LOOM_BEGIN = "<!-- loom:begin -->";
+export const LOOM_END = "<!-- loom:end -->";
+
+/** Loom's own sections of a description, between its markers: the pull requests it depends on, its Rollout section and who opened it. */
+export function loomBlock(key: string, dependsOn: readonly string[] = [], rollout: readonly string[] = []): string {
+  return [LOOM_BEGIN, ...(dependsOn.length > 0 ? [...dependsOn, ""] : []), ...(rollout.length > 0 ? [...rollout, ""] : []), `Opened by Loom for ${key}.`, LOOM_END].join("\n");
+}
+
+const count = (text: string, part: string) => text.split(part).length - 1;
+
+/**
+ * `body` with its Loom block replaced by `block`. Loom replaces only a block it can tell is its own: exactly one pair of
+ * markers, in order. "none" when there is no such pair, "several" when the markers appear more than once.
+ */
+export function replaceLoomBlock(body: string, block: string): { body: string } | { problem: "none" | "several" } {
+  const begins = count(body, LOOM_BEGIN);
+  const ends = count(body, LOOM_END);
+  if (begins > 1 || ends > 1) return { problem: "several" };
+  const start = body.indexOf(LOOM_BEGIN);
+  const end = body.indexOf(LOOM_END);
+  if (begins === 0 || ends === 0 || end < start) return { problem: "none" };
+  return { body: `${body.slice(0, start)}${block}${body.slice(end + LOOM_END.length)}` };
+}
+
+/** A worker's text with Loom's markers, and anything between a pair of them, taken out: only Loom writes its own sections. */
+export function withoutLoomBlocks(text: string): string {
+  let rest = text;
+  for (;;) {
+    const start = rest.indexOf(LOOM_BEGIN);
+    const end = start < 0 ? -1 : rest.indexOf(LOOM_END, start);
+    if (end < 0) break;
+    rest = `${rest.slice(0, start)}${rest.slice(end + LOOM_END.length)}`;
+  }
+  return rest.split(LOOM_BEGIN).join("").split(LOOM_END).join("").trim();
 }
 
 // ---------------------------------------------------------------- the pull request stage
@@ -630,6 +720,8 @@ export interface FeedbackCheck {
   url: string | null;
 }
 export interface FeedbackItem {
+  /** The forge's key for it, which loom_pr_reply names it by; none on the human's reply and in older feedback posts. */
+  key?: string;
   kind: "review" | "thread" | "comment" | "reply";
   author: string;
   /** Unknown on the human's reply and in older feedback posts. */
@@ -654,7 +746,8 @@ function itemLine(item: FeedbackItem): string {
           ? "The human's reply on the ticket"
           : `Comment by ${item.author}`;
   const link = item.url === null ? "" : ` (${item.url})`;
-  return `- ${what}${link}:\n${clip(item.body.trim(), ITEM_TEXT).replace(/^/gm, "  > ")}`;
+  const key = item.key === undefined || item.kind === "reply" ? "" : `, key \`${item.key}\``;
+  return `- ${what}${link}${key}:\n${clip(item.body.trim(), ITEM_TEXT).replace(/^/gm, "  > ")}`;
 }
 
 function skippedLine(check: Skipped): string {
@@ -681,43 +774,64 @@ export function feedbackList(checks: readonly FeedbackCheck[], items: readonly F
 /** What a worker's pull request comments end with unless Loom's commentSignature setting says otherwise. */
 export const COMMENT_SIGNATURE = "Posted by Loom";
 
-/** The rule that signs a worker's pull request comments, or none for an empty signature. A worker posts from the human's account. */
-function signRule(signature: string): string[] {
+/** How a worker answers the pull request's reviews and comments: through loom_pr_reply, which Loom signs, on every machine. */
+function replyRules(forge: ForgeSpec, signature: string): string[] {
+  if (!canReply(forge)) return ["Loom cannot reply on this pull request through its forge, so say in your loom_submit summary what you would answer a review or a comment; the human reads it on the ticket."];
   const line = signature.trim();
-  return line === "" ? [] : [`End every comment and reply you post on the pull request with a blank line and then this line, exactly as written:\n  ${line}`];
+  const signs = line === "" ? "" : ` Loom ends each reply with a blank line and this line:\n  ${line}`;
+  return [`Answer a review, a review thread or a comment on the pull request with loom_pr_reply({ item, text, resolve }), naming it by the key the fix round's message gives it, never with the forge's CLI: Loom posts the reply from the project's machine, so it works wherever you run.${signs}`];
 }
 
-const prRules = (signature: string) => [
+const prRules = (forge: ForgeSpec, signature: string) => [
   "Investigate a failed check with your own tools: the CI's CLI, the forge's CLI and the logs behind the links. A check that failed for a reason this change did not cause needs no code change; say so in your summary.",
-  "You may answer review comments on the pull request with the forge's CLI, for example to explain a change or to ask a question. Never push, merge, close, approve or edit the pull request: Loom does that.",
-  ...signRule(signature),
-  "If nothing needs to change, call loom_submit with a summary that says why; Loom then pushes nothing and keeps following the pull request.",
+  ...replyRules(forge, signature),
+  `${canReply(forge) ? "Reply, for example, to explain a change, to ask a question, or to resolve a review thread you fixed with resolve: true. " : ""}Never push, merge, close, approve or edit the pull request yourself: Loom does that.`,
+  canEdit(forge)
+    ? "When the feedback asks for a new title or description, pass pr = { title, body } to loom_submit with what it should read; the reviewers judge it, and Loom sets it on the pull request once they approve."
+    : "When the feedback asks for a new title or description, pass pr = { title, body } to loom_submit with what it should read; the reviewers judge it, and since this forge cannot change the pull request's text, Loom posts it on the ticket for the human to set.",
+  "If nothing needs to change, call loom_submit with a summary that says why; Loom then pushes nothing and keeps following the pull request. A fix that changes only pr goes to review, and Loom pushes nothing for it.",
   "Otherwise the fix goes through the checks and a review, then you write its commit message and Loom pushes it as one more commit.",
 ];
 
-/** Loom asks the worker of an approved ticket for its pull request: title, description and commit message, or a fix round's commit message. */
-export function prAskText(a: { key: string; fix: boolean; round: number; url: string | null; limitMinutes: number }): { summary: string; detail: string } {
+/**
+ * Loom asks the worker of an approved ticket for its pull request: the commit message, with the title and description it
+ * did not propose with loom_submit, or a fix round's commit message. `changes`: the fix round's proposal changes the text.
+ */
+export function prAskText(a: { key: string; fix: boolean; round: number; url: string | null; limitMinutes: number; proposed?: { title: boolean; body: boolean }; changes?: boolean }): { summary: string; detail: string } {
   const own = "Write it the way you normally do: follow your own instructions and skills for pull request descriptions and commit messages, if you have any.";
   const after = `Change no files: Loom pushes the exact commit the reviewers approved. Do not commit, push or open a pull request yourself. If loom_pr does not come within ${a.limitMinutes} minutes, Loom uses its own template.`;
+  const override = "Pass title or body as well only to change them again now; given, they win.";
   if (a.fix) {
+    const text = a.changes === true ? ", then sets the title and description you proposed with loom_submit, which the reviewers approved" : ", and keeps the pull request's title and description";
     return {
       summary: `[loom] ${a.key}: fix round ${a.round} is approved. Write its commit message and hand it in with loom_pr({ commit_message }), then end your turn.`,
-      detail: [`Loom pushes the approved fix to ${a.url ?? "the pull request's branch"} as one more commit with your message, and keeps the pull request's title and description.`, own, after].join("\n\n"),
+      detail: [`Loom pushes the approved fix to ${a.url ?? "the pull request's branch"} as one more commit with your message${text}. ${override}`, own, after].join("\n\n"),
     };
   }
+  const proposed = a.proposed ?? { title: false, body: false };
+  if (proposed.title && proposed.body) {
+    return {
+      summary: `[loom] ${a.key} is approved. Loom opens its pull request with the title and description the reviewers approved; write the commit message and hand it in with loom_pr({ commit_message }), then end your turn.`,
+      detail: ["Loom pushes the reviewed work as one commit with your commit message, and opens the pull request with the title and description you proposed with loom_submit.", override, own, "- commit_message: the message of that one commit: a subject line, a blank line, then a short body.", after].join("\n\n"),
+    };
+  }
+  const fields = [...(proposed.title ? [] : ["title"]), ...(proposed.body ? [] : ["body"]), "commit_message"];
   return {
-    summary: `[loom] ${a.key} is approved. Write its pull request and hand it in with loom_pr({ title, body, commit_message }), then end your turn.`,
+    summary: `[loom] ${a.key} is approved. Write its pull request and hand it in with loom_pr({ ${fields.join(", ")} }), then end your turn.`,
     detail: [
-      "Loom pushes the reviewed work as one commit with your commit message, and opens the pull request with your title and description.",
+      proposed.title || proposed.body
+        ? `Loom pushes the reviewed work as one commit with your commit message, and opens the pull request with the ${proposed.title ? "title" : "description"} you proposed with loom_submit and the ${proposed.title ? "description" : "title"} you give here.`
+        : "Loom pushes the reviewed work as one commit with your commit message, and opens the pull request with your title and description.",
       own,
-      "- title: the pull request's title.\n- body: its description, in Markdown.\n- commit_message: the message of that one commit: a subject line, a blank line, then a short body.",
+      [...(proposed.title ? [] : ["- title: the pull request's title."]), ...(proposed.body ? [] : ["- body: its description, in Markdown."]), "- commit_message: the message of that one commit: a subject line, a blank line, then a short body."].join("\n"),
       after,
     ].join("\n\n"),
   };
 }
 
-export function prNudgeText(key: string, fix: boolean): string {
-  const call = fix ? "loom_pr({ commit_message })" : "loom_pr({ title, body, commit_message })";
+/** `commitOnly`: the text is in, so only the commit message is missing. */
+export function prNudgeText(key: string, commitOnly: boolean): string {
+  const call = commitOnly ? "loom_pr({ commit_message })" : "loom_pr({ title, body, commit_message })";
   return `[loom] ${key}: your turn ended without loom_pr. Call ${call} now, then end your turn; if your turn ends again without it, Loom uses its own template.`;
 }
 
@@ -740,13 +854,13 @@ function foreignTipLines(foreign: ForeignTip | null): string[] {
   return ["The pull request's branch has commits Loom did not push. Do not fetch or merge them yourself: when Loom pushes your fix, it merges them into your branch first and runs your checks on the result, and a conflict comes back to you."];
 }
 
-export function prFeedbackText(a: { key: string; url: string | null; round: number; counted: number; max: number; checks: FeedbackCheck[]; items: FeedbackItem[]; skipped?: Skipped[]; foreign: ForeignTip | null; signature?: string; restored?: boolean }): { summary: string; detail: string } {
+export function prFeedbackText(a: { key: string; url: string | null; round: number; counted: number; max: number; checks: FeedbackCheck[]; items: FeedbackItem[]; skipped?: Skipped[]; foreign: ForeignTip | null; forge?: ForgeSpec; signature?: string; restored?: boolean }): { summary: string; detail: string } {
   const human = a.items.some((item) => item.kind === "reply");
   const what = human ? "The human replied on the ticket about its open pull request" : a.url === null ? "The pull request needs fixes" : `The pull request ${a.url} needs fixes`;
   const merge = foreignTipLines(a.foreign);
   return {
     summary: `[loom] ${a.key}: ${what} (fix round ${a.round}${human ? "" : `; ${a.counted} of the ${a.max} the pull request may start`}). Address it, then call loom_submit({ summary }).`,
-    detail: [...(a.restored === true ? [RESTORED_NOTE] : []), feedbackList(a.checks, a.items, a.skipped), ...(a.checks.length === 0 ? [] : [CI_FIX]), ...merge, ...prRules(a.signature ?? COMMENT_SIGNATURE).map((rule) => `- ${rule}`)].join("\n\n"),
+    detail: [...(a.restored === true ? [RESTORED_NOTE] : []), feedbackList(a.checks, a.items, a.skipped), ...(a.checks.length === 0 ? [] : [CI_FIX]), ...merge, ...prRules(a.forge ?? { kind: "gh" }, a.signature ?? COMMENT_SIGNATURE).map((rule) => `- ${rule}`)].join("\n\n"),
   };
 }
 
@@ -767,10 +881,19 @@ export function prDivergedText(key: string): { summary: string; detail: string }
   };
 }
 
-/** The worker's description with the pull requests it depends on and the line that says who opened it. */
-export function workerPrBody(key: string, body: string, dependsOn: readonly string[] = []): string {
-  return [body.trimEnd(), "", ...(dependsOn.length > 0 ? [...dependsOn, ""] : []), `Opened by Loom for ${key}.`].join("\n");
+/** The worker's description first, then Loom's own sections between its markers. */
+export function workerPrBody(key: string, body: string, dependsOn: readonly string[] = [], rollout: readonly string[] = []): string {
+  return `${withoutLoomBlocks(body)}\n\n${loomBlock(key, dependsOn, rollout)}`;
 }
+
+/** A brief's Rollout section: what the ticket's change is in the deploy order, after the rule for the agent reading it. */
+function rolloutBriefSection(spec: Spec, tickets: readonly TicketRow[], ticket: TicketRow, rule: string): string[] {
+  const facts = rolloutFacts(spec, tickets, ticket, null, 0);
+  return facts.length === 0 ? [] : ["## Rollout", rule, ...facts, ""];
+}
+const WORKER_ROLLOUT = "Loom writes the rollout order in the pull request's Rollout section; do not write deploy order or prerequisites into the description.";
+const REVIEWER_ROLLOUT =
+  "Loom tracks the rollout order and shows it in the pull request's Rollout section. Do not request changes to keep the pull request a draft or to describe the deploy order. Never call loom_request_changes for the rollout order: it is advice for the human. If the rollout order in the spec looks wrong, say so with loom_note or in your verdict's summary."; 
 
 /** Loom could not merge what a stacked ticket's branch must take: the worker merges `branch` and resolves the conflict. */
 export function restackConflictText(key: string, what: string, branch: string, files: readonly string[]): { summary: string; detail: string } {
@@ -801,6 +924,14 @@ export function restackRefusedText(key: string, what: string, why: string): { su
   return {
     summary: `[loom] ${key}: Loom must bring your branch up to date with ${what}, but left your worktree as it is: ${why}.`,
     detail: "Your worktree holds work that is not the commit the reviewers approved. Keep what belongs to the ticket and discard the rest, then call loom_submit({ summary }); Loom brings the branch up to date once that work passes review.",
+  };
+}
+
+/** Loom must merge into the worker's worktree, which has a merge the worker began and did not finish. */
+export function unfinishedMergeText(key: string, what: string): { summary: string; detail: string } {
+  return {
+    summary: `[loom] ${key}: Your worktree has a merge you have not finished. Finish it with git commit, or abort it with git merge --abort, then call loom_submit.`,
+    detail: `Loom must bring your branch up to date with ${what} before it pushes, and left your worktree as it is, so your resolution is kept. Once the merge is finished or aborted, run the checks and call loom_submit({ summary }); Loom brings the branch up to date once that work passes review.`,
   };
 }
 
@@ -858,8 +989,11 @@ export const SPEC_REVIEW_RUBRIC: readonly string[] = [
   "No speculation: configuration, flags, settings, abstraction layers, plugin points or generality that nothing in the goal uses now are findings, and so is work for possible future needs.",
   "Reuse: read the code the tickets touch. A ticket that rebuilds what the repository already has, such as a helper, component, command or test fixture, is a finding; name what to reuse.",
   "Completeness: a part of the goal that no ticket delivers, or an acceptance criterion no one could test, is a finding.",
+  "Done when: trace each project.done_when item to the tickets whose acceptance criteria make it true. An item that no ticket delivers is a finding; name the item.",
+  "Delivery: a ticket whose acceptance criteria can be met by documenting why the goal cannot be met, such as a change of comments or docs alone where the goal asks for different behaviour, is a finding. Ask for criteria that only the change itself meets.",
   "Checks and scope: a check command that does not exist in the repository, a scope far wider than the ticket's work, or a depends_on or merge_after where no order is needed, is a finding.",
   "Summary: project.summary tells someone who has not read the goal what the project changes and why. A summary that only names an issue or a task, or that promises what no ticket delivers, is a finding.",
+  "Rollout: on the pr strategy, depends_on orders the work, merge_after the merges and rollout the deploys. A ticket that changes a running system (a service, infrastructure, or an interface other code calls) with no rollout is a finding, and so is a rollout that breaks these: providers before consumers, dark before exposed, staging before production, a verify or a soak between stages, removal last behind a milestone, and no deploy-on-merge step inside a window.",
 ];
 
 const SPEC_LIMIT = 60_000;
@@ -953,18 +1087,25 @@ export function specReviewNudgeText(version: number): string {
   return `[loom] Your turn ended without a verdict on spec v${version}. Call loom_spec_approve({ summary }) or loom_spec_request_changes({ summary, findings }), then end your turn.`;
 }
 
+const handOverText = (version: number, pending: boolean) =>
+  pending
+    ? `Hand over to the human now: tell them what v${version} changes and that it waits for their approval. If they need to do more after approving, such as requeue tickets, record it with loom_ask_human.`
+    : "Hand over to the human now: tell them what you proposed and that the draft is ready to approve.";
+
 /** The verdict for the planner, visible in its chat: no findings is an approval. `pending` is a version proposed after approval. */
 export function specReviewVerdictText(a: { slug: string; version: number; round: number; summary: string; findings: readonly SpecFinding[]; pending?: boolean }): string {
   const { slug, version, round, summary, findings } = a;
-  if (findings.length === 0) {
-    const handOver = a.pending === true ? `Hand over to the human now: tell them what v${version} changes and that it waits for their approval. If they need to do more after approving, such as requeue tickets, record it with loom_ask_human.` : "Hand over to the human now: tell them what you proposed and that the draft is ready to approve.";
-    return [`[loom] Spec review round ${round} passed v${version} of ${slug}: ${summary}`, handOver].join("\n");
-  }
+  if (findings.length === 0) return [`[loom] Spec review round ${round} passed v${version} of ${slug}: ${summary}`, handOverText(version, a.pending === true)].join("\n");
   const next =
     round >= SPEC_REVIEW_ROUNDS
       ? "This was the last automatic round. Revise the spec for the findings you agree with and call loom_propose once more; Loom does not review it again. Then hand over, and tell the human which findings you left open and why."
       : "Revise the spec for each finding and call loom_propose again; a fresh reviewer checks the new version. If a finding is wrong, leave that part as it is and say why in your reply: the next reviewer reads this conversation. Do not hand over yet.";
   return [`[loom] Spec review round ${round} of ${SPEC_REVIEW_ROUNDS} found ${plural(findings.length, "problem")} in v${version} of ${slug}: ${summary}`, "", specFindingsList(findings), "", next].join("\n");
+}
+
+/** What the planner reads when its version skips the spec review: the hand-over a passed review gives, and why there was none. */
+export function specReviewSkippedText(a: { slug: string; version: number; against: number; paths: readonly string[]; pending?: boolean }): string {
+  return [`[loom] Loom skipped the spec review of v${a.version} of ${a.slug}: against v${a.against}, it changes only operational settings (${a.paths.join(", ")}).`, handOverText(a.version, a.pending === true)].join("\n");
 }
 
 export function specReviewFailedText(a: { slug: string; version: number; reason: string }): string {

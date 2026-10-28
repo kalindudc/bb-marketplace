@@ -54,6 +54,14 @@ export function feedText(event: EventRow, keys: Map<number, string>, { you = fal
       return `${WHO[String(data.author)] ?? "Someone"} added a ${data.kind} to ${key}.`;
     case "review.verdict":
       return data.verdict === "approved" ? `A reviewer approved ${key} in round ${data.round}.` : `A reviewer asked for changes on ${key} in round ${data.round}.`;
+    case "ticket.pr_reply":
+      return `${key}'s worker replied on its pull request in fix round ${data.round}.`;
+    case "ticket.after_push":
+    case "project.after_push": {
+      const push = `the push of ${String(data.sha).slice(0, 12)} to ${data.url}`;
+      if (data.moved !== true) return `Loom ran the after_push commands for ${push}.`;
+      return data.pushed === false ? `Loom ran the after_push commands for the move of ${data.url} to ${data.base}.` : `Loom ran the after_push commands for ${push} and its move to ${data.base}.`;
+    }
     case "turn.retry":
       return `${key}'s worker hit a rate limit; retry ${data.attempt} is scheduled.`;
     case "human.action": {
@@ -77,8 +85,18 @@ export function feedText(event: EventRow, keys: Map<number, string>, { you = fal
       const steps = Array.isArray(data.steps) ? (data.steps as Array<{ text?: unknown }>) : [];
       return steps.length === 0 ? "The planner cleared its asks." : `The planner asked the human to: ${steps.map((step) => String(step.text ?? "")).join(" ")}`;
     }
+    case "rollout.live": {
+      const by = data.by === "merge" ? "its pull request merged" : data.by === "verify" ? "its verify passed" : data.by === "check" ? "its check passed" : "the human marked it";
+      return data.by === "human" ? `${human} marked ${data.target} live.` : `${data.target} is live: ${by}.`;
+    }
+    case "rollout.unlive":
+      return `${human} undid ${data.target}'s live mark.`;
     case "spec.review.started":
       return `A spec reviewer started on spec version ${data.version} (round ${data.round}).`;
+    case "spec.review.skipped": {
+      const paths = Array.isArray(data.paths) ? (data.paths as unknown[]).map(String) : [];
+      return `Loom skipped the spec review of version ${data.version}: against version ${data.against}, it changes only operational settings (${paths.join(", ")}).`;
+    }
     case "spec.review.ended": {
       const n = num(data.findings) ?? 0;
       if (data.state === "approved") return `The spec review passed version ${data.version} in round ${data.round}.`;

@@ -53,6 +53,7 @@ describe("state maps", () => {
     expect(canMoveTicket("merging", "pr_open")).toBe(true);
     expect(canMoveTicket("blocked", "queued")).toBe(true);
     expect(canMoveTicket("blocked", "review")).toBe(true);
+    expect(canMoveTicket("blocked", "pr_open")).toBe(true);
     expect(canMoveTicket("blocked", "working")).toBe(false);
     expect(canMoveTicket("working", "blocked")).toBe(true);
     expect(canMoveTicket("blocked", "blocked")).toBe(false);
@@ -239,6 +240,24 @@ describe("tickets", () => {
     const ticket = new Store(old, clock.now).ticketByKey("CSV-1")!;
     expect(ticket.handback_json).toBe(message);
     expect(toLite(ticket)).toMatchObject({ holds: true, waitsSince: null });
+  });
+
+  it("keeps the spec reviews saved before skipped reviews existed, with their ids, and takes a skipped one after them", () => {
+    const old = new Database(":memory:");
+    const rebuilt = MIGRATIONS.findIndex((sql) => sql.startsWith("CREATE TABLE spec_reviews_next"));
+    expect(rebuilt).toBeGreaterThan(0);
+    for (const sql of MIGRATIONS.slice(0, rebuilt)) old.exec(sql);
+    old.prepare("INSERT INTO spec_reviews (project_id, version, round, state, spawn_token, thread_id, summary, started_at, ended_at, wait_json) VALUES (1, 1, 1, 'approved', 'tok1', 'thr_r1', 'Holds.', 5, 6, NULL)").run();
+    old.prepare("INSERT INTO spec_reviews (project_id, version, round, state, spawn_token, started_at) VALUES (1, 2, 1, 'reviewing', 'tok2', 7)").run();
+    for (const sql of MIGRATIONS.slice(rebuilt)) old.exec(sql);
+    const kept = new Store(old, clock.now);
+    expect(kept.specReviews(1)).toMatchObject([
+      { id: 1, version: 1, state: "approved", thread_id: "thr_r1", summary: "Holds.", started_at: 5, ended_at: 6, skip_json: null },
+      { id: 2, version: 2, state: "reviewing", thread_id: null },
+    ]);
+    expect(kept.openSpecReviews().map((row) => row.id)).toEqual([2]);
+    expect(kept.skipSpecReview({ project_id: 1, version: 3, round: 1, spawn_token: "tok3", summary: "Only the forge.", skip: { against: 2, paths: ["merge.forge.feedback"] } })).toMatchObject({ id: 3, state: "skipped", ended_at: clock.now(), skip_json: JSON.stringify({ against: 2, paths: ["merge.forge.feedback"] }) });
+    expect(kept.endSpecReview(3, "failed")).toBe(false);
   });
 
   it("updateTicket patches columns without an event", () => {
@@ -736,5 +755,62 @@ describe("check durations", () => {
       ]),
     );
     expect(store.checkDurations("https://github.com/acme/shop", ["test"], 2)).toEqual(new Map([["test", [4000, 3000]]]));
+  });
+});
+
+describe("rollout marks", () => {
+  it("keeps a ticket's rollout on its row, and null for a ticket without one", () => {
+    const project = store.createProject(newProject(), "human");
+    const plain = store.createTicket(newTicket(project.id, 1), "human");
+    const staged = store.createTicket(newTicket(project.id, 2, { rollout_json: JSON.stringify({ stage: "expand", requires_live: ["CSV-1"] }) }), "human");
+    expect(plain.rollout_json).toBeNull();
+    expect(JSON.parse(staged.rollout_json!)).toEqual({ stage: "expand", requires_live: ["CSV-1"] });
+  });
+
+  it("claims one run per target until it finishes, is let go or its claim expires, and keeps only the claimed run's result", () => {
+    const project = store.createProject(newProject(), "human");
+    expect(store.claimRolloutRun(project.id, "CSV-1", "run-a", clock.now() - 1000)).toBe(true);
+    expect(store.claimRolloutRun(project.id, "CSV-1", "run-b", clock.now() - 1000)).toBe(false);
+    expect(store.finishRolloutRun(project.id, "CSV-1", "run-b", { exitCode: 0, output: "" })).toBe(false);
+    clock.advance(5000);
+    expect(store.claimRolloutRun(project.id, "CSV-1", "run-b", clock.now() - 1000)).toBe(true);
+    expect(store.finishRolloutRun(project.id, "CSV-1", "run-a", { exitCode: 0, output: "late" })).toBe(false);
+    expect(store.finishRolloutRun(project.id, "CSV-1", "run-b", { exitCode: 1, output: "503" })).toBe(true);
+    expect(store.rolloutMark(project.id, "CSV-1")).toMatchObject({ checked_at: clock.now(), check_exit: 1, check_output: "503", run_token: null, run_at: null });
+    expect(store.claimRolloutRun(project.id, "CSV-1", "run-c", clock.now() - 1000)).toBe(true);
+    store.releaseRolloutRun(project.id, "CSV-1", "run-c");
+    expect(store.rolloutMark(project.id, "CSV-1")).toMatchObject({ check_exit: 1, run_token: null });
+  });
+
+  it("marks a target live with one event, records check runs with none, and undoes a mark", () => {
+    const project = store.createProject(newProject(), "human");
+    const ticket = store.createTicket(newTicket(project.id, 1), "human");
+    const run = (token: string, result: { exitCode: number | null; output: string }) => {
+      store.claimRolloutRun(project.id, "CSV-1", token, 0);
+      store.finishRolloutRun(project.id, "CSV-1", token, result);
+    };
+    run("one", { exitCode: 1, output: "503" });
+    run("two", { exitCode: null, output: "Loom could not run it: the machine is away" });
+    expect(store.rolloutMark(project.id, "CSV-1")).toMatchObject({ live_at: null, checked_at: clock.now(), check_exit: null, check_output: "Loom could not run it: the machine is away" });
+    clock.advance(1000);
+    store.markLive(project.id, ticket.id, "CSV-1", { by: "verify", evidence: "200 OK" }, "loom");
+    store.markLive(project.id, null, "traffic-low", { by: "human", evidence: "Checked the dashboard" }, "human");
+    expect(store.rolloutMarks(project.id).map((row) => [row.target, row.live_by, row.live_at, row.evidence])).toEqual([
+      ["CSV-1", "verify", clock.now(), "200 OK"],
+      ["traffic-low", "human", clock.now(), "Checked the dashboard"],
+    ]);
+    store.markNotLive(project.id, null, "traffic-low", "human", "Wrong dashboard");
+    expect(store.rolloutMark(project.id, "traffic-low")).toMatchObject({ live_at: null, live_by: null, evidence: null, undone_at: clock.now() });
+    const rollout = store.events(project.id).filter((event) => event.kind.startsWith("rollout."));
+    expect(rollout.map((event) => [event.kind, event.ticket_id, event.actor, JSON.parse(event.data_json)])).toEqual([
+      ["rollout.live", ticket.id, "loom", { target: "CSV-1", by: "verify", evidence: "200 OK" }],
+      ["rollout.live", null, "human", { target: "traffic-low", by: "human", evidence: "Checked the dashboard" }],
+      ["rollout.unlive", null, "human", { target: "traffic-low", note: "Wrong dashboard" }],
+    ]);
+  });
+
+  it("refuses an unknown way of going live", () => {
+    const project = store.createProject(newProject(), "human");
+    expect(() => db.prepare("INSERT INTO rollout_marks (project_id, target, live_by) VALUES (?, 'x', 'magic')").run(project.id)).toThrow(/CHECK/);
   });
 });

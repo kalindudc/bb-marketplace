@@ -89,7 +89,10 @@ export const holdKey = (hold: Hold) => `${hold.why}:${hold.keys.join(",")}`;
 export interface Restack {
   deps: Record<string, string>;
   commits: string[];
+  /** Fetch the remote base branch and take its tip. */
   withBase: boolean;
+  /** Take this tip of the remote base branch, which Loom fetched already, instead: a refresh's (fresh.ts). */
+  baseTip?: string;
 }
 
 export function restackOf(tickets: readonly TicketRow[], ticket: TicketRow): Restack | null {
@@ -106,10 +109,11 @@ export function restackOf(tickets: readonly TicketRow[], ticket: TicketRow): Res
   return { deps, commits: open.map((dep) => dep.pushed_sha!), withBase: merged || sync };
 }
 
-/** What a ticket's branch must take to have the base branch's tip as well as each open dependency's newest pull request commit. */
-export function restackWithBase(tickets: readonly TicketRow[], ticket: TicketRow): Restack {
+/** What a ticket's branch must take to have the base branch's tip as well as each open dependency's newest pull request commit; with `tip`, that tip as Loom fetched it already. */
+export function restackWithBase(tickets: readonly TicketRow[], ticket: TicketRow, tip?: string): Restack {
   const open = upstreamOf(tickets, ticket).open.filter((dep) => dep.pushed_sha !== null);
-  return { deps: Object.fromEntries(open.map((dep) => [dep.key, dep.pushed_sha!])), commits: open.map((dep) => dep.pushed_sha!), withBase: true };
+  const deps = Object.fromEntries(open.map((dep) => [dep.key, dep.pushed_sha!]));
+  return tip === undefined ? { deps, commits: open.map((dep) => dep.pushed_sha!), withBase: true } : { deps, commits: open.map((dep) => dep.pushed_sha!), withBase: false, baseTip: tip };
 }
 
 const sameCommits = (a: Record<string, string>, b: Record<string, string>) => {

@@ -1,7 +1,7 @@
 // The one thing to do next on a project, worked out on the server so the page only draws it. The app imports STAGES,
 // so this file imports nothing that pulls zod or smol-toml into the app's bundle.
 import type { BoardCard, ControlAction } from "./contract";
-import { isMultiRepoProject, its, plural, readyToLand, reposHave } from "./format";
+import { isMultiRepoProject, its, mergeRetryText, plural, readyToLand, reposHave } from "./format";
 import type { ProjectOverview } from "./projects";
 import type { SpecReviewStatus } from "./spec-review";
 import { PAUSE_NOW_REASON, SPEC_REVIEW_ROUNDS } from "./states";
@@ -128,10 +128,18 @@ function reviewStep(slug: string, version: number, review: SpecReviewStatus | un
   }
 }
 
-const REVIEWED_NOTE: Partial<Record<SpecReviewStatus["kind"], string>> = {
-  approved: "Loom's spec review passed it. ",
-  limit: `Loom stopped reviewing it after ${SPEC_REVIEW_ROUNDS} rounds; the planner's chat lists the findings it left open. `,
-};
+function reviewedNote(review: SpecReviewStatus | undefined): string {
+  switch (review?.kind) {
+    case "approved":
+      return "Loom's spec review passed it. ";
+    case "limit":
+      return `Loom stopped reviewing it after ${SPEC_REVIEW_ROUNDS} rounds; the planner's chat lists the findings it left open. `;
+    case "skipped":
+      return `Loom skipped its spec review, because against v${review.against} it changes only operational settings: ${review.paths.join(", ")}. `;
+    default:
+      return "";
+  }
+}
 
 export function nextStepOf(input: NextStepInput): NextStep | null {
   const { overview, board, version } = input;
@@ -147,7 +155,7 @@ export function nextStepOf(input: NextStepInput): NextStep | null {
       stage: 1,
       tone: "normal",
       title: `Next: review draft v${version}.`,
-      text: `${REVIEWED_NOTE[input.specReview?.kind ?? "none"] ?? ""}Read its tickets and checks, and ask the planner in its chat for any change, or approve it as it is. Approving creates ${tickets} on the board; nothing runs until you start.`,
+      text: `${reviewedNote(input.specReview)}Read its tickets and checks, and ask the planner in its chat for any change, or approve it as it is. Approving creates ${tickets} on the board; nothing runs until you start.`,
       action: { control: "approve", version, label: `Approve v${version} · create ${tickets}`, confirm: `Click again to approve v${version}` },
     };
   }
@@ -162,7 +170,7 @@ export function nextStepOf(input: NextStepInput): NextStep | null {
       stage,
       tone: "normal",
       title: `Next: approve v${pendingVersion}.`,
-      text: `The planner proposed spec v${pendingVersion}; it changes the spec, not the tickets on the board. ${REVIEWED_NOTE[input.specReview?.kind ?? "none"] ?? ""}${moves.length === 0 ? "Approving tells the planner." : `Approving ${moves.join(", ")}, and tells the planner.`}`,
+      text: `The planner proposed spec v${pendingVersion}; it changes the spec, not the tickets on the board. ${reviewedNote(input.specReview)}${moves.length === 0 ? "Approving tells the planner." : `Approving ${moves.join(", ")}, and tells the planner.`}`,
       action: {
         control: "approve",
         version: pendingVersion,
@@ -210,7 +218,8 @@ export function nextStepOf(input: NextStepInput): NextStep | null {
     const waiting = board.filter((card) => card.state === "working" && card.waitsForSlot).map((card) => card.key);
     const now = working.length === 0 ? "No worker is running now; tickets in checks, review or the merge queue move by themselves." : `${plural(working.length, "worker")} ${working.length === 1 ? "is" : "are"} on ${list(working)}.`;
     const queue = waiting.length === 0 ? "" : ` ${list(waiting)} ${waiting.length === 1 ? "waits" : "wait"} for a worker slot.`;
-    return { stage: 4, tone: "normal", title: "Running.", text: `${now}${queue}${ciText(board)} Nothing needs you now; this bar turns yellow when something does.`, action: null };
+    const merges = board.flatMap((card) => (card.mergeWait === null ? [] : [` ${card.key}'s merge waits: ${mergeRetryText(card.mergeWait)}`])).join("");
+    return { stage: 4, tone: "normal", title: "Running.", text: `${now}${queue}${merges}${ciText(board)} Nothing needs you now; this bar turns yellow when something does.`, action: null };
   }
 
   return { stage: STAGES.length, tone: "normal", title: "Done.", text: "Every ticket is done or cancelled.", action: null };

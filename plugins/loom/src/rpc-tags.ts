@@ -37,6 +37,7 @@ export const RPC_TAGS = {
   messagePlanner: { invalidates: (_: unknown, view: PlannerView | null) => changedTags(view?.slug ?? null) },
   dismissAsk: { invalidates: changesProject },
   syncPullRequests: { invalidates: changesProject },
+  markLive: { invalidates: changesProject },
   bbProjects: { tags: anything },
   startPlanning: { invalidates: anything },
   specVersion: { tags: ofProject },

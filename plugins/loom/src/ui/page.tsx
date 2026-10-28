@@ -14,6 +14,7 @@ import { HealthStrip } from "./health";
 import { Home } from "./home";
 import { InsightsTab } from "./insights";
 import { MergeOrderTab } from "./merge-order";
+import { RolloutTab } from "./rollout";
 import { NewProject } from "./new-project";
 import { NextStepBar, repoLand } from "./next-step-bar";
 import { PlannerPage } from "./planner-page";
@@ -24,7 +25,7 @@ import { SpecPage, bbProjectNamesOf } from "./spec-page";
 import { TicketView } from "./ticket";
 import { TimelineStrip } from "./timeline-strip";
 
-type Tab = "board" | "agents" | "insights" | "spec" | "planner" | "changes" | "merge";
+type Tab = "board" | "agents" | "insights" | "spec" | "planner" | "changes" | "merge" | "rollout";
 const TABS: ReadonlyArray<{ tab: Tab; label: string }> = [
   { tab: "board", label: "Board" },
   { tab: "agents", label: "Agents" },
@@ -33,6 +34,7 @@ const TABS: ReadonlyArray<{ tab: Tab; label: string }> = [
   { tab: "planner", label: "Planner" },
   { tab: "changes", label: "Changes" },
   { tab: "merge", label: "Merge order" },
+  { tab: "rollout", label: "Rollout" },
 ];
 
 /** A project shows its changes once it has started: before that no worker has changed anything. */
@@ -63,6 +65,8 @@ export function tabBadges(view: ProjectView, unviewed: number | null = null, pla
   const order = view.mergeOrder?.counts;
   if (order !== undefined && order.wrong > 0) badges.merge = { text: String(order.wrong), label: `${plural(order.wrong, "pull request")} merged into another ticket's branch`, tone: "destructive" };
   else if (order !== undefined && order.first > 0) badges.merge = { text: String(order.first), label: `${plural(order.first, "pull request")} with nothing before ${order.first === 1 ? "it" : "them"}`, tone: "info" };
+  const warnings = view.rollout?.warnings ?? [];
+  if (warnings.length > 0) badges.rollout = { text: String(warnings.length), label: `${plural(warnings.length, "rollout warning")} for you to read`, tone: warnings.some((warning) => warning.tone === "warning") ? "warning" : "info" };
   return badges;
 }
 
@@ -242,7 +246,8 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek, go }: { slug: string; tab:
   const changesTab = !rewound && hasChangesTab(overview.state);
   // The merge order is of the project now, so a rewound page leaves it out, as it does the changes.
   const mergeTab = changesTab && view.mergeOrder !== null;
-  const shownTab = (rewound && tab === "planner") || (!changesTab && tab === "changes") || (!mergeTab && tab === "merge") ? "board" : tab;
+  const rolloutTab = !rewound && view.rollout !== null;
+  const shownTab = (rewound && tab === "planner") || (!changesTab && tab === "changes") || (!mergeTab && tab === "merge") || (!rolloutTab && tab === "rollout") ? "board" : tab;
   const landing = landingFiles(changes.data ?? null);
   const badges = rewound ? {} : tabBadges(view, landing === null ? null : viewed.unviewed(landing), plannerWaiting);
   const openChanges = (id: string | null) => {
@@ -305,7 +310,7 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek, go }: { slug: string; tab:
       {view.health !== null && <HealthStrip health={view.health} />}
       <TimelineStrip slug={slug} at={at} onSeek={onSeek} onTicket={(key) => go(`${slug}/${key}`)} />
       <div role="tablist" aria-label="Project" className="flex shrink-0 gap-1 border-b border-border-seam px-3 pt-1.5">
-        {TABS.filter((entry) => (entry.tab !== "planner" || (overview.plannerThreadId !== null && !rewound)) && (entry.tab !== "changes" || changesTab) && (entry.tab !== "merge" || mergeTab)).map((entry) => {
+        {TABS.filter((entry) => (entry.tab !== "planner" || (overview.plannerThreadId !== null && !rewound)) && (entry.tab !== "changes" || changesTab) && (entry.tab !== "merge" || mergeTab) && (entry.tab !== "rollout" || rolloutTab)).map((entry) => {
           const badge = badges[entry.tab];
           return (
             <button
@@ -350,6 +355,7 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek, go }: { slug: string; tab:
           />
         )}
         {shownTab === "merge" && <MergeOrderTab order={view.mergeOrder} onTicket={(key) => go(`${slug}/${key}`)} />}
+        {shownTab === "rollout" && <RolloutTab slug={slug} rollout={view.rollout} now={view.now} onTicket={(key) => go(`${slug}/${key}`)} />}
         {shownTab === "changes" && (
           <ChangesTab changes={changes.data ?? null} error={changes.error} view={view} busy={busy} chosen={chosenChange} onChoose={setChosenChange} onControl={(action, repo) => void control(action, undefined, repo)} onReload={changes.reload} />
         )}

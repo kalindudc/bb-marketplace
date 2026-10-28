@@ -181,4 +181,29 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE threads ADD COLUMN resume_json TEXT`,
   // The seq of the newest machine_maintenance event whose idle Loom did not count.
   `ALTER TABLE threads ADD COLUMN maintenance_seq INTEGER NOT NULL DEFAULT 0`,
+  // A version that changes only operational settings skips its spec review: a 'skipped' row, with what it was compared
+  // with and the paths it changed in skip_json. SQLite cannot change a CHECK, so the table is built again.
+  `CREATE TABLE spec_reviews_next (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, version INTEGER NOT NULL, round INTEGER NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('reviewing', 'approved', 'changes_requested', 'failed', 'superseded', 'skipped')),
+    spawn_token TEXT NOT NULL UNIQUE, thread_id TEXT UNIQUE, idle_count INTEGER NOT NULL DEFAULT 0, summary TEXT,
+    findings_json TEXT NOT NULL DEFAULT '[]', reason TEXT, started_at INTEGER NOT NULL, ended_at INTEGER, wait_json TEXT, skip_json TEXT);
+  INSERT INTO spec_reviews_next (id, project_id, version, round, state, spawn_token, thread_id, idle_count, summary, findings_json, reason, started_at, ended_at, wait_json)
+    SELECT id, project_id, version, round, state, spawn_token, thread_id, idle_count, summary, findings_json, reason, started_at, ended_at, wait_json FROM spec_reviews;
+  DROP TABLE spec_reviews;
+  ALTER TABLE spec_reviews_next RENAME TO spec_reviews`,
+  // The ticket's place in the deploy order, its requires_live refs turned into ticket keys; null for none.
+  `ALTER TABLE tickets ADD COLUMN rollout_json TEXT`,
+  // Whether each ticket key or milestone ref of a project's rollout is live, by what, its verify or check command's last run,
+  // and the claim of the run going now, which keeps one run per target across a reload.
+  `CREATE TABLE rollout_marks (project_id INTEGER NOT NULL, target TEXT NOT NULL, live_at INTEGER,
+    live_by TEXT CHECK (live_by IN ('merge', 'verify', 'check', 'human')), evidence TEXT, undone_at INTEGER,
+    checked_at INTEGER, check_exit INTEGER, check_output TEXT, run_token TEXT, run_at INTEGER, PRIMARY KEY (project_id, target))`,
+  // MergeWait: the ticket's merge failed in a way worth waiting out, so it stays in merging until the wait ends.
+  `ALTER TABLE tickets ADD COLUMN merge_wait_json TEXT`,
+  // MergeStep: a merge Loom put in the worker's worktree whose checks have not passed yet, which a rerun finishes.
+  `ALTER TABLE tickets ADD COLUMN merge_step_json TEXT`,
+  // PrProposal: the pull request's title and description as the worker proposed them with loom_submit, for review.
+  `ALTER TABLE tickets ADD COLUMN pr_proposal_json TEXT`,
+  // PrApplied: the text Loom last set on the ticket's pull request, and an edit of it still to make.
+  `ALTER TABLE tickets ADD COLUMN pr_applied_json TEXT`,
 ];

@@ -5,7 +5,7 @@ import type { PrMeta } from "../src/pr-meta";
 import { parseSpec, type Spec } from "../src/spec";
 import type { TicketState } from "../src/states";
 import { withRepos } from "./fixtures";
-import { specToml } from "./helpers";
+import { specToml, type Doc } from "./helpers";
 
 // web merges into main and api into trunk, as withRepos sets them up.
 const spec: Spec = parseSpec(
@@ -66,6 +66,11 @@ function row(key: string, state: TicketState, over: Over = {}): TicketRow {
     merge_after_json: JSON.stringify(after),
     pr_meta_json: meta === undefined ? null : JSON.stringify({ at: 0, draft: null, review: null, base: null, ...meta }),
     head_tree: null,
+    rollout_json: null,
+    merge_wait_json: null,
+    merge_step_json: null,
+    pr_proposal_json: null,
+    pr_applied_json: null,
     created_by: "human",
     created_at: 0,
     updated_at: 0,
@@ -200,6 +205,22 @@ describe("mergeOrderOf", () => {
   it("leaves out the closed pull request of a ticket requeued after it, until a new one opens", () => {
     const redone = row("CSV-1", "working", { pr_url: "https://github.com/acme/web/pull/12", pushed_sha: null });
     expect(byKey(mergeOrderOf(spec, [redone])!.entries)["CSV-1"]).toMatchObject({ prUrl: null, prNumber: null, verdict: "no_pr", prOpen: false });
+  });
+
+  it("holds a pull request the forge says conflicts with its base, and gives each the count Loom made of its pushed commit", () => {
+    const fresh = (doc: Doc) => {
+      withRepos(doc);
+      delete doc.repo[0].after_merge;
+      doc.merge = { strategy: "pr", refresh_behind: 5000 };
+      doc.repo[1].refresh_behind = 100;
+    };
+    const counted = parseSpec(specToml(fresh)).spec!;
+    const conflicting = row("CSV-1", "pr_open", { checks: green, meta: { ...approved, mergeable: false, behind: { commits: 12_374, sha: "sha-CSV-1", tip: "t", at: 0 } } });
+    const stale = row("CSV-2", "pr_open", { checks: green, repo: "api", meta: { ...approved, mergeable: true, behind: { commits: 40, sha: "older", tip: "t", at: 0 } } });
+    const entries = byKey(mergeOrderOf(counted, [conflicting, stale])!.entries);
+    expect(entries["CSV-1"]).toMatchObject({ verdict: "first", holds: ["conflicts with main"], conflicts: true, behind: 12_374, refreshBehind: 5000 });
+    expect(entries["CSV-2"]).toMatchObject({ verdict: "ready", conflicts: false, behind: null, refreshBehind: 100 });
+    expect(byKey(mergeOrderOf(spec, [row("CSV-3", "pr_open", { checks: green, meta: approved })])!.entries)["CSV-3"]).toMatchObject({ verdict: "ready", conflicts: false, behind: null, refreshBehind: null });
   });
 
   it("does not count a pull request Loom let go of, such as a closed one, as open", () => {

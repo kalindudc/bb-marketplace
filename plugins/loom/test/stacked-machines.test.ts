@@ -217,7 +217,7 @@ describe("catching up with the dependency on a machine", () => {
     await queue();
 
     expect(h.host.callsTo("mergeOnto").at(-1)).toMatchObject({ ref: "base001" });
-    expect(h.host.callsTo("prRetarget")).toEqual([{ repo: "/repo", url: "https://github.com/acme/shop/pull/2", base: "main" }]);
+    expect(h.host.callsTo("prRetarget")).toEqual([{ repo: "/repo", url: "https://github.com/acme/shop/pull/2", base: "main", forge: { kind: "gh" } }]);
     expect(stackOf(ticketOf(h, "CSV-2"))).toMatchObject({ deps: {}, base: "base001" });
   });
 

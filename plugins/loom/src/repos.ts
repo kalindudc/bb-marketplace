@@ -24,6 +24,8 @@ export interface RepoSettings {
   environment: EnvironmentSpec | null;
   /** The command that prepares its integration worktree; null for Loom's own git worktree. */
   worktree: WorktreeSpec | null;
+  /** How many commits of its remote base an open pull request's branch may lack before Loom merges the base into it; null is off. */
+  refreshBehind: number | null;
   /** How long each git fetch, ls-remote or push for it may take; null when the spec sets none, so the host's default applies. */
   gitNetworkTimeoutMs: number | null;
 }
@@ -49,6 +51,7 @@ function settingsOf(spec: Spec, repo: RepoSpec | null): RepoSettings {
     ci: spec.merge.strategy === "pr" && (repo?.ci ?? spec.checks.ci ?? true) && followsFeedback(forge),
     environment: repo?.environment ?? spec.environment ?? null,
     worktree: repo?.worktree ?? spec.merge.worktree ?? null,
+    refreshBehind: spec.merge.strategy === "pr" ? (repo?.refresh_behind ?? spec.merge.refresh_behind ?? null) : null,
     gitNetworkTimeoutMs: seconds === undefined ? null : seconds * 1000,
   };
 }
@@ -96,6 +99,16 @@ export function prSettings(spec: Spec): PrSettings {
 /** Whether Loom can read a pull request's checks and reviews on this forge: gh, or a command forge with a feedback command. */
 export function followsFeedback(forge: ForgeSpec): boolean {
   return forge.kind === "gh" || (forge.kind === "command" && forge.feedback !== undefined);
+}
+
+/** Whether Loom can set a pull request's title and description on this forge: gh, or a command forge with an edit command. */
+export function canEdit(forge: ForgeSpec): boolean {
+  return forge.kind === "gh" || (forge.kind === "command" && forge.edit !== undefined);
+}
+
+/** Whether Loom can answer a pull request's feedback on this forge: gh, or a command forge with a reply command. */
+export function canReply(forge: ForgeSpec): boolean {
+  return forge.kind === "gh" || (forge.kind === "command" && forge.reply !== undefined);
 }
 
 /** Where a worker's branch starts in a repo when no earlier worker left one. */

@@ -8,6 +8,7 @@ import { gatherFacts, reachErrors, specTargets } from "./discover";
 import { SectionNameConflictError, type BbPort, type BbProjectInfo, type HostPort } from "./ports";
 import { MAX_PLANNING_REPOS, notesMessage, planningKickoff, planningTitle, type PickedRepo } from "./prompts";
 import { isMultiRepo, repoSettings } from "./repos";
+import { rolloutJson } from "./rollout";
 import { numberErrors, parseSpec, proposalErrorsOf, specHash, type Spec } from "./spec";
 import type { SpecNote } from "./spec-paths";
 import { PAUSE_NOW_REASON, TICKET_STATES, type AuthorKind, type MergeChoice, type ProjectState, type Role, type TicketState } from "./states";
@@ -408,6 +409,8 @@ export class Projects {
           priority: ticket.priority,
           repo: ticket.repo ?? null,
           environment_json: ticket.environment === undefined ? null : JSON.stringify(ticket.environment.inputs),
+          // A milestone ref is no ticket's, so it stays a ref.
+          rollout_json: rolloutJson(ticket.rollout, (ref) => keyOf.get(ref) ?? ref),
         },
         actor,
       );

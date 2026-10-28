@@ -4,7 +4,7 @@ import { repoCheckout, ticketRepo } from "./checkouts";
 import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { plural } from "./format";
 import { checkFailedText, clip, prUnchangedText } from "./prompts";
-import { unchangedFix } from "./pull-requests";
+import { openFeedback, proposalOf, proposeText, textPending, unchangedFix, type PrProposal, type PrText } from "./pull-requests";
 import { LoomError } from "./projects";
 import type { EnvironmentInfo } from "./ports";
 import { recordingHost } from "./runs";
@@ -49,8 +49,11 @@ export function workerOf(store: Store, ticket: TicketRow): WorkerStanding {
 // Resume hands over a failed result that was held back.
 export const delivers = (ctx: EngineCtx, projectId: number) => ctx.store.project(projectId)?.state === "running";
 
-/** The worker's loom_submit: validates, moves the ticket to checking, starts the checks and returns at once. */
-export function submit(ctx: EngineCtx, threadId: string, summary: string): string {
+/**
+ * The worker's loom_submit: validates, moves the ticket to checking, starts the checks and returns at once. `pr` is the
+ * pull request's title and description as the worker proposes them, for the reviewers to judge with the work.
+ */
+export function submit(ctx: EngineCtx, threadId: string, summary: string, pr?: { title?: string; body?: string }): string {
   const { store } = ctx;
   const row = store.threadByThreadId(threadId);
   if (row === null || row.role !== "worker") throw new LoomError("loom_forbidden", "loom_submit is for a Loom worker thread.");
@@ -61,14 +64,20 @@ export function submit(ctx: EngineCtx, threadId: string, summary: string): strin
   const text = summary.trim();
   if (text === "") throw new LoomError("loom_invalid_input", "The summary is empty. Say what you did and how each acceptance criterion holds.");
   if (row.resume_json !== null) throw new LoomError("loom_invalid_state", "Call loom_resume first: it puts the ticket's earlier work in your worktree, and your submit must build on it.");
+  const proposal = pr === undefined ? null : proposeText(specOf(store, store.project(ticket.project_id)!), ticket, pr, ctx.now());
   store.tx(() => {
     store.setTicketState(ticket.id, "checking", threadId, { submit: true });
-    store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "worker", author_thread_id: threadId, kind: "submit", body: text });
+    const proposed = proposal === null ? "" : proposalText(pr!);
+    store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "worker", author_thread_id: threadId, kind: "submit", body: `${text}${proposed}`, ...(proposal === null ? {} : { data_json: JSON.stringify({ pr: { title: pr!.title?.trim() ?? null, body: pr!.body?.trim() ?? null } }) }) });
+    if (proposal !== null) store.updateTicket(ticket.id, { pr_proposal_json: JSON.stringify(proposal) });
   });
   store.changed(ticket.project_id);
   void runChecks(ctx, ticket.id).catch((error) => ctx.bb.log("error", `Checks of ${ticket.key} failed: ${errText(error)}`));
   return `Submitted ${ticket.key}. The plugin is committing your work and running the checks now, so end your turn. The result arrives as a message: either what to fix, or a note that the ticket is waiting for review.`;
 }
+
+const proposalText = (pr: { title?: string; body?: string }) =>
+  ["", "", ...(pr.title === undefined ? [] : [`Proposed pull request title: ${pr.title.trim()}`]), ...(pr.body === undefined ? [] : [`Proposed pull request description:\n${pr.body.trim()}`])].join("\n");
 
 /** Runs the pipeline for a ticket in checking. Safe to call again for the same ticket: a run already in flight is shared. */
 export function runChecks(ctx: EngineCtx, ticketId: number): Promise<void> {
@@ -102,6 +111,8 @@ interface Outcome {
   environment: EnvironmentInfo;
   /** A fix round that changed nothing: no checks, no review, nothing to push. */
   unchanged?: boolean;
+  /** A fix round that changed only the pull request's proposed text: no checks, but a review of the text, and nothing to push. */
+  textOnly?: boolean;
   runs: CheckRun[];
   failure: CheckRun | null;
   outside: string[];
@@ -125,7 +136,7 @@ async function pipeline(ctx: EngineCtx, ticketId: number): Promise<void> {
   try {
     outcome = await runPipeline({ ...ctx, host: recordingHost(ctx.store, ctx.host, ticket, "check") }, ticket, spec, worker.row);
     const project = store.project(ticket.project_id)!;
-    if (outcome.failure === null && outcome.unchanged !== true && isRemote(project, outcome.environment)) {
+    if (outcome.failure === null && outcome.unchanged !== true && outcome.textOnly !== true && isRemote(project, outcome.environment)) {
       outcome = { ...outcome, commitSha: (await bringHome(ctx, project, spec, ticket, outcome.environment, "submit", outcome.tree)).sha };
     }
   } catch (error) {
@@ -150,7 +161,13 @@ async function runPipeline(ctx: EngineCtx, ticket: TicketRow, spec: Spec, worker
   const baseTree = stack?.base == null || !isRemote(project, environment) ? null : await stackedTree(ctx, project, spec, ticket, stack.base);
   const state = await ctx.host.call(hostId, "worktreeState", { worktree, base, ...(baseTree === null ? {} : { baseTree }) });
   const kept = { commitSha: commit.sha, tree: state.tree, environment };
-  if (unchangedFix(ctx.store.posts(ticket.id), { sha: commit.sha, tree: state.tree })) return { ...kept, unchanged: true, runs: [], failure: null, outside: [], protectedHits: [] };
+  const posts = ctx.store.posts(ticket.id);
+  if (unchangedFix(posts, { sha: commit.sha, tree: state.tree })) {
+    if (!textPending(ctx, ticket)) return { ...kept, unchanged: true, runs: [], failure: null, outside: [], protectedHits: [] };
+    // The work is the commit the open feedback was sent for, which the checkout has whatever machine the worker is on.
+    const sent = (JSON.parse(openFeedback(posts)!.data_json) as { head?: string | null }).head ?? ticket.head_sha!;
+    return { ...kept, commitSha: sent, textOnly: true, runs: [], failure: null, outside: [], protectedHits: [] };
+  }
   const report = scopeReport(state.changed, JSON.parse(ticket.scope_json) as string[], repo.protected);
   const outcome: Outcome = { ...kept, runs: [], failure: null, outside: report.outside, protectedHits: report.protectedHits };
   const refuse = (command: string, output: string) => {
@@ -202,6 +219,10 @@ async function stackedTree(ctx: EngineCtx, project: ProjectRow, spec: Spec, tick
 const seconds = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
 
 function checkPost(outcome: Outcome, enforce: Spec["scope"]["enforce"]): { body: string; data: object } {
+  if (outcome.textOnly === true) {
+    const body = `No checks ran: the work is the commit the pull request has (${outcome.commitSha.slice(0, 12)}), and the fix changes only the pull request's proposed title or description.`;
+    return { body, data: { passed: true, head: outcome.commitSha, runs: [], outside: [], protectedHits: [], textOnly: true } };
+  }
   const passed = outcome.failure === null;
   const lines = [passed ? `Checks passed (${outcome.runs.length} ${outcome.runs.length === 1 ? "command" : "commands"}).` : "Checks failed."];
   for (const run of outcome.runs) {
@@ -225,6 +246,12 @@ async function finish(ctx: EngineCtx, ticketId: number, spec: Spec, outcome: Out
     if (ticket === null || ticket.state !== "checking") return false;
     const owner = workerOf(store, ticket);
     worker = owner.standing === "active" ? owner.row : null;
+    // The proposal this submit brought came with the commit its checks passed with.
+    const proposal = proposalOf(ticket);
+    if (proposal?.head === null && failure === null) {
+      const head = outcome.unchanged === true ? ticket.head_sha! : outcome.commitSha;
+      store.updateTicket(ticket.id, { pr_proposal_json: JSON.stringify({ ...proposal, head } satisfies PrProposal) });
+    }
     if (outcome.unchanged === true) {
       store.setTicketState(ticket.id, "pr_open", LOOM_ACTOR, { unchanged: true, fixRound: ticket.pr_rounds });
       const body = `The worker changed nothing for fix round ${ticket.pr_rounds}, so Loom pushed nothing; it keeps following the pull request.`;
@@ -236,10 +263,13 @@ async function finish(ctx: EngineCtx, ticketId: number, spec: Spec, outcome: Out
     store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "check", body, data_json: JSON.stringify(data) });
     if (failure === null) {
       const round = ticket.review_round + 1;
-      store.setTicketState(ticket.id, "review", LOOM_ACTOR, { head: outcome.commitSha, round });
+      store.setTicketState(ticket.id, "review", LOOM_ACTOR, { head: outcome.commitSha, round, ...(outcome.textOnly === true ? { textOnly: true } : {}) });
       const stack = stackOf(ticket);
       const resolved = stack?.markers === undefined ? {} : { stack_json: JSON.stringify({ ...stack, markers: undefined } satisfies Stack) };
-      store.updateTicket(ticket.id, { head_sha: outcome.commitSha, head_tree: outcome.tree, review_round: round, ...resolved });
+      // Nothing to push once approved, so Loom asks for no commit message.
+      const text: PrText = { head: outcome.commitSha, by: "loom", title: null, body: null, commit: `${ticket.key}: ${ticket.title}` };
+      const textOnly = outcome.textOnly === true ? { pr_text_json: JSON.stringify(text) } : {};
+      store.updateTicket(ticket.id, { head_sha: outcome.commitSha, head_tree: outcome.tree, review_round: round, ...resolved, ...textOnly });
       if (worker !== null) store.updateThread((worker as ThreadRow).id, { idle_count: 0 });
       return true;
     }
@@ -263,7 +293,9 @@ async function finish(ctx: EngineCtx, ticketId: number, spec: Spec, outcome: Out
   if (target?.thread_id != null && delivers(ctx, ticket.project_id) && outcome.unchanged === true) {
     await send(ctx, target.thread_id, prUnchangedText(ticket.key));
   } else if (target?.thread_id != null && delivers(ctx, ticket.project_id)) {
-    if (failure === null) {
+    if (failure === null && outcome.textOnly === true) {
+      await send(ctx, target.thread_id, `[loom] ${ticket.key}: your fix changes only the pull request's proposed text, so no checks ran. The reviewers judge the text now; once they approve, Loom sets it on the pull request and pushes nothing. End your turn and wait for a message.`);
+    } else if (failure === null) {
       const outside = outcome.outside.length > 0 ? ` These files are outside the ticket's scope: ${outcome.outside.join(", ")}.` : "";
       await send(ctx, target.thread_id, `[loom] ${ticket.key}: the checks passed. The ticket is waiting for review; end your turn and wait for a message.${outside}`);
     } else if (blocked === null) {

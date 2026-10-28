@@ -1135,7 +1135,7 @@ describe("reading open pull requests in batches", () => {
   it("reads 12 pull requests of one GitHub repository in two calls of 10 and 2, and stores what it read on each ticket", async () => {
     await seedProject(h, withTickets(12));
     openAll((n) => `https://github.com/acme/shop/pull/${100 + n}`);
-    h.host.prMeta.set("https://github.com/acme/shop/pull/103", { draft: true, review: "APPROVED", base: "main" });
+    h.host.prMeta.set("https://github.com/acme/shop/pull/103", { draft: true, review: "APPROVED", base: "main", mergeable: false });
     await pollPullRequests(h.ctx, project());
 
     expect(h.host.calls.map((call) => call.method)).toEqual(["prBatch", "prBatch"]);
@@ -1143,8 +1143,8 @@ describe("reading open pull requests in batches", () => {
       { repo: "/repo", host: "github.com", owner: "acme", name: "shop", numbers: [101, 102, 103, 104, 105, 106, 107, 108, 109, 110], feedback: false },
       { repo: "/repo", host: "github.com", owner: "acme", name: "shop", numbers: [111, 112], feedback: false },
     ]);
-    expect(meta("CSV-3")).toEqual({ at: h.clock.t, draft: true, review: "APPROVED", base: "main", state: "OPEN" });
-    expect(meta("CSV-12")).toEqual({ at: h.clock.t, draft: false, review: null, base: null, state: "OPEN" });
+    expect(meta("CSV-3")).toEqual({ at: h.clock.t, draft: true, review: "APPROVED", base: "main", mergeable: false, state: "OPEN" });
+    expect(meta("CSV-12")).toEqual({ at: h.clock.t, draft: false, review: null, base: null, mergeable: null, state: "OPEN" });
     expect(h.store.tickets(project().id).every((ticket) => ticket.state === "pr_open" && ticket.pr_checked_at === h.clock.t)).toBe(true);
   });
 
@@ -1289,6 +1289,24 @@ describe("land", () => {
     expect(again).toMatchObject({ url: "https://github.com/acme/shop/pull/1" });
     expect(h.host.callsTo("prCreate")).toHaveLength(1);
     expect(h.host.callsTo("push").map((call) => call.src)).toEqual(["m1", "m2"]);
+  });
+
+  it("runs the forge's after_push commands when a land pushes new commits to the pull request already open, once per pushed commit", async () => {
+    await seedProject(h, (doc) => {
+      withDocsTicket(doc);
+      doc.merge.forge = { kind: "gh", after_push: ["ci start"] };
+    });
+    await mergeOne("CSV-1");
+    await land(h.ctx, "csv", landArgs);
+    const hooks = () => h.host.callsTo("exec").filter((call) => call.command === "ci start");
+    expect(hooks()).toEqual([]);
+    await mergeOne("CSV-3");
+    await land(h.ctx, "csv", landArgs);
+    expect(hooks()).toEqual([{ cwd: "/repo", command: "ci start", timeoutMs: 300_000, env: { LOOM_URL: "https://github.com/acme/shop/pull/1", LOOM_PR_NUMBER: "1", LOOM_HEAD: "loom/csv", LOOM_BASE: "main", LOOM_SHA: "m2" } }]);
+    await land(h.ctx, "csv", landArgs);
+    expect(h.host.callsTo("push").map((call) => call.src)).toEqual(["m1", "m2", "m2"]);
+    expect(hooks()).toHaveLength(1);
+    expect(h.store.projectEvents(project().id).filter((event) => event.kind === "project.after_push").map((event) => JSON.parse(event.data_json))).toEqual([{ sha: "m2", url: "https://github.com/acme/shop/pull/1", branch: "loom/csv", base: "main", pushed: true, moved: false }]);
   });
 
   it("pushes the sha it read while it held the merge guard, so no merge can move the branch in between", async () => {

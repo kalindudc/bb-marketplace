@@ -196,11 +196,13 @@ function StepRow({ step, now, repos, on }: { step: JourneyStep; now: number; rep
             ? `Loom's spec review found ${plural(step.findings.length, "problem")} in v${step.version}`
             : step.state === "failed"
               ? `Loom's spec review of v${step.version} did not finish`
-              : `Loom is reviewing v${step.version}`;
+              : step.state === "skipped"
+                ? `Loom skipped the spec review of v${step.version}: it changes only operational settings`
+                : `Loom is reviewing v${step.version}`;
       return (
         <Entry actor="reviewer" title={title} at={step.at} now={now} live={step.state === "reviewing"}>
           <p className="text-xs text-muted-foreground">
-            Round {step.round} of {SPEC_REVIEW_ROUNDS}
+            {step.state === "skipped" ? "No reviewer ran" : `Round ${step.round} of ${SPEC_REVIEW_ROUNDS}`}
             {step.state === "failed" && step.reason !== null ? ` · ${step.reason}` : ""}
             {on.onSpec !== undefined && (
               <>
@@ -221,7 +223,7 @@ function StepRow({ step, now, repos, on }: { step: JourneyStep; now: number; rep
               ))}
             </ol>
           )}
-          {step.summary !== null && step.summary !== "" && <More label="The reviewer's summary" text={step.summary} />}
+          {step.summary !== null && step.summary !== "" && <More label={step.state === "skipped" ? "What it changes" : "The reviewer's summary"} text={step.summary} />}
         </Entry>
       );
     }

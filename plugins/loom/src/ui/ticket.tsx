@@ -4,7 +4,7 @@ import type { TicketAction, TicketDetail } from "../contract";
 import { plural } from "../format";
 import { BUTTON, momentLabel, useAction, useLoom, useLoomWrite, useRun, useSyncPullRequests } from "./common";
 
-const ACTION_DONE: Record<TicketAction, string> = { requeue: "requeued", block: "blocked", cancel: "cancelled" };
+const ACTION_DONE: Record<TicketAction, string> = { requeue: "requeued", review: "sent back as it is", block: "blocked", cancel: "cancelled" };
 import { TicketHeader } from "./ticket-header";
 import { GHOST } from "./ticket-cards";
 import { SideCards } from "./ticket-side";

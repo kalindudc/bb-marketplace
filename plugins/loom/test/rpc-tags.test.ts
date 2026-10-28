@@ -49,5 +49,6 @@ describe("tags", () => {
     expect(invalidates("messagePlanner", { threadId: "thr_1" }, null)).toEqual([ANY]);
     expect(invalidates("startPlanning", {})).toEqual([ANY]);
     expect(invalidates("syncPullRequests", { slug: "csv", key: "CSV-1" })).toEqual(["project:csv", ANY]);
+    expect(invalidates("markLive", { slug: "csv", target: "CSV-1" })).toEqual(["project:csv", ANY]);
   });
 });

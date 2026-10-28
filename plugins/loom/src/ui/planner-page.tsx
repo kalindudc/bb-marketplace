@@ -217,6 +217,7 @@ function VersionCard({ view, project, onSpec }: { view: PlannerView; project: Pr
   const comments = view.steps.filter((step) => step.kind === "notes" && step.version === version - 1).reduce((sum, step) => sum + (step.kind === "notes" ? step.notes.length : 0), 0);
   const facts: Array<[string, ReactNode]> = [];
   if (review.kind === "approved") facts.push(["✓", `Passed Loom's spec review in round ${review.round}.`]);
+  else if (review.kind === "skipped") facts.push(["✓", `Loom skipped its spec review: against v${review.against}, it changes only operational settings (${review.paths.join(", ")}).`]);
   else if (review.kind === "limit") facts.push(["!", `Loom stopped reviewing after ${SPEC_REVIEW_ROUNDS} rounds, with ${plural(review.findings.length, "finding")} still open.`]);
   else if (review.kind === "failed")
     facts.push([

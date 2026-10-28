@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { prSettings } from "../src/repos";
+import { prSettings, repoSettings } from "../src/repos";
 import { dependencyCycle, globsOverlap, numberErrors, parseSpec, proposalErrorsOf, scopeOverlaps, specHash, ticketPatchSchema } from "../src/spec";
+import { withRepos } from "./fixtures";
 import { specToml, type Doc } from "./helpers";
 
 function run(edit?: (doc: Doc) => void) {
@@ -552,6 +553,31 @@ describe("forges, integration worktrees and environments", () => {
     expect(run((doc) => (doc.merge.forge = { kind: "gh", after_push: ["ci run"] })).errors).toEqual([]);
   });
 
+  it("parses a forge's edit, reply, after_push and ignore_checks globs, and refuses them where they cannot run or are blank or too many", () => {
+    const forge = { kind: "command", open: "o", state: "s", feedback: "f", edit: "e", reply: "r", after_push: ["ci run"], ignore_checks: ["Review bot*", "* (advisory)", "(a+)+$"] };
+    const result = run((doc) => (doc.merge = { strategy: "pr", forge }));
+    expect(result.errors).toEqual([]);
+    expect(result.spec!.merge.forge).toEqual(forge);
+    expect(run((doc) => (doc.merge = { strategy: "pr", forge: { kind: "gh", after_push: ["ci run"], ignore_checks: ["bot"] } })).errors).toEqual([]);
+    expect(run((doc) => (doc.merge = { strategy: "pr", forge: { kind: "gh", edit: "e", reply: "r" } })).errors).toEqual([
+      'merge.forge.edit: only kind = "command" runs it, and merge.forge.kind is "gh". Remove it, or set kind = "command".',
+      'merge.forge.reply: only kind = "command" runs it, and merge.forge.kind is "gh". Remove it, or set kind = "command".',
+    ]);
+    const none = (doc: Doc) => {
+      doc.merge = { strategy: "pr", forge: { kind: "none", after_push: ["x"], ignore_checks: ["x"] } };
+      doc.checks.ci = false;
+    };
+    expect(run(none).errors).toEqual([
+      expect.stringMatching(/^merge\.forge\.after_push: kind = "none" opens no pull request/u),
+      expect.stringMatching(/^merge\.forge\.ignore_checks: kind = "none" reads no checks/u),
+    ]);
+    expect(run((doc) => (doc.merge = { strategy: "pr", forge: { kind: "gh", ignore_checks: ["ok", "(unclosed"] } })).errors).toEqual([]);
+    expect(run((doc) => (doc.merge = { strategy: "pr", forge: { kind: "gh", ignore_checks: ["ok", "  "] } })).errors).toEqual([expect.stringMatching(/^merge\.forge\.ignore_checks\[1\]: must not be blank/u)]);
+    expect(run((doc) => (doc.merge = { strategy: "pr", forge: { kind: "gh", ignore_checks: ["x".repeat(201)] } })).errors[0]).toMatch(/^merge\.forge\.ignore_checks\[0\]/u);
+    expect(run((doc) => (doc.merge = { strategy: "pr", forge: { kind: "gh", ignore_checks: Array.from({ length: 21 }, (_, index) => `c${index}`) } })).errors[0]).toMatch(/^merge\.forge\.ignore_checks/u);
+    expect(run((doc) => (doc.merge = { strategy: "pr", forge: { kind: "gh", after_push: ["1", "2", "3", "4", "5", "6"] } })).errors[0]).toMatch(/^merge\.forge\.after_push/u);
+  });
+
   it("refuses a worktree on the pull request strategy, an unknown placeholder, and malformed ids", () => {
     expect(run((doc) => (doc.merge = { strategy: "pr", worktree: { command: "prep" } })).errors).toEqual(['merge.worktree: only the integration strategy has an integration worktree, and merge.strategy is "pr". Remove merge.worktree, or use merge.strategy = "integration".']);
     expect(run((doc) => (doc.environment = { provider: "trees", inputs: { tree: "{ticket}" } })).errors).toEqual(["environment.inputs: {ticket} is not a Loom placeholder. Use {branch} or {base}, or write the value out."]);
@@ -592,6 +618,35 @@ describe("forges, integration worktrees and environments", () => {
     ]);
     expect(run((doc) => (doc.merge = { strategy: "pr", checks_near_done_percent: 101 })).errors[0]).toMatch(/^merge\.checks_near_done_percent: /u);
     expect(run((doc) => (doc.merge = { strategy: "pr", checks_queued_minutes: 2.5 })).errors[0]).toMatch(/^merge\.checks_queued_minutes: /u);
+  });
+
+  it("keeps open pull requests fresh only when merge.refresh_behind or a repo's refresh_behind is set, on the pr strategy", () => {
+    const plain = run((doc) => (doc.merge = { strategy: "pr" })).spec!;
+    expect(Object.keys(plain.merge)).not.toContain("refresh_behind");
+    expect(repoSettings(plain, null).refreshBehind).toBeNull();
+    const set = run((doc) => (doc.merge = { strategy: "pr", refresh_behind: 5000 }));
+    expect(set.errors).toEqual([]);
+    expect(repoSettings(set.spec!, null).refreshBehind).toBe(5000);
+    const repos = run((doc) => {
+      withRepos(doc);
+      delete doc.repo[0].after_merge;
+      doc.merge = { strategy: "pr", refresh_behind: 5000 };
+      doc.repo[1].refresh_behind = 200;
+    }).spec!;
+    expect(repoSettings(repos, "web").refreshBehind).toBe(5000);
+    expect(repoSettings(repos, "api").refreshBehind).toBe(200);
+    expect(run((doc) => (doc.merge = { strategy: "pr", refresh_behind: 0 })).errors[0]).toMatch(/^merge\.refresh_behind: /u);
+    expect(run((doc) => (doc.merge = { strategy: "pr", refresh_behind: 2.5 })).errors[0]).toMatch(/^merge\.refresh_behind: /u);
+    expect(
+      run((doc) => {
+        withRepos(doc);
+        doc.merge = { strategy: "integration", refresh_behind: 100 };
+        doc.repo[1].refresh_behind = 10;
+      }).errors,
+    ).toEqual([
+      'merge.refresh_behind: it applies to the pull request Loom opens for each ticket, but merge.strategy is "integration". Remove it, or use merge.strategy = "pr".',
+      'repo[1].refresh_behind: it applies to the pull request Loom opens for each ticket, but merge.strategy is "integration". Remove it, or use merge.strategy = "pr".',
+    ]);
   });
 
   it("stacks pull requests on the pr strategy unless merge.stack = false, and refuses the key on the integration strategy", () => {
@@ -751,5 +806,136 @@ describe("project.summary, done_when and merge_after", () => {
 
   it("lets a ticket patch set merge_after", () => {
     expect(ticketPatchSchema.parse({ merge_after: ["CSV-1"] })).toEqual({ merge_after: ["CSV-1"] });
+  });
+});
+
+describe("rollout", () => {
+  const rolled = (edit?: (doc: Doc) => void) =>
+    run((doc) => {
+      doc.merge = { strategy: "pr" };
+      doc.rollout = {
+        deploy: { on_merge: false, how: "Shipit deploys main" },
+        stage: [
+          { name: "expand", goal: "The row mapper is live in production", soak: "1d" },
+          { name: "migrate", goal: "The endpoint uses it" },
+        ],
+        milestone: [{ ref: "traffic-low", title: "Old export traffic is near zero", check: "./traffic-low.sh", stage: "migrate" }],
+        window: [{ title: "Holiday freeze", from: "2026-11-09", to: "2026-11-23" }],
+      };
+      doc.ticket[0].rollout = { stage: "expand", verify: "curl -f https://example.com/health", rollback: "Revert the commit" };
+      doc.ticket[1].rollout = { stage: "migrate", requires_live: ["csv-model", "traffic-low"], release: "wave-1", dark: true, how: "Shipit, canary first" };
+      edit?.(doc);
+    });
+
+  it("parses, and hashes, a spec without any rollout field exactly as before", () => {
+    const spec = run().spec!;
+    expect(Object.keys(spec)).not.toContain("rollout");
+    expect(Object.keys(spec.ticket[0]!)).not.toContain("rollout");
+    const repo = run((doc) => ((doc.repo = [{ name: "web", project: "proj_web" }]), (doc.ticket[0].repo = "web"), (doc.ticket[1].repo = "web"))).spec!;
+    expect(Object.keys(repo.repo![0]!)).not.toContain("deploy");
+  });
+
+  it("keeps stages, milestones, windows, deploy settings and each ticket's rollout on the pr strategy", () => {
+    const result = rolled();
+    expect(result.errors).toEqual([]);
+    expect(result.warnings).toEqual([]);
+    const spec = result.spec!;
+    expect(spec.rollout!.stage!.map((stage) => stage.name)).toEqual(["expand", "migrate"]);
+    expect(spec.rollout!.milestone![0]).toEqual({ ref: "traffic-low", title: "Old export traffic is near zero", check: "./traffic-low.sh", stage: "migrate" });
+    expect(spec.ticket[1]!.rollout).toEqual({ stage: "migrate", requires_live: ["csv-model", "traffic-low"], release: "wave-1", dark: true, how: "Shipit, canary first" });
+  });
+
+  it("reads a window's dates written as TOML dates", () => {
+    const toml = specToml((doc) => ((doc.merge = { strategy: "pr" }), (doc.ticket[0].rollout = { verify: "true" }))) + '\n[[rollout.window]]\ntitle = "Holiday freeze"\nfrom = 2026-11-09\nto = 2026-11-23\n';
+    const result = parseSpec(toml);
+    expect(result.errors).toEqual([]);
+    expect(result.spec!.rollout!.window).toEqual([{ title: "Holiday freeze", from: "2026-11-09", to: "2026-11-23" }]);
+  });
+
+  it("refuses every rollout field on the integration strategy, where every ticket lands together", () => {
+    const result = rolled((doc) => {
+      doc.merge = { strategy: "integration" };
+      doc.repo = [{ name: "web", project: "proj_web", deploy: { on_merge: true } }];
+      doc.ticket[0].repo = "web";
+      doc.ticket[1].repo = "web";
+    });
+    expect(result.errors).toEqual([
+      expect.stringMatching(/^rollout: deploy order is advice for the pull requests Loom opens for each ticket, but merge\.strategy is "integration", where every ticket lands together\. Remove \[rollout\], or use merge\.strategy = "pr"\./),
+      expect.stringMatching(/^repo\[0\]\.deploy: .* merge\.strategy is "integration"/),
+      expect.stringMatching(/^ticket\[0\]\.rollout: .* merge\.strategy is "integration"/),
+      expect.stringMatching(/^ticket\[1\]\.rollout: .* merge\.strategy is "integration"/),
+    ]);
+  });
+
+  it("refuses an unknown stage, an unknown or own ref in requires_live, and duplicate stages and milestones", () => {
+    const result = rolled((doc) => {
+      doc.rollout.stage.push({ name: "expand", goal: "Again" });
+      doc.rollout.milestone.push({ ref: "traffic-low", title: "Again" }, { ref: "csv-model", title: "Same as a ticket" });
+      doc.rollout.milestone[0].stage = "cleanup";
+      doc.ticket[0].rollout.stage = "contract";
+      doc.ticket[1].rollout.requires_live = ["nope", "csv-export"];
+    });
+    expect(result.errors).toEqual([
+      'rollout.stage[2].name: "expand" is also the name of rollout.stage[0]. Give every stage a unique name.',
+      'rollout.milestone[1].ref: "traffic-low" is also the ref of rollout.milestone[0]. Give every milestone a unique ref.',
+      'rollout.milestone[2].ref: "csv-model" is also the ref of ticket[0]. A milestone is a prerequisite no ticket delivers: give it another ref, or name the ticket in requires_live instead.',
+      'rollout.milestone[0].stage: "cleanup" is not a [[rollout.stage]] name. Use one of: expand, migrate.',
+      'ticket[0].rollout.stage: "contract" is not a [[rollout.stage]] name. Use one of: expand, migrate.',
+      'ticket[1].rollout.requires_live: "nope" is not a ticket ref or a [[rollout.milestone]] ref. Use one of: csv-model, traffic-low.',
+      'ticket[1].rollout.requires_live: "csv-export" is this ticket\'s own ref. Remove it.',
+    ]);
+  });
+
+  it("refuses a bad soak and a window that ends before it starts", () => {
+    const result = rolled((doc) => {
+      doc.rollout.stage[0].soak = "a day";
+      doc.rollout.window[0] = { title: "Holiday freeze", from: "2026-11-23", to: "2026-11-09" };
+    });
+    expect(result.errors).toEqual(["rollout.stage[0].soak: must be a duration such as 30m, 2h or 1d."]);
+    expect(rolled((doc) => (doc.rollout.window[0] = { title: "Holiday freeze", from: "2026-11-23", to: "2026-11-09" })).errors).toEqual([
+      "rollout.window[0]: from (2026-11-23) is after to (2026-11-09). Swap them.",
+    ]);
+  });
+
+  it("refuses a cycle through depends_on, merge_after and requires_live", () => {
+    // csv-export depends on csv-model, so csv-model needing csv-export live first closes a loop.
+    const result = rolled((doc) => {
+      doc.ticket[0].rollout = { stage: "expand", requires_live: ["csv-export"] };
+      doc.ticket[1].rollout = { stage: "expand" };
+    });
+    expect(result.errors).toEqual([
+      "ticket[0].rollout.requires_live: rollout order cycle csv-model -> csv-export -> csv-model through depends_on, merge_after and requires_live. Remove one requires_live entry to break the cycle.",
+    ]);
+  });
+
+  it("refuses a ticket that requires a ticket or a milestone of a later stage", () => {
+    const result = rolled((doc) => {
+      doc.ticket.push({ ref: "csv-docs", title: "Docs", body: "Write them.", acceptance: ["WHEN built THE SYSTEM SHALL list it"], scope: ["docs/**"], rollout: { stage: "expand", requires_live: ["csv-export", "traffic-low"] } });
+    });
+    expect(result.errors).toEqual([
+      'ticket[2].rollout.requires_live: "csv-export" is in the stage "migrate", which comes after this ticket\'s stage "expand". Require only what the same or an earlier stage delivers, or move one of them to another stage.',
+      'ticket[2].rollout.requires_live: "traffic-low" is in the stage "migrate", which comes after this ticket\'s stage "expand". Require only what the same or an earlier stage delivers, or move one of them to another stage.',
+    ]);
+  });
+
+  it("warns about stages named with no [[rollout.stage]] tables, and about a verify a deploy-on-merge repo never runs", () => {
+    const loose = run((doc) => {
+      doc.merge = { strategy: "pr" };
+      doc.ticket[0].rollout = { stage: "expand" };
+      doc.ticket[1].rollout = { stage: "migrate" };
+    });
+    expect(loose.ok).toBe(true);
+    expect(loose.warnings).toEqual([expect.stringMatching(/^rollout: tickets name the stages expand and migrate, but the spec has no \[\[rollout\.stage\]\] tables/)]);
+    const merged = rolled((doc) => {
+      doc.repo = [{ name: "infra", project: "proj_infra", deploy: { on_merge: true, how: "The actuator applies on merge" } }];
+      doc.ticket[0].repo = "infra";
+      doc.ticket[1].repo = "infra";
+    });
+    expect(merged.ok).toBe(true);
+    expect(merged.warnings).toEqual([expect.stringMatching(/^ticket\[0\]\.rollout\.verify: the repo "infra" deploys on merge, so Loom marks this ticket live when its pull request merges and never runs verify\./)]);
+  });
+
+  it("lets a ticket patch set rollout", () => {
+    expect(ticketPatchSchema.parse({ rollout: { stage: "expand", requires_live: ["CSV-1"] } })).toEqual({ rollout: { stage: "expand", requires_live: ["CSV-1"] } });
   });
 });

@@ -53,6 +53,7 @@ export function stepSummary(method: HostMethod, output: unknown): { ok: boolean;
     case "merge": {
       const merged = output as HostOutput<"merge">;
       if (merged.outcome === "conflict") return { ok: false, text: ["Conflicts in:", ...merged.files].join("\n") };
+      if (merged.outcome === "unfinished") return { ok: false, text: "The worktree has a merge that is not finished, so Loom left it as it is." };
       return { ok: true, text: `Merged as ${sha12(merged.sha)}; the branch was at ${sha12(merged.before)}.${merged.already ? " (already merged)" : ""}` };
     }
     case "prState":

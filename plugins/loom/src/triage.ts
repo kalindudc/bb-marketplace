@@ -4,7 +4,9 @@ import type { PostRow, ProjectRow, ThreadRow, TicketRow } from "./db/store";
 import { briefBody, LoomError } from "./projects";
 import { clip, triageDigest } from "./prompts";
 import { isMultiRepo, repoSettings } from "./repos";
-import { dependencyCycle, fallsUnder, numberErrors, ticketEnvironmentErrors, type Spec, type TicketPatch, type TicketSpec } from "./spec";
+import { rolloutJson, rolloutOfTicket } from "./rollout";
+import { isBudgetPause } from "./scheduler";
+import { dependencyCycle, fallsUnder, numberErrors, ticketEnvironmentErrors, type Spec, type TicketPatch, type TicketRolloutSpec, type TicketSpec } from "./spec";
 import { HUMAN_ACTOR, LOOM_ACTOR, TICKET_STATES, canMoveTicket, type TicketState } from "./states";
 import { endLiveRows, specOf, type EngineCtx } from "./workers";
 
@@ -25,15 +27,20 @@ export async function maybeSendTriage(ctx: EngineCtx, project: ProjectRow): Prom
 
   const tickets = store.tickets(fresh.id);
   const blocked = tickets.filter((ticket) => ticket.state === "blocked");
-  if (blocked.length === 0 && fresh.state !== "paused") {
+  // Any other pause the planner cannot lift; the next-step bar shows the human its reason and Resume.
+  const budgetPaused = fresh.state === "paused" && isBudgetPause(fresh.system_reason);
+  if (blocked.length === 0 && !budgetPaused) {
     store.updateProject(fresh.id, { triage_pending: 0 });
     return false;
   }
   const counts = Object.fromEntries(TICKET_STATES.map((state) => [state, tickets.filter((ticket) => ticket.state === state).length])) as Record<TicketState, number>;
   const lastPosts = new Map<number, PostRow[]>(blocked.map((ticket) => [ticket.id, store.posts(ticket.id).slice(-DIGEST_POSTS)]));
   const round = fresh.triage_round + 1;
-  const detail = triageDigest({ project: fresh, round, counts, blocked, lastPosts });
-  const summary = `[loom] Triage round ${round} for ${fresh.slug}: ${blocked.length === 1 ? "1 ticket is" : `${blocked.length} tickets are`} blocked.`;
+  const detail = triageDigest({ project: fresh, round, counts, blocked, lastPosts, budgetPaused });
+  const summary =
+    blocked.length === 0
+      ? `[loom] Triage round ${round} for ${fresh.slug}: Loom paused the project. ${fresh.system_reason}`
+      : `[loom] Triage round ${round} for ${fresh.slug}: ${blocked.length === 1 ? "1 ticket is" : `${blocked.length} tickets are`} blocked.`;
   await ctx.bb.send(planner.thread_id, { summary, detail });
   store.updateProject(fresh.id, { triage_pending: 0, triage_round: round, triage_sent_at: ctx.now() });
   store.event(fresh.id, null, "triage.sent", LOOM_ACTOR, {
@@ -88,6 +95,44 @@ const environmentProblems = (spec: Spec, at: string, environment: { inputs: Reco
   return ticketEnvironmentErrors(environment, repoSettings(spec, repo).environment, at);
 };
 
+/**
+ * A board ticket's rollout against the approved spec: its stage, what its requires_live names resolve to (ticket keys,
+ * or the spec's milestone refs), and no requirement in a later stage. `stageOf` reads the stage of a resolved name.
+ */
+function rolloutErrors(spec: Spec, at: string, rollout: TicketRolloutSpec, a: { own: string; resolve(name: string): string | undefined; stageOf(target: string): string | undefined }): string[] {
+  if (spec.merge.strategy !== "pr") return [`${at}: deploy order is advice for the pull requests Loom opens for each ticket, but this project's merge.strategy is "integration". Remove rollout.`];
+  const errors: string[] = [];
+  const stages = (spec.rollout?.stage ?? []).map((stage) => stage.name);
+  if (rollout.stage !== undefined && stages.length > 0 && !stages.includes(rollout.stage)) errors.push(`${at}.stage: "${rollout.stage}" is not one of this project's [[rollout.stage]] names: ${stages.join(", ")}.`);
+  const own = rollout.stage === undefined ? -1 : stages.indexOf(rollout.stage);
+  for (const name of rollout.requires_live ?? []) {
+    const target = a.resolve(name);
+    if (target === undefined) errors.push(`${at}.requires_live: "${name}" is not a ticket on this board, a ref in this batch or a [[rollout.milestone]] ref.`);
+    else if (target === a.own) errors.push(`${at}.requires_live: "${name}" is this ticket; a ticket cannot require itself to be live.`);
+    else {
+      const theirs = a.stageOf(target);
+      if (own >= 0 && theirs !== undefined && stages.indexOf(theirs) > own) errors.push(`${at}.requires_live: "${name}" is in the stage "${theirs}", which comes after "${rollout.stage}". Require only what the same or an earlier stage delivers.`);
+    }
+  }
+  return errors;
+}
+
+/** The tickets on the board that require `key` live and sit in an earlier stage than `stage`, the stage a patch gives it. A cancelled one never deploys, so it holds nothing. */
+function consumerStageErrors(spec: Spec, board: readonly TicketRow[], key: string, stage: string | undefined): string[] {
+  const stages = (spec.rollout?.stage ?? []).map((entry) => entry.name);
+  const own = stage === undefined ? -1 : stages.indexOf(stage);
+  if (own < 0) return [];
+  return board.flatMap((other) => {
+    const theirs = rolloutOfTicket(other)?.stage;
+    const at = theirs === undefined ? -1 : stages.indexOf(theirs);
+    if (other.key === key || other.state === "cancelled" || at < 0 || at >= own || !requiresOf(other).includes(key)) return [];
+    return [`rollout.stage: ${other.key} requires ${key} live and is in the stage "${theirs}", which comes before "${stage}". Keep ${key} in "${theirs}" or an earlier stage, or move ${other.key} later first.`];
+  });
+}
+
+const milestoneStages = (spec: Spec) => new Map((spec.rollout?.milestone ?? []).flatMap((milestone) => (milestone.stage === undefined ? [] : [[milestone.ref, milestone.stage] as const])));
+const requiresOf = (ticket: TicketRow) => rolloutOfTicket(ticket)?.requires_live ?? [];
+
 const refused = (errors: string[], what: string) => new LoomError("loom_invalid_input", `${what}:\n${numberErrors(errors)}`);
 
 function requireTicket(ctx: EngineCtx, key: string): TicketRow {
@@ -107,11 +152,20 @@ export function addTickets(ctx: EngineCtx, projectId: number, tickets: TicketSpe
   const first = existing.reduce((top, ticket) => Math.max(top, ticket.seq), 0) + 1;
   const keyOf = new Map(tickets.map((ticket, index) => [ticket.ref, `${project.key}-${first + index}`]));
 
+  const milestones = new Set((spec.rollout?.milestone ?? []).map((milestone) => milestone.ref));
+  const resolve = (name: string) => keyOf.get(name) ?? known.get(name) ?? (milestones.has(name) ? name : undefined);
+  const stages = new Map<string, string>([
+    ...milestoneStages(spec),
+    ...existing.flatMap((row) => (rolloutOfTicket(row)?.stage === undefined ? [] : [[row.key, rolloutOfTicket(row)!.stage!] as const])),
+    ...tickets.flatMap((ticket) => (ticket.rollout?.stage === undefined ? [] : [[keyOf.get(ticket.ref)!, ticket.rollout.stage] as const])),
+  ]);
   const errors: string[] = [];
   tickets.forEach((ticket, index) => {
     const label = `tickets[${index}]`;
     if (tickets.findIndex((other) => other.ref === ticket.ref) !== index) errors.push(`${label}.ref: "${ticket.ref}" is used twice in this batch.`);
     if (known.has(ticket.ref)) errors.push(`${label}.ref: "${ticket.ref}" is already a ticket on this board.`);
+    else if (milestones.has(ticket.ref)) errors.push(`${label}.ref: "${ticket.ref}" is the ref of one of this project's [[rollout.milestone]] tables. Choose another ref.`);
+    if (ticket.rollout !== undefined) errors.push(...rolloutErrors(spec, `${label}.rollout`, ticket.rollout, { own: keyOf.get(ticket.ref)!, resolve, stageOf: (target) => stages.get(target) }));
     for (const dep of ticket.depends_on) {
       if (!keyOf.has(dep) && !known.has(dep)) errors.push(`${label}.depends_on: "${dep}" is not a ref in this batch or a ticket on this board.`);
     }
@@ -127,6 +181,11 @@ export function addTickets(ctx: EngineCtx, projectId: number, tickets: TicketSpe
   // A ticket on the board cannot name one of this batch, so a merge order loop can only run through the batch.
   const order = cycle === null ? dependencyCycle(tickets.map((ticket) => ({ ref: ticket.ref, depends_on: [...ticket.depends_on, ...(ticket.merge_after ?? []).filter((ref) => ref !== ticket.ref)] }))) : null;
   if (order !== null) errors.push(`tickets: merge order cycle ${order.join(" -> ")} through depends_on and merge_after. Remove one merge_after entry.`);
+  const deploy =
+    cycle === null && order === null
+      ? dependencyCycle(tickets.map((ticket) => ({ ref: ticket.ref, depends_on: [...ticket.depends_on, ...(ticket.merge_after ?? []), ...(ticket.rollout?.requires_live ?? [])].filter((ref) => ref !== ticket.ref) })))
+      : null;
+  if (deploy !== null) errors.push(`tickets: rollout order cycle ${deploy.join(" -> ")} through depends_on, merge_after and requires_live. Remove one requires_live entry.`);
   if (errors.length > 0) throw refused(errors, "Tickets not added. Fix these and call loom_add_tickets again");
 
   const created = store.tx(() =>
@@ -147,6 +206,7 @@ export function addTickets(ctx: EngineCtx, projectId: number, tickets: TicketSpe
           priority: ticket.priority,
           repo: ticket.repo ?? null,
           environment_json: ticket.environment === undefined ? null : JSON.stringify(ticket.environment.inputs),
+          rollout_json: rolloutJson(ticket.rollout, (name) => resolve(name)!),
         },
         actor,
       );
@@ -167,14 +227,17 @@ const repoLocked = (key: string, why: string, repo: string) =>
 
 /**
  * Changes a queued or blocked ticket. Only the fields in the patch change; the repo changes only while the ticket has no branch.
- * A patch of merge_after alone changes any ticket that has not finished, since the merge order holds nothing a worker does.
+ * A patch of merge_after or rollout alone changes any ticket that has not finished, since neither holds anything a worker
+ * does; rollout alone changes a done ticket too, since its deploy can come after its merge.
  */
 export function editTicket(ctx: EngineCtx, key: string, patch: TicketPatch, actor: string): TicketRow {
   const { store } = ctx;
   const ticket = requireTicket(ctx, key);
   const movesRepo = patch.repo !== undefined && patch.repo !== ticket.repo;
-  const orderOnly = patch.merge_after !== undefined && (Object.keys(patch) as Array<keyof TicketPatch>).every((field) => field === "merge_after" || patch[field] === undefined);
-  if (orderOnly && (ticket.state === "done" || ticket.state === "cancelled")) throw new LoomError("loom_invalid_state", `${key} is ${ticket.state}, so its merge order no longer matters.`);
+  const set = (Object.keys(patch) as Array<keyof TicketPatch>).filter((field) => patch[field] !== undefined);
+  const orderOnly = set.length > 0 && set.every((field) => field === "merge_after" || field === "rollout");
+  if (orderOnly && ticket.state === "cancelled") throw new LoomError("loom_invalid_state", `${key} is cancelled, so its ${set.includes("merge_after") ? "merge order" : "rollout"} no longer matters.`);
+  if (orderOnly && ticket.state === "done" && set.includes("merge_after")) throw new LoomError("loom_invalid_state", `${key} is done, so its merge order no longer matters.`);
   if (!orderOnly && ticket.state !== "queued" && ticket.state !== "blocked") {
     if (movesRepo) throw repoLocked(key, `is ${ticket.state}`, patch.repo!);
     throw new LoomError("loom_invalid_state", `${key} is ${ticket.state}; only a queued or blocked ticket can be edited.`, "A ticket a worker holds changes through a reply on the ticket, or cancel it and add a new one.");
@@ -208,6 +271,16 @@ export function editTicket(ctx: EngineCtx, key: string, patch: TicketPatch, acto
       else mergeAfter.push(resolved);
     }
   }
+  let rollout = ticket.rollout_json;
+  if (patch.rollout !== undefined) {
+    const spec = specOf(store, store.project(ticket.project_id)!);
+    const milestones = new Set((spec.rollout?.milestone ?? []).map((milestone) => milestone.ref));
+    const resolve = (name: string) => known.get(name) ?? (milestones.has(name) ? name : undefined);
+    const stages = new Map<string, string>([...milestoneStages(spec), ...board.flatMap((other) => (rolloutOfTicket(other)?.stage === undefined ? [] : [[other.key, rolloutOfTicket(other)!.stage!] as const]))]);
+    const problems = [...rolloutErrors(spec, "rollout", patch.rollout, { own: ticket.key, resolve, stageOf: (target) => stages.get(target) }), ...consumerStageErrors(spec, board, ticket.key, patch.rollout.stage)];
+    errors.push(...problems);
+    if (problems.length === 0) rollout = rolloutJson(patch.rollout, (name) => resolve(name)!);
+  }
   if (errors.length === 0 && (patch.merge_after !== undefined || patch.depends_on !== undefined)) {
     const graph = board.map((other) => {
       const own = other.key === ticket.key;
@@ -215,6 +288,15 @@ export function editTicket(ctx: EngineCtx, key: string, patch: TicketPatch, acto
     });
     const order = dependencyCycle(graph);
     if (order !== null) errors.push(`merge_after: merge order cycle ${order.join(" -> ")} through depends_on and merge_after.`);
+  }
+  if (errors.length === 0 && (patch.merge_after !== undefined || patch.depends_on !== undefined || patch.rollout !== undefined)) {
+    const graph = board.map((other) => {
+      const own = other.key === ticket.key;
+      const requires = own ? (rolloutOfTicket({ rollout_json: rollout })?.requires_live ?? []) : requiresOf(other);
+      return { ref: other.key, depends_on: [...(own ? deps : (JSON.parse(other.deps_json) as string[])), ...(own ? mergeAfter : (JSON.parse(other.merge_after_json) as string[])), ...requires] };
+    });
+    const order = dependencyCycle(graph);
+    if (order !== null) errors.push(`rollout.requires_live: rollout order cycle ${order.join(" -> ")} through depends_on, merge_after and requires_live.`);
   }
   const scope = patch.scope ?? (JSON.parse(ticket.scope_json) as string[]);
   const verify = patch.verify ?? (JSON.parse(ticket.verify_json) as string[]);
@@ -235,6 +317,7 @@ export function editTicket(ctx: EngineCtx, key: string, patch: TicketPatch, acto
     ...(patch.scope === undefined ? {} : { scope_json: JSON.stringify(patch.scope) }),
     ...(patch.depends_on === undefined ? {} : { deps_json: JSON.stringify(deps) }),
     ...(patch.merge_after === undefined ? {} : { merge_after_json: JSON.stringify(mergeAfter) }),
+    ...(patch.rollout === undefined ? {} : { rollout_json: rollout }),
     ...(patch.priority === undefined ? {} : { priority: patch.priority }),
     ...(patch.repo === undefined ? {} : { repo: patch.repo }),
     // An empty patch leaves the ticket with its repo's inputs.
@@ -252,11 +335,11 @@ export function editTicket(ctx: EngineCtx, key: string, patch: TicketPatch, acto
   return store.ticket(ticket.id)!;
 }
 
-/** Cancels a ticket in any non-final state. A live worker or reviewer ends first, so this is async. */
-export async function cancelTicket(ctx: EngineCtx, key: string, reason: string, actor: string): Promise<TicketRow> {
+/** Cancels a ticket in any non-final state. A live worker or reviewer ends first, so this is async. A ticket in merging is cancelled only once its merge is stopped (stopMerge). */
+export async function cancelTicket(ctx: EngineCtx, key: string, reason: string, actor: string, mergeStopped = false): Promise<TicketRow> {
   const { store } = ctx;
   const ticket = requireTicket(ctx, key);
-  if (ticket.state === "merging") throw new LoomError("loom_invalid_state", `${key} is merging; try again when the merge finishes.`);
+  if (ticket.state === "merging" && !mergeStopped) throw new LoomError("loom_invalid_state", `${key} is merging; try again when the merge finishes.`);
   if (!canMoveTicket(ticket.state, "cancelled")) throw new LoomError("loom_invalid_state", `${key} is ${ticket.state}; it cannot be cancelled.`);
   const human = actor === HUMAN_ACTOR;
   store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: human ? "human" : "planner", author_thread_id: human ? null : actor, kind: "system", body: `Cancelled: ${reason.trim()}` });

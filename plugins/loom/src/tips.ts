@@ -5,6 +5,7 @@
 import { workerOf } from "./checks";
 import { repoCheckout, type RepoCheckout } from "./checkouts";
 import type { ProjectRow, TicketRow } from "./db/store";
+import { transientOf, Unavailable } from "./forge-waits";
 import type { HostOutput } from "./host-contract";
 import { isWaking } from "./release";
 import { gitNetwork } from "./repos";
@@ -28,7 +29,7 @@ export async function readTip(ctx: EngineCtx, project: ProjectRow, checkout: Rep
   if (branch === null) return null;
   const { remote, base } = checkout.settings;
   const read = await ctx.host.call(checkout.hostId, "fetchTip", { repo: checkout.path, remote, branch, base, ref: tipRef(project.slug, ticket.key), ...gitNetwork(checkout.settings) });
-  if (read.outcome === "unavailable") throw new Error(read.message);
+  if (read.outcome === "unavailable") throw new Unavailable(read.message, transientOf(read));
   return read.outcome === "missing" ? null : read;
 }
 

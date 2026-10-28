@@ -7,9 +7,10 @@ import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import hostEntry from "../host";
 import { restrictedGitBin } from "./restricted-git";
-import { hostContract, type HostInput, type HostOutput } from "../src/host-contract";
+import { hostContract, REPLY_MARK, type HostInput, type HostOutput } from "../src/host-contract";
 import {
   batchQuery,
+  behindBase,
   carryDelete,
   carryFinish,
   carryStart,
@@ -38,12 +39,16 @@ import {
   prBatch,
   prCommit,
   prCreate,
+  prEdit,
   prFeedback,
+  prReply,
   prRequestReview,
+  prRetarget,
   prState,
   push,
   readBlob,
   refTip,
+  remoteBranch,
   remotes,
   resetHard,
   stackBase,
@@ -188,7 +193,7 @@ describe("worktreeState", () => {
     const worktree = addWorktree(repo, "loom/csv-2");
     put(worktree, "src/a.ts", "a");
     const { sha } = await commitAll({ worktree, message: "a" });
-    expect(await worktreeState({ worktree, base: "main" })).toEqual({ branch: "loom/csv-2", head: sha, tree: sh(worktree, "rev-parse", "HEAD^{tree}"), dirty: false, changed: ["src/a.ts"] });
+    expect(await worktreeState({ worktree, base: "main" })).toEqual({ branch: "loom/csv-2", head: sha, tree: sh(worktree, "rev-parse", "HEAD^{tree}"), dirty: false, changed: ["src/a.ts"], unfinishedMerge: false });
 
     sh(worktree, "checkout", "-q", "--detach");
     expect((await worktreeState({ worktree, base: "main" })).branch).toBeNull();
@@ -560,6 +565,34 @@ describe("merge and resetHard", () => {
     expect(() => sh(worktree, "rev-parse", "-q", "--verify", "MERGE_HEAD")).toThrow();
   });
 
+  it("reports a merge the worktree's worker began and did not finish, even with nothing left to resolve", async () => {
+    const repo = makeRepo();
+    const worktree = addWorktree(repo, "worker-o");
+    commitFile(worktree, "shared.txt", "ours\n");
+    const theirs = featureCommit(repo, "theirs-o", "shared.txt", "theirs\n");
+    expect(() => sh(worktree, "merge", "--no-edit", theirs)).toThrow();
+    sh(worktree, "checkout", "--ours", "shared.txt");
+    sh(worktree, "add", "shared.txt");
+    expect(await worktreeState({ worktree, base: "main" })).toMatchObject({ dirty: false, unfinishedMerge: true });
+    sh(worktree, "commit", "-q", "--no-edit");
+    expect(await worktreeState({ worktree, base: "main" })).toMatchObject({ unfinishedMerge: false });
+  });
+
+  it("leaves a merge the worktree's worker began and did not finish as it is, with its resolution, and says so", async () => {
+    const repo = makeRepo();
+    const worktree = addWorktree(repo, "worker-m");
+    commitFile(worktree, "shared.txt", "ours\n");
+    const theirs = featureCommit(repo, "theirs-m", "shared.txt", "theirs\n");
+    expect(() => sh(worktree, "merge", "--no-edit", theirs)).toThrow();
+    put(worktree, "shared.txt", "ours and theirs\n");
+    const head = sh(worktree, "rev-parse", "HEAD");
+    const next = featureCommit(repo, "next-m", "other.txt", "next\n");
+    expect(await merge({ worktree, ref: next, message: "Merge CSV-1's pull request into CSV-2 (Loom)" })).toEqual({ outcome: "unfinished" });
+    expect(sh(worktree, "rev-parse", "MERGE_HEAD")).toBe(theirs);
+    expect(sh(worktree, "rev-parse", "HEAD")).toBe(head);
+    expect(readFileSync(join(worktree, "shared.txt"), "utf8")).toBe("ours and theirs\n");
+  });
+
   it("reports a second merge of the same sha as already merged, with the rollback point the caller persisted", async () => {
     const { repo, worktree } = await integration("m3");
     const feature = featureCommit(repo, "feature-3", "src/b.ts", "b\n");
@@ -625,6 +658,31 @@ describe("push", () => {
     const result = await push({ repo, remote: "origin", src: "HEAD", branch: "loom/csv-1" });
     expect(result.outcome).toBe("unavailable");
     expect(result.outcome === "unavailable" && result.message).toMatch(/origin/);
+  });
+});
+
+describe("a network op that cannot reach the remote", () => {
+  const unreachable = () => {
+    const repo = makeRepo();
+    sh(repo, "remote", "add", "origin", "https://nowhere.invalid/acme/shop.git");
+    return repo;
+  };
+
+  it("marks a push, a fetch of the pull request's tip and the push-only forge's read as worth waiting out", async () => {
+    const repo = unreachable();
+    const head = sh(repo, "rev-parse", "HEAD");
+    expect(await push({ repo, remote: "origin", src: head, branch: "loom/x" })).toMatchObject({ outcome: "unavailable", transient: "network" });
+    expect(await fetchTip({ repo, remote: "origin", branch: "loom/x", base: "main", ref: "refs/loom/csv/csv-1/tip" })).toMatchObject({ outcome: "unavailable", transient: "network" });
+    expect(await prCommit({ repo, remote: "origin", branch: "loom/x", base: "main", head, message: "x" })).toMatchObject({ outcome: "unavailable", transient: "network" });
+    expect(await landedOn({ repo, remote: "origin", base: "main", sha: head })).toMatchObject({ outcome: "unavailable", transient: "network" });
+    expect(await stackBase({ repo, branch: "loom/csv/csv-1-stack", commits: [], base: { remote: "origin", branch: "main" }, message: "x" })).toMatchObject({ outcome: "unavailable", transient: "network" });
+  });
+
+  it("leaves a remote that does not exist, a refused push and a missing branch unmarked", async () => {
+    const repo = makeRepo();
+    const head = sh(repo, "rev-parse", "HEAD");
+    expect(await push({ repo, remote: "nowhere", src: head, branch: "loom/x" })).not.toHaveProperty("transient");
+    expect(await fetchTip({ repo, remote: "nowhere", branch: "loom/x", base: "main", ref: "refs/loom/csv/csv-1/tip" })).not.toHaveProperty("transient");
   });
 });
 
@@ -806,6 +864,45 @@ describe("gh", () => {
     expect(await prRequestReview({ repo, url: "https://review.example.com/shop/42", reviewers: ["alice"] })).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("not a GitHub pull request URL") });
     expect(calls()).toHaveLength(2);
   });
+
+  it("sets a pull request's title and description with gh pr edit, the body on stdin, and classifies a failure as a read's", async () => {
+    fakeGh(`cat > "$dir/stdin.txt"\necho "https://github.com/acme/shop/pull/7"`);
+    const input = { repo: makeRepo(), url: "https://github.com/acme/shop/pull/7", title: "Add order rows", body: "Why\n\n<!-- loom:begin -->\nOpened by Loom for CSV-1.\n<!-- loom:end -->", forge: GH };
+    expect(await prEdit(input)).toEqual({ outcome: "ok" });
+    expect(calls()).toEqual([["pr", "edit", "https://github.com/acme/shop/pull/7", "--title", "Add order rows", "--body-file", "-"]]);
+    expect(readFileSync(join(bin, "stdin.txt"), "utf8")).toBe(input.body);
+    fakeGh(`echo "HTTP 502: Bad Gateway" 1>&2\nexit 1`);
+    expect(await prEdit(input)).toEqual({ outcome: "unavailable", message: "gh pr edit failed: HTTP 502: Bad Gateway", transient: "server" });
+    fakeGh(`echo "GraphQL: Resource not accessible by integration" 1>&2\nexit 1`);
+    expect(await prEdit(input)).toEqual({ outcome: "unavailable", message: "gh pr edit failed: GraphQL: Resource not accessible by integration" });
+  });
+
+  it("replies in a review thread by the node id in its key and resolves it, and answers a review or a comment with a pull request comment", async () => {
+    fakeGh(`case "$*" in *resolveReviewThread*) echo '{"data":{"resolveReviewThread":{"thread":{"isResolved":true}}}}';; *) echo '{"data":{"addPullRequestReviewThreadReply":{"comment":{"url":"https://github.example.com/acme/shop/pull/7#discussion_r9"}}}}';; esac`);
+    const repo = makeRepo();
+    const base = { repo, url: "https://github.example.com/acme/shop/pull/7", body: "Renamed it.", forge: GH };
+    expect(await prReply({ ...base, key: "thread:PRRT_kwDO12:55:abc", kind: "thread", resolve: true })).toEqual({ outcome: "ok", url: "https://github.example.com/acme/shop/pull/7#discussion_r9", resolved: true });
+    const [reply, resolve] = calls();
+    expect(reply!.slice(0, 4)).toEqual(["api", "graphql", "--hostname", "github.example.com"]);
+    expect(reply).toContain("thread=PRRT_kwDO12");
+    expect(reply).toContain("body=Renamed it.");
+    expect(reply!.join("\n")).toContain("addPullRequestReviewThreadReply(input: { pullRequestReviewThreadId: $thread, body: $body })");
+    expect(resolve!.join("\n")).toContain("resolveReviewThread(input: { threadId: $thread })");
+    expect(await prReply({ ...base, key: "thread:PRRT_kwDO12:55:abc", kind: "thread", resolve: false })).toMatchObject({ resolved: false });
+    expect(calls()).toHaveLength(3);
+    expect(await prReply({ ...base, key: "thread:bad id:1:x", kind: "thread", resolve: false })).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("names no review thread") });
+
+    fakeGh(`cat > "$dir/stdin.txt"\necho "https://github.example.com/acme/shop/pull/7#issuecomment-3"`);
+    expect(await prReply({ ...base, key: "review:1:abc", kind: "review", body: "> Rename the column.\n\nDone.", resolve: true })).toEqual({ outcome: "ok", url: "https://github.example.com/acme/shop/pull/7#issuecomment-3", resolved: false });
+    expect(calls().at(-1)).toEqual(["pr", "comment", "https://github.example.com/acme/shop/pull/7", "--body-file", "-"]);
+    expect(readFileSync(join(bin, "stdin.txt"), "utf8")).toBe("> Rename the column.\n\nDone.");
+  });
+
+  it("keeps a reply that went out when its thread does not resolve, and says why", async () => {
+    fakeGh(`case "$*" in *resolveReviewThread*) echo "GraphQL: Resource not accessible by integration" 1>&2; exit 1;; *) echo '{"data":{"addPullRequestReviewThreadReply":{"comment":{"url":"https://github.com/acme/shop/pull/7#discussion_r9"}}}}';; esac`);
+    const result = await prReply({ repo: makeRepo(), url: "https://github.com/acme/shop/pull/7", key: "thread:PRRT_1:2:x", kind: "thread", body: "Done.", resolve: true, forge: GH });
+    expect(result).toEqual({ outcome: "ok", url: "https://github.com/acme/shop/pull/7#discussion_r9", resolved: false, message: "gh api graphql failed: GraphQL: Resource not accessible by integration" });
+  });
 });
 
 describe("ghTransient", () => {
@@ -893,6 +990,33 @@ describe("ghTransient", () => {
     const body = JSON.stringify({ data: { repository: { pullRequest: { comments: { nodes: [{ body: "CI failed with HTTP 502 and a rate limit, something went wrong" }] } } } }, errors: [{ type: "FORBIDDEN", message: "Resource not accessible by integration" }] });
     expect(failed("gh: Resource not accessible by integration\n", body)).toBeNull();
   });
+
+  it("reads a status a forge CLI prints at the start of a line, as Error: 429: or 503:", () => {
+    expect(failed("Error: 429: other changes to shop/world's pull requests, reviews, checks or settings were still being saved after 30s, so nothing was changed; retry shortly\n")).toEqual({ transient: "rate_limit" });
+    expect(failed("Error: 503: the service is restarting\n")).toEqual({ transient: "server" });
+    expect(failed("503: upstream connect error or disconnect/reset before headers. reset reason: connection termination\n")).toEqual({ transient: "server" });
+    expect(failed("Error: 404: no pull request 7 in shop/world\n")).toBeNull();
+    expect(failed("Error: 401: run dt auth login\n")).toBeNull();
+  });
+
+  it("reads no status from a number inside a line, or inside a JSON line's pull request text", () => {
+    expect(failed("Fix the 503: page the deploy shows\n")).toBeNull();
+    const body = JSON.stringify({ message: "Not Found", data: { body: "503: upstream connect error\n429: retry shortly" } });
+    expect(failed("gh: Not Found\n", body)).toBeNull();
+  });
+
+  it.each([
+    ["fatal: unable to access 'https://github.com/acme/shop.git/': The requested URL returned error: 503", { transient: "server" }],
+    ["error: RPC failed; HTTP 502 curl 22 The requested URL returned error: 502\nfatal: the remote end hung up unexpectedly", { transient: "server" }],
+    ["fatal: the remote end hung up unexpectedly", { transient: "server" }],
+    ["fatal: unable to access 'https://github.com/acme/shop.git/': Failed to connect to github.com port 443 after 75003 ms: Couldn't connect to server", { transient: "network" }],
+    ["fatal: unable to access 'https://github.com/acme/shop.git/': Could not resolve host: github.com", { transient: "network" }],
+    ["fatal: unable to access 'https://github.com/acme/shop.git/': The requested URL returned error: 403", null],
+    [" ! [rejected]        loom/csv/csv-1 -> loom/csv/csv-1 (fetch first)\nerror: failed to push some refs to 'https://github.com/acme/shop.git'", null],
+    ["remote: error: GH006: Protected branch update failed for refs/heads/main.", null],
+  ] as const)("classifies git's network output by the same rules: %s", (stderr, expected) => {
+    expect(ghTransient({ code: 128, stdout: "", stderr })).toEqual(expected);
+  });
 });
 
 describe("host entry", () => {
@@ -977,6 +1101,70 @@ describe("the spec's forge commands", () => {
     const input = { repo, remote: "origin", base: "main", head: "h", title: "t", body: "", draft: true };
     expect(await prCreate({ ...input, forge: { kind: "command", open: "echo denied; exit 2" } })).toMatchObject({ outcome: "unavailable", message: expect.stringMatching(/open command failed \(exit 2\): denied/u) });
     expect(await prCreate({ ...input, forge: { kind: "command", open: "echo created" } })).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("printed no pull request URL") });
+  });
+
+  it("marks an open command that printed a temporary error instead of a URL as one to wait out, and keeps its message", async () => {
+    const repo = makeRepo();
+    const input = { repo, remote: "origin", base: "main", head: "h", title: "t", body: "", draft: true };
+    const busy = "Error: 429: other changes to shop/world's pull requests, reviews, checks or settings were still being saved after 30s, so nothing was changed; retry shortly";
+    expect(await prCreate({ ...input, forge: { kind: "command", open: `echo "${busy}"` } })).toEqual({ outcome: "unavailable", message: `The forge's open command printed no pull request URL: ${busy}`, transient: "rate_limit" });
+    expect(await prCreate({ ...input, forge: { kind: "command", open: `echo "${busy}" >&2; exit 1` } })).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("open command failed (exit 1)"), transient: "rate_limit" });
+    expect(await prCreate({ ...input, forge: { kind: "command", open: "echo 'Error: 503: upstream connect error'" } })).toMatchObject({ transient: "server" });
+    expect(await prCreate({ ...input, forge: { kind: "command", open: "echo 'pr created'" } })).not.toHaveProperty("transient");
+  });
+
+  it("reads only the error fields of a JSON body longer than the message shows, never the pull request text in it", async () => {
+    const repo = makeRepo();
+    const input = { repo, remote: "origin", base: "main", head: "h", title: "t", body: "", draft: true };
+    const body = join(scratch, `body-${counter++}.json`);
+    writeFileSync(body, `${JSON.stringify({ number: 7, body: `${"x".repeat(3000)} the deploy got HTTP 503 from the edge ${"y".repeat(100)}` })}\n`);
+    expect(await prCreate({ ...input, forge: { kind: "command", open: `cat "${body}"` } })).not.toHaveProperty("transient");
+    expect(await prState({ repo, url: "https://review.example.com/r/7", forge: { kind: "command", state: `cat "${body}"; exit 1` } })).not.toHaveProperty("transient");
+    writeFileSync(body, `${JSON.stringify({ message: "HTTP 503: upstream connect error", body: "z".repeat(3000) })}\n`);
+    expect(await prCreate({ ...input, forge: { kind: "command", open: `cat "${body}"` } })).toMatchObject({ transient: "server" });
+  });
+
+  it("edits with the edit command and replies with the reply command: the text on stdin, LOOM_* in the environment", async () => {
+    const repo = makeRepo();
+    const out = join(scratch, `write-${counter++}`);
+    const url = "https://review.example.com/r/42";
+    const edit = `cat > "${out}.body"; printf '%s|%s|%s' "$LOOM_URL" "$LOOM_PR_NUMBER" "$LOOM_TITLE" > "${out}.env"`;
+    expect(await prEdit({ repo, url, title: "Add rows", body: "the body", forge: { kind: "command", edit } })).toEqual({ outcome: "ok" });
+    expect(readFileSync(`${out}.env`, "utf8")).toBe(`${url}|42|Add rows`);
+    expect(readFileSync(`${out}.body`, "utf8")).toBe("the body");
+    expect(await prEdit({ repo, url, title: "t", body: "", forge: { kind: "command", edit: "echo 'Error: 429: busy; retry shortly' >&2; exit 1" } })).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("The forge's edit command failed (exit 1)"), transient: "rate_limit" });
+
+    const reply = `cat > "${out}.reply"; printf '%s|%s|%s|%s|%s' "$LOOM_URL" "$LOOM_PR_NUMBER" "$LOOM_ITEM" "$LOOM_ITEM_KIND" "$LOOM_RESOLVE" > "${out}.renv"; echo "posted https://review.example.com/r/42#c7."`;
+    expect(await prReply({ repo, url, key: "thread:9", kind: "thread", body: "Done.", resolve: true, forge: { kind: "command", reply } })).toEqual({ outcome: "ok", url: "https://review.example.com/r/42#c7", resolved: true });
+    expect(readFileSync(`${out}.renv`, "utf8")).toBe(`${url}|42|thread:9|thread|1`);
+    expect(readFileSync(`${out}.reply`, "utf8")).toBe("Done.");
+    expect(await prReply({ repo, url, key: "comment:3", kind: "comment", body: "Done.", resolve: false, forge: { kind: "command", reply: "echo nope; exit 2" } })).toMatchObject({ outcome: "unavailable", message: "The forge's reply command failed (exit 2): nope" });
+  });
+
+  it("moves a pull request with the retarget command, LOOM_URL, LOOM_PR_NUMBER and LOOM_BASE set, and marks a failure that looks temporary", async () => {
+    const repo = makeRepo();
+    const out = join(scratch, `retarget-${counter++}`);
+    const url = "https://review.example.com/r/42";
+    const retarget = (command: string) => prRetarget({ repo, url, base: "main", forge: { kind: "command", retarget: command } });
+    expect(await retarget(`printf '%s|%s|%s' "$LOOM_URL" "$LOOM_PR_NUMBER" "$LOOM_BASE" > "${out}"`)).toEqual({ outcome: "ok" });
+    expect(readFileSync(out, "utf8")).toBe(`${url}|42|main`);
+    expect(await retarget("echo 'Error: 503: upstream connect error' >&2; exit 1")).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("The forge's retarget command failed (exit 1)"), transient: "server" });
+    expect(await retarget("echo 'no such pull request' >&2; exit 1")).not.toHaveProperty("transient");
+  });
+
+  it("gives the retarget command 5 minutes, as after_push gets, and waits out one that runs longer", async () => {
+    const repo = makeRepo();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      let settled = false;
+      const moving = prRetarget({ repo, url: "https://review.example.com/r/42", base: "main", forge: { kind: "command", retarget: "sleep 600" } }).finally(() => (settled = true));
+      await vi.advanceTimersByTimeAsync(4 * 60_000);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(await moving).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("The forge's retarget command took longer than 5 minutes"), transient: "server" });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("reads the first word of the state command's last line, in any case, with LOOM_URL and LOOM_PR_NUMBER set", async () => {
@@ -1138,6 +1326,63 @@ describe("landedOn", () => {
     execFileSync("git", ["init", "-q", "--bare", remote]);
     sh(repo, "remote", "add", "origin", remote);
     expect(await landedOn({ repo, remote: "origin", base: "main", sha: sh(repo, "rev-parse", "HEAD") })).toEqual({ outcome: "unavailable", message: 'The remote "origin" has no branch main.' });
+  });
+});
+
+describe("behindBase", () => {
+  const setup = () => {
+    const repo = makeRepo();
+    const remote = join(scratch, `remote-${counter++}.git`);
+    execFileSync("git", ["init", "-q", "--bare", remote]);
+    sh(repo, "remote", "add", "origin", remote);
+    sh(repo, "push", "-q", "origin", "main");
+    const pushed = sh(repo, "rev-parse", "HEAD");
+    // Another clone moves the remote's main on by three commits, which this checkout has not fetched.
+    const other = join(scratch, `clone-${counter++}`);
+    execFileSync("git", ["clone", "-q", "-b", "main", remote, other]);
+    sh(other, "config", "user.email", "dev@example.com");
+    sh(other, "config", "user.name", "Dev");
+    for (const n of [1, 2, 3]) commitFile(other, `base${n}.txt`, `${n}\n`);
+    sh(other, "push", "-q", "origin", "main");
+    return { repo, pushed, tip: sh(other, "rev-parse", "HEAD") };
+  };
+
+  it("fetches the base branch into its remote-tracking ref and counts the commits each commit lacks", async () => {
+    const { repo, pushed, tip } = setup();
+    expect(await behindBase({ repo, remote: "origin", base: "main", fetch: true, shas: [pushed, tip] })).toEqual({ outcome: "ok", tip, behind: [{ sha: pushed, commits: 3 }, { sha: tip, commits: 0 }] });
+    expect(sh(repo, "rev-parse", "refs/remotes/origin/main")).toBe(tip);
+    expect(existsSync(join(repo, ".git", "FETCH_HEAD"))).toBe(false);
+  });
+
+  it("counts on the ref as it is without fetch, and counts a commit the repository lacks as null", async () => {
+    const { repo, pushed, tip } = setup();
+    sh(repo, "update-ref", "refs/remotes/origin/main", pushed);
+    const unknown = "0123456789abcdef0123456789abcdef01234567";
+    expect(await behindBase({ repo, remote: "origin", base: "main", fetch: false, shas: [pushed, unknown] })).toEqual({ outcome: "ok", tip: pushed, behind: [{ sha: pushed, commits: 0 }, { sha: unknown, commits: null }] });
+    expect(sh(repo, "rev-parse", "refs/remotes/origin/main")).not.toBe(tip);
+  });
+
+  it("is unavailable when there is nothing to count against, and when the fetch fails", async () => {
+    const repo = makeRepo();
+    const head = sh(repo, "rev-parse", "HEAD");
+    expect(await behindBase({ repo, remote: "origin", base: "main", fetch: false, shas: [head] })).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("has no origin/main to count against") });
+    sh(repo, "remote", "add", "origin", join(scratch, "no-such-remote.git"));
+    expect(await behindBase({ repo, remote: "origin", base: "main", fetch: true, shas: [head] })).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("git fetch from origin") });
+  });
+});
+
+describe("remoteBranch", () => {
+  it("reads a branch's tip where git push sends it, and null once the branch is gone, without fetching it", async () => {
+    const repo = makeRepo();
+    const remote = join(scratch, `remote-${counter++}.git`);
+    execFileSync("git", ["init", "-q", "--bare", remote]);
+    sh(repo, "remote", "add", "origin", remote);
+    sh(repo, "push", "-q", "origin", "main:loom/csv/csv-1");
+    const head = sh(repo, "rev-parse", "HEAD");
+    expect(await remoteBranch({ repo, remote: "origin", branch: "loom/csv/csv-1" })).toEqual({ outcome: "ok", sha: head });
+    sh(repo, "push", "-q", "origin", ":loom/csv/csv-1");
+    expect(await remoteBranch({ repo, remote: "origin", branch: "loom/csv/csv-1" })).toEqual({ outcome: "ok", sha: null });
+    expect(await remoteBranch({ repo, remote: "nowhere", branch: "main" })).toMatchObject({ outcome: "unavailable", message: 'The git remote "nowhere" does not exist in ' + repo + "." });
   });
 });
 
@@ -1309,6 +1554,54 @@ describe("mergeOnto", () => {
   });
 });
 
+describe("a checkout in a subdirectory of its repository, as a bb project in a monorepo is", () => {
+  const harness = experimental_createHostEntryHarness(hostEntry, { experimental_paths: { dataDir: join(tmpdir(), "loom-host-entry-data"), tempDir: tmpdir() } });
+  // As LANE-17 had: the project is areas/infra/routing/nrm, and the ticket and the commit it takes both change a file outside it.
+  const monorepo = () => {
+    const repo = makeRepo();
+    put(repo, "areas/infra/routing/nrm/routes.conf", "routes\n");
+    const base = commitFile(repo, "clients/admin-web/app.ts", "base\n");
+    sh(repo, "checkout", "-q", "-b", "work", base);
+    const head = commitFile(repo, "clients/admin-web/app.ts", "mine\n");
+    sh(repo, "checkout", "-q", "-b", "other", base);
+    const theirs = commitFile(repo, "clients/admin-web/app.ts", "theirs\n");
+    sh(repo, "checkout", "-q", "main");
+    return { repo, checkout: join(repo, "areas/infra/routing/nrm"), head, theirs };
+  };
+
+  it("names mergeOnto's conflicts from the repository's top level, where the carry puts them, and conflictMarkers takes them", async () => {
+    const { repo, checkout, head, theirs } = monorepo();
+    const merged = await mergeOnto({ repo: checkout, head, ref: theirs, message: "Merge (Loom)", refs: [] });
+    expect(merged).toMatchObject({ outcome: "conflict", files: ["clients/admin-web/app.ts"] });
+    const exported = await exportChanges({ worktree: checkout, base: head, head: (merged as { sha: string }).sha });
+    expect(exported.changes.map((change) => change.path)).toEqual(["clients/admin-web/app.ts"]);
+
+    sh(repo, "checkout", "-q", "--detach", (merged as { sha: string }).sha);
+    expect(await harness.experimental_call("conflictMarkers", { worktree: repo, paths: (merged as { files: string[] }).files })).toEqual({ files: ["clients/admin-web/app.ts"] });
+  });
+
+  it("names stackBase's conflicts from the top level too", async () => {
+    const { checkout, head, theirs } = monorepo();
+    expect(await stackBase({ repo: checkout, branch: "loom/csv/csv-2-stack", commits: [head, theirs], message: "Loom: stack" })).toEqual({ outcome: "conflict", files: ["clients/admin-web/app.ts"] });
+  });
+
+  it("shows the patch of a file changedFiles lists outside the checkout's directory", async () => {
+    const { checkout, head } = monorepo();
+    const listed = await changedFiles({ repo: checkout, base: "main", head, mergeBase: true, maxFiles: 10 });
+    expect(listed).toMatchObject({ outcome: "ok", files: [{ path: "clients/admin-web/app.ts" }] });
+    const base = (listed as { base: string }).base;
+    const patch = await filePatch({ repo: checkout, base, head, path: "clients/admin-web/app.ts", maxBytes: 10_000 });
+    expect(patch).toMatchObject({ outcome: "ok", patch: expect.stringContaining("+mine") });
+  });
+
+  it("lists a worktree's untracked files from the top level, inside the checkout's directory and out of it", async () => {
+    const { repo, checkout } = monorepo();
+    put(repo, "areas/infra/routing/nrm/new.conf", "new\n");
+    put(repo, "clients/admin-web/new.ts", "new\n");
+    expect((await worktreeState({ worktree: checkout, base: "main" })).changed).toEqual(["areas/infra/routing/nrm/new.conf", "clients/admin-web/new.ts"]);
+  });
+});
+
 describe("fetchTip and pointRefs", () => {
   const setup = () => {
     const repo = makeRepo();
@@ -1395,6 +1688,34 @@ describe("prCommit", () => {
     expect(await prCommit(input(repo, fixed, { pushed: sha }))).toEqual({ outcome: "ok", sha, created: false });
   });
 
+  it("adds a commit that takes the base when merging it left head's tree as the tip's, so the branch is no longer behind", async () => {
+    const { repo, remote, head } = setup();
+    const first = (await prCommit(input(repo, head))) as { sha: string };
+    await push({ repo, remote: "origin", src: first.sha, branch: "loom/csv-1" });
+    // The base gets an edit and its revert: two commits that leave its files as they were.
+    const other = join(scratch, `clone-${counter++}`);
+    execFileSync("git", ["clone", "-q", "-b", "main", remote, other]);
+    sh(other, "config", "user.email", "other@example.com");
+    sh(other, "config", "user.name", "Other");
+    commitFile(other, "README.md", "changed\n", "Edit the readme");
+    sh(other, "revert", "--no-edit", "HEAD");
+    sh(other, "push", "-q", "origin", "main");
+    sh(repo, "fetch", "-q", "origin");
+    const tipOfBase = sh(repo, "rev-parse", "origin/main");
+    sh(repo, "merge", "-q", "--no-edit", "origin/main");
+    const merged = sh(repo, "rev-parse", "HEAD");
+    expect(tree(repo, merged)).toBe(tree(repo, first.sha));
+    expect(await behindBase({ repo, remote: "origin", base: "main", fetch: false, shas: [first.sha] })).toMatchObject({ behind: [{ sha: first.sha, commits: 2 }] });
+
+    const refreshed = (await prCommit(input(repo, merged, { message: "CSV-1: merge origin/main (Loom)", pushed: first.sha }))) as { sha: string; created: boolean };
+    expect(refreshed.created).toBe(true);
+    expect(parents(repo, refreshed.sha)).toEqual([first.sha, tipOfBase]);
+    expect(tree(repo, refreshed.sha)).toBe(tree(repo, first.sha));
+    await push({ repo, remote: "origin", src: refreshed.sha, branch: "loom/csv-1" });
+    expect(await behindBase({ repo, remote: "origin", base: "main", fetch: false, shas: [refreshed.sha] })).toMatchObject({ behind: [{ sha: refreshed.sha, commits: 0 }] });
+    expect(await prCommit(input(repo, merged, { pushed: refreshed.sha }))).toEqual({ outcome: "ok", sha: refreshed.sha, created: false });
+  });
+
   it("reports the branch as diverged when it has commits that neither Loom pushed nor head contains", async () => {
     const { repo, remote, head } = setup();
     const first = (await prCommit(input(repo, head))) as { sha: string };
@@ -1465,12 +1786,28 @@ describe("prFeedback", () => {
       draft: null,
       review: null,
       base: null,
+      title: null,
+      body: null,
+      mergeable: null,
       checks: [{ key: "check:7", name: "ci", state: "failed", url: "https://ci.example.com/7", started: null, startedAt: null, completedAt: null, progress: null, steps: null }],
       items: [
         { key: "review:r1", kind: "review", author: "alice", bot: false, body: "Rename it.", url: null, state: "changes_requested", path: null, line: null },
         { key: "thread:9", kind: "thread", author: "bob", bot: false, body: "Why?", url: null, state: null, path: "src/a.ts", line: 3 },
       ],
     });
+  });
+
+  it("reads a command forge's title and description when it prints them, and keeps the mark at the end of a long reply Loom posted", async () => {
+    const reply = `${"x".repeat(2500)}\n\nPosted by Loom\n${REPLY_MARK}`;
+    const json = JSON.stringify({ state: "open", head: "abc123", title: "Add rows", body: "Why\n<!-- loom:begin -->\nx\n<!-- loom:end -->", items: [{ id: 9, kind: "thread", author: "", body: reply }, { id: 10, kind: "comment", author: "", body: "y".repeat(2500) }] });
+    const file = join(scratch, `feedback-${counter++}.json`);
+    writeFileSync(file, json);
+    const result = await prFeedback({ repo: makeRepo(), url: "https://review.example.com/shop/42", forge: FEEDBACK(`cat "${file}"`) });
+    const ok = result as Extract<typeof result, { outcome: "ok" }>;
+    expect(ok).toMatchObject({ title: "Add rows", body: "Why\n<!-- loom:begin -->\nx\n<!-- loom:end -->" });
+    expect(ok.items[0]!.body.length).toBe(2000);
+    expect(ok.items[0]!.body.endsWith(`…\n${REPLY_MARK}`)).toBe(true);
+    expect(ok.items[1]!.body).toBe(`${"y".repeat(1999)}…`);
   });
 
   it("reads whether a command forge's check started, when, and how far it got", async () => {
@@ -1495,13 +1832,15 @@ describe("prFeedback", () => {
     expect(bad).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("checks.0.progress") });
   });
 
-  it("reads the draft flag, the review decision in any case and the base branch a forge command prints", async () => {
+  it("reads the draft flag, the review decision in any case, the base branch and whether it is mergeable as a forge command prints them", async () => {
     const repo = makeRepo();
     const url = "https://review.example.com/shop/42";
-    const json = JSON.stringify({ state: "merged", head: "abc123", draft: true, review: "Changes_Requested", base: "loom/x/csv-1" });
-    expect(await prFeedback({ repo, url, forge: FEEDBACK(`echo '${json}'`) })).toMatchObject({ outcome: "ok", state: "MERGED", draft: true, review: "CHANGES_REQUESTED", base: "loom/x/csv-1" });
-    const nulls = JSON.stringify({ state: "open", head: "abc123", draft: null, review: null, base: null });
-    expect(await prFeedback({ repo, url, forge: FEEDBACK(`echo '${nulls}'`) })).toMatchObject({ outcome: "ok", draft: null, review: null, base: null });
+    const json = JSON.stringify({ state: "merged", head: "abc123", draft: true, review: "Changes_Requested", base: "loom/x/csv-1", mergeable: false });
+    expect(await prFeedback({ repo, url, forge: FEEDBACK(`echo '${json}'`) })).toMatchObject({ outcome: "ok", state: "MERGED", draft: true, review: "CHANGES_REQUESTED", base: "loom/x/csv-1", mergeable: false });
+    const nulls = JSON.stringify({ state: "open", head: "abc123", draft: null, review: null, base: null, mergeable: null });
+    expect(await prFeedback({ repo, url, forge: FEEDBACK(`echo '${nulls}'`) })).toMatchObject({ outcome: "ok", draft: null, review: null, base: null, mergeable: null });
+    const word = JSON.stringify({ state: "open", head: "abc123", mergeable: "yes" });
+    expect(await prFeedback({ repo, url, forge: FEEDBACK(`echo '${word}'`) })).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("mergeable:") });
     const bad = await prFeedback({ repo, url, forge: FEEDBACK(`echo '{"state":"open","head":"a","review":"lgtm"}'`) });
     expect(bad).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("review:") });
   });
@@ -1710,27 +2049,33 @@ describe("prBatch", () => {
         "    p1: pullRequest(number: 7) { ...F }",
         "  }",
         "}",
-        "fragment F on PullRequest { number state isDraft reviewDecision baseRefName }",
+        "fragment F on PullRequest { number state isDraft reviewDecision baseRefName mergeable title body }",
         "",
       ].join("\n"),
     );
-    expect(batchQuery([1], true)).toContain("fragment F on PullRequest {\n  number state isDraft reviewDecision baseRefName headRefOid author { login }");
+    expect(batchQuery([1], true)).toContain("fragment F on PullRequest {\n  number state isDraft reviewDecision baseRefName mergeable title body headRefOid author { login }");
     expect(batchQuery([1], true)).toContain("reviewThreads(last: 100)");
   });
 
-  it("maps each pull request's state, draft flag, review decision and base, and lists a number GitHub did not answer for as missing", async () => {
+  it("reads each pull request's title and description, for Loom's own sections in it", async () => {
+    fakeGh({ data: { repository: { p0: pull(3, { title: "Add rows", body: "Why" }), p1: pull(4, { title: null, body: null }) } } });
+    expect(await prBatch(input([3, 4], false))).toMatchObject({ outcome: "ok", pulls: [{ number: 3, title: "Add rows", body: "Why", feedback: null }, { number: 4, title: null, body: null }] });
+  });
+
+  it("maps each pull request's state, draft flag, review decision, base and mergeability, and lists a number GitHub did not answer for as missing", async () => {
     fakeGh(
       {
-        data: { repository: { p0: pull(12, { state: "MERGED", isDraft: true, reviewDecision: "APPROVED", baseRefName: "loom/x/csv-1" }), p1: null, p2: pull(14, { state: "CLOSED", reviewDecision: "CHANGES_REQUESTED" }) } },
+        data: { repository: { p0: pull(12, { state: "MERGED", isDraft: true, reviewDecision: "APPROVED", baseRefName: "loom/x/csv-1", mergeable: "UNKNOWN" }), p1: null, p2: pull(14, { state: "CLOSED", reviewDecision: "CHANGES_REQUESTED", mergeable: "CONFLICTING" }), p3: pull(15, { mergeable: "MERGEABLE" }) } },
         errors: [{ type: "NOT_FOUND", path: ["repository", "p1"], message: "Could not resolve to a PullRequest with the number of 13." }],
       },
       1,
     );
-    expect(await prBatch(input([12, 13, 14], false))).toEqual({
+    expect(await prBatch(input([12, 13, 14, 15], false))).toEqual({
       outcome: "ok",
       pulls: [
-        { number: 12, state: "MERGED", draft: true, review: "APPROVED", base: "loom/x/csv-1", feedback: null },
-        { number: 14, state: "CLOSED", draft: false, review: "CHANGES_REQUESTED", base: "main", feedback: null },
+        { number: 12, state: "MERGED", draft: true, review: "APPROVED", base: "loom/x/csv-1", mergeable: null, title: null, body: null, feedback: null },
+        { number: 14, state: "CLOSED", draft: false, review: "CHANGES_REQUESTED", base: "main", mergeable: false, title: null, body: null, feedback: null },
+        { number: 15, state: "OPEN", draft: false, review: null, base: "main", mergeable: true, title: null, body: null, feedback: null },
       ],
       missing: [{ number: 13, message: "gh found no pull request #13 in acme/shop: Could not resolve to a PullRequest with the number of 13." }],
     });
@@ -1743,7 +2088,8 @@ describe("prBatch", () => {
     fakeGh({ data: { repository: { pullRequest: full } } });
     const single = await prFeedback({ repo: makeRepo(), url: "https://github.example.com/acme/shop/pull/5", forge: GH });
     expect(read).toMatchObject({ outcome: "ok", pulls: [{ number: 5, state: "OPEN", draft: false, review: "REVIEW_REQUIRED", base: "main" }], missing: [] });
-    expect((read as Extract<typeof read, { outcome: "ok" }>).pulls[0]!.feedback).toEqual(single);
+    const { title: _title, body: _body, ...feedback } = single as Extract<typeof single, { outcome: "ok" }>;
+    expect((read as Extract<typeof read, { outcome: "ok" }>).pulls[0]!.feedback).toEqual(feedback);
     expect(single).toMatchObject({ outcome: "ok", head: "f00d", items: [{ kind: "review", author: "alice", state: "commented" }] });
   });
 
@@ -2233,6 +2579,99 @@ describe("carrying a commit to a thread's own machine: carryStart, carryWrite, c
     expect(await carryStart({ worktree, remote: "origin", baseBranch: "main", base: exported.base, tree: exported.tree })).toEqual({ outcome: "ok", present: true });
     expect(sh(worktree, "rev-parse", "HEAD")).toBe(carried);
     expect(sh(worktree, "status", "--porcelain")).toBe("");
+  });
+
+  it("leaves a merge the worker has not finished as it is, even with nothing left to resolve", async () => {
+    const { clone } = setup();
+    const worktree = clone();
+    const theirs = sh(worktree, "rev-parse", "HEAD");
+    writeFileSync(join(worktree, ".git", "MERGE_HEAD"), `${theirs}\n`);
+    expect(sh(worktree, "status", "--porcelain")).toBe("");
+    const refused = await carryStart({ worktree, remote: "origin", baseBranch: "main", base: theirs, tree: sh(worktree, "rev-parse", "HEAD:keep") });
+    expect(refused).toEqual({ outcome: "unavailable", message: expect.stringContaining("has a merge that is not finished, so Loom left it as it is. Finish it with git commit, or abort it with git merge --abort") });
+    expect(readFileSync(join(worktree, ".git", "MERGE_HEAD"), "utf8")).toBe(`${theirs}\n`);
+  });
+
+  it("starts again over a carry that was cut short, whose files are its own, and refuses one that is not", async () => {
+    const { clone } = setup();
+    const checkout = clone();
+    sh(checkout, "switch", "-q", "-c", "loom/csv/csv-1-home");
+    put(checkout, "src/one.txt", "one\n");
+    const home = commitFile(checkout, "src/two.txt", "two\n");
+    const worktree = clone();
+    const exported = await exportChanges({ worktree: checkout, base: "origin/main", head: home });
+    const start = { worktree, remote: "origin", baseBranch: "main", base: exported.base, tree: exported.tree };
+    expect(await carryStart(start)).toEqual({ outcome: "ok", present: false });
+    await carryWrite({ worktree, path: "src/one.txt", mode: "100644", offset: 0, data: Buffer.from("one\n").toString("base64") });
+    expect(await carryStart(start)).toEqual({ outcome: "ok", present: false });
+    expect(existsSync(join(worktree, "src/one.txt"))).toBe(false);
+    expect(await carryOut(checkout, worktree, exported)).toMatchObject({ outcome: "ok", tree: exported.tree });
+
+    put(worktree, "notes.txt", "mine\n");
+    expect(await carryStart({ ...start, tree: sh(worktree, "rev-parse", "HEAD:keep") })).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("has uncommitted changes") });
+    expect(readFileSync(join(worktree, "notes.txt"), "utf8")).toBe("mine\n");
+  });
+
+  it("starts again over a stacked carry cut short after its first commit, partly written or not, until its last tree is in", async () => {
+    const { clone } = setup();
+    const checkout = clone();
+    sh(checkout, "switch", "-q", "-c", "loom/csv/csv-2-home");
+    const stacked = commitFile(checkout, "dep/a.txt", "dep\n");
+    const home = commitFile(checkout, "src/b.txt", "mine\n");
+    const first = await exportChanges({ worktree: checkout, base: "origin/main", head: stacked });
+    const second = await exportChanges({ worktree: checkout, base: stacked, head: home });
+    const worktree = clone();
+    const start = { worktree, remote: "origin", baseBranch: "main", base: first.base, tree: second.tree };
+    const write = (path: string, content: string) => carryWrite({ worktree, path, mode: "100644", offset: 0, data: Buffer.from(content).toString("base64") });
+    const finish = (exported: HostOutput<"exportChanges">) => carryFinish({ worktree, base: first.base, message: exported.message, author: exported.author, tree: exported.tree, paths: exported.changes.map((change) => change.path) });
+    const commitOfDependency = async () => {
+      expect(await carryStart(start)).toEqual({ outcome: "ok", present: false });
+      await write("dep/a.txt", "dep\n");
+      expect(await finish(first)).toMatchObject({ outcome: "ok", tree: first.tree });
+    };
+
+    await commitOfDependency();
+    await write("src/b.txt", "mi");
+    await commitOfDependency();
+    await commitOfDependency();
+    await write("src/b.txt", "mine\n");
+    expect(await finish(second)).toMatchObject({ outcome: "ok", tree: second.tree });
+    expect(sh(worktree, "rev-parse", "HEAD^^")).toBe(first.base);
+    expect(existsSync(join(worktree, ".git", "loom-carry"))).toBe(false);
+
+    put(worktree, "notes.txt", "mine\n");
+    expect(await carryStart({ ...start, tree: first.tree })).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("has uncommitted changes") });
+  });
+
+  it("marks a base fetch that could not reach the remote as worth waiting out", async () => {
+    const { clone } = setup();
+    const worktree = clone();
+    sh(worktree, "remote", "set-url", "origin", "https://nowhere.invalid/acme/shop.git");
+    const started = await carryStart({ worktree, remote: "origin", baseBranch: "main", base: "1".repeat(40), tree: sh(worktree, "rev-parse", "HEAD:keep") });
+    expect(started).toMatchObject({ outcome: "unavailable", message: expect.stringContaining("did not bring it"), transient: "network" });
+  });
+
+  it("carries into a worktree whose path is a subdirectory of its repository, with the paths from its top level", async () => {
+    const { clone } = setup();
+    const checkout = clone();
+    sh(checkout, "switch", "-q", "-c", "loom/csv/csv-1-home");
+    put(checkout, "src/new.txt", "new\n");
+    rmSync(join(checkout, "old.txt"));
+    sh(checkout, "add", "-A");
+    sh(checkout, "commit", "-q", "-m", "CSV-1: Order rows");
+    const home = sh(checkout, "rev-parse", "HEAD");
+    const worktree = clone();
+    const zone = join(worktree, "keep");
+    const exported = await exportChanges({ worktree: join(checkout, "keep"), base: "origin/main", head: home });
+
+    expect(await carryOut(checkout, zone, exported)).toEqual({ outcome: "ok", head: sh(worktree, "rev-parse", "HEAD"), tree: exported.tree });
+    expect(readFileSync(join(worktree, "src/new.txt"), "utf8")).toBe("new\n");
+    expect(existsSync(join(worktree, "old.txt"))).toBe(false);
+    expect(existsSync(join(zone, "src"))).toBe(false);
+    expect(sh(worktree, "status", "--porcelain")).toBe("");
+
+    put(worktree, "src/new.txt", "<<<<<<< ours\nmine\n=======\ntheirs\n>>>>>>> theirs\n");
+    expect(await conflictMarkers({ worktree: zone, paths: ["src/new.txt"] })).toEqual({ files: ["src/new.txt"] });
   });
 
   it("lists the files that still have conflict markers, and leaves out resolved and deleted ones", async () => {

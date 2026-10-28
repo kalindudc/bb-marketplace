@@ -57,6 +57,16 @@ export const END_LABELS: Record<string, string> = {
 };
 export const endLabel = (reason: string | null) => (reason === null ? "ended" : (END_LABELS[reason] ?? reason));
 
+/** The time of day where the page or the server runs, such as "14:05". */
+export const clockTime = (at: number): string => new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+/** "Loom tries the merge again at 14:05 after a temporary failure: <reason>." for a ticket whose merge waits; with `now`, "now" once the wait is over. */
+export function mergeRetryText(wait: { failures: number; until: number; message: string }, now?: number): string {
+  const when = now !== undefined && wait.until <= now ? "now" : `at ${clockTime(wait.until)}`;
+  const after = wait.failures > 1 ? `${wait.failures} temporary failures in a row` : "a temporary failure";
+  return `Loom tries the merge again ${when} after ${after}: ${wait.message.trim().replace(/[.:]+$/u, "")}.`;
+}
+
 /** "Its worker could not start (no free slot); Loom tries again in 4m." for a ticket that waits after a failed start. */
 export function startWaitText(wait: { role: "worker" | "reviewer"; reason: string; until: number; tries: number; unavailable: boolean }, now: number): string {
   const again = wait.until > now ? `tries again in ${formatDuration(wait.until - now)}` : "tries again now";

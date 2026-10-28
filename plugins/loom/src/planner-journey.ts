@@ -93,7 +93,9 @@ function summaryOf(chapter: Omit<Chapter, "summary">, view: Pick<PlannerView, "p
           ? `Loom's review found ${plural(review.findings.length, "problem")} in round ${review.round}.`
           : review.state === "failed"
             ? "Loom's review did not finish."
-            : `Loom is reviewing it (round ${review.round}).`,
+            : review.state === "skipped"
+              ? "Loom skipped its review: it changes only operational settings."
+              : `Loom is reviewing it (round ${review.round}).`,
     );
   }
   return sentences.join(" ");
@@ -170,7 +172,13 @@ export function workingOn(steps: readonly JourneyStep[]): string | null {
     case "notes":
       return `your ${latest.notes.length === 1 ? "comment" : "comments"} on v${latest.version}`;
     case "review":
-      return latest.state === "changes_requested" ? `the spec review's findings on v${latest.version}` : latest.state === "approved" ? `the passed review of v${latest.version}` : null;
+      return latest.state === "changes_requested"
+        ? `the spec review's findings on v${latest.version}`
+        : latest.state === "approved"
+          ? `the passed review of v${latest.version}`
+          : latest.state === "skipped"
+            ? `the skipped review of v${latest.version}`
+            : null;
     case "triage":
       return latest.response?.text != null ? null : `triage round ${latest.round}`;
     case "control":

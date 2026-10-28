@@ -13,7 +13,7 @@ import type { TicketState } from "./states";
 export type MergeVerdict =
   /** Nothing before it, it targets the base, its checks pass, and the forge says it is approved and not a draft. */
   | "ready"
-  /** Nothing before it, but the pull request itself holds it: a draft, a review, checks, or a fix round Loom is pushing. */
+  /** Nothing before it, but the pull request itself holds it: a conflict with its base, a draft, a review, checks, or a fix round Loom is pushing. */
   | "first"
   /** Nothing before it and its checks pass, but the forge did not say it is approved and not a draft, so Loom cannot say it is ready. */
   | "checks_pass"
@@ -59,6 +59,12 @@ export interface MergeEntry {
   review: ReviewDecision | null;
   /** The forge reported its draft flag or review decision. */
   reviewRead: boolean;
+  /** The forge says it conflicts with its base. */
+  conflicts: boolean;
+  /** How many commits of its remote base the commit Loom pushed lacks, as Loom last counted; null when Loom has not counted it since its last push. */
+  behind: number | null;
+  /** Its repo's refresh_behind: Loom merges the base into a pull request that lacks that many commits of it; null when the repo does not set it. */
+  refreshBehind: number | null;
   verdict: MergeVerdict;
   /** On a pull request with nothing before it, what still holds it, in words: "draft", "needs review", "1 check pending". */
   holds: string[];
@@ -138,6 +144,8 @@ export function mergeOrderOf(spec: Spec, tickets: readonly TicketRow[]): MergeOr
     const review = meta?.review ?? null;
     const reviewRead = meta !== null && (meta.draft !== null || meta.review !== null);
     const base = baseOf(ticket);
+    const conflicts = meta?.mergeable === false;
+    const behind = meta?.behind !== undefined && meta.behind.sha === ticket.pushed_sha ? meta.behind.commits : null;
     const target = targetOf(ticket);
     // pr_url outlives a pull request Loom let go of; until a new one opens, a requeued ticket has none. A blocked or done one keeps it to point at.
     const prUrl = ticket.pushed_sha !== null || ticket.state === "blocked" || ticket.state === "done" ? ticket.pr_url : null;
@@ -160,6 +168,9 @@ export function mergeOrderOf(spec: Spec, tickets: readonly TicketRow[]): MergeOr
       draft,
       review,
       reviewRead,
+      conflicts,
+      behind,
+      refreshBehind: repoSettings(spec, ticket.repo).refreshBehind,
       verdict: "no_pr",
       holds: [],
       trap: false,
@@ -177,6 +188,7 @@ export function mergeOrderOf(spec: Spec, tickets: readonly TicketRow[]): MergeOr
     if (parent !== null) return { ...entry, verdict: "moving" };
     const holds = [
       ...(entry.elsewhere !== null ? [`targets ${entry.elsewhere}, not ${base}`] : []),
+      ...(conflicts ? [`conflicts with ${base}`] : []),
       ...(ticket.state !== "pr_open" ? ["Loom is pushing a fix"] : []),
       ...(draft === true ? ["draft"] : []),
       ...(review === "CHANGES_REQUESTED" ? ["changes requested"] : review === "REVIEW_REQUIRED" ? ["needs review"] : []),

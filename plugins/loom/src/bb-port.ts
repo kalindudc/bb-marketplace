@@ -1,7 +1,7 @@
 // Adapts bb.sdk to Loom's BbPort. bb.sdk is read inside each call, never at load.
 import type { BbPluginApi, JsonValue } from "@get-bb/plugin-sdk";
 import { GIT_NETWORK_TIMEOUT_MS } from "./git-network";
-import { hostContract, type HostInput, type HostMethod, type HostOutput } from "./host-contract";
+import { hostContract, RETARGET_COMMAND_MS, type HostInput, type HostMethod, type HostOutput } from "./host-contract";
 import { SectionNameConflictError, SpawnRefusedError, SpawnUnavailableError, type BbPort, type HostPort } from "./ports";
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -286,23 +286,25 @@ export function createBbPort(bb: BbPluginApi): BbPort {
 const HOST_CALL_MS = 30_000;
 const NETWORK_CALL_MS = 150_000;
 // prFeedback runs gh or a forge command for up to 2 minutes, so the 30-second default would cut a slow read short and pause the project.
-// exportChanges reads every changed file of a large commit, and ensureWorktree may check out a large repository.
-const NETWORK_METHODS: readonly HostMethod[] = ["prCreate", "prState", "prFeedback", "prBatch", "ensureWorktree", "ghStatus", "exportChanges"];
+// exportChanges reads every changed file of a large commit, ensureWorktree may check out a large repository, mergeOnto runs
+// merge-tree, which takes a while there, and prRetarget, prRequestReview, prEdit and prReply run gh or a forge command.
+const NETWORK_METHODS: readonly HostMethod[] = ["prCreate", "prState", "prFeedback", "prBatch", "ensureWorktree", "ghStatus", "exportChanges", "mergeOnto", "prRetarget", "prRequestReview", "prEdit", "prReply"];
 // The calls that run git fetch, ls-remote or push, each step limited to the input's networkTimeoutMs (the repo's
 // git_network_timeout_seconds, else GIT_NETWORK_TIMEOUT_MS). prCommit, fetchTip, importCommit, carryStart and landedOn may run
 // two of them one after the other, so the call gets two steps' time plus HOST_CALL_MS for its local git.
-const GIT_NETWORK_METHODS: readonly HostMethod[] = ["fetchBranch", "push", "prCommit", "stackBase", "fetchTip", "importCommit", "carryStart", "landedOn"];
+const GIT_NETWORK_METHODS: readonly HostMethod[] = ["fetchBranch", "push", "prCommit", "stackBase", "fetchTip", "importCommit", "carryStart", "landedOn", "behindBase", "remoteBranch"];
 
 function callTimeoutMs<M extends HostMethod>(method: M, input: HostInput<M>): number {
   if (method === "exec") return (input as HostInput<"exec">).timeoutMs + HOST_CALL_MS;
   if (GIT_NETWORK_METHODS.includes(method)) return 2 * ((input as { networkTimeoutMs?: number }).networkTimeoutMs ?? GIT_NETWORK_TIMEOUT_MS) + HOST_CALL_MS;
+  if (method === "prRetarget" && (input as HostInput<"prRetarget">).forge?.kind === "command") return RETARGET_COMMAND_MS + HOST_CALL_MS;
   return NETWORK_METHODS.includes(method) ? NETWORK_CALL_MS : HOST_CALL_MS;
 }
 
 /**
  * The host entry client. Local git calls get 30 s; gh, forge commands and ensureWorktree (a first checkout) get 150 s; a call
- * that fetches, runs ls-remote or pushes gets twice its git network timeout plus 30 s (270 s by default); exec gets its own
- * timeout plus 30 s. All stay under bb's 30-minute host call cap.
+ * that fetches, runs ls-remote or pushes gets twice its git network timeout plus 30 s (270 s by default); a command forge's
+ * retarget gets its 5 minutes plus 30 s; exec gets its own timeout plus 30 s. All stay under bb's 30-minute host call cap.
  */
 export function createHostPort(bb: BbPluginApi): HostPort {
   const client = bb.hosts.experimental_client({ contract: hostContract });

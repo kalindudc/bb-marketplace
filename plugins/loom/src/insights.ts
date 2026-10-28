@@ -341,6 +341,7 @@ function lineOf(ev: Ev, ctx: Ctx): Phrase {
     if (from === "merging" && to === "working") return [`The merge sent it back to the worker${reason === null ? "." : `: ${clipText(reason, 140)}`}`];
     if (to === "blocked") return reason === null ? ["Blocked."] : ["Blocked: ", quote(reason, 220)];
     if (from === "blocked" && to === "queued") return ["Requeued."];
+    if (from === "blocked" && to === "review") return ["Back in review as it was, for the same commit."];
     if (to === "cancelled") return ["Cancelled."];
   }
   if (ev.kind === "review.verdict") {
@@ -536,7 +537,7 @@ function chapterOf(ctx: Ctx, key: string, events: Ev[], group: { to: number; cur
   };
 }
 
-const NOTE_KINDS = new Set(["spec.proposed", "spec.revised", "spec.approved", "spec.review.ended", "project.created", "record.sent", "record.failed", "triage.sent", "planner.asked"]);
+const NOTE_KINDS = new Set(["spec.proposed", "spec.revised", "spec.approved", "spec.review.ended", "spec.review.skipped", "project.created", "record.sent", "record.failed", "triage.sent", "planner.asked"]);
 
 function itemsOf(ctx: Ctx, group: { to: number; current: boolean; state: ProjectState }, events: Ev[]): StoryItem[] {
   const items: StoryItem[] = [];

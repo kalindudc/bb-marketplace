@@ -103,7 +103,7 @@ function LoomReview({ rounds, status, version, labelFor, onGo }: { rounds: reado
     if (stopped) return box("border-warning/50 bg-warning/10", <><p><b>Loom stopped reviewing after {SPEC_REVIEW_ROUNDS} rounds</b>; these findings of the last round are still open.</p>{list(status.findings)}</>);
     return null;
   }
-  const earlier = rounds.length > 1 ? <p className="text-subtle-foreground">Earlier rounds of v{version}: {rounds.slice(0, -1).map((round) => `round ${round.round} ${round.state === "approved" ? "passed" : round.state === "changes_requested" ? `found ${plural(round.findings.length, "problem")}` : "did not finish"}`).join(", ")}.</p> : null;
+  const earlier = rounds.length > 1 ? <p className="text-subtle-foreground">Earlier rounds of v{version}: {rounds.slice(0, -1).map((round) => (round.state === "skipped" ? "skipped" : `round ${round.round} ${round.state === "approved" ? "passed" : round.state === "changes_requested" ? `found ${plural(round.findings.length, "problem")}` : "did not finish"}`)).join(", ")}.</p> : null;
   const summary = latest.summary !== null && latest.summary !== "" ? (
     <details>
       <summary className="cursor-pointer text-muted-foreground">The reviewer's summary</summary>
@@ -130,6 +130,17 @@ function LoomReview({ rounds, status, version, labelFor, onGo }: { rounds: reado
       );
     case "failed":
       return box("border-destructive-text/40 bg-destructive-text/5", <><p><b>Loom's spec review of v{version} did not finish:</b> {latest.reason ?? "no reason recorded"}.</p>{earlier}</>);
+    case "skipped":
+      return box(
+        "border-border-seam bg-card",
+        <>
+          <p>
+            <b>Loom skipped the spec review of v{version}</b>: against v{latest.skip?.against ?? version - 1}, it changes only operational settings, which say how Loom runs the project and not what it builds. You still approve it.
+          </p>
+          {latest.skip !== null && <p data-skipped-paths className="font-mono text-[11px] text-muted-foreground [overflow-wrap:anywhere]">{latest.skip.paths.map(labelFor).join(" · ")}</p>}
+          {earlier}
+        </>,
+      );
   }
 }
 

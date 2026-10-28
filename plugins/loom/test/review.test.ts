@@ -6,7 +6,7 @@ import { SpawnRefusedError, SpawnUnavailableError, type SpawnArgs } from "../src
 import { waitOf } from "../src/starts";
 import { afterMergeFailedText, changesRequestedText, conflictText, heldCheckResult, landBody, prBody, reviewerBrief, reviewerNudgeText } from "../src/prompts";
 import { approve, blockedAtReview, checkOutReview, onReviewerGone, onReviewerIdle, onReviewerTurnFailed, requestChanges, settleReviews, spawnReviewers, type Finding } from "../src/review";
-import { endThread, requeueTicket, specOf } from "../src/workers";
+import { blockTicket, endThread, requeueTicket, specOf } from "../src/workers";
 import { GIT_WORKTREE_PROVIDER, checkOutHead, makeCtx, reachReview, seedMachineProject, seedProject, seedRepoProject, startWorker, ticketOf, withDocsTicket, type Doc, type EngineHarness } from "./helpers";
 
 let h: EngineHarness;
@@ -64,7 +64,7 @@ describe("reviewerBrief", () => {
     const { project, spec, ticket } = await readyTicket();
     const brief = reviewerBrief({ project, spec, ticket, round: 2, diff: { stat: "", patch: "", truncated: false }, checkPost: null, earlierReviews: [] });
     expect(brief).toContain(
-      "read and run anything, change nothing, commit nothing; judge each acceptance criterion; approve only when every one holds and no blocking finding remains; call exactly one verdict tool, then end your turn",
+      "read and run anything, change nothing, commit nothing; judge each acceptance criterion, and the pull request's text when this brief shows it; approve only when every one holds and no blocking finding remains; call exactly one verdict tool, then end your turn",
     );
     expect(brief).toContain("loom_approve");
     expect(brief).toContain("loom_request_changes");
@@ -785,6 +785,34 @@ describe("loom_checkout", () => {
     expect(reviewsOf()[0]!.verdict).toBe("approved");
   });
 
+  it("accepts a verdict on the reviewed tree when the ticket was submitted before Loom kept its tree, and keeps the tree it read", async () => {
+    await seedMachineProject(h);
+    await reachReview(h);
+    await spawn();
+    const reviewer = reviewers()[0]!;
+    h.store.updateTicket(ticketOf(h, "CSV-1").id, { head_tree: null });
+    await checkOutReview(h.ctx, reviewer.thread_id!);
+    expect(h.host.worktree(`/wt/${reviewer.environment_id}`).head).not.toBe("home1");
+    h.host.calls = [];
+    await approve(h.ctx, reviewer.thread_id!, "ok");
+    expect(reviewsOf()[0]!.verdict).toBe("approved");
+    expect(h.host.callsTo("refTip")).toEqual([{ repo: "/repo", ref: "home1" }]);
+    expect(ticketOf(h, "CSV-1").head_tree).toBe("c1");
+  });
+
+  it("still refuses a verdict on another tree when the ticket has no tree of its own", async () => {
+    await seedProject(h);
+    await reachReview(h);
+    await spawn();
+    const reviewer = reviewers()[0]!;
+    h.store.updateTicket(ticketOf(h, "CSV-1").id, { head_tree: null });
+    h.host.worktree(`/wt/${reviewer.environment_id}`).head = "x9";
+    await expect(approve(h.ctx, reviewer.thread_id!, "ok")).rejects.toThrow(/Call loom_checkout first/u);
+    checkOutHead(h, reviewer);
+    await approve(h.ctx, reviewer.thread_id!, "ok");
+    expect(reviewsOf()[0]!.verdict).toBe("approved");
+  });
+
   it("is for the live reviewer of a ticket in review", async () => {
     await seedProject(h);
     const worker = await reachReview(h);
@@ -845,3 +873,87 @@ describe("the brief of a reviewer of work from another machine", () => {
     expect(brief).not.toContain("/src/api");
   });
 });
+
+describe("review again as is", () => {
+  /** Points the ticket's branch on the checkout at its worker's worktree head, as git's shared refs do. */
+  const branchAt = (sha: string) => h.host.refs.set(`refs/heads/${ticketOf(h, "CSV-1").branch}`, sha);
+  const again = (note = "") => requeueTicket(h.ctx, "CSV-1", { note, actor: "human", author: "human", review: true });
+
+  it("sends a ticket blocked in review back to review for the same commit, with fresh review rounds and the counters reset", async () => {
+    await seedProject(h, (doc) => (doc.review = { max_rounds: 2 }));
+    const worker = await reachReview(h);
+    const roundVerdict = async () => {
+      await spawn();
+      const reviewer = reviewers().at(-1)!;
+      checkOutHead(h, reviewer);
+      await requestChanges(h.ctx, reviewer.thread_id!, "Fix it", findings);
+      await settleReviews(h.ctx);
+    };
+    await roundVerdict();
+    await resubmit(worker);
+    await roundVerdict();
+    const blocked = ticketOf(h, "CSV-1");
+    expect(blocked).toMatchObject({ state: "blocked", blocked_reason: "review requested changes in 2 rounds", review_round: 2, head_sha: "c2" });
+    h.store.updateTicket(blocked.id, { failures: 2, check_failures: 3 });
+    branchAt("c2");
+
+    const back = await again("The finding is wrong: the loop is right.");
+    expect(back).toMatchObject({ state: "review", review_round: 3, head_sha: "c2", failures: 0, check_failures: 0, blocked_reason: null, worker_thread_id: null });
+    expect(postsOf().slice(-2)).toMatchObject([
+      { kind: "reply", author_kind: "loom", body: expect.stringContaining("Back in review as it is: new reviewers judge c2") },
+      { kind: "reply", author_kind: "human", body: "The finding is wrong: the loop is right." },
+    ]);
+    const move = h.store.ticketEvents(blocked.id, ["ticket.state"]).at(-1)!;
+    expect(move.actor).toBe("human");
+    expect(JSON.parse(move.data_json)).toMatchObject({ from: "blocked", to: "review", head: "c2", round: 3, requeued: true });
+
+    // Fresh rounds: one more request for changes goes to the queue, as the worker is gone, instead of blocking again.
+    await roundVerdict();
+    expect(ticketOf(h, "CSV-1")).toMatchObject({ state: "queued" });
+    expect(reviewsOf().map((review) => review.round)).toEqual([1, 2, 3]);
+  });
+
+  it("refuses a ticket with no commit that passed its checks, one whose last checks failed, and one whose branch moved since, and suggests a plain requeue", async () => {
+    await seedProject(h);
+    const worker = await startWorker(h);
+    await blockTicketNow(worker);
+    await expect(again()).rejects.toMatchObject({ code: "loom_invalid_state", message: expect.stringMatching(/CSV-1 has no commit that passed its checks.*plain requeue/) });
+
+    h = makeCtx();
+    await seedProject(h);
+    const failing = await reachReview(h);
+    await spawn();
+    checkOutHead(h, reviewers().at(-1)!);
+    await requestChanges(h.ctx, reviewers().at(-1)!.thread_id!, "Fix it", findings);
+    await settleReviews(h.ctx);
+    h.host.execResults.push({ exitCode: 1, output: "1 failed" });
+    await resubmit(failing);
+    await blockTicketNow(failing);
+    branchAt("c2");
+    await expect(again()).rejects.toMatchObject({ code: "loom_invalid_state", message: expect.stringMatching(/last checks on CSV-1 did not pass.*plain requeue/) });
+
+    h = makeCtx();
+    await seedProject(h);
+    const moved = await reachReview(h);
+    await spawn();
+    checkOutHead(h, reviewers().at(-1)!);
+    await requestChanges(h.ctx, reviewers().at(-1)!.thread_id!, "Fix it", findings);
+    await settleReviews(h.ctx);
+    h.host.worktree(`/wt/${moved.environment_id}`).dirty = true;
+    await blockTicketNow(moved);
+    branchAt(h.host.worktree(`/wt/${moved.environment_id}`).head);
+    await expect(again()).rejects.toMatchObject({ code: "loom_invalid_state", message: expect.stringMatching(/CSV-1's branch has changes since c1.*plain requeue/) });
+    expect(ticketOf(h, "CSV-1").state).toBe("blocked");
+  });
+
+  it("refuses when Loom cannot find the ticket's branch on the project's checkout", async () => {
+    await seedProject(h);
+    await reachReview(h);
+    await blockTicket(h.ctx, ticketOf(h, "CSV-1"), { reason: "Hold on", needs: "", actor: "human" });
+    await expect(again()).rejects.toMatchObject({ code: "loom_invalid_state", message: expect.stringContaining("finds no branch of CSV-1") });
+  });
+});
+
+async function blockTicketNow(worker: ThreadRow): Promise<void> {
+  await blockTicket(h.ctx, ticketOf(h, "CSV-1"), { reason: "Stuck", needs: "", actor: worker.thread_id! });
+}

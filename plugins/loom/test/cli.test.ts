@@ -220,6 +220,23 @@ describe("human commands", () => {
     expect(host.store.posts(host.store.ticketByKey("CSV-1")!.id).at(-1)).toMatchObject({ kind: "block" });
   });
 
+  it("requeue --review sends a blocked ticket back to review as it is, and refuses one with nothing that passed its checks", async () => {
+    await approved();
+    await run(["block", "CSV-1", "Reviewers are down"]);
+    const refused = errorOf((await run(["requeue", "CSV-1", "--review", "--json"])).stdout);
+    expect(refused).toMatchObject({ code: "loom_invalid_state", message: expect.stringContaining("A plain requeue starts a new worker"), hint: expect.stringContaining("bb loom requeue CSV-1` without --review") });
+    expect(host.store.ticketByKey("CSV-1")?.state).toBe("blocked");
+
+    const ticket = host.store.ticketByKey("CSV-1")!;
+    host.store.updateTicket(ticket.id, { head_sha: "abc1234", branch: "loom/csv/csv-1-1", review_round: 1 });
+    host.store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "check", body: "Checks passed (1 command).", data_json: JSON.stringify({ passed: true, head: "abc1234", runs: [], outside: [], protectedHits: [] }) });
+    host.hostPort.refs.set("refs/heads/loom/csv/csv-1-1", "abc1234");
+    const out = await run(["requeue", "CSV-1", "--review"]);
+    expect(out.stdout).toBe("CSV-1 is back in review as it is: new reviewers judge the commit whose checks passed last, in round 2.\n");
+    expect(host.store.ticketByKey("CSV-1")).toMatchObject({ state: "review", review_round: 2, head_sha: "abc1234" });
+    expect(humanEvents().at(-1)).toEqual({ action: "requeue", slug: "csv", key: "CSV-1", review: true });
+  });
+
   it("cancel cancels a ticket with a reason and refuses a ticket that cannot move", async () => {
     await approved();
     const out = await run(["cancel", "CSV-2", "Not", "needed", "any", "more"]);
@@ -729,6 +746,43 @@ describe("sync", () => {
   });
 });
 
+describe("rollout and live", () => {
+  const rollout = (doc: Doc) => {
+    doc.merge = { strategy: "pr" };
+    doc.rollout = { deploy: { how: "Shipit deploys main" }, stage: [{ name: "expand", goal: "The model is live" }], milestone: [{ ref: "traffic-low", title: "Old traffic is near zero" }] };
+    doc.ticket[0].rollout = { stage: "expand", rollback: "Revert the commit" };
+    doc.ticket[1].rollout = { requires_live: ["csv-model", "traffic-low"] };
+  };
+
+  it("rollout prints the deploy order as sentences, or says the project has none", async () => {
+    await approved();
+    expect((await run(["rollout", "csv"])).stdout).toBe("csv has no rollout: its spec has no [rollout] table, no repo deploy and no ticket rollout.\n");
+    expect(JSON.parse((await run(["rollout", "csv", "--json"])).stdout)).toBeNull();
+  });
+
+  it("rollout and live read and mark a project's steps and milestones, with a human.action for each mark", async () => {
+    await propose(rollout);
+    await host.projects.approve("csv", "human");
+    const text = (await run(["rollout", "csv"])).stdout;
+    expect(text).toContain("Next: CSV-1 is next; its pull request is not open yet. 1 step waits on it.");
+    expect(text).toContain("expand: The model is live. 0 of 1 step live.");
+    expect(text).toContain("- CSV-1 Order rows: no pull request yet, not live. Deploys: Shipit deploys main. Rollback: Revert the commit.");
+    expect(text).toContain("- traffic-low Old traffic is near zero: does not hold. CSV-2 needs it.");
+    expect((await run(["live", "csv", "CSV-1", "--note", "Deployed by hand"])).stdout).toBe("CSV-1 is live.\n");
+    expect(JSON.parse((await run(["live", "csv", "traffic-low", "--json"])).stdout)).toMatchObject({ target: "traffic-low", live_by: "human" });
+    expect((await run(["live", "csv", "traffic-low", "--undo"])).stdout).toBe("traffic-low is no longer marked live.\n");
+    expect(humanEvents()).toEqual([
+      { action: "live", slug: "csv", key: "CSV-1", note: "Deployed by hand" },
+      { action: "live", slug: "csv", milestone: "traffic-low" },
+      { action: "unlive", slug: "csv", milestone: "traffic-low" },
+    ]);
+    const twice = errorOf((await run(["live", "csv", "CSV-1", "--json"])).stdout);
+    expect(twice).toMatchObject({ code: "loom_invalid_state", message: expect.stringMatching(/^CSV-1 is already live: marked by human at /), hint: "Undo it with `bb loom live csv CSV-1 --undo` first to mark it again." });
+    expect(errorOf((await run(["live", "csv", "nope", "--json"])).stdout)).toMatchObject({ code: "loom_not_found" });
+    expect(JSON.parse((await run(["rollout", "csv", "--json"])).stdout)).toMatchObject({ counts: { steps: 2, live: 1 } });
+  });
+});
+
 describe("loom_human_only", () => {
   async function setup() {
     await approved();
@@ -753,6 +807,7 @@ describe("loom_human_only", () => {
     ["land", "csv"],
     ["report", "csv", "--send"],
     ["sync", "csv"],
+    ["live", "csv", "CSV-1"],
   ];
 
   it("refuses every state-changing command from a planner, worker, reviewer or spec reviewer thread", async () => {
@@ -1013,6 +1068,18 @@ describe("metrics and feed", () => {
     const { rows } = JSON.parse((await run(["feed", "csv", "--json"])).stdout) as { rows: Array<{ text: string }> };
     expect(rows).toHaveLength(200);
     expect(rows.at(-1)).toMatchObject({ text: "custom by loom." });
+  });
+
+  it("feed --after pages forward from the id, 200 events at a time, so older events can be read", async () => {
+    await approved();
+    const project = host.store.projectBySlug("csv")!;
+    for (let n = 0; n < 250; n += 1) host.store.event(project.id, null, "custom", "loom", { n });
+    const page = async (after: number) => JSON.parse((await run(["feed", "csv", "--after", String(after), "--json"])).stdout) as { rows: Array<{ id: number }>; lastId: number };
+    const first = await page(0);
+    expect(first.rows).toHaveLength(200);
+    const second = await page(first.lastId);
+    expect(second.rows[0]!.id).toBeGreaterThan(first.lastId);
+    expect(first.rows.length + second.rows.length).toBe(host.store.projectEvents(project.id).length);
   });
 
   it("feed refuses an unknown project", async () => {

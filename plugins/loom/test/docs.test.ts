@@ -7,7 +7,8 @@ import { makeHost } from "./helpers";
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const host = makeHost();
-const commands = createCli(host.projects, host.engine, host.store, Date.now).commands!.map((command) => command.name);
+// Each command as it is typed, such as "forge check", from the start of its usage line.
+const commands = createCli(host.projects, host.engine, host.store, Date.now).commands!.map((command) => command.usage.replace(/^bb loom /, "").split(/ [<[]/)[0]!);
 const tools = [...new Set([...ORDINARY_TOOLS, ...PLANNER_TOOLS, ...WORKER_TOOLS, ...REVIEWER_TOOLS, ...SPEC_REVIEWER_TOOLS])];
 
 describe("the plugin's own documents", () => {
@@ -37,10 +38,16 @@ describe("the plugin's own documents", () => {
 
   it("the spec reference, the skills and README describe relying on CI, its ci key and the forge it needs", () => {
     const spec = read("skills/loom/references/spec.md");
-    for (const phrase of ["| `ci` | boolean | `true` |", "| `ci` | boolean | `checks.ci` |", "### Relying on CI", "`ci = false`", "feedback = \'\'\'", "dt pr checks"]) expect(spec, phrase).toContain(phrase);
+    for (const phrase of ["| `ci` | boolean | `true` |", "| `ci` | boolean | `checks.ci` |", "### Relying on CI", "`ci = false`", "feedback = \'\'\'", "pr-cli pr checks"]) expect(spec, phrase).toContain(phrase);
     for (const path of ["README.md", "skills/loom/SKILL.md", "skills/loom-plan/SKILL.md"]) {
       const text = read(path);
       for (const phrase of ["`ci = false`", "CI"]) expect(text, `${path}: ${phrase}`).toContain(phrase);
+    }
+  });
+
+  it("keeps the docs free of any one company's servers and tools", () => {
+    for (const path of ["README.md", "PLUGIN_OVERVIEW.md", "skills/loom/SKILL.md", "skills/loom/references/spec.md", "skills/loom-plan/SKILL.md"]) {
+      expect(read(path), path).not.toMatch(/\b(?:Shopify|Delta|Aquifer|Binks|Shipit|World)\b|\bdt pr\b/);
     }
   });
 
@@ -52,7 +59,7 @@ describe("the plugin's own documents", () => {
 
   it("the spec reference and README describe the forge's retarget and after_push commands", () => {
     const spec = read("skills/loom/references/spec.md");
-    for (const phrase of ["| `retarget` | string | none |", "| `after_push` | string array | none |", "`LOOM_SHA`", 'retarget = \'dt pr edit "$LOOM_PR_NUMBER" --base "$LOOM_BASE"\'']) expect(spec, phrase).toContain(phrase);
+    for (const phrase of ["| `retarget` | string | none |", "| `after_push` | string array | none |", "`LOOM_SHA`", 'retarget = \'pr-cli pr edit "$LOOM_PR_NUMBER" --base "$LOOM_BASE"\'']) expect(spec, phrase).toContain(phrase);
     for (const phrase of ["`after_push`", "`retarget`"]) expect(read("README.md"), phrase).toContain(phrase);
   });
 

@@ -177,6 +177,16 @@ describe("loom_propose", () => {
     expect(output).toContain("Ticket changes after approval go through the planner's board tools.");
   });
 
+  it("hands a pending version that changes only operational settings over at once, with the reason its review was skipped", async () => {
+    stubSpawn();
+    await propose();
+    await host.projects.approve("csv", "human");
+    const output = text(await propose((doc) => (doc.budget = { max_tokens: 9_000_000 })));
+    expect(output).toContain("Spec review: Loom skipped it, because against v1 v2 changes only operational settings (budget.max_tokens). You may hand over now.");
+    expect(output).toContain("Needs you (human): read it with `bb loom spec csv --version 2`, then apply it with `bb loom approve csv --version 2`.");
+    expect(host.harness.sdk.callsTo("threads.spawn")).toHaveLength(1);
+  });
+
   it("refuses a worker row", async () => {
     await propose();
     const project = host.store.projectBySlug("csv")!;
@@ -317,6 +327,18 @@ describe("worker and planner tools", () => {
     expect(ticketNamed("CSV-1").state).toBe("review");
   });
 
+  it("loom_submit takes the proposed pull request text only on a project that opens pull requests, and loom_pr_reply only in a fix round", async () => {
+    const workerId = await startWorkerFor("CSV-1");
+    const refused = await call("loom_submit", { summary: "done", pr: { title: "T" } }, workerId);
+    expect(isError(refused)).toBe(true);
+    expect(text(refused)).toContain("opens no pull request for each, so leave pr out");
+    await expect(call("loom_submit", { summary: "done", pr: { title: "T", draft: true } }, workerId)).rejects.toThrow('Unrecognized key: "draft"');
+    const reply = await call("loom_pr_reply", { item: "thread:1", text: "Done." }, workerId);
+    expect(isError(reply)).toBe(true);
+    expect(text(reply)).toContain("no fix round is open now");
+    expect(ticketNamed("CSV-1").state).toBe("working");
+  });
+
   it("loom_block records the reason and the needs, and the ticket blocks once the thread stopped", async () => {
     const workerId = await startWorkerFor("CSV-1");
     const result = await call("loom_block", { reason: "No API key", needs: "A key in the CI settings" }, workerId);
@@ -352,6 +374,21 @@ describe("worker and planner tools", () => {
     const again = await call("loom_requeue", { key: "CSV-1", note: "x" }, "thr_plan");
     expect(isError(again)).toBe(true);
     expect(text(again)).toContain("only a blocked ticket");
+  });
+
+  it("loom_requeue with review: true sends a blocked ticket back as it is, and says why it cannot", async () => {
+    await host.engine.block("CSV-1", "stuck", "human");
+    const refused = await call("loom_requeue", { key: "CSV-1", note: "", review: true }, "thr_plan");
+    expect(isError(refused)).toBe(true);
+    expect(text(refused)).toContain("CSV-1 has no commit that passed its checks, so it cannot go back as it is. A plain requeue starts a new worker from its branch instead.");
+
+    const ticket = ticketNamed("CSV-1");
+    host.store.updateTicket(ticket.id, { head_sha: "abc1234", branch: "loom/csv/csv-1-1", review_round: 1 });
+    host.store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "check", body: "Checks passed.", data_json: JSON.stringify({ passed: true, head: "abc1234" }) });
+    host.hostPort.refs.set("refs/heads/loom/csv/csv-1-1", "abc1234");
+    expect(text(await call("loom_requeue", { key: "CSV-1", note: "The reviewers were down.", review: true }, "thr_plan"))).toBe("CSV-1 is back in review as it is, in round 2: new reviewers judge the commit whose checks passed last.");
+    expect(ticketNamed("CSV-1").state).toBe("review");
+    expect(host.store.posts(ticket.id).at(-1)).toMatchObject({ kind: "reply", author_kind: "planner", author_thread_id: "thr_plan", body: "The reviewers were down." });
   });
 
   it("loom_add_tickets adds a batch with dependencies and refuses a cycle", async () => {
@@ -559,7 +596,8 @@ describe("the board tools on a multi-repo project", () => {
   it("names repo in the loom_add_tickets and loom_edit_ticket descriptions", () => {
     const description = (name: string) => host.harness.registrations.agentTools.find((tool) => tool.name === name)!.description;
     expect(description("loom_add_tickets")).toContain("every ticket sets repo to one of those repo names");
-    expect(description("loom_edit_ticket")).toContain("priority, repo.");
+    expect(description("loom_edit_ticket")).toContain("priority, repo, rollout.");
+    expect(description("loom_edit_ticket")).toContain("rollout alone also changes a done ticket");
     expect(description("loom_edit_ticket")).toContain("cancel the ticket and add a new one in the other repo");
   });
 });

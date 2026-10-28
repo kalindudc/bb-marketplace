@@ -338,6 +338,7 @@ function LiveRow({ ctx, attempt }: { ctx: StreamCtx; attempt: Attempt }) {
           </button>
         );
       if (pr?.forge === "none") return row(false, "Loom pushed the branch; the ticket is done when the remote's base branch contains it");
+      if (pr !== null && pr.url === null) return row(false, "The forge closed its pull request with the branch it built on; Loom opens a new one");
       if (pr === null || !pr.follows) return row(false, "The pull request is open; Loom checks every 5 minutes whether it merged", open);
       const next = pr.nextCheckAt === null ? "" : ` · next check ${pr.nextCheckAt <= now ? "now" : `in ${formatDuration(pr.nextCheckAt - now)}`}`;
       return row(true, `Loom is following the pull request: ${pr.checks === null ? "waiting for its checks" : `checks ${checksText(pr.checks)}`}${next}`, open);

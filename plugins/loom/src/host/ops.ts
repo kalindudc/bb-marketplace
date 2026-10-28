@@ -7,11 +7,12 @@ import { dirname, join, resolve } from "node:path";
 import { experimental_runVcsProcess, type ExperimentalVcsProcessPriority } from "@get-bb/plugin-sdk/host";
 import { z } from "zod";
 import { GIT_NETWORK_TIMEOUT_MS } from "../git-network";
-import { BLOB_MAX_BYTES, githubPull, prNumber, REVIEW_DECISIONS, type HostInput, type HostOutput } from "../host-contract";
+import { BLOB_MAX_BYTES, githubPull, prNumber, REPLY_MARK, RETARGET_COMMAND_MS, REVIEW_DECISIONS, type HostInput, type HostOutput } from "../host-contract";
 
 const GIT_TIMEOUT_MS = 30_000;
-// gh calls and the first checkout of the integration worktree can take a while on a slow link or a large repository. A git
-// fetch, ls-remote or push gets the call's networkTimeoutMs, from the repo's git_network_timeout_seconds, else GIT_NETWORK_TIMEOUT_MS.
+// gh calls, the first checkout of the integration worktree and merge-tree can take a while on a slow link or a large
+// repository. A git fetch, ls-remote or push gets the call's networkTimeoutMs, from the repo's git_network_timeout_seconds,
+// else GIT_NETWORK_TIMEOUT_MS.
 const NETWORK_TIMEOUT_MS = 120_000;
 const GIT_MAX_BUFFER = 64 * 1024 * 1024;
 const FORGE_COMMAND_MS = 120_000;
@@ -46,13 +47,30 @@ function run(cwd: string, args: readonly string[], signal?: AbortSignal, timeout
             if (error === null) return resolve({ code: 0, stdout, stderr });
             const failure = error as NodeJS.ErrnoException & { killed?: boolean };
             if (typeof failure.code === "number") return resolve({ code: failure.code, stdout, stderr });
-            reject(new Error(failure.killed === true ? `git ${args[0]} took too long` : `git ${args[0]}: ${failure.message}`));
+            if (failure.killed === true && failure.name !== "AbortError") return reject(new GitTimedOut(`git ${args[0]} took too long`));
+            reject(new Error(`git ${args[0]}: ${failure.message}`));
           },
         );
       }),
     { priority, signal },
   );
 }
+
+class GitTimedOut extends Error {}
+
+// A fetch, a push or an ls-remote that runs out of its time comes back as a failed run that says so, which remoteFailed reads
+// as worth waiting out, as a server that does not answer.
+async function runRemote(cwd: string, args: readonly string[], timeoutMs: number, signal?: AbortSignal): Promise<GitRun> {
+  try {
+    return await run(cwd, args, signal, timeoutMs);
+  } catch (error) {
+    if (error instanceof GitTimedOut) return { code: -1, stdout: "", stderr: `git ${args[0]} timed out after ${Math.round(timeoutMs / 1000)} seconds` };
+    throw error;
+  }
+}
+
+/** How long each git network step of a host call may take: its networkTimeoutMs, else GIT_NETWORK_TIMEOUT_MS. */
+const networkTimeout = (input: { networkTimeoutMs?: number }) => input.networkTimeoutMs ?? GIT_NETWORK_TIMEOUT_MS;
 
 function failure(args: readonly string[], result: GitRun): Error {
   return new Error(`git ${args.join(" ")} failed (${result.code}): ${(result.stderr.trim() || result.stdout.trim()).slice(-2000)}`);
@@ -70,6 +88,11 @@ async function tryGit(cwd: string, args: readonly string[], signal?: AbortSignal
   return result.code === 0 ? result.stdout.trim() : null;
 }
 
+// A bb project's checkout can be a subdirectory of its repository. The paths Loom passes on are relative to the top level,
+// as git diff names them and the carry writes them, so a git command that names paths from where it runs, such as
+// merge-tree, ls-files or a pathspec, runs there.
+const topLevel = (cwd: string, signal?: AbortSignal, priority?: Priority) => git(cwd, ["rev-parse", "--show-toplevel"], { signal, priority });
+
 export async function ensureBranch(input: HostInput<"ensureBranch">, signal?: AbortSignal): Promise<HostOutput<"ensureBranch">> {
   const { repo, branch, from } = input;
   const existing = await tryGit(repo, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}^{commit}`], signal);
@@ -81,15 +104,15 @@ export async function ensureBranch(input: HostInput<"ensureBranch">, signal?: Ab
 
 export async function worktreeState(input: HostInput<"worktreeState">, signal?: AbortSignal): Promise<HostOutput<"worktreeState">> {
   const { worktree, base, trackedOnly, baseTree } = input;
-  const [head = "", tree = ""] = (await git(worktree, ["rev-parse", "HEAD", "HEAD^{tree}"], { signal })).split("\n");
+  const [top = worktree, mergeHead = "", head = "", tree = ""] = (await git(worktree, ["rev-parse", "--show-toplevel", "--git-path", "MERGE_HEAD", "HEAD", "HEAD^{tree}"], { signal })).split("\n");
   const branch = (await tryGit(worktree, ["symbolic-ref", "--short", "-q", "HEAD"], signal)) || null;
   const dirty = (await git(worktree, ["status", "--porcelain", ...(trackedOnly === true ? ["--untracked-files=no"] : [])], { signal })) !== "";
   const onBase = baseTree === undefined ? null : await firstParentWithTree(worktree, head, baseTree, signal);
   const mergeBase = onBase ?? (await git(worktree, ["merge-base", base, "HEAD"], { signal }));
   const tracked = await git(worktree, ["diff", "--name-only", "-z", "--no-renames", mergeBase], { raw: true, signal });
-  const untracked = await git(worktree, ["ls-files", "--others", "--exclude-standard", "-z"], { raw: true, signal });
+  const untracked = await git(top, ["ls-files", "--others", "--exclude-standard", "-z"], { raw: true, signal });
   const changed = [...new Set([...tracked.split("\0"), ...untracked.split("\0")].filter((path) => path !== ""))].sort();
-  return { branch, head, tree, dirty, changed, ...(baseTree === undefined ? {} : { onBase: onBase !== null }) };
+  return { branch, head, tree, dirty, changed, unfinishedMerge: existsSync(resolve(worktree, mergeHead)), ...(baseTree === undefined ? {} : { onBase: onBase !== null }) };
 }
 
 const FIRST_PARENT_LIMIT = 200;
@@ -191,7 +214,7 @@ export async function filePatch(input: HostInput<"filePatch">, signal?: AbortSig
   const { repo, base, head, path, maxBytes } = input;
   for (const ref of [base, head]) if ((await commitOf(repo, ref, signal, INTERACTIVE)) === null) return missing(`${ref} is not in the repository.`);
   const args = ["--literal-pathspecs", "diff", ...PLAIN_DIFF, "--src-prefix=a/", "--dst-prefix=b/", base, head, "--", path];
-  const patch = Buffer.from(await git(repo, args, { raw: true, signal, priority: INTERACTIVE }));
+  const patch = Buffer.from(await git(await topLevel(repo, signal, INTERACTIVE), args, { raw: true, signal, priority: INTERACTIVE }));
   return { outcome: "ok", patch: patch.subarray(0, maxBytes).toString("utf8"), truncated: patch.length > maxBytes };
 }
 
@@ -251,10 +274,12 @@ export async function ensureWorktree(input: HostInput<"ensureWorktree">, dataDir
 
 /**
  * Merges exactly `ref` with a merge commit. A rerun after the commit exists reports `already`; the history cannot say whose
- * merge that was, so the rollback point is the one the caller persisted before the first run, or HEAD when it has none.
+ * merge that was, so the rollback point is the one the caller persisted before the first run, or HEAD when it has none. A
+ * worktree with a merge its worker began and did not finish is `unfinished`, untouched: aborting it would lose their resolution.
  */
 export async function merge(input: HostInput<"merge">, signal?: AbortSignal): Promise<HostOutput<"merge">> {
   const { worktree, message } = input;
+  if ((await tryGit(worktree, ["rev-parse", "-q", "--verify", "MERGE_HEAD"], signal)) !== null) return { outcome: "unfinished" };
   const target = await git(worktree, ["rev-parse", "--verify", `${input.ref}^{commit}`], { signal });
   const head = await git(worktree, ["rev-parse", "HEAD"], { signal });
   const ancestry = await run(worktree, ["merge-base", "--is-ancestor", target, "HEAD"], signal);
@@ -279,8 +304,8 @@ export async function resetHard(input: HostInput<"resetHard">, signal?: AbortSig
 
 export async function push(input: HostInput<"push">, signal?: AbortSignal): Promise<HostOutput<"push">> {
   const { repo, remote, src, branch } = input;
-  const pushed = await run(repo, ["push", remote, `${src}:refs/heads/${branch}`], signal, input.networkTimeoutMs ?? GIT_NETWORK_TIMEOUT_MS);
-  return pushed.code === 0 ? { outcome: "ok" } : { outcome: "unavailable", message: `git push to ${remote} failed: ${tail(pushed.stderr || pushed.stdout)}` };
+  const pushed = await runRemote(repo, ["push", remote, `${src}:refs/heads/${branch}`], networkTimeout(input), signal);
+  return pushed.code === 0 ? { outcome: "ok" } : remoteFailed(`git push to ${remote}`, pushed);
 }
 
 const isAncestor = async (repo: string, ancestor: string, of: string, signal?: AbortSignal): Promise<boolean> => {
@@ -289,21 +314,25 @@ const isAncestor = async (repo: string, ancestor: string, of: string, signal?: A
   throw failure(["merge-base", "--is-ancestor", ancestor, of], checked);
 };
 
-/**
- * A pull request branch's tip where `git push` sends it, which a remote that fetches from elsewhere does not show, with its
- * commits fetched; null when the branch is not there.
- */
-async function pushedTip(repo: string, remote: string, branch: string, timeoutMs: number, signal?: AbortSignal): Promise<{ tip: string | null } | { unavailable: string }> {
+/** A branch's tip where `git push` sends it, which a remote that fetches from elsewhere does not show; null when the branch is not there. */
+async function listedTip(repo: string, remote: string, branch: string, timeoutMs: number, signal?: AbortSignal): Promise<{ tip: string | null; target: string } | UnavailableAnswer> {
   const pushUrls = (await tryGit(repo, ["remote", "get-url", "--push", "--all", remote], signal))?.split("\n").filter((line) => line !== "");
-  if (pushUrls === undefined || pushUrls.length === 0) return { unavailable: `The git remote "${remote}" does not exist in ${repo}.` };
-  if (pushUrls.length > 1) return { unavailable: `The remote "${remote}" has ${pushUrls.length} push URLs, so Loom cannot tell which one holds the pull request's branch. Leave one with \`git remote set-url --push ${remote} <url>\`.` };
+  if (pushUrls === undefined || pushUrls.length === 0) return { outcome: "unavailable", message: `The git remote "${remote}" does not exist in ${repo}.` };
+  if (pushUrls.length > 1) return { outcome: "unavailable", message: `The remote "${remote}" has ${pushUrls.length} push URLs, so Loom cannot tell which one holds the pull request's branch. Leave one with \`git remote set-url --push ${remote} <url>\`.` };
   const target = pushUrls[0]!;
-  const listed = await run(repo, ["ls-remote", target, `refs/heads/${branch}`], signal, timeoutMs);
-  if (listed.code !== 0) return { unavailable: `git ls-remote ${remote} failed: ${tail(listed.stderr || listed.stdout)}` };
-  const tip = listed.stdout.trim().split(/\s+/u)[0] || null;
+  const listed = await runRemote(repo, ["ls-remote", target, `refs/heads/${branch}`], timeoutMs, signal);
+  if (listed.code !== 0) return remoteFailed(`git ls-remote ${remote}`, listed);
+  return { tip: listed.stdout.trim().split(/\s+/u)[0] || null, target };
+}
+
+/** A pull request branch's tip where `git push` sends it, with its commits fetched; null when the branch is not there. */
+async function pushedTip(repo: string, remote: string, branch: string, timeoutMs: number, signal?: AbortSignal): Promise<{ tip: string | null } | UnavailableAnswer> {
+  const read = await listedTip(repo, remote, branch, timeoutMs, signal);
+  if ("outcome" in read) return read;
+  const { tip, target } = read;
   if (tip !== null && (await tryGit(repo, ["cat-file", "-e", `${tip}^{commit}`], signal)) === null) {
-    const fetched = await run(repo, ["fetch", "--no-tags", "--no-write-fetch-head", target, `refs/heads/${branch}`], signal, timeoutMs);
-    if (fetched.code !== 0) return { unavailable: `git fetch from ${remote} failed: ${tail(fetched.stderr || fetched.stdout)}` };
+    const fetched = await runRemote(repo, ["fetch", "--no-tags", "--no-write-fetch-head", target, `refs/heads/${branch}`], timeoutMs, signal);
+    if (fetched.code !== 0) return remoteFailed(`git fetch from ${remote}`, fetched);
   }
   return { tip };
 }
@@ -311,21 +340,24 @@ async function pushedTip(repo: string, remote: string, branch: string, timeoutMs
 /**
  * The one commit Loom pushes for a ticket's pull request: head's tree on the remote branch's tip, or, when the branch is not
  * there yet, on head's merge base with `base`. When head also contains a newer base than the tip does, that base is a second
- * parent, so the pull request's diff stays the ticket's own. It signs as the user's git config says.
+ * parent, so the pull request's diff stays the ticket's own; that holds even when head's tree is the tip's, as after
+ * merging base commits that changed nothing in the end, so the branch has the base in its history. A tip with head's tree
+ * that has the base already is reported as nothing new. It signs as the user's git config says.
  */
 export async function prCommit(input: HostInput<"prCommit">, signal?: AbortSignal): Promise<HostOutput<"prCommit">> {
   const { repo, remote, branch, base, head, message, pushed } = input;
-  const read = await pushedTip(repo, remote, branch, input.networkTimeoutMs ?? GIT_NETWORK_TIMEOUT_MS, signal);
-  if ("unavailable" in read) return { outcome: "unavailable", message: read.unavailable };
+  const read = await pushedTip(repo, remote, branch, networkTimeout(input), signal);
+  if ("outcome" in read) return read;
   const { tip } = read;
   const tree = await git(repo, ["rev-parse", "--verify", `${head}^{tree}`], { signal });
   const mergeBase = await git(repo, ["merge-base", head, base], { signal });
   const parents: string[] = [];
   if (tip !== null) {
-    if ((await git(repo, ["rev-parse", "--verify", `${tip}^{tree}`], { signal })) === tree) return { outcome: "ok", sha: tip, created: false };
+    const hasBase = await isAncestor(repo, mergeBase, tip, signal);
+    if (hasBase && (await git(repo, ["rev-parse", "--verify", `${tip}^{tree}`], { signal })) === tree) return { outcome: "ok", sha: tip, created: false };
     if (tip !== pushed && !(await isAncestor(repo, tip, head, signal))) return { outcome: "diverged", tip };
     parents.push(tip);
-    if (!(await isAncestor(repo, mergeBase, tip, signal))) parents.push(mergeBase);
+    if (!hasBase) parents.push(mergeBase);
   } else {
     parents.push(mergeBase);
   }
@@ -384,8 +416,8 @@ export async function stackBase(input: HostInput<"stackBase">, signal?: AbortSig
   if (input.base !== undefined) {
     const { remote, branch: base } = input.base;
     const tracking = `refs/remotes/${remote}/${base}`;
-    const fetched = await run(repo, ["fetch", "--no-tags", "--no-write-fetch-head", remote, `+refs/heads/${base}:${tracking}`], signal, input.networkTimeoutMs ?? GIT_NETWORK_TIMEOUT_MS);
-    if (fetched.code !== 0) return { outcome: "unavailable", message: `git fetch from ${remote} failed: ${tail(fetched.stderr || fetched.stdout)}` };
+    const fetched = await runRemote(repo, ["fetch", "--no-tags", "--no-write-fetch-head", remote, `+refs/heads/${base}:${tracking}`], networkTimeout(input), signal);
+    if (fetched.code !== 0) return remoteFailed(`git fetch from ${remote}`, fetched);
     tip = await git(repo, ["rev-parse", "--verify", `${tracking}^{commit}`], { signal });
     commits.push(tip);
   }
@@ -403,8 +435,9 @@ export async function stackBase(input: HostInput<"stackBase">, signal?: AbortSig
     if (!contained) kept.push(commit);
   }
   let sha = kept[0]!;
+  const top = kept.length > 1 ? await topLevel(repo, signal) : repo;
   for (const next of kept.slice(1)) {
-    const merged = await run(repo, ["merge-tree", "--write-tree", "--name-only", "--no-messages", sha, next], signal);
+    const merged = await run(top, ["merge-tree", "--write-tree", "--name-only", "--no-messages", sha, next], signal, NETWORK_TIMEOUT_MS);
     const lines = merged.stdout.split("\n").filter((line) => line !== "");
     if (merged.code === 1) return { outcome: "conflict", files: [...new Set(lines.slice(1))].sort() };
     if (merged.code !== 0 || lines[0] === undefined) throw failure(["merge-tree", "--write-tree", sha, next], merged);
@@ -421,17 +454,38 @@ export async function stackBase(input: HostInput<"stackBase">, signal?: AbortSig
 /** The tip of a ticket's pull request branch on `ref`, for a merge on the checkout, and the newest base commit it has. */
 export async function fetchTip(input: HostInput<"fetchTip">, signal?: AbortSignal): Promise<HostOutput<"fetchTip">> {
   const { repo, remote, branch, base } = input;
-  const timeoutMs = input.networkTimeoutMs ?? GIT_NETWORK_TIMEOUT_MS;
-  const read = await pushedTip(repo, remote, branch, timeoutMs, signal);
-  if ("unavailable" in read) return { outcome: "unavailable", message: read.unavailable };
+  const read = await pushedTip(repo, remote, branch, networkTimeout(input), signal);
+  if ("outcome" in read) return read;
   if (read.tip === null) return { outcome: "missing" };
   const tip = await git(repo, ["rev-parse", "--verify", `${read.tip}^{commit}`], { signal });
   await git(repo, ["update-ref", input.ref, tip], { signal });
   const tracking = `refs/remotes/${remote}/${base}`;
-  const fetched = await run(repo, ["fetch", "--no-tags", "--no-write-fetch-head", remote, `+refs/heads/${base}:${tracking}`], signal, timeoutMs);
-  if (fetched.code !== 0) return { outcome: "unavailable", message: `git fetch from ${remote} failed: ${tail(fetched.stderr || fetched.stdout)}` };
+  const fetched = await runRemote(repo, ["fetch", "--no-tags", "--no-write-fetch-head", remote, `+refs/heads/${base}:${tracking}`], networkTimeout(input), signal);
+  if (fetched.code !== 0) return remoteFailed(`git fetch from ${remote}`, fetched);
   const mainBase = await tryGit(repo, ["merge-base", tip, tracking], signal);
   return { outcome: "ok", sha: tip, tree: await git(repo, ["rev-parse", `${tip}^{tree}`], { signal }), mainBase: mainBase === null || mainBase === "" ? null : mainBase };
+}
+
+export async function remoteBranch(input: HostInput<"remoteBranch">, signal?: AbortSignal): Promise<HostOutput<"remoteBranch">> {
+  const read = await listedTip(input.repo, input.remote, input.branch, networkTimeout(input), signal);
+  return "outcome" in read ? read : { outcome: "ok", sha: read.tip };
+}
+
+export async function behindBase(input: HostInput<"behindBase">, signal?: AbortSignal): Promise<HostOutput<"behindBase">> {
+  const { repo, remote, base } = input;
+  const tracking = `refs/remotes/${remote}/${base}`;
+  if (input.fetch) {
+    const fetched = await runRemote(repo, ["fetch", "--no-tags", "--no-write-fetch-head", remote, `+refs/heads/${base}:${tracking}`], networkTimeout(input), signal);
+    if (fetched.code !== 0) return remoteFailed(`git fetch from ${remote}`, fetched);
+  }
+  const tip = await commitOf(repo, tracking, signal);
+  if (tip === null) return { outcome: "unavailable", message: `${repo} has no ${remote}/${base} to count against; fetch it first.` };
+  const behind: Extract<HostOutput<"behindBase">, { outcome: "ok" }>["behind"] = [];
+  for (const sha of new Set(input.shas)) {
+    const counted = (await commitOf(repo, sha, signal)) === null ? null : await tryGit(repo, ["rev-list", "--count", `${sha}..${tip}`], signal);
+    behind.push({ sha, commits: counted === null ? null : Number(counted) });
+  }
+  return { outcome: "ok", tip, behind };
 }
 
 export async function pointRefs(input: HostInput<"pointRefs">, signal?: AbortSignal): Promise<HostOutput<"pointRefs">> {
@@ -447,7 +501,7 @@ export async function mergeOnto(input: HostInput<"mergeOnto">, signal?: AbortSig
   if (await isAncestor(repo, ref, head, signal)) return { outcome: "merged", sha: head, tree: await git(repo, ["rev-parse", `${head}^{tree}`], { signal }), already: true };
   const base = input.base === undefined ? null : await git(repo, ["rev-parse", "--verify", `${input.base}^{commit}`], { signal });
   const explicit = base !== null && (await isAncestor(repo, base, ref, signal)) ? [`--merge-base=${base}`] : [];
-  const merged = await run(repo, ["merge-tree", "--write-tree", "--name-only", "--no-messages", ...explicit, head, ref], signal);
+  const merged = await run(await topLevel(repo, signal), ["merge-tree", "--write-tree", "--name-only", "--no-messages", ...explicit, head, ref], signal, NETWORK_TIMEOUT_MS);
   const lines = merged.stdout.split("\n").filter((line) => line !== "");
   if ((merged.code !== 0 && merged.code !== 1) || lines[0] === undefined) throw failure(["merge-tree", "--write-tree", head, ref], merged);
   const tree = lines[0];
@@ -458,8 +512,8 @@ export async function mergeOnto(input: HostInput<"mergeOnto">, signal?: AbortSig
 
 export async function fetchBranch(input: HostInput<"fetchBranch">, signal?: AbortSignal): Promise<HostOutput<"fetchBranch">> {
   const { worktree, remote, branch } = input;
-  const fetched = await run(worktree, ["fetch", "--no-tags", remote, `refs/heads/${branch}`], signal, input.networkTimeoutMs ?? GIT_NETWORK_TIMEOUT_MS);
-  if (fetched.code !== 0) return { outcome: "unavailable", message: `git fetch from ${remote} failed: ${tail(fetched.stderr || fetched.stdout)}` };
+  const fetched = await runRemote(worktree, ["fetch", "--no-tags", remote, `refs/heads/${branch}`], networkTimeout(input), signal);
+  if (fetched.code !== 0) return remoteFailed(`git fetch from ${remote}`, fetched);
   return { outcome: "ok", sha: await git(worktree, ["rev-parse", "--verify", "FETCH_HEAD^{commit}"], { signal }) };
 }
 
@@ -611,12 +665,13 @@ export async function dropUploads(input: HostInput<"dropUploads">, dataDir: stri
 }
 
 /** Fetches what the remote has of `branch` into its remote-tracking ref, then `base` itself when the branch did not bring it. Null once the base is here, else why not. */
-async function fetchBase(repo: string, remote: string, branch: string, base: string, timeoutMs: number, signal?: AbortSignal): Promise<string | null> {
-  const fetched = await run(repo, ["fetch", "--no-tags", "--no-write-fetch-head", remote, `+refs/heads/${branch}:refs/remotes/${remote}/${branch}`], signal, timeoutMs);
+async function fetchBase(repo: string, remote: string, branch: string, base: string, timeoutMs: number, signal?: AbortSignal): Promise<UnavailableAnswer | null> {
+  const fetched = await runRemote(repo, ["fetch", "--no-tags", "--no-write-fetch-head", remote, `+refs/heads/${branch}:refs/remotes/${remote}/${branch}`], timeoutMs, signal);
   if (await hasCommit(repo, base, signal)) return null;
-  const bySha = await run(repo, ["fetch", "--no-tags", "--no-write-fetch-head", remote, base], signal, timeoutMs);
+  const bySha = await runRemote(repo, ["fetch", "--no-tags", "--no-write-fetch-head", remote, base], timeoutMs, signal);
   if (await hasCommit(repo, base, signal)) return null;
-  return `The base commit ${base.slice(0, 12)} is not in ${repo}, and git fetch from ${remote} did not bring it: ${tail(bySha.stderr || fetched.stderr || bySha.stdout)}`;
+  const failed = bySha.stderr || fetched.stderr ? bySha : fetched;
+  return { outcome: "unavailable", message: `The base commit ${base.slice(0, 12)} is not in ${repo}, and git fetch from ${remote} did not bring it: ${tail(bySha.stderr || fetched.stderr || bySha.stdout)}`, ...ghTransient(failed) };
 }
 
 export async function importCommit(input: HostInput<"importCommit">, dataDir: string, signal?: AbortSignal): Promise<HostOutput<"importCommit">> {
@@ -624,8 +679,8 @@ export async function importCommit(input: HostInput<"importCommit">, dataDir: st
   const index = join(dataDir, "imports", `index-${randomBytes(6).toString("hex")}`);
   const uploads = entries.flatMap((entry) => ("upload" in entry ? [uploadPath(dataDir, entry.upload)] : []));
   try {
-    const missing = await fetchBase(repo, remote, baseBranch, input.base, input.networkTimeoutMs ?? GIT_NETWORK_TIMEOUT_MS, signal);
-    if (missing !== null) return { outcome: "unavailable", message: missing };
+    const missing = await fetchBase(repo, remote, baseBranch, input.base, networkTimeout(input), signal);
+    if (missing !== null) return missing;
     const base = await git(repo, ["rev-parse", "--verify", `${input.base}^{commit}`], { signal });
     mkdirSync(dirname(index), { recursive: true });
     const env = { GIT_INDEX_FILE: index };
@@ -682,37 +737,60 @@ function insideWorktree(worktree: string, path: string, create: boolean): string
   return file;
 }
 
+// Where a carry marks the worktree from the moment it resets it to the base until the tree it carries is in: that base,
+// that tree, and the commits it has made on the way, as a stacked ticket's carry makes two. What is uncommitted then, and
+// those commits, are the carry's own, so a carry that starts again after one was cut short, as by a host call that got no
+// answer, may reset them. In the worktree's git directory, which no commit reaches.
+interface CarryMark {
+  base: string;
+  tree: string;
+  heads: string[];
+}
+const carryMarkOf = async (worktree: string, signal?: AbortSignal) => resolve(worktree, await git(worktree, ["rev-parse", "--git-path", "loom-carry"], { signal }));
+const readCarryMark = (path: string): CarryMark | null => (existsSync(path) ? parseJson<CarryMark>(readFileSync(path, "utf8")) : null);
+
 export async function carryStart(input: HostInput<"carryStart">, signal?: AbortSignal): Promise<HostOutput<"carryStart">> {
   const { worktree, remote, baseBranch, base } = input;
-  const [head = "", tree = ""] = (await git(worktree, ["rev-parse", "HEAD", "HEAD^{tree}"], { signal })).split("\n");
-  if (tree === input.tree) return { outcome: "ok", present: true };
+  const [mergeHead = "", head = "", tree = ""] = (await git(worktree, ["rev-parse", "--git-path", "MERGE_HEAD", "HEAD", "HEAD^{tree}"], { signal })).split("\n");
+  const mark = await carryMarkOf(worktree, signal);
+  if (tree === input.tree) {
+    rmSync(mark, { force: true });
+    return { outcome: "ok", present: true };
+  }
+  if (existsSync(resolve(worktree, mergeHead))) {
+    return { outcome: "unavailable", message: `The worktree ${worktree} has a merge that is not finished, so Loom left it as it is. Finish it with git commit, or abort it with git merge --abort, then try again` };
+  }
   const dirty = (await git(worktree, ["status", "--porcelain"], { signal })).split("\n").filter((line) => line !== "");
-  if (dirty.length > 0) {
+  const carried = readCarryMark(mark);
+  const cutShort = carried !== null && (carried.base === head || carried.heads.includes(head));
+  if (dirty.length > 0 && !cutShort) {
     const files = dirty.map((line) => line.slice(3)).slice(0, 10);
     return { outcome: "unavailable", message: `The worktree ${worktree} has uncommitted changes, so Loom cannot put the work in it: ${files.join(", ")}${dirty.length > files.length ? ", …" : ""}. Stash or discard them, then try again` };
   }
   // merge-base rather than --is-ancestor, which a machine's git may not have.
   const tracking = `refs/remotes/${remote}/${baseBranch}`;
-  if (head !== base && tree !== input.replaces && (await tryGit(worktree, ["merge-base", head, tracking], signal)) !== head) {
+  if (!cutShort && head !== base && tree !== input.replaces && (await tryGit(worktree, ["merge-base", head, tracking], signal)) !== head) {
     return { outcome: "unavailable", message: `The worktree ${worktree} has commits that are not on ${remote}/${baseBranch}, so putting the work in would drop them: ${head.slice(0, 12)}. Stash them or move them to another branch, then try again` };
   }
   // The base is a commit of the remote's base branch. One that branch lacks here, as after the pull request's branch took
   // a newer base, moves it up, so the worker's changes are measured from that base and not from an older one.
-  const timeoutMs = input.networkTimeoutMs ?? GIT_NETWORK_TIMEOUT_MS;
-  if ((await tryGit(worktree, ["merge-base", base, tracking], signal)) !== base) await run(worktree, ["fetch", "--no-tags", remote, baseBranch], signal, timeoutMs);
+  if ((await tryGit(worktree, ["merge-base", base, tracking], signal)) !== base) await runRemote(worktree, ["fetch", "--no-tags", remote, baseBranch], networkTimeout(input), signal);
   if (!(await hasCommit(worktree, base, signal))) {
-    const fetched = await run(worktree, ["fetch", "--no-tags", remote, base], signal, timeoutMs);
+    const fetched = await runRemote(worktree, ["fetch", "--no-tags", remote, base], networkTimeout(input), signal);
     if (!(await hasCommit(worktree, base, signal))) {
-      return { outcome: "unavailable", message: `The base commit ${base.slice(0, 12)} is not on this machine, and git fetch ${remote} ${base.slice(0, 12)} did not bring it: ${tail(fetched.stderr || fetched.stdout)}` };
+      return { outcome: "unavailable", message: `The base commit ${base.slice(0, 12)} is not on this machine, and git fetch ${remote} ${base.slice(0, 12)} did not bring it: ${tail(fetched.stderr || fetched.stdout)}`, ...ghTransient(fetched) };
     }
   }
   await git(worktree, ["reset", "-q", "--hard", base], { signal });
+  if (cutShort) await git(await topLevel(worktree, signal), ["clean", "-fdq"], { signal });
+  writeFileSync(mark, JSON.stringify({ base, tree: input.tree, heads: [] } satisfies CarryMark));
   return { outcome: "ok", present: false };
 }
 
+// The carry's paths are relative to the repository's top level, which a thread's worktree path may be a subdirectory of.
 export async function carryWrite(input: HostInput<"carryWrite">): Promise<HostOutput<"carryWrite">> {
-  const { worktree, path, mode, offset } = input;
-  const file = insideWorktree(worktree, path, true);
+  const { path, mode, offset } = input;
+  const file = insideWorktree(await topLevel(input.worktree), path, true);
   const bytes = Buffer.from(input.data, "base64");
   if (mode === "120000") {
     rmSync(file, { force: true });
@@ -735,8 +813,9 @@ const MARKER = /^(?:<{7}|>{7})(?: |$)/mu;
 
 export async function conflictMarkers(input: HostInput<"conflictMarkers">): Promise<HostOutput<"conflictMarkers">> {
   const files: string[] = [];
+  const top = await topLevel(input.worktree);
   for (const path of input.paths) {
-    const file = insideWorktree(input.worktree, path, false);
+    const file = insideWorktree(top, path, false);
     if (existsSync(file) && statSync(file).isFile() && MARKER.test(readFileSync(file, "utf8"))) files.push(path);
   }
   return { files };
@@ -744,9 +823,10 @@ export async function conflictMarkers(input: HostInput<"conflictMarkers">): Prom
 
 /** Deletes each path, and each directory that leaves empty, so a file may take a deleted directory's place. */
 export async function carryDelete(input: HostInput<"carryDelete">): Promise<HostOutput<"carryDelete">> {
-  const root = realpathSync(input.worktree);
+  const top = await topLevel(input.worktree);
+  const root = realpathSync(top);
   for (const path of input.paths) {
-    const file = insideWorktree(input.worktree, path, false);
+    const file = insideWorktree(top, path, false);
     rmSync(file, { force: true });
     for (let dir = dirname(file); dir !== root && existsSync(dir) && readdirSync(dir).length === 0; dir = dirname(dir)) rmdirSync(dir);
   }
@@ -756,7 +836,8 @@ export async function carryDelete(input: HostInput<"carryDelete">): Promise<Host
 // Untracked files go too, but not ignored ones: carryStart found the worktree clean, so all of them are the carry's.
 async function resetCarry(worktree: string, base: string, signal?: AbortSignal): Promise<void> {
   await git(worktree, ["reset", "-q", "--hard", base], { signal });
-  await git(worktree, ["clean", "-fdq"], { signal });
+  await git(await topLevel(worktree, signal), ["clean", "-fdq"], { signal });
+  rmSync(await carryMarkOf(worktree, signal), { force: true });
 }
 
 export async function carryAbort(input: HostInput<"carryAbort">, signal?: AbortSignal): Promise<HostOutput<"carryAbort">> {
@@ -766,16 +847,24 @@ export async function carryAbort(input: HostInput<"carryAbort">, signal?: AbortS
 
 export async function carryFinish(input: HostInput<"carryFinish">, signal?: AbortSignal): Promise<HostOutput<"carryFinish">> {
   const { worktree, base, message, author, tree, paths } = input;
-  await git(worktree, ["add", "-A"], { signal });
+  const top = await topLevel(worktree, signal);
+  await git(top, ["add", "-A"], { signal });
   // As arguments: some machines' git has no --pathspec-from-file.
   for (let at = 0; at < paths.length; at += PATH_BATCH) {
-    await git(worktree, ["add", "-f", "--", ...paths.slice(at, at + PATH_BATCH)], { signal, env: { GIT_LITERAL_PATHSPECS: "1" } });
+    await git(top, ["add", "-f", "--", ...paths.slice(at, at + PATH_BATCH)], { signal, env: { GIT_LITERAL_PATHSPECS: "1" } });
   }
   const staged = await run(worktree, ["diff", "--cached", "--quiet"], signal);
   if (staged.code !== 0 && staged.code !== 1) throw failure(["diff", "--cached", "--quiet"], staged);
   if (staged.code === 1) await git(worktree, [...(await identityArgs(worktree, signal)), "commit", "--no-verify", "--no-gpg-sign", "-q", "-m", message], { signal, env: authorEnv(author) });
   const [head = "", written = ""] = (await git(worktree, ["rev-parse", "HEAD", "HEAD^{tree}"], { signal })).split("\n");
-  if (written === tree) return { outcome: "ok", head, tree: written };
+  if (written === tree) {
+    // The mark ends with the tree the carry started for; a commit on the way to it, as a stacked ticket's first, joins it.
+    const mark = await carryMarkOf(worktree, signal);
+    const carried = readCarryMark(mark);
+    if (carried === null || carried.tree === written) rmSync(mark, { force: true });
+    else writeFileSync(mark, JSON.stringify({ ...carried, heads: [...carried.heads, head] } satisfies CarryMark));
+    return { outcome: "ok", head, tree: written };
+  }
   await resetCarry(worktree, base, signal);
   return { outcome: "mismatch", tree: written };
 }
@@ -826,13 +915,13 @@ const withoutCredentials = (url: string) => url.replace(/\/\/[^@/\s]+@/u, "//");
 
 // ---------------------------------------------------------------- failed pull request reads
 
-type ReadUnavailable = Extract<HostOutput<"prFeedback">, { outcome: "unavailable" }>;
-type Transient = Pick<ReadUnavailable, "transient" | "retryAfterMs">;
+type UnavailableAnswer = Extract<HostOutput<"prFeedback">, { outcome: "unavailable" }>;
+type Transient = Pick<UnavailableAnswer, "transient" | "retryAfterMs">;
 
-/** One gh call for a pull request read. A timeout comes back as a failed run, so it is classified like GitHub's own; nothing here runs gh again. */
-async function ghRead(cwd: string, args: readonly string[], signal?: AbortSignal): Promise<GhRun> {
+/** One gh call to GitHub. A timeout comes back as a failed run, so it is classified like GitHub's own failures; nothing here runs gh again. */
+async function ghCall(cwd: string, args: readonly string[], opts: { stdin?: string; signal?: AbortSignal } = {}): Promise<GhRun> {
   try {
-    return await gh(cwd, args, { signal });
+    return await gh(cwd, args, opts);
   } catch (error) {
     if (error instanceof GhTimedOut) return { code: -1, stdout: "", stderr: `gh timed out after ${NETWORK_TIMEOUT_MS / 60_000} minutes` };
     throw error;
@@ -840,13 +929,14 @@ async function ghRead(cwd: string, args: readonly string[], signal?: AbortSignal
 }
 
 const GH_AUTH_EXIT = 4;
-const HTTP_STATUS = /\bHTTP (\d{3})\b/u;
+// gh's "HTTP 502", git's "returned error: 502", and a forge CLI's "Error: 429: …" or "503: …" at the start of a line.
+const HTTP_STATUS = /\bHTTP (\d{3})\b|\breturned error: (\d{3})\b|^[ \t]*(?:error:[ \t]*)?(\d{3}):/imu;
 const RATE_LIMITED = /rate[-_ ]limit|abuse detection|too many requests/iu;
-const SERVER_TROUBLE = /\bserver error\b|bad gateway|service unavailable|gateway time-?out|\btime(?:d[- ]?|[- ]?)out|deadline exceeded|connection (?:reset|refused)|\bEOF\b|TLS handshake|something went wrong/iu;
+const SERVER_TROUBLE = /\bserver error\b|bad gateway|service unavailable|gateway time-?out|\btime(?:d[- ]?|[- ]?)out|deadline exceeded|connection (?:reset|refused)|\bEOF\b|TLS handshake|something went wrong|remote end hung up unexpectedly/iu;
 // The read never reached the forge: its name did not resolve or no connection opened. That is this machine's resolver or
 // network, not one pull request, so it is tested before SERVER_TROUBLE, whose timeouts would also match a connect timeout.
 const NETWORK_TROUBLE =
-  /could not resolve host|dns error|failed to lookup address|nodename nor servname|no such host|temporary failure in name resolution|getaddrinfo|name or service not known|error connecting to|client error \(connect\)|network is unreachable|host is unreachable|no route to host|connection timed out|i\/o timeout|check your internet connection/iu;
+  /could not resolve host|dns error|failed to lookup address|nodename nor servname|no such host|temporary failure in name resolution|getaddrinfo|name or service not known|error connecting to|client error \(connect\)|network is unreachable|host is unreachable|no route to host|connection timed out|i\/o timeout|check your internet connection|couldn't connect to server|failed to connect to/iu;
 const RETRY_AFTER_SECONDS = /retry[- ]after:?\s*(\d{1,6})\b/iu;
 const RATE_LIMIT_RESET = /x-ratelimit-reset:?\s*(\d{10})\b/iu;
 const TRY_AGAIN_IN = /(?:try again|retry) in (\d{1,4}) (second|minute|hour)s?\b/iu;
@@ -861,11 +951,22 @@ function errorFields(text: string): string[] | null {
   return [body.message, ...errors.flatMap((error) => [error?.type, error?.message])].filter((field): field is string => typeof field === "string");
 }
 
-// A failed read's stdout is the response body, which can hold the pull request's own text; only its error fields are read.
-function ghErrorText(run: GitRun): string {
-  const fields = errorFields(run.stdout);
-  return fields === null ? `${run.stderr}\n${run.stdout.slice(0, 2000)}` : [run.stderr, ...fields].join("\n");
+/**
+ * Output to read a failure from. A JSON answer, or a JSON line among other output, counts only for its error fields, since
+ * the rest can hold a pull request's own text; a line that starts as JSON and does not parse, as a body cut short, counts
+ * for nothing. Whole lines are parsed before any of it is clipped.
+ */
+function errorText(output: string): string {
+  const whole = errorFields(output);
+  if (whole !== null) return whole.join("\n");
+  return output
+    .split("\n")
+    .map((line) => errorFields(line.trim())?.join("\n") ?? (/^[{[]/u.test(line.trim()) ? "" : line))
+    .join("\n");
 }
+
+// A failed read's stdout is the response body, which can hold the pull request's own text.
+const ghErrorText = (run: GitRun): string => `${run.stderr}\n${errorText(run.stdout).slice(0, 2000)}`;
 
 function retryAfterMs(text: string): number | null {
   const seconds = RETRY_AFTER_SECONDS.exec(text);
@@ -876,16 +977,17 @@ function retryAfterMs(text: string): number | null {
 }
 
 /**
- * Whether a failed gh read is worth waiting out: `rate_limit` when GitHub says it rate-limited the call (HTTP 403 or 429, or
- * GraphQL's RATE_LIMITED), `server` for its 500, 502, 503 and 504 answers, timeouts and dropped connections, and `network`
- * when the call never reached it, such as a name lookup that failed. Null for the rest, such as a missing login, a 404 or a
- * bad URL. A forge command's failed read is classified by the same rules.
+ * Whether a failed gh call is worth waiting out: `rate_limit` when GitHub says it rate-limited the call (HTTP 429, a 403 or
+ * GraphQL's RATE_LIMITED that says so), `server` for its 500, 502, 503 and 504 answers, timeouts and dropped connections,
+ * and `network` when the call never reached it, such as a name lookup that failed. Null for the rest, such as a missing
+ * login, a 404 or a bad URL. A forge command's failure and a git fetch or push are classified by the same rules.
  */
 export function ghTransient(run: GitRun): Transient | null {
   if (run.code === GH_AUTH_EXIT) return null;
   const text = ghErrorText(run);
-  const status = HTTP_STATUS.exec(text)?.[1];
-  if (RATE_LIMITED.test(text) && (status === undefined || status === "403" || status === "429")) {
+  const found = HTTP_STATUS.exec(text);
+  const status = found?.[1] ?? found?.[2] ?? found?.[3];
+  if (status === "429" || (RATE_LIMITED.test(text) && (status === undefined || status === "403"))) {
     const wait = retryAfterMs(text);
     return wait === null ? { transient: "rate_limit" } : { transient: "rate_limit", retryAfterMs: wait };
   }
@@ -894,8 +996,13 @@ export function ghTransient(run: GitRun): Transient | null {
   return SERVER_TROUBLE.test(text) ? { transient: "server" } : null;
 }
 
-function readFailed(what: string, run: GitRun): ReadUnavailable {
+function readFailed(what: string, run: GitRun): UnavailableAnswer {
   return { outcome: "unavailable", message: ghFailed(what, run), ...ghTransient(run) };
+}
+
+/** A git call to a remote that failed, with `transient` when its output reads as a failure worth waiting out. */
+function remoteFailed(what: string, run: GitRun): UnavailableAnswer {
+  return { outcome: "unavailable", message: `${what} failed: ${tail(run.stderr || run.stdout)}`, ...ghTransient(run) };
 }
 
 export async function prCreate(input: HostInput<"prCreate">, signal?: AbortSignal): Promise<HostOutput<"prCreate">> {
@@ -910,31 +1017,32 @@ export async function prCreate(input: HostInput<"prCreate">, signal?: AbortSigna
   const github = parseRemoteUrl(remoteUrl);
   if (github === null) return unavailable(`The remote "${remote}" is ${withoutCredentials(remoteUrl)}, which is not a GitHub repository URL. Use an https://<host>/<owner>/<repo> or git@<host>:<owner>/<repo> remote.`);
 
-  const created = await gh(repo, ["pr", "create", "--repo", github, "--base", base, "--head", head, "--title", title, "--body-file", "-", ...(draft ? ["--draft"] : [])], { stdin: body, signal });
+  const created = await ghCall(repo, ["pr", "create", "--repo", github, "--base", base, "--head", head, "--title", title, "--body-file", "-", ...(draft ? ["--draft"] : [])], { stdin: body, signal });
   if (created === "missing") return unavailable(GH_MISSING);
   if (created.code === 0) {
     const url = created.stdout.trim().split("\n").pop() ?? "";
     return /^https?:\/\/\S+$/u.test(url) ? { outcome: "ok", url } : unavailable(`gh pr create printed no pull request URL: ${tail(created.stdout)}`);
   }
-  if (!/already exists/iu.test(`${created.stderr}\n${created.stdout}`)) return unavailable(ghFailed("gh pr create", created));
+  if (!/already exists/iu.test(`${created.stderr}\n${created.stdout}`)) return readFailed("gh pr create", created);
 
-  const viewed = await gh(repo, ["pr", "view", head, "--repo", github, "--json", "url"], { signal });
+  const viewed = await ghCall(repo, ["pr", "view", head, "--repo", github, "--json", "url"], { signal });
   if (viewed === "missing") return unavailable(GH_MISSING);
-  if (viewed.code !== 0) return unavailable(ghFailed("gh pr view", viewed));
+  if (viewed.code !== 0) return readFailed("gh pr view", viewed);
   const url = parseJson<{ url?: unknown }>(viewed.stdout)?.url;
   return typeof url === "string" ? { outcome: "ok", url } : unavailable(`gh pr view printed no URL: ${tail(viewed.stdout)}`);
 }
 
 export async function prRetarget(input: HostInput<"prRetarget">, signal?: AbortSignal): Promise<HostOutput<"prRetarget">> {
-  const edited = await gh(input.repo, ["pr", "edit", input.url, "--base", input.base], { signal });
+  if (input.forge?.kind === "command") return retargetWithCommand(input, input.forge.retarget, signal);
+  const edited = await ghCall(input.repo, ["pr", "edit", input.url, "--base", input.base], { signal });
   if (edited === "missing") return { outcome: "unavailable", message: GH_MISSING };
-  if (edited.code !== 0) return { outcome: "unavailable", message: ghFailed("gh pr edit", edited) };
+  if (edited.code !== 0) return readFailed("gh pr edit", edited);
   return { outcome: "ok" };
 }
 
 export async function prState(input: HostInput<"prState">, signal?: AbortSignal): Promise<HostOutput<"prState">> {
   if (input.forge.kind === "command") return stateWithCommand(input, input.forge.state, signal);
-  const viewed = await ghRead(input.repo, ["pr", "view", input.url, "--json", "state"], signal);
+  const viewed = await ghCall(input.repo, ["pr", "view", input.url, "--json", "state"], { signal });
   if (viewed === "missing") return { outcome: "unavailable", message: GH_MISSING };
   if (viewed.code !== 0) return readFailed("gh pr view", viewed);
   const state = parseJson<{ state?: unknown }>(viewed.stdout)?.state;
@@ -951,11 +1059,16 @@ type FeedbackCheck = Feedback["checks"][number];
 // Every item comes back, so none is lost before Loom filters out the seen and ignored ones; the bodies are clipped instead.
 const BODY_MAX = 2000;
 const digest = (text: string) => createHash("sha1").update(text).digest("hex").slice(0, 12);
-const clipBody = (text: string) => (text.length <= BODY_MAX ? text : `${text.slice(0, BODY_MAX - 1)}…`);
+// A body that ends with Loom's reply mark keeps it, so a reply Loom posted is still the worker's own when its thread is long.
+const clipBody = (text: string) => {
+  if (text.length <= BODY_MAX) return text;
+  if (!text.trimEnd().endsWith(REPLY_MARK)) return `${text.slice(0, BODY_MAX - 1)}…`;
+  return `${text.slice(0, BODY_MAX - REPLY_MARK.length - 2)}…\n${REPLY_MARK}`;
+};
 
 // What Loom reads of every pull request, and with the feedback the rest of what prFeedback answers. It asks for no check
 // run's steps, which made one pull request's read slow enough to time out at GitHub; runningSteps reads them when needed.
-const META_FIELDS = "number state isDraft reviewDecision baseRefName";
+const META_FIELDS = "number state isDraft reviewDecision baseRefName mergeable title body";
 const LIGHT_FRAGMENT = `fragment F on PullRequest { ${META_FIELDS} }`;
 const FEEDBACK_FRAGMENT = `fragment F on PullRequest {
   ${META_FIELDS} headRefOid author { login }
@@ -986,6 +1099,9 @@ interface GhMeta {
   isDraft?: boolean;
   reviewDecision?: string | null;
   baseRefName?: string;
+  title?: string | null;
+  body?: string | null;
+  mergeable?: string;
 }
 interface GhPull extends GhMeta {
   headRefOid: string;
@@ -1000,10 +1116,18 @@ const stateOf = (state: string): Feedback["state"] => (state === "MERGED" || sta
 type Review = NonNullable<Feedback["review"]>;
 const reviewOf = (decision: unknown): Review | null => REVIEW_DECISIONS.find((each) => each === decision) ?? null;
 
-/** The draft flag, review decision and base branch GitHub reports; null for one the answer leaves out. */
-function ghMeta(pull: GhMeta): { draft: boolean | null; review: Review | null; base: string | null } {
-  return { draft: typeof pull.isDraft === "boolean" ? pull.isDraft : null, review: reviewOf(pull.reviewDecision), base: typeof pull.baseRefName === "string" ? pull.baseRefName : null };
+/** The draft flag, review decision, base branch and mergeability GitHub reports; null for one the answer leaves out, and for UNKNOWN. */
+function ghMeta(pull: GhMeta): { draft: boolean | null; review: Review | null; base: string | null; mergeable: boolean | null } {
+  return {
+    draft: typeof pull.isDraft === "boolean" ? pull.isDraft : null,
+    review: reviewOf(pull.reviewDecision),
+    base: typeof pull.baseRefName === "string" ? pull.baseRefName : null,
+    mergeable: pull.mergeable === "MERGEABLE" ? true : pull.mergeable === "CONFLICTING" ? false : null,
+  };
 }
+
+/** The title and description GitHub reports, for Loom's own sections in it; null for one the answer leaves out. */
+const ghText = (pull: GhMeta): { title: string | null; body: string | null } => ({ title: typeof pull.title === "string" ? pull.title : null, body: typeof pull.body === "string" ? pull.body : null });
 
 const loginOf = (author: GhAuthor) => author?.login ?? "ghost";
 const isBot = (author: GhAuthor) => author?.__typename === "Bot";
@@ -1082,7 +1206,7 @@ async function runningSteps(repo: string, host: string, pull: GhPull, signal?: A
   if (ids.length === 0) return new Map();
   // The ids are checked against NODE_ID, so JSON's quoting is GraphQL's too; inline, they need no gh array syntax.
   const query = `query { nodes(ids: ${JSON.stringify(ids)}) { ... on CheckRun { id steps(first: 100) { totalCount nodes { status } } } } }`;
-  const asked = await ghRead(repo, ["api", "graphql", "--hostname", host, "-f", `query=${query}`], signal).catch(() => null);
+  const asked = await ghCall(repo, ["api", "graphql", "--hostname", host, "-f", `query=${query}`], { signal }).catch(() => null);
   if (asked === null || asked === "missing" || asked.code !== 0) return new Map();
   const found = parseJson<{ data?: { nodes?: Array<{ id?: unknown; steps?: GhSteps | null } | null> } }>(asked.stdout)?.data?.nodes ?? [];
   return new Map(found.flatMap((node): Array<[string, GhSteps]> => (node != null && typeof node.id === "string" && node.steps != null ? [[node.id, node.steps]] : [])));
@@ -1096,6 +1220,9 @@ const commandFeedbackSchema = z.object({
   draft: z.boolean().nullish(),
   review: z.string().transform((review) => review.toUpperCase()).pipe(z.enum(REVIEW_DECISIONS)).nullish(),
   base: z.string().min(1).max(200).nullish(),
+  title: z.string().max(256).nullish(),
+  body: z.string().max(65_536).nullish(),
+  mergeable: z.boolean().nullish(),
   checks: z
     .array(
       z.object({
@@ -1148,6 +1275,9 @@ async function feedbackWithCommand(input: HostInput<"prFeedback">, command: stri
     draft: data.draft ?? null,
     review: data.review ?? null,
     base: data.base ?? null,
+    title: data.title ?? null,
+    body: data.body ?? null,
+    mergeable: data.mergeable ?? null,
     checks: data.checks.map((check) => ({
       key: `check:${check.id}`,
       name: check.name,
@@ -1168,12 +1298,12 @@ export async function prFeedback(input: HostInput<"prFeedback">, signal?: AbortS
   const pr = githubPull(input.url);
   if (pr === null) return { outcome: "unavailable", message: `${input.url} is not a GitHub pull request URL.` };
   const { host, owner, name, number } = pr;
-  const asked = await ghRead(input.repo, ["api", "graphql", "--hostname", host, "-f", `owner=${owner}`, "-f", `name=${name}`, "-F", `number=${number}`, "-f", `query=${FEEDBACK_QUERY}`], signal);
+  const asked = await ghCall(input.repo, ["api", "graphql", "--hostname", host, "-f", `owner=${owner}`, "-f", `name=${name}`, "-F", `number=${number}`, "-f", `query=${FEEDBACK_QUERY}`], { signal });
   if (asked === "missing") return { outcome: "unavailable", message: GH_MISSING };
   if (asked.code !== 0) return readFailed("gh api graphql", asked);
   const pull = parseJson<{ data?: { repository?: { pullRequest?: GhPull | null } | null } }>(asked.stdout)?.data?.repository?.pullRequest;
   if (pull == null) return { outcome: "unavailable", message: `gh found no pull request at ${input.url}: ${tail(asked.stdout, 300)}` };
-  return ghFeedback(pull, await runningSteps(input.repo, host, pull, signal));
+  return { ...ghFeedback(pull, await runningSteps(input.repo, host, pull, signal)), ...ghText(pull) };
 }
 
 type GhAnswer = { data?: { repository?: Record<string, GhPull | null> | null } | null; errors?: Array<{ message?: string; path?: unknown[] }> };
@@ -1186,7 +1316,7 @@ type GhAnswer = { data?: { repository?: Record<string, GhPull | null> | null } |
 export async function prBatch(input: HostInput<"prBatch">, signal?: AbortSignal): Promise<HostOutput<"prBatch">> {
   const { repo, host, owner, name, feedback } = input;
   const numbers = [...new Set(input.numbers)];
-  const asked = await ghRead(repo, ["api", "graphql", "--hostname", host, "-f", `owner=${owner}`, "-f", `name=${name}`, "-f", `query=${batchQuery(numbers, feedback)}`], signal);
+  const asked = await ghCall(repo, ["api", "graphql", "--hostname", host, "-f", `owner=${owner}`, "-f", `name=${name}`, "-f", `query=${batchQuery(numbers, feedback)}`], { signal });
   if (asked === "missing") return { outcome: "unavailable", message: GH_MISSING };
   const answer = parseJson<GhAnswer>(asked.stdout);
   const found = answer?.data?.repository;
@@ -1234,7 +1364,7 @@ export async function prBatch(input: HostInput<"prBatch">, signal?: AbortSignal)
         continue;
       }
     }
-    pulls.push({ number, state: stateOf(pull.state), ...ghMeta(pull), feedback: read });
+    pulls.push({ number, state: stateOf(pull.state), ...ghMeta(pull), ...ghText(pull), feedback: read });
   }
   return { outcome: "ok", pulls, missing };
 }
@@ -1247,7 +1377,7 @@ export async function prRequestReview(input: HostInput<"prRequestReview">, signa
   const requested: string[] = [];
   const failed: Array<{ login: string; message: string }> = [];
   for (const login of input.reviewers) {
-    const asked = await gh(input.repo, ["api", "--hostname", host, "--method", "POST", `repos/${owner}/${name}/pulls/${number}/requested_reviewers`, "--input", "-", "--silent"], { stdin: JSON.stringify({ reviewers: [login] }), signal });
+    const asked = await ghCall(input.repo, ["api", "--hostname", host, "--method", "POST", `repos/${owner}/${name}/pulls/${number}/requested_reviewers`, "--input", "-", "--silent"], { stdin: JSON.stringify({ reviewers: [login] }), signal });
     if (asked === "missing") return { outcome: "unavailable", message: GH_MISSING };
     if (asked.code === 0) requested.push(login);
     else failed.push({ login, message: tail(asked.stderr || asked.stdout, 500) });
@@ -1255,44 +1385,110 @@ export async function prRequestReview(input: HostInput<"prRequestReview">, signa
   return { outcome: "ok", requested, failed };
 }
 
+export async function prEdit(input: HostInput<"prEdit">, signal?: AbortSignal): Promise<HostOutput<"prEdit">> {
+  if (input.forge.kind === "command") return editWithCommand(input, input.forge.edit, signal);
+  const edited = await ghCall(input.repo, ["pr", "edit", input.url, "--title", input.title, "--body-file", "-"], { stdin: input.body, signal });
+  if (edited === "missing") return { outcome: "unavailable", message: GH_MISSING };
+  if (edited.code !== 0) return readFailed("gh pr edit", edited);
+  return { outcome: "ok" };
+}
+
+const REPLY_MUTATION = `mutation($thread: ID!, $body: String!) {
+  addPullRequestReviewThreadReply(input: { pullRequestReviewThreadId: $thread, body: $body }) { comment { url } }
+}`;
+const RESOLVE_MUTATION = `mutation($thread: ID!) { resolveReviewThread(input: { threadId: $thread }) { thread { isResolved } } }`;
+
+/**
+ * gh: a reply in the review thread whose node id a thread key holds, then its resolution when asked; a review or a comment
+ * gets a comment on the pull request. A reply that went out but whose thread did not resolve is still ok, with why.
+ */
+export async function prReply(input: HostInput<"prReply">, signal?: AbortSignal): Promise<HostOutput<"prReply">> {
+  if (input.forge.kind === "command") return replyWithCommand(input, input.forge.reply, signal);
+  const { repo, url, key, kind, body, resolve: close } = input;
+  if (kind !== "thread") {
+    const commented = await ghCall(repo, ["pr", "comment", url, "--body-file", "-"], { stdin: body, signal });
+    if (commented === "missing") return { outcome: "unavailable", message: GH_MISSING };
+    if (commented.code !== 0) return readFailed("gh pr comment", commented);
+    return { outcome: "ok", url: [...commented.stdout.matchAll(URL_IN_OUTPUT)].at(-1)?.[0] ?? null, resolved: false };
+  }
+  const pr = githubPull(url);
+  if (pr === null) return { outcome: "unavailable", message: `${url} is not a GitHub pull request URL.` };
+  const thread = key.split(":")[1] ?? "";
+  if (!NODE_ID.test(thread)) return { outcome: "unavailable", message: `${key} names no review thread Loom can reply in.` };
+  const replied = await ghCall(repo, ["api", "graphql", "--hostname", pr.host, "-f", `query=${REPLY_MUTATION}`, "-f", `thread=${thread}`, "-f", `body=${body}`], { signal });
+  if (replied === "missing") return { outcome: "unavailable", message: GH_MISSING };
+  if (replied.code !== 0) return readFailed("gh api graphql", replied);
+  const answer = parseJson<{ data?: { addPullRequestReviewThreadReply?: { comment?: { url?: unknown } | null } | null }; errors?: Array<{ message?: string }> }>(replied.stdout);
+  const comment = answer?.data?.addPullRequestReviewThreadReply?.comment;
+  if (comment == null) return { outcome: "unavailable", message: `GitHub did not add the reply: ${answer?.errors?.[0]?.message ?? tail(replied.stdout, 300)}` };
+  const posted = typeof comment.url === "string" ? comment.url : null;
+  if (!close) return { outcome: "ok", url: posted, resolved: false };
+  const resolved = await ghCall(repo, ["api", "graphql", "--hostname", pr.host, "-f", `query=${RESOLVE_MUTATION}`, "-f", `thread=${thread}`], { signal });
+  if (resolved === "missing") return { outcome: "ok", url: posted, resolved: false, message: GH_MISSING };
+  if (resolved.code !== 0) return { outcome: "ok", url: posted, resolved: false, message: ghFailed("gh api graphql", resolved) };
+  return { outcome: "ok", url: posted, resolved: true };
+}
+
 // ---------------------------------------------------------------- the spec's forge commands
 
 const URL_IN_OUTPUT = /https?:\/\/\S+/gu;
 
-function commandFailure(what: string, result: HostOutput<"exec">): string | null {
-  if (result.timedOut) return `The forge's ${what} command took longer than ${FORGE_COMMAND_MS / 60_000} minutes: ${tail(result.output)}`;
+function commandFailure(what: string, result: HostOutput<"exec">, limitMs = FORGE_COMMAND_MS): string | null {
+  if (result.timedOut) return `The forge's ${what} command took longer than ${limitMs / 60_000} minutes: ${tail(result.output)}`;
   if (result.exitCode !== 0) return `The forge's ${what} command failed (exit ${result.exitCode}): ${tail(result.output)}`;
   return null;
 }
 
-// The output mixes the command's stdout and stderr, and a JSON line can carry the pull request's own text, so only the error
-// fields of such a line count. The text is the tail the message shows.
-const commandErrorText = (output: string) =>
-  tail(output)
-    .split("\n")
-    .map((line) => errorFields(line.trim())?.join("\n") ?? line)
-    .join("\n");
+// The output mixes the command's stdout and stderr, and a JSON line can carry the pull request's own text. The tail read is
+// about as long as the tail the message shows.
+const commandErrorText = (output: string) => tail(errorText(output));
 
 /**
- * Why a forge's state or feedback command failed, with `transient` when its output reads as a failure worth waiting out by
- * ghTransient's rules; a command that timed out always is. A command that ran but printed the wrong thing is not: that is
- * the command's own bug. Nothing here runs the command again.
+ * Why one of the forge's commands failed, with `transient` when its output reads as a failure worth waiting
+ * out by ghTransient's rules; a command that timed out always is. A state or feedback command that ran but printed the
+ * wrong thing is not: that is the command's own bug. Nothing here runs the command again.
  */
-function commandReadFailed(what: string, result: HostOutput<"exec">): ReadUnavailable | null {
-  const message = commandFailure(what, result);
+function commandReadFailed(what: string, result: HostOutput<"exec">, limitMs = FORGE_COMMAND_MS): UnavailableAnswer | null {
+  const message = commandFailure(what, result, limitMs);
   if (message === null) return null;
-  const transient = ghTransient({ code: result.exitCode ?? -1, stdout: "", stderr: commandErrorText(result.output) }) ?? (result.timedOut ? { transient: "server" as const } : null);
+  const transient = commandTransient(result) ?? (result.timedOut ? { transient: "server" as const } : null);
   return { outcome: "unavailable", message, ...transient };
 }
 
+const commandTransient = (result: HostOutput<"exec">) => ghTransient({ code: result.exitCode ?? -1, stdout: "", stderr: commandErrorText(result.output) });
+
+// The spec asks an open command to print the pull request already open for the branch, so running it again is safe. One
+// that printed an error worth waiting out instead of a URL, as a CLI that exits 0 on a refused request does, waits too.
 async function openWithCommand(input: HostInput<"prCreate">, command: string, signal?: AbortSignal): Promise<HostOutput<"prCreate">> {
   const { repo, remote, base, head, title, body, draft } = input;
   const env = { LOOM_REMOTE: remote, LOOM_BASE: base, LOOM_HEAD: head, LOOM_TITLE: title, LOOM_DRAFT: draft ? "1" : "0" };
   const result = await spawnCommand({ cwd: repo, command, timeoutMs: FORGE_COMMAND_MS, stdin: body, env }, signal);
-  const failed = commandFailure("open", result);
-  if (failed !== null) return { outcome: "unavailable", message: failed };
+  const failed = commandReadFailed("open", result);
+  if (failed !== null) return failed;
   const url = [...result.output.matchAll(URL_IN_OUTPUT)].at(-1)?.[0].replace(/[.,;:)\]'"]+$/u, "");
-  return url === undefined ? { outcome: "unavailable", message: `The forge's open command printed no pull request URL: ${tail(result.output)}` } : { outcome: "ok", url };
+  return url === undefined ? { outcome: "unavailable", message: `The forge's open command printed no pull request URL: ${tail(result.output)}`, ...commandTransient(result) } : { outcome: "ok", url };
+}
+
+async function editWithCommand(input: HostInput<"prEdit">, command: string, signal?: AbortSignal): Promise<HostOutput<"prEdit">> {
+  const env = { LOOM_URL: input.url, LOOM_PR_NUMBER: prNumber(input.url), LOOM_TITLE: input.title };
+  const result = await spawnCommand({ cwd: input.repo, command, timeoutMs: FORGE_COMMAND_MS, stdin: input.body, env }, signal);
+  return commandReadFailed("edit", result) ?? { outcome: "ok" };
+}
+
+async function retargetWithCommand(input: HostInput<"prRetarget">, command: string, signal?: AbortSignal): Promise<HostOutput<"prRetarget">> {
+  const env = { LOOM_URL: input.url, LOOM_PR_NUMBER: prNumber(input.url), LOOM_BASE: input.base };
+  const result = await spawnCommand({ cwd: input.repo, command, timeoutMs: RETARGET_COMMAND_MS, env }, signal);
+  return commandReadFailed("retarget", result, RETARGET_COMMAND_MS) ?? { outcome: "ok" };
+}
+
+// The command is trusted to resolve the thread when LOOM_RESOLVE is 1; a URL it prints is the reply's.
+async function replyWithCommand(input: HostInput<"prReply">, command: string, signal?: AbortSignal): Promise<HostOutput<"prReply">> {
+  const env = { LOOM_URL: input.url, LOOM_PR_NUMBER: prNumber(input.url), LOOM_ITEM: input.key, LOOM_ITEM_KIND: input.kind, LOOM_RESOLVE: input.resolve ? "1" : "0" };
+  const result = await spawnCommand({ cwd: input.repo, command, timeoutMs: FORGE_COMMAND_MS, stdin: input.body, env }, signal);
+  const failed = commandReadFailed("reply", result);
+  if (failed !== null) return failed;
+  const url = [...result.output.matchAll(URL_IN_OUTPUT)].at(-1)?.[0].replace(/[.,;:)\]'"]+$/u, "") ?? null;
+  return { outcome: "ok", url, resolved: input.resolve && input.kind === "thread" };
 }
 
 // The last non-empty line decides, so a warning a CLI prints first does not hide the state.
@@ -1342,13 +1538,12 @@ export async function trialWorktree(input: HostInput<"trialWorktree">, dataDir: 
 
 export async function landedOn(input: HostInput<"landedOn">, signal?: AbortSignal): Promise<HostOutput<"landedOn">> {
   const { repo, remote, base, sha } = input;
-  const timeoutMs = input.networkTimeoutMs ?? GIT_NETWORK_TIMEOUT_MS;
-  const listed = await run(repo, ["ls-remote", remote, `refs/heads/${base}`], signal, timeoutMs);
-  if (listed.code !== 0) return { outcome: "unavailable", message: `git ls-remote ${remote} failed: ${tail(listed.stderr || listed.stdout)}` };
+  const listed = await runRemote(repo, ["ls-remote", remote, `refs/heads/${base}`], networkTimeout(input), signal);
+  if (listed.code !== 0) return remoteFailed(`git ls-remote ${remote}`, listed);
   const tip = listed.stdout.trim().split(/\s+/u)[0] ?? "";
   if (tip === "") return { outcome: "unavailable", message: `The remote "${remote}" has no branch ${base}.` };
-  const fetched = await run(repo, ["fetch", "--no-tags", "--no-write-fetch-head", remote, `refs/heads/${base}`], signal, timeoutMs);
-  if (fetched.code !== 0) return { outcome: "unavailable", message: `git fetch from ${remote} failed: ${tail(fetched.stderr || fetched.stdout)}` };
+  const fetched = await runRemote(repo, ["fetch", "--no-tags", "--no-write-fetch-head", remote, `refs/heads/${base}`], networkTimeout(input), signal);
+  if (fetched.code !== 0) return remoteFailed(`git fetch from ${remote}`, fetched);
   const ancestry = await run(repo, ["merge-base", "--is-ancestor", sha, tip], signal);
   if (ancestry.code === 0 || ancestry.code === 1) return { outcome: "ok", landed: ancestry.code === 0 };
   throw failure(["merge-base", "--is-ancestor", sha, tip], ancestry);

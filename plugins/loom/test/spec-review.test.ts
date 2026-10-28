@@ -57,6 +57,8 @@ describe("starting a spec review", () => {
     expect(args.prompt).toContain("bb thread log thr_plan --format minimal --all");
     expect(args.prompt).toContain("Ask User Question");
     for (const line of SPEC_REVIEW_RUBRIC) expect(args.prompt).toContain(line);
+    expect(args.prompt).toMatch(/project\.done_when item to the tickets whose acceptance criteria make it true/);
+    expect(args.prompt).toMatch(/documenting why the goal cannot be met/);
     expect(args.prompt).toContain('slug = "csv"');
     expect(args.prompt).toContain("loom_spec_request_changes");
     expect(rows()[0]).toMatchObject({ thread_id: "thr_w1", state: "reviewing", version: 1, round: 1 });
@@ -202,6 +204,67 @@ describe("reviewing a pending version", () => {
     expect(status()).toEqual({ kind: "none" });
     await h.projects.approve("csv", "human");
     expect(status()).toEqual({ kind: "none" });
+  });
+});
+
+describe("versions that change only operational settings", () => {
+  const forge = (doc: Doc) => {
+    doc.merge = { strategy: "pr", forge: { kind: "command", open: "open.sh", state: "state.sh", feedback: "feedback-2.sh" } };
+  };
+  const onPr = (doc: Doc) => (doc.merge = { strategy: "pr", forge: { kind: "command", open: "open.sh", state: "state.sh", feedback: "feedback.sh" } });
+  const approveDraft = async () => {
+    await draft(onPr);
+    await specVerdict(h.ctx, reviewer(), [], "Holds.");
+    await h.projects.approve("csv", "human");
+  };
+
+  it("skips the review of a pending version that changes only operational settings against the version in force, and approval needs no --skip-review", async () => {
+    await approveDraft();
+    await propose((doc) => {
+      forge(doc);
+      doc.agents.max_workers = 4;
+    });
+    const skipped = await ensureSpecReview(h.ctx, "csv");
+    expect(skipped).toEqual({ kind: "skipped", version: 2, against: 1, paths: ["merge.forge.feedback", "agents.max_workers"] });
+    expect(status()).toEqual(skipped);
+    expect(spawns()).toHaveLength(1);
+    expect(rows().at(-1)).toMatchObject({ version: 2, state: "skipped", thread_id: null, summary: "v2 changes only operational settings against v1: merge.forge.feedback, agents.max_workers.", skip_json: JSON.stringify({ against: 1, paths: ["merge.forge.feedback", "agents.max_workers"] }) });
+    expect(approvalRefusal("csv", status(), true)).toBeNull();
+    const text = toPlanner().at(-1)!;
+    expect(text).toContain("[loom] Loom skipped the spec review of v2 of csv: against v1, it changes only operational settings (merge.forge.feedback, agents.max_workers).");
+    expect(text).toContain("Hand over to the human now: tell them what v2 changes and that it waits for their approval.");
+    const event = h.store.eventsOfKind(project().id, "spec.review.skipped").at(-1)!;
+    expect(JSON.parse(event.data_json)).toEqual({ version: 2, round: 1, against: 1, paths: ["merge.forge.feedback", "agents.max_workers"] });
+
+    expect(await ensureSpecReview(h.ctx, "csv")).toEqual(skipped);
+    expect(toPlanner().filter((message) => message.includes("skipped the spec review"))).toHaveLength(1);
+  });
+
+  it("reviews a pending version that changes anything else, or that only revises a skipped one into content", async () => {
+    await approveDraft();
+    await propose((doc) => {
+      forge(doc);
+      goal(3)(doc);
+    });
+    expect(await ensureSpecReview(h.ctx, "csv")).toEqual({ kind: "reviewing", version: 2, round: 1 });
+    await propose(forge);
+    expect(await ensureSpecReview(h.ctx, "csv")).toMatchObject({ kind: "skipped", version: 3, against: 1 });
+    expect(rows().find((row) => row.version === 2)!.state).toBe("superseded");
+  });
+
+  it("skips a draft's review only after the draft before it cleared its own, and never the first version", async () => {
+    expect(await draft(onPr)).toEqual({ kind: "reviewing", version: 1, round: 1 });
+    expect(await draft(forge)).toEqual({ kind: "reviewing", version: 2, round: 1 });
+    await specVerdict(h.ctx, reviewer(), findings(1), "Too much.");
+    expect(await draft(onPr)).toEqual({ kind: "reviewing", version: 3, round: 2 });
+    await specVerdict(h.ctx, reviewer(), [], "Holds.");
+    expect(await draft(forge)).toMatchObject({ kind: "skipped", version: 4, against: 3, paths: ["merge.forge.feedback"] });
+    expect(toPlanner().at(-1)).toContain("tell them what you proposed and that the draft is ready to approve");
+    expect(await draft((doc) => {
+      forge(doc);
+      doc.budget = { max_tokens: 5_000_000 };
+    })).toMatchObject({ kind: "skipped", version: 5, against: 4, paths: ["budget.max_tokens"] });
+    expect(approvalRefusal("csv", status())).toBeNull();
   });
 });
 

@@ -6,9 +6,11 @@ import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-libra
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers, type PluginSdkTestFakes, type RenderSlotOptions } from "@get-bb/plugin-sdk/testing/app";
 import { useLayoutEffect, useState, useSyncExternalStore } from "react";
 import { useComposers, type NewThreadRequest, type PluginComposerApi, type PluginNavPanelProps, type PluginSidebarThread, type PluginThreadHeaderActionProps } from "@get-bb/plugin-sdk/app";
-import type { Attempt, BadgeView, BbProjectChoice, InsightsWindow, ChangedFile, ChangeSource, ChangesView, ChecksItem, HomeProject, MergeEntry, MergeOrderView, NextStep, PlannerView, PlanningSession, ProjectSummary, ProjectView, RepoOverview, SentNote, SpecVersionView, ThreadInfo, TicketDetail, rpcContract } from "../src/contract";
+import { mergeLead } from "../src/ui/merge-order";
+import type { Attempt, BadgeView, BbProjectChoice, InsightsWindow, ChangedFile, ChangeSource, ChangesView, ChecksItem, HomeProject, MergeEntry, MergeOrderView, NextStep, PlannerView, PlanningSession, ProjectSummary, ProjectView, RepoOverview, RolloutStep, RolloutView, SentNote, SpecVersionView, ThreadInfo, TicketDetail, rpcContract } from "../src/contract";
 import type { TicketRow } from "../src/db/store";
 import { repoOverviews } from "../src/projects";
+import { clockTime } from "../src/format";
 import { notesMessage } from "../src/prompts";
 import { parseSpec } from "../src/spec";
 import { ConfirmButton, MoreMenu } from "../src/ui/common";
@@ -50,6 +52,7 @@ const handlers = (over: Partial<Handlers> = {}): Handlers => ({
   messagePlanner: unexpected,
   dismissAsk: unexpected,
   syncPullRequests: unexpected,
+  markLive: unexpected,
   specVersion: unexpected,
   sendNotes: unexpected,
   changes: unexpected,
@@ -1974,7 +1977,7 @@ describe("spec tab", () => {
   it("offers no Approve on a draft while Loom's spec review holds it, and says where the review stands", async () => {
     const finding = { path: "ticket[csv-export]", title: "No criterion for an empty export", detail: "Add one." };
     const draft = projectView({ overview: overview({ state: "draft", approvedVersion: null, ticketCount: 0, ticketCounts: {} }), board: [], next: null, specReview: { kind: "changes", version: 2, round: 1, findings: [finding] } });
-    const spec = specVersionView({ reviews: [{ version: 2, round: 1, state: "changes_requested", summary: "One gap.", findings: [finding], reason: null, startedAt: NOW - HOUR, endedAt: NOW }] });
+    const spec = specVersionView({ reviews: [{ version: 2, round: 1, state: "changes_requested", summary: "One gap.", findings: [finding], reason: null, skip: null, startedAt: NOW - HOUR, endedAt: NOW }] });
     const { slot } = await mountPage("csv", { project: () => ({ ...draft, spec: { ...draft.spec, version: 2 } }), specVersion: () => spec });
     fireEvent.click(await slot.findByRole("tab", { name: "Spec" }));
     await waitFor(() => expect(slot.container.querySelector("[data-review-panel]")).not.toBeNull());
@@ -2518,6 +2521,16 @@ describe("board", () => {
     expect(slot.container.querySelector('[data-card="CSV-4"] [data-start-wait]')!.textContent).toBe("Its reviewer could not start (The provider failed.); Loom tries again in 1m (2 failed starts in a row).");
   });
 
+  it("says on the card when a merge waits after a temporary failure, when Loom tries it again and why", async () => {
+    const now = projectView().now;
+    const until = now + 4 * 60_000;
+    const board = [card({ key: "CSV-2", title: "Export endpoint", state: "merging", ready: false, mergeWait: { failures: 2, since: now - 60_000, until, message: "host plugin call 1f46 exceeded its deadline" } }), card({ key: "CSV-3", title: "Docs", state: "merging", ready: false })];
+    const { slot } = await mountPage("csv", { project: () => projectView({ board }) });
+    await slot.findByRole("tab", { name: "Board" });
+    expect(slot.container.querySelector('[data-card="CSV-2"] [data-merge-wait]')!.textContent).toBe(`Loom tries the merge again at ${clockTime(until)} after 2 temporary failures in a row: host plugin call 1f46 exceeded its deadline.`);
+    expect(slot.container.querySelector('[data-card="CSV-3"] [data-merge-wait]')).toBeNull();
+  });
+
   it("says on the card when work went back to a worker and waits for a free worker slot", async () => {
     const board = [card({ key: "CSV-2", title: "Export endpoint", state: "working", ready: false, waitsForSlot: true }), card({ key: "CSV-3", title: "Docs", state: "working", ready: false })];
     const { slot } = await mountPage("csv", { project: () => projectView({ board }) });
@@ -2756,6 +2769,26 @@ describe("ticket", () => {
     expect(within(plain).queryByRole("button", { name: "Read the post that blocked it" })).toBeNull();
   });
 
+  it("offers Review again as is beside Requeue only when Loom says it may, and sends it with no note needed", async () => {
+    const block = { id: 6, parentId: null, depth: 0, authorKind: "loom" as const, authorThreadId: null, kind: "block" as const, body: "reviewers ended without a verdict", at: 6 };
+    const blocked = { state: "blocked" as const, blockedReason: "reviewers ended without a verdict", replyTo: null, stoppedFrom: "review" as const, posts: [...posts, block] };
+    const without = await mountTicket(blocked);
+    expect(within(without.container.querySelector<HTMLElement>("[data-blocked-callout]")!).queryByRole("button", { name: "Review again as is" })).toBeNull();
+    without.lifecycle.unmount();
+
+    const ticketAction = vi.fn(() => ticketDetail({ state: "review", posts }));
+    const slot = await mountTicket({ ...blocked, reviewAgain: true }, { ticketAction });
+    const callout = slot.container.querySelector<HTMLElement>("[data-blocked-callout]")!;
+    expect(callout.querySelector("[data-review-again]")!.textContent).toContain("starts no worker");
+    const button = within(callout).getByRole("button", { name: "Review again as is" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+    fireEvent.click(button);
+    expect(ticketAction).not.toHaveBeenCalled();
+    fireEvent.click(within(callout).getByRole("button", { name: /Click again/ }));
+    await waitFor(() => expect(ticketAction).toHaveBeenCalledWith({ key: "CSV-2", action: "review", note: "", confirm: true }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("CSV-2 sent back as it is"));
+  });
+
   it("sends Block and Cancel with the reason from the ⋯ menu, and offers neither on a finished ticket", async () => {
     const ticketAction = vi.fn(() => ticketDetail({ posts }));
     const slot = await mountTicket({}, { ticketAction });
@@ -2926,6 +2959,12 @@ describe("ticket", () => {
   it("says in the summary that the worker could not start and when Loom tries again", async () => {
     const slot = await mountTicket({ state: "queued", startWait: { role: "worker", reason: "No free slot.", until: Date.now() + 2 * 60_000, tries: 1, unavailable: true } });
     expect(slot.container.querySelector("[data-ticket-summary]")!.textContent).toBe("Its worker could not start (No free slot.); Loom tries again in 2m; the wait counts no attempt.");
+  });
+
+  it("says in the summary that the merge waits after a temporary failure and when Loom tries it again", async () => {
+    const until = Date.now() + 2 * 60_000;
+    const slot = await mountTicket({ state: "merging", mergeWait: { failures: 1, since: Date.now(), until, message: "The forge's open command printed no pull request URL: Error: 429: retry shortly" } });
+    expect(slot.container.querySelector("[data-ticket-summary]")!.textContent).toBe(`Loom tries the merge again at ${clockTime(until)} after a temporary failure: The forge's open command printed no pull request URL: Error: 429: retry shortly.`);
   });
 
   it("shows the planning row and the reply box for a ticket with no attempt yet", async () => {
@@ -3383,6 +3422,15 @@ describe("ticket", () => {
         expect(within(header(other)).queryByRole("button", { name: "Sync now" }), JSON.stringify(over)).toBeNull();
         other.lifecycle.unmount();
       }
+    });
+
+    it("offers no sync while Loom replaces a stacked pull request the forge closed, and says so, but does for the push-only forge's branch", async () => {
+      const replacing = await mountTicket({ state: "pr_open", prUrl: null, pr: pr({ url: null }) });
+      expect(within(header(replacing)).queryByRole("button", { name: "Sync now" })).toBeNull();
+      expect(replacing.container.querySelector("[data-live-row]")!.textContent).toContain("The forge closed its pull request with the branch it built on; Loom opens a new one");
+      replacing.lifecycle.unmount();
+      const pushOnly = await mountTicket({ state: "pr_open", prUrl: null, pr: pr({ url: null, forge: "none" }) });
+      expect(within(header(pushOnly)).getByRole("button", { name: "Sync now" })).not.toBeNull();
     });
 
     it("shows an open pull request's commits, checks and fix rounds, and that a reply starts a fix round", async () => {
@@ -4241,7 +4289,7 @@ describe("spec page", () => {
   });
 
   it("pins the findings of Loom's spec review on their parts, goes to one from the list, and tags the changes that answer earlier findings", async () => {
-    const round = (version: number, n: number, path: string, title: string) => ({ version, round: n, state: "changes_requested" as const, summary: `Round ${n}.`, findings: [{ path, title, detail: "Say exactly what it is." }], reason: null, startedAt: NOW - 2 * HOUR, endedAt: NOW - HOUR });
+    const round = (version: number, n: number, path: string, title: string) => ({ version, round: n, state: "changes_requested" as const, summary: `Round ${n}.`, findings: [{ path, title, detail: "Say exactly what it is." }], reason: null, skip: null, startedAt: NOW - 2 * HOUR, endedAt: NOW - HOUR });
     const spec = specVersionView({ reviews: [round(1, 1, "checks.commands[0]", "Run the tests the CI way"), round(2, 2, "ticket[csv-export].acceptance[1]", "Say what the empty file holds")] });
     const slot = await openPage({ specVersion: () => spec });
     const status = page(slot).querySelector<HTMLElement>('[data-spec-review-status="changes_requested"]')!;
@@ -4259,12 +4307,22 @@ describe("spec page", () => {
   });
 
   it("keeps a passed review of a version after approval, with the reviewer's summary", async () => {
-    const spec = specVersionView({ status: "approved", reviews: [{ version: 2, round: 1, state: "approved", summary: "Every ticket serves the request.", findings: [], reason: null, startedAt: NOW - 2 * HOUR, endedAt: NOW - HOUR }] });
+    const spec = specVersionView({ status: "approved", reviews: [{ version: 2, round: 1, state: "approved", summary: "Every ticket serves the request.", findings: [], reason: null, skip: null, startedAt: NOW - 2 * HOUR, endedAt: NOW - HOUR }] });
     const slot = await openPage({ specVersion: () => spec }, projectView({ spec: { ...projectView().spec, version: 2 } }));
     const status = page(slot).querySelector<HTMLElement>('[data-spec-review-status="approved"]')!;
     expect(status.textContent).toContain("✓ Loom's spec review passed v2 · round 1 of 3");
     expect(status.textContent).toContain("Every ticket serves the request.");
     expect(page(slot).querySelector("[data-finding-pin]")).toBeNull();
+  });
+
+  it("says a version skipped Loom's spec review, against which version and for which settings", async () => {
+    const skip = { against: 1, paths: ["merge.forge.feedback", "agents.max_workers"] };
+    const spec = specVersionView({ status: "pending", reviews: [{ version: 2, round: 1, state: "skipped", summary: "v2 changes only operational settings against v1.", findings: [], reason: null, skip, startedAt: NOW - HOUR, endedAt: NOW - HOUR }] });
+    const slot = await openPage({ specVersion: () => spec }, projectView({ spec: { ...projectView().spec, version: 2 } }));
+    const status = page(slot).querySelector<HTMLElement>('[data-spec-review-status="skipped"]')!;
+    expect(status.textContent).toContain("Loom skipped the spec review of v2: against v1, it changes only operational settings");
+    expect(status.textContent).toContain("You still approve it.");
+    expect(status.querySelector("[data-skipped-paths]")!.textContent).toContain(" · ");
   });
 
   it("shows a changed ticket's changed parts beside the list, the whole ticket at a click, and takes a comment on a criterion", async () => {
@@ -4736,6 +4794,9 @@ describe("merge order tab", () => {
     draft: false,
     review: "APPROVED",
     reviewRead: true,
+    conflicts: false,
+    behind: null,
+    refreshBehind: null,
     verdict: "ready",
     holds: [],
     trap: false,
@@ -4801,6 +4862,30 @@ describe("merge order tab", () => {
     expect(slot.inspection.navigateCalls.at(-1)).toEqual(pushed("csv/CSV-2"));
   });
 
+  it("says which pull requests conflict with their base and how far behind it each one is, warning once it is due a refresh", async () => {
+    const fresh = order({
+      entries: [
+        entry({ key: "CSV-1", verdict: "first", holds: ["conflicts with main"], conflicts: true, behind: 12_374, refreshBehind: 5000 }),
+        entry({ key: "CSV-2", behind: 40, refreshBehind: 5000 }),
+        entry({ key: "CSV-3", behind: 0, refreshBehind: 5000 }),
+      ],
+      steps: 1,
+      counts: { open: 3, first: 3, ready: 2, wrong: 0 },
+    });
+    const slot = await mountOrder(prView(fresh));
+    fireEvent.click(slot.getByRole("tab", { name: /Merge order/ }));
+    const row = (key: string) => slot.container.querySelector<HTMLElement>(`[data-merge-row="${key}"]`)!;
+    await waitFor(() => expect(row("CSV-1")).not.toBeNull());
+    expect(within(row("CSV-1")).getByText("conflicts with main").className).toContain("text-destructive-text");
+    expect(within(row("CSV-1")).getByText("12,374 commits behind main").className).toContain("text-warning-text");
+    expect(within(row("CSV-1")).getByText("Conflicts with main").getAttribute("data-merge-verdict")).toBe("first");
+    expect(within(row("CSV-2")).getByText("40 commits behind main").className).toContain("text-muted-foreground");
+    expect(row("CSV-3").textContent).not.toContain("behind");
+    expect(slot.container.querySelector("[data-merge-lead]")!.textContent).toContain("2 are ready to merge now.");
+    const alone = order({ entries: [entry({ key: "CSV-1", verdict: "first", holds: ["conflicts with main"], conflicts: true })], steps: 1, counts: { open: 1, first: 1, ready: 0, wrong: 0 } });
+    expect(mergeLead(alone)).toBe("1 open pull request merges in 1 step. 1 has nothing before it; none is ready yet: 1 conflicts with its base.");
+  });
+
   it("turns red for a pull request that merged into another ticket's branch, and says so first", async () => {
     const wrong = order({
       entries: [entry({ key: "CSV-1", verdict: "first", holds: ["draft"] }), entry({ key: "CSV-2", state: "done", step: 0, verdict: "merged_elsewhere", mergedInto: "CSV-1", mergedIntoState: "pr_open" })],
@@ -4818,6 +4903,119 @@ describe("merge order tab", () => {
     expect(alert.textContent).toContain("CSV-2's pull request #2 merged into CSV-1's branch, not main.");
     expect(alert.textContent).toContain("CSV-1 (#1) has not merged, so the change is not on main.");
     expect(alert.textContent).toContain("Loom counted CSV-2 as done before it checked where a pull request merged.");
+  });
+});
+
+describe("rollout tab", () => {
+  const step = (over: Partial<RolloutStep> & Pick<RolloutStep, "key">): RolloutStep => ({
+    title: `${over.key} title`,
+    repo: null,
+    state: "pr_open",
+    stage: "expand",
+    prUrl: `https://github.com/acme/shop/pull/${over.key.split("-")[1]}`,
+    prNumber: over.key.split("-")[1]!,
+    merge: "open",
+    live: null,
+    soaked: false,
+    soakedAt: null,
+    how: "Shipit deploys main",
+    onMerge: false,
+    requires: [],
+    release: null,
+    releaseWith: [],
+    dark: false,
+    verify: null,
+    rollback: null,
+    lastCheck: null,
+    liveConsumers: [],
+    waiting: 0,
+    ...over,
+  });
+  const rollout = (over: Partial<RolloutView> = {}): RolloutView => ({
+    stages: [
+      {
+        name: "expand",
+        goal: "Servers accept the header",
+        soak: "1d",
+        steps: [
+          step({ key: "CSV-1", state: "done", merge: "merged", verify: "curl -f https://shop.example.com/health", lastCheck: { at: NOW - 60_000, exitCode: 1, output: "curl: (22) 503" }, rollback: "Revert the commit", waiting: 1 }),
+          step({
+            key: "CSV-2",
+            onMerge: true,
+            how: "The actuator applies on merge",
+            requires: [{ target: "CSV-1", kind: "ticket", title: "CSV-1 title", live: false, cancelled: false, unknown: false, viaStage: false, prUrl: "https://github.com/acme/shop/pull/1", prNumber: "1", how: "Shipit deploys main" }],
+          }),
+        ],
+        milestones: [],
+        live: false,
+        soakedAt: null,
+        soaked: false,
+      },
+    ],
+    milestones: [{ ref: "traffic-low", title: "Old traffic is near zero", stage: null, check: null, live: { at: NOW - HOUR, by: "human", evidence: "Dashboard" }, lastCheck: null, neededBy: ["CSV-2"] }],
+    windows: [{ title: "Holiday freeze", from: "2026-01-09", to: "2026-01-12", note: null, active: true, startsIn: null, past: false }],
+    next: { kind: "deploy", keys: ["CSV-1"], stage: "expand", until: null, text: "Deploy CSV-1 (Shipit deploys main). 1 step waits on it." },
+    warnings: [{ kind: "ships_on_merge", tone: "warning", keys: ["CSV-2"], text: "CSV-2 deploys when it merges, and CSV-1 is not live yet." }],
+    counts: { steps: 2, live: 0, soaked: 0 },
+    ...over,
+  });
+  const prView = (view: RolloutView | null = rollout()) => projectView({ overview: overview({ strategy: "pr", branch: null }), rollout: view });
+  const mountRollout = async (rpc: Partial<Handlers> = {}, view = prView()) => {
+    const mounted = await mountPage("csv", { project: () => view, ...rpc });
+    await mounted.slot.findByRole("tab", { name: "Board" });
+    return mounted.slot;
+  };
+
+  it("is no tab for a project without a rollout", async () => {
+    const slot = await mountRollout({}, prView(null));
+    expect(slot.queryByRole("tab", { name: /Rollout/ })).toBeNull();
+  });
+
+  it("is a tab whose badge counts the warnings", async () => {
+    const slot = await mountRollout();
+    const badge = (await slot.findByRole("tab", { name: /Rollout/ })).querySelector("[data-tab-badge]")!;
+    expect(badge.textContent).toBe("1");
+    expect(badge.className).toContain("bg-warning");
+  });
+
+  it("leads with the next safe step, then the warnings, the windows, each stage's steps and the milestones", async () => {
+    const slot = await mountRollout();
+    fireEvent.click(slot.getByRole("tab", { name: /Rollout/ }));
+    expect((await slot.findByText("Deploy CSV-1 (Shipit deploys main). 1 step waits on it.")).getAttribute("data-rollout-next")).toBe("deploy");
+    expect(slot.container.querySelector("[data-rollout-warning]")!.textContent).toContain("CSV-2 deploys when it merges, and CSV-1 is not live yet.");
+    expect(slot.container.querySelector('[data-rollout-window="Holiday freeze"]')!.textContent).toContain("Jan 9 – Jan 12 · on now");
+    const row = (key: string) => slot.container.querySelector<HTMLElement>(`[data-rollout-row="${key}"]`)!;
+    expect(row("CSV-1").querySelector("[data-rollout-merge]")!.textContent).toBe("merged");
+    expect(row("CSV-1").querySelector("[data-rollout-live]")!.textContent).toBe("not live");
+    expect(row("CSV-1").textContent).toContain("Rollback: Revert the commit");
+    expect(within(row("CSV-1")).getByText("Output").closest("details")!.textContent).toContain("curl: (22) 503");
+    expect(row("CSV-2").textContent).toContain("Deploys on merge: The actuator applies on merge");
+    expect(row("CSV-2").querySelector('[data-rollout-need="CSV-1"]')!.textContent).toBe("◌ CSV-1");
+    expect(slot.container.querySelector('[data-rollout-milestone="traffic-low"]')!.textContent).toContain("CSV-2 needs it.");
+    fireEvent.click(within(row("CSV-2")).getByRole("button", { name: "CSV-2" }));
+    fireEvent.click(within(row("CSV-2")).getByRole("button", { name: "Open CSV-2's pull request" }));
+    expect(slot.inspection.navigateCalls.slice(-2)).toEqual([pushed("csv/CSV-2"), { method: "openUrl", url: "https://github.com/acme/shop/pull/2" }]);
+  });
+
+  it("marks a step live, and undoes a milestone's mark, with two clicks and a toast", async () => {
+    const slot = await mountRollout({ markLive: () => prView() });
+    fireEvent.click(slot.getByRole("tab", { name: /Rollout/ }));
+    const row = await waitFor(() => {
+      const found = slot.container.querySelector<HTMLElement>('[data-rollout-row="CSV-1"]');
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    fireEvent.click(within(row).getByRole("button", { name: "Mark live" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Click again to mark CSV-1 live" }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Marked CSV-1 live"));
+    const milestone = slot.container.querySelector<HTMLElement>('[data-rollout-milestone="traffic-low"]')!;
+    fireEvent.click(within(milestone).getByRole("button", { name: "Undo live" }));
+    fireEvent.click(within(milestone).getByRole("button", { name: "Click again to undo traffic-low's live mark" }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("traffic-low is no longer marked live"));
+    expect(calls(slot, "markLive").map((call) => call.input)).toEqual([
+      { slug: "csv", target: "CSV-1", confirm: true },
+      { slug: "csv", target: "traffic-low", undo: true, confirm: true },
+    ]);
   });
 });
 

@@ -19,13 +19,13 @@ export function projectMetrics(store: Store, project: ProjectRow, now: number, d
   });
 }
 
-/** The newest 200 events, oldest first, or those of them newer than `afterId`. With `at`, only events up to that id: the feed of a rewound page. */
+/**
+ * The newest 200 events, oldest first; with `afterId`, the 200 events after it, oldest first, so `lastId` pages forward.
+ * With `at`, only events up to that id: the feed of a rewound page.
+ */
 export function projectFeed(store: Store, project: ProjectRow, afterId?: number, at?: number): { rows: FeedRow[]; lastId: number } {
   const keys = new Map(store.tickets(project.id).map((ticket) => [ticket.id, ticket.key]));
-  const rows = store
-    .eventsNewest(project.id, FEED_LIMIT, at === undefined ? undefined : at + 1)
-    .reverse()
-    .filter((event) => afterId === undefined || event.id > afterId)
-    .map((event) => ({ id: event.id, at: event.at, kind: event.kind, actor: event.actor, ticketKey: event.ticket_id === null ? null : (keys.get(event.ticket_id) ?? null), text: feedText(event, keys) }));
+  const events = afterId === undefined ? store.eventsNewest(project.id, FEED_LIMIT, at === undefined ? undefined : at + 1).reverse() : store.events(project.id, afterId, FEED_LIMIT).filter((event) => at === undefined || event.id <= at);
+  const rows = events.map((event) => ({ id: event.id, at: event.at, kind: event.kind, actor: event.actor, ticketKey: event.ticket_id === null ? null : (keys.get(event.ticket_id) ?? null), text: feedText(event, keys) }));
   return { rows, lastId: rows.at(-1)?.id ?? afterId ?? 0 };
 }

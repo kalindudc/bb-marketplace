@@ -25,12 +25,20 @@ const networkTimeoutMs = z
 const worktreeKey = z.string().regex(/^[a-z][a-z0-9-]{1,39}(?:\.[a-z][a-z0-9-]{0,23})?$/, "must be a project slug, or a project slug and a repo name joined by a dot");
 const missing = z.object({ outcome: z.literal("missing"), message: z.string() }).strict();
 const forgeCommand = z.string().min(1).max(2000);
-const unavailable = z.object({ outcome: z.literal("unavailable"), message: z.string() }).strict();
-// A pull request read that failed. `transient` marks a forge failure worth waiting out instead of pausing: a server error or
-// timeout, a rate limit, or a network failure such as a name that did not resolve; `retryAfterMs` is how long the forge's
-// answer said to wait, when it said. Optional, as from an older host.
+// A step that could not be done. `transient` marks a failure of the forge or the remote worth waiting out instead of
+// pausing: a server error or timeout, a rate limit, or a network failure such as a name that did not resolve;
+// `retryAfterMs` is how long the answer said to wait, when it said. Optional, as from an older host.
 const transient = z.enum(["server", "rate_limit", "network"]);
-const readUnavailable = z.object({ outcome: z.literal("unavailable"), message: z.string(), transient: transient.optional(), retryAfterMs: z.number().int().min(0).optional() }).strict();
+const unavailable = z.object({ outcome: z.literal("unavailable"), message: z.string(), transient: transient.optional(), retryAfterMs: z.number().int().min(0).optional() }).strict();
+
+/** How long a command forge's retarget command may run: as long as its after_push commands, which often follow it. */
+export const RETARGET_COMMAND_MS = 5 * 60_000;
+
+/** The longest pull request description Loom sets with prEdit: GitHub's own limit. */
+export const PR_BODY_MAX = 65_536;
+
+/** What ends every reply Loom posts for a worker, so a later read of the pull request knows the reply as the worker's own. */
+export const REPLY_MARK = "<!-- loom:reply -->";
 
 /** A pull request's number as forge commands get it in LOOM_PR_NUMBER: the last run of digits in its URL, empty when there is none. */
 export function prNumber(url: string): string {
@@ -48,7 +56,11 @@ export function githubPull(url: string): { host: string; owner: string; name: st
 /** The most pull requests one prBatch call reads, which bounds the GraphQL query's node count. */
 export const PR_BATCH_MAX = 10;
 
+/** The most commits one behindBase call counts. */
+export const BEHIND_MAX = 50;
+
 const prState = z.enum(["OPEN", "MERGED", "CLOSED"]);
+const prUrl = z.string().regex(/^https?:\/\/\S+$/, "must be a pull request URL").max(500);
 export const REVIEW_DECISIONS = ["APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED"] as const;
 const reviewDecision = z.enum(REVIEW_DECISIONS);
 // GitHub's own limits on a host name, an owner and a repository name; they keep the values out of argv options and the query text.
@@ -66,6 +78,11 @@ const feedbackOk = z
     draft: z.boolean().nullable().optional(),
     review: reviewDecision.nullable().optional(),
     base: z.string().nullable().optional(),
+    /** Its title and description now, for Loom to refresh its own sections in; null or left out when the forge does not say. */
+    title: z.string().nullable().optional(),
+    body: z.string().nullable().optional(),
+    /** Whether it merges into its base without a conflict; null while the forge has not worked it out, or does not say. */
+    mergeable: z.boolean().nullable().optional(),
     checks: z.array(
       z
         .object({
@@ -151,7 +168,8 @@ export const hostContract = defineRpcContract({
     // baseTree measures `changed` from the newest commit on HEAD's first-parent line with that tree, which a machine that
     // gives commits new ids keeps; onBase says whether there is one, and without one `changed` is measured from base.
     input: z.object({ worktree: absPath, base: ref, trackedOnly: z.boolean().optional(), baseTree: commit.optional() }).strict(),
-    output: z.object({ branch: z.string().nullable(), head: sha, tree: sha, dirty: z.boolean(), changed: z.array(z.string()), onBase: z.boolean().optional() }).strict(),
+    // unfinishedMerge: the worktree has a merge someone began and did not finish (MERGE_HEAD), even with nothing left to resolve.
+    output: z.object({ branch: z.string().nullable(), head: sha, tree: sha, dirty: z.boolean(), changed: z.array(z.string()), onBase: z.boolean().optional(), unfinishedMerge: z.boolean().optional() }).strict(),
   },
   // What one commit changed against its merge base with `base`, for carrying it to another machine: each changed file's
   // status, and for one that is not deleted its mode, blob and size. head defaults to the worktree's HEAD.
@@ -290,10 +308,12 @@ export const hostContract = defineRpcContract({
   },
   merge: {
     // before is the rollback point the caller persisted ahead of the first attempt. A rerun that finds the merge made reports it back.
+    // unfinished: the worktree has a merge someone began and did not finish (MERGE_HEAD), which Loom leaves as it is.
     input: z.object({ worktree: absPath, ref: commit, message: z.string().min(1).max(500), before: commit.optional() }).strict(),
     output: z.discriminatedUnion("outcome", [
       z.object({ outcome: z.literal("merged"), sha, before: sha, already: z.boolean() }).strict(),
       z.object({ outcome: z.literal("conflict"), files: z.array(z.string()) }).strict(),
+      z.object({ outcome: z.literal("unfinished") }).strict(),
     ]),
   },
   resetHard: {
@@ -303,12 +323,13 @@ export const hostContract = defineRpcContract({
   // git fetch <remote> refs/heads/<branch> in the Loom worktree, whose FETCH_HEAD is its own; sha is the fetched tip.
   fetchBranch: {
     input: z.object({ worktree: absPath, remote: ref, branch: ref, networkTimeoutMs }).strict(),
-    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), sha }).strict(), z.object({ outcome: z.literal("unavailable"), message: z.string() }).strict()]),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), sha }).strict(), unavailable]),
   },
   // The commit to push to a ticket's pull request branch, with head's tree: on the remote branch's tip when it exists, else on
   // head's merge base with base. `pushed` is the tip Loom last accounted for: its own push, or commits someone else pushed
   // that it merged into head's work. A tip that is neither it nor in head's history has commits from someone else, which a
-  // commit with head's tree would undo, so it is reported as diverged instead.
+  // commit with head's tree would undo, so it is reported as diverged instead. A tip that has head's tree and head's merge
+  // base with base is the commit already (created false); one that lacks that base gets a commit taking it, tree unchanged.
   prCommit: {
     input: z.object({ repo: absPath, remote: ref, branch: ref, base: ref, head: commit, message: z.string().min(1).max(8000), pushed: commit.optional(), networkTimeoutMs }).strict(),
     output: z.discriminatedUnion("outcome", [
@@ -359,19 +380,41 @@ export const hostContract = defineRpcContract({
       unavailable,
     ]),
   },
+  // How many commits of the remote's base branch each commit lacks, `git rev-list --count <sha>..<remote>/<base>`, on its
+  // remote-tracking ref, which `fetch` brings up to date first, as git fetch does. A commit the repository lacks counts null.
+  behindBase: {
+    input: z.object({ repo: absPath, remote: ref, base: ref, fetch: z.boolean(), shas: z.array(commit).min(1).max(BEHIND_MAX), networkTimeoutMs }).strict(),
+    output: z.discriminatedUnion("outcome", [
+      z.object({ outcome: z.literal("ok"), tip: sha, behind: z.array(z.object({ sha, commits: z.number().int().min(0).nullable() }).strict()) }).strict(),
+      unavailable,
+    ]),
+  },
+  // A branch's tip where `git push` sends it, without fetching it; null when the remote has no such branch.
+  remoteBranch: {
+    input: z.object({ repo: absPath, remote: ref, branch: ref, networkTimeoutMs }).strict(),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), sha: sha.nullable() }).strict(), unavailable]),
+  },
   // Points each ref at sha, a commit of the repository.
   pointRefs: {
     input: z.object({ repo: absPath, sha: commit, refs: z.array(fullRef).min(1).max(4) }).strict(),
     output: z.object({}).strict(),
   },
-  // Moves an open pull request to another base branch: gh pr edit <url> --base <base>.
+  // Moves an open pull request to another base branch: gh pr edit <url> --base <base>, or the spec's retarget command with
+  // LOOM_URL, LOOM_PR_NUMBER and LOOM_BASE. Without forge, through gh, as before the command existed.
   prRetarget: {
-    input: z.object({ repo: absPath, url: z.string().regex(/^https?:\/\/\S+$/, "must be a pull request URL").max(500), base: ref }).strict(),
+    input: z
+      .object({
+        repo: absPath,
+        url: z.string().regex(/^https?:\/\/\S+$/, "must be a pull request URL").max(500),
+        base: ref,
+        forge: z.discriminatedUnion("kind", [z.object({ kind: z.literal("gh") }).strict(), z.object({ kind: z.literal("command"), retarget: forgeCommand }).strict()]).optional(),
+      })
+      .strict(),
     output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok") }).strict(), unavailable]),
   },
   push: {
     input: z.object({ repo: absPath, remote: ref, src: ref, branch: ref, networkTimeoutMs }).strict(),
-    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok") }).strict(), z.object({ outcome: z.literal("unavailable"), message: z.string() }).strict()]),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok") }).strict(), unavailable]),
   },
   prCreate: {
     input: z
@@ -386,7 +429,38 @@ export const hostContract = defineRpcContract({
         forge: z.discriminatedUnion("kind", [z.object({ kind: z.literal("gh") }).strict(), z.object({ kind: z.literal("command"), open: forgeCommand }).strict()]),
       })
       .strict(),
-    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), url: z.string() }).strict(), z.object({ outcome: z.literal("unavailable"), message: z.string() }).strict()]),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), url: z.string() }).strict(), unavailable]),
+  },
+  // Sets an open pull request's title and description: gh pr edit <url> --title <title> --body-file -, or the spec's edit
+  // command with the body on stdin.
+  prEdit: {
+    input: z
+      .object({
+        repo: absPath,
+        url: prUrl,
+        title: z.string().min(1).max(256),
+        body: z.string().max(PR_BODY_MAX),
+        forge: z.discriminatedUnion("kind", [z.object({ kind: z.literal("gh") }).strict(), z.object({ kind: z.literal("command"), edit: forgeCommand }).strict()]),
+      })
+      .strict(),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok") }).strict(), unavailable]),
+  },
+  // Answers one item of a pull request's feedback, named by the key its read gave it. gh replies in a review thread, and
+  // resolves it with `resolve`, and answers a review or a comment with a comment on the pull request; a command forge runs
+  // the spec's reply command with the body on stdin. `message` says why a reply that was posted did not resolve its thread.
+  prReply: {
+    input: z
+      .object({
+        repo: absPath,
+        url: prUrl,
+        key: z.string().min(1).max(500),
+        kind: z.enum(["review", "thread", "comment"]),
+        body: z.string().min(1).max(30_000),
+        resolve: z.boolean(),
+        forge: z.discriminatedUnion("kind", [z.object({ kind: z.literal("gh") }).strict(), z.object({ kind: z.literal("command"), reply: forgeCommand }).strict()]),
+      })
+      .strict(),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), url: z.string().nullable(), resolved: z.boolean(), message: z.string().optional() }).strict(), unavailable]),
   },
   // The pull request's state through the repo's forge: gh pr view <url> --json state, or the spec's state command.
   prState: {
@@ -397,7 +471,7 @@ export const hostContract = defineRpcContract({
         forge: z.discriminatedUnion("kind", [z.object({ kind: z.literal("gh") }).strict(), z.object({ kind: z.literal("command"), state: forgeCommand }).strict()]),
       })
       .strict(),
-    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), state: prState }).strict(), readUnavailable]),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), state: prState }).strict(), unavailable]),
   },
   // Asks each login for a review of the pull request, again for one who already reviewed it: one REST call each through gh,
   // so one who cannot be asked, such as a person without access to the repository, does not stop the others.
@@ -423,7 +497,7 @@ export const hostContract = defineRpcContract({
         forge: z.discriminatedUnion("kind", [z.object({ kind: z.literal("gh") }).strict(), z.object({ kind: z.literal("command"), feedback: forgeCommand }).strict()]),
       })
       .strict(),
-    output: z.discriminatedUnion("outcome", [feedbackOk, readUnavailable]),
+    output: z.discriminatedUnion("outcome", [feedbackOk, unavailable]),
   },
   // Many pull requests of one GitHub repository in one GraphQL call: each one's state, draft flag, review decision and base
   // branch, and with `feedback` what prFeedback reads for it. A number GitHub does not answer for is in `missing`.
@@ -451,6 +525,11 @@ export const hostContract = defineRpcContract({
                 draft: z.boolean().nullable(),
                 review: reviewDecision.nullable(),
                 base: z.string().nullable(),
+                /** Its title and description; left out by a host from before Loom read them. */
+                title: z.string().nullable().optional(),
+                body: z.string().nullable().optional(),
+                /** GitHub's MERGEABLE and CONFLICTING; null for UNKNOWN, which it answers until it has checked. Optional so an older host's answer still parses. */
+                mergeable: z.boolean().nullable().optional(),
                 /** What prFeedback answers for it; null when `feedback` was not asked for. */
                 feedback: feedbackOk.nullable(),
               })
@@ -460,7 +539,7 @@ export const hostContract = defineRpcContract({
           missing: z.array(z.object({ number: z.number().int(), message: z.string(), transient: transient.optional(), retryAfterMs: z.number().int().min(0).optional() }).strict()),
         })
         .strict(),
-      readUnavailable,
+      unavailable,
     ]),
   },
   // Each git remote with its push URLs, in `git remote` order.

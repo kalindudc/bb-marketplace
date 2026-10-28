@@ -32,11 +32,12 @@ A spec without `[[repo]]` tables is a single-repo project: every ticket runs in 
 | `draft` | boolean | `true` | whether pull requests open as drafts |
 | `forge` | table | `{ kind = "gh" }` | where pull requests open; see [merge.forge] |
 | `worktree` | table | none | integration strategy only; prepares the integration worktree; see [merge.worktree] |
-| `describe` | string | `"worker"` | pr strategy only; who writes each pull request's title, description and commit message: `"worker"` (the ticket's worker, with `loom_pr`, after approval) or `"loom"` (Loom's template from the ticket) |
+| `describe` | string | `"worker"` | pr strategy only; who writes each pull request's title, description and commit message: `"worker"` (the ticket's worker: the title and description it proposes with `loom_submit`, which the reviewers judge, and the commit message with `loom_pr` after approval) or `"loom"` (Loom's template from the ticket; `loom_submit` then refuses `pr`) |
 | `squash` | boolean | `true` | pr strategy only; push the reviewed work as one commit, and each fix round as one more, instead of the worker's branch as it is |
 | `max_fix_rounds` | integer | `5` | pr strategy only; 0 to 20; fix rounds the pull request's checks and reviews may start before the ticket blocks, counted again from each requeue; the human's replies do not count; `0` follows only merged and closed |
 | `stack` | boolean | `true` | pr strategy only; a ticket starts once its dependencies' pull requests are open, on top of them in its own repo, and its pull request opens on its one open dependency's branch; `false` waits for each dependency to merge |
 | `release_workers` | boolean | `true` | pr strategy only; once a ticket's pull request is open and its worker is idle, Loom archives the worker's thread so bb frees its environment, and brings the same thread back with a new environment for a fix round or a catch-up; `false` keeps every worker and its environment until its pull request merges; a pending version may change it after approval. See [Releasing workers](#releasing-workers) |
+| `refresh_behind` | integer | none | pr strategy only; 1 to 1000000; keeps open pull requests fresh with their base: once a pull request's branch lacks at least this many commits of the remote base, or the forge says it conflicts with its base, Loom merges the base into it, runs the ticket's checks in its worker's worktree and pushes, with no new review; unset is off; the default `refresh_behind` of every `[[repo]]`. See [Keeping pull requests fresh](#keeping-pull-requests-fresh) |
 | `checks_queued_minutes` | integer | Loom's `checksQueuedMinutes` setting (`5`) | pr strategy only; 0 to 1440; a pending check that is still queued this many minutes after Loom first saw it, or after the push, no longer holds back the failed ones; `0` waits for queued checks too |
 | `checks_near_done_percent` | integer | Loom's `checksNearDonePercent` setting (`75`) | pr strategy only; 0 to 100; once a check has failed, a running check holds back the fix round only while it is at least this far along; a check Loom cannot measure, and every commit status, keeps holding it; `0` waits for every running check. See [When failed checks go to the worker](#when-failed-checks-go-to-the-worker) |
 | `git_network_timeout_seconds` | integer | `120` | 30 to 600; how long each git fetch, `ls-remote` or push Loom runs in the repo may take, such as fetching the base branch to bring a stacked pull request up to date, building a pull request's commit, or pushing it; a host call that runs two of them in a row gets twice this plus 30 seconds; the default of every `[[repo]]`. Raise it for a large monorepo, where fetching main takes a minute or more; a version approved after the project started applies from Loom's next pass. See [Slow repositories](#slow-repositories) |
@@ -51,17 +52,22 @@ The server that hosts pull requests. Leave it out for GitHub: Loom opens and fol
 | `open` | string | none | required with `kind = "command"`, refused otherwise; a shell command that opens a pull request for a branch that is already pushed |
 | `state` | string | none | required with `kind = "command"`, refused otherwise; a shell command that prints the pull request's state |
 | `feedback` | string | none | `kind = "command"` only; a shell command that prints the pull request's checks and review feedback, so Loom can start fix rounds; without it Loom follows only merged and closed, and a repo on this forge must set `ci = false` (see [Relying on CI](#relying-on-ci)) |
+| `edit` | string | none | `kind = "command"` only; a shell command that sets an open pull request's title and description, so Loom can apply the text the reviewers approved in a fix round and refresh the Rollout section; without it Loom posts a new text on the ticket for the human to set |
+| `reply` | string | none | `kind = "command"` only; a shell command that answers one review, review thread or comment, so workers can reply through Loom with `loom_pr_reply`; without it the tool is refused on this forge |
 | `after_open` | string array | none | at most 5; shell commands run once after a pull request opens, such as one that starts CI; a failure is posted and blocks nothing; not allowed with `kind = "none"` |
-| `retarget` | string | none | `kind = "command"` only; a shell command that moves an open pull request to another base branch, which Loom does when a stacked pull request's dependency merges; without it Loom asks you to move it by hand; a failure is posted, asks you to move it by hand and blocks nothing |
-| `after_push` | string array | none | at most 5; shell commands run after each push Loom makes to an open pull request (a fix round, a catch-up with a dependency or the base branch, someone else's commits merged in, a land's push) and after Loom moves one to another base, such as one that starts CI again or marks the pull request ready once it builds on the base branch; a failure is posted and blocks nothing; not allowed with `kind = "none"` |
+| `retarget` | string | none | `kind = "command"` only; a shell command that moves an open pull request to another base branch, which Loom does when a stacked pull request's dependency merges; without it Loom asks you to move it by hand; a failure that looks temporary is waited out, as for the other commands, and any other failure is posted, asks you to move it by hand and blocks nothing; Loom counts the pull request as moved, for `after_push`'s `LOOM_BASE` and for later pushes, only once the command succeeds |
+| `after_push` | string array | none | at most 5; `kind = "gh"` or `"command"`; shell commands run after each push Loom makes to an open pull request (a fix round, a catch-up with a dependency or the base branch, a refresh, someone else's commits merged in, a land's push) and after Loom moves one to another base, such as one that starts CI again or marks the pull request ready once it builds on the base branch; at most once per push and once per move, also when a merge runs again; a failure is posted and pauses or blocks nothing; not allowed with `kind = "none"` |
+| `ignore_checks` | string array | none | at most 20 globs of up to 200 characters, none blank; `kind = "gh"` or `"command"`; a glob matches a check's whole name, case-sensitively: `*` is any run of characters, `?` one character, and everything else is literal, as in `"Review Bot*"` or `"* (advisory)"`; checks whose names match are dropped from what Loom reads before it decides a fix round, and from the board, the ticket page and the Merge order tab, such as a review bot's advisory status; items are not affected |
 
 The commands run with `/bin/sh` in the repo's checkout, with a 2-minute limit (`after_open`, `after_push` and `retarget`: 5 minutes):
 
 - `open` gets `LOOM_REMOTE`, `LOOM_BASE`, `LOOM_HEAD` (the pushed branch), `LOOM_TITLE` and `LOOM_DRAFT` (`1` or `0`), and reads the body on standard input. Loom takes the last `http(s)://` URL it prints as the pull request. When one is already open for the branch, it must print that one: a restart can run it again.
-- `state` gets `LOOM_URL` and `LOOM_PR_NUMBER` (the last run of digits in the URL). The first word of its last non-empty line must be `open`, `merged` or `closed`, in any case. Merged completes the ticket; closed blocks it. It tells Loom nothing else, so on a forge with only `state` the Merge order tab cannot say whether a pull request is a draft or approved, and a merge into another branch completes the ticket.
+- `state` gets `LOOM_URL` and `LOOM_PR_NUMBER` (the last run of digits in the URL). The first word of its last non-empty line must be `open`, `merged` or `closed`, in any case. Merged completes the ticket; closed blocks it, except a stacked pull request closed because the branch it built on is gone, which Loom replaces with a new one (see "Stacked pull requests" in the loom skill). It tells Loom nothing else, so on a forge with only `state` the Merge order tab cannot say whether a pull request is a draft or approved, and a merge into another branch completes the ticket.
 - `after_open` gets `LOOM_URL`, `LOOM_PR_NUMBER`, `LOOM_HEAD` and `LOOM_BASE`.
 - `retarget` gets `LOOM_URL`, `LOOM_PR_NUMBER` and `LOOM_BASE`, the branch to move the pull request to.
-- `after_push` gets `LOOM_URL`, `LOOM_PR_NUMBER`, `LOOM_HEAD` (the pull request's branch), `LOOM_SHA` (the commit it now has) and `LOOM_BASE`, the branch it builds on now: its dependency's branch while it is stacked, the repo's base branch once that dependency merged and Loom moved it. So `[ "$LOOM_BASE" != main ] || dt pr ready "$LOOM_PR_NUMBER"` marks a stacked pull request ready once it builds on main; in `after_open` too, it marks one that opens on main ready right away, since `after_open`'s `LOOM_BASE` is also the branch the pull request opened on.
+- `after_push` gets `LOOM_URL`, `LOOM_PR_NUMBER`, `LOOM_HEAD` (the pull request's branch), `LOOM_SHA` (the commit it now has) and `LOOM_BASE`, the branch it builds on now: its dependency's branch while it is stacked, the repo's base branch once that dependency merged and Loom moved it. So `[ "$LOOM_BASE" != main ] || pr-cli pr ready "$LOOM_PR_NUMBER"` marks a stacked pull request ready once it builds on main; in `after_open` too, it marks one that opens on main ready right away, since `after_open`'s `LOOM_BASE` is also the branch the pull request opened on. When Loom pushes and moves the pull request in one step, it runs once, after the move, with the new base, so CI starts once. When there is no move, or the move fails (it waits after a temporary failure, asks you to move it by hand, or pauses the project on gh), it runs at once for the push, with the base the pull request still has, and a move that succeeds on a later run gets its own run with the new base. It runs at most once per push and once per move: Loom records each run before the commands start, so a merge that runs again pushes the same commit or moves the pull request to the same base again and runs none, and a push whose pull request merged while its merge waited keeps its run.
+- `edit` gets `LOOM_URL`, `LOOM_PR_NUMBER` and `LOOM_TITLE`, and reads the whole new description on standard input. Exit 0 means it is set. Loom sends the whole description: the worker's part first, then Loom's own sections between `<!-- loom:begin -->` and `<!-- loom:end -->`. Loom never cuts a description short: one that would be longer than 65,536 characters is not sent, and Loom says why on the ticket.
+- `reply` gets `LOOM_URL`, `LOOM_PR_NUMBER`, `LOOM_ITEM` (the item's key as Loom read it from `feedback`, such as `thread:9`), `LOOM_ITEM_KIND` (`review`, `thread` or `comment`) and `LOOM_RESOLVE` (`1` to resolve a thread after replying, else `0`), and reads the reply on standard input. Exit 0 means it is posted; a URL it prints is shown as the reply's. The reply ends with Loom's `commentSignature` setting and a hidden `<!-- loom:reply -->` mark. Post it from the pull request's author's account when the forge can, and print `author` in `feedback`: Loom never counts an item from the author, or one whose body ends with that mark, as new feedback.
 - `feedback` gets `LOOM_URL` and `LOOM_PR_NUMBER`, and prints one JSON object on its last non-empty line:
 
   ```json
@@ -71,9 +77,13 @@ The commands run with `/bin/sh` in the repo's checkout, with a 2-minute limit (`
    "items": [{"id": "r7", "kind": "review", "author": "alice", "bot": false, "body": "Rename it.", "state": "changes_requested", "url": null, "path": null, "line": null}]}
   ```
 
-  `state` is `open`, `merged` or `closed`. A check's `state` is `pending`, `passed`, `failed` or `neutral`. An item's `kind` is `review`, `thread` (an unresolved review thread, with `path` and `line`, whose `author` is its latest comment's) or `comment`. A pending check may say whether it `started` (`false` while it waits in a queue) and how far it got as `progress`, 0 to 100; any check may give `started_at` and `completed_at` as ISO 8601 times, and the times of passed checks give Loom their usual durations. The object may also give the pull request's `draft` (`true` or `false`), its `review` decision (`approved`, `changes_requested` or `review_required`, in any case) and the `base` branch it targets; Loom shows the first two on the Merge order tab, and with `base` it blocks a ticket whose pull request merged into a branch other than the repo's base instead of completing it. `author`, `checks`, `items`, `bot`, `url`, `state`, `path`, `line`, `started`, `started_at`, `completed_at`, `progress`, `draft`, `review` and `base` may be left out, and a null `draft`, `review` or `base` means the forge cannot tell. An `id` must stay the same while the thing it names does not change, and change when it does (a check that runs again, an edited comment, a new reply in a thread): Loom sends each id to the worker once.
+  `state` is `open`, `merged` or `closed`. A check's `state` is `pending`, `passed`, `failed` or `neutral`. An item's `kind` is `review`, `thread` (an unresolved review thread, with `path` and `line`, whose `author` is its latest comment's) or `comment`. A pending check may say whether it `started` (`false` while it waits in a queue) and how far it got as `progress`, 0 to 100; any check may give `started_at` and `completed_at` as ISO 8601 times, and the times of passed checks give Loom their usual durations. The object may also give the pull request's `draft` (`true` or `false`), its `review` decision (`approved`, `changes_requested` or `review_required`, in any case), the `base` branch it targets and whether it is `mergeable` (`true`, or `false` when it conflicts with its base); Loom shows the first two and a conflict on the Merge order tab, with `base` it blocks a ticket whose pull request merged into a branch other than the repo's base instead of completing it, and on a repo that sets `refresh_behind` a conflict makes Loom merge the base into the branch. It may give the pull request's `title` and `body` as they are now, which Loom needs to refresh the Rollout section between its markers. `author`, `checks`, `items`, `bot`, `url`, `state`, `path`, `line`, `started`, `started_at`, `completed_at`, `progress`, `draft`, `review`, `base`, `mergeable`, `title` and `body` may be left out, and a null `draft`, `review`, `base` or `mergeable` means the forge cannot tell, as while it has not worked out whether the pull request conflicts. An `id` must stay the same while the thing it names does not change, and change when it does (a check that runs again, an edited comment, a new reply in a thread): Loom sends each id to the worker once.
 
-When `state` or `feedback` exits non-zero or runs out of time, Loom reads the end of its output as it reads gh's errors: a network failure, a server error or a rate limit is waited out instead of pausing the project, and anything else pauses it. A JSON line in that output counts only for its `message` and `errors` fields. So a command should exit non-zero when its CLI fails, for example with `set -eu` and without piping a failed call into another command, because one that exits 0 and prints the error instead of a state pauses the project.
+With `gh`, Loom sets a pull request's title and description with `gh pr edit <url> --title … --body-file -`, replies in a review thread with GraphQL's `addPullRequestReviewThreadReply` (and `resolveReviewThread` with `resolve`), answers a review or a comment with a pull request comment that quotes its first line and links it, and reads the description in its poll.
+
+When `open`, `state` or `feedback` exits non-zero or runs out of time, Loom reads the end of its output as it reads gh's errors: a network failure, a server error or a rate limit is waited out instead of pausing the project, and anything else pauses it. A status counts when the output says `HTTP 503`, or when a line starts with one, as in `Error: 429: … retry shortly` or `503: upstream connect error`; 429 is a rate limit, and 500, 502, 503 and 504 are server errors. A JSON line in that output counts only for its `message` and `errors` fields. An `open` command that exits 0 and prints such an error instead of a URL waits too, since running it again is safe. So a command should exit non-zero when its CLI fails, for example with `set -eu` and without piping a failed call into another command, because a `state` or `feedback` command that exits 0 and prints the error instead of a state pauses the project. A merge or a push to a pull request that fails this way waits 1, 2, 5 and 10 minutes, then every 15 (at least 15 after a rate limit), and pauses the project only after an hour of failures. An `edit` that fails this way is tried again on a later read of the pull request, on the same schedule, and never pauses; a newer approved text replaces it before then, also one that keeps the description as it is; any other `edit` failure is posted on the ticket, and the pull request keeps its text. A `reply` that fails returns the error to the worker.
+
+To try a forge's commands against a live pull request before relying on them, run `bb loom forge check <slug> <KEY or url> [--repo <name>] [--version N]`. It runs the read a poll makes on the project's machine (the `feedback` command, else `state`; with gh, gh's own read) and prints what Loom reads from it, or why the read failed and each field it refused, such as a check whose `state` is not one of the four. `--version N` uses that spec version's forge, so the commands of a pending version can be tried before the human approves it. It changes nothing in Loom.
 
 With `kind = "none"`, Loom pushes the ticket's branch and says where; a person opens the pull request. The ticket is done when the remote's base branch contains the ticket's exact commit, so a squash or rebase merge is not seen: block or cancel that ticket by hand. On the integration strategy, `bb loom land` pushes the integration branch and opens nothing.
 
@@ -146,7 +156,7 @@ With `machine`, every worker and reviewer of the repo starts on a new machine of
 
 #### Stacked pull requests on new machines
 
-Loom makes every stack merge on the project's checkout and puts only linear commits on a thread's machine, since a machine may keep no merge commit (World's sandboxes neither sync one to the laptop nor survive a move with one).
+Loom makes every stack merge on the project's checkout and puts only linear commits on a thread's machine, since a machine may keep no merge commit (some sandboxes neither sync one back to the project's machine nor survive a move with one).
 
 - A dependent starts once its dependency's pull request is open. The stack base, the commit it is stacked on, is built on the checkout as anywhere (one dependency's pull request commit, or a merge of several, on `loom/<slug>/<key>-stack`). The worker starts at the fresh base, and `loom_resume` puts the stack base in as one commit on it. On a machine, a stacked ticket's history is therefore the fresh base, one commit with the stack base's tree, and then its own work. `loom_resume` and `loom_checkout` carry earlier work, or the reviewed work, as one more commit on top.
 - The scope check on the machine measures the worker's changes from the newest commit on its first-parent line whose tree is the stack base's, since the machine may give that commit a new id. A branch that no longer has it, after a rebase, a reset or a squash over it, is refused as a scope check, and the worker's brief says to keep it.
@@ -178,13 +188,24 @@ On the pull request strategy a pull request can wait days for a person, and an i
 - `merge.release_workers = false` keeps each worker and its worktree until its pull request merges, as Loom did before this setting; choose it when a worktree holds set-up state that takes long to build again and environments cost little.
 - A spec version approved after the project started may turn it on or off; it applies from Loom's next pass. A worker released before it was turned off still comes back for its pull request's next fix round.
 
+### Keeping pull requests fresh
+
+On the pull request strategy Loom brings an open pull request's branch up to date with its base on its own only when a dependency it is stacked on changes or merges. Some CI systems fail every pipeline once a branch is far enough behind its base, so a repo can set `refresh_behind`, in commits behind the base, to keep its pull requests fresh. It is off unless `merge.refresh_behind` or the repo's own `refresh_behind` is set.
+
+- On such a repo, while it has open pull requests, Loom fetches the remote base branch on the project's checkout at most every 30 minutes and counts the commits of `<remote>/<base>` that the commit it pushed to each pull request lacks (`git rev-list --count <pushed>..<remote>/<base>`). A pull request pushed since its last count is counted again at once, against the base as last fetched. The count is on the Merge order tab; a count that fails is logged and tried again later.
+- An open pull request on the repo's base is due once Loom has counted it and it lacks at least `refresh_behind` commits, or once the forge says it conflicts with its base (gh reads that for you; a command forge's `feedback` prints `mergeable`), in a read after Loom's last push. It goes by what the commit Loom pushed has: once Loom's count of that commit finds every commit of the base tip it fetched, it is not due again until the base moves, whatever the forge says.
+- The merge queue takes a due pull request as it takes a stacked one that must catch up, after every approved ticket and every restack a stack needs: it merges the base tip the count fetched into the ticket's branch on the project's checkout, so a refresh fetches nothing more, puts the merge in its worker's worktree, runs the ticket's checks there and pushes the result, with no new review. It pushes a commit that takes the base even when the merge leaves the branch's files as they were, as after a base change and its revert, so the pushed branch is not behind any more. A worker on a machine of its own gets the merge made on the project's checkout, as linear commits. A released worker comes back first, and a worker whose pull request is due is not released. The post on the ticket says what Loom did, for example: "CSV-4's branch lacked 12,374 commits of origin/main, so Loom merged origin/main into it, ran its checks and pushed abc123."
+- Loom never rebases and never force-pushes. A merge that conflicts goes back to the worker with the files named, and a check that fails on the result goes back too, as for a stacked pull request.
+- A stacked pull request is not refreshed itself: its parent's refresh reaches it, through the merge that brings it up to date with its parent. A ticket in a fix round, or with work going back to its worker, waits until it is back in `pr_open`.
+- On `kind = "none"` Loom opens no pull request and reads none, so nothing is refreshed.
+
 ### Slow repositories
 
-Loom runs git's network steps in a repo's checkout: it fetches the base branch before it brings a stacked pull request up to date, runs `ls-remote` and may fetch the branch when it builds a pull request's commit, and pushes. Each step may take `git_network_timeout_seconds` (120 by default), and the host call around it twice that plus 30 seconds. A step that runs longer is stopped and the project pauses with the git error, or with "host plugin call … exceeded its deadline", and resuming pauses it again while the fetch stays that slow.
+Loom runs git's network steps in a repo's checkout: it fetches the base branch before it brings a stacked pull request up to date, runs `ls-remote` and may fetch the branch when it builds a pull request's commit, and pushes. Each step may take `git_network_timeout_seconds` (120 by default), and the host call around it twice that plus 30 seconds. A step that runs longer is stopped and waited out like any temporary failure, so the merge runs again after 1, 2, 5 and 10 minutes, then every 15; while the fetch stays that slow, every run stops the same way, and the project pauses after an hour of them.
 
-- Time the fetch in the repo's checkout, for example `time git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main`, and set `git_network_timeout_seconds` comfortably above it on that `[[repo]]`, or on `[merge]` for a single-repo project. Fetching main of the World monorepo takes 50 to 80 seconds, so 300 leaves room.
-- To change it on a running project, propose a revision with the new value; it applies once the version is approved. The project's pull requests, workers and tickets are unchanged.
-- The setting covers git only. `gh`, the forge's commands and the first checkout of an integration worktree keep their own 2-minute limits.
+- Time the fetch in the repo's checkout, for example `time git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main`, and set `git_network_timeout_seconds` comfortably above it on that `[[repo]]`, or on `[merge]` for a single-repo project. On a large monorepo whose main takes 50 to 80 seconds to fetch, 300 leaves room.
+- To change it on a running project, propose a revision with the new value; it applies once the version is approved, and a version that changes only it skips the spec review. The project's pull requests, workers and tickets are unchanged.
+- The setting covers git only. `gh`, the forge's commands and the first checkout of an integration worktree keep their own 2-minute limits, and merge-tree on the project's checkout gets 2 minutes too.
 
 ### [checks]
 
@@ -262,6 +283,8 @@ Zero to 10 entries. Leave them out when the work stays in the planner thread's o
 | `forge` | table | `merge.forge` | like [merge.forge], for this repo's pull requests |
 | `environment` | table | `environment` | like [environment], for the threads Loom starts in this repo |
 | `worktree` | table | `merge.worktree` | like [merge.worktree], for this repo's integration worktree |
+| `deploy` | table | `rollout.deploy` | `{ on_merge?, how? }`, like `[rollout].deploy`, for the tickets in this repo; each key it sets replaces the project's; strategy `"pr"` only |
+| `refresh_behind` | integer | `merge.refresh_behind` | like `merge.refresh_behind`, for this repo's pull requests; strategy `"pr"` only; see [Keeping pull requests fresh](#keeping-pull-requests-fresh) |
 | `git_network_timeout_seconds` | integer | `merge.git_network_timeout_seconds` | 30 to 600; like `merge.git_network_timeout_seconds`, for this repo's git fetches, `ls-remote` and pushes |
 
 Each repo gets its own integration branch (`merge.branch`, from the repo's `base`) and its own Loom worktree. Tickets in different repos never share a file, so their scopes never overlap.
@@ -283,8 +306,49 @@ One to 200 entries.
 | `priority` | integer | `2` | 0 (highest) to 3 |
 | `repo` | string | none | required when the spec has `[[repo]]` tables, and then one of their names; not allowed without them. The ticket changes only this repo: its `scope`, `verify` and protected paths are relative to the repo's root. `depends_on` may name a ticket in another repo. |
 | `environment` | table | none | `{ inputs = { … } }`: a merge patch over its repo's environment `inputs` for this ticket's workers and reviewers (see [environment]); only where the repo has an environment provider; `loom_edit_ticket` changes it, and an empty `inputs` removes it |
+| `rollout` | table | none | the ticket's place in the deploy order (see [rollout]); strategy `"pr"` only |
 
 Commands are up to 2000 characters each, globs up to 200, acceptance items up to 1000.
+
+### [rollout]
+
+Deploy order, on strategy `"pr"` only. Loom orders three things: `depends_on` orders the work, `merge_after` and stacks order the merges, and `rollout` orders the deploys: when a ticket's change may reach traffic, and what must be live first. It is advice for the human. Loom never holds, delays or reorders a start, a review, a merge or a push because of it; it tracks what is live, shows the order on the Rollout tab and in `bb loom rollout`, and writes a `## Rollout` section into each pull request's description. Every key is optional, and a spec without any of them reads as before.
+
+| Key | Type | Default | Rule |
+|---|---|---|---|
+| `deploy` | table | none | `{ on_merge?, how? }`: `on_merge = true` when merging deploys the change (a Terraform actuator that applies on merge); `how` is up to 300 characters on how changes reach traffic, such as "The deploy pipeline ships main: canary, then production". A `[[repo]]` table's `deploy` overrides each key it sets |
+| `stage` | array of tables | none | at most 12, in deploy order: `name` (`^[a-z][a-z0-9-]{0,23}$`, unique), `goal` (up to 300 characters: what is true once the stage is live) and an optional `soak` (`30m`, `2h`, `1d`: how long the stage's steps stay live before the next stage goes) |
+| `milestone` | array of tables | none | at most 30 prerequisites no ticket delivers, such as a metric reaching zero or another team's service existing: `ref` (like a ticket ref, unique, and not a ticket's ref), `title` (up to 200 characters), an optional `check` command whose exit 0 means it holds, and an optional `stage`: the stage it gates, whose steps all need it |
+| `window` | array of tables | none | at most 20 freezes or deploy restrictions: `title`, `from` and `to` (real dates, inclusive, as TOML dates or strings) and an optional `note` |
+
+A ticket's `rollout` table:
+
+| Key | Type | Default | Rule |
+|---|---|---|---|
+| `stage` | string | none | one of the `[[rollout.stage]]` names. Without those tables, the stages tickets name are ordered by the first ticket that names each, with a warning |
+| `requires_live` | string array | none | at most 20 ticket refs or milestone refs, not the ticket's own: what must be live, not merely merged, before this change reaches traffic. None may sit in a later stage than this ticket's |
+| `release` | string | none | a name the tickets that deploy together share, such as `nrm-wave-1` |
+| `dark` | boolean | `false` | the change ships with its gate off; turning the gate on is a step of its own |
+| `how` | string | its repo's `deploy.how` | up to 300 characters, when this ticket deploys differently from its repo |
+| `verify` | string | none | a command Loom runs after the merge that exits 0 once the change is live, such as `curl -fsS https://… \| grep …` |
+| `rollback` | string | none | up to 1000 characters on how to undo it |
+
+How Loom knows a change is live, cheapest first:
+
+1. A ticket in a repo whose `deploy.on_merge` is true is live once its pull request merges.
+2. A merged ticket with `verify`: Loom runs the command on the project's machine, in the ticket's repo checkout, every 15 minutes with a 2-minute timeout, until it exits 0. A milestone's `check` runs the same way, in the first repo's checkout, from when the project starts. A run that fails is kept with its output and tried again at the next interval; it never pauses the project. One command runs per target at a time, and a run keeps no result when the project was archived or the command changed while it ran. Loom keeps checking after the project is done, until it is archived.
+3. The human marks it, with Mark live on the Rollout tab or `bb loom live <slug> <KEY or milestone>`. Nothing else runs for a ticket with neither `verify` nor `on_merge`.
+
+A step is soaked once it has been live for its stage's `soak`. The next safe step is in the earliest stage with steps that are not live, once every stage before it has soaked: the steps there whose requirements are all live. Warnings name a deploy-on-merge pull request that is open or approved while something it requires is not live, a merged step that is not live while something it requires is not live, a deploy-on-merge pull request inside a window or with one starting within 14 days, a step whose earlier stage has not soaked, and a step that needs a milestone that does not hold. A ticket that is live while a step that requires it is live is past the point of no return: rolling it back breaks that consumer.
+
+Write a rollout for every ticket that changes a running system: a service, infrastructure, or an interface other code calls. The principles:
+
+- Providers before consumers: what is called is live before anything calls it (expand, then migrate, then contract).
+- Dark before exposed: code ships with its gate off, and turning the gate on is its own ticket.
+- Small blast radius first: staging before production, canary clusters before the fleet.
+- Verify and soak between stages: each step has an exit check, and a stage may soak before the next goes.
+- Removal last, behind a milestone: code that removes an old path waits for a signal, such as its traffic reaching zero.
+- Respect windows: no deploy-on-merge step inside a freeze.
 
 ## Example: a two-ticket project
 
@@ -421,6 +485,98 @@ depends_on = ["notes-api"]
 - A ticket's protected paths are `.github/**` and its own repo's list: `go.sum` in `api`, `package-lock.json` in `web`.
 - `bb loom land order-notes` opens one pull request in each repo, `bb loom land order-notes --repo api` lands only `api`, and the project is done when every repo with merged work has landed.
 
+## Example: deploy order
+
+Server support first, then the callers, then removing the old path once its traffic is gone. The proxy deploys on merge; the server deploys with its deploy tool.
+
+```toml
+[project]
+slug = "new-header"
+name = "New request header"
+key = "HDR"
+goal = "Move every caller from the X-Old header to X-New without breaking a request, then remove X-Old from the server."
+summary = "Callers send X-New instead of X-Old, and the server drops X-Old once nothing sends it, with no request lost on the way."
+
+[merge]
+strategy = "pr"
+
+[checks]
+commands = ["make lint test"]
+
+[agents.worker]
+provider = "claude-code"
+
+[agents.reviewer]
+provider = "codex"
+
+[rollout]
+deploy = { how = "The deploy pipeline ships main: canary, then production" }
+
+[[rollout.stage]]
+name = "expand"
+goal = "The server accepts X-New in production"
+soak = "1d"
+
+[[rollout.stage]]
+name = "migrate"
+goal = "Every caller sends X-New"
+
+[[rollout.stage]]
+name = "contract"
+goal = "The server no longer reads X-Old"
+
+[[rollout.milestone]]
+ref = "old-header-zero"
+title = "Requests with X-Old are near zero"
+check = "./scripts/old-header-rate.sh --below 0.1"
+stage = "contract"
+
+[[rollout.window]]
+title = "Holiday infrastructure freeze"
+from = 2026-11-09
+to = 2026-11-23
+
+[[repo]]
+name = "server"
+project = "proj_server"
+
+[[repo]]
+name = "proxy"
+project = "proj_proxy"
+deploy = { on_merge = true, how = "The Terraform actuator applies on merge" }
+
+[[ticket]]
+ref = "server-header"
+repo = "server"
+title = "Accept X-New"
+body = "Read X-New in src/headers.go wherever X-Old is read, preferring X-New when both are sent."
+acceptance = ["WHEN a request has X-New THE SYSTEM SHALL treat it as it treats X-Old"]
+scope = ["src/headers.go", "src/headers_test.go"]
+rollout = { stage = "expand", verify = "curl -fsS -H 'X-New: 1' https://api.example.com/health", rollback = "Revert; nothing sends X-New yet" }
+
+[[ticket]]
+ref = "proxy-header"
+repo = "proxy"
+title = "Send X-New from the proxy"
+body = "Set X-New instead of X-Old in terraform/proxy/headers.tf."
+acceptance = ["WHEN the proxy forwards a request THE SYSTEM SHALL send X-New and not X-Old"]
+scope = ["terraform/proxy/**"]
+depends_on = ["server-header"]
+rollout = { stage = "migrate", requires_live = ["server-header"], rollback = "Revert; the actuator applies the revert" }
+
+[[ticket]]
+ref = "drop-old-header"
+repo = "server"
+title = "Stop reading X-Old"
+body = "Remove the X-Old reads from src/headers.go and their tests."
+acceptance = ["WHEN a request has only X-Old THE SYSTEM SHALL ignore it"]
+scope = ["src/headers.go", "src/headers_test.go"]
+depends_on = ["server-header"]
+rollout = { stage = "contract", rollback = "Revert the removal" }
+```
+
+`proxy-header` deploys when it merges, so it should merge only after `server-header` is live: its pull request opens anyway, and the Rollout tab warns while `server-header` is not live. `drop-old-header` needs `old-header-zero` through its stage, so the next safe step waits for that check to pass.
+
 ## Example: servers other than GitHub
 
 A project in a repository whose remote is not on GitHub, and whose workers need a plugin's environment. The values come from `loom_discover` and the human; Loom knows none of them.
@@ -441,7 +597,9 @@ remote = "upstream"
 kind = "command"
 open = 'review-cli create --base "$LOOM_BASE" --head "$LOOM_HEAD" --title "$LOOM_TITLE" --body-file -'
 state = 'review-cli status "$LOOM_PR_NUMBER"'
+edit = 'review-cli update "$LOOM_PR_NUMBER" --title "$LOOM_TITLE" --body-file -'
 after_open = ['ci-cli run --pr "$LOOM_PR_NUMBER"']
+after_push = ['ci-cli run --pr "$LOOM_PR_NUMBER" --commit "$LOOM_SHA"']
 
 # On merge.strategy = "integration", the same plugin could prepare the integration worktree:
 # [merge.worktree]
@@ -469,11 +627,11 @@ scope = ["services/orders/db/**", "services/orders/model/**"]
 environment = { inputs = { paths = ["services/orders"] } }
 ```
 
-## Example: a World project on new machines
+## Example: a project on new machines with a command forge
 
-A project whose workers and reviewers each run on a new machine that a plugin's environment makes, opening and following its pull requests through a forge command. The provider ids and inputs come from `loom_discover` and the human; these are placeholders. The forge is Delta, through its `dt` CLI, whose JSON follows GitHub's REST API.
+A project whose workers and reviewers each run on a new machine that a plugin's environment makes, opening and following its pull requests through a forge command. The provider ids and inputs come from `loom_discover` and the human; these are placeholders. The forge is a server reached through its own CLI, called `pr-cli` here, whose JSON follows GitHub's REST API. The repository is a large monorepo, so the spec raises `git_network_timeout_seconds`; the forge moves a stacked pull request with `retarget`, and `after_push` starts CI again after each push, since this server's CI does not start by itself on a draft, and marks a stacked pull request ready once it builds on main.
 
-The zone's tests need a container runtime that the machines do not have, so the plugin's checks are only the static ones, and Loom relies on the pull request's CI (`ci` unset is `true`) for the rest. That needs the `feedback` command: it reads the pull request with `dt pr view`, and its check runs and commit statuses with `dt pr checks`, which exits 8 while checks are pending. The command turns them into the JSON object Loom reads, mapping each check run's `status` and `conclusion` to Loom's check states. It leaves out Delta's `reviews` check run, which is the approval gate rather than CI and would hold every failed check until the settle time. It reports no reviews or comments, so your replies on the ticket are what starts a fix round for a reviewer's request.
+The repository's tests need a container runtime that the machines do not have, so the plugin's checks are only the static ones, and Loom relies on the pull request's CI (`ci` unset is `true`) for the rest. That needs the `feedback` command: it reads the pull request with `pr-cli pr view`, and its check runs and commit statuses with `pr-cli pr checks`, which exits 8 while checks are pending. The command turns them into the JSON object Loom reads, mapping each check run's `status` and `conclusion` to Loom's check states. It leaves out the server's `reviews` check run, which is the approval gate rather than CI and would hold every failed check until the settle time. It reports no reviews or comments, so your replies on the ticket are what starts a fix round for a reviewer's request.
 
 ```toml
 [project]
@@ -485,20 +643,20 @@ summary = "Each route of the routing controller gets a configurable upstream tim
 
 [merge]
 strategy = "pr"
-# Fetching main of World takes about a minute; see Slow repositories.
+# Fetching main of this large monorepo takes about a minute; see Slow repositories.
 git_network_timeout_seconds = 300
 
 [merge.forge]
 kind = "command"
-open = 'dt pr create --remote "$LOOM_REMOTE" --base "$LOOM_BASE" --head "$LOOM_HEAD" --title "$LOOM_TITLE" --body "$(cat)"'
-state = 'dt pr view "$LOOM_PR_NUMBER" --json | jq -r "if .merged == true then \"merged\" else .state end"'
-retarget = 'dt pr edit "$LOOM_PR_NUMBER" --base "$LOOM_BASE"'
+open = 'pr-cli pr create --remote "$LOOM_REMOTE" --base "$LOOM_BASE" --head "$LOOM_HEAD" --title "$LOOM_TITLE" --body "$(cat)"'
+state = 'pr-cli pr view "$LOOM_PR_NUMBER" --json | jq -r "if .merged == true then \"merged\" else .state end"'
+retarget = 'pr-cli pr edit "$LOOM_PR_NUMBER" --base "$LOOM_BASE"'
 # Fresh CI after every push; a stacked pull request leaves draft once it builds on main.
-after_push = ['devx ci run -b "$LOOM_HEAD" -n', '[ "$LOOM_BASE" != main ] || dt pr ready "$LOOM_PR_NUMBER"']
+after_push = ['ci-cli run --branch "$LOOM_HEAD"', '[ "$LOOM_BASE" != main ] || pr-cli pr ready "$LOOM_PR_NUMBER"']
 feedback = '''
 set -eu
-view=$(dt pr view "$LOOM_PR_NUMBER" --remote origin --json)
-checks=$(dt pr checks "$LOOM_PR_NUMBER" --remote origin --json) || [ $? -eq 8 ]
+view=$(pr-cli pr view "$LOOM_PR_NUMBER" --remote origin --json)
+checks=$(pr-cli pr checks "$LOOM_PR_NUMBER" --remote origin --json) || [ $? -eq 8 ]
 jq -cn --argjson view "$view" --argjson checks "$checks" '{
   state: (if $view.merged then "merged" else $view.state end),
   head: $view.head.sha,
@@ -520,10 +678,10 @@ jq -cn --argjson view "$view" --argjson checks "$checks" '{
 '''
 
 [environment]
-provider = "example-world"
-machine = { provider = "example-world", inputs = { zones = ["areas/infra/routing/controller"] } }
+provider = "example-trees"
+machine = { provider = "example-machines", inputs = { paths = ["services/routing-controller"] } }
 
-# Cheap checks that run on the worker's machine; the zone's tests run in the pull request's CI.
+# Cheap checks that run on the worker's machine; the repository's tests run in the pull request's CI.
 [checks]
 commands = ["git diff --check origin/main...HEAD"]
 
@@ -532,7 +690,7 @@ ref = "route-timeout"
 title = "Configurable upstream timeout"
 body = "Add an upstream_timeout setting to each route, read it where the controller builds the upstream, and keep today's value as the default."
 acceptance = ["WHEN a route sets upstream_timeout THE SYSTEM SHALL use it for that route's upstream", "WHEN a route sets none THE SYSTEM SHALL keep today's timeout"]
-scope = ["areas/infra/routing/controller/**"]
+scope = ["services/routing-controller/**"]
 ```
 
 ## Errors
@@ -549,14 +707,26 @@ A spec with any error is refused and nothing is saved. Errors are numbered, at m
 - A ticket scope glob equals, or sits under, a protected glob (the text before the first `*` is compared).
 - A ticket has no `verify` command and `checks.commands` is empty.
 - `checks.after_merge` is set with strategy `"pr"`.
-- A forge with `kind = "command"` lacks `open` or `state`, a forge of another kind sets them or `feedback`, or `kind = "none"` sets `after_open`.
-- `merge.describe`, `merge.squash`, `merge.max_fix_rounds`, `merge.stack`, `merge.release_workers`, `merge.checks_queued_minutes` or `merge.checks_near_done_percent` on the integration strategy.
+- A forge with `kind = "command"` lacks `open` or `state`, a forge of another kind sets them, `feedback`, `edit` or `reply`, or `kind = "none"` sets `after_open`, `after_push` or `ignore_checks`.
+- An `ignore_checks` entry is blank or longer than 200 characters, or there are more than 20.
+- `merge.describe`, `merge.squash`, `merge.max_fix_rounds`, `merge.stack`, `merge.release_workers`, `merge.refresh_behind`, `merge.checks_queued_minutes`, `merge.checks_near_done_percent` or a repo's `refresh_behind` on the integration strategy.
 - `merge.worktree` is set with strategy `"pr"`.
 - An `environment` (top level or a repo's) or its `reviewer` sets `machine`, and the strategy is not `"pr"`.
 - `checks.ci` or a repo's `ci` on the integration strategy.
 - A repo that relies on the pull request's CI (strategy `"pr"` with `ci` unset or `true`) whose forge reports no checks: `kind = "command"` without `feedback`, or `kind = "none"`. Add a `feedback` command, or set `ci = false` for that repo.
 - An `inputs` string, in `[environment]`, its `reviewer` table or a ticket's `environment`, holds a `{name}` other than `{branch}` or `{base}`.
 - A ticket sets `environment` in a repo whose threads start in git worktrees, with no environment provider to patch.
+
+Rollout adds these errors:
+
+- `[rollout]`, a repo's `deploy` or a ticket's `rollout` on the integration strategy, where every ticket lands together.
+- Two stages with the same `name`, two milestones with the same `ref`, or a milestone whose `ref` is a ticket's.
+- A ticket's `rollout.stage`, or a milestone's `stage`, that is not a `[[rollout.stage]]` name, when the spec has those tables.
+- A `requires_live` entry that is neither a ticket ref nor a milestone ref, or is the ticket's own ref.
+- A `soak` that is not a duration such as `30m`, `2h` or `1d`.
+- A window whose `from` is after its `to`.
+- A cycle through `depends_on`, `merge_after` and `requires_live` together.
+- A ticket that requires a ticket or a milestone in a later stage than its own.
 
 Repos add these errors:
 
@@ -599,9 +769,12 @@ Warnings are returned but do not block a proposal.
 - The reviewer and the worker use the same provider and model (including both left unset), so review shares the worker's blind spots.
 - Two tickets have overlapping scope and no dependency path between them, so they will run one at a time. Add `depends_on` or narrow the scope.
 - After approval, a revision's ticket list is ignored: "Ticket changes after approval go through the planner's board tools."
+- Tickets name rollout stages, but the spec has no `[[rollout.stage]]` tables, so the stages have no goal or soak and are ordered by the first ticket that names each.
+- A ticket has a `rollout.verify` in a repo that deploys on merge: Loom marks it live when its pull request merges and never runs `verify`.
 
 ## Revisions
 
 - Before approval, proposing again from the planner thread with the same slug adds a new draft version; older drafts are kept as superseded, and approving takes the newest.
 - After approval, a revision becomes a pending version; `bb loom approve <slug>` applies it. Tickets are not recreated.
+- Loom's spec review checks each new version before the human is asked, except a version that, against the version before it, changes only operational settings: `merge.forge` and a repo's `forge`, `environment` and a repo's or a ticket's `environment`, `agents`, `budget`, every `[merge]` key but `strategy`, `branch` and `remote`, `checks.timeout_minutes`, `checks.ci`, and a repo's `ci` and `refresh_behind`. Such a version skips the review and goes to the human, who still approves it. The version before a pending version is the version in force; the version before a draft is the draft before it, and only when that draft's own review passed or was skipped. The first version is always reviewed.
 - Proposing a spec identical to the latest one changes nothing and returns the existing version.

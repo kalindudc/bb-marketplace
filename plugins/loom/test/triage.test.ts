@@ -122,6 +122,27 @@ describe("triage rounds", () => {
     expect(messageToPlanner()[0]!.detail).toContain("paused (The deadline 2030-01-01 has passed.)");
   });
 
+  it("sends no round for a pause the plugin made for anything but the budget or the deadline, and still sends one for blocked tickets", async () => {
+    await seedProject(h, undefined, "paused");
+    h.store.updateProject(project().id, { triage_pending: 1, system_reason: "Reading the pull request of CSV-1 stopped: host plugin call exceeded its deadline" });
+    expect(await round()).toBe(false);
+    expect(project().triage_pending).toBe(0);
+    expect(h.bb.callsTo("send")).toEqual([]);
+
+    await block("CSV-1", "No API key");
+    expect(await round()).toBe(true);
+    expect(messageToPlanner()[0]!.summary).toBe("[loom] Triage round 1 for csv: 1 ticket is blocked.");
+  });
+
+  it("says what a new spec version can change when the budget paused the project", async () => {
+    await seedProject(h, undefined, "paused");
+    h.store.updateProject(project().id, { triage_pending: 1, system_reason: "The token budget is used up: 900 of 800 tokens." });
+    expect(await round()).toBe(true);
+    const sent = messageToPlanner()[0]!;
+    expect(sent.summary).toBe("[loom] Triage round 1 for csv: Loom paused the project. The token budget is used up: 900 of 800 tokens.");
+    expect(sent.detail).toContain("budget.max_tokens");
+  });
+
   it("keeps the digest to the last three posts of each blocked ticket", async () => {
     await seedProject(h);
     const ticket = ticketOf(h, "CSV-1");
@@ -479,5 +500,70 @@ describe("merge_after on the board tools", () => {
     expect(ticketOf(h, "CSV-1").merge_after_json).toBe("[]");
     const event = h.store.events(project().id).filter((each) => each.kind === "ticket.edited").at(-1)!;
     expect(JSON.parse(event.data_json)).toMatchObject({ fields: ["merge_after"], before: { merge_after_json: "[]" } });
+  });
+});
+
+describe("rollout on the board tools", () => {
+  const staged = (doc: Doc) => {
+    doc.merge = { strategy: "pr" };
+    doc.rollout = { stage: [{ name: "expand", goal: "The model is live" }, { name: "migrate", goal: "Callers use it" }], milestone: [{ ref: "traffic-low", title: "Old traffic is near zero", stage: "migrate" }] };
+    doc.ticket[0].rollout = { stage: "expand" };
+  };
+
+  it("adds tickets whose rollout names refs in the batch, tickets on the board and milestones, and refuses what does not resolve or runs backwards", async () => {
+    await seedProject(h, staged);
+    const created = addTickets(h.ctx, project().id, [newTicket({ ref: "a", rollout: { stage: "migrate", requires_live: ["csv-model", "traffic-low"] } }), newTicket({ ref: "b", scope: ["web/**"], rollout: { requires_live: ["a"], verify: "true" } })], "thr_plan");
+    expect(created.map((ticket) => ticket.rollout_json)).toEqual([JSON.stringify({ stage: "migrate", requires_live: ["CSV-1", "traffic-low"] }), JSON.stringify({ requires_live: ["CSV-3"], verify: "true" })]);
+    const attempt = (tickets: TicketSpec[]) => () => addTickets(h.ctx, project().id, tickets, "thr_plan");
+    expect(attempt([newTicket({ ref: "c", rollout: { stage: "cleanup" } })])).toThrow(/tickets\[0\]\.rollout\.stage: "cleanup" is not one of this project's \[\[rollout\.stage\]\] names: expand, migrate/);
+    expect(attempt([newTicket({ ref: "c", rollout: { requires_live: ["nope"] } })])).toThrow(/requires_live: "nope" is not a ticket on this board, a ref in this batch or a \[\[rollout\.milestone\]\] ref/);
+    expect(attempt([newTicket({ ref: "c", rollout: { stage: "expand", requires_live: ["traffic-low"] } })])).toThrow(/"traffic-low" is in the stage "migrate", which comes after "expand"/);
+    expect(attempt([newTicket({ ref: "traffic-low" })])).toThrow(/"traffic-low" is the ref of one of this project's \[\[rollout\.milestone\]\] tables/);
+    expect(attempt([newTicket({ ref: "c", rollout: { requires_live: ["d"] } }), newTicket({ ref: "d", scope: ["web/**"], depends_on: ["c"] })])).toThrow(/rollout order cycle (c -> d -> c|d -> c -> d) through depends_on, merge_after and requires_live/);
+    expect(h.store.tickets(project().id)).toHaveLength(4);
+  });
+
+  it("refuses rollout on the integration strategy", async () => {
+    await seedProject(h);
+    expect(() => addTickets(h.ctx, project().id, [newTicket({ rollout: { dark: true } })], "thr_plan")).toThrow(/tickets\[0\]\.rollout: deploy order is advice .* merge\.strategy is "integration"/);
+    expect(() => editTicket(h.ctx, "CSV-1", { rollout: { dark: true } }, "thr_plan")).toThrow(/rollout: deploy order is advice/);
+  });
+
+  it("changes the rollout of a ticket whose pull request is open or that is done, but not of a cancelled one", async () => {
+    await seedProject(h, staged);
+    h.store.updateTicket(ticketOf(h, "CSV-2").id, { state: "pr_open" });
+    expect(editTicket(h.ctx, "CSV-2", { rollout: { stage: "migrate", requires_live: ["CSV-1"] } }, "thr_plan").rollout_json).toBe(JSON.stringify({ stage: "migrate", requires_live: ["CSV-1"] }));
+    expect(editTicket(h.ctx, "CSV-2", { rollout: { stage: "migrate", requires_live: ["CSV-1"] }, merge_after: [] }, "thr_plan").state).toBe("pr_open");
+    expect(() => editTicket(h.ctx, "CSV-2", { title: "x", rollout: {} }, "thr_plan")).toThrow(/CSV-2 is pr_open; only a queued or blocked ticket/);
+    h.store.updateTicket(ticketOf(h, "CSV-2").id, { state: "done" });
+    expect(editTicket(h.ctx, "CSV-2", { rollout: {} }, "thr_plan").rollout_json).toBeNull();
+    expect(() => editTicket(h.ctx, "CSV-2", { merge_after: [] }, "thr_plan")).toThrow(/CSV-2 is done, so its merge order no longer matters/);
+    h.store.updateTicket(ticketOf(h, "CSV-2").id, { state: "cancelled" });
+    expect(() => editTicket(h.ctx, "CSV-2", { rollout: {} }, "thr_plan")).toThrow(/CSV-2 is cancelled, so its rollout no longer matters/);
+  });
+
+  it("refuses moving a provider to a stage after a ticket that requires it, unless that ticket is cancelled", async () => {
+    await seedProject(h, (doc) => {
+      staged(doc);
+      doc.rollout.stage.push({ name: "contract", goal: "The old path is gone" });
+      doc.ticket[1].rollout = { stage: "migrate", requires_live: ["csv-model"] };
+    });
+    expect(() => editTicket(h.ctx, "CSV-1", { rollout: { stage: "contract" } }, "thr_plan")).toThrow(
+      /rollout\.stage: CSV-2 requires CSV-1 live and is in the stage "migrate", which comes before "contract"\. Keep CSV-1 in "migrate" or an earlier stage, or move CSV-2 later first\./,
+    );
+    expect(ticketOf(h, "CSV-1").rollout_json).toBe(JSON.stringify({ stage: "expand" }));
+    expect(editTicket(h.ctx, "CSV-1", { rollout: { stage: "migrate" } }, "thr_plan").rollout_json).toBe(JSON.stringify({ stage: "migrate" }));
+    h.store.updateTicket(ticketOf(h, "CSV-2").id, { state: "cancelled" });
+    expect(editTicket(h.ctx, "CSV-1", { rollout: { stage: "contract" } }, "thr_plan").rollout_json).toBe(JSON.stringify({ stage: "contract" }));
+  });
+
+  it("refuses a rollout patch that names itself, an unknown ticket, a later stage or a cycle", async () => {
+    await seedProject(h, staged);
+    expect(() => editTicket(h.ctx, "CSV-1", { rollout: { requires_live: ["csv-model"] } }, "thr_plan")).toThrow(/cannot require itself to be live/);
+    expect(() => editTicket(h.ctx, "CSV-1", { rollout: { requires_live: ["CSV-9"] } }, "thr_plan")).toThrow(/"CSV-9" is not a ticket on this board/);
+    expect(() => editTicket(h.ctx, "CSV-1", { rollout: { stage: "expand", requires_live: ["traffic-low"] } }, "thr_plan")).toThrow(/comes after "expand"/);
+    // CSV-2 depends on CSV-1, so CSV-1 needing CSV-2 live first is a loop.
+    expect(() => editTicket(h.ctx, "CSV-1", { rollout: { requires_live: ["CSV-2"] } }, "thr_plan")).toThrow(/rollout order cycle/);
+    expect(ticketOf(h, "CSV-1").rollout_json).toBe(JSON.stringify({ stage: "expand" }));
   });
 });

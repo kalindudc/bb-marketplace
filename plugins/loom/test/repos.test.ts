@@ -61,6 +61,7 @@ describe("repoSettings", () => {
       ci: false,
       environment: null,
       worktree: null,
+      refreshBehind: null,
       gitNetworkTimeoutMs: null,
     });
   });
@@ -79,6 +80,7 @@ describe("repoSettings", () => {
       ci: false,
       environment: null,
       worktree: null,
+      refreshBehind: null,
       gitNetworkTimeoutMs: null,
     });
   });
@@ -97,6 +99,7 @@ describe("repoSettings", () => {
       ci: false,
       environment: null,
       worktree: null,
+      refreshBehind: null,
       gitNetworkTimeoutMs: null,
     });
   });

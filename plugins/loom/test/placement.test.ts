@@ -190,8 +190,9 @@ describe("an open pull request, after a move", () => {
     await moveTo(onMachines);
     h.store.updateTicket(ticketOf(h, "CSV-1").id, { pushed_sha: "sq7" });
     await queue();
-    expect(h.host.callsTo("merge").at(-1)).toMatchObject({ worktree: worktreeOf(worker), ref: "sq7" });
-    expect(h.host.callsTo("mergeOnto")).toEqual([]);
+    expect(h.host.callsTo("mergeOnto").at(-1)).toMatchObject({ ref: "sq7" });
+    expect(h.host.callsTo("resetHard").at(-1)).toMatchObject({ worktree: worktreeOf(worker) });
+    expect(h.host.callsTo("carryStart")).toEqual([]);
   });
 
   it("off machines: a stacked ticket's live worker on a machine gets its dependency's new commit merged on the checkout and carried in", async () => {

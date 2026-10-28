@@ -20,7 +20,7 @@ export const SYNC_WAIT_MS = 30_000;
  * nothing new, and `failed` a read that got no answer or was not made. `waiting` was not read because its forge host
  * rate-limited Loom, and `reading` was still being read when the sync stopped waiting.
  */
-export type PrSyncOutcome = "merged" | "landed" | "blocked" | "fix" | "moved" | "open" | "failed" | "waiting" | "reading";
+export type PrSyncOutcome = "merged" | "landed" | "blocked" | "fix" | "moved" | "open" | "replacing" | "failed" | "waiting" | "reading";
 
 export interface PrSyncTicket {
   key: string;
@@ -116,6 +116,7 @@ export function requestSync(ctx: EngineCtx, slug: string, key?: string): PrSyncR
   } else {
     const ticket = store.ticketByKey(key);
     if (ticket === null || ticket.project_id !== project.id) throw new LoomError("loom_not_found", `Project ${slug} has no ticket ${key}.`, `Run \`bb loom tickets ${slug}\` to see its tickets.`);
+    if (ticket.state === "pr_open" && !followed(ticket)) throw new LoomError("loom_invalid_state", `${key} has no pull request for Loom to read: Loom let go of the one the forge closed with the branch it built on, and opens a new one.`);
     if (!followed(ticket)) throw new LoomError("loom_invalid_state", `${key} has no open pull request for Loom to read: it is ${ticket.state.replace("_", " ")}.`);
     tickets = [ticket];
   }
@@ -159,6 +160,8 @@ export function syncResult(ctx: EngineCtx, request: PrSyncRequest, finished: boo
     if (ticket.state === "done") return of(host === null ? "landed" : "merged");
     if (ticket.state === "blocked") return of("blocked", ticket.blocked_reason);
     if (ticket.state !== "pr_open") return ticket.pr_rounds > rounds ? of("fix", `fix round ${ticket.pr_rounds}`) : of("moved");
+    // The read found the stacked pull request closed with the branch it built on; the merge queue opens a new one.
+    if (ticket.pr_url === null && host !== null) return of("replacing");
     const last = reads.last.get(id);
     const answer = last !== undefined && last.at >= request.at ? last : null;
     if (answer !== null && answer.error === null) return of("open");
@@ -195,6 +198,7 @@ export function syncMessage(tickets: readonly PrSyncTicket[]): string {
       ...tickets.filter((ticket) => ticket.outcome === "blocked").map((ticket) => `${ticket.key} is blocked${ticket.detail === null ? "" : ` (${clause(ticket.detail)})`}`),
       ...tickets.filter((ticket) => ticket.outcome === "fix").map((ticket) => `${ticket.key}'s feedback started ${ticket.detail}`),
       ...tickets.filter((ticket) => ticket.outcome === "moved").map((ticket) => `${ticket.key} is ${ticket.state.replace("_", " ")} now`),
+      ...tickets.filter((ticket) => ticket.outcome === "replacing").map((ticket) => `${ticket.key}'s pull request closed with the branch it built on, and Loom opens a new one`),
     ];
     const open = keys("open").length;
     const still = open === 0 ? [] : changes.length > 0 ? [`${open} ${open === 1 ? "is" : "are"} still open`] : [open === 1 ? "nothing new, it is still open" : `nothing new, all ${open} are still open`];
@@ -230,6 +234,8 @@ function oneSentence(ticket: PrSyncTicket): string {
       return `${key} is ${ticket.state.replace("_", " ")} now`;
     case "open":
       return `Read ${key}'s pull request: nothing new, it is still open`;
+    case "replacing":
+      return `${key}'s pull request closed with the branch it built on, so Loom let go of it and opens a new one`;
     case "failed":
       return `Could not read ${key}'s pull request: ${clause(detail ?? "the forge did not answer")}`;
     case "waiting":

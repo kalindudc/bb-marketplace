@@ -320,13 +320,10 @@ describe("createHostPort", () => {
     const calls: Array<{ method: string; timeoutMs: number }> = [];
     const bb = { hosts: { experimental_client: () => ({ call: async (method: string, _input: unknown, opts: { timeoutMs: number }) => (calls.push({ method, timeoutMs: opts.timeoutMs }), {}) }) } } as unknown as Parameters<typeof createHostPort>[0];
     const port = createHostPort(bb);
-    for (const method of ["stackBase", "fetchTip", "prCommit", "push", "fetchBranch", "importCommit", "carryStart", "landedOn", "mergeOnto"] as const) await port.call("host_1", method, {} as never);
+    const gitNetwork = ["stackBase", "fetchTip", "prCommit", "push", "fetchBranch", "importCommit", "carryStart", "landedOn", "behindBase", "remoteBranch"] as const;
+    for (const method of [...gitNetwork, "pointRefs"] as const) await port.call("host_1", method, {} as never);
     await port.call("host_1", "stackBase", { networkTimeoutMs: 300_000 } as never);
-    expect(calls).toEqual([
-      ...["stackBase", "fetchTip", "prCommit", "push", "fetchBranch", "importCommit", "carryStart", "landedOn"].map((method) => ({ method, timeoutMs: 270_000 })),
-      { method: "mergeOnto", timeoutMs: 30_000 },
-      { method: "stackBase", timeoutMs: 630_000 },
-    ]);
+    expect(calls).toEqual([...gitNetwork.map((method) => ({ method, timeoutMs: 270_000 })), { method: "pointRefs", timeoutMs: 30_000 }, { method: "stackBase", timeoutMs: 630_000 }]);
   });
 
   it("gives pull request reads the network deadline, since gh and a forge command may take 2 minutes", async () => {
@@ -341,5 +338,15 @@ describe("createHostPort", () => {
       { method: "prState", timeoutMs: 150_000 },
       { method: "changedFiles", timeoutMs: 30_000 },
     ]);
+  });
+
+  it("gives the merge steps that run merge-tree, gh or a forge command the network deadline", async () => {
+    const calls: Array<{ method: string; timeoutMs: number }> = [];
+    const bb = { hosts: { experimental_client: () => ({ call: async (method: string, _input: unknown, opts: { timeoutMs: number }) => (calls.push({ method, timeoutMs: opts.timeoutMs }), {}) }) } } as unknown as Parameters<typeof createHostPort>[0];
+    const port = createHostPort(bb);
+    for (const method of ["mergeOnto", "prRetarget", "prRequestReview", "prEdit", "prReply", "pointRefs"] as const) await port.call("host_1", method, {} as never);
+    await port.call("host_1", "prRetarget", { forge: { kind: "gh" } } as never);
+    await port.call("host_1", "prRetarget", { forge: { kind: "command", retarget: "pr-cli pr edit" } } as never);
+    expect(calls.map((call) => call.timeoutMs)).toEqual([150_000, 150_000, 150_000, 150_000, 150_000, 30_000, 150_000, 330_000]);
   });
 });

@@ -23,8 +23,10 @@ Ask only what you cannot find in the repository:
 - Base branch: where work starts (default `main`), and whether a repo uses another base.
 - Merge plan: an integration branch that collects all approved tickets (`strategy = "integration"`), or one pull request per ticket (`strategy = "pr"`). On `"pr"`, dependent tickets start on their dependencies' open pull requests and stack on them in the same repo; ask only if the human wants each to wait for the merge instead (`merge.stack = false`). Where step 3 finds that Loom cannot add its own integration worktree, the choices are one pull request per ticket, or a `[merge.worktree]` command or plugin.
 - Check commands: the commands that must pass on every submitted ticket, per repo when the repos use different toolchains. On `"pr"`, put only cheap checks that run on the machine each thread runs on in `checks` and `verify` (lint, format, type checks, a fast unit suite), and leave the tests that are expensive or cannot run there (ones that need containers or services, long suites) to the pull request's CI, which Loom relies on by default. Ask only if the human wants Loom to ignore a repo's CI (`ci = false` in `[checks]` or on the `[[repo]]`); then its checks are the whole bar and must cover every test the tickets need.
+- Fresh pull requests, on `"pr"`: whether a repo's CI fails a pull request whose branch is far behind its base, or busy repos make pull requests go stale while they wait for review. Then set `merge.refresh_behind`, or `refresh_behind` on that `[[repo]]`, to a number of commits behind the base, below the limit that CI enforces; Loom then merges the base into an open pull request that falls that far behind, or that conflicts with its base, and pushes it with no new review. Leave it unset when the human prefers to bring branches up to date themselves.
 - Models: ask for a reviewer model that differs from the worker's, so the reviewer does not share the worker's blind spots. `provider` in `[agents.worker]` and `[agents.reviewer]` is a bb provider id, such as `claude-code`, `codex` or `pi`, not a model name such as `claude`; `loom_propose` refuses a provider bb does not have and lists the ids it has.
 - Protected paths: files no ticket may change, such as lockfiles, CI config or generated code.
+- Deploy order, on `"pr"` when the work changes a running system: how each repo's merged changes reach traffic and whether merging deploys them, what must be live before what, any prerequisite no ticket delivers (a metric reaching zero, another team's service existing), freeze windows, and how to tell each change is live. Step 5 turns the answers into `[rollout]`.
 
 Anything the human cannot answer yet goes in `project.open_questions`; Loom refuses a spec while that list is not empty, so settle every question before you propose.
 
@@ -51,11 +53,11 @@ Call `loom_discover` once you know the repos: with no arguments for this thread'
 - Settle every ask item before you propose. Look for the answer yourself first: in the goal, the repository's docs, the skills loaded in this thread and, for an environment provider, its description, its inputs schema and its plugin's skill (`bb skill list`). Ask the human only for what is still missing.
 - Ask everything that is left in ONE round with your question tool, giving each question the options discovery found. The Loom page shows the questions next to the draft.
 - A remote: when there is no `origin`, set `merge.remote`, or `remote` on the `[[repo]]`, to the remote its pull requests go through.
-- A forge: when `gh` cannot open pull requests on the push URL's host, set `[merge.forge]`, or `forge` on the `[[repo]]`: `kind = "command"` with an `open` and a `state` command for that server's own CLI, and a `feedback` command when that CLI can list a pull request's checks and review comments, so Loom can send them back to the worker as fix rounds; or `kind = "none"` to only push branches. A repo that relies on CI needs a forge that reports checks, `gh` or a command forge with `feedback`: write one when the CLI can list checks (the World example in `references/spec.md` shows one for a CLI with GitHub's JSON), and otherwise set `ci = false` for that repo after telling the human, because `loom_propose` refuses the spec until one of them is there. The loom skill's `references/spec.md` gives the commands' variables and the output Loom reads.
+- A forge: when `gh` cannot open pull requests on the push URL's host, set `[merge.forge]`, or `forge` on the `[[repo]]`: `kind = "command"` with an `open` and a `state` command for that server's own CLI, and a `feedback` command when that CLI can list a pull request's checks and review comments, so Loom can send them back to the worker as fix rounds; or `kind = "none"` to only push branches. A repo that relies on CI needs a forge that reports checks, `gh` or a command forge with `feedback`: write one when the CLI can list checks (the command forge example in `references/spec.md` shows one for a CLI with GitHub's JSON), and otherwise set `ci = false` for that repo after telling the human, because `loom_propose` refuses the spec until one of them is there. The loom skill's `references/spec.md` gives the commands' variables and the output Loom reads. Add an `edit` command when the CLI can change a pull request's title and description, so Loom can apply the text reviewers approve in a fix round and refresh the Rollout section (the `feedback` command then prints `title` and `body` too), and a `reply` command when it can answer a review comment, so workers reply through Loom on every machine. `after_push` commands run after each push to an open pull request, for a server whose CI must be started by hand, and `ignore_checks` globs (`*` and `?`, everything else literal), such as `"Review Bot*"`, drop advisory statuses, such as a review bot's, that no fix can clear; both work on `gh` too. Once the project exists, `bb loom forge check <slug> <pull request URL> --version <N>` runs version N's forge read against a live pull request, as a poll would, and prints what Loom reads or why the read failed; run it after proposing a version that changes forge commands, and before you hand it over.
 - An environment provider: when a plugin offers one, ask whether Loom's threads (workers, reviewers and the spec reviewer) run there. Set `[environment]`, or `environment` on the `[[repo]]`, to its `provider` id and `inputs` written to its schema, with `{branch}` and `{base}` where each thread's branch and starting point go. To keep plain git worktrees, set `provider = "git-worktree"`. When its environments are large or limited, give reviewers less with `reviewer = { inputs = { … } }` (a merge patch over `inputs`; reviewers only read, and Loom runs the checks in the worker's worktree), and give each ticket only what it touches with its own `environment = { inputs = { … } }`.
 - A new machine per thread: when discovery lists "New machine per thread", propose one of those environments on every project, weighing the earlier picks for the same remote, and confirm it with the human in your question round; keep this machine only when they prefer it. Copy the line as discovery prints it, `provider = "<id>"` with `machine = { provider = "<id>", inputs = { … } }` written to the machine provider's schema, and use `merge.strategy = "pr"`, which Loom needs there; stacking works on new machines too, so keep `merge.stack` as the human chose it. A stacked dependent's worker keeps its machine while its dependency's pull request is open, so count those machines against the machine provider's room. Every worker then runs the checks on its own machine, so make sure each check command works on that machine, not only on this one. Reviewers follow the workers unless you give them a `reviewer` table with another provider.
 - The integration worktree: on `strategy = "integration"`, when git refused Loom's own worktree, offer `strategy = "pr"`, or set `[merge.worktree]` to a command that prepares a checkout and prints its path last, or to a plugin's CLI command with `plugin = "<id>"` (`bb plugin run <id> --help` lists its commands).
-- A large repository: when fetching its base branch takes more than about a minute, as on a monorepo such as World, set `git_network_timeout_seconds` on its `[[repo]]` (or on `[merge]` for a single-repo project) well above the time `time git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main` takes in its checkout; 300 suits World. Loom's default of 120 seconds per fetch, `ls-remote` or push otherwise pauses the project whenever it brings a stacked pull request up to date. See Slow repositories in `references/spec.md`.
+- A large repository: when fetching its base branch takes more than about a minute, as on a large monorepo, set `git_network_timeout_seconds` on its `[[repo]]` (or on `[merge]` for a single-repo project) well above the time `time git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main` takes in its checkout; 300 leaves room for a fetch of 50 to 80 seconds. With Loom's default of 120 seconds per fetch, `ls-remote` or push, every try to bring a stacked pull request up to date runs out of time, and the project pauses after an hour of them. See Slow repositories in `references/spec.md`.
 - Anything the human cannot answer yet goes in `project.open_questions`. `loom_propose` refuses a spec that leaves any of these unsettled, and its numbered errors name the key to set.
 
 ## 4. Read the code and run the checks once
@@ -69,12 +71,14 @@ When the repos use different toolchains, give each `[[repo]]` its own `checks` (
 Every proposal needs `project.summary`: one or two plain sentences, 20 to 300 characters, that say what the project changes and why, for someone who has not read the goal. Loom shows it on the project page and in its home list, so a reader learns what the project is for without finding this thread. Write the outcome, not the task: "Page Edge Infrastructure and fail fast when a Cloudflare API token is rejected", not "Implement items 1 to 3 of the issue". When the goal says what done means, add `project.done_when`, one short line for each thing that must be true.
 
 - Build only what the goal needs: the fewest tickets that deliver it, no configuration, flags, layers or future-proofing it does not use, and reuse what the repository already has. Loom's spec reviewer checks exactly this.
+- Each `project.done_when` item must come true through some ticket's acceptance criteria; the spec reviewer traces each one and names any item no ticket delivers. Write criteria that only the change itself meets: a ticket that could pass by explaining in comments or docs why the goal cannot be met is a finding. When the work may turn out impossible, say so in the body and let the worker block, instead of accepting a write-up as done.
 - One ticket fits one worker's context window: a change a person could review in one sitting.
 - Acceptance criteria are testable statements, preferably in EARS form: "WHEN <event> THE SYSTEM SHALL <response>". Every ticket needs at least one.
 - Scope lists the exact files or directories the ticket may change, as globs. A ticket outside its scope is flagged.
 - Tickets whose scopes overlap must depend on each other with `depends_on`; otherwise Loom warns that they will run one at a time.
 - On the pull request strategy a dependent ticket usually starts before its dependency merges: its brief lists each dependency's open pull request and commit, and in the same repo its worktree starts on that commit. So say in its body which of the dependency's files or names it builds on, not that the dependency "is merged". Do not plan two independent tickets in one repo that a third depends on unless you must: its pull request can open only once one of them has merged.
 - On the pull request strategy, the human merges each pull request. When the rollout needs an order the code does not, such as the server deployed before the clients that call it, or staging before production, give the later ticket `merge_after` with the earlier refs instead of `depends_on`. It still starts at once, but the Merge order tab puts its pull request after theirs, and its description names them. Keep `depends_on` for work that builds on another ticket's code.
+- On the pull request strategy, give every ticket that changes a running system (a service, infrastructure, or an interface other code calls) a `rollout`, and the project the `[rollout]` tables it needs. See "Deploy order" below.
 - `verify` lists commands that check this ticket alone. A ticket with no `verify` needs commands in `[checks]`, or in its repo's `checks`.
 - Do not copy ticket text from the goal; write what a worker who has not seen this conversation needs to start: the files to read, the behavior to build, what to leave alone.
 - Never write `[NEEDS CLARIFICATION]` markers. Ask the human instead.
@@ -85,6 +89,71 @@ On a project with `[[repo]]` tables:
 - Split cross-repo work into one ticket per repo, linked with `depends_on`: for example the API ticket first, then the web ticket that `depends_on` it. On the integration strategy a ticket starts only when the tickets it depends on are done; on the pull request strategy it starts once their pull requests are open, and reads their work from the other repo's checkout at the commit its brief names.
 - Scopes, `verify` commands and protected paths are relative to the ticket's repo. Write `src/**`, not the repo's checkout path. Scopes in different repos never overlap.
 - In the body of a dependent ticket, say which files of the other repo to read, such as an API schema. Its brief gives the other repos' checkout paths; on the integration strategy it can read their merged work from the integration branch, and on the pull request strategy from the commit of their open pull request.
+
+### Deploy order
+
+Loom orders three things, and each answers its own question. `depends_on` orders the work: when a ticket can start. `merge_after` orders the merges, so git history is right. `rollout` orders the deploys: when a ticket's change may reach traffic, and what must be live first, not merely merged. A change can merge early and stay dark behind a gate, a repo can deploy on merge, one release can carry several merges, and some prerequisites are no ticket at all. Deploy order is advice for the human: Loom starts, reviews and opens every pull request whatever it says, and holds no merge for it. It tracks what is live, shows the order on the Rollout tab and writes a Rollout section into each pull request's description, which it refreshes when a prerequisite goes live, so do not ask workers or reviewers to write the deploy order into the description, or to keep a pull request a draft until something is live. Workers propose the rest of the description with `loom_submit` and the reviewers judge it with the code, so a rubric line about what a pull request's description must say (how to verify after deploy, how to roll back) is checked before the pull request opens.
+
+- `[rollout].deploy` says how changes reach traffic, and a `[[repo]]` table's `deploy` overrides it: `on_merge = true` for a repo whose merge deploys, such as a Terraform actuator.
+- `[[rollout.stage]]` tables, in order, each with a `goal` and an optional `soak`, such as expand, migrate and contract.
+- `[[rollout.milestone]]` for a prerequisite no ticket delivers, with a `check` command when one can tell, and the `stage` it gates.
+- `[[rollout.window]]` for each freeze.
+- Each ticket's `rollout`: its `stage`, what it `requires_live`, its `release` when several deploy together, `dark = true` for a change that ships with its gate off, `how` when it deploys unlike its repo, a `verify` command that exits 0 once it is live, and its `rollback`.
+
+Follow these principles, which the spec reviewer checks:
+
+- Providers before consumers: the server, the proxy or the schema is live before anything calls it.
+- Dark before exposed: ship the code with its gate off, and turn the gate on in a ticket of its own.
+- Staging before production, canary before the fleet.
+- Verify and soak between stages: give each step a `verify` where a command can tell, and a stage a `soak` where the change needs time in production.
+- Removal last, behind a milestone: the ticket that removes an old path sits in the last stage, which a milestone such as "old traffic near zero" gates.
+- Respect windows: no deploy-on-merge step should be due inside a freeze.
+
+A worked example, as an excerpt: each ticket also needs its title, body, acceptance and scope, and the references/spec.md example is a whole spec.
+
+```toml
+[rollout]
+deploy = { how = "The deploy pipeline ships main: canary, then production" }
+
+[[rollout.stage]]
+name = "expand"
+goal = "The server accepts the new header in production"
+soak = "1d"
+
+[[rollout.stage]]
+name = "migrate"
+goal = "Every caller sends the new header"
+
+[[rollout.stage]]
+name = "contract"
+goal = "The old header is gone"
+
+[[rollout.milestone]]
+ref = "old-header-zero"
+title = "Requests with the old header are near zero"
+check = "./scripts/old-header-rate.sh --below 0.1"
+stage = "contract"
+
+[[repo]]
+name = "proxy"
+project = "proj_proxy"
+deploy = { on_merge = true, how = "The Terraform actuator applies on merge" }
+
+[[ticket]]
+ref = "server-header"
+rollout = { stage = "expand", verify = "curl -fsS -H 'X-New: 1' https://api.example.com/health", rollback = "Revert; nothing calls it yet" }
+
+[[ticket]]
+ref = "proxy-header"
+repo = "proxy"
+rollout = { stage = "migrate", requires_live = ["server-header"], rollback = "Revert; the actuator applies the revert" }
+
+[[ticket]]
+ref = "drop-old-header"
+rollout = { stage = "contract", rollback = "Revert the removal" }
+```
+
+After approval, change a ticket's rollout with `loom_edit_ticket` and a patch of `rollout` alone, which works on a ticket whose pull request is open and on a done one; add stages, milestones and windows in a new spec version. `bb loom rollout <slug>` prints the order as Loom sees it.
 
 ## 6. Propose
 
@@ -97,6 +166,7 @@ Then wait for the spec review. For each draft version Loom starts a separate rev
 - After three rounds with findings, Loom stops reviewing. Revise for the findings you agree with, propose once more, then hand over and name the findings you left open and why.
 - A review that did not finish (the reviewer stopped, or bb could not start it) restarts when you call `loom_propose` again with the same spec.
 - A revision for the human's notes is reviewed again before you hand it back.
+- A version that, against the one before it, changes only operational settings (the forge, environments, `agents`, `budget`, `[merge]` keys other than `strategy`, `branch` and `remote`, `checks.timeout_minutes` and `ci`) skips the review, when that earlier draft's own review passed or was skipped, or when it is a pending version compared with the version in force. The message starts with "[loom] Loom skipped the spec review" and names the paths: hand over as after a passed review.
 
 The human can review the draft on the Loom page and send you notes. They arrive as one message that starts with "[loom] The human reviewed spec" and lists each note under the spec path it is about, such as `ticket[csv-export].acceptance[1]`: tickets by ref, list items counted from 0. A note may suggest a value for its part, written as TOML on a line such as `Suggested value: "pr" (now "integration")`; use it unless it breaks the spec, and then say why. Revise the spec for each note, or answer it in your reply, then call `loom_propose` again with the whole spec.
 
@@ -108,7 +178,7 @@ Whenever the human has to do something, such as approve a pending version and th
 
 ## 7. Hand over
 
-Hand over only after Loom's spec review passed, or after Loom said it stopped reviewing; then also name the findings you left open. The human cannot approve a draft or a pending version whose review is still running or has findings unless they skip it with `bb loom approve <slug> --skip-review`.
+Hand over only after Loom's spec review passed or was skipped, or after Loom said it stopped reviewing; then also name the findings you left open. The human cannot approve a draft or a pending version whose review is still running or has findings unless they skip it with `bb loom approve <slug> --skip-review`.
 
 Tell the human, in plain words, what you proposed and the next steps. On a project with `[[repo]]` tables, name the repos; landing opens one pull request in each repo with merged work, and `bb loom land <slug> --repo <name>` lands one. On the Loom page the next-step bar carries Approve and then Start; in a terminal the commands are:
 

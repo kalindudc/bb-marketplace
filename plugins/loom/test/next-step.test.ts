@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { BoardCard, ProjectSummary } from "../src/contract";
 import { STAGES, nextStepOf, type NextStepInput } from "../src/next-step";
+import { clockTime } from "../src/format";
 import { PAUSE_NOW_REASON } from "../src/states";
 import { card, overview } from "./fixtures";
 
@@ -65,6 +66,9 @@ describe("nextStepOf", () => {
     expect(passed).toMatchObject({ stage: 1, title: "Next: review draft v1.", action: { control: "approve", version: 1 } });
     expect(passed.text.startsWith("Loom's spec review passed it. Read its tickets and checks")).toBe(true);
     expect(draft({ kind: "limit", version: 4, findings: [] }).text.startsWith("Loom stopped reviewing it after 3 rounds; the planner's chat lists the findings it left open. Read")).toBe(true);
+    const skipped = draft({ kind: "skipped", version: 2, against: 1, paths: ["merge.forge.feedback"] });
+    expect(skipped).toMatchObject({ stage: 1, title: "Next: review draft v1.", action: { control: "approve", version: 1 } });
+    expect(skipped.text.startsWith("Loom skipped its spec review, because against v1 it changes only operational settings: merge.forge.feedback. Read")).toBe(true);
   });
 
   it("asks to approve a pending version, and names the tickets it requeues", () => {
@@ -99,6 +103,9 @@ describe("nextStepOf", () => {
     const passed = pending({ kind: "approved", version: 2, round: 1, summary: "Holds." });
     expect(passed.text).toContain("Loom's spec review passed it.");
     expect(passed.action).toMatchObject({ control: "approve", version: 2 });
+    const skipped = pending({ kind: "skipped", version: 2, against: 1, paths: ["merge.forge.feedback", "budget.max_tokens"] });
+    expect(skipped.text).toContain("Loom skipped its spec review, because against v1 it changes only operational settings: merge.forge.feedback, budget.max_tokens. Approving tells the planner.");
+    expect(skipped.action).toMatchObject({ control: "approve", version: 2 });
   });
 
   it("says who paused the project and offers Resume", () => {
@@ -191,6 +198,16 @@ describe("nextStepOf", () => {
 
     const idle = nextStepOf(input({ state: "running" }, [card({ state: "review", ready: false })]))!;
     expect(idle.text).toBe("No worker is running now; tickets in checks, review or the merge queue move by themselves. Nothing needs you now; this bar turns yellow when something does.");
+  });
+
+  it("says when a merge waits after a temporary failure and when Loom tries it again, without asking anything of the human", () => {
+    const until = Date.UTC(2026, 9, 27, 14, 5);
+    const board = [card({ key: "CSV-2", state: "merging", ready: false, mergeWait: { failures: 1, since: until - 60_000, until, message: "host plugin call 1f46 exceeded its deadline" } })];
+    const step = nextStepOf(input({ state: "running" }, board))!;
+    expect(step).toMatchObject({ tone: "normal", title: "Running.", action: null });
+    expect(step.text).toBe(
+      `No worker is running now; tickets in checks, review or the merge queue move by themselves. CSV-2's merge waits: Loom tries the merge again at ${clockTime(until)} after a temporary failure: host plugin call 1f46 exceeded its deadline. Nothing needs you now; this bar turns yellow when something does.`,
+    );
   });
 
   it("is done when every ticket is", () => {

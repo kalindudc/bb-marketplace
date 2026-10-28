@@ -5,6 +5,8 @@
 import { workerOf } from "./checks";
 import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { formatDuration } from "./format";
+import { refreshDue } from "./fresh";
+import { prTextReady } from "./pull-requests";
 import { prSettings } from "./repos";
 import { waitsForSlot } from "./scheduler";
 import type { Spec } from "./spec";
@@ -28,9 +30,12 @@ export function releasedWorker(store: Store, ticket: TicketRow): ThreadRow | nul
   return isReleased(row) ? row : null;
 }
 
-/** Whether a pull request's branch must take its dependencies' new commits, which the merge queue does in the worker's worktree. */
+/**
+ * Whether a pull request's branch must take its dependencies' new commits, or its base for a refresh (fresh.ts), which
+ * the merge queue does in the worker's worktree; for an approved ticket, before its pull request opens.
+ */
 function restackDue(spec: Spec, tickets: readonly TicketRow[], ticket: TicketRow): boolean {
-  return stacking(spec) && holdOf(tickets, ticket) === null && restackOf(tickets, ticket) !== null;
+  return (stacking(spec) && holdOf(tickets, ticket) === null && restackOf(tickets, ticket) !== null) || refreshDue(spec, ticket) !== null;
 }
 
 // ---------------------------------------------------------------- releasing
@@ -59,8 +64,9 @@ export async function releaseIdleWorkers(ctx: EngineCtx, project: ProjectRow, sp
       if (environment?.path == null) continue;
       if (isRemote(project, environment) && upstreamOf(tickets, ticket).open.length > 0) continue;
       const state = await ctx.host.call(environment.hostId, "worktreeState", { worktree: environment.path, base: worktreeBaseOf(project, spec, ticket, environment) });
-      // By tree, since the reviewed commit of a worker on its own machine was brought home with another id.
-      if ((ticket.head_tree === null ? state.head !== ticket.head_sha : state.tree !== ticket.head_tree) || state.dirty) continue;
+      // By tree, since the reviewed commit of a worker on its own machine was brought home with another id. A merge the worker
+      // began and did not finish can leave nothing uncommitted, and freeing the environment would lose it.
+      if ((ticket.head_tree === null ? state.head !== ticket.head_sha : state.tree !== ticket.head_tree) || state.dirty || state.unfinishedMerge === true) continue;
     } catch (error) {
       bb.log("warn", `Could not tell whether ${ticket.key}'s worker is idle: ${errText(error)}`);
       continue;
@@ -78,15 +84,20 @@ export function wakeRow(ctx: EngineCtx, row: ThreadRow): ThreadRow {
   return ctx.store.thread(row.id)!;
 }
 
-/** The tick's step on a project that stacks: wakes the released worker of each open pull request whose branch must catch up, for the merge queue. */
+/**
+ * The tick's step on the pr strategy: wakes the released worker of each open pull request whose branch must catch up,
+ * and of each approved ticket whose branch must before its pull request opens, for the merge queue. An approved ticket
+ * is woken once its pull request's text is ready, so no ask for it goes to a thread on its way back.
+ */
 export async function wakeForRestacks(ctx: EngineCtx, project: ProjectRow, spec: Spec): Promise<void> {
-  if (!stacking(spec)) return;
+  if (spec.merge.strategy !== "pr") return;
   const { store } = ctx;
-  for (const seen of store.tickets(project.id, ["pr_open"])) {
+  for (const seen of store.tickets(project.id, ["pr_open", "approved"])) {
     const woken = store.tx(() => {
       const ticket = store.ticket(seen.id)!;
       const row = releasedWorker(store, ticket);
-      if (ticket.state !== "pr_open" || row === null || startWaits(ticket, "worker", ctx.now()) || !restackDue(spec, store.tickets(project.id), ticket)) return null;
+      const waiting = ticket.state === "pr_open" || (ticket.state === "approved" && prTextReady(spec, ticket));
+      if (!waiting || row === null || startWaits(ticket, "worker", ctx.now()) || !restackDue(spec, store.tickets(project.id), ticket)) return null;
       return wakeRow(ctx, row);
     });
     if (woken !== null) await advanceWake(ctx, woken);

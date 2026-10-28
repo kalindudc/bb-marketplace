@@ -168,3 +168,6 @@ export function budgetReason(spec: Spec, tokens: number, now: number): string | 
   if (deadline !== undefined && now >= Date.parse(`${deadline}T00:00:00Z`) + DAY_MS) return `The deadline ${deadline} has passed.`;
   return null;
 }
+
+/** Whether a project's pause reason is one of budgetReason's, which a new spec version can lift. */
+export const isBudgetPause = (reason: string | null): boolean => reason !== null && (/^The token budget is used up: \d+ of \d+ tokens\.$/u.test(reason) || /^The deadline \S+ has passed\.$/u.test(reason));

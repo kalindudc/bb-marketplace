@@ -6,9 +6,11 @@ import { workerOf } from "./checks";
 import { repoCheckout, ticketRepo } from "./checkouts";
 import type { ProjectRow, ReviewRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { spawnEnvironment, threadBranch, ticketInputsOf, usesNewMachine } from "./environments";
+import { hostCallTransient, mergeWaitExpired, mergeWaitReason, mergeWaitText, nextMergeWait, type MergeWait } from "./forge-waits";
 import { plural } from "./format";
-import { changesRequestedText, findingsList, reviewerBrief, reviewerNudgeText } from "./prompts";
+import { changesRequestedText, findingsList, reviewerBrief, reviewerNudgeText, withRestoredNote } from "./prompts";
 import { openFeedback } from "./pull-requests";
+import { isWaking, releasedWorker } from "./release";
 import { nextWait, provisioningFailure, startProblemOf, startWaits, unavailableReason, waitOf, waitPost, type StartProblem, type StartWait } from "./starts";
 import { LoomError } from "./projects";
 import { NOT_PARKED, freeReviewerSlots, idleAction, type Parked } from "./scheduler";
@@ -16,7 +18,7 @@ import { deliverHandBacks, handBack } from "./slots";
 import type { Spec } from "./spec";
 import { LOOM_ACTOR } from "./states";
 import { carryTo, headCameHome, homeBranch, worktreeBaseOf } from "./transport";
-import { applyMove, baseOf, endLiveRows, endThread, freshBase, machineMoved, otherCheckouts, pauseProject, released, resolveEnvironment, resumeEnding, retryRateLimited, specOf, type EndReason, type EngineCtx, type TurnFailure } from "./workers";
+import { applyMove, baseOf, endLiveRows, endThread, freshBase, keptWorker, machineMoved, otherCheckouts, pauseProject, released, resolveEnvironment, resumeEnding, retryRateLimited, specOf, type EndReason, type EngineCtx, type TurnFailure } from "./workers";
 
 export interface Finding {
   severity: "blocking" | "should-fix";
@@ -63,8 +65,8 @@ function tally(store: Store, ticket: TicketRow, spec: Spec) {
 function changesRequestedSinceRequeue(store: Store, ticketId: number): number {
   let count = 0;
   for (const event of store.ticketEvents(ticketId, ["ticket.state", "review.verdict"])) {
-    const data = JSON.parse(event.data_json) as { from?: string; to?: string; verdict?: string };
-    if (event.kind === "ticket.state" && data.from === "blocked" && data.to === "queued") count = 0;
+    const data = JSON.parse(event.data_json) as { from?: string; to?: string; verdict?: string; requeued?: boolean };
+    if (event.kind === "ticket.state" && data.from === "blocked" && (data.to === "queued" || data.requeued === true)) count = 0;
     else if (event.kind === "review.verdict" && data.verdict === "changes_requested") count += 1;
   }
   return count;
@@ -116,9 +118,13 @@ function changesOutcome(ctx: EngineCtx, ticket: TicketRow, spec: Spec, review: R
     applyMove(ctx, ticket, { to: "blocked", patch: { ...released, blocked_reason: reason } }, LOOM_ACTOR, { reason });
     return { kind: "blocked" };
   }
-  if (worker.standing === "active" && worker.row.thread_id !== null) {
-    const text = changesRequestedText(ticket.key, review.round, review.summary ?? "", JSON.parse(review.findings_json) as Finding[]);
-    handBack(ctx, ticket, worker.row, worker.row.thread_id, text, { round: ticket.review_round });
+  // A worker Loom released, as a ticket sent back to review keeps one (keptWorker), comes back for the findings once it has a slot, as for a fix round.
+  const asleep = releasedWorker(store, ticket);
+  const thread = worker.standing === "active" ? worker.row.thread_id : (asleep?.thread_id ?? null);
+  if (thread !== null) {
+    const restored = asleep !== null || (worker.standing === "active" && isWaking(worker.row));
+    const text = withRestoredNote(changesRequestedText(ticket.key, review.round, review.summary ?? "", JSON.parse(review.findings_json) as Finding[]), restored);
+    handBack(ctx, ticket, worker.standing === "active" ? worker.row : null, thread, text, { round: ticket.review_round });
     return { kind: "changes" };
   }
   applyMove(ctx, ticket, { to: "queued", patch: released }, LOOM_ACTOR, { reason: "the worker is gone" });
@@ -213,13 +219,23 @@ export function blockedAtReview(ticket: TicketRow): boolean {
   return ticket.state === "blocked" && ticket.head_sha !== null && (reason.startsWith(`${REVIEWER_REFUSED}:`) || reason.startsWith(`${REVIEWER_UNAVAILABLE}:`));
 }
 
-/** Blocked back to review for the same head. The round is new, so the refused reviewer's pending review no longer counts as a reviewer that ended. */
-export function backToReview(ctx: EngineCtx, ticket: TicketRow, note: string): void {
+/**
+ * Blocked back to review for the same head. The round is new, so the refused reviewer's pending review no longer counts
+ * as a reviewer that ended. A `requeued` move resets the review rounds as a requeue does. On the pull request strategy, a
+ * ticket with no worker linked gets its newest worker thread back as a released worker (keptWorker), so a catch-up or a
+ * fix round once its pull request is open can bring that thread back.
+ */
+export function backToReview(ctx: EngineCtx, ticket: TicketRow, note: string, how: { actor?: string; reason?: string; requeued?: boolean; patch?: Partial<TicketRow> } = {}): void {
   const { store } = ctx;
   const round = ticket.review_round + 1;
   store.tx(() => {
-    store.setTicketState(ticket.id, "review", LOOM_ACTOR, { head: ticket.head_sha, round, reason: "bb refused its reviewer, and a new spec version is approved" });
-    store.updateTicket(ticket.id, { review_round: round, blocked_reason: null });
+    const reason = how.reason ?? "bb refused its reviewer, and a new spec version is approved";
+    store.setTicketState(ticket.id, "review", how.actor ?? LOOM_ACTOR, { head: ticket.head_sha, round, reason, ...(how.requeued === true ? { requeued: true, failures: 0 } : {}) });
+    const linked = how.patch?.worker_thread_id === undefined ? ticket.worker_thread_id : how.patch.worker_thread_id;
+    const kept = linked === null && specOf(store, store.project(ticket.project_id)!).merge.strategy === "pr" ? keptWorker(store, ticket) : null;
+    if (kept !== null && kept !== "ending") store.updateThread(kept.id, { end_reason: "released", released_at: kept.released_at ?? ctx.now() });
+    const keep = kept === null || kept === "ending" ? {} : { worker_thread_id: kept.thread_id };
+    store.updateTicket(ticket.id, { ...how.patch, ...keep, review_round: round, blocked_reason: null });
     store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "reply", body: note });
   });
   store.changed(ticket.project_id);
@@ -251,13 +267,46 @@ async function startReviewers(ctx: EngineCtx, project: ProjectRow, spec: Spec, t
   return started;
 }
 
-// A project that cannot show the reviewers their diff pauses with the reason instead of retrying every tick.
+// The waits of diff reads whose host call got no answer, by ticket and head. In memory: a restart reads again at once.
+const diffWaits = new WeakMap<Store, Map<number, { head: string; wait: MergeWait }>>();
+const diffWaitsOf = (store: Store) => diffWaits.get(store) ?? diffWaits.set(store, new Map()).get(store)!;
+
+/**
+ * The diff the reviewers get. A read whose host call got no answer waits and tries again on a merge's steps, posting
+ * once, and pauses the project only after an hour of them; any other failure pauses it with the reason at once, instead
+ * of retrying every tick.
+ */
 async function readDiff(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow): Promise<Diff | null> {
+  const waits = diffWaitsOf(ctx.store);
+  const known = waits.get(ticket.id);
+  const previous = known?.head === ticket.head_sha ? known.wait : null;
+  if (previous !== null && previous.until > ctx.now()) return null;
   try {
     const checkout = await repoCheckout(ctx, project, spec, ticket.repo);
-    return await ctx.host.call(checkout.hostId, "diff", { repo: checkout.path, base: baseOf(spec, ticket), head: ticket.head_sha!, maxBytes: PATCH_BYTES });
+    const diff = await ctx.host.call(checkout.hostId, "diff", { repo: checkout.path, base: baseOf(spec, ticket), head: ticket.head_sha!, maxBytes: PATCH_BYTES });
+    waits.delete(ticket.id);
+    return diff;
   } catch (error) {
-    pauseProject(ctx, project.id, `Could not read the diff of ${ticket.key} for review: ${errText(error)}`);
+    const failure = hostCallTransient(error);
+    if (failure === null) {
+      waits.delete(ticket.id);
+      pauseProject(ctx, project.id, `Could not read the diff of ${ticket.key} for review: ${errText(error)}`);
+      return null;
+    }
+    const now = ctx.now();
+    const what = `Reading the diff of ${ticket.key} for review`;
+    const wait = nextMergeWait(previous, { now, message: errText(error), ...failure });
+    ctx.bb.log("warn", `${what} failed ${plural(wait.failures, "time")} in a row with what looks like a temporary error: ${errText(error)}`);
+    if (mergeWaitExpired(wait, now)) {
+      waits.delete(ticket.id);
+      pauseProject(ctx, project.id, mergeWaitReason(what, wait, now));
+      return null;
+    }
+    waits.set(ticket.id, { head: ticket.head_sha!, wait });
+    if (previous === null) {
+      ctx.store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "system", body: mergeWaitText(what, wait, now) });
+      ctx.store.changed(ticket.project_id);
+    }
     return null;
   }
 }
@@ -305,6 +354,7 @@ async function startReviewer(ctx: EngineCtx, projectId: number, seen: TicketRow,
     prFeedback: openFeedback(store.posts(ticket.id)),
     checkouts,
     remote: onMachine,
+    tickets: store.tickets(project.id),
   });
   let spawned;
   try {
@@ -475,8 +525,29 @@ async function requireHeadCheckedOut(ctx: EngineCtx, row: ThreadRow, ticket: Tic
   const state = await ctx.host.call(environment.hostId, "worktreeState", { worktree: environment.path!, base: worktreeBaseOf(project, spec, ticket, environment) }).catch((error) => {
     throw new LoomError("loom_unavailable", `Could not read your worktree: ${errText(error)}`);
   });
-  const reviewed = ticket.head_tree === null ? state.head === ticket.head_sha : state.tree === ticket.head_tree;
+  const tree = ticket.head_tree ?? (await headTree(ctx, project, spec, ticket));
+  const reviewed = tree === null ? state.head === ticket.head_sha : state.tree === tree;
   if (!reviewed) throw new LoomError("loom_invalid_state", `Call loom_checkout first: your worktree does not have the reviewed work of ${ticket.key} yet. Then review again.`);
+}
+
+/**
+ * The tree of a ticket's head on the project's checkout, for a ticket whose row has none, as one submitted before Loom
+ * kept it; kept on the ticket while its head is the same. Null when the checkout does not have the commit.
+ */
+async function headTree(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow): Promise<string | null> {
+  const { store } = ctx;
+  const read = await repoCheckout(ctx, project, spec, ticket.repo)
+    .then((checkout) => ctx.host.call(checkout.hostId, "refTip", { repo: checkout.path, ref: ticket.head_sha! }))
+    .catch((error) => {
+      throw new LoomError("loom_unavailable", `Could not read the reviewed work of ${ticket.key}: ${errText(error)}`);
+    });
+  if (read.outcome !== "ok") return null;
+  store.tx(() => {
+    const current = store.ticket(ticket.id);
+    if (current?.head_sha === ticket.head_sha && current.head_tree === null) store.updateTicket(ticket.id, { head_tree: read.tree });
+  });
+  store.changed(ticket.project_id);
+  return read.tree;
 }
 
 /** loom_checkout: puts the work the ticket was submitted with in the reviewer's worktree, on its machine or carried to its own. */

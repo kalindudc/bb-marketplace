@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { IN_FLIGHT, budgetReason, idleAction, readyTickets, toLite, workerSlots, type TicketLite } from "../src/scheduler";
+import { IN_FLIGHT, budgetReason, idleAction, isBudgetPause, readyTickets, toLite, workerSlots, type TicketLite } from "../src/scheduler";
 import { scopeReport } from "../src/scope";
 import { parseSpec } from "../src/spec";
 import { TICKET_STATES } from "../src/states";
@@ -150,6 +150,13 @@ describe("budgetReason", () => {
     const limited = spec((doc) => (doc.budget = { deadline: "2030-06-30" }));
     expect(budgetReason(limited, 0, Date.UTC(2030, 5, 30, 23, 59, 59))).toBeNull();
     expect(budgetReason(limited, 0, Date.UTC(2030, 6, 1))).toBe("The deadline 2030-06-30 has passed.");
+  });
+
+  it("recognizes its own reasons, and no other pause, as a budget pause", () => {
+    const limited = spec((doc) => (doc.budget = { max_tokens: 1000, deadline: "2030-06-30" }));
+    expect(isBudgetPause(budgetReason(limited, 1000, 0))).toBe(true);
+    expect(isBudgetPause(budgetReason(limited, 0, Date.UTC(2030, 6, 1)))).toBe(true);
+    for (const other of [null, "pause --now", "Merging CSV-1 failed: HTTP 429", "Could not read the diff of CSV-1 for review: host plugin worker exited"]) expect(isBudgetPause(other), String(other)).toBe(false);
   });
 });
 

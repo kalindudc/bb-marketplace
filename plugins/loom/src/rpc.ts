@@ -2,7 +2,7 @@
 import { experimental_PluginRpcRefusal as PluginRpcRefusal, type BbPluginApi, type ExperimentalPluginRpcHandlersWithContext } from "@get-bb/plugin-sdk";
 import { badgeView } from "./badge";
 import { humanAction } from "./cli";
-import { rpcContract, type AgentRow, type BoardCard, type ProjectView, type SpecSummary, type StartWaitView, type ThreadInfo, type TicketDetail, type TicketPr } from "./contract";
+import { rpcContract, type AgentRow, type BoardCard, type MergeWaitView, type ProjectView, type SpecSummary, type StartWaitView, type ThreadInfo, type TicketDetail, type TicketPr } from "./contract";
 import type { EventRow, PostRow, ProjectRow, ReviewRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { stripAnsi, ticketActivity } from "./activity";
 import { Changes } from "./changes";
@@ -10,8 +10,9 @@ import { replyRecipient, type Engine } from "./engine";
 import { projectHealth } from "./health";
 import { homeView } from "./home";
 import { projectInsights } from "./insights";
-import { backedOffUntil, forgeHostOf, nextPollAt } from "./forge-waits";
+import { backedOffUntil, forgeHostOf, mergeWaitOf, nextPollAt } from "./forge-waits";
 import { mergeOrderOf } from "./merge-order";
+import { rolloutOf } from "./rollout";
 import { askOf, forgeRoundsSinceRequeue, PR_TEXT_MINUTES, prTextFor, statusOf } from "./pull-requests";
 import { followsFeedback, prSettings, repoSettings } from "./repos";
 import { computeMetrics } from "./metrics";
@@ -31,7 +32,7 @@ import { dismissAsk, plannerAsk } from "./asks";
 import { plannerView } from "./planner-view";
 import { specVersionView } from "./spec-view";
 import { HUMAN_ACTOR, type TicketState } from "./states";
-import { blockedAtStart, specOf } from "./workers";
+import { blockedAtStart, reviewAgainOf, specOf } from "./workers";
 
 const THROTTLE_MS = 300;
 
@@ -167,8 +168,9 @@ export function boardCards(tickets: TicketRow[], threads: ThreadRow[], spec: Spe
       prUrl: ticket.pr_url,
       blockedReason: ticket.blocked_reason,
       hasChanges: ticket.head_sha !== null || ((ticket.state === "working" || ticket.state === "checking") && ticket.environment_id !== null),
-      ...stackFacts(tickets, ticket, stack),
+      ...stackFacts(tickets, ticket, stack, spec !== null && replacingPr(spec, ticket)),
       startWait: startWaitView(ticket, threads),
+      mergeWait: mergeWaitView(ticket),
       waitsForSlot: lite.waitsSince !== null,
       ci: ciOf(spec, ticket),
     };
@@ -196,12 +198,28 @@ export function startWaitView(ticket: TicketRow, threads: readonly ThreadRow[]):
   return { role: wait.role, reason: wait.reason, until: wait.until, tries: wait.tries, unavailable: wait.kind === "unavailable" };
 }
 
-function stackFacts(tickets: TicketRow[], ticket: TicketRow, stack: boolean): Pick<BoardCard, "stackedOn" | "holding"> {
+/** The wait of a ticket in merging whose merge failed in a way worth waiting out. */
+export const mergeWaitView = (ticket: TicketRow): MergeWaitView | null => (ticket.state === "merging" ? mergeWaitOf(ticket) : null);
+
+/** An open ticket whose closed stacked pull request Loom let go of, before the merge queue opens its new one. */
+const replacingPr = (spec: Spec, ticket: TicketRow) => ticket.state === "pr_open" && ticket.pr_url === null && ticket.pushed_sha !== null && repoSettings(spec, ticket.repo).forge.kind !== "none";
+
+function stackFacts(tickets: TicketRow[], ticket: TicketRow, stack: boolean, replacing: boolean): Pick<BoardCard, "stackedOn" | "holding"> {
   if (!stack || ticket.state === "done" || ticket.state === "cancelled") return { stackedOn: [], holding: null };
   const open = new Set(upstreamOf(tickets, ticket).open.map((dep) => dep.key));
   const stackedOn = Object.keys(stackOf(ticket)?.deps ?? {}).filter((key) => open.has(key));
-  const hold = ticket.state === "approved" ? holdOf(tickets, ticket) : null;
-  const holding = hold === null ? null : hold.why === "merge" ? `Its pull request opens once all but one of ${hold.keys.join(", ")} merge` : hold.why === "push" ? `Its pull request opens once ${hold.keys[0]} has one` : `Its pull request opens once ${hold.keys[0]} takes the base branch`;
+  const hold = ticket.state === "approved" || replacing ? holdOf(tickets, ticket) : null;
+  const opens = replacing ? "Its new pull request opens" : "Its pull request opens";
+  const holding =
+    hold === null
+      ? replacing
+        ? "The forge closed its pull request with the branch it built on; Loom opens a new one"
+        : null
+      : hold.why === "merge"
+        ? `${opens} once all but one of ${hold.keys.join(", ")} merge`
+        : hold.why === "push"
+          ? `${opens} once ${hold.keys[0]} has one`
+          : `${opens} once ${hold.keys[0]} takes the base branch`;
   return { stackedOn, holding };
 }
 
@@ -240,6 +258,7 @@ export function draftCards(spec: Spec, at: number): BoardCard[] {
     stackedOn: [],
     holding: null,
     startWait: null,
+    mergeWait: null,
     waitsForSlot: false,
     ci: null,
   }));
@@ -328,6 +347,8 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       specReview,
       openAsks: past === null && project.state !== "archived" ? (plannerAsk(store, project)?.steps.filter((step) => !step.done).length ?? 0) : 0,
       mergeOrder: past === null && approved !== null ? mergeOrderOf(approved, tickets) : null,
+      // What is live is kept only as it is now, so a rewound view leaves the rollout out, as it does the merge order.
+      rollout: past === null && approved !== null ? rolloutOf(approved, tickets, store.rolloutMarks(project.id), at) : null,
     };
   };
 
@@ -408,6 +429,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       depsDone: deps.filter((dep) => stateOf(dep) === "done"),
       blockedReason: ticket.blocked_reason,
       startWait: startWaitView(ticket, threads),
+      mergeWait: mergeWaitView(ticket),
       branch: ticket.branch,
       prUrl: ticket.pr_url,
       pr: ticketPr(project, ticket, posts, past === null),
@@ -429,6 +451,7 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       threads: threads.map((row) => ({ threadId: row.thread_id, role: row.role, attempt: row.attempt, reviewRound: row.review_round, state: row.state, startedAt: row.started_at, endedAt: row.ended_at, endReason: row.end_reason })),
       replyTo: past === null ? (replyRecipient(store, ticket)?.role ?? null) : null,
       stoppedFrom: stoppedFrom(ticket, moves),
+      reviewAgain: past === null && Object.values(reviewAgainOf(ticket, posts)).some(Boolean),
       activity: ticketActivity({ state: ticket.state, posts, threads, runs }),
       at: past?.eventId ?? null,
       now: past?.at ?? now(),
@@ -481,6 +504,14 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       return project.planner_thread_id === null ? null : plannerView({ store, projects }, project.planner_thread_id, now());
     },
     specVersion: ({ slug, version, base }) => specVersionView({ store, projects }, slug, version, base),
+    markLive: async ({ slug, target, note, undo }, ctx) => {
+      const project = projects.require(slug);
+      const ticket = store.ticketByKey(target);
+      const which = ticket?.project_id === project.id ? { key: target } : { milestone: target };
+      const data = { slug, ...which, ...(note === undefined || note === "" ? {} : { note }) };
+      await act(ctx, undo === true ? "unlive" : "live", data, () => engine.markLive(slug, target, { note, undo: undo === true }, HUMAN_ACTOR));
+      return projectView(slug);
+    },
     syncPullRequests: ({ slug, key }, ctx) => {
       refusePlugins(ctx);
       return engine.syncPullRequests(slug, key === undefined ? {} : { key });
@@ -506,6 +537,11 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       return ticketDetail(key);
     },
     ticketAction: async ({ key, action, note }, ctx) => {
+      if (action !== "review" && note.trim() === "") throw new LoomError("loom_invalid_input", `The ${action === "requeue" ? "note" : "reason"} is empty.`);
+      if (action === "review") {
+        await act(ctx, "requeue", { key, review: true }, () => engine.requeue(key, note, HUMAN_ACTOR, { review: true }));
+        return ticketDetail(key);
+      }
       await act(ctx, action, { key }, () => {
         if (action === "requeue") return engine.requeue(key, note, HUMAN_ACTOR);
         if (action === "block") return engine.block(key, note, HUMAN_ACTOR);

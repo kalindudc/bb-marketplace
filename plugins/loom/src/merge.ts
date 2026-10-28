@@ -1,25 +1,53 @@
 // The merge queue: approved tickets merge one at a time per project, either into the integration branch (with the
 // after_merge checks run on the merged result) or as one pull request each. Every host step is idempotent, so a ticket
-// left in `merging` by a pause or a restart simply runs again. Merges run in the background, like checks.
+// left in `merging` by a pause, a restart or a failure worth waiting out simply runs again. Merges run in the background,
+// like checks.
 import { workerOf, type CheckRun } from "./checks";
 import { repoCheckout, type RepoCheckout } from "./checkouts";
 import type { ProjectRow, Store, ThreadRow, TicketRow } from "./db/store";
 import { plural } from "./format";
-import { backedOffUntil, backoffText, forgeHostOf, networkWaitReason, networkWaitText, nextBackoff, nextNetworkBackoff, nextPollAt, nextPollWait, pollWaitOf, pollWaitReason, pollWaitText, SERVER_ERROR_LIMIT_MS } from "./forge-waits";
-import { afterMergeChangedText, afterMergeFailedText, andList, clip, conflictText, dependsOnLines, landBody, prDivergedText, restackConflictText, restackFailedText, restackMarkersText, restackRefusedText, withRestoredNote, workerPrBody } from "./prompts";
-import { closedPrReset, followFeedback, inFixRound, prTextFor, prTextReady, reviewersToAsk, templatePr, type PrText } from "./pull-requests";
+import {
+  backedOffUntil,
+  backoffText,
+  forgeHostOf,
+  hostCallTransient,
+  mergeWaitExpired,
+  mergeWaitOf,
+  mergeWaitReason,
+  mergeWaits,
+  mergeWaitText,
+  networkWaitReason,
+  networkWaitText,
+  nextBackoff,
+  nextMergeWait,
+  nextNetworkBackoff,
+  nextPollAt,
+  nextPollWait,
+  pollWaitOf,
+  pollWaitReason,
+  pollWaitText,
+  PROJECT_MACHINE,
+  SERVER_ERROR_LIMIT_MS,
+  transientOf,
+  Unavailable,
+  waitableOf,
+  type Transient,
+} from "./forge-waits";
+import { afterMergeChangedText, afterMergeFailedText, andList, clip, conflictText, dependsOnLines, landBody, prDivergedText, restackConflictText, restackFailedText, restackMarkersText, restackRefusedText, unfinishedMergeText, withRestoredNote, workerPrBody } from "./prompts";
+import { appliedOf, applyPrText, closedPrReset, followFeedback, inFixRound, openedText, proposalOf, prRollout, prTextFor, prTextReady, reviewersToAsk, syncPrText, targetText, templatePr, wantedText, type PrApplied, type PrText } from "./pull-requests";
 import { githubPull, prNumber, PR_BATCH_MAX, type HostInput, type HostOutput as HostOutputOf } from "./host-contract";
 import type { EnvironmentInfo } from "./ports";
-import type { PrMeta } from "./pr-meta";
+import { readMeta, type PrMeta } from "./pr-meta";
 import { LoomError } from "./projects";
 import { followsFeedback, freshBaseOf, gitNetwork, isMultiRepo, prSettings, repoSettings, type RepoSettings } from "./repos";
 import { forgetClosedReads, noteAnswer, readGoesOut } from "./pr-sync";
 import { recordingHost } from "./runs";
+import { refreshDue, refreshedMeta, refreshedText, type Refresh } from "./fresh";
 import type { ForgeSpec, Spec } from "./spec";
 import { EMPTY_STACK, holdKey, holdOf, prBaseOf, restackOf, restackWithBase, stackBranch, stacking, stackOf, type Hold, type Restack, type Stack } from "./stack";
 import { isForeign, readTip, TIP_WHAT, tipOutgrowsStack, tipRef, withMarkers, type Tip } from "./tips";
 import { LOOM_ACTOR } from "./states";
-import { isWaking, restoredSinceSubmit } from "./release";
+import { isWaking, releasedWorker, restoredSinceSubmit } from "./release";
 import { deliverHandBacks, handBack } from "./slots";
 import { carryTo, homeBranch, isRemote, reviewedRef } from "./transport";
 import { applyMove, baseOf, endLiveRows, endThread, pauseProject, released, resolveEnvironment, specOf, type EngineCtx } from "./workers";
@@ -106,45 +134,62 @@ async function launch(ctx: EngineCtx, projectId: number, spec: Spec): Promise<vo
   );
 }
 
-// The ticket to merge: the one left in merging, else the oldest candidate whose repo has no worker worktree being created, moved to merging.
+// The ticket to merge: the one left in merging, unless its merge waits after a failure worth waiting out, when the queue
+// waits too; else the first candidate whose repo has no worker worktree being created, moved to merging. The tick runs
+// every 15 seconds, so a wait that ends is picked up then.
 async function begin(ctx: EngineCtx, projectId: number, spec: Spec): Promise<TicketRow | null> {
   const { store } = ctx;
   if (store.project(projectId)?.state !== "running") return null;
   const left = store.tickets(projectId, ["merging"])[0];
-  if (left !== undefined) return left;
+  if (left !== undefined) return mergeWaits(left, ctx.now()) ? null : left;
   postHolds(ctx, projectId, spec);
   if (candidates(ctx, projectId, spec).length === 0) return null;
   const waiting = spec.merge.strategy === "integration" ? await provisioningRepos(ctx, projectId) : new Set<string | null>();
-  const next = candidates(ctx, projectId, spec)
-    .filter((ticket) => !waiting.has(ticket.repo))
-    .sort((a, b) => a.state_at - b.state_at || a.seq - b.seq)[0];
+  const next = candidates(ctx, projectId, spec).find((ticket) => !waiting.has(ticket.repo));
   if (next === undefined || store.project(projectId)?.state !== "running") return null;
   store.tx(() => {
-    store.setTicketState(next.id, "merging", LOOM_ACTOR, next.state === "pr_open" ? { head: next.head_sha, restack: true } : { head: next.head_sha });
-    store.updateTicket(next.id, { merge_before: null });
+    const refresh = next.state === "pr_open" ? refreshDue(spec, next) : null;
+    store.setTicketState(next.id, "merging", LOOM_ACTOR, next.state === "pr_open" ? { head: next.head_sha, restack: true, ...(refresh === null ? {} : { refresh }) } : { head: next.head_sha });
+    store.updateTicket(next.id, { merge_before: null, merge_wait_json: null, merge_step_json: null });
   });
   return store.ticket(next.id)!;
 }
 
 /**
  * The tickets the merge queue may take: approved ones whose pull request text is ready and whose pull request no open
- * dependency holds, and on a project that stacks, open pull requests whose branch is behind what they are stacked on,
- * while their worker is there to run the checks in its worktree.
+ * dependency holds; open pull requests whose branch must catch up, on a project that stacks with what they are stacked
+ * on, and on a repo that sets refresh_behind with their base when they are due a refresh (fresh.ts), while their worker
+ * is there to run the checks in its worktree; and an open ticket whose closed pull request Loom let go of, for a new one.
+ * A ticket whose branch must catch up waits while its released worker comes back (wakeForRestacks); one whose worker is
+ * gone for good goes to a new worker when the merge needs one. Oldest first, except that a refresh with nothing else to
+ * take goes after every other merge, so a batch of them never holds up a first pull request or a restack a stack needs.
  */
 function candidates(ctx: EngineCtx, projectId: number, spec: Spec): TicketRow[] {
   const { store } = ctx;
   const tickets = store.tickets(projectId);
   const stack = stacking(spec);
-  const approved = tickets.filter((ticket) => ticket.state === "approved" && prTextReady(spec, ticket) && (!stack || holdOf(tickets, ticket) === null));
-  if (!stack) return approved;
+  const held = (ticket: TicketRow) => stack && holdOf(tickets, ticket) !== null;
+  const restacks = (ticket: TicketRow) => stack && restackOf(tickets, ticket) !== null;
   // A worker coming back from a release has no worktree yet (advanceWakes).
-  const behind = tickets.filter((ticket) => {
-    if (ticket.state !== "pr_open" || holdOf(tickets, ticket) !== null || restackOf(tickets, ticket) === null) return false;
+  const present = (ticket: TicketRow) => {
     const worker = workerOf(store, ticket);
     return worker.standing === "active" && !isWaking(worker.row);
-  });
-  return [...approved, ...behind];
+  };
+  const comingBack = (ticket: TicketRow) => releasedWorker(store, ticket) !== null || isWaking(workerOf(store, ticket).row);
+  const goneForGood = (ticket: TicketRow) => workerOf(store, ticket).standing === "gone" && !comingBack(ticket);
+  const onlyRefresh = (ticket: TicketRow) => ticket.state === "pr_open" && !reopens(spec, ticket) && !restacks(ticket);
+  return tickets
+    .filter((ticket) => {
+      if (ticket.state === "approved") return prTextReady(spec, ticket) && !held(ticket) && !(restacks(ticket) && comingBack(ticket));
+      if (ticket.state !== "pr_open" || held(ticket)) return false;
+      if (reopens(spec, ticket)) return !restacks(ticket) || present(ticket) || goneForGood(ticket);
+      return (restacks(ticket) || refreshDue(spec, ticket) !== null) && present(ticket);
+    })
+    .sort((a, b) => Number(onlyRefresh(a)) - Number(onlyRefresh(b)) || a.state_at - b.state_at || a.seq - b.seq);
 }
+
+/** An open ticket with no pull request on a forge that has them: Loom let go of a closed one (closedPullRequest), and the merge queue opens a new one. */
+const reopens = (spec: Spec, ticket: TicketRow) => ticket.state === "pr_open" && ticket.pr_url === null && ticket.pushed_sha !== null && repoSettings(spec, ticket.repo).forge.kind !== "none";
 
 /** Posts, once per hold, why an approved ticket's pull request waits on its open dependencies. */
 function postHolds(ctx: EngineCtx, projectId: number, spec: Spec): void {
@@ -166,11 +211,16 @@ function postHolds(ctx: EngineCtx, projectId: number, spec: Spec): void {
 }
 
 function holdText(spec: Spec, ticket: TicketRow, hold: Hold): string {
+  return `${ticket.key} passed review. ${holdOpens(spec, ticket, hold)}`;
+}
+
+/** When a held pull request opens, in a sentence. */
+function holdOpens(spec: Spec, ticket: TicketRow, hold: Hold, fresh = ""): string {
   const keys = andList(hold.keys);
-  if (hold.why === "merge") return `${ticket.key} passed review. Its pull request opens once all but one of ${keys} have merged, because a pull request builds on one other branch.`;
-  if (hold.why === "push") return `${ticket.key} passed review. Its pull request opens once ${keys} has a pull request again.`;
+  if (hold.why === "merge") return `Its ${fresh}pull request opens once all but one of ${keys} have merged, because a pull request builds on one other branch.`;
+  if (hold.why === "push") return `Its ${fresh}pull request opens once ${keys} has a pull request again.`;
   const { remote, base } = repoSettings(spec, ticket.repo);
-  return `${ticket.key} passed review. Its pull request opens on ${keys}'s branch once Loom has merged ${remote}/${base}, which has the dependencies that merged since, into that branch.`;
+  return `Its ${fresh}pull request opens on ${keys}'s branch once Loom has merged ${remote}/${base}, which has the dependencies that merged since, into that branch.`;
 }
 
 function addMergePost(ctx: EngineCtx, ticket: TicketRow, post: { body: string; data: object }): void {
@@ -206,9 +256,11 @@ async function endFinishedThreads(ctx: EngineCtx, projectId: number): Promise<vo
 
 // ---------------------------------------------------------------- one merge
 
-class Unavailable extends Error {}
-
-/** Merges one ticket in `merging`. Safe to run again: a host step that already happened reports itself as done. */
+/**
+ * Merges one ticket in `merging`. Safe to run again: a host step that already happened reports itself as done. A failure
+ * worth waiting out keeps the ticket in merging until its wait ends (waitOutMerge); any other failure pauses the project
+ * with the reason, instead of retrying every tick, and the ticket stays in merging too.
+ */
 export async function mergeTicket(ctx: EngineCtx, project: ProjectRow, spec: Spec, seen: TicketRow): Promise<void> {
   const ticket = ctx.store.ticket(seen.id);
   if (ticket?.state !== "merging") return;
@@ -217,10 +269,75 @@ export async function mergeTicket(ctx: EngineCtx, project: ProjectRow, spec: Spe
     if (spec.merge.strategy === "integration") await mergeIntoIntegration(recorded, project, spec, ticket);
     else await openPullRequest(recorded, project, spec, ticket);
   } catch (error) {
-    // A host that cannot do its job pauses the project with the reason, instead of retrying every tick. The ticket stays in merging.
+    const failure = waitableOf(error);
+    if (failure !== null) return waitOutMerge(ctx, ticket, errText(error), failure);
+    endMergeWait(ctx, ticket.id);
     pauseProject(ctx, project.id, error instanceof Unavailable ? error.message : `Merging ${ticket.key} stopped: ${errText(error)}`);
+    return;
   }
+  endMergeWait(ctx, ticket.id);
 }
+
+/**
+ * A merge that failed in a way worth waiting out: the ticket stays in merging and the queue waits, 1, 2, 5, 10, then 15
+ * minutes, and at least 15 after a rate limit. The first failure of a streak posts on the ticket; an hour of them pauses
+ * the project and ends the wait, so a resume merges at once.
+ */
+function waitOutMerge(ctx: EngineCtx, seen: TicketRow, message: string, failure: Transient): void {
+  const { store } = ctx;
+  const now = ctx.now();
+  const ticket = store.ticket(seen.id)!;
+  const what = `Merging ${ticket.key}`;
+  // The ticket moved on before the step after it failed; the next launch replays that step (endFinishedThreads).
+  if (ticket.state !== "merging") return ctx.bb.log("warn", `${what}: a step after the merge failed with what looks like a temporary error: ${message}`);
+  const previous = mergeWaitOf(ticket);
+  const wait = nextMergeWait(previous, { now, message, ...failure });
+  ctx.bb.log("warn", `${what} failed ${plural(wait.failures, "time")} in a row with what looks like a temporary error: ${message}`);
+  if (mergeWaitExpired(wait, now)) {
+    endMergeWait(ctx, ticket.id);
+    pauseProject(ctx, ticket.project_id, mergeWaitReason(what, wait, now));
+    return;
+  }
+  store.tx(() => {
+    store.updateTicket(ticket.id, { merge_wait_json: JSON.stringify(wait) });
+    if (previous === null) addWaitPost(ctx, ticket, mergeWaitText(what, wait, now), { mergeFailed: true, failures: wait.failures, until: wait.until });
+  });
+  store.changed(ticket.project_id);
+}
+
+function endMergeWait(ctx: EngineCtx, ticketId: number): void {
+  const ticket = ctx.store.ticket(ticketId);
+  if (ticket === null || ticket.merge_wait_json === null) return;
+  ctx.store.updateTicket(ticketId, { merge_wait_json: null });
+  ctx.store.changed(ticket.project_id);
+}
+
+/**
+ * Before the human blocks or cancels a ticket left in merging, whose merge is not running since the caller holds the
+ * merge guard: on the integration strategy, a merge the ticket made in its integration branch before its after_merge
+ * checks passed is taken out again, back to the point persisted before it, which nothing else can have moved since, as
+ * merges and lands wait while a ticket is in merging. Its wait and its merge step end.
+ */
+export async function stopMerge(ctx: EngineCtx, ticket: TicketRow): Promise<void> {
+  const { store } = ctx;
+  const project = store.project(ticket.project_id)!;
+  const spec = specOf(store, project);
+  if (spec.merge.strategy === "integration" && ticket.merge_before !== null) {
+    const before = ticket.merge_before;
+    try {
+      const { hostId, worktree, settings } = await loomWorktree(ctx, project, spec, ticket.repo);
+      const { head } = await ctx.host.call(hostId, "worktreeState", { worktree, base: settings.base });
+      if (head !== before) await ctx.host.call(hostId, "resetHard", { worktree, sha: before });
+    } catch (error) {
+      throw new LoomError("loom_unavailable", `Loom could not take ${ticket.key}'s merge back out of its integration branch: ${errText(error)}`, "Try again once the project's machine answers.");
+    }
+  }
+  store.updateTicket(ticket.id, { merge_wait_json: null, merge_step_json: null, merge_before: null });
+  store.changed(ticket.project_id);
+}
+
+/** A host's unavailable answer as an Unavailable, keeping whether it is worth waiting out; `message` replaces its own. */
+const unavailableOf = (answer: { message: string } & Partial<Transient>, message = answer.message) => new Unavailable(message, transientOf(answer));
 
 // A repo without a checkout pauses the project with repoCheckout's message, which gives the clone command.
 async function checkoutIn(ctx: EngineCtx, project: ProjectRow, spec: Spec, name: string | null): Promise<RepoCheckout> {
@@ -267,6 +384,9 @@ async function provisionedPath(ctx: EngineCtx, hostId: string, repo: string, pro
   return last;
 }
 
+// Loom's own worktree has its half-done merges aborted when Loom prepares it, so only something outside Loom leaves one there.
+const unfinishedInLoomWorktree = (worktree: string) => `The Loom worktree ${worktree} has a merge that is not finished; resume, and Loom aborts it before it merges again.`;
+
 // A message to the worker about its merge, which names the repo on a multi-repo project.
 function inRepo(text: { summary: string; detail: string }, settings: RepoSettings): { summary: string; detail: string } {
   return settings.name === null ? text : { ...text, detail: `${text.detail}\n\nThis was the integration branch of the repo "${settings.name}", which your worktree is a checkout of.` };
@@ -278,6 +398,7 @@ async function mergeIntoIntegration(ctx: EngineCtx, project: ProjectRow, spec: S
   const target = branchIn(settings);
   const before = await rollbackPoint(ctx, hostId, worktree, settings, ticket);
   const merged = await ctx.host.call(hostId, "merge", { worktree, ref: ticket.head_sha!, message: `${ticket.key}: ${clip(ticket.title, 200)} (Loom)`, before });
+  if (merged.outcome === "unfinished") throw new Unavailable(unfinishedInLoomWorktree(worktree));
 
   if (merged.outcome === "conflict") {
     await sendBack(ctx, ticket.id, {
@@ -392,15 +513,18 @@ async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
   if (branch === null) throw new Unavailable(`${ticket.key} has no branch recorded, so a pull request cannot be opened. Requeue it.`);
   const { remote, base } = settings;
   const fix = inFixRound(ticket);
-  // A ticket the queue took from pr_open only catches up with what it is stacked on; no worker wrote anything for it.
-  const catchUp = fix && movedToCatchUp(ctx, ticket);
+  // A ticket the queue took from pr_open only catches up with what it is stacked on or with its base, or opens a new pull
+  // request for one Loom let go of; no worker wrote anything for it.
+  const taken = fix ? catchUpOf(ctx, ticket) : null;
+  const catchUp = taken !== null;
+  const refresh = taken?.refresh ?? null;
   const text = prTextFor(spec, ticket) ?? { head: ticket.head_sha!, by: "loom" as const, title: null, body: null, commit: `${ticket.key}: ${ticket.title}` };
 
   // While the worker fixed it, the human may have merged or closed the pull request, perhaps into the branch it is stacked on.
   if (fix && ticket.pr_url !== null && settings.forge.kind !== "none") {
     const state = await fixRoundState(ctx, checkout, ticket.pr_url);
-    if (state.outcome === "unavailable") throw new Unavailable(state.message);
-    store.updateTicket(ticket.id, { pr_meta_json: JSON.stringify({ at: ctx.now(), ...state.meta, state: state.state } satisfies PrMeta) });
+    if (state.outcome === "unavailable") throw unavailableOf(state);
+    store.updateTicket(ticket.id, { pr_meta_json: JSON.stringify(readMeta(ticket, { at: ctx.now(), ...state.meta, state: state.state })) });
     if (state.state === "MERGED" && state.meta.base !== null && state.meta.base !== base) {
       await blockMergedElsewhere(ctx, ticket, settings, state.meta.base);
       return;
@@ -412,24 +536,37 @@ async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
       return;
     }
     if (state.state === "CLOSED") {
-      await blockClosed(ctx, ticket);
+      if (await closedPullRequest(ctx, project, store.ticket(ticket.id)!, state.meta.base)) await openPullRequest(ctx, project, spec, store.ticket(ticket.id)!);
       return;
     }
   }
 
   let current = ticket;
   let caughtUp: string | null = null;
-  const need = stacking(spec) ? restackOf(store.tickets(project.id), ticket) : null;
+  // Whether a merge Loom made for this push ran the ticket's checks.
+  let checked = false;
+  // A merge an earlier run put in the worker's worktree is finished first, so nothing builds on the head it replaces.
+  const step = stepOf(ticket);
+  if (step !== null) {
+    const finished = await finishStep(ctx, project, spec, ticket, step, checkout, text);
+    if (finished === null) return;
+    current = finished;
+    caughtUp = step.what;
+    checked = true;
+  }
+  // A refresh takes the base tip it was counted against through the restack a stacked ticket uses; a merge step finished above was its merge.
+  const need = refresh !== null && step === null ? restackWithBase(store.tickets(project.id), current, refresh.tip) : stacking(spec) ? restackOf(store.tickets(project.id), current) : null;
   if (need !== null) {
-    const result = await restack(ctx, project, spec, ticket, need, checkout, text);
+    const result = await restack(ctx, project, spec, current, need, checkout, text);
     if (result === null) return;
     if (result !== "skipped") {
       current = result.ticket;
-      caughtUp = result.what;
+      caughtUp = caughtUp === null ? result.what : `${caughtUp} and ${result.what}`;
+      checked ||= result.checked;
     }
   }
-  if (catchUp && caughtUp === null && !baseMoved(ctx, settings, current)) {
-    toPrOpen(ctx, current.id, {}, null, { url: current.pr_url, restack: true });
+  if (catchUp && caughtUp === null && current.pr_url !== null && !baseMoved(ctx, settings, current)) {
+    toPrOpen(ctx, current.id, refresh === null ? {} : refreshedMeta(store.ticket(current.id)!), null, { url: current.pr_url, restack: true });
     return;
   }
 
@@ -445,11 +582,14 @@ async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
     for (let taken = 0; built.outcome === "diverged" && taken < TIP_TAKES; taken += 1) {
       const took = await takeAtPush(ctx, project, spec, current, checkout, text);
       if (took === null) return;
-      if (took.head_sha !== current.head_sha) caughtUp = caughtUp === null ? TIP_WHAT : `${caughtUp} and ${TIP_WHAT}`;
+      if (took.head_sha !== current.head_sha) {
+        caughtUp = caughtUp === null ? TIP_WHAT : `${caughtUp} and ${TIP_WHAT}`;
+        checked = true;
+      }
       current = took;
       built = await build(current);
     }
-    if (built.outcome === "unavailable") throw new Unavailable(built.message);
+    if (built.outcome === "unavailable") throw unavailableOf(built);
     if (built.outcome === "diverged") {
       await sendBack(ctx, current.id, {
         post: { kind: "merge", body: `The pull request's branch ${branch} got commits Loom did not push while Loom merged the earlier ones (its tip is ${built.tip.slice(0, 12)}), so Loom pushed nothing.`, data: { outcome: "diverged", tip: built.tip, branch } },
@@ -465,7 +605,7 @@ async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
   const pushedNow = created || src !== current.pushed_sha;
   if (pushedNow) {
     const pushed = await ctx.host.call(hostId, "push", { repo, remote, src, branch, ...gitNetwork(settings) });
-    if (pushed.outcome === "unavailable") throw new Unavailable(pushed.message);
+    if (pushed.outcome === "unavailable") throw unavailableOf(pushed);
   }
   const at = ctx.now();
   const recorded: Partial<TicketRow> = { pr_branch: branch, pushed_sha: src, pushed_at: at, pr_checked_at: at, pr_status_json: null, pr_poll_json: null };
@@ -475,40 +615,71 @@ async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
   if (settings.forge.kind === "none" || (fix && current.pr_url !== null)) {
     const where = `${remote}/${branch}`;
     const target = current.pr_url ?? where;
+    // The title and description the fix round sets once it is pushed, when they change.
+    const want = fix ? wantedText(ctx, current, text) : null;
     const post: MergePost | null = !fix
       ? { kind: "merge", body: `Pushed ${branch} to ${remote}${commits}. Open its pull request there${prBase === base ? "" : ` on ${prBase}`}; Loom completes the ticket when ${remote}/${base} contains ${src.slice(0, 12)}.`, data: { outcome: "branch_pushed", pushed: where, sha: src, base: prBase } }
       : catchUp
         ? pushedNow
-          ? { kind: "merge", body: `Pushed ${current.key}'s branch, up to date with ${caughtUp ?? "its new base"}, to ${target}${commits}.`, data: { outcome: "pr_pushed", url: current.pr_url, pushed: where, sha: src, restack: true } }
+          ? refresh !== null
+            ? { kind: "merge", body: refreshedText(current.key, refresh, `${remote}/${base}`, caughtUp ?? `${remote}/${base}`, src, checked), data: { outcome: "pr_pushed", url: current.pr_url, pushed: where, sha: src, restack: true, refresh } }
+            : { kind: "merge", body: `Pushed ${current.key}'s branch, up to date with ${caughtUp ?? "its new base"}, to ${target}${commits}.`, data: { outcome: "pr_pushed", url: current.pr_url, pushed: where, sha: src, restack: true } }
           : null
         : pushedNow
           ? { kind: "merge", body: `Pushed fix round ${current.pr_rounds} to ${target}${commits}.`, data: { outcome: "pr_pushed", url: current.pr_url, pushed: where, sha: src, round: current.pr_rounds } }
-          : { kind: "merge", body: `Fix round ${current.pr_rounds} changed nothing the pull request does not already have, so Loom pushed nothing to ${target}.`, data: { outcome: "pr_unchanged", url: current.pr_url, sha: src, round: current.pr_rounds } };
-    const moved = current.pr_url !== null && prBase !== (current.pr_base ?? base) ? await retarget(ctx, { hostId, repo, settings, ticket: current, base: prBase }) : null;
+          : want !== null
+            ? { kind: "merge", body: `Fix round ${current.pr_rounds} changes only the pull request's text, so Loom pushed nothing to ${target}.`, data: { outcome: "pr_unchanged", url: current.pr_url, sha: src, round: current.pr_rounds, text: true } }
+            : { kind: "merge", body: `Fix round ${current.pr_rounds} changed nothing the pull request does not already have, so Loom pushed nothing to ${target}.`, data: { outcome: "pr_unchanged", url: current.pr_url, sha: src, round: current.pr_rounds } };
+    // The push's after_push runs as soon as Loom knows whether the pull request moves in this pass: once, after the move and
+    // on the new base, when it moves, so CI starts once; else at once, on the base the pull request has, also when the move
+    // waits or pauses, so no push loses its run. A move that succeeds on a later run then gets its own.
+    const has = current.pr_base ?? base;
+    const hook = (moved: boolean) =>
+      current.pr_url === null ? Promise.resolve() : afterPush(ctx, { hostId, repo, settings, head: branch, base: moved ? prBase : has, sha: src, url: current.pr_url, projectId: project.id, ticketId: current.id, pushed: pushedNow, moved });
+    let retargeted: Retargeted | null = null;
+    if (current.pr_url !== null && prBase !== has) {
+      try {
+        retargeted = await retarget(ctx, { hostId, repo, settings, ticket: current, base: prBase });
+      } catch (error) {
+        await hook(false);
+        throw error;
+      }
+    }
+    const moved = retargeted?.moved === true;
     const asked = fix && !catchUp && pushedNow ? await askForReviews(ctx, { hostId, repo, settings, ticket: current }) : null;
     const data = settings.forge.kind === "none" ? { pushed: where } : catchUp ? { url: current.pr_url, restack: true } : { url: current.pr_url, fixRound: current.pr_rounds };
-    const posts = [post, moved, asked].filter((each): each is MergePost => each !== null);
-    toPrOpen(ctx, current.id, { ...recorded, ...(moved === null ? {} : { pr_base: prBase }) }, posts, data);
-    if (current.pr_url !== null && (pushedNow || moved !== null)) {
-      await afterPush(ctx, { hostId, repo, settings, head: branch, base: prBase, sha: src, url: current.pr_url, projectId: project.id, ticketId: current.id });
-    }
+    const posts = [post, retargeted?.post ?? null, asked].filter((each): each is MergePost => each !== null);
+    toPrOpen(ctx, current.id, { ...recorded, ...(moved ? { pr_base: prBase } : {}), ...(refresh === null ? {} : refreshedMeta(store.ticket(current.id)!)) }, posts, data);
+    // Recorded in the same synchronous stretch as the move to pr_open, before any command runs.
+    await hook(moved);
+    if (want !== null) await applyPrText(ctx, spec, store.ticket(current.id)!, checkout, want);
     return;
   }
 
   const dependsOn = dependsOnLines(spec, store.tickets(project.id), current);
-  const pr = text.by === "worker" && text.title !== null && text.body !== null ? { title: text.title, body: workerPrBody(current.key, text.body, dependsOn) } : templatePr(ctx, current, dependsOn);
+  const rollout = prRollout(ctx, spec, current);
+  // loom_pr's title and body win over the ones the reviewers saw proposed; either missing leaves Loom's template. A
+  // replacement for a closed stacked pull request falls back, field by field, on the text it kept (keptText).
+  const proposal = proposalOf(current);
+  const kept = fix ? appliedOf(current) : null;
+  const title = text.title ?? proposal?.title ?? kept?.title ?? null;
+  const body = text.body ?? proposal?.body ?? kept?.body ?? null;
+  const template = templatePr(ctx, current, dependsOn, rollout);
+  const own = kept !== null || (title !== null && body !== null);
+  const pr = own ? { title: title ?? template.title, body: body === null ? template.body : workerPrBody(current.key, body, dependsOn, rollout) } : template;
   const opened = await ctx.host.call(hostId, "prCreate", { repo, remote, base: prBase, head: branch, title: clip(pr.title, 256), body: clip(pr.body, 60_000), draft: spec.merge.draft, forge: openForge(settings.forge) });
-  if (opened.outcome === "unavailable") throw new Unavailable(opened.message);
+  if (opened.outcome === "unavailable") throw unavailableOf(opened);
   const on = prBase === base ? "" : ` on ${prBase}`;
-  toPrOpen(ctx, current.id, { ...recorded, pr_url: opened.url, pr_base: prBase, pr_meta_json: null }, { kind: "merge", body: `Opened pull request ${opened.url}${on}${commits}.`, data: { outcome: "pr_opened", url: opened.url, sha: src, base: prBase } }, { url: opened.url });
+  const applied = openedText(ctx, spec, current, clip(pr.title, 256), own ? body : null);
+  toPrOpen(ctx, current.id, { ...recorded, pr_url: opened.url, pr_base: prBase, pr_meta_json: null, pr_applied_json: applied, pr_proposal_json: null }, { kind: "merge", body: `Opened pull request ${opened.url}${on}${commits}.`, data: { outcome: "pr_opened", url: opened.url, sha: src, base: prBase } }, { url: opened.url });
   await afterOpen(ctx, { hostId, repo, settings, head: branch, base: prBase, url: opened.url, projectId: project.id, ticketId: current.id });
 }
 
-/** Whether the queue took this ticket from pr_open to catch up: its move to merging says so. */
-function movedToCatchUp(ctx: EngineCtx, ticket: TicketRow): boolean {
+/** Whether the queue took this ticket from pr_open to catch up, and the refresh it was due then: its move to merging says so. */
+function catchUpOf(ctx: EngineCtx, ticket: TicketRow): { refresh: Refresh | null } | null {
   const last = ctx.store.ticketEvents(ticket.id, ["ticket.state"]).at(-1);
-  const data = last === undefined ? null : (JSON.parse(last.data_json) as { to?: string; restack?: boolean });
-  return data?.to === "merging" && data.restack === true;
+  const data = last === undefined ? null : (JSON.parse(last.data_json) as { to?: string; restack?: boolean; refresh?: Refresh });
+  return data?.to === "merging" && data.restack === true ? { refresh: data.refresh ?? null } : null;
 }
 
 // A catch-up that merged nothing may still have to move the pull request to another base, when the dependency it built on merged.
@@ -517,17 +688,22 @@ function baseMoved(ctx: EngineCtx, settings: RepoSettings, ticket: TicketRow): b
   return prBaseOf(ctx.store.tickets(ticket.project_id), ticket, settings.base) !== (ticket.pr_base ?? settings.base);
 }
 
+/** A restack that brought the branch up to date: the ticket as it is now, what it took, and whether it merged something and ran the checks on it, false when the head had it all already. */
+type Restacked = { ticket: TicketRow; what: string; checked: boolean };
+
 /**
- * Brings a stacked ticket's branch up to date before Loom pushes it: builds the commit it must take, merges that in its
- * worker's worktree and runs the ticket's checks on the result, with no new review. A worker on another machine gets
- * the merge made on the project's checkout instead, as linear commits (restackOnMachine). Returns the ticket as it is now
- * and what it took; "skipped" when its dependencies conflict with each other, so it is pushed as it is; null when the
- * ticket went back to its worker, or to the queue when the worker is gone.
+ * Brings a stacked ticket's branch up to date before Loom pushes it: builds the commit it must take, merges that into the
+ * ticket's head on the project's checkout, keeps the merge as a MergeStep, and only then puts it in the worker's worktree
+ * and runs the ticket's checks on it, with no new review, so a merge whose answer got lost is finished on the next run. A
+ * worker on another machine gets the merge as linear commits (restackOnMachine). Returns the ticket as it is now and what
+ * it took; "skipped" when its dependencies conflict with each other, so it is pushed as it is; null when the ticket went
+ * back to its worker, or to the queue when the worker is gone.
  */
-async function restack(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow, need: Restack, checkout: RepoCheckout, text: PrText): Promise<{ ticket: TicketRow; what: string } | "skipped" | null> {
+async function restack(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow, need: Restack, checkout: RepoCheckout, text: PrText): Promise<Restacked | "skipped" | null> {
   const { store } = ctx;
   const { hostId, path: repo, settings } = checkout;
-  const what = andList([...Object.keys(need.deps).map((key) => `${key}'s pull request`), ...(need.withBase ? [`${settings.remote}/${settings.base}`] : [])]);
+  const takesBase = need.withBase || need.baseTip !== undefined;
+  const what = andList([...Object.keys(need.deps).map((key) => `${key}'s pull request`), ...(takesBase ? [`${settings.remote}/${settings.base}`] : [])]);
   const worker = workerOf(store, ticket);
   if (worker.standing !== "active") {
     await sendBack(ctx, ticket.id, { post: { kind: "merge", body: `${ticket.key} must take ${what} before Loom pushes it, and its worker is gone, so a new worker takes it.`, data: { outcome: "restack_waits" } }, text: { summary: "", detail: "" }, countFailure: false, reason: "the worker is gone" });
@@ -539,12 +715,12 @@ async function restack(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: 
   const built = await ctx.host.call(hostId, "stackBase", {
     repo,
     branch,
-    commits: need.commits,
-    ...(need.withBase ? { base: { remote: settings.remote, branch: settings.base } } : {}),
+    commits: need.baseTip === undefined ? need.commits : [...need.commits, need.baseTip],
+    ...(need.withBase && need.baseTip === undefined ? { base: { remote: settings.remote, branch: settings.base } } : {}),
     message: `Loom: ${what} for ${ticket.key}`,
     ...gitNetwork(settings),
   });
-  if (built.outcome === "unavailable") throw new Unavailable(built.message);
+  if (built.outcome === "unavailable") throw unavailableOf(built);
   const known = stackOf(ticket) ?? EMPTY_STACK;
   if (built.outcome === "conflict") {
     store.tx(() => {
@@ -555,10 +731,10 @@ async function restack(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: 
     return "skipped";
   }
   const { conflict: _gone, ...rest } = known;
-  const stack: Stack = { ...rest, deps: need.deps, base: built.sha, synced: need.withBase ? ctx.now() : known.synced };
+  const stack: Stack = { ...rest, deps: need.deps, base: built.sha, synced: takesBase ? ctx.now() : known.synced };
   if (isRemote(project, environment)) return restackOnMachine(ctx, { project, spec, ticket, what, checkout, text, environment: { ...environment, path: environment.path }, built: built.sha, stack });
 
-  const merged = await ctx.host.call(environment.hostId, "merge", { worktree: environment.path, ref: built.sha, message: `Merge ${what} into ${ticket.key} (Loom)` });
+  const merged = await ctx.host.call(hostId, "mergeOnto", { repo, head: ticket.head_sha!, ref: built.sha, message: `Merge ${what} into ${ticket.key} (Loom)`, refs: [] });
   if (merged.outcome === "conflict") {
     await sendBack(ctx, ticket.id, {
       post: { kind: "merge", body: `Merging ${what} into ${ticket.key}'s branch conflicted in: ${merged.files.join(", ")}.`, data: { outcome: "conflict", files: merged.files, restack: true } },
@@ -568,85 +744,187 @@ async function restack(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: 
     });
     return null;
   }
-  const keepText = (head: string) => (text.by === "worker" ? { pr_text_json: JSON.stringify({ ...text, head } satisfies PrText) } : {});
   if (merged.already) {
     store.updateTicket(ticket.id, { stack_json: JSON.stringify(stack) });
-    return { ticket: store.ticket(ticket.id)!, what };
+    return { ticket: store.ticket(ticket.id)!, what, checked: false };
   }
-
-  const { runs, failure } = await checksOnMerge(ctx, { spec, ticket, settings, environment: { ...environment, path: environment.path }, base: built.sha, expect: { head: merged.sha } });
-  if (failure !== null) {
-    store.updateTicket(ticket.id, { stack_json: JSON.stringify(stack) });
-    // A worktree bb restored since the worker last ran has none of the files git ignores, so its first failed check counts no failure.
-    const restored = restoredSinceSubmit(store.posts(ticket.id));
-    await sendBack(ctx, ticket.id, { post: afterMergePost(failure.run, `${ticket.key}'s branch`, failure.changed), text: withRestoredNote(restackFailedText(ticket.key, what, failure.run, failure.changed), restored), countFailure: !restored, reason: "the checks failed after bringing the branch up to date" });
-    return null;
-  }
-  const passed = runs.length === 0 ? "" : `; its checks passed (${plural(runs.length, "command")})`;
-  store.tx(() => {
-    // A restack happens only on the project's machine, where the head's own id is what to compare.
-    store.updateTicket(ticket.id, { head_sha: merged.sha, head_tree: null, stack_json: JSON.stringify(stack), ...keepText(merged.sha) });
-    addMergePost(ctx, ticket, { body: `Merged ${what} into ${ticket.key}'s branch as ${merged.sha.slice(0, 12)}${passed}.`, data: { outcome: "restacked", sha: merged.sha, deps: need.deps, base: built.tip, runs: runs.map(({ command, exitCode, timedOut, durationMs }) => ({ command, exitCode, timedOut, durationMs })) } });
-  });
-  store.changed(project.id);
-  return { ticket: store.ticket(ticket.id)!, what };
+  const step: MergeStep = { kind: "restack", from: ticket.head_sha!, sha: merged.sha, tree: null, remote: false, what, checkBase: built.sha, stack, refs: [], data: { deps: need.deps, base: built.tip ?? need.baseTip ?? null } };
+  const finished = await startStep(ctx, project, spec, ticket, step, checkout, text);
+  return finished === null ? null : { ticket: finished, what, checked: true };
 }
 
 /**
  * restack for a worker on another machine, where a merge commit must never go: merges on the project's checkout with
  * merge-tree, carries the result into the worker's worktree as linear commits, replacing the reviewed work there, which
- * the checkout keeps, and runs the checks there. A conflict is carried in with its markers and goes back to the worker;
- * so does a worktree that holds other work than the reviewed one, which Loom leaves alone.
+ * the checkout keeps, and runs the checks there, as a MergeStep. A conflict is carried in with its markers and goes back
+ * to the worker; so does a worktree that holds other work than the reviewed one, which Loom leaves alone.
  */
 async function restackOnMachine(
   ctx: EngineCtx,
   a: { project: ProjectRow; spec: Spec; ticket: TicketRow; what: string; checkout: RepoCheckout; text: PrText; environment: EnvironmentInfo & { path: string }; built: string; stack: Stack },
-): Promise<{ ticket: TicketRow; what: string } | null> {
+): Promise<Restacked | null> {
   const { store } = ctx;
   const { project, spec, ticket, what, environment, stack } = a;
   const refs = [`refs/heads/${homeBranch(project.slug, ticket.key)}`, reviewedRef(project.slug, ticket.key)];
   const merged = await ctx.host.call(a.checkout.hostId, "mergeOnto", { repo: a.checkout.path, head: ticket.head_sha!, ref: a.built, message: `Merge ${what} into ${ticket.key} (Loom)`, refs });
   if (merged.outcome === "merged" && merged.already) {
     store.updateTicket(ticket.id, { stack_json: JSON.stringify(stack) });
-    return { ticket: store.ticket(ticket.id)!, what };
+    return { ticket: store.ticket(ticket.id)!, what, checked: false };
   }
-  const conflict = merged.outcome === "conflict" ? merged.files : null;
-  const carried: Stack = conflict === null ? stack : { ...stack, markers: conflict };
+  if (merged.outcome === "conflict") {
+    const carried: Stack = { ...stack, markers: merged.files };
+    if (!(await carryOrRefuse(ctx, project, spec, { ...ticket, stack_json: JSON.stringify(carried) }, merged.sha, environment, what))) return null;
+    store.updateTicket(ticket.id, { stack_json: JSON.stringify(carried) });
+    await sendBack(ctx, ticket.id, {
+      post: { kind: "merge", body: `Merging ${what} into ${ticket.key}'s branch conflicted in: ${merged.files.join(", ")}. Loom put the result, with conflict markers, in the worker's worktree.`, data: { outcome: "conflict", files: merged.files, restack: true } },
+      text: restackMarkersText(ticket.key, what, merged.files),
+      countFailure: false,
+      reason: "bringing the branch up to date conflicted",
+    });
+    return null;
+  }
+  const step: MergeStep = { kind: "restack", from: ticket.head_sha!, sha: merged.sha, tree: merged.tree, remote: true, what, checkBase: freshBaseOf(spec, ticket.repo), stack, refs: [], data: { deps: stack.deps, base: a.built } };
+  const finished = await startStep(ctx, project, spec, ticket, step, a.checkout, a.text);
+  return finished === null ? null : { ticket: finished, what, checked: true };
+}
+
+/**
+ * Carries a merge into the worktree of a worker on another machine, as the head it replaces there. A worktree that holds
+ * other work, or a merge of the worker's own that is not finished, goes back to the worker untouched, and false is
+ * returned; a failure worth waiting out throws, for the merge to run again.
+ */
+async function carryOrRefuse(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow, sha: string, environment: EnvironmentInfo & { path: string }, what: string): Promise<boolean> {
   try {
-    await carryTo(ctx, project, spec, { ...ticket, stack_json: JSON.stringify(carried) }, merged.sha, environment, ticket.head_tree === null ? {} : { replaces: ticket.head_tree });
+    await carryTo(ctx, project, spec, ticket, sha, environment, ticket.head_tree === null ? {} : { replaces: ticket.head_tree });
+    return true;
   } catch (error) {
+    if (waitableOf(error) !== null) throw error;
+    ctx.store.updateTicket(ticket.id, { merge_step_json: null });
     await sendBack(ctx, ticket.id, {
       post: { kind: "merge", body: `${ticket.key} must take ${what} before Loom pushes it, and Loom could not put it in the worker's worktree: ${errText(error)}`, data: { outcome: "restack_waits" } },
       text: restackRefusedText(ticket.key, what, errText(error)),
       countFailure: false,
       reason: "the worker's worktree holds work Loom has not seen",
     });
-    return null;
+    return false;
   }
-  if (conflict !== null) {
-    store.updateTicket(ticket.id, { stack_json: JSON.stringify(carried) });
-    await sendBack(ctx, ticket.id, {
-      post: { kind: "merge", body: `Merging ${what} into ${ticket.key}'s branch conflicted in: ${conflict.join(", ")}. Loom put the result, with conflict markers, in the worker's worktree.`, data: { outcome: "conflict", files: conflict, restack: true } },
-      text: restackMarkersText(ticket.key, what, conflict),
-      countFailure: false,
-      reason: "bringing the branch up to date conflicted",
-    });
-    return null;
-  }
+}
 
-  const { runs, failure } = await checksOnMerge(ctx, { spec, ticket, settings: a.checkout.settings, environment, base: freshBaseOf(spec, ticket.repo), expect: { tree: merged.tree } });
-  if (failure !== null) {
-    store.updateTicket(ticket.id, { stack_json: JSON.stringify(stack) });
-    await sendBack(ctx, ticket.id, { post: afterMergePost(failure.run, `${ticket.key}'s branch`, failure.changed), text: restackFailedText(ticket.key, what, failure.run, failure.changed), countFailure: true, reason: "the checks failed after bringing the branch up to date" });
+/**
+ * MergeStep: a merge Loom put in, or is putting in, the ticket's worker's worktree to bring its branch up to date (a
+ * restack) or to take commits someone else pushed to its pull request branch (a tip), with the checks that must pass on
+ * it before it becomes the ticket's head. It is kept on the ticket until they finish, so a run of the merge after a
+ * failure worth waiting out, a pause or a restart finishes the same merge instead of merging again from the older head,
+ * and nothing is pushed or accounted for before its checks pass; then, checked, until Loom pushes it.
+ */
+interface MergeStep {
+  kind: "restack" | "tip";
+  /** The ticket's head when Loom merged; the step holds only while head_sha is still this. */
+  from: string;
+  sha: string;
+  /** The merge's tree, which a worker on another machine is checked by; null for a merge made in a worker's own worktree. */
+  tree: string | null;
+  /** The worker is on another machine, which gets the merge as linear commits. */
+  remote: boolean;
+  /** What the merge took, for the posts and the message of the commit Loom pushes. */
+  what: string;
+  /** What the checks measure the worktree against. */
+  checkBase: string;
+  /** A restack's stack: what the ticket's branch is built on once the merge is in. */
+  stack?: Stack;
+  /** A tip's pull request branch tip, which Loom accounts for as pushed once the worker's worktree builds on it. */
+  tip?: string;
+  /** Refs on the checkout to point at the merge once it is in the worktree. */
+  refs: string[];
+  /** The restacked post's data, besides the sha and the runs. */
+  data: Record<string, unknown>;
+  /** Its checks passed and it is the ticket's head; it stays until Loom pushes it, so a push that failed is made on the next run. */
+  checked?: boolean;
+}
+
+function stepOf(ticket: TicketRow): MergeStep | null {
+  const step = ticket.merge_step_json === null ? null : (JSON.parse(ticket.merge_step_json) as MergeStep);
+  return step !== null && step.from === ticket.head_sha ? step : null;
+}
+
+async function startStep(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow, step: MergeStep, checkout: RepoCheckout, text: PrText): Promise<TicketRow | null> {
+  ctx.store.updateTicket(ticket.id, { merge_step_json: JSON.stringify(step) });
+  return finishStep(ctx, project, spec, ctx.store.ticket(ticket.id)!, step, checkout, text);
+}
+
+/**
+ * Puts a step's merge in the worker's worktree, when it is not there yet, points its refs at it and runs the ticket's
+ * checks on it, with no new review. Their passing makes it the ticket's head, and for a tip makes the tip the commit Loom
+ * accounts for; a failed check, or a worktree that holds other work or a merge of the worker's own that is not finished,
+ * ends the step and goes back to the worker. A failure worth waiting out throws and keeps the step. Returns the ticket as
+ * it is now; null when it went back to its worker, or to the queue when the worker is gone.
+ */
+async function finishStep(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticket: TicketRow, step: MergeStep, checkout: RepoCheckout, text: PrText): Promise<TicketRow | null> {
+  const { store } = ctx;
+  if (step.checked === true) return store.ticket(ticket.id)!;
+  const { what } = step;
+  const worker = workerOf(store, ticket);
+  const back = async (a: Parameters<typeof sendBack>[2], patch: Partial<TicketRow> = {}) => {
+    store.updateTicket(ticket.id, { merge_step_json: null, ...patch });
+    await sendBack(ctx, ticket.id, a);
     return null;
+  };
+  if (worker.standing !== "active") {
+    return back({ post: { kind: "merge", body: `${ticket.key} must take ${what} before Loom pushes it, and its worker is gone, so a new worker takes it.`, data: { outcome: "restack_waits" } }, text: { summary: "", detail: "" }, countFailure: false, reason: "the worker is gone" });
+  }
+  const found = await resolveEnvironment(ctx, worker.row);
+  if (found?.path == null) throw new Unavailable(`${ticket.key}'s worker has no worktree, so Loom cannot bring its branch up to date with ${what}. Resume once bb shows the worktree again.`);
+  const environment = { ...found, path: found.path };
+
+  if (step.remote) {
+    const carried = step.stack === undefined ? ticket : { ...ticket, stack_json: JSON.stringify(step.stack) };
+    if (!(await carryOrRefuse(ctx, project, spec, carried, step.sha, environment, what))) return null;
+  } else {
+    const state = await ctx.host.call(environment.hostId, "worktreeState", { worktree: environment.path, base: step.checkBase });
+    if (state.unfinishedMerge === true) {
+      return back({
+        post: { kind: "merge", body: `${ticket.key} must take ${what} before Loom pushes it, and the worker's worktree has a merge the worker has not finished, so Loom left it as it is.`, data: { outcome: "unfinished" } },
+        text: unfinishedMergeText(ticket.key, what),
+        countFailure: false,
+        reason: "the worker's worktree has a merge it has not finished",
+      });
+    }
+    // The worktree has the merge already, or still the head it was made from; anything else is work Loom has not seen.
+    const placed = state.head === step.sha && !state.dirty;
+    if (!placed && (state.head !== step.from || state.dirty)) {
+      const why = state.dirty ? "it has uncommitted changes" : `its HEAD is ${state.head.slice(0, 12)}, not the approved ${step.from.slice(0, 12)}`;
+      return back({ post: { kind: "merge", body: `${ticket.key} must take ${what} before Loom pushes it, and Loom left the worker's worktree as it is: ${why}.`, data: { outcome: "restack_waits" } }, text: restackRefusedText(ticket.key, what, why), countFailure: false, reason: "the worker's worktree holds work Loom has not seen" });
+    }
+    if (!placed) await ctx.host.call(environment.hostId, "resetHard", { worktree: environment.path, sha: step.sha });
+  }
+  if (step.refs.length > 0) await ctx.host.call(checkout.hostId, "pointRefs", { repo: checkout.path, sha: step.sha, refs: step.refs });
+
+  const { runs, failure } = await checksOnMerge(ctx, { spec, ticket, settings: checkout.settings, environment, base: step.checkBase, expect: step.remote ? { tree: step.tree! } : { head: step.sha } });
+  // The worktree of a worker on another machine builds on the tip now, so the next merge of the branch uses it as its base.
+  const accounted = step.tip !== undefined && step.remote ? { pushed_sha: step.tip, pushed_at: ctx.now() } : {};
+  const stacked = step.stack === undefined ? {} : { stack_json: JSON.stringify(step.stack) };
+  if (failure !== null) {
+    // A worktree bb restored since the worker last ran has none of the files git ignores, so its first failed check counts no failure.
+    const restored = !step.remote && restoredSinceSubmit(store.posts(ticket.id));
+    const reason = step.kind === "tip" ? "the checks failed after merging the pull request branch's new commits" : "the checks failed after bringing the branch up to date";
+    return back({ post: afterMergePost(failure.run, `${ticket.key}'s branch`, failure.changed), text: withRestoredNote(restackFailedText(ticket.key, what, failure.run, failure.changed), restored), countFailure: !restored, reason }, { ...accounted, ...stacked });
   }
   const passed = runs.length === 0 ? "" : `; its checks passed (${plural(runs.length, "command")})`;
+  const where = step.remote ? " on the project's machine, and carried it to the worker's" : "";
+  const took = step.tip === undefined ? what : `${what} (${step.tip.slice(0, 12)})`;
   store.tx(() => {
-    store.updateTicket(ticket.id, { head_sha: merged.sha, head_tree: merged.tree, stack_json: JSON.stringify(stack), ...(a.text.by === "worker" ? { pr_text_json: JSON.stringify({ ...a.text, head: merged.sha } satisfies PrText) } : {}) });
-    addMergePost(ctx, ticket, { body: `Merged ${what} into ${ticket.key}'s branch as ${merged.sha.slice(0, 12)} on the project's machine, and carried it to the worker's${passed}.`, data: { outcome: "restacked", sha: merged.sha, deps: stack.deps, base: a.built, runs: runs.map(({ command, exitCode, timedOut, durationMs }) => ({ command, exitCode, timedOut, durationMs })) } });
+    store.updateTicket(ticket.id, {
+      head_sha: step.sha,
+      head_tree: step.remote ? step.tree : null,
+      merge_step_json: JSON.stringify({ ...step, from: step.sha, checked: true } satisfies MergeStep),
+      ...accounted,
+      ...stacked,
+      ...(text.by === "worker" ? { pr_text_json: JSON.stringify({ ...text, head: step.sha } satisfies PrText) } : {}),
+    });
+    addMergePost(ctx, ticket, { body: `Merged ${took} into ${ticket.key}'s branch as ${step.sha.slice(0, 12)}${where}${passed}.`, data: { outcome: "restacked", sha: step.sha, ...step.data, runs: runs.map(({ command, exitCode, timedOut, durationMs }) => ({ command, exitCode, timedOut, durationMs })) } });
   });
   store.changed(project.id);
-  return { ticket: store.ticket(ticket.id)!, what };
+  return store.ticket(ticket.id)!;
 }
 
 /** How often one push merges the pull request branch's new commits before it gives up, when the branch keeps moving meanwhile. */
@@ -655,7 +933,7 @@ const TIP_TAKES = 3;
 /**
  * Merges the commits someone else pushed to a ticket's pull request branch into its head before Loom pushes, with the
  * commit Loom last pushed there as the merge base, and runs the ticket's checks on the result in the worker's worktree,
- * with no new review, as a restack does. On the checkout's machine the worktree's branch moves to the merge; a worker on
+ * with no new review, as a restack does, as a MergeStep. On the checkout's machine the worktree's branch moves to the merge; a worker on
  * another machine gets it as linear commits, and the checkout keeps the merge. A stacked ticket whose branch got base
  * branch commits that the commit it is stacked on lacks takes the base branch first. Returns the ticket as it is now;
  * null when it went back to its worker, or to the queue when the worker is gone.
@@ -676,7 +954,7 @@ async function takeAtPush(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticke
   try {
     tip = await readTip(ctx, project, checkout, ticket);
   } catch (error) {
-    throw new Unavailable(`Reading ${ticket.key}'s pull request branch stopped: ${errText(error)}`);
+    throw new Unavailable(`Reading ${ticket.key}'s pull request branch stopped: ${errText(error)}`, waitableOf(error));
   }
   if (tip === null) throw new Unavailable(`${ticket.key}'s pull request branch is gone from ${settings.remote}, so Loom cannot push to it. Requeue the ticket for a new pull request, or cancel it.`);
 
@@ -699,7 +977,6 @@ async function takeAtPush(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticke
   if (merged.outcome === "merged" && merged.already) return current;
   const remote = isRemote(project, environment);
   const home = `refs/heads/${homeBranch(project.slug, current.key)}`;
-  const keepText = (head: string) => (text.by === "worker" ? { pr_text_json: JSON.stringify({ ...text, head } satisfies PrText) } : {});
 
   if (merged.outcome === "conflict" && !remote) {
     await sendBack(ctx, current.id, {
@@ -710,68 +987,34 @@ async function takeAtPush(ctx: EngineCtx, project: ProjectRow, spec: Spec, ticke
     });
     return null;
   }
-  if (remote) {
-    const conflict = merged.outcome === "conflict" ? merged.files : null;
-    const carried = conflict === null ? current : { ...current, stack_json: JSON.stringify(withMarkers(current, conflict)) };
-    try {
-      await carryTo(ctx, project, spec, carried, merged.sha, environment, current.head_tree === null ? {} : { replaces: current.head_tree });
-    } catch (error) {
-      await sendBack(ctx, current.id, {
-        post: { kind: "merge", body: `${current.key} must take ${what} before Loom pushes it, and Loom could not put it in the worker's worktree: ${errText(error)}`, data: { outcome: "restack_waits" } },
-        text: restackRefusedText(current.key, what, errText(error)),
-        countFailure: false,
-        reason: "the worker's worktree holds work Loom has not seen",
-      });
-      return null;
-    }
-    // The worktree builds on the tip now, so the next merge of the branch uses it as its base.
-    store.updateTicket(current.id, { pushed_sha: tip.sha, pushed_at: ctx.now() });
-    if (conflict !== null) {
-      await ctx.host.call(hostId, "pointRefs", { repo, sha: merged.sha, refs: [home] });
-      store.updateTicket(current.id, { stack_json: carried.stack_json });
-      await sendBack(ctx, current.id, {
-        post: { kind: "merge", body: `Merging ${what} into ${current.key}'s branch conflicted in: ${conflict.join(", ")}. Loom put the result, with conflict markers, in the worker's worktree.`, data: { outcome: "conflict", files: conflict, tip: tip.sha } },
-        text: restackMarkersText(current.key, what, conflict),
-        countFailure: false,
-        reason: "merging the pull request branch's new commits conflicted",
-      });
-      return null;
-    }
-    await ctx.host.call(hostId, "pointRefs", { repo, sha: merged.sha, refs: [home, reviewedRef(project.slug, current.key)] });
-  } else {
-    const state = await ctx.host.call(environment.hostId, "worktreeState", { worktree: environment.path, base: baseOf(spec, current) });
-    if (state.head !== current.head_sha || state.dirty) {
-      const why = state.dirty ? "it has uncommitted changes" : `its HEAD is ${state.head.slice(0, 12)}, not the approved ${current.head_sha!.slice(0, 12)}`;
-      await sendBack(ctx, current.id, {
-        post: { kind: "merge", body: `${current.key} must take ${what} before Loom pushes it, and Loom left the worker's worktree as it is: ${why}.`, data: { outcome: "restack_waits" } },
-        text: restackRefusedText(current.key, what, why),
-        countFailure: false,
-        reason: "the worker's worktree holds work Loom has not seen",
-      });
-      return null;
-    }
-    await ctx.host.call(environment.hostId, "resetHard", { worktree: environment.path, sha: merged.sha });
-  }
-
-  const { runs, failure } = await checksOnMerge(ctx, { spec, ticket: current, settings, environment, base: remote ? freshBaseOf(spec, current.repo) : baseOf(spec, current), expect: remote ? { tree: merged.tree } : { head: merged.sha } });
-  if (failure !== null) {
-    const restored = !remote && restoredSinceSubmit(store.posts(current.id));
+  if (merged.outcome === "conflict") {
+    const carried = { ...current, stack_json: JSON.stringify(withMarkers(current, merged.files)) };
+    if (!(await carryOrRefuse(ctx, project, spec, carried, merged.sha, environment, what))) return null;
+    await ctx.host.call(hostId, "pointRefs", { repo, sha: merged.sha, refs: [home] });
+    // The worktree builds on the tip now, so the next merge of the branch uses it as its base. Recorded only here, with the
+    // markers, once nothing can fail before the ticket goes back to the worker.
+    store.updateTicket(current.id, { pushed_sha: tip.sha, pushed_at: ctx.now(), stack_json: carried.stack_json });
     await sendBack(ctx, current.id, {
-      post: afterMergePost(failure.run, `${current.key}'s branch`, failure.changed),
-      text: withRestoredNote(restackFailedText(current.key, what, failure.run, failure.changed), restored),
-      countFailure: !restored,
-      reason: "the checks failed after merging the pull request branch's new commits",
+      post: { kind: "merge", body: `Merging ${what} into ${current.key}'s branch conflicted in: ${merged.files.join(", ")}. Loom put the result, with conflict markers, in the worker's worktree.`, data: { outcome: "conflict", files: merged.files, tip: tip.sha } },
+      text: restackMarkersText(current.key, what, merged.files),
+      countFailure: false,
+      reason: "merging the pull request branch's new commits conflicted",
     });
     return null;
   }
-  const passed = runs.length === 0 ? "" : `; its checks passed (${plural(runs.length, "command")})`;
-  const where = remote ? " on the project's machine, and carried it to the worker's" : "";
-  store.tx(() => {
-    store.updateTicket(current.id, { head_sha: merged.sha, head_tree: remote ? merged.tree : null, ...keepText(merged.sha) });
-    addMergePost(ctx, current, { body: `Merged ${what} (${tip.sha.slice(0, 12)}) into ${current.key}'s branch as ${merged.sha.slice(0, 12)}${where}${passed}.`, data: { outcome: "restacked", sha: merged.sha, tip: tip.sha, runs: runs.map(({ command, exitCode, timedOut, durationMs }) => ({ command, exitCode, timedOut, durationMs })) } });
-  });
-  store.changed(project.id);
-  return store.ticket(current.id)!;
+  const step: MergeStep = {
+    kind: "tip",
+    from: current.head_sha!,
+    sha: merged.sha,
+    tree: remote ? merged.tree : null,
+    remote,
+    what,
+    checkBase: remote ? freshBaseOf(spec, current.repo) : baseOf(spec, current),
+    tip: tip.sha,
+    refs: remote ? [home, reviewedRef(project.slug, current.key)] : [],
+    data: { tip: tip.sha },
+  };
+  return startStep(ctx, project, spec, current, step, checkout, text);
 }
 
 /**
@@ -806,25 +1049,33 @@ async function checksOnMerge(
   return { runs, failure: null };
 }
 
+/** What a retarget did: its post, and whether the pull request moved; false when the post asks the human to move it. */
+type Retargeted = { post: MergePost; moved: boolean };
+
 /**
- * Moves an open pull request to the branch it now builds on, and returns the post that says so. On a forge Loom cannot move
- * it through, the post asks the human to. A forge that cannot be reached pauses the project, as opening one does.
+ * Moves an open pull request to the branch it now builds on: through gh, or a command forge's retarget command. A failure
+ * worth waiting out throws, for the merge to run again. Any other failure of the retarget command asks the human to move
+ * it, since the push already stands; gh's pauses the project, as opening a pull request does. On a forge Loom cannot move
+ * it through, the post asks the human to.
  */
-async function retarget(ctx: EngineCtx, a: { hostId: string; repo: string; settings: RepoSettings; ticket: TicketRow; base: string }): Promise<MergePost> {
+async function retarget(ctx: EngineCtx, a: { hostId: string; repo: string; settings: RepoSettings; ticket: TicketRow; base: string }): Promise<Retargeted> {
   const url = a.ticket.pr_url!;
   const { forge } = a.settings;
-  if (forge.kind === "command" && forge.retarget !== undefined) {
-    // A command forge's retarget that fails asks the human instead of pausing: the push already stands.
-    const problem = await runForgeCommand(ctx, { hostId: a.hostId, repo: a.repo, command: forge.retarget, env: { LOOM_URL: url, LOOM_PR_NUMBER: prNumber(url), LOOM_BASE: a.base } });
-    if (problem === null) return { kind: "merge", body: `Moved the pull request ${url} to ${a.base}.`, data: { outcome: "retargeted", url, base: a.base } };
-    return { kind: "merge", body: `The pull request ${url} now builds on ${a.base}, but the retarget command \`${forge.retarget}\` ${problem}\n\nChange its base to ${a.base} by hand.`, data: { outcome: "retarget_failed", url, base: a.base } };
+  const command = forge.kind === "command" ? forge.retarget : undefined;
+  if (forge.kind !== "gh" && command === undefined) {
+    return { moved: false, post: { kind: "merge", body: `The pull request ${url} now builds on ${a.base}. Loom cannot change its base through this forge, so change it to ${a.base} by hand.`, data: { outcome: "retarget_by_hand", url, base: a.base } } };
   }
-  if (forge.kind !== "gh") {
-    return { kind: "merge", body: `The pull request ${url} now builds on ${a.base}. Loom cannot change its base through this forge, so change it to ${a.base} by hand.`, data: { outcome: "retarget_by_hand", url, base: a.base } };
-  }
-  const moved = await ctx.host.call(a.hostId, "prRetarget", { repo: a.repo, url, base: a.base });
-  if (moved.outcome === "unavailable") throw new Unavailable(`Moving ${a.ticket.key}'s pull request to ${a.base} stopped: ${moved.message}`);
-  return { kind: "merge", body: `Moved the pull request ${url} to ${a.base}.`, data: { outcome: "retargeted", url, base: a.base } };
+  const moved = await ctx.host.call(a.hostId, "prRetarget", { repo: a.repo, url, base: a.base, forge: command === undefined ? { kind: "gh" } : { kind: "command", retarget: command } });
+  if (moved.outcome === "ok") return { moved: true, post: { kind: "merge", body: `Moved the pull request ${url} to ${a.base}.`, data: { outcome: "retargeted", url, base: a.base } } };
+  if (command === undefined || moved.transient !== undefined) throw unavailableOf(moved, `Moving ${a.ticket.key}'s pull request to ${a.base} stopped: ${moved.message}`);
+  return {
+    moved: false,
+    post: {
+      kind: "merge",
+      body: `The pull request ${url} now builds on ${a.base}, but the retarget command \`${command}\` did not move it: ${moved.message}\n\nChange its base to ${a.base} by hand.`,
+      data: { outcome: "retarget_failed", url, base: a.base },
+    },
+  };
 }
 
 /**
@@ -850,14 +1101,14 @@ async function askForReviews(ctx: EngineCtx, a: { hostId: string; repo: string; 
   return { kind: "merge", body: lines.join("\n\n"), data };
 }
 
-/** merging to pr_open, with what Loom pushed and its posts, in one transaction. */
+/** merging to pr_open, with what Loom pushed and its posts, in one transaction; a checked MergeStep is pushed now. */
 function toPrOpen(ctx: EngineCtx, ticketId: number, patch: Partial<TicketRow>, post: MergePost | null | MergePost[], data: object): void {
   const { store } = ctx;
   const posts = post === null ? [] : Array.isArray(post) ? post : [post];
   store.tx(() => {
     const ticket = store.ticket(ticketId)!;
     store.setTicketState(ticketId, "pr_open", LOOM_ACTOR, data);
-    store.updateTicket(ticketId, patch);
+    store.updateTicket(ticketId, { ...patch, merge_step_json: null });
     for (const each of posts) store.addPost({ project_id: ticket.project_id, ticket_id: ticketId, parent_id: null, author_kind: "loom", author_thread_id: null, kind: each.kind, body: each.body, data_json: JSON.stringify(each.data) });
   });
   store.changed(store.ticket(ticketId)!.project_id);
@@ -866,6 +1117,81 @@ function toPrOpen(ctx: EngineCtx, ticketId: number, patch: Partial<TicketRow>, p
 /** A pull request closed without merging blocks its ticket and ends its threads; a requeue opens a new one. */
 async function blockClosed(ctx: EngineCtx, ticket: TicketRow): Promise<void> {
   await blockPullRequest(ctx, ticket, "the pull request was closed without merging", null);
+}
+
+/** What Loom lets go of with a closed stacked pull request: the pull request, and what it read of it. The branch and the commit Loom pushed there stay, for the next one. */
+const reopenReset = { pr_url: null, pr_base: null, pr_meta_json: null, pr_status_json: null, pr_seen_json: "[]", pr_ask_json: null, pr_poll_json: null, handback_json: null } as const;
+
+/**
+ * The PrApplied a replacement pull request opens with: the text the old one was to end up with (targetText), the approved
+ * edit still waiting if there is one. The old pull request's edit and retry state, and its Rollout record, stay behind.
+ */
+function keptText(ctx: EngineCtx, ticket: TicketRow): string {
+  const text = targetText(ctx, ticket);
+  return JSON.stringify({ title: text.title, body: text.body, live: [], at: ctx.now() } satisfies PrApplied);
+}
+
+/**
+ * A pull request read as closed, by a poll or before a push. One Loom opened on another ticket's branch, which the forge
+ * closed because that branch went away, as when the pull request it was stacked on merged and its branch was deleted,
+ * does not block: Loom lets go of it, posts why, and the ticket stays open with no pull request, for the merge queue to
+ * bring its branch up to date and open a new one on the branch it builds on now (prBaseOf). True when Loom let go of it;
+ * the ticket is then where it was, in pr_open or still merging. Any other closed pull request blocks the ticket, since a
+ * person closed it. While a ticket that is not done still owns the gone branch, its own read settles first, and this
+ * ticket waits in pr_open for its next read. A failed read of the remote throws, as a failed host step does.
+ */
+async function closedPullRequest(ctx: EngineCtx, project: ProjectRow, ticket: TicketRow, target: string | null): Promise<boolean> {
+  const { store } = ctx;
+  const spec = specOf(store, project);
+  const settings = repoSettings(spec, ticket.repo);
+  const { remote, base } = settings;
+  const branch = ticket.pr_base;
+  if (!stacking(spec) || branch === null || branch === base || (target !== null && target !== branch)) {
+    await blockClosed(ctx, ticket);
+    return false;
+  }
+  const owner = store.tickets(project.id).find((other) => other.id !== ticket.id && other.repo === ticket.repo && other.pr_branch === branch) ?? null;
+  if (owner?.state !== "done") {
+    const checkout = await checkoutIn(ctx, project, spec, ticket.repo);
+    const read = await ctx.host.call(checkout.hostId, "remoteBranch", { repo: checkout.path, remote, branch });
+    if (read.outcome === "unavailable") throw unavailableOf(read, `Reading whether ${branch} is still on ${remote} stopped: ${read.message}`);
+    if (read.sha !== null) {
+      await blockClosed(ctx, ticket);
+      return false;
+    }
+    if (owner !== null && owner.state !== "cancelled") {
+      if (ticket.state === "merging") toPrOpen(ctx, ticket.id, {}, null, { url: ticket.pr_url, waits: owner.key });
+      return false;
+    }
+  }
+  const why = owner?.state === "done" ? `${owner.key}'s pull request, whose branch ${branch} it built on, merged` : `the branch it built on, ${branch}, left ${remote}`;
+  store.tx(() => {
+    const current = store.ticket(ticket.id)!;
+    store.updateTicket(current.id, { ...reopenReset, pr_applied_json: keptText(ctx, current) });
+    const after = store.ticket(current.id)!;
+    const tickets = store.tickets(project.id);
+    const hold = holdOf(tickets, after);
+    const next = hold === null ? `Its new pull request opens on ${prBaseOf(tickets, after, base)}${restackOf(tickets, after) === null ? "" : ` once Loom has brought its branch up to date`}.` : holdOpens(spec, after, hold, "new ");
+    addMergePost(ctx, current, {
+      body: `The pull request ${ticket.pr_url} closed when ${why}. A person did not close it, so Loom let go of it instead of blocking ${current.key}, and keeps its branch. ${next}`,
+      data: { outcome: "pr_let_go", url: ticket.pr_url, branch, ticket: owner?.key ?? null },
+    });
+  });
+  store.changed(project.id);
+  ctx.kick();
+  return true;
+}
+
+/** A poll's closed read: closedPullRequest, with a failed read of the remote waited out or pausing the project as a failed poll would. */
+async function settleClosed(ctx: EngineCtx, project: ProjectRow, settings: RepoSettings, ticket: TicketRow, target: string | null): Promise<void> {
+  try {
+    await closedPullRequest(ctx, project, ticket, target);
+  } catch (error) {
+    const message = `Reading the pull request of ${ticket.key} stopped: ${errText(error)}`;
+    noteAnswer(ctx, ticket.id, message);
+    if (waitableOf(error) === null) pauseProject(ctx, project.id, message);
+    else waitOutServerError(ctx, ticket, errText(error), error instanceof Unavailable ? settings.remote : PROJECT_MACHINE);
+  }
 }
 
 /**
@@ -903,49 +1229,73 @@ async function blockPullRequest(ctx: EngineCtx, ticket: TicketRow, reason: strin
 const openForge = (forge: ForgeSpec): HostInput<"prCreate">["forge"] => (forge.kind === "command" ? { kind: "command", open: forge.open! } : { kind: "gh" });
 const stateForge = (forge: ForgeSpec): HostInput<"prState">["forge"] => (forge.kind === "command" ? { kind: "command", state: forge.state! } : { kind: "gh" });
 
-/** Runs one forge command in the repo's checkout; null when it exited 0, else what went wrong, with its output's tail. */
-async function runForgeCommand(ctx: EngineCtx, a: { hostId: string; repo: string; command: string; env: Record<string, string> }): Promise<string | null> {
-  try {
-    const result = await ctx.host.call(a.hostId, "exec", { cwd: a.repo, command: a.command, timeoutMs: AFTER_OPEN_MS, env: a.env });
-    const output = result.output.trim() === "" ? "" : `\n\n${clip(result.output.slice(-2000), 2000)}`;
-    return result.timedOut ? `timed out after ${AFTER_OPEN_MS / 60_000} minutes${output}` : result.exitCode !== 0 ? `failed (exit ${result.exitCode})${output}` : null;
-  } catch (error) {
-    return `could not run: ${errText(error)}`;
-  }
+/** A forge hook's run: where, for which pull request and ticket, and the branches its LOOM_HEAD and LOOM_BASE name. */
+type HookArgs = { hostId: string; repo: string; settings: RepoSettings; head: string; base: string; url: string; projectId: number; ticketId: number | null };
+
+/** Runs the forge's after_open commands once a pull request is open; LOOM_BASE is the branch it opened on. */
+async function afterOpen(ctx: EngineCtx, a: HookArgs): Promise<void> {
+  await forgeHooks(ctx, a, "after_open", a.settings.forge.after_open ?? [], {});
 }
 
-/** Runs the forge's after_open commands once a pull request is open; LOOM_BASE is the branch it opened on. A failure is posted and blocks nothing: the pull request stays open. */
-async function afterOpen(ctx: EngineCtx, a: { hostId: string; repo: string; settings: RepoSettings; head: string; base: string; url: string; projectId: number; ticketId: number | null }): Promise<void> {
-  const env = { LOOM_URL: a.url, LOOM_PR_NUMBER: prNumber(a.url), LOOM_HEAD: a.head, LOOM_BASE: a.base };
-  await forgeHooks(ctx, { ...a, commands: a.settings.forge.after_open ?? [], env, key: "after_open", done: `The pull request ${a.url} is open; nothing else changed.` });
+/** What an after_push run was for, as its event records it. */
+type PushRun = { sha?: string; url?: string; base?: string; pushed?: boolean; moved?: boolean };
+
+/**
+ * Runs the forge's after_push commands once Loom pushed to an open pull request, such as a fix round's, a catch-up's or a
+ * land's, or moved one to another base (`moved`), such as to start its CI again or mark it ready; LOOM_BASE is the branch
+ * it builds on now. A push and a move in one step run them once. They run at most once per push and once per move: the
+ * event recorded before the commands run says what they ran for, so a merge that runs again after a failure, and pushes
+ * the same commit or moves the pull request to the same base again, runs none for what they already ran for. With
+ * neither a new push nor a move, nothing runs.
+ */
+export async function afterPush(ctx: EngineCtx, a: HookArgs & { sha: string; pushed: boolean; moved: boolean }): Promise<void> {
+  const commands = a.settings.forge.after_push ?? [];
+  if (commands.length === 0) return;
+  const kind = a.ticketId === null ? "project.after_push" : "ticket.after_push";
+  const events = a.ticketId === null ? ctx.store.projectEvents(a.projectId).filter((event) => event.kind === kind) : ctx.store.ticketEvents(a.ticketId, [kind]);
+  const runs = events.map((event) => JSON.parse(event.data_json) as PushRun).filter((run) => run.url === a.url && run.sha === a.sha);
+  const pushed = a.pushed && !runs.some((run) => run.pushed !== false);
+  const moved = a.moved && !runs.some((run) => run.moved === true && run.base === a.base);
+  if (!pushed && !moved) return;
+  ctx.store.event(a.projectId, a.ticketId, kind, LOOM_ACTOR, { sha: a.sha, url: a.url, branch: a.head, base: a.base, pushed, moved } satisfies PushRun & { branch: string });
+  await forgeHooks(ctx, a, "after_push", commands, { LOOM_SHA: a.sha }, pushed);
 }
 
 /**
- * Runs the forge's after_push commands after Loom pushed to an open pull request, or moved one to another base, such as to
- * start its CI again or mark it ready. LOOM_BASE is the branch it builds on now. A failure is posted and blocks nothing.
+ * Runs a forge's after_open or after_push commands. A failure is posted and blocks nothing: the pull request stays as it
+ * is, and no command runs again, since a second run could repeat what the first did, such as starting CI. A host call
+ * that got no answer stops the rest, which would not get one either, in the same post.
  */
-async function afterPush(ctx: EngineCtx, a: { hostId: string; repo: string; settings: RepoSettings; head: string; base: string; sha: string; url: string; projectId: number; ticketId: number | null }): Promise<void> {
-  const env = { LOOM_URL: a.url, LOOM_PR_NUMBER: prNumber(a.url), LOOM_HEAD: a.head, LOOM_BASE: a.base, LOOM_SHA: a.sha };
-  await forgeHooks(ctx, { ...a, commands: a.settings.forge.after_push ?? [], env, key: "after_push", done: `Loom's push to ${a.url} stands; nothing else changed.` });
-}
-
-async function forgeHooks(
-  ctx: EngineCtx,
-  a: { hostId: string; repo: string; url: string; projectId: number; ticketId: number | null; commands: readonly string[]; env: Record<string, string>; key: "after_open" | "after_push"; done: string },
-): Promise<void> {
-  for (const command of a.commands) {
-    const problem = await runForgeCommand(ctx, { hostId: a.hostId, repo: a.repo, command, env: a.env });
+async function forgeHooks(ctx: EngineCtx, a: HookArgs, hook: "after_open" | "after_push", commands: readonly string[], more: Record<string, string>, pushed = false): Promise<void> {
+  for (const [index, command] of commands.entries()) {
+    let problem: string | null;
+    let rest: string[] = [];
+    try {
+      const env = { LOOM_URL: a.url, LOOM_PR_NUMBER: prNumber(a.url), LOOM_HEAD: a.head, LOOM_BASE: a.base, ...more };
+      const result = await ctx.host.call(a.hostId, "exec", { cwd: a.repo, command, timeoutMs: AFTER_OPEN_MS, env });
+      const output = result.output.trim() === "" ? "" : `\n\n${clip(result.output.slice(-2000), 2000)}`;
+      problem = result.timedOut ? `timed out after ${AFTER_OPEN_MS / 60_000} minutes${output}` : result.exitCode !== 0 ? `failed (exit ${result.exitCode})${output}` : null;
+    } catch (error) {
+      if (hostCallTransient(error) === null) problem = `could not run: ${errText(error)}`;
+      else {
+        rest = commands.slice(index + 1);
+        problem = `got no answer from the project's machine, so Loom cannot tell whether it ran, and does not run it again: ${errText(error)}`;
+      }
+    }
     if (problem === null) continue;
-    const body = `The ${a.key} command \`${command}\` ${problem}\n\n${a.done}`;
-    const data = { outcome: `${a.key}_failed`, command, url: a.url };
+    const skipped = rest.length === 0 ? "" : ` Loom did not run ${andList(rest.map((each) => `\`${each}\``))} after it either.`;
+    const state = hook === "after_open" ? "is open" : pushed ? "has the push" : `builds on ${a.base}`;
+    const body = `The ${hook} command \`${command}\` ${problem}${skipped}\n\nThe pull request ${a.url} ${state}; nothing else changed.`;
+    const data = { outcome: `${hook}_failed`, command, url: a.url };
     // A land's pull request belongs to no ticket, so its failure is an event and a log line instead of a post.
     if (a.ticketId === null) {
-      ctx.store.event(a.projectId, null, `project.${a.key}_failed`, LOOM_ACTOR, data);
+      ctx.store.event(a.projectId, null, `project.${hook}_failed`, LOOM_ACTOR, data);
       ctx.bb.log("warn", body);
     } else {
       ctx.store.addPost({ project_id: a.projectId, ticket_id: a.ticketId, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "merge", body, data_json: JSON.stringify(data) });
     }
     ctx.store.changed(a.projectId);
+    if (rest.length > 0) return;
   }
 }
 
@@ -958,8 +1308,12 @@ type Feedback = Extract<HostOutputOf<"prFeedback">, { outcome: "ok" }>;
  * request), and its feedback when Loom follows it; or why it failed, with `transient` for a forge failure worth waiting out.
  */
 type PrRead =
-  | { outcome: "ok"; state: "OPEN" | "MERGED" | "CLOSED"; meta: Pick<PrMeta, "draft" | "review" | "base"> | null; feedback: Feedback | null }
+  | { outcome: "ok"; state: "OPEN" | "MERGED" | "CLOSED"; meta: Pick<PrMeta, "draft" | "review" | "base" | "mergeable"> | null; feedback: Feedback | null; text?: PrTextRead }
   | { outcome: "unavailable"; message: string; transient?: "server" | "rate_limit" | "network"; retryAfterMs?: number };
+
+/** The title and description a read gave; null when it gave neither, as a state command or a host from before Loom read them. */
+type PrTextRead = { title: string | null; body: string | null } | null;
+const textRead = (read: { title?: string | null; body?: string | null }): PrTextRead => (read.title === undefined && read.body === undefined ? null : { title: read.title ?? null, body: read.body ?? null });
 
 /** The due GitHub pull requests of one repository, with the checkout gh runs in; `forgeHost` keys the host's backoff. */
 interface Batch {
@@ -1051,7 +1405,9 @@ async function readDue(ctx: EngineCtx, project: ProjectRow, spec: Spec, due: Tic
     } catch (error) {
       const message = `Reading the pull request of ${ticket.key} stopped: ${errText(error)}`;
       noteAnswer(ctx, ticket.id, message);
-      pauseProject(ctx, project.id, message);
+      // A host call that got no answer is waited out like a server error; the project's machine, not the forge, failed.
+      if (hostCallTransient(error) !== null) waitOutServerError(ctx, ticket, errText(error), PROJECT_MACHINE);
+      else pauseProject(ctx, project.id, message);
       continue;
     }
     await settleRead(ctx, project, checkout.settings, ticket, read, host);
@@ -1116,9 +1472,9 @@ function waitOutNetworkError(ctx: EngineCtx, ticket: TicketRow, host: string, me
 
 /**
  * What a pull request whose fix round is ready looks like now: one GitHub read of it, or a command forge's feedback command,
- * which can name its base, else its state command, which cannot. Its draft flag, review and base are kept like a poll's.
+ * which can name its base, else its state command, which cannot. Its draft flag, review, base and mergeability are kept like a poll's.
  */
-async function fixRoundState(ctx: EngineCtx, checkout: RepoCheckout, url: string): Promise<{ outcome: "ok"; state: "OPEN" | "MERGED" | "CLOSED"; meta: Pick<PrMeta, "draft" | "review" | "base"> } | { outcome: "unavailable"; message: string }> {
+async function fixRoundState(ctx: EngineCtx, checkout: RepoCheckout, url: string): Promise<{ outcome: "ok"; state: "OPEN" | "MERGED" | "CLOSED"; meta: Pick<PrMeta, "draft" | "review" | "base" | "mergeable"> } | ({ outcome: "unavailable"; message: string } & Partial<Transient>)> {
   const { hostId, path: repo, settings } = checkout;
   const { forge } = settings;
   const pull = forge.kind === "gh" ? githubPull(url) : null;
@@ -1126,16 +1482,19 @@ async function fixRoundState(ctx: EngineCtx, checkout: RepoCheckout, url: string
     const answer = await ctx.host.call(hostId, "prBatch", { repo, host: pull.host, owner: pull.owner, name: pull.name, numbers: [pull.number], feedback: false });
     if (answer.outcome === "unavailable") return answer;
     const read = answer.pulls.find((each) => each.number === pull.number);
-    if (read === undefined) return { outcome: "unavailable", message: answer.missing[0]?.message ?? `gh found no pull request at ${url}.` };
-    return { outcome: "ok", state: read.state, meta: { draft: read.draft, review: read.review, base: read.base } };
+    if (read === undefined) {
+      const miss = answer.missing[0];
+      return { outcome: "unavailable", message: miss?.message ?? `gh found no pull request at ${url}.`, ...(miss === undefined ? {} : transientOf(miss)) };
+    }
+    return { outcome: "ok", state: read.state, meta: { draft: read.draft, review: read.review, base: read.base, mergeable: read.mergeable ?? null } };
   }
   if (forge.kind === "command" && forge.feedback !== undefined) {
     const read = await ctx.host.call(hostId, "prFeedback", { repo, url, forge: { kind: "command", feedback: forge.feedback } });
     if (read.outcome === "unavailable") return read;
-    return { outcome: "ok", state: read.state, meta: { draft: read.draft ?? null, review: read.review ?? null, base: read.base ?? null } };
+    return { outcome: "ok", state: read.state, meta: { draft: read.draft ?? null, review: read.review ?? null, base: read.base ?? null, mergeable: read.mergeable ?? null } };
   }
   const state = await ctx.host.call(hostId, "prState", { repo, url, forge: stateForge(forge) });
-  return state.outcome === "ok" ? { outcome: "ok", state: state.state, meta: { draft: null, review: null, base: null } } : state;
+  return state.outcome === "ok" ? { outcome: "ok", state: state.state, meta: { draft: null, review: null, base: null, mergeable: null } } : state;
 }
 
 /** A command forge's pull request through its feedback or state command, or the push-only forge's pushed commit. */
@@ -1149,7 +1508,7 @@ async function readOne(ctx: EngineCtx, checkout: RepoCheckout, ticket: TicketRow
   if (follows && followsFeedback(forge)) {
     const read = await ctx.host.call(hostId, "prFeedback", { repo, url: ticket.pr_url!, forge: forge.kind === "command" ? { kind: "command", feedback: forge.feedback! } : { kind: "gh" } });
     if (read.outcome !== "ok") return read;
-    return { outcome: "ok", state: read.state, meta: { draft: read.draft ?? null, review: read.review ?? null, base: read.base ?? null }, feedback: read };
+    return { outcome: "ok", state: read.state, meta: { draft: read.draft ?? null, review: read.review ?? null, base: read.base ?? null, mergeable: read.mergeable ?? null }, feedback: read, text: textRead(read) };
   }
   // The state command prints one word, so it tells nothing else about the pull request.
   const state = await ctx.host.call(hostId, "prState", { repo, url: ticket.pr_url!, forge: stateForge(forge) });
@@ -1174,7 +1533,8 @@ async function readBatch(ctx: EngineCtx, project: ProjectRow, spec: Spec, batch:
     const what = polled.length === 1 ? `the pull request of ${polled[0]!.ticket.key}` : `the pull requests of ${andList(polled.map(({ ticket }) => ticket.key))}`;
     const message = `Reading ${what} stopped: ${errText(error)}`;
     for (const { ticket } of polled) noteAnswer(ctx, ticket.id, message);
-    pauseProject(ctx, project.id, message);
+    if (hostCallTransient(error) !== null) for (const { ticket } of polled) waitOutServerError(ctx, ticket, errText(error), PROJECT_MACHINE);
+    else pauseProject(ctx, project.id, message);
     return;
   }
   if (answer.outcome === "unavailable") {
@@ -1199,7 +1559,7 @@ async function readBatch(ctx: EngineCtx, project: ProjectRow, spec: Spec, batch:
     const read: PrRead =
       pull === undefined
         ? missedRead(ticket, missOf(number))
-        : { outcome: "ok", state: pull.state, meta: { draft: pull.draft, review: pull.review, base: pull.base }, feedback: pull.feedback };
+        : { outcome: "ok", state: pull.state, meta: { draft: pull.draft, review: pull.review, base: pull.base, mergeable: pull.mergeable ?? null }, feedback: pull.feedback, text: textRead(pull) };
     await settleRead(ctx, project, repoSettings(spec, ticket.repo), ticket, read, batch.forgeHost);
   }
   // However many pull requests of the one answer GitHub rate-limited, it is one limit: one backoff, one post, the longest wait it named.
@@ -1221,7 +1581,8 @@ function missedRead(ticket: TicketRow, miss: Extract<HostOutputOf<"prBatch">, { 
 
 /**
  * Acts on one read of the ticket's pull request: merged completes the ticket, unless it merged into a branch other than
- * the repo's base, closed blocks it, and open follows its feedback. A successful read stores the PrMeta first.
+ * the repo's base, closed blocks it, and open follows its feedback and keeps its text up to date (syncPrText). A
+ * successful read stores the PrMeta first.
  */
 async function settleRead(ctx: EngineCtx, project: ProjectRow, settings: RepoSettings, polled: TicketRow, read: PrRead, host: string | null): Promise<void> {
   const { store } = ctx;
@@ -1230,7 +1591,8 @@ async function settleRead(ctx: EngineCtx, project: ProjectRow, settings: RepoSet
     const forge = settings.forge.kind === "gh" ? "GitHub" : (host ?? "the forge");
     if (read.transient === "rate_limit" && host !== null) backOff(ctx, polled, host, read, forge);
     else if (read.transient === "network" && host !== null) waitOutNetworkError(ctx, polled, host, read.message);
-    else if (read.transient === "server" || read.transient === "network") waitOutServerError(ctx, polled, read.message, forge);
+    // The push-only forge has no forge host to back off, so even its rate limit waits on the ticket.
+    else if (read.transient !== undefined) waitOutServerError(ctx, polled, read.message, forge);
     else pauseProject(ctx, project.id, read.message);
     return;
   }
@@ -1239,7 +1601,7 @@ async function settleRead(ctx: EngineCtx, project: ProjectRow, settings: RepoSet
   // The answer is about the pull request and attempt that were polled; the human may have blocked and requeued the ticket during the host call.
   const seen = store.ticket(polled.id);
   if (seen?.state !== "pr_open" || seen.pr_url !== polled.pr_url || seen.attempt !== polled.attempt || seen.pushed_sha !== polled.pushed_sha) return;
-  if (read.meta !== null) store.updateTicket(seen.id, { pr_meta_json: JSON.stringify({ at: ctx.now(), ...read.meta, state: read.state } satisfies PrMeta) });
+  if (read.meta !== null) store.updateTicket(seen.id, { pr_meta_json: JSON.stringify(readMeta(seen, { at: ctx.now(), ...read.meta, state: read.state })) });
   const current = store.ticket(seen.id)!;
   const base = read.meta?.base ?? null;
   if (read.state === "MERGED" && settings.forge.kind === "none") {
@@ -1250,9 +1612,10 @@ async function settleRead(ctx: EngineCtx, project: ProjectRow, settings: RepoSet
   } else if (read.state === "MERGED") {
     complete(ctx, current.id, { kind: "merge", body: "The pull request was merged.", data: { outcome: "pr_merged", url: current.pr_url } });
   } else if (read.state === "CLOSED") {
-    await blockClosed(ctx, current);
-  } else if (read.feedback !== null) {
-    await followFeedback(ctx, store.project(project.id)!, current, read.feedback);
+    await settleClosed(ctx, project, settings, current, base);
+  } else {
+    if (read.feedback !== null) await followFeedback(ctx, store.project(project.id)!, current, read.feedback);
+    await syncPrText(ctx, store.project(project.id)!, current.id, read.text ?? null);
   }
 }
 
@@ -1429,7 +1792,7 @@ async function pushIntegration(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
   if (pushed.outcome === "unavailable") throw unavailable(pushed.message);
   if (settings.forge.kind === "none") return { sha: head, url: null };
   if (open !== null) {
-    await afterPush(ctx, { hostId, repo, settings, head: settings.branch!, base, sha: head, url: open, projectId: project.id, ticketId: null });
+    await afterPush(ctx, { hostId, repo, settings, head: settings.branch!, base, sha: head, url: open, projectId: project.id, ticketId: null, pushed: true, moved: false });
     return { sha: head, url: open };
   }
   const created = await ctx.host.call(hostId, "prCreate", { repo, remote, base, head: settings.branch!, title: clip(a.title ?? project.name, 256), body, draft: spec.merge.draft && !a.ready, forge: openForge(settings.forge) });
@@ -1453,6 +1816,7 @@ async function pushToBase(ctx: EngineCtx, project: ProjectRow, spec: Spec, name:
   const fetched = await ctx.host.call(hostId, "fetchBranch", { worktree, remote, branch: base, ...gitNetwork(settings) });
   if (fetched.outcome === "unavailable") throw unavailable(fetched.message);
   const merged = await ctx.host.call(hostId, "merge", { worktree, ref: fetched.sha, message: `Merge ${target} into ${branch} (Loom)` });
+  if (merged.outcome === "unfinished") throw new LoomError("loom_invalid_state", `Cannot land on ${target}: ${unfinishedInLoomWorktree(worktree)}`);
   if (merged.outcome === "conflict") {
     const asPr = `bb loom land ${project.slug}${name === null ? "" : ` --repo ${name}`}`;
     throw new LoomError("loom_invalid_state", `Cannot land on ${target}: it conflicts with ${branch} in ${merged.files.join(", ")}.`, `Land it as a pull request with \`${asPr}\` and resolve the conflict there.`);

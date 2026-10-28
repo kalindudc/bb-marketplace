@@ -142,7 +142,7 @@ describe("git through bb's VCS scheduler", () => {
     forget();
     expect(await diff({ repo, base: "main", head: feature, maxBytes: 10_000 }, signal)).toMatchObject({ truncated: false });
     expect(await filePatch({ repo, base, head: feature, path: "a.txt", maxBytes: 10_000 }, signal)).toMatchObject({ outcome: "ok" });
-    expect(gitSubcommands(repo)).toEqual(["diff", "diff", "rev-parse", "rev-parse", "diff"]);
+    expect(gitSubcommands(repo)).toEqual(["diff", "diff", "rev-parse", "rev-parse", "rev-parse", "diff"]);
     expectAdmitted("interactive", signal);
 
     sh(repo, "merge", "-q", "--no-ff", "-m", "merge feature", "feature");

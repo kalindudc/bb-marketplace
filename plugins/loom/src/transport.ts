@@ -7,6 +7,7 @@ import { randomBytes } from "node:crypto";
 import { repoCheckout } from "./checkouts";
 import type { ProjectRow, TicketRow } from "./db/store";
 import { threadBranch } from "./environments";
+import { transientOf, Unavailable } from "./forge-waits";
 import { BLOB_MAX_BYTES, CHUNK_BYTES, type HostOutput } from "./host-contract";
 import type { EnvironmentInfo } from "./ports";
 import { freshBaseOf, gitNetwork } from "./repos";
@@ -97,7 +98,7 @@ export async function bringHome(ctx: EngineCtx, project: ProjectRow, spec: Spec,
   const { remote, base: baseBranch } = checkout.settings;
   const stacked = stackOf(ticket)?.base ?? null;
   const made = await ctx.host.call(checkout.hostId, "importCommit", { repo: checkout.path, remote, baseBranch, base: exported.base, tree: exported.tree, message: exported.message, author: exported.author, entries, refs, ...(stacked === null ? {} : { parent: stacked }), ...gitNetwork(checkout.settings) });
-  if (made.outcome === "unavailable") throw new Error(made.message);
+  if (made.outcome === "unavailable") throw new Unavailable(made.message, transientOf(made));
   if (made.outcome === "mismatch") throw new Error(`the commit Loom rebuilt on the project's machine has the tree ${made.tree.slice(0, 12)}, not the worker's ${exported.tree.slice(0, 12)}`);
   return { sha: made.sha, tree: exported.tree, copied: true };
 }
@@ -124,7 +125,7 @@ export async function carryTo(ctx: EngineCtx, project: ProjectRow, spec: Spec, t
   const start = steps[0]!.base;
   const tree = steps.at(-1)!.tree;
   const started = await ctx.host.call(environment.hostId, "carryStart", { worktree, remote: checkout.settings.remote, baseBranch: checkout.settings.base, base: start, tree, ...(opts.replaces === undefined ? {} : { replaces: opts.replaces }), ...gitNetwork(checkout.settings) });
-  if (started.outcome === "unavailable") throw new Error(started.message);
+  if (started.outcome === "unavailable") throw new Unavailable(started.message, transientOf(started));
   if (started.present) return { tree };
   let finished;
   try {

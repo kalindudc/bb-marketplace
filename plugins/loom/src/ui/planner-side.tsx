@@ -108,6 +108,7 @@ const REVIEW_LABEL: Record<NonNullable<PlannerVersion["review"]>["state"], strin
   changes_requested: "review found problems",
   failed: "review did not finish",
   reviewing: "in review",
+  skipped: "review skipped",
 };
 
 /** Every spec version, newest first, each opening the Spec tab on it. */
