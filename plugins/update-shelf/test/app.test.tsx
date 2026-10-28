@@ -42,7 +42,7 @@ async function mountOverlay(updates: PendingUpdate[]) {
     app.appOverlays[0]!,
     {},
     {
-      pluginId: "plugin-updates",
+      pluginId: "update-shelf",
       rpc: {
         list: () => {
           calls.push({ method: "list", input: null });
@@ -76,7 +76,7 @@ describe("plugin app", () => {
     expect(within(group).getByText("2 plugins have updates")).toBeTruthy();
     expect(within(group).getByText("Generative UI")).toBeTruthy();
     expect(within(group).getAllByText("0.1.0 → 0.2.0")).toHaveLength(2);
-    const host = group.closest("[data-plugin-updates-group]")!;
+    const host = group.closest("[data-update-shelf]")!;
     expect(host.nextElementSibling?.querySelector('[data-testid="plugin-row-genui"]')).not.toBeNull();
     slot.lifecycle.unmount();
   });
@@ -128,7 +128,7 @@ describe("plugin app", () => {
   it("draws nothing when no plugin has an update", async () => {
     const app = await loadPluginApp(() => import("../app"));
     renderInstalledPage();
-    const slot = renderSlot(app.appOverlays[0]!, {}, { pluginId: "plugin-updates", rpc: { list: () => ({ updates: [] }) } });
+    const slot = renderSlot(app.appOverlays[0]!, {}, { pluginId: "update-shelf", rpc: { list: () => ({ updates: [] }) } });
     await waitFor(() => expect(slot.inspection.rpcCalls.length).toBeGreaterThan(0));
     expect(screen.queryByRole("region", { name: "Plugin updates" })).toBeNull();
     slot.lifecycle.unmount();

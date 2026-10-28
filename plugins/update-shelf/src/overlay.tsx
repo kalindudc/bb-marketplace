@@ -69,7 +69,7 @@ function InstalledUpdates() {
   if (listError !== null && updates.length === 0) {
     return (
       <p className="rounded-xl border border-border bg-card px-3 py-2 text-xs text-muted-foreground">
-        Plugin Updates couldn’t read the waiting updates: {listError}
+        Update Shelf couldn’t read the waiting updates: {listError}
       </p>
     );
   }

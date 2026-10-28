@@ -155,7 +155,7 @@ export function publicTransport(fetchImpl: typeof fetch = fetch): Transport {
     const response = await fetchImpl(`https://api.github.com/${path}`, {
       headers: {
         Accept: accept === "raw" ? "application/vnd.github.raw" : "application/vnd.github+json",
-        "User-Agent": "bb-plugin-plugin-updates",
+        "User-Agent": "bb-plugin-update-shelf",
       },
       signal: AbortSignal.timeout(GH_TIMEOUT_MS),
     });

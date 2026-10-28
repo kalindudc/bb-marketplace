@@ -1,7 +1,7 @@
 // bb has no slot on its Installed plugins page, so the group is placed through the page's markup. These are the
 // only selectors this plugin depends on; when a bb release changes them the group stops showing and nothing breaks.
 export const ROW_SELECTOR = '[data-testid^="plugin-row-"]';
-export const HOST_ATTRIBUTE = "data-plugin-updates-group";
+export const HOST_ATTRIBUTE = "data-update-shelf";
 
 const SCAN_DELAY_MS = 150;
 

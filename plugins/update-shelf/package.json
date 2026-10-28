@@ -1,5 +1,5 @@
 {
-  "name": "bb-plugin-plugin-updates",
+  "name": "bb-plugin-update-shelf",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -8,7 +8,7 @@
     "bbPluginSdk": ">=0.6.79"
   },
   "bb": {
-    "name": "Plugin Updates",
+    "name": "Update Shelf",
     "description": "Groups every plugin with a waiting update at the top of the Installed plugins page, with each one's changelog from its source and one-click Update or Update all.",
     "branding": {
       "icon": "Download"

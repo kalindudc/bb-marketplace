@@ -1,4 +1,4 @@
-bb marks a plugin with a waiting update on its own card, but the Installed page has no filter or grouping, so the updates are easy to miss among dozens of cards. Plugin Updates adds one group to the top of that page instead of a separate view.
+bb marks a plugin with a waiting update on its own card, but the Installed page has no filter or grouping, so the updates are easy to miss among dozens of cards. Update Shelf adds one group to the top of that page instead of a separate view.
 
 ## What you get
 

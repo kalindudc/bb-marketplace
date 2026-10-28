@@ -1,6 +1,6 @@
 {
-  "id": "plugin-updates",
-  "displayName": "Plugin Updates",
+  "id": "update-shelf",
+  "displayName": "Update Shelf",
   "description": "Groups every plugin with a waiting update at the top of the Installed plugins page, with each one's changelog from its source and one-click Update or Update all.",
   "icon": "Download",
   "tags": ["updates", "plugins", "changelog", "release-notes", "maintenance"],
@@ -9,13 +9,13 @@
     "github": "kalindudc"
   },
   "category": "utilities",
-  "overview": "./plugins/plugin-updates/PLUGIN_OVERVIEW.md",
+  "overview": "./plugins/update-shelf/PLUGIN_OVERVIEW.md",
   "source": {
     "git": {
       "url": "https://github.com/kalindudc/bb-marketplace.git",
-      "subdir": "plugins/plugin-updates",
+      "subdir": "plugins/update-shelf",
       "range": ">=0.1.0 <1.0.0",
-      "tagPrefix": "plugin-updates/"
+      "tagPrefix": "update-shelf/"
     }
   }
 }

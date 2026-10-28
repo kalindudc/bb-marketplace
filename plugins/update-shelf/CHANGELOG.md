@@ -1,6 +1,6 @@
 # Changelog
 
-Notable changes to Plugin Updates, newest first. Releases are tagged `plugin-updates/vX.Y.Z` in this repository.
+Notable changes to Update Shelf, newest first. Releases are tagged `update-shelf/vX.Y.Z` in this repository.
 
 ## 0.1.0 (2026-10-28)
 
@@ -12,5 +12,5 @@ Notable changes to Plugin Updates, newest first. Releases are tagged `plugin-upd
   - when the changelog has no entry for the release, the commits that changed the plugin's directory since the installed commit, each linked to GitHub;
   - a link to the full comparison on GitHub.
   It reads GitHub with the GitHub CLI when it is signed in, so private repositories work, and otherwise with GitHub's public API. A changelog is read only when a row is opened, and kept until the update changes.
-- **Update** on each row, and **Update all** in the group's header after one confirmation. Both go through bb's own update queue, one plugin at a time, with bb's compatibility checks and rollback. Plugin Updates updates itself last, because that reloads it.
+- **Update** on each row, and **Update all** in the group's header after one confirmation. Both go through bb's own update queue, one plugin at a time, with bb's compatibility checks and rollback. Update Shelf updates itself last, because that reloads it.
 - Each row shows its update's progress: queued, the phase bb reports while it updates, or the reason it failed or was rolled back, with a Retry.

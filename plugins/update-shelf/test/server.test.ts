@@ -32,7 +32,7 @@ function setup(options: { startUpdate?: (pluginId: string) => Promise<unknown>; 
     ...options.github,
   };
   const { bb, harness } = createFakePluginHost({
-    pluginId: "plugin-updates",
+    pluginId: "update-shelf",
     sdk: {
       plugins: {
         list: async () => ({ plugins: [genui, current, burn] }) as never,
@@ -51,7 +51,7 @@ function setup(options: { startUpdate?: (pluginId: string) => Promise<unknown>; 
   return { harness, started, githubCalls };
 }
 
-describe("plugin-updates backend", () => {
+describe("update-shelf backend", () => {
   it("lists the plugins waiting for an update with their running jobs", async () => {
     const { harness } = setup();
     const result = (await harness.behavior.callRpc("list", null)) as { updates: Array<{ id: string; job: unknown }> };
@@ -104,9 +104,9 @@ describe("plugin-updates backend", () => {
 
   it("starts each update and leaves this plugin for last, since updating it reloads this backend", async () => {
     const { harness, started } = setup();
-    const result = await harness.behavior.callRpc("update", { ids: ["plugin-updates", "genui", "burn", "genui"] });
-    expect(started).toEqual(["genui", "burn", "plugin-updates"]);
-    expect(result).toEqual({ started: ["genui", "burn", "plugin-updates"], failed: [] });
+    const result = await harness.behavior.callRpc("update", { ids: ["update-shelf", "genui", "burn", "genui"] });
+    expect(started).toEqual(["genui", "burn", "update-shelf"]);
+    expect(result).toEqual({ started: ["genui", "burn", "update-shelf"], failed: [] });
   });
 
   it("keeps going past an update bb refuses to start", async () => {

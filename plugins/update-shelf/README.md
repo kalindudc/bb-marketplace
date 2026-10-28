@@ -1,12 +1,12 @@
-# Plugin Updates
+# Update Shelf
 
 Groups every plugin with a waiting update at the top of bb's **Plugins → Installed** page, with each one's
 changelog from its source and one-click **Update** or **Update all**. There is no separate page: the group sits
 between the page's toolbar and its plugin cards.
 
 ```sh
-bb plugin install plugin-updates@kalindudc
-bb plugin update plugin-updates               # after a new release is tagged
+bb plugin install update-shelf@kalindudc
+bb plugin update update-shelf               # after a new release is tagged
 ```
 
 ## What it shows
