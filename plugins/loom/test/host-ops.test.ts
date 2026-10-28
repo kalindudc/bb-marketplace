@@ -1019,6 +1019,9 @@ describe("ghTransient", () => {
     ["fatal: unable to access 'https://github.com/acme/shop.git/': The requested URL returned error: 403", null],
     [" ! [rejected]        loom/csv/csv-1 -> loom/csv/csv-1 (fetch first)\nerror: failed to push some refs to 'https://github.com/acme/shop.git'", null],
     ["remote: error: GH006: Protected branch update failed for refs/heads/main.", null],
+    ["fatal: remote error: native upload-pack memory budget exhausted by fetches far behind; retry with backoff", { transient: "server" }],
+    ["remote: The server is too busy. Please try again later.\nfatal: the remote end hung up unexpectedly", { transient: "server" }],
+    ["fatal: remote error: upload-pack: not our ref 0123456789abcdef0123456789abcdef01234567", null],
   ] as const)("classifies git's network output by the same rules: %s", (stderr, expected) => {
     expect(ghTransient({ code: 128, stdout: "", stderr })).toEqual(expected);
   });
@@ -1643,6 +1646,59 @@ describe("fetchTip and pointRefs", () => {
     await pointRefs({ repo, sha: newer, refs: ["refs/heads/loom/csv/csv-1-home", "refs/loom/csv/csv-1/reviewed"] });
     expect(sh(repo, "rev-parse", "loom/csv/csv-1-home")).toBe(newer);
     expect(sh(repo, "rev-parse", "refs/loom/csv/csv-1/reviewed")).toBe(newer);
+  });
+
+  it("fetches the base branch before the tip, so a tip that merged many base commits fetches as its own commits", async () => {
+    const { repo, clone } = setup();
+    sh(clone, "checkout", "-q", "-b", "loom/csv-1");
+    commitFile(clone, "a.txt", "a\n");
+    sh(clone, "push", "-q", "origin", "loom/csv-1");
+    const real = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+    const bin = join(scratch, `logging-bin-${counter++}`);
+    const log = join(bin, "fetches");
+    mkdirSync(bin);
+    writeFileSync(join(bin, "git"), `#!/bin/sh\ncase " $* " in *" fetch "*) echo "$*" >> "${log}";; esac\nexec "${real}" "$@"\n`, { mode: 0o755 });
+    const outer = process.env.PATH;
+    process.env.PATH = `${bin}:${outer}`;
+    try {
+      expect(await fetchTip(input(repo))).toMatchObject({ outcome: "ok" });
+    } finally {
+      process.env.PATH = outer;
+    }
+    const fetches = readFileSync(log, "utf8").trim().split("\n");
+    expect(fetches).toHaveLength(2);
+    expect(fetches[0]).toContain("+refs/heads/main:refs/remotes/origin/main");
+    expect(fetches[1]).toContain("refs/heads/loom/csv-1");
+  });
+
+  it("marks a fetch the server refused for now, such as an upload-pack out of its memory budget, as worth waiting out", async () => {
+    const { repo, remote } = setup();
+    const clone = join(scratch, `clone-${counter++}`);
+    execFileSync("git", ["clone", "-q", "-b", "main", remote, clone]);
+    sh(clone, "config", "user.email", "other@example.com");
+    sh(clone, "config", "user.name", "Other");
+    sh(clone, "checkout", "-q", "-b", "loom/csv-1");
+    commitFile(clone, "a.txt", "a\n");
+    sh(clone, "push", "-q", "origin", "loom/csv-1");
+    // An ssh that serves the listing, then refuses the fetch as the forge did.
+    const ssh = join(scratch, `ssh-${counter++}`);
+    const calls = `${ssh}.calls`;
+    writeFileSync(
+      ssh,
+      `#!/bin/sh\nn=$(cat "${calls}" 2>/dev/null || echo 0); echo $((n + 1)) > "${calls}"\nif [ "$n" -eq 0 ]; then exec git-upload-pack "${remote}"; fi\necho "fatal: remote error: native upload-pack memory budget exhausted by fetches far behind; retry with backoff" >&2\nexit 128\n`,
+      { mode: 0o755 },
+    );
+    sh(repo, "remote", "set-url", "origin", "ssh://git@forge.invalid/acme/shop.git");
+    const outer = process.env.GIT_SSH_COMMAND;
+    process.env.GIT_SSH_COMMAND = ssh;
+    try {
+      const read = await fetchTip(input(repo));
+      expect(read).toMatchObject({ outcome: "unavailable", transient: "server" });
+      expect(read.outcome === "unavailable" && read.message).toContain("memory budget exhausted");
+    } finally {
+      if (outer === undefined) delete process.env.GIT_SSH_COMMAND;
+      else process.env.GIT_SSH_COMMAND = outer;
+    }
   });
 
   it("reports a branch that is not on the remote as missing, and a remote it cannot read as unavailable", async () => {

@@ -2,6 +2,17 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.30.1 (2026-10-28)
+
+### Fixed
+
+- A git server that refuses a fetch for now and asks to be tried again no longer pauses the project. A forge's upload-pack answered "native upload-pack memory budget exhausted by fetches far behind; retry with backoff" while Loom read a pull request's branch before a push, and Loom paused. Git's and forge commands' failures that say retry with backoff, retry later or shortly, try again later, temporarily unavailable, budget or resources exhausted, a busy server or an overloaded one now wait and run again, as a server error does, and pause only after an hour.
+- Reading a pull request's branch fetches the base branch before the branch. After someone merged many base commits into the pull request, as a forge's "update branch" does, fetching its tip first from a checkout whose base is old brought every one of those commits, which is the fetch far behind the forge refused. With the base fetched first, the tip brings only the pull request's own commits.
+
+### Compatibility
+
+- No migration.
+
 ## 0.30.0 (2026-10-28)
 
 ### Changed

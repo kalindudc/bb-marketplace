@@ -455,14 +455,20 @@ export async function stackBase(input: HostInput<"stackBase">, signal?: AbortSig
 /** The tip of a ticket's pull request branch on `ref`, for a merge on the checkout, and the newest base commit it has. */
 export async function fetchTip(input: HostInput<"fetchTip">, signal?: AbortSignal): Promise<HostOutput<"fetchTip">> {
   const { repo, remote, branch, base } = input;
-  const read = await pushedTip(repo, remote, branch, networkTimeout(input), signal);
-  if ("outcome" in read) return read;
-  if (read.tip === null) return { outcome: "missing" };
-  const tip = await git(repo, ["rev-parse", "--verify", `${read.tip}^{commit}`], { signal });
-  await git(repo, ["update-ref", input.ref, tip], { signal });
+  const listed = await listedTip(repo, remote, branch, networkTimeout(input), signal);
+  if ("outcome" in listed) return listed;
+  if (listed.tip === null) return { outcome: "missing" };
+  // The base branch first. A tip that has just merged many base commits then comes as its own commits; fetched first, from
+  // a checkout whose base is old, it brings every one of them, which a forge may refuse as a fetch too far behind.
   const tracking = `refs/remotes/${remote}/${base}`;
   const fetched = await runRemote(repo, ["fetch", "--no-tags", "--no-write-fetch-head", remote, `+refs/heads/${base}:${tracking}`], networkTimeout(input), signal);
   if (fetched.code !== 0) return remoteFailed(`git fetch from ${remote}`, fetched);
+  if ((await tryGit(repo, ["cat-file", "-e", `${listed.tip}^{commit}`], signal)) === null) {
+    const took = await runRemote(repo, ["fetch", "--no-tags", "--no-write-fetch-head", listed.target, `refs/heads/${branch}`], networkTimeout(input), signal);
+    if (took.code !== 0) return remoteFailed(`git fetch from ${remote}`, took);
+  }
+  const tip = await git(repo, ["rev-parse", "--verify", `${listed.tip}^{commit}`], { signal });
+  await git(repo, ["update-ref", input.ref, tip], { signal });
   const mainBase = await tryGit(repo, ["merge-base", tip, tracking], signal);
   return { outcome: "ok", sha: tip, tree: await git(repo, ["rev-parse", `${tip}^{tree}`], { signal }), mainBase: mainBase === null || mainBase === "" ? null : mainBase };
 }
@@ -952,7 +958,10 @@ const GH_AUTH_EXIT = 4;
 // gh's "HTTP 502", git's "returned error: 502", and a forge CLI's "Error: 429: …" or "503: …" at the start of a line.
 const HTTP_STATUS = /\bHTTP (\d{3})\b|\breturned error: (\d{3})\b|^[ \t]*(?:error:[ \t]*)?(\d{3}):/imu;
 const RATE_LIMITED = /rate[-_ ]limit|abuse detection|too many requests/iu;
-const SERVER_TROUBLE = /\bserver error\b|bad gateway|service unavailable|gateway time-?out|\btime(?:d[- ]?|[- ]?)out|deadline exceeded|connection (?:reset|refused)|\bEOF\b|TLS handshake|something went wrong|remote end hung up unexpectedly/iu;
+// A server that says it is short of something now and asks to be tried again, such as a git server whose upload-pack ran
+// out of its memory budget, counts too.
+const SERVER_TROUBLE =
+  /\bserver error\b|bad gateway|service unavailable|gateway time-?out|\btime(?:d[- ]?|[- ]?)out|deadline exceeded|connection (?:reset|refused)|\bEOF\b|TLS handshake|something went wrong|remote end hung up unexpectedly|retry with backoff|\bretry (?:later|shortly)\b|try again later|temporarily unavailable|budget exhausted|resources? exhausted|\b(?:server|service) (?:is )?(?:too )?busy\b|\boverloaded\b/iu;
 // The read never reached the forge: its name did not resolve or no connection opened. That is this machine's resolver or
 // network, not one pull request, so it is tested before SERVER_TROUBLE, whose timeouts would also match a connect timeout.
 const NETWORK_TROUBLE =
