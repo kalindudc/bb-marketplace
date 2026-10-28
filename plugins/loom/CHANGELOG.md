@@ -2,6 +2,16 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.29.1 (2026-10-28)
+
+### Fixed
+
+- Every Loom agent has its tools again. 0.29.0 made the loom skill's description 1,083 characters, over the 1,024 bb registers, so bb dropped the skill, `bb.agents.configure` then failed on the unknown skill id, and no planner, worker or reviewer thread got a Loom tool. `bb plugin list` showed `agent configure failed: configure() selected unknown skill id "loom"`. The description is shorter now, and a test keeps each skill's name and description within what bb registers.
+
+### Compatibility
+
+- No migration.
+
 ## 0.29.0 (2026-10-27)
 
 Two pull request projects needed the human far too often: 69 ticket blocks, 17 automatic pauses and 21 resumes in three days. Most came from four gaps: the merge path paused the project on failures worth waiting out, a worker could not change its pull request's text, open pull requests went stale against their base, and deploy order had nowhere to live. This release closes them.

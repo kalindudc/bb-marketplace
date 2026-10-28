@@ -23,6 +23,19 @@ describe("the plugin's own documents", () => {
     for (const id of Object.values(SKILLS)) expect(found, id).toContain(id);
   });
 
+  it("keeps each skill's frontmatter within what bb registers, so configure() finds every skill", () => {
+    // bb drops a skill whose description is over 1,024 characters, and configure() then fails for every Loom agent.
+    for (const id of Object.values(SKILLS)) {
+      const frontmatter = /^---\n([\s\S]*?)\n---/u.exec(read(`skills/${id}/SKILL.md`))?.[1] ?? "";
+      const name = /^name:\s*(.+)$/mu.exec(frontmatter)?.[1]?.trim();
+      const raw = /^description:\s*(.+)$/mu.exec(frontmatter)?.[1]?.trim() ?? "";
+      const description: string = raw.startsWith('"') ? JSON.parse(raw) : raw;
+      expect(name, id).toBe(id);
+      expect(description.length, id).toBeGreaterThan(0);
+      expect(description.length, id).toBeLessThanOrEqual(1024);
+    }
+  });
+
   it("README names every bb loom command and every agent tool", () => {
     const readme = read("README.md");
     expect(commands.length).toBeGreaterThanOrEqual(17);
