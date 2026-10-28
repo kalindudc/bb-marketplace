@@ -14,12 +14,14 @@ export function useNeedsBadge(): ExperimentalBadge | null {
 }
 
 /** The area and its part, each linking back, then the selected PR. */
-function crumbsOf(route: Route): { label: string; route: Route }[] {
+function crumbsOf(route: Route, boardName?: string): { label: string; route: Route }[] {
   switch (route.view) {
     case "inbox": return [{ label: AREA_META.inbox.label, route: { view: "inbox", key: null } }];
     case "mine": return [{ label: AREA_META.mine.label, route: { view: "mine", key: null } }, { label: "Open", route: { view: "mine", key: null } }];
     case "done": return [{ label: AREA_META.mine.label, route: { view: "mine", key: null } }, { label: "Merged and closed", route: { view: "done", key: null } }];
     case "reviews": return [{ label: AREA_META.reviews.label, route: { view: "reviews", source: "all", key: null } }, { label: SOURCE_META[route.source].label, route: { ...route, key: null } }];
+    case "boards": return [{ label: AREA_META.boards.label, route: { view: "boards", tab: route.tab } }];
+    case "board": return [{ label: AREA_META.boards.label, route: { view: "boards", tab: "active" } }, { label: boardName ?? "Board", route: { view: "board", id: route.id, key: null } }];
     case "insights": return [{ label: AREA_META.insights.label, route: { view: "insights", tab: "overview" } }, { label: INSIGHTS_TAB_LABELS[route.tab], route }];
     case "pr": return [{ label: "Look up", route }];
     case "search": return [{ label: route.query === "" ? "Search" : `Search: \u201c${route.query}\u201d`, route: { ...route, key: null } }];
@@ -29,8 +31,10 @@ function crumbsOf(route: Route): { label: string; route: Route }[] {
 export function useShuttlePageTitle({ subPath }: PluginNavPanelProps): ExperimentalPageTitle | null {
   const pluginId = experimental_usePluginId();
   const route = routeOf(subPath);
-  const crumbs = crumbsOf(route);
-  const key = route.view === "insights" ? null : route.key;
+  const board = useShuttleQuery("board", { id: route.view === "board" ? route.id : "board" }, route.view === "board");
+  const boardName = route.view === "board" ? board.data?.board.name : undefined;
+  const crumbs = crumbsOf(route, boardName);
+  const key = route.view === "insights" || route.view === "boards" ? null : route.key;
   if (key === null && crumbs.length === 1) return { title: crumbs[0]!.label };
   const to = (target: Route) => {
     const path = formatRoute(target);

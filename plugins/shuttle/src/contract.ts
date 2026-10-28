@@ -239,6 +239,42 @@ export const prViewSchema = z.object({
 });
 export type PrView = z.infer<typeof prViewSchema>;
 
+export const BOARD_ARCHIVED = ["exclude", "include", "only"] as const;
+export type BoardArchived = (typeof BOARD_ARCHIVED)[number];
+const boardIdSchema = z.string().trim().min(1).max(100);
+const boardNameSchema = z.string().trim().min(1).max(80);
+const boardDescriptionSchema = z.string().trim().max(300);
+const boardPrsSchema = z.array(z.string().trim().min(1).max(500)).max(200);
+
+export const boardSummarySchema = z.object({
+  id: boardIdSchema,
+  name: z.string(),
+  description: z.string(),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+  archivedAt: z.number().nullable(),
+  createdBy: z.string().nullable(),
+  prCount: z.number(),
+  attention: z.number(),
+  ready: z.number(),
+  merged: z.number(),
+  preview: z.array(z.object({ key: z.string(), title: z.string(), state: z.enum(PR_STATES) })).max(3),
+});
+export type BoardSummary = z.infer<typeof boardSummarySchema>;
+
+export const boardActivitySchema = z.object({ id: z.number(), at: z.number(), text: z.string(), threadId: z.string().nullable() });
+export type BoardActivity = z.infer<typeof boardActivitySchema>;
+
+export const boardDetailSchema = z.object({ board: boardSummarySchema, prs: z.array(prViewSchema), activity: z.array(boardActivitySchema) });
+export type BoardDetail = z.infer<typeof boardDetailSchema>;
+
+export const boardsInputSchema = z.object({ query: z.string().max(200).optional(), archived: z.enum(BOARD_ARCHIVED).optional(), key: key.optional() });
+export const boardInputSchema = z.object({ id: boardIdSchema });
+export const boardCreateInputSchema = z.object({ name: boardNameSchema, description: boardDescriptionSchema.optional(), prs: boardPrsSchema.optional() });
+export const boardUpdateInputSchema = z.object({ id: boardIdSchema, name: boardNameSchema.optional(), description: boardDescriptionSchema.optional(), archived: z.boolean().optional() });
+export const boardAddInputSchema = z.object({ id: boardIdSchema, prs: boardPrsSchema.min(1) });
+export const boardRemoveInputSchema = z.object({ id: boardIdSchema, prs: boardPrsSchema.min(1) });
+
 /** Why a step of a sync failed, in plain words and as the command left it. */
 export const SYNC_FAILURE_KINDS = ["unavailable", "timeout", "network", "rate_limit", "auth", "cut_short", "failed"] as const;
 export type SyncFailureKind = (typeof SYNC_FAILURE_KINDS)[number];
@@ -480,6 +516,7 @@ export type PostFinding = z.infer<typeof postFindingSchema>;
 
 // Reads carry tags and writes declare what they invalidate; background syncs invalidate "prs" and "servers" from the server.
 const PRS = () => ["prs"];
+const BOARDS = () => ["boards", "prs"];
 const CONVERSATION = () => ["prs", "conversation"];
 const CONFIG = () => ["config"];
 
@@ -493,6 +530,8 @@ export const rpcContract = defineContract({
   conversation: { input: z.object({ key }), output: z.object({ items: z.array(conversationItemSchema), error: z.string().nullable(), fetchedAt: z.number() }), tags: () => ["conversation"] },
   /** PRs Shuttle already has whose title, repository, number, author, branches or labels hold every word; no server is asked. */
   search: { input: z.object({ query: z.string().max(200) }), output: z.object({ prs: z.array(prViewSchema), total: z.number() }), tags: PRS },
+  boards: { input: boardsInputSchema, output: z.object({ boards: z.array(boardSummarySchema) }), tags: BOARDS },
+  board: { input: boardInputSchema, output: boardDetailSchema, tags: BOARDS },
   /** A link or a key such as delta:shop/world#2261179; fetched from its server and kept. */
   lookup: { input: z.object({ query: z.string().min(1).max(500) }), output: prOut, invalidates: PRS },
   activity: { input: z.object({ limit: z.number().int().min(1).max(500).optional() }), output: z.object({ events: z.array(eventViewSchema) }), tags: PRS },
@@ -527,6 +566,10 @@ export const rpcContract = defineContract({
   projects: { input: z.object({ key: key.optional() }), output: z.object({ projects: z.array(projectOptionSchema), suggested: z.string().nullable() }) },
   getConfig: { input: z.object({}), output: z.object({ config: configSchema }), tags: CONFIG },
   saveConfig: { input: z.object({ config: z.unknown() }), output: z.object({ config: configSchema }), invalidates: () => ["config", "prs", "servers"] },
+  boardCreate: { input: boardCreateInputSchema, output: boardDetailSchema, invalidates: () => ["boards"] },
+  boardUpdate: { input: boardUpdateInputSchema, output: z.object({ board: boardSummarySchema }), invalidates: () => ["boards"] },
+  boardAdd: { input: boardAddInputSchema, output: z.object({ board: boardSummarySchema, added: z.array(z.string()), alreadyPresent: z.array(z.string()) }), invalidates: () => ["boards"] },
+  boardRemove: { input: boardRemoveInputSchema, output: z.object({ board: boardSummarySchema, removed: z.array(z.string()) }), invalidates: () => ["boards"] },
   /** Run a server's commands once (a saved server by id, or an unsaved one) and report each. */
   testServer: { input: z.object({ id: z.string().max(32).optional(), server: z.unknown().optional() }), output: z.object({ results: z.array(testResultSchema) }) },
   exportToml: { input: z.object({}), output: z.object({ toml: z.string() }), tags: CONFIG },

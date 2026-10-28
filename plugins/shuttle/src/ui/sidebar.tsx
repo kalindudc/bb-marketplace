@@ -59,6 +59,8 @@ export function ShuttleSidebar({ subPath }: PluginNavPanelProps) {
   const sources = reviews.data === undefined ? null : sourceCounts(reviews.data.prs);
   const go = (next: Route) => navigate.toPluginPanel(PANEL_PATH, { subPath: formatRoute(next) });
   const mineOpen = route.view === "mine" || route.view === "done";
+  const boardsOpen = route.view === "boards" || route.view === "board";
+  const boards = useShuttleQuery("boards", { archived: "exclude" });
   const servers = overview.data?.servers.filter((server) => server.enabled) ?? [];
   return (
     <nav aria-label="Shuttle areas" className="flex h-full min-h-0 flex-col gap-px p-2">
@@ -74,6 +76,10 @@ export function ShuttleSidebar({ subPath }: PluginNavPanelProps) {
       <NavItem icon={AREA_META.reviews.icon} label="Reviews" count={counts?.reviews ?? null} on={reviewsOpen} onClick={() => go({ view: "reviews", source: "all", key: null })} />
       {reviewsOpen && SOURCES.map((source) => (
         <NavItem key={source} sub label={SOURCE_META[source].label} count={sources?.[source] ?? null} on={route.source === source} onClick={() => go({ view: "reviews", source, key: null })} />
+      ))}
+      <NavItem icon={AREA_META.boards.icon} label="Boards" count={boards.data?.boards.length ?? null} on={boardsOpen} onClick={() => go({ view: "boards", tab: "active" })} />
+      {boardsOpen && boards.data !== undefined && boards.data.boards.map((board) => (
+        <NavItem key={board.id} sub label={board.name} count={board.prCount} on={route.view === "board" && route.id === board.id} onClick={() => go({ view: "board", id: board.id, key: null })} />
       ))}
       <NavItem icon={AREA_META.insights.icon} label="Insights" count={null} on={route.view === "insights"} onClick={() => go({ view: "insights", tab: "overview" })} />
       {route.view === "insights" && (

@@ -27,6 +27,8 @@ export function registerRpc(bb: BbPluginApi, shuttle: Shuttle): void {
     detail: ({ key }) => refusing(() => shuttle.detailOrLookup(key)),
     conversation: ({ key }) => refusing(() => shuttle.conversation(key)),
     search: ({ query }) => refusing(() => shuttle.search(query)),
+    boards: ({ query, archived, key }) => refusing(() => shuttle.boards({ query, archived, key })),
+    board: ({ id }) => refusing(() => shuttle.board(id)),
     lookup: ({ query }) => refusing(async () => ({ pr: await shuttle.lookup(query) })),
     activity: ({ limit }) => refusing(() => ({ events: shuttle.activity(limit) })),
     insights: ({ range }) => refusing(() => shuttle.insights(range)),
@@ -61,6 +63,10 @@ export function registerRpc(bb: BbPluginApi, shuttle: Shuttle): void {
     projects: ({ key }) => refusing(() => shuttle.projectOptions(key)),
     getConfig: () => refusing(() => ({ config: shuttle.config() })),
     saveConfig: ({ config }) => refusing(() => ({ config: shuttle.saveConfig(config) })),
+    boardCreate: (input) => refusing(() => shuttle.boardCreate(input)),
+    boardUpdate: (input) => refusing(() => shuttle.boardUpdate(input)),
+    boardAdd: (input) => refusing(() => shuttle.boardAdd(input)),
+    boardRemove: (input) => refusing(() => shuttle.boardRemove(input)),
     testServer: (input) => refusing(async () => ({ results: await shuttle.testServer(input) })),
     exportToml: () => refusing(() => ({ toml: shuttle.exportToml() })),
     importToml: ({ toml, apply }) => refusing(() => shuttle.importToml(toml, apply)),
@@ -94,4 +100,5 @@ export function registerRpc(bb: BbPluginApi, shuttle: Shuttle): void {
   };
   bb.rpc.experimental_whileWatched("detail", keepFresh((input) => [(input as { key: string }).key]));
   bb.rpc.experimental_whileWatched("threadPrs", keepFresh((input) => shuttle.threadPrs((input as { threadId: string }).threadId).prs.map((pr) => pr.key)));
+  bb.rpc.experimental_whileWatched("board", keepFresh((input) => shuttle.board((input as { id: string }).id).prs.map((pr) => pr.key)));
 }

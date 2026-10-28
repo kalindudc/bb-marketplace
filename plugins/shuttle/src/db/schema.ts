@@ -193,4 +193,32 @@ export const MIGRATIONS: string[] = [
     steps TEXT NOT NULL
   )`,
   `CREATE INDEX sync_runs_server ON sync_runs (server, at)`,
+  // 0.3.9: saved boards of explicit PR memberships, with stable ids and activity.
+  `CREATE TABLE boards (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    name_key TEXT NOT NULL UNIQUE,
+    description TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    archived_at INTEGER,
+    created_by TEXT
+  )`,
+  `CREATE TABLE board_members (
+    board_id TEXT NOT NULL,
+    pr_id INTEGER NOT NULL,
+    position INTEGER NOT NULL,
+    added_at INTEGER NOT NULL,
+    PRIMARY KEY (board_id, pr_id)
+  )`,
+  `CREATE INDEX board_members_board ON board_members (board_id, position)`,
+  `CREATE INDEX board_members_pr ON board_members (pr_id, board_id)`,
+  `CREATE TABLE board_activity (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    board_id TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    thread_id TEXT
+  )`,
+  `CREATE INDEX board_activity_board ON board_activity (board_id, id)`,
 ];

@@ -27,6 +27,7 @@ export class FakePort implements BbPort {
   sections = new Map<string, string>();
   failSections = false;
   publishes = 0;
+  invalidations: string[][] = [];
   logs: string[] = [];
   private next = 1;
 
@@ -93,8 +94,9 @@ export class FakePort implements BbPort {
   async listSkills(): Promise<Array<{ id: string; name: string; description: string }>> {
     return [{ id: "s1", name: "pr-reviewer", description: "Reviews" }];
   }
-  publish(): void {
+  publish(tags?: string[]): void {
     this.publishes++;
+    this.invalidations.push(tags ?? ["prs", "servers", "conversation", "boards"]);
   }
   log(_level: string, text: string): void {
     this.logs.push(text);

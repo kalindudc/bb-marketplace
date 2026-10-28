@@ -1,7 +1,7 @@
 {
   "id": "shuttle",
   "displayName": "Shuttle",
-  "description": "Every pull request that needs you, from any server, in one place: an Inbox of the decisions waiting on you, your PRs with the agent thread that fixes their reviews and failed checks, a review centre for the PRs that ask you or your teams, and insights into where time goes. Merge, comment and post AI review drafts from Shuttle, on GitHub, Delta or any server you add with commands.",
+  "description": "Your PRs and reviews across servers, saved PR boards, and agents that handle feedback, in one place.",
   "icon": { "url": "plugins/shuttle/icons/shuttle.svg" },
   "tags": [
     "pull-requests",

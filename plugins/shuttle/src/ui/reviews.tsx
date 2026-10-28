@@ -1,8 +1,10 @@
+import { useEffect, useMemo, useState } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import type { PrView } from "../contract";
 import { ErrorNote, FIELD, PAGE, PageHeading } from "./common";
 import { REVIEW_GROUPS, SOURCE_META, type Group } from "./constants";
 import { messageOf, useShuttleQuery } from "./data";
+import { BoardChooserDialog, BoardFormDialog, BoardSelectionToolbar, useBoardSelection } from "./boards";
 import { useFolding, type ReviewFilter } from "./prefs";
 import { SOURCES, type Route, type Source } from "./route";
 import { FoldAllButton, GroupList, ReviewRow, type RowLayout } from "./row";
@@ -49,6 +51,9 @@ export function ReviewsView({ source, filter, layout, onFilter, onGo }: {
   onGo(route: Route): void;
 }) {
   const list = useShuttleQuery("list", { area: "reviews" });
+  const boardSelection = useBoardSelection();
+  const [boardDialog, setBoardDialog] = useState<null | "create" | "choose">(null);
+  useEffect(() => boardSelection.clear(), [source]);
   const prs = list.data?.prs;
   const counts = prs === undefined ? null : sourceCounts(prs);
   const teamPrs = (prs ?? []).filter((pr) => inSource(pr, "team"));
@@ -59,7 +64,8 @@ export function ReviewsView({ source, filter, layout, onFilter, onGo }: {
   const quiet = inScope.filter((pr) => pr.quiet && !pr.bot).length;
   const shown = inScope.filter((pr) => !(filter.hideBots && pr.bot) && !(filter.hideQuiet && pr.quiet));
   const chip = (on: boolean) => `inline-flex shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs ${on ? "border-primary/45 bg-accent text-foreground" : "border-border text-muted-foreground hover:text-foreground"}`;
-  const row = (pr: PrView) => <ReviewRow key={pr.key} pr={pr} layout={layout} />;
+  const selectedSet = useMemo(() => new Set(boardSelection.selected), [boardSelection.selected]);
+  const row = (pr: PrView) => <ReviewRow key={pr.key} pr={pr} layout={{ ...layout, selection: { checked: selectedSet.has(pr.key), onToggle: () => boardSelection.toggle(pr.key) } }} />;
   const grouped = new Set(REVIEW_GROUPS.flatMap((group) => group.kinds));
   const oldestFirst = (items: PrView[]) => [...items].sort((a, b) => (a.requestedAt ?? Number.POSITIVE_INFINITY) - (b.requestedAt ?? Number.POSITIVE_INFINITY));
   const folding = useFolding("reviews");
@@ -89,6 +95,7 @@ export function ReviewsView({ source, filter, layout, onFilter, onGo }: {
         <Toggle on={filter.hideQuiet} label="Hide quiet for 30+ days" count={quiet} onChange={(hideQuiet) => onFilter({ ...filter, hideQuiet })} />
         <span className="ml-auto"><FoldAllButton titles={sections.map((section) => section.group.title)} folding={folding} /></span>
       </div>
+      {(shown.length > 0 || boardSelection.selected.length > 0) && <BoardSelectionToolbar selected={boardSelection.selected} onCreate={() => setBoardDialog("create")} onAdd={() => setBoardDialog("choose")} onClear={boardSelection.clear} />}
       {list.error !== null && <ErrorNote>{messageOf(list.error)}</ErrorNote>}
       {prs === undefined && list.error === null && <div className="py-6 text-sm text-muted-foreground">Loading…</div>}
       {prs !== undefined && source === "tracked" && inScope.length === 0 && (
@@ -100,6 +107,8 @@ export function ReviewsView({ source, filter, layout, onFilter, onGo }: {
         <div className="py-10 text-center text-sm text-muted-foreground">{inScope.length === 0 ? "Nothing here." : "Everything here is hidden by the filters above."}</div>
       )}
       {sections.map((section) => <GroupList key={section.group.title} group={section.group} prs={section.prs} layout={layout} row={row} folding={folding} />)}
+      {boardDialog === "choose" && <BoardChooserDialog prs={boardSelection.selected} onClose={() => setBoardDialog(null)} onCreateBoard={() => setBoardDialog("create")} />}
+      {boardDialog === "create" && <BoardFormDialog mode="create" prs={boardSelection.selected} onClose={() => setBoardDialog(null)} />}
     </div>
   );
 }

@@ -17,11 +17,12 @@ export interface RowLayout {
   /** The PR panel is open beside the list, or the screen is a phone: rows leave out their trailing action. */
   compact: boolean;
   phone: boolean;
+  selection?: { checked: boolean; onToggle(): void };
   onSelect(key: string): void;
 }
 
 function Row({ pr, layout, meta, pills }: { pr: PrView; layout: RowLayout; meta: ReactNode; pills: ReactNode }) {
-  const selected = pr.key === layout.selected;
+  const selected = pr.key === layout.selected || layout.selection?.checked === true;
   const primary = pr.next.primary;
   const onKey = (event: KeyboardEvent) => {
     if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
@@ -31,7 +32,10 @@ function Row({ pr, layout, meta, pills }: { pr: PrView; layout: RowLayout; meta:
   };
   return (
     <li data-pr={pr.key} data-next={pr.next.kind} tabIndex={0} aria-current={selected ? "true" : undefined} onClick={onCardClick(() => layout.onSelect(pr.key))} onKeyDown={onKey}
-      className={`flex cursor-pointer items-center gap-2.5 border-t border-border px-3.5 py-2.5 first:border-t-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${selected ? SELECTED_ROW : "hover:bg-accent/50"}`}>
+      className={`flex cursor-pointer items-start gap-2.5 border-t border-border px-3.5 py-2.5 first:border-t-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${selected ? SELECTED_ROW : "hover:bg-accent/50"}`}>
+      {layout.selection && (
+        <input type="checkbox" aria-label={`Select ${pr.title}`} checked={layout.selection.checked} onChange={() => layout.selection?.onToggle()} className="mt-1 size-4 shrink-0 cursor-pointer accent-primary" />
+      )}
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-1.5 text-[11.5px] text-muted-foreground">{meta}</div>
         <div className={`mb-1.5 mt-0.5 text-[13px] font-semibold ${layout.phone ? "line-clamp-2" : "truncate"}`}>{pr.title}</div>

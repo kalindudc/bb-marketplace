@@ -7,6 +7,7 @@ import { AREA_META, PANEL_PATH } from "./constants";
 import { isNotFound, messageOf, threadsOf, useShuttleMutation, useShuttleQuery } from "./data";
 import { PrDetail, TrackButton } from "./detail";
 import { keyLabel } from "./format";
+import { BoardDetailView, BoardsView } from "./boards";
 import { InboxView } from "./inbox";
 import { InsightsView, type IdeaAction } from "./insights";
 import { MineView } from "./mine";
@@ -22,19 +23,20 @@ import { useScrollMemory } from "./scroll";
 import { useSurface } from "./surface";
 import { useViewport } from "./viewport";
 
-const AREAS: readonly Area[] = ["inbox", "mine", "reviews", "insights"];
+const AREAS: readonly Area[] = ["inbox", "mine", "reviews", "boards", "insights"];
 const AREA_ROUTES: Record<Area, Route> = {
   inbox: { view: "inbox", key: null },
   mine: { view: "mine", key: null },
   reviews: { view: "reviews", source: "all", key: null },
+  boards: { view: "boards", tab: "active" },
   insights: { view: "insights", tab: "overview" },
 };
 const INBOX: Route = AREA_ROUTES.inbox;
 
-const isListRoute = (route: Route): route is ListRoute => route.view === "inbox" || route.view === "mine" || route.view === "done" || route.view === "reviews" || route.view === "search";
+const isListRoute = (route: Route): route is ListRoute => route.view === "inbox" || route.view === "mine" || route.view === "done" || route.view === "reviews" || route.view === "search" || route.view === "board";
 
 function countOf(area: Area, overview: Overview | undefined): number | null {
-  if (overview === undefined || area === "insights") return null;
+  if (overview === undefined || area === "insights" || area === "boards") return null;
   return overview.counts[area];
 }
 
@@ -146,7 +148,7 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
   const filter = useStored(reviewFilter);
   const setFilter = reviewFilter.set;
 
-  const selectedKey = route.view === "insights" ? null : route.key;
+  const selectedKey = route.view === "insights" || route.view === "boards" ? null : route.key;
   const inbox = useShuttleQuery("inbox", {}, route.view === "inbox");
   const listArea = route.view === "mine" || route.view === "done" || route.view === "reviews" ? route.view : "mine";
   const list = useShuttleQuery("list", { area: listArea }, route.view === "mine" || route.view === "done" || route.view === "reviews");
@@ -238,6 +240,8 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
     case "mine":
     case "done": area = <MineView done={route.view === "done"} layout={layout} overview={overview.data} onGo={go} />; break;
     case "reviews": area = <ReviewsView source={route.source} filter={filter} layout={layout} onFilter={setFilter} onGo={go} />; break;
+    case "boards": area = <BoardsView tab={route.tab} onGo={go} />; break;
+    case "board": area = <BoardDetailView id={route.id} layout={layout} onGo={go} />; break;
     case "search": area = <SearchView query={route.query} layout={layout} />; break;
     case "insights": area = <InsightsView tab={route.tab} onTab={(tab) => go({ view: "insights", tab })} onAction={onIdea} onOpenPr={select} />; break;
     case "pr": area = (

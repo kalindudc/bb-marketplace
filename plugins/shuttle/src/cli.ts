@@ -1,17 +1,19 @@
 import { PluginCliError, cliCommand, defineCli, type PluginCliRegistration, type PluginCliResult } from "@get-bb/plugin-sdk";
 import { readFile } from "node:fs/promises";
-import { AGENT_MODES, AREAS, type AgentMode, type Area } from "./contract";
+import { AGENT_MODES, AREAS, boardAddInputSchema, boardCreateInputSchema, boardInputSchema, boardRemoveInputSchema, boardsInputSchema, boardUpdateInputSchema, type AgentMode, type Area } from "./contract";
 import { errText } from "./ctx";
-import { prDetail, prList, serverText } from "./format";
+import { boardDetailText, boardLine, boardList, prDetail, prList, serverText } from "./format";
 import type { Shuttle } from "./shuttle";
 
 const json = { type: "boolean", description: "Print machine-readable JSON." } as const;
 const thread = { type: "string", description: "The thread id; the calling thread by default." } as const;
 const PR = { name: "pr", description: "A PR link, or a key such as github:owner/repo#123.", required: true } as const;
+const BOARD = { name: "id", description: "The board id.", required: true } as const;
 const out = (stdout: string): PluginCliResult => ({ exitCode: 0, stdout: stdout.endsWith("\n") ? stdout : `${stdout}\n` });
 const toJson = (value: unknown) => JSON.stringify(value, null, 2);
 const LISTS = ["inbox", ...AREAS] as const;
 const countsText = (counts: Record<string, number>) => LISTS.map((l) => `${l} ${counts[l]}`).join(", ");
+const boardKeysText = (label: string, keys: string[], empty: string) => `${label}: ${keys.length ? keys.join(", ") : empty}`;
 
 async function guarded(fn: () => Promise<PluginCliResult> | PluginCliResult): Promise<PluginCliResult> {
   try {
@@ -26,6 +28,12 @@ function threadOf(option: string | undefined, ctx: { threadId?: string }): strin
   const id = option ?? ctx.threadId;
   if (!id) throw new PluginCliError("No thread: run this inside a thread or pass --thread <id>.");
   return id;
+}
+
+function parseInput(schema: { safeParse(input: unknown): unknown }, input: unknown): any {
+  const parsed = schema.safeParse(input) as { success: true; data: any } | { success: false; error: { issues: Array<{ path: PropertyKey[]; message: string }> } };
+  if (!parsed.success) throw new PluginCliError(parsed.error.issues.map((issue) => `${issue.path.map(String).join(".") || "input"}: ${issue.message}`).join("; "));
+  return parsed.data;
 }
 
 export function createCli(shuttle: Shuttle): PluginCliRegistration {
@@ -77,6 +85,84 @@ export function createCli(shuttle: Shuttle): PluginCliRegistration {
             const view = await shuttle.lookup(positionals.pr);
             const detail = shuttle.detail(view.key);
             return out(options.json ? toJson(detail) : prDetail(detail.pr, detail.events));
+          }),
+      }),
+      "board list": cliCommand({
+        summary: "List Shuttle boards, optionally filtered by name, archived state or a member PR key",
+        options: { query: { type: "string", description: "Only boards whose name or description matches this text." }, archived: { type: "string", description: "exclude (default), include or only." }, key: { type: "string", description: "Only boards containing this canonical PR key." }, json },
+        run: ({ options }) =>
+          guarded(() => {
+            const input = parseInput(boardsInputSchema, { ...(options.query === undefined ? {} : { query: options.query }), ...(options.archived === undefined ? {} : { archived: options.archived }), ...(options.key === undefined ? {} : { key: options.key }) });
+            const boards = shuttle.boards(input);
+            return out(options.json ? toJson(boards) : boardList(boards.boards, "No board matches that filter."));
+          }),
+      }),
+      "board show": cliCommand({
+        summary: "Show one Shuttle board, with its saved PRs and recent board activity",
+        positionals: [BOARD],
+        options: { json },
+        run: ({ options, positionals }) =>
+          guarded(() => {
+            const input = parseInput(boardInputSchema, { id: positionals.id });
+            const detail = shuttle.board(input.id);
+            return out(options.json ? toJson(detail) : boardDetailText(detail));
+          }),
+      }),
+      "board create": cliCommand({
+        summary: "Create a Shuttle board, optionally with an initial set of PR links or keys",
+        positionals: [{ name: "name", description: "The board name.", required: true }, { name: "pr", description: "A PR link or key to add now.", required: false, variadic: true }],
+        options: { description: { type: "string", description: "A short description of what belongs in the board." }, thread, json },
+        run: ({ options, positionals }, ctx) =>
+          guarded(async () => {
+            const input = parseInput(boardCreateInputSchema, { name: positionals.name, ...(options.description === undefined ? {} : { description: options.description }), ...(positionals.pr.length ? { prs: positionals.pr } : {}) });
+            const detail = await shuttle.boardCreate(input, options.thread ?? ctx.threadId);
+            return out(options.json ? toJson(detail) : boardDetailText(detail));
+          }),
+      }),
+      "board update": cliCommand({
+        summary: "Rename, describe, archive or restore a Shuttle board",
+        positionals: [BOARD],
+        options: {
+          name: { type: "string", description: "The new board name." },
+          description: { type: "string", description: "The new board description." },
+          archive: { type: "boolean", description: "Archive the board." },
+          restore: { type: "boolean", description: "Restore an archived board." },
+          thread,
+          json,
+        },
+        run: ({ options, positionals }, ctx) =>
+          guarded(() => {
+            if (options.archive && options.restore) throw new PluginCliError("Pass at most one of --archive and --restore");
+            const input = parseInput(boardUpdateInputSchema, {
+              id: positionals.id,
+              ...(options.name === undefined ? {} : { name: options.name }),
+              ...(options.description === undefined ? {} : { description: options.description }),
+              ...(options.archive ? { archived: true } : options.restore ? { archived: false } : {}),
+            });
+            const updated = shuttle.boardUpdate(input, options.thread ?? ctx.threadId);
+            return out(options.json ? toJson(updated) : boardLine(updated.board));
+          }),
+      }),
+      "board add": cliCommand({
+        summary: "Add explicit PR links or keys to a Shuttle board by id",
+        positionals: [BOARD, { name: "pr", description: "One or more PR links or keys.", required: true, variadic: true }],
+        options: { thread, json },
+        run: ({ options, positionals }, ctx) =>
+          guarded(async () => {
+            const input = parseInput(boardAddInputSchema, { id: positionals.id, prs: positionals.pr });
+            const result = await shuttle.boardAdd(input, options.thread ?? ctx.threadId);
+            return out(options.json ? toJson(result) : [boardLine(result.board), boardKeysText("Added", result.added, "none"), boardKeysText("Already present", result.alreadyPresent, "none")].join("\n"));
+          }),
+      }),
+      "board remove": cliCommand({
+        summary: "Remove explicit PR links or keys from a Shuttle board by id",
+        positionals: [BOARD, { name: "pr", description: "One or more PR links or keys.", required: true, variadic: true }],
+        options: { thread, json },
+        run: ({ options, positionals }, ctx) =>
+          guarded(() => {
+            const input = parseInput(boardRemoveInputSchema, { id: positionals.id, prs: positionals.pr });
+            const result = shuttle.boardRemove(input, options.thread ?? ctx.threadId);
+            return out(options.json ? toJson(result) : [boardLine(result.board), boardKeysText("Removed", result.removed, "none")].join("\n"));
           }),
       }),
       link: cliCommand({

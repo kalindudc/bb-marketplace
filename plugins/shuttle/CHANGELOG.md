@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0
+
+- **Saved PR boards.** Keep an explicit set of PRs for a release, project, or handoff, across repositories and servers. Create an empty board, save a selection from My PRs, Reviews or Search, or add PRs by searching Shuttle or pasting links and keys. A PR can belong to several boards. Its status stays live, and merged or closed PRs stay in the set until removed.
+- **Curate without changing ownership.** Rename, describe or duplicate a board, filter its PRs, remove selected members with confirmation and Undo, and open their ordinary detail panels. Membership badges show exactly which boards contain a PR. Board operations never assign an agent, change review tracking or alter feedback delivery.
+- **Archive and restore.** Archive hides a board from active navigation without losing its saved PRs. Archived boards stay read-only until explicitly restored. Boards follows the other navigation areas: its submenu appears only while Boards is open.
+- **A compact activity log.** Each board shows timestamped log lines for membership and metadata changes. Fold Activity to hide the log; Shuttle remembers the fold separately for each board on this device. Filters have more space above the PR list.
+- **Threads and the CLI can manage boards.** The six new `shuttle_board*` tools and `bb shuttle board list|show|create|update|add|remove` share the same validation, archive guards and atomic membership operations. Adding the same PR again is safe. Board PRs stay fresh during sync and while their board is open.
+
 ## 0.3.8
 
 - **A thread's Shuttle tab shows a PR in full.** View PR on a card, or a click on its title, opens the PR inside the tab with everything its view on the Shuttle page has: where it stands, the next step and its buttons, the agent or your review, the description, the conversation with Reply, Resolve and the composer, checks, labels and reviewers, and its threads. Merge, Start AI review, Link a thread and the other dialogs open from there too, so you no longer leave the thread to act on its PR. Pull requests goes back to the list, and the tab reopens on the PR you left it on, for each thread. A PR clicked in the thread's Info tab or in the Pull requests segment above the composer opens the tab on that PR.

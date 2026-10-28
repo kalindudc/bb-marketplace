@@ -1,10 +1,11 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { experimental_Icon as Icon, useSettings } from "@get-bb/plugin-sdk/app";
 import type { Overview, PrView } from "../contract";
 import { useActions } from "./actions";
 import { BUTTON_PRIMARY, ErrorNote, FIELD, PAGE, PageHeading, Segmented, STRIP } from "./common";
 import { MINE_GROUPS, type Group } from "./constants";
 import { messageOf, useShuttleQuery } from "./data";
+import { BoardChooserDialog, BoardFormDialog, BoardSelectionToolbar, useBoardSelection } from "./boards";
 import { plural } from "./format";
 import { isLive } from "./pills";
 import { doneSort, mineLayout, mineSort, useFolding } from "./prefs";
@@ -73,6 +74,9 @@ export function MineView({ done, layout, overview, onGo }: { done: boolean; layo
   const sortStore = done ? doneSort : mineSort;
   const sort = useStored(sortStore);
   const folding = useFolding("mine");
+  const boardSelection = useBoardSelection();
+  const [boardDialog, setBoardDialog] = useState<null | "create" | "choose">(null);
+  useEffect(() => boardSelection.clear(), [done]);
   const prs = list.data?.prs;
   const sorted = useMemo(() => (prs === undefined ? undefined : sortPrs(prs, sort)), [prs, sort]);
   const grouped = !done && shape === "grouped";
@@ -83,7 +87,8 @@ export function MineView({ done, layout, overview, onGo }: { done: boolean; layo
     <Segmented label="My PRs" value={done ? "done" : "mine"} onChange={(view) => onGo({ view, key: null })}
       options={[{ value: "mine" as const, label: "Open" }, { value: "done" as const, label: "Merged" }]} />
   );
-  const row = (pr: PrView) => <MineRow key={pr.key} pr={pr} layout={layout} time={rowTime(pr, sort)} group={done || grouped ? undefined : groupOf(pr).title} />;
+  const selectedSet = useMemo(() => new Set(boardSelection.selected), [boardSelection.selected]);
+  const row = (pr: PrView) => <MineRow key={pr.key} pr={pr} layout={{ ...layout, selection: { checked: selectedSet.has(pr.key), onToggle: () => boardSelection.toggle(pr.key) } }} time={rowTime(pr, sort)} group={done || grouped ? undefined : groupOf(pr).title} />;
   const flat = (items: readonly PrView[]) => <ul aria-label="Pull requests" className="overflow-hidden rounded-lg border border-border bg-card">{items.map(row)}</ul>;
   const tools = sorted !== undefined && sorted.length > 0 && (
     <div data-list-tools className="mb-1 mt-2 flex flex-wrap items-center gap-1.5">
@@ -101,9 +106,12 @@ export function MineView({ done, layout, overview, onGo }: { done: boolean; layo
       {prs === undefined && list.error === null && <div className="py-6 text-sm text-muted-foreground">Loading…</div>}
       {prs !== undefined && prs.length === 0 && <div className="py-10 text-center text-sm text-muted-foreground">Nothing here.</div>}
       {prs !== undefined && !done && <AutoAgent prs={prs} overview={overview} />}
+      {((prs !== undefined && prs.length > 0) || boardSelection.selected.length > 0) && <BoardSelectionToolbar selected={boardSelection.selected} onCreate={() => setBoardDialog("create")} onAdd={() => setBoardDialog("choose")} onClear={boardSelection.clear} />}
       {tools}
       {sorted !== undefined && sorted.length > 0 && !grouped && flat(sorted)}
       {sections.map((section) => <GroupList key={section.group.title} group={section.group} prs={section.prs} layout={layout} row={row} folding={folding} />)}
+      {boardDialog === "choose" && <BoardChooserDialog prs={boardSelection.selected} onClose={() => setBoardDialog(null)} onCreateBoard={() => setBoardDialog("create")} />}
+      {boardDialog === "create" && <BoardFormDialog mode="create" prs={boardSelection.selected} onClose={() => setBoardDialog(null)} />}
     </div>
   );
 }

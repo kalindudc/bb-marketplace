@@ -3,10 +3,11 @@ import { adapterFor, type Adapter } from "./adapters";
 import { runProcess, sleep, type Runner } from "./adapters/exec";
 import { configChanges, configFromToml, configToToml, ConfigError, parseConfig, serverSchema, type Config, type ServerConfig, type WatchMode } from "./config";
 import type {
-  AgentMode, AgentTarget, Area, ConversationItem, EventView, InboxView, InsightsView, LinkRole, MergeMethod, MergeOptions, Outcome, Overview, PostFinding, PrChange, PrView, ReviewDraft,
-  ReviewInput, ServerStatus, SyncHistory, SyncRun, SyncStep, SyncStepName, TestResult, ThreadOption, Verdict,
+  AgentMode, AgentTarget, Area, BoardDetail, BoardSummary, ConversationItem, EventView, InboxView, InsightsView, LinkRole, MergeMethod, MergeOptions, Outcome, Overview, PostFinding, PrChange,
+  PrView, ReviewDraft, ReviewInput, ServerStatus, SyncHistory, SyncRun, SyncStep, SyncStepName, TestResult, ThreadOption, Verdict,
 } from "./contract";
 import { askAgent, runAutoAgent, setAgent, setAgentMode, type AgentChange } from "./agents";
+import { board as readBoard, boardAdd, boardCreate, boardRemove, boards as listBoards, boardUpdate } from "./boards";
 import { cancelAutoMerge, comment, Conversations, merge, mergeOptions, recordOutcomes, reply, resolve } from "./conversation";
 import { draftView, saveDraft, setDraftState, submitReview, type DraftInput } from "./drafts";
 import { insights, INSIGHTS_SINCE, snapshotCounts } from "./insights";
@@ -246,6 +247,30 @@ export class Shuttle implements Ctx {
 
   search(query: string): { prs: PrView[]; total: number } {
     return searchPrs(this, query);
+  }
+
+  boards(input: { query?: string; archived?: "exclude" | "include" | "only"; key?: string } = {}): { boards: BoardSummary[] } {
+    return listBoards(this, input);
+  }
+
+  board(id: string): BoardDetail {
+    return readBoard(this, id);
+  }
+
+  boardCreate(input: { name: string; description?: string; prs?: string[] }, actorThreadId?: string): Promise<BoardDetail> {
+    return boardCreate(this, input, actorThreadId);
+  }
+
+  boardUpdate(input: { id: string; name?: string; description?: string; archived?: boolean }, actorThreadId?: string): { board: BoardSummary } {
+    return boardUpdate(this, input, actorThreadId);
+  }
+
+  boardAdd(input: { id: string; prs: string[] }, actorThreadId?: string): Promise<{ board: BoardSummary; added: string[]; alreadyPresent: string[] }> {
+    return boardAdd(this, input, actorThreadId);
+  }
+
+  boardRemove(input: { id: string; prs: string[] }, actorThreadId?: string): { board: BoardSummary; removed: string[] } {
+    return boardRemove(this, input, actorThreadId);
   }
 
   inbox(): InboxView {

@@ -6,6 +6,8 @@ export type Route =
   | { view: "mine"; key: string | null }
   | { view: "done"; key: string | null }
   | { view: "reviews"; source: Source; key: string | null }
+  | { view: "boards"; tab: "active" | "archived" }
+  | { view: "board"; id: string; key: string | null }
   | { view: "insights"; tab: InsightsTab }
   | { view: "pr"; key: string }
   /** Words to find among the PRs Shuttle has; "" before the user types any. */
@@ -15,14 +17,15 @@ export const INSIGHTS_TABS = ["overview", "log", "sync"] as const;
 export type InsightsTab = (typeof INSIGHTS_TABS)[number];
 
 /** A route that shows a list, with the PR selected in it. */
-export type ListRoute = Exclude<Route, { view: "insights" | "pr" }>;
+export type ListRoute = Exclude<Route, { view: "insights" | "pr" | "boards" }>;
 
 /** The four areas of the page; Merged and closed sits under My PRs. */
-export type Area = "inbox" | "mine" | "reviews" | "insights";
+export type Area = "inbox" | "mine" | "reviews" | "boards" | "insights";
 
 /** A looked-up PR and search results belong to no area. */
 export function areaOf(route: Route): Area | null {
   if (route.view === "done") return "mine";
+  if (route.view === "boards" || route.view === "board") return "boards";
   if (route.view === "pr" || route.view === "search") return null;
   return route.view;
 }
@@ -53,6 +56,8 @@ export function parseRoute(subPath: string): Route {
   const key = rest.length === 0 ? null : keyFromSegments(rest);
   if (first === "" || first === "inbox") return { view: "inbox", key };
   if (first === "mine" || first === "done") return { view: first, key };
+  if (first === "boards") return { view: "boards", tab: rest[0] === "archived" ? "archived" : "active" };
+  if (first === "board") return rest.length === 0 ? { view: "boards", tab: "active" } : { view: "board", id: decoded(rest[0]!), key: rest.length > 1 ? keyFromSegments(rest.slice(1)) : null };
   if (first === "insights") return rest.length === 1 && (rest[0] === "log" || rest[0] === "sync") ? { view: "insights", tab: rest[0] } : { view: "insights", tab: "overview" };
   if (first === "activity" && rest.length === 0) return { view: "insights", tab: "log" };
   if (first === "pr") return key === null ? INBOX : { view: "pr", key };
@@ -75,6 +80,8 @@ export function formatRoute(route: Route): string {
       const words = `search/${encodeURIComponent(route.query)}`;
       return route.key === null ? words : `${words}/${keySegments(route.key)}`;
     }
+    case "boards": return route.tab === "active" ? "boards" : "boards/archived";
+    case "board": return route.key === null ? `board/${encodeURIComponent(route.id)}` : `board/${encodeURIComponent(route.id)}/${keySegments(route.key)}`;
     case "insights": return route.tab === "overview" ? "insights" : `insights/${route.tab}`;
     case "inbox": return route.key === null ? "inbox" : `inbox/${keySegments(route.key)}`;
     case "mine":

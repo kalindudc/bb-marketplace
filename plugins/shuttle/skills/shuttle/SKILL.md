@@ -1,6 +1,6 @@
 ---
 name: shuttle
-description: Use Shuttle, the bb plugin for pull requests on any versioning server. Link a PR to this thread (a thread can own several) so this thread becomes its agent, check the thread's PRs, look one up, start a review, hand a finished review back as a draft, report what you did with forwarded feedback, or add a server such as Delta or GitLab with command adapters. Covers the shuttle_link, shuttle_unlink, shuttle_prs, shuttle_review_draft and shuttle_feedback_done tools, `bb shuttle` and `[shuttle]` messages.
+description: Use Shuttle, the bb plugin for pull requests on any versioning server. Link a PR to this thread (a thread can own several) so this thread becomes its agent, check the thread's PRs, look one up, start a review, hand a finished review back as a draft, report what you did with forwarded feedback, or add a server such as Delta or GitLab with command adapters. Create, curate, archive, or restore custom PR boards. Covers the shuttle_link, shuttle_unlink, shuttle_prs, shuttle_review_draft, shuttle_feedback_done and shuttle_board tools, `bb shuttle` and `[shuttle]` messages.
 ---
 
 # Shuttle
@@ -24,6 +24,36 @@ A PR's key is `<server>:<repo>#<number>`, for example `github:get-bb/bb#4411` or
 | `shuttle_feedback_done({ pr, items })` | After you deal with forwarded feedback: each item's `ref` with `outcome` fixed (give `commit`), replied, declined, or question when you need the user's decision, and an optional one-line `note`. |
 
 After you open a pull request, link it with `shuttle_link` so its feedback comes back here.
+
+## Boards
+
+Boards save an explicit set of PRs across repositories and servers. PR statuses stay live, and
+merged or closed PRs stay in the set until removed. A PR can belong to multiple boards. Adding
+a PR to a board does not link it to this thread, assign an agent, track it for review, or change
+feedback delivery. Use `shuttle_link` separately when the thread should own the PR.
+
+- `shuttle_boards({ query?, archived?, key? })` finds boards and their stable IDs. `archived`
+  is `exclude` by default, `include` for all boards, or `only` for archived boards. `key` filters
+  exact memberships by canonical PR key; an uncached key returns no boards. Use a name query to narrow a large list.
+- `shuttle_board({ id })` inspects a board, its PRs, and recent activity.
+- `shuttle_board_create({ name, description?, prs? })` creates a named board, optionally with
+  PR links or keys. To duplicate a board, inspect it and create a new named board with its PRs.
+- `shuttle_board_update({ id, name?, description?, archived? })` renames or describes a board,
+  archives it with `archived: true`, or explicitly restores it with `archived: false`.
+- `shuttle_board_add({ id, prs })` adds explicit PR links or keys. Repeated adds are safe:
+  existing memberships are reported, not duplicated.
+- `shuttle_board_remove({ id, prs })` removes memberships, not the PRs themselves. Other boards,
+  agent ownership, and feedback delivery are unchanged.
+
+Find a board by name first, then use its ID for subsequent operations. Names are unique,
+including archived boards; do not silently create another board when the intended one already
+exists. Archived boards reject membership changes. Restore one only when the user asked you to,
+not as an automatic workaround. A batch with an invalid PR does not partly change membership.
+
+Boards uses the same sidebar navigation as the other areas: its board links appear only while
+Boards is open. Archive hides an individual board from active navigation without deleting it.
+The board's compact activity log can be folded to its heading; the device remembers the fold
+separately for each board.
 
 ## `[shuttle]` messages
 
@@ -49,8 +79,22 @@ what happens next), `bb shuttle list [--area inbox|mine|done|reviews]`, `bb shut
 `bb shuttle track <pr> [--off]`, `bb shuttle watch <pr> [--mode act|forward] [--off]`,
 `bb shuttle review <pr> [--preset <id>] [--project <id>] [--note <text>] [--new-thread]` (the PR's last review
 thread of Shuttle's gets it, brought back from the archive when needed, unless `--new-thread`), `bb shuttle sync [--server <id>]`,
-`bb shuttle config-export`, `bb shuttle config-import <file> [--apply]`. Every command takes
-`--json`, and `link`/`unlink` default to the calling thread.
+`bb shuttle config-export`, `bb shuttle config-import <file> [--apply]`. PR and board commands
+accept `--json`; config export prints TOML and config import prints a change summary.
+`link`/`unlink` default to the calling thread.
+
+The board commands use the stable ID returned by list or create:
+
+- `bb shuttle board list [--query <text>] [--archived exclude|include|only] [--key <pr-key>]`
+- `bb shuttle board show <id>`
+- `bb shuttle board create "<name>" [<pr>…] [--description <text>]`
+- `bb shuttle board update <id> [--name <text>] [--description <text>] [--archive | --restore]`
+- `bb shuttle board add <id> <pr>…`
+- `bb shuttle board remove <id> <pr>…`
+
+Board writes accept `--thread <id>` for activity attribution; inside a thread, attribution uses
+that thread by default. PR arguments accept links or canonical keys. Add and remove accept up
+to 200 PR references per call. No board command posts on a PR or changes its agent.
 
 ## Servers
 
