@@ -1,8 +1,16 @@
 {
   "id": "forage",
   "displayName": "Forage",
-  "description": "Six web-research tools for every BB agent: search, fetch, map, deterministic extraction, bounded crawl jobs and snapshot diffs. Durable scoped sources, Sources UI, zero-turn CLI and privacy ceilings share one runtime.",
+  "description": "Six web-research tools for every BB agent: search, fetch, map, deterministic extraction, bounded crawl jobs and snapshot diffs, with a Research tab in every thread for what was looked up, kept pages, citations and crawls. A zero-turn CLI and privacy ceilings share one runtime.",
   "icon": { "url": "plugins/forage/icons/forage.svg" },
+  "screenshots": [
+    "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/forage/research-tab.png",
+    "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/forage/reader.png",
+    "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/forage/check-in-sources.png",
+    "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/forage/crawls.png",
+    "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/forage/thread-research.png",
+    "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/forage/research-page.png"
+  ],
   "tags": ["search", "web", "fetch", "research", "tools", "agents", "sources", "crawl", "privacy"],
   "author": {
     "name": "Kalindu De Costa",

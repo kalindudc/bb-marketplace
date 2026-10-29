@@ -5,7 +5,7 @@ description: Configure or troubleshoot Forage's six web tools, provider/privacy 
 
 # Forage
 
-Forage registers `web_search`, `web_fetch`, `web_map`, `web_extract`, `web_crawl` and `web_diff` for every BB agent. Calls use one shared runtime with the CLI and Sources UI.
+Forage registers `web_search`, `web_fetch`, `web_map`, `web_extract`, `web_crawl` and `web_diff` for every BB agent. Calls use one shared runtime with the CLI and the Research UI.
 
 ## Operations
 
@@ -23,6 +23,14 @@ Public content is captured before formatting. Continue with snapshotId, contentH
 Source IDs are scoped. Share URLs or findings across threads unless public evidence was explicitly copied to the project. Restricted same-thread capture is OFF by default, cannot be promoted and requires explicit selection for export. Disabling restricted capture revokes restricted reads. Scope is product isolation, not protection from local filesystem access.
 
 Configured providers/readers/backends and privacy are ceilings. Profile/provider/reader/backend arguments can only narrow them. Private search uses configured SearXNG, direct readers and local crawl; it does not guarantee private upstream SearXNG engines. Local private-network permission NEVER grants remote-forwarding consent. Sensitive URLs are rejected before remote forwarding/capture. Do not retry a policy error through another provider.
+
+## Research UI, activity log and per-thread policy
+
+Each thread has a Research tab (Activity, Sources, Crawls, a reader and Check in sources), and the rail has a Research page with every thread's research and Health and storage. A person can search, read a link or crawl from the tab with no model turn; those entries are labelled as theirs.
+
+The activity log keeps each thread's queries, results seen, pages read and crawls for 30 days. The person clears one thread's log from the tab menu. The `keepActivityLog` setting, on by default, stops recording and deletes every log when turned off.
+
+Web research per thread lives in the thread menu: `settings`, `docs`, `fresh`, `private` or `off`, stored as `webResearch` in Forage's thread metadata. It only narrows settings. `off` removes the web tools from the next agent session and refuses web operations from tools, the CLI and the Research tab until then ("Web research is off in this thread"); tell the person and stop, never route around it, and never change the policy yourself. `private` needs a configured SearXNG search. Switching to Private or Off stops crawls the new policy would not allow.
 
 ## Commands
 

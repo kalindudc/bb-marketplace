@@ -27,6 +27,8 @@ import { diffSnapshots } from "./sources/diff.ts";
 import { cacheClear, cacheStats, type FetchedContent, type FetchOptions } from "./web/fetch.ts";
 import { clearSearchCache } from "./web/search.ts";
 import { isRestrictedAccess } from "./sources/policy.ts";
+import type { ActivityActor, ActivityEvent, TouchedPage } from "./research/activity.ts";
+import { applyThreadPolicy, type ThreadPolicy } from "./research/policy.ts";
 import {
 	RECENCY_VALUES,
 	type Recency,
@@ -391,7 +393,7 @@ export const diffParams = z.object({
  ...selectors, sourceId: z.string().min(1).optional(), beforeSnapshotId: z.string().min(1).optional(), afterSnapshotId: z.string().min(1).optional(), url: z.string().min(1).optional(), maxHunks: z.number().int().min(1).max(200).optional(), maxChars: z.number().int().min(200).max(30000).optional(),
 }).strict();
 export const operationSchemas = { search: searchParams, fetch: fetchParams, map: mapParams, extract: extractParams, crawl: crawlParams, diff: diffParams };
-export interface ForageContext { scope: SourceScope; signal: AbortSignal }
+export interface ForageContext { scope: SourceScope; signal: AbortSignal; actor?: ActivityActor; policy?: ThreadPolicy; via?: "tab" | "browser" }
 export interface OperationResult { text: string; details: unknown; isError?: boolean }
 type AcquisitionOptions = FetchOptions & { reader?: z.infer<typeof selectors.reader>; profile?: z.infer<typeof selectors.profile> };
 export interface RuntimeDependencies {
@@ -404,6 +406,8 @@ export interface RuntimeDependencies {
  search?: typeof search;
  onChanged?(scope: SourceScope): void;
  onInvalidateAll?(): void;
+ recordActivity?(event: ActivityEvent): void;
+ threadPolicy?(scope: Extract<SourceScope, { kind: "thread" }>, signal?: AbortSignal): Promise<ThreadPolicy>;
 }
 interface CapturedPage extends FetchedContent { receipt?: RetrievalReceipt }
 interface OperationHooks {
@@ -489,6 +493,8 @@ export function createForageRuntime(deps: RuntimeDependencies): ForageRuntime {
   let status: DiagnosticRecord["status"] = "failure";
   let provider: DiagnosticRecord["provider"];
   const warnings: NonNullable<DiagnosticRecord["warnings"]> = [];
+  const touched: TouchedPage[] = [];
+  let activity = null as { scope: SourceScope; params: unknown; details?: unknown } | null;
   const key = sourceScopeKey(context.scope);
   let scopeEntry = scopes.get(key);
   if (!scopeEntry || scopeEntry.controller.signal.aborted) {
@@ -502,9 +508,14 @@ export function createForageRuntime(deps: RuntimeDependencies): ForageRuntime {
    signal.throwIfAborted();
    const params = operationSchemas[name].parse(input);
    const scope = await deps.resolveScope(sourceScopeSchema.parse(context.scope), signal);
+   activity = { scope, params };
    stageMs.scope = Date.now() - started;
    if (deps.sources.storageSummary(scope).deleting) throw new Error("SOURCE_NOT_VISIBLE: Scope cleanup is in progress.");
-   const config = await deps.getConfig();
+   // Every entry point (tools, CLI, the Research tab) gets the thread's policy here, so none can skip it.
+   const policy = context.policy ?? (scope.kind === "thread" && deps.threadPolicy ? await deps.threadPolicy(scope, signal) : undefined);
+   const crawlControl = name === "crawl" && ["status", "list", "cancel"].includes(String((params as { action?: unknown }).action));
+   if (policy === "off" && !crawlControl) throw new Error("POLICY_BLOCKED: Web research is off in this thread. The person can turn it back on from the thread menu under Web research.");
+   const config = applyThreadPolicy(await deps.getConfig(), policy);
    resolvePolicy(config, params, name === "search" ? "search" : "retrieval");
    provider = name === "search" ? (params.provider !== "auto" ? params.provider : undefined) : params.reader ?? (name === "crawl" ? params.backend ?? "local" : "direct");
    stageMs.policy = Date.now() - started - stageMs.scope;
@@ -535,6 +546,7 @@ export function createForageRuntime(deps: RuntimeDependencies): ForageRuntime {
      if (page.receipt.persisted) { counts.persisted = (counts.persisted ?? 0) + 1; deps.onChanged?.(scope); }
      else if (page.receipt.warning) warnings.push(page.receipt.warning.code === "STORAGE_LIMIT" ? "storage-limit" : "policy-blocked");
     }
+    if (touched.length < 60) touched.push({ url: page.url, finalUrl: page.finalUrl, title: page.title, origin, sourceId: page.receipt?.persisted ? page.receipt.sourceId : null, snapshotId: page.receipt?.persisted ? page.receipt.snapshotId : null, chars: page.content?.length ?? 0, ...(page.error ? { error: page.error } : {}), restricted: page.access ? isRestrictedAccess(page.access) : false });
     return page;
    }};
    let result: OperationResult;
@@ -646,14 +658,21 @@ export function createForageRuntime(deps: RuntimeDependencies): ForageRuntime {
     } finally { deadline.dispose(); }
    }
    signal.throwIfAborted();
+   activity.details = result.details;
    status = counts.failed ? (counts.successful ? "partial" : "failure") : warnings.some(code => ["partial", "storage-limit", "policy-blocked"].includes(code)) ? "partial" : "success";
    return { ...result, text: boundOutput(result.text, "Narrow the request or use snapshot paging.").text, ...(status === "failure" ? { isError: true } : {}) };
   };
   const promise = work();
   pending.add(promise);
+  let failure: string | undefined;
   try { return await promise; }
-  catch (error) { if (signal.aborted) status = "cancelled"; warnings.push(signal.aborted ? "cancelled" : errText(error).includes("POLICY_BLOCKED") ? "policy-blocked" : "failure"); throw error; }
-  finally { pending.delete(promise); scopeEntry.active--; if (scopeEntry.active === 0 && scopes.get(key) === scopeEntry) scopes.delete(key); diagnostics.record({ operation: name, status, provider, warnings, durationMs: Date.now() - started, stageMs: { ...stageMs, total: Date.now() - started }, counts, cache }); }
+  catch (error) { failure = errText(error); if (signal.aborted) status = "cancelled"; warnings.push(signal.aborted ? "cancelled" : errText(error).includes("POLICY_BLOCKED") ? "policy-blocked" : "failure"); throw error; }
+  finally {
+   if (activity && deps.recordActivity && !disposed && !scopeEntry.controller.signal.aborted) {
+    try { deps.recordActivity({ scope: activity.scope, actor: context.actor ?? "agent", ...(context.via ? { via: context.via } : {}), operation: name, status, startedAt: started, finishedAt: Date.now(), params: activity.params, details: activity.details, pages: touched, ...(failure ? { error: failure } : {}) }); }
+    catch { /* The activity log is a record of the call; failing to write it never fails the call. */ }
+   }
+   pending.delete(promise); scopeEntry.active--; if (scopeEntry.active === 0 && scopes.get(key) === scopeEntry) scopes.delete(key); diagnostics.record({ operation: name, status, provider, warnings, durationMs: Date.now() - started, stageMs: { ...stageMs, total: Date.now() - started }, counts, cache }); }
  }
  return {
   getConfig: deps.getConfig, resolveScope: deps.resolveScope, sources: deps.sources, jobs: deps.jobs, fenceScope, fenceAll() { for (const entry of scopes.values()) entry.controller.abort(new Error("Forage policy changed")); }, invalidate(scope) { deps.onChanged?.(scope); }, invalidateAll() { deps.onInvalidateAll?.(); }, allowRestrictedThreadCapture: deps.allowRestrictedThreadCapture, diagnostics,

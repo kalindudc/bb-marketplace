@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.0
+
+- Forage is per thread now. The Sources tab becomes Research: Activity (searches with the results seen, pages read, maps, crawls and problems, grouped by who did them), Sources grouped by how they arrived, a line-numbered reader with versions, comparison, quoting and citations, and Crawls with limits as progress bars, Stop, Resume and a form to map or crawl a site.
+- Search the web or read a link from the tab with no model turn, and Read now on a search result the agent did not open. These are labelled as yours.
+- Citation cards in replies (`::forage-cite`, `::forage-sources`), Check in sources on a message or a selection, a header chip, a composer segment, an Info section, Save to research in bb's Browser and palette commands.
+- A source counts as cited when a finished reply cites it, whether or not anyone opens the reply. Check in sources matches word forms ("retries" finds "retry"), leaves numbers out, and shows a passage once when several pages repeat it.
+- Versions count distinct kept text, so reading an unchanged page again adds no version.
+- Web research per thread from the thread menu: Use Forage settings, Docs first, Fresh results, Private or Off. A thread can only narrow Forage settings. Every entry point (tools, CLI, the Research tab) follows it; Off refuses web operations and removes the web tools from the agent, and Private or Off stops crawls they would not allow.
+- The rail page becomes Research: threads with research, each thread's Activity and Sources, sources shared with projects, and Health and storage.
+- A per-thread activity log, kept for 30 days, with Clear in the tab and a Keep a research activity log setting that stops recording and deletes every log.
+- A new leaf icon.
+
 ## 0.2.0
 
 - Added one shared tool/CLI runtime with six strict operations, privacy ceilings, cancellation and redacted bounded diagnostics.

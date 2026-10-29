@@ -1,3 +1,4 @@
+import { RESEARCH_MIGRATIONS } from "../research/schema.ts";
 import { SOURCE_MIGRATIONS } from "../sources/schema.ts";
 
 export const CRAWL_MIGRATIONS: readonly string[] = [
@@ -34,4 +35,5 @@ export const CRAWL_MIGRATIONS: readonly string[] = [
  `CREATE TABLE forage_crawl_control (job_id TEXT NOT NULL REFERENCES forage_crawl_jobs(id) ON DELETE CASCADE, generation INTEGER NOT NULL, reserved INTEGER NOT NULL, PRIMARY KEY(job_id, generation))`,
 ];
 
-export const FORAGE_MIGRATIONS: readonly string[] = [...SOURCE_MIGRATIONS, ...CRAWL_MIGRATIONS];
+// bb numbers migrations by position: never insert into these lists, only append research migrations at the end.
+export const FORAGE_MIGRATIONS: readonly string[] = [...SOURCE_MIGRATIONS, ...CRAWL_MIGRATIONS, ...RESEARCH_MIGRATIONS];

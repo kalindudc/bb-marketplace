@@ -13,6 +13,7 @@ Use the lightest set of operations that answers the question. A single factual l
 2. Fetch relevant primary sources in full, not only search snippets. Use snapshotId and contentHash for stable continuation; use find, outline, links, line ranges or focus to read a specific section.
 3. Extract fixed fields when headings, links, tables or JSON-LD answer the question. This is deterministic extraction, not arbitrary AI schema inference.
 4. Cite the URL and, when persisted, source/snapshot identifiers and one-based line ranges. Distinguish observed evidence from inference and stale or partial material.
+5. In a reply, put `::forage-cite{snapshot="<snapshotId>" lines="<from>-<to>"}` on its own line after a claim it supports, with only the few lines that back it; `find="<short phrase>"` can replace `lines`. Get line numbers from `find` results or `view: "lines"`. bb draws a card the person can open at those lines. `::forage-sources` on its own line draws a one-line summary of the thread's sources; use it at most once, at the end of a researched reply.
 
 ## Site-wide work
 
@@ -28,5 +29,7 @@ Use diff on immutable snapshots to check changes. A fresh URL can be compared ag
 - Source IDs from another thread are invisible. Share findings and URLs unless a public source was explicitly copied to the project.
 - A sensitive URL rejection is a policy result, not a reason to print or forward the rejected URL.
 - Report missing, failed, evicted, stale, partial and storage-refused evidence. NEVER invent source IDs or silently refetch an evicted snapshot.
+
+If a call says web research is off in this thread, tell the person; do not look for another way to reach the web.
 
 Finish when the requested answer is supported. Do not start a crawl, export, live doctor, model turn or external write merely because the tool exists.

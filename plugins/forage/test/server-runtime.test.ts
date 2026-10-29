@@ -38,7 +38,7 @@ describe("single server service graph", () => {
   const jobs = await fake.harness.behavior.callRpc("getCrawlJob", { scope: threadScope(), jobId }); expect(jobs).toMatchObject({ state: "completed", counts: { saved: 1 } });
   expect((await fake.harness.behavior.callRpc("listSources", { scope: threadScope(), limit: 10 })) as object).toHaveProperty("sources");
   const diagnostic = await fake.harness.behavior.runCli(["diagnostics"]); for (const name of ["search", "fetch", "map", "extract", "diff", "crawl"]) expect(diagnostic.stdout).toContain(`"operation": "${name}"`);
-  expect(fake.harness.experimental_rpcInvalidations).toContainEqual(["forage:sources:thread:proj_a:thr_a", "forage:jobs:thread:proj_a:thr_a"]);
+  expect(fake.harness.experimental_rpcInvalidations).toContainEqual(["forage:sources:thread:proj_a:thr_a", "forage:jobs:thread:proj_a:thr_a", "forage:activity:thread:proj_a:thr_a"]);
   const exported = await fake.harness.behavior.runCli(["sources", "export", ...flags]); expect(exported.stdout).toContain("/api/v1/plugins/forage/http/sources-export");
  });
  it("recovers missed thread/project deletion, retains archived scopes and never deletes after transient SDK failures", async () => {

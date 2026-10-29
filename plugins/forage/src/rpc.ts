@@ -7,6 +7,8 @@ import { SourceRepositoryError, type SourceRepository, type SourceScope, type So
 import { isRestrictedAccess } from "./sources/policy.ts";
 import { diffSnapshots } from "./sources/diff.ts";
 import type { WebConfig } from "./web/config.ts";
+import { researchContract } from "./research/contract.ts";
+import { createResearchHandlers, type ResearchDependencies } from "./research/rpc.ts";
 import { sourceScopeKey } from "./web/contracts.ts";
 
 export { rpcContract };
@@ -17,6 +19,7 @@ export interface SourcesRpcDependencies {
  getConfig(): WebConfig | Promise<WebConfig>;
  allowRestrictedThreadCapture(): boolean | Promise<boolean>;
  resolveScope?(scope: SourceScope, signal?: AbortSignal): Promise<SourceScope>;
+ research?: Omit<ResearchDependencies, "repository" | "jobs" | "getConfig" | "allowRestrictedThreadCapture">;
 }
 
 function refuse(code: "forbidden" | "not_found" | "conflict" | "invalid", message: string): never {
@@ -113,6 +116,9 @@ export function createSourcesRpc(bb: BbPluginApi, deps: SourcesRpcDependencies) 
    const job = jobs.status(scope, jobId);
    if (!job) invisible();
    if (!await jobAllowed(job)) refuse("forbidden", "POLICY_BLOCKED: Crawl backend is outside the current provider ceiling.");
+   const threadPolicy = scope.kind === "thread" ? await deps.research?.policies.get(scope.threadId) : undefined;
+   if (threadPolicy === "off") refuse("forbidden", "POLICY_BLOCKED: Web research is off in this thread.");
+   if (threadPolicy === "private" && job.backend !== "local") refuse("forbidden", "POLICY_BLOCKED: This thread is Private, so only crawls on this machine can run.");
    return jobs.resume(scope, jobId, limits);
   },
   copySourceToProject: async ({ projectId, threadId, sourceId }) => {
@@ -129,8 +135,18 @@ export function createSourcesRpc(bb: BbPluginApi, deps: SourcesRpcDependencies) 
    return repository.deleteSource(scope, sourceId);
   },
   deleteScope: async ({ scope }) => { await validateScope(scope); return repository.deleteScope(scope); },
+  ...(deps.research
+   ? createResearchHandlers(bb, { ...deps.research, repository, jobs, getConfig: deps.getConfig, allowRestrictedThreadCapture: deps.allowRestrictedThreadCapture }, { validateScope, sourceAllowed })
+   : Object.fromEntries(Object.keys(researchContract).map((method) => [method, async () => refuse("not_found", "Research views are unavailable.")])) as unknown as ReturnType<typeof createResearchHandlers>),
  };
- const clientOnly = new Set<keyof typeof rpcContract>(["cancelCrawlJob", "resumeCrawlJob", "copySourceToProject", "deleteSource", "deleteScope"]);
+ let researchTimer: ReturnType<typeof setTimeout> | null = null;
+ bb.onDispose(() => { if (researchTimer) clearTimeout(researchTimer); });
+ // The Research page's index reads every thread; refresh it at most every two seconds while crawls save pages.
+ const invalidateResearch = () => {
+  if (researchTimer) return;
+  researchTimer = setTimeout(() => { researchTimer = null; bb.rpc.experimental_invalidate(["forage:research"]); }, 2000);
+ };
+ const clientOnly = new Set<keyof typeof rpcContract>(["cancelCrawlJob", "resumeCrawlJob", "copySourceToProject", "deleteSource", "deleteScope", "clearActivity", "noteCitation", "run", "setThreadPolicy", "prune"]);
  function wrap<M extends keyof typeof rpcContract>(method: M): void {
   const handler = handlers[method];
   handlers[method] = (async (input, context) => {
@@ -149,8 +165,9 @@ export function createSourcesRpc(bb: BbPluginApi, deps: SourcesRpcDependencies) 
  for (const method of Object.keys(handlers) as Array<keyof typeof rpcContract>) wrap(method);
  return {
   handlers, validateScope, sourceAllowed,
-  invalidate(scope: SourceScope, domains: readonly ("sources" | "jobs")[] = ["sources", "jobs"]) {
+  invalidate(scope: SourceScope, domains: readonly ("sources" | "jobs" | "activity")[] = ["sources", "jobs", "activity"]) {
    bb.rpc.experimental_invalidate(domains.map((domain) => `forage:${domain}:${sourceScopeKey(scope)}`));
+   invalidateResearch();
   },
  };
 }

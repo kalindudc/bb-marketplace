@@ -76,6 +76,6 @@ describe("Sources RPC", () => {
  });
  it("publishes exact scope invalidation for background source/job updates", () => {
   const f = setup(); f.api.invalidate(f.scope);
-  expect(f.harness.experimental_rpcInvalidations).toContainEqual(["forage:sources:thread:proj_a:thr_a", "forage:jobs:thread:proj_a:thr_a"]);
+  expect(f.harness.experimental_rpcInvalidations).toContainEqual(["forage:sources:thread:proj_a:thr_a", "forage:jobs:thread:proj_a:thr_a", "forage:activity:thread:proj_a:thr_a"]);
  });
 });

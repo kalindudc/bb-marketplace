@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-forage",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -9,10 +9,11 @@
   },
   "bb": {
     "name": "Forage",
-    "description": "Six web-research tools for every BB agent: search, fetch, map, deterministic extraction, bounded crawl jobs and snapshot diffs. Durable scoped sources, Sources UI, zero-turn CLI and privacy ceilings share one runtime.",
+    "description": "Six web-research tools for every BB agent: search, fetch, map, deterministic extraction, bounded crawl jobs and snapshot diffs, with a Research tab in every thread for what was looked up, kept pages, citations and crawls. A zero-turn CLI and privacy ceilings share one runtime.",
     "branding": {
       "icon": "./icons/forage.svg",
       "experimental_icons": {
+        "forage": "./icons/forage.svg",
         "search": "./icons/search.svg",
         "fetch": "./icons/fetch.svg",
         "map": "./icons/map.svg",

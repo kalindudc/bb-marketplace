@@ -11,11 +11,13 @@ Forage gives every BB agent six web-research tools, durable scoped evidence and 
 
 Content is captured before formatting. Continue with snapshotId, contentHash and UTF-16 offset for immutable paging. URL-only paging may download again after cache expiry. Every batch failure and partial limit is visible; output is capped at 32,000 characters.
 
-## Sources
+## Research in each thread
 
-The project Sources page and thread tab preview evidence, show citations and diffs, manage jobs, copy public sources to the project, and export streamed NDJSON. IDs from another thread are invisible: share URLs or findings unless explicitly project-promoted.
+A Research tab in each thread shows what the agent and you looked up: searches with the results seen, pages read, crawls against their limits, and problems in words. Read kept text, compare versions, quote lines into your message, check a reply against kept pages, and search or crawl yourself with no model turn. Replies can carry citation cards. The thread menu sets web research per thread: Docs, Fresh, Private or Off. The Research page lists threads with research, plus health and storage.
 
-Default retention is 30 days for thread content, 180 days for project content and 128 MiB retained content. Active-job snapshots are protected. Storage refusal never produces a fictional source ID. Missed deletion events are recovered using authoritative scope checks; archived threads are not deleted.
+The activity log keeps queries and results for 30 days; clear it per thread or turn it off. Source IDs stay in their thread unless shared with the project.
+
+Default retention is 30 days for thread content, 180 days for project content and 128 MiB retained content. Active-job snapshots are protected. Storage refusal never produces a fictional source ID. Missed deletions are recovered by scope checks; archived threads are kept.
 
 ## Privacy and providers
 
@@ -35,4 +37,4 @@ Sources commands: list, show, export, delete and prune. Destructive commands req
 
 `status` and `diagnostics` show redacted in-memory records (maximum 200, 24 hours), never query/URL/content/credential values. `clear` clears process caches. `doctor` is offline unless --live explicitly enables bounded keyless probes. `bench` runs a bundled local corpus without network access.
 
-See the README and bundled research skill for parameters, limits and safe continuation.
+See the README for every parameter and limit.

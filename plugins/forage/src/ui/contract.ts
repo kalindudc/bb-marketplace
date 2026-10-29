@@ -1,10 +1,12 @@
 import { z } from "zod";
 import { rpcContract as sourcesContract, sourceScopeSchema } from "../contract.ts";
 import { defineContract } from "../define-contract.ts";
+import { researchContract } from "../research/contract.ts";
 import { sourceScopeKey, type SourceScope } from "../web/contracts.ts";
 
 export const rpcContract = defineContract({
  ...sourcesContract,
+ ...researchContract,
  snapshotMetadata: {
   input: z.object({ scope: sourceScopeSchema, snapshotId: z.string().min(1).max(200) }).strict(),
   output: z.object({

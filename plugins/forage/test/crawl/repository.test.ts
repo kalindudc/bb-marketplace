@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { CRAWL_DEFAULT_LIMITS, SqliteCrawlRepository } from "../../src/crawl/repository.ts";
 import { CRAWL_MIGRATIONS, FORAGE_MIGRATIONS } from "../../src/crawl/schema.ts";
+import { RESEARCH_MIGRATIONS } from "../../src/research/schema.ts";
 import { SOURCE_MIGRATIONS, configureSourceDatabase } from "../../src/sources/schema.ts";
 import { artifact, attempt, threadScope } from "../sources/helpers.ts";
 import { SqliteSourceRepository } from "../../src/sources/repository.ts";
@@ -20,7 +21,7 @@ function setup(now = () => 1000) {
 }
 afterEach(() => { for (const db of databases.splice(0)) if (db.open) db.close(); });
 describe("durable crawl repository", () => {
- it("exports append-only combined migrations", () => { expect(FORAGE_MIGRATIONS).toEqual([...SOURCE_MIGRATIONS, ...CRAWL_MIGRATIONS]); });
+ it("exports append-only combined migrations", () => { expect(FORAGE_MIGRATIONS).toEqual([...SOURCE_MIGRATIONS, ...CRAWL_MIGRATIONS, ...RESEARCH_MIGRATIONS]); });
  it("reserves before claims, charges accepted bytes, counts distinct failed URLs and caps retries", () => {
   const { repo, job } = setup(); const run = repo.start(job.id)!;
   repo.enqueue(run.id, run.generation, ["https://example.com/a", "https://example.com/b"], 1);

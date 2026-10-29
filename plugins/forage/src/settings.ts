@@ -154,6 +154,12 @@ export const SETTINGS = {
 		description: "Off by default. Explicitly retain private-network or website-credentialed content only in its thread. Disabling blocks reads; restricted content cannot be copied to a project or exported unless explicitly selected in its thread. This is a storage choice, not a human-identity security boundary.",
 		default: false,
 	},
+	keepActivityLog: {
+		type: "boolean",
+		label: "Keep a research activity log",
+		description: "Record each thread's searches, reads and crawls for 30 days so you can review them in its Research tab. Clear one thread's log from that tab. Turning this off stops recording and deletes every log.",
+		default: true,
+	},
 	userAgent: {
 		type: "string",
 		label: "User-Agent",

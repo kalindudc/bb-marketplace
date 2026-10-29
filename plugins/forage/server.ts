@@ -9,7 +9,13 @@ import { SqliteSourceRepository } from "./src/sources/repository.ts";
 import { configureSourceDatabase } from "./src/sources/schema.ts";
 import type { SourceScope } from "./src/web/contracts.ts";
 import { createDeadline } from "./src/web/deadline.ts";
-import { registerTools } from "./src/tools.ts";
+import { registerTools, TOOL_NAMES } from "./src/tools.ts";
+import { ActivityRepository } from "./src/research/activity.ts";
+import { recordReplyCitations } from "./src/research/citations.ts";
+import { createThreadPolicyStore, policyFromMetadata, POLICY_METADATA_KEY } from "./src/research/policy.ts";
+
+const ACTIVITY_DAYS = 30;
+const MAX_CONTENT_BYTES = 128 * 1024 * 1024;
 
 function authoritativeNotFound(error: unknown): boolean {
  if (!error || typeof error !== "object") return false;
@@ -23,20 +29,35 @@ export async function createServerRuntime(bb: BbPluginApi, dependencies: {
  crawl?: Partial<Omit<CrawlEngineOptions, "getSources" | "getConfig" | "onChanged" | "allowRestrictedThreadCapture">>;
 } = {}): Promise<ForageRuntime> {
  const settings = bb.settings.define(SETTINGS);
- let cachedConfig = configFromSettings(await settings.get());
+ const initialSettings = await settings.get();
+ let cachedConfig = configFromSettings(initialSettings);
+ let keepActivity = initialSettings.keepActivityLog !== false;
  const db = bb.storage.database(); configureSourceDatabase(db); bb.storage.migrate(db, [...FORAGE_MIGRATIONS]);
  let disposed = false;
  let sources: SqliteSourceRepository;
  let runtime: ForageRuntime;
  let api: ReturnType<typeof createSourcesRpc>;
  const lifecycle = new AbortController();
- const changed = (scope: SourceScope) => { if (!disposed) api?.invalidate(scope, ["sources", "jobs"]); };
+ const changed = (scope: SourceScope) => { if (!disposed) api?.invalidate(scope, ["sources", "jobs", "activity"]); };
+ const activity = new ActivityRepository(db);
+ const policies = createThreadPolicyStore({
+  read: (threadId, signal) => bb.sdk.threads.getPluginMetadata({ threadId, ...(signal ? { signal } : {}) }),
+  async readMany(threadIds) {
+   const out: Record<string, unknown> = {};
+   for (let i = 0; i < threadIds.length; i += 200) {
+    const result = await bb.sdk.threads.experimental_listPluginMetadata({ threadIds: threadIds.slice(i, i + 200) });
+    for (const row of result.threads) out[row.threadId] = row.metadata;
+   }
+   return out;
+  },
+  write: (threadId, policy) => bb.sdk.threads.updatePluginMetadata({ threadId, set: { [POLICY_METADATA_KEY]: policy } }),
+ });
  const crawl = createCrawlService(db, { ...dependencies.crawl, getSources: () => sources, getConfig: () => cachedConfig, allowRestrictedThreadCapture: () => cachedConfig.allowRestrictedThreadCapture, onChanged: changed });
  sources = new SqliteSourceRepository(db, { maintenance: crawl });
  const deleteScope = sources.deleteScope.bind(sources);
  sources.deleteScope = async (scope, options) => {
   runtime?.fenceScope(scope);
-  const result = await deleteScope(scope, options); changed(scope); return result;
+  const result = await deleteScope(scope, options); activity.clear(scope); changed(scope); return result;
  };
  const deleteSource = sources.deleteSource.bind(sources);
  sources.deleteSource = async (scope, id, options) => {
@@ -62,26 +83,55 @@ export async function createServerRuntime(bb: BbPluginApi, dependencies: {
    if (await authority(scope, signal) === "missing") { await sources.deleteScope(scope, { signal }); throw new Error("SOURCE_NOT_VISIBLE: The requested scope is unavailable."); }
    return scope;
   }, fetch: dependencies.fetch, search: dependencies.search, onChanged: changed, onInvalidateAll: () => { if (!disposed) bb.rpc.experimental_invalidateAll(); },
+  threadPolicy: (scope, signal) => policies.get(scope.threadId, signal),
+  recordActivity(event) {
+   if (!keepActivity || disposed) return;
+   if (activity.record(event)) changed(event.scope);
+  },
  });
- const rpcDependencies = { repository: sources, jobs: crawl, getConfig: runtime.getConfig, allowRestrictedThreadCapture: runtime.allowRestrictedThreadCapture, resolveScope: runtime.resolveScope };
+ async function pruneNow(signal: AbortSignal) {
+  const receipt = await sources.prune({ threadDays: 30, projectDays: 180, completedJobDays: 30, failedJobDays: 7, maxContentBytes: MAX_CONTENT_BYTES, now: Date.now(), signal });
+  const removed = keepActivity ? activity.prune(Date.now() - ACTIVITY_DAYS * 86_400_000) : activity.deleteAll();
+  return { receipt, removed };
+ }
+ const rpcDependencies = { repository: sources, jobs: crawl, getConfig: runtime.getConfig, allowRestrictedThreadCapture: runtime.allowRestrictedThreadCapture, resolveScope: runtime.resolveScope,
+  research: {
+   db, activity, policies, runtime: () => runtime, activityEnabled: () => keepActivity, diagnostics: () => runtime.diagnostics.snapshot(), maxContentBytes: MAX_CONTENT_BYTES,
+   prune: () => serialize(async () => {
+    const { receipt, removed } = await pruneNow(lifecycle.signal);
+    runtime.invalidateAll();
+    return { snapshots: receipt.expiredSnapshots + receipt.budgetSnapshots, sources: receipt.sources, activity: removed, bytes: receipt.bytes };
+   }),
+  } };
  api = createSourcesRpc(bb, rpcDependencies); registerSourcesRpc(bb, api); registerSourcesHttp(bb, rpcDependencies, api);
  registerTools(bb, runtime); bb.cli.register(createCli(runtime));
- let tail = Promise.resolve();
- const serialize = (work: () => Promise<void>): Promise<void> => { const next = tail.then(work, work); tail = next; return next; };
+ bb.agents.configure((context) => {
+  const policy = policyFromMetadata(context.pluginMetadata);
+  policies.prime(context.thread.id, policy);
+  return policy === "off" ? { tools: [], skills: ["forage"] } : { tools: [...TOOL_NAMES], skills: ["forage", "forage-research"] };
+ });
+ let tail: Promise<unknown> = Promise.resolve();
+ function serialize<T>(work: () => Promise<T>): Promise<T> { const next = tail.then(work, work); tail = next.catch(() => undefined); return next; }
  async function maintain(signal: AbortSignal): Promise<void> {
   await sources.resumePendingDeletes({ signal });
-  for (const repository of [sources, crawl]) for await (const scope of repository.scopes()) {
+  for (const repository of [sources, crawl, activity]) for await (const scope of repository.scopes()) {
    signal.throwIfAborted();
    try { if (await authority(scope, signal) === "missing") await sources.deleteScope(scope, { signal }); }
    catch (error) { if (signal.aborted) throw error; bb.log.warn("Scope authority lookup failed; retained existing evidence."); }
   }
-  await sources.prune({ threadDays: 30, projectDays: 180, completedJobDays: 30, failedJobDays: 7, maxContentBytes: 128 * 1024 * 1024, now: Date.now(), signal });
+  await pruneNow(signal);
   runtime.invalidateAll();
  }
  bb.events.on("thread.deleted", ({ thread }) => {
   const scope: SourceScope = { kind: "thread", projectId: thread.projectId, threadId: thread.id };
   runtime.fenceScope(scope);
   return serialize(async () => { await sources.deleteScope(scope, { signal: lifecycle.signal }); });
+ });
+ bb.events.on("thread.idle", ({ thread, lastAssistantText }) => {
+  if (disposed || !lastAssistantText?.includes("::forage-cite")) return;
+  const scope = { kind: "thread" as const, projectId: thread.projectId, threadId: thread.id };
+  try { if (recordReplyCitations({ scope, text: lastAssistantText, messageId: `reply:${thread.id}:${Date.now()}`, sources, activity }) > 0) changed(scope); }
+  catch { bb.log.warn("Could not record the citations in a reply."); }
  });
  bb.background.service("crawl", { async start(signal) {
   const combined = AbortSignal.any([signal, lifecycle.signal]);
@@ -91,6 +141,8 @@ export async function createServerRuntime(bb: BbPluginApi, dependencies: {
  bb.background.schedule("retention", "0 * * * *", () => serialize(() => maintain(lifecycle.signal)));
  settings.onChange((next) => {
   cachedConfig = configFromSettings(next);
+  keepActivity = next.keepActivityLog !== false;
+  if (!keepActivity && activity.deleteAll() > 0) runtime.invalidateAll();
   runtime.fenceAll(); const revoked = crawl.revoke();
   runtime.cache.clear(); runtime.invalidateAll();
   for (const field of cachedConfig.warnings) bb.log.warn(`Settings: ${field.split(":", 1)[0]} is invalid or was clamped.`);

@@ -1,6 +1,6 @@
 # Forage
 
-Forage 0.2.0 gives every BB agent six web-research tools and a zero-model-turn CLI. It requires BB 0.47 or newer and Plugin SDK 0.6.79.
+Forage 0.3.0 gives every BB agent six web-research tools, a Research tab in every thread and a zero-model-turn CLI. It requires BB 0.47 or newer and Plugin SDK 0.6.79.
 
 ## Tools and one shared runtime
 
@@ -11,15 +11,36 @@ Forage 0.2.0 gives every BB agent six web-research tools and a zero-model-turn C
 - `web_crawl` starts and controls durable bounded jobs. Use `action: start|status|list|cancel|resume`. Defaults are 25 pages, depth two, 20 MiB accepted payload, five minutes and two workers; hard caps are 200 pages, depth five, 100 MiB, 30 minutes and four workers.
 - `web_diff` compares two visible snapshots, the latest pair for a source, or a fresh URL against a stored baseline. A refused capture can still be compared in memory; no persistent source IDs are invented.
 
-The server constructs one source repository, one job engine and one runtime. Tools and CLI invoke the same strict schemas and operations. The Sources project page and thread tab use typed RPC and local-auth streamed export over that same graph.
+The server constructs one source repository, one job engine and one runtime. Tools and CLI invoke the same strict schemas and operations. The Research tab, the Research page and the chat surfaces use typed RPC and local-auth streamed export over that same graph.
+
+## Research in each thread
+
+Every thread has a Research tab, kept on the id `sources` so tabs opened before 0.3.0 keep working:
+
+- Activity lists what the agent and you looked up, grouped by who did it and when: each search with its queries and the results seen (marked with what was read next), pages read, maps, crawls with live progress, comparisons, and problems in words. Read now fetches an unopened result into the thread.
+- Sources groups kept pages by how they arrived (read by the agent, from a crawl, saved by you) and lists sources shared with the project. Filters pick cited, changed or problem sources; a crawl folds into one row that expands to its pages.
+- The reader shows the kept text with line numbers, the lines a reply cited, an outline, find in page, versions and a section-by-section comparison. Select lines to quote them into your message with a citation the agent can reopen, copy a citation, or check other sources.
+- Crawls shows each job's pages, data and time against its limits, the latest pages and why one failed or was skipped, with Stop, Resume (with 20 more pages after a page limit) and a form to map or crawl a site yourself.
+- The search box searches the web, or reads a pasted link, in the thread with no model turn. The entry is labelled as yours; the agent sees what you find when you quote it. bb gives a plugin no way to prove that a call came from a person rather than an agent using the same RPC, so the label records where the call came from, not who made it.
+
+Elsewhere in a thread:
+
+- Agents can cite a kept page in a reply with `::forage-cite{snapshot="<snapshotId>" lines="<from>-<to>"}` (or `find="<short phrase>"` instead of `lines`). The card shows the source, the lines and the quoted text, and opens the reader there. `::forage-sources` draws a one-line summary of the thread's sources. A source counts as cited when the reply that cites it finishes, and again when a card renders, once per range of lines.
+- Check in sources, in a message's action bar and text-selection menu, looks for the selected words in the thread's kept pages. It is a word match, not a model call, and it reports a passage that only an earlier version still contains.
+- A header chip, a segment above the composer and an Info section summarise the thread's research. Save to research in bb's Browser fetches Forage's own public copy of the page; the Browser's cookies and signed-in content are never used. Palette commands open the tab or its search box.
+- Web research in the thread menu picks Use Forage settings, Docs first, Fresh results, Private or Off for that thread. Docs and Fresh change the default profile and Private applies the private ceiling. Off removes the web tools from the agent from its next session and refuses every web operation in the thread meanwhile, from tools, the CLI and the Research tab alike; checking and stopping crawls still works. Switching to Private or Off also stops running crawls the new policy would not allow. A thread can never widen the settings. Private is disabled until SearXNG is configured. The policy lives in thread metadata, which the thread's own agent can also write, so it is a narrowing the person chooses, not a lock against the agent.
+
+The Research page in the rail lists threads with research, running crawls first, with each thread's Activity and Sources side by side, sources shared with projects, and Health and storage: which providers and readers can run and why not, the policy in words, the last 24 hours from the diagnostics ring, storage by thread and Prune now. Its rail icon counts running crawls.
+
+The activity log keeps, per thread, the queries, the result titles, links and snippets seen, the pages read and the crawls started, for 30 days. Userinfo, fragments and secret-looking query parameters are removed from logged addresses, including addresses inside error text, entries that read private or credentialed content follow the same visibility rules as their sources, and each thread keeps at most 2,000 entries. Clear one thread's log from the Research tab menu; deleting a thread deletes its log. Turning off Keep a research activity log in settings stops recording and deletes every log.
 
 ## Evidence and continuation
 
-Public, uncredentialed content is captured in the calling thread before output is shortened. Search queries, search metadata and raw provider payloads are not automatically saved. A retrieval attempt is separate from an immutable snapshot: unchanged reads add attempts without manufacturing changed versions. A 304 preserves the original body, hash and fetch time.
+Public, uncredentialed content is captured in the calling thread before output is shortened. Raw provider payloads are never saved; queries and the results seen are kept only in the activity log described above. A retrieval attempt is separate from an immutable snapshot: unchanged reads add attempts without manufacturing changed versions. A 304 preserves the original body, hash and fetch time.
 
 Use `snapshotId`, `contentHash` and `offset` from a result for immutable continuation. Offsets are UTF-16 string indices, not byte offsets; surrogate pairs are not split. URL-only offset reads use the process cache when available but may download again after expiry. A mismatched hash fails with `STALE_CONTENT`; an evicted snapshot does not silently refetch. Citations use the URL, source/snapshot IDs and one-based line ranges. Outline, links and focus are derived views, not offsets into the original snapshot.
 
-IDs from another thread are invisible. Share URLs and findings across threads, or explicitly copy a public source to the project through Sources. Restricted snapshots cannot be promoted. Thread retention defaults to 30 days, project retention to 180 days, completed-job metadata to 30 days and failed/cancelled-job metadata to seven days. Retained content is capped at 128 MiB; snapshots at 8 MiB UTF-8 and structured data at 1 MiB. Active jobs protect their snapshots; cancel the job before deleting one. Retention removes inactive/expired data first. Storage refusal is explicit, not a fake saved page.
+IDs from another thread are invisible. Share URLs and findings across threads, or explicitly copy a public source to the project from its menu in the Research tab. Restricted snapshots cannot be promoted. Thread retention defaults to 30 days, project retention to 180 days, completed-job metadata to 30 days and failed/cancelled-job metadata to seven days. Retained content is capped at 128 MiB; snapshots at 8 MiB UTF-8 and structured data at 1 MiB. Active jobs protect their snapshots; cancel the job before deleting one. Retention removes inactive/expired data first. Storage refusal is explicit, not a fake saved page.
 
 ## Privacy and provider controls
 
