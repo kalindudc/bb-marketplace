@@ -1,13 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { experimental_Icon as Icon, Markdown, useBbNavigate } from "@get-bb/plugin-sdk/app";
-import type { ConversationItem, PrView, Verdict } from "../contract";
+import type { ConversationItem, PrView } from "../contract";
 import { nudgeText, useActions } from "./actions";
 import { BUTTON_GHOST, BUTTON_PRIMARY, SectionTitle, Segmented, type Tone } from "./common";
 import { openExternal, undoToast, useShuttleMutation } from "./data";
 import { age, checkName, plural, tinyKey } from "./format";
 import { isLive } from "./pills";
 import { VERDICT_OPTIONS } from "./your-review";
+import { usePrState } from "./pr-state";
 
 const TAG_TONES: Record<Tone, string> = {
   neutral: "border-border text-muted-foreground",
@@ -51,23 +52,24 @@ function Avatar({ item }: { item: ConversationItem }) {
   return <span aria-hidden className="inline-flex size-[22px] shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-bold text-foreground">{initial}</span>;
 }
 
-function ReplyBox({ pr, item, onClose }: { pr: PrView; item: ConversationItem; onClose(): void }) {
-  const [text, setText] = useState("");
+function ReplyBox({ pr, item, autoFocus, onClose }: { pr: PrView; item: ConversationItem; autoFocus: boolean; onClose(): void }) {
+  const [text, setText] = usePrState(pr.key, "replyText", "", `reply/${item.id}`);
   const reply = useShuttleMutation("reply");
   const send = async () => {
     const body = text.trim();
     if (body === "" || item.thread === null) return;
     if ((await reply.run({ key: pr.key, thread: item.thread, body })) === null) return;
     toast.success(`Replied on ${pr.serverName}.`);
+    setText("");
     onClose();
   };
   return (
     <div className="mt-2 rounded-lg border border-primary/60 bg-background">
-      <textarea aria-label={`Reply to ${item.author ?? "the thread"}`} autoFocus rows={2} value={text} placeholder={`Reply to ${item.author ?? "the thread"}…`}
+      <textarea aria-label={`Reply to ${item.author ?? "the thread"}`} autoFocus={autoFocus} rows={2} value={text} placeholder={`Reply to ${item.author ?? "the thread"}…`}
         onChange={(event) => setText(event.target.value)} className="block w-full resize-y bg-transparent px-2.5 py-2 text-sm outline-none" />
       <div className="flex items-center gap-1.5 border-t border-border px-2 py-1.5">
         <span className="flex-1 text-xs text-muted-foreground">Replies on {pr.serverName} as you</span>
-        <button type="button" className={BUTTON_GHOST} onClick={onClose}>Cancel</button>
+        <button type="button" className={BUTTON_GHOST} onClick={() => { setText(""); onClose(); }}>Cancel</button>
         <button type="button" className={BUTTON_PRIMARY} disabled={reply.isPending || text.trim() === ""} onClick={() => void send()}>Reply</button>
       </div>
     </div>
@@ -76,7 +78,8 @@ function ReplyBox({ pr, item, onClose }: { pr: PrView; item: ConversationItem; o
 
 function Item({ pr, item, onResolve }: { pr: PrView; item: ConversationItem; onResolve(item: ConversationItem): void }) {
   const actions = useActions();
-  const [replying, setReplying] = useState(false);
+  const [replying, setReplying] = usePrState(pr.key, "replyOpen", false, `reply/${item.id}`);
+  const focusReply = useRef(false);
   const tag = tagOf(pr, item);
   const live = isLive(pr);
   const inThread = item.kind === "thread" && item.thread !== null;
@@ -107,12 +110,12 @@ function Item({ pr, item, onResolve }: { pr: PrView; item: ConversationItem; onR
         {item.outcome?.note && <div className="mt-0.5 text-xs text-muted-foreground">{item.outcome.note}</div>}
         {(canReply || canResolve || canSend) && (
           <div className="mt-1 flex gap-3 text-xs">
-            {canReply && !replying && <button type="button" className={link} onClick={() => setReplying(true)}>Reply</button>}
+            {canReply && !replying && <button type="button" className={link} onClick={() => { focusReply.current = true; setReplying(true); }}>Reply</button>}
             {canSend && <button type="button" className={link} onClick={() => actions.pickAgent(pr)}>Send to an agent</button>}
             {canResolve && <button type="button" className={link} onClick={() => onResolve(item)}>{item.resolved ? "Reopen" : "Resolve"}</button>}
           </div>
         )}
-        {replying && <ReplyBox pr={pr} item={item} onClose={() => setReplying(false)} />}
+        {replying && <ReplyBox pr={pr} item={item} autoFocus={focusReply.current} onClose={() => setReplying(false)} />}
       </div>
     </li>
   );
@@ -153,13 +156,17 @@ export function Conversation({ pr, items, error, phone }: { pr: PrView; items: r
 export function Composer({ pr, onDone, autoFocus = false, initialText = "" }: { pr: PrView; onDone?: () => void; autoFocus?: boolean; initialText?: string }) {
   const { intent, done } = useActions();
   const options = pr.mine ? [] : VERDICT_OPTIONS.filter((option) => (option.value === "comment" ? pr.can.comment : pr.can.review));
-  const [text, setText] = useState(initialText);
-  const [verdict, setVerdict] = useState<Verdict>(options[0]?.value ?? "comment");
+  const [text, setText] = usePrState(pr.key, "comment", initialText);
+  const [verdict, setVerdict] = usePrState(pr.key, "verdict", options[0]?.value ?? "comment");
   const box = useRef<HTMLTextAreaElement>(null);
   const comment = useShuttleMutation("comment");
   const submit = useShuttleMutation("submitReview");
   const ask = useShuttleMutation("askAgent");
   const busy = comment.isPending || submit.isPending || ask.isPending;
+
+  useEffect(() => {
+    if (initialText !== "") setText(initialText);
+  }, [pr.key, initialText, setText]);
 
   useEffect(() => {
     if (intent?.kind !== "compose" || intent.key !== pr.key) return;

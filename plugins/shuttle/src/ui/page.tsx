@@ -84,6 +84,7 @@ function TabBar({ route, overview, onGo }: { route: Route; overview: Overview | 
 function PhonePrView({ prKey, backLabel, onBack }: { prKey: string; backLabel: string; onBack(): void }) {
   const actions = useActions();
   const pr = useShuttleQuery("detail", { key: prKey }).data?.pr;
+  const scroller = useScrollMemory(`pr/${prKey}`);
   const { intent, done } = actions;
   // A phone has no composer in the PR view: a pending "compose" opens the comment sheet instead.
   useEffect(() => {
@@ -113,8 +114,8 @@ function PhonePrView({ prKey, backLabel, onBack }: { prKey: string; backLabel: s
           </button>
         )}
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <PrDetail prKey={prKey} phone />
+      <div ref={scroller.ref} onScroll={scroller.onScroll} className="min-h-0 flex-1 overflow-y-auto">
+        <PrDetail key={prKey} prKey={prKey} phone />
       </div>
       {pr !== undefined && isLive(pr) && (step !== null || canComment) && (
         <div data-phone-actions className="flex shrink-0 gap-2 border-t border-border bg-card px-3 pb-4 pt-2.5">
@@ -171,7 +172,8 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
     else if (resume !== null) navigate.toPluginPanel(PANEL_PATH, { subPath: resume, replace: true });
     // Only a change of place counts; `navigate` is a new object on each render.
   }, [subPath, resume, here]);
-  const scroller = useScrollMemory(route.view === "pr" ? null : isListRoute(route) ? formatRoute({ ...route, key: null }) : here);
+  const scroller = useScrollMemory(route.view === "pr" ? `pr/${route.key}` : isListRoute(route) ? formatRoute({ ...route, key: null }) : here);
+  const prScroller = useScrollMemory(selectedKey === null ? null : `pr/${selectedKey}`);
   const select = (key: string) => {
     if (!isListRoute(route)) {
       if (route.view === "pr" && route.key === key) return;
@@ -254,7 +256,7 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
           </div>
         ) : lookedUp?.error != null && <ErrorNote>{messageOf(lookedUp.error)}</ErrorNote>}
         {lookedUp?.data === undefined && lookedUp?.error === null && <div className="py-6 text-sm text-muted-foreground">Loading…</div>}
-        {!phone && showDetail && <div className="overflow-hidden rounded-lg border border-border"><PrDetail prKey={route.key} onClose={closeSelection} /></div>}
+        {!phone && showDetail && <div className="overflow-hidden rounded-lg border border-border"><PrDetail key={route.key} prKey={route.key} onClose={closeSelection} /></div>}
       </div>
     ); break;
   }
@@ -294,7 +296,7 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
           {overlay && (
             <>
               <div data-scrim className="absolute inset-0 z-10 bg-background/60" onClick={closeSelection} />
-              <div data-overlay className="absolute inset-y-0 right-0 z-20 w-[min(640px,88%)] overflow-y-auto border-l border-border bg-background shadow-lg animate-in slide-in-from-right duration-200">
+              <div ref={prScroller.ref} onScroll={prScroller.onScroll} data-overlay className="absolute inset-y-0 right-0 z-20 w-[min(640px,88%)] overflow-y-auto border-l border-border bg-background shadow-lg animate-in slide-in-from-right duration-200">
                 {detailPanel(closeSelection)}
               </div>
             </>
@@ -306,7 +308,7 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
     body = (
       <div className="flex h-full min-h-0 flex-row">
         <div ref={scroller.ref} onScroll={scroller.onScroll} data-scroller className="min-w-0 flex-1 overflow-y-auto">{notices}{area}</div>
-        <div data-panel className="w-[640px] min-w-0 max-w-[55%] shrink-0 overflow-y-auto border-l border-border">{detailPanel(closeSelection)}</div>
+        <div ref={prScroller.ref} onScroll={prScroller.onScroll} data-panel className="w-[640px] min-w-0 max-w-[55%] shrink-0 overflow-y-auto border-l border-border">{detailPanel(closeSelection)}</div>
       </div>
     );
   } else {

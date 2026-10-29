@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { experimental_Icon as Icon, experimental_usePluginId, UrlLink } from "@get-bb/plugin-sdk/app";
-import type { MyReview, PrView, ReviewDraft, Severity, Verdict } from "../contract";
+import type { MyReview, PrView, ReviewDraft, Severity } from "../contract";
 import { NextButtons, useActions } from "./actions";
 import { BUTTON, BUTTON_GHOST, BUTTON_PRIMARY, FIELD, LABEL, Segmented, TONE_PANEL, TONE_TEXT } from "./common";
 import { NEXT_ICONS } from "./constants";
 import { useShuttleMutation } from "./data";
 import { ago, plural, settingsHref } from "./format";
 import { isLive } from "./pills";
+import { usePrState } from "./pr-state";
 
 const SEVERITY_TEXT: Record<Severity, string> = { high: "text-destructive", medium: "text-warning-text", low: "text-primary", nit: "text-muted-foreground" };
 export const VERDICT_OPTIONS = [
@@ -24,11 +25,13 @@ const location = (path: string, line: number | null) => `${path.split("/").slice
 /** An AI draft: tick the findings to post, edit their text, pick the verdict, and post one review. */
 function DraftReview({ pr, draft }: { pr: PrView; draft: ReviewDraft }) {
   const actions = useActions();
-  const [summary, setSummary] = useState(draft.summary);
-  const [findings, setFindings] = useState(() => draft.findings.map((finding) => ({ ...finding, on: finding.severity !== "nit" })));
+  const scope = `draft/${draft.id}`;
+  const [summary, setSummary] = usePrState(pr.key, "summary", draft.summary, scope);
+  const [findings, setFindings] = usePrState(pr.key, "findings", () => draft.findings.map((finding) => ({ ...finding, on: finding.severity !== "nit" })), scope);
   // The server refuses the same way: a draft without a head counts as read on an older one.
   const stale = draft.head === null || pr.head === null || draft.head !== pr.head;
-  const [verdict, setVerdict] = useState<Verdict>(stale && draft.verdict === "approve" ? "comment" : draft.verdict);
+  const [chosenVerdict, setVerdict] = usePrState(pr.key, "verdict", draft.verdict, scope);
+  const verdict = stale && chosenVerdict === "approve" ? "comment" : chosenVerdict;
   const [staleOk, setStaleOk] = useState(false);
   const submit = useShuttleMutation("submitReview");
   const ticked = findings.filter((finding) => finding.on);

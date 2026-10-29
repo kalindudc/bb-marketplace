@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { experimental_Icon as Icon, Markdown } from "@get-bb/plugin-sdk/app";
 import type { ConversationItem, PrView } from "../contract";
 import { AgentCard } from "./agent";
@@ -12,12 +12,13 @@ import { age, checkName, clock, plural, shortKey, sizeOf } from "./format";
 import { LabelsAndReviewers, ManageCard } from "./manage";
 import { StatePill } from "./pills";
 import { YourReviewCard } from "./your-review";
+import { usePrState } from "./pr-state";
 
 const LONG_DESCRIPTION = 1500;
 
 /** The PR's own description, rendered by bb's sanitizing Markdown renderer; a long one is cut until asked. */
-function Description({ body }: { body: string | null }) {
-  const [expanded, setExpanded] = useState(false);
+function Description({ prKey, body }: { prKey: string; body: string | null }) {
+  const [expanded, setExpanded] = usePrState(prKey, "description", false);
   const long = body !== null && body.length > LONG_DESCRIPTION;
   return (
     <section aria-label="Description" className="mx-4 mt-4">
@@ -128,7 +129,7 @@ function Banner({ pr }: { pr: PrView }) {
 
 function Details({ pr }: { pr: PrView }) {
   const { phone } = useActions();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = usePrState(pr.key, "details", false);
   return (
     <section aria-label="Details" className="mx-4 mt-4">
       <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="flex w-full cursor-pointer items-center gap-1.5 text-left">
@@ -277,7 +278,7 @@ export function PrDetail({ prKey, onClose, phone = false }: { prKey: string; onC
           {pr.agent !== null && <AgentCard pr={pr} />}
         </>
       )}
-      <Description body={body} />
+      <Description prKey={pr.key} body={body} />
       <Conversation pr={pr} items={items} error={conversationError} phone={phone} />
       <ChecksSection pr={pr} items={items} />
       <Details pr={pr} />

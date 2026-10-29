@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.3
+
+- **Keep your place when a PR view is recreated.** Each PR restores its scroll position in the desktop panel, narrow overlay, phone layout, standalone view and thread tab. Expanded descriptions and Details, open reply boxes, unfinished comments and replies, and edits to an AI review draft stay in the current browser tab's session. Live syncing stays on; ordinary background refreshes still update the existing view in place.
+- **Keep drafts separate and clear text after sending.** Working state belongs to its PR, replies belong to their conversation item, and AI-review edits belong to their draft ID. A new AI review starts cleanly. Sending a comment or reply, or cancelling a reply, clears that text; failed sends keep it. Restored replies do not steal focus, and confirmation to post a stale review is never remembered.
+
 ## 0.4.2
 
 - **Add context when starting an AI review.** The preset dialog now has an optional Note for the reviewer field for both first reviews and re-reviews. Add context or areas to focus on without opening the custom-review dialog. Notes apply only to that run, and blank notes are omitted.

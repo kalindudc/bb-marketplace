@@ -17,6 +17,7 @@ import { panelPrs, rememberPanelPr } from "./prefs";
 import { useStored } from "./remember";
 import { formatRoute } from "./route";
 import { useSurface } from "./surface";
+import { useScrollMemory } from "./scroll";
 import { GITHUB_PR_STATUS, githubPrStatus } from "./tab";
 import { useViewport } from "./viewport";
 import type { PrWrites } from "./writes";
@@ -162,6 +163,7 @@ function PrCard({ pr, threadId, busy, writes, onView, onUnlink }: {
 /** One PR in full inside the tab, as the Shuttle page shows it, with a way back to the thread's list. */
 function PanelPrView({ prKey, onBack }: { prKey: string; onBack(): void }) {
   const navigate = useBbNavigate();
+  const scroller = useScrollMemory(`pr/${prKey}`);
   return (
     <section data-shuttle-panel data-panel-pr={prKey} aria-label="Shuttle" className="flex h-full min-h-0 flex-col bg-background text-foreground">
       <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border px-2">
@@ -175,7 +177,7 @@ function PanelPrView({ prKey, onBack }: { prKey: string; onBack(): void }) {
           <Icon name="shuttle/shuttle" fallback="GitPullRequest" className="size-4" aria-hidden />
         </button>
       </div>
-      <div data-scroller className="min-h-0 flex-1 overflow-y-auto">
+      <div ref={scroller.ref} onScroll={scroller.onScroll} data-scroller className="min-h-0 flex-1 overflow-y-auto">
         <PrDetail key={prKey} prKey={prKey} />
       </div>
     </section>

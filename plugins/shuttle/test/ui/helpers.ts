@@ -6,6 +6,7 @@ import {
   type NextStep, type Overview, type PrView, type ReviewDraft, type ServerStatus,
 } from "../../src/contract";
 import { reloadPrefs } from "../../src/ui/prefs";
+import { prStates } from "../../src/ui/pr-state";
 
 export type Handlers = PluginRpcTestHandlers<typeof rpcContract>;
 /** GitHub PR Status's read, answered from the same map: the harness routes every plugin's RPC to it. */
@@ -277,7 +278,9 @@ export function unmountAll() {
   width = DESKTOP;
   // What the page remembers on this device must not leak from one test into the next.
   window.localStorage.clear();
+  window.sessionStorage.clear();
   reloadPrefs();
+  prStates.reload();
 }
 
 export const callsTo = (slot: RenderedSlot, method: string) => slot.inspection.rpcCalls.filter((call) => call.method === method).map((call) => call.input);

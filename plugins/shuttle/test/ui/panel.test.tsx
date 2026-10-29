@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, waitFor, within } from "@testing-library/react";
 import type { ExperimentalThreadActionTabProps, ExperimentalTabRegistration } from "@get-bb/plugin-sdk/app";
 import type { PrView } from "../../src/contract";
 import { agent, app, CAN_ALL, callsTo, event, find, handlers, item, link, mount, pr, unmountAll, type Handlers, type PullRequests } from "./helpers";
@@ -218,6 +218,55 @@ describe("a PR in full inside the tab", () => {
     fireEvent.click(slot.getByRole("button", { name: "Back to this thread's pull requests" }));
     await waitFor(() => expect(slot.container.querySelectorAll("[data-pr]")).toHaveLength(3));
     expect(slot.container.querySelector("[data-panel-pr]")).toBeNull();
+  });
+
+  it("keeps the open PR, scroll container, expanded sections and drafts through a background refresh", async () => {
+    const detailData = { pr: base, events: [], body: "A long description. ".repeat(100), draft: null };
+    const conversationData = { items: [item({ author: "tomas", thread: "PRRT_9" })], error: null, fetchedAt: Date.now() };
+    let refreshing = false;
+    let finishPrs: (value: { prs: PrView[]; sent: [] }) => void;
+    let finishDetail: (value: typeof detailData) => void;
+    let finishConversation: (value: typeof conversationData) => void;
+    const slot = await panel({
+      threadPrs: () => refreshing ? new Promise((resolve) => { finishPrs = resolve; }) : { prs: [base, middle, top], sent: [] },
+      detail: () => refreshing ? new Promise((resolve) => { finishDetail = resolve; }) : detailData,
+      conversation: () => refreshing ? new Promise((resolve) => { finishConversation = resolve; }) : conversationData,
+    });
+    const detail = await view(slot, base.key);
+    fireEvent.click(within(detail).getByRole("button", { name: "Show the whole description" }));
+    fireEvent.click(within(detail).getByRole("button", { name: /Details/u }));
+    fireEvent.click(await within(detail).findByRole("button", { name: "Reply" }));
+    const reply = within(detail).getByRole("textbox", { name: "Reply to tomas" }) as HTMLTextAreaElement;
+    const comment = within(detail).getByRole("textbox", { name: "Comment on bb-marketplace#118" }) as HTMLTextAreaElement;
+    fireEvent.change(reply, { target: { value: "An unfinished reply" } });
+    fireEvent.change(comment, { target: { value: "An unfinished comment" } });
+    const scroller = slot.container.querySelector<HTMLElement>("[data-scroller]")!;
+    scroller.scrollTop = 480;
+
+    const assertPreserved = () => {
+      expect(slot.container.querySelector("[data-detail]")).toBe(detail);
+      expect(slot.container.querySelector("[data-scroller]")).toBe(scroller);
+      expect(scroller.scrollTop).toBe(480);
+      expect(within(detail).getByRole("button", { name: "Show less" })).toBeTruthy();
+      expect(within(detail).getByRole("button", { name: /Details/u }).getAttribute("aria-expanded")).toBe("true");
+      expect(within(detail).getByRole("textbox", { name: "Reply to tomas" })).toBe(reply);
+      expect(reply.value).toBe("An unfinished reply");
+      expect(comment.value).toBe("An unfinished comment");
+    };
+    refreshing = true;
+    let refresh: Promise<void>;
+    act(() => { refresh = slot.behavior.experimental_invalidateRpc(["prs", "conversation"], "shuttle"); });
+    await waitFor(() => expect(callsTo(slot, "threadPrs")).toHaveLength(2));
+    assertPreserved();
+    await act(async () => {
+      finishPrs!({ prs: [base, middle, top], sent: [] });
+      finishDetail!({ ...detailData, pr: { ...base, title: "Updated after sync" } });
+      finishConversation!({ ...conversationData, items: [item({ id: "new", body: "A new comment", at: Date.now() }), ...conversationData.items] });
+      await refresh!;
+    });
+    await within(detail).findByText("Updated after sync");
+    await within(detail).findByText("A new comment");
+    assertPreserved();
   });
 
   it("opens from its title too", async () => {

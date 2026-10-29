@@ -1,18 +1,19 @@
 import { useSyncExternalStore } from "react";
 
-// A write that fails, on a full or disabled localStorage, keeps the value for this session only: a remembered view
-// choice is not worth breaking the click that made it.
-function write(key: string, value: string): void {
+type StorageKind = "localStorage" | "sessionStorage";
+
+// Storage can be full or disabled; view choices still work in memory for this session.
+function write(storage: StorageKind, key: string, value: string): void {
   try {
-    window.localStorage.setItem(key, value);
+    window[storage].setItem(key, value);
   } catch {
     // Kept in memory.
   }
 }
 
-function read(key: string): unknown {
+function read(storage: StorageKind, key: string): unknown {
   try {
-    const raw = window.localStorage.getItem(key);
+    const raw = window[storage].getItem(key);
     return raw === null ? undefined : JSON.parse(raw);
   } catch {
     return undefined;
@@ -22,12 +23,12 @@ function read(key: string): unknown {
 /**
  * A view choice this device remembers, shared by every Shuttle surface and followed across bb windows. A stored value
  * that no longer parses, such as one an older version wrote, reads as the default. `delay` batches frequent writes,
- * such as scroll positions, into one write.
+ * such as scroll positions, into one write. Session storage keeps unsent PR text in this tab only.
  */
-export function createStored<T>(name: string, initial: T, parse: (value: unknown) => T | null, delay = 0) {
+export function createStored<T>(name: string, initial: T, parse: (value: unknown) => T | null, delay = 0, storage: StorageKind = "localStorage") {
   const key = `bb-plugin-shuttle:${name}`;
   const load = (): T => {
-    const raw = read(key);
+    const raw = read(storage, key);
     return raw === undefined ? initial : parse(raw) ?? initial;
   };
   let value = load();
@@ -39,7 +40,7 @@ export function createStored<T>(name: string, initial: T, parse: (value: unknown
   const flush = () => {
     if (timer !== null) clearTimeout(timer);
     timer = null;
-    write(key, JSON.stringify(value));
+    write(storage, key, JSON.stringify(value));
   };
   const reload = () => {
     if (timer !== null) clearTimeout(timer);
@@ -49,7 +50,7 @@ export function createStored<T>(name: string, initial: T, parse: (value: unknown
   };
   // Another bb window wrote; without this, the next write here would put back what that window changed.
   const onStorage = (event: StorageEvent) => {
-    if (event.key === key || event.key === null) reload();
+    if (event.storageArea === window[storage] && (event.key === key || event.key === null)) reload();
   };
   return {
     get: (): T => value,

@@ -5,6 +5,13 @@ Every pull request that needs you, from any server, in one place. See
 [skills/shuttle/references/servers.md](skills/shuttle/references/servers.md) for the command
 adapter contract and a working Delta adapter.
 
+## PR view state
+
+Shuttle restores each PR's scroll position and expanded Description and Details when its view
+is recreated, in the page and the thread tab. Unfinished comments and replies, open reply boxes,
+and edits to an AI review draft stay in this browser tab's session. Sending a comment or reply
+clears its text. A new AI review draft starts with its own findings and summary.
+
 ## AI reviews
 
 Choose **Start AI review** or **Re-review with AI**, pick a preset, and optionally add a

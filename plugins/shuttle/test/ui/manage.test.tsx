@@ -9,7 +9,8 @@ import { app, callsTo, handlers, mount, pr, setViewport, unmountAll, type Handle
 /** Opens the PR view's Details, where the Manage card lives. */
 async function details(root: HTMLElement) {
   const section = await waitFor(() => within(root).getByRole("region", { name: "Details" }));
-  fireEvent.click(within(section).getByRole("button", { name: /Details/u }));
+  const toggle = within(section).getByRole("button", { name: /Details/u });
+  if (toggle.getAttribute("aria-expanded") !== "true") fireEvent.click(toggle);
   return section;
 }
 
