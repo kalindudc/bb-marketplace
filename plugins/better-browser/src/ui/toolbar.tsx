@@ -38,7 +38,10 @@ export function BrowserToolbarControl({ threadId, tabId, url, isCompactViewport,
     let stopped = false;
     const beat = () => {
       if (document.visibilityState !== "visible") return;
-      rpc.call("heartbeat", { threadId, tabId }).then((next) => !stopped && setStatus(next), () => undefined);
+      // Focus tells the plugin whether this Browser tab is the one on screen: a background sync leases it, and leasing a
+      // tab the user is not looking at makes bb switch the side panel to the Browser.
+      const focused = page ? page.evaluate("document.hasFocus()").then((value) => value === true, () => true) : Promise.resolve(true);
+      void focused.then((isFocused) => rpc.call("heartbeat", { threadId, tabId, focused: isFocused }).then((next) => !stopped && setStatus(next), () => undefined));
     };
     beat();
     const timer = setInterval(beat, HEARTBEAT_MS);
@@ -48,7 +51,7 @@ export function BrowserToolbarControl({ threadId, tabId, url, isCompactViewport,
       clearInterval(timer);
       document.removeEventListener("visibilitychange", beat);
     };
-  }, [rpc, threadId, tabId]);
+  }, [rpc, threadId, tabId, page]);
 
   const openExternal = useCallback(
     (target: string) => {

@@ -71,7 +71,7 @@ describe("plugin app", () => {
     const { page, expressions, send } = fakePage();
     const slot = await toolbar("https://example.com/", page);
     await waitFor(() => expect(expressions.some((expression) => expression.includes("__betterBrowserLinksUntil ="))).toBe(true));
-    expect(slot.inspection.rpcCalls[0]).toEqual({ method: "heartbeat", input: { threadId: "thr_1", tabId: "tab_1" } });
+    await waitFor(() => expect(slot.inspection.rpcCalls.find(({ method }) => method === "heartbeat")).toEqual({ method: "heartbeat", input: { threadId: "thr_1", tabId: "tab_1", focused: true } }));
     await act(async () => send({ type: "better-browser:open", url: "https://example.com/next" }));
     await waitFor(() => expect(slot.inspection.rpcCalls).toContainEqual({ method: "openExternal", input: { url: "https://example.com/next" } }));
     slot.lifecycle.unmount();

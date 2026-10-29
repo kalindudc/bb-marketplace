@@ -121,7 +121,7 @@ export default function betterBrowser(bb: BbPluginApi): void {
       await settings.experimental_set({ browser: browserId === "" ? "system" : browserId, profile });
       return engine.refreshStatus();
     },
-    heartbeat: ({ threadId, tabId }) => engine.heartbeat(threadId, tabId),
+    heartbeat: ({ threadId, tabId, focused }) => engine.heartbeat(threadId, tabId, focused),
     handoff: (input) => {
       const result = handoffs.advance(input);
       if (result.effects.length > 0) {

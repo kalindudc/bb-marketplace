@@ -1,4 +1,4 @@
-import type { ExperimentalDesktopBrowsersArea, PluginRpcResult, StandardSchemaV1InferInput } from "@get-bb/plugin-sdk";
+import type { ExperimentalDesktopBrowserLease, ExperimentalDesktopBrowsersArea, PluginRpcResult, StandardSchemaV1InferInput } from "@get-bb/plugin-sdk";
 import type { BrowserInfo, HostContract } from "./contract";
 import type { SyncErrorCode } from "./errors";
 import type { Status, SyncSummary } from "./rpc";
@@ -43,6 +43,8 @@ export const ACTIVE_TAB_MS = 90_000;
 export const WATCH_DEBOUNCE_MS = 1_500;
 /** The longest one sync may hold its hidden tab's control lease. */
 const LEASE_MS = 120_000;
+/** The bb window a helper tab belongs to. */
+type HelperScope = { hostId: string; instanceId: string; generation: string; threadId: string };
 const BROWSER_LIST_MS = 60_000;
 
 /** Failures only the user can fix; automatic syncs stop retrying them (and re-prompting) until the user acts. */
@@ -61,7 +63,7 @@ class Failure extends Error {
  * change, and when the user or a sign-in asks.
  */
 export function createEngine(deps: EngineDeps) {
-  const tabs = new Map<string, { threadId: string; seenAt: number }>();
+  const tabs = new Map<string, { threadId: string; seenAt: number; focused: boolean }>();
   let desktop: Desktop | null = null;
   let watching: string | null = null;
   let dirty = true;
@@ -77,12 +79,16 @@ export function createEngine(deps: EngineDeps) {
   const snapshot = (): Status => ({ ...state });
   const publish = () => deps.publish(snapshot());
 
+  /**
+   * The thread whose Browser tab the user is in. Only a focused tab counts: writing cookies leases a tab, and leasing
+   * one that is not on screen makes bb switch the side panel to it, which interrupts a terminal or a diff.
+   */
   function activeThread(): string | undefined {
     let best: { threadId: string; seenAt: number } | undefined;
     const cutoff = deps.now() - ACTIVE_TAB_MS;
     for (const [key, tab] of tabs) {
       if (tab.seenAt < cutoff) tabs.delete(key);
-      else if (!best || tab.seenAt > best.seenAt) best = tab;
+      else if (tab.focused && (!best || tab.seenAt > best.seenAt)) best = tab;
     }
     return best?.threadId;
   }
@@ -158,7 +164,55 @@ export function createEngine(deps: EngineDeps) {
     }
     const owner = threadId ?? activeThread();
     if (!owner) throw new Failure("noBrowserTab", "Open a bb Browser tab: the sync runs through it");
-    let scope = { hostId: found.hostId, instanceId: found.instanceId, generation: found.generation, threadId: owner };
+    dirty = false;
+    const { scope, tabId, lease, owned } = await leaseTab(owner, found);
+    try {
+      const connection = await deps.desktops.openConnection({ ...scope, leaseId: lease.leaseId });
+      const applied = await deps.host("apply", { ...source, wsEndpoint: connection.wsEndpoint, mode }, { hostId: connection.hostId, timeoutMs: LEASE_MS });
+      if (!applied.ok) {
+        dirty = true;
+        throw new Failure(applied.code, applied.message);
+      }
+      state.profile = applied.profile;
+      state.lastSync = {
+        at: deps.now(), status: "synced", set: applied.set, removed: applied.removed, rejected: applied.rejected,
+        cookies: applied.cookies, undecryptable: applied.undecryptable, hosts: applied.hosts, reason,
+      };
+      state.error = null;
+      deps.log.info(`sync (${reason}, ${mode}): set ${applied.set}, removed ${applied.removed}, rejected ${applied.rejected} of ${applied.cookies}`);
+    } finally {
+      await deps.desktops.releaseControl({ ...scope, leaseId: lease.leaseId }).catch(() => undefined);
+      if (owned) await deps.desktops.closeTab({ ...scope, tabId }).catch(() => undefined);
+    }
+  }
+
+  /** The Browser tab this thread reported most recently, if it is still in use. */
+  function openTabFor(owner: string): string | undefined {
+    const cutoff = deps.now() - ACTIVE_TAB_MS;
+    let best: { tabId: string; seenAt: number } | undefined;
+    for (const [key, tab] of tabs) {
+      if (tab.threadId !== owner || tab.seenAt < cutoff) continue;
+      const tabId = key.slice(key.indexOf("\u0000") + 1);
+      if (!best || tab.seenAt > best.seenAt) best = { tabId, seenAt: tab.seenAt };
+    }
+    return best?.tabId;
+  }
+
+  /**
+   * A CDP target to write cookies through. The user's own tab is preferred: creating a tab makes bb rebuild its
+   * side-panel tab list and switch to the new tab, which remounts every panel tab. Only when the thread has no open tab
+   * — a sync from the CLI, or a call after the tab closed — does this open a hidden helper tab, and it closes again.
+   */
+  async function leaseTab(owner: string, found: Desktop): Promise<{ scope: HelperScope; tabId: string; lease: ExperimentalDesktopBrowserLease; owned: boolean }> {
+    let scope: HelperScope = { hostId: found.hostId, instanceId: found.instanceId, generation: found.generation, threadId: owner };
+    const open = openTabFor(owner);
+    if (open !== undefined) {
+      try {
+        return { scope, tabId: open, lease: await deps.desktops.acquireControl({ ...scope, tabIds: [open], controllerLabel: "Better Browser", ttlMs: LEASE_MS }), owned: false };
+      } catch {
+        // The tab closed between its heartbeat and this sync; fall through to a helper tab.
+      }
+    }
     let tabId: string;
     try {
       tabId = (await deps.desktops.createTab({ ...scope, url: "about:blank", presentation: "hidden" })).tab.tabId;
@@ -169,29 +223,7 @@ export function createEngine(deps: EngineDeps) {
       scope = { hostId: current.hostId, instanceId: current.instanceId, generation: current.generation, threadId: owner };
       tabId = (await deps.desktops.createTab({ ...scope, url: "about:blank", presentation: "hidden" })).tab.tabId;
     }
-    dirty = false;
-    try {
-      const lease = await deps.desktops.acquireControl({ ...scope, tabIds: [tabId], controllerLabel: "Better Browser", ttlMs: LEASE_MS });
-      try {
-        const connection = await deps.desktops.openConnection({ ...scope, leaseId: lease.leaseId });
-        const applied = await deps.host("apply", { ...source, wsEndpoint: connection.wsEndpoint, mode }, { hostId: connection.hostId, timeoutMs: LEASE_MS });
-        if (!applied.ok) {
-          dirty = true;
-          throw new Failure(applied.code, applied.message);
-        }
-        state.profile = applied.profile;
-        state.lastSync = {
-          at: deps.now(), status: "synced", set: applied.set, removed: applied.removed, rejected: applied.rejected,
-          cookies: applied.cookies, undecryptable: applied.undecryptable, hosts: applied.hosts, reason,
-        };
-        state.error = null;
-        deps.log.info(`sync (${reason}, ${mode}): set ${applied.set}, removed ${applied.removed}, rejected ${applied.rejected} of ${applied.cookies}`);
-      } finally {
-        await deps.desktops.releaseControl({ ...scope, leaseId: lease.leaseId }).catch(() => undefined);
-      }
-    } finally {
-      await deps.desktops.closeTab({ ...scope, tabId }).catch(() => undefined);
-    }
+    return { scope, tabId, lease: await deps.desktops.acquireControl({ ...scope, tabIds: [tabId], controllerLabel: "Better Browser", ttlMs: LEASE_MS }), owned: true };
   }
 
   function record(error: unknown): void {
@@ -256,10 +288,10 @@ export function createEngine(deps: EngineDeps) {
     },
 
     /** A toolbar says its tab is showing. A change the real browser made while no tab was open syncs now. */
-    async heartbeat(threadId: string, tabId: string): Promise<Status> {
-      tabs.set(`${threadId}\u0000${tabId}`, { threadId, seenAt: deps.now() });
+    async heartbeat(threadId: string, tabId: string, focused = true): Promise<Status> {
+      tabs.set(`${threadId}\u0000${tabId}`, { threadId, seenAt: deps.now(), focused });
       const settings = await deps.settings();
-      if (settings.sync && dirty && !running) void sync("changes", "tab", threadId);
+      if (settings.sync && focused && dirty && !running) void sync("changes", "tab", threadId);
       else if (!running) await this.refreshStatus();
       return snapshot();
     },

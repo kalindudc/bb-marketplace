@@ -77,7 +77,7 @@ function setup(options: { changed?: boolean; settings?: Partial<EngineSettings>;
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe("the sync engine", () => {
-  it("writes through a hidden tab it leases and always hands the tab back", async () => {
+  it("writes through a hidden helper tab and closes it when the thread has no open tab", async () => {
     const { engine, calls } = setup();
     const status = await engine.syncNow("changes", "manual", "thr_1");
     expect(calls.filter((call) => !call.startsWith("host.browsers"))).toEqual([
@@ -100,11 +100,40 @@ describe("the sync engine", () => {
     expect(calls).toContain("host.apply full");
   });
 
-  it("closes the tab and reports the host's reason when the write fails", async () => {
+  it("releases the tab and reports the host's reason when the write fails", async () => {
     const { engine, calls } = setup({ apply: { ok: false, code: "keychainDenied", message: "Keychain access was refused" } });
     const status = await engine.syncNow("full", "manual", "thr_1");
     expect(calls.slice(-2)).toEqual(["release", "close"]);
     expect(status.error).toMatchObject({ code: "keychainDenied", message: "Keychain access was refused" });
+  });
+
+  it("writes through the thread's open Browser tab without creating or closing any tab", async () => {
+    const { engine, deps, calls } = setup();
+    await engine.heartbeat("thr_1", "tab_open");
+    await settle();
+    calls.length = 0;
+    await engine.syncNow("changes", "watch", "thr_1");
+    expect(deps.desktops.createTab).not.toHaveBeenCalled();
+    expect(deps.desktops.acquireControl).toHaveBeenLastCalledWith(expect.objectContaining({ tabIds: ["tab_open"] }));
+    expect(calls).not.toContain("close");
+  });
+
+  it("opens and closes a hidden helper tab only when the thread has no open tab", async () => {
+    const { engine, deps, calls } = setup();
+    await engine.syncNow("full", "manual", "thr_1");
+    expect(deps.desktops.createTab).toHaveBeenCalledTimes(1);
+    expect(deps.desktops.closeTab).toHaveBeenCalledTimes(1);
+    expect(calls).toContain("close");
+  });
+
+  it("falls back to a helper tab when the open tab has closed since its heartbeat", async () => {
+    const { engine, deps } = setup();
+    await engine.heartbeat("thr_1", "tab_gone");
+    await settle();
+    vi.mocked(deps.desktops.acquireControl).mockRejectedValueOnce(new Error("Tab is outside this lease"));
+    await engine.syncNow("full", "manual", "thr_1");
+    expect(deps.desktops.createTab).toHaveBeenCalledTimes(1);
+    expect(deps.desktops.closeTab).toHaveBeenCalledTimes(1);
   });
 
   it("finds the bb window again when the one it knew has gone", async () => {
@@ -138,6 +167,21 @@ describe("the sync engine", () => {
     const { engine } = setup();
     const status = await engine.syncNow("full", "manual");
     expect(status.error?.code).toBe("noBrowserTab");
+  });
+
+  it("leaves a background sync alone while the user is not on the Browser tab", async () => {
+    const { engine, calls, advance } = setup();
+    await engine.heartbeat("thr_1", "tab_1", false);
+    await settle();
+    calls.length = 0;
+    engine.sourceChanged();
+    advance(WATCH_DEBOUNCE_MS);
+    await settle();
+    expect(calls.filter((call) => call.startsWith("host.apply"))).toHaveLength(0);
+    await engine.heartbeat("thr_1", "tab_1", true);
+    await settle();
+    await settle();
+    expect(calls.filter((call) => call.startsWith("host.apply"))).toHaveLength(1);
   });
 
   it("syncs a change the real browser saved only while a bb Browser tab is in use", async () => {

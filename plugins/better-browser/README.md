@@ -77,8 +77,12 @@ only while bb still holds the copy the plugin wrote.
 
 The real browser writes cookies to disk about every 30 seconds, so a new
 session reaches bb within roughly that time plus a 1.5 second debounce. Syncs
-happen only while a bb Browser tab has reported in within 90 seconds; a change
-made while no tab was open syncs when the next tab opens.
+run only while a bb Browser tab is open and focused, and they write through
+that tab: opening a tab of its own would make bb rebuild the side panel's tab
+list and bring the new tab forward, interrupting whatever else is in the panel.
+A change made while you are in a terminal or a diff syncs the moment you return
+to the Browser; with no Browser tab open at all, a hidden tab is opened for the
+write and closed again.
 
 The Cmd+click handler is a capture-phase click listener in the page's
 isolated world. Each toolbar refresh keeps it on for six seconds, so it

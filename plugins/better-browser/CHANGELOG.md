@@ -2,6 +2,12 @@
 
 Notable changes to Better Browser, newest first. Releases are tagged `better-browser/vX.Y.Z` in this repository.
 
+## 0.2.3 (2026-10-29)
+
+### Fixed
+
+- Periodic cookie syncs no longer make the side panel flicker, reset its other tabs, or switch away from them. Each sync used to open a new Browser tab: bb rebuilds the side panel's tab list when a native tab appears or disappears, remounting every panel tab, and it brings the new tab forward. Background syncs now run only while the Browser tab itself has focus, and they write through that tab instead of opening one. A hidden tab is opened only when no Browser tab is open at all, and it closes again immediately. When you return to the Browser, a pending change syncs at once.
+
 ## 0.2.2 (2026-10-29)
 
 ### Fixed

@@ -70,7 +70,7 @@ export const rpcContract = defineContract({
     input: z.object({ browserId: z.string().max(64), profile: z.string().max(4096) }).strict(),
     output: status,
   },
-  heartbeat: { input: z.object(tab).strict(), output: status },
+  heartbeat: { input: z.object({ ...tab, focused: z.boolean().default(true) }).strict(), output: status },
   handoff: {
     input: z.object({ ...tab, mode: z.enum(["automatic", "ask", "off"]), event: signInEvent, targetUrl: webUrl.nullable() }).strict(),
     output: z.object({
