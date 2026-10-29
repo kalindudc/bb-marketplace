@@ -2,6 +2,16 @@
 
 Notable changes to Lineup, newest first. Releases are tagged `lineup/vX.Y.Z` in this repository.
 
+## 0.1.1 (2026-10-29)
+
+### Fixed
+
+- Pins, reorders and tab changes made close together, in one window or several, all keep their change. Each write now names one change (pin, unpin or move one model, or set the last tab), the server applies writes one at a time to the latest stored state, and each window sends its writes in order. Before, two overlapping saves could each rewrite the whole state, so the later one dropped a pin or brought back the previous tab.
+- A window shows a change made in another window even when it arrives while this window's own pin or move is on its way. That window reads the state again once its writes finish, and a change announced during an older read is read again instead of reusing that read. Before, the window could keep its own older state until the next change or a reload.
+- Recent leaves out a thread whose model cannot be read, such as a thread deleted during the scan, and still lists every other recent model. Before, one such thread failed the whole list, which showed as empty with an error toast. The thread is tried again on the next scan.
+- Recent reads bb's thread list in pages of 500 instead of in one request. bb's list is not ordered by activity, so Recent still reads every thread's summary to find the newest ones, but a default page size can no longer cut the list short and hide recent models. Models are still read for at most the 400 most recently active threads.
+- The settings page starts its model picker on the first provider that offers a model, counting models bb lists only once selected, and skips providers that are signed out or fail to answer. When none offers a model it says so. Before, it tried only the first provider and could show "Loading models…" for good.
+
 ## 0.1.0 (2026-10-29)
 
 ### Added

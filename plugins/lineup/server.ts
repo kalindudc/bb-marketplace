@@ -5,12 +5,14 @@ import {
   EMPTY_STATE,
   MAX_LINEUP,
   MAX_RECENT_LIMIT,
+  moveModel,
   normalizeLineup,
+  setPinned,
   VIEWS,
   type CatalogProvider,
   type LineupState,
 } from "./src/lineup";
-import { collectRecent, ThreadModelCache } from "./src/recent";
+import { collectRecent, listAllThreads, ThreadModelCache } from "./src/recent";
 
 const id = z.string().min(1).max(300);
 const modelRef = z.object({ providerId: id, model: id });
@@ -19,7 +21,10 @@ const stateSchema = z.object({ lineup: z.array(modelRef).max(MAX_LINEUP * 2), la
 
 export const rpcContract = defineRpcContract({
   state: { input: z.null(), output: stateSchema },
-  saveLineup: { input: z.object({ lineup: z.array(modelRef).max(MAX_LINEUP * 2) }), output: stateSchema },
+  // Each write names one change, not the whole lineup, so two windows pinning
+  // different models at once both keep their pin.
+  pin: { input: modelRef.extend({ pinned: z.boolean() }), output: stateSchema },
+  move: { input: modelRef.extend({ delta: z.union([z.literal(-1), z.literal(1)]) }), output: stateSchema },
   setLastView: { input: z.object({ view }), output: stateSchema },
   recent: {
     input: z.null(),
@@ -75,29 +80,40 @@ export default function plugin(bb: BbPluginApi) {
     return { lineup: normalizeLineup(parsed.data.lineup), lastView: parsed.data.lastView };
   }
 
-  async function write(change: (state: LineupState) => LineupState): Promise<LineupState> {
-    const next = change(await read());
-    const clean = { lineup: normalizeLineup(next.lineup), lastView: next.lastView };
-    await bb.storage.kv.set(KV_KEY, clean);
-    bb.realtime.publish(STATE_CHANGED, { reason: "state" });
-    return clean;
+  // Writes run one at a time, each on the state the previous one stored, so
+  // overlapping requests never overwrite each other's change.
+  let writes: Promise<unknown> = Promise.resolve();
+  function write(change: (state: LineupState) => LineupState): Promise<LineupState> {
+    const run = writes.then(async () => {
+      const next = change(await read());
+      const clean = { lineup: normalizeLineup(next.lineup), lastView: next.lastView };
+      await bb.storage.kv.set(KV_KEY, clean);
+      bb.realtime.publish(STATE_CHANGED, { reason: "state" });
+      return clean;
+    });
+    writes = run.catch(() => undefined);
+    return run;
   }
 
-  const threadModels = new ThreadModelCache(async (threadId) => {
-    const options = await bb.sdk.threads.defaultExecutionOptions({ threadId });
-    return options?.model ?? null;
-  });
+  const warnedThreads = new Set<string>();
+  const threadModels = new ThreadModelCache(
+    async (threadId) => {
+      const options = await bb.sdk.threads.defaultExecutionOptions({ threadId });
+      return options?.model ?? null;
+    },
+    (thread, error) => {
+      if (warnedThreads.has(thread.id)) return;
+      warnedThreads.add(thread.id);
+      bb.log.warn(`Recent skips thread ${thread.id}: ${error instanceof Error ? error.message : String(error)}`);
+    },
+  );
   let recentCache: { at: number; value: Awaited<ReturnType<typeof collectRecent>> } | null = null;
 
   async function recent() {
     if (recentCache !== null && Date.now() - recentCache.at < RECENT_TTL_MS) return recentCache.value;
     const { recentLimit } = await settings.get();
-    const threads = await bb.sdk.threads.list();
-    const value = await collectRecent(
-      threads.map((thread) => ({ id: thread.id, providerId: thread.providerId, updatedAt: thread.updatedAt })),
-      threadModels,
-      recentLimit,
-    );
+    const threads = await listAllThreads((offset, limit) => bb.sdk.threads.list({ offset, limit }));
+    const value = await collectRecent(threads, threadModels, recentLimit);
     recentCache = { at: Date.now(), value };
     return value;
   }
@@ -140,7 +156,10 @@ export default function plugin(bb: BbPluginApi) {
 
   bb.rpc.register(rpcContract, {
     state: () => read(),
-    saveLineup: ({ lineup }) => write((state) => ({ ...state, lineup })),
+    pin: ({ providerId, model, pinned }) =>
+      write((state) => ({ ...state, lineup: setPinned(state.lineup, { providerId, model }, pinned) })),
+    move: ({ providerId, model, delta }) =>
+      write((state) => ({ ...state, lineup: moveModel(state.lineup, { providerId, model }, delta) })),
     setLastView: ({ view: next }) => write((state) => ({ ...state, lastView: next })),
     recent: async () => ({ models: await recent() }),
     catalog: async () => ({ providers: await catalog() }),

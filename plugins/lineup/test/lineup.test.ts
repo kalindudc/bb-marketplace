@@ -8,8 +8,8 @@ import {
   resolveModel,
   rowTitleIndex,
   searchCatalog,
+  setPinned,
   timeAgo,
-  toggleModel,
   type CatalogProvider,
 } from "../src/lineup";
 
@@ -35,13 +35,15 @@ const pi: CatalogProvider = {
 };
 
 describe("lineup", () => {
-  it("toggles a model in and out, keeping order and one copy", () => {
+  it("pins at the end and unpins, idempotently, keeping one copy", () => {
     const a = { providerId: "pi", model: "openai/gpt-5.5" };
     const b = { providerId: "codex", model: "gpt-5.5" };
-    let lineup = toggleModel([], a);
-    lineup = toggleModel(lineup, b);
+    let lineup = setPinned([], a, true);
+    lineup = setPinned(lineup, b, true);
     expect(lineup).toEqual([a, b]);
-    expect(toggleModel(lineup, a)).toEqual([b]);
+    expect(setPinned(lineup, a, true)).toEqual([a, b]);
+    expect(setPinned(lineup, a, false)).toEqual([b]);
+    expect(setPinned([b], a, false)).toEqual([b]);
     expect(normalizeLineup([a, a, b])).toEqual([a, b]);
   });
 

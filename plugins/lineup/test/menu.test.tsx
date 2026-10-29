@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { renderSlot, type RenderSlotOptions } from "@get-bb/plugin-sdk/testing/app";
 import { MenuAnchor } from "../src/menu";
 import { resetStore } from "../src/store";
-import type { CatalogProvider, LineupState, ModelRef, RecentModel } from "../src/lineup";
+import { setPinned, type CatalogProvider, type LineupState, type ModelRef, type RecentModel } from "../src/lineup";
 import { buildPicker, type FakeProvider } from "./fake-picker";
 
 // jsdom has no layout, so it leaves scrollIntoView out.
@@ -48,19 +48,58 @@ const recent: RecentModel[] = [
   { providerId: "codex", model: "retired", usedAt: now - 3 * 3_600_000 },
 ];
 
-function setup(options: { state?: LineupState; providers?: FakeProvider[]; catalog?: CatalogProvider[] } = {}) {
+function setup(
+  options: {
+    state?: LineupState;
+    providers?: FakeProvider[];
+    catalog?: CatalogProvider[];
+    slowPins?: boolean;
+    /** Hold each pin's reply until the test calls `release`. */
+    heldPins?: boolean;
+  } = {},
+) {
+  let holdStateReads = false;
+  let stateReleases: Array<() => void> = [];
+  /** Hold state reads (each one keeps the state it read) until `releaseStateReads`. */
+  const holdStates = () => {
+    holdStateReads = true;
+  };
+  const releaseStateReads = () => {
+    holdStateReads = false;
+    const pending = stateReleases;
+    stateReleases = [];
+    for (const done of pending) done();
+  };
+  let releases: Array<() => void> = [];
+  const release = () => {
+    const pending = releases;
+    releases = [];
+    for (const done of pending) done();
+  };
   const fake = buildPicker(options.providers ?? nativeProviders);
   let stored: LineupState = options.state ?? { lineup: [sol], lastView: "native" };
   const calls: Array<[string, unknown]> = [];
+  const events: string[] = [];
   const config: RenderSlotOptions = {
     rpc: {
-      state: () => stored,
+      state: async () => {
+        const read = stored;
+        if (holdStateReads) await new Promise<void>((resolve) => stateReleases.push(resolve));
+        return read;
+      },
       recent: () => ({ models: recent }),
       catalog: () => ({ providers: options.catalog ?? catalog }),
-      saveLineup: (input: unknown) => {
-        calls.push(["saveLineup", input]);
-        stored = { ...stored, lineup: (input as { lineup: ModelRef[] }).lineup };
-        return stored;
+      pin: async (input: unknown) => {
+        calls.push(["pin", input]);
+        const { providerId, model, pinned } = input as ModelRef & { pinned: boolean };
+        events.push(`start ${model} ${pinned}`);
+        // Like the server: the write is applied, then the reply takes its time.
+        stored = { ...stored, lineup: setPinned(stored.lineup, { providerId, model }, pinned) };
+        const reply = stored;
+        if (options.slowPins) await new Promise((resolve) => setTimeout(resolve, 30));
+        if (options.heldPins) await new Promise<void>((resolve) => releases.push(resolve));
+        events.push(`end ${model} ${pinned}`);
+        return reply;
       },
       setLastView: (input: unknown) => {
         calls.push(["setLastView", input]);
@@ -75,7 +114,10 @@ function setup(options: { state?: LineupState; providers?: FakeProvider[]; catal
     },
   };
   const slot = renderSlot({ component: MenuAnchor }, {}, config);
-  return { fake, slot, calls, stored: () => stored };
+  const otherWindow = (change: (state: LineupState) => LineupState) => {
+    stored = change(stored);
+  };
+  return { fake, slot, calls, events, otherWindow, release, holdStates, releaseStateReads, stored: () => stored };
 }
 
 async function openMenu(fake: ReturnType<typeof buildPicker>) {
@@ -141,8 +183,53 @@ describe("Lineup in bb's model menu", () => {
     await openMenu(fake);
     await waitFor(() => expect(ownRows(fake)).toHaveLength(2));
     fireEvent.click(ownRows(fake)[0]!.querySelector('[data-lineup-pin="off"]')!);
-    expect(calls).toContainEqual(["saveLineup", { lineup: [sol, opus] }]);
+    await waitFor(() => expect(calls).toContainEqual(["pin", { ...opus, pinned: true }]));
     await waitFor(() => expect(ownRows(fake)[0]!.querySelector('[data-lineup-pin="on"]')).not.toBeNull());
+  });
+
+  it("sends a window's pins one at a time, in the order they were made", async () => {
+    const { fake, events } = setup({ slowPins: true });
+    await openMenu(fake);
+    await waitFor(() => expect(fake.rows()[1]!.querySelector('[data-lineup-pin="off"]')).not.toBeNull());
+    fireEvent.click(fake.rows()[1]!.querySelector('[data-lineup-pin="off"]')!);
+    fireEvent.click(fake.rows()[0]!.querySelector('[data-lineup-pin="on"]')!);
+    await waitFor(() => expect(events).toHaveLength(4));
+    expect(events).toEqual(["start gpt-5.5 true", "end gpt-5.5 true", "start gpt-6.1-sol false", "end gpt-6.1-sol false"]);
+  });
+
+  it("picks up another window's change that lands while its own write is on its way", async () => {
+    const { fake, slot, calls, events, otherWindow, release } = setup({ heldPins: true });
+    await openMenu(fake);
+    await waitFor(() => expect(fake.rows()[1]!.querySelector('[data-lineup-pin="off"]')).not.toBeNull());
+    fireEvent.click(fake.rows()[1]!.querySelector('[data-lineup-pin="off"]')!);
+    await waitFor(() => expect(events).toEqual(["start gpt-5.5 true"]));
+    otherWindow((state) => ({ ...state, lineup: setPinned(state.lineup, opus, true) }));
+    await slot.behavior.emitRealtime("state-changed", { reason: "state" });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      release();
+    });
+    await waitFor(() => expect(events).toContain("end gpt-5.5 true"));
+    // Switching bb's list writes nothing, so only a fresh read can show the other window's pin.
+    fireEvent.click(fake.tabs()[1]!);
+    await waitFor(() => expect(fake.activeTitle()).toBe("Pi"));
+    await waitFor(() => expect(fake.rows()[0]!.querySelector('[data-lineup-pin="on"]')).not.toBeNull());
+    expect(calls.filter(([method]) => method === "setLastView")).toEqual([]);
+  });
+
+  it("reads the state again when a change is announced during an older read", async () => {
+    const { fake, slot, otherWindow, holdStates, releaseStateReads } = setup();
+    await openMenu(fake);
+    holdStates();
+    await slot.behavior.emitRealtime("state-changed", { reason: "state" });
+    otherWindow((state) => ({ ...state, lineup: setPinned(state.lineup, opus, true) }));
+    await slot.behavior.emitRealtime("state-changed", { reason: "state" });
+    await act(async () => {
+      releaseStateReads();
+    });
+    fireEvent.click(fake.tabs()[1]!);
+    await waitFor(() => expect(fake.activeTitle()).toBe("Pi"));
+    await waitFor(() => expect(fake.rows()[0]!.querySelector('[data-lineup-pin="on"]')).not.toBeNull());
   });
 
   it("puts a pin on bb's rows that adds the model without picking it", async () => {
@@ -151,7 +238,7 @@ describe("Lineup in bb's model menu", () => {
     await waitFor(() => expect(fake.rows()[1]!.querySelector("[data-lineup-pin]")).not.toBeNull());
     expect(fake.rows()[0]!.querySelector('[data-lineup-pin="on"]')).not.toBeNull();
     fireEvent.click(fake.rows()[1]!.querySelector('[data-lineup-pin="off"]')!);
-    expect(calls).toContainEqual(["saveLineup", { lineup: [sol, { providerId: "codex", model: "gpt-5.5" }] }]);
+    await waitFor(() => expect(calls).toContainEqual(["pin", { providerId: "codex", model: "gpt-5.5", pinned: true }]));
     expect(fake.picked).toEqual([]);
   });
 

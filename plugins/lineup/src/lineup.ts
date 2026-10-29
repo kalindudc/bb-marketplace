@@ -62,11 +62,13 @@ export function inLineup(lineup: readonly ModelRef[], ref: ModelRef): boolean {
   return lineup.some((existing) => sameModel(existing, ref));
 }
 
-/** Add a model at the end, or remove it when it is already there. */
-export function toggleModel(lineup: readonly ModelRef[], ref: ModelRef): ModelRef[] {
-  return inLineup(lineup, ref)
-    ? lineup.filter((existing) => !sameModel(existing, ref))
-    : normalizeLineup([...lineup, ref]);
+/**
+ * Pin a model (at the end) or unpin it. Idempotent, so two windows that pin
+ * the same model, or a repeated request, leave one copy.
+ */
+export function setPinned(lineup: readonly ModelRef[], ref: ModelRef, pinned: boolean): ModelRef[] {
+  if (!pinned) return lineup.filter((existing) => !sameModel(existing, ref));
+  return inLineup(lineup, ref) ? [...lineup] : normalizeLineup([...lineup, ref]);
 }
 
 export function moveModel(lineup: readonly ModelRef[], ref: ModelRef, delta: number): ModelRef[] {

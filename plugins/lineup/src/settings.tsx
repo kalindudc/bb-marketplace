@@ -7,32 +7,53 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
-import { inLineup, MAX_LINEUP, modelKey, moveModel, resolveModel, toggleModel, type ModelRef } from "./lineup";
+import { inLineup, MAX_LINEUP, modelKey, resolveModel } from "./lineup";
 import { useLineupStore } from "./store";
 
-/** A starting value for bb's picker: the first provider's default model. */
-function useInitialPick(): ExperimentalProviderModelPickerValue | null {
+type InitialPick =
+  | { status: "loading" }
+  | { status: "ready"; pick: ExperimentalProviderModelPickerValue }
+  | { status: "none" };
+
+/**
+ * A starting value for bb's picker: the default model of the first provider
+ * that offers one. A provider that is signed out or fails to answer is
+ * skipped, so one broken provider does not block adding models from the rest.
+ */
+function useInitialPick(): InitialPick {
   const sdk = useSdk();
-  const { providers } = experimental_useProviders();
-  const providerId = providers[0]?.id;
-  const [pick, setPick] = useState<ExperimentalProviderModelPickerValue | null>(null);
+  const { providers, status } = experimental_useProviders();
+  const [result, setResult] = useState<InitialPick>({ status: "loading" });
+  const providerIds = providers.map((provider) => provider.id);
+  const idsKey = providerIds.join("\n");
   useEffect(() => {
-    if (providerId === undefined) return;
+    if (status === "loading") return;
     let live = true;
-    sdk.providers.models({ providerId }).then(
-      (result) => {
-        const model = result.models.find((candidate) => candidate.isDefault) ?? result.models[0];
-        if (live && model !== undefined) {
-          setPick({ providerId, model: model.model, reasoningLevel: model.defaultReasoningEffort });
+    void (async () => {
+      for (const providerId of status === "ready" ? providerIds : []) {
+        try {
+          const models = await sdk.providers.models({ providerId });
+          const model = models.models.find((candidate) => candidate.isDefault) ?? models.models[0] ?? models.selectedOnlyModels[0];
+          if (model !== undefined) {
+            if (live) {
+              setResult({
+                status: "ready",
+                pick: { providerId, model: model.model, reasoningLevel: model.defaultReasoningEffort },
+              });
+            }
+            return;
+          }
+        } catch {
+          // This provider is unavailable; try the next one.
         }
-      },
-      () => {},
-    );
+      }
+      if (live) setResult({ status: "none" });
+    })();
     return () => {
       live = false;
     };
-  }, [sdk, providerId]);
-  return pick;
+  }, [sdk, status, idsKey]);
+  return result;
 }
 
 /** Reorder, remove and add lineup models; pins in the model menu do the same in place. */
@@ -45,13 +66,12 @@ export function LineupSettings() {
     void refreshCatalog();
   }, [refreshCatalog]);
   useEffect(() => {
-    if (pick === null && initialPick !== null) setPick(initialPick);
+    if (pick === null && initialPick.status === "ready") setPick(initialPick.pick);
   }, [pick, initialPick]);
 
   if (store.state === null) return <p className="text-sm text-muted-foreground">Loading your lineup…</p>;
   const lineup = store.state.lineup;
   const catalog = store.catalog ?? [];
-  const save = (next: ModelRef[]) => store.saveLineup(next);
   const chosen = pick === null ? null : { providerId: pick.providerId, model: pick.model };
   const already = chosen !== null && inLineup(lineup, chosen);
   const full = lineup.length >= MAX_LINEUP;
@@ -76,14 +96,14 @@ export function LineupSettings() {
                     {model === null ? `${ref.providerId} · not offered on this machine` : `${model.providerName} · ${ref.model}`}
                   </span>
                 </span>
-                <IconButton icon="ArrowUp" label={`Move ${name} up`} disabled={index === 0} onClick={() => save(moveModel(lineup, ref, -1))} />
+                <IconButton icon="ArrowUp" label={`Move ${name} up`} disabled={index === 0} onClick={() => store.moveModel(ref, -1)} />
                 <IconButton
                   icon="ArrowDown"
                   label={`Move ${name} down`}
                   disabled={index === lineup.length - 1}
-                  onClick={() => save(moveModel(lineup, ref, 1))}
+                  onClick={() => store.moveModel(ref, 1)}
                 />
-                <IconButton icon="X" label={`Remove ${name}`} onClick={() => save(toggleModel(lineup, ref))} />
+                <IconButton icon="X" label={`Remove ${name}`} onClick={() => store.setPinned(ref, false)} />
               </li>
             );
           })}
@@ -91,7 +111,11 @@ export function LineupSettings() {
       )}
       <div className="flex flex-wrap items-center gap-2">
         {pick === null ? (
-          <span className="text-sm text-muted-foreground">Loading models…</span>
+          <span className="text-sm text-muted-foreground">
+            {initialPick.status === "none"
+              ? "No provider offered a model. Check that a provider is enabled and signed in under Settings → Providers."
+              : "Loading models…"}
+          </span>
         ) : (
           <ProviderModelPicker value={pick} onChange={setPick} />
         )}
@@ -99,7 +123,7 @@ export function LineupSettings() {
           type="button"
           size="sm"
           disabled={chosen === null || already || full}
-          onClick={() => chosen !== null && save(toggleModel(lineup, chosen))}
+          onClick={() => chosen !== null && store.setPinned(chosen, true)}
         >
           <Icon name="Plus" className="size-4" />
           {already ? "Already in your lineup" : full ? `Full (${MAX_LINEUP} models)` : "Add to lineup"}

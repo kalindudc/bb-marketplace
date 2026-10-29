@@ -18,7 +18,6 @@ import {
   sameModel,
   searchCatalog,
   timeAgo,
-  toggleModel,
   type ModelRef,
   type ResolvedModel,
   type View,
@@ -326,7 +325,7 @@ function PickerSession({ popover, composer, store }: SessionProps) {
     [composer],
   );
 
-  const togglePin = useCallback((ref: ModelRef) => store.saveLineup(toggleModel(lineup, ref)), [store.saveLineup, lineup]);
+  const togglePin = useCallback((ref: ModelRef) => store.setPinned(ref, !inLineup(lineup, ref)), [store.setPinned, lineup]);
 
   // Keys typed in the search box: Tab moves between tabs everywhere; the arrows and
   // Enter drive Lineup's list while it shows. Window capture runs before bb's handlers.

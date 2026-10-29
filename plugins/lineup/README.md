@@ -36,9 +36,9 @@ bb has no plugin API for its model menu, so the frontend adds to the menu bb
 | Showing a tab                | `data-lineup-view` on the menu; `app.css` hides bb's list and mutes its tab underline while Recent or Lineup is open |
 | Picking a model              | `useComposer().setSelection({ providerId, model })`, the same path bb's pickers take |
 | Keys                         | A window capture listener for keys typed in the menu's search box: Tab cycles the three lists; arrows and Enter drive Lineup's list |
-| Recent models                | `server.ts` walks threads newest first and reads each one's last model with `bb.sdk.threads.defaultExecutionOptions`, caching by thread and `updatedAt` (`src/recent.ts`) |
+| Recent models                | `server.ts` reads the thread list in pages of 500 (bb's list is not ordered by activity, so the newest threads can be anywhere in it), then reads the last model of the 400 most recently active threads with `bb.sdk.threads.defaultExecutionOptions`, caching by thread and `updatedAt` (`src/recent.ts`); a thread whose model cannot be read is skipped and tried again next time |
 | Model names                  | `bb.sdk.providers.list` and `providers.models`; names drop the provider's brand prefix, as bb's rows do |
-| Lineup and last tab          | One `bb.storage.kv` value; each write publishes `state-changed` so other windows reload |
+| Lineup and last tab          | One `bb.storage.kv` value. Each write is one change (`pin`, `move` or `setLastView`); the server applies them one at a time to the latest state, each window sends its own in order, and every write publishes `state-changed` so other windows read the state again (a window with a write on its way reads again once it finishes) |
 
 `src/picker.ts` holds every selector. When the search box or the model list
 is missing, Lineup leaves the menu alone; when the menu closes it removes
