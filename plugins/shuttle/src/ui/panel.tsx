@@ -163,7 +163,7 @@ function PrCard({ pr, threadId, busy, writes, onView, onUnlink }: {
 /** One PR in full inside the tab, as the Shuttle page shows it, with a way back to the thread's list. */
 function PanelPrView({ prKey, onBack }: { prKey: string; onBack(): void }) {
   const navigate = useBbNavigate();
-  const scroller = useScrollMemory(`pr/${prKey}`);
+  const scroller = useScrollMemory(`pr/${prKey}`, true);
   return (
     <section data-shuttle-panel data-panel-pr={prKey} aria-label="Shuttle" className="flex h-full min-h-0 flex-col bg-background text-foreground">
       <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border px-2">

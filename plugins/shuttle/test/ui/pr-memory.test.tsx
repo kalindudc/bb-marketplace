@@ -40,6 +40,7 @@ const scrollParent = (detail: HTMLElement): HTMLElement => {
 };
 
 const scroll = (node: HTMLElement, top: number) => {
+  fireEvent.wheel(node);
   node.scrollTop = top;
   fireEvent.scroll(node);
 };
@@ -65,6 +66,23 @@ describe("PR view session memory", () => {
     const restored = await find(again.slot.container, "[data-detail]");
     await waitFor(() => expectRestored(restored, width === 390));
     await waitFor(() => expect(scrollParent(restored).scrollTop).toBe(620));
+  });
+
+  it("holds the restored position while late rendering shifts the scroll, until the user takes over", async () => {
+    const subPath = formatRoute({ view: "mine", key: own.key });
+    const first = await page(subPath, rpc());
+    scroll(scrollParent(await find(first.slot.container, "[data-detail]")), 620);
+    first.slot.lifecycle.unmount();
+    const again = await page(subPath, rpc());
+    const pane = scrollParent(await find(again.slot.container, "[data-detail]"));
+    await waitFor(() => expect(pane.scrollTop).toBe(620));
+    pane.scrollTop = 663;
+    fireEvent.scroll(pane);
+    await waitFor(() => expect(pane.scrollTop).toBe(620));
+    scroll(pane, 900);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(pane.scrollTop).toBe(900);
+    expect(pane.style.overflowAnchor).toBe("");
   });
 
   it("restores the thread tab after its view is remounted", async () => {

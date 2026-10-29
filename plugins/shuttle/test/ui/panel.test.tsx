@@ -241,7 +241,9 @@ describe("a PR in full inside the tab", () => {
     fireEvent.change(reply, { target: { value: "An unfinished reply" } });
     fireEvent.change(comment, { target: { value: "An unfinished comment" } });
     const scroller = slot.container.querySelector<HTMLElement>("[data-scroller]")!;
+    fireEvent.wheel(scroller);
     scroller.scrollTop = 480;
+    fireEvent.scroll(scroller);
 
     const assertPreserved = () => {
       expect(slot.container.querySelector("[data-detail]")).toBe(detail);

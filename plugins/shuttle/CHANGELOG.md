@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.4
+
+- **Hold the PR's scroll position while its content settles.** Live verification of 0.4.3 found that late rendering could shift the restored position after it was first reached. PR panes now keep restoring for about five seconds with browser scroll anchoring disabled during that window. Scrolling, touching, clicking or typing takes over immediately; ordinary list restoration is unchanged.
+
 ## 0.4.3
 
 - **Keep your place when a PR view is recreated.** Each PR restores its scroll position in the desktop panel, narrow overlay, phone layout, standalone view and thread tab. Expanded descriptions and Details, open reply boxes, unfinished comments and replies, and edits to an AI review draft stay in the current browser tab's session. Live syncing stays on; ordinary background refreshes still update the existing view in place.

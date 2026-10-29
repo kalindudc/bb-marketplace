@@ -84,7 +84,7 @@ function TabBar({ route, overview, onGo }: { route: Route; overview: Overview | 
 function PhonePrView({ prKey, backLabel, onBack }: { prKey: string; backLabel: string; onBack(): void }) {
   const actions = useActions();
   const pr = useShuttleQuery("detail", { key: prKey }).data?.pr;
-  const scroller = useScrollMemory(`pr/${prKey}`);
+  const scroller = useScrollMemory(`pr/${prKey}`, true);
   const { intent, done } = actions;
   // A phone has no composer in the PR view: a pending "compose" opens the comment sheet instead.
   useEffect(() => {
@@ -172,8 +172,8 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
     else if (resume !== null) navigate.toPluginPanel(PANEL_PATH, { subPath: resume, replace: true });
     // Only a change of place counts; `navigate` is a new object on each render.
   }, [subPath, resume, here]);
-  const scroller = useScrollMemory(route.view === "pr" ? `pr/${route.key}` : isListRoute(route) ? formatRoute({ ...route, key: null }) : here);
-  const prScroller = useScrollMemory(selectedKey === null ? null : `pr/${selectedKey}`);
+  const scroller = useScrollMemory(route.view === "pr" ? `pr/${route.key}` : isListRoute(route) ? formatRoute({ ...route, key: null }) : here, route.view === "pr");
+  const prScroller = useScrollMemory(selectedKey === null ? null : `pr/${selectedKey}`, true);
   const select = (key: string) => {
     if (!isListRoute(route)) {
       if (route.view === "pr" && route.key === key) return;
