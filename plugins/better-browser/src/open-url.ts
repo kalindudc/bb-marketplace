@@ -7,6 +7,8 @@ export interface OpenCommand {
 
 export interface OpenOptions {
   profile?: string;
+  /** Absolute path of the synced profile, which Firefox needs because it takes a directory, not a profile-directory name. */
+  profilePath?: string;
   /** On Linux, the browser binary to launch, which the host resolves on PATH; without it xdg-open opens the system default. */
   executable?: string;
 }
@@ -18,6 +20,11 @@ export interface OpenOptions {
  * the same way, its single-instance check forwarding the arguments the same way.
  */
 export function openCommand(platform: NodeJS.Platform, browser: BrowserDefinition, url: string, options: OpenOptions = {}): OpenCommand | null {
+  if (browser.engine === "firefox" && options.profilePath) {
+    // Firefox ignores -profile when an instance is already running, so ask for a new instance in that profile.
+    const args = ["-new-instance", "-profile", options.profilePath, url];
+    return platform === "darwin" ? { file: "/usr/bin/open", args: ["-n", "-b", browser.bundleId, "--args", ...args] } : platform === "linux" && options.executable ? { file: options.executable, args } : null;
+  }
   if (platform === "darwin") {
     if (browser.profileArgument && options.profile) {
       return { file: "/usr/bin/open", args: ["-n", "-b", browser.bundleId, "--args", `--profile-directory=${options.profile}`, url] };

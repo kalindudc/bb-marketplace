@@ -151,6 +151,14 @@ export function planSync(input: {
   return { set, remove, memory };
 }
 
+/**
+ * The memory to keep after a sync. A read that could not decrypt everything cannot see those cookies, so their previous
+ * hashes are kept; forgetting them would make a later sync unable to remove them.
+ */
+export function keptMemory(previous: SyncMemory | null, memory: SyncMemory, readComplete: boolean): SyncMemory {
+  return readComplete || previous === null ? memory : { ...previous, ...memory };
+}
+
 /** True when the real browser's cookies differ from what the last sync recorded. */
 export function sourceChanged(source: readonly SourceCookie[], previous: SyncMemory | null, nowSeconds: number): boolean {
   if (previous === null) return true;

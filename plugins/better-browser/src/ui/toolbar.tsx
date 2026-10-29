@@ -139,7 +139,9 @@ export function BrowserToolbarControl({ threadId, tabId, url, isCompactViewport,
         const target = returnUrl.current;
         page?.evaluate(target ? `(location.assign(${JSON.stringify(target)}), true)` : "(location.reload(), true)").catch(() => undefined);
       } else {
-        openExternal(returnUrl.current ?? urlRef.current);
+        // The page may have steered this tab to a sign-in URL to make the real browser open something of its choosing,
+        // so open the sign-in page itself; after sign-in the bb tab reloads to the application on its own.
+        openExternal(urlRef.current);
       }
     },
     [rpc, threadId, page, openExternal],

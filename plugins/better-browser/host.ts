@@ -11,7 +11,7 @@ import {
 import { withLeasedPage } from "./src/cdp";
 import { deriveLinuxKey, encryptedSamples, needsKey, readChromiumCookies, schemaVersion, workingKey } from "./src/chromium";
 import { MAX_CHANGED_HOSTS, hostContract, hostSignals, type BrowserInfo } from "./src/contract";
-import { planSync, sourceChanged, toCdpParam, type JarCookie, type SourceCookie, type SyncMemory } from "./src/cookies";
+import { keptMemory, planSync, sourceChanged, toCdpParam, type JarCookie, type SourceCookie, type SyncMemory } from "./src/cookies";
 import { SyncError, describeError } from "./src/errors";
 import { readFirefoxCookies } from "./src/firefox";
 import { createKeychain, runCommand } from "./src/keychain";
@@ -296,7 +296,9 @@ export default experimental_defineHostEntry({
           if (error instanceof SyncError) throw error;
           throw new SyncError("writeFailed", `Could not write cookies into bb's Browser: ${describeError(error)}`, { cause: error });
         });
-        await saveMemory(source, context, outcome.memory);
+        // A partial read cannot see the cookies it could not decrypt; keep their remembered hashes so a later sync can
+        // still drop them when the real browser really loses them.
+        await saveMemory(source, context, keptMemory(previous, outcome.memory, read.undecryptable === 0));
         return {
           ok: true as const, set: outcome.set, removed: outcome.removed, rejected: outcome.rejected, hosts: outcome.hosts, profile: source.profile,
           cookies: read.cookies.length, undecryptable: read.undecryptable, partitioned: read.partitioned,
@@ -334,8 +336,10 @@ export default experimental_defineHostEntry({
       const browser = findBrowser(browserId);
       if (!browser) return failure(new SyncError("unsupportedBrowser", `Better Browser does not know the browser "${browserId}"`));
       const executable = process.platform === "linux" ? await linuxExecutable(browser) : undefined;
+      const profilePath = profile && browser.engine === "firefox" ? join(dataDirectory(browser, homedir(), process.platform) ?? "", profile) : undefined;
       const command = openCommand(process.platform, browser, url, {
         ...(profile ? { profile } : {}),
+        ...(profilePath ? { profilePath } : {}),
         ...(executable ? { executable } : {}),
       });
       if (!command) return failure(new SyncError("unsupportedPlatform", "Opening links in another browser works on macOS and Linux"));

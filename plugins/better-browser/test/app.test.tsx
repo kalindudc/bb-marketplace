@@ -125,7 +125,8 @@ describe("plugin app", () => {
     const redirected = await toolbar("https://shopify.okta.com/user/verify_idx_credentials", fakePage({ signInForm: true }).page, { handlers });
     try {
       await elapse(SETTLE_MS + 1_500);
-      expect(openExternal).toHaveBeenCalledExactlyOnceWith({ url: "https://app.example.test/orders" });
+      // The sign-in page is what opens, not the URL another page planted as the return address.
+      expect(openExternal).toHaveBeenCalledExactlyOnceWith({ url: "https://shopify.okta.com/user/verify_idx_credentials" });
     } finally {
       redirected.lifecycle.unmount();
     }

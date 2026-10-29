@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { cookieKey, planSync, sourceChanged, toCdpParam, valueHash, type JarCookie, type SourceCookie, type SyncMemory } from "../src/cookies";
+import { cookieKey, keptMemory, planSync, sourceChanged, toCdpParam, valueHash, type JarCookie, type SourceCookie, type SyncMemory } from "../src/cookies";
 
 const NOW = 1_800_000_000;
 
@@ -89,6 +89,18 @@ describe("planSync", () => {
     const secret = cookie({ value: "super-secret-token" });
     expect(JSON.stringify(memoryOf(secret))).not.toContain("super-secret-token");
     expect(memoryOf(secret)[cookieKey(secret)]?.v).toBe(valueHash("super-secret-token"));
+  });
+});
+
+describe("keptMemory", () => {
+  it("keeps remembered cookies a partial read could not see, and replaces memory after a complete read", () => {
+    const session = cookie({ name: "session" });
+    const other = cookie({ name: "other" });
+    const previous = memoryOf(session);
+    const partial = memoryOf(other);
+    expect(keptMemory(previous, partial, false)).toEqual({ ...previous, ...partial });
+    expect(keptMemory(previous, partial, true)).toEqual(partial);
+    expect(keptMemory(null, partial, false)).toEqual(partial);
   });
 });
 

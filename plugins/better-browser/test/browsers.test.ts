@@ -77,6 +77,12 @@ describe("opening links", () => {
     expect(openCommand("linux", findBrowser("firefox")!, "https://a.test/", { executable: "/usr/bin/firefox", profile: "Profiles/abc.default-release" })).toEqual({
       file: "/usr/bin/firefox", args: ["https://a.test/"],
     });
+    expect(openCommand("darwin", findBrowser("firefox")!, "https://a.test/", { profilePath: "/home/me/.mozilla/firefox/abc.default-release" })).toEqual({
+      file: "/usr/bin/open", args: ["-n", "-b", "org.mozilla.firefox", "--args", "-new-instance", "-profile", "/home/me/.mozilla/firefox/abc.default-release", "https://a.test/"],
+    });
+    expect(openCommand("linux", findBrowser("firefox")!, "https://a.test/", { executable: "/usr/bin/firefox", profilePath: "/home/me/.mozilla/firefox/abc.default-release" })).toEqual({
+      file: "/usr/bin/firefox", args: ["-new-instance", "-profile", "/home/me/.mozilla/firefox/abc.default-release", "https://a.test/"],
+    });
     expect(openCommand("linux", findBrowser("chrome")!, "https://a.test/")).toEqual({ file: "xdg-open", args: ["https://a.test/"] });
   });
 
