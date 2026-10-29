@@ -103,8 +103,10 @@ export interface EncryptedSample {
 }
 
 export function encryptedSamples(database: DatabaseSync, limit = 5): EncryptedSample[] {
+  // Only v10/v11 values are keys this plugin can use: v12 (portal-encrypted, e.g. inside a Flatpak sandbox) never
+  // decrypts, so sampling those first would reject a key that works for the readable cookies.
   const rows = database.prepare(
-    "select host_key, encrypted_value from cookies where length(encrypted_value) > 0 limit ?",
+    "select host_key, encrypted_value from cookies where substr(encrypted_value, 1, 3) in (x'763130', x'763131') limit ?",
   ).all(limit) as { host_key: string; encrypted_value: Uint8Array }[];
   return rows.map((row) => ({ host: row.host_key, encrypted: row.encrypted_value })).filter((sample) => sample.encrypted.length > 0);
 }
