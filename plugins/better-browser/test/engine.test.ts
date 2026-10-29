@@ -262,6 +262,20 @@ describe("the sync engine", () => {
     expect(calls.filter((call) => call.startsWith("host.apply"))).toEqual(["host.apply changes", "host.apply full"]);
   });
 
+  it("reports a chosen browser that is not installed instead of using another one", async () => {
+    const { engine, deps } = setup({ settings: { browser: "arc" } });
+    await engine.heartbeat("thr_1", "tab_1");
+    await settle();
+    const status = await engine.syncNow("full", "manual", "thr_1");
+    expect(status.error).toMatchObject({ code: "notInstalled" });
+    expect(status.error?.message).toMatch(/arc is not installed/i);
+    expect(deps.host).not.toHaveBeenCalledWith("apply", expect.anything(), expect.anything());
+    expect(await engine.openExternal("https://example.com/")).toEqual({
+      ok: false,
+      message: expect.stringMatching(/arc is not installed/i),
+    });
+  });
+
   it("opens links in the default browser's last profile unless the settings name another browser", async () => {
     const defaults = setup();
     expect(await defaults.engine.openExternal("https://example.com/")).toEqual({ ok: true, browser: "Google Chrome" });

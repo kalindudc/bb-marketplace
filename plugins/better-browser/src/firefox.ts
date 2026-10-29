@@ -6,8 +6,8 @@ const NONE = 0;
 const STRICT = 2;
 const RAW_SAMESITE_FIRST_SCHEMA = 10;
 const RAW_SAMESITE_LAST_SCHEMA = 14;
-/** Firefox stores expiry in milliseconds from this moz_cookies schema version on, and in seconds before it. */
-const EXPIRY_MILLISECONDS_SCHEMA = 16;
+/** Above this, an expiry can only be milliseconds: seconds reach it in the year 5138. */
+const MILLISECONDS_FROM = 1e11;
 
 interface Row {
   host: string;
@@ -50,7 +50,9 @@ export function readFirefoxCookies(database: DatabaseSync): SourceCookie[] {
     };
     const site = sameSite(row.sameSite, row.rawSameSite);
     if (site) cookie.sameSite = site;
-    if (expiry > 0) cookie.expires = version >= EXPIRY_MILLISECONDS_SCHEMA ? Math.floor(expiry / 1000) : expiry;
+    // Firefox stores seconds before moz_cookies schema 16 and milliseconds from 16 on; the magnitude tells them apart,
+    // so a profile migrated by an intermediate Firefox version reads correctly either way.
+    if (expiry > 0) cookie.expires = expiry >= MILLISECONDS_FROM ? Math.floor(expiry / 1000) : expiry;
     return cookie;
   });
 }

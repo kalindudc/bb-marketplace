@@ -119,14 +119,22 @@ export function createEngine(deps: EngineDeps) {
     return value;
   }
 
-  /** The browser and profile to follow: the settings, else the system default browser, else Chrome. */
+  /**
+   * The browser and profile to follow: the chosen browser, else the system default, else Chrome. A chosen browser that
+   * is not installed is reported rather than silently swapped for another one.
+   */
   async function choice(hostId: string): Promise<{ browser: BrowserInfo | null; browserId: string; profile?: string; sync: boolean }> {
     const settings = await deps.settings();
     const list = await browsers(hostId);
     state.supported = list.supported;
     const installed = list.browsers.filter((browser) => browser.installed);
     const pick = (id: string | null | undefined) => (id ? installed.find((browser) => browser.id === id) : undefined);
-    const browser = pick(settings.browser) ?? pick(list.defaultBrowserId) ?? pick("chrome") ?? installed.find((entry) => entry.syncable) ?? null;
+    const chosen = pick(settings.browser);
+    if (settings.browser && chosen === undefined) {
+      const name = list.browsers.find((browser) => browser.id === settings.browser)?.name ?? settings.browser;
+      throw new Failure("notInstalled", `${name} is not installed on this computer. Choose another browser, or follow the system default, in Better Browser settings.`);
+    }
+    const browser = chosen ?? pick(list.defaultBrowserId) ?? pick("chrome") ?? installed.find((entry) => entry.syncable) ?? null;
     const browserId = browser?.id ?? (settings.browser || "chrome");
     state.browser = browser ? { id: browser.id, name: browser.name, syncable: browser.syncable } : null;
     const profile = settings.profile || browser?.lastUsedProfile;

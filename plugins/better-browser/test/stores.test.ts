@@ -97,6 +97,16 @@ describe("Firefox cookie stores", () => {
     database.close();
   });
 
+  it("reads seconds even when a profile reports schema 16, so an intermediate migration cannot expire cookies", () => {
+    const path = join(scratch, "cookies.sqlite");
+    const database = new DatabaseSync(path);
+    database.exec(`create table moz_cookies (id integer primary key, originAttributes text, name text, value text, host text, path text,
+      expiry integer, isSecure integer, isHttpOnly integer, sameSite integer); pragma user_version = 16;`);
+    database.prepare("insert into moz_cookies (originAttributes, name, value, host, path, expiry, isSecure, isHttpOnly, sameSite) values ('', 'sid', 'v', '.example.com', '/', 1900000000, 1, 1, 0)").run();
+    expect(readFirefoxCookies(database)).toEqual([{ name: "sid", value: "v", host: ".example.com", path: "/", secure: true, httpOnly: true, sameSite: "None", expires: 1_900_000_000 }]);
+    database.close();
+  });
+
   it("reads older schemas in seconds and treats Lax-by-default as unset", () => {
     const path = join(scratch, "cookies.sqlite");
     const database = new DatabaseSync(path);
