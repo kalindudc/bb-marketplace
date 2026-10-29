@@ -159,7 +159,8 @@ export const researchContract = {
   tags: () => [RESEARCH_TAG],
  },
  health: {
-  input: z.object({}).strict(),
+  // bb's plugin list probes an RPC named health with no input.
+  input: z.object({}).strict().nullish(),
   output: z.object({
    providers: z.array(providerStateSchema),
    policy: z.object({ profile: z.string(), privacy: z.string(), paidFallback: z.boolean(), privateNetwork: z.boolean(), restrictedCapture: z.boolean(), activityLog: z.boolean(), customThreads: z.number().int().nonnegative() }).strict(),

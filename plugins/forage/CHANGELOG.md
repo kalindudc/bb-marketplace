@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1
+
+- `bb plugin list` no longer reports `rpc health failed`. bb probes a plugin's `health` RPC with no input, and Forage now accepts that.
+- `web_diff` with a `url` always downloads a fresh copy instead of using the 15-minute page cache, so it reports changes made since the last read. With a `url` and no baseline it refuses before fetching anything.
+- A page read in raw mode keeps its title, headings, canonical address and other fields, as in readable mode, so `web_extract` on its snapshot returns them instead of the file name and empty fields. Pages read in raw mode before 0.3.1 get them when they are read again.
+
 ## 0.3.0
 
 - Forage is per thread now. The Sources tab becomes Research: Activity (searches with the results seen, pages read, maps, crawls and problems, grouped by who did them), Sources grouped by how they arrived, a line-numbered reader with versions, comparison, quoting and citations, and Crawls with limits as progress bars, Stop, Resume and a form to map or crawl a site.

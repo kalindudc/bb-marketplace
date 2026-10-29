@@ -21,7 +21,7 @@ const searched = (query: string): SearchResponse => ({
  results: [{ title: "Performance", url: "https://worker.example/docs/performance", snippet: "Workers LISTEN" }, { title: "Releases", url: "https://github.com/example/releases?token=secret", snippet: "" }],
 });
 
-async function setup() {
+async function setup(fetch: (url: string, options: any) => Promise<FetchedContent> = async (url) => page(url)) {
  const metadata = new Map<string, Record<string, unknown>>();
  const fake = createFakePluginHost({ pluginId: "forage", agentSkillIds: ["forage", "forage-research"], experimental_declaredIconNames: ["forage", "search", "fetch", "map", "extract", "crawl", "diff"] });
  fake.harness.sdk.stub("projects.get", async ({ projectId }) => ({ id: projectId, name: "Acme API", createdAt: 1, updatedAt: 1, gitRemoteUrl: null, kind: "standard", sources: [] }));
@@ -30,7 +30,7 @@ async function setup() {
  fake.harness.sdk.stub("threads.updatePluginMetadata", async ({ threadId, set }: any) => { const next = { ...(metadata.get(threadId) ?? {}), ...(set ?? {}) }; metadata.set(threadId, next); return next; });
  fake.harness.sdk.stub("threads.experimental_listPluginMetadata", async ({ threadIds }: any) => ({ threads: (threadIds as string[]).filter((id) => metadata.has(id)).map((threadId) => ({ threadId, metadata: metadata.get(threadId)! as never })) }));
  cleanups.push(() => fake.harness.lifecycle.dispose());
- const runtime = await createServerRuntime(fake.bb, { search: async (query) => searched(query), fetch: async (url) => page(url) });
+ const runtime = await createServerRuntime(fake.bb, { search: async (query) => searched(query), fetch });
  const rpc = <T = any>(method: string, input: unknown, caller?: { kind: "plugin"; pluginId: string }) => fake.harness.behavior.callRpc(method, input, caller ? { experimental_caller: caller } : undefined) as Promise<T>;
  const tool = (name: string, input: unknown) => fake.harness.behavior.callAgentTool(name, input, ctx) as Promise<{ content: unknown; isError?: boolean }>;
  return { fake, runtime, rpc, tool, metadata };
@@ -123,6 +123,40 @@ describe("per-thread research", () => {
   await tool("web_search", { query: "three" });
   const after = await rpc<any>("listActivity", { scope, limit: 10 });
   expect(after).toMatchObject({ enabled: false, entries: [] });
+ });
+
+ it("answers bb's health probe, which sends no input", async () => {
+  const { rpc } = await setup();
+  for (const input of [null, undefined, {}]) expect(await rpc<any>("health", input)).toMatchObject({ providers: expect.any(Array), last24h: expect.any(Object) });
+ });
+
+ it("downloads a fresh copy for a diff against a URL, and refuses one with no baseline before fetching", async () => {
+  const calls: Array<{ url: string; noCache: boolean }> = [];
+  let version = 0;
+  const { tool, rpc } = await setup(async (url, options) => { calls.push({ url, noCache: Boolean(options.noCache) }); return page(url, `${DOC}\n\nVersion ${++version}.`); });
+  await tool("web_fetch", { url: "https://worker.example/docs/performance" });
+  const source = (await rpc<any>("listResearchSources", { scope, filter: "all", limit: 10 })).sources[0];
+  const refused = await tool("web_diff", { url: "https://worker.example/docs/performance" });
+  expect(refused.isError).toBe(true);
+  expect(JSON.stringify(refused.content)).toMatch(/baseline/u);
+  expect(calls).toHaveLength(1);
+  const diff = await tool("web_diff", { url: "https://worker.example/docs/performance", sourceId: source.id });
+  expect(diff.isError).toBeFalsy();
+  expect(calls[1]).toEqual({ url: "https://worker.example/docs/performance", noCache: true });
+  expect(JSON.stringify(diff.content)).toContain("Version 2");
+ });
+
+ it("extracts the kept fields of a readable snapshot of an HTML page", async () => {
+  // A readable page from HTML keeps Markdown text with kind html; its fields come from the HTML at capture.
+  const { tool, rpc } = await setup(async (url) => {
+   const base = page(url);
+   return { ...base, kind: "html", artifact: { ...base.artifact!, kind: "html", structured: { ...base.artifact!.structured!, title: "JSON encoder", canonicalUrl: "https://docs.example/json" } } };
+  });
+  await tool("web_fetch", { url: "https://docs.example/json.html" });
+  const source = (await rpc<any>("listResearchSources", { scope, filter: "all", limit: 10 })).sources[0];
+  const text = JSON.stringify((await tool("web_extract", { snapshotId: source.latestSnapshotId, fields: ["title", "canonicalUrl"] })).content);
+  expect(text).toContain("JSON encoder");
+  expect(text).toContain("https://docs.example/json");
  });
 
  it("records citations from a finished reply, once per range", async () => {

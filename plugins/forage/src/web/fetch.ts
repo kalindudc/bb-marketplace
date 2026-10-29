@@ -1083,7 +1083,10 @@ async function fetchAndExtract(
 		}
 		const text = decodeText(bytes, contentTypeHeader);
 		const isHtml = contentType === "text/html" || contentType === "application/xhtml+xml" || ((contentType === "" || contentType === "application/octet-stream") && looksLikeHtml(text));
-		return { ...base, title: titleFromText(text, finalUrl), content: text, kind: isHtml ? "html" : contentType.includes("json") ? "json" : "text" };
+		if (!isHtml) return { ...base, title: titleFromText(text, finalUrl), content: text, kind: contentType.includes("json") ? "json" : "text" };
+		// Raw HTML keeps its markup as the content, and its fields are read from that markup as in readable mode.
+		const structured = extractDeterministic({ finalUrl, contentType: "text/html", body: text }).structured;
+		return { ...base, title: structured.title || titleFromText(text, finalUrl), content: text, structured, kind: "html" };
 	}
 
 	// --- PDF ---------------------------------------------------------------

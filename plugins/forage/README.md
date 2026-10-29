@@ -1,6 +1,6 @@
 # Forage
 
-Forage 0.3.0 gives every BB agent six web-research tools, a Research tab in every thread and a zero-model-turn CLI. It requires BB 0.47 or newer and Plugin SDK 0.6.79.
+Forage 0.3.1 gives every BB agent six web-research tools, a Research tab in every thread and a zero-model-turn CLI. It requires BB 0.47 or newer and Plugin SDK 0.6.79.
 
 ## Tools and one shared runtime
 

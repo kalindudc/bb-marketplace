@@ -161,6 +161,7 @@ describe.sequential("H1B existing tool boundary", () => {
 	beforeAll(async () => {
 		server = await startServer({
 			"/compact.json": (_req, res) => { res.writeHead(200, { "content-type": "application/json" }); res.end('{"exact":true}\r\n'); },
+			"/page.html": (_req, res) => { res.writeHead(200, { "content-type": "text/html" }); res.end('<!doctype html><html lang="en"><head><title>JSON encoder</title><link rel="canonical" href="https://docs.example/json"></head><body><main><h1>json</h1><h2>Basic usage</h2><p>Encode and decode JSON with the standard library, in a paragraph long enough to count as readable text for the extractor.</p></main></body></html>'); },
 			"/long": (_req, res) => { res.writeHead(200, { "content-type": "text/plain" }); res.end(`# ${"L".repeat(10_000)}\n\n${"body line\n".repeat(8_000)}`); },
 			"/a": (_req, res) => { res.writeHead(200, { "content-type": "text/plain" }); res.end(`# ${"A".repeat(8_000)}\n\nalpha`); },
 			"/b": (_req, res) => { res.writeHead(200, { "content-type": "text/plain" }); res.end(`# ${"B".repeat(8_000)}\n\nbeta`); },
@@ -179,6 +180,20 @@ describe.sequential("H1B existing tool boundary", () => {
 		const result = await fetchContent(`${server.url}/compact.json`, { mode: "raw", resolve: "auto", config: config(), noCache: true });
 		assert.equal(result.content, '{"exact":true}\r\n');
 		assert.equal(result.artifact?.transport, "direct");
+	});
+
+	it("reads structured fields from raw HTML as readable mode does", async () => {
+		cacheClear();
+		for (const mode of ["raw", "readable"] as const) {
+			const result = await fetchContent(`${server.url}/page.html`, { mode, resolve: "auto", config: config(), noCache: true });
+			assert.equal(result.kind, "html", mode);
+			assert.equal(result.artifact?.structured?.title, "JSON encoder", mode);
+			assert.equal(result.artifact?.structured?.canonicalUrl, "https://docs.example/json", mode);
+			assert.deepEqual(result.artifact?.structured?.headings.map((heading) => heading.text), ["json", "Basic usage"], mode);
+		}
+		const raw = await fetchContent(`${server.url}/page.html`, { mode: "raw", resolve: "auto", config: config(), noCache: true });
+		assert.match(raw.content, /^<!doctype html>/u);
+		assert.equal(raw.title, "JSON encoder");
 	});
 
 	it("rejects oversized combined query and URL inputs instead of silently truncating them", async () => {

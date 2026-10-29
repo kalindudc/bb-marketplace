@@ -565,7 +565,6 @@ export function createForageRuntime(deps: RuntimeDependencies): ForageRuntime {
    } else {
     const deadline = createDeadline(Math.min(300000, config.timeoutMs * 3 + 500), signal);
     const byteBudget = createByteBudget(config.maxResponseBytes * Math.max(1, config.concurrency));
-    const acquire = (url: string, origin: "extract" | "map" | "diff") => hooks.fetch(url, { mode: "readable", config, deadline, byteBudget, signal: deadline.signal, requestScopeKey, reader: params.reader, profile: params.profile }, origin);
     try {
      if (name === "fetch") {
       const p = fetchParams.parse(params);
@@ -642,8 +641,10 @@ export function createForageRuntime(deps: RuntimeDependencies): ForageRuntime {
        const id = deps.sources.get(scope, p.sourceId)?.latestSnapshot?.id;
        if (id) before = await readableSnapshot(scope, id, config);
       }
+      if (p.url && !before) throw new Error("A diff with url compares a fresh download against a baseline; pass beforeSnapshotId or sourceId too.");
       if (p.url) {
-       const page = await acquire(p.url, "diff");
+       // A diff against a URL is a check for change, so the page cache is never used.
+       const page = await hooks.fetch(p.url, { mode: "readable", noCache: true, config, deadline, byteBudget, signal: deadline.signal, requestScopeKey, reader: p.reader, profile: p.profile }, "diff");
        if (page.error || !page.artifact) throw new Error(page.error ?? "No retrieval artifact.");
        if (page.receipt?.snapshotId) after = await readableSnapshot(scope, page.receipt.snapshotId, config);
        else {
