@@ -1,19 +1,20 @@
 {
   "name": "bb-plugin-gruve",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "engines": {
     "bb": ">=0.47",
-    "bbPluginSdk": ">=0.6.49"
+    "bbPluginSdk": ">=0.6.79"
   },
   "bb": {
     "name": "Gruve",
-    "description": "A gruvbox theme for coding: sharp corners, flat surfaces, a monospace UI and a composer styled as a terminal prompt. Dark mode is gruvbox soft; light mode puts gruvbox ink on neutral paper instead of yellow.",
+    "description": "A gruvbox theme for coding: sharp corners, flat surfaces, a monospace UI and a composer styled as a terminal prompt, with settings for the accent colour, fonts, text size, corners and prompt. Dark mode is gruvbox soft; light mode puts gruvbox ink on neutral paper instead of yellow.",
     "branding": {
       "icon": "./icons/gruve.svg"
     },
     "server": "./server.ts",
+    "app": "./app.tsx",
     "themes": [
       {
         "id": "gruve",
@@ -33,12 +34,17 @@
     "typecheck": "tsc"
   },
   "devDependencies": {
-    "@get-bb/plugin-sdk": "0.6.49",
+    "@get-bb/plugin-sdk": "0.6.79",
+    "@testing-library/react": "^16.3.3",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
     "better-sqlite3": "12.10.0",
     "hono": "^4.13.13",
+    "jsdom": "^27.0.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
     "typescript": "^5.7.0",
     "vitest": "^4.1.12"
   }

@@ -1,9 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
-  <rect x="1" y="1" width="22" height="22" fill="#32302f" stroke="#504945" stroke-width="1"/>
-  <path d="M5 7l4 3.5L5 14" fill="none" stroke="#fabd2f" stroke-width="2" stroke-linecap="square"/>
-  <path d="M11 14h7" stroke="#ebdbb2" stroke-width="2" stroke-linecap="square"/>
-  <rect x="4" y="18" width="4" height="2" fill="#fb4934"/>
-  <rect x="8" y="18" width="4" height="2" fill="#b8bb26"/>
-  <rect x="12" y="18" width="4" height="2" fill="#83a598"/>
-  <rect x="16" y="18" width="4" height="2" fill="#d3869b"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-linecap="square" stroke-linejoin="miter">
+  <!-- bb paints a plugin icon as a mask of this file in the theme's colour, so
+       the mark is one silhouette: a square terminal with a prompt and a cursor.
+       icons/gruve-color.svg is the same mark in gruvbox colours for listings. -->
+  <rect x="2.4" y="3.1" width="19.2" height="17.8" stroke-width="1.6"/>
+  <path d="M6.6 8.4 10.9 12.1 6.6 15.8" stroke-width="2.6"/>
+  <path d="M13.6 15.8h4.6" stroke-width="2.3"/>
 </svg>

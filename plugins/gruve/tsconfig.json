@@ -4,10 +4,11 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ES2022", "DOM"],
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": ["node"],
     "noEmit": true,
     "skipLibCheck": false
   },
-  "include": ["server.ts", "test", "vitest.config.ts"]
+  "include": ["server.ts", "app.tsx", "src", "test", "vitest.config.ts"]
 }

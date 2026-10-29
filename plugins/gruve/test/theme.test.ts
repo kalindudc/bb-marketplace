@@ -1,6 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { accentColours } from "../src/appearance";
+import { DEFAULT_APPEARANCE, SETTING_DESCRIPTORS, type Accent } from "../src/settings";
 
 const root = join(import.meta.dirname, "..");
 const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
@@ -130,6 +132,27 @@ describe("theme", () => {
     expect(existsSync(join(root, theme.css))).toBe(true);
   });
 
+  // The settings rewrite three tokens; the theme has to draw from them, or the
+  // choices would change nothing.
+  it("squares corners through one variable the settings can rewrite", () => {
+    expect(light["--gruve-corner"]).toBe("0px");
+    expect(light["--radius"]).toBe("var(--gruve-corner)");
+    expect(css).toMatch(/\) \{\s*border-radius: var\(--gruve-corner\);/u);
+  });
+
+  it("draws the composer prompt from variables the settings can rewrite", () => {
+    expect(light["--gruve-prompt"]).toBe('"❯"');
+    expect(light["--gruve-prompt-indent"]).toBe("2.125rem");
+    expect(css).toContain("content: var(--gruve-prompt);");
+    expect(css).toContain("padding-left: var(--gruve-prompt-indent);");
+  });
+
+  // The appearance code finds the active theme by this token, so it must stay in
+  // the sheet and keep meaning something.
+  it("names itself with the token the settings look for", () => {
+    expect(css).toContain("--gruve-prompt");
+  });
+
   const selectors = (css.replace(/\/\*[\s\S]*?\*\//g, "").match(/[^{}]+(?=\{)/g) ?? []).map((s) => s.trim());
 
   it("never targets another plugin's classes", () => {
@@ -140,5 +163,27 @@ describe("theme", () => {
     const composer = selectors.filter((s) => /promptbox|ProseMirror/.test(s));
     expect(composer.length).toBeGreaterThan(0);
     for (const selector of composer) expect(selector).toMatch(/^\[data-bb-plugin="bb--composer"\] /);
+  });
+});
+
+// The accent is a setting, so each choice has to keep the promise the theme makes:
+// it is drawn as text and as a fill.
+describe.each([["light", light], ["dark", dark]] as const)("%s mode accents", (mode, tokens) => {
+  const accents = SETTING_DESCRIPTORS.accent.options as Accent[];
+
+  it.each(accents)("%s is readable as text on every surface", (accent) => {
+    const [primary] = accentColours(accent, mode);
+    for (const surface of SURFACES) expect(contrast(primary, hex(tokens, surface))).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it.each(accents)("%s carries text on its own fill", (accent) => {
+    const [primary, onPrimary] = accentColours(accent, mode);
+    expect(contrast(onPrimary, primary)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("ships gruvbox yellow as the theme's own accent", () => {
+    const [primary, onPrimary] = accentColours(DEFAULT_APPEARANCE.accent, mode);
+    expect(hex(tokens, "--primary")).toBe(primary);
+    expect(hex(tokens, "--primary-foreground")).toBe(onPrimary);
   });
 });

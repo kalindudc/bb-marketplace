@@ -73,12 +73,19 @@
   --font-mono: "JetBrainsMono Nerd Font", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --font-terminal: "JetBrainsMono Nerd Font Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
-  --radius: 0px;
-  --radius-xs: 0px;
-  --radius-sm: 0px;
-  --radius-md: 0px;
-  --radius-lg: 0px;
-  --radius-xl: 0px;
+  /* The values Gruve's settings rewrite (Settings > Installed plugins >
+     Gruve): the corner radius, the composer's prompt glyph, and the room it is
+     given. --gruve-prompt also names this theme in bb's theme sheet. */
+  --gruve-corner: 0px;
+  --gruve-prompt: "❯";
+  --gruve-prompt-indent: 2.125rem;
+
+  --radius: var(--gruve-corner);
+  --radius-xs: var(--gruve-corner);
+  --radius-sm: var(--gruve-corner);
+  --radius-md: var(--gruve-corner);
+  --radius-lg: var(--gruve-corner);
+  --radius-xl: var(--gruve-corner);
 
   /* Tailwind composes shadows into one box-shadow list, so "none" would
      void the whole declaration; a zero transparent shadow is safe. */
@@ -164,7 +171,7 @@
   --ansi-15: #ebdbb2; --ansi-bg-fg-15: #1d2021;
 }
 
-/* --radius: 0 squares every radius-derived utility; these use fixed radii.
+/* --radius squares every radius-derived utility; these use fixed radii.
    rounded-full stays round on purpose: avatars, spinners, dots and pills. */
 :root :is(
   .rounded,
@@ -178,11 +185,11 @@
   .data-\[panel-shelf\=full\]\:rounded,
   .data-\[sidebar-shelf\=open\]\:rounded
 ) {
-  border-radius: 0;
+  border-radius: var(--gruve-corner);
 }
 
 :root .after\:rounded::after {
-  border-radius: 0;
+  border-radius: var(--gruve-corner);
 }
 
 /* The composer as a terminal prompt: a ❯ before the first line, an accent
@@ -195,7 +202,7 @@
 }
 
 [data-bb-plugin="bb--composer"] [data-promptbox-editor-scroll] {
-  padding-left: 2.125rem;
+  padding-left: var(--gruve-prompt-indent);
 }
 
 [data-bb-plugin="bb--composer"] [data-promptbox-editor-content] {
@@ -203,7 +210,7 @@
 }
 
 [data-bb-plugin="bb--composer"] [data-promptbox-editor-content]::before {
-  content: "❯";
+  content: var(--gruve-prompt);
   position: absolute;
   top: 0;
   left: -1.125rem;
