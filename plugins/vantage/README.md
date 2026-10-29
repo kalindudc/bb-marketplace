@@ -22,7 +22,7 @@ one. Two settings choose how loudly it tells you a thread needs you. See
 
 ## The Vantage page
 
-![The Vantage page reviewing the Pricing worktree: the worktree list in bb's sidebar grouped into Needs you and To review, a warning that README.md is also changed in the Banner worktree, the file tree with one file reviewed, the README diff with a draft comment quoting a line, and the bar that sends the comment to the agent](../../screenshots/vantage/full-screen.png)
+![The Vantage page reviewing the Pricing worktree: the worktree list in bb's sidebar grouped into Waiting on you and Ready to review, a warning that README.md is also changed in the Banner worktree, the file tree with one file checked, the README diff with a draft comment quoting a line, and the bar that sends the comment to the agent](../../screenshots/vantage/full-screen.png)
 
 Click Vantage in bb's left navigation to open the page. While it is open, its
 worktree list takes the place of bb's thread list, so the page itself keeps its
@@ -38,31 +38,32 @@ worktrees.
   paths.
 - **The scope** reads "All threads · last 24 h" or "Tree: <thread>". A tree's
   × shows every thread again.
-- **Chips** filter the list to one kind of worktree: Needs you, To review,
-  Working or Overlaps. A chip shows only when something matches it.
-- **Rows** are grouped by what you need to do next: Needs you, To review,
-  Working, Reviewed, Unavailable (a worktree that cannot be read), then
-  Archived. A group's heading folds it, and
-  Archived starts folded; a folded group still shows the worktree you have
-  open. "Group by Project" at the bottom groups them by project instead. A row shows the
-  thread, its line counts, its project, its commits or uncommitted files, its
-  pull request, and, when files are reviewed, how many. A third line says why
-  the row matters, such as "Overlaps with Banner in README.md".
+- **Chips** filter the list to one kind of worktree: Waiting on you, Ready to
+  review, Still working or Shared files. A chip shows only when something
+  matches it.
+- **Rows** are grouped by what you need to do next: Waiting on you, Ready to
+  review, Still working, Done, Unavailable (a worktree that cannot be read),
+  then Archived. A group's heading folds it, and Archived starts folded; a
+  folded group still shows the worktree you have open. "Group by Project" at
+  the bottom groups them by project instead. A row has two lines: the thread
+  and its line counts, then the project and one plain sentence about why it
+  matters, such as "The agent asked you a question", "3 files to read" or
+  "Shares README.md with Banner".
 - **Changed outside worktrees** lists repositories an agent edited by path and
   files outside any repository. A row opens them in All changes.
 - Worktrees with no changes are left out; a line at the bottom counts them.
   Archived threads are left out of the page until you press Show next to
   Archived, and Hide archived at the bottom leaves them out again.
 
-### The overview
+### What opens first
 
-![The overview of the Holiday sale tree: watching and reviews on, counts of what needs you, what is to review and the overlapping files, then an Up next list that starts with the worktree waiting for an answer](../../screenshots/vantage/overview.png)
-
-With no worktree selected, the page answers "what should I look at next?":
-counts of what is waiting, then an Up next list with a button on each row
-(Review, Open, or Answer for a thread that asks you something), then what is
-still working, overlapping files, reviewed worktrees and changes outside
-worktrees.
+The page never draws a second index of the worktrees: the list is the index.
+With no worktree in the address, it opens the one that most needs a person,
+in this order: waiting on you, ready to review, still working, done,
+unavailable. Pressing a row opens that one instead, and `[` and `]` step
+through the list. When no worktree has changes at all, the page says so and
+offers All changes. The header always has All changes, and a count of the
+overlapping worktrees while files overlap.
 
 ### Reviewing a worktree
 
@@ -98,8 +99,8 @@ Select a row to open its worktree.
   you open starts folded too, until you press Expand all. Either button also
   drops the files you folded or opened by hand.
 - `J` and `K` step through the files, `C` comments on the current file, `X`
-  collapses or expands every file, `W` wraps long lines or stops wrapping
-  them, and `Escape` goes back to the overview.
+  collapses or expands every file, and `W` wraps long lines or stops wrapping
+  them.
 - **What Vantage remembers** on this device, across reloads: the diff layout,
   wrapping, Collapse all, each file you folded or opened by hand, each
   worktree's change switch, the folders you folded in each worktree's tree,
@@ -153,7 +154,7 @@ Every view has its own address, so back, forward and links work:
 
 | Address after `/plugins/vantage/vantage/` | Shows |
 | --- | --- |
-| (nothing) | every thread, the overview |
+| (nothing) | every thread, the worktree that needs you first |
 | `worktree/<key>` | every thread, one worktree |
 | `changes` | every thread, All changes |
 | `changes/repo/<key>` | All changes for one repository |
@@ -175,7 +176,7 @@ than the limit, the page says so.
 
 ## Inside a thread
 
-![A parent thread with its Vantage tab open: its child threads' worktrees grouped into Needs you and To review, with Watching and Reviews on in the tab's header, and the one-line summary "4 worktrees · 1 needs you · 2 overlaps" above the composer](../../screenshots/vantage/side-panel.png)
+![A parent thread with its Vantage tab open: its child threads' worktrees grouped into Waiting on you and Ready to review, and the one-line summary "4 child worktrees · 1 waiting on you · 2 shared files" above the composer](../../screenshots/vantage/side-panel.png)
 
 - **The Vantage tab** opens from the thread header's folder button, the palette
   ("Vantage: Show changes across repositories") or the side panel's tab
@@ -186,12 +187,14 @@ than the limit, the page says so.
   repository. The header has Refresh and Open full screen, which opens the
   page on this thread's tree.
 - **Above the composer**, one line sums up the child threads' worktrees, such
-  as "4 worktrees · 1 needs you · 2 overlaps". It shows only once a child
-  thread has changed something, and it stays one line until you click it; then
-  it lists the worktrees, with Open Vantage. Clicking a worktree opens it in
-  the Vantage tab.
-- **The Info tab** has a Worktrees section with the first three child
-  worktrees and why each matters.
+  as "4 child worktrees · 1 waiting on you · 2 shared files". It shows only
+  once a child thread has changed something, and it stays one line until you
+  click it; then it lists only the worktrees that need a person, waiting on
+  you or sharing a file, and one row that opens the panel for the rest.
+  Clicking a worktree opens it in the Vantage tab.
+- **The Info tab** has a Worktrees section with counts: active worktrees,
+  waiting on you, ready to review and shared files. It does not repeat the
+  panel's list.
 - **The thread menu** (in the header, on the sidebar row and on its right-click
   menu) has "Review changes in Vantage", which opens the page on that thread's
   tree.
@@ -203,15 +206,15 @@ reviews; both are gone, and the choices they stored are ignored.
 
 **Status** is always the thread's real state, the one bb's sidebar shows. A
 thread that waits for your answer or whose last turn failed files its worktree
-under Needs you, with bb's status mark, a strip with Answer or Retry, and a
-count in the composer summary and the Info section.
+under Waiting on you, with bb's status mark, a strip with Answer or Retry, and
+a count in the composer summary and the Info section.
 
 **Reviews** are always there. Every file has a Reviewed button (`V`), in its
 header and in the file tree. A reviewed file folds away. Once you tick a file
 in a worktree, the bar shows "3 of 5 reviewed" with a Hide reviewed switch, and
 the list shows the worktree's progress; a worktree you have not started shows
-no count. Worktrees with changes sit under To review until every file is
-ticked, then under Reviewed. A file that changes after you tick it shows
+no count. Worktrees with changes sit under Ready to review until every file is
+ticked, then under Done. A file that changes after you tick it shows
 "Changed" until you tick it again.
 
 **Alerts** are two settings in Vantage's plugin settings:
@@ -471,6 +474,13 @@ or steers a turn of the worktree's thread, as typing them into its chat would.
 
 ## Changes
 
+- **0.8.0**: one list, one place. The page no longer draws an overview beside
+  the worktree list: it opens the worktree that needs you first, and Escape,
+  the metric cards and the Up next list are gone. Statuses read as people
+  describe them: Waiting on you, Ready to review, Still working, Done, and
+  Shared files. A row is two lines with one plain sentence instead of commit
+  counts, and the composer summary and Info section stop repeating the panel's
+  list.
 - **0.7.0**: no more Watch and Track reviews. Vantage always shows each
   thread's real state, so Needs you, the strips and the composer summary match
   bb's sidebar; every file has a Reviewed tick, and progress shows once you

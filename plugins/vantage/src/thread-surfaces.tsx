@@ -53,12 +53,12 @@ function useOpenTab() {
 }
 
 function why(row: Row, data: RowsData): string {
-  if (row.bucket === "needs") return row.live.sidebar?.indicatorLabel ?? "Needs you";
+  if (row.bucket === "needs") return row.live.indicator === "unread-error" ? (row.live.sidebar?.indicatorLabel ?? "The last turn failed") : "Asked you a question";
   if (row.bucket === "unavailable") return "Cannot be read";
   const overlap = row.overlaps[0];
-  if (overlap !== undefined) return `Overlaps with ${data.titleOf(overlap.otherKeys[0]!)} in ${overlap.path.slice(overlap.path.lastIndexOf("/") + 1)}`;
-  if (reviewStarted(row) && row.progress !== null) return `${row.progress.reviewed} of ${row.progress.total} reviewed`;
-  return row.bucket === "working" ? "Working" : plural(row.worktree.uncommitted.length + row.worktree.committed.length, "file");
+  if (overlap !== undefined) return `Shares ${overlap.path.slice(overlap.path.lastIndexOf("/") + 1)} with ${data.titleOf(overlap.otherKeys[0]!)}`;
+  if (reviewStarted(row) && row.progress !== null) return `${row.progress.reviewed} of ${row.progress.total} checked`;
+  return row.bucket === "working" ? "Still working" : `${plural(row.worktree.uncommitted.length + row.worktree.committed.length, "file")} to read`;
 }
 
 export function VantageHeaderButton({ threadId, isCompactViewport }: PluginThreadHeaderActionProps) {
@@ -79,16 +79,16 @@ function SegmentSummaryView({ threadId, isExpanded, onToggle }: ExperimentalThre
   const { data, loading } = useTree(threadId);
   const rows = childRows(data, threadId);
   const needs = rows.filter((row) => row.bucket === "needs").length;
-  const overlaps = rows.filter((row) => row.overlaps.length > 0).length;
+  const shared = new Set(rows.flatMap((row) => row.overlaps.map((overlap) => overlap.path))).size;
   return (
     <button type="button" aria-expanded={isExpanded} onClick={onToggle} data-vantage-segment
       title={isExpanded ? "Hide the worktrees" : "Show the worktrees of this thread's child threads"}
       className="inline-flex h-6 max-w-full cursor-pointer items-center gap-1.5 rounded-md px-1.5 text-xs text-muted-foreground hover:bg-state-hover hover:text-foreground">
       <Icon name="FolderGit" className="size-3.5 shrink-0" aria-hidden />
       <span className="truncate">
-        <span className="font-medium text-foreground">{loading ? "Worktrees" : plural(rows.length, "worktree")}</span>
-        {needs > 0 && <> · <span className="text-foreground">{needs} {needs === 1 ? "needs" : "need"} you</span></>}
-        {overlaps > 0 && <> · <span className="text-warning-text">{plural(overlaps, "overlap")}</span></>}
+        <span className="font-medium text-foreground">{loading ? "Child worktrees" : plural(rows.length, "child worktree")}</span>
+        {needs > 0 && <> · <span className="text-foreground">{needs} waiting on you</span></>}
+        {shared > 0 && <> · <span className="text-warning-text">{plural(shared, "shared file")}</span></>}
       </span>
       <Icon name={isExpanded ? "ChevronDown" : "ChevronRight"} className="size-3 shrink-0" aria-hidden />
     </button>
@@ -103,16 +103,15 @@ function SegmentDetailsView({ threadId, isExpanded }: ExperimentalThreadContextS
   const { data, loading } = useTree(threadId);
   const open = useOpenTab();
   const rows = childRows(data, threadId);
+  // Only what needs a person; the rest are one click away in the panel, not a second list here.
+  const urgent = rows.filter((row) => row.bucket === "needs" || row.overlaps.length > 0);
+  const rest = rows.length - urgent.length;
   if (!isExpanded) return null;
   return (
     <div data-vantage-segment-details className="max-h-64 overflow-y-auto py-1 text-xs">
-      <div className="flex flex-wrap items-center gap-1.5 px-2 pb-1.5">
-        <span className="flex-1" />
-        <button type="button" onClick={() => open(threadId)} className="h-6 cursor-pointer rounded-md px-2 text-muted-foreground hover:bg-state-hover hover:text-foreground">Open Vantage</button>
-      </div>
       {loading && <p className="px-2 py-1 text-muted-foreground">Loading worktrees…</p>}
       {!loading && rows.length === 0 && <p className="px-2 py-1 text-muted-foreground">No child thread has changes yet.</p>}
-      {rows.map((row) => (
+      {urgent.map((row) => (
         <button key={row.worktree.key} type="button" onClick={() => open(threadId, row.worktree.key)}
           className="grid w-full cursor-pointer grid-cols-[1rem_minmax(0,1fr)_auto] items-center gap-2 rounded-md px-2 py-1 text-left hover:bg-state-hover">
           <StatusGlyph row={row} />
@@ -120,6 +119,15 @@ function SegmentDetailsView({ threadId, isExpanded }: ExperimentalThreadContextS
           <span className="whitespace-nowrap font-mono text-[11px]"><span className="text-diff-added">+{row.additions}</span> <span className="text-diff-removed">−{row.deletions}</span></span>
         </button>
       ))}
+      {!loading && rows.length > 0 && (
+        <button type="button" onClick={() => open(threadId)}
+          className="mt-0.5 flex w-full cursor-pointer items-center gap-1 rounded-md px-2 py-1 text-left text-muted-foreground hover:bg-state-hover hover:text-foreground">
+          <Icon name="FolderGit" className="size-3.5 shrink-0" aria-hidden />
+          <span className="min-w-0 flex-1 truncate">{rest > 0 ? `${plural(rest, "more child worktree")}` : "All child worktrees"}</span>
+          <span className="shrink-0 text-brand">Open the panel</span>
+          <Icon name="ChevronRight" className="size-3 shrink-0" aria-hidden />
+        </button>
+      )}
     </div>
   );
 }
@@ -133,14 +141,22 @@ function InfoView({ threadId }: ExperimentalThreadInfoProps) {
   const open = useOpenTab();
   const rows = childRows(data, threadId);
   if (rows.length === 0) return null;
-  const needs = rows.filter((row) => row.bucket === "needs").length;
+  const waiting = rows.filter((row) => row.bucket === "needs");
+  const ready = rows.filter((row) => row.bucket === "review");
+  const shared = new Set(rows.flatMap((row) => row.overlaps.map((overlap) => overlap.path))).size;
+  // Facts, not a second copy of the panel's list. Each row opens the worktree it counts, not just the tab.
+  const items = [
+    { key: "waiting", icon: "SideChat" as const, name: "Waiting on you", value: waiting.length, target: waiting[0]?.worktree.key },
+    { key: "ready", icon: "Eye" as const, name: "Ready to review", value: ready.length, target: ready[0]?.worktree.key },
+    { key: "shared", icon: "AlertTriangle" as const, name: "Shared files", value: shared, target: rows.find((row) => row.overlaps.length > 0)?.worktree.key },
+  ];
   return (
-    <InfoSection label="Worktrees" count={rows.length} trailing={needs > 0 ? <span className="text-xs text-muted-foreground">{needs} {needs === 1 ? "needs" : "need"} you</span> : undefined}>
-      <InfoList items={rows} getKey={(row) => row.worktree.key} limit={3}
-        renderItem={(row) => (
-          <InfoListRow leading={<StatusGlyph row={row} />} name={row.title} title={row.live.title} context={why(row, data)}
-            trailing={<span className="whitespace-nowrap font-mono text-[11px]"><span className="text-diff-added">+{row.additions}</span> <span className="text-diff-removed">−{row.deletions}</span></span>}
-            onSelect={() => open(threadId, row.worktree.key)} />
+    <InfoSection label="Worktrees" trailing={waiting.length > 0 ? <span className="text-xs text-muted-foreground">{waiting.length} waiting on you</span> : undefined}>
+      <InfoList items={items} getKey={(item) => item.key} limit={3}
+        renderItem={(item) => (
+          <InfoListRow leading={<Icon name={item.icon} className="size-3.5" aria-hidden />} name={item.name}
+            trailing={<span className="whitespace-nowrap text-xs text-foreground">{item.value}</span>}
+            onSelect={() => open(threadId, item.target)} />
         )} />
     </InfoSection>
   );

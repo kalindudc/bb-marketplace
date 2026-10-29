@@ -114,15 +114,27 @@ async function comeBack(slot: Slot, subPath: string, options: Options = {}, part
 const treeFiles = (container: HTMLElement) => [...container.querySelectorAll("[data-file-tree] [data-tree-file]")].map((row) => row.getAttribute("data-tree-file"));
 
 describe("the page", () => {
-  it("lists what to look at next, with the waiting thread first and no switches to turn on", async () => {
+  it("opens the worktree that needs you first, with no switches to turn on", async () => {
     const { slot } = await mount("tree/thr_root");
     const view = within(slot.container);
-    await view.findByText("Up next");
-    expect(view.getByText("Holiday sale", { selector: "h1" })).toBeTruthy();
-    expect(view.getByText("Need you")).toBeTruthy();
-    expect(view.getByRole("button", { name: "Answer" })).toBeTruthy();
+    await waitFor(() => expect(slot.container.querySelector("[data-review-header]")).not.toBeNull());
+    expect(view.getByRole("heading", { name: "Pricing" })).toBeTruthy();
+    expect(view.getAllByRole("button", { name: "Answer" }).length).toBeGreaterThan(0);
     expect(view.queryByRole("button", { name: /Watch/ })).toBeNull();
     expect(view.queryByRole("button", { name: /Track reviews/ })).toBeNull();
+    // The address is replaced once, not pushed on every render.
+    await waitFor(() => expect(slot.inspection.navigateCalls).toContainEqual({
+      method: "toPluginPanel", path: "vantage",
+      options: { subPath: `tree/thr_root/worktree/${key(CHILD.key)}`, replace: true },
+    }));
+  });
+
+  it("offers the repository view when no worktree exists to open", async () => {
+    const { slot } = await mount("tree/thr_root", { overview: tree({ worktrees: [] }) });
+    const view = within(slot.container);
+    await view.findByText("No worktree in this thread or its child threads has changes yet.");
+    fireEvent.click(view.getByRole("button", { name: "See every change by repository" }));
+    expect(slot.inspection.navigateCalls).toContainEqual({ method: "toPluginPanel", path: "vantage", options: { subPath: "tree/thr_root/changes" } });
   });
 
   it("opens a worktree with every change as a diff, and narrows to what is committed or one commit", async () => {
@@ -413,27 +425,30 @@ describe("the page's sidebar", () => {
     const { slot } = await mount("tree/thr_root", {}, "sidebar");
     const view = within(slot.container);
     await waitFor(() => expect(slot.container.querySelectorAll("[data-worktree-row]")).toHaveLength(2));
-    expect([...slot.container.querySelectorAll("[data-worktree-group]")].map((group) => group.getAttribute("data-worktree-group"))).toEqual(["Needs you", "To review"]);
+    expect([...slot.container.querySelectorAll("[data-worktree-group]")].map((group) => group.getAttribute("data-worktree-group"))).toEqual(["Waiting on you", "Ready to review"]);
     expect(view.getByText("1 worktree with no changes is hidden.")).toBeTruthy();
     expect(view.getByText("Tree: Holiday sale")).toBeTruthy();
+    // The row says what it needs in a sentence, not in git's words.
+    expect(view.getByText(/The agent asked you a question/)).toBeTruthy();
+    expect(view.queryByText(/uncommitted/)).toBeNull();
   });
 
   it("folds a group of worktrees and keeps it folded, still showing the open worktree", async () => {
     const first = await mount("tree/thr_root", {}, "sidebar");
     await waitFor(() => expect(first.slot.container.querySelectorAll("[data-worktree-row]")).toHaveLength(2));
-    fireEvent.click(within(first.slot.container).getByRole("button", { name: "Needs you" }));
+    fireEvent.click(within(first.slot.container).getByRole("button", { name: "Waiting on you" }));
     const rows = (slot: Slot) => [...slot.container.querySelectorAll("[data-worktree-row]")].map((row) => row.getAttribute("data-worktree-row"));
     expect(rows(first.slot)).toEqual([ROOT.key]);
     const back = await comeBack(first.slot, `tree/thr_root/worktree/${key(CHILD.key)}`, {}, "sidebar");
-    await waitFor(() => expect(back.slot.container.querySelector("[data-worktree-group='Needs you']")).not.toBeNull());
-    expect(within(back.slot.container).getByRole("button", { name: "Needs you" }).getAttribute("aria-expanded")).toBe("false");
+    await waitFor(() => expect(back.slot.container.querySelector("[data-worktree-group='Waiting on you']")).not.toBeNull());
+    expect(within(back.slot.container).getByRole("button", { name: "Waiting on you" }).getAttribute("aria-expanded")).toBe("false");
     expect(rows(back.slot)).toEqual([CHILD.key, ROOT.key]);
   });
 
-  it("files a thread that waits for you under Needs you", async () => {
+  it("files a thread that waits for you under Waiting on you", async () => {
     const { slot } = await mount("tree/thr_root", {}, "sidebar");
-    await waitFor(() => expect(slot.container.querySelector("[data-worktree-group='Needs you']")).not.toBeNull());
-    expect(within(slot.container).getByRole("button", { name: /1Needs you/ })).toBeTruthy();
+    await waitFor(() => expect(slot.container.querySelector("[data-worktree-group='Waiting on you']")).not.toBeNull());
+    expect(within(slot.container).getByRole("button", { name: /1Waiting on you/ })).toBeTruthy();
   });
 
   it("opens a worktree on the page", async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Overview, ReviewMarks, Worktree } from "../src/contract";
-import { buildRows, chipCounts, groupRows, hiddenCount, matchesChip, outsideEntries, reviewStarted, type RowsInput } from "../src/model";
+import { buildRows, chipCounts, firstToOpen, groupRows, hiddenCount, matchesChip, outsideEntries, reviewStarted, type Bucket, type RowsInput } from "../src/model";
 import { markId, signature } from "../src/reviewed";
 import { checkoutRepo, fileChange, overview, sharedFile, sidebarThread, threadSummary, worktree } from "./fixtures";
 
@@ -99,11 +99,25 @@ describe("buildRows", () => {
   });
 });
 
+describe("firstToOpen", () => {
+  const rows = buildRows(input({}));
+
+  it("opens the worktree that most needs a person, in a fixed order, and never an archived one", () => {
+    const withBuckets = (...buckets: Bucket[]) => buckets.map((bucket, index) => ({ ...rows[index % rows.length]!, bucket }));
+    expect(firstToOpen([])).toBeNull();
+    expect(firstToOpen(withBuckets("archived"))).toBeNull();
+    expect(firstToOpen(withBuckets("needs", "review", "working"))?.bucket).toBe("needs");
+    expect(firstToOpen(withBuckets("unavailable", "reviewed", "working"))?.bucket).toBe("working");
+    expect(firstToOpen(withBuckets("unavailable", "archived", "reviewed"))?.bucket).toBe("reviewed");
+    expect(firstToOpen(withBuckets("unavailable"))?.bucket).toBe("unavailable");
+  });
+});
+
 describe("groups and chips", () => {
   const rows = buildRows(input({ sharedFiles: [sharedFile({ path: "src/a.ts", worktreeKeys: ["w1", "w2"] })] }));
 
   it("groups by what needs doing, in a fixed order, and leaves out empty groups", () => {
-    expect(groupRows(rows, "status").map((group) => [group.label, group.rows.length])).toEqual([["Needs you", 1], ["Working", 1]]);
+    expect(groupRows(rows, "status").map((group) => [group.label, group.rows.length])).toEqual([["Waiting on you", 1], ["Still working", 1]]);
   });
 
   it("groups by project, archived last", () => {

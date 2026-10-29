@@ -80,16 +80,16 @@ export function StatusGlyph({ row }: { row: Pick<Row, "live" | "worktree"> }) {
 export function statusLabel(row: Row): string {
   if (row.worktree.state === "unavailable") return "Unavailable";
   if (row.live.archived) return "Archived";
-  if (row.live.indicator === "waiting-for-input") return "Needs you";
+  if (row.live.indicator === "waiting-for-input") return "Waiting on you";
   if (row.live.indicator === "unread-error") return "Failed";
-  if (isWorking(row.live)) return "Working";
-  if (row.bucket === "reviewed") return "Reviewed";
+  if (isWorking(row.live)) return "Still working";
+  if (row.bucket === "reviewed") return "Done";
   return "Idle";
 }
 
 const PILL_TONE: Record<string, string> = {
-  "Needs you": "bg-surface-attention text-foreground", Failed: "bg-surface-destructive text-destructive-text",
-  Working: "bg-state-hover text-foreground", Reviewed: "bg-success/15 text-success", Unavailable: "bg-surface-destructive text-destructive-text",
+  "Waiting on you": "bg-surface-attention text-foreground", Failed: "bg-surface-destructive text-destructive-text",
+  "Still working": "bg-state-hover text-foreground", Done: "bg-success/15 text-success", Unavailable: "bg-surface-destructive text-destructive-text",
 };
 
 export function PullRequestChip({ environmentId }: { environmentId: string | null }) {

@@ -27,10 +27,10 @@ export interface WorktreeListProps {
 }
 
 const CHIPS: ReadonlyArray<{ id: Chip; label: string; tone: string }> = [
-  { id: "needs", label: "Needs you", tone: "text-foreground" },
-  { id: "review", label: "To review", tone: "text-foreground" },
-  { id: "working", label: "Working", tone: "text-foreground" },
-  { id: "overlaps", label: "Overlaps", tone: "text-warning-text" },
+  { id: "needs", label: "Waiting on you", tone: "text-foreground" },
+  { id: "review", label: "Ready to review", tone: "text-foreground" },
+  { id: "working", label: "Still working", tone: "text-foreground" },
+  { id: "overlaps", label: "Shared files", tone: "text-warning-text" },
 ];
 
 export function FilterChips({ counts, chip, onChip }: Pick<WorktreeListProps, "counts" | "chip" | "onChip">) {
@@ -48,35 +48,34 @@ export function FilterChips({ counts, chip, onChip }: Pick<WorktreeListProps, "c
   );
 }
 
-function shortState(row: Row): string {
-  const { worktree } = row;
-  if (worktree.state === "unavailable") return "unavailable";
-  if (worktree.kind === "branch") return `kept branch · ${plural(worktree.committed.length, "file")}`;
-  const parts: string[] = [];
-  if (worktree.commits.length > 0) parts.push(plural(worktree.commits.length, "commit"));
-  else if (worktree.threadCommits.length > 0) parts.push(`${plural(worktree.threadCommits.length, "commit")} on ${worktree.branch ?? "base"}`);
-  if (worktree.uncommitted.length > 0) parts.push(`${worktree.uncommitted.length} uncommitted`);
-  return parts.join(" · ") || "no changes";
-}
-
-function why(row: Row, titleOf: (key: string) => string): { tone: string; icon: string; text: string } | null {
+// One plain sentence per row: what this worktree needs, not how git describes it.
+function why(row: Row, titleOf: (key: string) => string): { tone: string; text: string } {
+  if (row.worktree.state === "unavailable") return { tone: "text-destructive-text", text: row.worktree.message ?? "This worktree can't be read" };
   if (row.bucket === "needs") {
     return row.live.indicator === "unread-error"
-      ? { tone: "text-destructive-text", icon: "AlertTriangle", text: row.live.sidebar?.indicatorLabel ?? "Failed" }
-      : { tone: "text-foreground", icon: "SideChat", text: row.live.sidebar?.indicatorLabel ?? "Needs you" };
+      ? { tone: "text-destructive-text", text: row.live.sidebar?.indicatorLabel ?? "The last turn failed" }
+      : { tone: "text-foreground", text: "The agent asked you a question" };
   }
-  const overlap = row.bucket === "archived" ? undefined : row.overlaps[0];
+  if (row.bucket === "archived") return { tone: "text-muted-foreground", text: "Archived" };
+  const overlap = row.overlaps[0];
   if (overlap !== undefined) {
     const more = row.overlaps.length > 1 ? ` and ${plural(row.overlaps.length - 1, "more file")}` : "";
-    return { tone: "text-warning-text", icon: "AlertTriangle", text: `Overlaps with ${titleOf(overlap.otherKeys[0]!)} in ${overlap.path.slice(overlap.path.lastIndexOf("/") + 1)}${more}` };
+    return { tone: "text-warning-text", text: `Shares ${overlap.path.slice(overlap.path.lastIndexOf("/") + 1)} with ${titleOf(overlap.otherKeys[0]!)}${more}` };
   }
-  if (isWorking(row.live)) return { tone: "text-muted-foreground", icon: "Clock", text: "Working" };
-  return null;
+  if (isWorking(row.live)) return { tone: "text-muted-foreground", text: "The agent is still working" };
+  if (reviewStarted(row) && row.progress !== null) {
+    return row.progress.reviewed === row.progress.total
+      ? { tone: "text-success", text: "All files checked" }
+      : { tone: "text-muted-foreground", text: `${row.progress.reviewed} of ${row.progress.total} files checked` };
+  }
+  if (row.bucket === "reviewed") return { tone: "text-success", text: "All files checked" };
+  return { tone: "text-muted-foreground", text: `${plural(row.worktree.uncommitted.length + row.worktree.committed.length, "file")} to read` };
 }
 
 function RowView({ row, selected, under, titleOf, onOpen }: { row: Row; selected: boolean; under: string | null; titleOf(key: string): string; onOpen(key: string): void }) {
   const loading = row.worktree.state === "loading";
   const reason = why(row, titleOf);
+  const context = [row.worktree.label, loading ? "" : reason.text, under === null ? "" : `under ${under}`].filter((part) => part !== "").join(" · ");
   return (
     <button type="button" data-worktree-row={row.worktree.key} aria-current={selected ? "true" : undefined} onClick={() => onOpen(row.worktree.key)}
       className={`grid w-full cursor-pointer grid-cols-[1rem_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-0.5 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-state-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${selected ? "bg-surface-selected" : ""}`}>
@@ -85,27 +84,10 @@ function RowView({ row, selected, under, titleOf, onOpen }: { row: Row; selected
       <span className="whitespace-nowrap text-right font-mono text-[11px]">
         {loading ? <Skeleton className="h-3 w-12 align-middle" /> : <><span className="text-diff-added">+{row.additions}</span> <span className="text-diff-removed">−{row.deletions}</span></>}
       </span>
-      <span className="flex min-w-0 items-center gap-1.5 text-[11.5px] text-muted-foreground">
-        <span className="min-w-0 truncate">
-          {row.worktree.label}
-          {loading ? "" : ` · ${shortState(row)}`}
-          {under !== null && ` · under ${under}`}
-        </span>
+      <span className={`col-span-2 col-start-2 flex min-w-0 items-center gap-1.5 text-[11.5px] ${reason.tone}`}>
+        <span className="min-w-0 truncate">{context}</span>
         {!loading && <PullRequestChip environmentId={row.worktree.ref.kind === "workspace" ? row.worktree.ref.environmentId : null} />}
       </span>
-      <span className="whitespace-nowrap text-right text-[11px] text-subtle-foreground">
-        {reviewStarted(row) && row.progress !== null && (
-          row.progress.reviewed === row.progress.total
-            ? <span className="inline-flex items-center gap-0.5 text-success"><Icon name="Check" className="size-3" aria-hidden />reviewed</span>
-            : <span title="Files reviewed">{row.progress.reviewed}/{row.progress.total}</span>
-        )}
-      </span>
-      {reason !== null && (
-        <span className={`col-span-2 col-start-2 flex min-w-0 items-center gap-1 text-[11.5px] ${reason.tone}`}>
-          <Icon name={reason.icon} className="size-3 shrink-0" aria-hidden />
-          <span className="min-w-0 truncate">{reason.text}</span>
-        </span>
-      )}
     </button>
   );
 }

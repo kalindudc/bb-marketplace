@@ -49,7 +49,7 @@ describe("the composer segment", () => {
     const onToggle = vi.fn();
     const slot = renderSlot<object, typeof rpcContract>({ component: segment.summary } as never, { ...PROPS, segments: [], isExpanded: false, onToggle }, options());
     const button = await within(slot.container).findByRole("button", { expanded: false });
-    await waitFor(() => expect(button.textContent).toBe("2 worktrees · 1 needs you · 2 overlaps"));
+    await waitFor(() => expect(button.textContent).toBe("2 child worktrees · 1 waiting on you · 1 shared file"));
     fireEvent.click(button);
     expect(onToggle).toHaveBeenCalledTimes(1);
     slot.lifecycle.unmount();
@@ -69,6 +69,7 @@ describe("the composer segment", () => {
     const slot = renderSlot<object, typeof rpcContract>({ component: app.threadContextSegments[0]!.details! } as never,
       { ...PROPS, segments: [], isExpanded: true, onToggle: vi.fn() }, options());
     const row = await within(slot.container).findByRole("button", { name: /^Pricing/ });
+    expect(within(slot.container).getByRole("button", { name: /All child worktrees.*Open the panel/ })).toBeTruthy();
     fireEvent.click(row);
     expect(panelSelection.get()).toMatchObject({ threadId: "thr_root", key: "w_b" });
     expect(slot.inspection.navigateCalls).toContainEqual({ method: "openThreadPanel", options: { actionId: "changes" } });
@@ -77,12 +78,13 @@ describe("the composer segment", () => {
 });
 
 describe("the Info section", () => {
-  it("lists the child worktrees with why each one matters", async () => {
+  it("summarises the child worktrees as counts instead of a second copy of the list", async () => {
     const app = await loadPluginApp(() => import("../app"));
     const slot = renderSlot<object, typeof rpcContract>(app.threadInfoSections[0]! as never, PROPS, options());
-    await waitFor(() => expect(slot.container.textContent).toContain("Banner"));
-    expect(slot.container.textContent).toContain("BannerNeeds you");
-    expect(slot.container.textContent).toContain("Overlaps with Banner in README.md");
+    await waitFor(() => expect(slot.container.textContent).toContain("Waiting on you1"));
+    expect(slot.container.textContent).toContain("Ready to review1");
+    expect(slot.container.textContent).toContain("Shared files1");
+    expect(slot.container.textContent).toContain("1 waiting on you");
     slot.lifecycle.unmount();
   });
 });

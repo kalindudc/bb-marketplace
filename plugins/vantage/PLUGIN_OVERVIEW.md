@@ -2,8 +2,8 @@ See every worktree your parallel agents work in, review what each one changed, a
 
 ## What you get
 
-- A Vantage page in bb's left navigation. While it is open, its worktree list replaces bb's thread list: worktrees grouped by what needs doing (Needs you, To review, Working, Reviewed, Unavailable, Archived) or by project, with search and filter chips. bb's title bar says where you are.
-- An overview that lists what to look at next, then one worktree at a time: one switch for all, uncommitted, committed or one commit's changes, a file tree with folders that fold, and every diff in one stream, unified or side by side, with unchanged lines you can expand and long lines that can wrap (`W`). Collapse all and Expand all (or `X`) fold and open every file at once. Vantage remembers these choices, and what you fold, across reloads.
+- A Vantage page in bb's left navigation. While it is open, its worktree list replaces bb's thread list: worktrees grouped by what needs doing (Waiting on you, Ready to review, Still working, Done, Unavailable, Archived) or by project, with search and filter chips. Each row is two lines: the thread and its line counts, then one plain sentence such as "The agent asked you a question" or "Shares README.md with Banner". bb's title bar says where you are.
+- One worktree at a time, never a second index beside the list: the page opens the worktree that needs you first, then one switch for all, uncommitted, committed or one commit's changes, a file tree with folders that fold, and every diff in one stream, unified or side by side, with unchanged lines you can expand and long lines that can wrap (`W`). Collapse all and Expand all (or `X`) fold and open every file at once. Vantage remembers these choices, and what you fold, across reloads.
 - Comments on files, optionally quoting selected lines. They collect into one message you preview, then send to the agent now or after its current turn. The agent's chat opens in the page's Agent tab.
 - An overlaps page for files that two worktrees both changed, with a guess at whether merging will conflict and a ready-made "ask to rebase" comment.
 - All changes: everything the threads changed, by repository, including checkouts agents edited by path, archived branches and files outside any repository.
@@ -12,7 +12,7 @@ See every worktree your parallel agents work in, review what each one changed, a
 
 ## Nothing to turn on
 
-- Every thread shows its real state, the one bb's sidebar shows: a thread waiting for your answer or with a failed turn is under Needs you.
+- Every thread shows its real state, the one bb's sidebar shows: a thread waiting for your answer or with a failed turn is under Waiting on you.
 - Every file has a Reviewed tick. A ticked file folds away, and a worktree shows its progress once you tick one of its files. A file that changes after you tick it shows as changed.
 - Two settings choose the alerts: a badge on the Vantage icon counting threads that need you (on by default) and a toast when one starts waiting (off by default).
 

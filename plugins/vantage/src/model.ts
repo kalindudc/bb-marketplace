@@ -37,13 +37,23 @@ export interface RowsInput {
 }
 
 export const STATUS_GROUPS: ReadonlyArray<{ id: Bucket; label: string }> = [
-  { id: "needs", label: "Needs you" },
-  { id: "review", label: "To review" },
-  { id: "working", label: "Working" },
-  { id: "reviewed", label: "Reviewed" },
+  { id: "needs", label: "Waiting on you" },
+  { id: "review", label: "Ready to review" },
+  { id: "working", label: "Still working" },
+  { id: "reviewed", label: "Done" },
   { id: "unavailable", label: "Unavailable" },
   { id: "archived", label: "Archived" },
 ];
+
+// The worktree the page opens when no other is selected: the one that most needs a person first.
+const OPEN_ORDER: readonly Bucket[] = ["needs", "review", "working", "reviewed", "unavailable"];
+export function firstToOpen(rows: readonly Row[]): Row | null {
+  for (const bucket of OPEN_ORDER) {
+    const found = rows.find((row) => row.bucket === bucket);
+    if (found !== undefined) return found;
+  }
+  return null;
+}
 const ORDER: Record<Bucket, number> = { needs: 0, review: 1, working: 2, reviewed: 3, unavailable: 4, archived: 5 };
 
 const sum = (files: readonly FileChange[], field: "additions" | "deletions"): number => files.reduce((total, file) => total + (file[field] ?? 0), 0);

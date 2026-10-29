@@ -64,11 +64,11 @@ async function mountPanel(rows = 2) {
 }
 
 describe("the thread's Vantage tab", () => {
-  it("lists this thread's own checkout and its child's worktree, with the waiting child under Needs you and no switches", async () => {
+  it("lists this thread's own checkout and its child's worktree, with the waiting child under Waiting on you and no switches", async () => {
     const { slot } = await mountPanel();
     const view = within(slot.container);
     expect(view.getByText("This thread")).toBeTruthy();
-    expect(slot.container.querySelector(`[data-worktree-group='Needs you'] [data-worktree-row='${CHILD.key}']`)).not.toBeNull();
+    expect(slot.container.querySelector(`[data-worktree-group='Waiting on you'] [data-worktree-row='${CHILD.key}']`)).not.toBeNull();
     expect(view.queryByRole("button", { name: /Watch/ })).toBeNull();
     expect(view.queryByRole("button", { name: /Track reviews/ })).toBeNull();
   });
