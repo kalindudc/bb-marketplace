@@ -10,7 +10,7 @@ import {
 import { STATUS_CHANNEL } from "../channel";
 import { LINK_HANDLER_OFF, LINK_LEASE_MS, SIGN_IN_FORM_PROBE, linkHandlerExpression, parseOpenMessage } from "../links";
 import type { RpcContract, Status } from "../rpc";
-import { IDLE, concernsPages, isSignInPage, signInPatterns, step, type Effect, type Episode, type SignInEvent, type SignInMode } from "../signin";
+import { IDLE, concernsPages, isSignInPage, signInPatterns, type Effect, type Episode, type SignInEvent, type SignInMode } from "../signin";
 import { ICON_BUTTON, PILL, describeSync, isStatus, readSettings } from "./common";
 
 const HEARTBEAT_MS = 30_000;
@@ -84,14 +84,20 @@ export function BrowserToolbarControl({ threadId, tabId, url, isCompactViewport,
 
   // Sign-in handoff.
   const hostMatches = isSignInPage(url, patterns);
-  const [formVisible, setFormVisible] = useState(false);
+  const dispatchRef = useRef<(event: SignInEvent) => void>(() => undefined);
   useEffect(() => {
-    if (!page || !hostMatches || settings.signIn === "off") {
-      setFormVisible(false);
+    if (!hostMatches || settings.signIn === "off") {
+      if (!hostMatches && isWebUrl(url)) returnUrl.current = url;
+      dispatchRef.current({ type: "url", onSignInPage: false, now: Date.now() });
       return;
     }
+    if (!page) return;
     let stopped = false;
-    const probe = () => page.evaluate(SIGN_IN_FORM_PROBE).then((visible) => !stopped && setFormVisible(visible === true), () => undefined);
+    const probe = () => page.evaluate(SIGN_IN_FORM_PROBE).then((visible) => {
+      if (!stopped && (visible === true || visible === false || visible === null)) {
+        dispatchRef.current({ type: "form", visible, now: Date.now() });
+      }
+    }, () => undefined);
     probe();
     const timer = setInterval(probe, PROBE_MS);
     return () => {
@@ -103,14 +109,10 @@ export function BrowserToolbarControl({ threadId, tabId, url, isCompactViewport,
   const urlRef = useRef(url);
   urlRef.current = url;
   const returnUrl = useRef<string | null>(null);
-  useEffect(() => {
-    if (isWebUrl(url) && !hostMatches) returnUrl.current = url;
-  }, [url, hostMatches]);
 
   const [episode, setEpisode] = useState<Episode>(IDLE);
   const episodeRef = useRef(episode);
   const mode: SignInMode = settings.signIn;
-  const dispatchRef = useRef<(event: SignInEvent) => void>(() => undefined);
 
   const run = useCallback(
     (effect: Effect) => {
@@ -139,24 +141,22 @@ export function BrowserToolbarControl({ threadId, tabId, url, isCompactViewport,
 
   const dispatch = useCallback(
     (event: SignInEvent) => {
-      const result = step(episodeRef.current, event, mode);
-      if (result.episode !== episodeRef.current) {
-        episodeRef.current = result.episode;
-        setEpisode(result.episode);
-      }
-      result.effects.forEach(run);
+      rpc.call("handoff", { threadId, tabId, event, mode, targetUrl: returnUrl.current }).then(
+        (result) => {
+          episodeRef.current = result.episode;
+          setEpisode(result.episode);
+          if (returnUrl.current === null) returnUrl.current = result.targetUrl;
+          result.effects.forEach(run);
+        },
+        (error: unknown) => toast.error(error instanceof Error ? error.message : String(error)),
+      );
     },
-    [mode, run],
+    [mode, run, rpc, threadId, tabId],
   );
   dispatchRef.current = dispatch;
 
-  const onSignInPage = hostMatches && formVisible;
-  useEffect(() => {
-    dispatchRef.current({ type: "url", onSignInPage, now: Date.now() });
-  }, [onSignInPage]);
-
   const phase = episode.phase.kind;
-  const ticking = phase === "settling" || phase === "checking" || phase === "waiting";
+  const ticking = phase !== "idle";
   useEffect(() => {
     if (!ticking) return;
     const timer = setInterval(() => dispatchRef.current({ type: "tick", now: Date.now() }), TICK_MS);
@@ -196,7 +196,7 @@ export function BrowserToolbarControl({ threadId, tabId, url, isCompactViewport,
   let pill: ReactNode = null;
   if (phase === "offer" || phase === "stalled") {
     pill = (
-      <button type="button" className={PILL} title={`Sign in with ${browserName}, where passkeys and Okta Verify work`} onClick={() => dispatch({ type: "start" })}>
+      <button type="button" className={PILL} title={`Sign in with ${browserName}, where passkeys and Okta Verify work`} onClick={() => dispatch({ type: "start", now: Date.now() })}>
         <Icon name="SecurityCheck" className="size-3.5" aria-hidden />
         {isCompactViewport ? null : phase === "stalled" ? `Try ${browserName} again` : `Sign in with ${browserName}`}
       </button>

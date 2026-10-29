@@ -10,8 +10,7 @@ export default definePluginApp((app) => {
   });
   app.slots.settingsSection({
     id: "better-browser",
-    title: "Your browser",
-    description: "Pick the browser and profile bb's Browser follows. Its sessions sync into bb, sign-in pages finish there, and Cmd+click opens links there.",
+    title: "Connection",
     component: SettingsSection,
   });
 });

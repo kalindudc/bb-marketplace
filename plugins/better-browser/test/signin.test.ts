@@ -109,12 +109,65 @@ describe("the handoff", () => {
     const asked = run([{ type: "url", onSignInPage: true, now: 0 }, { type: "tick", now: SETTLE_MS * 2 }], "ask");
     expect(asked.episode.phase).toEqual({ kind: "offer" });
     expect(asked.effects).toEqual([]);
-    expect(run([{ type: "start" }], "ask", asked.episode).effects).toEqual(["sync"]);
+    expect(run([{ type: "start", now: SETTLE_MS * 2 }], "ask", asked.episode).effects).toEqual(["sync"]);
     expect(run([{ type: "url", onSignInPage: true, now: 0 }, { type: "tick", now: SETTLE_MS }], "off")).toEqual({ episode: IDLE, effects: [] });
+  });
+
+  it("preserves progress when the form briefly disappears during the refresh reload", () => {
+    const { episode, effects } = run([
+      { type: "form", visible: true, now: 0 },
+      { type: "tick", now: SETTLE_MS },
+      { type: "synced", set: 2, now: SETTLE_MS + 100 },
+      { type: "form", visible: false, now: SETTLE_MS + 200 },
+      { type: "tick", now: SETTLE_MS + 1_000 },
+      { type: "form", visible: true, now: SETTLE_MS + 1_500 },
+      { type: "tick", now: SETTLE_MS * 2 + 100 },
+    ]);
+    expect(effects).toEqual(["sync", "reload", "open"]);
+    expect(episode.phase.kind).toBe("waiting");
+  });
+
+  it("waits for a loading document instead of opening Chrome or restarting the sync", () => {
+    const checking = run([
+      { type: "form", visible: true, now: 0 },
+      { type: "tick", now: SETTLE_MS },
+      { type: "synced", set: 2, now: SETTLE_MS + 100 },
+      { type: "form", visible: null, now: SETTLE_MS + 200 },
+      { type: "tick", now: 20_000 },
+    ]);
+    expect(checking.effects).toEqual(["sync", "reload"]);
+    expect(checking.episode.phase.kind).toBe("checking");
+    const finished = run([{ type: "form", visible: true, now: 20_100 }, { type: "tick", now: 20_500 }], "automatic", checking.episode);
+    expect(finished.effects).toEqual(["open"]);
+  });
+
+  it("finishes after a stable absence without opening Chrome", () => {
+    const { episode, effects } = run([
+      { type: "form", visible: true, now: 0 },
+      { type: "tick", now: SETTLE_MS },
+      { type: "synced", set: 2, now: SETTLE_MS + 100 },
+      { type: "form", visible: false, now: SETTLE_MS + 200 },
+      { type: "tick", now: SETTLE_MS * 2 + 199 },
+      { type: "tick", now: SETTLE_MS * 2 + 200 },
+    ]);
+    expect(effects).toEqual(["sync", "reload"]);
+    expect(episode).toEqual(IDLE);
+  });
+
+  it("does not open Chrome if the form vanishes while the initial sync is pending", () => {
+    const { episode, effects } = run([
+      { type: "form", visible: true, now: 0 },
+      { type: "tick", now: SETTLE_MS },
+      { type: "form", visible: false, now: SETTLE_MS + 100 },
+      { type: "synced", set: 0, now: SETTLE_MS + 200 },
+      { type: "tick", now: SETTLE_MS * 2 + 100 },
+    ]);
+    expect(effects).toEqual(["sync"]);
+    expect(episode).toEqual(IDLE);
   });
 
   it("turns a dismissed wait back into an offer", () => {
     const waiting = run([{ type: "url", onSignInPage: true, now: 0 }, { type: "tick", now: SETTLE_MS }, { type: "synced", set: 0, now: SETTLE_MS }]).episode;
-    expect(run([{ type: "dismiss" }], "automatic", waiting).episode).toEqual({ phase: { kind: "offer" }, opened: false });
+    expect(run([{ type: "dismiss" }], "automatic", waiting).episode).toEqual({ ...waiting, phase: { kind: "offer" }, opened: false });
   });
 });

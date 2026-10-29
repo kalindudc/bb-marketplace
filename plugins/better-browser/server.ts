@@ -2,6 +2,7 @@ import { PluginCliError, cliCommand, defineCli, type BbPluginApi } from "@get-bb
 import { z } from "zod";
 import { hostContract, hostSignals } from "./src/contract";
 import { createEngine, type HostCall } from "./src/engine";
+import { createHandoffSessions } from "./src/handoff";
 import { STATUS_CHANNEL, rpcContract, type Status } from "./src/rpc";
 import { parsePattern } from "./src/signin";
 
@@ -27,54 +28,50 @@ function describeStatus(status: Status): string {
 
 export default function betterBrowser(bb: BbPluginApi): void {
   const settings = bb.settings.define({
+    sync: {
+      type: "boolean",
+      label: "Keep sessions in sync",
+      description: "Copy signed-in sessions from your browser while bb's Browser is open.",
+      default: true,
+    },
+    signIn: {
+      type: "select",
+      label: "Sign-in handoff",
+      description: "Finish sign-ins that need passkeys or device verification in your real browser.",
+      options: ["automatic", "ask", "off"],
+      experimental_optionLabels: { automatic: "Automatic", ask: "Ask first", off: "Off" },
+      default: "automatic",
+    },
+    modifierClick: {
+      type: "boolean",
+      label: "Cmd/Ctrl-click opens your browser",
+      description: "Open links externally with Cmd+click on macOS or Ctrl+click elsewhere.",
+      default: true,
+    },
     browser: {
       type: "string",
-      label: "Browser",
-      description: "The browser bb follows, by id (chrome, arc, brave, edge, vivaldi, opera, chromium, dia, helium, firefox, zen or safari). Leave it empty to use your default browser; the picker below fills it in.",
+      label: "Browser override (optional)",
+      description: "Leave blank to follow your system default. To override it, enter a browser ID such as chrome, arc, brave or firefox. Safari opens links only.",
       experimental_schema: z.string().max(64).regex(/^[a-z0-9-]*$/, "Use a browser id such as chrome or arc"),
       default: "",
     },
     profile: {
       type: "string",
-      label: "Profile",
-      description: "The browser profile's directory, such as Default or Profile 1. Leave it empty for the profile the browser used last.",
+      label: "Profile override (optional)",
+      description: "Leave blank to follow the browser's last-used profile. Otherwise enter a profile directory, such as Default or Profile 1.",
       experimental_schema: z.string().max(4096),
       default: "",
     },
-    sync: {
-      type: "boolean",
-      label: "Sync sessions",
-      description: "Copy the profile's cookies into bb's Browser whenever the browser saves them, without closing the browser.",
-      default: true,
-    },
-    signIn: {
-      type: "select",
-      label: "Sign-in pages",
-      description: "What happens when a bb Browser tab stops on a sign-in page such as Okta, Google or Microsoft.",
-      options: ["automatic", "ask", "off"],
-      experimental_optionLabels: {
-        automatic: "Finish signing in in my browser automatically",
-        ask: "Offer a button to finish in my browser",
-        off: "Leave sign-in pages alone",
-      },
-      default: "automatic",
-    },
     signInPages: {
       type: "string",
-      label: "More sign-in pages",
-      description: "One host per line, with an optional path: *.example.com, login.example.com or example.com/login. Okta, Microsoft, Google, Auth0, OneLogin, Duo, Ping and GitHub sign-in are built in.",
+      label: "Additional sign-in sites (optional)",
+      description: "Only needed for sites not detected automatically. One host or path pattern per line, such as login.example.com or example.com/login.",
       experimental_multiline: true,
       experimental_schema: z.string().max(8192).refine(
         (text) => text.split(/\r?\n/).every((line) => !line.trim() || line.trim().startsWith("#") || parsePattern(line) !== null),
         "Each line needs a host such as *.example.com or example.com/login",
       ),
       default: "",
-    },
-    modifierClick: {
-      type: "boolean",
-      label: "Cmd+click opens links in my browser",
-      description: "Cmd+click on macOS, or Ctrl+click elsewhere, opens a link in the browser above instead of a new bb tab.",
-      default: true,
     },
   });
 
@@ -103,7 +100,11 @@ export default function betterBrowser(bb: BbPluginApi): void {
       return () => clearTimeout(timer);
     },
   });
-  bb.onDispose(() => engine.dispose());
+  const handoffs = createHandoffSessions(() => Date.now());
+  bb.onDispose(() => {
+    handoffs.clear();
+    return engine.dispose();
+  });
 
   client.experimental_onSignal("changed", () => engine.sourceChanged());
   client.experimental_onWorkerExit(() => engine.workerExited());
@@ -119,6 +120,13 @@ export default function betterBrowser(bb: BbPluginApi): void {
       return engine.refreshStatus();
     },
     heartbeat: ({ threadId, tabId }) => engine.heartbeat(threadId, tabId),
+    handoff: (input) => {
+      const result = handoffs.advance(input);
+      if (result.effects.length > 0) {
+        bb.log.info(`handoff ${JSON.stringify({ threadId: input.threadId, tabId: input.tabId, event: input.event.type, phase: result.episode.phase.kind, effects: result.effects.map((effect) => effect.kind) })}`);
+      }
+      return result;
+    },
     sync: ({ threadId, mode, reason }) => engine.syncNow(mode, reason, threadId),
     openExternal: ({ url }) => {
       if (!/^https?:\/\//i.test(url)) return { ok: false as const, message: "Only http and https links open externally" };

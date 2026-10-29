@@ -30,6 +30,30 @@ export const status = z.object({
 export type Status = z.infer<typeof status>;
 
 const tab = { threadId: z.string().min(1).max(160), tabId: z.string().min(1).max(512) };
+const webUrl = z.string().max(8192).regex(/^https?:\/\//i);
+const signInEvent = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("url"), onSignInPage: z.boolean(), now: z.number() }).strict(),
+  z.object({ type: z.literal("form"), visible: z.boolean().nullable(), now: z.number() }).strict(),
+  z.object({ type: z.literal("tick"), now: z.number() }).strict(),
+  z.object({ type: z.literal("synced"), set: z.number().int().nonnegative(), now: z.number() }).strict(),
+  z.object({ type: z.literal("syncFailed"), now: z.number() }).strict(),
+  z.object({ type: z.literal("start"), now: z.number() }).strict(),
+  z.object({ type: z.literal("dismiss") }).strict(),
+]);
+const episode = z.object({
+  phase: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("idle") }).strict(),
+    z.object({ kind: z.literal("settling"), since: z.number() }).strict(),
+    z.object({ kind: z.literal("offer") }).strict(),
+    z.object({ kind: z.literal("refreshing"), since: z.number() }).strict(),
+    z.object({ kind: z.literal("checking"), since: z.number() }).strict(),
+    z.object({ kind: z.literal("waiting"), since: z.number() }).strict(),
+    z.object({ kind: z.literal("stalled") }).strict(),
+  ]),
+  opened: z.boolean(),
+  formVisible: z.boolean().nullable(),
+  absentSince: z.number().nullable(),
+}).strict();
 
 export const rpcContract = defineContract({
   status: { input: z.null(), output: status },
@@ -47,6 +71,14 @@ export const rpcContract = defineContract({
     output: status,
   },
   heartbeat: { input: z.object(tab).strict(), output: status },
+  handoff: {
+    input: z.object({ ...tab, mode: z.enum(["automatic", "ask", "off"]), event: signInEvent, targetUrl: webUrl.nullable() }).strict(),
+    output: z.object({
+      episode,
+      effects: z.array(z.object({ kind: z.enum(["sync", "reload", "open"]) }).strict()).max(3),
+      targetUrl: webUrl.nullable(),
+    }).strict(),
+  },
   sync: {
     input: z.object({
       threadId: tab.threadId.optional(),

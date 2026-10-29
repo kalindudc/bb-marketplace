@@ -146,8 +146,9 @@ describe("the host entry on Linux", () => {
       expect(await harness.experimental_call("watch", { browserId: "chrome" })).toEqual({ ok: true, profile: "Default" });
       const watch = watches[watches.length - 1];
       expect(watch?.options.rootPath).toBe(join(config, "Default"));
+      const signalsBefore = harness.experimental_getSignals().length;
       await watch!.listener({ kind: "changed", changes: [{ path: join(watch!.options.rootPath, "Cookies-journal"), type: "create" }] });
-      expect(harness.experimental_getSignals()).toEqual([{ signal: "changed", payload: { browserId: "chrome", profile: "Default" } }]);
+      expect(harness.experimental_getSignals().slice(signalsBefore)).toEqual([{ signal: "changed", payload: { browserId: "chrome", profile: "Default" } }]);
     });
   });
 

@@ -93,7 +93,7 @@ export type Phase =
   /** "Ask" mode: the toolbar offers to finish signing in in the real browser. */
   | { kind: "offer" }
   /** Pulling the real browser's current sessions into bb before anything else. */
-  | { kind: "refreshing" }
+  | { kind: "refreshing"; since: number }
   /** Reloaded with fresh sessions; watching whether the sign-in page goes away. */
   | { kind: "checking"; since: number }
   /** The page is open in the real browser; waiting for its new session to reach bb. */
@@ -105,20 +105,23 @@ export interface Episode {
   phase: Phase;
   /** True once this sign-in has been opened in the real browser, so it is opened at most once. */
   opened: boolean;
+  formVisible: boolean | null;
+  absentSince: number | null;
 }
 
 export type Effect = { kind: "sync" } | { kind: "reload" } | { kind: "open" };
 
 export type SignInEvent =
   | { type: "url"; onSignInPage: boolean; now: number }
+  | { type: "form"; visible: boolean | null; now: number }
   | { type: "tick"; now: number }
   | { type: "synced"; set: number; now: number }
   | { type: "syncFailed"; now: number }
-  | { type: "start" }
+  | { type: "start"; now: number }
   /** The user stopped waiting; the toolbar keeps a button to start again. */
   | { type: "dismiss" };
 
-export const IDLE: Episode = { phase: { kind: "idle" }, opened: false };
+export const IDLE: Episode = { phase: { kind: "idle" }, opened: false, formVisible: null, absentSince: null };
 
 /**
  * The sign-in handoff for one Browser tab, as a pure step function. A tab that stays on a sign-in page first gets the
@@ -128,35 +131,50 @@ export const IDLE: Episode = { phase: { kind: "idle" }, opened: false };
  */
 export function step(episode: Episode, event: SignInEvent, mode: SignInMode): { episode: Episode; effects: Effect[] } {
   const { phase } = episode;
-  const to = (next: Phase, effects: Effect[] = [], opened = episode.opened) => ({ episode: { phase: next, opened }, effects });
+  const to = (next: Phase, effects: Effect[] = [], changes: Partial<Omit<Episode, "phase">> = {}) => ({
+    episode: next.kind === "idle" ? IDLE : { ...episode, phase: next, ...changes },
+    effects,
+  });
   const stay = { episode, effects: [] as Effect[] };
   switch (event.type) {
     case "url":
-      if (!event.onSignInPage) return to({ kind: "idle" }, [], false);
-      if (mode === "off") return to({ kind: "idle" }, [], false);
-      if (phase.kind !== "idle") return stay;
-      return mode === "ask" ? to({ kind: "offer" }) : to({ kind: "settling", since: event.now });
+      if (!event.onSignInPage || mode === "off") return to({ kind: "idle" });
+      if (phase.kind !== "idle") {
+        return episode.formVisible === true ? stay : to(phase, [], { formVisible: true, absentSince: null });
+      }
+      return to(mode === "ask" ? { kind: "offer" } : { kind: "settling", since: event.now }, [], { formVisible: true });
+    case "form":
+      if (mode === "off") return to({ kind: "idle" });
+      if (event.visible === true) return step(episode, { type: "url", onSignInPage: true, now: event.now }, mode);
+      if (phase.kind === "idle" || episode.formVisible === event.visible) return stay;
+      return to(phase, [], { formVisible: event.visible, absentSince: event.visible === false ? event.now : null });
     case "dismiss":
-      return phase.kind === "idle" ? stay : to({ kind: "offer" }, [], false);
+      return phase.kind === "idle" ? stay : to({ kind: "offer" }, [], { opened: false });
     case "start":
       if (phase.kind === "refreshing") return stay;
-      return to({ kind: "refreshing" }, [{ kind: "sync" }], false);
+      return to({ kind: "refreshing", since: event.now }, [{ kind: "sync" }], { opened: false });
     case "tick":
-      if (phase.kind === "settling" && event.now - phase.since >= SETTLE_MS) return to({ kind: "refreshing" }, [{ kind: "sync" }]);
-      if (phase.kind === "checking" && event.now - phase.since >= SETTLE_MS) {
-        return episode.opened ? to({ kind: "waiting", since: event.now }) : to({ kind: "waiting", since: event.now }, [{ kind: "open" }], true);
+      if ((phase.kind === "waiting" || phase.kind === "refreshing") && event.now - phase.since >= WAIT_LIMIT_MS) return to({ kind: "stalled" });
+      if (episode.formVisible === null) return stay;
+      if (episode.absentSince !== null) {
+        return event.now - episode.absentSince >= SETTLE_MS ? to({ kind: "idle" }) : stay;
       }
-      if (phase.kind === "waiting" && event.now - phase.since >= WAIT_LIMIT_MS) return to({ kind: "stalled" });
+      if (phase.kind === "settling" && event.now - phase.since >= SETTLE_MS) return to({ kind: "refreshing", since: event.now }, [{ kind: "sync" }]);
+      if (phase.kind === "checking" && event.now - phase.since >= SETTLE_MS) {
+        return episode.opened ? to({ kind: "waiting", since: event.now }) : to({ kind: "waiting", since: event.now }, [{ kind: "open" }], { opened: true });
+      }
       return stay;
     case "synced":
       if (phase.kind === "refreshing") {
         if (event.set > 0) return to({ kind: "checking", since: event.now }, [{ kind: "reload" }]);
-        return episode.opened ? to({ kind: "waiting", since: event.now }) : to({ kind: "waiting", since: event.now }, [{ kind: "open" }], true);
+        if (episode.formVisible !== true) return to({ kind: "checking", since: event.now });
+        return episode.opened ? to({ kind: "waiting", since: event.now }) : to({ kind: "waiting", since: event.now }, [{ kind: "open" }], { opened: true });
       }
       if (phase.kind === "waiting" && event.set > 0) return to({ kind: "checking", since: event.now }, [{ kind: "reload" }]);
       return stay;
     case "syncFailed":
       if (phase.kind !== "refreshing") return stay;
-      return episode.opened ? to({ kind: "waiting", since: event.now }) : to({ kind: "waiting", since: event.now }, [{ kind: "open" }], true);
+      if (episode.formVisible !== true) return to({ kind: "checking", since: event.now });
+      return episode.opened ? to({ kind: "waiting", since: event.now }) : to({ kind: "waiting", since: event.now }, [{ kind: "open" }], { opened: true });
   }
 }

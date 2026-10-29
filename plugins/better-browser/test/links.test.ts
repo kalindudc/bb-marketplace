@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { LINK_HANDLER_OFF, SIGN_IN_FORM_PROBE, linkHandlerExpression, parseOpenMessage } from "../src/links";
 
 type Win = Window & { __betterBrowserLinksUntil?: number };
@@ -85,6 +85,15 @@ describe("parseOpenMessage", () => {
 });
 
 describe("the sign-in form probe", () => {
+  it("does not treat an unfinished document as a completed sign-in", () => {
+    const ready = vi.spyOn(document, "readyState", "get").mockReturnValue("loading");
+    try {
+      expect(evaluate(SIGN_IN_FORM_PROBE)).toBeNull();
+    } finally {
+      ready.mockRestore();
+    }
+  });
+
   it("is false for a page without a sign-in field", () => {
     expect(evaluate(SIGN_IN_FORM_PROBE)).toBe(false);
   });

@@ -24,8 +24,12 @@ bb marketplace add git:github.com/kalindudc/bb-marketplace@main
 bb plugin install better-browser@kalindudc
 ```
 
-Then open the plugin's page in Settings and pick a browser and profile, or
-leave it on your default browser. The first sync from a Chromium browser shows
+The plugin follows your system default browser and its last-used profile.
+Its Settings page puts session sync, sign-in handoff and modified-click behavior
+first. Optional browser, profile and extra sign-in-site overrides follow; use
+`bb better-browser browsers` to find browser IDs and profile directories. The
+Connection section shows the resolved browser and sync status, with a Sync now
+button and expandable session-access details. The first Chromium sync shows
 a macOS Keychain prompt for "<Browser> Safe Storage"; choose **Always Allow**.
 On Linux the "Safe Storage" secret is read from the Secret Service or KWallet
 without a prompt; if neither answers, the basic password store is tried.
@@ -62,7 +66,7 @@ that rather than replacing the view:
 | --- | --- | --- |
 | `host.ts` | The host daemon on the machine with the bb app | Finds browsers and profiles, reads a private copy of a profile's cookie database (`VACUUM INTO`, or a file copy when the browser holds an exclusive lock), decrypts Chromium values with the "Safe Storage" key, watches the cookie file, writes cookies over CDP, and opens links with `open -b` or the browser binary. |
 | `server.ts` and `src/engine.ts` | The bb server | Decides when to sync, finds the desktop app's Browser, creates a hidden `about:blank` tab, takes a short control lease on it, hands the CDP endpoint to the host, then releases and closes the tab. |
-| `app.tsx` and `src/ui/` | The bb app | The Browser toolbar control: heartbeats, the Cmd+click handler it installs in each page's isolated world, the sign-in handoff, and the settings picker. |
+| `app.tsx` and `src/ui/` | The bb app | The Browser toolbar control: heartbeats, the Cmd+click handler it installs in each page's isolated world, the sign-in handoff, and connection status in Settings. |
 
 A sync writes cookies with `Network.setCookies` on the leased tab; every bb
 Browser tab shares one cookie store, so they all see them. The host remembers

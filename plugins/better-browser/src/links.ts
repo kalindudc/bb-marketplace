@@ -55,7 +55,7 @@ export function parseOpenMessage(data: unknown): string | null {
 /**
  * True when the page shows a sign-in form: a password, username, email or passkey field, or the Okta, Microsoft or
  * Google sign-in widget. Sign-in hosts also serve pages that are not sign-in (the Okta dashboard, for one), so the
- * handoff waits for a visible form.
+ * handoff waits for a visible form. Null means the document is still loading, not that sign-in has finished.
  */
 export const SIGN_IN_FORM_PROBE = `(() => {
   const selectors = [
@@ -69,5 +69,6 @@ export const SIGN_IN_FORM_PROBE = `(() => {
     const style = getComputedStyle(element);
     return style.visibility !== "hidden" && style.display !== "none";
   };
-  return selectors.some((selector) => Array.from(document.querySelectorAll(selector)).some(visible));
+  if (selectors.some((selector) => Array.from(document.querySelectorAll(selector)).some(visible))) return true;
+  return document.readyState === "loading" ? null : false;
 })()`;
