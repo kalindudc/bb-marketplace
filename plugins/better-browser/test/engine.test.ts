@@ -77,11 +77,14 @@ function setup(options: { changed?: boolean; settings?: Partial<EngineSettings>;
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe("the sync engine", () => {
-  it("writes through a hidden helper tab and closes it when the thread has no open tab", async () => {
+  it("writes through the thread's tab and releases it", async () => {
     const { engine, calls } = setup();
+    await engine.heartbeat("thr_1", "tab_open");
+    await settle();
+    calls.length = 0;
     const status = await engine.syncNow("changes", "manual", "thr_1");
     expect(calls.filter((call) => !call.startsWith("host.browsers"))).toEqual([
-      "host.watch", "host.inspect", "createTab thr_1 hidden", "acquire tab_hidden", "connect", "host.apply changes", "release", "close",
+      "host.inspect", "acquire tab_open", "connect", "host.apply changes", "release",
     ]);
     expect(status).toMatchObject({ browser: { id: "chrome" }, profile: "Default", error: null, lastSync: { status: "synced", set: 3, removed: 1, hosts: ["example.com"], reason: "manual" } });
   });
@@ -95,6 +98,10 @@ describe("the sync engine", () => {
 
   it("skips the check on a full sync", async () => {
     const { engine, calls } = setup({ changed: false });
+    await engine.heartbeat("thr_1", "tab_1");
+    await settle();
+    await settle();
+    calls.length = 0;
     await engine.syncNow("full", "sign-in", "thr_1");
     expect(calls).not.toContain("host.inspect");
     expect(calls).toContain("host.apply full");
@@ -102,8 +109,11 @@ describe("the sync engine", () => {
 
   it("releases the tab and reports the host's reason when the write fails", async () => {
     const { engine, calls } = setup({ apply: { ok: false, code: "keychainDenied", message: "Keychain access was refused" } });
+    await engine.heartbeat("thr_1", "tab_1");
+    await settle();
+    calls.length = 0;
     const status = await engine.syncNow("full", "manual", "thr_1");
-    expect(calls.slice(-2)).toEqual(["release", "close"]);
+    expect(calls.slice(-1)).toEqual(["release"]);
     expect(status.error).toMatchObject({ code: "keychainDenied", message: "Keychain access was refused" });
   });
 
@@ -118,31 +128,33 @@ describe("the sync engine", () => {
     expect(calls).not.toContain("close");
   });
 
-  it("opens and closes a hidden helper tab only when the thread has no open tab", async () => {
-    const { engine, deps, calls } = setup();
-    await engine.syncNow("full", "manual", "thr_1");
-    expect(deps.desktops.createTab).toHaveBeenCalledTimes(1);
-    expect(deps.desktops.closeTab).toHaveBeenCalledTimes(1);
-    expect(calls).toContain("close");
+  it("never opens a tab of its own, even with no Browser tab open", async () => {
+    const { engine, deps } = setup();
+    const status = await engine.syncNow("full", "manual", "thr_1");
+    expect(status.error?.code).toBe("noBrowserTab");
+    expect(deps.desktops.createTab).not.toHaveBeenCalled();
+    expect(deps.desktops.closeTab).not.toHaveBeenCalled();
   });
 
-  it("falls back to a helper tab when the open tab has closed since its heartbeat", async () => {
-    const { engine, deps } = setup();
+  it("skips a background sync quietly when the tab closed since its heartbeat", async () => {
+    const { engine, deps, calls } = setup();
     await engine.heartbeat("thr_1", "tab_gone");
     await settle();
+    calls.length = 0;
     vi.mocked(deps.desktops.acquireControl).mockRejectedValueOnce(new Error("Tab is outside this lease"));
-    await engine.syncNow("full", "manual", "thr_1");
-    expect(deps.desktops.createTab).toHaveBeenCalledTimes(1);
-    expect(deps.desktops.closeTab).toHaveBeenCalledTimes(1);
+    await engine.syncNow("changes", "watch", "thr_1");
+    expect(deps.desktops.createTab).not.toHaveBeenCalled();
+    expect(deps.desktops.closeTab).not.toHaveBeenCalled();
   });
 
-  it("finds the bb window again when the one it knew has gone", async () => {
+  it("does not create a tab when the bb window it knew has gone", async () => {
     const { engine, deps } = setup();
-    vi.mocked(deps.desktops.createTab).mockRejectedValueOnce(new Error("Desktop instance is unavailable or has reconnected"));
+    await engine.heartbeat("thr_1", "tab_1");
+    await settle();
+    vi.mocked(deps.desktops.acquireControl).mockRejectedValueOnce(new Error("Desktop instance is unavailable or has reconnected"));
     const status = await engine.syncNow("full", "manual", "thr_1");
-    expect(status.error).toBeNull();
-    expect(deps.desktops.createTab).toHaveBeenCalledTimes(2);
-    expect(deps.desktops.listInstances).toHaveBeenCalledTimes(2);
+    expect(status.error?.code).toBe("writeFailed");
+    expect(deps.desktops.createTab).not.toHaveBeenCalled();
   });
 
   it("stops syncing on its own after a refused Keychain prompt until the user asks again", async () => {
@@ -212,6 +224,10 @@ describe("the sync engine", () => {
 
   it("folds requests made during a sync into one follow-up", async () => {
     const { engine, calls } = setup();
+    await engine.heartbeat("thr_1", "tab_1");
+    await settle();
+    await settle();
+    calls.length = 0;
     const first = engine.syncNow("changes", "manual", "thr_1");
     const second = engine.syncNow("changes", "manual", "thr_1");
     const third = engine.syncNow("full", "manual", "thr_1");

@@ -2,6 +2,12 @@
 
 Notable changes to Better Browser, newest first. Releases are tagged `better-browser/vX.Y.Z` in this repository.
 
+## 0.2.4 (2026-10-29)
+
+### Fixed
+
+- The plugin no longer opens a Browser tab of its own, ever. With no Browser tab in the side panel it used to open a hidden tab for the write and close it again, which made the panel flash while you worked in other tabs. It now waits: with no Browser tab open there is nothing to sync into, and the first sync happens when you open one and it has focus.
+
 ## 0.2.3 (2026-10-29)
 
 ### Fixed

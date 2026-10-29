@@ -1,4 +1,4 @@
-import type { ExperimentalDesktopBrowserLease, ExperimentalDesktopBrowsersArea, PluginRpcResult, StandardSchemaV1InferInput } from "@get-bb/plugin-sdk";
+import type { ExperimentalDesktopBrowsersArea, PluginRpcResult, StandardSchemaV1InferInput } from "@get-bb/plugin-sdk";
 import type { BrowserInfo, HostContract } from "./contract";
 import type { SyncErrorCode } from "./errors";
 import type { Status, SyncSummary } from "./rpc";
@@ -165,7 +165,8 @@ export function createEngine(deps: EngineDeps) {
     const owner = threadId ?? activeThread();
     if (!owner) throw new Failure("noBrowserTab", "Open a bb Browser tab: the sync runs through it");
     dirty = false;
-    const { scope, tabId, lease, owned } = await leaseTab(owner, found);
+    const { scope, tabId } = openTarget(owner, found);
+    const lease = await deps.desktops.acquireControl({ ...scope, tabIds: [tabId], controllerLabel: "Better Browser", ttlMs: LEASE_MS });
     try {
       const connection = await deps.desktops.openConnection({ ...scope, leaseId: lease.leaseId });
       const applied = await deps.host("apply", { ...source, wsEndpoint: connection.wsEndpoint, mode }, { hostId: connection.hostId, timeoutMs: LEASE_MS });
@@ -182,7 +183,6 @@ export function createEngine(deps: EngineDeps) {
       deps.log.info(`sync (${reason}, ${mode}): set ${applied.set}, removed ${applied.removed}, rejected ${applied.rejected} of ${applied.cookies}`);
     } finally {
       await deps.desktops.releaseControl({ ...scope, leaseId: lease.leaseId }).catch(() => undefined);
-      if (owned) await deps.desktops.closeTab({ ...scope, tabId }).catch(() => undefined);
     }
   }
 
@@ -198,32 +198,11 @@ export function createEngine(deps: EngineDeps) {
     return best?.tabId;
   }
 
-  /**
-   * A CDP target to write cookies through. The user's own tab is preferred: creating a tab makes bb rebuild its
-   * side-panel tab list and switch to the new tab, which remounts every panel tab. Only when the thread has no open tab
-   * — a sync from the CLI, or a call after the tab closed — does this open a hidden helper tab, and it closes again.
-   */
-  async function leaseTab(owner: string, found: Desktop): Promise<{ scope: HelperScope; tabId: string; lease: ExperimentalDesktopBrowserLease; owned: boolean }> {
-    let scope: HelperScope = { hostId: found.hostId, instanceId: found.instanceId, generation: found.generation, threadId: owner };
-    const open = openTabFor(owner);
-    if (open !== undefined) {
-      try {
-        return { scope, tabId: open, lease: await deps.desktops.acquireControl({ ...scope, tabIds: [open], controllerLabel: "Better Browser", ttlMs: LEASE_MS }), owned: false };
-      } catch {
-        // The tab closed between its heartbeat and this sync; fall through to a helper tab.
-      }
-    }
-    let tabId: string;
-    try {
-      tabId = (await deps.desktops.createTab({ ...scope, url: "about:blank", presentation: "hidden" })).tab.tabId;
-    } catch {
-      // The bb window this instance belonged to closed or reconnected since it was found; find the current one.
-      desktop = null;
-      const current = await findDesktop();
-      scope = { hostId: current.hostId, instanceId: current.instanceId, generation: current.generation, threadId: owner };
-      tabId = (await deps.desktops.createTab({ ...scope, url: "about:blank", presentation: "hidden" })).tab.tabId;
-    }
-    return { scope, tabId, lease: await deps.desktops.acquireControl({ ...scope, tabIds: [tabId], controllerLabel: "Better Browser", ttlMs: LEASE_MS }), owned: true };
+  /** The thread's own open tab is the only write target: opening one would make bb rebuild the side panel. */
+  function openTarget(owner: string, found: Desktop): { scope: HelperScope; tabId: string } {
+    const tabId = openTabFor(owner);
+    if (tabId === undefined) throw new Failure("noBrowserTab", "Open a bb Browser tab: the sync runs through it");
+    return { scope: { hostId: found.hostId, instanceId: found.instanceId, generation: found.generation, threadId: owner }, tabId };
   }
 
   function record(error: unknown): void {
@@ -238,7 +217,7 @@ export function createEngine(deps: EngineDeps) {
 
   /** Run one sync at a time; a request made while one runs is folded into a single follow-up. */
   function sync(mode: Mode, reason: Reason, threadId?: string): Promise<void> {
-    if (automatic(reason) && blocked) return Promise.resolve();
+    if (automatic(reason) && (blocked || openTabFor(threadId ?? activeThread() ?? "") === undefined)) return Promise.resolve();
     if (!automatic(reason)) blocked = false;
     if (running) {
       queued = { mode: queued?.mode === "full" || mode === "full" ? "full" : "changes", reason, ...(threadId ? { threadId } : queued?.threadId ? { threadId: queued.threadId } : {}) };
