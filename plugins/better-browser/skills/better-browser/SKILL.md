@@ -22,7 +22,7 @@ Better Browser copies cookies from the browser profile the user picked into bb's
 
 Change them on the plugin's page in Settings or with `bb plugin config better-browser set <key> <value>`:
 
-- `browser`: a browser id from `bb better-browser browsers` (`chrome`, `arc`, `brave`, `edge`, …); empty follows the system default browser.
+- `browser`: select a browser by name in Settings. For the CLI, use `system` to follow the system default browser, or a browser id from `bb better-browser browsers` (`chrome`, `arc`, `brave`, `edge`, …). Existing empty values still follow the system default.
 - `profile`: a profile directory such as `Default` or `Profile 1`; empty uses the profile the browser used last.
 - `sync`: `true` or `false`.
 - `signIn`: `automatic` (hand sign-in pages to the real browser), `ask` (show a button), or `off`.

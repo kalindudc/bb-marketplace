@@ -2,6 +2,13 @@
 
 Notable changes to Better Browser, newest first. Releases are tagged `better-browser/vX.Y.Z` in this repository.
 
+## 0.2.2 (2026-10-29)
+
+### Fixed
+
+- Restored a Browser dropdown with named browser choices and an explicit System default option, instead of requiring a browser ID in a blank text field. The dropdown is the only browser-selection control.
+- Existing blank default-browser selections keep following the system default, and explicit browser/profile selections are preserved. The existing choose RPC still accepts an empty browser value for compatibility.
+
 ## 0.2.1 (2026-10-29)
 
 ### Fixed

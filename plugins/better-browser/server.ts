@@ -1,6 +1,7 @@
 import { PluginCliError, cliCommand, defineCli, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { hostContract, hostSignals } from "./src/contract";
+import { BROWSERS } from "./src/browsers";
 import { createEngine, type HostCall } from "./src/engine";
 import { createHandoffSessions } from "./src/handoff";
 import { STATUS_CHANNEL, rpcContract, type Status } from "./src/rpc";
@@ -28,6 +29,14 @@ function describeStatus(status: Status): string {
 
 export default function betterBrowser(bb: BbPluginApi): void {
   const settings = bb.settings.define({
+    browser: {
+      type: "select",
+      label: "Browser",
+      description: "Choose a browser installed on this computer, or follow your system default. Safari opens links only.",
+      options: ["system", ...BROWSERS.map((browser) => browser.id)],
+      experimental_optionLabels: { system: "System default", ...Object.fromEntries(BROWSERS.map((browser) => [browser.id, browser.name])) },
+      default: "system",
+    },
     sync: {
       type: "boolean",
       label: "Keep sessions in sync",
@@ -47,13 +56,6 @@ export default function betterBrowser(bb: BbPluginApi): void {
       label: "Cmd/Ctrl-click opens your browser",
       description: "Open links externally with Cmd+click on macOS or Ctrl+click elsewhere.",
       default: true,
-    },
-    browser: {
-      type: "string",
-      label: "Browser override (optional)",
-      description: "Leave blank to follow your system default. To override it, enter a browser ID such as chrome, arc, brave or firefox. Safari opens links only.",
-      experimental_schema: z.string().max(64).regex(/^[a-z0-9-]*$/, "Use a browser id such as chrome or arc"),
-      default: "",
     },
     profile: {
       type: "string",
@@ -90,7 +92,7 @@ export default function betterBrowser(bb: BbPluginApi): void {
     host,
     settings: async () => {
       const values = await settings.get();
-      return { browser: values.browser, profile: values.profile, sync: values.sync };
+      return { browser: values.browser === "system" ? "" : values.browser, profile: values.profile, sync: values.sync };
     },
     publish: (status) => bb.realtime.publish(STATUS_CHANNEL, status),
     log: bb.log,
@@ -116,7 +118,7 @@ export default function betterBrowser(bb: BbPluginApi): void {
     status: () => engine.refreshStatus(),
     browsers: () => engine.browsers(),
     async choose({ browserId, profile }) {
-      await settings.experimental_set({ browser: browserId, profile });
+      await settings.experimental_set({ browser: browserId === "" ? "system" : browserId, profile });
       return engine.refreshStatus();
     },
     heartbeat: ({ threadId, tabId }) => engine.heartbeat(threadId, tabId),

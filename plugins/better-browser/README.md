@@ -25,9 +25,10 @@ bb plugin install better-browser@kalindudc
 ```
 
 The plugin follows your system default browser and its last-used profile.
-Its Settings page puts session sync, sign-in handoff and modified-click behavior
-first. Optional browser, profile and extra sign-in-site overrides follow; use
-`bb better-browser browsers` to find browser IDs and profile directories. The
+Its Settings page starts with a Browser dropdown containing named browser
+choices and System default, followed by session sync, sign-in handoff and
+modified-click behavior. Profile and extra sign-in-site overrides remain optional;
+use `bb better-browser browsers` to find profile directories. The
 Connection section shows the resolved browser and sync status, with a Sync now
 button and expandable session-access details. The first Chromium sync shows
 a macOS Keychain prompt for "<Browser> Safe Storage"; choose **Always Allow**.
@@ -38,7 +39,7 @@ without a prompt; if neither answers, the basic password store is tried.
 
 | Key | Default | What it does |
 | --- | --- | --- |
-| `browser` | empty | Browser id (`chrome`, `arc`, `brave`, `edge`, `vivaldi`, `opera`, `chromium`, `dia`, `helium`, `firefox`, `zen`, `safari`). Empty follows the system default browser. |
+| `browser` | `system` | Select a named browser in Settings, or System default. CLI values are `system` or a supported browser ID such as `chrome`, `arc`, `brave` or `firefox`. Existing empty values still follow the system default. |
 | `profile` | empty | Profile directory, such as `Default` or `Profile 1`. Empty uses the profile the browser used last. |
 | `sync` | `true` | Copy sessions into bb's Browser. |
 | `signIn` | `automatic` | `automatic` hands sign-in pages to your browser, `ask` shows a button, `off` leaves them alone. |
