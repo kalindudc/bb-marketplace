@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { createStored, useStored } from "./remember";
 import { formatRoute, parseRoute, type Route } from "./route";
 import { DONE_SORTS, MINE_SORTS, type SortKey } from "./sort";
+import { BOARD_GROUP_LABELS, BOARD_SORT_LABELS, DEFAULT_BOARD_VIEW, type BoardGrouping, type BoardSort, type BoardViewPrefs } from "./board-prs";
 
 // What the page remembers on this device, so it opens where it was left and the way it was left.
 
@@ -23,6 +24,15 @@ export const lastRoute = createStored<string | null>("last-route", null, (value)
 export const mineLayout = createStored<MineLayout>("mine-layout", "grouped", oneOf<MineLayout>(["grouped", "list"]));
 export const mineSort = createStored<SortKey>("mine-sort", MINE_SORTS[0]!, oneOf(MINE_SORTS));
 export const doneSort = createStored<SortKey>("done-sort", DONE_SORTS[0]!, oneOf(DONE_SORTS));
+export const boardViews = createStored<Readonly<Record<string, BoardViewPrefs>>>("board-views", {}, (value) => {
+  if (!isRecord(value)) return null;
+  const parseSort = oneOf<BoardSort>(Object.keys(BOARD_SORT_LABELS) as BoardSort[]);
+  const parseGroup = oneOf<BoardGrouping>(Object.keys(BOARD_GROUP_LABELS) as BoardGrouping[]);
+  return Object.fromEntries(Object.entries(value).flatMap(([id, prefs]) => isRecord(prefs) ? [[id, {
+    sort: parseSort(prefs.sort) ?? DEFAULT_BOARD_VIEW.sort,
+    group: parseGroup(prefs.group) ?? DEFAULT_BOARD_VIEW.group,
+  }]] : []));
+});
 export const reviewFilter = createStored<ReviewFilter>("review-filter", DEFAULT_FILTER, (value) =>
   isRecord(value) && typeof value.team === "string" && typeof value.hideBots === "boolean" && typeof value.hideQuiet === "boolean"
     ? { team: value.team, hideBots: value.hideBots, hideQuiet: value.hideQuiet }
@@ -98,5 +108,5 @@ export function useFolding(area: string): Folding {
 
 /** Tests clear localStorage between cases; this reads every remembered value again. */
 export function reloadPrefs(): void {
-  for (const stored of [lastRoute, mineLayout, mineSort, doneSort, reviewFilter, folds, scrolls, panelPrs]) stored.reload();
+  for (const stored of [lastRoute, mineLayout, mineSort, doneSort, boardViews, reviewFilter, folds, scrolls, panelPrs]) stored.reload();
 }

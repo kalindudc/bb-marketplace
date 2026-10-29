@@ -225,6 +225,154 @@ const member = mine({ number: 1, title: "Retry 429s in the edge router" });
 const mergedMember = mine({ number: 2, title: "Edge cache keys", state: "merged" });
 const populated = { board: { ...activeBoard, preview: [] }, prs: [member, mergedMember], activity: [] };
 
+describe("board sorting and grouping", () => {
+  const older = mine({ number: 11, title: "Older change", repo: "acme/zebra", author: "zoe", createdAt: 100, updatedAt: 400, closedAt: null, additions: 2, deletions: 1 });
+  const newer = pr({ number: 12, title: "Newer change", repo: "acme/alpha", author: "alice", createdAt: 300, updatedAt: 200, closedAt: 500, state: "merged", additions: 20, deletions: 10 });
+  const prs = [older, newer];
+  const rpc = { board: () => ({ ...populated, prs }) };
+  const keysIn = (root: ParentNode) => [...root.querySelectorAll("[data-pr]")].map((row) => row.getAttribute("data-pr"));
+  const change = (slot: Awaited<ReturnType<typeof boardPage>>["slot"], name: string, value: string) => fireEvent.change(slot.getByRole("combobox", { name }), { target: { value } });
+
+  it("defaults to the saved order without groups", async () => {
+    const { slot } = await boardPage("board/release", rpc);
+    await find(slot.container, "[data-pr]");
+    expect((slot.getByRole("combobox", { name: "Sort by" }) as HTMLSelectElement).value).toBe("saved");
+    expect((slot.getByRole("combobox", { name: "Group by" }) as HTMLSelectElement).value).toBe("none");
+    expect(keysIn(slot.getByRole("list", { name: "Board PRs" }))).toEqual(prs.map((pr) => pr.key));
+    expect(slot.container.querySelector("[data-group]")).toBeNull();
+  });
+
+  it.each([
+    ["updated", [older.key, newer.key]],
+    ["newest", [newer.key, older.key]],
+    ["oldest", [older.key, newer.key]],
+    ["closed", [newer.key, older.key]],
+    ["repo", [newer.key, older.key]],
+    ["size", [newer.key, older.key]],
+  ])("sorts board PRs by %s and can return to saved order", async (sort, expected) => {
+    const { slot } = await boardPage("board/release", rpc);
+    await find(slot.container, "[data-pr]");
+    change(slot, "Sort by", sort as string);
+    expect(keysIn(slot.container)).toEqual(expected);
+    change(slot, "Sort by", "saved");
+    expect(keysIn(slot.container)).toEqual(prs.map((pr) => pr.key));
+    for (const method of ["boardUpdate", "boardAdd", "boardRemove"]) expect(callsTo(slot, method)).toEqual([]);
+  });
+
+  it.each([
+    ["status", ["Open", "Merged"]],
+    ["repo", ["acme/alpha · GitHub", "acme/zebra · GitHub"]],
+    ["author", ["alice", "zoe"]],
+    ["server", ["GitHub"]],
+  ])("groups board PRs by %s", async (group, titles) => {
+    const { slot } = await boardPage("board/release", rpc);
+    await find(slot.container, "[data-pr]");
+    change(slot, "Group by", group as string);
+    expect([...slot.container.querySelectorAll("[data-group]")].map((section) => section.getAttribute("data-group"))).toEqual(titles);
+    expect(keysIn(slot.container).sort()).toEqual(prs.map((pr) => pr.key).sort());
+    change(slot, "Group by", "none");
+    expect(keysIn(slot.getByRole("list", { name: "Board PRs" }))).toEqual(prs.map((pr) => pr.key));
+  });
+
+  it("sorts inside groups and applies filters before grouping and counting", async () => {
+    const openNewer = { ...newer, state: "open" as const };
+    const { slot } = await boardPage("board/release", { board: () => ({ ...populated, prs: [older, openNewer] }) });
+    await find(slot.container, "[data-pr]");
+    change(slot, "Group by", "status");
+    change(slot, "Sort by", "newest");
+    const section = slot.getByRole("region", { name: "Open" });
+    expect(keysIn(section)).toEqual([newer.key, older.key]);
+    expect(within(section).getByRole("button", { name: /^Open\s*2$/u })).toBeTruthy();
+    fireEvent.change(slot.getByRole("textbox", { name: "Filter board PRs" }), { target: { value: "Older" } });
+    expect(keysIn(section)).toEqual([older.key]);
+    expect(within(section).getByRole("button", { name: /^Open\s*1$/u })).toBeTruthy();
+    change(slot, "Board status", "merged");
+    expect(slot.container.querySelector("[data-group]")).toBeNull();
+    expect(slot.getByText("No matching PRs.")).toBeTruthy();
+    expect(slot.queryByRole("button", { name: "Collapse all" })).toBeNull();
+  });
+
+  it("keeps selection and PR navigation working across grouping and sorting", async () => {
+    const { slot } = await boardPage("board/release", rpc);
+    fireEvent.click(within(await find(slot.container, `[data-pr="${older.key}"]`)).getByRole("checkbox"));
+    change(slot, "Sort by", "newest");
+    change(slot, "Group by", "status");
+    expect((within(slot.getByRole("region", { name: "Open" })).getByRole("checkbox") as HTMLInputElement).checked).toBe(true);
+    expect(slot.getByText("1 selected")).toBeTruthy();
+    fireEvent.click(await find(slot.container, `[data-pr="${newer.key}"]`));
+    expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: formatRoute({ view: "board", id: "release", key: newer.key }) } });
+  });
+
+  it("remembers choices and folded groups per board without folding activity", async () => {
+    const handlers = { board: ({ id }: { id: string }) => ({ ...populated, board: { ...activeBoard, id, name: id }, prs }) };
+    const first = await boardPage("board/release", handlers);
+    await find(first.slot.container, "[data-pr]");
+    change(first.slot, "Sort by", "newest");
+    change(first.slot, "Group by", "status");
+    fireEvent.click(within(first.slot.getByRole("region", { name: "Open" })).getByRole("button", { name: /^Open\s*1$/u }));
+    first.route("board/other");
+    await first.slot.findByRole("heading", { name: "other" });
+    expect((first.slot.getByRole("combobox", { name: "Sort by" }) as HTMLSelectElement).value).toBe("saved");
+    expect((first.slot.getByRole("combobox", { name: "Group by" }) as HTMLSelectElement).value).toBe("none");
+    change(first.slot, "Group by", "status");
+    expect(keysIn(first.slot.getByRole("region", { name: "Open" }))).toEqual([older.key]);
+    first.slot.lifecycle.unmount();
+    reloadPrefs();
+
+    const { slot } = await boardPage("board/release", handlers);
+    await slot.findByRole("heading", { name: "release" });
+    expect((slot.getByRole("combobox", { name: "Sort by" }) as HTMLSelectElement).value).toBe("newest");
+    expect((slot.getByRole("combobox", { name: "Group by" }) as HTMLSelectElement).value).toBe("status");
+    expect(keysIn(slot.getByRole("region", { name: "Open" }))).toEqual([]);
+    fireEvent.click(slot.getByRole("button", { name: "Collapse all" }));
+    expect(keysIn(slot.container)).toEqual([]);
+    expect(slot.getByRole("button", { name: /^Activity/u }).getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(slot.getByRole("button", { name: "Expand all" }));
+    expect(keysIn(slot.container)).toEqual([older.key, newer.key]);
+  });
+
+  it("keeps repositories, servers, and authors separate across servers with the same display name", async () => {
+    const delta = { ...older, key: `delta:${older.repo}#11`, server: "delta" };
+    const { slot } = await boardPage("board/release", { board: () => ({ ...populated, prs: [older, delta] }) });
+    await find(slot.container, "[data-pr]");
+    for (const group of ["repo", "server", "author"]) {
+      change(slot, "Group by", group);
+      const sections = [...slot.container.querySelectorAll("[data-group]")];
+      expect(sections).toHaveLength(2);
+      expect(keysIn(sections[0]!)).toHaveLength(1);
+      expect(keysIn(sections[1]!)).toHaveLength(1);
+      fireEvent.click(within(sections[0]! as HTMLElement).getByRole("button"));
+      expect(keysIn(sections[0]!)).toEqual([]);
+      expect(keysIn(sections[1]!)).toHaveLength(1);
+    }
+  });
+
+  it("allows sorting and grouping archived boards without enabling membership edits", async () => {
+    const { slot } = await boardPage("board/handoff", { board: () => ({ ...populated, board: archivedBoard, prs }) });
+    await find(slot.container, "[data-pr]");
+    change(slot, "Sort by", "newest");
+    change(slot, "Group by", "server");
+    expect(keysIn(slot.getByRole("region", { name: "GitHub" }))).toEqual([newer.key, older.key]);
+    expect(slot.queryByRole("checkbox")).toBeNull();
+    expect(slot.queryByRole("button", { name: "Add PRs" })).toBeNull();
+  });
+
+  it("ignores invalid saved preferences without discarding another board's choices", async () => {
+    localStorage.setItem("bb-plugin-shuttle:board-views", JSON.stringify({ release: { sort: "missing", group: [] }, other: { sort: "newest", group: "status" } }));
+    reloadPrefs();
+    const { slot, route } = await boardPage("board/release", {
+      board: ({ id }: { id: string }) => ({ ...populated, board: { ...activeBoard, id, name: id }, prs }),
+    });
+    await find(slot.container, "[data-pr]");
+    expect((slot.getByRole("combobox", { name: "Sort by" }) as HTMLSelectElement).value).toBe("saved");
+    expect((slot.getByRole("combobox", { name: "Group by" }) as HTMLSelectElement).value).toBe("none");
+    route("board/other");
+    await slot.findByRole("heading", { name: "other" });
+    expect((slot.getByRole("combobox", { name: "Sort by" }) as HTMLSelectElement).value).toBe("newest");
+    expect((slot.getByRole("combobox", { name: "Group by" }) as HTMLSelectElement).value).toBe("status");
+  });
+});
+
 describe("board layout and activity", () => {
   const activity: BoardDetail["activity"] = [
     { id: 2, at: Date.now(), text: "Added 1 PR.", threadId: null },

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.1
+
+- **Sort and group board PRs.** Each board has Sort by and Group by menus. Keep the saved order or sort by update time, creation time, merge or close time, repository, or size. Group by status, repository, server, or author, with sorting inside each group. Repositories and author accounts on different servers stay separate.
+- **Remember each board's view.** Fold individual groups or collapse and expand them all. Shuttle keeps sorting, grouping, and group folds separately for each board on this device, independently of the Activity log. These controls also work on archived boards and never change saved membership.
+
 ## 0.4.0
 
 - **Saved PR boards.** Keep an explicit set of PRs for a release, project, or handoff, across repositories and servers. Create an empty board, save a selection from My PRs, Reviews or Search, or add PRs by searching Shuttle or pasting links and keys. A PR can belong to several boards. Its status stays live, and merged or closed PRs stay in the set until removed.

@@ -7,8 +7,11 @@ import { ago, clock, plural, shortKey } from "./format";
 import { BUTTON, BUTTON_GHOST, BUTTON_PRIMARY, Dialog, ErrorNote, FIELD, PageHeading, SectionTitle } from "./common";
 import { messageOf, undoToast, useShuttleMutation, useShuttleQuery } from "./data";
 import { StatePill } from "./pills";
-import { GroupHeader, MineRow, ReviewRow, type RowLayout } from "./row";
-import { useFolding } from "./prefs";
+import { FoldAllButton, GroupHeader, MineRow, ReviewRow, type RowLayout } from "./row";
+import { boardViews, useFolding } from "./prefs";
+import { useStored } from "./remember";
+import { BOARD_GROUP_LABELS, BOARD_SORT_LABELS, DEFAULT_BOARD_VIEW, groupBoardPrs, type BoardGrouping, type BoardSort, type BoardViewPrefs } from "./board-prs";
+import { rowTime, sortPrs } from "./sort";
 import { formatRoute, type Route } from "./route";
 
 type BoardPreview = BoardSummary["preview"][number];
@@ -409,6 +412,10 @@ function BoardBulkBar({ count, onRemove, onClear, onCreate, onAdd, archived }: {
 
 export function BoardDetailView({ id, layout, onGo }: { id: string; layout: RowLayout; onGo(next: Route): void }) {
   const boardQuery = useShuttleQuery("board", { id });
+  const views = useStored(boardViews);
+  const view = Object.hasOwn(views, id) ? views[id]! : DEFAULT_BOARD_VIEW;
+  const setView = (next: Partial<BoardViewPrefs>) => boardViews.set({ ...boardViews.get(), [id]: { ...view, ...next } });
+  const groupFolding = useFolding(`board/${id}/groups/${view.group}`);
   const folding = useFolding(`board/${id}`);
   const activityFolded = folding.folded("Activity");
   const update = useShuttleMutation("boardUpdate");
@@ -445,7 +452,9 @@ export function BoardDetailView({ id, layout, onGo }: { id: string; layout: RowL
   const board = detail.board;
   const archived = board.archivedAt !== null;
   const prs = detail.prs;
-  const visible = prs.filter((pr) => boardFiltersVisible(pr, query, status));
+  const filtered = prs.filter((pr) => boardFiltersVisible(pr, query, status));
+  const visible = view.sort === "saved" ? filtered : sortPrs(filtered, view.sort);
+  const sections = groupBoardPrs(visible, view.group);
   const removeSelected = async () => {
     if (selection.selected.length === 0) return;
     const out = await remove.run({ id: board.id, prs: selection.selected });
@@ -462,6 +471,14 @@ export function BoardDetailView({ id, layout, onGo }: { id: string; layout: RowL
     })());
   };
   const openPr = (key: string) => onGo({ view: "board", id, key });
+  const row = (pr: PrView) => {
+    const rowLayout: RowLayout = {
+      ...layout,
+      selection: archived ? undefined : { checked: selected.has(pr.key), onToggle: () => toggleSelected(pr.key) },
+      onSelect: openPr,
+    };
+    return pr.mine ? <MineRow key={pr.key} pr={pr} layout={rowLayout} time={view.sort === "saved" ? undefined : rowTime(pr, view.sort)} /> : <ReviewRow key={pr.key} pr={pr} layout={rowLayout} />;
+  };
 
   const header = (
     <>
@@ -516,23 +533,36 @@ export function BoardDetailView({ id, layout, onGo }: { id: string; layout: RowL
           <option value="merged">Merged</option>
           <option value="closed">Closed</option>
         </select>
+        <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+          Sort by
+          <select aria-label="Sort by" value={view.sort} onChange={(event) => setView({ sort: event.target.value as BoardSort })} className={FIELD}>
+            {Object.entries(BOARD_SORT_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </label>
+        <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+          Group by
+          <select aria-label="Group by" value={view.group} onChange={(event) => setView({ group: event.target.value as BoardGrouping })} className={FIELD}>
+            {Object.entries(BOARD_GROUP_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </label>
+        {sections.length > 0 && <span className="ml-auto"><FoldAllButton titles={sections.map((section) => section.key)} folding={groupFolding} /></span>}
       </div>
       <BoardBulkBar count={selection.selected.length} onRemove={() => setDialog({ kind: "remove" })} onClear={selection.clear} onCreate={() => setDialog({ kind: "create" })} onAdd={() => setDialog({ kind: "choose" })} archived={archived} />
       {visible.length === 0 && (
         <div className="py-10 text-center text-sm text-muted-foreground">{prs.length === 0 ? "This board is empty." : "No matching PRs."}</div>
       )}
-      {visible.length > 0 && (
-        <ul aria-label="Board PRs" className="overflow-hidden rounded-lg border border-border bg-card">
-          {visible.map((pr) => {
-            const rowLayout: RowLayout = {
-              ...layout,
-              selection: archived ? undefined : { checked: selected.has(pr.key), onToggle: () => toggleSelected(pr.key) },
-              onSelect: openPr,
-            };
-            return pr.mine ? <MineRow key={pr.key} pr={pr} layout={rowLayout} /> : <ReviewRow key={pr.key} pr={pr} layout={rowLayout} />;
-          })}
-        </ul>
+      {visible.length > 0 && view.group === "none" && (
+        <ul aria-label="Board PRs" className="overflow-hidden rounded-lg border border-border bg-card">{visible.map(row)}</ul>
       )}
+      {sections.map((section) => {
+        const folded = groupFolding.folded(section.key);
+        return (
+          <section key={section.key} aria-label={section.title} data-group={section.title} data-folded={folded ? "" : undefined}>
+            <GroupHeader title={section.title} count={section.prs.length} layout={layout} folded={folded} onFold={() => groupFolding.toggle(section.key)} />
+            {!folded && <ul className="overflow-hidden rounded-lg border border-border bg-card">{section.prs.map(row)}</ul>}
+          </section>
+        );
+      })}
       <section aria-label="Board activity" data-folded={activityFolded ? "" : undefined} className="mt-6">
         <GroupHeader title="Activity" count={detail.activity.length} layout={layout} folded={activityFolded} onFold={() => folding.toggle("Activity")} />
         {!activityFolded && (detail.activity.length === 0 ? <p className="text-xs text-muted-foreground">No activity yet.</p> : (

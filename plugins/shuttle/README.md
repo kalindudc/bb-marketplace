@@ -11,6 +11,12 @@ Save a specific set of PRs as a board, across repositories and servers. Create a
 save a selection from a PR list, or add PR links to an existing board. PR status stays live;
 merged and closed PRs stay in the saved set until removed. A PR can belong to multiple boards.
 
+Use **Sort by** to keep the saved order or sort by update time, creation time, merge or close time,
+repository, or size. Use **Group by** to split the list by status, repository, server, or author.
+Sorting applies within each group. Fold individual groups or collapse and expand them all.
+Shuttle remembers sorting, grouping, and folded sections separately for each board on this device;
+these view choices do not change saved membership or anyone else's view.
+
 Archive a board to hide it from active navigation without losing its PRs. Restore it before
 changing membership. Boards uses the same sidebar navigation as the other areas: its board links
 appear only while Boards is open. Board membership never assigns an agent or changes feedback
