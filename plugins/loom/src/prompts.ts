@@ -102,10 +102,27 @@ function pickedReposLines(repos: readonly PickedRepo[]): string[] {
   ];
 }
 
+/**
+ * The human's standing instructions from Loom's settings, for a planner: what they are and how a spec carries them out.
+ * Empty without instructions. The kickoff and loom_discover both show them, so a planner started anywhere sees them.
+ */
+export function standingInstructionsLines(instructions: string): string[] {
+  const text = instructions.trim();
+  if (text === "") return [];
+  return [
+    "## The human's standing instructions",
+    "The human set these planner instructions in Loom's settings, for every project. Carry them out in this spec as far as they apply to it. Where they ask for something to happen when a project event happens (the spec is approved, the project starts, a worker starts a ticket, Loom opens a pull request, a ticket is blocked or done, the project is done), write a [[hook]] table for it: tell for what you, the planner, do then with your own tools, to = \"worker\" on ticket.started for what each worker does, and run for a command. Confirm in your question round any hook the goal leaves unclear, and leave out an instruction that does not apply to this project. Loom's spec reviewer checks the spec against them. The loom skill's references/spec.md describes [[hook]].",
+    '"""',
+    text,
+    '"""',
+  ];
+}
+
 /** The agent-only note after the human's goal in a planner thread started from the Loom page. With no `repos` it says nothing about repos. */
-export function planningKickoff(a: { merge: MergeChoice; reviewer: string; repos?: readonly PickedRepo[] }): string {
+export function planningKickoff(a: { merge: MergeChoice; reviewer: string; repos?: readonly PickedRepo[]; instructions?: string }): string {
   const reviewer = a.reviewer.trim();
   const repos = a.repos ?? [];
+  const standing = standingInstructionsLines(a.instructions ?? "");
   return [
     "[loom] The human started this thread from the Loom page to plan a new project, and the goal is the message above.",
     "Plan it with the loom-plan skill: one round of questions here, then read the code, run the checks, and call loom_propose.",
@@ -113,6 +130,7 @@ export function planningKickoff(a: { merge: MergeChoice; reviewer: string; repos
     ...(a.merge === "ask" ? [] : [`The merge plan is already chosen: strategy = "${a.merge}" in [merge], so do not ask about it.`]),
     ...(reviewer === "" ? [] : [`The human asked for this reviewer model: ${JSON.stringify(reviewer)}. Write it into [agents.reviewer] as provider and model; ask only if it is unclear.`]),
     ...(repos.length === 0 ? [] : pickedReposLines(repos)),
+    ...(standing.length === 0 ? [] : ["", ...standing]),
   ].join("\n");
 }
 
@@ -307,6 +325,7 @@ export function workerBrief(a: {
     ...dependenciesSection(spec, ticket, a.tickets ?? [], a.checkouts ?? new Map(), a.remote),
     ...(spec.merge.strategy === "pr" ? pullRequestSection(spec, repo, a.signature ?? COMMENT_SIGNATURE) : []),
     ...rolloutBriefSection(spec, a.tickets ?? [ticket], ticket, WORKER_ROLLOUT),
+    ...workerHooksSection(spec),
     "## Rules",
     "- Work only in this worktree. Never push, merge, or edit a protected path.",
     "- Call loom_note({ text }) once for each milestone, so the human can follow along on the ticket.",
@@ -341,6 +360,52 @@ export function workerBrief(a: {
     lines.push("Read the ticket thread below first: the human's replies and the planner's answers are instructions, and the last block post says why work stopped.", "", renderThread(posts, THREAD_LIMIT));
   }
   return lines.join("\n");
+}
+
+/** The tell of each [[hook]] for workers: on ticket.started, every worker's brief carries it. */
+function workerHooksSection(spec: Spec): string[] {
+  const tells = (spec.hook ?? []).flatMap((hook) => (hook.on === "ticket.started" && hook.to === "worker" && hook.tell !== undefined ? [hook.tell] : []));
+  if (tells.length === 0) return [];
+  return [
+    "## The spec's instructions for every worker",
+    "The human asked every worker on this project to do this when it starts on a ticket, with its own tools. It adds to the ticket and changes neither its scope nor its acceptance criteria, and Loom does not check it; say in your loom_submit summary what you did.",
+    ...tells.map((tell) => `- ${tell.split("\n").join("\n  ")}`),
+    "",
+  ];
+}
+
+/** What happened, for the planner's hook message and a hook command's variables. */
+export interface HookFacts {
+  /** One sentence. */
+  what: string;
+  key?: string;
+  title?: string;
+  url?: string;
+  repo?: string;
+  version?: number;
+  reason?: string;
+}
+
+/** One hook's tell for the planner: its index and event in the spec, what it says and what happened. */
+export interface HookTell {
+  hook: number;
+  on: string;
+  text: string;
+  facts: HookFacts;
+}
+
+/** The planner's message when [[hook]] tables fire: a visible line, and each hook with what happened and what to do. */
+export function hookTellText(slug: string, tells: readonly HookTell[]): { summary: string; detail: string } {
+  const events = [...new Set(tells.map((tell) => tell.on))];
+  const summary = `[loom] ${tells.length === 1 ? "A hook" : `${tells.length} hooks`} of ${slug} fired on ${events.join(", ")}. Carry ${tells.length === 1 ? "it" : "them"} out, then end your turn.`;
+  const items = tells.map((tell, index) => [`${index + 1}. hook[${tell.hook}], on ${tell.on}: ${tell.facts.what}`, `   Do: ${tell.text.split("\n").join("\n   ")}`].join("\n"));
+  const detail = [
+    `[loom] These [[hook]] tables of ${slug}'s approved spec fired, oldest first. Each is the human's standing instruction for this project: do what it says with your own tools, in order, then end your turn.`,
+    "Loom only delivers them: it checks nothing and waits for nothing, and no ticket moves because of them. Say in your reply what you did for each, or why one could not be done. A hook that asks for something only the human may do, such as approving, starting or landing, goes to loom_ask_human instead.",
+    "",
+    items.join("\n\n"),
+  ].join("\n");
+  return { summary, detail };
 }
 
 /** The newest changes-requested review the worker has not answered with a new submit, or null. */
@@ -993,6 +1058,7 @@ export const SPEC_REVIEW_RUBRIC: readonly string[] = [
   "Delivery: a ticket whose acceptance criteria can be met by documenting why the goal cannot be met, such as a change of comments or docs alone where the goal asks for different behaviour, is a finding. Ask for criteria that only the change itself meets.",
   "Checks and scope: a check command that does not exist in the repository, a scope far wider than the ticket's work, or a depends_on or merge_after where no order is needed, is a finding.",
   "Summary: project.summary tells someone who has not read the goal what the project changes and why. A summary that only names an issue or a task, or that promises what no ticket delivers, is a finding.",
+  "Hooks: every [[hook]] carries out something the human asked for, in the planning conversation or in the standing instructions from Loom's settings when this brief lists them; a hook no one asked for is a finding. So is a standing instruction that applies to this project when no hook or ticket carries it out: name the instruction and the hook that would.",
   "Rollout: on the pr strategy, depends_on orders the work, merge_after the merges and rollout the deploys. A ticket that changes a running system (a service, infrastructure, or an interface other code calls) with no rollout is a finding, and so is a rollout that breaks these: providers before consumers, dark before exposed, staging before production, a verify or a soak between stages, removal last behind a milestone, and no deploy-on-merge step inside a window.",
 ];
 
@@ -1033,8 +1099,9 @@ export function specFindingsList(findings: readonly SpecFinding[]): string {
     .join("\n");
 }
 
-export function specReviewerBrief(a: { project: ProjectRow; spec: Spec; toml: string; version: number; round: number; earlier: readonly SpecReviewRow[]; inForce?: { version: number; spec: Spec } | null }): string {
+export function specReviewerBrief(a: { project: ProjectRow; spec: Spec; toml: string; version: number; round: number; earlier: readonly SpecReviewRow[]; inForce?: { version: number; spec: Spec } | null; instructions?: string }): string {
   const { project, spec, toml, version, round } = a;
+  const instructions = (a.instructions ?? "").trim();
   const inForce = a.inForce ?? null;
   const earlier = a.earlier.filter((row) => row.state === "approved" || row.state === "changes_requested");
   const lines = [
@@ -1048,6 +1115,16 @@ export function specReviewerBrief(a: { project: ProjectRow; spec: Spec; toml: st
     ...(spec.project.summary === undefined ? [] : [`Summary: ${spec.project.summary}`]),
     ...(spec.project.non_goals.length === 0 ? [] : ["Non-goals:", bullets(spec.project.non_goals)]),
     "",
+    ...(instructions === ""
+      ? []
+      : [
+          "## The human's standing instructions",
+          "The human set these planner instructions in Loom's settings, for every project, and the planner saw them. They are the human's words too, but the human's messages in this conversation outrank them. Check that the spec carries out each one that applies to this project, usually as a [[hook]] table.",
+          '"""',
+          instructions,
+          '"""',
+          "",
+        ]),
     ...(inForce === null
       ? []
       : [

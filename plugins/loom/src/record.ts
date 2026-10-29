@@ -16,6 +16,8 @@ import type { Spec } from "./spec";
 import { LOOM_ACTOR } from "./states";
 import { specOf, type EngineCtx } from "./workers";
 
+export const PLANNER_INSTRUCTIONS_MAX = 4000;
+
 export const SETTINGS = {
   doneHook: {
     type: "string",
@@ -33,6 +35,15 @@ export const SETTINGS = {
     options: ["summary", "full"],
     default: "summary",
     experimental_optionLabels: { summary: "A summary an agent writes from the record", full: "The full record" },
+  },
+  plannerInstructions: {
+    type: "string",
+    label: "Planner instructions",
+    description:
+      "Standing instructions for every Loom planner, such as: when a project starts, create a Shuttle board for it, and add each pull request Loom opens to that board. Loom adds them after your first message when you start a project from the Loom page, loom_discover shows them to a planner started anywhere else, and the spec reviewer checks that the spec carries them out, usually as [[hook]] tables that tell the planner to act, or run a command, when a project event happens. Empty: none.",
+    default: "",
+    experimental_multiline: true,
+    experimental_schema: z.string().max(PLANNER_INSTRUCTIONS_MAX),
   },
   checksSettleMinutes: {
     type: "number",
@@ -70,7 +81,7 @@ export const SETTINGS = {
 
 export type DoneSettings = { doneHook: string; doneRecord: string };
 /** Every Loom setting; the pull request ones are optional so a caller with only the done hook's settings can pass them. */
-export type LoomSettings = DoneSettings & { checksSettleMinutes?: number; checksQueuedMinutes?: number; checksNearDonePercent?: number; commentSignature?: string };
+export type LoomSettings = DoneSettings & { checksSettleMinutes?: number; checksQueuedMinutes?: number; checksNearDonePercent?: number; commentSignature?: string; plannerInstructions?: string };
 export const NO_HOOK: DoneSettings = { doneHook: "", doneRecord: "summary" };
 
 export const RECORD_MAX = 300_000;

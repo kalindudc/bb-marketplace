@@ -2,6 +2,19 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.31.0 (2026-10-29)
+
+### Added
+
+- Hooks in the spec. A `[[hook]]` table names a project event in `on` (`spec.approved`, `project.started`, `ticket.started`, `pr.opened`, `ticket.blocked`, `ticket.done` or `project.done`) and says what happens then: `tell` is an instruction Loom sends the planner thread, with what happened, once the planner is idle, and `run` is a shell command Loom runs on the project's machine with `LOOM_*` variables for the event. With `to = "worker"` on `ticket.started`, the instruction goes into every worker's brief instead. Before, an instruction such as "add every pull request to a Shuttle board" lived only in the planning conversation, and nothing reminded anyone of it once the project ran. Every hook is optional; the planner writes the ones the human asks for. Loom delivers each hook once per event, from the project's event log and with the spec version in force when the event happened, and only delivers it: it checks nothing a hook asks for, moves no ticket and holds nothing back. A command that fails, or that a restart interrupted, never runs again, and a project's next command waits until an interrupted one can no longer be running; a send to the planner that bb refuses is tried again on the next pass, three sends in all. The feed and the Insights tab record `hook.told`, `hook.ran` and `hook.failed`, and the Spec tab draws the hooks as a card that What changed and comments reach.
+- A Planner instructions setting (`plannerInstructions`): standing instructions for every planner, up to 4,000 characters. Loom adds them, for the planner only, after the goal of a project started from the Loom page; `loom_discover` prints them first, so a planner started from any thread sees them; and the spec reviewer reads them, with a rubric line that asks for a hook or ticket for each instruction that applies and flags a hook nobody asked for. The loom-plan skill says how to turn them into hooks.
+
+### Compatibility
+
+- One migration: a `hook_firings` table, and `projects.hook_event_id`, the newest event whose hooks Loom queued. Every existing project starts after its newest event, so a hook that a later version adds never fires for an old event.
+- A ticket's move to `pr_open` when Loom opens its pull request now records `opened: true` in its event, which `pr.opened` reads; a move back after a fix round or a catch-up does not.
+- A spec without `[[hook]]` tables parses and hashes as before. Changing a hook keeps the spec review, since hooks are what the human asked for.
+
 ## 0.30.3 (2026-10-28)
 
 ### Fixed

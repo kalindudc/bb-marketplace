@@ -5,6 +5,7 @@ import { unknownPlaceholders } from "./environments";
 import { deploysOnMerge, SOAK_PATTERN } from "./rollout";
 import { plural } from "./format";
 import { GIT_NETWORK_TIMEOUT_SECONDS } from "./git-network";
+import { HOOK_EVENTS } from "./hook-events";
 import { matchesAny } from "./scope";
 
 const MAX_ERRORS = 20;
@@ -99,6 +100,18 @@ export const forgeSchema = z
     after_push: z.array(command).max(5).optional(),
     // Globs, not regular expressions: a pattern from a spec must never be able to stall the plugin's thread.
     ignore_checks: z.array(z.string().max(200).refine((pattern) => pattern.trim() !== "", "must not be blank")).max(20).optional(),
+  })
+  .strict();
+
+// What happens when a project event happens: the planner, or for ticket.started each worker's brief, is told to do
+// something with its own tools, and a command runs on the project's machine. Loom only delivers them; neither blocks anything.
+export const hookSchema = z
+  .object({
+    on: z.enum(HOOK_EVENTS),
+    tell: z.string().trim().min(1).max(2000).optional(),
+    // Unset: the planner.
+    to: z.enum(["planner", "worker"]).optional(),
+    run: command.optional(),
   })
   .strict();
 
@@ -286,6 +299,7 @@ export const specSchema = z
     environment: environmentSchema.optional(),
     repo: z.array(repoSpecSchema).max(10).optional(),
     rollout: rolloutSchema.optional(),
+    hook: z.array(hookSchema).max(20).optional(),
     ticket: z.array(ticketSpecSchema).min(1).max(200),
   })
   .strict();
@@ -300,6 +314,8 @@ export type MachineSpec = z.output<typeof machineSchema>;
 export type WorktreeSpec = z.output<typeof worktreeSchema>;
 export type TicketRolloutSpec = z.output<typeof ticketRolloutSchema>;
 export type RolloutSpec = z.output<typeof rolloutSchema>;
+export type HookSpec = z.output<typeof hookSchema>;
+export type { HookEvent } from "./hook-events";
 
 export interface SpecResult {
   ok: boolean;
@@ -562,7 +578,7 @@ export function validateSemantics(spec: Spec, rawToml: string): { errors: string
   repos.forEach((repo, index) => {
     errors.push(...forgeErrors(repo.forge, `repo[${index}].forge`), ...worktreeErrors(spec, repo.worktree, `repo[${index}].worktree`), ...environmentErrors(repo.environment, `repo[${index}].environment`));
   });
-  errors.push(...machineErrors(spec));
+  errors.push(...machineErrors(spec), ...hookErrors(spec));
 
   const { worker, reviewer } = spec.agents;
   if (worker.provider === reviewer.provider && worker.model === reviewer.model) {
@@ -693,6 +709,19 @@ function ciForgeErrors(spec: Spec): string[] {
         ? `${forgeAt}: ${relies} kind = "none" opens no pull request and reports no checks. Use kind = "gh", or kind = "command" with a feedback command, or ${off}`
         : `${forgeAt}: ${relies} this forge reports no checks, so Loom could never send a failed one back. Add a feedback command to ${forgeAt}, or ${off}`,
     ];
+  });
+}
+
+/** A hook needs something to do, and only a worker that starts on a ticket reads one: every other event finds it done, gone or waiting. */
+function hookErrors(spec: Spec): string[] {
+  return (spec.hook ?? []).flatMap((hook, index) => {
+    const at = `hook[${index}]`;
+    if (hook.tell === undefined && hook.run === undefined) return [`${at}: does nothing. Set tell (what the planner is told to do) or run (a command), or both.`];
+    if (hook.to !== undefined && hook.tell === undefined) return [`${at}.to: only says who reads tell, and this hook has none. Remove to, or add tell.`];
+    if (hook.to === "worker" && hook.on !== "ticket.started") {
+      return [`${at}.to: a worker reads a hook only when it starts on a ticket, in its brief; on ${hook.on} its work is handed in or done. Use on = "ticket.started", or leave to unset so the planner does it.`];
+    }
+    return [];
   });
 }
 

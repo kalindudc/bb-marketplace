@@ -9,6 +9,7 @@ import { LoomError, type ApproveResult, type Projects } from "./projects";
 import { isMultiRepo } from "./repos";
 import { CHECKS_NEAR_DONE_PERCENT, CHECKS_QUEUED_MINUTES } from "./check-wait";
 import { CHECKS_SETTLE_MINUTES } from "./pull-requests";
+import { followHooks } from "./hooks";
 import { NO_HOOK, sendRecords, type LoomSettings } from "./record";
 import { newPrReads, requestSync, SYNC_WAIT_MS, syncResult, within, type PrSyncResult } from "./pr-sync";
 import { backToReview, blockedAtReview, onReviewerGone, onReviewerIdle, onReviewerTurnFailed, reviewerStartFailed, spawnReviewers } from "./review";
@@ -92,6 +93,7 @@ export class Engine {
       checksQueuedMinutes: () => this.settings().checksQueuedMinutes ?? CHECKS_QUEUED_MINUTES,
       checksNearDonePercent: () => this.settings().checksNearDonePercent ?? CHECKS_NEAR_DONE_PERCENT,
       commentSignature: signature,
+      plannerInstructions: () => this.settings().plannerInstructions ?? "",
     };
   }
 
@@ -147,6 +149,7 @@ export class Engine {
       }
     }
     sendRecords(this.ctx, this.settings());
+    await followHooks(this.ctx).catch((error) => this.warn("hooks", error));
   }
 
   // A paused project starts no worker, reviewer or merge; it still follows its open pull requests and finishes when the last one is done.

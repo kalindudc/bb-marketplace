@@ -632,4 +632,19 @@ describe("loom_discover", () => {
     const output = text(await host.harness.callAgentTool("loom_discover", {}, { threadId: "thr_plan", projectId: "proj_1" }));
     expect(output).toContain("- Forge for origin: ask: gh is not signed in to github.com.");
   });
+
+  it("starts with the human's standing planner instructions from Loom's settings, so a planner started anywhere carries them out", async () => {
+    host = makeHost({ settings: () => ({ doneHook: "", doneRecord: "summary", plannerInstructions: "Create a Shuttle board for every project.\nAdd each pull request to it." }) });
+    registerTools(host.bb, host.projects, host.engine);
+    const output = text(await host.harness.callAgentTool("loom_discover", {}, { threadId: "thr_plan", projectId: "proj_1" }));
+    expect(output.startsWith("## The human's standing instructions\n")).toBe(true);
+    expect(output).toContain('"""\nCreate a Shuttle board for every project.\nAdd each pull request to it.\n"""\n\nThis thread\'s repository (bb project proj_1)');
+    expect(text(await makeDiscover())).not.toContain("standing instructions");
+  });
 });
+
+async function makeDiscover() {
+  const plain = makeHost();
+  registerTools(plain.bb, plain.projects, plain.engine);
+  return plain.harness.callAgentTool("loom_discover", {}, { threadId: "thr_plan", projectId: "proj_1" });
+}

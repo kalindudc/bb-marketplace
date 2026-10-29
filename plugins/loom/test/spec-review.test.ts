@@ -62,6 +62,7 @@ describe("starting a spec review", () => {
     expect(args.prompt).toContain('slug = "csv"');
     expect(args.prompt).toContain("loom_spec_request_changes");
     expect(rows()[0]).toMatchObject({ thread_id: "thr_w1", state: "reviewing", version: 1, round: 1 });
+    expect(args.prompt).not.toContain("## The human's standing instructions");
 
     expect(await draft()).toEqual({ kind: "reviewing", version: 1, round: 1 });
     expect(spawns()).toHaveLength(1);
@@ -421,5 +422,15 @@ describe("the spec reviewer's environment", () => {
   it("keeps the managed worktree without an environment", async () => {
     await draft();
     expect(spawns().at(-1)!.environment).toBeUndefined();
+  });
+});
+
+describe("the standing planner instructions", () => {
+  it("reach the spec reviewer, from Loom's settings when the review starts", async () => {
+    h.ctx.plannerInstructions = () => "Create a Shuttle board for every project.";
+    await draft();
+    const args = spawns().at(-1)!;
+    expect(args.prompt).toContain("## The human's standing instructions");
+    expect(args.prompt).toContain('"""\nCreate a Shuttle board for every project.\n"""');
   });
 });

@@ -23,6 +23,8 @@ export interface ProjectRow {
   triage_round: number;
   triage_sent_at: number | null;
   pr_url: string | null;
+  /** The newest event whose hooks Loom queued; it reads the project's later events for its [[hook]] tables. */
+  hook_event_id: number;
   created_at: number;
   updated_at: number;
 }
@@ -252,6 +254,29 @@ export interface RecordRow {
   updated_at: number;
 }
 
+export type HookFiringState = "pending" | "running" | "done" | "failed" | "skipped";
+
+/** One [[hook]] table's tell or run for one event, queued once; `text` is the hook's tell or run as the spec said it then. */
+export interface HookFiringRow {
+  id: number;
+  project_id: number;
+  event_id: number;
+  /** The hook's index in the spec's [[hook]] list. */
+  hook: number;
+  hook_on: string;
+  kind: "tell" | "run";
+  ticket_id: number | null;
+  text: string;
+  /** HookFacts: what happened, for the planner's message and the command's variables. */
+  facts_json: string;
+  state: HookFiringState;
+  reason: string | null;
+  /** Sends of a tell that failed so far. */
+  tries: number;
+  created_at: number;
+  updated_at: number;
+}
+
 export type SpecReviewState = "reviewing" | "approved" | "changes_requested" | "failed" | "superseded" | "skipped";
 
 /** SpecReviewSkip: why a version skipped its review, the version it was compared with and the operational paths it changed. */
@@ -363,6 +388,11 @@ export class Store {
   /** Every event of the project, oldest first. The metrics replay all of them. */
   projectEvents(projectId: number): EventRow[] {
     return this.db.prepare("SELECT * FROM events WHERE project_id = ? ORDER BY id").all(projectId) as EventRow[];
+  }
+
+  /** The project's newest event of one kind at or before an event id, or null. */
+  lastEventOfKind(projectId: number, kind: string, atOrBefore: number): EventRow | null {
+    return (this.db.prepare("SELECT * FROM events WHERE project_id = ? AND kind = ? AND id <= ? ORDER BY id DESC LIMIT 1").get(projectId, kind, atOrBefore) as EventRow | undefined) ?? null;
   }
 
   /** A project's events of one kind, oldest first. */
@@ -753,6 +783,38 @@ export class Store {
 
   updateRecord(id: number, patch: Partial<Pick<RecordRow, "state" | "thread_id" | "started_at" | "retry_at">>): void {
     this.patch("records", id, patch);
+  }
+
+  // ---- hook firings
+
+  /** Queues a hook's tell or run for an event; a second queue of the same one changes nothing. */
+  addHookFiring(row: Pick<HookFiringRow, "project_id" | "event_id" | "hook" | "hook_on" | "kind" | "ticket_id" | "text" | "facts_json">): void {
+    const now = this.now();
+    this.db
+      .prepare("INSERT INTO hook_firings (project_id, event_id, hook, hook_on, kind, ticket_id, text, facts_json, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?) ON CONFLICT (event_id, hook, kind) DO NOTHING")
+      .run(row.project_id, row.event_id, row.hook, row.hook_on, row.kind, row.ticket_id, row.text, row.facts_json, now, now);
+    this.changed(row.project_id);
+  }
+
+  /** Moves the project's hook cursor past an event; it leaves updated_at alone, since nothing the human sees changed. */
+  setHookCursor(projectId: number, eventId: number): void {
+    this.db.prepare("UPDATE projects SET hook_event_id = ? WHERE id = ? AND hook_event_id < ?").run(eventId, projectId, eventId);
+  }
+
+  /** The project's firings in these states, oldest first; every project's when `projectId` is null. */
+  hookFirings(projectId: number | null, states: readonly HookFiringState[], kind?: HookFiringRow["kind"]): HookFiringRow[] {
+    const marks = states.map(() => "?").join(", ");
+    const where = [`state IN (${marks})`, ...(projectId === null ? [] : ["project_id = ?"]), ...(kind === undefined ? [] : ["kind = ?"])].join(" AND ");
+    const args = [...states, ...(projectId === null ? [] : [projectId]), ...(kind === undefined ? [] : [kind])];
+    return this.db.prepare(`SELECT * FROM hook_firings WHERE ${where} ORDER BY id`).all(...args) as HookFiringRow[];
+  }
+
+  /** The compare-and-set that moves a firing on from `from`; false when it is no longer there. */
+  moveHookFiring(id: number, from: HookFiringState, patch: { state: HookFiringState; reason?: string | null; tries?: number }): boolean {
+    const result = this.db
+      .prepare("UPDATE hook_firings SET state = ?, reason = COALESCE(?, reason), tries = COALESCE(?, tries), updated_at = ? WHERE id = ? AND state = ?")
+      .run(patch.state, patch.reason ?? null, patch.tries ?? null, this.now(), id, from);
+    return result.changes === 1;
   }
 
   // ---- spec reviews

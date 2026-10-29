@@ -206,4 +206,14 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE tickets ADD COLUMN pr_proposal_json TEXT`,
   // PrApplied: the text Loom last set on the ticket's pull request, and an edit of it still to make.
   `ALTER TABLE tickets ADD COLUMN pr_applied_json TEXT`,
+  // The spec's [[hook]] tables: each event a hook follows queues one row per tell and per run, once, from the project's
+  // events after hook_event_id. A project from before hooks existed starts after its newest event, so none fires late.
+  `CREATE TABLE hook_firings (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, event_id INTEGER NOT NULL, hook INTEGER NOT NULL,
+    hook_on TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('tell', 'run')), ticket_id INTEGER, text TEXT NOT NULL, facts_json TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('pending', 'running', 'done', 'failed', 'skipped')), reason TEXT, tries INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+    UNIQUE (event_id, hook, kind));
+  CREATE INDEX hook_firings_open ON hook_firings (state, project_id);
+  ALTER TABLE projects ADD COLUMN hook_event_id INTEGER NOT NULL DEFAULT 0;
+  UPDATE projects SET hook_event_id = (SELECT COALESCE(MAX(id), 0) FROM events)`,
 ];

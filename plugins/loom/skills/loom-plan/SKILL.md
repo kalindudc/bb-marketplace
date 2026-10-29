@@ -11,7 +11,7 @@ Read the spec reference first: the `loom` skill's `references/spec.md` lists eve
 
 ## When the Loom page started this thread
 
-The human can start a project from New project on the Loom page. Then this thread's first message is their goal, followed by a note that starts with `[loom]`. The note may already settle the merge plan, name the reviewer model they want, or list the repos they picked in the composer's repo picker. Skip the interview questions it answers, and ask the rest as usual. Picked repos are a starting point, not a limit: step 2 still applies to them, and you may add other repos the work changes. When you hand over, say that they can read, approve and start the draft on the Loom page. Once you propose, this conversation is the project's Planner tab there.
+The human can start a project from New project on the Loom page. Then this thread's first message is their goal, followed by a note that starts with `[loom]`. The note may already settle the merge plan, name the reviewer model they want, list the repos they picked in the composer's repo picker, or carry the human's standing instructions (see Standing instructions and hooks). Skip the interview questions it answers, and ask the rest as usual. Picked repos are a starting point, not a limit: step 2 still applies to them, and you may add other repos the work changes. When you hand over, say that they can read, approve and start the draft on the Loom page. Once you propose, this conversation is the project's Planner tab there.
 
 ## 1. Interview (one short round)
 
@@ -26,6 +26,7 @@ Ask only what you cannot find in the repository:
 - Fresh pull requests, on `"pr"`: whether a repo's CI fails a pull request whose branch is far behind its base, or busy repos make pull requests go stale while they wait for review. Then set `merge.refresh_behind`, or `refresh_behind` on that `[[repo]]`, to a number of commits behind the base, below the limit that CI enforces; Loom then merges the base into an open pull request that falls that far behind, or that conflicts with its base, and pushes it with no new review. Leave it unset when the human prefers to bring branches up to date themselves.
 - Models: ask for a reviewer model that differs from the worker's, so the reviewer does not share the worker's blind spots. `provider` in `[agents.worker]` and `[agents.reviewer]` is a bb provider id, such as `claude-code`, `codex` or `pi`, not a model name such as `claude`; `loom_propose` refuses a provider bb does not have and lists the ids it has.
 - Protected paths: files no ticket may change, such as lockfiles, CI config or generated code.
+- Hooks: what should happen when a project event happens, such as a pull request Loom opens going onto a Shuttle board, or a command that posts each blocked ticket to a channel. Ask only when the goal or the standing instructions call for one and leave something open; most projects have none. See Standing instructions and hooks.
 - Deploy order, on `"pr"` when the work changes a running system: how each repo's merged changes reach traffic and whether merging deploys them, what must be live before what, any prerequisite no ticket delivers (a metric reaching zero, another team's service existing), freeze windows, and how to tell each change is live. Step 5 turns the answers into `[rollout]`.
 
 Anything the human cannot answer yet goes in `project.open_questions`; Loom refuses a spec while that list is not empty, so settle every question before you propose.
@@ -48,7 +49,7 @@ Every repo needs a checkout on this machine; `loom_propose` refuses a repo witho
 
 ## 3. Discover how each repo is reached
 
-Call `loom_discover` once you know the repos: with no arguments for this thread's own repository, or with the bb project ids of every `[[repo]]`, in their order. For each repo it reports its git remotes, whether `gh` can open pull requests there, the environment providers bb offers for it on this machine, the environments that start each thread on a new machine of its own ("New machine per thread"), the environments earlier approved projects chose for a repository with the same remote ("Earlier picks"), and whether Loom can add its own integration worktree. Every line ends in found or ask.
+Call `loom_discover` once you know the repos: with no arguments for this thread's own repository, or with the bb project ids of every `[[repo]]`, in their order. For each repo it reports its git remotes, whether `gh` can open pull requests there, the environment providers bb offers for it on this machine, the environments that start each thread on a new machine of its own ("New machine per thread"), the environments earlier approved projects chose for a repository with the same remote ("Earlier picks"), and whether Loom can add its own integration worktree. Every line ends in found or ask. When the human set standing instructions in Loom's settings, the report starts with them; carry them out as Standing instructions and hooks in step 5 says.
 
 - Settle every ask item before you propose. Look for the answer yourself first: in the goal, the repository's docs, the skills loaded in this thread and, for an environment provider, its description, its inputs schema and its plugin's skill (`bb skill list`). Ask the human only for what is still missing.
 - Ask everything that is left in ONE round with your question tool, giving each question the options discovery found. The Loom page shows the questions next to the draft.
@@ -155,6 +156,33 @@ rollout = { stage = "contract", rollback = "Revert the removal" }
 
 After approval, change a ticket's rollout with `loom_edit_ticket` and a patch of `rollout` alone, which works on a ticket whose pull request is open and on a done one; add stages, milestones and windows in a new spec version. `bb loom rollout <slug>` prints the order as Loom sees it.
 
+### Standing instructions and hooks
+
+The human can set standing instructions for every planner in Loom's settings (Planner instructions), such as "Use Shuttle: create a PR board for every project and link each pull request Loom opens to it." They come in two places, under the heading "The human's standing instructions": the `[loom]` note after the goal when the Loom page started this thread, and the top of `loom_discover`'s report, which you call in step 3 wherever this thread started. Carry out each one that applies to this project, and leave out one that does not. Loom's spec reviewer reads them too, and a standing instruction that applies with nothing in the spec that carries it out is a finding.
+
+An instruction about the work itself goes into the tickets. An instruction about what should happen when a project event happens becomes a `[[hook]]` table, so it is never forgotten: Loom delivers each hook every time its event happens, long after this conversation. A hook has `on`, the event, and `tell`, `run` or both:
+
+- `on` is one of `spec.approved` (the human approves a version), `project.started`, `ticket.started` (a worker starts on a ticket, once per ticket), `pr.opened` (Loom opens a ticket's pull request, or on the integration strategy the pull request that lands the integration branch), `ticket.blocked`, `ticket.done` and `project.done`.
+- `tell` is what to do then, written as an instruction. Loom sends it to you, the planner, in one message with whatever else fired, once your thread is idle, with what happened (the ticket, its pull request, the reason it blocked). Do it with your own tools, such as Shuttle's board tools, then end your turn.
+- `to = "worker"` with `on = "ticket.started"` puts `tell` in every worker's brief instead, for something each worker does while it works, such as reading the team's conventions file before it changes code. Workers read no other event: by then their work is handed in or done.
+- `run` is a shell command Loom runs on the project's machine, in the checkout of the event's repo, with a 2-minute limit and `LOOM_EVENT`, `LOOM_PROJECT_SLUG`, `LOOM_PROJECT_NAME`, `LOOM_PROJECT_KEY`, `LOOM_TICKET_KEY`, `LOOM_TICKET_TITLE`, `LOOM_URL`, `LOOM_REPO`, `LOOM_VERSION` and `LOOM_REASON` set where they apply. Use it when a command does the whole job and needs no judgment.
+
+Hooks are optional, and Loom only delivers them: it checks nothing a hook asks for, holds no ticket back for one, and records each delivery or failure in the feed. Write only the hooks the human asked for, in this conversation or in the standing instructions; the spec reviewer flags any other. When a hook's details are unclear, such as the board's name, settle them in your question round and write them into its `tell`.
+
+```toml
+[[hook]]
+on = "project.started"
+tell = "Create a Shuttle board named after this project, unless one exists, and keep its id for the next hooks."
+
+[[hook]]
+on = "pr.opened"
+tell = "Add this pull request to the project's Shuttle board, and create the board first if it does not exist."
+
+[[hook]]
+on = "ticket.blocked"
+run = 'notify-cli post "#team" "$LOOM_TICKET_KEY is blocked: $LOOM_REASON"'
+```
+
 ## 6. Propose
 
 Call `loom_propose` with the whole spec. Fix every numbered error it returns and call it again; a refused spec creates nothing. Calling it again from this thread with the same slug revises the draft. Read any warnings and fix the ones that matter.
@@ -171,6 +199,10 @@ Then wait for the spec review. For each draft version Loom starts a separate rev
 The human can review the draft on the Loom page and send you notes. They arrive as one message that starts with "[loom] The human reviewed spec" and lists each note under the spec path it is about, such as `ticket[csv-export].acceptance[1]`: tickets by ref, list items counted from 0. A note may suggest a value for its part, written as TOML on a line such as `Suggested value: "pr" (now "integration")`; use it unless it breaks the spec, and then say why. Revise the spec for each note, or answer it in your reply, then call `loom_propose` again with the whole spec.
 
 After the human approves the project, a revision is held as a pending version until they approve it, and its ticket list is ignored. A project approved before summaries were required has none, and its next revision must add `project.summary`: `loom_propose` refuses one without it. Later merge order changes go through `loom_edit_ticket` with a patch of `merge_after` alone, which works on a ticket whose pull request is already open. Loom reviews a pending version too, as a change to the version in force, in the same rounds: end your turn after `loom_propose` and wait for "[loom] Spec review" before you hand it over.
+
+## When a hook fires
+
+After approval, a message that starts with "[loom] A hook of" or "[loom] <n> hooks of" lists the `[[hook]]` tables that fired, oldest first, each with what happened and its `tell`. Do each with your own tools, in order, say in your reply what you did or why one could not be done, and end your turn. A hook asks you to act; it never lets you do what only the human may do: for an approval, a start or a land, use `loom_ask_human`.
 
 ## When the human has to act
 

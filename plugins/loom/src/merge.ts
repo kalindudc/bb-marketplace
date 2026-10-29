@@ -671,7 +671,7 @@ async function openPullRequest(ctx: EngineCtx, project: ProjectRow, spec: Spec, 
   if (opened.outcome === "unavailable") throw unavailableOf(opened);
   const on = prBase === base ? "" : ` on ${prBase}`;
   const applied = openedText(ctx, spec, current, clip(pr.title, 256), own ? body : null);
-  toPrOpen(ctx, current.id, { ...recorded, pr_url: opened.url, pr_base: prBase, pr_meta_json: null, pr_applied_json: applied, pr_proposal_json: null }, { kind: "merge", body: `Opened pull request ${opened.url}${on}${commits}.`, data: { outcome: "pr_opened", url: opened.url, sha: src, base: prBase } }, { url: opened.url });
+  toPrOpen(ctx, current.id, { ...recorded, pr_url: opened.url, pr_base: prBase, pr_meta_json: null, pr_applied_json: applied, pr_proposal_json: null }, { kind: "merge", body: `Opened pull request ${opened.url}${on}${commits}.`, data: { outcome: "pr_opened", url: opened.url, sha: src, base: prBase } }, { url: opened.url, opened: true });
   await afterOpen(ctx, { hostId, repo, settings, head: branch, base: prBase, url: opened.url, projectId: project.id, ticketId: current.id });
 }
 

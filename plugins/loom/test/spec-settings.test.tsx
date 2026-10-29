@@ -93,6 +93,10 @@ function everything(doc: Doc): void {
     milestone: [{ ref: "old-traffic-zero", title: "Old header traffic is zero", check: "metrics-cli zero old_header", stage: "contract" }],
     window: [{ title: "Holiday freeze", from: "2026-12-20", to: "2027-01-02", note: "No deploys over the holidays" }],
   };
+  doc.hook = [
+    { on: "project.started", tell: "Create a Shuttle board named after the project, unless one exists.", run: 'board-cli create "$LOOM_PROJECT_SLUG"' },
+    { on: "ticket.started", to: "worker", tell: "Name the ticket key in every commit message." },
+  ];
   doc.ticket[0] = { ...doc.ticket[0], repo: "web", rollout: { stage: "expand", verify: "curl -fsS https://web.example.com/health" } };
   doc.ticket[1] = {
     ...doc.ticket[1],
@@ -147,6 +151,7 @@ function trimmed(doc: Doc): void {
     { name: "api", project: "proj_api", environment: { provider: "example-world", inputs: { zone: "west" }, machine: { provider: "example-world" } } },
   ];
   doc.rollout = { deploy: { on_merge: false }, stage: [{ name: "expand", goal: "The server takes both headers" }] };
+  doc.hook = [{ on: "project.started", run: 'board-cli create "$LOOM_PROJECT_SLUG"' }];
   doc.ticket[0].rollout = { stage: "expand" };
   doc.ticket[1] = { ...doc.ticket[1], verify: [], merge_after: undefined, environment: undefined, rollout: { rollback: "Revert; nothing sends the new header yet" } };
 }
@@ -293,8 +298,22 @@ describe("spec settings", () => {
     const slot = await openSpec(versionOf(spec, skeleton(spec)));
     entire(slot);
     expect(missedJumps(slot, paths)).toEqual([]);
-    // About 140 jumps, each a render of the whole page.
-  }, 30_000);
+    // About 150 jumps, each a render of the whole page; a loaded machine needs more than 30 seconds for them.
+  }, 60_000);
+
+  it("draws each hook with its event, what it tells and to whom, and its command", async () => {
+    const slot = await openSpec(versionOf(full(), full()));
+    entire(slot);
+    const card = page(slot).querySelector<HTMLElement>('[data-settings-card="hooks"]')!;
+    expect(card.getAttribute("aria-label")).toBe("Hooks · 2");
+    const [first, second] = [...card.querySelectorAll<HTMLElement>("[data-hook]")];
+    expect(first!.textContent).toContain("When the human starts the project");
+    expect(first!.textContent).toContain("Create a Shuttle board named after the project, unless one exists.");
+    expect(first!.textContent).toContain('board-cli create "$LOOM_PROJECT_SLUG"');
+    expect(first!.querySelector('[aria-current="true"]')!.textContent).toBe("The planner, when it happens");
+    expect(second!.textContent).toContain("When a worker starts on a ticket");
+    expect(second!.querySelector('[aria-current="true"]')!.textContent).toBe("Each worker, in its brief");
+  });
 
   it("draws what a version removes, each removal with a target of its own that What changed goes to", async () => {
     const before = valid(specToml(withDocs));

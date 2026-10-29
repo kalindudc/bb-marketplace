@@ -1,5 +1,6 @@
 import { Fragment, useState, type ReactNode } from "react";
 import { GIT_NETWORK_TIMEOUT_MS } from "../git-network";
+import { HOOK_EVENT_NAMES, HOOK_EVENTS } from "../hook-events";
 import type { EnvironmentSpec, ForgeSpec, MachineSpec, RepoSpec, Spec } from "../spec";
 import { textSteps, type TextStep } from "../spec-diff";
 import { isUnder } from "../spec-paths";
@@ -894,7 +895,56 @@ function DeployOrder({ spec }: { spec: Spec }) {
   );
 }
 
-/** How Loom runs the project: merging, workers, reviewers, checks, the scope guard, repos, the deploy order, and limits and triage. */
+const HOOK_READERS = { planner: "The planner, when it happens", worker: "Each worker, in its brief" };
+
+/** The spec's [[hook]] tables: on which event, what the planner or each worker is told, and the command Loom runs. */
+function HookList({ spec }: { spec: Spec }) {
+  const review = useReview();
+  const hooks = spec.hook ?? [];
+  const gone = removedTables(review, "hook", hooks.length);
+  const faded = (path: string) => (review.only && !kept(review, [path]) ? "opacity-45" : "");
+  const eventName = (on: string) => HOOK_EVENT_NAMES[on as keyof typeof HOOK_EVENT_NAMES] ?? on;
+  return (
+    <div className="min-w-0 space-y-2">
+      <p className="text-xs text-muted-foreground">When each event happens, Loom tells the planner what to do, or puts it in each worker's brief, and runs the command on the project's machine. It checks neither and holds nothing back for them.</p>
+      <ol className="space-y-1">
+        {hooks.map((hook, index) => {
+          const at = `hook[${index}]`;
+          const label = `Hook ${index + 1}`;
+          return (
+            <li key={index} data-hook={index} className={`min-w-0 space-y-1.5 rounded-md border border-border-seam px-2 py-1.5 text-sm ${faded(at)}`}>
+              <Commentable as="span" target={{ paths: [`${at}.on`], label: `${label} › on`, kind: "enum", value: hook.on, options: HOOK_EVENTS, names: HOOK_EVENT_NAMES }} className="font-semibold [overflow-wrap:anywhere]">
+                When {eventName(hook.on)}
+              </Commentable>
+              {(hook.tell !== undefined || changedAt(review, `${at}.tell`)) && (
+                <Part label="Tell" paths={[`${at}.tell`]}>
+                  <Prose path={`${at}.tell`} label={`${label} › tell`} text={hook.tell} fallback="nothing to tell" className="block whitespace-pre-line" />
+                </Part>
+              )}
+              {(hook.tell !== undefined || hook.to !== undefined || changedAt(review, `${at}.to`)) && (
+                <Part label="Who reads it" paths={[`${at}.to`]}>
+                  <Choice path={`${at}.to`} label={`${label} › to`} value={hook.to ?? "planner"} options={["planner", "worker"]} names={HOOK_READERS} />
+                </Part>
+              )}
+              {(hook.run !== undefined || changedAt(review, `${at}.run`)) && (
+                <Part label="Run" paths={[`${at}.run`]}>
+                  <Command path={`${at}.run`} label={`${label} › run`} command={hook.run} />
+                </Part>
+              )}
+            </li>
+          );
+        })}
+        {gone.map((table) => (
+          <RemovedRow key={table.at} table={table} label={`Hook ${table.index + 1} (removed)`}>
+            When {eventName(oldText(table, "on"))}
+          </RemovedRow>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+/** How Loom runs the project: merging, workers, reviewers, checks, the scope guard, repos, the deploy order, hooks, and limits and triage. */
 export function SettingsSection({ spec, bbProjectNames, onShowAll, onJump }: { spec: Spec; bbProjectNames: Readonly<Record<string, string>>; onShowAll(): void; onJump(section: "tickets" | "guardrails"): void }) {
   const review = useReview();
   const { merge, agents, review: rules, checks, scope, budget, project } = spec;
@@ -1228,6 +1278,9 @@ export function SettingsSection({ spec, bbProjectNames, onShowAll, onJump }: { s
     ...(spec.rollout === undefined && !repos.some((repo) => repo.deploy !== undefined) && !deployPaths.some((path) => changedAt(review, path))
       ? []
       : [{ id: "deploy", title: "Deploy order", note: "when each change may reach traffic", paths: deployPaths, full: true, body: <DeployOrder spec={spec} /> }]),
+    ...(spec.hook === undefined && !changedAt(review, "hook")
+      ? []
+      : [{ id: "hooks", title: `Hooks · ${spec.hook?.length ?? 0}`, note: "what happens after each event", paths: ["hook"], full: true, body: <HookList spec={spec} /> }]),
     {
       id: "limits",
       title: "Limits and triage",

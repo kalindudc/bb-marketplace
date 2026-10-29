@@ -16,6 +16,7 @@ import { handInPrText, REPLIES_PER_ROUND, replyToItem } from "./pull-requests";
 import { usesNewMachine } from "./environments";
 import { approve, checkOutReview, requestChanges } from "./review";
 import { ticketPatchSchema, ticketSpecSchema } from "./spec";
+import { standingInstructionsLines } from "./prompts";
 import { ensureSpecReview, specReviewerOf, specVerdict, type SpecReviewStatus } from "./spec-review";
 import { SPEC_REVIEW_ROUNDS, TICKET_STATES } from "./states";
 import { addTickets, boardText, editTicket } from "./triage";
@@ -146,7 +147,7 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
   bb.agents.registerTool({
     name: "loom_discover",
     description:
-      "Before proposing a Loom spec: for each repo, its git remotes, whether gh can open pull requests there, the environment providers bb offers for it on this machine (with their inputs schemas), and whether Loom can add its own integration worktree. Every choice comes back as found or ask; ask the human about each ask item before you propose.",
+      "Before proposing a Loom spec: the human's standing planner instructions from Loom's settings, if any, and for each repo its git remotes, whether gh can open pull requests there, the environment providers bb offers for it on this machine (with their inputs schemas), and whether Loom can add its own integration worktree. Every choice comes back as found or ask; ask the human about each ask item before you propose, and carry out the standing instructions in the spec.",
     presentation: { label: { pending: "Discovering how the repos are reached", completed: "Discovered how the repos are reached" } },
     parameters: z.object({
       projects: z
@@ -165,7 +166,9 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
           const names = new Map((await ctx.bb.listProjects()).map((project) => [project.id, project.name]));
           targets = ids.map((id, index) => ({ label: `the repo of bb project ${names.get(id) ?? id}`, index, bbProjectId: id, settings: null }));
         }
-        return discoverText(await gatherFacts(ctx, targets, hostId));
+        const standing = standingInstructionsLines(projects.plannerInstructions());
+        // First, so a long report that is clipped never loses them.
+        return [...(standing.length === 0 ? [] : [...standing, ""]), discoverText(await gatherFacts(ctx, targets, hostId))].join("\n");
       }),
   });
 

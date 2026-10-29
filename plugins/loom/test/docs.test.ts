@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { createCli } from "../src/cli";
+import { HOOK_EVENTS } from "../src/hook-events";
 import { parseSpec, proposalErrorsOf } from "../src/spec";
 import { MACHINE_WORKER_TOOLS, ORDINARY_TOOLS, PLANNER_TOOLS, REVIEWER_TOOLS, SKILLS, SPEC_REVIEWER_TOOLS, WORKER_TOOLS } from "../src/tools";
 import { makeHost } from "./helpers";
@@ -245,6 +246,19 @@ describe("the plugin's own documents", () => {
     const readme = read("README.md");
     const hook = readme.slice(readme.indexOf("## When a project finishes"), readme.indexOf("## Safety"));
     expect(hook).toContain("LOOM_PROJECT_URLS");
+  });
+
+  it("the spec reference, the skills and README describe hooks, every event they follow, and the planner instructions setting", () => {
+    const spec = read("skills/loom/references/spec.md");
+    expect(spec).toContain("### [[hook]]");
+    for (const key of ["`on`", "`tell`", "`to`", "`run`"]) expect(spec, key).toContain(`| ${key} |`);
+    for (const path of ["README.md", "skills/loom/SKILL.md", "skills/loom-plan/SKILL.md", "skills/loom/references/spec.md"]) {
+      const text = read(path);
+      for (const event of HOOK_EVENTS) expect(text, `${path}: ${event}`).toContain(`\`${event}\``);
+      for (const name of ["LOOM_EVENT", "LOOM_TICKET_KEY", "LOOM_URL", "[[hook]]"]) expect(text, `${path}: ${name}`).toContain(name);
+    }
+    for (const path of ["README.md", "skills/loom-plan/SKILL.md"]) expect(read(path), path).toMatch(/Planner instructions/);
+    expect(read("README.md")).toContain("bb plugin config loom set plannerInstructions");
   });
 
   it("the README's safety rules name the default permission mode", () => {

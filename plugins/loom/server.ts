@@ -37,7 +37,7 @@ export function createLoomPlugin(deps: PluginDeps = {}) {
       done = next;
     });
     const host = deps.host ? deps.host(bb) : createHostPort(bb);
-    const projects = new Projects({ store, bb: port, now, host });
+    const projects = new Projects({ store, bb: port, now, host, plannerInstructions: () => done.plannerInstructions });
     const engine = new Engine({ store, bb: port, now, host, projects, settings: () => done });
     let disposed = false;
     const stopWatching = watchChanges(bb, store);

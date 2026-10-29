@@ -269,8 +269,9 @@ marks a project with no checkout on any machine. The picked repos are a
 starting point, not a limit.
 
 Submitting starts an ordinary bb thread as the planner, with the `loom-plan`
-skill, and opens its Planner page. Once it proposes, the conversation becomes
-the project's Planner tab. Conversations that have not proposed yet stay on the
+skill, and opens its Planner page. When Loom's Planner instructions setting
+has text, Loom adds it after your goal, for the planner only (see Hooks). Once
+it proposes, the conversation becomes the project's Planner tab. Conversations that have not proposed yet stay on the
 home page until their thread is archived. "Don't work in a project" is refused,
 because Loom needs a git checkout.
 
@@ -372,8 +373,9 @@ The spec as one page in three sections:
   and whether Loom relies on CI, the scope guard and its protected paths, each
   repo, its other settings behind a Settings line that opens by itself when one
   of them changed, the deploy order when the spec has one (how changes deploy,
-  the stages with their soak and tickets, the milestones and the windows), and
-  the limits and triage. Every setting the spec can hold is drawn there, and
+  the stages with their soak and tickets, the milestones and the windows), the
+  hooks (each one's event, what it tells and to whom, and its command), and the
+  limits and triage. Every setting the spec can hold is drawn there, and
   what a version removes stays drawn, struck through, so "What changed" can
   jump to any change and you can comment on it.
 - Tickets: List + detail shows the tickets by wave beside the picked one, with
@@ -1262,10 +1264,65 @@ bb plugin config loom set doneRecord summary   # or full
   that finished before the hook was set is not sent;
   `bb loom report <slug> --send` sends it, for a backfill or after a failure.
 
+## Hooks
+
+A spec's `[[hook]]` tables say what should happen when a project event
+happens, so an instruction such as "put every pull request on a Shuttle
+board" holds for the whole project, long after planning ends. Each hook names
+an event in `on` and does one or both of two things:
+
+- `tell` is an instruction for the planner. When the event happens, Loom sends
+  it to the planner thread with what happened (the ticket, its pull request,
+  why it blocked), in one message with every other hook that fired, once the
+  planner is idle. The planner does it with its own tools, such as Shuttle's
+  board tools, and says in its reply what it did. With `to = "worker"` on
+  `ticket.started`, the instruction goes into every worker's brief instead.
+- `run` is a shell command Loom runs on the project's machine, in the checkout
+  of the event's repo, with a 2-minute limit and `LOOM_EVENT`,
+  `LOOM_PROJECT_SLUG`, `LOOM_PROJECT_NAME`, `LOOM_PROJECT_KEY`,
+  `LOOM_TICKET_KEY`, `LOOM_TICKET_TITLE`, `LOOM_URL`, `LOOM_REPO`,
+  `LOOM_VERSION` and `LOOM_REASON`.
+
+The events are `spec.approved`, `project.started`, `ticket.started` (a
+ticket's first start), `pr.opened` (each pull request Loom opens, the land's
+too), `ticket.blocked`, `ticket.done` and `project.done`. Every hook is
+optional: the planner writes the ones you ask for, in the planning
+conversation or in your standing instructions, and confirms the details with
+you. Loom delivers each hook once per event and only delivers it: it checks
+nothing a hook asks for and holds no ticket back for one. The feed and the
+Insights tab record each delivery and each failure. A command that failed or
+that a restart interrupted never runs again. A send to the planner that bb
+refuses is tried again on the next pass, three sends in all, before it fails.
+
+```toml
+[[hook]]
+on = "project.started"
+tell = "Create a Shuttle board named after this project, unless one exists."
+
+[[hook]]
+on = "pr.opened"
+tell = "Add this pull request to the project's Shuttle board, and create the board first if it does not exist."
+```
+
+Standing instructions make the planner write the same hooks for every
+project. Set them in bb's settings for Loom (Planner instructions), or from a
+terminal:
+
+```sh
+bb plugin config loom set plannerInstructions 'Use Shuttle: when a project starts, create a PR board for it, and add every pull request Loom opens to that board.'
+```
+
+`plannerInstructions` is up to 4,000 characters and empty by default. Loom
+adds it after your goal when you start a project from the Loom page, and
+`loom_discover`, which every planner calls before it proposes, prints it
+first, so a planner started from any thread sees it too. The spec reviewer
+reads it as well and asks for changes when a spec leaves out an instruction
+that applies to the project, or adds a hook nobody asked for.
+
 ## Settings
 
-Besides the done hook, Loom has four settings for pull requests. Set them in
-bb's settings for Loom, or from a terminal:
+Besides the done hook and the planner instructions, Loom has four settings for
+pull requests. Set them in bb's settings for Loom, or from a terminal:
 
 ```sh
 bb plugin config loom set checksSettleMinutes 45

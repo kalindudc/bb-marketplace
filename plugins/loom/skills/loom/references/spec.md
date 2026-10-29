@@ -350,6 +350,42 @@ Write a rollout for every ticket that changes a running system: a service, infra
 - Removal last, behind a milestone: code that removes an old path waits for a signal, such as its traffic reaching zero.
 - Respect windows: no deploy-on-merge step inside a freeze.
 
+### [[hook]]
+
+What happens when a project event happens: the planner is told to do something, every worker's brief says to do something, or Loom runs a command. Hooks keep a standing instruction, such as the human's Planner instructions in Loom's settings, from being forgotten once planning ends. Every hook is optional, and a spec without any reads as before. Loom only delivers a hook: it checks nothing the hook asks for, moves no ticket and holds nothing back for one.
+
+| Key | Type | Default | Rule |
+|---|---|---|---|
+| `on` | string | required | the event: `spec.approved` (the human approves a version, a pending one too), `project.started` (the human starts the approved project), `ticket.started` (a worker starts on a ticket, at its first start only), `pr.opened` (Loom opens a ticket's pull request, once per pull request; on the integration strategy, the pull request `bb loom land` opens), `ticket.blocked` (each time a ticket moves to blocked), `ticket.done` or `project.done` |
+| `tell` | string | none | up to 2000 characters: what to do, written as an instruction. Loom sends it to the planner thread, with what happened, in one message with every other tell that fired, once the planner is idle |
+| `to` | string | `"planner"` | who reads `tell`: `"planner"`, or `"worker"` with `on = "ticket.started"`, which puts `tell` in every worker's brief instead of a message |
+| `run` | string | none | a shell command Loom runs on the project's machine when the event happens |
+
+A hook needs `tell`, `run` or both; at most 20 hooks. A command runs with `/bin/sh` in the checkout of the event's repo (the ticket's repo, or the landed repo for the pull request a land opens on a multi-repo project; any other project event runs in the project's own repository), with a 2-minute limit, one at a time per project in the order the events happened. It gets `LOOM_EVENT`, `LOOM_PROJECT_SLUG`, `LOOM_PROJECT_NAME`, `LOOM_PROJECT_KEY`, and where they apply `LOOM_TICKET_KEY`, `LOOM_TICKET_TITLE`, `LOOM_URL` (the pull request), `LOOM_REPO`, `LOOM_VERSION` (on `spec.approved`) and `LOOM_REASON` (on `ticket.blocked`); the others are empty. A command that fails, or that a restart interrupted, is recorded in the feed and never runs again; after a restart, the project's next command waits until the interrupted one can no longer be running, 2.5 minutes after it started. Loom sends each tell once. When bb refuses the send, Loom tries again on the next pass, three sends in all, and then records the failure; a tell a restart interrupted fails and is not sent again, and so does a tell with no planner thread left to read it.
+
+Loom reads the project's events from its approval on, with the version in force: a hook that a pending version adds follows the events after that version's approval, the approval itself included, and a project approved before hooks existed starts after its newest event. The feed records `hook.told` when the planner was told, `hook.ran` when a command ran, and `hook.failed` with the reason.
+
+An excerpt, to add to a whole spec such as the examples below:
+
+```
+[[hook]]
+on = "project.started"
+tell = "Create a Shuttle board named after this project, unless one exists."
+
+[[hook]]
+on = "pr.opened"
+tell = "Add this pull request to the project's Shuttle board, and create the board first if it does not exist."
+
+[[hook]]
+on = "ticket.started"
+to = "worker"
+tell = "Read docs/CONVENTIONS.md before you change any code, and follow it."
+
+[[hook]]
+on = "ticket.blocked"
+run = 'notify-cli post "#team" "$LOOM_TICKET_KEY is blocked: $LOOM_REASON"'
+```
+
 ## Example: a two-ticket project
 
 ```toml
@@ -727,6 +763,12 @@ Rollout adds these errors:
 - A window whose `from` is after its `to`.
 - A cycle through `depends_on`, `merge_after` and `requires_live` together.
 - A ticket that requires a ticket or a milestone in a later stage than its own.
+
+Hooks add these errors:
+
+- A `[[hook]]` with neither `tell` nor `run`.
+- A `to` on a hook without `tell`.
+- `to = "worker"` on any event but `ticket.started`: a worker reads a hook only in its brief, and by every other event its work is handed in or done.
 
 Repos add these errors:
 

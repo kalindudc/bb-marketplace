@@ -77,6 +77,18 @@ export function feedText(event: EventRow, keys: Map<number, string>, { you = fal
     }
     case "record.failed":
       return `The done hook failed: ${data.reason}.`;
+    case "hook.told": {
+      const hooks = Array.isArray(data.hooks) ? (data.hooks as Array<{ on?: unknown; key?: unknown }>) : [];
+      const on = [...new Set(hooks.map((hook) => String(hook.on)))].join(", ");
+      return `Loom told the planner to carry out ${hooks.length === 1 ? "a hook" : `${hooks.length} hooks`} on ${on}.`;
+    }
+    case "hook.ran":
+      return `The command of hook[${data.hook}] on ${data.on} ran${text(data.key) === null ? "" : ` for ${data.key}`}.`;
+    case "hook.failed": {
+      const target = text(data.key) === null ? "" : ` for ${data.key}`;
+      if (data.kind === "run") return `The command of hook[${data.hook}] on ${data.on}${target} failed: ${data.reason}.`;
+      return `hook[${data.hook}] on ${data.on}${target} did not reach the planner: ${data.reason}.`;
+    }
     case "triage.sent": {
       const n = Array.isArray(data.blocked) ? data.blocked.length : 0;
       return `Loom sent the planner triage round ${data.round}: ${n === 1 ? "1 ticket is" : `${n} tickets are`} blocked.`;

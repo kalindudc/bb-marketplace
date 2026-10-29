@@ -31,6 +31,8 @@ export interface Ctx {
   bb: BbPort;
   now: () => number;
   host: HostPort;
+  /** The human's standing instructions for every planner; Loom's plannerInstructions setting. */
+  plannerInstructions?: () => string;
 }
 
 export interface ProposeResult {
@@ -166,12 +168,19 @@ export class Projects {
   private readonly bb: BbPort;
   private readonly host: HostPort;
   private readonly now: () => number;
+  private readonly instructions: () => string;
 
   constructor(ctx: Ctx) {
     this.store = ctx.store;
     this.bb = ctx.bb;
     this.host = ctx.host;
     this.now = ctx.now;
+    this.instructions = ctx.plannerInstructions ?? (() => "");
+  }
+
+  /** The human's standing instructions for every planner, trimmed; "" for none. */
+  plannerInstructions(): string {
+    return this.instructions().trim();
   }
 
   // ---------------------------------------------------------------- propose
@@ -605,7 +614,7 @@ export class Projects {
       throw new LoomError("loom_no_checkout", "Loom needs a bb project with a git checkout. Pick a project in the composer.");
     }
     const repos = await this.pickedRepos(a.request.projectId, a.repos ?? []);
-    const threadId = await this.bb.spawnPlanner({ request: a.request, title: `Loom plan: ${title}`, kickoff: planningKickoff({ merge: a.merge, reviewer: a.reviewer, repos }) });
+    const threadId = await this.bb.spawnPlanner({ request: a.request, title: `Loom plan: ${title}`, kickoff: planningKickoff({ merge: a.merge, reviewer: a.reviewer, repos, instructions: this.plannerInstructions() }) });
     this.store.addPlanning({ thread_id: threadId, bb_project_id: a.request.projectId, title });
     return { threadId };
   }
