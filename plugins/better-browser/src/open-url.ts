@@ -21,8 +21,9 @@ export interface OpenOptions {
  */
 export function openCommand(platform: NodeJS.Platform, browser: BrowserDefinition, url: string, options: OpenOptions = {}): OpenCommand | null {
   if (browser.engine === "firefox" && options.profilePath) {
-    // Firefox ignores -profile when an instance is already running, so ask for a new instance in that profile.
-    const args = ["-new-instance", "-profile", options.profilePath, url];
+    // No -new-instance: a running Firefox forwards the URL to that profile, and forcing a new instance would fail on a
+    // profile that is open, which is the normal case for the profile being followed.
+    const args = ["-profile", options.profilePath, url];
     return platform === "darwin" ? { file: "/usr/bin/open", args: ["-n", "-b", browser.bundleId, "--args", ...args] } : platform === "linux" && options.executable ? { file: options.executable, args } : null;
   }
   if (platform === "darwin") {

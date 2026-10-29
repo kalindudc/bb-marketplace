@@ -154,8 +154,11 @@ export function createEngine(deps: EngineDeps) {
     const found = await findDesktop();
     const chosen = await choice(found.hostId);
     if (!chosen.browser?.syncable && chosen.browser) throw new Failure("unsupportedBrowser", `${chosen.browser.name} sessions cannot sync yet`);
+    // Watch the profile that will actually be read: with no override the host follows the last-used one, so the key must
+    // carry it or a change of last-used profile leaves the old cookie database watched.
+    const watchProfile = chosen.profile ?? chosen.browser?.lastUsedProfile;
     const source = { browserId: chosen.browserId, ...(chosen.profile ? { profile: chosen.profile } : {}) };
-    await ensureWatch(found.hostId, chosen.browserId, chosen.profile);
+    await ensureWatch(found.hostId, chosen.browserId, watchProfile);
     if (mode === "changes") {
       const inspected = await deps.host("inspect", source, { hostId: found.hostId, timeoutMs: 60_000 });
       if (!inspected.ok) throw new Failure(inspected.code, inspected.message);

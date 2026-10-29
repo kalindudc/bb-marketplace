@@ -336,7 +336,8 @@ export default experimental_defineHostEntry({
       const browser = findBrowser(browserId);
       if (!browser) return failure(new SyncError("unsupportedBrowser", `Better Browser does not know the browser "${browserId}"`));
       const executable = process.platform === "linux" ? await linuxExecutable(browser) : undefined;
-      const profilePath = profile && browser.engine === "firefox" ? join(dataDirectory(browser, homedir(), process.platform) ?? "", profile) : undefined;
+      // profileRoot keeps an already-absolute profile path (a moved Firefox profile) instead of nesting it under the data dir.
+      const profilePath = profile && browser.engine === "firefox" ? profileRoot(browser, homedir(), process.platform, profile) : undefined;
       const command = openCommand(process.platform, browser, url, {
         ...(profile ? { profile } : {}),
         ...(profilePath ? { profilePath } : {}),

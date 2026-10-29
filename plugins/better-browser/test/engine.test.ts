@@ -147,6 +147,26 @@ describe("the sync engine", () => {
     expect(deps.desktops.closeTab).not.toHaveBeenCalled();
   });
 
+  it("watches the last-used profile again when it changes", async () => {
+    const { engine, deps, advance } = setup();
+    await engine.heartbeat("thr_1", "tab_1");
+    await settle();
+    await settle();
+    advance(61_000);
+    const watches = () => vi.mocked(deps.host).mock.calls.filter(([method]) => method === "watch");
+    expect(watches()).toHaveLength(1);
+    vi.mocked(deps.host).mockImplementation(async (method: string) => {
+      if (method === "browsers") return { ...browsers, browsers: browsers.browsers.map((browser) => browser.id === "chrome" ? { ...browser, lastUsedProfile: "Profile 1", profiles: [...browser.profiles, { directory: "Profile 1", name: "Work" }] } : browser) };
+      if (method === "watch") return { ok: true, profile: "Profile 1" };
+      if (method === "inspect") return { ok: true, changed: true, profile: "Profile 1", cookies: 10, undecryptable: 0, partitioned: 0 };
+      if (method === "apply") return { ok: true, set: 1, removed: 0, rejected: 0, hosts: ["example.com"], profile: "Profile 1", cookies: 10, undecryptable: 0, partitioned: 0 };
+      return { ok: true };
+    });
+    await engine.syncNow("full", "settings", "thr_1");
+    expect(watches().at(-1)?.[1]).toMatchObject({ browserId: "chrome", profile: "Profile 1" });
+    expect(watches()).toHaveLength(2);
+  });
+
   it("does not create a tab when the bb window it knew has gone", async () => {
     const { engine, deps } = setup();
     await engine.heartbeat("thr_1", "tab_1");
