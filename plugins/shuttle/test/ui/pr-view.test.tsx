@@ -428,8 +428,9 @@ describe("the PR view of someone else's PR", () => {
     fireEvent.click(within(card).getByRole("button", { name: "Re-review with AI" }));
     const dialog = await slot.findByRole("dialog", { name: "Re-review world#2311622" });
     expect(dialog.textContent).toContain("Goes to the same thread, “Review shop/world#2311622”");
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Note for the reviewer" }), { target: { value: " Check that the fallback is fixed. " } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Start" }));
-    await waitFor(() => expect(callsTo(slot, "review")).toEqual([{ key: theirs.key, presetId: "standard", threadId: "thr_last" }]));
+    await waitFor(() => expect(callsTo(slot, "review")).toEqual([{ key: theirs.key, presetId: "standard", threadId: "thr_last", note: "Check that the fallback is fixed." }]));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
     fireEvent.click(within(card).getByRole("button", { name: "Approve…" }));
@@ -437,6 +438,35 @@ describe("the PR view of someone else's PR", () => {
     fireEvent.change(within(approve).getByRole("textbox", { name: "Optional comment" }), { target: { value: "Thanks for the fixes." } });
     fireEvent.click(within(approve).getByRole("button", { name: "Approve" }));
     await waitFor(() => expect(callsTo(slot, "submitReview")).toEqual([{ key: theirs.key, verdict: "approve", body: "Thanks for the fixes.", findings: [] }]));
+  });
+
+  it.each([
+    { preset: "Standard review", presetId: "standard", text: "  Focus on filters.\nCheck the fallback too.  ", note: "Focus on filters.\nCheck the fallback too." },
+    { preset: "Quick skim", presetId: "quick", text: " Focus on filters. ", note: "Focus on filters." },
+    { preset: "Standard review", presetId: "standard", text: " \n ", note: undefined },
+  ])("starts $preset with an optional reviewer note ($note)", async ({ preset, presetId, text, note }) => {
+    const { slot, view } = await prPage(theirs, { review: () => ({ threadId: "thr_review", revived: false }) });
+    fireEvent.click(within(await find(await view(), "[data-your-review]")).getByRole("button", { name: "Start AI review" }));
+    const dialog = await slot.findByRole("dialog", { name: "Start an AI review of world#2311622" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Note for the reviewer" }), { target: { value: text } });
+    fireEvent.click(within(dialog).getByRole("radio", { name: new RegExp(preset, "u") }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Start" }));
+    await waitFor(() => expect(callsTo(slot, "review")).toEqual([{ key: theirs.key, presetId, ...(note === undefined ? {} : { note }) }]));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("carries the reviewer note into the per-run review dialog and lets it be edited", async () => {
+    const { slot, view } = await prPage(theirs, { review: () => ({ threadId: "thr_review", revived: false }) });
+    fireEvent.click(within(await find(await view(), "[data-your-review]")).getByRole("button", { name: "Start AI review" }));
+    const presets = await slot.findByRole("dialog");
+    fireEvent.change(within(presets).getByRole("textbox", { name: "Note for the reviewer" }), { target: { value: " Focus on filters. " } });
+    fireEvent.click(within(presets).getByRole("button", { name: "Change for this run…" }));
+    const dialog = await slot.findByRole("dialog", { name: "Review shop/world#2311622" });
+    const note = within(dialog).getByRole("textbox", { name: "Note for the reviewer" }) as HTMLTextAreaElement;
+    expect(note.value).toBe(" Focus on filters. ");
+    fireEvent.change(note, { target: { value: " Focus on filters and the fallback. " } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Start review" }));
+    await waitFor(() => expect(callsTo(slot, "review")).toEqual([{ key: theirs.key, presetId: "standard", note: "Focus on filters and the fallback.", projectId: "prj_bb" }]));
   });
 
   it("opens the per-run review dialog from the preset dialog", async () => {

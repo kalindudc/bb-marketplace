@@ -5,6 +5,12 @@ Every pull request that needs you, from any server, in one place. See
 [skills/shuttle/references/servers.md](skills/shuttle/references/servers.md) for the command
 adapter contract and a working Delta adapter.
 
+## AI reviews
+
+Choose **Start AI review** or **Re-review with AI**, pick a preset, and optionally add a
+**Note for the reviewer** with context or areas to focus on. The note applies only to that
+review and stays with you if you open **Change for this run…** for more options.
+
 ## Boards
 
 Save a specific set of PRs as a board, across repositories and servers. Create an empty board,

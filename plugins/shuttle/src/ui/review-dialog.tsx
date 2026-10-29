@@ -12,7 +12,7 @@ import { SkillInput } from "./skill-input";
 
 const NEW_THREAD = "";
 
-export function ReviewDialog({ pr, presets, thread = null, onClose }: { pr: PrView; presets: readonly Preset[]; thread?: { threadId: string; title: string } | null; onClose(): void }) {
+export function ReviewDialog({ pr, presets, thread = null, initialNote = "", onClose }: { pr: PrView; presets: readonly Preset[]; thread?: { threadId: string; title: string } | null; initialNote?: string; onClose(): void }) {
   const { busy, start } = useStartReview();
   const [presetId, setPresetId] = useState(defaultPresetOf(presets)?.id ?? null);
   const preset = presets.find((item) => item.id === presetId) ?? null;
@@ -23,7 +23,7 @@ export function ReviewDialog({ pr, presets, thread = null, onClose }: { pr: PrVi
   const reusable = pr.links.filter((link) => !link.archived && link.threadId !== own?.threadId).map((link) => ({ threadId: link.threadId, title: link.title }));
   if (thread !== null && thread.threadId !== own?.threadId && !reusable.some((link) => link.threadId === thread.threadId)) reusable.push(thread);
   const [projectChoice, setProjectChoice] = useState<string | null>(null);
-  const [note, setNote] = useState("");
+  const [note, setNote] = useState(initialNote);
   const projects = useShuttleQuery("projects", { key: pr.key });
   const projectId = projectChoice ?? projects.data?.suggested ?? "";
 
@@ -113,7 +113,7 @@ export function ReviewDialog({ pr, presets, thread = null, onClose }: { pr: PrVi
           </>
         )}
         <span className="self-start pt-1.5 text-xs text-muted-foreground">Note for the reviewer</span>
-        <textarea aria-label="Note for the reviewer" rows={2} className={`${FIELD} w-full`} placeholder="Optional, for example: focus on the filter ordering" value={note} onChange={(event) => setNote(event.target.value)} />
+        <textarea aria-label="Note for the reviewer" rows={2} maxLength={4000} className={`${FIELD} w-full`} placeholder="Optional, for example: focus on the filter ordering" value={note} onChange={(event) => setNote(event.target.value)} />
       </div>
     </Dialog>
   );

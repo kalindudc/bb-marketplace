@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.2
+
+- **Add context when starting an AI review.** The preset dialog now has an optional Note for the reviewer field for both first reviews and re-reviews. Add context or areas to focus on without opening the custom-review dialog. Notes apply only to that run, and blank notes are omitted.
+- **Keep your note when changing review options.** Opening Change for this run… preserves the note and lets you edit it before starting. Both dialogs limit notes to the existing 4,000-character maximum.
+
 ## 0.4.1
 
 - **Sort and group board PRs.** Each board has Sort by and Group by menus. Keep the saved order or sort by update time, creation time, merge or close time, repository, or size. Group by status, repository, server, or author, with sorting inside each group. Repositories and author accounts on different servers stay separate.

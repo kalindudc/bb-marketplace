@@ -17,7 +17,7 @@ import { usePrWrites } from "./writes";
 
 type DialogState =
   | { kind: "link"; request: LinkRequest }
-  | { kind: "customize"; pr: PrView; thread: { threadId: string; title: string } | null }
+  | { kind: "customize"; pr: PrView; thread: { threadId: string; title: string } | null; note?: string }
   | { kind: "preset"; pr: PrView }
   | { kind: "merge"; pr: PrView }
   | { kind: "agent"; pr: PrView; start?: "new" }
@@ -94,10 +94,10 @@ export function useSurface({ phone, sheetComposer, selected, select, threadIds }
   const dialogs: ReactNode = (
     <>
       {dialog?.kind === "link" && <LinkDialog request={dialog.request} onClose={close} />}
-      {dialog?.kind === "customize" && presets !== undefined && <ReviewDialog pr={dialog.pr} presets={presets} thread={dialog.thread} onClose={close} />}
+      {dialog?.kind === "customize" && presets !== undefined && <ReviewDialog pr={dialog.pr} presets={presets} thread={dialog.thread} initialNote={dialog.note} onClose={close} />}
       {dialog?.kind === "preset" && presets !== undefined && (
         <PresetDialog pr={dialog.pr} presets={presets} onClose={close}
-          onCustomize={() => setDialog({ kind: "customize", pr: dialog.pr, thread: dialog.pr.next.kind === "rereview" && dialog.pr.lastReview !== null ? { threadId: dialog.pr.lastReview.threadId, title: dialog.pr.lastReview.title } : null })} />
+          onCustomize={(note) => setDialog({ kind: "customize", pr: dialog.pr, note, thread: dialog.pr.next.kind === "rereview" && dialog.pr.lastReview !== null ? { threadId: dialog.pr.lastReview.threadId, title: dialog.pr.lastReview.title } : null })} />
       )}
       {dialog?.kind === "merge" && <MergeDialog pr={dialog.pr} onClose={close} />}
       {dialog?.kind === "agent" && <AgentDialog pr={dialog.pr} start={dialog.start} onClose={close} />}

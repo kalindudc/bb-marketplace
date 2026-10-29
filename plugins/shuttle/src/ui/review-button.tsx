@@ -35,20 +35,22 @@ export const reReviewThread = (pr: PrView): { threadId: string; title: string } 
   pr.next.kind === "rereview" && pr.lastReview !== null ? { threadId: pr.lastReview.threadId, title: pr.lastReview.title } : null;
 
 /** Pick a preset and start an AI review; "Change for this run…" opens the per-run dialog. */
-export function PresetDialog({ pr, presets, onCustomize, onClose }: { pr: PrView; presets: readonly Preset[]; onCustomize(): void; onClose(): void }) {
+export function PresetDialog({ pr, presets, onCustomize, onClose }: { pr: PrView; presets: readonly Preset[]; onCustomize(note: string): void; onClose(): void }) {
   const { busy, start } = useStartReview();
   const [presetId, setPresetId] = useState(defaultPresetOf(presets)?.id ?? null);
+  const [note, setNote] = useState("");
   const again = reReviewThread(pr);
   const preset = presets.find((item) => item.id === presetId) ?? null;
   const submit = async () => {
     if (preset === null) return;
-    if (await start({ key: pr.key, presetId: preset.id, ...(again === null ? {} : { threadId: again.threadId }) }, preset.name)) onClose();
+    const trimmedNote = note.trim();
+    if (await start({ key: pr.key, presetId: preset.id, ...(trimmedNote === "" ? {} : { note: trimmedNote }), ...(again === null ? {} : { threadId: again.threadId }) }, preset.name)) onClose();
   };
   return (
     <Dialog title={again !== null ? `Re-review ${tinyKey(pr)}` : `Start an AI review of ${tinyKey(pr)}`} leading={<Icon name="Play" className="size-4" aria-hidden />} onClose={onClose}
       footer={(
         <>
-          <button type="button" className={BUTTON_GHOST} onClick={onCustomize}>Change for this run…</button>
+          <button type="button" className={BUTTON_GHOST} onClick={() => onCustomize(note)}>Change for this run…</button>
           <span className="flex-1" />
           <button type="button" className={BUTTON_PRIMARY} disabled={busy || preset === null} onClick={() => void submit()}>
             <Icon name="Play" className="size-3.5" aria-hidden />Start
@@ -68,6 +70,10 @@ export function PresetDialog({ pr, presets, onCustomize, onClose }: { pr: PrView
             Goes to its review thread, “{pr.reviewThread.title}”{pr.reviewThread.archived ? ", brought back from the archive" : ""}.
           </div>
         )}
+      <label className="mt-3 block text-xs text-muted-foreground">
+        Note for the reviewer
+        <textarea rows={3} maxLength={4000} className={`${FIELD} mt-1.5 w-full text-sm`} placeholder="Optional, for example: focus on the filter ordering" value={note} onChange={(event) => setNote(event.target.value)} />
+      </label>
       <div className="mt-1.5 text-xs text-muted-foreground">It drafts findings here. Nothing is posted until you choose.</div>
     </Dialog>
   );
