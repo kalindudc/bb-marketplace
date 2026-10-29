@@ -1,0 +1,14 @@
+{
+  "requestId": "req_direct",
+  "results": [
+    {
+      "id": "direct_1",
+      "url": "https://direct.example/page",
+      "title": "Direct result",
+      "publishedDate": "2026-02-03T04:05:06.000Z",
+      "author": "Example Author",
+      "score": 0.88,
+      "highlights": ["Direct API highlight"]
+    }
+  ]
+}

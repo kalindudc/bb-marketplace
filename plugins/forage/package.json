@@ -1,29 +1,35 @@
 {
   "name": "bb-plugin-forage",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "engines": {
-    "bb": ">=0.46",
-    "bbPluginSdk": ">=0.6.49"
+    "bb": ">=0.47",
+    "bbPluginSdk": ">=0.6.79"
   },
   "bb": {
     "name": "Forage",
-    "description": "Gives every agent in bb web search and web fetch as bb's own tools, so results render in the timeline instead of as a raw tool call. Keyless DuckDuckGo and Exa, Brave and SearXNG when you configure them, batch queries, recency and domain filters, readable markdown, paging and passage search.",
+    "description": "Six web-research tools for every BB agent: search, fetch, map, deterministic extraction, bounded crawl jobs and snapshot diffs. Durable scoped sources, Sources UI, zero-turn CLI and privacy ceilings share one runtime.",
     "branding": {
       "icon": "./icons/forage.svg",
       "experimental_icons": {
         "search": "./icons/search.svg",
-        "fetch": "./icons/fetch.svg"
+        "fetch": "./icons/fetch.svg",
+        "map": "./icons/map.svg",
+        "extract": "./icons/extract.svg",
+        "crawl": "./icons/crawl.svg",
+        "diff": "./icons/diff.svg"
       }
     },
     "server": "./server.ts",
+    "app": "./app.tsx",
     "skills": [
       "./skills"
     ]
   },
   "scripts": {
     "build": "bb plugin build",
+    "pretest": "bb plugin build",
     "test": "vitest run",
     "typecheck": "tsc"
   },
@@ -35,7 +41,14 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
     "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.2.0",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/dom": "^10.4.1",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "jsdom": "^27.0.0",
     "better-sqlite3": "^12.10.0",
+    "cron-parser": "5.5.0",
     "hono": "^4.13.13",
     "typescript": "^5.7.0",
     "vitest": "^4.1.12"

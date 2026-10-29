@@ -1,0 +1,10 @@
+{
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "Notice: Date bounds were relaxed because too few results matched.\n{\"requestId\":\"req_1\",\"results\":[{\"id\":\"a\",\"url\":\"https://Example.com/Docs/Case?Q=A\",\"title\":\"Case-sensitive docs\",\"highlights\":[\"First relevant chunk.\",\"Second chunk.\"],\"publishedDate\":\"2026-01-03T00:00:00.000Z\"},{\"id\":\"b\",\"url\":\"https://example.com/docs/case?q=a\",\"title\":\"Different case\",\"highlights\":[\"Another page\"]}]}"
+      }
+    ]
+  }
+}

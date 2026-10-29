@@ -1,0 +1,15 @@
+{
+  "results": [
+    {
+      "url": "https://good.example/",
+      "raw_content": "# Extracted",
+      "images": []
+    }
+  ],
+  "failed_results": [
+    {
+      "url": "https://bad.example/",
+      "error": "blocked"
+    }
+  ]
+}

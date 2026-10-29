@@ -3,8 +3,12 @@ import { readFileSync } from "node:fs";
 import { describe, it } from "vitest";
 import { fileURLToPath } from "node:url";
 import { CONFIG_DEFAULTS, type WebConfig } from "../src/web/config.ts";
+import { ProviderHttpError } from "../src/web/providers/http.ts";
+import type { SearchProviderAdapter } from "../src/web/providers/types.ts";
 import {
+	clearSearchCache,
 	decodeDuckDuckGoUrl,
+	finalizeResults,
 	isProviderConfigured,
 	matchesDomainFilters,
 	parseBraveResponse,
@@ -15,6 +19,8 @@ import {
 	parseJsonRpcBody,
 	parseSearxngResponse,
 	resolveProviderChain,
+	search,
+	searchCacheStats,
 } from "../src/web/search.ts";
 
 const fixture = (name: string) => readFileSync(fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url)), "utf8");
@@ -130,18 +136,153 @@ describe("Brave / SearXNG parsers", () => {
 });
 
 describe("routing", () => {
-	it("auto chain includes keyed providers only when configured, keyless last", () => {
+	it("auto chain never enables billable fallback from key presence alone", () => {
 		assert.deepEqual(resolveProviderChain(undefined, config()), ["duckduckgo", "exa"]);
-		assert.deepEqual(resolveProviderChain(undefined, config({ braveApiKey: "k" })), ["brave", "duckduckgo", "exa"]);
-		assert.deepEqual(resolveProviderChain(undefined, config({ braveApiKey: "k", searxngUrl: "http://sx" })), ["brave", "searxng", "duckduckgo", "exa"]);
+		assert.deepEqual(resolveProviderChain(undefined, config({ privacyProfile: "private", searxngUrl: "https://search.example" })), ["searxng"]);
+		assert.deepEqual(resolveProviderChain(undefined, config({ braveApiKey: "k" })), ["duckduckgo", "exa"]);
+		assert.deepEqual(resolveProviderChain(undefined, config({ braveApiKey: "k", searxngUrl: "http://sx" })), ["searxng", "duckduckgo", "exa"]);
 		assert.deepEqual(resolveProviderChain("exa", config()), ["exa"]);
 		assert.deepEqual(resolveProviderChain(undefined, config({ provider: "brave" })), ["brave"]);
+	});
+	it("filters unconfigured fallback providers after an explicit provider", () => {
+		assert.deepEqual(resolveProviderChain("exa", config({ searxngUrl: undefined })), ["exa"]);
+		assert.deepEqual(resolveProviderChain("exa", config({ searxngUrl: "https://search.example" })), ["exa"]);
 	});
 	it("reports configuration state per provider", () => {
 		assert.equal(isProviderConfigured("brave", config()), false);
 		assert.equal(isProviderConfigured("brave", config({ braveApiKey: "k" })), true);
 		assert.equal(isProviderConfigured("searxng", config()), false);
+		assert.equal(isProviderConfigured("tavily", config()), false);
+		assert.equal(isProviderConfigured("tavily", config({ tavilyApiKey: "k" })), true);
 		assert.equal(isProviderConfigured("duckduckgo", config()), true);
 		assert.equal(isProviderConfigured("exa", config()), true);
+	});
+});
+
+const CAPABILITIES = {
+	recency: true,
+	domains: true,
+	language: false,
+	country: false,
+	category: false,
+	chunks: false,
+} as const;
+
+function adapter(id: "duckduckgo" | "exa" | "brave" | "searxng" | "tavily", run: SearchProviderAdapter["search"]): SearchProviderAdapter {
+	return { id, capabilities: CAPABILITIES, search: run };
+}
+
+describe("search policy, cache and result identity", () => {
+	it("preserves path and query case while deduplicating canonical URL equivalents", () => {
+		const finalized = finalizeResults([
+			{ title: "upper", url: "HTTPS://Example.COM:443/Docs/Case?Q=A#one", snippet: "" },
+			{ title: "duplicate", url: "https://example.com/Docs/Case?Q=A#two", snippet: "" },
+			{ title: "lower", url: "https://example.com/docs/case?q=a", snippet: "" },
+		], { numResults: 10 });
+		assert.deepEqual(finalized.results.map((result) => result.title), ["upper", "lower"]);
+	});
+
+	it("caches by query, filters, provider and policy while exposing cache age and lookup latency", async () => {
+		clearSearchCache();
+		let calls = 0;
+		let now = 1_000;
+		const mock = adapter("duckduckgo", async () => {
+			calls += 1;
+			now += 25;
+			return { results: [{ title: "A", url: "https://a.example/", snippet: "one" }], rawCount: 1, appliedControls: ["domains"], unsupportedControls: [], notices: [] };
+		});
+		const deps = { providers: { duckduckgo: mock }, now: () => now };
+		const first = await search("same", { numResults: 5, domains: ["a.example"] }, config({ searchCacheTtlMs: 10_000 }), "duckduckgo", deps);
+		now = 1_750;
+		const second = await search("same", { numResults: 5, domains: ["a.example"] }, config({ searchCacheTtlMs: 10_000 }), "duckduckgo", deps);
+		assert.equal(first.cached, false);
+		assert.equal(first.durationMs, 25);
+		assert.equal(second.cached, true);
+		assert.equal(second.cacheAgeMs, 725);
+		assert.equal(second.durationMs, 0);
+		assert.equal(calls, 1);
+		assert.equal(searchCacheStats().entries, 1);
+		await search("same", { numResults: 5, domains: ["b.example"] }, config({ searchCacheTtlMs: 10_000 }), "duckduckgo", deps);
+		assert.equal(calls, 2);
+	});
+
+	it("expires cache entries by TTL and evicts the least recently used entry", async () => {
+		clearSearchCache();
+		let calls = 0;
+		let now = 10_000;
+		const mock = adapter("duckduckgo", async (request) => {
+			calls += 1;
+			return { results: [{ title: request.query, url: `https://${request.query}.example/`, snippet: "" }], rawCount: 1, appliedControls: [], unsupportedControls: [], notices: [] };
+		});
+		const cfg = config({ searchCacheTtlMs: 1_000, searchCacheMaxEntries: 2 });
+		const deps = { providers: { duckduckgo: mock }, now: () => now };
+		await search("one", { numResults: 1 }, cfg, "duckduckgo", deps);
+		await search("two", { numResults: 1 }, cfg, "duckduckgo", deps);
+		await search("one", { numResults: 1 }, cfg, "duckduckgo", deps);
+		await search("three", { numResults: 1 }, cfg, "duckduckgo", deps);
+		await search("two", { numResults: 1 }, cfg, "duckduckgo", deps);
+		assert.equal(calls, 4, "two was evicted after one was refreshed");
+		now += 1_000;
+		await search("one", { numResults: 1 }, cfg, "duckduckgo", deps);
+		assert.equal(calls, 5, "one expired at the TTL boundary");
+	});
+
+	it("searches under a private ceiling with the default auto profile", async () => {
+		clearSearchCache();
+		let calls = 0;
+		const searxng = adapter("searxng", async () => {
+			calls += 1;
+			return { results: [{ title: "Private", url: "https://private.example/", snippet: "" }], rawCount: 1, appliedControls: [], unsupportedControls: [], notices: [] };
+		});
+		const cfg = config({ privacyProfile: "private", allowedProviders: ["searxng"], searxngUrl: "https://search.example" });
+		const response = await search("private", { numResults: 1 }, cfg, undefined, { providers: { searxng } });
+		assert.equal(response.provider, "searxng");
+		assert.equal(calls, 1);
+		await assert.rejects(() => search("widen", { numResults: 1, profile: "deep" }, cfg, undefined, { providers: { searxng } }), /POLICY_BLOCKED/);
+		assert.equal(calls, 1);
+	});
+
+	it("fails strict controls before dispatch when the selected provider cannot apply them", async () => {
+		let calls = 0;
+		const mock = adapter("duckduckgo", async () => {
+			calls += 1;
+			return { results: [], rawCount: 0, appliedControls: [], unsupportedControls: [], notices: [] };
+		});
+		await assert.rejects(
+			() => search("strict", { numResults: 5, language: "fr", strictFilters: true }, config(), "duckduckgo", { providers: { duckduckgo: mock } }),
+			/language.*not supported/i,
+		);
+		assert.equal(calls, 0);
+	});
+
+	it("fails strict controls when an adapter reports a request-specific unsupported control", async () => {
+		const mock = adapter("exa", async () => ({
+			results: [],
+			rawCount: 0,
+			appliedControls: [],
+			unsupportedControls: ["category"],
+			notices: [],
+		}));
+		await assert.rejects(
+			() => search("strict", { numResults: 5, category: "research", strictFilters: true }, config(), "exa", { providers: { exa: mock } }),
+			/category.*not supported/i,
+		);
+	});
+
+	it("honors bounded Retry-After cooldowns across calls", async () => {
+		clearSearchCache();
+		let calls = 0;
+		let now = 10_000;
+		const mock = adapter("brave", async () => {
+			calls += 1;
+			throw new ProviderHttpError("brave", 429, "rate limited", Number.MAX_SAFE_INTEGER);
+		});
+		const cfg = config({ braveApiKey: "key" });
+		await assert.rejects(() => search("cooldown", { numResults: 5, fallback: false }, cfg, "brave", { providers: { brave: mock }, now: () => now }), /rate limited/i);
+		now += 1_000;
+		await assert.rejects(() => search("cooldown", { numResults: 5, fallback: false }, cfg, "brave", { providers: { brave: mock }, now: () => now }), /cooldown/i);
+		now += 10 * 60_000;
+		await assert.rejects(() => search("cooldown", { numResults: 5, fallback: false }, cfg, "brave", { providers: { brave: mock }, now: () => now }), /rate limited/i);
+		assert.equal(calls, 2);
 	});
 });

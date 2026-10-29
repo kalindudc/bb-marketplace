@@ -25,12 +25,29 @@ describe("tokenize", () => {
 	});
 	it("skips comments, doctype and treats script/style bodies as opaque", () => {
 		const tokens = tokenize(`<!DOCTYPE html><!-- <p>no</p> --><script>if (a < b) { x = "<p>"; }</script><p>yes</p>`);
-		const names = tokens.map((t) => (t.type === "text" ? `text:${t.value}` : `${t.type}:${t.name}`));
+		const names = tokens.map((t) => t.type === "text" ? `text:${t.value}` : t.type === "json-ld" ? "json-ld" : `${t.type}:${t.name}`);
 		assert.deepEqual(names, ["open:script", "close:script", "open:p", "text:yes", "close:p"]);
 	});
 	it("keeps <title> text as a raw text token", () => {
 		const tokens = tokenize(`<title>A &amp; B</title>`);
 		assert.deepEqual(tokens[1], { type: "text", value: "A &amp; B", raw: true });
+	});
+	it("retains bounded ld+json as data without exposing it as markdown", () => {
+		const tokens = tokenize(`<main>before<script type="application/ld+json">{"name":"Guide"}</script>after</main>`);
+		assert.deepEqual(tokens.find((token) => token.type === "json-ld"), {
+			type: "json-ld",
+			value: '{"name":"Guide"}',
+			truncated: false,
+		});
+		assert.equal(htmlToMarkdown(`<p>before</p><script type="application/ld+json">{"name":"Guide"}</script><p>after</p>`), "before\n\nafter");
+
+		const oversized = tokenize(`<script type="application/ld+json">${"x".repeat(70_000)}</script>`);
+		const jsonLd = oversized.find((token) => token.type === "json-ld");
+		assert.equal(jsonLd?.type, "json-ld");
+		if (jsonLd?.type === "json-ld") {
+			assert.equal(jsonLd.truncated, true);
+			assert.ok(jsonLd.value.length < 70_000);
+		}
 	});
 });
 
@@ -63,6 +80,12 @@ describe("htmlToMarkdown", () => {
 			`<nav><a href="/">Home</a></nav><style>p{}</style><form><input><button>Go</button></form><div hidden>hid</div><div aria-hidden="true">aria</div><div class="cookie-banner">Accept</div><div role="navigation">nav</div><p>Keep</p>`,
 		);
 		assert.equal(md, "Keep");
+	});
+	it("keeps content beneath role=presentation while removing only its semantics", () => {
+		assert.equal(
+			htmlToMarkdown(`<div role="presentation"><pre><code class="language-ts">critical_example()</code></pre></div>`),
+			"```ts\ncritical_example()\n```",
+		);
 	});
 	it("keeps header/footer inside article but drops top-level header/footer (document mode)", () => {
 		const html = `<header>Site</header><article><header><h1>Post</h1></header><p>Body</p><footer>Tags</footer></article><footer>Site footer</footer>`;

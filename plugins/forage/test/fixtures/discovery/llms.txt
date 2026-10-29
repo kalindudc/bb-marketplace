@@ -1,0 +1,5 @@
+# Documentation index
+
+- [LLM guide](/docs/llm-guide)
+- [Duplicate A](/docs/A#llms)
+- [External](https://outside.example/docs/nope)

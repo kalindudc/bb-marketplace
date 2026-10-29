@@ -80,7 +80,14 @@ export interface TextToken {
 	/** Text came from a raw-text element (title/textarea) — not marked up. */
 	raw?: boolean;
 }
-export type Token = OpenToken | CloseToken | TextToken;
+export interface JsonLdToken {
+	type: "json-ld";
+	value: string;
+	truncated: boolean;
+}
+export type Token = OpenToken | CloseToken | TextToken | JsonLdToken;
+
+export const JSON_LD_TOKEN_MAX_CHARS = 64 * 1024;
 
 const VOID_ELEMENTS = new Set([
 	"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr",
@@ -172,7 +179,8 @@ export function tokenize(html: string): Token[] {
 
 		const attrSource = html.slice(j, k);
 		const selfClosing = /\/\s*$/.test(attrSource) || VOID_ELEMENTS.has(name);
-		tokens.push({ type: "open", name, attrs: parseAttrs(attrSource.replace(/\/\s*$/, "")), selfClosing });
+		const attrs = parseAttrs(attrSource.replace(/\/\s*$/, ""));
+		tokens.push({ type: "open", name, attrs, selfClosing });
 		i = textStart = k + 1;
 
 		if (RAW_TEXT_ELEMENTS.has(name) && !selfClosing) {
@@ -180,7 +188,15 @@ export function tokenize(html: string): Token[] {
 			closeRe.lastIndex = i;
 			const cm = closeRe.exec(html);
 			const contentEnd = cm ? cm.index : len;
-			if (RAW_TEXT_KEEP.has(name)) tokens.push({ type: "text", value: html.slice(i, contentEnd), raw: true });
+			const rawContent = html.slice(i, contentEnd);
+			if (RAW_TEXT_KEEP.has(name)) tokens.push({ type: "text", value: rawContent, raw: true });
+			if (name === "script" && /^application\/ld\+json(?:\s*;|$)/i.test(attrs.type ?? "")) {
+				tokens.push({
+					type: "json-ld",
+					value: rawContent.slice(0, JSON_LD_TOKEN_MAX_CHARS),
+					truncated: rawContent.length > JSON_LD_TOKEN_MAX_CHARS,
+				});
+			}
 			tokens.push({ type: "close", name });
 			i = textStart = cm ? cm.index + cm[0].length : len;
 		}
@@ -206,7 +222,7 @@ const NOISE_ELEMENTS = new Set([
 	"map", "button", "select", "option", "datalist", "input", "textarea", "label", "meter", "progress", "dialog",
 	"menu", "nav", "aside", "form",
 ]);
-const NOISE_ROLES = new Set(["navigation", "banner", "contentinfo", "complementary", "search", "dialog", "alertdialog", "menu", "menubar", "toolbar", "tooltip", "presentation"]);
+const NOISE_ROLES = new Set(["navigation", "banner", "contentinfo", "complementary", "search", "dialog", "alertdialog", "menu", "menubar", "toolbar", "tooltip"]);
 const NOISE_CLASS_RE = /(?:^|[\s_-])(?:cookie|consent|gdpr|popup|modal|advert|advertisement|ads|ad-slot|sponsored|breadcrumbs?|skip-link|skip-to|sr-only|visually-hidden|screen-reader|share-buttons|social-share|newsletter|subscribe-box|sidebar|site-header|site-footer|global-nav|top-bar|announcement-bar|toc-toggle)(?:$|[\s_-])/i;
 
 // ---------------------------------------------------------------------------
@@ -812,7 +828,7 @@ export function convertTokens(tokens: Token[], options: ConvertOptions = {}): st
 		else if (token.type === "open") {
 			if (token.name === "code" && b.inPre()) b.noteCodeInPre(token.attrs);
 			b.open(token);
-		} else b.close(token);
+		} else if (token.type === "close") b.close(token);
 	}
 	return b.finish();
 }
@@ -977,6 +993,28 @@ export function extractDocument(html: string, url?: string): HtmlDocument {
 /** Convert an HTML fragment/string to markdown (no content-root selection). */
 export function htmlToMarkdown(html: string, baseUrl?: string): string {
 	return convertTokens(tokenize(html), { baseUrl, keepChrome: true });
+}
+
+export interface HtmlMarkdownAlternate {
+	url: string;
+	title: string;
+}
+
+export function findHtmlMarkdownAlternates(html: string, baseUrl: string, max = 8): HtmlMarkdownAlternate[] {
+	if (max <= 0) return [];
+	const alternates: HtmlMarkdownAlternate[] = [];
+	const seen = new Set<string>();
+	for (const token of tokenize(html)) {
+		if (token.type !== "open" || token.name !== "link") continue;
+		const relations = (token.attrs.rel ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+		if (!relations.includes("alternate") || !/^(?:text|application)\/markdown(?:\s*;|$)/i.test(token.attrs.type ?? "")) continue;
+		const url = resolveUrl(token.attrs.href ?? "", baseUrl);
+		if (!url || seen.has(url)) continue;
+		seen.add(url);
+		alternates.push({ url, title: (token.attrs.title ?? "").trim() });
+		if (alternates.length >= Math.max(0, max)) break;
+	}
+	return alternates;
 }
 
 /** Strip all tags and collapse whitespace (for snippets). */

@@ -1,0 +1,24 @@
+{
+  "grounding": {
+    "generic": [
+      {
+        "title": "Brave source",
+        "url": "https://brave.example/a",
+        "snippets": ["Relevant context A"]
+      },
+      {
+        "title": "Second source",
+        "url": "https://brave.example/b",
+        "snippets": ["Chunk one", "Chunk two"]
+      }
+    ]
+  },
+  "sources": {
+    "https://brave.example/a": {
+      "age": "2 days ago"
+    },
+    "https://brave.example/b": {
+      "age": "1 week ago"
+    }
+  }
+}

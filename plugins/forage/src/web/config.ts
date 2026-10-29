@@ -1,61 +1,87 @@
-/**
- * Forage configuration.
- *
- * The web engine is configured from a single resolved `WebConfig`. The bb
- * plugin settings (see ../settings.ts) are the source of values; nothing here
- * reads the filesystem or the environment, so the engine stays portable and
- * testable on its own.
- */
+/** Resolved web configuration. This module never reads process environment or files. */
 
-export const SEARCH_PROVIDERS = ["auto", "duckduckgo", "exa", "brave", "searxng"] as const;
+import { PROFILE_NAMES, PRIVACY_PROFILES, type PrivacyProfileName, type SearchProfileName } from "../profiles.ts";
+
+export const SEARCH_PROVIDERS = ["auto", "duckduckgo", "exa", "brave", "searxng", "tavily"] as const;
 export type SearchProviderName = (typeof SEARCH_PROVIDERS)[number];
+export type ConcreteSearchProvider = Exclude<SearchProviderName, "auto">;
+
+export const READER_PROVIDERS = ["direct", "tavily", "firecrawl", "jina"] as const;
+export type ReaderProviderName = (typeof READER_PROVIDERS)[number];
+
+export const CRAWL_BACKENDS = ["local", "firecrawl"] as const;
+export type CrawlBackendName = (typeof CRAWL_BACKENDS)[number];
 
 export interface WebConfig {
-	/** Default search provider. `auto` = brave (if key) → searxng (if url) → duckduckgo → exa (both keyless). */
 	provider: SearchProviderName;
-	/** Brave Search API key (https://brave.com/search/api/). */
+	profile: SearchProfileName;
+	privacyProfile: PrivacyProfileName;
+	allowedProviders: ConcreteSearchProvider[];
+	allowedReaders: ReaderProviderName[];
+	allowedBackends: CrawlBackendName[];
+	allowPaidProviderFallback: boolean;
 	braveApiKey?: string;
-	/** Base URL of a SearXNG instance with the JSON format enabled. */
+	exaApiKey?: string;
+	tavilyApiKey?: string;
+	firecrawlApiKey?: string;
+	jinaApiKey?: string;
 	searxngUrl?: string;
-	/** Allow fetching loopback / private / link-local addresses (default false). */
 	allowPrivateNetwork: boolean;
-	/** Per-request timeout in milliseconds. */
+	allowRestrictedThreadCapture: boolean;
 	timeoutMs: number;
-	/** Default max characters of page content returned per URL. */
 	maxChars: number;
-	/** Hard cap on downloaded response bytes. */
 	maxResponseBytes: number;
-	/** User-Agent header sent with every request. */
 	userAgent: string;
-	/** Max concurrent network operations per tool call. */
 	concurrency: number;
-	/** Non-fatal problems found while resolving settings (reported by `bb forage status`). */
+	searchCacheTtlMs: number;
+	searchCacheMaxEntries: number;
 	warnings: string[];
 }
 
 export const DEFAULT_USER_AGENT =
-	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36 forage/0.1";
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36 forage/0.2";
 
 export const CONFIG_DEFAULTS = {
 	provider: "auto" as SearchProviderName,
+	profile: "auto" as SearchProfileName,
+	privacyProfile: "standard" as PrivacyProfileName,
+	allowedProviders: ["duckduckgo", "exa", "brave", "searxng", "tavily"] as ConcreteSearchProvider[],
+	allowedReaders: ["direct", "tavily", "firecrawl", "jina"] as ReaderProviderName[],
+	allowedBackends: ["local", "firecrawl"] as CrawlBackendName[],
+	allowPaidProviderFallback: false,
 	allowPrivateNetwork: false,
+	allowRestrictedThreadCapture: false,
 	timeoutMs: 20_000,
 	maxChars: 30_000,
 	maxResponseBytes: 5 * 1024 * 1024,
 	userAgent: DEFAULT_USER_AGENT,
 	concurrency: 4,
+	searchCacheTtlMs: 5 * 60_000,
+	searchCacheMaxEntries: 128,
 };
 
-/** Raw values as they arrive from bb settings (strings, numbers, booleans). */
 export interface WebConfigValues {
 	provider?: unknown;
+	profile?: unknown;
+	privacyProfile?: unknown;
+	allowedProviders?: unknown;
+	allowedReaders?: unknown;
+	allowedBackends?: unknown;
+	allowPaidProviderFallback?: unknown;
 	braveApiKey?: unknown;
+	exaApiKey?: unknown;
+	tavilyApiKey?: unknown;
+	firecrawlApiKey?: unknown;
+	jinaApiKey?: unknown;
 	searxngUrl?: unknown;
 	allowPrivateNetwork?: unknown;
+	allowRestrictedThreadCapture?: unknown;
 	timeoutMs?: unknown;
 	maxChars?: unknown;
 	concurrency?: unknown;
 	userAgent?: unknown;
+	searchCacheTtlMs?: unknown;
+	searchCacheMaxEntries?: unknown;
 }
 
 function asString(value: unknown): string | undefined {
@@ -70,6 +96,13 @@ function asPositiveInt(value: unknown, warnings: string[], field: string): numbe
 	return undefined;
 }
 
+function boundedInt(value: unknown, warnings: string[], field: string, fallback: number, min: number, max: number): number {
+	const parsed = asPositiveInt(value, warnings, field);
+	if (parsed === undefined) return fallback;
+	if (parsed < min || parsed > max) warnings.push(`${field}: clamped ${parsed} to ${Math.min(max, Math.max(min, parsed))}`);
+	return Math.min(max, Math.max(min, parsed));
+}
+
 function asBool(value: unknown, warnings: string[], field: string): boolean | undefined {
 	if (value === undefined || value === "") return undefined;
 	if (typeof value === "boolean") return value;
@@ -82,37 +115,75 @@ function asBool(value: unknown, warnings: string[], field: string): boolean | un
 	return undefined;
 }
 
-function asProvider(value: unknown, warnings: string[], field: string): SearchProviderName | undefined {
-	if (value === undefined || value === "") return undefined;
-	if (typeof value === "string" && (SEARCH_PROVIDERS as readonly string[]).includes(value.trim().toLowerCase())) {
-		return value.trim().toLowerCase() as SearchProviderName;
+function asEnum<T extends string>(value: unknown, choices: readonly T[], warnings: string[], field: string): T | undefined {
+	if (value === undefined) return undefined;
+	if (typeof value === "string") {
+		const normalized = value.trim().toLowerCase();
+		if ((choices as readonly string[]).includes(normalized)) return normalized as T;
 	}
-	warnings.push(`${field}: expected one of ${SEARCH_PROVIDERS.join("|")}, got ${JSON.stringify(value)}`);
+	warnings.push(`${field}: expected one of ${choices.join("|")}, got ${JSON.stringify(value)}`);
 	return undefined;
 }
 
-/** Coerce raw settings into a complete config, collecting non-fatal problems. */
+function asList<T extends string>(
+	value: unknown,
+	choices: readonly T[],
+	warnings: string[],
+	field: string,
+	defaultValue: readonly T[],
+	invalidFallback: readonly T[],
+): T[] {
+	if (value === undefined) return [...defaultValue];
+	const raw = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : [];
+	const normalized = raw.map((item) => typeof item === "string" ? item.trim().toLowerCase() : "").filter(Boolean);
+	const valid = normalized.filter((item): item is T => (choices as readonly string[]).includes(item));
+	if (normalized.length === 0 || valid.length !== normalized.length) {
+		warnings.push(`${field}: expected a comma-separated subset of ${choices.join("|")}, got ${JSON.stringify(value)}`);
+	}
+	return [...new Set(valid.length > 0 ? valid : invalidFallback)];
+}
+
 export function resolveConfig(values: WebConfigValues = {}): WebConfig {
 	const warnings: string[] = [];
-	const searxngUrl = asString(values.searxngUrl);
-	if (searxngUrl && !/^https?:\/\//i.test(searxngUrl)) {
-		warnings.push(`searxngUrl must start with http:// or https:// (got ${searxngUrl})`);
-	}
+	const rawSearxngUrl = asString(values.searxngUrl);
+	const searxngUrl = rawSearxngUrl && /^https?:\/\//i.test(rawSearxngUrl) ? rawSearxngUrl.replace(/\/+$/, "") : undefined;
+	if (rawSearxngUrl && !searxngUrl) warnings.push("searxngUrl must start with http:// or https://");
 	return {
-		provider: asProvider(values.provider, warnings, "provider") ?? CONFIG_DEFAULTS.provider,
+		provider: asEnum(values.provider, SEARCH_PROVIDERS, warnings, "provider") ?? CONFIG_DEFAULTS.provider,
+		profile: asEnum(values.profile, PROFILE_NAMES, warnings, "profile") ?? CONFIG_DEFAULTS.profile,
+		privacyProfile: values.privacyProfile === undefined
+			? CONFIG_DEFAULTS.privacyProfile
+			: asEnum(values.privacyProfile, PRIVACY_PROFILES, warnings, "privacyProfile") ?? "private",
+		allowedProviders: asList(
+			values.allowedProviders,
+			SEARCH_PROVIDERS.slice(1) as readonly ConcreteSearchProvider[],
+			warnings,
+			"allowedProviders",
+			CONFIG_DEFAULTS.allowedProviders,
+			["duckduckgo", "exa"],
+		),
+		allowedReaders: asList(values.allowedReaders, READER_PROVIDERS, warnings, "allowedReaders", CONFIG_DEFAULTS.allowedReaders, ["direct"]),
+		allowedBackends: asList(values.allowedBackends, CRAWL_BACKENDS, warnings, "allowedBackends", CONFIG_DEFAULTS.allowedBackends, ["local"]),
+		allowPaidProviderFallback: asBool(values.allowPaidProviderFallback, warnings, "allowPaidProviderFallback") ?? CONFIG_DEFAULTS.allowPaidProviderFallback,
 		braveApiKey: asString(values.braveApiKey),
-		searxngUrl: searxngUrl?.replace(/\/+$/, ""),
+		exaApiKey: asString(values.exaApiKey),
+		tavilyApiKey: asString(values.tavilyApiKey),
+		firecrawlApiKey: asString(values.firecrawlApiKey),
+		jinaApiKey: asString(values.jinaApiKey),
+		searxngUrl,
 		allowPrivateNetwork: asBool(values.allowPrivateNetwork, warnings, "allowPrivateNetwork") ?? CONFIG_DEFAULTS.allowPrivateNetwork,
-		timeoutMs: asPositiveInt(values.timeoutMs, warnings, "timeoutMs") ?? CONFIG_DEFAULTS.timeoutMs,
-		maxChars: asPositiveInt(values.maxChars, warnings, "maxChars") ?? CONFIG_DEFAULTS.maxChars,
+		allowRestrictedThreadCapture: asBool(values.allowRestrictedThreadCapture, warnings, "allowRestrictedThreadCapture") ?? false,
+		timeoutMs: boundedInt(values.timeoutMs, warnings, "timeoutMs", CONFIG_DEFAULTS.timeoutMs, 1_000, 120_000),
+		maxChars: boundedInt(values.maxChars, warnings, "maxChars", CONFIG_DEFAULTS.maxChars, 200, 200_000),
 		maxResponseBytes: CONFIG_DEFAULTS.maxResponseBytes,
 		userAgent: asString(values.userAgent) ?? CONFIG_DEFAULTS.userAgent,
-		concurrency: Math.min(8, asPositiveInt(values.concurrency, warnings, "concurrency") ?? CONFIG_DEFAULTS.concurrency),
+		concurrency: boundedInt(values.concurrency, warnings, "concurrency", CONFIG_DEFAULTS.concurrency, 1, 8),
+		searchCacheTtlMs: boundedInt(values.searchCacheTtlMs, warnings, "searchCacheTtlMs", CONFIG_DEFAULTS.searchCacheTtlMs, 1_000, 60 * 60_000),
+		searchCacheMaxEntries: boundedInt(values.searchCacheMaxEntries, warnings, "searchCacheMaxEntries", CONFIG_DEFAULTS.searchCacheMaxEntries, 1, 256),
 		warnings,
 	};
 }
 
-/** Mask a secret for display: keeps first 4 and last 2 characters. */
 export function maskSecret(secret: string | undefined): string {
 	if (!secret) return "(not set)";
 	if (secret.length <= 8) return "*".repeat(secret.length);

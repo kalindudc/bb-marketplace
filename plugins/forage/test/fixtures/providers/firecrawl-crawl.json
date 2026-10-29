@@ -1,0 +1,18 @@
+{
+  "success": true,
+  "id": "crawl_123",
+  "status": "scraping",
+  "completed": 3,
+  "total": 8,
+  "next": "https://api.firecrawl.dev/v2/crawl/crawl_123?skip=3",
+  "data": [
+    {
+      "markdown": "# Crawled page",
+      "metadata": {
+        "title": "Crawled page",
+        "statusCode": 200,
+        "url": "https://docs.example/crawled"
+      }
+    }
+  ]
+}

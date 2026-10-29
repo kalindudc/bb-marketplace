@@ -1,0 +1,7 @@
+{
+  "success": true,
+  "links": [
+    { "url": "https://docs.example/a", "title": "A", "description": "Page A" },
+    { "url": "https://docs.example/B?Case=1", "title": "B" }
+  ]
+}

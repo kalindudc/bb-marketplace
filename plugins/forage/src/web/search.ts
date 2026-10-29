@@ -2,20 +2,30 @@
  * Web search providers and routing.
  *
  *   duckduckgo  keyless HTML endpoint (lite endpoint as fallback); fast, keyword-style
- *   exa         keyless Exa MCP endpoint (JSON-RPC over HTTPS); semantic, rich highlights
- *   brave       Brave Search API (BRAVE_API_KEY / braveApiKey)
- *   searxng     self-hosted SearXNG with JSON format (SEARXNG_URL / searxngUrl)
+ *   exa         advanced keyless MCP, or direct account API when explicitly selected
+ *   brave       Web Search and LLM Context with an explicit account key
+ *   searxng     self-hosted SearXNG with JSON format
+ *   tavily      search with an explicit account key
  *
- * `auto` tries brave → searxng → duckduckgo → exa, skipping unconfigured
- * providers and falling through on errors (e.g. DuckDuckGo's bot check).
+ * Profiles and setting ceilings choose the chain. Keys alone never enable a
+ * billable fallback, and private routing permits only configured SearXNG.
  * Keyless providers get a small per-process concurrency cap so batch queries
  * do not trip their rate limits. Every response records which provider
  * answered and any attempts that failed, so the agent can see what happened.
  */
 
-import type { WebConfig, SearchProviderName } from "./config.ts";
+import { resolvePolicy, type SearchProfileName } from "../profiles.ts";
+import type { OperationContext } from "./contracts.ts";
+import type { ConcreteSearchProvider, WebConfig, SearchProviderName } from "./config.ts";
+import { createDeadline } from "./deadline.ts";
 import { decodeEntities, htmlToText } from "./html.ts";
-import { NetError, createLimiter, mimeType, readBodyLimited, safeFetch } from "./net.ts";
+import { NetError, createLimiter, readBodyLimited, safeFetch } from "./net.ts";
+import { braveProvider } from "./providers/brave.ts";
+import { exaProvider } from "./providers/exa.ts";
+import { MAX_RETRY_AFTER_MS, ProviderHttpError, type ProviderTransport } from "./providers/http.ts";
+import { tavilyProvider } from "./providers/tavily.ts";
+import type { ProviderCapabilities, ProviderSearchResponse, SearchControl, SearchProviderAdapter } from "./providers/types.ts";
+import { canonicalUrlKey } from "./url.ts";
 
 export type Recency = "day" | "week" | "month" | "year";
 export const RECENCY_VALUES = ["day", "week", "month", "year"] as const;
@@ -31,9 +41,17 @@ export interface SearchResult {
 export interface SearchOptions {
 	numResults: number;
 	recency?: Recency;
-	/** Domain filters; prefix with "-" to exclude. */
 	domains?: string[];
 	signal?: AbortSignal;
+	context?: OperationContext;
+	profile?: SearchProfileName;
+	fallback?: boolean;
+	strictFilters?: boolean;
+	language?: string;
+	country?: string;
+	category?: string;
+	content?: "snippets" | "chunks";
+	maxPerHost?: number;
 }
 
 export interface SearchAttempt {
@@ -44,18 +62,20 @@ export interface SearchAttempt {
 
 export interface SearchResponse {
 	query: string;
-	provider: Exclude<SearchProviderName, "auto">;
+	provider: ConcreteSearchProvider;
+	providers?: ConcreteSearchProvider[];
 	results: SearchResult[];
 	durationMs: number;
-	/** Providers that were tried before `provider` succeeded. */
 	attempts: SearchAttempt[];
-	/** Total results the provider returned before domain filtering / truncation. */
 	rawCount: number;
-	/** Caveats worth surfacing (e.g. provider ignored the recency filter). */
 	note?: string;
+	appliedControls: SearchControl[];
+	unsupportedControls: SearchControl[];
+	cached: boolean;
+	cacheAgeMs?: number;
 }
 
-type ConcreteProvider = Exclude<SearchProviderName, "auto">;
+type ConcreteProvider = ConcreteSearchProvider;
 
 // ---------------------------------------------------------------------------
 // Domain filtering
@@ -106,15 +126,26 @@ function applySiteOperator(query: string, filters: DomainFilters): string {
 	return parts.length ? `${query} ${parts.join(" ")}` : query;
 }
 
-function finalizeResults(results: SearchResult[], options: SearchOptions): { results: SearchResult[]; rawCount: number } {
+export function finalizeResults(results: SearchResult[], options: SearchOptions): { results: SearchResult[]; rawCount: number } {
 	const filters = parseDomainFilters(options.domains);
 	const seen = new Set<string>();
+	const perHost = new Map<string, number>();
 	const out: SearchResult[] = [];
 	for (const r of results) {
-		const key = r.url.replace(/^https?:\/\/(www\.)?/, "").replace(/\/+$/, "").toLowerCase();
+		let key: string;
+		let host: string;
+		try {
+			key = canonicalUrlKey(r.url);
+			host = new URL(r.url).hostname.toLowerCase();
+		} catch {
+			continue;
+		}
 		if (seen.has(key)) continue;
 		seen.add(key);
 		if (!matchesDomainFilters(r.url, filters)) continue;
+		const hostCount = perHost.get(host) ?? 0;
+		if (options.maxPerHost && hostCount >= options.maxPerHost) continue;
+		perHost.set(host, hostCount + 1);
 		out.push(r);
 		if (out.length >= options.numResults) break;
 	}
@@ -200,6 +231,7 @@ async function fetchText(
 	signal: AbortSignal | undefined,
 	headers: Record<string, string>,
 	init: { method?: "GET" | "POST"; body?: string } = {},
+	context?: OperationContext,
 ): Promise<{ status: number; text: string; contentType: string }> {
 	const { response } = await safeFetch(url, {
 		signal,
@@ -208,8 +240,10 @@ async function fetchText(
 		headers: { "User-Agent": config.userAgent, "Accept-Language": "en-US,en;q=0.9", ...headers },
 		method: init.method,
 		body: init.body,
+		deadline: context?.deadline,
+		byteBudget: context?.byteBudget,
 	});
-	const bytes = await readBodyLimited(response, config.maxResponseBytes, signal);
+	const bytes = await readBodyLimited(response, config.maxResponseBytes, signal, context?.byteBudget);
 	return { status: response.status, text: new TextDecoder().decode(bytes), contentType: response.headers.get("content-type") ?? "" };
 }
 
@@ -220,7 +254,7 @@ async function searchDuckDuckGo(query: string, options: SearchOptions, config: W
 	htmlUrl.searchParams.set("kl", "wt-wt");
 	if (options.recency) htmlUrl.searchParams.set("df", DDG_RECENCY[options.recency]);
 
-	const primary = await fetchText(htmlUrl.href, config, options.signal, { Accept: "text/html" });
+	const primary = await fetchText(htmlUrl.href, config, options.signal, { Accept: "text/html" }, {}, options.context);
 	const blocked = detectDuckDuckGoBlock(primary.text, primary.status);
 	let results = primary.status === 200 && !blocked ? parseDuckDuckGoHtml(primary.text) : [];
 	if (results.length > 0) return results;
@@ -230,7 +264,7 @@ async function searchDuckDuckGo(query: string, options: SearchOptions, config: W
 	liteUrl.searchParams.set("q", q);
 	liteUrl.searchParams.set("kl", "wt-wt");
 	if (options.recency) liteUrl.searchParams.set("df", DDG_RECENCY[options.recency]);
-	const lite = await fetchText(liteUrl.href, config, options.signal, { Accept: "text/html" });
+	const lite = await fetchText(liteUrl.href, config, options.signal, { Accept: "text/html" }, {}, options.context);
 	const liteBlocked = detectDuckDuckGoBlock(lite.text, lite.status);
 	results = lite.status === 200 && !liteBlocked ? parseDuckDuckGoLite(lite.text) : [];
 	if (results.length > 0) return results;
@@ -247,8 +281,6 @@ async function searchDuckDuckGo(query: string, options: SearchOptions, config: W
 // ---------------------------------------------------------------------------
 // Exa (keyless MCP endpoint)
 // ---------------------------------------------------------------------------
-
-const EXA_MCP_URL = "https://mcp.exa.ai/mcp?tools=web_search_exa";
 
 interface JsonRpcResponse {
 	result?: { isError?: boolean; content?: Array<{ type: string; text?: string }> };
@@ -308,44 +340,9 @@ export function parseExaText(text: string): SearchResult[] {
 	return results;
 }
 
-async function searchExa(query: string, options: SearchOptions, config: WebConfig): Promise<SearchResult[]> {
-	const filters = parseDomainFilters(options.domains);
-	const wantsFilter = filters.allow.length > 0 || filters.deny.length > 0;
-	const body = JSON.stringify({
-		jsonrpc: "2.0",
-		id: 1,
-		method: "tools/call",
-		params: {
-			name: "web_search_exa",
-			arguments: {
-				query: filters.allow.length === 1 ? `${query} (from ${filters.allow[0]})` : query,
-				numResults: Math.min(20, wantsFilter ? options.numResults * 2 : options.numResults),
-				objective: `Rank the most relevant, authoritative pages for: ${query}.${options.recency ? ` Prefer content from the last ${options.recency}.` : ""}`,
-			},
-		},
-	});
-	const { status, text } = await fetchText(EXA_MCP_URL, config, options.signal, {
-		"Content-Type": "application/json",
-		Accept: "application/json, text/event-stream",
-		"x-exa-source": "pi-web",
-	}, { method: "POST", body });
-	if (status === 429) throw new Error("Exa (keyless) rate limit reached (HTTP 429) — retry in a moment");
-	if (status !== 200) throw new Error(`Exa MCP returned HTTP ${status}: ${text.slice(0, 200)}`);
-	const rpc = parseJsonRpcBody(text);
-	if (!rpc) throw new Error("Exa MCP returned an unrecognized response");
-	if (rpc.error) throw new Error(`Exa MCP error${rpc.error.code ? ` ${rpc.error.code}` : ""}: ${rpc.error.message ?? "unknown"}`);
-	const content = rpc.result?.content?.find((c) => c.type === "text" && typeof c.text === "string")?.text ?? "";
-	if (rpc.result?.isError) throw new Error(content.trim().slice(0, 300) || "Exa MCP returned an error");
-	if (!content.trim()) return [];
-	return parseExaText(content);
-}
-
 // ---------------------------------------------------------------------------
 // Brave
 // ---------------------------------------------------------------------------
-
-const BRAVE_URL = "https://api.search.brave.com/res/v1/web/search";
-const BRAVE_RECENCY: Record<Recency, string> = { day: "pd", week: "pw", month: "pm", year: "py" };
 
 interface BraveResponse {
 	web?: { results?: Array<{ title?: string; url?: string; description?: string; age?: string; page_age?: string }> };
@@ -364,28 +361,6 @@ export function parseBraveResponse(payload: unknown): SearchResult[] {
 		out.push({ title: htmlToText(r.title), url: r.url, snippet: htmlToText(r.description ?? ""), age: r.age });
 	}
 	return out;
-}
-
-async function searchBrave(query: string, options: SearchOptions, config: WebConfig): Promise<SearchResult[]> {
-	if (!config.braveApiKey) throw new Error("Brave is not configured (set BRAVE_API_KEY or braveApiKey in pi-web.json)");
-	const filters = parseDomainFilters(options.domains);
-	const url = new URL(BRAVE_URL);
-	url.searchParams.set("q", applySiteOperator(query, filters));
-	url.searchParams.set("count", String(Math.min(20, Math.max(options.numResults, filters.allow.length || filters.deny.length ? 20 : options.numResults))));
-	url.searchParams.set("text_decorations", "false");
-	url.searchParams.set("safesearch", "moderate");
-	if (options.recency) url.searchParams.set("freshness", BRAVE_RECENCY[options.recency]);
-
-	const { status, text, contentType } = await fetchText(url.href, config, options.signal, {
-		Accept: "application/json",
-		"Accept-Encoding": "gzip",
-		"X-Subscription-Token": config.braveApiKey,
-	});
-	if (status === 401 || status === 403) throw new Error(`Brave rejected the API key (HTTP ${status})`);
-	if (status === 429) throw new Error("Brave rate limit exceeded (HTTP 429)");
-	if (status !== 200) throw new Error(`Brave returned HTTP ${status}: ${text.slice(0, 200)}`);
-	if (!mimeType(contentType).includes("json")) throw new Error("Brave returned a non-JSON response");
-	return parseBraveResponse(JSON.parse(text));
 }
 
 // ---------------------------------------------------------------------------
@@ -412,16 +387,19 @@ async function searchSearxng(query: string, options: SearchOptions, config: WebC
 	url.searchParams.set("q", applySiteOperator(query, parseDomainFilters(options.domains)));
 	url.searchParams.set("format", "json");
 	if (options.recency) url.searchParams.set("time_range", options.recency);
+	if (options.language) url.searchParams.set("language", options.language);
+	if (options.category) url.searchParams.set("categories", options.category);
 
 	const { response } = await safeFetch(url.href, {
 		signal: options.signal,
 		timeoutMs: config.timeoutMs,
 		maxBytes: config.maxResponseBytes,
 		headers: { "User-Agent": config.userAgent, Accept: "application/json" },
-		// A self-hosted SearXNG is very often on a private address.
 		allowPrivateNetwork: true,
+		deadline: options.context?.deadline,
+		byteBudget: options.context?.byteBudget,
 	});
-	const text = new TextDecoder().decode(await readBodyLimited(response, config.maxResponseBytes, options.signal));
+	const text = new TextDecoder().decode(await readBodyLimited(response, config.maxResponseBytes, options.signal, options.context?.byteBudget));
 	if (response.status === 403) throw new Error("SearXNG returned 403 — enable `json` in the instance's `search.formats` setting");
 	if (response.status !== 200) throw new Error(`SearXNG returned HTTP ${response.status}: ${text.slice(0, 200)}`);
 	return parseSearxngResponse(JSON.parse(text));
@@ -431,36 +409,154 @@ async function searchSearxng(query: string, options: SearchOptions, config: WebC
 // Routing
 // ---------------------------------------------------------------------------
 
-const PROVIDERS: Record<ConcreteProvider, (q: string, o: SearchOptions, c: WebConfig) => Promise<SearchResult[]>> = {
-	duckduckgo: searchDuckDuckGo,
-	exa: searchExa,
-	brave: searchBrave,
-	searxng: searchSearxng,
+const SIMPLE_CAPABILITIES: Record<"duckduckgo" | "searxng", ProviderCapabilities> = {
+	duckduckgo: { recency: true, domains: true, language: false, country: false, category: false, chunks: false },
+	searxng: { recency: true, domains: true, language: true, country: false, category: true, chunks: false },
 };
 
-/** Keyless endpoints are shared by everyone; keep our burst small. */
-const PROVIDER_LIMITERS: Partial<Record<ConcreteProvider, ReturnType<typeof createLimiter>>> = {
+function simpleAdapter(id: "duckduckgo" | "searxng", run: (query: string, options: SearchOptions, config: WebConfig) => Promise<SearchResult[]>): SearchProviderAdapter {
+	return {
+		id,
+		capabilities: SIMPLE_CAPABILITIES[id],
+		async search(request) {
+			const options: SearchOptions = {
+				numResults: request.numResults,
+				recency: request.recency,
+				domains: [...request.domains.allow, ...request.domains.deny.map((domain) => `-${domain}`)],
+				signal: request.context.deadline.signal,
+				context: request.context,
+				language: request.language,
+				category: request.category,
+			};
+			const results = await run(request.query, options, request.config);
+			return {
+				results: results.map((result) => ({ ...result, publishedDate: result.age })),
+				rawCount: results.length,
+				appliedControls: [
+					...(request.recency ? ["recency" as const] : []),
+					...(request.domains.allow.length || request.domains.deny.length ? ["domains" as const] : []),
+					...(id === "searxng" && request.language ? ["language" as const] : []),
+					...(id === "searxng" && request.category ? ["category" as const] : []),
+				],
+				unsupportedControls: [],
+				notices: [],
+			};
+		},
+	};
+}
+
+const DEFAULT_PROVIDERS: Record<ConcreteProvider, SearchProviderAdapter> = {
+	duckduckgo: simpleAdapter("duckduckgo", searchDuckDuckGo),
+	exa: exaProvider,
+	brave: braveProvider,
+	searxng: simpleAdapter("searxng", searchSearxng),
+	tavily: tavilyProvider,
+};
+
+const PROVIDER_LIMITERS: Record<ConcreteProvider, ReturnType<typeof createLimiter>> = {
 	duckduckgo: createLimiter(2),
 	exa: createLimiter(2),
+	brave: createLimiter(1),
+	searxng: createLimiter(4),
+	tavily: createLimiter(2),
 };
 
-const SUPPORTS_RECENCY: Record<ConcreteProvider, boolean> = { duckduckgo: true, exa: false, brave: true, searxng: true };
+interface CacheEntry { createdAt: number; response: SearchResponse }
+const SEARCH_CACHE = new Map<string, CacheEntry>();
+const COOLDOWNS = new Map<ConcreteProvider, number>();
+
+export interface SearchDependencies {
+	providers?: Partial<Record<ConcreteProvider, SearchProviderAdapter>>;
+	now?: () => number;
+	transport?: ProviderTransport;
+}
+
+export function clearSearchCache(): void {
+	SEARCH_CACHE.clear();
+	COOLDOWNS.clear();
+}
+
+export function searchCacheStats(): { entries: number; cooldowns: number } {
+	return { entries: SEARCH_CACHE.size, cooldowns: COOLDOWNS.size };
+}
 
 export function isProviderConfigured(provider: ConcreteProvider, config: WebConfig): boolean {
 	if (provider === "brave") return Boolean(config.braveApiKey);
+	if (provider === "tavily") return Boolean(config.tavilyApiKey);
 	if (provider === "searxng") return Boolean(config.searxngUrl);
 	return true;
 }
 
-/** Ordered list of providers to try for a request. */
 export function resolveProviderChain(requested: SearchProviderName | undefined, config: WebConfig): ConcreteProvider[] {
-	const want = requested ?? config.provider;
-	if (want !== "auto") return [want];
-	const chain: ConcreteProvider[] = [];
-	if (config.braveApiKey) chain.push("brave");
-	if (config.searxngUrl) chain.push("searxng");
-	chain.push("duckduckgo", "exa");
-	return chain;
+	return resolvePolicy(config, { provider: requested }).providers;
+}
+
+function requestedControls(options: SearchOptions): SearchControl[] {
+	return [
+		...(options.recency ? ["recency" as const] : []),
+		...(options.domains?.length ? ["domains" as const] : []),
+		...(options.language ? ["language" as const] : []),
+		...(options.country ? ["country" as const] : []),
+		...(options.category ? ["category" as const] : []),
+		...(options.content === "chunks" ? ["chunks" as const] : []),
+	];
+}
+
+function unsupportedBy(adapter: SearchProviderAdapter, controls: readonly SearchControl[]): SearchControl[] {
+	return controls.filter((control) => !adapter.capabilities[control]);
+}
+
+function recencyStart(recency: Recency | undefined, now: number): string | undefined {
+	if (!recency) return undefined;
+	const days = recency === "day" ? 1 : recency === "week" ? 7 : recency === "month" ? 31 : 366;
+	return new Date(now - days * 86_400_000).toISOString();
+}
+
+function cacheKey(query: string, options: SearchOptions, policy: ReturnType<typeof resolvePolicy>, recency: Recency | undefined): string {
+	return JSON.stringify({
+		query: query.trim(),
+		numResults: options.numResults,
+		recency,
+		domains: options.domains ?? [],
+		language: options.language ?? null,
+		country: options.country ?? null,
+		category: options.category ?? null,
+		content: options.content ?? "snippets",
+		maxPerHost: options.maxPerHost ?? null,
+		strictFilters: options.strictFilters ?? false,
+		profile: policy.profile,
+		privacy: policy.privacy,
+		providers: policy.providers,
+		fallback: policy.fallback,
+	});
+}
+
+function getCached(key: string, now: number, ttlMs: number, lookupDurationMs: number): SearchResponse | undefined {
+	const entry = SEARCH_CACHE.get(key);
+	if (!entry) return undefined;
+	const age = now - entry.createdAt;
+	if (age >= ttlMs) {
+		SEARCH_CACHE.delete(key);
+		return undefined;
+	}
+	SEARCH_CACHE.delete(key);
+	SEARCH_CACHE.set(key, entry);
+	return { ...entry.response, attempts: [...entry.response.attempts], results: [...entry.response.results], durationMs: lookupDurationMs, cached: true, cacheAgeMs: age };
+}
+
+function putCached(key: string, response: SearchResponse, now: number, maxEntries: number): void {
+	SEARCH_CACHE.delete(key);
+	SEARCH_CACHE.set(key, { createdAt: now, response: { ...response, cached: false, cacheAgeMs: undefined } });
+	while (SEARCH_CACHE.size > maxEntries) SEARCH_CACHE.delete(SEARCH_CACHE.keys().next().value as string);
+}
+
+function toSearchResults(response: ProviderSearchResponse): SearchResult[] {
+	return response.results.map((result) => ({
+		title: result.title,
+		url: result.url,
+		snippet: result.snippet,
+		age: result.age ?? result.publishedDate?.slice(0, 10),
+	}));
 }
 
 export async function search(
@@ -468,27 +564,107 @@ export async function search(
 	options: SearchOptions,
 	config: WebConfig,
 	requested?: SearchProviderName,
+	dependencies: SearchDependencies = {},
 ): Promise<SearchResponse> {
-	const chain = resolveProviderChain(requested, config);
+	const now = dependencies.now ?? Date.now;
+	const startedAt = now();
+	const policy = resolvePolicy(config, { profile: options.profile, provider: requested, fallback: options.fallback });
+	const effectiveRecency = options.recency ?? (policy.strictRecency ? "month" : undefined);
+	const effectiveOptions = { ...options, recency: effectiveRecency };
+	const key = cacheKey(query, effectiveOptions, policy, effectiveRecency);
+	const cacheable = !policy.providers.includes("searxng");
+	const cacheNow = now();
+	const cached = cacheable ? getCached(key, cacheNow, config.searchCacheTtlMs, Math.max(0, cacheNow - startedAt)) : undefined;
+	if (cached) return cached;
+	const ownedDeadline = options.context ? undefined : createDeadline(config.timeoutMs, options.signal);
+	const context = options.context ?? { deadline: ownedDeadline! };
 	const attempts: SearchAttempt[] = [];
-	const startedAt = Date.now();
+	const controls = requestedControls(effectiveOptions);
+	const merged: SearchResult[] = [];
+	const successfulProviders: ConcreteProvider[] = [];
+	const notes: string[] = [];
+	const applied = new Set<SearchControl>();
+	const unsupported = new Set<SearchControl>();
+	let rawCount = 0;
 
-	for (const provider of chain) {
-		const attemptStart = Date.now();
-		try {
-			const run = () => PROVIDERS[provider](query, options, config);
-			const limiter = PROVIDER_LIMITERS[provider];
-			const raw = await (limiter ? limiter(run) : run());
-			const { results, rawCount } = finalizeResults(raw, options);
-			const note = options.recency && !SUPPORTS_RECENCY[provider] ? `${provider} does not support recency filters; results are not date-restricted` : undefined;
-			return { query, provider, results, durationMs: Date.now() - startedAt, attempts, rawCount, note };
-		} catch (err) {
-			if (options.signal?.aborted || (err instanceof NetError && err.kind === "aborted")) throw err;
-			const message = err instanceof Error ? err.message : String(err);
-			attempts.push({ provider, error: message, durationMs: Date.now() - attemptStart });
+	try {
+		for (const provider of policy.providers) {
+			const attemptStart = now();
+			const adapter = dependencies.providers?.[provider] ?? DEFAULT_PROVIDERS[provider];
+			const unsupportedControls = unsupportedBy(adapter, controls);
+			if (effectiveOptions.strictFilters && unsupportedControls.length > 0) {
+				const message = `${provider}: ${unsupportedControls.join(", ")} ${unsupportedControls.length === 1 ? "is" : "are"} not supported`;
+				attempts.push({ provider, error: message, durationMs: now() - attemptStart });
+				if (policy.explicitProvider || !policy.fallback) throw new Error(message);
+				continue;
+			}
+			const cooldownUntil = COOLDOWNS.get(provider) ?? 0;
+			if (cooldownUntil > now()) {
+				const message = `${provider} is in cooldown for ${cooldownUntil - now()}ms`;
+				attempts.push({ provider, error: message, durationMs: 0 });
+				if (policy.explicitProvider || !policy.fallback) throw new Error(message);
+				continue;
+			}
+			try {
+				const run = () => adapter.search({
+					query,
+					numResults: options.numResults,
+					recency: effectiveRecency,
+					domains: parseDomainFilters(options.domains),
+					language: options.language,
+					country: options.country,
+					category: options.category,
+					content: options.content,
+					startPublishedDate: recencyStart(effectiveRecency, now()),
+					endPublishedDate: effectiveRecency ? new Date(now()).toISOString() : undefined,
+					context,
+					config,
+					explicitAccountApi: policy.explicitProvider && provider === "exa",
+					transport: dependencies.transport,
+				});
+				const response = await PROVIDER_LIMITERS[provider](run, { deadline: context.deadline, signal: context.deadline.signal });
+				if (effectiveOptions.strictFilters && response.unsupportedControls.length > 0) {
+					throw new Error(`${provider}: ${response.unsupportedControls.join(", ")} ${response.unsupportedControls.length === 1 ? "is" : "are"} not supported for this request`);
+				}
+				rawCount += response.rawCount;
+				merged.push(...toSearchResults(response));
+				successfulProviders.push(provider);
+				response.notices.forEach((notice) => notes.push(`${provider}: ${notice}`));
+				response.appliedControls.forEach((control) => applied.add(control));
+				[...unsupportedControls, ...response.unsupportedControls].forEach((control) => unsupported.add(control));
+				if (policy.profile !== "deep") break;
+			} catch (error) {
+				if (error instanceof ProviderHttpError && error.status === 429) {
+					COOLDOWNS.set(provider, now() + Math.min(MAX_RETRY_AFTER_MS, error.retryAfterMs ?? 60_000));
+				}
+				if (context.deadline.signal.aborted || (error instanceof NetError && error.kind === "aborted")) throw error;
+				const message = error instanceof Error ? error.message : String(error);
+				attempts.push({ provider, error: message, durationMs: now() - attemptStart });
+				if (!policy.fallback) throw error;
+			}
 		}
+		if (successfulProviders.length === 0) {
+			const detail = attempts.map((attempt) => `${attempt.provider}: ${attempt.error}`).join("; ");
+			throw new Error(`All search providers failed — ${detail}`);
+		}
+		const finalized = finalizeResults(merged, effectiveOptions);
+		if (unsupported.size > 0) notes.push(`Unsupported controls: ${[...unsupported].join(", ")}`);
+		const response: SearchResponse = {
+			query,
+			provider: successfulProviders[0]!,
+			...(successfulProviders.length > 1 ? { providers: successfulProviders } : {}),
+			results: finalized.results,
+			durationMs: now() - startedAt,
+			attempts,
+			rawCount: Math.max(rawCount, finalized.rawCount),
+			...(notes.length ? { note: notes.join("; ") } : {}),
+			appliedControls: [...applied],
+			unsupportedControls: [...unsupported],
+			cached: false,
+		};
+		if (cacheable) putCached(key, response, now(), config.searchCacheMaxEntries);
+		return response;
+	} finally {
+		ownedDeadline?.dispose();
 	}
-
-	const detail = attempts.map((a) => `${a.provider}: ${a.error}`).join("; ");
-	throw new Error(`All search providers failed — ${detail}`);
 }

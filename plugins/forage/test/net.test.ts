@@ -14,7 +14,9 @@ import {
 	readBodyLimited,
 	safeFetch,
 	validateUrl,
+	vetUrl,
 } from "../src/web/net.ts";
+import { createByteBudget, createDeadline } from "../src/web/deadline.ts";
 import { type TestServer, html, startServer } from "./_server.ts";
 
 describe("address classification", () => {
@@ -44,8 +46,13 @@ describe("address classification", () => {
 			assert.equal(isBlockedIPv6(ip), true, ip);
 		}
 	});
+	it("blocks private IPv4 inside compatible and 6to4 addresses", () => {
+		for (const ip of ["::127.0.0.1", "::7f00:1", "::10.0.0.1", "::192.168.1.1", "2002:7f00:1::", "2002:a00:1::", "2002:a9fe:a9fe::", "2002:c0a8:101::"]) {
+			assert.equal(isBlockedIPv6(ip), true, ip);
+		}
+	});
 	it("allows public IPv6", () => {
-		for (const ip of ["2606:4700:4700::1111", "2a00:1450:4001:80b::200e", "::ffff:8.8.8.8"]) {
+		for (const ip of ["2606:4700:4700::1111", "2a00:1450:4001:80b::200e", "::ffff:8.8.8.8", "::8.8.8.8", "::808:808", "2002:808:808::", "2002:101:101::"]) {
 			assert.equal(isBlockedIPv6(ip), false, ip);
 		}
 	});
@@ -71,6 +78,23 @@ describe("validateUrl", () => {
 		await assert.rejects(validateUrl("http://[::1]/"), /Blocked address/);
 		await assert.rejects(validateUrl("http://169.254.169.254/latest/meta-data"), /Blocked address/);
 	});
+	it("blocks compatible and 6to4 private literals before transport", async () => {
+		for (const ip of ["::127.0.0.1", "2002:7f00:1::"]) {
+			await assert.rejects(validateUrl(`http://[${ip}]/`), (e: unknown) => e instanceof NetError && e.kind === "blocked");
+		}
+	});
+	it("blocks DNS answers embedding a private IPv4 address", async () => {
+		await assert.rejects(
+			validateUrl("https://transition.example/", { resolver: async () => [{ address: "2002:7f00:1::", family: 6 }] }),
+			(e: unknown) => e instanceof NetError && e.kind === "blocked",
+		);
+	});
+	it("marks explicitly permitted private transition addresses as private", async () => {
+		for (const ip of ["::127.0.0.1", "2002:7f00:1::"]) {
+			const vetted = await vetUrl(`http://[${ip}]/`, { allowPrivateNetwork: true });
+			assert.equal(vetted.network, "private");
+		}
+	});
 	it("blocks hostnames whose resolved address set includes any private address", async () => {
 		await assert.rejects(validateUrl("https://evil.example/", { resolver: privateResolver }), /resolves to 10\.0\.0\.5/);
 	});
@@ -93,7 +117,16 @@ describe("validateUrl", () => {
 
 describe("safeFetch + readBodyLimited (local server)", () => {
 	let server: TestServer;
+	let sink: TestServer;
 	beforeAll(async () => {
+		sink = await startServer({
+			"/headers": async (req, res) => {
+				let body = "";
+				for await (const chunk of req) body += chunk;
+				res.writeHead(200, { "content-type": "application/json" });
+				res.end(JSON.stringify({ headers: req.headers, method: req.method, body }));
+			},
+		});
 		server = await startServer({
 			"/ok": (_req, res) => html(res, "<p>ok</p>"),
 			"/redir1": (_req, res) => { res.writeHead(302, { location: "/redir2" }); res.end(); },
@@ -116,9 +149,15 @@ describe("safeFetch + readBodyLimited (local server)", () => {
 				res.writeHead(200, { "content-type": "application/json" });
 				res.end(JSON.stringify({ method: req.method, body }));
 			},
+			"/cross-origin": (_req, res) => { res.writeHead(302, { location: `${sink.url}/headers` }); res.end("redirect body"); },
+			"/cross-origin-307": (_req, res) => { res.writeHead(307, { location: `${sink.url}/headers` }); res.end(); },
+			"/same-origin-307": (_req, res) => { res.writeHead(307, { location: "/post" }); res.end(); },
 		});
 	});
-	afterAll(() => server.close());
+	afterAll(async () => {
+		await server.close();
+		await sink.close();
+	});
 
 	const opts = { timeoutMs: 5000, maxBytes: 1_000_000, allowPrivateNetwork: true };
 
@@ -126,10 +165,11 @@ describe("safeFetch + readBodyLimited (local server)", () => {
 		await assert.rejects(safeFetch(`${server.url}/ok`, { ...opts, allowPrivateNetwork: false }), /Blocked address/);
 	});
 	it("follows redirect chains manually and reports the final URL", async () => {
-		const { response, finalUrl, redirects } = await safeFetch(`${server.url}/redir1`, opts);
+		const { response, finalUrl, redirects, access } = await safeFetch(`${server.url}/redir1`, opts);
 		assert.equal(response.status, 200);
 		assert.equal(finalUrl, `${server.url}/ok`);
 		assert.equal(redirects, 2);
+		assert.equal(access.network, "private");
 		assert.equal(new TextDecoder().decode(await readBodyLimited(response, 1000)), "<p>ok</p>");
 	});
 	it("caps redirects and rejects missing Location", async () => {
@@ -139,25 +179,107 @@ describe("safeFetch + readBodyLimited (local server)", () => {
 	it("re-validates every redirect hop against the SSRF policy", async () => {
 		await assert.rejects(safeFetch(`${server.url}/external`, { ...opts, allowPrivateNetwork: false }), /Blocked/);
 	});
-	it("enforces the byte limit while streaming and via content-length", async () => {
+	it("enforces response and shared byte budgets before retaining chunks", async () => {
 		const a = await safeFetch(`${server.url}/big`, opts);
 		await assert.rejects(readBodyLimited(a.response, 5000), (e: unknown) => e instanceof NetError && e.kind === "too-large");
 		const b = await safeFetch(`${server.url}/big-declared`, opts);
 		await assert.rejects(readBodyLimited(b.response, 5000), /exceeds limit/);
+		const c = await safeFetch(`${server.url}/big`, opts);
+		const budget = createByteBudget(100);
+		await assert.rejects(readBodyLimited(c.response, 20_000, undefined, budget), /byte budget/i);
+		assert.equal(budget.remaining(), 100);
 	});
 	it("times out slow servers with a clear message", async () => {
 		await assert.rejects(safeFetch(`${server.url}/slow`, { ...opts, timeoutMs: 300 }), (e: unknown) => e instanceof NetError && e.kind === "timeout");
 	});
-	it("propagates caller aborts as 'aborted'", async () => {
+	it("applies the deadline while DNS is still pending", async () => {
+		const started = Date.now();
+		await assert.rejects(
+			safeFetch("https://slow-dns.invalid/", {
+				...opts,
+				timeoutMs: 30,
+				resolver: async () => {
+					await new Promise((resolve) => setTimeout(resolve, 200));
+					return [{ address: "93.184.216.34", family: 4 }];
+				},
+			}),
+			(e: unknown) => e instanceof NetError && e.kind === "timeout",
+		);
+		assert.ok(Date.now() - started < 150);
+
+		const outer = createDeadline(30);
+		await assert.rejects(
+			safeFetch("https://outer-deadline.invalid/", {
+				...opts,
+				signal: outer.signal,
+				resolver: async () => {
+					await new Promise((resolve) => setTimeout(resolve, 200));
+					return [{ address: "93.184.216.34", family: 4 }];
+				},
+			}),
+			(e: unknown) => e instanceof NetError && e.kind === "timeout",
+		);
+		outer.dispose();
+	});
+	it("propagates caller aborts as 'aborted', including during DNS", async () => {
 		const ac = new AbortController();
 		setTimeout(() => ac.abort(), 50);
 		await assert.rejects(safeFetch(`${server.url}/slow`, { ...opts, signal: ac.signal }), (e: unknown) => e instanceof NetError && e.kind === "aborted");
+
+		const dnsAbort = new AbortController();
+		setTimeout(() => dnsAbort.abort(), 20);
+		await assert.rejects(
+			safeFetch("https://abort-dns.invalid/", {
+				...opts,
+				signal: dnsAbort.signal,
+				resolver: async () => {
+					await new Promise((resolve) => setTimeout(resolve, 200));
+					return [{ address: "93.184.216.34", family: 4 }];
+				},
+			}),
+			(e: unknown) => e instanceof NetError && e.kind === "aborted",
+		);
 	});
 	it("sends POST bodies and custom headers", async () => {
 		const { response } = await safeFetch(`${server.url}/post`, { ...opts, method: "POST", body: '{"a":1}', headers: { "x-test": "1" } });
 		const json = JSON.parse(new TextDecoder().decode(await readBodyLimited(response, 1000)));
 		assert.deepEqual(json, { method: "POST", body: '{"a":1}' });
 		assert.equal(server.requests.at(-1)?.headers["x-test"], "1");
+	});
+	it("strips sensitive and non-allowlisted headers across origins", async () => {
+		const { response } = await safeFetch(`${server.url}/cross-origin`, {
+			...opts,
+			headers: {
+				Authorization: "Bearer placeholder",
+				Cookie: "session=placeholder",
+				"X-Subscription-Token": "placeholder",
+				"X-Custom": "drop-me",
+				Accept: "text/plain",
+				"User-Agent": "ForageTest/1",
+			},
+		});
+		const json = JSON.parse(new TextDecoder().decode(await readBodyLimited(response, 10_000)));
+		assert.equal(json.headers.authorization, undefined);
+		assert.equal(json.headers.cookie, undefined);
+		assert.equal(json.headers["x-subscription-token"], undefined);
+		assert.equal(json.headers["x-custom"], undefined);
+		assert.equal(json.headers.accept, "text/plain");
+		assert.equal(json.headers["user-agent"], "ForageTest/1");
+	});
+	it("rejects cross-origin body-preserving redirects but preserves same-origin 307 bodies", async () => {
+		await assert.rejects(
+			safeFetch(`${server.url}/cross-origin-307`, { ...opts, method: "POST", body: "secret-placeholder" }),
+			/body-preserving redirect/i,
+		);
+		const { response } = await safeFetch(`${server.url}/same-origin-307`, { ...opts, method: "POST", body: "same-origin" });
+		const json = JSON.parse(new TextDecoder().decode(await readBodyLimited(response, 1000)));
+		assert.deepEqual(json, { method: "POST", body: "same-origin" });
+	});
+	it("enforces an optional redirect-origin ceiling", async () => {
+		await assert.rejects(
+			safeFetch(`${server.url}/cross-origin`, { ...opts, allowedRedirectOrigins: [new URL(server.url).origin] }),
+			/redirect origin/i,
+		);
 	});
 	it("decodes non-UTF-8 charsets from Content-Type", async () => {
 		const { response } = await safeFetch(`${server.url}/latin1`, opts);
@@ -258,5 +380,18 @@ describe("helpers", () => {
 		const limit = createLimiter(1);
 		await assert.rejects(limit(async () => { throw new Error("boom"); }), /boom/);
 		assert.equal(await limit(async () => "next"), "next");
+	});
+	it("expires queued work before it starts", async () => {
+		const limit = createLimiter(1);
+		let secondStarted = false;
+		const first = limit(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 80));
+		});
+		const second = limit(async () => {
+			secondStarted = true;
+		}, { timeoutMs: 20 });
+		await assert.rejects(second, /timed out/i);
+		await first;
+		assert.equal(secondStarted, false);
 	});
 });

@@ -1,0 +1,12 @@
+{
+  "query": "example",
+  "results": [
+    {
+      "title": "Tavily result",
+      "url": "https://tavily.example/page",
+      "content": "Relevant Tavily chunks",
+      "score": 0.91,
+      "published_date": "2026-02-01"
+    }
+  ]
+}

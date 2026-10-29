@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>/docs/A#intro</loc><lastmod>2026-10-02</lastmod></url>
+  <url><loc>/docs/A#other</loc></url>
+  <url><loc>/docs/private/secret</loc></url>
+  <url><loc>/Docs/case-sensitive</loc></url>
+  <url><loc>/docs/B?Case=X</loc></url>
+</urlset>

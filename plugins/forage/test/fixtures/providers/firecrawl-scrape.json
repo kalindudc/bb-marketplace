@@ -1,0 +1,11 @@
+{
+  "success": true,
+  "data": {
+    "markdown": "# Page",
+    "metadata": {
+      "title": "Page",
+      "statusCode": 200,
+      "url": "https://docs.example/page"
+    }
+  }
+}

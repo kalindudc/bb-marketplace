@@ -1,9 +1,9 @@
 {
   "id": "forage",
   "displayName": "Forage",
-  "description": "Web search and web fetch for every agent in bb, as bb's own tools. The model in a pi, Codex, Claude Code or ACP thread can search the web and read a page, and each call is a real timeline row with an icon, a label and a duration instead of a raw tool call. Keyless DuckDuckGo and Exa out of the box, Brave or SearXNG when you add a key, batch queries, recency and domain filters, readable markdown, GitHub-aware fetching, paging and passage search.",
+  "description": "Six web-research tools for every BB agent: search, fetch, map, deterministic extraction, bounded crawl jobs and snapshot diffs. Durable scoped sources, Sources UI, zero-turn CLI and privacy ceilings share one runtime.",
   "icon": { "url": "plugins/forage/icons/forage.svg" },
-  "tags": ["search", "web", "fetch", "research", "tools", "agents", "markdown", "providers"],
+  "tags": ["search", "web", "fetch", "research", "tools", "agents", "sources", "crawl", "privacy"],
   "author": {
     "name": "Kalindu De Costa",
     "github": "kalindudc"
