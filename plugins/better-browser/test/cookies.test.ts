@@ -59,6 +59,12 @@ describe("planSync", () => {
     expect(plan.remove).toEqual([{ name: "session", domain: "app.example.com", path: "/" }]);
   });
 
+  it("removes nothing when the source could not be read completely", () => {
+    const unreadable = cookie({ name: "session", host: "app.example.com" });
+    const plan = planSync({ source: [], previous: memoryOf(unreadable), jar: jar(unreadable), mode: "changes", nowSeconds: NOW, allowRemovals: false });
+    expect(plan.remove).toEqual([]);
+  });
+
   it("keeps a dropped cookie when bb has its own newer value", () => {
     const gone = cookie();
     const plan = planSync({ source: [], previous: memoryOf(gone), jar: jar(cookie({ value: "bb-own" })), mode: "changes", nowSeconds: NOW });

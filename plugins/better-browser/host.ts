@@ -275,7 +275,7 @@ export default experimental_defineHostEntry({
         const previous = await loadMemory(source, context);
         const outcome = await withLeasedPage(wsEndpoint, context.signal, async (page) => {
           const { cookies: jar } = await page.send<{ cookies: JarCookie[] }>("Network.getAllCookies");
-          const plan = planSync({ source: read.cookies, previous, jar, mode, nowSeconds: Date.now() / 1000 });
+          const plan = planSync({ source: read.cookies, previous, jar, mode, nowSeconds: Date.now() / 1000, allowRemovals: read.undecryptable === 0 });
           const written = await writeCookies(page, plan.set);
           let removed = 0;
           for (const cookie of plan.remove) {

@@ -8,7 +8,14 @@ export const LINK_LEASE_MS = 6_000;
  * toolbar goes away (plugin disabled, setting off, tab hidden) it lapses and the page behaves as it would without the
  * plugin. Kept as source text: a bundler's helpers would not exist inside the page.
  */
-export function linkHandlerExpression(until: number): string {
+export const SYNTHETIC_CLICK_GUARD = "event.isTrusted !== true";
+
+/**
+ * `guard` is the condition that ignores a click. Production uses SYNTHETIC_CLICK_GUARD: a script can dispatch a click
+ * with a modifier set, and only a real user gesture may open the real browser. Tests pass "false" because jsdom marks
+ * every dispatched event untrusted.
+ */
+export function linkHandlerExpression(until: number, guard: string = SYNTHETIC_CLICK_GUARD): string {
   return `(() => {
   window.__betterBrowserLinksUntil = ${Math.floor(until)};
   if (window.__betterBrowserLinks) return false;
@@ -31,6 +38,7 @@ export function linkHandlerExpression(until: number): string {
   };
   window.addEventListener("click", (event) => {
     if (Date.now() > window.__betterBrowserLinksUntil) return;
+    if (${guard}) return;
     if (event.button !== 0 || !(mac ? event.metaKey : event.ctrlKey)) return;
     const url = linkOf(event);
     if (url === null) return;

@@ -120,6 +120,8 @@ export function planSync(input: {
   jar: readonly JarCookie[];
   mode: SyncMode;
   nowSeconds: number;
+  /** False when the source could not be read completely, so a missing cookie may only be unreadable. */
+  allowRemovals?: boolean;
 }): SyncPlan {
   const jar = new Map<string, string>();
   for (const cookie of input.jar) {
@@ -141,7 +143,7 @@ export function planSync(input: {
     set.push(cookie);
   }
   const remove: CookieRef[] = [];
-  for (const [key, entry] of Object.entries(previous)) {
+  for (const [key, entry] of input.allowRemovals === false ? [] : Object.entries(previous)) {
     if (memory[key] || jar.get(key) !== entry.v) continue;
     const [name, domain, path] = key.split("\u0000") as [string, string, string];
     remove.push({ name, domain, path });

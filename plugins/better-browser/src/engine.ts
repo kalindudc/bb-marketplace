@@ -164,9 +164,15 @@ export function createEngine(deps: EngineDeps) {
     }
     const owner = threadId ?? activeThread();
     if (!owner) throw new Failure("noBrowserTab", "Open a bb Browser tab: the sync runs through it");
-    dirty = false;
     const { scope, tabId } = openTarget(owner, found);
-    const lease = await deps.desktops.acquireControl({ ...scope, tabIds: [tabId], controllerLabel: "Better Browser", ttlMs: LEASE_MS });
+    let lease;
+    try {
+      lease = await deps.desktops.acquireControl({ ...scope, tabIds: [tabId], controllerLabel: "Better Browser", ttlMs: LEASE_MS });
+    } catch (error) {
+      // The cached window or tab went stale; rediscover it instead of failing every later sync for this generation.
+      desktop = null;
+      throw error;
+    }
     try {
       const connection = await deps.desktops.openConnection({ ...scope, leaseId: lease.leaseId });
       const applied = await deps.host("apply", { ...source, wsEndpoint: connection.wsEndpoint, mode }, { hostId: connection.hostId, timeoutMs: LEASE_MS });
@@ -180,7 +186,11 @@ export function createEngine(deps: EngineDeps) {
         cookies: applied.cookies, undecryptable: applied.undecryptable, hosts: applied.hosts, reason,
       };
       state.error = null;
+      dirty = false;
       deps.log.info(`sync (${reason}, ${mode}): set ${applied.set}, removed ${applied.removed}, rejected ${applied.rejected} of ${applied.cookies}`);
+    } catch (error) {
+      dirty = true;
+      throw error;
     } finally {
       await deps.desktops.releaseControl({ ...scope, leaseId: lease.leaseId }).catch(() => undefined);
     }

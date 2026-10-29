@@ -157,6 +157,33 @@ describe("the sync engine", () => {
     expect(deps.desktops.createTab).not.toHaveBeenCalled();
   });
 
+  it("retries the same change on the next focused heartbeat after a failed write", async () => {
+    const { engine, deps, calls } = setup({ apply: { ok: false, code: "readFailed", message: "could not read" } });
+    await engine.heartbeat("thr_1", "tab_1");
+    await settle();
+    await settle();
+    const applies = () => calls.filter((call) => call.startsWith("host.apply")).length;
+    expect(applies()).toBe(1);
+    vi.mocked(deps.host).mockClear();
+    vi.mocked(deps.desktops.acquireControl).mockClear();
+    await engine.heartbeat("thr_1", "tab_1");
+    await settle();
+    await settle();
+    expect(vi.mocked(deps.desktops.acquireControl)).toHaveBeenCalled();
+    expect(vi.mocked(deps.host).mock.calls.filter(([method]) => method === "apply")).toHaveLength(1);
+  });
+
+  it("forgets the cached window when acquiring its tab fails, so the next sync rediscovers it", async () => {
+    const { engine, deps } = setup();
+    await engine.heartbeat("thr_1", "tab_1");
+    await settle();
+    vi.mocked(deps.desktops.acquireControl).mockRejectedValueOnce(new Error("Desktop instance is unavailable"));
+    await engine.syncNow("full", "manual", "thr_1");
+    const before = vi.mocked(deps.desktops.listInstances).mock.calls.length;
+    await engine.syncNow("full", "manual", "thr_1");
+    expect(vi.mocked(deps.desktops.listInstances).mock.calls.length).toBeGreaterThan(before);
+  });
+
   it("stops syncing on its own after a refused Keychain prompt until the user asks again", async () => {
     const { engine, deps, calls, advance } = setup({ apply: { ok: false, code: "keychainDenied", message: "refused" } });
     await engine.heartbeat("thr_1", "tab_1");

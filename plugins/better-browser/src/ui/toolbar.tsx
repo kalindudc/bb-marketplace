@@ -50,6 +50,9 @@ export function BrowserToolbarControl({ threadId, tabId, url, isCompactViewport,
       stopped = true;
       clearInterval(timer);
       document.removeEventListener("visibilitychange", beat);
+      // The tab is going away (another panel tab took the panel): stop counting it as focused at once, so no background
+      // sync leases a tab the user cannot see.
+      rpc.call("heartbeat", { threadId, tabId, focused: false }).catch(() => undefined);
     };
   }, [rpc, threadId, tabId, page]);
 

@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { LINK_HANDLER_OFF, SIGN_IN_FORM_PROBE, linkHandlerExpression, parseOpenMessage } from "../src/links";
+import { LINK_HANDLER_OFF, SIGN_IN_FORM_PROBE, SYNTHETIC_CLICK_GUARD, linkHandlerExpression, parseOpenMessage } from "../src/links";
 
 type Win = Window & { __betterBrowserLinksUntil?: number };
 
@@ -12,8 +12,8 @@ let secondInstall: unknown;
 // jsdom keeps one window for the file, like a page that is never reloaded: install once, then renew.
 beforeAll(() => {
   Object.defineProperty(window.navigator, "platform", { value: "MacIntel", configurable: true });
-  firstInstall = evaluate(linkHandlerExpression(Date.now() + 5_000));
-  secondInstall = evaluate(linkHandlerExpression(Date.now() + 5_000));
+  firstInstall = evaluate(linkHandlerExpression(Date.now() + 5_000, "false"));
+  secondInstall = evaluate(linkHandlerExpression(Date.now() + 5_000, "false"));
 });
 
 beforeEach(() => {
@@ -63,6 +63,15 @@ describe("the Cmd+click handler", () => {
     root.innerHTML = `<a href="https://shadow.test/page"><span id="inner">x</span></a>`;
     click(root.getElementById("inner")!, { metaKey: true });
     expect(messages).toEqual([{ type: "better-browser:open", url: "https://shadow.test/page" }]);
+  });
+
+  it("ignores a click a script dispatched, so a page cannot open the real browser by itself", () => {
+    // jsdom marks every event untrusted, so the behavioural tests above install the handler without the guard; the guard
+    // itself is asserted here. It must stay ahead of the modifier check and the message that opens the real browser.
+    expect(SYNTHETIC_CLICK_GUARD).toBe("event.isTrusted !== true");
+    const expression = linkHandlerExpression(Date.now() + 5_000);
+    expect(expression).toContain("if (event.isTrusted !== true) return;");
+    expect(expression.indexOf("event.isTrusted !== true")).toBeLessThan(expression.indexOf("bb.postMessage"));
   });
 
   it("stops intercepting when the toolbar stops renewing it or turns it off", () => {
