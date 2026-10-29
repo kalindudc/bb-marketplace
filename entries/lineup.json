@@ -1,0 +1,21 @@
+{
+  "id": "lineup",
+  "displayName": "Lineup",
+  "description": "Pick a model from a short list without leaving bb's model menu. Lineup adds two tabs before the provider tabs: Recent, the models your threads used most recently (25 by default, configurable), and Lineup, models you pin from any row in the menu. Search also lists matches from every provider, Tab switches lists, and the menu reopens on the tab you used last.",
+  "icon": "Pin",
+  "tags": ["models", "model-picker", "composer", "recent", "favorites", "providers"],
+  "author": {
+    "name": "Kalindu De Costa",
+    "github": "kalindudc"
+  },
+  "category": "utilities",
+  "overview": "./plugins/lineup/PLUGIN_OVERVIEW.md",
+  "source": {
+    "git": {
+      "url": "https://github.com/kalindudc/bb-marketplace.git",
+      "subdir": "plugins/lineup",
+      "range": ">=0.1.0 <1.0.0",
+      "tagPrefix": "lineup/"
+    }
+  }
+}

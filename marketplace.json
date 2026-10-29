@@ -222,6 +222,34 @@
       }
     },
     {
+      "id": "lineup",
+      "displayName": "Lineup",
+      "description": "Pick a model from a short list without leaving bb's model menu. Lineup adds two tabs before the provider tabs: Recent, the models your threads used most recently (25 by default, configurable), and Lineup, models you pin from any row in the menu. Search also lists matches from every provider, Tab switches lists, and the menu reopens on the tab you used last.",
+      "icon": "Pin",
+      "tags": [
+        "models",
+        "model-picker",
+        "composer",
+        "recent",
+        "favorites",
+        "providers"
+      ],
+      "author": {
+        "name": "Kalindu De Costa",
+        "github": "kalindudc"
+      },
+      "category": "utilities",
+      "overview": "Pick a model from a short list instead of scrolling or searching through every provider and model bb knows about, without leaving bb's own model menu.\n\n## What you get\n\n- Two tabs at the start of bb's model menu, before its provider tabs: **Recent** and **Lineup**. When only one provider is enabled and bb draws no tabs, Lineup adds the row with an **All models** tab for bb's own list.\n- **Recent** lists the models your threads ran on most recently, newest first, with how long ago each was used. It reads them from your thread history, so it is full from the first day. Set how many it shows under **Models in Recent** in the plugin's settings (25 by default).\n- **Lineup** is a list of models you choose. Hover a model in any tab, including bb's own lists, and click its pin to add it or take it out.\n- Picking a row switches the composer's model just as picking it in bb's list does, and the menu stays open so you can change the reasoning level too.\n- Typing in the search box filters Recent or Lineup and also lists matching models from every provider underneath, so you can find and pin any model without changing tabs.\n- **Tab** and **Shift+Tab** in the search box move between Recent, Lineup and bb's list; the arrow keys and Enter work as in bb's list.\n- The menu opens on the tab you used last. Until you choose Recent or Lineup it opens on bb's own list, as it always has.\n- **Settings → Plugins → Lineup** reorders the lineup, removes models from it and adds any model with bb's own picker.\n- It works in the New thread composer and in a thread's composer. The lineup and the last tab are saved on the bb server, so every window shares them.\n\n## Limits\n\n- bb has no plugin interface for its model menu, so Lineup adds its tabs to the menu bb 0.47 draws. If a bb update changes that menu, the tabs stop appearing until Lineup is updated; bb's own menu keeps working.\n- Lineup does not change bb's own lists; it only adds the two tabs and the pins.\n- A model that is not offered on this machine, for example because its provider is disabled, is left out of Recent and shown as \"not offered here\" in Lineup.\n- Recent reads at most the 400 most recently active threads, so a long-unused model can drop off before the limit is reached.",
+      "source": {
+        "git": {
+          "url": "https://github.com/kalindudc/bb-marketplace.git",
+          "subdir": "plugins/lineup",
+          "range": ">=0.1.0 <1.0.0",
+          "tagPrefix": "lineup/"
+        }
+      }
+    },
+    {
       "id": "loom",
       "displayName": "Loom",
       "description": "Hand a goal to agents and keep the decisions. A planner turns it into a spec with tickets, acceptance criteria, checks and a merge plan, and a separate agent reviews the spec before you approve it. Workers then build each ticket in its own git worktree, Loom runs your checks, and reviewers on another model approve the work or send findings back. Approved work merges into an integration branch you land as one pull request, or opens as one pull request per ticket that Loom follows through CI. A full-screen Loom page shows what each project is for, what needs you, the board, every attempt and review, the order to merge stacked pull requests in, the changes before they land, insights on how the project went and a timeline you can rewind.",

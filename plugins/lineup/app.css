@@ -1,0 +1,49 @@
+/* Lineup's own list replaces bb's while Recent or Lineup is the open tab. */
+[data-lineup-view="recent"] [data-lineup-native-list],
+[data-lineup-view="lineup"] [data-lineup-native-list] {
+  display: none !important;
+}
+
+[data-lineup-list] {
+  display: none;
+}
+
+[data-lineup-view="recent"] [data-lineup-list],
+[data-lineup-view="lineup"] [data-lineup-list] {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+/* bb still underlines its selected provider tab; mute it while a Lineup tab is open. */
+[data-lineup-view="recent"] [data-lineup-native-tabrow] > button[title],
+[data-lineup-view="lineup"] [data-lineup-native-tabrow] > button[title] {
+  border-bottom-color: transparent !important;
+  color: var(--muted-foreground) !important;
+}
+
+[data-lineup-view="recent"] [data-lineup-native-tabrow] > button[title]:hover,
+[data-lineup-view="lineup"] [data-lineup-native-tabrow] > button[title]:hover {
+  color: var(--foreground) !important;
+}
+
+/* A pin shows on the row under the pointer or the keyboard, and always once pinned. */
+[data-lineup-pin="off"] {
+  visibility: hidden;
+  color: var(--subtle-foreground);
+}
+
+[role="option"]:hover [data-lineup-pin="off"],
+[role="option"][data-last-hovered] [data-lineup-pin="off"],
+[role="option"][data-lineup-active] [data-lineup-pin="off"] {
+  visibility: visible;
+}
+
+[data-lineup-pin="on"] {
+  color: var(--foreground);
+}
+
+[data-lineup-pin]:hover {
+  color: var(--foreground);
+}

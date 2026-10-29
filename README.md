@@ -13,6 +13,7 @@ bb plugin install follow-thinking@kalindudc
 bb plugin install forage@kalindudc
 bb plugin install gruve@kalindudc
 bb plugin install lan-connect@kalindudc
+bb plugin install lineup@kalindudc
 bb plugin install loom@kalindudc
 bb plugin install update-shelf@kalindudc
 bb plugin install session-log@kalindudc
@@ -36,6 +37,7 @@ plugin store.
 | [Forage](plugins/forage) | `forage` | Gives every agent web search and web fetch as bb's own tools, so a pi, Codex, Claude Code or ACP thread gets results in a real timeline row instead of a raw tool call. Keyless DuckDuckGo and Exa, Brave or SearXNG with a key, batch queries, recency and domain filters, readable markdown, GitHub-aware fetching, paging and passage search. |
 | [Gruve](plugins/gruve) | `gruve` | A gruvbox theme for coding: 0px corners, flat surfaces, a JetBrains Mono interface and a composer styled as a terminal prompt. Dark mode is gruvbox soft; light mode keeps gruvbox's ink on neutral paper instead of yellow. Pick it under Settings → Appearance. |
 | [LAN Connect](plugins/lan-connect) | `lan-connect` | Opens this bb to phones and laptops on your home network: pair a device once with a code or QR code, then use bb in its browser at `<computer>.local`, its LAN IP or your own name. No bb account needed. |
+| [Lineup](plugins/lineup) | `lineup` | Adds Recent and Lineup tabs to bb's own model menu: the models your threads used most recently, and a short list you pin from any row. Search also lists matches from every provider, and the menu reopens on the tab you used last. |
 | [Loom](plugins/loom) | `loom` | Run a software project with agents: a planner turns a goal into a validated spec and tickets, workers pick up tickets in their own worktrees, separate reviewers approve or request changes, and approved work merges into an integration branch or opens a pull request. |
 | [Pi AI Services](plugins/pi-services) | `pi-services` | Writes bb's thread titles and commit messages with your own pi CLI setup — your credentials and model, no bb account. Adds a regenerate-title button to the thread header and its actions menu, and pi executable/model knobs in the plugin settings. |
 | [Retitle](plugins/retitle) | `retitle` | Titles threads that bb's automatic titling left untitled (it gives up after 8 seconds), using the Shopify AI proxy and only the text you typed, so `!plan` threads get a title for the work. `bb retitle` titles any thread again or backfills untitled ones. |
