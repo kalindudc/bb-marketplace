@@ -167,6 +167,17 @@ describe("the sync engine", () => {
     expect(watches()).toHaveLength(2);
   });
 
+  it("rediscovers the bb window after a failed connection, not only after a failed acquire", async () => {
+    const { engine, deps } = setup();
+    await engine.heartbeat("thr_1", "tab_1");
+    await settle();
+    vi.mocked(deps.desktops.openConnection).mockRejectedValueOnce(new Error("HTTP 502: Desktop browser instance is unavailable or generation is stale"));
+    await engine.syncNow("full", "manual", "thr_1");
+    const before = vi.mocked(deps.desktops.listInstances).mock.calls.length;
+    await engine.syncNow("full", "manual", "thr_1");
+    expect(vi.mocked(deps.desktops.listInstances).mock.calls.length).toBeGreaterThan(before);
+  });
+
   it("does not create a tab when the bb window it knew has gone", async () => {
     const { engine, deps } = setup();
     await engine.heartbeat("thr_1", "tab_1");

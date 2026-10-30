@@ -2,6 +2,12 @@
 
 Notable changes to Better Browser, newest first. Releases are tagged `better-browser/vX.Y.Z` in this repository.
 
+## 0.2.6 (2026-10-29)
+
+### Fixed
+
+- Any failed sync now forgets the cached bb window, not just a failed tab lease. After bb restarts or its browser window reconnects, the plugin used to keep retrying the old generation and reported "Desktop browser instance is unavailable or generation is stale" until it was reloaded; it now rediscovers the window on the next sync.
+
 ## 0.2.5 (2026-10-29)
 
 ### Security

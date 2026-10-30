@@ -201,6 +201,9 @@ export function createEngine(deps: EngineDeps) {
       deps.log.info(`sync (${reason}, ${mode}): set ${applied.set}, removed ${applied.removed}, rejected ${applied.rejected} of ${applied.cookies}`);
     } catch (error) {
       dirty = true;
+      // Any failure may mean the cached window is gone (bb restarted, the app reconnected): rediscover it next time
+      // instead of failing in a loop against a stale generation.
+      desktop = null;
       throw error;
     } finally {
       await deps.desktops.releaseControl({ ...scope, leaseId: lease.leaseId }).catch(() => undefined);
