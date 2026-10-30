@@ -17,7 +17,7 @@ const SEARCH_DELAY_MS = 200;
 function TabButton({ on, onClick, children }: { on: boolean; onClick(): void; children: string }) {
   return (
     <button type="button" role="tab" aria-selected={on} onClick={onClick}
-      className={`-mb-px cursor-pointer border-b-2 px-2.5 py-1.5 text-sm ${on ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
+      className={`-mb-px cursor-pointer border-b-2 px-2.5 py-1.5 text-sm ${on ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
       {children}
     </button>
   );
@@ -113,8 +113,8 @@ export function LinkDialog({ request, onClose }: { request: LinkRequest; onClose
               const already = linkedRole(thread.id);
               return (
                 <button key={thread.id} type="button" role="radio" aria-checked={on} onClick={() => setPicked(thread.id)}
-                  className={`flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-2 text-left text-sm ${on ? "border-primary bg-primary/5" : "border-border hover:bg-accent"}`}>
-                  <span className={`size-4 shrink-0 rounded-full border ${on ? "border-[5px] border-primary" : "border-border"}`} aria-hidden />
+                  className={`flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-2 text-left text-sm ${on ? "border-surface-selected-border bg-surface-selected" : "border-border hover:bg-state-hover"}`}>
+                  <span className={`size-4 shrink-0 rounded-full border ${on ? "border-[5px] border-foreground" : "border-border"}`} aria-hidden />
                   <Icon name="MessageSquare" className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
                   <span className="min-w-0 flex-1 truncate">{thread.title}</span>
                   <span className="shrink-0 text-xs text-muted-foreground">

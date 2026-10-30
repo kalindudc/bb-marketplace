@@ -20,6 +20,9 @@ case "$REPO" in
   *) fail "$REPO is not owner/name" ;;
 esac
 HOST="https://delta.shopify.io"
+# A compare lists every changed file, about 1KB each, where the PR view keeps 100; past 100 the
+# files endpoint's first page, patches and all, is the smaller read.
+COMPARE_FILES=100
 
 # Runs dt and prints its answer. A failed dt fails the script with dt's own error and exit code:
 # piped straight into jq, it would leave jq to print nothing and exit 0. What dt says on stderr is
@@ -108,10 +111,12 @@ ACTIVITY='($pull[0].head.sha) as $head | ($gate[0] // null) as $g
   | {head: $head, items: (
     [$reviews[0][] | select(.state != "PENDING") | select(.state != "COMMENTED" or ((.body // "") != ""))
       | {id: "\(.node_id):\(.state)", kind: "review", author: .user.login, bot: (.user.type == "Bot"),
-         state: (.state | ascii_downcase | gsub("_"; " ")), body, url: .html_url, at: .submitted_at}]
+         state: (.state | ascii_downcase | gsub("_"; " ")), body, url: .html_url, at: .submitted_at}
+        + (if $detail == "1" then {review: .id} else {} end)]
     + [$threads[0][]
       | {id: .node_id, kind: "thread", author: .user.login, bot: (.user.type == "Bot"), body, path, line, url: .html_url,
-         at: .created_at, thread: .thread_id, resolved: (.resolved == true)}]
+         at: .created_at, thread: .thread_id, resolved: (.resolved == true)}
+        + (if $detail == "1" then {hunk: (if .in_reply_to_id == null then .diff_hunk else null end), review: .pull_request_review_id} else {} end)]
     + [$comments[0][] | {id: .node_id, kind: "comment", author: .user.login, bot: (.user.type == "Bot"), body, url: .html_url, at: .created_at}]
     + (if $g == null then [] else ($g.head // $head) as $on | [$g.status_check_rollup.contexts[]?
       | select(.status == "completed" and (.conclusion | '"$FAILED"'))
@@ -137,6 +142,30 @@ MERGE_OPTIONS='([.viewer.allowed_methods[]? | select(. == "squash" or . == "merg
   | {methods: $methods, default: $methods[0], delete_branch: false, can_auto: false, state: $state,
      detail: (if $state == "clean" then null elif ($why | length) == 0 then null
        else ($why | join("; ") | (.[0:1] | ascii_upcase) + .[1:]) + "." end)}'
+
+# With SHUTTLE_DETAIL=1, what the PR view shows besides the conversation: every check on the head
+# from the merge gate, the last 100 commits, the first 100 changed files (paths and counts only) and
+# whether it can merge. A failed check's item is the id its check item has in the conversation.
+# The commits and files come from one compare of the PR's base and head, whose files carry no
+# patches; it lists every file at once, so a PR with more than COMPARE_FILES files reads the PR's
+# own files endpoint instead, a page of 100 with their patches, and its commits on their own.
+CHECK_RUN='{name: (.name // "check"), group: ((.producer // "") | sub("@.*$"; "") | if . == "" then null else . end),
+  state: (if .status != "completed" then "running" elif (.conclusion | IN("success", "neutral")) then "passed"
+          elif (.conclusion | IN("skipped", "stale")) then "skipped" elif (.conclusion | '"$FAILED"') then "failed" else "running" end),
+  detail: (if .status != "completed" then ((.status // "") | gsub("_"; " ") | if . == "" then null else . end)
+           elif (.conclusion | IN("success", "failure", "skipped")) then null else ((.conclusion // "") | gsub("_"; " ") | if . == "" then null else . end) end),
+  url: .details_url, started_at: (.started_at // null), completed_at: (.completed_at // null),
+  item: (if .status == "completed" and (.conclusion | '"$FAILED"') then (("\(.kind):\(.producer // ""):\(.name // "")" | .[0:240]) + ":\($on)") else null end)}'
+DETAIL='($pull[0]) as $p | ($gate[0] // null) as $g
+  | {checks: (if $g == null or (($g.status_check_rollup.contexts? | type) != "array") then null
+      else ($g.head // $p.head.sha) as $on | [$g.status_check_rollup.contexts[] | '"$CHECK_RUN"'] | {total: length, items: .[0:100]} end),
+     commits: (if $commits[0] == null then null else {total: ($p.commits // 0),
+       items: ([($before[0] // [])[], $commits[0][]] | .[-100:] | map({sha, message: ((.commit.message // "") | split("\n")[0]),
+         author: (.author.login // .commit.author.name // null), at: (.commit.committer.date // .commit.author.date // null)}))} end),
+     files: (if $files[0] == null then null else {total: ($p.changed_files // ($files[0] | length)),
+       items: [$files[0][0:100][] | {path: .filename, additions, deletions,
+         change: ({added: "added", removed: "removed", modified: "modified", renamed: "renamed", copied: "copied"}[.status] // "changed")}]} end),
+     merge: (if $g == null then null else ($g | '"$MERGE_OPTIONS"' | {state, detail}) end)}'
 
 search() {
   q=$(printf 'repo:%s is:pr %s' "$REPO" "$1" | jq -sRr @uri)
@@ -183,13 +212,48 @@ case "${SHUTTLE_OPERATION:?}" in
     all "repos/$REPO/pulls/$n/comments" > "$tmp/threads" & threads=$!
     all "repos/$REPO/issues/$n/comments" > "$tmp/comments" & comments=$!
     get "repos/$REPO/pulls/$n/merge-readiness" > "$tmp/gate" 2>/dev/null & gate=$!
+    detail="${SHUTTLE_DETAIL:-0}"
+    echo null > "$tmp/commits"
+    echo null > "$tmp/before"
+    echo null > "$tmp/files"
     failed=0
     wait_all "$pull" "$reviews" "$threads" "$comments" || failed=$?
     # Without the merge gate the reviews and comments still arrive; failed checks come with a later read.
     wait "$gate" || : > "$tmp/gate"
     if [ "$failed" -ne 0 ]; then exit "$failed"; fi
-    jq -n --slurpfile pull "$tmp/pull" --slurpfile reviews "$tmp/reviews" --slurpfile threads "$tmp/threads" \
-      --slurpfile comments "$tmp/comments" --slurpfile gate "$tmp/gate" "$ACTIVITY" ;;
+    if [ "$detail" = 1 ]; then
+      # The PR view's extras never fail the conversation: a part that cannot be read is left out.
+      count=$(jq '.commits // 0' "$tmp/pull")
+      changed=$(jq '.changed_files // 0' "$tmp/pull")
+      base=$(jq -r '.base.sha // empty' "$tmp/pull")
+      head=$(jq -r '.head.sha // empty' "$tmp/pull")
+      compared=0
+      if [ "$changed" -le "$COMPARE_FILES" ] && [ -n "$base" ] && [ -n "$head" ]; then
+        # Its first page holds every file and the first 100 commits, oldest first.
+        if (get "repos/$REPO/compare/$base...$head?per_page=100") > "$tmp/compare"; then
+          jq '.files' "$tmp/compare" > "$tmp/files"
+          if [ "$count" -le 100 ]; then jq '.commits' "$tmp/compare" > "$tmp/commits"; fi
+          compared=1
+        fi
+      fi
+      if [ "$compared" = 0 ]; then get "repos/$REPO/pulls/$n/files?per_page=100" > "$tmp/files" & files=$!; fi
+      if [ "$compared" = 0 ] || [ "$count" -gt 100 ]; then
+        # The API lists commits oldest first, 100 a page; the last 100 can span the last two pages.
+        last=$(( (count + 99) / 100 ))
+        if [ "$last" -lt 1 ]; then last=1; fi
+        (get "repos/$REPO/pulls/$n/commits?per_page=100&page=$last") > "$tmp/commits" || echo null > "$tmp/commits"
+        if [ "$last" -gt 1 ] && [ $((count % 100)) -ne 0 ]; then
+          (get "repos/$REPO/pulls/$n/commits?per_page=100&page=$((last - 1))") > "$tmp/before" || echo null > "$tmp/before"
+        fi
+      fi
+      if [ "$compared" = 0 ]; then
+        if wait "$files"; then :; else echo null > "$tmp/files"; fi
+      fi
+    fi
+    jq -n --arg detail "$detail" --slurpfile pull "$tmp/pull" --slurpfile reviews "$tmp/reviews" --slurpfile threads "$tmp/threads" \
+      --slurpfile comments "$tmp/comments" --slurpfile gate "$tmp/gate" \
+      --slurpfile commits "$tmp/commits" --slurpfile before "$tmp/before" --slurpfile files "$tmp/files" \
+      "$ACTIVITY + (if \$detail == \"1\" then ($DETAIL) else {} end)" ;;
   merge_options)
     gate=$(get "repos/$REPO/pulls/${SHUTTLE_NUMBER:?}/merge-readiness") || exit
     printf '%s\n' "$gate" | jq "$MERGE_OPTIONS" ;;

@@ -18,7 +18,7 @@ function InboxCard({ pr, layout }: { pr: PrView; layout: RowLayout }) {
   const selected = layout.selected === pr.key;
   return (
     <article data-card={pr.key} aria-label={pr.title} aria-current={selected ? "true" : undefined} onClick={onCardClick(() => layout.onSelect(pr.key))}
-      className={`flex cursor-pointer flex-col rounded-lg border border-l-[3px] border-border px-3.5 py-2.5 transition-colors ${TONE_EDGE[next.tone]} ${selected ? SELECTED_CARD : "bg-card hover:bg-accent/40"}`}>
+      className={`flex cursor-pointer flex-col rounded-lg border border-l-[3px] border-border px-3.5 py-2.5 transition-colors ${TONE_EDGE[next.tone]} ${selected ? SELECTED_CARD : "bg-card hover:bg-state-hover"}`}>
       <div className="flex items-start gap-2">
         <div className={`flex min-w-0 flex-1 items-center gap-1.5 pt-1 text-[10.5px] font-bold uppercase tracking-wider ${TONE_TEXT[next.tone]}`}>
           <Icon name={NEXT_ICONS[next.kind]} fallback="Circle" className="size-3.5 shrink-0" aria-hidden />
@@ -82,7 +82,7 @@ export function InboxView({ layout, onGo }: { layout: RowLayout; onGo(route: Rou
       {cards.map((pr) => <InboxCard key={pr.key} pr={pr} layout={layout} />)}
       {data !== undefined && data.olderRequests > 0 && (
         <article data-older onClick={onCardClick(() => onGo({ view: "reviews", source: "asked", key: null }))}
-          className={`flex cursor-pointer flex-col rounded-lg border border-l-[3px] border-border bg-card px-3.5 py-2.5 transition-colors hover:bg-accent/40 ${TONE_EDGE.neutral}`}>
+          className={`flex cursor-pointer flex-col rounded-lg border border-l-[3px] border-border bg-card px-3.5 py-2.5 transition-colors hover:bg-state-hover ${TONE_EDGE.neutral}`}>
           <div className={`flex items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-wider ${TONE_TEXT.neutral}`}><Icon name="Clock" className="size-3.5" aria-hidden />Reviews · Older requests</div>
           <div className="mb-2 mt-1 text-[13px]">
             {plural(data.olderRequests, "request")} by name {data.olderRequests === 1 ? "has" : "have"} waited more than {plural(typeof days === "number" ? days : 3, "day")}. They stay in Reviews, not here, so the Inbox stays short.
@@ -98,7 +98,7 @@ export function InboxView({ layout, onGo }: { layout: RowLayout; onGo(route: Rou
             {data.handled.length === 0 && <li className="py-2 text-[13px] text-muted-foreground">Nothing in the last 24 hours.</li>}
             {data.handled.map((event) => (
               <li key={event.id} data-event={event.kind} onClick={event.key === null ? undefined : onCardClick(() => layout.onSelect(event.key!))}
-                className={`-mx-3 flex items-start gap-2.5 border-t border-border px-3 py-2 text-[13px] first:border-t-0 ${event.key === null ? "" : "cursor-pointer hover:bg-accent/40"}`}>
+                className={`-mx-3 flex items-start gap-2.5 border-t border-border px-3 py-2 text-[13px] first:border-t-0 ${event.key === null ? "" : "cursor-pointer hover:bg-state-hover"}`}>
                 <EventIcon kind={event.kind} />
                 <span className="min-w-0 flex-1">
                   {event.text}

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import type { AgentMode, AgentView, PrView } from "../contract";
 import { useActions } from "./actions";
-import { BUTTON, BUTTON_GHOST, BUTTON_PRIMARY, Choice, Dialog, ErrorNote, LABEL, Pill, Segmented } from "./common";
+import { BUTTON, BUTTON_GHOST, BUTTON_PRIMARY, Choice, Dialog, ErrorNote, LABEL, LABEL_FIRST, Pill, Segmented } from "./common";
 import { AGENT_MODE_META } from "./constants";
 import { messageOf, useShuttleQuery } from "./data";
 import { ago, tinyKey } from "./format";
@@ -21,24 +21,19 @@ function StatusPill({ agent }: { agent: AgentView }) {
 }
 
 /** Who handles new reviews and failed checks on a PR: a thread and what it is asked to do, or nobody. */
-export function AgentCard({ pr }: { pr: PrView }) {
+export function AgentControls({ pr }: { pr: PrView }) {
   const actions = useActions();
   if (!isLive(pr)) return null;
   const agent = pr.agent;
   return (
-    <section aria-label="Agent" data-agent-card className="mx-4 mt-3 rounded-lg border border-border bg-card">
-      <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-sm font-semibold">
-        <Icon name="Bot" className="size-4" aria-hidden />
-        Agent
-        <span className="truncate text-xs font-normal text-muted-foreground">who handles new reviews and failed checks</span>
-      </div>
+    <div aria-label="Agent" role="group" data-agent-card className="rounded-lg border border-border bg-background">
       <div className="px-3 py-2.5">
         {agent === null ? (
           <>
             <div className="mb-2 text-sm text-muted-foreground">No agent. New feedback on this PR waits in your Inbox.</div>
             {pr.suggestedAgent !== null && (
-              <div data-suggested-agent className="mb-2 flex items-center gap-2.5 rounded-lg border border-primary/70 bg-primary/5 px-3 py-2">
-                <span aria-hidden className="size-3.5 shrink-0 rounded-full border-4 border-primary" />
+              <div data-suggested-agent className="mb-2 flex items-center gap-2.5 rounded-lg border border-surface-selected-border bg-surface-selected px-3 py-2">
+                <span aria-hidden className="size-3.5 shrink-0 rounded-full border-4 border-foreground" />
                 <span className="min-w-0 flex-1">
                   <b className="block truncate text-sm">{pr.suggestedAgent.title}</b>
                   <span className="block text-xs text-muted-foreground">{pr.suggestedAgent.why}</span>
@@ -80,7 +75,7 @@ export function AgentCard({ pr }: { pr: PrView }) {
           </>
         )}
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -122,7 +117,7 @@ export function AgentDialog({ pr, start, onClose }: { pr: PrView; start?: "new";
           </button>
         </>
       )}>
-      <div className={`${LABEL} mt-0`}>Thread</div>
+      <div className={LABEL_FIRST}>Thread</div>
       <div role="radiogroup" aria-label="Thread">
         {pr.suggestedAgent !== null && (
           <Choice on={picked === pr.suggestedAgent.threadId} title={pr.suggestedAgent.title} hint={pr.suggestedAgent.why} onPick={() => setPicked(pr.suggestedAgent!.threadId)} />

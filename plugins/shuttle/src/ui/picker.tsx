@@ -93,11 +93,12 @@ export function Picker({ phone, title, trigger, triggerClassName, triggerLabel, 
   );
 }
 
-const ROW = "flex w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent data-[highlighted]:bg-accent data-[disabled]:cursor-default data-[disabled]:opacity-60 disabled:cursor-default disabled:opacity-60";
+const ROW = "flex w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm outline-none hover:bg-state-hover focus-visible:bg-state-hover data-[highlighted]:bg-state-hover data-[disabled]:cursor-default data-[disabled]:opacity-60 disabled:cursor-default disabled:opacity-60";
+const ROW_DANGER = `${ROW} text-destructive-text`;
 
 function Box({ checked }: { checked: boolean }) {
   return (
-    <span aria-hidden className={`inline-flex size-4 shrink-0 items-center justify-center rounded border ${checked ? "border-primary bg-primary text-primary-foreground" : "border-border"}`}>
+    <span aria-hidden className={`inline-flex size-4 shrink-0 items-center justify-center rounded border ${checked ? "border-foreground bg-foreground text-background" : "border-input"}`}>
       {checked && <Icon name="Check" className="size-3" />}
     </span>
   );
@@ -122,18 +123,19 @@ export function PickerCheckbox({ checked, disabled = false, onToggle, children }
   );
 }
 
-/** A row that does one thing; it closes the picker unless `keepOpen`. */
-export function PickerAction({ onSelect, keepOpen = false, className = "", children }: { onSelect(): void; keepOpen?: boolean; className?: string; children: ReactNode }) {
+/** A row that does one thing; it closes the picker unless `keepOpen`. `danger` is for one that closes, archives or deletes. */
+export function PickerAction({ onSelect, keepOpen = false, danger = false, children }: { onSelect(): void; keepOpen?: boolean; danger?: boolean; children: ReactNode }) {
   const { mode, close } = useContext(Context);
+  const className = danger ? ROW_DANGER : ROW;
   if (mode === "menu") {
     return (
-      <DropdownMenu.Item className={`${ROW} ${className}`} onSelect={(event) => { if (keepOpen) event.preventDefault(); onSelect(); }}>
+      <DropdownMenu.Item className={className} onSelect={(event) => { if (keepOpen) event.preventDefault(); onSelect(); }}>
         {children}
       </DropdownMenu.Item>
     );
   }
   return (
-    <button type="button" role="menuitem" className={`${ROW} ${className}`} onClick={() => { onSelect(); if (!keepOpen) close(); }}>
+    <button type="button" role="menuitem" className={className} onClick={() => { onSelect(); if (!keepOpen) close(); }}>
       {children}
     </button>
   );

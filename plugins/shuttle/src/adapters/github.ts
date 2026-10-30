@@ -1,10 +1,10 @@
 // The built-in GitHub adapter: gh's GraphQL API, mapped onto the same shapes command adapters print.
 import { z } from "zod";
 import { OPERATIONS, type ListOperation, type Operation, type ServerConfig } from "../config";
-import type { CheckCounts, CheckState, MergeMethod, MergeOptions, MyReview, PrChange, PrState, Reviewer, ReviewerState, ReviewState } from "../contract";
+import type { CheckCounts, CheckRun, CheckState, FileChange, MergeMethod, MergeOptions, MyReview, PrChange, PrDetails, PrState, Reviewer, ReviewerState, ReviewState, RunState, TimelineEvent, TimelineKind } from "../contract";
 import { linkFor } from "../keys";
 import type { Activity, ActivityItem, EditOptions, PrSummary } from "../model";
-import { AdapterError, changeOperation, type Adapter, type ListOptions, type ListResult, type MergeInput, type ReviewComment, type ReviewPost, type ReviewPosted } from "./adapter";
+import { AdapterError, changeOperation, type ActivityOptions, type Adapter, type CheckInfo, type CommitInfo, type ListOptions, type ListResult, type MergeInput, type ReviewComment, type ReviewPost, type ReviewPosted } from "./adapter";
 import { fillCommand, outputTail, runProcess, shellQuote, tail, type RunResult, type Runner } from "./exec";
 
 const GH_TIMEOUT_MS = 45_000;
@@ -38,6 +38,60 @@ export function listFields(operation: ListOperation): string {
   if (operation === "mentioned") return SUMMARY_FIELDS;
   return `${SUMMARY_FIELDS} ${REQUESTED_FIELDS}`;
 }
+
+const WHO = "author { login __typename }";
+const REVIEWER = "requestedReviewer { __typename ... on User { login } ... on Bot { login } ... on Mannequin { login } ... on Team { combinedSlug } }";
+const TIMELINE_EVENTS = `REVIEW_REQUESTED_EVENT, REVIEW_REQUEST_REMOVED_EVENT, LABELED_EVENT, UNLABELED_EVENT, READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT,
+  HEAD_REF_FORCE_PUSHED_EVENT, MERGED_EVENT, CLOSED_EVENT, REOPENED_EVENT, RENAMED_TITLE_EVENT, AUTO_MERGE_ENABLED_EVENT, AUTO_MERGE_DISABLED_EVENT,
+  REVIEW_DISMISSED_EVENT, HEAD_REF_DELETED_EVENT, BASE_REF_CHANGED_EVENT`;
+
+/**
+ * The review activity of one PR. Watching reads it on every sync, so it stays light; the PR view asks with
+ * detail for every check, the commits, the changed files (paths and counts, never contents), other timeline
+ * events, whether it can merge, and each thread's diff hunk.
+ */
+function activityQuery(detail: boolean): string {
+  const threadExtra = detail ? "first: comments(first: 1) { nodes { diffHunk } }" : "";
+  const commentExtra = detail ? "pullRequestReview { id }" : "";
+  const contexts = detail
+    ? `state contexts(first: 100) { totalCount nodes { __typename
+      ... on CheckRun { id name status conclusion detailsUrl startedAt completedAt isRequired(pullRequestNumber: $number) checkSuite { workflowRun { workflow { name } } app { name } } }
+      ... on StatusContext { id context state targetUrl createdAt description isRequired(pullRequestNumber: $number) } } }`
+    : `contexts(first: 50) { nodes { __typename
+      ... on CheckRun { id name conclusion detailsUrl completedAt } ... on StatusContext { id context state targetUrl createdAt } } }`;
+  const extra = detail
+    ? `isDraft mergeable mergeStateStatus reviewDecision
+      commitList: commits(last: 100) { totalCount nodes { commit { oid messageHeadline committedDate author { name user { login } } } } }
+      files(first: 100) { totalCount nodes { path additions deletions changeType } }
+      timelineItems(last: 100, itemTypes: [${TIMELINE_EVENTS}]) { nodes { __typename
+        ... on ReviewRequestedEvent { createdAt actor { login } ${REVIEWER} }
+        ... on ReviewRequestRemovedEvent { createdAt actor { login } ${REVIEWER} }
+        ... on LabeledEvent { createdAt actor { login } label { name } }
+        ... on UnlabeledEvent { createdAt actor { login } label { name } }
+        ... on ReadyForReviewEvent { createdAt actor { login } }
+        ... on ConvertToDraftEvent { createdAt actor { login } }
+        ... on HeadRefForcePushedEvent { createdAt actor { login } beforeCommit { abbreviatedOid } afterCommit { abbreviatedOid } }
+        ... on MergedEvent { createdAt actor { login } commit { abbreviatedOid } mergeRefName }
+        ... on ClosedEvent { createdAt actor { login } }
+        ... on ReopenedEvent { createdAt actor { login } }
+        ... on RenamedTitleEvent { createdAt actor { login } previousTitle currentTitle }
+        ... on AutoMergeEnabledEvent { createdAt actor { login } }
+        ... on AutoMergeDisabledEvent { createdAt actor { login } }
+        ... on ReviewDismissedEvent { createdAt actor { login } review { author { login } } }
+        ... on HeadRefDeletedEvent { createdAt actor { login } headRefName }
+        ... on BaseRefChangedEvent { createdAt actor { login } previousRefName currentRefName } } }`
+    : "";
+  return `query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+    headRefOid
+    reviews(last: 50) { nodes { id state body url submittedAt ${WHO} } }
+    reviewThreads(last: 50) { nodes { id isResolved path line ${threadExtra} comments(last: 20) { nodes { id body url createdAt ${WHO} ${commentExtra} } } } }
+    comments(last: 50) { nodes { id body url createdAt ${WHO} } }
+    commits(last: 1) { nodes { commit { statusCheckRollup { ${contexts} } } } }
+    ${extra}
+  } } }`;
+}
+const ACTIVITY_QUERY = activityQuery(false);
+const DETAIL_QUERY = activityQuery(true);
 
 const actor = z.object({ login: z.string(), __typename: z.string().optional() }).nullable();
 const stateCounts = z.array(z.object({ state: z.string(), count: z.number() })).nullish();
@@ -248,6 +302,46 @@ export function toSummary(node: SummaryNode): PrSummary {
   };
 }
 
+const contextNode = z.object({
+  __typename: z.string(),
+  id: z.string().optional(),
+  name: z.string().optional(),
+  status: z.string().optional(),
+  conclusion: z.string().nullable().optional(),
+  detailsUrl: z.string().nullable().optional(),
+  startedAt: z.string().nullish(),
+  completedAt: z.string().nullish(),
+  isRequired: z.boolean().optional(),
+  checkSuite: z.object({ workflowRun: z.object({ workflow: z.object({ name: z.string() }) }).nullish(), app: z.object({ name: z.string() }).nullish() }).nullish(),
+  context: z.string().optional(),
+  state: z.string().optional(),
+  targetUrl: z.string().nullable().optional(),
+  createdAt: z.string().nullish(),
+  description: z.string().nullable().optional(),
+});
+type ContextNode = z.infer<typeof contextNode>;
+const oid = z.object({ abbreviatedOid: z.string() }).nullish();
+const timelineNode = z
+  .object({
+    __typename: z.string(),
+    createdAt: z.string().optional(),
+    actor: z.object({ login: z.string() }).nullish(),
+    requestedReviewer: z.object({ __typename: z.string(), login: z.string().optional(), combinedSlug: z.string().optional() }).nullish(),
+    label: z.object({ name: z.string() }).nullish(),
+    beforeCommit: oid,
+    afterCommit: oid,
+    commit: oid,
+    mergeRefName: z.string().nullish(),
+    previousTitle: z.string().optional(),
+    currentTitle: z.string().optional(),
+    review: z.object({ author: z.object({ login: z.string() }).nullable() }).nullish(),
+    headRefName: z.string().optional(),
+    previousRefName: z.string().optional(),
+    currentRefName: z.string().optional(),
+  })
+  .nullable();
+type TimelineNode = NonNullable<z.infer<typeof timelineNode>>;
+
 const activityNode = z.object({
   headRefOid: z.string().nullable(),
   reviews: z.object({ nodes: z.array(z.object({ id: z.string(), state: z.string(), body: z.string(), url: z.string().nullable(), submittedAt: z.string().nullish(), author: actor })) }),
@@ -258,7 +352,10 @@ const activityNode = z.object({
         isResolved: z.boolean(),
         path: z.string().nullable(),
         line: z.number().nullable(),
-        comments: z.object({ nodes: z.array(z.object({ id: z.string(), body: z.string(), url: z.string().nullable(), createdAt: z.string().nullish(), author: actor })) }),
+        first: z.object({ nodes: z.array(z.object({ diffHunk: z.string().nullable() })) }).optional(),
+        comments: z.object({
+          nodes: z.array(z.object({ id: z.string(), body: z.string(), url: z.string().nullable(), createdAt: z.string().nullish(), author: actor, pullRequestReview: z.object({ id: z.string() }).nullish() })),
+        }),
       }),
     ),
   }),
@@ -267,30 +364,24 @@ const activityNode = z.object({
     nodes: z.array(
       z.object({
         commit: z.object({
-          statusCheckRollup: z
-            .object({
-              contexts: z.object({
-                nodes: z.array(
-                  z.object({
-                    __typename: z.string(),
-                    id: z.string().optional(),
-                    name: z.string().optional(),
-                    conclusion: z.string().nullable().optional(),
-                    detailsUrl: z.string().nullable().optional(),
-                    completedAt: z.string().nullish(),
-                    context: z.string().optional(),
-                    state: z.string().optional(),
-                    targetUrl: z.string().nullable().optional(),
-                    createdAt: z.string().nullish(),
-                  }),
-                ),
-              }),
-            })
-            .nullable(),
+          statusCheckRollup: z.object({ state: z.string().optional(), contexts: z.object({ totalCount: z.number().optional(), nodes: z.array(contextNode) }) }).nullable(),
         }),
       }),
     ),
   }),
+  // Only with detail: what the PR view shows besides the conversation.
+  isDraft: z.boolean().optional(),
+  mergeable: z.string().optional(),
+  mergeStateStatus: z.string().optional(),
+  reviewDecision: z.string().nullable().optional(),
+  commitList: z
+    .object({
+      totalCount: z.number(),
+      nodes: z.array(z.object({ commit: z.object({ oid: z.string(), messageHeadline: z.string(), committedDate: z.string().nullish(), author: z.object({ name: z.string().nullable(), user: z.object({ login: z.string() }).nullable() }).nullable() }) })),
+    })
+    .optional(),
+  files: z.object({ totalCount: z.number(), nodes: z.array(z.object({ path: z.string(), additions: z.number(), deletions: z.number(), changeType: z.string() })) }).nullish(),
+  timelineItems: z.object({ nodes: z.array(timelineNode) }).optional(),
 });
 
 const REVIEW_LABEL: Record<string, string> = { APPROVED: "approved", CHANGES_REQUESTED: "changes requested", COMMENTED: "commented", DISMISSED: "dismissed" };
@@ -302,24 +393,147 @@ export function toActivity(node: z.infer<typeof activityNode>): Activity {
     if (review.state === "PENDING") continue;
     // A comment-only review with no body is just the container of its threads, which arrive on their own.
     if (review.state === "COMMENTED" && !review.body.trim()) continue;
-    items.push({ id: `${review.id}:${review.state}`, kind: "review", author: review.author?.login ?? null, bot: isBot(review.author), state: REVIEW_LABEL[review.state] ?? review.state.toLowerCase(), body: review.body, url: review.url, path: null, line: null, at: ms(review.submittedAt), thread: null, resolved: null });
+    items.push({ id: `${review.id}:${review.state}`, kind: "review", author: review.author?.login ?? null, bot: isBot(review.author), state: REVIEW_LABEL[review.state] ?? review.state.toLowerCase(), body: review.body, url: review.url, path: null, line: null, at: ms(review.submittedAt), thread: null, resolved: null, review: review.id });
   }
   for (const thread of node.reviewThreads.nodes) {
-    for (const comment of thread.comments.nodes) {
-      items.push({ id: `${thread.id}:${comment.id}`, kind: "thread", author: comment.author?.login ?? null, bot: isBot(comment.author), state: null, body: comment.body, url: comment.url, path: thread.path, line: thread.line, at: ms(comment.createdAt), thread: thread.id, resolved: thread.isResolved });
-    }
+    const hunk = thread.first?.nodes[0]?.diffHunk ?? null;
+    thread.comments.nodes.forEach((comment, index) => {
+      items.push({
+        id: `${thread.id}:${comment.id}`, kind: "thread", author: comment.author?.login ?? null, bot: isBot(comment.author), state: null, body: comment.body, url: comment.url, path: thread.path, line: thread.line,
+        at: ms(comment.createdAt), thread: thread.id, resolved: thread.isResolved,
+        // The hunk is the thread's; it rides on the earliest comment read.
+        ...(index === 0 && hunk !== null ? { hunk } : {}),
+        ...(comment.pullRequestReview ? { review: comment.pullRequestReview.id } : {}),
+      });
+    });
   }
   for (const comment of node.comments.nodes) {
     items.push({ id: comment.id, kind: "comment", author: comment.author?.login ?? null, bot: isBot(comment.author), state: null, body: comment.body, url: comment.url, path: null, line: null, at: ms(comment.createdAt), thread: null, resolved: null });
   }
-  for (const context of node.commits.nodes[0]?.commit.statusCheckRollup?.contexts.nodes ?? []) {
+  const rollup = node.commits.nodes[0]?.commit.statusCheckRollup ?? null;
+  const contexts = rollup?.contexts.nodes ?? [];
+  for (const context of contexts) {
     const failed = context.__typename === "CheckRun" ? FAILED_RUN.has(context.conclusion ?? "") : context.state === "FAILURE" || context.state === "ERROR";
     if (!failed || !context.id) continue;
     const name = context.name ?? context.context ?? "check";
-    items.push({ id: `${context.id}:${head ?? ""}`, kind: "check", author: null, bot: false, state: "failed", body: `${name} failed`, url: context.detailsUrl ?? context.targetUrl ?? null, path: null, line: null, at: ms(context.completedAt ?? context.createdAt), thread: null, resolved: null });
+    items.push({ id: checkItemId(context.id, head), kind: "check", author: null, bot: false, state: "failed", body: `${name} failed`, url: context.detailsUrl ?? context.targetUrl ?? null, path: null, line: null, at: ms(context.completedAt ?? context.createdAt), thread: null, resolved: null });
   }
-  return { head, items };
+  return { head, items, details: node.commitList === undefined ? null : detailsOf(node, contexts, head) };
 }
+
+/** A failed check's id is the check and the head it ran on, so the same failure on a new head is new again. */
+const checkItemId = (contextId: string, head: string | null) => `${contextId}:${head ?? ""}`;
+const words = (value: string) => value.toLowerCase().replace(/_/gu, " ");
+
+export function checkRunOf(context: ContextNode, head: string | null): CheckRun {
+  if (context.__typename === "CheckRun") {
+    const conclusion = context.conclusion ?? null;
+    const state: RunState = context.status !== "COMPLETED" || conclusion === null ? "running"
+      : FAILED_RUN.has(conclusion) ? "failed"
+        : conclusion === "SKIPPED" || conclusion === "STALE" ? "skipped" : "passed";
+    const detail = state === "running" ? (context.status ? words(context.status) : null) : conclusion !== null && !["SUCCESS", "FAILURE", "SKIPPED"].includes(conclusion) ? words(conclusion) : null;
+    return {
+      name: context.name ?? "check",
+      group: context.checkSuite?.workflowRun?.workflow.name ?? context.checkSuite?.app?.name ?? null,
+      state,
+      detail,
+      required: context.isRequired ?? null,
+      url: context.detailsUrl ?? null,
+      startedAt: ms(context.startedAt),
+      completedAt: state === "running" ? null : ms(context.completedAt),
+      itemId: state === "failed" && context.id ? checkItemId(context.id, head) : null,
+    };
+  }
+  const state: RunState = context.state === "SUCCESS" ? "passed" : context.state === "FAILURE" || context.state === "ERROR" ? "failed" : "running";
+  return {
+    name: context.context ?? "status",
+    group: null,
+    state,
+    detail: context.description ?? null,
+    required: context.isRequired ?? null,
+    url: context.targetUrl ?? null,
+    startedAt: ms(context.createdAt),
+    completedAt: null,
+    itemId: state === "failed" && context.id ? checkItemId(context.id, head) : null,
+  };
+}
+
+const FILE_CHANGE: Record<string, FileChange> = { ADDED: "added", DELETED: "removed", RENAMED: "renamed", COPIED: "copied", MODIFIED: "modified", CHANGED: "changed" };
+/** A merge is also a close at the same moment on GitHub's timeline; only the merge is news. */
+const SAME_MOMENT_MS = 5000;
+
+export function timelineOf(nodes: ReadonlyArray<TimelineNode | null>): TimelineEvent[] {
+  const merges = nodes.flatMap((n) => (n?.__typename === "MergedEvent" ? [ms(n.createdAt)] : [])).filter((at): at is number => at !== null);
+  const reviewer = (r: TimelineNode["requestedReviewer"]) => (!r ? null : r.__typename === "Team" ? (r.combinedSlug ? `@${r.combinedSlug}` : null) : r.login ?? null);
+  const out: TimelineEvent[] = [];
+  for (const n of nodes) {
+    const at = ms(n?.createdAt);
+    if (!n || at === null) continue;
+    const add = (kind: TimelineKind, subject: string | null = null, detail: string | null = null) => out.push({ kind, at, actor: n.actor?.login ?? null, subject, detail });
+    switch (n.__typename) {
+      case "ReviewRequestedEvent": add("review_requested", reviewer(n.requestedReviewer)); break;
+      case "ReviewRequestRemovedEvent": add("review_request_removed", reviewer(n.requestedReviewer)); break;
+      case "LabeledEvent": add("labeled", n.label?.name ?? null); break;
+      case "UnlabeledEvent": add("unlabeled", n.label?.name ?? null); break;
+      case "ReadyForReviewEvent": add("ready_for_review"); break;
+      case "ConvertToDraftEvent": add("converted_to_draft"); break;
+      case "HeadRefForcePushedEvent": add("force_pushed", n.afterCommit?.abbreviatedOid ?? null, n.beforeCommit?.abbreviatedOid ?? null); break;
+      case "MergedEvent": add("merged", n.commit?.abbreviatedOid ?? null, n.mergeRefName ?? null); break;
+      case "ClosedEvent": if (!merges.some((merged) => Math.abs(merged - at) < SAME_MOMENT_MS)) add("closed"); break;
+      case "ReopenedEvent": add("reopened"); break;
+      case "RenamedTitleEvent": add("renamed", n.currentTitle ?? null, n.previousTitle ?? null); break;
+      case "AutoMergeEnabledEvent": add("auto_merge_enabled"); break;
+      case "AutoMergeDisabledEvent": add("auto_merge_disabled"); break;
+      case "ReviewDismissedEvent": add("review_dismissed", n.review?.author?.login ?? null); break;
+      case "HeadRefDeletedEvent": add("branch_deleted", n.headRefName ?? null); break;
+      case "BaseRefChangedEvent": add("base_changed", n.currentRefName ?? null, n.previousRefName ?? null); break;
+    }
+  }
+  return out;
+}
+
+function detailsOf(node: z.infer<typeof activityNode>, contexts: readonly ContextNode[], head: string | null): PrDetails {
+  const rollup = node.commits.nodes[0]?.commit.statusCheckRollup ?? null;
+  const list = node.commitList!;
+  return {
+    checks: { total: Math.max(rollup?.contexts.totalCount ?? 0, contexts.length), items: contexts.map((context) => checkRunOf(context, head)) },
+    commits: {
+      total: list.totalCount,
+      items: list.nodes.map(({ commit }) => ({ sha: commit.oid, message: commit.messageHeadline, author: commit.author?.user?.login ?? commit.author?.name ?? null, at: ms(commit.committedDate) })),
+    },
+    files: node.files ? { total: node.files.totalCount, items: node.files.nodes.map((file) => ({ path: file.path, additions: file.additions, deletions: file.deletions, change: FILE_CHANGE[file.changeType] ?? "changed" })) } : null,
+    timeline: timelineOf(node.timelineItems?.nodes ?? []),
+    merge: node.mergeStateStatus === undefined ? null : mergeState({
+      isDraft: node.isDraft ?? false,
+      mergeable: node.mergeable ?? "UNKNOWN",
+      mergeStateStatus: node.mergeStateStatus,
+      viewerCanEnableAutoMerge: false,
+      reviewDecision: node.reviewDecision ?? null,
+      commits: { nodes: [{ commit: { statusCheckRollup: rollup?.state ? { state: rollup.state } : null } }] },
+    }),
+  };
+}
+
+const commitNode = z.object({
+  __typename: z.string(),
+  oid: z.string().optional(),
+  messageHeadline: z.string().optional(),
+  committedDate: z.string().nullish(),
+  additions: z.number().nullish(),
+  deletions: z.number().nullish(),
+  author: z.object({ name: z.string().nullable(), user: z.object({ login: z.string() }).nullable() }).nullish(),
+  statusCheckRollup: z.object({ state: z.string() }).nullish(),
+  associatedPullRequests: z.object({ nodes: z.array(z.object({ number: z.number() })) }).nullish(),
+});
+const restPrs = z.array(z.object({ number: z.number() })).nullish();
+const restCheckRun = z.object({
+  node_id: z.string().nullish(), name: z.string(), status: z.string(), conclusion: z.string().nullish(), html_url: z.string().nullish(), details_url: z.string().nullish(),
+  started_at: z.string().nullish(), completed_at: z.string().nullish(), head_sha: z.string().nullish(), app: z.object({ name: z.string() }).nullish(), pull_requests: restPrs,
+});
+const restRun = z.object({
+  name: z.string(), display_title: z.string().nullish(), status: z.string(), conclusion: z.string().nullish(), html_url: z.string().nullish(), event: z.string().nullish(),
+  run_started_at: z.string().nullish(), updated_at: z.string().nullish(), head_sha: z.string().nullish(), pull_requests: restPrs,
+});
 
 const mergeNode = z.object({
   squashMergeAllowed: z.boolean(),
@@ -520,16 +734,8 @@ export class GithubAdapter implements Adapter {
     return toSummary(node);
   }
 
-  async activity(repo: string, number: number, signal?: AbortSignal): Promise<Activity> {
-    const who = "author { login __typename }";
-    const query = `query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) {
-      headRefOid
-      reviews(last: 50) { nodes { id state body url submittedAt ${who} } }
-      reviewThreads(last: 50) { nodes { id isResolved path line comments(last: 20) { nodes { id body url createdAt ${who} } } } }
-      comments(last: 50) { nodes { id body url createdAt ${who} } }
-      commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 50) { nodes { __typename
-        ... on CheckRun { id name conclusion detailsUrl completedAt } ... on StatusContext { id context state targetUrl createdAt } } } } } } }
-    } } }`;
+  async activity(repo: string, number: number, signal?: AbortSignal, options: ActivityOptions = {}): Promise<Activity> {
+    const query = options.detail ? DETAIL_QUERY : ACTIVITY_QUERY;
     const schema = z.object({ repository: z.object({ pullRequest: activityNode.nullable() }).nullable() });
     const data = await this.graphql("activity", query, this.repoVars(repo, number, "activity"), schema, signal);
     const node = data.repository?.pullRequest;
@@ -602,6 +808,46 @@ export class GithubAdapter implements Adapter {
     if (input.subject) args.push("--subject", input.subject);
     await this.gh("merge", args, signal);
     return { merged: !input.auto };
+  }
+
+  async commit(repo: string, sha: string, signal?: AbortSignal): Promise<CommitInfo> {
+    const query = `query($owner: String!, $name: String!, $sha: String!) { repository(owner: $owner, name: $name) { object(expression: $sha) { __typename
+      ... on Commit { oid messageHeadline committedDate additions deletions author { name user { login } } statusCheckRollup { state }
+        associatedPullRequests(first: 3, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { number } } } } } }`;
+    const schema = z.object({ repository: z.object({ object: commitNode.nullable() }).nullable() });
+    const [owner, name] = repo.split("/");
+    if (!owner || !name) throw new AdapterError("view", `${repo} is not owner/name`);
+    const data = await this.graphql("view", query, { owner, name, sha }, schema, signal);
+    const node = data.repository?.object;
+    if (!node || node.__typename !== "Commit" || !node.oid) throw new AdapterError("view", `${repo}@${sha.slice(0, 7)} was not found`);
+    return {
+      sha: node.oid,
+      message: node.messageHeadline ?? "",
+      author: node.author?.user?.login ?? node.author?.name ?? null,
+      at: ms(node.committedDate),
+      additions: node.additions ?? null,
+      deletions: node.deletions ?? null,
+      checks: node.statusCheckRollup ? checksState(node.statusCheckRollup.state) : null,
+      prs: (node.associatedPullRequests?.nodes ?? []).map((pr) => pr.number),
+    };
+  }
+
+  async checkRun(repo: string, ids: { checkRun: number | null; run: number | null }, signal?: AbortSignal): Promise<CheckInfo> {
+    if (ids.checkRun !== null) {
+      const raw = restCheckRun.parse(JSON.parse(await this.gh("view", ["api", ...this.hostArgs(), `repos/${repo}/check-runs/${ids.checkRun}`], signal)));
+      const run = checkRunOf({
+        __typename: "CheckRun", id: raw.node_id ?? undefined, name: raw.name, status: raw.status.toUpperCase(), conclusion: raw.conclusion ? raw.conclusion.toUpperCase() : null,
+        detailsUrl: raw.html_url ?? raw.details_url ?? null, startedAt: raw.started_at, completedAt: raw.completed_at, checkSuite: { app: raw.app ? { name: raw.app.name } : null },
+      }, raw.head_sha ?? null);
+      return { run: { ...run, itemId: null }, head: raw.head_sha ?? null, prs: (raw.pull_requests ?? []).map((pr) => pr.number) };
+    }
+    if (ids.run === null) throw new AdapterError("view", "a check link names no run");
+    const raw = restRun.parse(JSON.parse(await this.gh("view", ["api", ...this.hostArgs(), `repos/${repo}/actions/runs/${ids.run}`], signal)));
+    const run = checkRunOf({
+      __typename: "CheckRun", name: raw.display_title ? `${raw.name} · ${raw.display_title}` : raw.name, status: raw.status.toUpperCase(), conclusion: raw.conclusion ? raw.conclusion.toUpperCase() : null,
+      detailsUrl: raw.html_url ?? null, startedAt: raw.run_started_at, completedAt: raw.status === "completed" ? raw.updated_at : null, checkSuite: { workflowRun: { workflow: { name: raw.name } } },
+    }, raw.head_sha ?? null);
+    return { run: { ...run, group: raw.event ? `${raw.name} · on ${raw.event.replace(/_/gu, " ")}` : raw.name, itemId: null }, head: raw.head_sha ?? null, prs: (raw.pull_requests ?? []).map((pr) => pr.number) };
   }
 
   async cancelAutoMerge(repo: string, number: number, signal?: AbortSignal): Promise<void> {

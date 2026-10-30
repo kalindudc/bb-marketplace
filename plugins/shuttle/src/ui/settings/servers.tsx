@@ -2,7 +2,7 @@ import { useState } from "react";
 import { experimental_Icon as Icon, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import type { Config, ServerConfig } from "../../config";
 import type { ServerStatus, TestResult } from "../../contract";
-import { BUTTON, BUTTON_GHOST, BUTTON_PRIMARY, CARD, ErrorNote, FIELD, Pill, ServerBadge, Toggle } from "../common";
+import { BUTTON, BUTTON_DANGER, BUTTON_GHOST, BUTTON_PRIMARY, CARD, CARD_SELECTED, ErrorNote, FIELD, FIELD_CODE, Pill, ServerBadge, Toggle } from "../common";
 import { CONVERSATION_OPERATIONS, MANAGE_OPERATIONS, OPERATIONS, OPERATION_LABELS, PANEL_PATH, READ_OPERATIONS } from "../constants";
 import { messageOf, useShuttleMutation, useShuttleQuery } from "../data";
 import { ago } from "../format";
@@ -122,9 +122,9 @@ function TestResults({ results }: { results: readonly TestResult[] }) {
     <ul aria-label="Test results" className="mt-2 flex flex-col gap-1 rounded-md border border-border bg-background p-2">
       {results.map((result) => (
         <li key={result.operation} data-test-result={result.operation} className="flex items-start gap-2 text-xs">
-          <Icon name={result.ok ? "Check" : "X"} className={`mt-0.5 size-3.5 shrink-0 ${result.ok ? "text-success" : "text-destructive"}`} aria-hidden />
+          <Icon name={result.ok ? "Check" : "X"} className={`mt-0.5 size-3.5 shrink-0 ${result.ok ? "text-success" : "text-destructive-text"}`} aria-hidden />
           <span className="w-32 shrink-0 font-mono">{result.operation}</span>
-          <span className={`min-w-0 flex-1 break-words ${result.ok ? "text-muted-foreground" : "text-destructive"}`}>{result.detail}</span>
+          <span className={`min-w-0 flex-1 break-words ${result.ok ? "text-muted-foreground" : "text-destructive-text"}`}>{result.detail}</span>
           <span className="shrink-0 text-muted-foreground">{result.ms} ms</span>
         </li>
       ))}
@@ -175,7 +175,7 @@ function ServerCard({ server, status, busy, onEnable, onEdit, onDelete }: {
         <button type="button" aria-label={`Edit ${server.name}`} className={BUTTON_GHOST} onClick={onEdit}>Edit</button>
         {confirming ? (
           <>
-            <button type="button" className={`${BUTTON} text-destructive`} disabled={busy} onClick={() => { setConfirming(false); onDelete(); }}>Click again to delete</button>
+            <button type="button" className={BUTTON_DANGER} disabled={busy} onClick={() => { setConfirming(false); onDelete(); }}>Click again to delete</button>
             <button type="button" className={BUTTON_GHOST} onClick={() => setConfirming(false)}>Cancel</button>
           </>
         ) : (
@@ -206,7 +206,7 @@ function CommandTable({ operations, commands, onChange }: { operations: readonly
               <div className="text-[11px] text-muted-foreground">{OPERATION_LABELS[op]}</div>
             </td>
             <td className="py-1.5">
-              <input aria-label={`${op} command`} className={`${FIELD} w-full font-mono text-xs`} value={commands[op]}
+              <input aria-label={`${op} command`} className={`${FIELD_CODE} w-full`} value={commands[op]}
                 placeholder={op === "view" ? "Required" : MANAGE_OPERATIONS.includes(op) || CONVERSATION_OPERATIONS.includes(op) ? "Leave empty if the server can't" : "Leave empty to skip this list"}
                 onChange={(event) => onChange({ ...commands, [op]: event.target.value })} />
             </td>
@@ -241,7 +241,7 @@ function ServerForm({ initial, saved, existingIds, saving, onSave, onCancel }: {
   const row = "grid grid-cols-1 items-center gap-1 sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-3";
   const label = "text-xs text-muted-foreground";
   return (
-    <div data-server-form className={`${CARD} border-primary p-3`}>
+    <div data-server-form className={`${CARD_SELECTED} p-3`}>
       <div className="mb-3 flex items-center gap-2">
         <b className="flex-1 text-sm">{draft.original === null ? "Add a server" : `Edit ${initial.name}`}</b>
         <button type="button" aria-label="Close the server form" className={BUTTON_GHOST} onClick={onCancel}><Icon name="X" className="size-3.5" aria-hidden /></button>
@@ -253,7 +253,7 @@ function ServerForm({ initial, saved, existingIds, saving, onSave, onCancel }: {
           <span>
             <input aria-label="Server id" className={`${FIELD} w-full font-mono`} placeholder="gitlab-acme" value={draft.id} disabled={draft.original !== null} onChange={(event) => set("id", event.target.value)} />
             <span className="mt-1 block text-xs text-muted-foreground">
-              {duplicate ? <span className="text-destructive">A server already has this id.</span> : "The first part of every PR key from this server, as in gitlab-acme:group/project!77. Lowercase letters, digits and dashes."}
+              {duplicate ? <span className="text-destructive-text">A server already has this id.</span> : "The first part of every PR key from this server, as in gitlab-acme:group/project!77. Lowercase letters, digits and dashes."}
             </span>
           </span>
         </label>
@@ -265,7 +265,7 @@ function ServerForm({ initial, saved, existingIds, saving, onSave, onCancel }: {
               <span className={label}>Link pattern</span>
               <span>
                 <input aria-label="Link pattern" className={`${FIELD} w-full font-mono`} placeholder="^https://git\.acme\.dev/(?<repo>.+?)/-/merge_requests/(?<number>\d+)" value={draft.pattern} onChange={(event) => set("pattern", event.target.value)} />
-                <span className={`mt-1 block text-xs ${problem ? "text-destructive" : "text-muted-foreground"}`}>{problem ?? "A regular expression for this server's PR links, with (?<repo>…) and (?<number>…) groups."}</span>
+                <span className={`mt-1 block text-xs ${problem ? "text-destructive-text" : "text-muted-foreground"}`}>{problem ?? "A regular expression for this server's PR links, with (?<repo>…) and (?<number>…) groups."}</span>
               </span>
             </label>
             <label className={row}><span className={label}>Link template</span><input aria-label="Link template" className={`${FIELD} font-mono`} placeholder="https://git.acme.dev/{repo}/-/merge_requests/{number}" value={draft.link} onChange={(event) => set("link", event.target.value)} /></label>
@@ -313,18 +313,18 @@ function ServerForm({ initial, saved, existingIds, saving, onSave, onCancel }: {
             <label className={row}><span className={label}>Provider</span><input aria-label="Environment provider" className={`${FIELD} font-mono`} placeholder="world-tree" value={draft.provider} onChange={(event) => set("provider", event.target.value)} /></label>
             <label className={row}>
               <span className={label}>Inputs (JSON)</span>
-              <textarea aria-label="Provider inputs" rows={3} className={`${FIELD} w-full font-mono text-xs`} placeholder='{ "tree": "shuttle-{number}" }' value={draft.inputs} onChange={(event) => set("inputs", event.target.value)} />
+              <textarea aria-label="Provider inputs" rows={3} className={`${FIELD_CODE} w-full`} placeholder='{ "tree": "shuttle-{number}" }' value={draft.inputs} onChange={(event) => set("inputs", event.target.value)} />
             </label>
           </>
         )}
         {draft.workspaceKind === "command" && (
           <label className={row}>
             <span className={label}>Command</span>
-            <input aria-label="Workspace command" className={`${FIELD} w-full font-mono text-xs`} placeholder="cd ~/world && dev tree add shuttle-{number} >&2 && echo ~/world/trees/shuttle-{number}/src"
+            <input aria-label="Workspace command" className={`${FIELD_CODE} w-full`} placeholder="cd ~/world && dev tree add shuttle-{number} >&2 && echo ~/world/trees/shuttle-{number}/src"
               value={draft.workspaceCommand} onChange={(event) => set("workspaceCommand", event.target.value)} />
           </label>
         )}
-        <p className={`text-xs ${workspaceProblem ? "text-destructive" : "text-muted-foreground"}`}>
+        <p className={`text-xs ${workspaceProblem ? "text-destructive-text" : "text-muted-foreground"}`}>
           {workspaceProblem ?? "Used when a review preset asks for its own checkout. Inputs and the command may use {number}, {repo}, {repo_name}, {head_ref}, {base}, {head}, {server} and {slug}; the command prints the checkout's absolute path on its last line."}
         </p>
       </div>

@@ -37,6 +37,25 @@ export const reviewFilter = createStored<ReviewFilter>("review-filter", DEFAULT_
   isRecord(value) && typeof value.team === "string" && typeof value.hideBots === "boolean" && typeof value.hideQuiet === "boolean"
     ? { team: value.team, hideBots: value.hideBots, hideQuiet: value.hideQuiet }
     : null);
+export type ConversationOrder = "newest" | "oldest";
+/** Which end of a PR's conversation comes first. */
+export const conversationOrder = createStored<ConversationOrder>("conversation-order", "newest", oneOf<ConversationOrder>(["newest", "oldest"]));
+/** Bots' comments in a PR's conversation stay out of the way when on. */
+export const hideBotComments = createStored<boolean>("conversation-hide-bots", false, (value) => (typeof value === "boolean" ? value : null));
+
+const MAX_SEEN = 300;
+/** When each PR's view was last opened on this device, so what came since can say New. */
+export const prSeen = createStored<Readonly<Record<string, number>>>("pr-seen", {}, (value) => {
+  if (!isRecord(value)) return null;
+  return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, number] => typeof entry[1] === "number"));
+});
+
+export function rememberSeen(key: string, at: number): void {
+  const { [key]: _old, ...rest } = prSeen.get();
+  const entries = Object.entries(rest);
+  prSeen.set(Object.fromEntries([...entries.slice(Math.max(0, entries.length - MAX_SEEN + 1)), [key, at]]));
+}
+
 /** Sections folded by hand, as "<area>/<title>"; every other section is open. */
 export const folds = createStored<readonly string[]>("folds", [], (value) => (Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : null));
 
@@ -108,5 +127,5 @@ export function useFolding(area: string): Folding {
 
 /** Tests clear localStorage between cases; this reads every remembered value again. */
 export function reloadPrefs(): void {
-  for (const stored of [lastRoute, mineLayout, mineSort, doneSort, boardViews, reviewFilter, folds, scrolls, panelPrs]) stored.reload();
+  for (const stored of [lastRoute, mineLayout, mineSort, doneSort, boardViews, reviewFilter, folds, scrolls, panelPrs, conversationOrder, hideBotComments, prSeen]) stored.reload();
 }

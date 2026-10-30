@@ -2,10 +2,11 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { experimental_Icon as Icon, useBbNavigate, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import type { Overview } from "../contract";
 import { ActionsProvider, nudgeText, runNext, useActions } from "./actions";
-import { BUTTON, ErrorNote, ICON_GHOST, PAGE, PageHeading } from "./common";
+import { BUTTON, ErrorNote, ICON_GHOST_LARGE, PAGE, PageHeading } from "./common";
 import { AREA_META, PANEL_PATH } from "./constants";
 import { isNotFound, messageOf, threadsOf, useShuttleMutation, useShuttleQuery } from "./data";
-import { PrDetail, TrackButton } from "./detail";
+import { PrDetail } from "./detail";
+import { PrMenu, TrackButton } from "./pr-menu";
 import { keyLabel } from "./format";
 import { BoardDetailView, BoardsView } from "./boards";
 import { InboxView } from "./inbox";
@@ -43,7 +44,7 @@ function countOf(area: Area, overview: Overview | undefined): number | null {
 /** A narrow window's way between the areas, under the header. */
 function AreaChips({ route, overview, onGo }: { route: Route; overview: Overview | undefined; onGo(next: Route): void }) {
   const current = areaOf(route);
-  const chip = (on: boolean) => `inline-flex shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-xs ${on ? "border-primary/50 bg-accent text-foreground" : "border-border text-muted-foreground hover:text-foreground"}`;
+  const chip = (on: boolean) => `inline-flex shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-xs ${on ? "border-input bg-state-active text-foreground" : "border-border text-muted-foreground hover:text-foreground"}`;
   return (
     <nav aria-label="Areas" className="flex shrink-0 gap-1.5 overflow-x-auto border-b border-border px-3 py-2 [scrollbar-width:none]">
       {AREAS.map((area) => {
@@ -68,7 +69,7 @@ function TabBar({ route, overview, onGo }: { route: Route; overview: Overview | 
     <nav aria-label="Areas" className="flex shrink-0 border-t border-border bg-card px-1 pb-4 pt-1.5">
       {AREAS.map((area) => (
         <button key={area} type="button" aria-current={current === area ? "page" : undefined} onClick={() => onGo(AREA_ROUTES[area])}
-          className={`relative flex flex-1 cursor-pointer flex-col items-center gap-0.5 text-[10.5px] ${current === area ? "font-semibold text-primary" : "text-muted-foreground"}`}>
+          className={`relative flex flex-1 cursor-pointer flex-col items-center gap-0.5 text-[10.5px] ${current === area ? "font-semibold text-foreground" : "text-muted-foreground"}`}>
           <Icon name={AREA_META[area].icon} fallback="Circle" className="size-5" aria-hidden />
           {AREA_META[area].label}
           {area === "inbox" && inbox > 0 && (
@@ -103,16 +104,17 @@ function PhonePrView({ prKey, backLabel, onBack }: { prKey: string; backLabel: s
   return (
     <div data-phone-pr className="flex h-full min-h-0 flex-col bg-background text-foreground">
       <div className="flex h-11 shrink-0 items-center gap-1 border-b border-border px-2">
-        <button type="button" aria-label={`Back to ${backLabel}`} className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-md px-1.5 text-sm text-foreground hover:bg-accent" onClick={onBack}>
+        <button type="button" aria-label={`Back to ${backLabel}`} className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-md px-1.5 text-sm text-foreground hover:bg-state-hover" onClick={onBack}>
           <Icon name="ChevronLeft" className="size-4" aria-hidden />{backLabel}
         </button>
         <span className="flex-1" />
         {pr !== undefined && !pr.mine && <TrackButton pr={pr} iconOnly />}
         {pr !== undefined && (
-          <button type="button" aria-label={`Open on ${pr.serverName}`} title={`Open on ${pr.serverName}`} className={`${ICON_GHOST} size-9`} onClick={() => actions.open(pr)}>
+          <button type="button" aria-label={`Open on ${pr.serverName}`} title={`Open on ${pr.serverName}`} className={ICON_GHOST_LARGE} onClick={() => actions.open(pr)}>
             <Icon name="ExternalLink" className="size-4" aria-hidden />
           </button>
         )}
+        {pr !== undefined && <PrMenu pr={pr} triggerClassName={ICON_GHOST_LARGE} />}
       </div>
       <div ref={scroller.ref} onScroll={scroller.onScroll} className="min-h-0 flex-1 overflow-y-auto">
         <PrDetail key={prKey} prKey={prKey} phone />
@@ -120,7 +122,7 @@ function PhonePrView({ prKey, backLabel, onBack }: { prKey: string; backLabel: s
       {pr !== undefined && isLive(pr) && (step !== null || canComment) && (
         <div data-phone-actions className="flex shrink-0 gap-2 border-t border-border bg-card px-3 pb-4 pt-2.5">
           {step !== null && (
-            <button type="button" data-next={step.id} className={`${wide} flex-[2] ${pr.next.primary !== null ? "border-primary bg-primary font-semibold text-primary-foreground" : "border-border bg-card"}`}
+            <button type="button" data-next={step.id} className={`${wide} flex-[2] ${pr.next.primary !== null ? "border-foreground bg-foreground font-medium text-background" : "border-input bg-transparent"}`}
               onClick={() => runNext(actions, pr, step.id)}>
               {step.label}
             </button>
@@ -164,6 +166,11 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
   useEffect(() => {
     if (selectedKey === null) pushed.current = false;
   }, [selectedKey]);
+  // A PR opened as a full page from beside a list goes back there; one reached another way goes beside its own list.
+  const expanded = useRef(false);
+  useEffect(() => {
+    if (route.view !== "pr") expanded.current = false;
+  }, [route.view]);
 
   const go = (next: Route, replace = false) => navigate.toPluginPanel(PANEL_PATH, { subPath: formatRoute(next), ...(replace ? { replace: true } : {}) });
   const here = formatRoute(route);
@@ -196,6 +203,19 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
   };
   const close = useRef(closeSelection);
   close.current = closeSelection;
+  const expand = (key: string) => {
+    expanded.current = true;
+    go({ view: "pr", key });
+  };
+  const collapse = (key: string) => {
+    if (expanded.current) {
+      expanded.current = false;
+      return window.history.back();
+    }
+    const pr = detail.data?.pr;
+    const home: Route = pr === undefined || !pr.mine ? { view: "reviews", source: "all", key } : pr.state === "merged" || pr.state === "closed" ? { view: "done", key } : { view: "mine", key };
+    go(home, true);
+  };
 
   const { actions, dialogs, dialogOpen, raise } = useSurface({ phone, sheetComposer: phone, selected: selectedKey, select, threadIds });
   const { writes } = actions;
@@ -246,7 +266,7 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
     case "board": area = <BoardDetailView id={route.id} layout={layout} onGo={go} />; break;
     case "search": area = <SearchView query={route.query} layout={layout} />; break;
     case "insights": area = <InsightsView tab={route.tab} onTab={(tab) => go({ view: "insights", tab })} onAction={onIdea} onOpenPr={select} />; break;
-    case "pr": area = (
+    case "pr": area = !phone && showDetail ? <PrDetail key={route.key} prKey={route.key} page onCollapse={() => collapse(route.key)} /> : (
       <div className={PAGE}>
         <PageHeading title="Look up" description="Fetched from the server whose link pattern matches. Works for any PR, whether or not you are part of it." />
         {isNotFound(lookedUp?.error ?? null) ? (
@@ -256,7 +276,6 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
           </div>
         ) : lookedUp?.error != null && <ErrorNote>{messageOf(lookedUp.error)}</ErrorNote>}
         {lookedUp?.data === undefined && lookedUp?.error === null && <div className="py-6 text-sm text-muted-foreground">Loading…</div>}
-        {!phone && showDetail && <div className="overflow-hidden rounded-lg border border-border"><PrDetail key={route.key} prKey={route.key} onClose={closeSelection} /></div>}
       </div>
     ); break;
   }
@@ -275,7 +294,7 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
     </>
   );
 
-  const detailPanel = (onClose?: () => void) => selectedKey !== null && <PrDetail key={selectedKey} prKey={selectedKey} onClose={onClose} />;
+  const detailPanel = (onClose?: () => void) => selectedKey !== null && <PrDetail key={selectedKey} prKey={selectedKey} onClose={onClose} onExpand={() => expand(selectedKey)} />;
   const backLabel = route.view === "pr" ? "Back" : route.view === "search" ? "Search" : AREA_META[areaOf(route) ?? "inbox"].label;
   let body: ReactNode;
   if (phone && showDetail) {

@@ -28,9 +28,9 @@ function attentionOf(pr: PrView): Attention {
 const TONE_TEXT: Record<Tone, string> = {
   neutral: "text-muted-foreground",
   ok: "text-success",
-  bad: "text-destructive",
+  bad: "text-destructive-text",
   warn: "text-warning-text",
-  info: "text-primary",
+  info: "text-foreground",
   brand: "text-foreground",
 };
 
@@ -49,7 +49,7 @@ function useOpenPr(threadId: string) {
 
 function ChecksGlyph({ checks }: { checks: PrView["checks"] }) {
   if (checks === "passed") return <Icon name="Check" aria-label="Checks pass" className="size-3.5 text-success" />;
-  if (checks === "failed") return <Icon name="X" aria-label="Checks fail" className="size-3.5 text-destructive" />;
+  if (checks === "failed") return <Icon name="X" aria-label="Checks fail" className="size-3.5 text-destructive-text" />;
   if (checks === "pending") return <Icon name="Clock" aria-label="Checks running" className="size-3.5 text-warning-text" />;
   return null;
 }
@@ -106,7 +106,7 @@ export function PullRequestsSummary({ threadId, isExpanded, onToggle }: Experime
   return (
     <button type="button" data-segment-summary aria-expanded={isExpanded} onClick={onToggle}
       aria-label={`Shuttle: ${named}, ${worst.label}`}
-      className="flex min-h-6 items-center gap-1.5 overflow-hidden rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
+      className="flex min-h-6 items-center gap-1.5 overflow-hidden rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-state-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
       <Icon name="shuttle/shuttle" fallback="GitPullRequest" className="size-3.5 shrink-0" aria-hidden />
       <span className="truncate font-mono">{label}</span>
       {(only !== null || worst.rank > 0) && (
@@ -129,7 +129,7 @@ export function PullRequestsDetails({ threadId }: ExperimentalThreadContextSegme
         return (
           <li key={pr.key} data-pr={pr.key}>
             <button type="button" onClick={() => openPr(pr)} title={pr.title}
-              className="flex w-full cursor-pointer items-center gap-2 rounded px-2 py-1 text-left text-xs hover:bg-accent">
+              className="flex w-full cursor-pointer items-center gap-2 rounded px-2 py-1 text-left text-xs hover:bg-state-hover">
               <span className="shrink-0 font-mono">{shortKey(pr)}</span>
               <span className="min-w-0 flex-1 truncate text-muted-foreground">{pr.title}</span>
               <span className={`shrink-0 ${TONE_TEXT[attention.tone]}`}>{attention.label}</span>
@@ -146,7 +146,7 @@ export function PullRequestsAction({ threadId }: ExperimentalThreadContextSegmen
   const openTab = useOpenShuttleTab();
   return (
     <button type="button" aria-label="Open the Shuttle tab" title="Open the Shuttle tab" onClick={() => openTab(threadId)}
-      className="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
+      className="inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
       <Icon name="PanelRight" className="size-3.5" aria-hidden />
     </button>
   );

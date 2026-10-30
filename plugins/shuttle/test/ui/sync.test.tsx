@@ -48,7 +48,7 @@ describe("the sync banner", () => {
     expect(alert.textContent).toContain("Delta was restarting (HTTP 503) when Shuttle asked for who you are.");
     expect(alert.textContent).toContain(`Delta's PRs show what Shuttle had at ${clock(LAST_GOOD)}.`);
     expect(alert.textContent).toContain(`This usually passes by itself. Shuttle tries again around ${clock(NEXT)}.`);
-    expect(alert.className).toContain("border-destructive");
+    expect(alert.className).toContain("border-surface-destructive-border");
     fireEvent.click(within(alert).getByRole("button", { name: "Sync Delta now" }));
     await waitFor(() => expect(callsTo(slot, "sync")).toEqual([{ server: "delta" }]));
     fireEvent.click(within(alert).getByRole("button", { name: "See why" }));

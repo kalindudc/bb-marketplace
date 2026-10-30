@@ -135,7 +135,7 @@ export function draft(overrides: Partial<ReviewDraft> = {}): ReviewDraft {
 export function item(overrides: Partial<ConversationItem> = {}): ConversationItem {
   return {
     id: "c1", kind: "thread", author: "alice-w", bot: false, mine: false, state: null, body: "The retry should back off.", path: "app/jobs/waf.rb", line: 42,
-    url: "https://github.com/get-bb/bb/pull/4411#discussion_r1", at: NOW - 40 * 60_000, thread: "PRRT_1", resolved: false, delivery: null, outcome: null, ...overrides,
+    url: "https://github.com/get-bb/bb/pull/4411#discussion_r1", at: NOW - 40 * 60_000, thread: "PRRT_1", resolved: false, delivery: null, outcome: null, hunk: null, review: null, ...overrides,
   };
 }
 
@@ -204,7 +204,9 @@ export function handlers(overrides: Partial<Handlers> = {}): Handlers {
     inbox: () => inbox(),
     list: () => ({ prs: [] }),
     detail: unexpected("detail"),
-    conversation: () => ({ items: [], error: null, fetchedAt: NOW }),
+    conversation: () => ({ items: [], details: null, error: null, fetchedAt: NOW }),
+    linkCard: unexpected("linkCard"),
+    linkStates: ({ urls }) => ({ links: urls.map((url) => ({ url, kind: null, state: null })) }),
     lookup: unexpected("lookup"),
     search: () => ({ prs: [], total: 0 }),
     activity: () => ({ events: [] }),

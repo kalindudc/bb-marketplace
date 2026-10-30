@@ -14,30 +14,64 @@ export function usePortalScope() {
   return { "data-bb-portaled-overlay": "", "data-bb-plugin-root": "", "data-bb-plugin": pluginId } as const;
 }
 
-export const BUTTON = "inline-flex h-7 shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md border border-border bg-card px-2.5 text-xs text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50";
-export const BUTTON_PRIMARY = "inline-flex h-7 shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md border border-primary bg-primary px-2.5 text-xs font-semibold text-primary-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50";
-export const BUTTON_GHOST = "inline-flex h-7 shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md px-2 text-xs text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50";
-export const ICON_GHOST = "inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50";
-export const FIELD = "rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-60";
+// The button vocabulary of bb's own Button: outline, the main action in --foreground (bb fills nothing with --primary), and ghost.
+// Tailwind orders utilities in its stylesheet, not by their order in className, so a class added after one of these never
+// reliably beats one it already sets: each kind, size and state is a style of its own (test/ui/class-overrides.test.ts).
+const FOCUS = "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50";
+const FRAME = `inline-flex shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md ${FOCUS}`;
+const SMALL = "h-7 px-2.5 text-xs";
+export const BUTTON = `${FRAME} ${SMALL} border border-input bg-transparent text-foreground hover:bg-state-hover`;
+/** A pressed toggle, or the current one of a few choices. */
+export const BUTTON_ON = `${FRAME} ${SMALL} border border-input bg-state-active text-foreground`;
+/** A toggle that is off: a button's size without its outline. */
+export const BUTTON_OFF = `${FRAME} ${SMALL} border border-transparent bg-transparent text-foreground hover:bg-state-hover`;
+/** An outline button that removes, archives or deletes. */
+export const BUTTON_DANGER = `${FRAME} ${SMALL} border border-destructive/40 bg-transparent text-destructive-text hover:bg-surface-destructive`;
+export const BUTTON_PRIMARY = `${FRAME} ${SMALL} border border-foreground bg-foreground font-medium text-background hover:bg-foreground/90`;
+/** The main action at the foot of a long form, such as posting a review. */
+export const BUTTON_PRIMARY_LARGE = `${FRAME} h-8 px-3 text-[13px] border border-foreground bg-foreground font-medium text-background hover:bg-foreground/90`;
+/** A main action that is a go-ahead, such as Merge or Approve. */
+export const BUTTON_SUCCESS = `${FRAME} ${SMALL} border border-success bg-success font-medium text-background hover:bg-success/90`;
+export const BUTTON_GHOST = `${FRAME} h-7 px-2 text-xs text-muted-foreground hover:bg-state-hover hover:text-foreground`;
+/** A ghost button in a tight row, such as a log's Copy. */
+export const BUTTON_GHOST_SMALL = `${FRAME} h-6 px-2 text-xs text-muted-foreground hover:bg-state-hover hover:text-foreground`;
+export const BUTTON_GHOST_DANGER = `${FRAME} h-7 px-2 text-xs text-destructive-text hover:bg-surface-destructive`;
+const ICON_FRAME = `inline-flex shrink-0 cursor-pointer items-center justify-center rounded-md ${FOCUS}`;
+const ICON_TONE = "text-muted-foreground hover:bg-state-hover hover:text-foreground";
+export const ICON_GHOST = `${ICON_FRAME} size-7 ${ICON_TONE}`;
+/** An icon button in a phone's top bar, a thumb's size. */
+export const ICON_GHOST_LARGE = `${ICON_FRAME} size-9 ${ICON_TONE}`;
+export const ICON_GHOST_LARGE_ON = `${ICON_FRAME} size-9 bg-state-active text-foreground hover:bg-state-hover`;
+/** An icon button inside a line of text, such as copying a branch name. */
+export const ICON_GHOST_SMALL = `${ICON_FRAME} size-5 ${ICON_TONE}`;
+const FIELD_FRAME = "rounded-md border border-input bg-background px-2 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-60";
+export const FIELD = `${FIELD_FRAME} py-1.5 text-sm`;
+/** A field for code or commands, in the smaller monospace text. */
+export const FIELD_CODE = `${FIELD_FRAME} py-1.5 font-mono text-xs`;
+/** A select in a toolbar, as tall as the buttons beside it. */
+export const FIELD_SMALL = `${FIELD_FRAME} h-7 py-0 text-xs`;
 export const HEADING = "text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground";
 export const CARD = "rounded-lg border border-border bg-card";
+export const CARD_SELECTED = "rounded-lg border border-surface-selected-border bg-card";
+/** A form label that opens its section, without the gap above the others. */
+export const LABEL_FIRST = "mb-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground";
 
 export type Tone = "neutral" | "ok" | "bad" | "warn" | "info" | "brand";
 const TONES: Record<Tone, string> = {
-  neutral: "border-border text-muted-foreground",
-  ok: "border-success/40 bg-success/10 text-success",
-  bad: "border-destructive/40 bg-destructive/10 text-destructive",
-  warn: "border-warning/40 bg-warning/10 text-warning-text",
-  info: "border-primary/40 bg-primary/10 text-primary",
-  brand: "border-ring/40 bg-ring/10 text-foreground",
+  neutral: "border-border bg-surface-recessed text-muted-foreground",
+  ok: "border-success/25 bg-success/5 text-success",
+  bad: "border-surface-destructive-border bg-surface-destructive text-destructive-text",
+  warn: "border-warning/20 bg-warning/5 text-warning-text",
+  info: "border-border bg-surface-raised text-foreground",
+  brand: "border-border bg-surface-raised text-foreground",
 };
 
 type NextTone = "ok" | "bad" | "warn" | "info" | "neutral";
 export const TONE_TEXT: Record<NextTone, string> = {
   ok: "text-success",
-  bad: "text-destructive",
+  bad: "text-destructive-text",
   warn: "text-warning-text",
-  info: "text-primary",
+  info: "text-foreground",
   neutral: "text-muted-foreground",
 };
 /** A card's coloured left edge. */
@@ -45,15 +79,15 @@ export const TONE_EDGE: Record<NextTone, string> = {
   ok: "border-l-success",
   bad: "border-l-destructive",
   warn: "border-l-warning",
-  info: "border-l-primary",
+  info: "border-l-foreground",
   neutral: "border-l-muted-foreground",
 };
 /** A banner's tinted border and background. */
 export const TONE_PANEL: Record<NextTone, string> = {
-  ok: "border-success/40 bg-success/5",
-  bad: "border-destructive/40 bg-destructive/5",
-  warn: "border-warning/40 bg-warning/5",
-  info: "border-primary/40 bg-primary/5",
+  ok: "border-success/25 bg-success/5",
+  bad: "border-surface-destructive-border bg-surface-destructive",
+  warn: "border-warning/20 bg-warning/5",
+  info: "border-border bg-surface-raised",
   neutral: "border-border bg-card",
 };
 
@@ -68,7 +102,7 @@ export function Pill({ tone = "neutral", icon, title, children }: { tone?: Tone;
 
 export function ServerBadge({ name, large = false }: { name: string; large?: boolean }) {
   return (
-    <span title={name} aria-label={name} className={`inline-flex shrink-0 items-center justify-center rounded-md bg-muted font-mono font-bold text-foreground ${large ? "h-6 w-8 text-[11px]" : "h-5 w-6 text-[10px]"}`}>
+    <span title={name} aria-label={name} className={`inline-flex shrink-0 items-center justify-center rounded-md bg-surface-recessed font-mono font-bold text-foreground ${large ? "h-6 w-8 text-[11px]" : "h-5 w-6 text-[10px]"}`}>
       {initials(name)}
     </span>
   );
@@ -83,9 +117,10 @@ export function Toggle({ on, label, onChange, disabled = false }: { on: boolean;
       aria-label={label}
       disabled={disabled}
       onClick={() => onChange(!on)}
-      className={`relative inline-flex h-[17px] w-[30px] shrink-0 cursor-pointer items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50 ${on ? "bg-primary" : "bg-muted"}`}
+      className={`relative inline-flex h-[17px] w-[30px] shrink-0 cursor-pointer items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50 ${on ? "border border-foreground bg-foreground" : "border border-input bg-muted"}`}
     >
-      <span className={`absolute top-[2px] size-[13px] rounded-full transition-[left] ${on ? "left-[15px] bg-primary-foreground" : "left-[2px] bg-foreground"}`} />
+      {/* The knob sits inside the border in both states, so it does not move when the colour does. */}
+      <span className={`absolute top-px size-[13px] rounded-full transition-[left] ${on ? "left-[14px] bg-background" : "left-px bg-muted-foreground"}`} />
     </button>
   );
 }
@@ -93,7 +128,7 @@ export function Toggle({ on, label, onChange, disabled = false }: { on: boolean;
 export function Checkbox({ checked, label, hint, onChange }: { checked: boolean; label: string; hint?: string; onChange(next: boolean): void }) {
   return (
     <label className="flex cursor-pointer items-start gap-2.5 py-1.5 text-sm">
-      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="mt-0.5 size-4 shrink-0 cursor-pointer accent-primary" />
+      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="mt-0.5 size-4 shrink-0 cursor-pointer accent-foreground" />
       <span>
         <span className="block">{label}</span>
         {hint && <span className="block text-xs text-muted-foreground">{hint}</span>}
@@ -104,7 +139,7 @@ export function Checkbox({ checked, label, hint, onChange }: { checked: boolean;
 
 export function ErrorNote({ children }: { children: ReactNode }) {
   return (
-    <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+    <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive-text">
       {children}
     </div>
   );
@@ -191,7 +226,7 @@ export function Segmented<T extends string>({ label, value, options, onChange, d
         const on = option.value === value;
         return (
           <button key={option.value} type="button" role="radio" aria-checked={on} disabled={disabled || option.disabled} onClick={() => !on && onChange(option.value)}
-            className={`inline-flex flex-1 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2 py-1 text-xs disabled:cursor-default disabled:opacity-50 ${on ? "bg-accent font-semibold text-foreground shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--primary)_40%,transparent)]" : "text-muted-foreground hover:text-foreground"}`}>
+            className={`inline-flex flex-1 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2 py-1 text-xs disabled:cursor-default disabled:opacity-50 ${on ? "bg-state-active font-medium text-foreground" : "text-muted-foreground hover:bg-state-hover hover:text-foreground"}`}>
             {option.icon && <Icon name={option.icon} fallback="Circle" className="size-3.5" aria-hidden />}
             {option.label}
           </button>
@@ -205,8 +240,8 @@ export function Segmented<T extends string>({ label, value, options, onChange, d
 export function Choice({ on, disabled = false, title, hint, onPick, trailing }: { on: boolean; disabled?: boolean; title: ReactNode; hint?: ReactNode; onPick(): void; trailing?: ReactNode }) {
   return (
     <button type="button" role="radio" aria-checked={on} aria-disabled={disabled || undefined} onClick={() => !disabled && onPick()}
-      className={`mb-1.5 flex w-full items-start gap-2.5 rounded-lg border px-3 py-2 text-left text-sm ${disabled ? "cursor-default opacity-50" : "cursor-pointer"} ${on ? "border-primary/70 bg-primary/5" : `border-border ${disabled ? "" : "hover:bg-accent"}`}`}>
-      <span aria-hidden className={`mt-0.5 size-3.5 shrink-0 rounded-full border-[1.5px] ${on ? "border-4 border-primary" : "border-muted-foreground"}`} />
+      className={`mb-1.5 flex w-full items-start gap-2.5 rounded-lg border px-3 py-2 text-left text-sm ${disabled ? "cursor-default opacity-50" : "cursor-pointer"} ${on ? "border-surface-selected-border bg-surface-selected" : `border-border ${disabled ? "" : "hover:bg-state-hover"}`}`}>
+      <span aria-hidden className={`mt-0.5 size-3.5 shrink-0 rounded-full border-[1.5px] ${on ? "border-4 border-foreground" : "border-muted-foreground"}`} />
       <span className="min-w-0 flex-1">
         <span className="block font-semibold">{title}</span>
         {hint && <span className="block text-xs text-muted-foreground">{hint}</span>}
@@ -264,6 +299,28 @@ export const STRIP = "my-1.5 flex flex-wrap items-center gap-2 rounded-lg border
  * The PR open in the panel. Cards and rows share one tint and a ring in the primary colour, so the open
  * PR stands out on every page and never looks like a hovered one, which only gets the accent colour.
  */
-const SELECTED_TINT = "bg-[color-mix(in_srgb,var(--primary)_12%,var(--card))]";
-export const SELECTED_CARD = `${SELECTED_TINT} shadow-[0_0_0_2px_var(--primary)]`;
-export const SELECTED_ROW = `${SELECTED_TINT} shadow-[inset_4px_0_0_var(--primary),inset_0_0_0_1px_var(--primary)]`;
+const SELECTED_TINT = "bg-surface-selected";
+export const SELECTED_CARD = `${SELECTED_TINT} shadow-[0_0_0_2px_var(--surface-selected-border)]`;
+export const SELECTED_ROW = `${SELECTED_TINT} shadow-[inset_3px_0_0_var(--primary),inset_0_0_0_1px_var(--surface-selected-border)]`;
+
+/** A titled part of a PR view's tab, such as People or Open threads, in sentence case. */
+export function PaneSection({ title, label = title, count, aside, className = "mb-6", children }: {
+  title: string;
+  label?: string;
+  count?: ReactNode;
+  aside?: ReactNode;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section aria-label={label} className={className}>
+      <div className="mb-2 flex min-h-7 items-center gap-2">
+        <h3 className="text-[13.5px] font-semibold">{title}</h3>
+        {count}
+        <span className="flex-1" />
+        {aside}
+      </div>
+      {children}
+    </section>
+  );
+}

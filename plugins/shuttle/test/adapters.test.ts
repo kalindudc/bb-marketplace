@@ -8,7 +8,8 @@ import { describe, expect, it } from "vitest";
 import { AdapterError, type Adapter } from "../src/adapters/adapter";
 import { CommandAdapter, MERGE_DEFAULTS } from "../src/adapters/command";
 import { runProcess, shellQuote, type RunOptions, type RunResult } from "../src/adapters/exec";
-import { GithubAdapter, isPlacementError, listFields, searchQuery, toActivity, toMergeOptions, toSummary } from "../src/adapters/github";
+import { checkRunOf, GithubAdapter, isPlacementError, listFields, searchQuery, timelineOf, toActivity, toMergeOptions, toSummary } from "../src/adapters/github";
+import { hunkLines } from "../src/model";
 import { DEFAULT_CONFIG, parseConfig, type ServerConfig } from "../src/config";
 
 interface Call {
@@ -191,6 +192,124 @@ describe("GitHub activity", () => {
       ["CK1:abc", at("2026-10-22T14:00:00Z"), null, null],
       ["SC1:abc", at("2026-10-22T15:00:00Z"), null, null],
     ]);
+    expect(activity.details).toBeNull();
+  });
+
+  it("asks for the PR view's details only with detail, so watching stays light", async () => {
+    const empty = { headRefOid: "abc", reviews: { nodes: [] }, reviewThreads: { nodes: [] }, comments: { nodes: [] }, commits: { nodes: [] } };
+    const { calls, run } = recorder(() => ({ json: { data: { repository: { pullRequest: empty } } } }));
+    const gh = new GithubAdapter(github(), run);
+    await gh.activity("acme/api", 7);
+    await gh.activity("acme/api", 7, undefined, { detail: true });
+    const query = (index: number) => calls[index]!.args.find((arg) => arg.startsWith("query="))!;
+    for (const field of ["files(first: 100)", "commitList: commits(last: 100)", "timelineItems(", "mergeStateStatus", "diffHunk", "isRequired"]) {
+      expect(query(0)).not.toContain(field);
+      expect(query(1)).toContain(field);
+    }
+  });
+
+  it("reads every check, the commits, the files, the timeline, the merge state and each thread's hunk with detail", () => {
+    const detailed = toActivity({
+      headRefOid: "abc",
+      reviews: { nodes: [] },
+      reviewThreads: { nodes: [{
+        id: "T1", isResolved: false, path: "a.rs", line: 2, first: { nodes: [{ diffHunk: "@@ -1,2 +1,3 @@\n fn a() {\n+  b();\n }" }] },
+        comments: { nodes: [
+          { id: "C1", body: "here", url: null, createdAt: "2026-10-22T11:00:00Z", author: who("tom"), pullRequestReview: { id: "PRR1" } },
+          { id: "C2", body: "and", url: null, createdAt: "2026-10-22T11:05:00Z", author: who("ana"), pullRequestReview: { id: "PRR2" } },
+        ] },
+      }] },
+      comments: { nodes: [] },
+      commits: { nodes: [{ commit: { statusCheckRollup: { state: "FAILURE", contexts: { totalCount: 130, nodes: [
+        { __typename: "CheckRun", id: "CK1", name: "lint", status: "COMPLETED", conclusion: "TIMED_OUT", detailsUrl: "d", startedAt: "2026-10-22T13:58:00Z", completedAt: "2026-10-22T14:00:00Z", isRequired: true, checkSuite: { workflowRun: { workflow: { name: "CI" } }, app: { name: "GitHub Actions" } } },
+        { __typename: "CheckRun", id: "CK2", name: "e2e", status: "IN_PROGRESS", conclusion: null, detailsUrl: null, startedAt: "2026-10-22T13:59:00Z", completedAt: null, isRequired: false, checkSuite: { workflowRun: null, app: { name: "Buildkite" } } },
+        { __typename: "StatusContext", id: "SC1", context: "deploy", state: "SUCCESS", targetUrl: "t", createdAt: "2026-10-22T15:00:00Z", description: "Preview is up", isRequired: false },
+      ] } } } }] },
+      isDraft: false, mergeable: "MERGEABLE", mergeStateStatus: "BLOCKED", reviewDecision: "CHANGES_REQUESTED",
+      commitList: { totalCount: 140, nodes: [{ commit: { oid: "abc1234def", messageHeadline: "Fix it", committedDate: "2026-10-22T12:00:00Z", author: { name: "Tom", user: { login: "tom" } } } }] },
+      files: { totalCount: 2400, nodes: [{ path: "a.rs", additions: 3, deletions: 1, changeType: "MODIFIED" }, { path: "b.rs", additions: 0, deletions: 9, changeType: "DELETED" }] },
+      timelineItems: { nodes: [{ __typename: "ReviewRequestedEvent", createdAt: "2026-10-22T09:00:00Z", actor: { login: "sam" }, requestedReviewer: { __typename: "Team", combinedSlug: "acme/web" } }] },
+    });
+    const [first, second] = detailed.items;
+    expect(first).toMatchObject({ id: "T1:C1", hunk: "@@ -1,2 +1,3 @@\n fn a() {\n+  b();\n }", review: "PRR1" });
+    expect(second).toMatchObject({ id: "T1:C2", review: "PRR2" });
+    expect(second).not.toHaveProperty("hunk");
+    expect(detailed.items.find((i) => i.kind === "check")!.id).toBe("CK1:abc");
+    expect(detailed.details).toEqual({
+      checks: { total: 130, items: [
+        { name: "lint", group: "CI", state: "failed", detail: "timed out", required: true, url: "d", startedAt: at("2026-10-22T13:58:00Z"), completedAt: at("2026-10-22T14:00:00Z"), itemId: "CK1:abc" },
+        { name: "e2e", group: "Buildkite", state: "running", detail: "in progress", required: false, url: null, startedAt: at("2026-10-22T13:59:00Z"), completedAt: null, itemId: null },
+        { name: "deploy", group: null, state: "passed", detail: "Preview is up", required: false, url: "t", startedAt: at("2026-10-22T15:00:00Z"), completedAt: null, itemId: null },
+      ] },
+      commits: { total: 140, items: [{ sha: "abc1234def", message: "Fix it", author: "tom", at: at("2026-10-22T12:00:00Z") }] },
+      files: { total: 2400, items: [{ path: "a.rs", additions: 3, deletions: 1, change: "modified" }, { path: "b.rs", additions: 0, deletions: 9, change: "removed" }] },
+      timeline: [{ kind: "review_requested", at: at("2026-10-22T09:00:00Z"), actor: "sam", subject: "@acme/web", detail: null }],
+      merge: { state: "blocked", detail: "A reviewer requested changes." },
+    });
+  });
+
+  it("names how each check ended in the server's words", () => {
+    const run = (status: string, conclusion: string | null) => checkRunOf({ __typename: "CheckRun", id: "X", name: "n", status, conclusion }, "h");
+    expect(["SUCCESS", "NEUTRAL", "SKIPPED", "STALE", "FAILURE", "CANCELLED", "ACTION_REQUIRED"].map((c) => [run("COMPLETED", c).state, run("COMPLETED", c).detail])).toEqual([
+      ["passed", null], ["passed", "neutral"], ["skipped", null], ["skipped", "stale"], ["failed", null], ["failed", "cancelled"], ["failed", "action required"],
+    ]);
+    expect([run("QUEUED", null).state, run("QUEUED", null).detail]).toEqual(["running", "queued"]);
+    const status = (state: string) => checkRunOf({ __typename: "StatusContext", id: "S", context: "ci", state }, "h").state;
+    expect(["SUCCESS", "FAILURE", "ERROR", "PENDING", "EXPECTED"].map(status)).toEqual(["passed", "failed", "failed", "running", "running"]);
+  });
+
+  it("keeps a merge's close out of the timeline, but not a close of its own", () => {
+    const event = (__typename: string, createdAt: string, extra = {}) => ({ __typename, createdAt, actor: { login: "sam" }, ...extra });
+    expect(timelineOf([
+      event("ClosedEvent", "2026-10-20T10:00:00Z"),
+      event("ReopenedEvent", "2026-10-21T10:00:00Z"),
+      event("LabeledEvent", "2026-10-21T11:00:00Z", { label: { name: "ship" } }),
+      event("HeadRefForcePushedEvent", "2026-10-21T12:00:00Z", { beforeCommit: { abbreviatedOid: "aaa1111" }, afterCommit: { abbreviatedOid: "bbb2222" } }),
+      event("MergedEvent", "2026-10-22T10:00:00Z", { commit: { abbreviatedOid: "ccc3333" }, mergeRefName: "main" }),
+      event("ClosedEvent", "2026-10-22T10:00:01Z"),
+      null,
+    ]).map((e) => [e.kind, e.subject, e.detail])).toEqual([
+      ["closed", null, null], ["reopened", null, null], ["labeled", "ship", null], ["force_pushed", "bbb2222", "aaa1111"], ["merged", "ccc3333", "main"],
+    ]);
+  });
+});
+
+describe("GitHub reads for link cards", () => {
+  it("reads a commit with its checks and its PRs", async () => {
+    const { calls, run } = recorder(() => ({ json: { data: { repository: { object: {
+      __typename: "Commit", oid: "1a2b3c4d5e", messageHeadline: "Fix the retry", committedDate: "2026-10-22T10:00:00Z", additions: 4, deletions: 1,
+      author: { name: "Ana", user: { login: "ana" } }, statusCheckRollup: { state: "FAILURE" }, associatedPullRequests: { nodes: [{ number: 12 }] },
+    } } } } }));
+    expect(await new GithubAdapter(github(), run).commit("acme/api", "1a2b3c4")).toEqual({
+      sha: "1a2b3c4d5e", message: "Fix the retry", author: "ana", at: at("2026-10-22T10:00:00Z"), additions: 4, deletions: 1, checks: "failed", prs: [12],
+    });
+    expect(calls[0]!.args).toContain("sha=1a2b3c4");
+  });
+
+  it("reads a check run by id, and a workflow run when the link names only the run", async () => {
+    const { calls, run } = recorder((call) => (call.args.some((arg) => arg.includes("check-runs"))
+      ? { json: { name: "lint", status: "completed", conclusion: "timed_out", html_url: "https://github.com/acme/api/runs/5", started_at: "2026-10-22T10:00:00Z", completed_at: "2026-10-22T10:02:00Z", head_sha: "h1", app: { name: "GitHub Actions" }, pull_requests: [{ number: 12 }] } }
+      : { json: { name: "CI", display_title: "Fix the retry", status: "in_progress", conclusion: null, html_url: "https://github.com/acme/api/actions/runs/8", event: "pull_request", run_started_at: "2026-10-22T10:00:00Z", updated_at: "2026-10-22T10:01:00Z", head_sha: "h1", pull_requests: [] } }));
+    const gh = new GithubAdapter(github(), run);
+    expect(await gh.checkRun("acme/api", { checkRun: 5, run: 8 })).toMatchObject({
+      run: { name: "lint", group: "GitHub Actions", state: "failed", detail: "timed out", url: "https://github.com/acme/api/runs/5", startedAt: at("2026-10-22T10:00:00Z"), completedAt: at("2026-10-22T10:02:00Z") },
+      head: "h1", prs: [12],
+    });
+    expect(await gh.checkRun("acme/api", { checkRun: null, run: 8 })).toMatchObject({ run: { name: "CI · Fix the retry", group: "CI · on pull request", state: "running", completedAt: null }, prs: [] });
+    expect(calls.map((call) => call.args.at(-1))).toEqual(["repos/acme/api/check-runs/5", "repos/acme/api/actions/runs/8"]);
+  });
+});
+
+describe("diff hunks", () => {
+  it("keeps the last lines, numbered as in the new file, and skips the no-newline note", () => {
+    expect(hunkLines("@@ -10,4 +20,5 @@ fn main\n ctx\n-old\n+new\n+more\n\\ No newline at end of file\n tail", 3)).toEqual([
+      { kind: "add", text: "new", line: 21 },
+      { kind: "add", text: "more", line: 22 },
+      { kind: "context", text: "tail", line: 23 },
+    ]);
+    expect(hunkLines("@@ -1 +1 @@\n-gone")).toEqual([{ kind: "del", text: "gone", line: null }]);
+    expect(hunkLines("no header")).toBeNull();
+    expect(hunkLines(null)).toBeNull();
   });
 });
 
@@ -401,8 +520,67 @@ describe("command server reads", () => {
       reviewers: [{ login: "ana", team: false, state: "approved", at: at("2026-10-22T10:00:00Z"), head: "h2" }],
     });
     expect((await adapter.activity("shop/world", 7)).items[0]).toMatchObject({ at: at("2026-10-22T11:00:00Z"), thread: "t-1", resolved: true });
+    expect((await adapter.activity("shop/world", 7)).details).toBeNull();
     expect((await adapter.list("reviewed", {})).rows[0]).toMatchObject({ number: 8, createdAt: at("2026-10-19T10:00:00Z"), myReview: null, url: "https://forge.test/shop/world/pull/8" });
     expect(adapter.operations()).toEqual(["reviewed", "view", "activity"]);
+  });
+});
+
+describe("command server PR details", () => {
+  it("asks with SHUTTLE_DETAIL and reads every part it prints", async () => {
+    const { calls, run } = recorder(() => ({ json: {
+      head: "h2",
+      items: [{ id: "c1", kind: "thread", hunk: "@@ -1 +1,2 @@\n a\n+b", review: 12 }],
+      checks: [{ name: "ci", state: "failed", started_at: "2026-10-22T10:00:00Z", item: "check:ci:h2" }],
+      commits: { total: 300, items: [{ sha: "abc", message: "Fix", at: "2026-10-22T09:00:00Z" }] },
+      files: { total: 1500, items: [{ path: "a.rs", additions: 1, deletions: 0 }] },
+      timeline: [{ kind: "labeled", at: "2026-10-22T08:00:00Z", actor: "sam", subject: "ship" }, { kind: "closed", at: null }],
+      merge: { state: "conflicts", detail: "It has conflicts." },
+    } }));
+    const adapter = new CommandAdapter(forge({ activity: "a" }), run);
+    const activity = await adapter.activity("shop/world", 7, undefined, { detail: true });
+    expect(calls[0]!.env).toMatchObject({ SHUTTLE_OPERATION: "activity", SHUTTLE_DETAIL: "1" });
+    expect(activity.items[0]).toMatchObject({ hunk: "@@ -1 +1,2 @@\n a\n+b", review: "12" });
+    expect(activity.details).toEqual({
+      checks: { total: 1, items: [{ name: "ci", group: null, state: "failed", detail: null, required: null, url: null, startedAt: at("2026-10-22T10:00:00Z"), completedAt: null, itemId: "check:ci:h2" }] },
+      commits: { total: 300, items: [{ sha: "abc", message: "Fix", author: null, at: at("2026-10-22T09:00:00Z") }] },
+      files: { total: 1500, items: [{ path: "a.rs", additions: 1, deletions: 0, change: "modified" }] },
+      timeline: [{ kind: "labeled", at: at("2026-10-22T08:00:00Z"), actor: "sam", subject: "ship", detail: null }],
+      merge: { state: "conflicts", detail: "It has conflicts." },
+    });
+    await adapter.activity("shop/world", 7);
+    expect(calls[1]!.env).not.toHaveProperty("SHUTTLE_DETAIL");
+  });
+
+  it("gives every command the folder of the adapter scripts that ship with this copy", async () => {
+    const { calls, run } = recorder(() => ({ json: { items: [] } }));
+    await new CommandAdapter(forge({ activity: "a" }), run).activity("shop/world", 7);
+    const dir = calls[0]!.env.SHUTTLE_SCRIPTS!;
+    expect(dir).toBe(fileURLToPath(new URL("../skills/shuttle/references", import.meta.url)));
+    expect(spawnSync("/bin/sh", ["-c", 'test -d "$SHUTTLE_SCRIPTS"'], { env: { ...process.env, SHUTTLE_SCRIPTS: dir } }).status).toBe(0);
+  });
+
+  it("takes a hunk of any length, and cuts long lists to what the view keeps instead of failing the read", async () => {
+    const hunk = `@@ -1,3 +1,4000 @@\n${Array.from({ length: 4000 }, (_, i) => `+line ${i}`).join("\n")}`;
+    const commits = Array.from({ length: 150 }, (_, i) => ({ sha: `c${i}`, message: `m${i}` }));
+    const files = Array.from({ length: 150 }, (_, i) => ({ path: `f${i}.rs` }));
+    const checks = Array.from({ length: 150 }, (_, i) => ({ name: `ci ${i}`, state: i === 149 ? "failed" : "passed" }));
+    const { run } = recorder(() => ({ json: { items: [{ id: "t1", kind: "thread", hunk }], commits, files: { total: 900, items: files }, checks } }));
+    const activity = await new CommandAdapter(forge({ activity: "a" }), run).activity("shop/world", 7, undefined, { detail: true });
+    expect(hunk.length).toBeGreaterThan(20_000);
+    expect(activity.items[0]!.hunk).toBe(hunk);
+    expect(activity.details?.commits).toMatchObject({ total: 150 });
+    expect(activity.details?.commits?.items.map((c) => c.sha)).toEqual(commits.slice(-100).map((c) => c.sha));
+    expect(activity.details?.files?.total).toBe(900);
+    expect(activity.details?.files?.items.map((f) => f.path)).toEqual(files.slice(0, 100).map((f) => f.path));
+    // Every check is kept, so the failing one at the end still shows.
+    expect(activity.details?.checks?.items).toHaveLength(150);
+    expect(activity.details?.checks?.items.at(-1)).toMatchObject({ name: "ci 149", state: "failed" });
+  });
+
+  it("refuses a details part in the wrong shape, like any other field", async () => {
+    const { run } = recorder(() => ({ json: { items: [], checks: [{ name: "ci", state: "exploded" }] } }));
+    await expect(new CommandAdapter(forge({ activity: "a" }), run).activity("shop/world", 7, undefined, { detail: true })).rejects.toThrow(/activity printed JSON in the wrong shape: checks/u);
   });
 });
 
@@ -502,12 +680,26 @@ if (process.env.FAKE_DT_PULL_DOWN && path === "pulls/7") {
 }
 const user = (login) => ({ login, type: "User" });
 const answers = {
-  "pulls/7": { number: 7, head: { sha: "h2" } },
-  "pulls/7/reviews?per_page=100&page=1": [{ node_id: "R1", state: "CHANGES_REQUESTED", body: "Fix it", html_url: "r", submitted_at: "2026-10-22T10:00:00Z", user: user("ana") }],
+  "pulls/7": { number: 7, head: { sha: "h2" }, base: { sha: "b1" }, commits: 2, changed_files: 1800 },
+  "pulls/8": { number: 8, head: { sha: "h8" }, base: { sha: "b8" }, commits: 1, changed_files: 2 },
+  "pulls/8/reviews?per_page=100&page=1": [],
+  "pulls/8/comments?per_page=100&page=1": [],
+  "issues/8/comments?per_page=100&page=1": [],
+  "compare/b8...h8?per_page=100": {
+    total_commits: 1,
+    commits: [{ sha: "c8", commit: { message: "Small\\n\\nBody", author: { name: "Ana" }, committer: { date: "2026-10-21T10:00:00+00:00" } }, author: { login: "ana" } }],
+    files: [{ filename: "a.rs", status: "added", additions: 5, deletions: 0 }, { filename: "b.rs", status: "renamed", additions: 1, deletions: 1 }],
+  },
+  "pulls/7/reviews?per_page=100&page=1": [{ id: 901, node_id: "R1", state: "CHANGES_REQUESTED", body: "Fix it", html_url: "r", submitted_at: "2026-10-22T10:00:00Z", user: user("ana") }],
   "pulls/7/comments?per_page=100&page=1": [
-    { id: 11, node_id: "C11", thread_id: "t-1", in_reply_to_id: null, resolved: false, path: "a.rs", line: 4, body: "here", html_url: "c", created_at: "2026-10-22T11:00:00Z", user: user("ana") },
-    { id: 12, node_id: "C12", thread_id: "t-1", in_reply_to_id: 11, resolved: false, path: "a.rs", line: 4, body: "done", html_url: "c", created_at: "2026-10-22T12:00:00Z", user: user("sam") },
+    { id: 11, node_id: "C11", thread_id: "t-1", in_reply_to_id: null, resolved: false, path: "a.rs", line: 4, body: "here", html_url: "c", created_at: "2026-10-22T11:00:00Z", user: user("ana"), diff_hunk: "@@ -1,3 +1,4 @@\\n a\\n+b", pull_request_review_id: 901 },
+    { id: 12, node_id: "C12", thread_id: "t-1", in_reply_to_id: 11, resolved: false, path: "a.rs", line: 4, body: "done", html_url: "c", created_at: "2026-10-22T12:00:00Z", user: user("sam"), diff_hunk: "@@ -1,3 +1,4 @@\\n a\\n+b", pull_request_review_id: 902 },
   ],
+  "pulls/7/commits?per_page=100&page=1": [
+    { sha: "c1", commit: { message: "Start\\n\\nLong body", author: { name: "Ana" }, committer: { date: "2026-10-21T10:00:00Z" } }, author: { login: "ana" } },
+    { sha: "c2", commit: { message: "Fix", author: { name: "Sam" }, committer: { date: "2026-10-21T11:00:00Z" } }, author: null },
+  ],
+  "pulls/7/files?per_page=100": [{ filename: "a.rs", status: "modified", additions: 3, deletions: 1, patch: "@@ never read @@" }, { filename: "b.rs", status: "removed", additions: 0, deletions: 4 }],
   "issues/7/comments?per_page=100&page=1": [],
   "pulls/7/merge-readiness": {
     head: "h2", merge_state_status: "blocked", mergeable: true, viewer: { allowed_methods: ["merge"], can_merge: false },
@@ -608,6 +800,44 @@ else if (path === "pulls/7/reviews") console.log("{}");
     expect(activity.items[3]).toMatchObject({ state: "failed", body: "reviews failed", url: "d1", bot: false });
     const withoutGate = await delta("FAKE_DT_NO_GATE=1 ").activity("shop/world", 7);
     expect(withoutGate.items.map((i) => i.id)).toEqual(["R1:CHANGES_REQUESTED", "C11", "C12"]);
+  });
+
+  it("adds every check, the commits, the first files, the merge state and thread hunks with SHUTTLE_DETAIL", async () => {
+    calls();
+    const activity = await delta().activity("shop/world", 7, undefined, { detail: true });
+    expect(argsOf(calls()).map((args) => args[1])).toEqual(expect.arrayContaining(["repos/shop/world/pulls/7/files?per_page=100", "repos/shop/world/pulls/7/commits?per_page=100&page=1"]));
+    expect(activity.items.map((i) => [i.id, i.review ?? null, i.hunk ?? null])).toEqual([
+      ["R1:CHANGES_REQUESTED", "901", null],
+      ["C11", "901", "@@ -1,3 +1,4 @@\n a\n+b"],
+      ["C12", "902", null],
+      ["check:ci@x.iam:reviews:h2", null, null],
+    ]);
+    expect(activity.details).toEqual({
+      checks: { total: 3, items: [
+        { name: "reviews", group: "ci", state: "failed", detail: null, required: null, url: "d1", startedAt: null, completedAt: null, itemId: "check:ci@x.iam:reviews:h2" },
+        { name: "Required CI", group: "ci", state: "running", detail: "in progress", required: null, url: "d2", startedAt: null, completedAt: null, itemId: null },
+        { name: "lint", group: "lint", state: "passed", detail: null, required: null, url: "d3", startedAt: null, completedAt: null, itemId: null },
+      ] },
+      commits: { total: 2, items: [{ sha: "c1", message: "Start", author: "ana", at: at("2026-10-21T10:00:00Z") }, { sha: "c2", message: "Fix", author: "Sam", at: at("2026-10-21T11:00:00Z") }] },
+      files: { total: 1800, items: [{ path: "a.rs", additions: 3, deletions: 1, change: "modified" }, { path: "b.rs", additions: 0, deletions: 4, change: "removed" }] },
+      timeline: null,
+      merge: { state: "blocked", detail: "It is part of a stack; reviews is failing; main advances through the merge queue." },
+    });
+    // 1800 files is too many to compare: the files endpoint's first page and the commits instead.
+    expect(argsOf(calls()).map((args) => args[1]).filter((path) => path.includes("compare"))).toEqual([]);
+    // Without SHUTTLE_DETAIL, nothing more is read than before.
+    const light = await delta().activity("shop/world", 7);
+    expect(light.details).toBeNull();
+    expect(argsOf(calls()).map((args) => args[1]).filter((path) => /files|commits/u.test(path))).toEqual([]);
+  });
+
+  it("reads a small PR's commits and files in one compare, without their patches", async () => {
+    calls();
+    const activity = await delta().activity("shop/world", 8, undefined, { detail: true });
+    const read = argsOf(calls()).map((args) => args[1]).filter((path) => /files|commits|compare/u.test(path));
+    expect(read).toEqual(["repos/shop/world/compare/b8...h8?per_page=100"]);
+    expect(activity.details?.commits).toEqual({ total: 1, items: [{ sha: "c8", message: "Small", author: "ana", at: at("2026-10-21T10:00:00Z") }] });
+    expect(activity.details?.files).toEqual({ total: 2, items: [{ path: "a.rs", additions: 5, deletions: 0, change: "added" }, { path: "b.rs", additions: 1, deletions: 1, change: "renamed" }] });
   });
 
   it("merges with squash or merge at the head, and refuses what Delta cannot do", async () => {

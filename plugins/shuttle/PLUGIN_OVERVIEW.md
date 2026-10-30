@@ -22,6 +22,10 @@ Start reviews from presets for the skill, model and workspace, or enable auto re
 
 ## Act on PRs
 
+Each PR's view says what it is, where it stands and what happens next in one card, then shows the rest in tabs: an overview, your review, the conversation with open threads first, every check, a summary of its commits and files, and its history. Open it as a full page, or put it on boards from there.
+
+Git links in thread messages show what they point at on hover: a PR's state and next step, a comment with its code, a commit, or a check's result. Open the PR in Shuttle on the right tab from there. Shuttle draws with your bb theme's own colours.
+
 Merge, comment, reply, resolve threads, request reviewers, manage labels and post reviews as yourself. A thread's Shuttle tab shows its PRs in full. Search cached PRs or paste a link to look one up. Layouts adapt to phones and narrow windows, and lists remember their scroll, sort, filters and folded sections.
 
 ## Setup and tools

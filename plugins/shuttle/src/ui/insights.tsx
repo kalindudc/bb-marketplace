@@ -15,8 +15,8 @@ type Idea = Insights["ideas"][number];
 export type IdeaAction = NonNullable<Idea["action"]>;
 
 const RANGES = (["7d", "30d", "90d"] as const).map((value) => ({ value, label: value }));
-// bb defines no chart colours inside a plugin's page, so each series falls back to a different theme colour.
-const FALLBACKS = ["var(--primary)", "var(--warning)", "var(--success)", "var(--destructive)", "var(--ring)", "var(--muted-foreground)"];
+// bb defines no chart colours inside a plugin's page; every theme defines a terminal palette, so a series takes one of its colours.
+const FALLBACKS = ["var(--ansi-4)", "var(--ansi-3)", "var(--ansi-2)", "var(--ansi-5)", "var(--ansi-6)", "var(--ansi-1)"];
 const color = (n: number) => `var(--chart-${n}, ${FALLBACKS[(n - 1) % FALLBACKS.length]})`;
 
 function Kpi({ label, value, sub, warn = false }: { label: string; value: string; sub: string; warn?: boolean }) {

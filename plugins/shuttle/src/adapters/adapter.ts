@@ -1,5 +1,5 @@
 import type { ChangeOperation, ListOperation, Operation, ServerConfig } from "../config";
-import type { MergeMethod, MergeOptions, PrChange, Verdict } from "../contract";
+import type { CheckRun, CheckState, MergeMethod, MergeOptions, PrChange, Verdict } from "../contract";
 import type { Activity, EditOptions, PrSummary } from "../model";
 
 export interface ListOptions {
@@ -18,6 +18,30 @@ export interface MergeInput {
   deleteBranch: boolean;
   /** The squash or merge commit's title. */
   subject?: string;
+}
+
+/** A commit as a link card shows it. */
+export interface CommitInfo {
+  sha: string;
+  message: string;
+  author: string | null;
+  at: number | null;
+  additions: number | null;
+  deletions: number | null;
+  checks: CheckState | null;
+  /** The PRs it belongs to, newest first. */
+  prs: number[];
+}
+
+/** A check run or a workflow run as a link card shows it, with the commit it ran on and its PRs. */
+export interface CheckInfo {
+  run: CheckRun;
+  head: string | null;
+  prs: number[];
+}
+
+export interface ActivityOptions {
+  detail?: boolean;
 }
 
 export interface ReviewComment {
@@ -53,7 +77,8 @@ export interface Adapter {
   whoami(signal?: AbortSignal): Promise<string>;
   list(operation: ListOperation, options: ListOptions, signal?: AbortSignal): Promise<ListResult>;
   view(repo: string, number: number, signal?: AbortSignal): Promise<PrSummary>;
-  activity(repo: string, number: number, signal?: AbortSignal): Promise<Activity>;
+  /** With `detail`, also what the PR view shows besides the conversation; watching asks without it, so syncs stay light. */
+  activity(repo: string, number: number, signal?: AbortSignal, options?: ActivityOptions): Promise<Activity>;
   /** Changes the PR on its server; resolves once the server accepted the change. */
   change(repo: string, number: number, change: PrChange, signal?: AbortSignal): Promise<void>;
   /** The repo's labels, and people the server suggests as reviewers. */
@@ -62,6 +87,10 @@ export interface Adapter {
   mergeOptions(repo: string, number: number, signal?: AbortSignal): Promise<MergeOptions>;
   /** Merges, or turns on auto-merge with `auto`; `merged` is false when it only turned auto-merge on. */
   merge(repo: string, number: number, input: MergeInput, signal?: AbortSignal): Promise<{ merged: boolean }>;
+  /** Reads one commit, for a link card; absent where the server has no way to. */
+  commit?(repo: string, sha: string, signal?: AbortSignal): Promise<CommitInfo>;
+  /** Reads a check run, or a workflow run when only its id is known, for a link card. */
+  checkRun?(repo: string, ids: { checkRun: number | null; run: number | null }, signal?: AbortSignal): Promise<CheckInfo>;
   /** GitHub only: turns auto-merge off. Absent where the server has no auto-merge. */
   cancelAutoMerge?(repo: string, number: number, signal?: AbortSignal): Promise<void>;
   comment(repo: string, number: number, body: string, signal?: AbortSignal): Promise<void>;

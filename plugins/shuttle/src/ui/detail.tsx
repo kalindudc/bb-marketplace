@@ -1,243 +1,230 @@
-import type { ReactNode } from "react";
-import { experimental_Icon as Icon, Markdown } from "@get-bb/plugin-sdk/app";
-import type { ConversationItem, PrView } from "../contract";
-import { AgentCard } from "./agent";
-import { BoardMemberships } from "./boards";
-import { NextButtons, runNext, useActions } from "./actions";
-import { BUTTON, BUTTON_PRIMARY, ErrorNote, ICON_GHOST, Pill, SectionTitle, TONE_PANEL, TONE_TEXT, type Tone } from "./common";
-import { NEXT_ICONS } from "./constants";
-import { ChecksSection, Conversation } from "./conversation";
-import { isNotFound, messageOf, useShuttleMutation, useShuttleQuery } from "./data";
-import { age, checkName, clock, plural, shortKey, sizeOf } from "./format";
-import { LabelsAndReviewers, ManageCard } from "./manage";
-import { StatePill } from "./pills";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
+import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
+import type { PrDetails, PrView } from "../contract";
+import { runNext, useActions } from "./actions";
+import { Avatar } from "./avatar";
+import { BoardChips, CHIP_ADD } from "./board-picker";
+import { ChangesPane } from "./changes";
+import { ChecksPane, checksSummary } from "./checks";
+import { BUTTON_PRIMARY, ErrorNote, ICON_GHOST } from "./common";
+import { Conversation, threadsOf } from "./conversation";
+import { isNotFound, messageOf, useShuttleQuery } from "./data";
+import { useEditPr } from "./edit";
+import { ago, clock, plural, shortKey } from "./format";
+import { HistoryPane } from "./history";
+import { LabelChip, LabelChoices } from "./manage";
+import { Description, Facts } from "./overview";
+import { Picker } from "./picker";
+import { isLive, STATE_LOOKS } from "./pills";
+import { copy, PrMenu, TrackButton } from "./pr-menu";
+import { usePrState, useSeenSince, type PrTab } from "./pr-state";
+import { StatusCard } from "./status";
 import { YourReviewCard } from "./your-review";
-import { usePrState } from "./pr-state";
 
-const LONG_DESCRIPTION = 1500;
+export { TrackButton } from "./pr-menu";
 
-/** The PR's own description, rendered by bb's sanitizing Markdown renderer; a long one is cut until asked. */
-function Description({ prKey, body }: { prKey: string; body: string | null }) {
-  const [expanded, setExpanded] = usePrState(prKey, "description", false);
-  const long = body !== null && body.length > LONG_DESCRIPTION;
+/** From this width a full-page PR puts its people and facts in a column beside the tabs. */
+const WIDE_PX = 960;
+const TOP_BAR_PX = 44;
+
+function useWidth(node: HTMLElement | null): number {
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    if (node === null || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(([entry]) => setWidth(entry?.contentRect.width ?? 0));
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [node]);
+  return width;
+}
+
+/** The header has scrolled up under the top bar, which then shows the title. */
+function useScrolledPast(node: HTMLElement | null): boolean {
+  const [past, setPast] = useState(false);
+  useEffect(() => {
+    if (node === null || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(([entry]) => setPast(entry !== undefined && !entry.isIntersecting && entry.boundingClientRect.top < TOP_BAR_PX), { rootMargin: `-${TOP_BAR_PX}px 0px 0px 0px` });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [node]);
+  return past;
+}
+
+function StateBadge({ state }: { state: PrView["state"] }) {
+  const look = STATE_LOOKS[state];
   return (
-    <section aria-label="Description" className="mx-4 mt-4">
-      <SectionTitle icon="FileText">Description</SectionTitle>
-      {body === null ? (
-        <div className="text-sm text-muted-foreground">Loading the description…</div>
-      ) : body.trim() === "" ? (
-        <div className="text-sm text-muted-foreground">No description.</div>
-      ) : (
-        <div className="rounded-lg border border-border bg-card px-3 py-2.5">
-          <div data-description className={`min-w-0 overflow-x-auto break-words text-sm ${long && !expanded ? "max-h-80 overflow-y-hidden [mask-image:linear-gradient(to_bottom,black_75%,transparent)]" : ""}`}>
-            <Markdown content={body} />
-          </div>
-          {long && (
-            <button type="button" className="mt-2 cursor-pointer text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground" onClick={() => setExpanded(!expanded)}>
-              {expanded ? "Show less" : "Show the whole description"}
-            </button>
-          )}
-        </div>
-      )}
-    </section>
+    <span data-pr-state={state} className="mr-2 inline-flex h-6 items-center gap-1.5 rounded-full border border-border bg-background px-2 align-middle text-xs font-medium text-foreground">
+      <Icon name={look.icon} className={`size-3.5 ${look.className}`} aria-hidden />{look.label}
+    </span>
   );
 }
 
-interface CellValue {
-  tone: Tone;
-  icon?: string;
-  value: string;
-  sub: string;
-}
-
-function Cell({ label, cell }: { label: string; cell: CellValue }) {
-  const color = cell.tone === "neutral" ? "text-foreground" : TONE_TEXT[cell.tone as keyof typeof TONE_TEXT];
-  return (
-    <div data-cell={label} className="min-w-0 border-r border-border px-2.5 py-1.5 last:border-r-0">
-      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
-      <div className={`flex items-center gap-1 truncate text-[12.5px] font-semibold ${color}`}>
-        {cell.icon && <Icon name={cell.icon} fallback="Circle" className="size-3 shrink-0" aria-hidden />}
-        <span className="truncate">{cell.value}</span>
-      </div>
-      <div className="truncate text-[11px] text-muted-foreground" title={cell.sub}>{cell.sub}</div>
-    </div>
-  );
-}
-
-function checksCell(pr: PrView, items: readonly ConversationItem[] | undefined, short: boolean): CellValue {
-  const counts = pr.checkCounts;
-  const total = counts === null ? "" : plural(counts.total, "check");
-  if (pr.checks === "passed") return { tone: "ok", icon: "Check", value: "All pass", sub: total || "all green" };
-  if (pr.checks === "failed") {
-    const names = (items ?? []).filter((item) => item.kind === "check").map((item) => checkName(item.body));
-    const failed = counts === null ? "Failing" : short ? "Failing" : `${counts.failed} failing`;
-    return { tone: "bad", icon: "X", value: failed, sub: !short && names.length > 0 ? names.join(", ") : counts === null ? "" : `${counts.failed} of ${counts.total}` };
-  }
-  if (pr.checks === "pending") return { tone: "warn", icon: "Clock", value: counts === null || short ? "Running" : `${counts.passed} of ${counts.total}`, sub: counts === null ? "running" : short ? `${counts.passed} of ${counts.total}` : "running" };
-  return { tone: "neutral", value: "None", sub: "no checks" };
-}
-
-/** Where the PR stands, in three cells: checks, reviews and agent on yours; size, checks and your review on others'. */
-function Strip({ pr, items }: { pr: PrView; items: readonly ConversationItem[] | undefined }) {
-  let cells: [string, CellValue][];
-  if (pr.mine) {
-    const reviewers = pr.reviewers ?? [];
-    const by = (state: string) => reviewers.filter((reviewer) => reviewer.state === state).map((reviewer) => reviewer.login);
-    const asked = by("requested").length;
-    const review: CellValue = pr.review === "changes" ? { tone: "bad", icon: "X", value: "Changes", sub: by("changes").length > 0 ? `by ${by("changes").join(", ")}` : "requested" }
-      : pr.review === "approved" ? { tone: "ok", icon: "Check", value: "Approved", sub: by("approved").length > 0 ? `by ${by("approved").join(", ")}` : "" }
-      : pr.state === "draft" ? { tone: "neutral", icon: "GitPullRequestDraft", value: "Draft", sub: "not requested" }
-      : { tone: "warn", icon: "Clock", value: "None yet", sub: [`${asked} asked`, pr.createdAt === null ? null : age(pr.createdAt)].filter(Boolean).join(" · ") };
-    const agent = pr.agent;
-    const agentCell: CellValue = agent === null || agent.mode === "off" ? { tone: "neutral", icon: "Bot", value: "No agent", sub: "feedback waits for you" }
-      : { tone: agent.status === "waiting" ? "warn" : "info", icon: "Bot", value: agent.mode === "fix" ? "Fixes" : "Told only", sub: agent.status === "waiting" ? "waiting on you" : agent.status === "working" ? "working now" : "idle" };
-    cells = [["Checks", checksCell(pr, items, false)], ["Reviews", review], ["Agent", agentCell]];
-  } else {
-    const size = sizeOf(pr);
-    const sizeCell: CellValue = { tone: "neutral", value: [size, pr.files === null ? null : plural(pr.files, "file")].filter(Boolean).join(" · ") || "Unknown", sub: pr.additions === null || pr.deletions === null ? "" : `+${pr.additions} −${pr.deletions}` };
-    const run = pr.lastReview;
-    const mine = pr.myReview;
-    const yours: CellValue = pr.draft !== null ? { tone: "info", icon: "Check", value: "Draft ready", sub: "not posted" }
-      : run?.state === "running" ? { tone: "info", icon: "Bot", value: "AI running", sub: age(run.at) }
-      : mine !== null ? (pr.next.kind === "rereview" ? { tone: "warn", icon: "RotateCcw", value: "Updated", sub: "since your review" }
-        : { tone: mine.verdict === "approve" ? "ok" : "neutral", icon: "Check", value: mine.verdict === "approve" ? "Approved" : "Reviewed", sub: mine.at === null ? "" : age(mine.at) })
-      : { tone: "neutral", icon: "UserRound", value: "Not started", sub: pr.requestedAt === null ? "not asked" : `asked ${age(pr.requestedAt)} ago` };
-    cells = [["Size", sizeCell], ["Checks", checksCell(pr, items, true)], ["Your review", yours]];
-  }
-  return (
-    <div data-strip className="mx-4 grid grid-cols-3 overflow-hidden rounded-lg border border-border bg-card">
-      {cells.map(([label, cell]) => <Cell key={label} label={label} cell={cell} />)}
-    </div>
-  );
-}
-
-/** What happens next with your PR, in the same words as its Inbox card. */
-function Banner({ pr }: { pr: PrView }) {
-  const next = pr.next;
-  if ((next.kind === "merged" || next.kind === "closed") && next.primary === null) return null;
-  const buttons = next.primary !== null || next.more.length > 0;
-  return (
-    <div data-banner={next.kind} className={`mx-4 mt-3 rounded-lg border px-3 py-2.5 ${TONE_PANEL[next.tone]}`}>
-      <div className={`flex items-center gap-1.5 text-sm font-bold ${TONE_TEXT[next.tone]}`}>
-        <Icon name={NEXT_ICONS[next.kind]} fallback="Circle" className="size-3.5" aria-hidden />{next.label}
-      </div>
-      <div className="mb-2 mt-0.5 text-[13px]">{next.why}</div>
-      {buttons && <div className="flex flex-wrap items-center gap-1.5"><NextButtons pr={pr} /></div>}
-    </div>
-  );
-}
-
-function Details({ pr }: { pr: PrView }) {
-  const { phone } = useActions();
-  const [open, setOpen] = usePrState(pr.key, "details", false);
-  return (
-    <section aria-label="Details" className="mx-4 mt-4">
-      <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="flex w-full cursor-pointer items-center gap-1.5 text-left">
-        <Icon name={open ? "ChevronDown" : "ChevronRight"} className="size-3 text-muted-foreground" aria-hidden />
-        <span className="flex-1 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">Details</span>
-        <span className="text-[11px] text-muted-foreground">{pr.mine ? "reviewers, labels, draft and close" : "reviewers and labels"}</span>
-      </button>
-      {open && (
-        <div className="mt-1">
-          {pr.mine && pr.actions.length > 0 ? <ManageCard pr={pr} phone={phone} /> : <LabelsAndReviewers pr={pr} />}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function Threads({ pr }: { pr: PrView }) {
+function TopBar({ pr, stuck, onClose, onExpand, onCollapse }: { pr: PrView; stuck: boolean; onClose?: () => void; onExpand?: () => void; onCollapse?: () => void }) {
   const actions = useActions();
-  const unlink = useShuttleMutation("unlink");
-  const roleOf = (threadId: string, role: string): { label: string; tone: Tone } =>
-    pr.agent?.threadId === threadId ? { label: "Agent", tone: "info" } : role === "review" ? { label: "Review", tone: "neutral" } : { label: "Reference", tone: "neutral" };
   return (
-    <section aria-label="Threads" className="mx-4 mt-4">
-      <SectionTitle icon="MessageSquare">Threads</SectionTitle>
-      {pr.links.length === 0 && <div className="text-sm text-muted-foreground">No thread.</div>}
-      <ul className="flex flex-col gap-0.5">
-        {pr.links.map((entry) => {
-          const role = roleOf(entry.threadId, entry.role);
-          return (
-            <li key={entry.threadId} data-link={entry.threadId} className="flex items-center gap-2 py-0.5">
-              <Icon name={entry.archived ? "Archive" : "MessageSquare"} className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-              <button type="button" className="min-w-0 flex-1 cursor-pointer truncate text-left text-[13px] hover:underline" title={`Open “${entry.title}”`} onClick={() => actions.openThread(entry.threadId)}>
-                {entry.title}
-                {entry.archived && <span className="text-xs text-muted-foreground"> (archived)</span>}
-              </button>
-              <Pill tone={role.tone}>{role.label}</Pill>
-              <button type="button" aria-label={`Unlink “${entry.title}”`} title="Unlink" className={ICON_GHOST} disabled={unlink.isPending}
-                onClick={() => void unlink.run({ key: pr.key, threadId: entry.threadId })}>
-                <Icon name="X" className="size-3.5" aria-hidden />
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-      <button type="button" className={`${BUTTON} mt-1.5`} onClick={() => actions.link(pr)}>
-        <Icon name="Link" className="size-3.5" aria-hidden />Link a thread
+    <div data-topbar className={`sticky top-0 z-20 flex h-11 items-center gap-1 border-b bg-background pl-4 pr-2 ${stuck ? "border-border" : "border-transparent"}`}>
+      <span className="shrink-0 text-xs text-muted-foreground">{pr.serverName}</span>
+      <button type="button" title={`Copy ${pr.key}`} className="min-w-0 shrink cursor-copy truncate font-mono text-xs hover:underline" onClick={() => copy(pr.key, pr.key)}>{shortKey(pr)}</button>
+      <span aria-hidden={!stuck} className={`ml-1.5 min-w-0 flex-1 truncate text-[13px] font-semibold transition-opacity ${stuck ? "opacity-100" : "opacity-0"}`}>{pr.title}</span>
+      {!pr.mine && <TrackButton pr={pr} />}
+      <button type="button" aria-label={`Open on ${pr.serverName}`} title={`Open on ${pr.serverName}`} className={ICON_GHOST} onClick={() => actions.open(pr)}>
+        <Icon name="ExternalLink" className="size-4" aria-hidden />
       </button>
-    </section>
+      {onExpand && (
+        <button type="button" aria-label="Open as a full page" title="Open as a full page" className={ICON_GHOST} onClick={onExpand}>
+          <Icon name="Maximize2" fallback="PanelRightOpen" className="size-4" aria-hidden />
+        </button>
+      )}
+      {onCollapse && (
+        <button type="button" aria-label="Show beside the list" title="Show beside the list" className={ICON_GHOST} onClick={onCollapse}>
+          <Icon name="Minimize2" fallback="PanelRight" className="size-4" aria-hidden />
+        </button>
+      )}
+      <PrMenu pr={pr} />
+      {onClose && (
+        <button type="button" aria-label="Close details" title="Close" className={ICON_GHOST} onClick={onClose}>
+          <Icon name="X" className="size-4" aria-hidden />
+        </button>
+      )}
+    </div>
   );
 }
 
-export function TrackButton({ pr, iconOnly = false }: { pr: PrView; iconOnly?: boolean }) {
-  const { writes } = useActions();
-  const label = pr.tracked ? "Tracked" : "Track";
-  return (
-    <button type="button" aria-pressed={pr.tracked} aria-label={label} title="Keep it in Reviews › Tracked; changes show in your Inbox"
-      className={iconOnly ? `${ICON_GHOST} size-9 ${pr.tracked ? "text-primary" : ""}` : pr.tracked ? `${BUTTON} border-primary/50 text-primary` : `${BUTTON} border-transparent bg-transparent`}
-      onClick={() => void writes.setTracked(pr, !pr.tracked)}>
-      <Icon name="Pin" className="size-3.5" aria-hidden />
-      {!iconOnly && label}
-    </button>
-  );
+function Branch({ name }: { name: string }) {
+  return <code title={name} className="inline-block max-w-full truncate rounded-sm bg-surface-recessed px-1 align-middle font-mono text-xs leading-5 text-foreground">{name.replace(/-thr_\w+$/u, "…")}</code>;
 }
 
-function Header({ pr, phone, onClose }: { pr: PrView; phone: boolean; onClose?: () => void }) {
+/** Why someone else's PR is in your lists, in a few words. */
+function reasonOf(pr: PrView): string | null {
+  const has = (reason: string) => pr.reasons.some((item) => item.reason === reason);
+  const when = pr.requestedAt === null ? "" : ` ${ago(pr.requestedAt)}`;
+  if (has("requested")) return `${pr.author} asked you${when}`;
+  if (has("team")) return `${pr.author} asked ${pr.teams.length === 0 ? "your team" : `@${pr.teams[0]}`}${when}`;
+  if (has("mentioned")) return `${pr.author} mentioned you`;
+  if (pr.tracked) return "You track it";
+  return null;
+}
+
+function Header({ pr, details, wide }: { pr: PrView; details: PrDetails | null; wide: boolean }) {
   const actions = useActions();
-  const ref = pr.headRef?.replace(/-thr_\w+$/u, "…") ?? null;
-  const meta: ReactNode[] = [<span key="who">{pr.mine ? "You" : pr.author}</span>];
-  if (ref !== null) meta.push(<span key="ref" className="font-mono text-[11px]">{ref}{pr.base !== null && ` → ${pr.base}`}</span>);
-  if (pr.additions !== null && pr.deletions !== null) meta.push(<span key="size"><span className="text-success">+{pr.additions.toLocaleString()}</span> <span className="text-destructive">−{pr.deletions.toLocaleString()}</span></span>);
-  if (pr.files !== null) meta.push(<span key="files">{plural(pr.files, "file")}</span>);
+  const edit = useEditPr(pr);
+  const canLabel = pr.mine && isLive(pr) && pr.actions.includes("labels");
+  const commits = details?.commits?.total ?? null;
+  const merger = pr.state === "merged" ? details?.timeline?.find((event) => event.kind === "merged")?.actor ?? null : null;
+  // Without the server's merge event nobody is named: the author often is not who merged.
+  const anonymous = pr.state === "merged" && merger === null;
+  const actor = merger ?? pr.author;
+  const you = pr.mine && actor === pr.author;
+  const verb = pr.state === "merged" ? "merged" : pr.state === "closed" ? "wanted to merge" : you ? "want to merge" : "wants to merge";
+  const meta = [pr.createdAt === null ? null : `Opened ${ago(pr.createdAt)}`, pr.updatedAt === null ? null : `updated ${ago(pr.updatedAt)}`, pr.mine ? null : reasonOf(pr)].filter(Boolean).join(" · ");
   return (
-    <div className="px-4 pb-2.5 pt-3">
-      <div className="flex items-center gap-1.5">
-        <span className="shrink-0 text-xs text-muted-foreground">{pr.serverName}</span>
-        <span className="min-w-0 truncate font-mono text-xs">{shortKey(pr)}</span>
-        <StatePill state={pr.state} />
-        <span className="flex-1" />
-        {!phone && !pr.mine && <TrackButton pr={pr} />}
-        {!phone && (
-          <button type="button" aria-label={`Open on ${pr.serverName}`} title={`Open on ${pr.serverName}`} className={ICON_GHOST} onClick={() => actions.open(pr)}>
-            <Icon name="ExternalLink" className="size-4" aria-hidden />
-          </button>
-        )}
-        {onClose && (
-          <button type="button" aria-label="Close details" title="Close" className={ICON_GHOST} onClick={onClose}>
-            <Icon name="X" className="size-4" aria-hidden />
-          </button>
-        )}
+    <header className={wide ? "px-6 pb-4 pt-2" : "px-4 pb-3.5 pt-1"}>
+      <h2 className={`font-semibold leading-snug [text-wrap:pretty] ${wide ? "text-xl" : "text-[17px]"}`}>{pr.title}</h2>
+      <div className="mt-2 text-[13px] leading-[26px] text-muted-foreground">
+        <StateBadge state={pr.state} />
+        {anonymous ? "Merged" : (
+          <>
+            <span className="mr-1 inline-block align-middle"><Avatar login={actor} size={18} bot={pr.bot && actor === pr.author} /></span>
+            <b className="font-semibold text-foreground">{you ? "You" : actor}</b> {verb}
+          </>
+        )}{commits !== null && <> {plural(commits, "commit")}</>}
+        {pr.base !== null && <> into <Branch name={pr.base} /></>}
+        {pr.headRef !== null && <> from <Branch name={pr.headRef} /></>}
       </div>
-      <h3 className="mb-0.5 mt-1.5 text-[15px] font-semibold leading-snug">{pr.title}</h3>
-      <div className="flex flex-wrap items-center gap-x-1 text-xs text-muted-foreground">
-        {meta.flatMap((part, index) => (index === 0 ? [part] : [<span key={`dot${index}`} aria-hidden>·</span>, part]))}
-      </div>
+      {meta !== "" && <div className="text-xs text-muted-foreground first-letter:uppercase">{meta}</div>}
       {pr.stale && (
         <div className="mt-1.5 text-xs text-warning-text">
           {pr.serverName}'s last sync could not read this PR, so this shows what Shuttle had {pr.staleSince === null ? "before" : `at ${clock(pr.staleSince)}`}.
         </div>
       )}
+      <div data-chips className="mt-2.5 flex flex-wrap items-center gap-1.5">
+        {(pr.labels ?? []).map((label) => (
+          <LabelChip key={label.name} label={label} onRemove={canLabel ? () => edit.apply({ kind: "labels", remove: [label.name] }) : undefined} />
+        ))}
+        {canLabel && (
+          <Picker phone={actions.phone} title="Labels" triggerLabel="Edit labels" triggerClassName={CHIP_ADD} align="start"
+            trigger={<><Icon name="Plus" className="size-3" aria-hidden />Label</>}>
+            <LabelChoices pr={pr} edit={edit} />
+          </Picker>
+        )}
+        <BoardChips pr={pr} phone={actions.phone} />
+      </div>
+    </header>
+  );
+}
+
+interface TabEntry {
+  id: PrTab;
+  label: string;
+  badge?: { text: string; tone: "neutral" | "bad" | "warn" | "info" };
+}
+
+/** bb's own count badge (bg-surface-recessed, text-2xs), tinted only when it asks for attention. */
+const BADGE_TONES = {
+  neutral: "bg-surface-recessed text-muted-foreground",
+  bad: "bg-surface-destructive text-destructive-text",
+  warn: "bg-warning/10 text-warning-text",
+  info: "bg-surface-recessed text-foreground",
+} as const;
+
+const tabId = (base: string, tab: PrTab) => `${base}-tab-${tab}`;
+
+/** The tabs, with the keyboard pattern of a tab list: one stop in the Tab order, the arrows, Home and End move between tabs. */
+function TabBar({ tabs, current, sticky, inset, barRef, panelId, onTab }: { tabs: readonly TabEntry[]; current: PrTab; sticky: string; inset: boolean; barRef: RefObject<HTMLDivElement | null>; panelId: string; onTab(tab: PrTab): void }) {
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const at = tabs.findIndex((tab) => tab.id === current);
+    const next = event.key === "ArrowRight" ? (at + 1) % tabs.length : event.key === "ArrowLeft" ? (at - 1 + tabs.length) % tabs.length
+      : event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : -1;
+    if (next < 0 || at < 0) return;
+    event.preventDefault();
+    onTab(tabs[next]!.id);
+    barRef.current?.querySelector<HTMLElement>(`[data-tab="${tabs[next]!.id}"]`)?.focus();
+  };
+  return (
+    <div ref={barRef} role="tablist" aria-label="Pull request sections" onKeyDown={onKeyDown} className={`sticky ${sticky} z-10 mt-4 flex gap-0.5 overflow-x-auto border-b border-border bg-background [scrollbar-width:none] ${inset ? "px-2.5" : ""}`}>
+      {tabs.map((tab) => (
+        <button key={tab.id} id={tabId(panelId, tab.id)} type="button" role="tab" aria-selected={tab.id === current} aria-controls={panelId} tabIndex={tab.id === current ? 0 : -1} data-tab={tab.id} onClick={() => onTab(tab.id)}
+          className={`-mb-px inline-flex shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap border-b-2 px-2 py-2.5 text-[13px] ${tab.id === current ? "border-foreground font-semibold text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
+          {tab.label}
+          {tab.badge && <span className={`rounded-full px-1.5 text-2xs font-normal leading-4 tabular-nums ${BADGE_TONES[tab.badge.tone]}`}>{tab.badge.text}</span>}
+        </button>
+      ))}
     </div>
   );
 }
 
-/** One PR, the same everywhere. On a phone the page's top and bottom bars carry its main actions. */
-export function PrDetail({ prKey, onClose, phone = false }: { prKey: string; onClose?: () => void; phone?: boolean }) {
+/** One PR, the same everywhere: who and what, where it stands, then its parts in tabs. On a phone the page's bars carry its main actions. */
+export function PrDetail({ prKey, onClose, onExpand, onCollapse, phone = false, page = false }: {
+  prKey: string;
+  onClose?: () => void;
+  /** Beside a list: open the PR as a full page. */
+  onExpand?: () => void;
+  /** On a full page: put the PR back beside its list. */
+  onCollapse?: () => void;
+  phone?: boolean;
+  /** A full page, which puts people and facts in a column of their own once it is wide enough. */
+  page?: boolean;
+}) {
   const actions = useActions();
   const detail = useShuttleQuery("detail", { key: prKey });
   const conversation = useShuttleQuery("conversation", { key: prKey });
+  const panelId = useId();
+  const [root, setRoot] = useState<HTMLElement | null>(null);
+  const [header, setHeader] = useState<HTMLElement | null>(null);
+  const tabBar = useRef<HTMLDivElement>(null);
+  const pane = useRef<HTMLDivElement>(null);
+  const width = useWidth(page ? root : null);
+  const stuck = useScrolledPast(phone ? null : header);
+  const since = useSeenSince(prKey);
+  const [storedTab, setTab] = usePrState(prKey, "tab", "overview");
+  const { intent } = actions;
+
+  useEffect(() => {
+    if (intent === null || intent.key !== prKey) return;
+    // The composer and the draft live in their tabs; opening the tab lets them take the intent.
+    if (intent.kind === "compose") setTab("conversation");
+    if (intent.kind === "draft") setTab("review");
+  }, [intent, prKey, setTab]);
 
   if (detail.data === undefined) {
     return (
@@ -248,41 +235,73 @@ export function PrDetail({ prKey, onClose, phone = false }: { prKey: string; onC
       </aside>
     );
   }
-  const { pr, body, draft } = detail.data;
+
+  const { pr, body, draft, events } = detail.data;
   const items = conversation.data?.items;
+  const details = conversation.data?.details ?? null;
   const conversationError = conversation.data?.error ?? (conversation.error === null ? null : messageOf(conversation.error));
   const lookedUp = pr.next.kind === "looked_up" && !pr.tracked;
+  const reviewTab = !pr.mine && isLive(pr);
+  const tab: PrTab = storedTab === "review" && !reviewTab ? "overview" : storedTab;
+  const wide = page && width >= WIDE_PX;
+
+  const checks = checksSummary(pr, items, details);
+  const openThreads = threadsOf((items ?? []).filter((item) => item.kind === "thread")).filter((group) => !group.resolved).length;
+  const spoken = (items ?? []).filter((item) => item.kind !== "check").length;
+  const tabs: TabEntry[] = [{ id: "overview", label: "Overview" }];
+  if (reviewTab) tabs.push({ id: "review", label: "Your review", ...(draft !== null ? { badge: { text: String(draft.findings.length), tone: "info" as const } } : {}) });
+  tabs.push({ id: "conversation", label: "Conversation", ...(openThreads > 0 ? { badge: { text: `${openThreads} open`, tone: "warn" as const } } : items !== undefined && spoken > 0 ? { badge: { text: String(spoken), tone: "neutral" as const } } : {}) });
+  const checkBadge = checks.counts === null ? (checks.state === "failed" ? { text: "failing", tone: "bad" as const } : null) : checks.counts.failed > 0 ? { text: `${checks.counts.failed} failing`, tone: "bad" as const } : checks.counts.running > 0 ? { text: `${checks.counts.running} running`, tone: "warn" as const } : checks.counts.total > 0 ? { text: String(checks.counts.total), tone: "neutral" as const } : null;
+  tabs.push({ id: "checks", label: "Checks", ...(checkBadge !== null ? { badge: checkBadge } : {}) });
+  const files = details?.files?.total ?? pr.files;
+  tabs.push({ id: "changes", label: "Changes", ...(files !== null ? { badge: { text: files.toLocaleString(), tone: "neutral" as const } } : {}) });
+  tabs.push({ id: "history", label: "History" });
+
+  const open = (next: PrTab) => {
+    setTab(next);
+    // Scrolled into a tab, the next one starts at its top rather than wherever this one was.
+    const bar = tabBar.current?.getBoundingClientRect();
+    const start = pane.current?.getBoundingClientRect();
+    if (bar !== undefined && start !== undefined && start.top < bar.bottom - 1) pane.current?.scrollIntoView?.({ block: "start" });
+  };
+
+  let content: ReactNode;
+  switch (tab) {
+    case "overview": content = <><Description prKey={pr.key} body={body} />{!wide && <Facts pr={pr} details={details} />}</>; break;
+    case "review": content = <YourReviewCard pr={pr} draft={draft} />; break;
+    case "conversation": content = <Conversation pr={pr} items={items} error={conversationError} phone={phone} since={since} />; break;
+    case "checks": content = <ChecksPane pr={pr} items={items} details={details} />; break;
+    case "changes": content = <ChangesPane pr={pr} items={items} details={details} />; break;
+    case "history": content = <HistoryPane pr={pr} items={items} details={details} events={events} />; break;
+  }
 
   return (
-    <aside aria-label={`Pull request ${shortKey(pr)}`} data-detail={pr.key} className="min-w-0 bg-background pb-8">
-      <Header pr={pr} phone={phone} onClose={onClose} />
-      {lookedUp && (
-        <div data-looked-up className="mx-4 mb-2.5 flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
-          <Icon name="Search" className="size-3.5" aria-hidden />
-          <span className="flex-1">Looked up. It is not in any of your lists.</span>
-          <button type="button" className={BUTTON_PRIMARY} onClick={() => runNext(actions, pr, "track")}>
-            <Icon name="Pin" className="size-3.5" aria-hidden />Track it
-          </button>
+    <article ref={setRoot} aria-label={`Pull request ${shortKey(pr)}`} data-detail={pr.key} data-layout={wide ? "columns" : "single"} className="min-w-0 bg-background pb-10">
+      {!phone && <TopBar pr={pr} stuck={stuck} onClose={onClose} onExpand={onExpand} onCollapse={onCollapse} />}
+      <div className={page ? "mx-auto w-full max-w-[1320px]" : ""}>
+        <div ref={setHeader}><Header pr={pr} details={details} wide={wide} /></div>
+        {lookedUp && (
+          <div data-looked-up className={`${wide ? "mx-6" : "mx-4"} mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-xs text-muted-foreground`}>
+            <Icon name="Search" className="size-3.5" aria-hidden />
+            <span className="flex-1">Looked up. It is not in any of your lists.</span>
+            <button type="button" className={BUTTON_PRIMARY} onClick={() => runNext(actions, pr, "track")}>
+              <Icon name="Pin" className="size-3.5" aria-hidden />Track it
+            </button>
+          </div>
+        )}
+        <div className={wide ? "grid grid-cols-[minmax(0,1fr)_320px] items-start gap-7 px-6" : ""}>
+          <div className="min-w-0">
+            <div className={wide ? "" : "px-4"}><StatusCard pr={pr} items={items} details={details} draft={draft} onTab={open} /></div>
+            <TabBar tabs={tabs} current={tab} sticky={phone ? "top-0" : "top-11"} inset={!wide} barRef={tabBar} panelId={panelId} onTab={open} />
+            <div ref={pane} id={panelId} role="tabpanel" aria-labelledby={tabId(panelId, tab)} className={`scroll-mt-24 pt-4 ${wide ? "" : "px-4"}`}>{content}</div>
+          </div>
+          {wide && (
+            <aside aria-label="About this PR" className="sticky top-14 max-h-[calc(100vh-4.5rem)] overflow-y-auto pb-6 pt-1 [scrollbar-width:none]">
+              <Facts pr={pr} details={details} compact />
+            </aside>
+          )}
         </div>
-      )}
-      <BoardMemberships pr={pr} />
-      <Strip pr={pr} items={items} />
-      {pr.mine ? (
-        <>
-          <Banner pr={pr} />
-          <AgentCard pr={pr} />
-        </>
-      ) : (
-        <>
-          <YourReviewCard pr={pr} draft={draft} />
-          {pr.agent !== null && <AgentCard pr={pr} />}
-        </>
-      )}
-      <Description prKey={pr.key} body={body} />
-      <Conversation pr={pr} items={items} error={conversationError} phone={phone} />
-      <ChecksSection pr={pr} items={items} />
-      <Details pr={pr} />
-      <Threads pr={pr} />
-    </aside>
+      </div>
+    </article>
   );
 }

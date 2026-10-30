@@ -57,8 +57,8 @@ function BranchSuggestion({ threadId, linked, busy, onLink }: { threadId: string
   const { pullRequest } = row;
   if (linked.some((pr) => sameUrl(pr.url, pullRequest.url))) return null;
   return (
-    <div data-branch-pr className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-primary/40 bg-primary/5 p-3 text-sm">
-      <Icon name="GitPullRequest" className="size-4 shrink-0 text-primary" aria-hidden />
+    <div data-branch-pr className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-raised p-3 text-sm">
+      <Icon name="GitPullRequest" className="size-4 shrink-0 text-muted-foreground" aria-hidden />
       <span className="min-w-0 flex-1">
         This thread's branch has PR #{pullRequest.number}
         <span className="block truncate text-xs text-muted-foreground" title={pullRequest.title}>{pullRequest.title}</span>
@@ -168,7 +168,7 @@ function PanelPrView({ prKey, onBack }: { prKey: string; onBack(): void }) {
     <section data-shuttle-panel data-panel-pr={prKey} aria-label="Shuttle" className="flex h-full min-h-0 flex-col bg-background text-foreground">
       <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border px-2">
         <button type="button" aria-label="Back to this thread's pull requests" onClick={onBack}
-          className="inline-flex h-7 cursor-pointer items-center gap-1 rounded-md px-1.5 text-xs text-foreground hover:bg-accent">
+          className="inline-flex h-7 cursor-pointer items-center gap-1 rounded-md px-1.5 text-xs text-foreground hover:bg-state-hover">
           <Icon name="ChevronLeft" className="size-4" aria-hidden />Pull requests
         </button>
         <span className="flex-1" />

@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { experimental_copyToClipboard, experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import type { ServerStatus, SyncHistory, SyncRun, SyncState, SyncStep } from "../contract";
 import { failureAdvice, primaryStep, STEP_LABELS } from "../failures";
-import { BUTTON, BUTTON_GHOST, BUTTON_PRIMARY, CARD, ErrorNote, HEADING, Pill, ServerBadge, TONE_PANEL, TONE_TEXT, type Tone } from "./common";
+import { BUTTON, BUTTON_GHOST, BUTTON_GHOST_SMALL, BUTTON_PRIMARY, CARD, ErrorNote, HEADING, Pill, ServerBadge, TONE_PANEL, TONE_TEXT, type Tone } from "./common";
 import { messageOf, useShuttleMutation, useShuttleQuery } from "./data";
 import { ago, clock, plural, seconds } from "./format";
 
@@ -148,7 +148,7 @@ function Marks({ runs, windowMs }: { runs: SyncHistory["servers"][number]["runs"
 
 const STEP_ICON: Record<SyncStep["status"], { icon: string; tone: string }> = {
   ok: { icon: "Check", tone: "text-success" },
-  failed: { icon: "X", tone: "text-destructive" },
+  failed: { icon: "X", tone: "text-destructive-text" },
   skipped: { icon: "Minus", tone: "text-muted-foreground" },
 };
 
@@ -162,7 +162,7 @@ function Steps({ steps }: { steps: readonly SyncStep[] }) {
             <span className="block">{STEP_LABELS[step.operation]}</span>
             <span className="block font-mono text-[10.5px] text-muted-foreground">{step.operation}</span>
           </span>
-          <span className={`min-w-0 flex-1 break-words ${step.status === "failed" ? "text-destructive" : "text-muted-foreground"}`}>
+          <span className={`min-w-0 flex-1 break-words ${step.status === "failed" ? "text-destructive-text" : "text-muted-foreground"}`}>
             {step.failure ? `${step.failure.summary}${step.detail ? `: ${step.detail}` : ""}` : step.detail}
             {step.attempts > 1 && <span className="text-muted-foreground"> · tried {step.attempts} times</span>}
           </span>
@@ -183,7 +183,7 @@ function Printed({ run }: { run: SyncRun }) {
       <div className="flex items-center gap-2 border-b border-border px-2.5 py-1 text-[11px] text-muted-foreground">
         <span className="flex-1">{failure.output === null ? "What Shuttle saw" : "What the command printed"}</span>
         {failure.exit !== null && <span className="font-mono">exit {failure.exit}</span>}
-        <button type="button" className={`${BUTTON_GHOST} h-6`} onClick={() => void copy([text, failure.command].filter(Boolean).join("\n\n"), "the error")}>
+        <button type="button" className={BUTTON_GHOST_SMALL} onClick={() => void copy([text, failure.command].filter(Boolean).join("\n\n"), "the error")}>
           <Icon name="Copy" className="size-3" aria-hidden />Copy
         </button>
       </div>
@@ -206,7 +206,7 @@ function Failures({ failures }: { failures: SyncHistory["servers"][number]["fail
               <summary className="flex cursor-pointer list-none items-baseline gap-2">
                 <span className="w-28 shrink-0 text-muted-foreground">{clock(failure.at)}</span>
                 <span className="w-32 shrink-0 font-mono text-[10.5px] text-muted-foreground">{failure.operation}</span>
-                <span className={`min-w-0 flex-1 ${failure.state === "partial" ? "text-warning-text" : "text-destructive"}`}>{failure.summary}</span>
+                <span className={`min-w-0 flex-1 ${failure.state === "partial" ? "text-warning-text" : "text-destructive-text"}`}>{failure.summary}</span>
               </summary>
               {failure.output !== null && <pre className="mt-1 whitespace-pre-wrap break-words rounded bg-background px-2 py-1.5 font-mono text-[11px]">{failure.output}</pre>}
             </details>

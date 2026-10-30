@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { experimental_copyToClipboard, experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
-import { BUTTON, BUTTON_GHOST, BUTTON_PRIMARY, ErrorNote, FIELD } from "../common";
+import { BUTTON, BUTTON_GHOST, BUTTON_PRIMARY, ErrorNote, FIELD_CODE } from "../common";
 import { messageOf, useShuttleMutation, useShuttleQuery } from "../data";
 import { plural } from "../format";
 
@@ -71,7 +71,7 @@ export function TransferSection() {
       )}
       {pasting && (
         <div className="flex flex-col gap-2">
-          <textarea aria-label="TOML to import" rows={10} className={`${FIELD} w-full font-mono text-xs`} placeholder={"[[server]]\nid = \"github\"\n…"}
+          <textarea aria-label="TOML to import" rows={10} className={`${FIELD_CODE} w-full`} placeholder={"[[server]]\nid = \"github\"\n…"}
             value={toml} onChange={(event) => setToml(event.target.value)} />
           {error !== null && <ErrorNote>{error}</ErrorNote>}
           {current !== null && (

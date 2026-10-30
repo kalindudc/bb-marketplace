@@ -363,6 +363,12 @@ export class Store {
     return (this.db.prepare("SELECT * FROM prs WHERE id = ?").get(id) as PrRow | undefined) ?? null;
   }
 
+  /** The PR on a server's repo whose head commit starts with `sha`, the most recently updated first. Heads shorter than 7 characters never match. */
+  prByHead(server: string, repo: string, sha: string): PrRow | null {
+    return (this.db.prepare("SELECT * FROM prs WHERE server = ? AND repo = ? AND length(head) >= 7 AND (substr(head, 1, length(?)) = ? OR substr(?, 1, length(head)) = head) ORDER BY COALESCE(updated_at, fetched_at) DESC LIMIT 1")
+      .get(server, repo, sha, sha, sha) as PrRow | undefined) ?? null;
+  }
+
   allPrs(): PrRow[] {
     return this.db.prepare("SELECT * FROM prs ORDER BY COALESCE(updated_at, fetched_at) DESC").all() as PrRow[];
   }

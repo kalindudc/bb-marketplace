@@ -3,7 +3,7 @@ import { adapterFor, type Adapter } from "./adapters";
 import { runProcess, sleep, type Runner } from "./adapters/exec";
 import { configChanges, configFromToml, configToToml, ConfigError, parseConfig, serverSchema, type Config, type ServerConfig, type WatchMode } from "./config";
 import type {
-  AgentMode, AgentTarget, Area, BoardDetail, BoardSummary, ConversationItem, EventView, InboxView, InsightsView, LinkRole, MergeMethod, MergeOptions, Outcome, Overview, PostFinding, PrChange,
+  AgentMode, AgentTarget, Area, BoardDetail, BoardSummary, ConversationItem, EventView, InboxView, InsightsView, LinkRole, MergeMethod, MergeOptions, Outcome, Overview, LinkCard, PostFinding, PrChange, PrDetails,
   PrView, ReviewDraft, ReviewInput, ServerStatus, SyncHistory, SyncRun, SyncStep, SyncStepName, TestResult, ThreadOption, Verdict,
 } from "./contract";
 import { askAgent, runAutoAgent, setAgent, setAgentMode, type AgentChange } from "./agents";
@@ -26,6 +26,7 @@ import { primaryStep } from "./failures";
 import { RECHECK_MS, runAutoReviews, syncServer } from "./sync";
 import { allViews, inArea, inboxOf, toView } from "./views";
 import { editOptions, editPr } from "./edit";
+import { LinkCards } from "./link-cards";
 import { deliver, pollWatches } from "./watch";
 
 const PROJECTS_TTL_MS = 5 * 60_000;
@@ -80,6 +81,7 @@ export class Shuttle implements Ctx {
   private syncingScope: readonly string[] | null = null;
   private deliveries: Promise<unknown> = Promise.resolve();
   private readonly conversations = new Conversations(this);
+  private readonly linkCards = new LinkCards(this, this.conversations);
 
   constructor(deps: ShuttleDeps) {
     this.store = deps.store;
@@ -421,7 +423,15 @@ export class Shuttle implements Ctx {
     return toView(this, this.store.prById(pr.id)!);
   }
 
-  conversation(key: string): Promise<{ items: ConversationItem[]; error: string | null; fetchedAt: number }> {
+  linkCard(url: string): Promise<LinkCard> {
+    return this.linkCards.card(url);
+  }
+
+  linkStates(urls: readonly string[]) {
+    return this.linkCards.states(urls);
+  }
+
+  conversation(key: string): Promise<{ items: ConversationItem[]; details: PrDetails | null; error: string | null; fetchedAt: number }> {
     return this.conversations.read(key);
   }
 

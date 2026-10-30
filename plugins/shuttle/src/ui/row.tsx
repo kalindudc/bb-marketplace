@@ -32,9 +32,9 @@ function Row({ pr, layout, meta, pills }: { pr: PrView; layout: RowLayout; meta:
   };
   return (
     <li data-pr={pr.key} data-next={pr.next.kind} tabIndex={0} aria-current={selected ? "true" : undefined} onClick={onCardClick(() => layout.onSelect(pr.key))} onKeyDown={onKey}
-      className={`flex cursor-pointer items-start gap-2.5 border-t border-border px-3.5 py-2.5 first:border-t-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${selected ? SELECTED_ROW : "hover:bg-accent/50"}`}>
+      className={`flex cursor-pointer items-start gap-2.5 border-t border-border px-3.5 py-2.5 first:border-t-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${selected ? SELECTED_ROW : "hover:bg-state-hover"}`}>
       {layout.selection && (
-        <input type="checkbox" aria-label={`Select ${pr.title}`} checked={layout.selection.checked} onChange={() => layout.selection?.onToggle()} className="mt-1 size-4 shrink-0 cursor-pointer accent-primary" />
+        <input type="checkbox" aria-label={`Select ${pr.title}`} checked={layout.selection.checked} onChange={() => layout.selection?.onToggle()} className="mt-1 size-4 shrink-0 cursor-pointer accent-foreground" />
       )}
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-1.5 text-[11.5px] text-muted-foreground">{meta}</div>

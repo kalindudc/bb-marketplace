@@ -1,0 +1,66 @@
+/* Git links in thread messages that Shuttle can read (marked by ui/links/dom.ts): an icon for what the
+   link names, coloured by its PR's state in the theme's own colours, a dotted underline that firms up on
+   hover, and a hover tint, so the link reads as something with more behind it. Lucide's icons, as masks. */
+:root {
+  --shuttle-link-pr: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2224%22 height=%2224%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22black%22 stroke-width=%222.25%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22 %3E %3Ccircle cx=%2218%22 cy=%2218%22 r=%223%22 /%3E %3Ccircle cx=%226%22 cy=%226%22 r=%223%22 /%3E %3Cpath d=%22M13 6h3a2 2 0 0 1 2 2v7%22 /%3E %3Cline x1=%226%22 x2=%226%22 y1=%229%22 y2=%2221%22 /%3E %3C/svg%3E");
+  --shuttle-link-draft: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2224%22 height=%2224%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22black%22 stroke-width=%222.25%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22 %3E %3Ccircle cx=%2218%22 cy=%2218%22 r=%223%22 /%3E %3Ccircle cx=%226%22 cy=%226%22 r=%223%22 /%3E %3Cpath d=%22M18 6V5%22 /%3E %3Cpath d=%22M18 11v-1%22 /%3E %3Cline x1=%226%22 x2=%226%22 y1=%229%22 y2=%2221%22 /%3E %3C/svg%3E");
+  --shuttle-link-merged: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2224%22 height=%2224%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22black%22 stroke-width=%222.25%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22 %3E %3Ccircle cx=%2218%22 cy=%2218%22 r=%223%22 /%3E %3Ccircle cx=%226%22 cy=%226%22 r=%223%22 /%3E %3Cpath d=%22M6 21V9a9 9 0 0 0 9 9%22 /%3E %3C/svg%3E");
+  --shuttle-link-closed: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2224%22 height=%2224%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22black%22 stroke-width=%222.25%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22 %3E %3Ccircle cx=%226%22 cy=%226%22 r=%223%22 /%3E %3Cpath d=%22M6 9v12%22 /%3E %3Cpath d=%22m21 3-6 6%22 /%3E %3Cpath d=%22m21 9-6-6%22 /%3E %3Cpath d=%22M18 11.5V15%22 /%3E %3Ccircle cx=%2218%22 cy=%2218%22 r=%223%22 /%3E %3C/svg%3E");
+  --shuttle-link-comment: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2224%22 height=%2224%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22black%22 stroke-width=%222.25%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22 %3E %3Cpath d=%22M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z%22 /%3E %3C/svg%3E");
+  --shuttle-link-review: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2224%22 height=%2224%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22black%22 stroke-width=%222.25%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22 %3E %3Cpath d=%22M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z%22 /%3E %3Cpath d=%22M13 8H7%22 /%3E %3Cpath d=%22M17 12H7%22 /%3E %3C/svg%3E");
+  --shuttle-link-commit: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2224%22 height=%2224%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22black%22 stroke-width=%222.25%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22 %3E %3Ccircle cx=%2212%22 cy=%2212%22 r=%223%22 /%3E %3Cline x1=%223%22 x2=%229%22 y1=%2212%22 y2=%2212%22 /%3E %3Cline x1=%2215%22 x2=%2221%22 y1=%2212%22 y2=%2212%22 /%3E %3C/svg%3E");
+  --shuttle-link-check: url("data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2224%22 height=%2224%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22black%22 stroke-width=%222.25%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22 %3E %3Ccircle cx=%2212%22 cy=%2212%22 r=%2210%22 /%3E %3Cpolygon points=%2210 8 16 12 10 16 10 8%22 /%3E %3C/svg%3E");
+}
+
+a[data-shuttle-link] {
+  --shuttle-link-mark: var(--muted-foreground);
+  --shuttle-link-icon: var(--shuttle-link-pr);
+  border-radius: calc(var(--radius) - 4px);
+  padding: 0 0.15em;
+  margin: 0 -0.05em;
+  cursor: pointer;
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: color-mix(in oklab, var(--primary) 60%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  transition: background-color 120ms ease, text-decoration-color 120ms ease;
+}
+a[data-shuttle-link]::before {
+  content: "";
+  display: inline-block;
+  width: 0.95em;
+  height: 0.95em;
+  margin-right: 0.25em;
+  vertical-align: -0.14em;
+  background: var(--shuttle-link-mark);
+  -webkit-mask: var(--shuttle-link-icon) center / contain no-repeat;
+  mask: var(--shuttle-link-icon) center / contain no-repeat;
+}
+a[data-shuttle-link]:hover,
+a[data-shuttle-link]:focus-visible,
+a[data-shuttle-link][data-shuttle-open] {
+  background-color: var(--state-hover);
+  text-decoration-style: solid;
+  text-decoration-color: var(--primary);
+  outline: none;
+}
+a[data-shuttle-link]:focus-visible {
+  box-shadow: 0 0 0 1px var(--ring);
+}
+
+a[data-shuttle-link="comment"] { --shuttle-link-icon: var(--shuttle-link-comment); }
+a[data-shuttle-link="review"] { --shuttle-link-icon: var(--shuttle-link-review); }
+a[data-shuttle-link="commit"] { --shuttle-link-icon: var(--shuttle-link-commit); }
+a[data-shuttle-link="check"] { --shuttle-link-icon: var(--shuttle-link-check); }
+
+a[data-shuttle-link][data-shuttle-state="open"] { --shuttle-link-mark: var(--success); }
+a[data-shuttle-link][data-shuttle-state="merged"] { --shuttle-link-mark: var(--pr-merged); }
+a[data-shuttle-link][data-shuttle-state="closed"] { --shuttle-link-mark: var(--destructive-text); }
+a[data-shuttle-link="pr"][data-shuttle-state="draft"] { --shuttle-link-icon: var(--shuttle-link-draft); }
+a[data-shuttle-link="pr"][data-shuttle-state="merged"] { --shuttle-link-icon: var(--shuttle-link-merged); }
+a[data-shuttle-link="pr"][data-shuttle-state="closed"] { --shuttle-link-icon: var(--shuttle-link-closed); }
+
+@media (prefers-reduced-motion: reduce) {
+  a[data-shuttle-link] { transition: none; }
+}

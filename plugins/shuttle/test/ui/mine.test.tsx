@@ -116,7 +116,7 @@ describe("My PRs", () => {
     });
     const { slot, route } = await minePage({}, [asking], formatRoute({ view: "mine", key: asking.key }));
     const view = await find(slot.container, `[data-detail="${asking.key}"]`);
-    const banner = await find(view, "[data-banner]");
+    const banner = await find(view, "[data-status]");
     fireEvent.click(within(banner).getByRole("button", { name: "Nudge reviewers" }));
     route(formatRoute({ view: "mine", key: asking.key }));
     const box = within(view).getByRole("textbox", { name: "Comment on bb#4" }) as HTMLTextAreaElement;

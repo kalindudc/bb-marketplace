@@ -15,7 +15,7 @@ export function SkillInput({ value, onChange, projectId, label = "Skill" }: { va
         {skills?.map((skill) => <option key={skill.id} value={skill.name}>{skill.description}</option>)}
       </datalist>
       {known !== null && <div className="mt-1 truncate text-xs text-muted-foreground">{known.description}</div>}
-      {query.error !== null && <div className="mt-1 text-xs text-destructive">Could not list skills: {messageOf(query.error)}</div>}
+      {query.error !== null && <div className="mt-1 text-xs text-destructive-text">Could not list skills: {messageOf(query.error)}</div>}
     </div>
   );
 }

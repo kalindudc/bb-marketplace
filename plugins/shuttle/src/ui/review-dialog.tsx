@@ -73,8 +73,8 @@ export function ReviewDialog({ pr, presets, thread = null, initialNote = "", onC
           const on = item.id === presetId;
           return (
             <button key={item.id} type="button" role="radio" aria-checked={on} onClick={() => pickPreset(item.id)}
-              className={`flex cursor-pointer items-start gap-2.5 rounded-lg border px-3 py-2.5 text-left ${on ? "border-primary bg-primary/5" : "border-border hover:bg-accent"}`}>
-              <span className={`mt-0.5 size-4 shrink-0 rounded-full border ${on ? "border-[5px] border-primary" : "border-border"}`} aria-hidden />
+              className={`flex cursor-pointer items-start gap-2.5 rounded-lg border px-3 py-2.5 text-left ${on ? "border-surface-selected-border bg-surface-selected" : "border-border hover:bg-state-hover"}`}>
+              <span className={`mt-0.5 size-4 shrink-0 rounded-full border ${on ? "border-[5px] border-foreground" : "border-border"}`} aria-hidden />
               <span className="min-w-0">
                 <span className="flex items-center gap-2 text-sm font-semibold">
                   {item.name}

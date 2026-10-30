@@ -2,7 +2,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { MERGE_METHODS, type MergeMethod, type PrView } from "../contract";
-import { BUTTON_GHOST, BUTTON_PRIMARY, Choice, Dialog, ErrorNote, FIELD, LABEL } from "./common";
+import { BUTTON_GHOST, BUTTON_SUCCESS, Choice, Dialog, ErrorNote, FIELD, LABEL } from "./common";
 import { messageOf, useShuttleMutation, useShuttleQuery } from "./data";
 import { plural, tinyKey } from "./format";
 
@@ -67,7 +67,7 @@ export function MergeDialog({ pr, onClose }: { pr: PrView; onClose(): void }) {
         <>
           <span className="flex-1" />
           <button type="button" className={BUTTON_GHOST} onClick={onClose}>Cancel</button>
-          <button type="button" className={`${BUTTON_PRIMARY} border-success bg-success`} disabled={loaded === undefined || stuck || method === null || head === null || merge.isPending} onClick={() => void submit()}>
+          <button type="button" className={BUTTON_SUCCESS} disabled={loaded === undefined || stuck || method === null || head === null || merge.isPending} onClick={() => void submit()}>
             <Icon name="GitMerge" className="size-3.5" aria-hidden />{auto ? "Turn on auto-merge" : "Merge"}
           </button>
         </>
@@ -75,7 +75,7 @@ export function MergeDialog({ pr, onClose }: { pr: PrView; onClose(): void }) {
       <ul aria-label="Before it merges" className="mb-1">
         {pr.checks === "passed" && <Line tone="text-success" icon="Check">{counts !== null ? `All ${counts.total} checks pass` : "All checks pass"}</Line>}
         {pr.checks === "pending" && <Line tone="text-warning-text" icon="Clock">{counts !== null ? `${counts.pending} of ${counts.total} checks still running` : "Checks are still running"}</Line>}
-        {pr.checks === "failed" && <Line tone="text-destructive" icon="X">{counts !== null ? `${plural(counts.failed, "check")} fail` : "Checks fail"}</Line>}
+        {pr.checks === "failed" && <Line tone="text-destructive-text" icon="X">{counts !== null ? `${plural(counts.failed, "check")} fail` : "Checks fail"}</Line>}
         {pr.checks === "none" && <Line tone="text-muted-foreground" icon="Info">No checks</Line>}
         {approvers.length > 0
           ? <Line tone="text-success" icon="Check">{`Approved by ${approvers.join(", ")}`}</Line>
@@ -87,7 +87,7 @@ export function MergeDialog({ pr, onClose }: { pr: PrView; onClose(): void }) {
       {loaded !== undefined && (
         <>
           {loaded.state !== "clean" && (loaded.detail !== null || loaded.state !== "unknown") && (
-            <div role={stuck ? "alert" : undefined} className={`mt-2 rounded-md border px-3 py-2 text-xs ${stuck ? "border-destructive/40 bg-destructive/10 text-destructive" : "border-warning/40 bg-warning/5 text-warning-text"}`}>
+            <div role={stuck ? "alert" : undefined} className={`mt-2 rounded-md border px-3 py-2 text-xs ${stuck ? "border-destructive/40 bg-destructive/10 text-destructive-text" : "border-warning/40 bg-warning/5 text-warning-text"}`}>
               {loaded.detail ?? STATE_TEXT[loaded.state]}
             </div>
           )}
@@ -118,12 +118,12 @@ export function MergeDialog({ pr, onClose }: { pr: PrView; onClose(): void }) {
             </>
           )}
           <label className="mt-2.5 flex cursor-pointer items-center gap-2 text-sm">
-            <input type="checkbox" checked={deleteBranch} onChange={(event) => setDeleteChoice(event.target.checked)} className="size-4 cursor-pointer accent-primary" />
+            <input type="checkbox" checked={deleteBranch} onChange={(event) => setDeleteChoice(event.target.checked)} className="size-4 cursor-pointer accent-foreground" />
             Delete the branch after merging
           </label>
           {head !== null
             ? <div className="mt-2 text-xs text-muted-foreground">Merges only if nobody pushed since you looked (head <span className="font-mono">{head.slice(0, 7)}</span>).</div>
-            : <div className="mt-2 text-xs text-destructive">Shuttle does not know this PR's head yet. Sync, then try again.</div>}
+            : <div className="mt-2 text-xs text-destructive-text">Shuttle does not know this PR's head yet. Sync, then try again.</div>}
         </>
       )}
     </Dialog>

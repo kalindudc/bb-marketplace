@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { BoardDetail, BoardSummary } from "../../src/contract";
 import { formatRoute } from "../../src/ui/route";
 import { reloadPrefs } from "../../src/ui/prefs";
-import { app, callsTo, find, handlers, lastNavigation, mine, mount, overview, page, pr, server, unmountAll, type Handlers } from "./helpers";
+import { app, callsTo, find, handlers, lastNavigation, mine, mount, overview, page, pr, server, setViewport, unmountAll, type Handlers } from "./helpers";
 
 const toasts = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), toasts) }));
@@ -680,19 +680,60 @@ describe("board management safeguards", () => {
     await waitFor(() => expect(callsTo(slot, "boardCreate")).toEqual([{ name: "Selected work", description: "", prs: keys }]));
   });
 
-  it("reads exact PR memberships even when the PR is absent from card previews", async () => {
+  it("shows the boards a PR is on in its view, and puts it on more boards or takes it off", async () => {
+    const other: BoardSummary = { ...activeBoard, id: "edge", name: "Edge work", description: "", preview: [] };
+    let on = [activeBoard, archivedBoard];
     const { slot } = await boardPage(formatRoute({ view: "pr", key: member.key }), {
       detail: () => ({ pr: member, events: [], body: "", draft: null }),
-      boards: ({ key }) => ({ boards: key === member.key ? [activeBoard, archivedBoard] : [] }),
+      boards: ({ key, archived }) => ({ boards: key === member.key ? on : archived === "exclude" ? [activeBoard, other] : [] }),
+      boardAdd: ({ id }) => {
+        const board = [activeBoard, other].find((item) => item.id === id)!;
+        on = [...on, board];
+        return { board, added: [member.key], alreadyPresent: [] };
+      },
+      boardRemove: ({ id }) => {
+        on = on.filter((item) => item.id !== id);
+        return { board: activeBoard, removed: [member.key] };
+      },
     });
-    const memberships = await slot.findByRole("region", { name: "Boards" });
-    await within(memberships).findByRole("button", { name: activeBoard.name });
-    expect(within(memberships).getByRole("button", { name: /Review handoff/u })).toBeTruthy();
+    const chip = await find(slot.container, `[data-board-chip="${activeBoard.id}"]`);
+    expect(chip.textContent).toContain(activeBoard.name);
+    expect(slot.container.querySelector(`[data-board-chip="${archivedBoard.id}"]`)!.textContent).toContain("archived");
     expect(callsTo(slot, "boards")).toContainEqual({ archived: "include", key: member.key });
-    fireEvent.click(within(memberships).getByRole("button", { name: activeBoard.name }));
+    fireEvent.click(chip);
     expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: "board/release" } });
-    fireEvent.click(within(memberships).getByRole("button", { name: "Add to board" }));
-    expect(await slot.findByRole("dialog", { name: "Add to a board" })).toBeTruthy();
+
+    fireEvent.keyDown(slot.getByRole("button", { name: "Boards for this PR" }), { key: "Enter" });
+    const menu = await screen.findByRole("menu", { name: "Boards for this PR" });
+    const edge = await within(menu).findByRole("menuitemcheckbox", { name: /Edge work/u });
+    expect(edge.getAttribute("aria-checked")).toBe("false");
+    expect(within(menu).getByRole("menuitemcheckbox", { name: /October release/u }).getAttribute("aria-checked")).toBe("true");
+    expect(within(menu).getByRole("menuitemcheckbox", { name: /Review handoff/u }).getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(edge);
+    await waitFor(() => expect(callsTo(slot, "boardAdd")).toEqual([{ id: "edge", prs: [member.key] }]));
+    await waitFor(() => expect(within(menu).getByRole("menuitemcheckbox", { name: /Edge work/u }).getAttribute("aria-checked")).toBe("true"));
+    fireEvent.click(within(menu).getByRole("menuitemcheckbox", { name: /October release/u }));
+    await waitFor(() => expect(callsTo(slot, "boardRemove")).toEqual([{ id: activeBoard.id, prs: [member.key] }]));
+    await waitFor(() => expect(slot.container.querySelector(`[data-board-chip="${activeBoard.id}"]`)).toBeNull());
+    expect(toasts.success.mock.calls.map(([message]) => message)).toEqual(["Added it to “Edge work”.", "Took it off “October release”."]);
+  });
+
+  it("starts a board with the PR from its view, and stays on the PR", async () => {
+    const { slot } = await boardPage(formatRoute({ view: "pr", key: member.key }), {
+      detail: () => ({ pr: member, events: [], body: "", draft: null }),
+      boards: () => ({ boards: [] }),
+    });
+    fireEvent.keyDown(await slot.findByRole("button", { name: "Boards for this PR" }), { key: "Enter" });
+    const menu = await screen.findByRole("menu", { name: "Boards for this PR" });
+    fireEvent.change(within(menu).getByRole("textbox", { name: "Find a board" }), { target: { value: "Launch" } });
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "New board “Launch” with this PR…" }));
+    const dialog = await slot.findByRole("dialog", { name: "Create board" });
+    expect((within(dialog).getByRole("textbox", { name: "Board name" }) as HTMLInputElement).value).toBe("Launch");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Create board" }));
+    await waitFor(() => expect(callsTo(slot, "boardCreate")).toEqual([{ name: "Launch", description: "", prs: [member.key] }]));
+    await waitFor(() => expect(slot.queryByRole("dialog")).toBeNull());
+    expect(slot.inspection.navigateCalls.filter((call) => call.method === "toPluginPanel")).toEqual([]);
+    expect(toasts.success).toHaveBeenCalledWith("Created “Launch” with this PR.");
   });
 
   it("keeps a refused create open without discarding the entered name", async () => {
@@ -743,5 +784,80 @@ describe("board management safeguards", () => {
     fireEvent.click(boxes[1]!);
     fireEvent.click(within(dialog).getByRole("button", { name: "Add 1" }));
     await waitFor(() => expect(callsTo(slot, "boardAdd")).toEqual([{ id: activeBoard.id, prs: [mergedMember.key] }]));
+  });
+});
+
+describe("boards on a phone", () => {
+  it("keeps board cards inside the screen, one column, without the desktop's tall minimum", async () => {
+    setViewport(390);
+    const { slot } = await boardPage("boards");
+    const card = await find(slot.container, "[data-board-card]");
+    expect(card.parentElement!.className).toContain("grid-cols-1");
+    expect(card.className).toContain("min-w-0");
+    expect(card.className).not.toMatch(/(^| )min-h-56/u);
+  });
+
+  it("gives a board a way back, its main action, and the rest in a sheet", async () => {
+    setViewport(390);
+    const { slot } = await boardPage("board/release", { board: () => populated });
+    await find(slot.container, "[data-pr]");
+    expect(slot.queryByRole("heading", { name: "Boards" })).toBeNull();
+    expect(slot.queryByRole("button", { name: "Edit board" })).toBeNull();
+    expect(slot.getByRole("button", { name: "Add PRs" })).toBeTruthy();
+    fireEvent.click(slot.getByRole("button", { name: "Back to Boards" }));
+    expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: "boards" } });
+    fireEvent.click(slot.getByRole("button", { name: "More for October release" }));
+    const sheet = await screen.findByRole("menu", { name: "October release" });
+    expect(within(sheet).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Edit board", "Duplicate", "Thread tools", "Archive board"]);
+    fireEvent.click(within(sheet).getByRole("menuitem", { name: "Edit board" }));
+    expect(await screen.findByRole("dialog", { name: "Edit board" })).toBeTruthy();
+  });
+
+  it("offers Restore as an archived board's main action", async () => {
+    setViewport(390);
+    const { slot } = await boardPage("board/handoff", { board: () => ({ board: archivedBoard, prs: [member], activity: [] }) });
+    await find(slot.container, "[data-pr]");
+    expect(slot.getByRole("button", { name: "Restore board" })).toBeTruthy();
+    expect(slot.queryByRole("button", { name: "Add PRs" })).toBeNull();
+    fireEvent.click(slot.getByRole("button", { name: "More for Review handoff" }));
+    const sheet = await screen.findByRole("menu", { name: "Review handoff" });
+    expect(within(sheet).queryByRole("menuitem", { name: "Archive board" })).toBeNull();
+  });
+
+  it("puts the three filters in one row under their names", async () => {
+    setViewport(390);
+    const { slot } = await boardPage("board/release", { board: () => populated });
+    await find(slot.container, "[data-pr]");
+    const status = slot.getByRole("combobox", { name: "Board status" }) as HTMLSelectElement;
+    expect(status.options[0]!.textContent).toBe("All");
+    // The toolbar's small field, not the form field with extra classes that lose to it.
+    expect(status.className.split(" ")).toEqual(expect.arrayContaining(["h-7", "py-0", "text-xs"]));
+    expect(status.className.split(" ")).not.toContain("py-1.5");
+    const row = status.closest("label")!.parentElement!;
+    expect(row.className).toContain("grid-cols-3");
+    expect([...row.querySelectorAll("label")].map((label) => label.firstChild?.textContent)).toEqual(["Status", "Sort by", "Group by"]);
+  });
+
+  it("keeps the selection's actions at the top while the list scrolls, and they still act", async () => {
+    setViewport(390);
+    const { slot } = await boardPage("board/release", { board: () => populated });
+    await find(slot.container, "[data-pr]");
+    fireEvent.click(slot.getByRole("checkbox", { name: `Select ${member.title}` }));
+    const bar = await find(slot.container, "[data-selection-bar]");
+    expect(bar.className).toContain("sticky");
+    expect(within(bar).getByText("1 selected")).toBeTruthy();
+    fireEvent.click(within(bar).getByRole("button", { name: "Remove" }));
+    expect(await screen.findByRole("dialog", { name: "Remove PRs from this board?" })).toBeTruthy();
+  });
+
+  it("leaves out the selection hint on My PRs until something is selected", async () => {
+    setViewport(390);
+    const { slot } = await boardPage("mine");
+    await find(slot.container, "[data-pr]");
+    expect(slot.queryByText(/Select PRs to save a set/u)).toBeNull();
+    fireEvent.click(slot.getAllByRole("checkbox")[0]!);
+    const bar = await find(slot.container, "[data-selection-bar]");
+    expect(within(bar).getByRole("button", { name: "New board" })).toBeTruthy();
+    expect(within(bar).queryByRole("button", { name: "Remove" })).toBeNull();
   });
 });

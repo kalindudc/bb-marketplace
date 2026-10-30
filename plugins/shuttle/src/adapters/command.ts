@@ -4,8 +4,9 @@ import { OPERATIONS, type ListOperation, type Operation, type ServerConfig } fro
 import { linkFor } from "../keys";
 import type { MergeOptions, PrChange } from "../contract";
 import { activitySchema, editOptionsSchema, mergeOptionsInputSchema, prSummarySchema, reviewPostedSchema, toSummary, whoamiSchema, type Activity, type EditOptions, type PrSummary } from "../model";
-import { AdapterError, changeOperation, type Adapter, type ListOptions, type ListResult, type MergeInput, type ReviewPost, type ReviewPosted } from "./adapter";
+import { AdapterError, changeOperation, type ActivityOptions, type Adapter, type ListOptions, type ListResult, type MergeInput, type ReviewPost, type ReviewPosted } from "./adapter";
 import { fillCommand, outputTail, runProcess, shellQuote, tail, type RunResult, type Runner } from "./exec";
+import { SCRIPTS_DIR } from "../scripts";
 
 export const COMMAND_TIMEOUT_MS = 60_000;
 
@@ -27,7 +28,7 @@ export class CommandAdapter implements Adapter {
     const command = this.server.commands[operation];
     if (!command) throw new AdapterError(operation, `${this.server.name} has no ${operation} command`);
     const result = await this.run("/bin/sh", ["-c", command], {
-      env: { SHUTTLE_SERVER: this.server.id, SHUTTLE_OPERATION: operation, ...env },
+      env: { SHUTTLE_SERVER: this.server.id, SHUTTLE_OPERATION: operation, ...(SCRIPTS_DIR === null ? {} : { SHUTTLE_SCRIPTS: SCRIPTS_DIR }), ...env },
       timeoutMs: COMMAND_TIMEOUT_MS,
       signal,
     }).catch((error: unknown) => {
@@ -93,8 +94,9 @@ export class CommandAdapter implements Adapter {
     return this.withUrl({ ...toSummary(row), body: row.body ?? "" });
   }
 
-  async activity(repo: string, number: number, signal?: AbortSignal): Promise<Activity> {
-    return this.parse("activity", activitySchema, await this.json("activity", this.refEnv(repo, number), signal));
+  async activity(repo: string, number: number, signal?: AbortSignal, options: ActivityOptions = {}): Promise<Activity> {
+    const env = { ...this.refEnv(repo, number), ...(options.detail ? { SHUTTLE_DETAIL: "1" } : {}) };
+    return this.parse("activity", activitySchema, await this.json("activity", env, signal));
   }
 
   async change(repo: string, number: number, change: PrChange, signal?: AbortSignal): Promise<void> {

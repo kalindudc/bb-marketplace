@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { experimental_Icon as Icon, useSettings } from "@get-bb/plugin-sdk/app";
 import type { Overview, PrView } from "../contract";
 import { useActions } from "./actions";
-import { BUTTON_PRIMARY, ErrorNote, FIELD, PAGE, PageHeading, Segmented, STRIP } from "./common";
+import { BUTTON_PRIMARY, ErrorNote, FIELD_SMALL, PAGE, PageHeading, STRIP, Segmented } from "./common";
 import { MINE_GROUPS, type Group } from "./constants";
 import { messageOf, useShuttleQuery } from "./data";
 import { BoardChooserDialog, BoardFormDialog, BoardSelectionToolbar, useBoardSelection } from "./boards";
@@ -33,8 +33,8 @@ function AutoAgent({ prs, overview }: { prs: readonly PrView[]; overview: Overvi
   if (none.length === 0) return null;
   const opened = none.filter((pr) => pr.suggestedAgent !== null).length;
   return (
-    <div data-auto-agent="off" className="mb-1.5 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2.5">
-      <div className="flex items-center gap-1.5 text-sm font-bold text-primary">
+    <div data-auto-agent="off" className="mb-1.5 rounded-lg border border-border bg-surface-raised px-3 py-2.5">
+      <div className="flex items-center gap-1.5 text-sm font-bold text-foreground">
         <Icon name="Bot" className="size-3.5" aria-hidden />{none.length} of your {plural(open.length, "open PR")} {none.length === 1 ? "has" : "have"} no agent
       </div>
       <div className="mb-2 mt-0.5 text-[13px]">
@@ -57,7 +57,7 @@ function SortSelect({ value, options, onChange }: { value: SortKey; options: rea
   return (
     <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
       <Icon name="Sort" fallback="ChevronDown" className="size-3.5" aria-hidden />
-      <select aria-label="Sort by" className={`${FIELD} h-7 py-0 text-xs`} value={value} onChange={(event) => onChange(event.target.value as SortKey)}>
+      <select aria-label="Sort by" className={FIELD_SMALL} value={value} onChange={(event) => onChange(event.target.value as SortKey)}>
         {options.map((key) => <option key={key} value={key}>{SORT_LABELS[key]}</option>)}
       </select>
     </label>

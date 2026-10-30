@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import type { PrView } from "../contract";
-import { ErrorNote, FIELD, PAGE, PageHeading } from "./common";
+import { ErrorNote, FIELD_SMALL, PAGE, PageHeading } from "./common";
 import { REVIEW_GROUPS, SOURCE_META, type Group } from "./constants";
 import { messageOf, useShuttleQuery } from "./data";
 import { BoardChooserDialog, BoardFormDialog, BoardSelectionToolbar, useBoardSelection } from "./boards";
@@ -35,8 +35,8 @@ function teamsOf(prs: readonly PrView[]): [string, number][] {
 
 function Toggle({ on, label, count, onChange }: { on: boolean; label: string; count: number; onChange(next: boolean): void }) {
   return (
-    <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border py-0.5 pl-1.5 pr-2.5 text-xs ${on ? "border-primary/45 text-foreground" : "border-border text-muted-foreground"}`}>
-      <input type="checkbox" checked={on} onChange={(event) => onChange(event.target.checked)} className="size-3.5 cursor-pointer accent-primary" />
+    <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border py-0.5 pl-1.5 pr-2.5 text-xs ${on ? "border-input bg-state-active text-foreground" : "border-border text-muted-foreground"}`}>
+      <input type="checkbox" checked={on} onChange={(event) => onChange(event.target.checked)} className="size-3.5 cursor-pointer accent-foreground" />
       {label} <span data-hidden-count className="text-muted-foreground">{count}</span>
     </label>
   );
@@ -63,7 +63,7 @@ export function ReviewsView({ source, filter, layout, onFilter, onGo }: {
   const bots = inScope.filter((pr) => pr.bot).length;
   const quiet = inScope.filter((pr) => pr.quiet && !pr.bot).length;
   const shown = inScope.filter((pr) => !(filter.hideBots && pr.bot) && !(filter.hideQuiet && pr.quiet));
-  const chip = (on: boolean) => `inline-flex shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs ${on ? "border-primary/45 bg-accent text-foreground" : "border-border text-muted-foreground hover:text-foreground"}`;
+  const chip = (on: boolean) => `inline-flex shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs ${on ? "border-input bg-state-active text-foreground" : "border-border text-muted-foreground hover:text-foreground"}`;
   const selectedSet = useMemo(() => new Set(boardSelection.selected), [boardSelection.selected]);
   const row = (pr: PrView) => <ReviewRow key={pr.key} pr={pr} layout={{ ...layout, selection: { checked: selectedSet.has(pr.key), onToggle: () => boardSelection.toggle(pr.key) } }} />;
   const grouped = new Set(REVIEW_GROUPS.flatMap((group) => group.kinds));
@@ -86,7 +86,7 @@ export function ReviewsView({ source, filter, layout, onFilter, onGo }: {
       </div>
       <div className="mb-1 flex flex-wrap items-center gap-1.5">
         {source === "team" && (
-          <select aria-label="Team" className={`${FIELD} h-7 py-0 text-xs`} value={team} onChange={(event) => onFilter({ ...filter, team: event.target.value })}>
+          <select aria-label="Team" className={FIELD_SMALL} value={team} onChange={(event) => onFilter({ ...filter, team: event.target.value })}>
             <option value="all">All my teams · {teamPrs.length}</option>
             {teams.map(([name, count]) => <option key={name} value={name}>{name} · {count}</option>)}
           </select>

@@ -36,6 +36,20 @@ export const OUTCOMES = ["fixed", "replied", "declined", "question"] as const;
 export type Outcome = (typeof OUTCOMES)[number];
 export const TONES = ["ok", "bad", "warn", "info", "neutral"] as const;
 export type NextTone = (typeof TONES)[number];
+/** clean: it can merge now; blocked: required reviews or checks are missing; behind: base moved on; conflicts; unknown. */
+export const MERGE_STATES = ["clean", "blocked", "behind", "conflicts", "pending", "unknown"] as const;
+export type MergeState = (typeof MERGE_STATES)[number];
+/** How one check on the head stands. */
+export const RUN_STATES = ["failed", "running", "passed", "skipped"] as const;
+export type RunState = (typeof RUN_STATES)[number];
+export const FILE_CHANGES = ["added", "modified", "removed", "renamed", "copied", "changed"] as const;
+export type FileChange = (typeof FILE_CHANGES)[number];
+/** What else happened on a PR besides its reviews, comments and commits. */
+export const TIMELINE_KINDS = [
+  "review_requested", "review_request_removed", "labeled", "unlabeled", "ready_for_review", "converted_to_draft", "force_pushed",
+  "merged", "closed", "reopened", "renamed", "auto_merge_enabled", "auto_merge_disabled", "review_dismissed", "branch_deleted", "base_changed",
+] as const;
+export type TimelineKind = (typeof TIMELINE_KINDS)[number];
 
 /**
  * The one rule every surface shows: what happens next with this PR. The Inbox card, the row's
@@ -396,6 +410,10 @@ export const inboxSchema = z.object({
 });
 export type InboxView = z.infer<typeof inboxSchema>;
 
+/** One line of the diff a review thread comments on; `line` is its number in the new file, null for a removed line. */
+export const hunkLineSchema = z.object({ kind: z.enum(["add", "del", "context"]), text: z.string(), line: z.number().nullable() });
+export type HunkLine = z.infer<typeof hunkLineSchema>;
+
 export const conversationItemSchema = z.object({
   id: z.string(),
   kind: z.enum(["review", "thread", "comment", "check"]),
@@ -417,8 +435,94 @@ export const conversationItemSchema = z.object({
   delivery: z.enum(["sent", "pending"]).nullable(),
   /** What the agent said it did with it. */
   outcome: z.object({ outcome: z.enum(OUTCOMES), note: z.string().nullable(), commit: z.string().nullable(), at: z.number() }).nullable(),
+  /** A review thread's comments: the last lines of the diff it is on, ending at its line; null when the server sent none. */
+  hunk: z.array(hunkLineSchema).nullable(),
+  /** The review an item belongs to: a review's own id, or the review a line comment was posted in. */
+  review: z.string().nullable(),
 });
 export type ConversationItem = z.infer<typeof conversationItemSchema>;
+
+export const checkRunSchema = z.object({
+  name: z.string(),
+  /** The workflow or app it belongs to, when the server says. */
+  group: z.string().nullable(),
+  state: z.enum(RUN_STATES),
+  /** The server's word for how it ended or stands, such as "timed out" or "queued", or a status's description. */
+  detail: z.string().nullable(),
+  /** A branch rule needs it to pass; null when the server does not say. */
+  required: z.boolean().nullable(),
+  url: z.string().nullable(),
+  startedAt: z.number().nullable(),
+  completedAt: z.number().nullable(),
+  /** A failed check's conversation item, which says what the agent got and did. */
+  itemId: z.string().nullable(),
+});
+export type CheckRun = z.infer<typeof checkRunSchema>;
+export const commitViewSchema = z.object({ sha: z.string(), message: z.string(), author: z.string().nullable(), at: z.number().nullable() });
+export type CommitView = z.infer<typeof commitViewSchema>;
+export const changedFileSchema = z.object({ path: z.string(), additions: z.number().nullable(), deletions: z.number().nullable(), change: z.enum(FILE_CHANGES) });
+export type ChangedFile = z.infer<typeof changedFileSchema>;
+/**
+ * `subject` is who or what the event is about: the reviewer, the label, the new title, the new head or base,
+ * or the merge commit. `detail` is what it was before: the old title, head or base, or the branch merged into.
+ */
+export const timelineEventSchema = z.object({ kind: z.enum(TIMELINE_KINDS), at: z.number(), actor: z.string().nullable(), subject: z.string().nullable(), detail: z.string().nullable() });
+export type TimelineEvent = z.infer<typeof timelineEventSchema>;
+/** A capped list: up to its first or last 100, and how many there are in all. */
+const capped = <T extends z.ZodType>(item: T) => z.object({ total: z.number(), items: z.array(item) });
+
+/** What the PR view shows beyond the conversation. Each part is null when the PR's server does not send it. */
+export const prDetailsSchema = z.object({
+  checks: capped(checkRunSchema).nullable(),
+  /** Oldest first. */
+  commits: capped(commitViewSchema).nullable(),
+  /** Paths and line counts only, never their contents. */
+  files: capped(changedFileSchema).nullable(),
+  timeline: z.array(timelineEventSchema).nullable(),
+  merge: z.object({ state: z.enum(MERGE_STATES), detail: z.string().nullable() }).nullable(),
+});
+export type PrDetails = z.infer<typeof prDetailsSchema>;
+
+export const LINK_CARD_KINDS = ["pr", "comment", "review", "commit", "check"] as const;
+
+/** What the card on a git link in a thread shows; every part is null when the link is not about it or Shuttle could not read it. */
+export const linkCardSchema = z.object({
+  kind: z.enum(LINK_CARD_KINDS),
+  /** "acme/api#12", "acme/api@1a2b3c4" or a check's name, as the card's first line. */
+  label: z.string(),
+  server: z.string(),
+  serverName: z.string(),
+  /** The PR the link is on or names, as Shuttle has it; null when Shuttle has not seen it. */
+  pr: prViewSchema.nullable(),
+  /** The key of that PR, even when Shuttle has not seen it, so the card can offer to look it up. */
+  prKey: z.string().nullable(),
+  /** Which tab of the PR view the link is closest to. */
+  tab: z.enum(["overview", "conversation", "checks", "changes"]),
+  comment: z.object({
+    item: conversationItemSchema,
+    /** Comments in its review thread besides it. */
+    replies: z.number(),
+    resolved: z.boolean(),
+  }).nullable(),
+  review: z.object({ item: conversationItemSchema, comments: z.number(), open: z.number() }).nullable(),
+  commit: z.object({
+    sha: z.string(),
+    message: z.string(),
+    author: z.string().nullable(),
+    at: z.number().nullable(),
+    additions: z.number().nullable(),
+    deletions: z.number().nullable(),
+    checks: z.enum(CHECK_STATES).nullable(),
+    /** It is the PR's head now. */
+    head: z.boolean(),
+    /** What its agent said this commit fixed. */
+    fixes: z.array(z.object({ author: z.string().nullable(), path: z.string().nullable(), line: z.number().nullable(), body: z.string() })),
+  }).nullable(),
+  check: checkRunSchema.extend({ delivery: z.enum(["sent", "pending"]).nullable() }).nullable(),
+  /** Why a part is missing, in plain words: not seen yet, or the server's error. */
+  note: z.string().nullable(),
+});
+export type LinkCard = z.infer<typeof linkCardSchema>;
 
 export const mergeOptionsSchema = z.object({
   /** Methods the repository allows, the default first. */
@@ -428,8 +532,7 @@ export const mergeOptionsSchema = z.object({
   deleteBranch: z.boolean(),
   /** The server can merge it by itself once checks pass. */
   canAuto: z.boolean(),
-  /** clean: it can merge now; blocked: required reviews or checks are missing; behind: base moved on; conflicts; unknown. */
-  state: z.enum(["clean", "blocked", "behind", "conflicts", "pending", "unknown"]),
+  state: z.enum(MERGE_STATES),
   /** The server's reason when it is not clean. */
   detail: z.string().nullable(),
 });
@@ -526,8 +629,8 @@ export const rpcContract = defineContract({
   list: { input: z.object({ area: z.enum(AREAS) }), output: z.object({ prs: z.array(prViewSchema) }), tags: PRS },
   /** body is the description, or null until Shuttle has fetched the PR itself (lists carry none). */
   detail: { input: z.object({ key }), output: z.object({ pr: prViewSchema, events: z.array(eventViewSchema), body: z.string().nullable(), draft: reviewDraftSchema.nullable() }), tags: PRS },
-  /** The PR's reviews, comments and failed checks, read from its server (kept for 30 seconds). */
-  conversation: { input: z.object({ key }), output: z.object({ items: z.array(conversationItemSchema), error: z.string().nullable(), fetchedAt: z.number() }), tags: () => ["conversation"] },
+  /** The PR's reviews, comments and failed checks, and the details its view shows, read from its server (kept for 30 seconds). */
+  conversation: { input: z.object({ key }), output: z.object({ items: z.array(conversationItemSchema), details: prDetailsSchema.nullable(), error: z.string().nullable(), fetchedAt: z.number() }), tags: () => ["conversation"] },
   /** PRs Shuttle already has whose title, repository, number, author, branches or labels hold every word; no server is asked. */
   search: { input: z.object({ query: z.string().max(200) }), output: z.object({ prs: z.array(prViewSchema), total: z.number() }), tags: PRS },
   boards: { input: boardsInputSchema, output: z.object({ boards: z.array(boardSummarySchema) }), tags: BOARDS },
@@ -614,5 +717,13 @@ export const rpcContract = defineContract({
   restoreDraft: { input: z.object({ key, draftId: z.number().int() }), output: prOut, invalidates: PRS },
   reply: { input: z.object({ key, thread: z.string().min(1).max(300), body }), output: ok, invalidates: CONVERSATION },
   resolve: { input: z.object({ key, thread: z.string().min(1).max(300), resolved: z.boolean() }), output: ok, invalidates: CONVERSATION },
+  /** The card for a git link in a thread. A PR comes from Shuttle's copy; its comments and details from the same 30-second read as its view. Nothing is written. */
+  linkCard: { input: z.object({ url: z.string().min(8).max(2000) }), output: linkCardSchema, tags: () => ["prs", "conversation"] },
+  /** Each link's kind and its PR's state, from what Shuttle already has, to mark links in threads; no server is asked. */
+  linkStates: {
+    input: z.object({ urls: z.array(z.string().min(8).max(2000)).max(100) }),
+    output: z.object({ links: z.array(z.object({ url: z.string(), kind: z.enum(LINK_CARD_KINDS).nullable(), state: z.enum(PR_STATES).nullable() })) }),
+    tags: PRS,
+  },
   skills: { input: z.object({ projectId: z.string().max(100).optional() }), output: z.object({ skills: z.array(z.object({ id: z.string(), name: z.string(), description: z.string() })) }) },
 });

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import type { Preset } from "../../config";
-import { BUTTON, BUTTON_GHOST, BUTTON_PRIMARY, CARD, ErrorNote, FIELD, Pill } from "../common";
+import { BUTTON, BUTTON_GHOST, BUTTON_GHOST_DANGER, BUTTON_PRIMARY, CARD, ErrorNote, FIELD, Pill } from "../common";
 import { WORKSPACES } from "../constants";
 import { ExecutionPicker, executionOf, withExecution, type Execution } from "../execution";
 import { defaultPresetOf, presetSummary } from "../review-button";
@@ -62,7 +62,7 @@ function PresetEditor({ preset, isNew, canDelete, onChange, onExecution, onMakeD
       </div>
       {canDelete && (
         <div className="sm:col-start-2">
-          <button type="button" className={`${BUTTON_GHOST} text-destructive`} onClick={onDelete}>
+          <button type="button" className={BUTTON_GHOST_DANGER} onClick={onDelete}>
             <Icon name="Trash2" className="size-3.5" aria-hidden />
             Delete this preset
           </button>
@@ -115,7 +115,7 @@ export function PresetsSection() {
             {presets.map((preset, at) => (
               <li key={at}>
                 <button type="button" aria-current={at === current ? "true" : undefined} onClick={() => setIndex(at)}
-                  className={`w-full cursor-pointer rounded-lg border bg-card px-3 py-2 text-left ${at === current ? "border-primary shadow-[inset_3px_0_0_var(--primary)]" : "border-border hover:bg-accent"}`}>
+                  className={`w-full cursor-pointer rounded-lg border bg-card px-3 py-2 text-left ${at === current ? "border-surface-selected-border bg-surface-selected shadow-[inset_3px_0_0_var(--primary)]" : "border-border hover:bg-state-hover"}`}>
                   <span className="flex items-center gap-2">
                     <b className="min-w-0 flex-1 truncate text-sm">{preset.name || "Untitled"}</b>
                     {preset.default && <Pill tone="info">default</Pill>}

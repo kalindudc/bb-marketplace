@@ -12,25 +12,34 @@ const rpc = () => handlers({
   list: () => ({ prs: [own, other] }),
   threadPrs: () => ({ prs: [own], sent: [] }),
   detail: ({ key }) => ({ pr: key === own.key ? own : other, events: [], body, draft: null }),
-  conversation: () => ({ items: [item({ author: "alice" })], error: null, fetchedAt: Date.now() }),
+  conversation: () => ({ items: [item({ author: "alice" })], details: null, error: null, fetchedAt: Date.now() }),
 });
 
 afterEach(unmountAll);
 
+const openTab = (detail: HTMLElement, id: string) => fireEvent.click(detail.querySelector<HTMLElement>(`[data-tab="${id}"]`)!);
+const selectedTab = (detail: HTMLElement) => detail.querySelector('[aria-selected="true"][data-tab]')!.getAttribute("data-tab");
+
 async function fill(detail: HTMLElement) {
   fireEvent.click(within(detail).getByRole("button", { name: "Show the whole description" }));
-  fireEvent.click(within(detail).getByRole("button", { name: /Details/u }));
+  openTab(detail, "conversation");
   fireEvent.click(await within(detail).findByRole("button", { name: "Reply" }));
   fireEvent.change(within(detail).getByRole("textbox", { name: "Reply to alice" }), { target: { value: "Unfinished reply" } });
   const comment = within(detail).queryByRole("textbox", { name: "Comment on bb#21" });
   if (comment !== null) fireEvent.change(comment, { target: { value: "Unfinished comment" } });
 }
 
+/** The tab, the open reply and the unsent text come back; so does the description opened on Overview. */
 function expectRestored(detail: HTMLElement, phone = false) {
-  expect(within(detail).getByRole("button", { name: "Show less" })).toBeTruthy();
-  expect(within(detail).getByRole("button", { name: /Details/u }).getAttribute("aria-expanded")).toBe("true");
+  expect(selectedTab(detail)).toBe("conversation");
   expect((within(detail).getByRole("textbox", { name: "Reply to alice" }) as HTMLTextAreaElement).value).toBe("Unfinished reply");
   if (!phone) expect((within(detail).getByRole("textbox", { name: "Comment on bb#21" }) as HTMLTextAreaElement).value).toBe("Unfinished comment");
+}
+
+function expectDescriptionOpen(detail: HTMLElement) {
+  openTab(detail, "overview");
+  expect(within(detail).getByRole("button", { name: "Show less" })).toBeTruthy();
+  openTab(detail, "conversation");
 }
 
 const scrollParent = (detail: HTMLElement): HTMLElement => {
@@ -66,6 +75,7 @@ describe("PR view session memory", () => {
     const restored = await find(again.slot.container, "[data-detail]");
     await waitFor(() => expectRestored(restored, width === 390));
     await waitFor(() => expect(scrollParent(restored).scrollTop).toBe(620));
+    expectDescriptionOpen(restored);
   });
 
   it("holds the restored position while late rendering shifts the scroll, until the user takes over", async () => {
@@ -107,8 +117,8 @@ describe("PR view session memory", () => {
     await fill(await find(slot.container, "[data-detail]"));
     route(path(other.key));
     const second = await find(slot.container, `[data-detail="${other.key}"]`);
+    expect(selectedTab(second)).toBe("overview");
     expect(within(second).getByRole("button", { name: "Show the whole description" })).toBeTruthy();
-    expect(within(second).getByRole("button", { name: /Details/u }).getAttribute("aria-expanded")).toBe("false");
     expect(within(second).queryByRole("textbox", { name: "Reply to alice" })).toBeNull();
     route(path(own.key));
     await waitFor(() => expectRestored(slot.container.querySelector<HTMLElement>(`[data-detail="${own.key}"]`)!));
@@ -119,6 +129,7 @@ describe("PR view session memory", () => {
     const custom = { ...rpc(), detail: () => ({ pr: other, events: [], body, draft: current }) };
     const subPath = formatRoute({ view: "reviews", source: "all", key: other.key });
     const first = await page(subPath, custom);
+    openTab(await find(first.slot.container, "[data-detail]"), "review");
     const summary = await first.slot.findByRole("textbox", { name: "Summary" });
     fireEvent.change(summary, { target: { value: "My edited summary" } });
     const finding = first.slot.getByRole("textbox", { name: "Text of the finding at header/actions.tsx:88" });

@@ -57,9 +57,10 @@ describe("the Inbox", () => {
     const open = await card(slot, nobody.key);
     await find(slot.container, `[data-detail="${nobody.key}"]`);
     expect(open.getAttribute("aria-current")).toBe("true");
-    expect(open.className).toContain("shadow-[0_0_0_2px_var(--primary)]");
-    expect(open.className).toContain("var(--primary)_12%");
-    expect(open.className).not.toContain("hover:bg-accent");
+    // bb's selection tokens: the theme's primary at a tint, and a ring of it.
+    expect(open.className).toContain("shadow-[0_0_0_2px_var(--surface-selected-border)]");
+    expect(open.className).toContain("bg-surface-selected");
+    expect(open.className).not.toContain("hover:bg-state-hover");
     const other = await card(slot, ready.key);
     expect(other.getAttribute("aria-current")).toBeNull();
     expect(other.className).toContain("bg-card");

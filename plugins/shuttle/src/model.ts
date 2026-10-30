@@ -1,7 +1,10 @@
 // What every adapter returns, whatever the server. Command adapters print these shapes as JSON;
 // the built-in GitHub adapter maps gh's GraphQL answers onto them.
 import { z } from "zod";
-import { CHECK_STATES, MERGE_METHODS, REVIEW_STATES, REVIEWER_STATES, type CheckCounts, type CheckState, type Label, type MyReview, type PrState, type Reviewer, type ReviewState } from "./contract";
+import {
+  CHECK_STATES, FILE_CHANGES, MERGE_METHODS, MERGE_STATES, REVIEW_STATES, REVIEWER_STATES, RUN_STATES, TIMELINE_KINDS,
+  type CheckCounts, type CheckState, type HunkLine, type Label, type MyReview, type PrDetails, type PrState, type Reviewer, type ReviewState,
+} from "./contract";
 
 const text = (max: number) => z.string().max(max);
 const id = z.union([z.string().min(1).max(300), z.number()]).transform(String);
@@ -146,14 +149,100 @@ export const activityItemSchema = z.object({
   /** The review thread a comment belongs to, as Reply and Resolve name it on the server. */
   thread: text(300).nullish(),
   resolved: z.boolean().nullish(),
+  /** A review comment's diff hunk in unified format, as the server keeps it; only asked for with SHUTTLE_DETAIL. Any length: hunkLines keeps its last lines. */
+  hunk: z.string().nullish(),
+  /** The review an item belongs to: a review's own id, or the review a line comment was posted in. */
+  review: id.nullish(),
 });
 export type ActivityItem = z.output<typeof activityItemSchema>;
 
+/** How many of a list the PR view keeps, and how long a list a server may send. */
+export const LIST_KEEP = 100;
+const LIST_MAX = 5000;
+/**
+ * A list that may be cut short: a bare array is all of it; `{total, items}` says how many there are in all. A longer
+ * list than the view keeps is cut to its first or last LIST_KEEP, as the server's own reads are.
+ */
+const capped = <T extends z.ZodType>(item: T, keep: "first" | "last", limit = LIST_KEEP) => {
+  const cut = <V>(items: V[]) => (items.length <= limit ? items : keep === "first" ? items.slice(0, limit) : items.slice(-limit));
+  return z.union([
+    z.array(item).max(LIST_MAX).transform((items) => ({ total: items.length, items: cut(items) })),
+    z.object({ total: z.number().int().nonnegative(), items: z.array(item).max(LIST_MAX) }).transform((list) => ({ total: Math.max(list.total, list.items.length), items: cut(list.items) })),
+  ]);
+};
+const checkRunInputSchema = z.object({
+  name: text(300).min(1),
+  group: text(300).nullish(),
+  state: z.enum(RUN_STATES),
+  detail: text(1000).nullish(),
+  required: z.boolean().nullish(),
+  url: text(1000).nullish(),
+  started_at: time,
+  completed_at: time,
+  /** The id of the check's activity item, when it failed. */
+  item: id.nullish(),
+}).transform((c) => ({ name: c.name, group: c.group ?? null, state: c.state, detail: c.detail ?? null, required: c.required ?? null, url: c.url ?? null, startedAt: c.started_at, completedAt: c.completed_at, itemId: c.item ?? null }));
+const commitInputSchema = z.object({ sha: text(100).min(1), message: text(1000).default(""), author: text(200).nullish(), at: time })
+  .transform((c) => ({ sha: c.sha, message: c.message, author: c.author ?? null, at: c.at }));
+const fileInputSchema = z.object({
+  path: text(1000).min(1),
+  additions: z.number().int().nonnegative().nullish(),
+  deletions: z.number().int().nonnegative().nullish(),
+  change: z.enum(FILE_CHANGES).default("modified"),
+}).transform((f) => ({ path: f.path, additions: f.additions ?? null, deletions: f.deletions ?? null, change: f.change }));
+const timelineInputSchema = z.object({ kind: z.enum(TIMELINE_KINDS), at: time, actor: text(200).nullish(), subject: text(1000).nullish(), detail: text(1000).nullish() });
+
+/**
+ * One PR's review activity. With SHUTTLE_DETAIL set, a server may add what the PR view shows besides:
+ * every check, the commits, the changed files (paths and counts, never contents), other timeline events
+ * and whether it can merge. A server that leaves them out gets a PR view without those parts.
+ */
 export const activitySchema = z.object({
   head: text(100).nullish(),
   items: z.array(activityItemSchema).max(1000),
+  // Every check is kept, so a failure is never cut off; a PR's checks are far fewer than its files.
+  checks: capped(checkRunInputSchema, "first", LIST_MAX).nullish(),
+  commits: capped(commitInputSchema, "last").nullish(),
+  files: capped(fileInputSchema, "first").nullish(),
+  timeline: z.array(timelineInputSchema).max(300).nullish(),
+  merge: z.object({ state: z.enum(MERGE_STATES), detail: text(2000).nullish() }).nullish(),
+}).transform(({ head, items, checks, commits, files, timeline, merge }): { head?: string | null; items: ActivityItem[]; details: PrDetails | null } => {
+  const given = [checks, commits, files, timeline, merge].some((part) => part !== undefined && part !== null);
+  return {
+    head,
+    items,
+    details: given ? {
+      checks: checks ?? null,
+      commits: commits ?? null,
+      files: files ?? null,
+      timeline: timeline ? timeline.flatMap((event) => (event.at === null ? [] : [{ kind: event.kind, at: event.at, actor: event.actor ?? null, subject: event.subject ?? null, detail: event.detail ?? null }])) : null,
+      merge: merge ? { state: merge.state, detail: merge.detail ?? null } : null,
+    } : null,
+  };
 });
 export type Activity = z.output<typeof activitySchema>;
+
+const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/u;
+export const HUNK_LINES = 8;
+
+/** The last lines of a unified diff hunk, numbered as in the new file; null when it has no hunk header. */
+export function hunkLines(hunk: string | null | undefined, keep = HUNK_LINES): HunkLine[] | null {
+  if (!hunk) return null;
+  const [header, ...rest] = hunk.replace(/\r\n/gu, "\n").split("\n");
+  const match = HUNK_HEADER.exec(header ?? "");
+  if (!match) return null;
+  let next = Number(match[1]);
+  const lines: HunkLine[] = [];
+  for (const raw of rest) {
+    // "\ No newline at end of file" is a note about the line before it, not a line of the file.
+    if (raw.startsWith("\\")) continue;
+    const text = raw.slice(1, 501);
+    if (raw.startsWith("+")) lines.push({ kind: "add", text, line: next++ });
+    else if (raw.startsWith("-")) lines.push({ kind: "del", text, line: null });
+    else lines.push({ kind: "context", text, line: next++ });
+  }
+  return lines.length === 0 ? null : lines.slice(-keep);
+}
 
 export const editOptionsSchema = z.union([
   z.array(labelInputSchema).max(1000).transform((labels) => ({ labels, people: [] as string[] })),
@@ -169,7 +258,7 @@ export const mergeOptionsInputSchema = z.object({
   default: z.enum(MERGE_METHODS).optional(),
   delete_branch: z.boolean().optional(),
   can_auto: z.boolean().optional(),
-  state: z.enum(["clean", "blocked", "behind", "conflicts", "pending", "unknown"]).optional(),
+  state: z.enum(MERGE_STATES).optional(),
   detail: z.string().max(2000).nullish(),
 });
 

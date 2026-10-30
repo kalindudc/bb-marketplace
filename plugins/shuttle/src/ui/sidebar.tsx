@@ -11,7 +11,7 @@ import { sidebarReason } from "./sync";
 function NavItem({ icon, label, count, hot = false, on, sub = false, onClick }: { icon?: string; label: string; count: number | null; hot?: boolean; on: boolean; sub?: boolean; onClick(): void }) {
   return (
     <button type="button" aria-current={on ? "page" : undefined} onClick={onClick}
-      className={`flex w-full cursor-pointer items-center gap-2 rounded-md text-left ${sub ? "py-1 pl-8 pr-2 text-xs" : "px-2 py-1.5 text-sm"} ${on ? "bg-accent font-semibold text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground"}`}>
+      className={`flex w-full cursor-pointer items-center gap-2 rounded-md text-left ${sub ? "py-1 pl-8 pr-2 text-xs" : "px-2 py-1.5 text-sm"} ${on ? "bg-state-active font-semibold text-foreground" : "text-muted-foreground hover:bg-state-hover hover:text-foreground"}`}>
       {icon && <Icon name={icon} fallback="Circle" className="size-4 shrink-0" aria-hidden />}
       <span className="truncate">{label}</span>
       {count !== null && (
@@ -22,7 +22,7 @@ function NavItem({ icon, label, count, hot = false, on, sub = false, onClick }: 
 }
 
 const DOT = { ok: "bg-success", partial: "bg-warning", failed: "bg-destructive" } as const;
-const REASON_TONE = { bad: "text-destructive", warn: "text-warning-text", neutral: "text-muted-foreground" } as const;
+const REASON_TONE = { bad: "text-destructive-text", warn: "text-warning-text", neutral: "text-muted-foreground" } as const;
 
 /** A server's last sync; one that fails, or failed in the last hour, says why in a line and opens Insights › Sync. */
 function Health({ server, onOpen }: { server: ServerStatus; onOpen(): void }) {
@@ -38,7 +38,7 @@ function Health({ server, onOpen }: { server: ServerStatus; onOpen(): void }) {
   if (reason === null) return <div data-server={server.id} title={server.login ? `Signed in as ${server.login}` : undefined} className="flex items-center">{line}</div>;
   return (
     <button type="button" data-server={server.id} title="Open Insights › Sync" onClick={onOpen}
-      className="-mx-1 flex cursor-pointer flex-col items-start gap-px rounded px-1 py-0.5 text-left hover:bg-accent">
+      className="-mx-1 flex cursor-pointer flex-col items-start gap-px rounded px-1 py-0.5 text-left hover:bg-state-hover">
       {line}
       <span className={`line-clamp-2 pl-[15px] text-[11px] leading-snug ${REASON_TONE[reason.tone]}`}>
         {reason.text} · <span className="text-primary">why?</span>

@@ -2,18 +2,19 @@
 // threads and merging. Each write goes to the server as the user, then the PR is read back.
 import type { MergeInput } from "./adapters/adapter";
 import type { WriteOperation } from "./config";
-import type { ConversationItem, MergeOptions, Outcome } from "./contract";
+import type { ConversationItem, MergeOptions, Outcome, PrDetails } from "./contract";
 import { errText, ShuttleError, type Ctx } from "./ctx";
 import type { PrRow } from "./db/store";
 import { readBack } from "./drafts";
 import { lookup, requirePr, shortKey } from "./prs";
 import { itemRef } from "./watch";
 import { AdapterError } from "./adapters/adapter";
+import { hunkLines } from "./model";
 
 const FRESH_MS = 30_000;
 
 export class Conversations {
-  private readonly cache = new Map<string, { at: number; items: ConversationItem[] }>();
+  private readonly cache = new Map<string, { at: number; items: ConversationItem[]; details: PrDetails | null }>();
 
   constructor(private readonly ctx: Ctx) {}
 
@@ -21,12 +22,12 @@ export class Conversations {
     this.cache.delete(key);
   }
 
-  async read(key: string): Promise<{ items: ConversationItem[]; error: string | null; fetchedAt: number }> {
+  async read(key: string): Promise<{ items: ConversationItem[]; details: PrDetails | null; error: string | null; fetchedAt: number }> {
     const pr = requirePr(this.ctx, key);
     const cached = this.cache.get(key);
-    if (cached && this.ctx.now() - cached.at < FRESH_MS) return { items: this.annotate(pr, cached.items), error: null, fetchedAt: cached.at };
+    if (cached && this.ctx.now() - cached.at < FRESH_MS) return { items: this.annotate(pr, cached.items), details: cached.details, error: null, fetchedAt: cached.at };
     try {
-      const activity = await this.ctx.adapter(pr.server).activity(pr.repo, pr.number);
+      const activity = await this.ctx.adapter(pr.server).activity(pr.repo, pr.number, undefined, { detail: true });
       const me = this.ctx.store.server(pr.server)?.login?.toLowerCase() ?? null;
       const items: ConversationItem[] = activity.items.map((item) => ({
         id: item.id,
@@ -44,14 +45,23 @@ export class Conversations {
         resolved: item.resolved === true,
         delivery: null,
         outcome: null,
+        hunk: hunkLines(item.hunk),
+        review: item.review ?? null,
       }));
       items.sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
       const at = this.ctx.now();
-      this.cache.set(key, { at, items });
-      return { items: this.annotate(pr, items), error: null, fetchedAt: at };
+      this.cache.set(key, { at, items, details: activity.details });
+      return { items: this.annotate(pr, items), details: activity.details, error: null, fetchedAt: at };
     } catch (error) {
-      return { items: [], error: `Could not read the conversation from ${this.ctx.server(pr.server)?.name ?? pr.server}: ${errText(error)}`, fetchedAt: this.ctx.now() };
+      return { items: [], details: null, error: `Could not read the conversation from ${this.ctx.server(pr.server)?.name ?? pr.server}: ${errText(error)}`, fetchedAt: this.ctx.now() };
     }
+  }
+
+  /** What the last read brought, however old, without asking the server; null before any read. */
+  peek(key: string): { items: ConversationItem[]; details: PrDetails | null } | null {
+    const pr = this.ctx.store.prByKey(key);
+    const cached = this.cache.get(key);
+    return pr && cached ? { items: this.annotate(pr, cached.items), details: cached.details } : null;
   }
 
   /** Delivery and outcomes change without the server, so they are added on every read. */

@@ -7,11 +7,21 @@ export const isLive = (pr: Pick<PrView, "state">) => pr.state === "open" || pr.s
 
 const DAY = 24 * 60 * 60_000;
 
+/** Each state's icon, word and colour; the colour goes on the icon only, as on bb's own PR chips. */
+export const STATE_LOOKS: Record<PrView["state"], { icon: string; label: string; className: string }> = {
+  open: { icon: "GitPullRequest", label: "Open", className: "text-success" },
+  draft: { icon: "GitPullRequestDraft", label: "Draft", className: "text-muted-foreground" },
+  merged: { icon: "GitMerge", label: "Merged", className: "text-pr-merged" },
+  closed: { icon: "GitPullRequestClosed", label: "Closed", className: "text-destructive-text" },
+};
+
 export function StatePill({ state }: { state: PrView["state"] }) {
-  if (state === "draft") return <Pill icon="GitPullRequestDraft">Draft</Pill>;
-  if (state === "merged") return <Pill tone="info" icon="GitMerge">Merged</Pill>;
-  if (state === "closed") return <Pill tone="bad" icon="GitPullRequestClosed">Closed</Pill>;
-  return <Pill tone="ok" icon="GitPullRequest">Open</Pill>;
+  const look = STATE_LOOKS[state];
+  return (
+    <span data-pill={state} className="inline-flex h-5 shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-border bg-background px-2 text-[11.5px] leading-none text-foreground">
+      <Icon name={look.icon} fallback="Circle" className={`size-3 ${look.className}`} aria-hidden />{look.label}
+    </span>
+  );
 }
 
 /** "Checks pass", "2 checks fail" or "Checks 5/7", from the counts when the server sent them. */
@@ -45,7 +55,7 @@ export function AgentPill({ pr }: { pr: Pick<PrView, "agent" | "state"> }) {
       </span>
     );
   }
-  const status = agent.status === "waiting" ? { text: "needs you", className: "text-warning-text" } : agent.status === "working" ? { text: "fixing", className: "text-primary" } : null;
+  const status = agent.status === "waiting" ? { text: "needs you", className: "text-warning-text" } : agent.status === "working" ? { text: "fixing", className: "text-foreground" } : null;
   return (
     <Pill tone={agent.mode === "fix" ? "info" : "neutral"} icon="Bot">
       {agent.mode === "fix" ? "Agent fixes" : "Agent told"}

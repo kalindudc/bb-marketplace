@@ -1,6 +1,9 @@
+import "./src/ui/links/links.css";
 import { definePluginApp, experimental_THREAD_INFO_SECTION_GROUPS as INFO_SECTION_GROUPS } from "@get-bb/plugin-sdk/app";
 import { PANEL_ACTION_ID, PANEL_PATH } from "./src/ui/constants";
 import { ShuttleHeader } from "./src/ui/header";
+import { mountLinks } from "./src/ui/links/dom";
+import { LinkOverlay } from "./src/ui/links/overlay";
 import { useNeedsBadge, useShuttlePageTitle } from "./src/ui/navigation";
 import { ShuttlePage } from "./src/ui/page";
 import { ShuttlePanel } from "./src/ui/panel";
@@ -13,6 +16,9 @@ import { tabParams } from "./src/ui/tab";
 import { PullRequestsAction, PullRequestsDetails, PullRequestsInfo, PullRequestsSummary, useHasThreadPrs } from "./src/ui/thread-prs";
 
 export default definePluginApp((app) => {
+  // Git links in thread messages: the page script marks them, the overlay draws their cards.
+  app.contentScripts.register({ id: "git-links", mount: ({ signal }) => mountLinks(signal) });
+  app.slots.experimental_appOverlay({ id: "link-cards", component: LinkOverlay });
   app.slots.navPanel({
     id: "shuttle",
     title: "Shuttle",

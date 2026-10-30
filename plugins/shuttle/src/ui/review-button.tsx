@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { experimental_Icon as Icon, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import type { Preset } from "../config";
 import type { PrView, ReviewInput } from "../contract";
-import { BUTTON_GHOST, BUTTON_PRIMARY, Choice, Dialog, FIELD } from "./common";
+import { BUTTON_GHOST, BUTTON_PRIMARY, BUTTON_SUCCESS, Choice, Dialog, FIELD } from "./common";
 import { useShuttleMutation } from "./data";
 import { tinyKey } from "./format";
 
@@ -94,7 +94,7 @@ export function ApproveDialog({ pr, onClose }: { pr: PrView; onClose(): void }) 
         <>
           <span className="flex-1" />
           <button type="button" className={BUTTON_GHOST} onClick={onClose}>Cancel</button>
-          <button type="button" className={`${BUTTON_PRIMARY} border-success bg-success`} disabled={submit.isPending} onClick={() => void approve()}>
+          <button type="button" className={BUTTON_SUCCESS} disabled={submit.isPending} onClick={() => void approve()}>
             <Icon name="Check" className="size-3.5" aria-hidden />Approve
           </button>
         </>

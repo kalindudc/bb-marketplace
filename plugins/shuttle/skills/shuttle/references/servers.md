@@ -13,31 +13,33 @@ sep = "#"                        # or "!" for GitLab-style group/project!77
 read = "dt pr view {number} -R {repo} --comments"   # how an agent reads the PR; shown in prompts
 
 [server.commands]
-whoami = "sh ~/.config/shuttle/delta.sh"
-authored = "sh ~/.config/shuttle/delta.sh"
-review_requested = "sh ~/.config/shuttle/delta.sh"
-view = "sh ~/.config/shuttle/delta.sh"
-activity = "sh ~/.config/shuttle/delta.sh"
-team_requested = "SHUTTLE_DELTA_TEAMS=edge-infrastructure sh ~/.config/shuttle/delta.sh"
-reviewed = "sh ~/.config/shuttle/delta.sh"
+whoami = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
+authored = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
+review_requested = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
+view = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
+activity = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
+team_requested = 'SHUTTLE_DELTA_TEAMS=edge-infrastructure sh "$SHUTTLE_SCRIPTS/delta.sh"'
+reviewed = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
 # mentioned left out: Delta refuses the mentions: qualifier
 # Managing your own PRs from Shuttle; draft is left out because Delta can't go back to draft.
-ready = "sh ~/.config/shuttle/delta.sh"
-close = "sh ~/.config/shuttle/delta.sh"
-reopen = "sh ~/.config/shuttle/delta.sh"
-edit_labels = "sh ~/.config/shuttle/delta.sh"
-edit_reviewers = "sh ~/.config/shuttle/delta.sh"
+ready = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
+close = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
+reopen = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
+edit_labels = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
+edit_reviewers = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
 # Merging, and writing on the PR's conversation.
-merge_options = "sh ~/.config/shuttle/delta.sh"
-merge = "sh ~/.config/shuttle/delta.sh"
-comment = "sh ~/.config/shuttle/delta.sh"
-review = "sh ~/.config/shuttle/delta.sh"
-reply = "sh ~/.config/shuttle/delta.sh"
-resolve = "sh ~/.config/shuttle/delta.sh"
+merge_options = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
+merge = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
+comment = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
+review = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
+reply = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
+resolve = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
 ```
 
-`delta.sh` next to this file is a working adapter for Delta through `dt` and `jq`; copy it to
-`~/.config/shuttle/delta.sh`. `view` is required; every other operation is optional.
+`delta.sh` next to this file is a working adapter for Delta through `dt` and `jq`. Run it from
+`$SHUTTLE_SCRIPTS`, the folder of scripts that ships with the installed Shuttle, so each upgrade
+brings its fixes; a copy elsewhere, or a path into a checkout, stays at the version it was copied
+from. `view` is required; every other operation is optional.
 
 ## How commands run
 
@@ -48,6 +50,7 @@ the usual tool directories on `PATH`, and a 60-second limit. It gets:
 |---|---|
 | `SHUTTLE_OPERATION` | always: the operation's name, such as authored or edit_labels |
 | `SHUTTLE_SERVER` | always: the server id |
+| `SHUTTLE_SCRIPTS` | always, when the installed Shuttle has it: the folder of adapter scripts, this file's folder |
 | `SHUTTLE_STATE` | authored: `open`, or `closed` for merged and closed PRs |
 | `SHUTTLE_SINCE` | authored with `closed`: YYYY-MM-DD, the start of the Done window |
 | `SHUTTLE_REPO`, `SHUTTLE_NUMBER`, `SHUTTLE_URL` | view, activity and every operation below that reads or changes one PR |
@@ -140,6 +143,42 @@ Each item may add `"at"`, when it was written or submitted. A `thread` item may 
 the review thread's identifier as the `reply` and `resolve` commands take it, and
 `"resolved": true` when that thread is resolved; Shuttle never sends a resolved thread to a
 watching thread.
+
+When Shuttle opens a PR's view it runs `activity` with `SHUTTLE_DETAIL=1`, and the command may
+add what the view shows besides the conversation. Watching runs it without `SHUTTLE_DETAIL`, so
+syncs stay as light as before; a command that ignores the variable works as it always did, and
+the view leaves out the parts it did not get. Every part is optional:
+
+```json
+{"head": "a41f7c3…", "items": [
+  {"id": "c12", "kind": "thread", "body": "Reuse the buffer.", "path": "src/cpu.rs", "line": 42,
+   "hunk": "@@ -40,2 +40,3 @@\n fn run() {\n+    let buf = vec![];", "review": "r7"}],
+ "checks": {"total": 41, "items": [{"name": "lint", "group": "CI", "state": "failed", "detail": "timed out",
+   "required": true, "url": "https://…", "started_at": "…", "completed_at": "…", "item": "check:lint:a41f7c3"}]},
+ "commits": {"total": 4, "items": [{"sha": "a41f7c3…", "message": "Fix the retry", "author": "ana", "at": "…"}]},
+ "files": {"total": 2400, "items": [{"path": "src/cpu.rs", "additions": 12, "deletions": 3, "change": "modified"}]},
+ "timeline": [{"kind": "labeled", "at": "…", "actor": "ana", "subject": "ship"}],
+ "merge": {"state": "blocked", "detail": "It needs an approving review."}}
+```
+
+- An item's `hunk` is the diff hunk its review thread is on, in unified format; the view shows its
+  last lines. `review` names the review an item belongs to: a review's own id, or the review a
+  line comment was posted in.
+- `checks` is every check on the head, up to 5000. `state` is `failed`, `running`, `passed` or
+  `skipped`, and `item` is the id of a failed check's `check` item, so the view can say what its
+  agent got.
+- `commits` are the last 100, oldest first, and `files` the first 100, with paths and line counts
+  only. Shuttle never reads file contents. `total` says how many there are in all; a bare array
+  counts as all of them. A longer list, up to 5000, is cut to its last 100 commits or first 100
+  files.
+- `timeline` kinds are `review_requested`, `review_request_removed`, `labeled`, `unlabeled`,
+  `ready_for_review`, `converted_to_draft`, `force_pushed`, `merged`, `closed`, `reopened`,
+  `renamed`, `auto_merge_enabled`, `auto_merge_disabled`, `review_dismissed`, `branch_deleted`
+  and `base_changed`. `subject` is who or what it is about (the reviewer, the label, the new title,
+  the new head or base, the merge commit) and `detail` what it was before.
+- `merge.state` takes the same values as `merge_options` prints.
+
+A part in the wrong shape fails the read with the field it is about, as any other field does.
 
 ## Managing your own PRs
 
@@ -250,7 +289,13 @@ and `draft` (a Delta PR cannot go back to draft). The lists search `SHUTTLE_DELT
 `merge_options` reads Delta's merge gate, `repos/{repo}/pulls/{number}/merge-readiness`, for the
 methods you may use, its blockers and the head's checks; World's main branch always reports
 "main advances through the merge queue". `view` counts the head's checks from the same gate, and
-`activity` sends each failed one as a `check` item whose id is the check and the head it ran on.
+`activity` sends each failed one as a `check` item whose id is the check and the head it ran on. With
+`SHUTTLE_DETAIL=1` it also sends every check from that gate, the last 100 commits, the first 100
+changed files, the gate's merge state and each thread's `diff_hunk`; Delta's timeline is left out.
+A PR with up to 100 files gets its commits and files from one
+`repos/{repo}/compare/{base}...{head}`, whose files carry no patches. A compare cannot page its
+files, so a larger PR reads the first page of `pulls/{number}/files` (with patches) and its
+commits from `pulls/{number}/commits` instead. Delta has no GraphQL.
 
 `merge` runs `dt pr merge --sha`, which on a stacked PR merges the stack up to it. It refuses
 rebase, auto-merge (Delta has none) and deleting the branch, and leaves out `SHUTTLE_SUBJECT`,

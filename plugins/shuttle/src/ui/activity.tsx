@@ -9,9 +9,9 @@ const ACTIVITY_LIMIT = 200;
 export const TONE_ICON: Record<Tone, string> = {
   neutral: "text-muted-foreground",
   ok: "text-success",
-  bad: "text-destructive",
+  bad: "text-destructive-text",
   warn: "text-warning-text",
-  info: "text-primary",
+  info: "text-foreground",
   brand: "text-foreground",
 };
 

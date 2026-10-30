@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import type { BoardDetail, BoardSummary, PrView } from "../contract";
 import { PANEL_PATH } from "./constants";
 import { ago, clock, plural, shortKey } from "./format";
-import { BUTTON, BUTTON_GHOST, BUTTON_PRIMARY, Dialog, ErrorNote, FIELD, PageHeading, SectionTitle } from "./common";
+import { BUTTON, BUTTON_DANGER, BUTTON_GHOST, BUTTON_ON, BUTTON_PRIMARY, Dialog, ErrorNote, FIELD, FIELD_SMALL, ICON_GHOST_LARGE, PageHeading } from "./common";
 import { messageOf, undoToast, useShuttleMutation, useShuttleQuery } from "./data";
 import { StatePill } from "./pills";
 import { FoldAllButton, GroupHeader, MineRow, ReviewRow, type RowLayout } from "./row";
@@ -13,8 +13,58 @@ import { useStored } from "./remember";
 import { BOARD_GROUP_LABELS, BOARD_SORT_LABELS, DEFAULT_BOARD_VIEW, groupBoardPrs, type BoardGrouping, type BoardSort, type BoardViewPrefs } from "./board-prs";
 import { rowTime, sortPrs } from "./sort";
 import { formatRoute, type Route } from "./route";
+import { Picker, PickerAction, PickerSeparator } from "./picker";
+import { useViewport } from "./viewport";
 
 type BoardPreview = BoardSummary["preview"][number];
+
+/** A phone's buttons: tall enough for a thumb, sharing their row. */
+const TOUCH = "inline-flex h-9 min-w-0 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-md border text-xs disabled:cursor-default disabled:opacity-50";
+const TOUCH_PRIMARY = `${TOUCH} border-foreground bg-foreground font-medium text-background`;
+const TOUCH_OUTLINE = `${TOUCH} border-input bg-transparent text-foreground`;
+const TOUCH_DANGER = `${TOUCH} border-destructive/40 bg-transparent text-destructive-text`;
+
+/** A dialog footer's note; a phone's sheet leaves it out, so its buttons keep one row. */
+function FooterHint({ children }: { children: string }) {
+  const phone = useViewport() === "phone";
+  return phone ? <span className="flex-1" /> : <span className="mr-auto text-xs text-muted-foreground">{children}</span>;
+}
+
+/**
+ * What to do with the selected PRs. On a phone it sits in two rows and sticks to the top of the page while the list
+ * scrolls under it, so the actions stay in reach.
+ */
+function SelectionBar({ count, onCreate, onAdd, onRemove, onClear }: { count: number; onCreate(): void; onAdd(): void; onRemove?: () => void; onClear(): void }) {
+  const phone = useViewport() === "phone";
+  const bar = "rounded-lg border border-surface-selected-border bg-surface-selected px-3 py-2 text-sm";
+  if (phone) {
+    return (
+      <div data-selection-bar className="sticky top-0 z-10 -mx-4 mb-3 bg-background px-4 py-2 sm:-mx-5 sm:px-5">
+        <div className={bar}>
+          <div className="flex items-center gap-2">
+            <b className="flex-1">{count} selected</b>
+            <button type="button" className={BUTTON_GHOST} onClick={onClear}>Clear selection</button>
+          </div>
+          <div className="mt-2 flex gap-2">
+            <button type="button" className={`${TOUCH_PRIMARY} flex-1 px-2`} onClick={onCreate}>New board</button>
+            <button type="button" className={`${TOUCH_OUTLINE} flex-1 px-2`} onClick={onAdd}>Add to board</button>
+            {onRemove && <button type="button" className={`${TOUCH_DANGER} flex-1 px-2`} onClick={onRemove}>Remove</button>}
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div data-selection-bar className={`mb-3 flex flex-wrap items-center gap-2 ${bar}`}>
+      <b>{count} selected</b>
+      <span className="flex-1" />
+      <button type="button" className={BUTTON_PRIMARY} onClick={onCreate}>Save as new board</button>
+      <button type="button" className={BUTTON} onClick={onAdd}>Add to board</button>
+      {onRemove && <button type="button" className={BUTTON_DANGER} onClick={onRemove}>Remove selected</button>}
+      <button type="button" className={BUTTON_GHOST} onClick={onClear}>Clear selection</button>
+    </div>
+  );
+}
 
 
 export function useSelectedKeys(initial: readonly string[] = []) {
@@ -41,9 +91,9 @@ function BoardCard({ board, onOpen }: { board: BoardSummary; onOpen(): void }) {
   const preview: readonly BoardPreview[] = board.preview.slice(0, 3);
   return (
     <button type="button" data-board-card onClick={onOpen}
-      className={`flex min-h-56 cursor-pointer flex-col rounded-lg border border-border bg-card p-4 text-left transition hover:border-primary ${board.archivedAt !== null ? "opacity-90" : ""}`}>
+      className={`flex min-w-0 cursor-pointer flex-col rounded-lg @xl:min-h-56 border border-border bg-card p-4 text-left transition hover:border-input hover:bg-state-hover ${board.archivedAt !== null ? "opacity-90" : ""}`}>
       <div className="flex items-start gap-2">
-        <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-background text-primary" aria-hidden>
+        <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-surface-recessed text-muted-foreground" aria-hidden>
           <Icon name={board.archivedAt !== null ? "Archive" : "LayoutGrid"} className="size-4" />
         </span>
         <div className="min-w-0 flex-1">
@@ -67,18 +117,19 @@ function BoardCard({ board, onOpen }: { board: BoardSummary; onOpen(): void }) {
         <span>{plural(board.prCount, "PR")}</span>
         {board.attention > 0 && <span className="rounded-full border border-border px-1.5 py-0.5 text-warning-text">{board.attention} {board.attention === 1 ? "needs" : "need"} attention</span>}
         {board.ready > 0 && <span className="rounded-full border border-border px-1.5 py-0.5 text-success">{board.ready} ready</span>}
-        {board.merged > 0 && <span className="rounded-full border border-border px-1.5 py-0.5 text-primary">{board.merged} merged</span>}
+        {board.merged > 0 && <span className="rounded-full border border-border px-1.5 py-0.5 text-pr-merged">{board.merged} merged</span>}
         <span className="ml-auto truncate">Updated {ago(board.updatedAt)}</span>
       </div>
     </button>
   );
 }
 
-export function BoardFormDialog({ mode, board, prs = [], onClose }: { mode: "create" | "edit" | "duplicate"; board?: BoardSummary; prs?: readonly string[]; onClose(): void }) {
+/** `stay` keeps the page where it is after a create, as the PR view does, instead of opening the new board. */
+export function BoardFormDialog({ mode, board, prs = [], stay = false, initialName = "", onClose }: { mode: "create" | "edit" | "duplicate"; board?: BoardSummary; prs?: readonly string[]; stay?: boolean; initialName?: string; onClose(): void }) {
   const navigate = useBbNavigate();
   const create = useShuttleMutation("boardCreate");
   const update = useShuttleMutation("boardUpdate");
-  const [name, setName] = useState(mode === "duplicate" ? `${(board?.name ?? "").slice(0, 80 - " (copy)".length).trimEnd()} (copy)` : board?.name ?? "");
+  const [name, setName] = useState(mode === "duplicate" ? `${(board?.name ?? "").slice(0, 80 - " (copy)".length).trimEnd()} (copy)` : board?.name ?? initialName);
   const [description, setDescription] = useState(board?.description ?? "");
   const [error, setError] = useState<string | null>(null);
   const busy = create.isPending || update.isPending;
@@ -106,9 +157,9 @@ export function BoardFormDialog({ mode, board, prs = [], onClose }: { mode: "cre
       ...(prs.length === 0 ? {} : { prs: [...prs] }),
     });
     if (out === null) return;
-    toast.success(mode === "duplicate" ? "Duplicated board." : "Created board.");
+    toast.success(mode === "duplicate" ? "Duplicated board." : stay ? `Created “${out.board.name}” with this PR.` : "Created board.");
     onClose();
-    navigate.toPluginPanel(PANEL_PATH, { subPath: formatRoute({ view: "board", id: out.board.id, key: null }) });
+    if (!stay) navigate.toPluginPanel(PANEL_PATH, { subPath: formatRoute({ view: "board", id: out.board.id, key: null }) });
   };
 
   return (
@@ -118,9 +169,7 @@ export function BoardFormDialog({ mode, board, prs = [], onClose }: { mode: "cre
       onClose={onClose}
       footer={(
         <>
-          <span className="mr-auto text-xs text-muted-foreground">
-            {mode === "edit" ? "Renaming keeps the board ID stable." : prs.length > 0 ? "The selected PRs are copied into the new board." : "Boards save membership, not a frozen status report."}
-          </span>
+          <FooterHint>{mode === "edit" ? "Renaming keeps the board ID stable." : prs.length > 0 ? "The selected PRs are copied into the new board." : "Boards save membership, not a frozen status report."}</FooterHint>
           <button type="button" className={BUTTON} onClick={onClose}>Cancel</button>
           <button type="submit" form={formId} className={BUTTON_PRIMARY} disabled={busy}>
             {mode === "edit" ? "Save changes" : mode === "duplicate" ? "Duplicate board" : "Create board"}
@@ -138,7 +187,7 @@ export function BoardFormDialog({ mode, board, prs = [], onClose }: { mode: "cre
         Description <span className="text-muted-foreground">(optional)</span>
         <textarea aria-label="Board description" value={description} onChange={(event) => setDescription(event.target.value)} maxLength={300} className={`${FIELD} mt-1.5 min-h-24 w-full resize-y`} />
       </label>
-      {error !== null && <div role="alert" className="mt-3 text-sm text-destructive">{error}</div>}
+      {error !== null && <div role="alert" className="mt-3 text-sm text-destructive-text">{error}</div>}
       </form>
     </Dialog>
   );
@@ -151,6 +200,7 @@ export function BoardChooserDialog({ prs, onClose, onCreateBoard }: { prs: reado
   const [query, setQuery] = useState("");
   const needle = query.trim().toLowerCase();
   const list = (boards.data?.boards ?? []).filter((board) => `${board.name} ${board.description}`.toLowerCase().includes(needle));
+  const phone = useViewport() === "phone";
 
   const addTo = async (board: BoardSummary) => {
     if (prs.length === 0) return;
@@ -171,7 +221,7 @@ export function BoardChooserDialog({ prs, onClose, onCreateBoard }: { prs: reado
       wide
       footer={(
         <>
-          <span className="mr-auto text-xs text-muted-foreground">Choose a board, or create a new one with the same selection.</span>
+          <FooterHint>Choose a board, or create a new one with the same selection.</FooterHint>
           <button type="button" className={BUTTON} onClick={onClose}>Done</button>
         </>
       )}
@@ -183,7 +233,7 @@ export function BoardChooserDialog({ prs, onClose, onCreateBoard }: { prs: reado
       {boards.error !== null && <ErrorNote>Could not load boards: {messageOf(boards.error)}</ErrorNote>}
       {boards.data === undefined && boards.error === null && <div className="py-4 text-sm text-muted-foreground">Loading boards…</div>}
       {boards.data !== undefined && list.length === 0 && <div className="py-4 text-sm text-muted-foreground">{needle === "" ? "No active boards yet." : "No matching boards."}</div>}
-      <div className="flex max-h-[24rem] flex-col gap-2 overflow-y-auto">
+      <div className={`flex flex-col gap-2 ${phone ? "" : "max-h-[24rem] overflow-y-auto"}`}>
         {list.map((board) => (
           <div key={board.id} className="flex items-center gap-3 rounded-lg border border-border px-3 py-2">
             <div className="min-w-0 flex-1">
@@ -214,6 +264,7 @@ export function BoardAddDialog({ board, existingKeys, onClose }: { board: BoardS
   const existing = useMemo(() => new Set(existingKeys), [existingKeys]);
   const searchResults = useShuttleQuery("search", { query: query.trim() }, tab === "search" && query.trim() !== "");
   const candidates = searchResults.data?.prs ?? [];
+  const phone = useViewport() === "phone";
 
   useEffect(() => {
     if (tab === "search") setError(null);
@@ -246,7 +297,7 @@ export function BoardAddDialog({ board, existingKeys, onClose }: { board: BoardS
       wide
       footer={(
         <>
-          <span className="mr-auto text-xs text-muted-foreground">Already saved PRs are skipped.</span>
+          <FooterHint>Already saved PRs are skipped.</FooterHint>
           <button type="button" className={BUTTON} onClick={onClose}>Cancel</button>
           <button type="button" className={BUTTON_PRIMARY} disabled={selected.length === 0 || add.isPending} onClick={() => void submit()}>
             Add {selected.length}
@@ -255,8 +306,8 @@ export function BoardAddDialog({ board, existingKeys, onClose }: { board: BoardS
       )}
     >
       <div className="mb-3 flex gap-2">
-        <button type="button" aria-pressed={tab === "search"} className={`${BUTTON} ${tab === "search" ? "border-primary text-primary" : ""}`} onClick={() => setTab("search")}>Search Shuttle</button>
-        <button type="button" aria-pressed={tab === "links"} className={`${BUTTON} ${tab === "links" ? "border-primary text-primary" : ""}`} onClick={() => setTab("links")}>Paste links</button>
+        <button type="button" aria-pressed={tab === "search"} className={tab === "search" ? BUTTON_ON : BUTTON} onClick={() => setTab("search")}>Search Shuttle</button>
+        <button type="button" aria-pressed={tab === "links"} className={tab === "links" ? BUTTON_ON : BUTTON} onClick={() => setTab("links")}>Paste links</button>
       </div>
       {tab === "search" ? (
         <>
@@ -266,12 +317,12 @@ export function BoardAddDialog({ board, existingKeys, onClose }: { board: BoardS
           </label>
           {searchResults.error !== null && <ErrorNote>Could not search Shuttle: {messageOf(searchResults.error)}</ErrorNote>}
           {query.trim() !== "" && searchResults.data === undefined && searchResults.error === null && <div className="py-4 text-sm text-muted-foreground">Searching…</div>}
-          <div className="flex max-h-[22rem] flex-col gap-2 overflow-y-auto">
+          <div className={`flex flex-col gap-2 ${phone ? "" : "max-h-[22rem] overflow-y-auto"}`}>
             {candidates.map((pr) => {
               const checked = picked.includes(pr.key) || existing.has(pr.key);
               return (
-                <label key={pr.key} className={`flex items-start gap-3 rounded-lg border border-border px-3 py-2 ${existing.has(pr.key) ? "opacity-60" : "cursor-pointer hover:bg-accent"}`}>
-                  <input type="checkbox" checked={checked} disabled={existing.has(pr.key)} onChange={() => setPicked((current) => (current.includes(pr.key) ? current.filter((item) => item !== pr.key) : [...current, pr.key]))} className="mt-1 size-4 shrink-0 cursor-pointer accent-primary" />
+                <label key={pr.key} className={`flex items-start gap-3 rounded-lg border border-border px-3 py-2 ${existing.has(pr.key) ? "opacity-60" : "cursor-pointer hover:bg-state-hover"}`}>
+                  <input type="checkbox" checked={checked} disabled={existing.has(pr.key)} onChange={() => setPicked((current) => (current.includes(pr.key) ? current.filter((item) => item !== pr.key) : [...current, pr.key]))} className="mt-1 size-4 shrink-0 cursor-pointer accent-foreground" />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium">{pr.title}</span>
                     <span className="block truncate text-xs text-muted-foreground">{shortKey(pr)} · {pr.serverName}</span>
@@ -290,7 +341,7 @@ export function BoardAddDialog({ board, existingKeys, onClose }: { board: BoardS
           <textarea aria-label="PR links or keys" value={links} onChange={(event) => { setLinks(event.target.value); setError(null); }} placeholder={"github:acme/desktop#128\nhttps://github.com/acme/desktop/pull/131"} className={`${FIELD} mt-1.5 min-h-32 w-full resize-y font-mono text-sm`} autoFocus />
         </label>
       )}
-      {error !== null && <div role="alert" className="mt-3 text-sm text-destructive">{error}</div>}
+      {error !== null && <div role="alert" className="mt-3 text-sm text-destructive-text">{error}</div>}
     </Dialog>
   );
 }
@@ -333,7 +384,7 @@ function BoardArchiveDialog({ board, onClose, onArchive }: { board: BoardSummary
       onClose={onClose}
       footer={(
         <>
-          <span className="mr-auto text-xs text-muted-foreground">Archived boards stay in the archive and reject membership changes until restored.</span>
+          <FooterHint>Archived boards stay in the archive and reject membership changes until restored.</FooterHint>
           <button type="button" className={BUTTON} onClick={onClose}>Cancel</button>
           <button type="button" className={BUTTON_PRIMARY} onClick={onArchive}>Archive board</button>
         </>
@@ -359,8 +410,8 @@ export function BoardsView({ tab, onGo }: { tab: "active" | "archived"; onGo(nex
         <button type="button" className={BUTTON_PRIMARY} onClick={() => setDialog({ kind: "create" })}>New board</button>
       </PageHeading>
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <button type="button" aria-pressed={currentTab === "active"} className={`${BUTTON} ${currentTab === "active" ? "border-primary text-primary" : ""}`} onClick={() => { setCurrentTab("active"); onGo({ view: "boards", tab: "active" }); }}>Active</button>
-        <button type="button" aria-pressed={currentTab === "archived"} className={`${BUTTON} ${currentTab === "archived" ? "border-primary text-primary" : ""}`} onClick={() => { setCurrentTab("archived"); onGo({ view: "boards", tab: "archived" }); }}>Archived</button>
+        <button type="button" aria-pressed={currentTab === "active"} className={currentTab === "active" ? BUTTON_ON : BUTTON} onClick={() => { setCurrentTab("active"); onGo({ view: "boards", tab: "active" }); }}>Active</button>
+        <button type="button" aria-pressed={currentTab === "archived"} className={currentTab === "archived" ? BUTTON_ON : BUTTON} onClick={() => { setCurrentTab("archived"); onGo({ view: "boards", tab: "archived" }); }}>Archived</button>
         <label className="ml-auto flex min-w-[14rem] flex-1 items-center gap-2 rounded-md border border-border bg-background px-2.5 py-1.5 text-sm text-muted-foreground sm:max-w-md">
           <Icon name="Search" className="size-4 shrink-0" aria-hidden />
           <input aria-label="Search boards" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find a board…" className="min-w-0 flex-1 bg-transparent outline-none" />
@@ -371,13 +422,13 @@ export function BoardsView({ tab, onGo }: { tab: "active" | "archived"; onGo(nex
       {boards.data === undefined && boards.error === null && <div className="py-6 text-sm text-muted-foreground">Loading boards…</div>}
       {showEmpty && (
         <div className="py-10 text-center text-sm text-muted-foreground">
-          <div className="mx-auto mb-2 size-10 rounded-full border border-border bg-card p-2 text-primary"><Icon name={currentTab === "archived" ? "Archive" : "LayoutGrid"} className="size-6" aria-hidden /></div>
+          <div className="mx-auto mb-2 size-10 rounded-full border border-border bg-surface-recessed p-2 text-muted-foreground"><Icon name={currentTab === "archived" ? "Archive" : "LayoutGrid"} className="size-6" aria-hidden /></div>
           <div className="font-medium text-foreground">{query.trim() === "" ? currentTab === "archived" ? "No archived boards yet." : "Your first board starts here." : "No matching boards."}</div>
           <div className="mt-1">{query.trim() === "" ? currentTab === "archived" ? "When you archive a board, it will stay here until restored." : "Create a board to save an explicit set of PRs." : "Try another search."}</div>
           {currentTab !== "archived" && query.trim() === "" && <button type="button" className={`${BUTTON_PRIMARY} mt-4`} onClick={() => setDialog({ kind: "create" })}>Create board</button>}
         </div>
       )}
-      {items.length > 0 && <div className="grid gap-3 @xl:grid-cols-2 @5xl:grid-cols-3">{items.map((board) => <BoardCard key={board.id} board={board} onOpen={() => onGo({ view: "board", id: board.id, key: null })} />)}</div>}
+      {items.length > 0 && <div className="grid grid-cols-1 gap-3 @xl:grid-cols-2 @5xl:grid-cols-3">{items.map((board) => <BoardCard key={board.id} board={board} onOpen={() => onGo({ view: "board", id: board.id, key: null })} />)}</div>}
       {dialog?.kind === "create" && <BoardFormDialog mode="create" onClose={() => setDialog(null)} prs={[]} />}
     </div>
   );
@@ -396,19 +447,9 @@ function boardFiltersVisible(pr: PrView, query: string, status: BoardStatus) {
   return `${pr.title} ${pr.repo} ${pr.number} ${pr.author} ${pr.key} ${shortKey(pr)} ${pr.serverName}`.toLowerCase().includes(needle);
 }
 
-function BoardBulkBar({ count, onRemove, onClear, onCreate, onAdd, archived }: { count: number; onRemove(): void; onClear(): void; onCreate(): void; onAdd(): void; archived: boolean }) {
-  if (count === 0 || archived) return null;
-  return (
-    <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
-      <b>{count} selected</b>
-      <span className="flex-1" />
-      <button type="button" className={BUTTON_PRIMARY} onClick={onCreate}>Save as new board</button>
-      <button type="button" className={BUTTON} onClick={onAdd}>Add to board</button>
-      <button type="button" className={`${BUTTON} border-destructive/40 text-destructive`} onClick={onRemove}>Remove selected</button>
-      <button type="button" className={BUTTON_GHOST} onClick={onClear}>Clear selection</button>
-    </div>
-  );
-}
+const STATUS_LABELS: Record<BoardStatus, string> = {
+  all: "All statuses", attention: "Needs attention", ready: "Ready to merge", waiting: "Awaiting review", draft: "Draft", merged: "Merged", closed: "Closed",
+};
 
 export function BoardDetailView({ id, layout, onGo }: { id: string; layout: RowLayout; onGo(next: Route): void }) {
   const boardQuery = useShuttleQuery("board", { id });
@@ -470,6 +511,13 @@ export function BoardDetailView({ id, layout, onGo }: { id: string; layout: RowL
       if (restored !== null) toast.success(`Restored ${plural(restored.added.length || out.removed.length, "PR")} to “${board.name}”.`);
     })());
   };
+  const phone = layout.phone;
+  const restore = () => void (async () => {
+    const out = await update.run({ id: board.id, archived: false });
+    if (out === null) return;
+    undoToast(`Restored “${board.name}”.`, () => void update.run({ id: board.id, archived: true }));
+    navigate.toPluginPanel(PANEL_PATH, { subPath: formatRoute({ view: "board", id: board.id, key: null }) });
+  })();
   const openPr = (key: string) => onGo({ view: "board", id, key });
   const row = (pr: PrView) => {
     const rowLayout: RowLayout = {
@@ -480,74 +528,122 @@ export function BoardDetailView({ id, layout, onGo }: { id: string; layout: RowL
     return pr.mine ? <MineRow key={pr.key} pr={pr} layout={rowLayout} time={view.sort === "saved" ? undefined : rowTime(pr, view.sort)} /> : <ReviewRow key={pr.key} pr={pr} layout={rowLayout} />;
   };
 
-  const header = (
+  const facts = (
     <>
-      <div className="flex flex-wrap items-start gap-2">
-        <div className="min-w-0 flex-1">
-          <h1 className="text-base font-semibold">{board.name}</h1>
-          <p className="mt-0.5 text-xs text-muted-foreground">{board.description || "Saved PRs that stay live."}</p>
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-            <span className="flex items-center gap-1"><Icon name={archived ? "Archive" : "LayoutGrid"} className="size-3.5" aria-hidden />{board.archivedAt === null ? "Live board" : "Archived board"}</span>
-            <span>Created {ago(board.createdAt)}</span>
-            <span>Updated {ago(board.updatedAt)}</span>
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {!archived && <button type="button" className={BUTTON_PRIMARY} onClick={() => setDialog({ kind: "add" })}><Icon name="Plus" className="size-3.5" aria-hidden />Add PRs</button>}
-          <button type="button" className={BUTTON} onClick={() => setDialog({ kind: "edit" })}>Edit board</button>
-          <button type="button" className={BUTTON} onClick={() => setDialog({ kind: "duplicate" })}>Duplicate</button>
-          {!archived ? <button type="button" className={`${BUTTON} text-destructive`} onClick={() => setDialog({ kind: "archive" })}>Archive board</button> : <button type="button" className={BUTTON} onClick={() => void (async () => {
-            const out = await update.run({ id: board.id, archived: false });
-            if (out === null) return;
-            undoToast(`Restored “${board.name}”.`, () => void update.run({ id: board.id, archived: true }));
-            navigate.toPluginPanel(PANEL_PATH, { subPath: formatRoute({ view: "board", id: board.id, key: null }) });
-          })()}>Restore board</button>}
-          <button type="button" className={BUTTON_GHOST} onClick={() => setDialog({ kind: "tools" })}>Thread tools</button>
-        </div>
+      <p className="mt-0.5 text-xs text-muted-foreground">{board.description || "Saved PRs that stay live."}</p>
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+        <span className="flex items-center gap-1"><Icon name={archived ? "Archive" : "LayoutGrid"} className="size-3.5" aria-hidden />{board.archivedAt === null ? "Live board" : "Archived board"}</span>
+        <span>Created {ago(board.createdAt)}</span>
+        <span>Updated {ago(board.updatedAt)}</span>
       </div>
     </>
+  );
+  // A phone keeps the one main action on screen and the rest in a sheet, under a way back to the boards.
+  const header = phone ? (
+    <>
+      <button type="button" aria-label="Back to Boards" className="-ml-1.5 mb-1.5 inline-flex h-8 cursor-pointer items-center gap-1 rounded-md px-1.5 text-sm text-foreground hover:bg-state-hover"
+        onClick={() => onGo({ view: "boards", tab: archived ? "archived" : "active" })}>
+        <Icon name="ChevronLeft" className="size-4" aria-hidden />Boards
+      </button>
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <h1 className="break-words text-base font-semibold">{board.name}</h1>
+          {facts}
+        </div>
+        <Picker phone title={board.name} triggerLabel={`More for ${board.name}`} triggerClassName={`${ICON_GHOST_LARGE} border border-input`}
+          trigger={<Icon name="MoreHorizontal" className="size-4" aria-hidden />}>
+          <PickerAction onSelect={() => setDialog({ kind: "edit" })}><Icon name="Pencil" className="size-3.5" aria-hidden />Edit board</PickerAction>
+          <PickerAction onSelect={() => setDialog({ kind: "duplicate" })}><Icon name="Copy" className="size-3.5" aria-hidden />Duplicate</PickerAction>
+          <PickerAction onSelect={() => setDialog({ kind: "tools" })}><Icon name="Terminal" className="size-3.5" aria-hidden />Thread tools</PickerAction>
+          {!archived && (
+            <>
+              <PickerSeparator />
+              <PickerAction danger onSelect={() => setDialog({ kind: "archive" })}><Icon name="Archive" className="size-3.5" aria-hidden />Archive board</PickerAction>
+            </>
+          )}
+        </Picker>
+      </div>
+      <div className="mt-3 flex">
+        {!archived
+          ? <button type="button" className={`${TOUCH_PRIMARY} px-3`} onClick={() => setDialog({ kind: "add" })}><Icon name="Plus" className="size-3.5" aria-hidden />Add PRs</button>
+          : <button type="button" className={`${TOUCH_OUTLINE} px-3`} onClick={restore}>Restore board</button>}
+      </div>
+    </>
+  ) : (
+    <div className="flex flex-wrap items-start gap-2">
+      <div className="min-w-0 flex-1">
+        <h1 className="text-base font-semibold">{board.name}</h1>
+        {facts}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {!archived && <button type="button" className={BUTTON_PRIMARY} onClick={() => setDialog({ kind: "add" })}><Icon name="Plus" className="size-3.5" aria-hidden />Add PRs</button>}
+        <button type="button" className={BUTTON} onClick={() => setDialog({ kind: "edit" })}>Edit board</button>
+        <button type="button" className={BUTTON} onClick={() => setDialog({ kind: "duplicate" })}>Duplicate</button>
+        {!archived ? <button type="button" className={BUTTON_DANGER} onClick={() => setDialog({ kind: "archive" })}>Archive board</button> : <button type="button" className={BUTTON} onClick={restore}>Restore board</button>}
+        <button type="button" className={BUTTON_GHOST} onClick={() => setDialog({ kind: "tools" })}>Thread tools</button>
+      </div>
+    </div>
+  );
+  const caption = phone ? "text-xs text-muted-foreground" : "text-muted-foreground";
+  const search = (
+    <label className={`flex items-center gap-2 rounded-md border border-border bg-background px-2.5 py-1.5 text-sm text-muted-foreground ${phone ? "w-full" : "min-w-[14rem] flex-1 sm:max-w-md"}`}>
+      <Icon name="Search" className="size-4 shrink-0" aria-hidden />
+      <input aria-label="Filter board PRs" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter PRs in this board…" className="min-w-0 flex-1 bg-transparent outline-none" />
+    </label>
+  );
+  const selects = [
+    // Under its "Status" caption a phone's select only needs "All".
+    { label: "Status", aria: "Board status", value: status, options: phone ? { ...STATUS_LABELS, all: "All" } : STATUS_LABELS, onChange: (next: string) => setStatus(next as BoardStatus) },
+    { label: "Sort by", aria: "Sort by", value: view.sort, options: BOARD_SORT_LABELS, onChange: (next: string) => setView({ sort: next as BoardSort }) },
+    { label: "Group by", aria: "Group by", value: view.group, options: BOARD_GROUP_LABELS, onChange: (next: string) => setView({ group: next as BoardGrouping }) },
+  ];
+  const select = (entry: typeof selects[number], className: string) => (
+    <select aria-label={entry.aria} value={entry.value} onChange={(event) => entry.onChange(event.target.value)} className={className}>
+      {Object.entries(entry.options).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+    </select>
+  );
+  const foldAll = sections.length > 0 && <FoldAllButton titles={sections.map((section) => section.key)} folding={groupFolding} />;
+  // Three short selects share one row on a phone, each under its name.
+  const filters = phone ? (
+    <div className="mb-4 mt-4 space-y-2">
+      {search}
+      <div className="grid grid-cols-3 gap-2">
+        {selects.map((entry) => (
+          <label key={entry.aria} className="min-w-0 text-[11px] text-muted-foreground">
+            {entry.label}
+            {select(entry, `${FIELD_SMALL} mt-1 block w-full min-w-0`)}
+          </label>
+        ))}
+      </div>
+      {foldAll && <div className="flex justify-end">{foldAll}</div>}
+    </div>
+  ) : (
+    <div className="mb-5 mt-4 flex flex-wrap items-center gap-2">
+      {search}
+      {select(selects[0]!, FIELD)}
+      {selects.slice(1).map((entry) => (
+        <label key={entry.aria} className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+          {entry.label}
+          {select(entry, FIELD)}
+        </label>
+      ))}
+      {foldAll && <span className="ml-auto">{foldAll}</span>}
+    </div>
   );
 
   return (
     <div className="@container w-full px-4 pb-10 pt-4 sm:px-5">
-      <PageHeading title="Boards" description="Keep a specific set of PRs together, across repositories and servers." />
+      {!phone && <PageHeading title="Boards" description="Keep a specific set of PRs together, across repositories and servers." />}
       {header}
-      <div className="mt-4 grid gap-3 border-y border-border py-4 text-sm sm:grid-cols-4">
-        <div><b className="block text-base">{plural(board.prCount, "saved PR")}</b><span className="text-muted-foreground">Live membership</span></div>
-        <div><b className="block text-base text-warning-text">{board.attention} {board.attention === 1 ? "needs" : "need"} attention</b><span className="text-muted-foreground">Checks or reviews need work</span></div>
-        <div><b className="block text-base text-success">{board.ready} ready to merge</b><span className="text-muted-foreground">Already in good shape</span></div>
-        <div><b className="block text-base text-primary">{board.merged} merged</b><span className="text-muted-foreground">Still saved until removed</span></div>
+      <div className="mt-4 grid grid-cols-2 gap-3 border-y border-border py-4 text-sm sm:grid-cols-4">
+        <div><b className="block text-base">{plural(board.prCount, "saved PR")}</b><span className={caption}>Live membership</span></div>
+        <div><b className="block text-base text-warning-text">{board.attention} {board.attention === 1 ? "needs" : "need"} attention</b><span className={caption}>Checks or reviews need work</span></div>
+        <div><b className="block text-base text-success">{board.ready} ready to merge</b><span className={caption}>Already in good shape</span></div>
+        <div><b className="block text-base text-pr-merged">{board.merged} merged</b><span className={caption}>Still saved until removed</span></div>
       </div>
       {archived && <div className="mt-4 rounded-lg border border-border bg-card px-3 py-2 text-sm text-muted-foreground">This board is archived. Restore it to add or remove PRs.</div>}
-      <div className="mb-5 mt-4 flex flex-wrap items-center gap-2">
-        <label className="flex min-w-[14rem] flex-1 items-center gap-2 rounded-md border border-border bg-background px-2.5 py-1.5 text-sm text-muted-foreground sm:max-w-md">
-          <Icon name="Search" className="size-4 shrink-0" aria-hidden />
-          <input aria-label="Filter board PRs" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter PRs in this board…" className="min-w-0 flex-1 bg-transparent outline-none" />
-        </label>
-        <select aria-label="Board status" value={status} onChange={(event) => setStatus(event.target.value as BoardStatus)} className={FIELD}>
-          <option value="all">All statuses</option>
-          <option value="attention">Needs attention</option>
-          <option value="ready">Ready to merge</option>
-          <option value="waiting">Awaiting review</option>
-          <option value="draft">Draft</option>
-          <option value="merged">Merged</option>
-          <option value="closed">Closed</option>
-        </select>
-        <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-          Sort by
-          <select aria-label="Sort by" value={view.sort} onChange={(event) => setView({ sort: event.target.value as BoardSort })} className={FIELD}>
-            {Object.entries(BOARD_SORT_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-          </select>
-        </label>
-        <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-          Group by
-          <select aria-label="Group by" value={view.group} onChange={(event) => setView({ group: event.target.value as BoardGrouping })} className={FIELD}>
-            {Object.entries(BOARD_GROUP_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-          </select>
-        </label>
-        {sections.length > 0 && <span className="ml-auto"><FoldAllButton titles={sections.map((section) => section.key)} folding={groupFolding} /></span>}
-      </div>
-      <BoardBulkBar count={selection.selected.length} onRemove={() => setDialog({ kind: "remove" })} onClear={selection.clear} onCreate={() => setDialog({ kind: "create" })} onAdd={() => setDialog({ kind: "choose" })} archived={archived} />
+      {filters}
+      {selection.selected.length > 0 && !archived && <SelectionBar count={selection.selected.length} onRemove={() => setDialog({ kind: "remove" })} onClear={selection.clear} onCreate={() => setDialog({ kind: "create" })} onAdd={() => setDialog({ kind: "choose" })} />}
       {visible.length === 0 && (
         <div className="py-10 text-center text-sm text-muted-foreground">{prs.length === 0 ? "This board is empty." : "No matching PRs."}</div>
       )}
@@ -599,58 +695,18 @@ export function BoardDetailView({ id, layout, onGo }: { id: string; layout: RowL
   );
 }
 
-export function BoardMemberships({ pr }: { pr: PrView }) {
-  const memberships = useShuttleQuery("boards", { archived: "include", key: pr.key });
-  const navigate = useBbNavigate();
-  const [dialog, setDialog] = useState<null | "choose" | "create">(null);
-
-  const boards = memberships.data?.boards ?? [];
-
-  return (
-    <section aria-label="Boards" className="mx-4 mt-4">
-      <div className="mb-2 flex items-center gap-2">
-        <SectionTitle icon="LayoutGrid">Boards</SectionTitle>
-        <span className="text-xs text-muted-foreground">· {boards.length}</span>
-        <span className="flex-1" />
-        <button type="button" className={BUTTON_GHOST} onClick={() => setDialog("choose")}>Add to board</button>
-      </div>
-      {memberships.error !== null && <ErrorNote>Could not load boards: {messageOf(memberships.error)}</ErrorNote>}
-      {memberships.data === undefined && memberships.error === null && <p className="text-sm text-muted-foreground">Loading board memberships…</p>}
-      {memberships.data !== undefined && boards.length === 0 && <p className="text-sm text-muted-foreground">Not saved to any board.</p>}
-      {boards.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {boards.map((board) => (
-            <button key={board.id} type="button" className={BUTTON} onClick={() => navigate.toPluginPanel(PANEL_PATH, { subPath: formatRoute({ view: "board", id: board.id, key: null }) })}>
-              <Icon name={board.archivedAt === null ? "LayoutGrid" : "Archive"} className="size-3.5" aria-hidden />
-              {board.name}
-              {board.archivedAt !== null && <span className="rounded-full border border-border px-1.5 py-0.5 text-[10.5px] text-muted-foreground">Archived</span>}
-            </button>
-          ))}
-        </div>
-      )}
-      {dialog === "choose" && <BoardChooserDialog prs={[pr.key]} onClose={() => setDialog(null)} onCreateBoard={() => setDialog("create")} />}
-      {dialog === "create" && <BoardFormDialog mode="create" prs={[pr.key]} onClose={() => setDialog(null)} />}
-    </section>
-  );
-}
-
 export function BoardSelectionToolbar({ selected, onCreate, onAdd, onClear }: { selected: readonly string[]; onCreate(): void; onAdd(): void; onClear(): void }) {
+  const phone = useViewport() === "phone";
   if (selected.length === 0) {
+    // A phone has no room for the hint; the rows' checkboxes say the same.
+    if (phone) return null;
     return (
       <div className="mb-3 rounded-lg border border-dashed border-border bg-card px-3 py-2 text-sm text-muted-foreground">
         Select PRs to save a set as a new board or add them to an existing one.
       </div>
     );
   }
-  return (
-    <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
-      <b>{selected.length} selected</b>
-      <span className="flex-1" />
-      <button type="button" className={BUTTON_PRIMARY} onClick={onCreate}>Save as new board</button>
-      <button type="button" className={BUTTON} onClick={onAdd}>Add to board</button>
-      <button type="button" className={BUTTON_GHOST} onClick={onClear}>Clear selection</button>
-    </div>
-  );
+  return <SelectionBar count={selected.length} onCreate={onCreate} onAdd={onAdd} onClear={onClear} />;
 }
 
 export function useBoardSelection() {

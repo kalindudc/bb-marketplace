@@ -35,7 +35,7 @@ async function panel(rpc: Partial<Handlers> & { pullRequests?: PullRequests } = 
     ...handlers({
       threadPrs: () => ({ prs, sent: [event({ id: 7, kind: "forwarded", text: "tomas approved: sent with the act prompt", key: base.key, threadId: THREAD })] }),
       detail: ({ key }) => ({ pr: prs.find((item) => item.key === key) ?? base, events: [], body: "## Why\n\nThe ticket page shows **every** stage.", draft: null }),
-      conversation: () => ({ items: [item({ id: "c1", author: "tomas", body: "Can the stage list wrap?", thread: "PRRT_9" })], error: null, fetchedAt: Date.now() }),
+      conversation: () => ({ items: [item({ id: "c1", author: "tomas", body: "Can the stage list wrap?", thread: "PRRT_9" })], details: null, error: null, fetchedAt: Date.now() }),
       setAgentMode: ({ key, mode }) => change(key, (item) => ({ ...item, agent: item.agent === null ? null : { ...item.agent, mode } })),
       setAgent: ({ key, target }) => ({ ...change(key, (item) => ({ ...item, agent: target.kind === "existing" ? agent({ threadId: target.threadId, title: "Loom work" }) : null })), threadId: THREAD }),
       link: ({ key, threadId, role }) => change(key, (item) => ({ ...item, links: item.links.map((entry) => (entry.threadId === threadId ? { ...entry, role: role! } : entry)) })),
@@ -210,9 +210,11 @@ describe("a PR in full inside the tab", () => {
     const slot = await panel();
     const detail = await view(slot, base.key);
     expect(detail.getAttribute("data-detail")).toBe(base.key);
-    await within(detail).findByText("Can the stage list wrap?");
+    expect(within(detail).getByRole("region", { name: "Where it stands" }).textContent).toContain(base.next.label);
     expect(within(detail).getByRole("region", { name: "Description" }).textContent).toContain("every");
     expect(within(detail).getByRole("region", { name: "Threads" }).textContent).toContain("Loom work");
+    fireEvent.click(detail.querySelector<HTMLElement>('[data-tab="conversation"]')!);
+    await within(detail).findByText("Can the stage list wrap?");
     expect(callsTo(slot, "detail")).toContainEqual({ key: base.key });
     expect(slot.container.querySelector("[data-pr]")).toBeNull();
     fireEvent.click(slot.getByRole("button", { name: "Back to this thread's pull requests" }));
@@ -222,7 +224,7 @@ describe("a PR in full inside the tab", () => {
 
   it("keeps the open PR, scroll container, expanded sections and drafts through a background refresh", async () => {
     const detailData = { pr: base, events: [], body: "A long description. ".repeat(100), draft: null };
-    const conversationData = { items: [item({ author: "tomas", thread: "PRRT_9" })], error: null, fetchedAt: Date.now() };
+    const conversationData = { items: [item({ author: "tomas", thread: "PRRT_9" })], details: null, error: null, fetchedAt: Date.now() };
     let refreshing = false;
     let finishPrs: (value: { prs: PrView[]; sent: [] }) => void;
     let finishDetail: (value: typeof detailData) => void;
@@ -234,7 +236,7 @@ describe("a PR in full inside the tab", () => {
     });
     const detail = await view(slot, base.key);
     fireEvent.click(within(detail).getByRole("button", { name: "Show the whole description" }));
-    fireEvent.click(within(detail).getByRole("button", { name: /Details/u }));
+    fireEvent.click(detail.querySelector<HTMLElement>('[data-tab="conversation"]')!);
     fireEvent.click(await within(detail).findByRole("button", { name: "Reply" }));
     const reply = within(detail).getByRole("textbox", { name: "Reply to tomas" }) as HTMLTextAreaElement;
     const comment = within(detail).getByRole("textbox", { name: "Comment on bb-marketplace#118" }) as HTMLTextAreaElement;
@@ -249,8 +251,7 @@ describe("a PR in full inside the tab", () => {
       expect(slot.container.querySelector("[data-detail]")).toBe(detail);
       expect(slot.container.querySelector("[data-scroller]")).toBe(scroller);
       expect(scroller.scrollTop).toBe(480);
-      expect(within(detail).getByRole("button", { name: "Show less" })).toBeTruthy();
-      expect(within(detail).getByRole("button", { name: /Details/u }).getAttribute("aria-expanded")).toBe("true");
+      expect(detail.querySelector('[aria-selected="true"][data-tab]')!.getAttribute("data-tab")).toBe("conversation");
       expect(within(detail).getByRole("textbox", { name: "Reply to tomas" })).toBe(reply);
       expect(reply.value).toBe("An unfinished reply");
       expect(comment.value).toBe("An unfinished comment");
@@ -266,9 +267,11 @@ describe("a PR in full inside the tab", () => {
       finishConversation!({ ...conversationData, items: [item({ id: "new", body: "A new comment", at: Date.now() }), ...conversationData.items] });
       await refresh!;
     });
-    await within(detail).findByText("Updated after sync");
+    await waitFor(() => expect(detail.querySelector("header h2")!.textContent).toBe("Updated after sync"));
     await within(detail).findByText("A new comment");
     assertPreserved();
+    fireEvent.click(detail.querySelector<HTMLElement>('[data-tab="overview"]')!);
+    expect(within(detail).getByRole("button", { name: "Show less" })).toBeTruthy();
   });
 
   it("opens from its title too", async () => {
@@ -281,6 +284,7 @@ describe("a PR in full inside the tab", () => {
   it("comments on the PR and replies in its conversation without leaving the thread", async () => {
     const slot = await panel({ comment: () => ({ pr: base }), reply: () => ({ ok: true }) });
     const detail = await view(slot, base.key);
+    fireEvent.click(detail.querySelector<HTMLElement>('[data-tab="conversation"]')!);
     fireEvent.click(await within(detail).findByRole("button", { name: "Reply" }));
     fireEvent.change(within(detail).getByRole("textbox", { name: "Reply to tomas" }), { target: { value: "It wraps now." } });
     fireEvent.click(within(detail).getAllByRole("button", { name: "Reply" }).at(-1)!);

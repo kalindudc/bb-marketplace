@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, waitFor, within } from "@testing-library/react";
 import { formatRoute } from "../../src/ui/route";
 import { callsTo, find, lastNavigation, next, page, pr, unmountAll, type Handlers } from "./helpers";
@@ -34,9 +34,9 @@ describe("Shuttle page", () => {
     const open = slot.container.querySelector<HTMLElement>(`[data-pr="${second.key}"]`)!;
     expect(open.getAttribute("aria-current")).toBe("true");
     // The same tint as an Inbox card, with a bar and a ring, so it never reads as a hovered row.
-    expect(open.className).toContain("var(--primary)_12%");
-    expect(open.className).toContain("inset_4px_0_0_var(--primary)");
-    expect(open.className).not.toContain("hover:bg-accent");
+    expect(open.className).toContain("bg-surface-selected");
+    expect(open.className).toContain("inset_3px_0_0_var(--primary)");
+    expect(open.className).not.toContain("hover:bg-state-hover");
     expect(callsTo(slot, "detail")).toEqual([{ key: second.key }]);
     fireEvent.click(within(panel).getByRole("button", { name: "Close details" }));
     expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: "reviews", replace: true } });
@@ -74,13 +74,28 @@ describe("Shuttle page", () => {
     await waitFor(() => expect(callsTo(needs.slot, "inbox")).toEqual([{}]));
   });
 
-  it("shows a looked-up PR from its path, and closes it to the Inbox", async () => {
+  it("shows a PR on its own path as a full page, and puts it beside its list", async () => {
     const { slot } = await reviews(formatRoute({ view: "pr", key: second.key }));
-    expect(await slot.findByRole("heading", { name: "Look up" })).toBeTruthy();
     const view = await find(slot.container, `[data-detail="${second.key}"]`);
+    expect(slot.queryByRole("heading", { name: "Look up" })).toBeNull();
     expect(callsTo(slot, "list")).toEqual([]);
-    fireEvent.click(within(view).getByRole("button", { name: "Close details" }));
-    expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: "inbox", replace: true } });
+    expect(within(view).queryByRole("button", { name: "Close details" })).toBeNull();
+    fireEvent.click(within(view).getByRole("button", { name: "Show beside the list" }));
+    expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: selected(second.key), replace: true } });
+  });
+
+  it("opens the PR beside the list as a full page, and goes back to the list from there", async () => {
+    const back = vi.spyOn(window.history, "back").mockImplementation(() => {});
+    const { slot, route } = await reviews(selected(second.key));
+    const panel = await find(slot.container, `[data-panel] [data-detail="${second.key}"]`);
+    fireEvent.click(within(panel).getByRole("button", { name: "Open as a full page" }));
+    expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: formatRoute({ view: "pr", key: second.key }) } });
+    route(formatRoute({ view: "pr", key: second.key }));
+    await waitFor(() => expect(slot.container.querySelector("[data-panel]")).toBeNull());
+    const full = await find(slot.container, `[data-detail="${second.key}"]`);
+    fireEvent.click(within(full).getByRole("button", { name: "Show beside the list" }));
+    expect(back).toHaveBeenCalledTimes(1);
+    back.mockRestore();
   });
 
   it("fetches a looked-up PR the server does not know yet when asked", async () => {
@@ -113,11 +128,11 @@ describe("Shuttle page", () => {
     await waitFor(() => expect(callsTo(slot, "list").length).toBeGreaterThan(before));
   });
 
-  it("shows the PR's description in the PR view, without opening Details", async () => {
+  it("shows the PR's description first in its Overview, then its people", async () => {
     const { slot } = await reviews(selected(first.key));
     const view = await find(slot.container, `[data-detail="${first.key}"]`);
     const description = within(view).getByRole("region", { name: "Description" });
     expect((await find(description, "[data-description]")).textContent).toContain("Adds **compact** headers");
-    expect(within(view).getByRole("region", { name: "Details" }).querySelector("[data-description]")).toBeNull();
+    expect(within(view).getByRole("region", { name: "People" })).toBeTruthy();
   });
 });
