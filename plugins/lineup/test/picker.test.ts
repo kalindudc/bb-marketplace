@@ -32,6 +32,37 @@ describe("picker", () => {
     expect(openPopover(root)).toBe(fake.popover);
   });
 
+  it("finds bb's drawer on a narrow screen, where the model button names no menu", () => {
+    const fake = buildPicker(several, { drawer: true });
+    const anchor = document.createElement("span");
+    fake.form.append(anchor);
+    const root = findComposerRoot(anchor)!;
+    expect(openPopover(root)).toBeNull();
+    fake.open();
+    expect(fake.trigger.hasAttribute("aria-controls")).toBe(false);
+    // The drawer shows a placeholder at first, so it is found before its menu is drawn.
+    expect(openPopover(root)).toBe(fake.menu);
+    expect(readPicker(fake.menu)).toBeNull();
+    fake.realize();
+    const parts = readPicker(fake.menu)!;
+    expect(parts.popover).toBe(fake.popover);
+    expect(parts.drawer).toBe(true);
+    expect(parts.nativeTabRow?.children).toHaveLength(2);
+    fake.close();
+    expect(openPopover(root)).toBeNull();
+  });
+
+  it("passes over open drawers that do not hold bb's model menu", () => {
+    const fake = buildPicker(several, { drawer: true });
+    fake.open();
+    fake.realize();
+    const other = document.createElement("div");
+    other.setAttribute("data-persistent-drawer-content", "");
+    other.setAttribute("data-state", "open");
+    document.body.append(other);
+    expect(openPopover(fake.form)).toBe(fake.menu);
+  });
+
   it("reads bb's tab row, search box and list, and fails when a part is missing", () => {
     const fake = buildPicker(several);
     const parts = readPicker(fake.popover)!;
@@ -74,6 +105,19 @@ describe("picker", () => {
     fake.popover.setAttribute("data-lineup-view", "recent");
     removeMounts(fake.popover);
     expect(fake.popover.outerHTML).toBe(before);
+  });
+
+  it("removes everything it added to the drawer", () => {
+    const fake = buildPicker(several, { drawer: true });
+    fake.open();
+    fake.realize();
+    const before = fake.menu.outerHTML;
+    const parts = readPicker(fake.menu)!;
+    ensureMounts(parts);
+    nativeRowSlots(parts.listbox);
+    parts.popover.setAttribute("data-lineup-view", "recent");
+    removeMounts(fake.menu);
+    expect(fake.menu.outerHTML).toBe(before);
   });
 
   it("adds one pin slot before each row's check mark", () => {

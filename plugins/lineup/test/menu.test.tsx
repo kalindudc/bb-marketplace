@@ -56,6 +56,8 @@ function setup(
     slowPins?: boolean;
     /** Hold each pin's reply until the test calls `release`. */
     heldPins?: boolean;
+    /** Draw bb's menu in its narrow-screen drawer. */
+    drawer?: boolean;
   } = {},
 ) {
   let holdStateReads = false;
@@ -76,7 +78,7 @@ function setup(
     releases = [];
     for (const done of pending) done();
   };
-  const fake = buildPicker(options.providers ?? nativeProviders);
+  const fake = buildPicker(options.providers ?? nativeProviders, { drawer: options.drawer });
   let stored: LineupState = options.state ?? { lineup: [sol], lastView: "native" };
   const calls: Array<[string, unknown]> = [];
   const events: string[] = [];
@@ -297,5 +299,60 @@ describe("Lineup in bb's model menu", () => {
     });
     await waitFor(() => expect(fake.popover.querySelector("[data-lineup-tabs]")).toBeNull());
     expect(fake.popover.hasAttribute("data-lineup-view")).toBe(false);
+  });
+
+  it("keeps its list as tall as bb's in the popover", async () => {
+    const { fake } = setup({ state: { lineup: [sol], lastView: "lineup" } });
+    await openMenu(fake);
+    await waitFor(() => expect(ownRows(fake)).toHaveLength(1));
+    expect(fake.popover.querySelector("[data-lineup-list] [role=listbox]")!.classList).toContain("max-h-64");
+  });
+});
+
+describe("Lineup in bb's model drawer on a narrow screen", () => {
+  it("adds its tabs once the drawer draws the menu, and picks from its own list", async () => {
+    const { fake, slot } = setup({ drawer: true, state: { lineup: [sol, opus], lastView: "lineup" } });
+    await openMenu(fake);
+    expect(fake.menu.contains(fake.popover)).toBe(true);
+    expect(fake.popover.querySelector("[data-lineup-tabs]")!.parentElement).toBe(fake.tabs()[0]!.parentElement);
+    await waitFor(() => expect(fake.popover.getAttribute("data-lineup-view")).toBe("lineup"));
+    await waitFor(() => expect(ownRows(fake)).toHaveLength(2));
+    fireEvent.click(ownRows(fake)[1]!);
+    await waitFor(() =>
+      expect(slot.inspection.composer.selections).toEqual([{ providerId: "pi", model: "anthropic/claude-opus-5-5" }]),
+    );
+    fireEvent.click(tab(fake, "Recent"));
+    await waitFor(() => expect(ownRows(fake)).toHaveLength(2));
+    expect(ownRows(fake)[0]!.textContent).toContain("Claude Opus 5.5");
+  });
+
+  it("lets its list fill the drawer, as bb's does", async () => {
+    const { fake } = setup({ drawer: true, state: { lineup: [sol], lastView: "lineup" } });
+    await openMenu(fake);
+    await waitFor(() => expect(ownRows(fake)).toHaveLength(1));
+    expect(fake.popover.querySelector("[data-lineup-list] [role=listbox]")!.classList).not.toContain("max-h-64");
+  });
+
+  it("puts pins on bb's rows in the drawer", async () => {
+    const { fake, calls } = setup({ drawer: true });
+    await openMenu(fake);
+    await waitFor(() => expect(fake.rows()[1]!.querySelector('[data-lineup-pin="off"]')).not.toBeNull());
+    fireEvent.click(fake.rows()[1]!.querySelector('[data-lineup-pin="off"]')!);
+    await waitFor(() => expect(calls).toContainEqual(["pin", { providerId: "codex", model: "gpt-5.5", pinned: true }]));
+    expect(fake.picked).toEqual([]);
+  });
+
+  it("leaves the closed drawer as bb drew it, and comes back when it opens again", async () => {
+    const { fake } = setup({ drawer: true, state: { lineup: [sol], lastView: "recent" } });
+    await openMenu(fake);
+    await waitFor(() => expect(fake.popover.getAttribute("data-lineup-view")).toBe("recent"));
+    await act(async () => {
+      fake.close();
+    });
+    await waitFor(() => expect(fake.menu.querySelector("[data-lineup-tabs], [data-lineup-list], [data-lineup-pin-slot]")).toBeNull());
+    expect(fake.menu.isConnected).toBe(true);
+    expect(fake.menu.querySelector("[data-lineup-view]")).toBeNull();
+    await openMenu(fake);
+    await waitFor(() => expect(ownRows(fake)).toHaveLength(2));
   });
 });

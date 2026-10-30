@@ -8,7 +8,7 @@ catalog.
   first. The count is the **Models in Recent** setting (default 25, up to
   100).
 - **Lineup** lists models you pin. Hover any row in the menu, including bb's
-  own rows, and click its pin.
+  own rows, and click its pin. On a touch screen every row shows its pin.
 - Picking a row switches the composer's model as bb's list does. Typing
   filters the tab and also lists matches from every provider.
 - Tab and Shift+Tab in the search box move between Recent, Lineup and bb's
@@ -16,6 +16,8 @@ catalog.
   choose another.
 - Settings → Plugins → Lineup reorders the lineup and adds models with bb's
   picker.
+- It works in bb's popover menu and in the drawer bb opens instead on a phone
+  or in a window narrower than 768px.
 
 ## Install
 
@@ -31,8 +33,8 @@ bb has no plugin API for its model menu, so the frontend adds to the menu bb
 
 | Part                         | How                                                                            |
 | ---------------------------- | ------------------------------------------------------------------------------ |
-| Knowing which composer opened the menu | An action in each composer (`app.composer.customize`) that renders a hidden span; it watches that composer's model button (`aria-label^="Provider, model and reasoning"`) and finds the menu through its `aria-controls` |
-| Tabs, list and pins          | React portals into containers added to bb's menu: the tabs at the start of bb's provider tab row (or a row of Lineup's own when bb draws none), the list after bb's `[role=listbox][aria-label=Models]`, a pin slot before each row's check mark |
+| Knowing which composer opened the menu | An action in each composer (`app.composer.customize`) that renders a hidden span; it watches that composer's model button (`aria-label^="Provider, model and reasoning"`) and finds the menu through its `aria-controls`. Below 768px bb draws the menu in a bottom drawer in `<body>` and the button has no `aria-controls`, so Lineup takes the open drawer (`[data-persistent-drawer-content][data-state="open"]`) that holds the model search box, or the placeholder the drawer shows before its first draw |
+| Tabs, list and pins          | React portals into containers added to bb's menu (in the drawer, the drawer's child that holds the search box): the tabs at the start of bb's provider tab row (or a row of Lineup's own when bb draws none), the list after bb's `[role=listbox][aria-label=Models]`, a pin slot before each row's check mark |
 | Showing a tab                | `data-lineup-view` on the menu; `app.css` hides bb's list and mutes its tab underline while Recent or Lineup is open |
 | Picking a model              | `useComposer().setSelection({ providerId, model })`, the same path bb's pickers take |
 | Keys                         | A window capture listener for keys typed in the menu's search box: Tab cycles the three lists; arrows and Enter drive Lineup's list |

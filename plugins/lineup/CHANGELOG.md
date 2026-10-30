@@ -2,6 +2,14 @@
 
 Notable changes to Lineup, newest first. Releases are tagged `lineup/vX.Y.Z` in this repository.
 
+## 0.1.2 (2026-10-30)
+
+### Fixed
+
+- Recent and Lineup appear on a phone and in any window narrower than 768px. There bb draws its model menu as a drawer at the bottom of the screen, and its model button does not name the menu it opens, so Lineup never found it and the menu showed only bb's own tabs. Lineup now finds the open drawer that holds bb's model menu, including on the drawer's first open, when bb draws the menu a few frames late.
+- In the drawer, Recent and Lineup fill the drawer's height as bb's own list does, instead of stopping at 16rem.
+- On a touch screen every row shows its pin, since there is no pointer to hover with, and the pin is a larger target, as bb's own controls are there.
+
 ## 0.1.1 (2026-10-29)
 
 ### Fixed

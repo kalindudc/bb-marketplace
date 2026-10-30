@@ -40,6 +40,13 @@
   visibility: visible;
 }
 
+/* A touch screen has no pointer to hover with, so every row shows its pin. */
+@media (pointer: coarse) {
+  [data-lineup-pin="off"] {
+    visibility: visible;
+  }
+}
+
 [data-lineup-pin="on"] {
   color: var(--foreground);
 }

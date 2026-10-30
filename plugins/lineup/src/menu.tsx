@@ -42,7 +42,7 @@ type Composer = ReturnType<typeof useComposer>;
 
 const SEARCH_RESULTS = 30;
 // Class lists copied from bb's own menu so Lineup's rows look like bb's.
-const LIST_CLASS = "min-h-0 flex-1 overflow-y-auto overscroll-contain px-1 pb-1 pt-0 max-h-64";
+const LIST_CLASS = "min-h-0 flex-1 overflow-y-auto overscroll-contain px-1 pb-1 pt-0";
 const HEADER_CLASS =
   "sticky top-0 z-10 bg-background px-2 text-xs font-medium text-muted-foreground pb-[0.3125rem] pt-2 max-md:pointer-coarse:pb-1.5";
 const ROW_CLASS =
@@ -181,7 +181,10 @@ function PickerSession({ popover, composer, store }: SessionProps) {
       }
       const nextMounts = ensureMounts(next);
       setParts((current) =>
-        current?.search === next.search && current.listbox === next.listbox && current.nativeTabRow === next.nativeTabRow
+        current?.popover === next.popover &&
+        current.search === next.search &&
+        current.listbox === next.listbox &&
+        current.nativeTabRow === next.nativeTabRow
           ? current
           : next,
       );
@@ -220,8 +223,8 @@ function PickerSession({ popover, composer, store }: SessionProps) {
   }, [store.state?.lastView]);
 
   useLayoutEffect(() => {
-    if (parts !== null) popover.setAttribute(VIEW_ATTR, view);
-  }, [popover, parts, view]);
+    parts?.popover.setAttribute(VIEW_ATTR, view);
+  }, [parts, view]);
 
   const choose = useCallback(
     (next: View) => {
@@ -392,6 +395,7 @@ function PickerSession({ popover, composer, store }: SessionProps) {
                 selected={selected}
                 lineup={lineup}
                 mixed={catalog.length > 1}
+                drawer={parts.drawer}
                 onHighlight={setHighlight}
                 onPick={(row) => void pick(row)}
                 onTogglePin={togglePin}
@@ -454,7 +458,7 @@ function PinToggle({ label, pinned, onToggle }: { label: string; pinned: boolean
       aria-pressed={pinned}
       aria-label={pinned ? `Remove ${label} from lineup` : `Add ${label} to lineup`}
       data-lineup-pin={pinned ? "on" : "off"}
-      className="inline-flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-state-hover"
+      className="inline-flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-state-hover max-md:pointer-coarse:size-7"
       onPointerEnter={() => setHover(true)}
       onPointerLeave={() => setHover(false)}
       onPointerDown={keepFocus}
@@ -464,7 +468,7 @@ function PinToggle({ label, pinned, onToggle }: { label: string; pinned: boolean
         onToggle();
       }}
     >
-      <Icon name={pinned && hover ? "PinOff" : "Pin"} className="size-3.5" />
+      <Icon name={pinned && hover ? "PinOff" : "Pin"} className="size-3.5 max-md:pointer-coarse:size-5" />
     </span>
   );
 }
@@ -475,19 +479,21 @@ interface OwnListProps {
   selected: ModelRef | null;
   lineup: ModelRef[];
   mixed: boolean;
+  /** In bb's narrow-screen drawer, where bb's list fills the drawer instead of stopping at 16rem. */
+  drawer: boolean;
   onHighlight(key: string): void;
   onPick(row: Row): void;
   onTogglePin(ref: ModelRef): void;
 }
 
-function OwnList({ sections, highlighted, selected, lineup, mixed, onHighlight, onPick, onTogglePin }: OwnListProps) {
+function OwnList({ sections, highlighted, selected, lineup, mixed, drawer, onHighlight, onPick, onTogglePin }: OwnListProps) {
   const { providers } = experimental_useProviders();
   const rowRefs = useRef(new Map<string, HTMLElement>());
   useEffect(() => {
     if (highlighted !== null) rowRefs.current.get(highlighted)?.scrollIntoView({ block: "nearest" });
   }, [highlighted]);
   return (
-    <div role="listbox" aria-label={sections[0]?.title ?? "Models"} className={LIST_CLASS}>
+    <div role="listbox" aria-label={sections[0]?.title ?? "Models"} className={cn(LIST_CLASS, !drawer && "max-h-64")}>
       {sections.map((section) => (
         <div key={section.title} role="group" aria-label={section.title}>
           <div className={HEADER_CLASS}>{section.title}</div>
