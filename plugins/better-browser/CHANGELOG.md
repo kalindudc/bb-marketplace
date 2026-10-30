@@ -10,11 +10,6 @@ Notable changes to Better Browser, newest first. Releases are tagged `better-bro
 
 ## 0.2.5 (2026-10-29)
 
-### Security
-
-- Cmd/Ctrl-click now opens the real browser only for a real user gesture. A page that dispatched its own click with the modifier set could previously open an arbitrary http(s) URL in the browser where you are signed in.
-- The automatic sign-in handoff opens the sign-in page the tab is showing, not an address the page had planted before redirecting there. After sign-in the bb tab still reloads to the application on its own.
-
 ### Fixed
 
 - A read that could not decrypt every cookie no longer removes the ones it could not see, and no longer forgets their remembered hashes, so a temporary keyring failure cannot sign you out or strand a stale session in bb.
@@ -25,6 +20,11 @@ Notable changes to Better Browser, newest first. Releases are tagged `better-bro
 - Firefox cookie expiry is read correctly whether the profile stores seconds or milliseconds.
 - The Linux key probe samples only ciphertexts a key can open, so unsupported portal-encrypted rows no longer make readable cookies look undecryptable.
 - The cookie watch follows a changed last-used profile instead of keeping the previous profile's database watched.
+
+### Security
+
+- Cmd/Ctrl-click now opens the real browser only for a real user gesture. A page that dispatched its own click with the modifier set could previously open an arbitrary http(s) URL in the browser where you are signed in.
+- The automatic sign-in handoff opens the sign-in page the tab is showing, not an address the page had planted before redirecting there. After sign-in the bb tab still reloads to the application on its own.
 
 ## 0.2.4 (2026-10-29)
 
@@ -47,6 +47,11 @@ Notable changes to Better Browser, newest first. Releases are tagged `better-bro
 
 ## 0.2.1 (2026-10-29)
 
+### Changed
+
+- Settings have one configuration form instead of a second browser/profile picker. Behavior controls appear first, followed by optional browser, profile and sign-in-site overrides. Existing keys, defaults and saved values are unchanged.
+- The Connection section shows the resolved browser/profile, recent sync status and actionable errors. Session-access help is collapsed, and opening settings no longer makes a separate browser-discovery request.
+
 ### Fixed
 
 - Sign-in handoffs no longer restart when the temporary cookie-sync tab unmounts the Browser toolbar. Progress is kept per owning thread and tab, so an Okta verification page opens the real browser instead of repeatedly refreshing.
@@ -55,7 +60,28 @@ Notable changes to Better Browser, newest first. Releases are tagged `better-bro
 - A handoff stuck waiting to start its sync now times out and offers a retry instead of remaining on “Checking…” indefinitely.
 - Sync now is disabled for browsers whose sessions cannot be synced, such as Safari.
 
+## 0.2.0 (2026-10-28)
+
+### Added
+
+- Session sync on Linux. Each browser carries its Linux data directory, PATH binary and `.desktop` id, and the default browser comes from `xdg-settings`.
+- Links open through the browser binary found on PATH with `--profile-directory`, falling back to `xdg-open`.
+
 ### Changed
 
-- Settings have one configuration form instead of a second browser/profile picker. Behavior controls appear first, followed by optional browser, profile and sign-in-site overrides. Existing keys, defaults and saved values are unchanged.
-- The Connection section shows the resolved browser/profile, recent sync status and actionable errors. Session-access help is collapsed, and opening settings no longer makes a separate browser-discovery request.
+- Chromium cookie keys are derived the Linux way, with PBKDF2 and one round, and every candidate key source is proved against real ciphertext before it is used: `secret-tool` under both `chrome_libsecret_os_crypt_password` schemas, `kwallet-query` in the `<Product> Keys` folder, then the basic store's `peanuts`. A wrong source never silently reads garbage.
+
+### Compatibility
+
+- Arc, Dia and Helium stay macOS-only, as do portal-encrypted (v12) cookies.
+
+## 0.1.0 (2026-10-27)
+
+### Added
+
+- Live sessions from the browser you already use. Pick a browser and profile (Chrome, Chromium, Arc, Dia, Brave, Edge, Vivaldi, Opera, Helium, Firefox or Zen on macOS), or follow the system default, and the plugin watches that profile's cookie file and writes what changed into bb's Browser while the real browser stays open.
+- Cookies are read from a private `VACUUM INTO` copy of the cookie database, and Chromium values are decrypted with the Keychain's "Safe Storage" key, so a session never needs a quit and a re-import.
+- Only hashes of what was synced are kept, never values, so a cookie a site changed inside bb is never overwritten with an older copy.
+- A sign-in handoff. A tab that stays on a visible sign-in form first gets the real browser's current session and a reload; if the form is still there the page opens in the real browser, and the bb tab reloads when the new session arrives. It can be automatic, a button, or off, and extra sign-in pages are a setting.
+- Cmd+click (Ctrl+click off macOS) opens a link in the chosen browser and profile instead of a new bb tab.
+- A sync button beside the address bar, a settings picker, and `bb better-browser status|browsers|sync|open`.
