@@ -745,8 +745,51 @@ describe("the PR view of someone else's PR", () => {
     fireEvent.click(within(within(await view()).getByRole("region", { name: "Threads" })).getByRole("button", { name: "Link a thread" }));
     const dialog = await slot.findByRole("dialog");
     fireEvent.click(await within(dialog).findByRole("radio", { name: /Edge retry budget notes/u }));
-    expect([...(within(dialog).getByRole("combobox", { name: "Role" }) as HTMLSelectElement).options].map((option) => option.value)).toEqual(["review", "reference"]);
+    // Someone else's PR has no agent: a thread reviews it, or is linked for reference.
+    const purposes = within(dialog).getByRole("radiogroup", { name: "What it is for" });
+    expect(within(purposes).getAllByRole("radio").map((radio) => radio.querySelector(".font-semibold")!.textContent)).toEqual(["Review", "Reference only"]);
+    expect(within(purposes).getByRole("radio", { name: /Reference only/u }).getAttribute("aria-checked")).toBe("true");
     fireEvent.click(within(dialog).getByRole("button", { name: "Link" }));
     await waitFor(() => expect(callsTo(slot, "link")).toEqual([{ key: theirs.key, threadId: "thr_x", role: "reference" }]));
+    fireEvent.click(within(within(await view()).getByRole("region", { name: "Threads" })).getByRole("button", { name: "Link a thread" }));
+    const again = await slot.findByRole("dialog");
+    fireEvent.click(await within(again).findByRole("radio", { name: /Edge retry budget notes/u }));
+    fireEvent.click(within(again).getByRole("radio", { name: /^Review/u }));
+    fireEvent.click(within(again).getByRole("button", { name: "Link" }));
+    await waitFor(() => expect(callsTo(slot, "link")[1]).toEqual({ key: theirs.key, threadId: "thr_x", role: "review" }));
+  });
+
+  it("makes a linked thread your PR's agent, with what it does, instead of offering a review", async () => {
+    const before = { ...own, agent: agent({ threadId: "thr_agent", title: "CF token containment 2: retry WAF deletes", mode: "fix" }) };
+    const { slot, view } = await prPage(before, {
+      threads: () => ({ threads: [{ id: "thr_fixer", title: "Fix the retry budget", projectId: "prj_bb", status: "idle", updatedAt: null }] }),
+      setAgent: ({ key, target, mode }) => ({ pr: { ...before, key, agent: agent({ threadId: target.kind === "existing" ? target.threadId : "thr_new", title: "Fix the retry budget", mode: mode ?? "fix" }) }, threadId: target.kind === "existing" ? target.threadId : "thr_new" }),
+    });
+    fireEvent.click(within(within(await view()).getByRole("region", { name: "Threads" })).getByRole("button", { name: "Link a thread" }));
+    const dialog = await slot.findByRole("dialog");
+    fireEvent.click(await within(dialog).findByRole("radio", { name: /Fix the retry budget/u }));
+    const purposes = within(dialog).getByRole("radiogroup", { name: "What it is for" });
+    expect(within(purposes).getAllByRole("radio").map((radio) => radio.querySelector(".font-semibold")!.textContent)).toEqual(["Agent", "Reference only"]);
+    // The PR has an agent already, so linking defaults to reference; picking Agent says who it takes over from.
+    expect(within(purposes).getByRole("radio", { name: /Reference only/u }).getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(within(purposes).getByRole("radio", { name: /^Agent/u }));
+    expect(within(purposes).getByRole("radio", { name: /^Agent/u }).textContent).toContain("It takes over from “CF token containment 2: retry WAF deletes”, which stays linked for reference.");
+    fireEvent.click(within(within(dialog).getByRole("radiogroup", { name: "What the agent does" })).getByRole("radio", { name: "Just tell it" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Link" }));
+    await waitFor(() => expect(callsTo(slot, "setAgent")).toEqual([{ key: before.key, target: { kind: "existing", threadId: "thr_fixer" }, mode: "notify" }]));
+    expect(callsTo(slot, "link")).toEqual([]);
+    await waitFor(() => expect(slot.queryByRole("dialog")).toBeNull());
+  });
+
+  it("defaults to making a linked thread the agent when your PR has none", async () => {
+    const lonely = { ...own, agent: null };
+    const { slot, view } = await prPage(lonely, { threads: () => ({ threads: [{ id: "thr_fixer", title: "Fix the retry budget", projectId: "prj_bb", status: "idle", updatedAt: null }] }) });
+    fireEvent.click(within(within(await view()).getByRole("region", { name: "Threads" })).getByRole("button", { name: "Link a thread" }));
+    const dialog = await slot.findByRole("dialog");
+    const purposes = within(dialog).getByRole("radiogroup", { name: "What it is for" });
+    expect(within(purposes).getByRole("radio", { name: /^Agent/u }).getAttribute("aria-checked")).toBe("true");
+    expect(within(within(dialog).getByRole("radiogroup", { name: "What the agent does" })).getByRole("radio", { name: "Fix it" }).getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(within(dialog).getByRole("tab", { name: "A new thread" }));
+    expect([...(within(dialog).getByRole("combobox", { name: "Start it to" }) as HTMLSelectElement).options].map((option) => option.textContent)).toEqual(["Be its agent: work on the PR and fix its feedback", "Start an AI review of it"]);
   });
 });

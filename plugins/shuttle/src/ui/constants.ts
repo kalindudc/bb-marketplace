@@ -82,7 +82,7 @@ export const AGENT_MODE_META: Record<AgentMode, { label: string; icon: string; s
 };
 
 export const ROLE_LABELS: Record<(typeof LINK_ROLES)[number], { short: string; long: string }> = {
-  owner: { short: "Owner", long: "Owner" },
+  owner: { short: "Agent", long: "Agent: it gets the PR's feedback" },
   review: { short: "Review", long: "Review thread" },
   reference: { short: "Reference", long: "Reference only: it gets nothing sent" },
 };

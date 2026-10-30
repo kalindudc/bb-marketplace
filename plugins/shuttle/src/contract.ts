@@ -483,7 +483,10 @@ export const prDetailsSchema = z.object({
 });
 export type PrDetails = z.infer<typeof prDetailsSchema>;
 
-export const LINK_CARD_KINDS = ["pr", "comment", "review", "commit", "check"] as const;
+export const LINK_CARD_KINDS = ["pr", "comment", "review", "commit", "check", "issue"] as const;
+export const ISSUE_STATES = ["open", "completed", "not_planned"] as const;
+/** A link's colour: its PR's state, or its issue's. */
+export const LINK_STATES = [...PR_STATES, "completed", "not_planned"] as const;
 
 /** What the card on a git link in a thread shows; every part is null when the link is not about it or Shuttle could not read it. */
 export const linkCardSchema = z.object({
@@ -519,6 +522,20 @@ export const linkCardSchema = z.object({
     fixes: z.array(z.object({ author: z.string().nullable(), path: z.string().nullable(), line: z.number().nullable(), body: z.string() })),
   }).nullable(),
   check: checkRunSchema.extend({ delivery: z.enum(["sent", "pending"]).nullable() }).nullable(),
+  issue: z.object({
+    number: z.number(),
+    title: z.string(),
+    state: z.enum(ISSUE_STATES),
+    author: z.string().nullable(),
+    createdAt: z.number().nullable(),
+    closedAt: z.number().nullable(),
+    body: z.string(),
+    labels: z.array(z.object({ name: z.string(), color: z.string().nullable() })),
+    assignees: z.array(z.string()),
+    comments: z.number(),
+    /** The PRs that close it; `key` is set when Shuttle has the PR, and `state` is Shuttle's then. */
+    closedBy: z.array(z.object({ repo: z.string(), number: z.number(), title: z.string(), state: z.enum(PR_STATES), url: z.string(), key: z.string().nullable() })),
+  }).nullable(),
   /** Why a part is missing, in plain words: not seen yet, or the server's error. */
   note: z.string().nullable(),
 });
@@ -719,10 +736,10 @@ export const rpcContract = defineContract({
   resolve: { input: z.object({ key, thread: z.string().min(1).max(300), resolved: z.boolean() }), output: ok, invalidates: CONVERSATION },
   /** The card for a git link in a thread. A PR comes from Shuttle's copy; its comments and details from the same 30-second read as its view. Nothing is written. */
   linkCard: { input: z.object({ url: z.string().min(8).max(2000) }), output: linkCardSchema, tags: () => ["prs", "conversation"] },
-  /** Each link's kind and its PR's state, from what Shuttle already has, to mark links in threads; no server is asked. */
+  /** Each link's kind and its PR's or issue's state, from what Shuttle already has, to mark links in threads; no server is asked. */
   linkStates: {
     input: z.object({ urls: z.array(z.string().min(8).max(2000)).max(100) }),
-    output: z.object({ links: z.array(z.object({ url: z.string(), kind: z.enum(LINK_CARD_KINDS).nullable(), state: z.enum(PR_STATES).nullable() })) }),
+    output: z.object({ links: z.array(z.object({ url: z.string(), kind: z.enum(LINK_CARD_KINDS).nullable(), state: z.enum(LINK_STATES).nullable() })) }),
     tags: PRS,
   },
   skills: { input: z.object({ projectId: z.string().max(100).optional() }), output: z.object({ skills: z.array(z.object({ id: z.string(), name: z.string(), description: z.string() })) }) },

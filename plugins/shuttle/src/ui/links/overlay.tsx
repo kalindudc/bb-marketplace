@@ -4,7 +4,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
-import { rpcContract } from "../../contract";
+import { rpcContract, type LinkCard } from "../../contract";
 import { linkKey, parseGitLink } from "../../links";
 import { Dialog, usePortalScope } from "../common";
 import { useShuttleQuery } from "../data";
@@ -48,8 +48,8 @@ export function LinkOverlay() {
         try {
           const { links } = await rpcRef.current.call("linkStates", { urls: chunk });
           for (const link of links) {
-            const key = keyOf(link.url);
-            if (key) paintState(key, link.state);
+            const target = parseGitLink(link.url, servers);
+            if (target) paintState(linkKey(target), link.state, link.kind !== null && link.kind !== target.kind ? link.kind : undefined);
           }
         } catch {
           // Shuttle's server is restarting: the links stay grey, and the page script's two-minute recheck asks
@@ -185,6 +185,7 @@ function HoverCard({ target, moved, cardRef, onPointerEnter, onPointerLeave, onF
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const card = useShuttleQuery("linkCard", { url: target.url });
   const navigate = useBbNavigate();
+  usePaintRead(target, card.data);
 
   useLayoutEffect(() => {
     const rect = target.el.getBoundingClientRect();
@@ -207,9 +208,21 @@ function HoverCard({ target, moved, cardRef, onPointerEnter, onPointerLeave, onF
   );
 }
 
+/**
+ * An issue's state is known only once its card has read it from the server, since Shuttle keeps no copy of
+ * issues: colour every link to it then. An issue link that turned out to be a PR takes that PR's state.
+ */
+function usePaintRead(target: LinkTargetRef, card: LinkCard | undefined) {
+  useEffect(() => {
+    if (card === undefined || target.kind !== "issue") return;
+    paintState(target.key, card.issue?.state ?? card.pr?.state ?? null, card.kind === "pr" ? "pr" : undefined);
+  }, [card, target]);
+}
+
 /** A phone has no hover: the card opens as a bottom sheet, and its Open button follows the link. */
 function LinkSheet({ target, onClose }: { target: LinkTargetRef; onClose(): void }) {
   const card = useShuttleQuery("linkCard", { url: target.url });
+  usePaintRead(target, card.data);
   const navigate = useBbNavigate();
   const phone = useViewport() === "phone";
   return (

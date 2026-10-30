@@ -34,10 +34,13 @@ this device is marked New.
 ## Link cards
 
 Git links in thread messages that Shuttle can read get an icon for what they name, coloured by their PR's
-state, and a card on hover, focus or a tap on a phone: a PR, one of its pages, a comment or review on it,
-a commit, or a check or workflow run. The page script (`src/ui/links/dom.ts`) marks the links and the app
-overlay (`src/ui/links/overlay.tsx`) draws the card from `linkCard`, which answers from Shuttle's copy and
-the PR view's 30-second read; a PR it has not seen is never fetched on a hover. Nothing on a card writes.
+or issue's state, and a card on hover, focus or a tap on a phone: a PR, one of its pages, a comment or review
+on it, a commit, a check or workflow run, or an issue. The page script (`src/ui/links/dom.ts`) marks the links
+and the app overlay (`src/ui/links/overlay.tsx`) draws the card from `linkCard`, which answers from Shuttle's
+copy and the PR view's 30-second read; a PR it has not seen is never fetched on a hover. Shuttle keeps no copy
+of issues, so an issue card reads it from the server, as a commit or check Shuttle cannot place does, at most
+once a minute; only GitHub's adapter can read issues. An issue link whose number is a PR's shows the PR.
+Nothing on a card writes.
 On a focused link, Down moves into its card. The script finds messages by bb's timeline markers, which
 are not a published contract.
 

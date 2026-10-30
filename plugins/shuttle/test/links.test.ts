@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { parseConfig, DEFAULT_CONFIG } from "../src/config";
 import { linkKey, parseGitLink } from "../src/links";
-import type { CheckInfo, CommitInfo } from "../src/adapters/adapter";
+import type { CheckInfo, CommitInfo, IssueInfo } from "../src/adapters/adapter";
 import type { CheckRun } from "../src/contract";
 import { harness, pr, testConfig } from "./helpers";
 
@@ -50,8 +50,15 @@ describe("git links", () => {
     expect(parseGitLink("https://evil.example/?u=https://forge.test/a/b/pull/3", loose)).toBeNull();
   });
 
+  it("reads an issue, and a comment on one as its issue", () => {
+    expect(parse("https://github.com/acme/api/issues/4")).toEqual({ kind: "issue", server: "github", repo: "acme/api", number: 4, ref: null });
+    expect(parse("https://github.com/acme/api/issues/4#issuecomment-9")).toMatchObject({ kind: "issue", number: 4 });
+    expect(parse("https://delta.shopify.io/shop/world/issues/7")).toMatchObject({ kind: "issue", server: "delta", repo: "shop/world", number: 7 });
+    expect(linkKey(parse("https://github.com/acme/api/issues/4")!)).toBe(linkKey(parse("https://github.com/acme/api/issues/4#issuecomment-9")!));
+  });
+
   it("leaves everything else alone", () => {
-    for (const url of ["https://github.com/acme/api", "https://github.com/acme/api/issues/4", "https://github.com/acme/api/blob/main/a.ts", "https://example.com/acme/api/pull/1", "not a link"]) {
+    for (const url of ["https://github.com/acme/api", "https://github.com/acme/api/issues", "https://github.com/acme/api/issues/0", "https://github.com/acme/api/blob/main/a.ts", "https://example.com/acme/api/pull/1", "not a link"]) {
       expect(parse(url)).toBeNull();
     }
   });
@@ -199,6 +206,65 @@ describe("link cards", () => {
       expect((await h.shuttle.linkCard(link)).commit).toMatchObject({ sha: "123456700", message: "Elsewhere", fixes: [] });
       await h.shuttle.linkCard(link);
       expect(reads).toBe(1);
+    });
+  });
+
+  describe("issues", () => {
+    const ISSUE = (n: number, rest = "") => `https://forge.test/shop/world/issues/${n}${rest}`;
+    const info = (overrides: Partial<IssueInfo> = {}): IssueInfo => ({
+      pr: false, number: 40, title: "Retries hide gateway outages", state: "open", author: "sam", createdAt: 1, closedAt: null, body: "When the gateway is down…",
+      labels: [{ name: "bug", color: "d73a4a" }], assignees: ["ana"], comments: 2, url: ISSUE(40),
+      closedBy: [{ repo: "shop/world", number: 1, title: "Old title", state: "open", url: "https://forge.test/shop/world/pull/1" }, { repo: "shop/world", number: 77, title: "Not seen", state: "draft", url: "https://forge.test/shop/world/pull/77" }],
+      ...overrides,
+    });
+    async function seen() {
+      const h = harness();
+      h.lists.authored = [pr(1, { author: "me", title: "Retry only on 504" })];
+      await h.shuttle.sync();
+      return h;
+    }
+
+    it("reads an issue from its server once a minute, with the PRs that close it as Shuttle has them, and colours its links once read", async () => {
+      const h = await seen();
+      const reads: unknown[] = [];
+      Object.assign(h.shuttle.adapter("forge"), { issue: async (repo: string, number: number): Promise<IssueInfo> => { reads.push([repo, number]); return info(); } });
+      expect(h.shuttle.linkStates([ISSUE(40)])).toEqual([{ url: ISSUE(40), kind: "issue", state: null }]);
+      const card = await h.shuttle.linkCard(ISSUE(40, "#issuecomment-5"));
+      expect(reads).toEqual([["shop/world", 40]]);
+      expect(card).toMatchObject({ kind: "issue", label: "shop/world#40", pr: null, prKey: null, note: null });
+      expect(card.issue).toMatchObject({ number: 40, title: "Retries hide gateway outages", state: "open", assignees: ["ana"], comments: 2 });
+      expect(card.issue!.closedBy).toEqual([
+        { repo: "shop/world", number: 1, title: "Retry only on 504", state: "open", url: "https://forge.test/shop/world/pull/1", key: "forge:shop/world#1" },
+        { repo: "shop/world", number: 77, title: "Not seen", state: "draft", url: "https://forge.test/shop/world/pull/77", key: null },
+      ]);
+      await h.shuttle.linkCard(ISSUE(40));
+      expect(reads).toHaveLength(1);
+      expect(h.shuttle.linkStates([ISSUE(40)])).toEqual([{ url: ISSUE(40), kind: "issue", state: "open" }]);
+      h.clock.now += 61_000;
+      await h.shuttle.linkCard(ISSUE(40));
+      expect(reads).toHaveLength(2);
+    });
+
+    it("shows the PR when the number is one, from Shuttle's copy without asking, or offers to look it up", async () => {
+      const h = await seen();
+      let reads = 0;
+      Object.assign(h.shuttle.adapter("forge"), { issue: async (): Promise<IssueInfo> => { reads += 1; return info({ pr: true, number: 9 }); } });
+      const known = await h.shuttle.linkCard(ISSUE(1));
+      expect(known).toMatchObject({ kind: "pr", prKey: "forge:shop/world#1", issue: null });
+      expect(known.pr?.title).toBe("Retry only on 504");
+      expect(h.shuttle.linkStates([ISSUE(1)])).toEqual([{ url: ISSUE(1), kind: "pr", state: "open" }]);
+      expect(reads).toBe(0);
+      const unseen = await h.shuttle.linkCard(ISSUE(9));
+      expect(unseen).toMatchObject({ kind: "pr", pr: null, prKey: "forge:shop/world#9", note: "Shuttle hasn't seen shop/world#9 yet." });
+      expect(reads).toBe(1);
+    });
+
+    it("says why there is no card when the server cannot be asked or fails", async () => {
+      const h = await seen();
+      expect(await h.shuttle.linkCard(ISSUE(40))).toMatchObject({ kind: "issue", issue: null, note: "Forge cannot be asked about issues here." });
+      Object.assign(h.shuttle.adapter("forge"), { issue: async (): Promise<IssueInfo> => { throw new Error("HTTP 404"); } });
+      expect(await h.shuttle.linkCard(ISSUE(41))).toMatchObject({ issue: null, note: "Could not read the issue from Forge: HTTP 404" });
+      expect(h.shuttle.linkStates([ISSUE(41)])).toEqual([{ url: ISSUE(41), kind: "issue", state: null }]);
     });
   });
 

@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { LinkCard } from "../../src/contract";
+import { parseConfig } from "../../src/config";
+import { parseGitLink } from "../../src/links";
 import { app, callsTo, config, handlers, item, mine, mount, unmountAll, type Handlers } from "./helpers";
 import { retryPr } from "./fixtures";
 
@@ -8,9 +10,12 @@ vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { error: vi.fn(), succe
 
 const SERVERS = [{ id: "github", name: "GitHub", kind: "github" as const, enabled: true, sep: "#" as const, commands: {} }];
 const PR_URL = "https://github.com/acme/checkout/pull/4821";
+const ISSUE_URL = "https://github.com/acme/checkout/issues/40";
+/** What the server says a link is: what it looks like, as Shuttle's server reads it. */
+const kindOf = (url: string) => parseGitLink(url, parseConfig(config({ servers: SERVERS })).servers)?.kind ?? null;
 const card = (overrides: Partial<LinkCard> = {}): LinkCard => ({
   kind: "pr", label: "acme/checkout#4821", server: "github", serverName: "GitHub", pr: retryPr, prKey: retryPr.key, tab: "overview",
-  comment: null, review: null, commit: null, check: null, note: null, ...overrides,
+  comment: null, review: null, commit: null, check: null, issue: null, note: null, ...overrides,
 });
 
 let disposers: Array<() => void> = [];
@@ -31,7 +36,7 @@ async function thread(links: string[], rpc: Partial<Handlers> = {}) {
   const overlay = loaded.appOverlays.find((entry) => entry.id === "link-cards")!;
   const slot = mount(overlay.component, {}, handlers({
     getConfig: () => ({ config: config({ servers: SERVERS }) }),
-    linkStates: ({ urls }) => ({ links: urls.map((url) => ({ url, kind: "pr", state: url.startsWith(PR_URL) ? "open" : null })) }),
+    linkStates: ({ urls }) => ({ links: urls.map((url) => ({ url, kind: kindOf(url), state: url.startsWith(PR_URL) ? "open" : null })) }),
     linkCard: () => card(),
     ...rpc,
   }));
@@ -60,7 +65,7 @@ describe("git links in a thread", () => {
   it("marks the links Shuttle can read by kind and their PR's state, and leaves the rest alone", async () => {
     const { slot, link } = await thread([PR_URL, `${PR_URL}#issuecomment-9`, "https://github.com/acme/checkout/commit/1a2b3c4", "https://github.com/acme/checkout/actions/runs/8", "https://github.com/acme/checkout/issues/3", "https://example.com/a"]);
     await waitFor(() => expect(link(0).dataset.shuttleState).toBe("open"));
-    expect([0, 1, 2, 3, 4, 5].map((index) => link(index).dataset.shuttleLink ?? null)).toEqual(["pr", "comment", "commit", "check", null, null]);
+    expect([0, 1, 2, 3, 4, 5].map((index) => link(index).dataset.shuttleLink ?? null)).toEqual(["pr", "comment", "commit", "check", "issue", null]);
     expect(link(1).dataset.shuttleState).toBe("open");
     expect(document.getElementById("chrome")!.dataset.shuttleLink).toBeUndefined();
     expect(callsTo(slot, "linkStates")).toHaveLength(1);
@@ -240,5 +245,49 @@ describe("git links in a thread", () => {
     fireEvent.focusOut(first, { relatedTarget: null });
     await new Promise((resolve) => setTimeout(resolve, 400));
     expect(screen.getByRole("dialog")).toBe(shown);
+  });
+
+  it("shows an issue's card, colours its links once the card has read it, and opens a PR that closes it in Shuttle", async () => {
+    const issue: NonNullable<LinkCard["issue"]> = {
+      number: 40, title: "Retries hide gateway outages", state: "completed", author: "sam-rivera", createdAt: Date.now() - 3 * 86_400_000, closedAt: Date.now() - 3_600_000,
+      body: "When the gateway is down, the retries make it look slow instead.", labels: [{ name: "bug", color: "d73a4a" }], assignees: ["kalindudc"], comments: 2,
+      closedBy: [
+        { repo: "acme/checkout", number: 4821, title: "Retry card authorization when the payment gateway times out", state: "merged", url: PR_URL, key: retryPr.key },
+        { repo: "acme/docs", number: 3, title: "Document the retry budget", state: "open", url: "https://github.com/acme/docs/pull/3", key: null },
+      ],
+    };
+    const { slot, link } = await thread([ISSUE_URL, `${ISSUE_URL}#issuecomment-1`], {
+      linkCard: () => card({ kind: "issue", label: "acme/checkout#40", pr: null, prKey: null, issue }),
+    });
+    await waitFor(() => expect(link(0).dataset.shuttleLink).toBe("issue"));
+    expect(link(0).dataset.shuttleState).toBeUndefined();
+    hover(link(0));
+    const shown = await screen.findByRole("dialog", {}, { timeout: 2000 });
+    await waitFor(() => expect(shown.textContent).toContain("Retries hide gateway outages"));
+    expect(shown.querySelector('[data-pill="completed"]')!.textContent).toBe("Closed");
+    expect(shown.textContent).toContain("sam-rivera opened it 3d ago");
+    expect(shown.textContent).toContain("When the gateway is down");
+    expect(shown.querySelector('[data-label="bug"]')).not.toBeNull();
+    expect(shown.textContent).toContain("Assigned to kalindudc");
+    expect(shown.textContent).toContain("Closed by");
+    expect(within(shown).queryByRole("button", { name: /Shuttle/u })).toBeNull();
+    // Both links to the issue take its colour from the card's read.
+    await waitFor(() => expect(link(0).dataset.shuttleState).toBe("completed"));
+    expect(link(1).dataset.shuttleState).toBe("completed");
+    fireEvent.click(within(shown).getByRole("button", { name: /#4821/u }));
+    expect(slot.inspection.navigateCalls).toContainEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: "pr/github/acme/checkout/4821" } });
+  });
+
+  it("marks an issue link as a PR when Shuttle knows the number is one", async () => {
+    const { link } = await thread([ISSUE_URL], {
+      linkStates: ({ urls }) => ({ links: urls.map((url) => ({ url, kind: "pr", state: "merged" })) }),
+    });
+    await waitFor(() => expect(link(0).dataset.shuttleState).toBe("merged"));
+    expect(link(0).dataset.shuttleLink).toBe("pr");
+    // A later pass over the page keeps what it turned out to be.
+    link(0).parentElement!.insertAdjacentHTML("beforeend", "<span> more</span>");
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+    expect(link(0).dataset.shuttleLink).toBe("pr");
   });
 });

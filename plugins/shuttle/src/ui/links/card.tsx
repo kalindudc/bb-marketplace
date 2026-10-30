@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { experimental_Icon as Icon, type BbNavigate } from "@get-bb/plugin-sdk/app";
 import type { CheckState, HunkLine, LinkCard, PrView } from "../../contract";
 import { Avatar } from "../avatar";
+import { LabelChip } from "../manage";
 import { BUTTON, BUTTON_PRIMARY, TONE_PANEL, TONE_TEXT } from "../common";
 import { PANEL_PATH } from "../constants";
 import { messageOf, openExternal } from "../data";
@@ -11,7 +12,23 @@ import { presetTab } from "../pr-state";
 import { formatRoute } from "../route";
 import { Tag, tagOf } from "../tags";
 
-const KIND_ICONS: Record<LinkCard["kind"], string> = { pr: "GitPullRequest", comment: "MessageSquare", review: "MessageSquareText", commit: "GitCommit", check: "CirclePlay" };
+const KIND_ICONS: Record<LinkCard["kind"], string> = { pr: "GitPullRequest", comment: "MessageSquare", review: "MessageSquareText", commit: "GitCommit", check: "CirclePlay", issue: "CircleDot" };
+type IssueState = NonNullable<LinkCard["issue"]>["state"];
+/** As GitHub draws issues, in the theme's colours: open, closed as completed (the merged colour) and not planned. */
+const ISSUE_LOOKS: Record<IssueState, { icon: string; className: string; label: string }> = {
+  open: { icon: "CircleDot", className: "text-success", label: "Open" },
+  completed: { icon: "CircleCheck", className: "text-pr-merged", label: "Closed" },
+  not_planned: { icon: "CircleSlash", className: "text-muted-foreground", label: "Not planned" },
+};
+
+function IssuePill({ state }: { state: IssueState }) {
+  const look = ISSUE_LOOKS[state];
+  return (
+    <span data-pill={state} className="inline-flex h-5 shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-border bg-background px-2 text-[11.5px] leading-none text-foreground">
+      <Icon name={look.icon} fallback="Circle" className={`size-3 ${look.className}`} aria-hidden />{look.label}
+    </span>
+  );
+}
 const CHECKS: Record<CheckState, { icon: string; className: string; text: string }> = {
   passed: { icon: "CircleCheck", className: "text-success", text: "Checks pass" },
   failed: { icon: "CircleX", className: "text-destructive-text", text: "Checks fail" },
@@ -109,7 +126,13 @@ export function LinkCardBody({ url, kind, card, error, navigate, onDone, sheet =
     onDone();
   };
   const serverName = card?.serverName ?? "its server";
-  const look = pr === null ? null : STATE_LOOKS[pr.state];
+  const issue = card?.issue ?? null;
+  const look = pr !== null ? STATE_LOOKS[pr.state] : issue !== null ? ISSUE_LOOKS[issue.state] : null;
+  const openPr = (key: string) => {
+    presetTab(key, "overview");
+    navigate.toPluginPanel(PANEL_PATH, { subPath: formatRoute({ view: "pr", key }) });
+    onDone();
+  };
 
   let body: ReactNode = null;
   if (card === undefined) {
@@ -188,6 +211,38 @@ export function LinkCardBody({ url, kind, card, error, navigate, onDone, sheet =
         </div>,
       );
     }
+    if (issue !== null) {
+      const facts: ReactNode[] = [];
+      if (issue.assignees.length > 0) facts.push(<Fact key="assignees" icon="UserRound">Assigned to {issue.assignees.join(", ")}</Fact>);
+      facts.push(<Fact key="comments" icon="MessageSquare">{issue.comments === 0 ? "No comments" : plural(issue.comments, "comment")}</Fact>);
+      parts.push(
+        <div key="issue" data-link-part="issue" className="space-y-1.5">
+          {issue.body.trim() !== "" && <div className="line-clamp-3 text-[12.5px] leading-[1.45] text-foreground [overflow-wrap:anywhere]">{clip(issue.body, 240)}</div>}
+          {issue.labels.length > 0 && (
+            <div className="flex flex-wrap gap-1">{issue.labels.slice(0, 6).map((label) => <LabelChip key={label.name} label={label} maxChars={24} />)}</div>
+          )}
+          <div className="space-y-1">{facts}</div>
+          {issue.closedBy.length > 0 && (
+            <div data-link-part="closed-by" className="space-y-1">
+              <div className="text-xs text-muted-foreground">{issue.state === "open" ? "Closes when it merges" : "Closed by"}</div>
+              {issue.closedBy.map((linked) => {
+                const linkedLook = STATE_LOOKS[linked.state];
+                return (
+                  <button key={`${linked.repo}#${linked.number}`} type="button" title={linked.key !== null ? "Open in Shuttle" : `Open on ${serverName}`}
+                    onClick={() => (linked.key !== null ? openPr(linked.key) : (openExternal(navigate, linked.url), onDone()))}
+                    className="flex w-full min-w-0 cursor-pointer items-center gap-1.5 rounded-sm px-1 py-0.5 text-left text-xs hover:bg-state-hover">
+                    <Icon name={linkedLook.icon} fallback="GitPullRequest" className={`size-3.5 shrink-0 ${linkedLook.className}`} aria-hidden />
+                    <span className="shrink-0 font-mono text-[11px] text-muted-foreground">#{linked.number}</span>
+                    <span className="min-w-0 flex-1 truncate">{linked.title}</span>
+                    <span className="shrink-0 text-muted-foreground">{linkedLook.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>,
+      );
+    }
     if (pr !== null && (card.kind === "pr" || parts.length === 0)) parts.push(<div key="facts" className="space-y-1">{prFacts(pr)}</div>);
     body = (
       <div className="space-y-2.5">
@@ -211,7 +266,20 @@ export function LinkCardBody({ url, kind, card, error, navigate, onDone, sheet =
         {card && <span className="shrink-0">{card.serverName}</span>}
         <span className="flex-1" />
         {pr !== null && <StatePill state={pr.state} />}
+        {issue !== null && <IssuePill state={issue.state} />}
       </div>
+      {issue !== null && (
+        <>
+          <div className="mt-1 line-clamp-2 text-[13.5px] font-semibold leading-snug">{issue.title}</div>
+          <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+            {issue.author !== null && <Avatar login={issue.author} size={16} />}
+            <span className="truncate">
+              {issue.author ?? "Someone"}{issue.createdAt !== null && ` opened it ${ago(issue.createdAt)}`}
+              {issue.closedAt !== null && ` · ${issue.state === "not_planned" ? "closed as not planned" : "closed"} ${ago(issue.closedAt)}`}
+            </span>
+          </div>
+        </>
+      )}
       {pr !== null && (
         <>
           <div className="mt-1 line-clamp-2 text-[13.5px] font-semibold leading-snug">{pr.title}</div>

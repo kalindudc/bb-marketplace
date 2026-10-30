@@ -1,9 +1,9 @@
 // Which git thing a link names, for the link cards in threads: a PR or one of its pages, a comment or
-// review on it, a commit, or a check run. Pure, so the page script and the server read links the same way.
+// review on it, a commit, a check run, or an issue. Pure, so the page script and the server read links the same way.
 import type { ServerConfig } from "./config";
 import { linkPattern, prKey, REPO, type PrRef } from "./keys";
 
-export const LINK_KINDS = ["pr", "comment", "review", "commit", "check"] as const;
+export const LINK_KINDS = ["pr", "comment", "review", "commit", "check", "issue"] as const;
 export type LinkKind = (typeof LINK_KINDS)[number];
 export const PR_PARTS = ["overview", "files", "commits", "checks"] as const;
 export type PrPart = (typeof PR_PARTS)[number];
@@ -17,7 +17,9 @@ export type LinkTarget =
   /** `ref` is the PR the link is on, when it is a PR's commit. */
   | { kind: "commit"; server: string; repo: string; sha: string; ref: PrRef | null }
   /** A check run by its id, or a workflow run by its id (and the job, which is a check run). */
-  | { kind: "check"; server: string; repo: string; checkRun: number | null; run: number | null; ref: PrRef | null };
+  | { kind: "check"; server: string; repo: string; checkRun: number | null; run: number | null; ref: PrRef | null }
+  /** An issue, or a comment on one. Its number can be a PR's too, which only the server or Shuttle's copy can say. */
+  | { kind: "issue"; server: string; repo: string; number: number; ref: null };
 
 /** The host of a server's repository pages: GitHub's, or the one its PR link template names. */
 function hostOf(server: ServerConfig): string | null {
@@ -67,12 +69,14 @@ function onRepo(server: ServerConfig, repo: string, rest: string): LinkTarget | 
   if (run) return { kind: "check", server: server.id, repo, run: Number(run[1]), checkRun: null, ref: null };
   const checkRun = /^\/runs\/(\d+)$/u.exec(path);
   if (checkRun) return { kind: "check", server: server.id, repo, run: null, checkRun: Number(checkRun[1]), ref: null };
+  const issue = /^\/issues\/(\d+)$/u.exec(path);
+  if (issue && Number(issue[1]) > 0) return { kind: "issue", server: server.id, repo, number: Number(issue[1]), ref: null };
   return null;
 }
 
 const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 
-/** What a link names on one of the enabled servers; null for anything else, such as an issue or a file. */
+/** What a link names on one of the enabled servers; null for anything else, such as a file or a repository. */
 export function parseGitLink(url: string, servers: readonly ServerConfig[]): LinkTarget | null {
   const value = url.trim();
   if (!/^https?:\/\//iu.test(value)) return null;
@@ -106,5 +110,6 @@ export function linkKey(target: LinkTarget): string {
     case "review": return `${target.kind} ${prKey(target.ref)} ${target.anchor}`;
     case "commit": return `commit ${target.server}:${target.repo}@${target.sha.slice(0, 12)}`;
     case "check": return `check ${target.server}:${target.repo} ${target.run ?? ""}/${target.checkRun ?? ""}`;
+    case "issue": return `issue ${target.server}:${target.repo}#${target.number}`;
   }
 }

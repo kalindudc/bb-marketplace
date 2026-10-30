@@ -33,6 +33,27 @@ export interface CommitInfo {
   prs: number[];
 }
 
+/** An issue as a link card shows it. `pr` is set instead when the number is a PR's. */
+export interface IssueInfo {
+  pr: boolean;
+  number: number;
+  title: string;
+  /** Closed as completed (or before servers said why), or as not planned or a duplicate. */
+  state: IssueState;
+  author: string | null;
+  createdAt: number | null;
+  closedAt: number | null;
+  /** The start of its description, at most a few hundred characters. */
+  body: string;
+  labels: { name: string; color: string | null }[];
+  assignees: string[];
+  comments: number;
+  /** The PRs that close it when they merge, as the server links them. */
+  closedBy: { repo: string; number: number; title: string; state: "open" | "draft" | "merged" | "closed"; url: string }[];
+  url: string;
+}
+export type IssueState = "open" | "completed" | "not_planned";
+
 /** A check run or a workflow run as a link card shows it, with the commit it ran on and its PRs. */
 export interface CheckInfo {
   run: CheckRun;
@@ -91,6 +112,8 @@ export interface Adapter {
   commit?(repo: string, sha: string, signal?: AbortSignal): Promise<CommitInfo>;
   /** Reads a check run, or a workflow run when only its id is known, for a link card. */
   checkRun?(repo: string, ids: { checkRun: number | null; run: number | null }, signal?: AbortSignal): Promise<CheckInfo>;
+  /** Reads an issue for a link card; a server that cannot leaves it out. */
+  issue?(repo: string, number: number, signal?: AbortSignal): Promise<IssueInfo>;
   /** GitHub only: turns auto-merge off. Absent where the server has no auto-merge. */
   cancelAutoMerge?(repo: string, number: number, signal?: AbortSignal): Promise<void>;
   comment(repo: string, number: number, body: string, signal?: AbortSignal): Promise<void>;

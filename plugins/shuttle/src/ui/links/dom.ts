@@ -32,6 +32,8 @@ const MARKED = "a[data-shuttle-link]";
 let bridge: Bridge | null = null;
 let schedule: () => void = () => {};
 const states = new Map<string, string>();
+/** What a link turned out to name, when that is not what it looks like: an issue link whose number is a PR's. */
+const kinds = new Map<string, string>();
 const wanted = new Set<string>();
 
 function inScope(a: HTMLAnchorElement): boolean {
@@ -56,8 +58,9 @@ function decorate(root: ParentNode): string[] {
       return;
     }
     // A streamed message can change an anchor's href in place; follow it.
-    if (a.dataset.shuttleKey !== read.key || a.dataset.shuttleLink !== read.kind) {
-      a.dataset.shuttleLink = read.kind;
+    const kind = kinds.get(read.key) ?? read.kind;
+    if (a.dataset.shuttleKey !== read.key || a.dataset.shuttleLink !== kind) {
+      a.dataset.shuttleLink = kind;
       a.dataset.shuttleKey = read.key;
     }
     const state = states.get(read.key);
@@ -72,12 +75,14 @@ function decorate(root: ParentNode): string[] {
   return [...fresh.values()];
 }
 
-/** The PR state of every link to `key`; "" when Shuttle does not know it. */
-export function paintState(key: string, state: string | null): void {
+/** The PR or issue state of every link to `key`; "" when Shuttle does not know it. `kind` corrects what it names. */
+export function paintState(key: string, state: string | null, kind?: string): void {
   states.set(key, state ?? "");
+  if (kind !== undefined) kinds.set(key, kind);
   wanted.delete(key);
   document.querySelectorAll<HTMLAnchorElement>(MARKED).forEach((a) => {
     if (a.dataset.shuttleKey !== key) return;
+    if (kind !== undefined) a.dataset.shuttleLink = kind;
     if (state) a.dataset.shuttleState = state;
     else delete a.dataset.shuttleState;
   });
@@ -94,6 +99,7 @@ export function markOpen(el: HTMLAnchorElement | null): void {
 export function registerBridge(next: Bridge): () => void {
   bridge = next;
   states.clear();
+  kinds.clear();
   wanted.clear();
   schedule();
   return () => {

@@ -4,7 +4,7 @@ import { OPERATIONS, type ListOperation, type Operation, type ServerConfig } fro
 import type { CheckCounts, CheckRun, CheckState, FileChange, MergeMethod, MergeOptions, MyReview, PrChange, PrDetails, PrState, Reviewer, ReviewerState, ReviewState, RunState, TimelineEvent, TimelineKind } from "../contract";
 import { linkFor } from "../keys";
 import type { Activity, ActivityItem, EditOptions, PrSummary } from "../model";
-import { AdapterError, changeOperation, type ActivityOptions, type Adapter, type CheckInfo, type CommitInfo, type ListOptions, type ListResult, type MergeInput, type ReviewComment, type ReviewPost, type ReviewPosted } from "./adapter";
+import { AdapterError, changeOperation, type ActivityOptions, type Adapter, type CheckInfo, type CommitInfo, type IssueInfo, type ListOptions, type ListResult, type MergeInput, type ReviewComment, type ReviewPost, type ReviewPosted } from "./adapter";
 import { fillCommand, outputTail, runProcess, shellQuote, tail, type RunResult, type Runner } from "./exec";
 
 const GH_TIMEOUT_MS = 45_000;
@@ -526,6 +526,26 @@ const commitNode = z.object({
   associatedPullRequests: z.object({ nodes: z.array(z.object({ number: z.number() })) }).nullish(),
 });
 const restPrs = z.array(z.object({ number: z.number() })).nullish();
+const issueNode = z.object({
+  __typename: z.string(),
+  number: z.number().optional(),
+  title: z.string().optional(),
+  state: z.string().optional(),
+  stateReason: z.string().nullish(),
+  url: z.string().optional(),
+  body: z.string().nullish(),
+  createdAt: z.string().nullish(),
+  closedAt: z.string().nullish(),
+  author: z.object({ login: z.string() }).nullish(),
+  labels: z.object({ nodes: z.array(z.object({ name: z.string(), color: z.string().nullish() })) }).nullish(),
+  assignees: z.object({ nodes: z.array(z.object({ login: z.string() })) }).nullish(),
+  comments: z.object({ totalCount: z.number() }).nullish(),
+  closedByPullRequestsReferences: z.object({ nodes: z.array(z.object({
+    number: z.number(), title: z.string(), state: z.string(), isDraft: z.boolean().nullish(), url: z.string(), repository: z.object({ nameWithOwner: z.string() }),
+  })) }).nullish(),
+});
+/** How far into an issue's description a card reads. */
+const ISSUE_BODY = 600;
 const restCheckRun = z.object({
   node_id: z.string().nullish(), name: z.string(), status: z.string(), conclusion: z.string().nullish(), html_url: z.string().nullish(), details_url: z.string().nullish(),
   started_at: z.string().nullish(), completed_at: z.string().nullish(), head_sha: z.string().nullish(), app: z.object({ name: z.string() }).nullish(), pull_requests: restPrs,
@@ -829,6 +849,40 @@ export class GithubAdapter implements Adapter {
       deletions: node.deletions ?? null,
       checks: node.statusCheckRollup ? checksState(node.statusCheckRollup.state) : null,
       prs: (node.associatedPullRequests?.nodes ?? []).map((pr) => pr.number),
+    };
+  }
+
+  async issue(repo: string, number: number, signal?: AbortSignal): Promise<IssueInfo> {
+    const query = `query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { issueOrPullRequest(number: $number) { __typename
+      ... on Issue { number title state stateReason url body createdAt closedAt author { login } labels(first: 10) { nodes { name color } }
+        assignees(first: 5) { nodes { login } } comments { totalCount }
+        closedByPullRequestsReferences(first: 5, includeClosedPrs: true) { nodes { number title state isDraft url repository { nameWithOwner } } } }
+      ... on PullRequest { number title url } } } }`;
+    const schema = z.object({ repository: z.object({ issueOrPullRequest: issueNode.nullable() }).nullable() });
+    const [owner, name] = repo.split("/");
+    if (!owner || !name) throw new AdapterError("view", `${repo} is not owner/name`);
+    const data = await this.graphql("view", query, { owner, name, number }, schema, signal);
+    const node = data.repository?.issueOrPullRequest;
+    if (!node || (node.__typename !== "Issue" && node.__typename !== "PullRequest")) throw new AdapterError("view", `${repo}#${number} was not found`);
+    const closed = (node.state ?? "OPEN").toUpperCase() !== "OPEN";
+    const reason = (node.stateReason ?? "").toUpperCase();
+    return {
+      pr: node.__typename === "PullRequest",
+      number: node.number ?? number,
+      title: node.title ?? "",
+      state: !closed ? "open" : reason === "NOT_PLANNED" || reason === "DUPLICATE" ? "not_planned" : "completed",
+      author: node.author?.login ?? null,
+      createdAt: ms(node.createdAt),
+      closedAt: closed ? ms(node.closedAt) : null,
+      body: (node.body ?? "").slice(0, ISSUE_BODY),
+      labels: (node.labels?.nodes ?? []).map((label) => ({ name: label.name, color: label.color ?? null })),
+      assignees: (node.assignees?.nodes ?? []).map((person) => person.login),
+      comments: node.comments?.totalCount ?? 0,
+      closedBy: (node.closedByPullRequestsReferences?.nodes ?? []).map((pr) => ({
+        repo: pr.repository.nameWithOwner, number: pr.number, title: pr.title, url: pr.url,
+        state: pr.state === "MERGED" ? "merged" : pr.state === "CLOSED" ? "closed" : pr.isDraft ? "draft" : "open",
+      })),
+      url: node.url ?? "",
     };
   }
 

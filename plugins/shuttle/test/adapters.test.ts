@@ -298,6 +298,37 @@ describe("GitHub reads for link cards", () => {
     expect(await gh.checkRun("acme/api", { checkRun: null, run: 8 })).toMatchObject({ run: { name: "CI · Fix the retry", group: "CI · on pull request", state: "running", completedAt: null }, prs: [] });
     expect(calls.map((call) => call.args.at(-1))).toEqual(["repos/acme/api/check-runs/5", "repos/acme/api/actions/runs/8"]);
   });
+
+  it("reads an issue with why it closed, the start of its description and the PRs that close it, and says when the number is a PR's", async () => {
+    const issue = {
+      __typename: "Issue", number: 40, title: "Retries hide gateway outages", state: "CLOSED", stateReason: "NOT_PLANNED", url: "https://github.com/acme/api/issues/40",
+      body: "x".repeat(2000), createdAt: "2026-10-20T10:00:00Z", closedAt: "2026-10-22T10:00:00Z", author: { login: "sam" },
+      labels: { nodes: [{ name: "bug", color: "d73a4a" }] }, assignees: { nodes: [{ login: "ana" }] }, comments: { totalCount: 3 },
+      closedByPullRequestsReferences: { nodes: [
+        { number: 12, title: "Retry only on 504", state: "MERGED", isDraft: false, url: "https://github.com/acme/api/pull/12", repository: { nameWithOwner: "acme/api" } },
+        { number: 3, title: "Docs", state: "OPEN", isDraft: true, url: "https://github.com/acme/docs/pull/3", repository: { nameWithOwner: "acme/docs" } },
+      ] },
+    };
+    let node: unknown = issue;
+    const { calls, run } = recorder(() => ({ json: { data: { repository: { issueOrPullRequest: node } } } }));
+    const gh = new GithubAdapter(github(), run);
+    const read = await gh.issue("acme/api", 40);
+    expect(read).toMatchObject({
+      pr: false, number: 40, title: "Retries hide gateway outages", state: "not_planned", author: "sam", createdAt: at("2026-10-20T10:00:00Z"), closedAt: at("2026-10-22T10:00:00Z"),
+      labels: [{ name: "bug", color: "d73a4a" }], assignees: ["ana"], comments: 3,
+      closedBy: [{ repo: "acme/api", number: 12, state: "merged" }, { repo: "acme/docs", number: 3, state: "draft" }],
+    });
+    expect(read.body).toHaveLength(600);
+    expect(calls[0]!.args).toEqual(expect.arrayContaining(["owner=acme", "name=api", "number=40"]));
+    node = { ...issue, stateReason: null };
+    expect((await gh.issue("acme/api", 40)).state).toBe("completed");
+    node = { ...issue, state: "OPEN", stateReason: "REOPENED", closedAt: null };
+    expect(await gh.issue("acme/api", 40)).toMatchObject({ state: "open", closedAt: null });
+    node = { __typename: "PullRequest", number: 40, title: "A PR", url: "https://github.com/acme/api/pull/40" };
+    expect(await gh.issue("acme/api", 40)).toMatchObject({ pr: true, number: 40 });
+    node = null;
+    await expect(gh.issue("acme/api", 40)).rejects.toThrow("acme/api#40 was not found");
+  });
 });
 
 describe("diff hunks", () => {

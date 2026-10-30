@@ -1,8 +1,9 @@
 // The cards on git links in threads: what a link names, read from Shuttle's own copy first. A PR is never
-// fetched on a hover; its comments and details come from the same 30-second read as its view, and a
-// commit or check run Shuttle cannot place is read from its server once a minute at most. Nothing is written.
-import type { CommitInfo, CheckInfo } from "./adapters/adapter";
-import type { ConversationItem, LinkCard, PrDetails, PrState } from "./contract";
+// fetched on a hover; its comments and details come from the same 30-second read as its view. A commit or
+// check run Shuttle cannot place, and an issue, which Shuttle keeps no copy of, are read from their server once
+// a minute at most. Nothing is written.
+import type { CommitInfo, CheckInfo, IssueInfo } from "./adapters/adapter";
+import type { ConversationItem, LINK_STATES, LinkCard, PrDetails } from "./contract";
 import { errText, ShuttleError, type Ctx } from "./ctx";
 import type { PrRow } from "./db/store";
 import { prKey } from "./keys";
@@ -24,10 +25,11 @@ const short = (sha: string) => sha.slice(0, 7);
 function labelOf(target: LinkTarget): string {
   if (target.kind === "commit") return `${target.repo}@${short(target.sha)}`;
   if (target.kind === "check") return target.ref ? `${target.repo}#${target.ref.number}` : target.repo;
+  if (target.kind === "issue") return `${target.repo}#${target.number}`;
   return `${target.repo}#${target.ref.number}`;
 }
 
-const TABS: Record<LinkTarget["kind"], LinkCard["tab"]> = { pr: "overview", comment: "conversation", review: "conversation", commit: "changes", check: "checks" };
+const TABS: Record<LinkTarget["kind"], LinkCard["tab"]> = { pr: "overview", comment: "conversation", review: "conversation", commit: "changes", check: "checks", issue: "overview" };
 const PART_TABS: Record<Extract<LinkTarget, { kind: "pr" }>["part"], LinkCard["tab"]> = { overview: "overview", checks: "checks", files: "changes", commits: "changes" };
 /** The PR view's tab closest to what the link shows: a PR's Checks page opens Checks. */
 const tabOf = (target: LinkTarget): LinkCard["tab"] => (target.kind === "pr" ? PART_TABS[target.part] : TABS[target.kind]);
@@ -35,7 +37,7 @@ const tabOf = (target: LinkTarget): LinkCard["tab"] => (target.kind === "pr" ? P
 const SHA = /^[0-9a-f]{7,40}$/iu;
 
 export class LinkCards {
-  private readonly fetched = new Map<string, { at: number; value: CommitInfo | CheckInfo | Error }>();
+  private readonly fetched = new Map<string, { at: number; value: CommitInfo | CheckInfo | IssueInfo | Error }>();
 
   constructor(private readonly ctx: Ctx, private readonly conversations: Reader) {}
 
@@ -45,15 +47,26 @@ export class LinkCards {
     return target;
   }
 
-  /** Each link's kind and its PR's state, from Shuttle's copy only. */
-  states(urls: readonly string[]): { url: string; kind: LinkCard["kind"] | null; state: PrState | null }[] {
+  /** Each link's kind and its PR's or issue's state, from Shuttle's copy and the cards it already read; no server is asked. */
+  states(urls: readonly string[]): { url: string; kind: LinkCard["kind"] | null; state: (typeof LINK_STATES)[number] | null }[] {
     const servers = this.ctx.config().servers;
     return urls.map((url) => {
       const target = parseGitLink(url, servers);
       if (!target) return { url, kind: null, state: null };
+      if (target.kind === "issue") {
+        const asPr = this.issuePr(target);
+        if (asPr) return { url, kind: "pr", state: asPr.state };
+        const read = this.fetched.get(linkKey(target))?.value;
+        return { url, kind: "issue", state: read !== undefined && !(read instanceof Error) && "comments" in read && !read.pr ? read.state : null };
+      }
       const row = target.ref ? this.ctx.store.prByKey(prKey(target.ref)) : this.byHead(target);
       return { url, kind: target.kind, state: row?.state ?? null };
     });
+  }
+
+  /** An issue link whose number is a PR Shuttle has: GitHub opens /issues/N on the PR. */
+  private issuePr(target: Extract<LinkTarget, { kind: "issue" }>): PrRow | null {
+    return this.ctx.store.prByKey(prKey({ server: target.server, repo: target.repo, number: target.number }));
   }
 
   /** A commit's or check's PR when the link does not say: the PR whose head it is. */
@@ -61,7 +74,7 @@ export class LinkCards {
     return target.kind === "commit" ? this.ctx.store.prByHead(target.server, target.repo, target.sha) : null;
   }
 
-  private async fetchOnce<T extends CommitInfo | CheckInfo>(key: string, read: () => Promise<T>): Promise<T> {
+  private async fetchOnce<T extends CommitInfo | CheckInfo | IssueInfo>(key: string, read: () => Promise<T>): Promise<T> {
     const hit = this.fetched.get(key);
     if (hit && this.ctx.now() - hit.at < FETCHED_MS) {
       if (hit.value instanceof Error) throw hit.value;
@@ -78,7 +91,7 @@ export class LinkCards {
     }
   }
 
-  private remember(key: string, value: CommitInfo | CheckInfo | Error): void {
+  private remember(key: string, value: CommitInfo | CheckInfo | IssueInfo | Error): void {
     this.fetched.delete(key);
     if (this.fetched.size >= MAX_FETCHED) this.fetched.delete(this.fetched.keys().next().value!);
     this.fetched.set(key, { at: this.ctx.now(), value });
@@ -90,12 +103,13 @@ export class LinkCards {
     const serverName = server?.name ?? target.server;
     const card: LinkCard = {
       kind: target.kind, label: labelOf(target), server: target.server, serverName, pr: null, prKey: target.ref ? prKey(target.ref) : null, tab: tabOf(target),
-      comment: null, review: null, commit: null, check: null, note: null,
+      comment: null, review: null, commit: null, check: null, issue: null, note: null,
     };
     let row = target.ref ? this.ctx.store.prByKey(prKey(target.ref)) : this.byHead(target);
     const view = () => (row ? toView(this.ctx, row) : null);
     const unseen = () => `Shuttle hasn't seen ${card.prKey === null ? "this PR" : card.label} yet.`;
     switch (target.kind) {
+      case "issue": return this.issueCard(card, target);
       case "pr":
         card.pr = view();
         if (card.pr === null) card.note = unseen();
@@ -156,6 +170,28 @@ export class LinkCards {
         return card;
       }
     }
+  }
+
+  private async issueCard(card: LinkCard, target: Extract<LinkTarget, { kind: "issue" }>): Promise<LinkCard> {
+    const ref = { server: target.server, repo: target.repo, number: target.number };
+    const asPr = (): LinkCard => ({ ...card, kind: "pr", prKey: prKey(ref) });
+    const known = this.issuePr(target);
+    if (known) return { ...asPr(), pr: toView(this.ctx, known) };
+    const adapter = this.ctx.adapter(target.server);
+    if (!adapter.issue) return { ...card, note: `${card.serverName} cannot be asked about issues here.` };
+    let info: IssueInfo;
+    try {
+      info = await this.fetchOnce(linkKey(target), () => adapter.issue!(target.repo, target.number));
+    } catch (error) {
+      return { ...card, note: `Could not read the issue from ${card.serverName}: ${errText(error)}` };
+    }
+    if (info.pr) return { ...asPr(), note: `Shuttle hasn't seen ${card.label} yet.` };
+    const closedBy = info.closedBy.map((pr) => {
+      const row = this.ctx.store.prByKey(prKey({ server: target.server, repo: pr.repo, number: pr.number }));
+      return { repo: pr.repo, number: pr.number, title: row?.title ?? pr.title, state: row?.state ?? pr.state, url: pr.url, key: row?.key ?? null };
+    });
+    const { pr: _pr, url: _url, ...shown } = info;
+    return { ...card, issue: { ...shown, closedBy } };
   }
 
   private async commitCard(card: LinkCard, target: Extract<LinkTarget, { kind: "commit" }>, start: PrRow | null, view: () => ReturnType<typeof toView> | null): Promise<LinkCard> {
