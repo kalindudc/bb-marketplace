@@ -55,15 +55,17 @@ entries/<id>.json       one store listing per plugin
 plugins/<id>/           plugin source (a plugin can also live in its own repository)
 scripts/build.mjs       checks the entries and writes marketplace.json
 scripts/rules.mjs       the listing rules: bb's schema and stricter marketplaces
+scripts/changelog.mjs   the changelog format, checked by npm test and npm run check
 marketplace.json        generated; bb reads this file, so commit it
 ```
 
 ## Add a plugin
 
 1. Put the plugin in `plugins/<id>/`. Its package name must be
-   `bb-plugin-<id>`, and it needs `engines.bb` and a `PLUGIN_OVERVIEW.md`
+   `bb-plugin-<id>`, and it needs `engines.bb`, a `PLUGIN_OVERVIEW.md`
    (at most 4000 characters counting the final newline, no `#` title, no
-   HTML or images, and only `https://` links).
+   HTML or images, and only `https://` links) and a `CHANGELOG.md` in the
+   format below.
 2. Add `entries/<id>.json` by copying an existing entry. For a plugin in this
    repository, `source.git` uses this repository's URL,
    `"subdir": "plugins/<id>"` and `"tagPrefix": "<id>/"`.
@@ -83,13 +85,45 @@ Entries follow semver tags scoped to each plugin, so pushing to `main` ships
 nothing by itself:
 
 ```sh
-# bump "version" in plugins/<id>/package.json and commit it to main, then:
+# bump "version" in plugins/<id>/package.json, add its CHANGELOG.md entry in
+# the same commit, and commit both to main, then:
 git tag <id>/v0.2.0 && git push origin <id>/v0.2.0
 ```
+
+The entry goes in the same commit as the version bump; `npm test` and
+`npm run check` fail without it.
 
 Entries accept any `0.x` release (`>=0.1.0 <1.0.0`), so a release needs no
 catalog change until 1.0. bb records the commit each tag points at and
 refuses a tag that moves, so publish a fix as a new version.
+
+## Changelogs
+
+Every plugin has a `plugins/<id>/CHANGELOG.md`. `scripts/changelog.mjs` is the
+format and `node scripts/changelog-files.mjs [id...]` prints what to fix.
+
+```md
+# Changelog
+
+Notable changes to Lineup, newest first. Releases are tagged `lineup/vX.Y.Z` in this repository.
+
+## 0.1.2 (2026-10-30)
+
+### Fixed
+
+- Recent and Lineup appear on a phone and in any window narrower than 768px, and the menu is found in the drawer bb opens there.
+```
+
+- `## X.Y.Z (YYYY-MM-DD)`, newest first, the date its tag carries.
+  `## Unreleased` may sit at the top, undated.
+- Sections are Added, Changed, Deprecated, Removed, Fixed, Security and
+  Compatibility, in that order, only those with content. One paragraph may
+  open a version.
+- One bullet per change, no bold lead-in, at most 12,000 characters per
+  version.
+- A blank line between blocks, no HTML or images, one newline at the end.
+- A tag older than the file needs the intro line "Releases before this file
+  existed are described in their commit messages."
 
 ## Develop
 

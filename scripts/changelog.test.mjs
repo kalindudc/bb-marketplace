@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { changelogProblems, MAX_VERSION_CHARACTERS } from "./changelog.mjs";
+import { marketplaceChangelogProblems } from "./changelog-files.mjs";
 
 const TAGS = [
   { version: "0.1.0", date: "2026-10-28" },
@@ -136,4 +137,10 @@ test("stays inside what Update Shelf's reader accepts", () => {
     }
   }
   assert.deepEqual(versions, ["0.2.0", "0.1.0"]);
+});
+
+// The rule only holds if it holds for every plugin in the marketplace, tags included: a tag with no entry is a
+// release whose What's new falls back to a list of commits.
+test("every plugin in the marketplace follows the format", () => {
+  assert.deepEqual(marketplaceChangelogProblems(), []);
 });

@@ -6,10 +6,10 @@
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { REPOSITORY_URL, pluginChangelogProblems } from "./changelog-files.mjs";
 import { entryProblems, overviewProblems } from "./rules.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const REPOSITORY_URL = "https://github.com/kalindudc/bb-marketplace.git";
 
 const readText = (path) => readFileSync(join(root, path), "utf8");
 const readJson = (path) => JSON.parse(readText(path));
@@ -42,6 +42,10 @@ const plugins = readdirSync(join(root, "entries"))
       }
       if (manifest.engines?.bb === undefined) problem(`${git.subdir}/package.json has no engines.bb range`);
       if (git.tagPrefix !== `${entry.id}/`) problem(`tagPrefix must be "${entry.id}/"`);
+      // Update Shelf shows these notes in What's new, so they are read before a release is offered.
+      for (const message of pluginChangelogProblems(root, { id: entry.id, displayName: entry.displayName, subdir: git.subdir })) {
+        problem(message);
+      }
       // bb reads each bb.skills entry as a folder of skill folders; pointing at one skill's own folder loads nothing.
       for (const skillsRoot of manifest.bb?.skills ?? []) {
         const dir = join(root, git.subdir, skillsRoot);

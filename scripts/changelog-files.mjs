@@ -8,6 +8,9 @@ import { changelogProblems } from "./changelog.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
+// The only repository whose plugins this checkout can read a changelog from.
+export const REPOSITORY_URL = "https://github.com/kalindudc/bb-marketplace.git";
+
 const git = (cwd, args) => {
   try {
     return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
@@ -35,29 +38,32 @@ export function releaseTags(pluginRoot, id) {
 export function pluginChangelogProblems(base, plugin) {
   const dir = join(base, plugin.subdir);
   const path = join(dir, "CHANGELOG.md");
-  if (!existsSync(path)) return [`${plugin.subdir}/CHANGELOG.md does not exist`];
+  if (!existsSync(path)) return ["CHANGELOG.md does not exist"];
   const manifest = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
   return changelogProblems(readFileSync(path, "utf8"), {
     id: plugin.id,
     displayName: plugin.displayName,
     version: manifest.version ?? null,
     tags: releaseTags(base, plugin.id),
-  }).map((problem) => `${plugin.subdir}/CHANGELOG.md: ${problem}`);
+  });
 }
 
-/** Every problem across the marketplace's own plugins, filtered to the ids given. */
-export function marketplaceChangelogProblems(base = root, only = null) {
+/** Every problem across the marketplace's own plugins, each prefixed with its file, optionally only for `only`. */
+export function marketplaceChangelogProblems(base = root, { only = null, repositoryUrl = REPOSITORY_URL } = {}) {
   const entries = readdirSync(join(base, "entries"))
     .filter((file) => file.endsWith(".json"))
     .map((file) => JSON.parse(readFileSync(join(base, "entries", file), "utf8")))
-    .filter((entry) => entry.source?.git?.subdir !== undefined)
+    .filter((entry) => entry.source?.git?.url === repositoryUrl && entry.source.git.subdir !== undefined)
     .filter((entry) => only === null || only.includes(entry.id));
-  return entries.flatMap((entry) => pluginChangelogProblems(base, { ...entry, subdir: entry.source.git.subdir }));
+  return entries.flatMap((entry) => {
+    const subdir = entry.source.git.subdir;
+    return pluginChangelogProblems(base, { ...entry, subdir }).map((problem) => `${subdir}/CHANGELOG.md: ${problem}`);
+  });
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const only = process.argv.slice(2);
-  const problems = marketplaceChangelogProblems(root, only.length > 0 ? only : null);
+  const ids = process.argv.slice(2);
+  const problems = marketplaceChangelogProblems(root, { only: ids.length > 0 ? ids : null });
   for (const problem of problems) console.error(problem);
   if (problems.length > 0) {
     console.error(`\n${problems.length} problem(s)`);
