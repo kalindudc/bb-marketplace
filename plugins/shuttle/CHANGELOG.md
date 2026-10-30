@@ -6,6 +6,15 @@ Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` i
 
 ### Added
 
+- An Inbox you can triage. Each PR is one row under what to do with it: Needs you, Ready to merge, AI reviews to post, Updated since your review and New review requests, each heading with its count and folding its section. A row starts with the author's avatar, or a plain PR mark on your own PR, then the repo, the number and the title, and its second line says only what the heading does not: failing checks, who asked for changes, no agent, who approved, how many findings, mentions and the size.
+  - Search by title, repo, author or number, and group by what to do, by repository or not at all, sorted by priority, newest or oldest activity, or smallest first. Shuttle remembers the choice on this device.
+  - A dot and a bold title mark a PR that changed since you last opened it, on any device. Opening it clears the dot, and Mark all as seen in the header's ⋯ menu clears them all.
+  - Pointing at a row, or moving to it with J and K, shows its next step, Snooze, Dismiss and ⋯. The row's ⋯ menu snoozes or dismisses that PR, or keeps PRs like it out.
+- Snooze, dismiss and rules. Snooze until later today, tomorrow, next week or until it changes; anything new still brings a PR back sooner. Dismiss keeps a PR out of the Inbox for good, even when it changes, and it stays in My PRs or Reviews. A rule keeps out every PR by an author, every PR from a repo, or mentions in a repo when you are not asked to review, and the row's menu says how many PRs in the Inbox each would take out. Snoozes, dismissals and rules have Undo, in their toast or with U.
+  - The Snoozed tab says when each PR comes back and has Wake now. The Dismissed tab marks a PR that changed since you dismissed it with New activity, and the tab gets a dot; Restore brings one back. Your rules are listed there with what each keeps out, and Remove.
+  - The PR view's ⋯ menu adds Dismiss from the Inbox and Restore to the Inbox.
+- Several PRs at once, and the keyboard. Tick rows, Shift-click a range or press X, then snooze or dismiss them together. The keys are J, K, Enter, X, E, S, U, / and Escape, listed under the header's ⋯ menu. On a phone, swipe a row left to dismiss it or right to snooze it.
+- Tooltips on the buttons. The Inbox's buttons, and the next-step buttons in the PR view, say what they do, with their key when they have one.
 - A PR view that reads in the order you ask. The header says what the PR is: its title and state, who wants to merge how many commits from which branch, its labels and the boards it is on. One status card says where it stands: the next step with its buttons, then a row each for your review, reviews, checks, whether it can merge, the agent and, on someone else's PR, its size. Each row says what it waits on and opens the tab with the rest. The card replaces the strip, the next-step banner, the agent card and the your-review card.
 - Tabs for the details. Each PR keeps the tab you left it on.
   - Overview: the description, the people and where each review stands (on which commit, and whether that commit is older than the head), the PR's facts and its linked threads. You request, withdraw and re-request reviewers here and edit labels from the header, instead of in a folded Details section.
@@ -23,8 +32,17 @@ Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` i
 
 ### Changed
 
+- The Inbox leaves other areas their jobs. Its count stays in Shuttle's sidebar, the agents summary is in My PRs, and one line links to Insights › Automation log instead of listing what automation did.
 - Details are read only when you open a PR. The PR view gets its checks, commits, files, timeline, merge state and each thread's code in the same read as its conversation, kept for 30 seconds. Syncs and agent watching read no more than before.
 - For command servers. `activity` gets `SHUTTLE_DETAIL=1` when a PR view opens and may print the same details (see `servers.md`). Every command gets `SHUTTLE_SCRIPTS`, the folder of adapter scripts in the installed Shuttle, so a server that runs a script from there follows each upgrade. When a command server sends no commits or files, the Changes tab says how to add them. The reference Delta adapter sends every detail, and reads a PR with up to 100 files in one compare, without patch text.
+
+### Fixed
+
+- A PR snoozed until it changes, or with Not now, no longer looks unsnoozed: it shows as snoozed, and its ⋯ menu offers Bring back to the Inbox instead of Snooze again.
+
+### Compatibility
+
+- One migration: `prs.dismissed_at` becomes `snoozed_at`, and `inbox_dismissed_at`, `seen_at` and an `inbox_rules` table are added. Existing PRs count as seen, so nothing turns new on upgrade. Shuttle 0.4.4 cannot read the database afterwards, so going back to it needs a copy of the database from before the upgrade.
 
 ## 0.4.4 (2026-10-29)
 

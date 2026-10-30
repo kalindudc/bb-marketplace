@@ -1,6 +1,6 @@
 // What happens next with a PR, decided once on the server so the Inbox, the rows and the PR view
 // always say the same thing. Pure: views.ts gathers the facts.
-import type { AgentView, CheckCounts, MyReview, NextAction, NextKind, NextStep, NextTone, PrState, Reason, Reviewer, ReviewRunView, ReviewState, CheckState } from "./contract";
+import type { AgentView, CheckCounts, InboxRuleKind, MyReview, NextAction, NextKind, NextStep, NextTone, PrState, Reason, Reviewer, ReviewRunView, ReviewState, CheckState } from "./contract";
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -25,6 +25,8 @@ export interface NextFacts {
   handled: boolean;
   autoMerge: boolean;
   snoozed: boolean;
+  /** Dismissed from the Inbox, or a rule keeps it out. */
+  keptOut: boolean;
   /** The server has the commands. */
   can: { merge: boolean; comment: boolean; ready: boolean; reopen: boolean; cancelAutoMerge: boolean; approve: boolean };
   // other people's PRs
@@ -248,10 +250,35 @@ function othersNext(f: NextFacts): NextStep {
     : step("looked_up", "neutral", "Not in your lists", "You looked this up. Track it to keep it in Reviews.", { primary: act("track", "Track"), more: [act("review", "Start AI review"), ...reviewMore] });
 }
 
-/** A snooze holds every card out of the Inbox, so the Snooze button means the same on each one. */
-export function nextStep(f: NextFacts): NextStep {
-  const step = f.mine ? mineNext(f) : othersNext(f);
-  return f.snoozed && step.inbox ? { ...step, inbox: false } : step;
+/** The step as if nothing held the PR out of the Inbox. */
+export function stepOf(f: NextFacts): NextStep {
+  return f.mine ? mineNext(f) : othersNext(f);
+}
+
+/** A snooze, a dismissal or a rule holds every card out of the Inbox, so each means the same on every kind. */
+export function nextStep(f: NextFacts, step: NextStep = stepOf(f)): NextStep {
+  return (f.snoozed || f.keptOut) && step.inbox ? { ...step, inbox: false } : step;
+}
+
+/** It mentions you and nobody asked you by name; your own PRs never count. */
+export function mentionOnly(pr: { mine: boolean; reasons: readonly Reason[] }): boolean {
+  return !pr.mine && pr.reasons.includes("mentioned") && !pr.reasons.includes("requested");
+}
+
+/** Logins and repos belong to a server, so every rule names one. */
+export function ruleMatches(
+  rule: { kind: InboxRuleKind; server: string; value: string },
+  pr: { mine: boolean; server: string; author: string; repo: string; reasons: readonly Reason[] },
+): boolean {
+  if (pr.server !== rule.server) return false;
+  switch (rule.kind) {
+    case "author":
+      return !pr.mine && pr.author === rule.value;
+    case "repo":
+      return pr.repo === rule.value;
+    case "mention":
+      return pr.repo === rule.value && mentionOnly(pr);
+  }
 }
 
 /** The Inbox's order: what blocks others or waits on you first. */

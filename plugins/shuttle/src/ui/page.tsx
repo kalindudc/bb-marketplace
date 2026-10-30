@@ -2,7 +2,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { experimental_Icon as Icon, useBbNavigate, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import type { Overview } from "../contract";
 import { ActionsProvider, nudgeText, runNext, useActions } from "./actions";
-import { BUTTON, ErrorNote, ICON_GHOST_LARGE, PAGE, PageHeading } from "./common";
+import { BUTTON, ErrorNote, ICON_GHOST_LARGE, PAGE, PageHeading, TipProvider } from "./common";
 import { AREA_META, PANEL_PATH } from "./constants";
 import { isNotFound, messageOf, threadsOf, useShuttleMutation, useShuttleQuery } from "./data";
 import { PrDetail } from "./detail";
@@ -157,7 +157,7 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
   const list = useShuttleQuery("list", { area: listArea }, route.view === "mine" || route.view === "done" || route.view === "reviews");
   const detail = useShuttleQuery("detail", { key: selectedKey ?? "" }, selectedKey !== null);
   const lookup = useShuttleMutation("lookup");
-  const known = [...(inbox.data?.prs ?? []), ...(list.data?.prs ?? []), ...(detail.data ? [detail.data.pr] : [])];
+  const known = [...(inbox.data?.prs ?? []), ...(inbox.data?.snoozed ?? []), ...(inbox.data?.dismissed ?? []), ...(list.data?.prs ?? []), ...(detail.data ? [detail.data.pr] : [])];
   const threadIds = threadsOf(known);
 
   // Opening a PR from a list pushes a history entry, so Back and the swipe return to the list;
@@ -258,7 +258,7 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
 
   let area: ReactNode;
   switch (route.view) {
-    case "inbox": area = <InboxView layout={layout} onGo={go} />; break;
+    case "inbox": area = <InboxView tab={route.tab ?? "inbox"} layout={layout} onGo={go} />; break;
     case "mine":
     case "done": area = <MineView done={route.view === "done"} layout={layout} overview={overview.data} onGo={go} />; break;
     case "reviews": area = <ReviewsView source={route.source} filter={filter} layout={layout} onFilter={setFilter} onGo={go} />; break;
@@ -336,10 +336,12 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
 
   return (
     <ActionsProvider value={actions}>
-      <div className="h-full min-h-0 min-w-0 bg-background text-foreground">
-        {body}
-        {dialogs}
-      </div>
+      <TipProvider>
+        <div className="h-full min-h-0 min-w-0 bg-background text-foreground">
+          {body}
+          {dialogs}
+        </div>
+      </TipProvider>
     </ActionsProvider>
   );
 }

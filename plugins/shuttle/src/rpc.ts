@@ -55,7 +55,17 @@ export function registerRpc(bb: BbPluginApi, shuttle: Shuttle): void {
       return { ok: true as const };
     }),
     track: ({ key, on }) => refusing(() => ({ pr: shuttle.track(key, on) })),
-    snooze: ({ key, until }) => refusing(() => ({ pr: shuttle.snooze(key, until) })),
+    snooze: ({ keys, until }) => refusing(() => ({ prs: shuttle.snooze(keys, until) })),
+    dismiss: ({ keys, on }) => refusing(() => ({ prs: shuttle.dismiss(keys, on) })),
+    markSeen: ({ keys }) => refusing(() => {
+      shuttle.markSeen(keys);
+      return { ok: true as const };
+    }),
+    inboxRuleAdd: (input) => refusing(() => shuttle.inboxRuleAdd(input)),
+    inboxRuleRemove: ({ id }) => refusing(() => {
+      shuttle.inboxRuleRemove(id);
+      return { ok: true as const };
+    }),
     handle: ({ key, on }) => refusing(() => ({ pr: shuttle.handle(key, on) })),
     review: (input) => refusing(() => shuttle.review(input)),
     newThread: ({ key, start, projectId }) => refusing(async () => ({ threadId: await shuttle.newThread(key, start, projectId) })),

@@ -1,5 +1,5 @@
 import { experimental_usePluginId, type ExperimentalBadge, type ExperimentalPageTitle, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
-import { AREA_META, INSIGHTS_TAB_LABELS, PANEL_PATH, SOURCE_META } from "./constants";
+import { AREA_META, INBOX_TAB_LABELS, INSIGHTS_TAB_LABELS, PANEL_PATH, SOURCE_META } from "./constants";
 import { useShuttleQuery } from "./data";
 import { keyLabel } from "./format";
 import { routeOf } from "./prefs";
@@ -16,7 +16,10 @@ export function useNeedsBadge(): ExperimentalBadge | null {
 /** The area and its part, each linking back, then the selected PR. */
 function crumbsOf(route: Route, boardName?: string): { label: string; route: Route }[] {
   switch (route.view) {
-    case "inbox": return [{ label: AREA_META.inbox.label, route: { view: "inbox", key: null } }];
+    case "inbox": return [
+      { label: AREA_META.inbox.label, route: { view: "inbox", key: null } },
+      ...(route.tab === undefined ? [] : [{ label: INBOX_TAB_LABELS[route.tab], route: { ...route, key: null } }]),
+    ];
     case "mine": return [{ label: AREA_META.mine.label, route: { view: "mine", key: null } }, { label: "Open", route: { view: "mine", key: null } }];
     case "done": return [{ label: AREA_META.mine.label, route: { view: "mine", key: null } }, { label: "Merged and closed", route: { view: "done", key: null } }];
     case "reviews": return [{ label: AREA_META.reviews.label, route: { view: "reviews", source: "all", key: null } }, { label: SOURCE_META[route.source].label, route: { ...route, key: null } }];

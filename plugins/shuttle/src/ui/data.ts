@@ -3,7 +3,7 @@ import {
   experimental_PluginRpcCallError as PluginRpcCallError, experimental_useRpcMutation, experimental_useRpcQuery,
   type BbNavigate, type ExperimentalRpcOptimisticCache, type PluginRpcCallArgs, type PluginRpcResult, type StandardSchemaV1InferInput,
 } from "@get-bb/plugin-sdk/app";
-import { AREAS, rpcContract, type PrView } from "../contract";
+import { AREAS, rpcContract, type InboxView, type PrView } from "../contract";
 
 type Contract = typeof rpcContract;
 type Method = keyof Contract & string;
@@ -58,10 +58,21 @@ export function undoToast(message: string, undo: () => void) {
  */
 export function patchPr(cache: Cache, key: string, patch: (pr: PrView) => PrView, threadIds: readonly string[]) {
   const each = (pr: PrView) => (pr.key === key ? patch(pr) : pr);
-  cache.update("inbox", {}, (current) => ({ ...current, prs: current.prs.map(each) }));
+  cache.update("inbox", {}, (current) => sortInbox(current, each));
   for (const area of AREAS) cache.update("list", { area }, (current) => ({ prs: current.prs.map(each) }));
   cache.update("detail", { key }, (current) => ({ ...current, pr: each(current.pr) }));
   for (const threadId of threadIds) cache.update("threadPrs", { threadId }, (current) => ({ ...current, prs: current.prs.map(each) }));
+}
+
+/**
+ * The Inbox's lists after a patch: a PR moves to Snoozed or Dismissed, or back, at once. The rest stay in `prs`, where
+ * the page shows only those whose step is in the Inbox.
+ */
+function sortInbox(current: InboxView, each: (pr: PrView) => PrView): InboxView {
+  const all = [...current.prs, ...current.snoozed, ...current.dismissed].map(each);
+  const dismissed = all.filter((pr) => pr.dismissed !== null);
+  const snoozed = all.filter((pr) => pr.dismissed === null && pr.snoozed);
+  return { ...current, prs: all.filter((pr) => pr.dismissed === null && !pr.snoozed), snoozed, dismissed };
 }
 
 /** Every thread a PR's lists in thread tabs may be cached under. */

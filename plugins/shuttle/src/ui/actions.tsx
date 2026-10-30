@@ -2,7 +2,7 @@ import { createContext, useContext } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import type { Preset } from "../config";
 import type { NextAction, PrView } from "../contract";
-import { BUTTON, BUTTON_PRIMARY } from "./common";
+import { BUTTON, BUTTON_PRIMARY, Tip } from "./common";
 import type { useEditPrs } from "./edit";
 import { sizeOf } from "./format";
 import type { PrWrites } from "./writes";
@@ -95,15 +95,36 @@ const ACTION_ICONS: Partial<Record<NextAction, string>> = {
   reopen: "RotateCcw",
 };
 
+/** What each next-step button does, for its tooltip. */
+export const ACTION_HINTS: Record<NextAction, string> = {
+  merge: "Choose how to merge it, then merge it",
+  assign_suggested: "Make the thread that opened this PR its agent, so its reviews and failed checks go there",
+  pick_agent: "Pick a thread to be this PR's agent; it gets the reviews and failed checks",
+  handle: "Say you'll fix it yourself; it leaves the Inbox until new feedback arrives",
+  open_agent: "Open the agent's thread",
+  ready: "Mark it ready for review, so its reviewers are told",
+  nudge: "Write a comment asking its reviewers to take a look",
+  cancel_auto_merge: "Turn off auto-merge",
+  choose: "Read the AI review's findings and choose what to post",
+  open_review: "Open the review's thread",
+  review: "Start an AI review with one of your presets",
+  approve: "Approve it as yourself",
+  not_now: "Leave it out of the Inbox until it changes",
+  track: "Keep it in Reviews › Tracked",
+  reopen: "Reopen it",
+};
+
 export function NextButton({ pr, action, primary, small = false }: { pr: PrView; action: { id: NextAction; label: string }; primary: boolean; small?: boolean }) {
   const actions = useActions();
   const icon = ACTION_ICONS[action.id];
   return (
-    <button type="button" data-next={action.id} className={`${primary ? BUTTON_PRIMARY : BUTTON} ${small ? "" : "h-8 px-3 text-[13px]"}`}
-      onClick={(event) => { event.stopPropagation(); runNext(actions, pr, action.id); }}>
-      {icon && <Icon name={icon} className="size-3.5" aria-hidden />}
-      {action.label}
-    </button>
+    <Tip text={ACTION_HINTS[action.id]}>
+      <button type="button" data-next={action.id} className={`${primary ? BUTTON_PRIMARY : BUTTON} ${small ? "" : "h-8 px-3 text-[13px]"}`}
+        onClick={(event) => { event.stopPropagation(); runNext(actions, pr, action.id); }}>
+        {icon && <Icon name={icon} className="size-3.5" aria-hidden />}
+        {action.label}
+      </button>
+    </Tip>
   );
 }
 

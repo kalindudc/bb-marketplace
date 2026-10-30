@@ -159,11 +159,11 @@ describe("Insights › Sync", () => {
 });
 
 describe("old data", () => {
-  it("marks an Inbox card whose lists failed with the time of its data", async () => {
+  it("marks an Inbox row whose lists failed with the time of its data", async () => {
     const stale = pr({ stale: true, staleSince: LAST_GOOD, serverName: "Delta", next: next({ kind: "new_request", label: "New review request", inbox: true }) });
     const { slot } = await page("inbox", { inbox: () => inbox({ prs: [stale] }) });
-    const card = await find(slot.container, `[data-card='${stale.key}']`);
-    expect(card.textContent).toContain(`Data from ${clock(LAST_GOOD)}`);
+    const row = await find(slot.container, `[data-row='${stale.key}']`);
+    expect(row.textContent).toContain(`Data from ${clock(LAST_GOOD)}`);
   });
 });
 

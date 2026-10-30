@@ -1,7 +1,7 @@
 // Typed repository over the plugin database.
 import type Database from "better-sqlite3";
 import { DEFAULT_CONFIG, parseConfig, type Config, type WatchMode } from "../config";
-import type { BoardArchived, CheckState, LinkRole, PrState, Reason, ReviewState } from "../contract";
+import type { BoardArchived, CheckState, InboxRuleKind, LinkRole, PrState, Reason, ReviewState } from "../contract";
 import { prKey, type PrRef } from "../keys";
 import type { ActivityItem, PrSummary } from "../model";
 
@@ -26,7 +26,8 @@ export interface PrRow {
   updated_at: number | null;
   mine: number;
   fetched_at: number;
-  dismissed_at: number | null;
+  /** When a snooze started; null when the PR is not snoozed. */
+  snoozed_at: number | null;
   /** The description, once a view fetched it; null while only lists have seen the PR. */
   body: string | null;
   /** JSON Label[], or null until a server's answer carried them. */
@@ -36,7 +37,7 @@ export interface PrRow {
   /** When a view (not a list) last read the PR. */
   viewed_at: number | null;
   tracked: number;
-  /** With dismissed_at as its start: out of the Inbox until this time, or until the PR changes when null. */
+  /** With snoozed_at as its start: out of the Inbox until this time, or until the PR changes when null. */
   snoozed_until: number | null;
   /** The feedback the user said they would handle ("I'll do it"), as a signature; null when they did not. */
   handled_sig: string | null;
@@ -52,6 +53,18 @@ export interface PrRow {
   first_review_at: number | null;
   suggested_thread: string | null;
   suggested_why: string | null;
+  /** When the user dismissed it from the Inbox, for good; null when not dismissed. */
+  inbox_dismissed_at: number | null;
+  /** When the user last opened it in Shuttle. */
+  seen_at: number | null;
+}
+
+export interface InboxRuleRow {
+  id: number;
+  kind: InboxRuleKind;
+  server: string;
+  value: string;
+  created_at: number;
 }
 
 export interface ServerRow {
@@ -373,13 +386,44 @@ export class Store {
     return this.db.prepare("SELECT * FROM prs ORDER BY COALESCE(updated_at, fetched_at) DESC").all() as PrRow[];
   }
 
-  setDismissed(prId: number, at: number | null): void {
-    this.db.prepare("UPDATE prs SET dismissed_at = ?, snoozed_until = NULL WHERE id = ?").run(at, prId);
-  }
-
   /** `at` null brings the PR back; `until` null keeps it out until the PR changes. */
   setSnooze(prId: number, at: number | null, until: number | null): void {
-    this.db.prepare("UPDATE prs SET dismissed_at = ?, snoozed_until = ? WHERE id = ?").run(at, at === null ? null : until, prId);
+    this.db.prepare("UPDATE prs SET snoozed_at = ?, snoozed_until = ? WHERE id = ?").run(at, at === null ? null : until, prId);
+  }
+
+  /** `at` null restores the PRs to the Inbox. */
+  setInboxDismissed(prIds: readonly number[], at: number | null): void {
+    this.tx(() => {
+      const update = this.db.prepare("UPDATE prs SET inbox_dismissed_at = ? WHERE id = ?");
+      for (const id of prIds) update.run(at, id);
+    });
+  }
+
+  setSeenAt(prIds: readonly number[], at: number): void {
+    this.tx(() => {
+      const update = this.db.prepare("UPDATE prs SET seen_at = ? WHERE id = ?");
+      for (const id of prIds) update.run(at, id);
+    });
+  }
+
+  /** Newest first. */
+  inboxRules(): InboxRuleRow[] {
+    return this.db.prepare("SELECT * FROM inbox_rules ORDER BY created_at DESC, id DESC").all() as InboxRuleRow[];
+  }
+
+  inboxRule(id: number): InboxRuleRow | null {
+    return (this.db.prepare("SELECT * FROM inbox_rules WHERE id = ?").get(id) as InboxRuleRow | undefined) ?? null;
+  }
+
+  /** The same rule twice is one rule: the existing one comes back, with `created` false. */
+  addInboxRule(kind: InboxRuleKind, server: string, value: string): InboxRuleRow & { created: boolean } {
+    const created = this.db.prepare("INSERT OR IGNORE INTO inbox_rules (kind, server, value, created_at) VALUES (?, ?, ?, ?)").run(kind, server, value, this.now()).changes > 0;
+    const row = this.db.prepare("SELECT * FROM inbox_rules WHERE kind = ? AND server = ? AND value = ?").get(kind, server, value) as InboxRuleRow;
+    return { ...row, created };
+  }
+
+  removeInboxRule(id: number): boolean {
+    return this.db.prepare("DELETE FROM inbox_rules WHERE id = ?").run(id).changes > 0;
   }
 
   setTracked(prId: number, on: boolean): void {
@@ -828,6 +872,11 @@ export class Store {
   addEvent(kind: string, text: string, prId: number | null = null, threadId: string | null = null): void {
     this.db.prepare("INSERT INTO events (at, kind, text, pr_id, thread_id) VALUES (?, ?, ?, ?, ?)").run(this.now(), kind, text, prId, threadId);
     this.db.prepare("DELETE FROM events WHERE id <= (SELECT MAX(id) - 2000 FROM events)").run();
+  }
+
+  countEvents(kinds: readonly string[], since: number): number {
+    if (!kinds.length) return 0;
+    return (this.db.prepare(`SELECT COUNT(*) AS n FROM events WHERE at >= ? AND kind IN (${kinds.map(() => "?").join(", ")})`).get(since, ...kinds) as { n: number }).n;
   }
 
   events(filter: { prId?: number; threadId?: string; kinds?: string[]; limit: number }): EventRow[] {

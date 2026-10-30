@@ -2,7 +2,7 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { createContext, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
-import { BUTTON, usePortalScope } from "./common";
+import { BUTTON, Tip, usePortalScope } from "./common";
 
 /** A phone's menu: a sheet from the bottom with a handle, a title and Done. Escape and the scrim close it. */
 function BottomSheet({ title, onClose, children }: { title: string; onClose(): void; children: ReactNode }) {
@@ -48,18 +48,30 @@ const Context = createContext<PickerContext>({ mode: "menu", close: () => {} });
  * A menu of choices: bb's Radix dropdown in a portal on a desktop, a bottom sheet on a phone.
  * The children mount only while it is open, so they can load what they offer then.
  */
-export function Picker({ phone, title, trigger, triggerClassName, triggerLabel, disabled = false, disabledReason, align = "end", children }: {
+export function Picker({ phone, title, trigger, triggerClassName, triggerLabel, tip, disabled = false, disabledReason, align = "end", open: shown, onOpenChange, onCloseAutoFocus, children }: {
   phone: boolean;
   title: string;
   trigger: ReactNode;
   triggerClassName: string;
   triggerLabel?: string;
+  /** What the trigger does, as a tooltip on a desktop. */
+  tip?: { text: string; keys?: string };
   disabled?: boolean;
   disabledReason?: string;
   align?: "start" | "end";
+  /** Open from outside too, such as by a key; the picker still says when it closes. */
+  open?: boolean;
+  onOpenChange?(open: boolean): void;
+  /** A desktop menu has closed and is about to give focus back to its trigger; preventDefault keeps it. */
+  onCloseAutoFocus?(event: Event): void;
   children: ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
+  const [own, setOwn] = useState(false);
+  const open = shown ?? own;
+  const setOpen = (next: boolean) => {
+    setOwn(next);
+    onOpenChange?.(next);
+  };
   const scope = usePortalScope();
   const label = triggerLabel ?? title;
   if (phone) {
@@ -78,13 +90,16 @@ export function Picker({ phone, title, trigger, triggerClassName, triggerLabel, 
       </>
     );
   }
+  const button = (
+    <DropdownMenu.Trigger asChild disabled={disabled}>
+      <button type="button" aria-label={label} title={disabled ? disabledReason : undefined} className={triggerClassName}>{trigger}</button>
+    </DropdownMenu.Trigger>
+  );
   return (
     <DropdownMenu.Root modal={false} open={open} onOpenChange={setOpen}>
-      <DropdownMenu.Trigger asChild disabled={disabled}>
-        <button type="button" aria-label={label} title={disabled ? disabledReason : undefined} className={triggerClassName}>{trigger}</button>
-      </DropdownMenu.Trigger>
+      {tip === undefined || disabled ? button : <Tip text={tip.text} keys={tip.keys}>{button}</Tip>}
       <DropdownMenu.Portal>
-        <DropdownMenu.Content {...scope} align={align} sideOffset={4} collisionPadding={8}
+        <DropdownMenu.Content {...scope} align={align} sideOffset={4} collisionPadding={8} onCloseAutoFocus={onCloseAutoFocus}
           className="z-50 flex max-h-[min(24rem,var(--radix-dropdown-menu-content-available-height))] w-80 flex-col overflow-y-auto rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md">
           <Context.Provider value={{ mode: "menu", close: () => setOpen(false) }}>{children}</Context.Provider>
         </DropdownMenu.Content>
@@ -117,6 +132,25 @@ export function PickerCheckbox({ checked, disabled = false, onToggle, children }
   }
   return (
     <button type="button" role="menuitemcheckbox" aria-checked={checked} disabled={disabled} className={ROW} onClick={onToggle}>
+      <Box checked={checked} />
+      {children}
+    </button>
+  );
+}
+
+/** One choice of several where exactly one is on; it looks like a checkbox row and the picker stays open. */
+export function PickerRadio({ checked, onSelect, children }: { checked: boolean; onSelect(): void; children: ReactNode }) {
+  const { mode } = useContext(Context);
+  if (mode === "menu") {
+    return (
+      <DropdownMenu.Item role="menuitemradio" aria-checked={checked} className={ROW} onSelect={(event) => { event.preventDefault(); onSelect(); }}>
+        <Box checked={checked} />
+        {children}
+      </DropdownMenu.Item>
+    );
+  }
+  return (
+    <button type="button" role="menuitemradio" aria-checked={checked} className={ROW} onClick={onSelect}>
       <Box checked={checked} />
       {children}
     </button>

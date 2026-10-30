@@ -1,16 +1,10 @@
+import { useRef } from "react";
 import { toast } from "sonner";
-import type { AgentMode, AgentTarget, PrView } from "../contract";
+import type { AgentMode, AgentTarget, InboxRule, PrView } from "../contract";
 import { patchPr, undoToast, useShuttleMutation } from "./data";
-import { tinyKey } from "./format";
+import { atNine, plural, ruleText, tinyKey, when } from "./format";
 
 const WATCH_OF: Record<AgentMode, PrView["watch"]> = { fix: "act", notify: "forward", off: null };
-
-const tomorrowAtNine = () => {
-  const at = new Date();
-  at.setDate(at.getDate() + 1);
-  at.setHours(9, 0, 0, 0);
-  return at.getTime();
-};
 
 const MODE_TOASTS: Record<AgentMode, (pr: PrView) => string> = {
   fix: () => "The agent now fixes new feedback.",
@@ -18,12 +12,17 @@ const MODE_TOASTS: Record<AgentMode, (pr: PrView) => string> = {
   off: (pr) => `The agent of ${tinyKey(pr)} is off. New feedback waits in your Inbox.`,
 };
 
+const SEEN_BATCH = 500;
+
+/** "world#2311622" for one PR, "3 PRs" for more. */
+const prsLabel = (prs: readonly PrView[]) => (prs.length === 1 ? tinyKey(prs[0]!) : plural(prs.length, "PR"));
+
 /** The agent a PR has now, as the target that puts it back. */
 const targetOf = (pr: PrView): { target: AgentTarget; mode?: AgentMode } =>
   pr.agent === null ? { target: { kind: "none" } } : { target: { kind: "existing", threadId: pr.agent.threadId }, mode: pr.agent.mode };
 
 /**
- * The writes every PR surface shares. Agent mode, Track, Snooze and "I'll do it" show at once
+ * The writes every PR surface shares. Agent mode, Track, Snooze, Dismiss and "I'll do it" show at once
  * everywhere the PR is loaded; each reversible write offers Undo, and a refusal puts the PR back
  * and shows the server's message.
  */
@@ -31,9 +30,35 @@ export function usePrWrites(threadIds: readonly string[]) {
   const setAgentMode = useShuttleMutation("setAgentMode", ({ key, mode }, cache) =>
     patchPr(cache, key, (pr) => (pr.agent === null ? pr : { ...pr, agent: { ...pr.agent, mode }, watch: WATCH_OF[mode] }), threadIds));
   const track = useShuttleMutation("track", ({ key, on }, cache) => patchPr(cache, key, (pr) => ({ ...pr, tracked: on }), threadIds));
-  const snooze = useShuttleMutation("snooze", ({ key, until }, cache) => patchPr(cache, key, (pr) => (until === null
-    ? { ...pr, snoozedUntil: null, next: { ...pr.next, inbox: pr.snoozedUntil !== null || pr.next.inbox } }
-    : { ...pr, snoozedUntil: until === "tomorrow" ? tomorrowAtNine() : null, next: { ...pr.next, inbox: false } }), threadIds));
+  const snooze = useShuttleMutation("snooze", ({ keys, until }, cache) => {
+    for (const key of keys) patchPr(cache, key, (pr) => {
+      if (until !== null) return { ...pr, snoozed: true, snoozedUntil: until === "update" ? null : until, next: { ...pr.next, inbox: false } };
+      // Whether its step puts it in the Inbox is the server's to say; the refetch this write causes places it.
+      return { ...pr, snoozed: false, snoozedUntil: null };
+    }, threadIds);
+  });
+  const dismiss = useShuttleMutation("dismiss", ({ keys, on }, cache) => {
+    const at = Date.now();
+    for (const key of keys) patchPr(cache, key, (pr) => {
+      if (on) return { ...pr, dismissed: { at, activity: false }, snoozed: false, snoozedUntil: null, next: { ...pr.next, inbox: false } };
+      return { ...pr, dismissed: null };
+    }, threadIds);
+  });
+  const seen = useShuttleMutation("markSeen", ({ keys }, cache) => {
+    for (const key of keys) patchPr(cache, key, (pr) => ({ ...pr, unseen: false }), threadIds);
+  });
+  const ruleAdd = useShuttleMutation("inboxRuleAdd");
+  const ruleRemove = useShuttleMutation("inboxRuleRemove");
+  // The Inbox's last change that Undo can take back, for its U key; a toast's Undo and U take it once.
+  const lastUndo = useRef<(() => void) | null>(null);
+  const offerUndo = (message: string, undo: () => void) => {
+    const once = () => {
+      if (lastUndo.current === once) lastUndo.current = null;
+      undo();
+    };
+    lastUndo.current = once;
+    undoToast(message, once);
+  };
   const handle = useShuttleMutation("handle", ({ key, on }, cache) => patchPr(cache, key, (pr) => (on
     ? { ...pr, handled: true, next: { ...pr.next, inbox: false } }
     : { ...pr, handled: false, next: { ...pr.next, inbox: pr.handled || pr.next.inbox } }), threadIds));
@@ -76,11 +101,69 @@ export function usePrWrites(threadIds: readonly string[]) {
     else toast.success(message);
   };
 
-  const setSnooze = async (pr: PrView, until: "tomorrow" | "update" | null) => {
-    if ((await snooze.run({ key: pr.key, until })) === null) return;
-    if (until === null) return void toast.success(`${tinyKey(pr)} is back in your Inbox.`);
-    const message = until === "tomorrow" ? `Snoozed ${tinyKey(pr)} until tomorrow 9:00, or until something new happens.` : `${tinyKey(pr)} stays in Reviews and leaves the Inbox.`;
-    undoToast(message, () => void setSnooze({ ...pr, snoozedUntil: tomorrowAtNine() }, null));
+  /** Out of the Inbox until a time, until it changes ("update"), or back now (null); "tomorrow" is 9:00 tomorrow here. */
+  const snoozePrs = async (prs: readonly PrView[], until: "tomorrow" | "update" | number | null, undoable = true): Promise<boolean> => {
+    const at = until === "tomorrow" ? atNine(Date.now(), 1) : until;
+    if ((await snooze.run({ keys: prs.map((pr) => pr.key), until: at })) === null) return false;
+    const label = prsLabel(prs);
+    if (at === null) {
+      const message = `${label} ${prs.length === 1 ? "is" : "are"} back in your Inbox.`;
+      const before = prs[0]!.snoozedUntil ?? "update";
+      // Waking PRs that were snoozed until different times has no one time to put back.
+      if (undoable && prs.every((pr) => pr.snoozed && (pr.snoozedUntil ?? "update") === before)) offerUndo(message, () => void snoozePrs(prs, before, false));
+      else toast.success(message);
+      return true;
+    }
+    const message = at === "update" ? `Snoozed ${label} until it changes.` : `Snoozed ${label} until ${when(at)}.`;
+    if (undoable) offerUndo(message, () => void snoozePrs(prs, null, false));
+    else toast.success(message);
+    return true;
+  };
+  const setSnooze = (pr: PrView, until: "tomorrow" | "update" | number | null) => snoozePrs([pr], until);
+
+  /** Out of the Inbox for good, even when it changes; off brings it back. */
+  const dismissPrs = async (prs: readonly PrView[], on: boolean, undoable = true): Promise<boolean> => {
+    if ((await dismiss.run({ keys: prs.map((pr) => pr.key), on })) === null) return false;
+    const label = prsLabel(prs);
+    const message = on ? `Dismissed ${label}.` : `${label} ${prs.length === 1 ? "is" : "are"} back in your Inbox.`;
+    if (undoable) offerUndo(message, () => void dismissPrs(prs, !on, false));
+    else toast.success(message);
+    return true;
+  };
+
+  /** Opening a PR clears what is new on it; nothing to say about that. */
+  const markSeen = async (keys: readonly string[]) => {
+    for (let start = 0; start < keys.length; start += SEEN_BATCH) await seen.run({ keys: keys.slice(start, start + SEEN_BATCH) });
+  };
+
+  const addRule = async (rule: Pick<InboxRule, "kind" | "server" | "value">, undoable = true): Promise<InboxRule | null> => {
+    const out = await ruleAdd.run({ kind: rule.kind, server: rule.server, value: rule.value });
+    if (out === null) return null;
+    // Undo would remove a rule the user already had.
+    if (!out.created) {
+      toast(`${ruleText(out.rule)} already stay out of the Inbox.`);
+      return out.rule;
+    }
+    const left = out.rule.keeps.length;
+    const message = `${ruleText(out.rule)} now stay out of the Inbox${left > 0 ? `; ${plural(left, "PR")} left it` : ""}.`;
+    if (undoable) offerUndo(message, () => void removeRule(out.rule, false));
+    else toast.success(message);
+    return out.rule;
+  };
+
+  const removeRule = async (rule: InboxRule, undoable = true) => {
+    if ((await ruleRemove.run({ id: rule.id })) === null) return;
+    const message = `${ruleText(rule)} can come to the Inbox again.`;
+    if (undoable) offerUndo(message, () => void addRule(rule, false));
+    else toast.success(message);
+  };
+
+  /** Takes back the Inbox's last change, as its toast's Undo would; false when there is none. */
+  const undoLast = () => {
+    const undo = lastUndo.current;
+    if (undo === null) return false;
+    undo();
+    return true;
   };
 
   const setHandled = async (pr: PrView, on: boolean, undoable = true) => {
@@ -108,7 +191,7 @@ export function usePrWrites(threadIds: readonly string[]) {
     if ((await cancelAutoMerge.run({ key: pr.key })) !== null) toast.success(`Auto-merge is off for ${tinyKey(pr)}.`);
   };
 
-  return { changeMode, giveAgent, setTracked, setSnooze, setHandled, discard, setAutoAgent, cancelAuto };
+  return { changeMode, giveAgent, setTracked, setSnooze, snoozePrs, dismissPrs, markSeen, addRule, removeRule, undoLast, setHandled, discard, setAutoAgent, cancelAuto };
 }
 
 export type PrWrites = ReturnType<typeof usePrWrites>;

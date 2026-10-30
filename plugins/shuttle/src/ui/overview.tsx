@@ -155,7 +155,7 @@ export function About({ pr, details, compact = false }: { pr: PrView; details: P
   }
   const reasons = pr.mine ? null : reasonsOf(pr);
   if (reasons !== null) rows.push(["In your lists", reasons]);
-  if (pr.snoozedUntil !== null) rows.push(["Snoozed", `Until ${clock(pr.snoozedUntil)}, or until it changes`]);
+  if (pr.snoozed) rows.push(["Snoozed", pr.snoozedUntil === null ? "Until it changes" : `Until ${clock(pr.snoozedUntil)}, or until it changes`]);
   return (
     <PaneSection title="About this PR" label="About">
       {/* The labels' column never goes below its longest word, which a monospace theme makes wider than the default font. */}

@@ -1,9 +1,9 @@
 // PR rows as the UI, the tools and the CLI see them, and which area each one belongs in.
 import type { AgentView, Area, CheckCounts, MyReview, PrView, Reason } from "./contract";
 import type { Ctx } from "./ctx";
-import type { LinkRow, PrRow, ServerRow } from "./db/store";
+import type { InboxRuleRow, LinkRow, PrRow, ServerRow } from "./db/store";
 import { actionsOf, parseLabels, parseReviewers } from "./edit";
-import { agentActive, feedbackSignature, INBOX_ORDER, nextStep, stillHandled } from "./next";
+import { agentActive, feedbackSignature, INBOX_ORDER, nextStep, ruleMatches, stepOf, stillHandled, type NextFacts } from "./next";
 import { globMatch, STEP_OF_REASON } from "./sync";
 
 const DAY = 86_400_000;
@@ -82,7 +82,19 @@ function requestedAtOf(ctx: Ctx, pr: PrRow, reasons: Array<{ reason: string; sin
   return null;
 }
 
-export function toView(ctx: Ctx, pr: PrRow): PrView {
+export function toView(ctx: Ctx, pr: PrRow, rules: readonly InboxRuleRow[] = ctx.store.inboxRules()): PrView {
+  return viewOf(ctx, pr, rules).view;
+}
+
+/** The first rule by age, so adding a rule never changes which one a PR names. */
+function keptOutBy(rules: readonly InboxRuleRow[], pr: PrRow, reasons: readonly Reason[]): number | null {
+  const facts = { mine: pr.mine === 1, server: pr.server, author: pr.author, repo: pr.repo, reasons };
+  const ids = rules.filter((rule) => ruleMatches(rule, facts)).map((rule) => rule.id);
+  return ids.length ? Math.min(...ids) : null;
+}
+
+/** The view, and whether its step would put it in the Inbox if nothing held it out. */
+function viewOf(ctx: Ctx, pr: PrRow, rules: readonly InboxRuleRow[]): { view: PrView; wanted: boolean } {
   const server = ctx.server(pr.server);
   const serverRow = ctx.store.server(pr.server);
   const watch = ctx.store.watch(pr.id);
@@ -125,12 +137,14 @@ export function toView(ctx: Ctx, pr: PrRow): PrView {
     resolve: live && ops.has("resolve"),
   };
   const now = ctx.now();
-  const snoozed = pr.dismissed_at !== null && (pr.updated_at ?? 0) <= pr.dismissed_at && (pr.snoozed_until === null || now < pr.snoozed_until);
+  const snoozed = pr.snoozed_at !== null && (pr.updated_at ?? 0) <= pr.snoozed_at && (pr.snoozed_until === null || now < pr.snoozed_until);
+  const dismissedAt = pr.inbox_dismissed_at;
+  const ruleId = keptOutBy(rules, pr, reasons.map((r) => r.reason));
   const handled = stillHandled(pr.handled_sig, feedbackSignature(reviewers, pr.checks, pr.head));
   const bot = isBot(ctx, pr);
   const suggested = pr.suggested_thread && !owner ? { threadId: pr.suggested_thread, title: ctx.store.threadTitle(pr.suggested_thread) ?? "Thread", why: pr.suggested_why ?? "" } : null;
   const settings = ctx.settings();
-  const next = nextStep({
+  const facts: NextFacts = {
     now,
     mine: pr.mine === 1,
     state: pr.state,
@@ -147,6 +161,7 @@ export function toView(ctx: Ctx, pr: PrRow): PrView {
     handled,
     autoMerge: pr.auto_merge === 1,
     snoozed,
+    keptOut: dismissedAt !== null || ruleId !== null,
     can: {
       merge: can.merge,
       comment: can.comment,
@@ -170,8 +185,10 @@ export function toView(ctx: Ctx, pr: PrRow): PrView {
     files: pr.files,
     inboxRequests: settings.inboxRequests,
     inboxRequestDays: settings.inboxRequestDays,
-  });
-  return {
+  };
+  const step = stepOf(facts);
+  const next = nextStep(facts, step);
+  const view: PrView = {
     key: pr.key,
     server: pr.server,
     serverName: server?.name ?? pr.server,
@@ -210,7 +227,11 @@ export function toView(ctx: Ctx, pr: PrRow): PrView {
     myReview,
     draft: draft ? { id: draft.id, findings: draftFindings, at: draft.created_at } : null,
     next,
+    snoozed,
     snoozedUntil: snoozed ? (pr.snoozed_until ?? null) : null,
+    dismissed: dismissedAt === null ? null : { at: dismissedAt, activity: (pr.updated_at ?? 0) > dismissedAt },
+    keptOutBy: ruleId,
+    unseen: pr.seen_at === null || (pr.updated_at ?? 0) > pr.seen_at,
     handled,
     autoMerge: pr.auto_merge === 1,
     stale: freshness.stale,
@@ -221,6 +242,7 @@ export function toView(ctx: Ctx, pr: PrRow): PrView {
     actions,
     can,
   };
+  return { view, wanted: step.inbox };
 }
 
 export function inArea(view: PrView, area: Area, ctx: Ctx): boolean {
@@ -241,11 +263,17 @@ export function enabledServerIds(ctx: Ctx): Set<string> {
 
 /** Every PR of the enabled servers, newest first, as views. */
 export function allViews(ctx: Ctx): PrView[] {
+  return inboxCandidates(ctx).map((entry) => entry.view);
+}
+
+/** allViews, each with whether its step would put it in the Inbox if no snooze, dismissal or rule held it out. */
+export function inboxCandidates(ctx: Ctx): Array<{ view: PrView; wanted: boolean }> {
   const enabled = enabledServerIds(ctx);
+  const rules = ctx.store.inboxRules();
   return ctx.store
     .allPrs()
     .filter((pr) => enabled.has(pr.server))
-    .map((pr) => toView(ctx, pr));
+    .map((pr) => viewOf(ctx, pr, rules));
 }
 
 export function inboxOf(views: PrView[]): PrView[] {

@@ -74,7 +74,7 @@ describe("auto review", () => {
     expect(h.port.spawned).toHaveLength(1);
     h.shuttle.onThreadIdle(spawned.threadId);
     expect(h.shuttle.inbox().prs.map((p) => [p.number, p.next.kind])).toEqual([[3, "review_done"]]);
-    h.shuttle.snooze("forge:shop/world#3", "update");
+    h.shuttle.snooze(["forge:shop/world#3"], "update");
     expect(h.shuttle.inbox().prs).toEqual([]);
   });
 

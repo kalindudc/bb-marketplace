@@ -94,7 +94,11 @@ export function pr(overrides: Partial<PrView> = {}): PrView {
     myReview: null,
     draft: null,
     next: next(),
+    snoozed: false,
     snoozedUntil: null,
+    dismissed: null,
+    keptOutBy: null,
+    unseen: false,
     handled: false,
     autoMerge: false,
     stale: false,
@@ -162,7 +166,7 @@ export function overview(overrides: Partial<Overview> = {}): Overview {
 }
 
 export function inbox(overrides: Partial<InboxView> = {}): InboxView {
-  return { prs: [], agents: { open: 0, withAgent: 0, working: 0, waiting: 0, none: 0 }, olderRequests: 0, handled: [], ...overrides };
+  return { prs: [], snoozed: [], dismissed: [], rules: [], olderRequests: 0, handled: 0, ...overrides };
 }
 
 export function insights(overrides: Partial<InsightsView> = {}): InsightsView {
@@ -222,6 +226,10 @@ export function handlers(overrides: Partial<Handlers> = {}): Handlers {
     setSettings: unexpected("setSettings"),
     track: unexpected("track"),
     snooze: unexpected("snooze"),
+    dismiss: unexpected("dismiss"),
+    markSeen: () => ({ ok: true }),
+    inboxRuleAdd: unexpected("inboxRuleAdd"),
+    inboxRuleRemove: unexpected("inboxRuleRemove"),
     handle: unexpected("handle"),
     review: unexpected("review"),
     newThread: unexpected("newThread"),

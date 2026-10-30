@@ -6,7 +6,7 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import type { PrView } from "../contract";
 import { ActionsProvider } from "./actions";
-import { BUTTON, BUTTON_GHOST, BUTTON_PRIMARY, CARD, ErrorNote, HEADING, ICON_GHOST, Pill, Segmented, ServerBadge } from "./common";
+import { BUTTON, BUTTON_GHOST, BUTTON_PRIMARY, CARD, ErrorNote, HEADING, ICON_GHOST, Pill, Segmented, ServerBadge, TipProvider } from "./common";
 import { AGENT_MODE_META, PANEL_PATH, ROLE_LABELS } from "./constants";
 import { messageOf, openExternal, threadsOf, useShuttleMutation, useShuttleQuery } from "./data";
 import { PrDetail } from "./detail";
@@ -288,12 +288,14 @@ export function ShuttlePanel({ threadId }: ExperimentalThreadActionTabProps) {
 
   return (
     <ActionsProvider value={actions}>
-      {openKey !== null ? (
-        <PanelPrView prKey={openKey} onBack={() => rememberPanelPr(threadId, null)} />
-      ) : (
-        <PanelList threadId={threadId} prs={prs} data={data} writes={actions.writes} onView={select} />
-      )}
-      {dialogs}
+      <TipProvider>
+        {openKey !== null ? (
+          <PanelPrView prKey={openKey} onBack={() => rememberPanelPr(threadId, null)} />
+        ) : (
+          <PanelList threadId={threadId} prs={prs} data={data} writes={actions.writes} onView={select} />
+        )}
+        {dialogs}
+      </TipProvider>
     </ActionsProvider>
   );
 }

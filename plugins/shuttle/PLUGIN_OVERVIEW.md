@@ -2,7 +2,7 @@ See what each PR is waiting on and act without leaving bb. GitHub works out of t
 
 ## Five areas
 
-- **Inbox:** the decisions waiting on you. Each PR says why it is here, what happens next and which action clears it. Snooze hides it until tomorrow or new activity.
+- **Inbox:** the decisions waiting on you, one row per PR under what to do with it, with what changed since you last opened it marked. Search, group and sort it. Snooze a PR until later today, tomorrow, next week or until it changes, dismiss it for good, or keep out every PR by an author, from a repo, or mentions where you are not asked; the Snoozed and Dismissed tabs list them, with the way back.
 - **My PRs:** your open PRs grouped by their next step or shown in a sortable list, followed by merged and closed PRs. Checks, reviews and agents stay beside each PR.
 - **Reviews:** requests from people and teams, mentions and tracked PRs, grouped by where your review stands. Filter by team or hide bots and quiet PRs.
 - **Boards:** saved PR sets for a release, project or handoff, across repositories and servers.

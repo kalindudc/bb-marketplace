@@ -216,6 +216,16 @@ export function PrDetail({ prKey, onClose, onExpand, onCollapse, phone = false, 
   const width = useWidth(page ? root : null);
   const stuck = useScrolledPast(phone ? null : header);
   const since = useSeenSince(prKey);
+  const decided = useRef<string | null>(null);
+  const loaded = detail.data?.pr.key === prKey;
+  const unseen = detail.data?.pr.unseen === true;
+  const { markSeen } = actions.writes;
+  // Decided by the first load of each PR opened: one that changes while it stays open is not marked seen, so it shows as new next time.
+  useEffect(() => {
+    if (!loaded || decided.current === prKey) return;
+    decided.current = prKey;
+    if (unseen) void markSeen([prKey]);
+  }, [loaded, unseen, prKey, markSeen]);
   const [storedTab, setTab] = usePrState(prKey, "tab", "overview");
   const { intent } = actions;
 

@@ -33,7 +33,7 @@ const STATE_ACTIONS: { action: Extract<PrAction, "ready" | "draft" | "close" | "
   { action: "reopen", label: "Reopen", icon: "RotateCcw", when: (pr) => pr.state === "closed" },
 ];
 
-/** Everything that does not need a place on screen: copying, tracking, snoozing, threads, reviews, and your PR's state. */
+/** Everything that does not need a place on screen: copying, tracking, snoozing and dismissing, threads, reviews, and your PR's state. */
 export function PrMenu({ pr, triggerClassName = ICON_GHOST }: { pr: PrView; triggerClassName?: string }) {
   const actions = useActions();
   const live = isLive(pr);
@@ -50,14 +50,20 @@ export function PrMenu({ pr, triggerClassName = ICON_GHOST }: { pr: PrView; trig
       {!pr.mine && (
         <PickerAction onSelect={() => void actions.writes.setTracked(pr, !pr.tracked)}><Icon name="Pin" className="size-3.5" aria-hidden />{pr.tracked ? "Stop tracking" : "Track"}</PickerAction>
       )}
-      {live && pr.snoozedUntil === null && (
+      {live && !pr.snoozed && pr.dismissed === null && (
         <>
           <PickerAction onSelect={() => void actions.writes.setSnooze(pr, "tomorrow")}><Icon name="Clock" className="size-3.5" aria-hidden />Snooze until tomorrow</PickerAction>
           <PickerAction onSelect={() => void actions.writes.setSnooze(pr, "update")}><Icon name="Clock" className="size-3.5" aria-hidden />Snooze until it changes</PickerAction>
         </>
       )}
-      {live && pr.snoozedUntil !== null && (
+      {live && pr.snoozed && pr.dismissed === null && (
         <PickerAction onSelect={() => void actions.writes.setSnooze(pr, null)}><Icon name="Clock" className="size-3.5" aria-hidden />Bring back to the Inbox</PickerAction>
+      )}
+      {live && pr.dismissed === null && (pr.next.inbox || pr.snoozed) && (
+        <PickerAction onSelect={() => void actions.writes.dismissPrs([pr], true)}><Icon name="ArchiveX" fallback="Archive" className="size-3.5" aria-hidden />Dismiss from the Inbox</PickerAction>
+      )}
+      {pr.dismissed !== null && (
+        <PickerAction onSelect={() => void actions.writes.dismissPrs([pr], false)}><Icon name="ArchiveRestore" fallback="RotateCcw" className="size-3.5" aria-hidden />Restore to the Inbox</PickerAction>
       )}
       <PickerAction onSelect={() => actions.link(pr)}><Icon name="Link" className="size-3.5" aria-hidden />Link a thread…</PickerAction>
       {!pr.mine && live && <PickerAction onSelect={() => actions.startReview(pr)}><Icon name="Play" className="size-3.5" aria-hidden />Start an AI review…</PickerAction>}

@@ -68,6 +68,9 @@ export const NEXT_ACTIONS = [
   "choose", "open_review", "review", "approve", "not_now", "track", "reopen",
 ] as const;
 export type NextAction = (typeof NEXT_ACTIONS)[number];
+/** What an Inbox rule keeps out: every PR by an author, every PR from a repo, or mentions in a repo where you are not asked by name. */
+export const INBOX_RULE_KINDS = ["author", "repo", "mention"] as const;
+export type InboxRuleKind = (typeof INBOX_RULE_KINDS)[number];
 
 const key = z.string().min(3).max(400);
 const threadId = z.string().min(1).max(100);
@@ -230,8 +233,16 @@ export const prViewSchema = z.object({
   /** An AI review draft waiting for you to choose what to post. */
   draft: z.object({ id: z.number(), findings: z.number(), at: z.number() }).nullable(),
   next: nextStepSchema,
-  /** Snoozed: out of the Inbox until this time or until it changes. */
+  /** Out of the Inbox by a snooze right now, whether until a time or until it changes. */
+  snoozed: z.boolean(),
+  /** When a snooze ends; null when not snoozed or snoozed until it changes. */
   snoozedUntil: z.number().nullable(),
+  /** Dismissed from the Inbox for good; activity: it changed after it was dismissed. */
+  dismissed: z.object({ at: z.number(), activity: z.boolean() }).nullable(),
+  /** The oldest Inbox rule that matches the PR, whether or not its step would put it in the Inbox. */
+  keptOutBy: z.number().nullable(),
+  /** It changed since you last opened it in Shuttle, or you never have. */
+  unseen: z.boolean(),
   /** You said "I'll do it" about its current feedback. */
   handled: z.boolean(),
   /** GitHub's auto-merge is on: it merges when its checks pass. */
@@ -398,15 +409,32 @@ export const overviewSchema = z.object({
 });
 export type Overview = z.infer<typeof overviewSchema>;
 
+export const inboxRuleSchema = z.object({
+  id: z.number(),
+  kind: z.enum(INBOX_RULE_KINDS),
+  server: z.string(),
+  serverName: z.string(),
+  /** A login for author rules, a repo for repo and mention rules. */
+  value: z.string(),
+  createdAt: z.number(),
+  /** The keys of the PRs it keeps out of the Inbox now: ones that would be in it, not snoozed or dismissed. */
+  keeps: z.array(z.string()),
+});
+export type InboxRule = z.infer<typeof inboxRuleSchema>;
+
 export const inboxSchema = z.object({
   /** Highest priority first. */
   prs: z.array(prViewSchema),
-  /** Your open PRs and who handles their feedback. */
-  agents: z.object({ open: z.number(), withAgent: z.number(), working: z.number(), waiting: z.number(), none: z.number() }),
+  /** Live snoozed PRs that are not dismissed, soonest back first; "until it changes" last. */
+  snoozed: z.array(prViewSchema),
+  /** Live dismissed PRs, most recently dismissed first. */
+  dismissed: z.array(prViewSchema),
+  /** Newest first. */
+  rules: z.array(inboxRuleSchema),
   /** Requests by name or mention that left the Inbox by age and are still not reviewed; they wait in Reviews. */
   olderRequests: z.number(),
-  /** What automation did in the last 24 hours, newest first. */
-  handled: z.array(eventViewSchema),
+  /** How many things automation did in the last 24 hours (Insights › Automation log lists them). */
+  handled: z.number(),
 });
 export type InboxView = z.infer<typeof inboxSchema>;
 
@@ -604,6 +632,7 @@ export type TestResult = z.infer<typeof testResultSchema>;
 
 const ok = z.object({ ok: z.literal(true) });
 const prOut = z.object({ pr: prViewSchema });
+const prsOut = z.object({ prs: z.array(prViewSchema) });
 
 export const reviewInputSchema = z.object({
   key,
@@ -671,8 +700,18 @@ export const rpcContract = defineContract({
   /** The page's own switches for Shuttle's bb settings. */
   setSettings: { input: z.object({ autoAgent: z.boolean().optional(), inboxRequests: z.boolean().optional() }), output: ok, invalidates: () => ["prs", "servers", "config"] },
   track: { input: z.object({ key, on: z.boolean() }), output: prOut, invalidates: PRS },
-  /** "tomorrow": until 9:00 tomorrow or until it changes; "update": until it changes; null: back now. */
-  snooze: { input: z.object({ key, until: z.enum(["tomorrow", "update"]).nullable() }), output: prOut, invalidates: PRS },
+  /**
+   * Out of the Inbox until an epoch-ms time (in the future, at most 60 days ahead) or "update", until it changes;
+   * anything new brings it back sooner either way. null: back now.
+   */
+  snooze: { input: z.object({ keys: z.array(key).min(1).max(200), until: z.union([z.number().int(), z.literal("update")]).nullable() }), output: prsOut, invalidates: PRS },
+  /** Out of the Inbox for good, even when it changes, and its snooze ends; off restores it. */
+  dismiss: { input: z.object({ keys: z.array(key).min(1).max(200), on: z.boolean() }), output: prsOut, invalidates: PRS },
+  /** You opened these PRs: they are no longer new. */
+  markSeen: { input: z.object({ keys: z.array(key).min(1).max(500) }), output: ok, invalidates: PRS },
+  /** The same rule twice returns the existing one, with created false. */
+  inboxRuleAdd: { input: z.object({ kind: z.enum(INBOX_RULE_KINDS), server: z.string().min(1).max(100), value: z.string().trim().min(1).max(200) }), output: z.object({ rule: inboxRuleSchema, created: z.boolean() }), invalidates: PRS },
+  inboxRuleRemove: { input: z.object({ id: z.number().int() }), output: ok, invalidates: PRS },
   /** "I'll do it": its current feedback leaves the Inbox until new feedback arrives. */
   handle: { input: z.object({ key, on: z.boolean() }), output: prOut, invalidates: PRS },
   /** Runs in the PR's review thread, brought back from the archive when Shuttle archived it, or in a new one. */

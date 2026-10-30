@@ -3,15 +3,16 @@ import { adapterFor, type Adapter } from "./adapters";
 import { runProcess, sleep, type Runner } from "./adapters/exec";
 import { configChanges, configFromToml, configToToml, ConfigError, parseConfig, serverSchema, type Config, type ServerConfig, type WatchMode } from "./config";
 import type {
-  AgentMode, AgentTarget, Area, BoardDetail, BoardSummary, ConversationItem, EventView, InboxView, InsightsView, LinkRole, MergeMethod, MergeOptions, Outcome, Overview, LinkCard, PostFinding, PrChange, PrDetails,
+  AgentMode, AgentTarget, Area, BoardDetail, BoardSummary, ConversationItem, EventView, InboxRule, InboxRuleKind, InboxView, InsightsView, LinkRole, MergeMethod, MergeOptions, Outcome, Overview, LinkCard, PostFinding, PrChange, PrDetails,
   PrView, ReviewDraft, ReviewInput, ServerStatus, SyncHistory, SyncRun, SyncStep, SyncStepName, TestResult, ThreadOption, Verdict,
 } from "./contract";
 import { askAgent, runAutoAgent, setAgent, setAgentMode, type AgentChange } from "./agents";
 import { board as readBoard, boardAdd, boardCreate, boardRemove, boards as listBoards, boardUpdate } from "./boards";
 import { cancelAutoMerge, comment, Conversations, merge, mergeOptions, recordOutcomes, reply, resolve } from "./conversation";
 import { draftView, saveDraft, setDraftState, submitReview, type DraftInput } from "./drafts";
+import { addRule, dismiss, inbox as readInbox, markSeen, removeRule, snooze } from "./inbox";
 import { insights, INSIGHTS_SINCE, snapshotCounts } from "./insights";
-import { agentActive, feedbackSignature, phaseOf } from "./next";
+import { feedbackSignature, phaseOf } from "./next";
 import { errText, ShuttleError, type Ctx } from "./ctx";
 import type { EventRow, ServerRow, Store, SyncRunRow } from "./db/store";
 import { THREAD_SCAN, type BbPort, type ProjectInfo } from "./ports";
@@ -276,24 +277,7 @@ export class Shuttle implements Ctx {
   }
 
   inbox(): InboxView {
-    const views = allViews(this);
-    const open = views.filter((v) => v.mine && (v.state === "open" || v.state === "draft"));
-    const active = open.filter((v) => agentActive(v.agent));
-    const days = this.settings().inboxRequestDays;
-    const olderRequests = views.filter(
-      (v) => v.next.kind === "not_reviewed" && !v.bot && !v.quiet && v.reasons.some((r) => r.reason === "requested" || r.reason === "mentioned") && (v.requestedAt === null || this.now() - v.requestedAt >= days * 86_400_000),
-    ).length;
-    const handled = this.store
-      .events({ kinds: ["forwarded", "review_done", "auto_agent", "outcome", "draft", "auto_failed", "forward_failed"], limit: 20 })
-      .filter((e) => e.at >= this.now() - 86_400_000)
-      .slice(0, 8)
-      .map(toEventView);
-    return {
-      prs: inboxOf(views),
-      agents: { open: open.length, withAgent: active.length, working: active.filter((v) => v.agent?.status === "working").length, waiting: active.filter((v) => v.agent?.status === "waiting").length, none: open.length - active.length },
-      olderRequests,
-      handled,
-    };
+    return readInbox(this);
   }
 
   insights(range: InsightsView["range"]): InsightsView {
@@ -398,20 +382,24 @@ export class Shuttle implements Ctx {
     return toView(this, this.store.prById(pr.id)!);
   }
 
-  /** "tomorrow" is 9:00 on the next day, in this machine's time zone. */
-  snooze(key: string, until: "tomorrow" | "update" | null): PrView {
-    const pr = requirePr(this, key);
-    if (until === null) {
-      this.store.setSnooze(pr.id, null, null);
-    } else {
-      const morning = new Date(this.now());
-      morning.setDate(morning.getDate() + 1);
-      morning.setHours(9, 0, 0, 0);
-      this.store.setSnooze(pr.id, this.now(), until === "tomorrow" ? morning.getTime() : null);
-      this.store.addEvent("snoozed", until === "tomorrow" ? `Snoozed ${shortKey(this, pr)} until tomorrow.` : `${shortKey(this, pr)} left the Inbox until it changes.`, pr.id);
-    }
-    this.port.publish();
-    return toView(this, this.store.prById(pr.id)!);
+  snooze(keys: readonly string[], until: number | "update" | null): PrView[] {
+    return snooze(this, keys, until);
+  }
+
+  dismiss(keys: readonly string[], on: boolean): PrView[] {
+    return dismiss(this, keys, on);
+  }
+
+  markSeen(keys: readonly string[]): void {
+    markSeen(this, keys);
+  }
+
+  inboxRuleAdd(input: { kind: InboxRuleKind; server: string; value: string }): { rule: InboxRule; created: boolean } {
+    return addRule(this, input);
+  }
+
+  inboxRuleRemove(id: number): void {
+    removeRule(this, id);
   }
 
   handle(key: string, on: boolean): PrView {

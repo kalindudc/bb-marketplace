@@ -1,8 +1,11 @@
 export const SOURCES = ["all", "asked", "team", "mentioned", "tracked"] as const;
 export type Source = (typeof SOURCES)[number];
+/** The Inbox's own tab has no name in the route; Snoozed and Dismissed ride on it as "inbox~snoozed". */
+export const INBOX_TABS = ["snoozed", "dismissed"] as const;
+export type InboxTab = (typeof INBOX_TABS)[number];
 
 export type Route =
-  | { view: "inbox"; key: string | null }
+  | { view: "inbox"; tab?: InboxTab; key: string | null }
   | { view: "mine"; key: string | null }
   | { view: "done"; key: string | null }
   | { view: "reviews"; source: Source; key: string | null }
@@ -46,6 +49,7 @@ const OLD_SECTIONS: Record<string, (key: string | null) => Route> = {
  * The page's subPath: "inbox", "mine", "done" and "reviews" are their lists, each followed by a
  * selected PR's key as path segments, "insights", "insights/log" and "insights/sync", "pr/<key>" one looked-up PR, and
  * "search/<words>" the search results, the words percent-encoded as one segment, then a selected key.
+ * The Inbox's Snoozed and Dismissed tabs are "inbox~snoozed" and "inbox~dismissed", the same way.
  * A Reviews source other than Everything rides on the area as "reviews~team": server ids are lowercase
  * words, so a "~" can never be mistaken for one. A key travels as plain segments: bb encodes the
  * subPath again, so a percent-encoded key would come back still encoded. "" also parses as the Inbox, but the
@@ -55,6 +59,11 @@ export function parseRoute(subPath: string): Route {
   const [first = "", ...rest] = subPath.replace(/^\/+|\/+$/gu, "").split("/");
   const key = rest.length === 0 ? null : keyFromSegments(rest);
   if (first === "" || first === "inbox") return { view: "inbox", key };
+  const inbox = /^inbox~([a-z]+)$/u.exec(first);
+  if (inbox) {
+    const tab = INBOX_TABS.find((item) => item === inbox[1]);
+    return tab === undefined ? { view: "inbox", key } : { view: "inbox", tab, key };
+  }
   if (first === "mine" || first === "done") return { view: first, key };
   if (first === "boards") return { view: "boards", tab: rest[0] === "archived" ? "archived" : "active" };
   if (first === "board") return rest.length === 0 ? { view: "boards", tab: "active" } : { view: "board", id: decoded(rest[0]!), key: rest.length > 1 ? keyFromSegments(rest.slice(1)) : null };
@@ -83,7 +92,10 @@ export function formatRoute(route: Route): string {
     case "boards": return route.tab === "active" ? "boards" : "boards/archived";
     case "board": return route.key === null ? `board/${encodeURIComponent(route.id)}` : `board/${encodeURIComponent(route.id)}/${keySegments(route.key)}`;
     case "insights": return route.tab === "overview" ? "insights" : `insights/${route.tab}`;
-    case "inbox": return route.key === null ? "inbox" : `inbox/${keySegments(route.key)}`;
+    case "inbox": {
+      const area = route.tab === undefined ? "inbox" : `inbox~${route.tab}`;
+      return route.key === null ? area : `${area}/${keySegments(route.key)}`;
+    }
     case "mine":
     case "done": return route.key === null ? route.view : `${route.view}/${keySegments(route.key)}`;
     case "reviews": {

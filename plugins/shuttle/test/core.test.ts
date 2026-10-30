@@ -40,6 +40,7 @@ const facts = (patch: Partial<NextFacts>): NextFacts => ({
   handled: false,
   autoMerge: false,
   snoozed: false,
+  keptOut: false,
   can: { merge: true, comment: true, ready: true, reopen: true, cancelAutoMerge: false, approve: true },
   reasons: [],
   teams: [],
@@ -264,17 +265,17 @@ describe("threads to link", () => {
 });
 
 describe("the Inbox", () => {
-  it("snoozes until 9:00 tomorrow, or until the PR changes", async () => {
+  it("snoozes until a time, or sooner when the PR changes", async () => {
     const h = harness();
     h.lists.authored = [pr(1, { author: "me", review: "approved" })];
     await h.shuttle.sync();
     expect(h.shuttle.inbox().prs.map((p) => p.next.kind)).toEqual(["ready_to_merge"]);
-    h.shuttle.snooze(KEY(1), "tomorrow");
+    h.shuttle.snooze([KEY(1)], h.clock.now + DAY);
     expect(h.shuttle.inbox().prs).toEqual([]);
     expect(h.shuttle.view(KEY(1)).snoozedUntil).toBeGreaterThan(h.clock.now);
     h.clock.now += 2 * DAY;
     expect(h.shuttle.inbox().prs).toHaveLength(1);
-    h.shuttle.snooze(KEY(1), "tomorrow");
+    h.shuttle.snooze([KEY(1)], h.clock.now + DAY);
     h.clock.now += HOUR;
     h.lists.authored = [pr(1, { author: "me", review: "approved", updated_at: new Date(h.clock.now).toISOString() })];
     await h.shuttle.sync();
@@ -286,8 +287,8 @@ describe("the Inbox", () => {
     h.lists.authored = [pr(1, { author: "me", checks: "failed" })];
     await h.shuttle.sync();
     expect(h.shuttle.inbox().prs.map((p) => p.next.kind)).toEqual(["nobody"]);
-    const view = h.shuttle.snooze(KEY(1), "tomorrow");
-    expect(view.next).toMatchObject({ kind: "nobody", inbox: false });
+    const [view] = h.shuttle.snooze([KEY(1)], h.clock.now + DAY);
+    expect(view!.next).toMatchObject({ kind: "nobody", inbox: false });
     expect(h.shuttle.inbox().prs).toEqual([]);
   });
 

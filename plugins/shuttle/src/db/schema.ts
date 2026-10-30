@@ -221,4 +221,18 @@ export const MIGRATIONS: string[] = [
     thread_id TEXT
   )`,
   `CREATE INDEX board_activity_board ON board_activity (board_id, id)`,
+  // The Inbox rework: dismissed_at was always a snooze's start, and a dismissal from the Inbox is its own column.
+  `ALTER TABLE prs RENAME COLUMN dismissed_at TO snoozed_at`,
+  `ALTER TABLE prs ADD COLUMN inbox_dismissed_at INTEGER`,
+  `ALTER TABLE prs ADD COLUMN seen_at INTEGER`,
+  // PRs stored before seen state existed count as seen, so the upgrade does not mark them all new.
+  `UPDATE prs SET seen_at = COALESCE(updated_at, fetched_at)`,
+  `CREATE TABLE inbox_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL CHECK (kind IN ('author', 'repo', 'mention')),
+    server TEXT NOT NULL,
+    value TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    UNIQUE (kind, server, value)
+  )`,
 ];

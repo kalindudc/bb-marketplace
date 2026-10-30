@@ -37,6 +37,22 @@ export const reviewFilter = createStored<ReviewFilter>("review-filter", DEFAULT_
   isRecord(value) && typeof value.team === "string" && typeof value.hideBots === "boolean" && typeof value.hideQuiet === "boolean"
     ? { team: value.team, hideBots: value.hideBots, hideQuiet: value.hideQuiet }
     : null);
+export const INBOX_GROUPINGS = ["kind", "repo", "none"] as const;
+export type InboxGrouping = (typeof INBOX_GROUPINGS)[number];
+export const INBOX_SORTS = ["priority", "newest", "oldest", "small"] as const;
+export type InboxSort = (typeof INBOX_SORTS)[number];
+export interface InboxViewPrefs {
+  group: InboxGrouping;
+  sort: InboxSort;
+}
+/** How the Inbox is grouped and sorted. */
+export const inboxView = createStored<InboxViewPrefs>("inbox-view", { group: "kind", sort: "priority" }, (value) => {
+  if (!isRecord(value)) return null;
+  return { group: oneOf(INBOX_GROUPINGS)(value.group) ?? "kind", sort: oneOf(INBOX_SORTS)(value.sort) ?? "priority" };
+});
+/** The phone's "Swipe a row left to dismiss it" hint, until it is closed. */
+export const inboxSwipeHint = createStored<boolean>("inbox-swipe-hint", true, (value) => (typeof value === "boolean" ? value : null));
+
 export type ConversationOrder = "newest" | "oldest";
 /** Which end of a PR's conversation comes first. */
 export const conversationOrder = createStored<ConversationOrder>("conversation-order", "newest", oneOf<ConversationOrder>(["newest", "oldest"]));
@@ -127,5 +143,5 @@ export function useFolding(area: string): Folding {
 
 /** Tests clear localStorage between cases; this reads every remembered value again. */
 export function reloadPrefs(): void {
-  for (const stored of [lastRoute, mineLayout, mineSort, doneSort, boardViews, reviewFilter, folds, scrolls, panelPrs, conversationOrder, hideBotComments, prSeen]) stored.reload();
+  for (const stored of [lastRoute, mineLayout, mineSort, doneSort, boardViews, reviewFilter, folds, scrolls, panelPrs, conversationOrder, hideBotComments, prSeen, inboxView, inboxSwipeHint]) stored.reload();
 }

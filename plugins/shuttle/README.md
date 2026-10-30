@@ -5,6 +5,27 @@ Every pull request that needs you, from any server, in one place. See
 [skills/shuttle/references/servers.md](skills/shuttle/references/servers.md) for the command
 adapter contract and a working Delta adapter.
 
+## Inbox
+
+The Inbox lists what waits on you, one row per PR under what to do with it: Needs you, Ready to
+merge, AI reviews to post, Updated since your review and New review requests. A row's second line
+says only what its heading, avatar and time do not. Search, group by what to do or by repository,
+and sort; the choice is kept on this device. Pointing at a row, or moving to it with J and K,
+shows its next step, Snooze, Dismiss and ⋯; each says what it does, and its key, in a tooltip. A
+row's ⋯ menu holds Snooze and Dismiss too (the only menu on a phone, besides swiping), then its rules.
+
+- **Snooze** hides a PR until later today, tomorrow, next week or until it changes; anything new
+  brings it back sooner. The Snoozed tab lists them with when each comes back.
+- **Dismiss** keeps a PR out of the Inbox for good, even when it changes. The Dismissed tab lists
+  them, marks those with new activity and restores one.
+- **Rules** from a row's ⋯ menu keep out every PR by an author, every PR from a repo, or mentions
+  in a repo when you are not asked to review. They are per server and listed under Dismissed.
+- **New since you opened it:** Shuttle stores when you last opened each PR, so the dot and bold
+  title follow you across devices. Opening the PR clears them; Mark all as seen clears every one.
+
+Several rows can be snoozed or dismissed at once. Snoozes, dismissals and rules have Undo, and a
+phone swipes a row left to dismiss it or right to snooze it.
+
 ## PR view
 
 A PR's view reads top to bottom the way a person asks about it:
@@ -23,7 +44,8 @@ A PR's view reads top to bottom the way a person asks about it:
 
 Beside a list, the view's expand button opens it as a full page, which puts people and facts in a
 column of their own on a wide window; a PR's own link opens there too. The ⋯ menu holds copying,
-tracking, snoozing, linking a thread, starting an AI review and your PR's draft, close and reopen.
+tracking, snoozing, dismissing from the Inbox, linking a thread, starting an AI review and your
+PR's draft, close and reopen.
 
 Shuttle restores each PR's tab, scroll position and folds when its view is recreated, in the page
 and the thread tab. Unfinished comments and replies, open reply boxes, and edits to an AI review
@@ -93,7 +115,8 @@ src/boards.ts          saved PR sets, board activity, archive guards and members
 src/adapters/          the built-in GitHub adapter (gh) and the command adapter
 src/sync.ts            one server sync, step by step with bounded retries, and the auto reviews it calls for
 src/failures.ts        why a sync step failed, in plain words, for the UI, the CLI and the Automation log
-src/next.ts            the next-step rule every PR's Inbox card, row and banner show
+src/next.ts            the next-step rule every PR's Inbox row, list row and banner show, and Inbox rules
+src/inbox.ts           the Inbox's read, snoozes, dismissals, seen marks and rules
 src/views.ts           PR rows as the UI sees them, and which area each belongs in
 src/agents.ts          a PR's agent thread, its mode, and auto agent
 src/watch.ts           new activity on PRs with an agent: batches, messages, item refs

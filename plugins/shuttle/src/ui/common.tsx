@@ -1,5 +1,6 @@
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useId, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import * as Tooltip from "@radix-ui/react-tooltip";
 import { experimental_Icon as Icon, experimental_usePluginId } from "@get-bb/plugin-sdk/app";
 import { initials } from "./format";
 import { useViewport } from "./viewport";
@@ -73,14 +74,6 @@ export const TONE_TEXT: Record<NextTone, string> = {
   warn: "text-warning-text",
   info: "text-foreground",
   neutral: "text-muted-foreground",
-};
-/** A card's coloured left edge. */
-export const TONE_EDGE: Record<NextTone, string> = {
-  ok: "border-l-success",
-  bad: "border-l-destructive",
-  warn: "border-l-warning",
-  info: "border-l-foreground",
-  neutral: "border-l-muted-foreground",
 };
 /** A banner's tinted border and background. */
 export const TONE_PANEL: Record<NextTone, string> = {
@@ -216,7 +209,7 @@ export function Dialog({ title, subtitle, leading, onClose, footer, children, wi
 export function Segmented<T extends string>({ label, value, options, onChange, disabled = false }: {
   label: string;
   value: T;
-  options: readonly { value: NoInfer<T>; label: string; icon?: string; disabled?: boolean }[];
+  options: readonly { value: NoInfer<T>; label: ReactNode; icon?: string; disabled?: boolean; tip?: string }[];
   onChange(next: NoInfer<T>): void;
   disabled?: boolean;
 }) {
@@ -224,16 +217,66 @@ export function Segmented<T extends string>({ label, value, options, onChange, d
     <div role="radiogroup" aria-label={label} className="flex gap-0.5 rounded-lg border border-border bg-background p-0.5">
       {options.map((option) => {
         const on = option.value === value;
-        return (
+        const button = (
           <button key={option.value} type="button" role="radio" aria-checked={on} disabled={disabled || option.disabled} onClick={() => !on && onChange(option.value)}
             className={`inline-flex flex-1 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2 py-1 text-xs disabled:cursor-default disabled:opacity-50 ${on ? "bg-state-active font-medium text-foreground" : "text-muted-foreground hover:bg-state-hover hover:text-foreground"}`}>
             {option.icon && <Icon name={option.icon} fallback="Circle" className="size-3.5" aria-hidden />}
             {option.label}
           </button>
         );
+        return option.tip === undefined ? button : <Tip key={option.value} text={option.tip} side="bottom">{button}</Tip>;
       })}
     </div>
   );
+}
+
+const TipScope = createContext(false);
+
+/**
+ * Escape presses an open tooltip took. Radix prevents their default, and by the time a page's own key handler runs the tooltip
+ * is already gone from the page, so this is how the page can tell that Escape only closed a tooltip.
+ */
+export const escapedByTip = new WeakSet<Event>();
+
+/**
+ * One provider for a surface's tooltips, so moving from one button to the next shows its tooltip at once. A tooltip has
+ * nothing to click, so it closes as the pointer leaves its button rather than waiting for it to reach the tooltip.
+ */
+export function TipProvider({ children }: { children: ReactNode }) {
+  return (
+    <Tooltip.Provider delayDuration={350} skipDelayDuration={300} disableHoverableContent>
+      <TipScope.Provider value>{children}</TipScope.Provider>
+    </Tooltip.Provider>
+  );
+}
+
+/**
+ * What a control does, shown after a short rest of the pointer or on keyboard focus, in bb's colours, with its key when it has one.
+ * Focus that follows a click, such as a menu closed by a click handing focus back, is neither, so it shows nothing; touch never shows one.
+ */
+export function Tip({ text, keys, side = "top", children }: { text: string; keys?: string; side?: "top" | "bottom" | "left" | "right"; children: ReactElement }) {
+  const scope = usePortalScope();
+  const shared = useContext(TipScope);
+  // The trigger may be a button or a checkbox; Radix types its ref as a button's.
+  const trigger = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  const onOpenChange = (next: boolean) => {
+    const node = trigger.current;
+    setOpen(next && node !== null && (node.matches(":hover") || node.matches(":focus-visible")));
+  };
+  const root = (
+      <Tooltip.Root open={open} onOpenChange={onOpenChange}>
+        <Tooltip.Trigger asChild ref={trigger}>{children}</Tooltip.Trigger>
+        <Tooltip.Portal>
+          <Tooltip.Content {...scope} data-tip side={side} sideOffset={6} collisionPadding={8} onEscapeKeyDown={(event) => escapedByTip.add(event)}
+            className="z-[60] flex max-w-72 items-center gap-2 rounded-md border border-border bg-popover px-2 py-1 text-xs leading-snug text-popover-foreground shadow-md">
+            <span>{text}</span>
+            {keys !== undefined && <kbd className="shrink-0 rounded border border-b-2 border-border bg-background px-1 font-mono text-[10.5px] leading-[15px] text-muted-foreground">{keys}</kbd>}
+          </Tooltip.Content>
+        </Tooltip.Portal>
+      </Tooltip.Root>
+  );
+  return shared ? root : <Tooltip.Provider delayDuration={350} disableHoverableContent>{root}</Tooltip.Provider>;
 }
 
 /** A choice in a dialog's list of choices. */
@@ -278,8 +321,6 @@ export function PageHeading({ title, description, children }: { title: string; d
 /** An area's page, at most 900px wide. */
 /** A page fills the area beside bb's sidebar; its sections choose their columns from its width (a container), not the window's. */
 export const PAGE = "@container w-full px-4 pb-10 pt-4 sm:px-5";
-/** Card columns: one in a narrow area, two from 64rem, three from 110rem. */
-export const CARD_GRID = "grid items-stretch gap-2.5 @5xl:grid-cols-2 @[110rem]:grid-cols-3";
 
 const CONTROLS = "button, a, input, textarea, select, label, [role=menuitem], [role=option]";
 
@@ -296,12 +337,10 @@ export function onCardClick(open: () => void) {
 export const STRIP = "my-1.5 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs";
 
 /**
- * The PR open in the panel. Cards and rows share one tint and a ring in the primary colour, so the open
- * PR stands out on every page and never looks like a hovered one, which only gets the accent colour.
+ * The PR open in the panel: a tint and an edge in the primary colour, so the open PR stands out on every page
+ * and never looks like a hovered one, which only gets the accent colour.
  */
-const SELECTED_TINT = "bg-surface-selected";
-export const SELECTED_CARD = `${SELECTED_TINT} shadow-[0_0_0_2px_var(--surface-selected-border)]`;
-export const SELECTED_ROW = `${SELECTED_TINT} shadow-[inset_3px_0_0_var(--primary),inset_0_0_0_1px_var(--surface-selected-border)]`;
+export const SELECTED_ROW = "bg-surface-selected shadow-[inset_3px_0_0_var(--primary),inset_0_0_0_1px_var(--surface-selected-border)]";
 
 /** A titled part of a PR view's tab, such as People or Open threads, in sentence case. */
 export function PaneSection({ title, label = title, count, aside, className = "mb-6", children }: {

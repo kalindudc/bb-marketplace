@@ -108,7 +108,7 @@ export async function startReview(ctx: Ctx, input: ReviewInput, trigger: "auto" 
   // A new review makes the last one's unposted draft out of date.
   const stale = ctx.store.liveDraft(pr.id);
   if (stale) ctx.store.setDraftState(stale.id, "discarded");
-  ctx.store.setDismissed(pr.id, null);
+  ctx.store.setSnooze(pr.id, null, null);
   const why = trigger === "auto" ? "Auto review" : "Review";
   const back = revived ? ", brought back from the archive" : "";
   ctx.store.addEvent("review", `${why} of ${shortKey(ctx, pr)} started with ${preset.name}${skill ? ` (${skill})` : ""} in \u201c${ctx.store.threadTitle(threadId)}\u201d${back}.`, pr.id, threadId);

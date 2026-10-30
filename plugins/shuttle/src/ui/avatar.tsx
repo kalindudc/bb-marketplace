@@ -10,6 +10,9 @@ function slotOf(login: string): number {
   return SLOTS[hash % SLOTS.length]!;
 }
 
+/** The theme colour a name such as a repo always gets, the same as an avatar's. */
+export const swatchOf = (name: string) => `var(--ansi-${slotOf(name)})`;
+
 /** A person's initial in their colour; a team is square, a bot is a robot. */
 export function Avatar({ login, team = false, bot = false, size = 22 }: { login: string; team?: boolean; bot?: boolean; size?: number }) {
   const box = { width: size, height: size };
