@@ -2,6 +2,24 @@
 
 Notable changes to Better Browser, newest first. Releases are tagged `better-browser/vX.Y.Z` in this repository.
 
+## 0.2.5 (2026-10-29)
+
+### Security
+
+- Cmd/Ctrl-click now opens the real browser only for a real user gesture. A page that dispatched its own click with the modifier set could previously open an arbitrary http(s) URL in the browser where you are signed in.
+- The automatic sign-in handoff opens the sign-in page the tab is showing, not an address the page had planted before redirecting there. After sign-in the bb tab still reloads to the application on its own.
+
+### Fixed
+
+- A read that could not decrypt every cookie no longer removes the ones it could not see, and no longer forgets their remembered hashes, so a temporary keyring failure cannot sign you out or strand a stale session in bb.
+- A failed cookie write keeps the change pending for the next sync instead of dropping it, and a stale bb window is rediscovered rather than reused.
+- A Browser tab that goes away stops counting as focused at once, so background syncs cannot lease a tab you are not looking at.
+- Choosing a browser that is not installed is reported, naming it, instead of quietly syncing the system default instead.
+- Firefox and Zen links open in the synced profile, including a profile moved to an absolute path, without forcing a second instance against a profile that is already open.
+- Firefox cookie expiry is read correctly whether the profile stores seconds or milliseconds.
+- The Linux key probe samples only ciphertexts a key can open, so unsupported portal-encrypted rows no longer make readable cookies look undecryptable.
+- The cookie watch follows a changed last-used profile instead of keeping the previous profile's database watched.
+
 ## 0.2.4 (2026-10-29)
 
 ### Fixed
