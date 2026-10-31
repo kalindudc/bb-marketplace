@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { browserInfo, errorCode } from "./contract";
+import { browserInfo, errorCode, mirrorHosts } from "./contract";
 import { defineContract } from "./define-contract";
 
 const issue = z.object({ code: errorCode, message: z.string(), at: z.number() }).strict();
@@ -51,6 +51,8 @@ const episode = z.object({
     z.object({ kind: z.literal("stalled") }).strict(),
   ]),
   opened: z.boolean(),
+  consented: z.boolean(),
+  arrived: z.boolean(),
   formVisible: z.boolean().nullable(),
   absentSince: z.number().nullable(),
 }).strict();
@@ -72,11 +74,16 @@ export const rpcContract = defineContract({
   },
   heartbeat: { input: z.object({ ...tab, focused: z.boolean().default(true) }).strict(), output: status },
   handoff: {
-    input: z.object({ ...tab, mode: z.enum(["automatic", "ask", "off"]), event: signInEvent, targetUrl: webUrl.nullable() }).strict(),
+    input: z.object({
+      ...tab, mode: z.enum(["automatic", "ask", "off"]), event: signInEvent, targetUrl: webUrl.nullable(), gateway: z.boolean().optional(),
+      consentUrl: webUrl.optional(),
+    }).strict(),
     output: z.object({
       episode,
       effects: z.array(z.object({ kind: z.enum(["sync", "reload", "open"]) }).strict()).max(3),
       targetUrl: webUrl.nullable(),
+      gateway: z.boolean(),
+      consentUrl: webUrl.nullable(),
     }).strict(),
   },
   sync: {
@@ -84,6 +91,8 @@ export const rpcContract = defineContract({
       threadId: tab.threadId.optional(),
       mode: z.enum(["changes", "full"]),
       reason: z.enum(["manual", "sign-in", "tab"]),
+      /** Sites whose cookies bb should hold only as the real browser holds them, during an access gateway's handoff. */
+      mirrorHosts: mirrorHosts.optional(),
     }).strict(),
     output: status,
   },

@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { createFakePluginHost, makeHostResponse } from "@get-bb/plugin-sdk/testing";
 import betterBrowser from "../server";
 import { BROWSERS } from "../src/browsers";
+import { DISTRIBUTION_DEFAULTS } from "../src/distribution";
+import { readSettings } from "../src/ui/common";
 
 function setup(settings: Record<string, string | boolean> = {}) {
   const { bb, harness } = createFakePluginHost({
@@ -33,7 +35,7 @@ describe("settings form", () => {
     const harness = setup();
     try {
       const fields = harness.inspection.registrations.settingsDescriptors;
-      expect(Object.keys(fields)).toEqual(["browser", "sync", "signIn", "modifierClick", "profile", "signInPages"]);
+      expect(Object.keys(fields)).toEqual(["browser", "sync", "signIn", "modifierClick", "profile", "signInPages", "gatewayPages"]);
       expect(fields.browser).toMatchObject({
         type: "select", default: "system", label: "Browser",
         options: ["system", ...BROWSERS.map((browser) => browser.id)],
@@ -41,7 +43,7 @@ describe("settings form", () => {
       });
       expect(fields.profile.label).toBe("Profile override (optional)");
       expect(Object.fromEntries(Object.entries(fields).map(([key, field]) => [key, field.default]))).toEqual({
-        browser: "system", profile: "", sync: true, signIn: "automatic", signInPages: "", modifierClick: true,
+        browser: "system", profile: "", sync: true, signIn: "automatic", signInPages: "", gatewayPages: DISTRIBUTION_DEFAULTS.gatewayPages, modifierClick: true,
       });
     } finally {
       await harness.lifecycle.dispose();
@@ -69,6 +71,23 @@ describe("settings form", () => {
     } finally {
       await harness.lifecycle.dispose();
     }
+  });
+
+  it("accepts access gateway patterns and refuses lines that are not a host", async () => {
+    const harness = setup();
+    try {
+      await harness.behavior.setSettings({ gatewayPages: "gateway.example.com/auth\n# a comment\n*.iap.example.test" });
+      await expect(harness.behavior.setSettings({ gatewayPages: "not a host!" })).rejects.toThrow();
+      // A marketplace's own default has to pass the same check, or the setting could never be saved unchanged.
+      await harness.behavior.setSettings({ gatewayPages: DISTRIBUTION_DEFAULTS.gatewayPages });
+    } finally {
+      await harness.lifecycle.dispose();
+    }
+  });
+
+  it("falls back to the distribution's gateway pages while the app has no setting values", () => {
+    expect(readSettings(undefined).gatewayPages).toBe(DISTRIBUTION_DEFAULTS.gatewayPages);
+    expect(readSettings({ gatewayPages: "gateway.example.com/auth" }).gatewayPages).toBe("gateway.example.com/auth");
   });
 
   it("rejects unknown browser IDs instead of treating them as commands", async () => {

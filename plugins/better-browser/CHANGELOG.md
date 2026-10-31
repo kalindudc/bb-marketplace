@@ -2,6 +2,20 @@
 
 Notable changes to Better Browser, newest first. Releases are tagged `better-browser/vX.Y.Z` in this repository.
 
+## 0.3.0 (2026-10-30)
+
+### Added
+
+- Access gateways. Some identity-aware proxies in front of internal apps check the browser or device itself, such as its version, whether it is managed or a device certificate, and turn bb's Browser away with a page that has no sign-in form, so the handoff never started. List those pages in the new `gatewayPages` setting. When a tab stops on one, the plugin copies your browser's cookies for the app the gateway returns to (named in its `rd`, `redirect_url`, `return_to`, `returnTo` or `return_url` parameter) and retries the app. If the gateway still turns bb away, a Continue button opens the app in your browser, and the bb tab returns to it once the new session arrives. The tab also follows when your browser signs in to the app some other way, and a gateway page that names no app to return to is left alone.
+
+### Fixed
+
+- During an access gateway's handoff, bb's cookies for the app now match your browser's exactly: a cookie bb holds there that your browser does not, such as a pending request id left by bb's own failed attempt, is removed. Without this, some gateways ignored the session copied from your browser and sent the tab back to the gateway.
+
+### Security
+
+- An access gateway's handoff opens your browser only after you press Continue, and only for the app the button named, even if the tab moves to another gateway before it opens, because the app's address comes from the page in the tab. It opens the app itself, not the gateway URL, because a gateway URL can carry bb's pending request, and letting another browser complete that request is what gateways treat as a stolen sign-in.
+
 ## 0.2.6 (2026-10-29)
 
 ### Fixed

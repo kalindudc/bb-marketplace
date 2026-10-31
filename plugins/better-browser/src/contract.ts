@@ -26,6 +26,9 @@ export type BrowserInfo = z.infer<typeof browserInfo>;
 
 const source = z.object({ browserId: id, profile: profile.optional() }).strict();
 
+/** Hostnames, lower case and without a leading dot or port. */
+export const mirrorHosts = z.array(z.string().min(1).max(253).regex(/^[a-z0-9.-]+$/)).min(1).max(10);
+
 const readCounts = {
   /** The profile directory that was read, after resolving the default. */
   profile,
@@ -48,7 +51,7 @@ export const hostContract = defineContract({
     output: z.union([z.object({ ok: z.literal(true), changed: z.boolean(), ...readCounts }).strict(), failure]),
   },
   apply: {
-    input: source.extend({ wsEndpoint: z.string().min(1).max(4096), mode: z.enum(["changes", "full"]) }).strict(),
+    input: source.extend({ wsEndpoint: z.string().min(1).max(4096), mode: z.enum(["changes", "full"]), mirrorHosts: mirrorHosts.optional() }).strict(),
     output: z.union([
       z.object({
         ok: z.literal(true), set: z.number().int(), removed: z.number().int(), rejected: z.number().int(),

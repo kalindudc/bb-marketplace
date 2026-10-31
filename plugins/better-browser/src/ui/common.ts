@@ -1,3 +1,4 @@
+import { DISTRIBUTION_DEFAULTS } from "../distribution";
 import type { Status, SyncSummary } from "../rpc";
 import type { SignInMode } from "../signin";
 
@@ -11,6 +12,7 @@ export const BUTTON =
 export interface UiSettings {
   signIn: SignInMode;
   signInPages: string;
+  gatewayPages: string;
   modifierClick: boolean;
   sync: boolean;
 }
@@ -21,6 +23,7 @@ export function readSettings(values: Record<string, unknown> | undefined): UiSet
   return {
     signIn: signIn === "ask" || signIn === "off" ? signIn : "automatic",
     signInPages: typeof values?.signInPages === "string" ? values.signInPages : "",
+    gatewayPages: typeof values?.gatewayPages === "string" ? values.gatewayPages : DISTRIBUTION_DEFAULTS.gatewayPages,
     modifierClick: values?.modifierClick !== false,
     sync: values?.sync !== false,
   };

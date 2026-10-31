@@ -1,6 +1,9 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { HOST_LIST_LIMIT, IDLE, SETTLE_MS, WAIT_LIMIT_MS, concernsPages, isSignInPage, parsePattern, signInPatterns, step, type Effect, type Episode, type SignInEvent, type SignInMode } from "../src/signin";
+import {
+  HOST_LIST_LIMIT, IDLE, SETTLE_MS, WAIT_LIMIT_MS, concernsPages, gatewayReturnUrl, isSignInPage, pagePatterns, parsePattern, signInPatterns, step,
+  type Effect, type Episode, type SignInEvent, type SignInMode,
+} from "../src/signin";
 
 describe("sign-in pages", () => {
   const patterns = signInPatterns("intranet.example.com/login\n# a comment\n*.corp.test");
@@ -36,6 +39,25 @@ describe("sign-in pages", () => {
   });
 });
 
+describe("gatewayReturnUrl", () => {
+  const avoid = [...signInPatterns(""), ...pagePatterns("gateway.example.test/auth")];
+
+  it("reads the page a gateway returns to from its return parameter", () => {
+    expect(gatewayReturnUrl("https://gateway.example.test/auth?request=abc&rd=https://app.example.test%2F", avoid)).toBe("https://app.example.test/");
+    expect(gatewayReturnUrl("https://gateway.example.test/auth?return_to=https%3A%2F%2Fapp.example.test%2Forders%3Fid%3D1", avoid)).toBe("https://app.example.test/orders?id=1");
+  });
+
+  it("skips a relative, non-web, credentialed or sign-in return address", () => {
+    expect(gatewayReturnUrl("https://gateway.example.test/auth?rd=%2Forders", avoid)).toBeNull();
+    expect(gatewayReturnUrl("https://gateway.example.test/auth?rd=javascript:alert(1)", avoid)).toBeNull();
+    expect(gatewayReturnUrl("https://gateway.example.test/auth?rd=https://user:secret@app.example.test/", avoid)).toBeNull();
+    expect(gatewayReturnUrl("https://gateway.example.test/auth?rd=https://gateway.example.test/auth", avoid)).toBeNull();
+    expect(gatewayReturnUrl("https://gateway.example.test/auth?rd=https://shopify.okta.com/x&return_to=https://app.example.test/", avoid)).toBe("https://app.example.test/");
+    expect(gatewayReturnUrl("https://gateway.example.test/auth?redirect_uri=https://app.example.test/callback", avoid)).toBeNull();
+    expect(gatewayReturnUrl("not a url", avoid)).toBeNull();
+  });
+});
+
 describe("concernsPages", () => {
   it("relates a cookie's site to the page's site, its parents and its subdomains", () => {
     const pages = ["https://shopify.okta.com/oauth2/v1/authorize", "https://admin.example.com/orders"];
@@ -47,11 +69,11 @@ describe("concernsPages", () => {
   });
 });
 
-function run(events: SignInEvent[], mode: SignInMode = "automatic", start: Episode = IDLE) {
+function run(events: SignInEvent[], mode: SignInMode = "automatic", start: Episode = IDLE, gateway = false) {
   let episode = start;
   const effects: Effect["kind"][] = [];
   for (const event of events) {
-    const result = step(episode, event, mode);
+    const result = step(episode, event, mode, gateway);
     episode = result.episode;
     effects.push(...result.effects.map((effect) => effect.kind));
   }
@@ -64,6 +86,7 @@ describe("the handoff", () => {
       { type: "url", onSignInPage: true, now: 0 },
       { type: "tick", now: SETTLE_MS - 1 },
       { type: "url", onSignInPage: false, now: SETTLE_MS },
+      { type: "tick", now: SETTLE_MS * 2 },
     ]);
     expect(episode).toEqual(IDLE);
     expect(effects).toEqual([]);
@@ -75,6 +98,7 @@ describe("the handoff", () => {
       { type: "tick", now: SETTLE_MS },
       { type: "synced", set: 4, now: SETTLE_MS + 100 },
       { type: "url", onSignInPage: false, now: SETTLE_MS + 900 },
+      { type: "tick", now: SETTLE_MS * 2 + 900 },
     ]);
     expect(effects).toEqual(["sync", "reload"]);
     expect(episode).toEqual(IDLE);
@@ -89,6 +113,7 @@ describe("the handoff", () => {
       { type: "tick", now: 40_000 + SETTLE_MS },
       { type: "synced", set: 3, now: 70_000 },
       { type: "url", onSignInPage: false, now: 71_000 },
+      { type: "tick", now: 71_000 + SETTLE_MS },
     ]);
     expect(effects).toEqual(["sync", "open", "reload", "reload"]);
     expect(episode).toEqual(IDLE);
@@ -164,6 +189,62 @@ describe("the handoff", () => {
     ]);
     expect(effects).toEqual(["sync"]);
     expect(episode).toEqual(IDLE);
+  });
+
+  it("refreshes an access gateway's session on its own but opens the real browser only after the button", () => {
+    const offered = run([
+      { type: "url", onSignInPage: true, now: 0 },
+      { type: "tick", now: SETTLE_MS },
+      { type: "synced", set: 0, now: SETTLE_MS + 100 },
+    ], "automatic", IDLE, true);
+    expect(offered.effects).toEqual(["sync"]);
+    expect(offered.episode.phase).toEqual({ kind: "offer" });
+    const started = run([{ type: "start", now: 10_000 }, { type: "synced", set: 0, now: 10_100 }], "automatic", offered.episode, true);
+    expect(started.effects).toEqual(["sync", "open"]);
+    expect(started.episode).toMatchObject({ phase: { kind: "waiting" }, opened: true, consented: true });
+  });
+
+  it("keeps a handoff through the application its own retry passes on the way back", () => {
+    const { episode, effects } = run([
+      { type: "url", onSignInPage: true, now: 0 },
+      { type: "tick", now: SETTLE_MS },
+      { type: "synced", set: 2, now: SETTLE_MS + 100 },
+      { type: "url", onSignInPage: false, now: SETTLE_MS + 200 },
+      { type: "tick", now: SETTLE_MS + 300 },
+      { type: "url", onSignInPage: true, now: SETTLE_MS + 400 },
+      { type: "tick", now: SETTLE_MS * 2 + 300 },
+    ], "automatic", IDLE, true);
+    expect(effects).toEqual(["sync", "reload"]);
+    expect(episode.phase).toEqual({ kind: "offer" });
+  });
+
+  it("follows a session that reaches bb while the gateway's button shows, without Continue", () => {
+    const offered = run([
+      { type: "url", onSignInPage: true, now: 0 },
+      { type: "tick", now: SETTLE_MS },
+      { type: "synced", set: 0, now: SETTLE_MS + 100 },
+    ], "automatic", IDLE, true).episode;
+    const followed = run([{ type: "synced", set: 3, now: 30_000 }, { type: "synced", set: 0, now: 30_100 }], "automatic", offered, true);
+    expect(followed.effects).toEqual(["sync", "reload"]);
+    expect(followed.episode).toMatchObject({ phase: { kind: "checking" }, arrived: false, opened: false });
+    const failed = run([{ type: "synced", set: 3, now: 30_000 }, { type: "syncFailed", now: 30_100 }], "automatic", offered, true);
+    expect(failed.effects).toEqual(["sync", "reload"]);
+    // A sign-in page's offer (ask mode) waits for the button.
+    const asked = run([{ type: "url", onSignInPage: true, now: 0 }, { type: "synced", set: 3, now: 100 }], "ask");
+    expect(asked.effects).toEqual([]);
+    expect(asked.episode.phase).toEqual({ kind: "offer" });
+  });
+
+  it("offers the gateway handoff when the refreshed page still turns the tab away", () => {
+    const { episode, effects } = run([
+      { type: "url", onSignInPage: true, now: 0 },
+      { type: "tick", now: SETTLE_MS },
+      { type: "synced", set: 2, now: SETTLE_MS + 100 },
+      { type: "url", onSignInPage: true, now: SETTLE_MS + 900 },
+      { type: "tick", now: SETTLE_MS * 2 + 100 },
+    ], "automatic", IDLE, true);
+    expect(effects).toEqual(["sync", "reload"]);
+    expect(episode.phase).toEqual({ kind: "offer" });
   });
 
   it("turns a dismissed wait back into an offer", () => {

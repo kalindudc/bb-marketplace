@@ -268,14 +268,17 @@ export default experimental_defineHostEntry({
       }
     },
 
-    async apply({ browserId, profile, wsEndpoint, mode }, context) {
+    async apply({ browserId, profile, wsEndpoint, mode, mirrorHosts }, context) {
       try {
         const source = await resolveSource(browserId, profile);
         const read = await readSource(source, context);
         const previous = await loadMemory(source, context);
         const outcome = await withLeasedPage(wsEndpoint, context.signal, async (page) => {
           const { cookies: jar } = await page.send<{ cookies: JarCookie[] }>("Network.getAllCookies");
-          const plan = planSync({ source: read.cookies, previous, jar, mode, nowSeconds: Date.now() / 1000, allowRemovals: read.undecryptable === 0 });
+          const plan = planSync({
+            source: read.cookies, previous, jar, mode, nowSeconds: Date.now() / 1000, allowRemovals: read.undecryptable === 0,
+            ...(mirrorHosts ? { mirrorHosts } : {}),
+          });
           const written = await writeCookies(page, plan.set);
           let removed = 0;
           for (const cookie of plan.remove) {

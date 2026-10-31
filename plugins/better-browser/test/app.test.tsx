@@ -234,6 +234,118 @@ describe("plugin app", () => {
     }
   });
 
+  it("refreshes an access gateway's site, then opens the page it returns to only after the button", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const openExternal = vi.fn(() => ({ ok: true, browser: "Google Chrome" }));
+    const sync = vi.fn(() => status({ lastSync: { at: Date.now(), status: "synced", set: 0, removed: 0, rejected: 0, cookies: 9, undecryptable: 0, hosts: [], reason: "sign-in" } }));
+    const handlers = rpc({ openExternal, sync });
+    const { page, expressions } = fakePage();
+    const gateway = "https://gateway.example.test/auth?request=abc&rd=https://app.example.test%2Forders";
+    const slot = await toolbar(gateway, page, { handlers, settings: { gatewayPages: "gateway.example.test/auth" } });
+    try {
+      await elapse(SETTLE_MS + 1_500);
+      expect(slot.inspection.rpcCalls.find(({ method }) => method === "sync")?.input).toEqual({
+        threadId: "thr_1", mode: "full", reason: "sign-in", mirrorHosts: ["app.example.test"],
+      });
+      expect(openExternal).not.toHaveBeenCalled();
+      const button = within(slot.container).getByRole("button", { name: /Continue in Google Chrome/ });
+      expect(button.getAttribute("title")).toContain("Open app.example.test in Google Chrome");
+
+      fireEvent.click(button);
+      await elapse(1_000);
+      expect(sync).toHaveBeenCalledTimes(2);
+      // The page the gateway returns to opens, not the gateway URL with its pending request id.
+      expect(openExternal).toHaveBeenCalledExactlyOnceWith({ url: "https://app.example.test/orders" });
+
+      await slot.behavior.emitRealtime("status", status({ lastSync: { at: Date.now() + 1_000, status: "synced", set: 2, removed: 0, rejected: 0, cookies: 9, undecryptable: 0, hosts: ["app.example.test"], reason: "watch" } }));
+      // The session that arrived is copied once more with the app's site mirrored, then the app is retried, even
+      // though that last copy changed nothing.
+      await waitFor(() => expect(expressions).toContain('(location.assign("https://app.example.test/orders"), true)'));
+      expect(sync).toHaveBeenCalledTimes(3);
+      expect(slot.inspection.rpcCalls.filter(({ method }) => method === "sync").at(-1)?.input).toMatchObject({ mirrorHosts: ["app.example.test"] });
+      expect(openExternal).toHaveBeenCalledTimes(1);
+    } finally {
+      slot.lifecycle.unmount();
+    }
+  });
+
+  it("follows a session that reaches bb while the gateway's Continue button shows", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const openExternal = vi.fn(() => ({ ok: true, browser: "Google Chrome" }));
+    const sync = vi.fn(() => status({ lastSync: { at: Date.now(), status: "synced", set: 0, removed: 0, rejected: 0, cookies: 9, undecryptable: 0, hosts: [], reason: "sign-in" } }));
+    const { page, expressions } = fakePage();
+    const slot = await toolbar("https://gateway.example.test/auth?request=abc&rd=https://app.example.test%2F", page, { handlers: rpc({ openExternal, sync }), settings: { gatewayPages: "gateway.example.test/auth" } });
+    try {
+      await elapse(SETTLE_MS + 1_500);
+      await waitFor(() => expect(within(slot.container).getByRole("button", { name: /Continue in Google Chrome/ })).toBeTruthy());
+      await slot.behavior.emitRealtime("status", status({ lastSync: { at: Date.now() + 1_000, status: "synced", set: 3, removed: 0, rejected: 0, cookies: 9, undecryptable: 0, hosts: ["app.example.test"], reason: "watch" } }));
+      await waitFor(() => expect(expressions).toContain('(location.assign("https://app.example.test/"), true)'));
+      expect(sync).toHaveBeenCalledTimes(2);
+      expect(openExternal).not.toHaveBeenCalled();
+    } finally {
+      slot.lifecycle.unmount();
+    }
+  });
+
+  it("opens only the application Continue named, even if the tab moves to another gateway before the open", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const openExternal = vi.fn(() => ({ ok: true, browser: "Google Chrome" }));
+    const idle = () => status({ lastSync: { at: Date.now(), status: "synced", set: 0, removed: 0, rejected: 0, cookies: 9, undecryptable: 0, hosts: [], reason: "sign-in" } });
+    let finish: (() => void) | null = null;
+    const sync = vi.fn()
+      .mockImplementationOnce(idle)
+      .mockImplementationOnce(() => new Promise<Status>((resolve) => { finish = () => resolve(idle()); }));
+    const app = await loadPluginApp(() => import("../app"));
+    const action = app.browserToolbarActions[0]!;
+    const Toolbar = action.component;
+    const props = { threadId: "thr_1", tabId: "tab_1", isCompactViewport: false, experimental_page: fakePage().page };
+    const slot = renderSlot(action, { ...props, url: "https://gateway.example.test/auth?rd=https://app-a.example.test%2F" }, {
+      pluginId: "better-browser", rpc: rpc({ openExternal, sync }),
+      settings: { signIn: "automatic", signInPages: "", gatewayPages: "gateway.example.test/auth", modifierClick: true, sync: true },
+    });
+    try {
+      await elapse(SETTLE_MS + 1_500);
+      fireEvent.click(within(slot.container).getByRole("button", { name: /Continue in Google Chrome/ }));
+      await waitFor(() => expect(sync).toHaveBeenCalledTimes(2));
+      slot.lifecycle.rerender(<Toolbar {...props} url="https://gateway.example.test/auth?rd=https://app-b.example.test%2F" />);
+      await elapse(500);
+      await act(async () => finish?.());
+      await elapse(1_000);
+      expect(openExternal).toHaveBeenCalledExactlyOnceWith({ url: "https://app-a.example.test/" });
+    } finally {
+      slot.lifecycle.unmount();
+    }
+  });
+
+  it("leaves a gateway page alone when it names no application, so the gateway URL never opens", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const openExternal = vi.fn(() => ({ ok: true, browser: "Google Chrome" }));
+    const slot = await toolbar("https://gateway.example.test/auth?request=abc&rd=%2Forders", fakePage().page, { handlers: rpc({ openExternal }), settings: { gatewayPages: "gateway.example.test/auth" } });
+    try {
+      await elapse(SETTLE_MS * 3);
+      expect(slot.inspection.rpcCalls.map(({ method }) => method)).not.toContain("sync");
+      expect(openExternal).not.toHaveBeenCalled();
+      expect(within(slot.container).queryByRole("button", { name: /Continue/ })).toBeNull();
+    } finally {
+      slot.lifecycle.unmount();
+    }
+  });
+
+  it("returns to the application without the real browser when the refresh clears bb's own cookie there", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const openExternal = vi.fn(() => ({ ok: true, browser: "Google Chrome" }));
+    const handlers = rpc({ openExternal, sync: () => status({ lastSync: { at: Date.now(), status: "synced", set: 0, removed: 1, rejected: 0, cookies: 9, undecryptable: 0, hosts: ["app.example.test"], reason: "sign-in" } }) });
+    const { page, expressions } = fakePage();
+    const slot = await toolbar("https://gateway.example.test/auth?rd=https://app.example.test%2F", page, { handlers, settings: { gatewayPages: "gateway.example.test/auth" } });
+    try {
+      await elapse(SETTLE_MS + 1_500);
+      expect(expressions).toContain('(location.assign("https://app.example.test/"), true)');
+      expect(openExternal).not.toHaveBeenCalled();
+    } finally {
+      slot.lifecycle.unmount();
+    }
+  });
+
   it("leaves a sign-in host alone while it shows no sign-in form", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const slot = await toolbar("https://shopify.okta.com/app/UserHome", fakePage({ signInForm: false }).page);

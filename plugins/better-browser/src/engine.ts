@@ -30,6 +30,13 @@ export interface EngineDeps {
 
 type Reason = SyncSummary["reason"];
 type Mode = "changes" | "full";
+interface Request {
+  mode: Mode;
+  reason: Reason;
+  threadId?: string;
+  /** Sites to hold only as the real browser holds them; see planSync. */
+  mirrorHosts?: string[];
+}
 
 interface Desktop {
   hostId: string;
@@ -68,7 +75,7 @@ export function createEngine(deps: EngineDeps) {
   let watching: string | null = null;
   let dirty = true;
   let running: Promise<void> | null = null;
-  let queued: { mode: Mode; reason: Reason; threadId?: string } | null = null;
+  let queued: Request | null = null;
   let cancelWatchTimer: (() => void) | null = null;
   let blocked = false;
   let browserList: { at: number; value: PluginRpcResult<HostContract["browsers"]> } | null = null;
@@ -150,7 +157,7 @@ export function createEngine(deps: EngineDeps) {
     else deps.log.warn(`watch: ${result.message}`);
   }
 
-  async function runSync(mode: Mode, reason: Reason, threadId: string | undefined): Promise<void> {
+  async function runSync({ mode, reason, threadId, mirrorHosts }: Request): Promise<void> {
     const found = await findDesktop();
     const chosen = await choice(found.hostId);
     if (!chosen.browser?.syncable && chosen.browser) throw new Failure("unsupportedBrowser", `${chosen.browser.name} sessions cannot sync yet`);
@@ -186,7 +193,11 @@ export function createEngine(deps: EngineDeps) {
     }
     try {
       const connection = await deps.desktops.openConnection({ ...scope, leaseId: lease.leaseId });
-      const applied = await deps.host("apply", { ...source, wsEndpoint: connection.wsEndpoint, mode }, { hostId: connection.hostId, timeoutMs: LEASE_MS });
+      const applied = await deps.host(
+        "apply",
+        { ...source, wsEndpoint: connection.wsEndpoint, mode, ...(mirrorHosts?.length ? { mirrorHosts } : {}) },
+        { hostId: connection.hostId, timeoutMs: LEASE_MS },
+      );
       if (!applied.ok) {
         dirty = true;
         throw new Failure(applied.code, applied.message);
@@ -240,22 +251,29 @@ export function createEngine(deps: EngineDeps) {
   const automatic = (reason: Reason) => reason === "tab" || reason === "watch" || reason === "settings";
 
   /** Run one sync at a time; a request made while one runs is folded into a single follow-up. */
-  function sync(mode: Mode, reason: Reason, threadId?: string): Promise<void> {
+  function sync(requestedMode: Mode, reason: Reason, threadId?: string, mirrorHosts?: readonly string[]): Promise<void> {
     if (automatic(reason) && (blocked || openTabFor(threadId ?? activeThread() ?? "") === undefined)) return Promise.resolve();
     if (!automatic(reason)) blocked = false;
+    // Mirroring removes cookies the real browser lacks, which a "nothing changed there" shortcut would skip.
+    const mode: Mode = mirrorHosts?.length ? "full" : requestedMode;
     if (running) {
-      queued = { mode: queued?.mode === "full" || mode === "full" ? "full" : "changes", reason, ...(threadId ? { threadId } : queued?.threadId ? { threadId: queued.threadId } : {}) };
+      const mirror = [...new Set([...(queued?.mirrorHosts ?? []), ...(mirrorHosts ?? [])])];
+      queued = {
+        mode: queued?.mode === "full" || mode === "full" ? "full" : "changes", reason,
+        ...(threadId ? { threadId } : queued?.threadId ? { threadId: queued.threadId } : {}),
+        ...(mirror.length ? { mirrorHosts: mirror } : {}),
+      };
       return running;
     }
     state.syncing = true;
     publish();
     running = (async () => {
-      let next: { mode: Mode; reason: Reason; threadId?: string } | null = { mode, reason, ...(threadId ? { threadId } : {}) };
+      let next: Request | null = { mode, reason, ...(threadId ? { threadId } : {}), ...(mirrorHosts?.length ? { mirrorHosts: [...mirrorHosts] } : {}) };
       while (next) {
-        const current: { mode: Mode; reason: Reason; threadId?: string } = next;
+        const current: Request = next;
         queued = null;
         try {
-          await runSync(current.mode, current.reason, current.threadId);
+          await runSync(current);
         } catch (error) {
           record(error);
         }
@@ -299,8 +317,8 @@ export function createEngine(deps: EngineDeps) {
       return snapshot();
     },
 
-    async syncNow(mode: Mode, reason: Reason, threadId?: string): Promise<Status> {
-      await sync(mode, reason, threadId);
+    async syncNow(mode: Mode, reason: Reason, threadId?: string, mirrorHosts?: readonly string[]): Promise<Status> {
+      await sync(mode, reason, threadId, mirrorHosts);
       return snapshot();
     },
 

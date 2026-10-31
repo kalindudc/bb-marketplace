@@ -85,6 +85,26 @@ describe("planSync", () => {
     expect(plan.set).toEqual([same]);
   });
 
+  it("mirrors a named site: removes cookies bb holds there that the real browser does not", () => {
+    const session = cookie({ name: "session", host: "app.example.com" });
+    const pending = cookie({ name: "pending_request", host: "app.example.com" });
+    const elsewhere = cookie({ name: "pending_request", host: "other.example.com" });
+    const parent = cookie({ name: "shared", host: ".example.com" });
+    const partitioned: JarCookie = { ...jar(cookie({ name: "chip", host: "app.example.com" }))[0]!, partitionKey: { topLevelSite: "https://other.com", hasCrossSiteAncestor: true } };
+    const inBb = [...jar(session, pending, elsewhere, parent), partitioned];
+    const plan = planSync({ source: [session], previous: memoryOf(session), jar: inBb, mode: "full", nowSeconds: NOW, mirrorHosts: ["App.Example.com"] });
+    expect(plan.remove).toEqual([{ name: "pending_request", domain: "app.example.com", path: "/" }]);
+    expect(planSync({ source: [session], previous: memoryOf(session), jar: inBb, mode: "full", nowSeconds: NOW }).remove).toEqual([]);
+  });
+
+  it("mirrors an expired copy in the real browser as missing, and removes nothing after a partial read", () => {
+    const pending = cookie({ name: "pending_request", host: "app.example.com" });
+    const expired = planSync({ source: [{ ...pending, expires: NOW - 1 }], previous: null, jar: jar(pending), mode: "full", nowSeconds: NOW, mirrorHosts: ["app.example.com"] });
+    expect(expired.remove).toEqual([{ name: "pending_request", domain: "app.example.com", path: "/" }]);
+    const partial = planSync({ source: [], previous: null, jar: jar(pending), mode: "full", nowSeconds: NOW, mirrorHosts: ["app.example.com"], allowRemovals: false });
+    expect(partial.remove).toEqual([]);
+  });
+
   it("keeps hashes, not values, in its memory", () => {
     const secret = cookie({ value: "super-secret-token" });
     expect(JSON.stringify(memoryOf(secret))).not.toContain("super-secret-token");

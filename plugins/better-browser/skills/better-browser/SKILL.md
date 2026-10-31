@@ -27,6 +27,7 @@ Change them on the plugin's page in Settings or with `bb plugin config better-br
 - `sync`: `true` or `false`.
 - `signIn`: `automatic` (hand sign-in pages to the real browser), `ask` (show a button), or `off`.
 - `signInPages`: extra sign-in pages, one per line: `*.example.com`, `login.example.com` or `example.com/login`.
+- `gatewayPages`: access gateway pages, one per line in the same form. These are pages where a gateway checks the browser or device and turns bb's Browser away without a sign-in form. On one, the plugin syncs and retries the app named in the URL's `rd` (or `redirect_url`, `return_to`, `returnTo`, `return_url`) parameter, then shows a Continue button that opens that app in the real browser.
 - `modifierClick`: `true` or `false` for Cmd+click opening links in the real browser.
 
 ## Rules

@@ -2,12 +2,18 @@ import { PluginCliError, cliCommand, defineCli, type BbPluginApi } from "@get-bb
 import { z } from "zod";
 import { hostContract, hostSignals } from "./src/contract";
 import { BROWSERS } from "./src/browsers";
+import { DISTRIBUTION_DEFAULTS } from "./src/distribution";
 import { createEngine, type HostCall } from "./src/engine";
 import { createHandoffSessions } from "./src/handoff";
 import { STATUS_CHANNEL, rpcContract, type Status } from "./src/rpc";
 import { parsePattern } from "./src/signin";
 
 export { rpcContract };
+
+const patternLines = z.string().max(8192).refine(
+  (text) => text.split(/\r?\n/).every((line) => !line.trim() || line.trim().startsWith("#") || parsePattern(line) !== null),
+  "Each line needs a host such as *.example.com or example.com/login",
+);
 
 function describeStatus(status: Status): string {
   const lines = [
@@ -69,11 +75,17 @@ export default function betterBrowser(bb: BbPluginApi): void {
       label: "Additional sign-in sites (optional)",
       description: "Only needed for sites not detected automatically. One host or path pattern per line, such as login.example.com or example.com/login.",
       experimental_multiline: true,
-      experimental_schema: z.string().max(8192).refine(
-        (text) => text.split(/\r?\n/).every((line) => !line.trim() || line.trim().startsWith("#") || parsePattern(line) !== null),
-        "Each line needs a host such as *.example.com or example.com/login",
-      ),
+      experimental_schema: patternLines,
       default: "",
+    },
+    gatewayPages: {
+      type: "string",
+      label: "Access gateway pages (optional)",
+      description:
+        "Pages where an access gateway checks your browser or device and turns bb's Browser away without a sign-in form, such as gateway.example.com/auth. One host or path pattern per line. bb offers to open the site the gateway returns to in your browser, then follows once the new session arrives.",
+      experimental_multiline: true,
+      experimental_schema: patternLines,
+      default: DISTRIBUTION_DEFAULTS.gatewayPages,
     },
   });
 
@@ -125,11 +137,11 @@ export default function betterBrowser(bb: BbPluginApi): void {
     handoff: (input) => {
       const result = handoffs.advance(input);
       if (result.effects.length > 0) {
-        bb.log.info(`handoff ${JSON.stringify({ threadId: input.threadId, tabId: input.tabId, event: input.event.type, phase: result.episode.phase.kind, effects: result.effects.map((effect) => effect.kind) })}`);
+        bb.log.info(`handoff ${JSON.stringify({ threadId: input.threadId, tabId: input.tabId, event: input.event.type, gateway: input.gateway === true, phase: result.episode.phase.kind, effects: result.effects.map((effect) => effect.kind) })}`);
       }
       return result;
     },
-    sync: ({ threadId, mode, reason }) => engine.syncNow(mode, reason, threadId),
+    sync: ({ threadId, mode, reason, mirrorHosts }) => engine.syncNow(mode, reason, threadId, mirrorHosts),
     openExternal: ({ url }) => {
       if (!/^https?:\/\//i.test(url)) return { ok: false as const, message: "Only http and https links open externally" };
       return engine.openExternal(url);

@@ -10,7 +10,9 @@ import {
 import { STATUS_CHANNEL } from "../channel";
 import { LINK_HANDLER_OFF, LINK_LEASE_MS, SIGN_IN_FORM_PROBE, linkHandlerExpression, parseOpenMessage } from "../links";
 import type { RpcContract, Status } from "../rpc";
-import { IDLE, concernsPages, isSignInPage, signInPatterns, type Effect, type Episode, type SignInEvent, type SignInMode } from "../signin";
+import {
+  IDLE, concernsPages, gatewayReturnUrl, isSignInPage, pagePatterns, signInPatterns, type Effect, type Episode, type SignInEvent, type SignInMode,
+} from "../signin";
 import { ICON_BUTTON, PILL, describeSync, isStatus, readSettings } from "./common";
 
 const HEARTBEAT_MS = 30_000;
@@ -22,11 +24,19 @@ function isWebUrl(url: string): boolean {
   return /^https?:\/\//i.test(url);
 }
 
+/** The host a sync may mirror; the RPC accepts plain DNS names only. */
+function mirrorHost(url: string | null): string | null {
+  if (!url) return null;
+  const host = new URL(url).hostname;
+  return /^[a-z0-9.-]+$/.test(host) ? host : null;
+}
+
 /** The Better Browser controls beside a bb Browser tab's address bar. */
 export function BrowserToolbarControl({ threadId, tabId, url, isCompactViewport, experimental_page: page }: ExperimentalPluginBrowserToolbarActionProps) {
   const rpc = useRpc<RpcContract>();
   const settings = readSettings(useSettings().values);
   const patterns = useMemo(() => signInPatterns(settings.signInPages), [settings.signInPages]);
+  const gatewayPatterns = useMemo(() => pagePatterns(settings.gatewayPages), [settings.gatewayPages]);
   const [status, setStatus] = useState<Status | null>(null);
   const browserName = status?.browser?.name ?? "your browser";
 
@@ -88,8 +98,16 @@ export function BrowserToolbarControl({ threadId, tabId, url, isCompactViewport,
     };
   }, [page, url, settings.modifierClick, openExternal]);
 
-  // Sign-in handoff.
-  const hostMatches = isSignInPage(url, patterns);
+  // Sign-in handoff. An access gateway's page counts as a sign-in page, and the application it names as its return
+  // address is where this tab goes back to and what opens in the real browser. A gateway page that names none is left
+  // alone: the only other thing to open would be the gateway URL, with bb's pending request in it.
+  const handoffPatterns = useMemo(() => [...patterns, ...gatewayPatterns], [patterns, gatewayPatterns]);
+  const onGatewayPage = isSignInPage(url, gatewayPatterns);
+  const gatewayTarget = useMemo(() => (onGatewayPage ? gatewayReturnUrl(url, handoffPatterns) : null), [onGatewayPage, url, handoffPatterns]);
+  const onGateway = gatewayTarget !== null;
+  const hostMatches = onGatewayPage || isSignInPage(url, patterns);
+  const pageKindRef = useRef<boolean | undefined>(undefined);
+  pageKindRef.current = onGateway ? true : hostMatches ? false : undefined;
   const dispatchRef = useRef<(event: SignInEvent) => void>(() => undefined);
   useEffect(() => {
     if (!hostMatches || settings.signIn === "off") {
@@ -98,6 +116,12 @@ export function BrowserToolbarControl({ threadId, tabId, url, isCompactViewport,
       return;
     }
     if (!page) return;
+    if (onGateway) {
+      // The gateway's page is the obstacle itself: there is no form to wait for.
+      if (gatewayTarget) returnUrl.current = gatewayTarget;
+      dispatchRef.current({ type: "url", onSignInPage: true, now: Date.now() });
+      return;
+    }
     let stopped = false;
     const probe = () => page.evaluate(SIGN_IN_FORM_PROBE).then((visible) => {
       if (!stopped && (visible === true || visible === false || visible === null)) {
@@ -110,7 +134,7 @@ export function BrowserToolbarControl({ threadId, tabId, url, isCompactViewport,
       stopped = true;
       clearInterval(timer);
     };
-  }, [page, hostMatches, url, settings.signIn]);
+  }, [page, hostMatches, onGateway, gatewayTarget, url, settings.signIn]);
 
   const urlRef = useRef(url);
   urlRef.current = url;
@@ -118,13 +142,27 @@ export function BrowserToolbarControl({ threadId, tabId, url, isCompactViewport,
 
   const [episode, setEpisode] = useState<Episode>(IDLE);
   const episodeRef = useRef(episode);
+  const [gatewayEpisode, setGatewayEpisode] = useState(false);
+  const gatewayEpisodeRef = useRef(false);
+  /** The application the user approved with Continue; a gateway handoff opens nothing else. */
+  const consentUrlRef = useRef<string | null>(null);
+  /** When the phase last changed, so only a sync that arrives later can move a resting handoff on. */
+  const phaseSinceRef = useRef(0);
   const mode: SignInMode = settings.signIn;
+  /** What a gateway handoff opens: the application, never a sign-in or gateway page. */
+  const gatewayOpenUrl = () => {
+    const target = returnUrl.current;
+    return target && !isSignInPage(target, handoffPatterns) ? target : null;
+  };
 
   const run = useCallback(
     (effect: Effect) => {
       if (effect.kind === "sync") {
         const before = Date.now();
-        rpc.call("sync", { threadId, mode: "full", reason: "sign-in" }).then(
+        // A gateway's site keeps only the real browser's cookies, so a request id left by bb's own failed attempt cannot
+        // make the site ignore the session that arrives.
+        const mirror = gatewayEpisodeRef.current ? mirrorHost(gatewayOpenUrl()) : null;
+        rpc.call("sync", { threadId, mode: "full", reason: "sign-in", ...(mirror ? { mirrorHosts: [mirror] } : {}) }).then(
           (next) => {
             setStatus(next);
             const failed = next.error !== null && next.error.at >= before && (next.lastSync === null || next.lastSync.at < next.error.at);
@@ -140,19 +178,31 @@ export function BrowserToolbarControl({ threadId, tabId, url, isCompactViewport,
         page?.evaluate(target ? `(location.assign(${JSON.stringify(target)}), true)` : "(location.reload(), true)").catch(() => undefined);
       } else {
         // The page may have steered this tab to a sign-in URL to make the real browser open something of its choosing,
-        // so open the sign-in page itself; after sign-in the bb tab reloads to the application on its own.
-        openExternal(urlRef.current);
+        // so open the sign-in page itself; after sign-in the bb tab reloads to the application on its own. A gateway's
+        // application opens instead, and only the one named by the button the user pressed: the tab may have moved to
+        // another gateway since. The gateway URL never opens: it can carry bb's request id, and the real browser
+        // finishing bb's pending request is what gateways treat as a stolen one.
+        if (!gatewayEpisodeRef.current) return openExternal(urlRef.current);
+        const target = consentUrlRef.current;
+        if (target && !isSignInPage(target, handoffPatterns)) openExternal(target);
       }
     },
-    [rpc, threadId, page, openExternal],
+    [rpc, threadId, page, openExternal, handoffPatterns],
   );
 
   const dispatch = useCallback(
-    (event: SignInEvent) => {
-      rpc.call("handoff", { threadId, tabId, event, mode, targetUrl: returnUrl.current }).then(
+    (event: SignInEvent, consentUrl?: string | null) => {
+      const gateway = pageKindRef.current;
+      rpc.call("handoff", {
+        threadId, tabId, event, mode, targetUrl: returnUrl.current, ...(gateway === undefined ? {} : { gateway }), ...(consentUrl ? { consentUrl } : {}),
+      }).then(
         (result) => {
+          consentUrlRef.current = result.consentUrl;
+          if (result.episode.phase.kind !== episodeRef.current.phase.kind) phaseSinceRef.current = Date.now();
           episodeRef.current = result.episode;
+          gatewayEpisodeRef.current = result.gateway;
           setEpisode(result.episode);
+          setGatewayEpisode(result.gateway);
           if (returnUrl.current === null) returnUrl.current = result.targetUrl;
           result.effects.forEach(run);
         },
@@ -171,12 +221,15 @@ export function BrowserToolbarControl({ threadId, tabId, url, isCompactViewport,
     return () => clearInterval(timer);
   }, [ticking]);
 
-  // While the sign-in finishes in the real browser, each sync that brings cookies for this tab's sites reloads it.
+  // While the sign-in finishes in the real browser, each sync that brings cookies for this tab's sites reloads it. A
+  // gateway's handoff also follows them while its button shows, since the real browser may sign in without Continue.
   const lastSyncAt = status?.lastSync?.at ?? 0;
   useEffect(() => {
     const current = episodeRef.current.phase;
     const sync = status?.lastSync;
-    if (current.kind !== "waiting" || !sync || sync.at <= current.since || sync.status !== "synced") return;
+    const resting = current.kind === "waiting" || (gatewayEpisodeRef.current && (current.kind === "offer" || current.kind === "stalled"));
+    const since = current.kind === "waiting" ? current.since : phaseSinceRef.current;
+    if (!resting || !sync || sync.at <= since || sync.status !== "synced") return;
     if (!concernsPages(sync.hosts, [urlRef.current, returnUrl.current])) return;
     dispatchRef.current({ type: "synced", set: sync.set + sync.removed, now: Date.now() });
   }, [lastSyncAt, status?.lastSync]);
@@ -203,10 +256,14 @@ export function BrowserToolbarControl({ threadId, tabId, url, isCompactViewport,
 
   let pill: ReactNode = null;
   if (phase === "offer" || phase === "stalled") {
+    const target = gatewayEpisode ? gatewayOpenUrl() : null;
+    const title = gatewayEpisode
+      ? `Open ${target ? new URL(target).host : "the application"} in ${browserName}, which passes this access check. This tab follows once the new session arrives.`
+      : `Sign in with ${browserName}, where passkeys and Okta Verify work`;
     pill = (
-      <button type="button" className={PILL} title={`Sign in with ${browserName}, where passkeys and Okta Verify work`} onClick={() => dispatch({ type: "start", now: Date.now() })}>
+      <button type="button" className={PILL} title={title} onClick={() => dispatch({ type: "start", now: Date.now() }, target)}>
         <Icon name="SecurityCheck" className="size-3.5" aria-hidden />
-        {isCompactViewport ? null : phase === "stalled" ? `Try ${browserName} again` : `Sign in with ${browserName}`}
+        {isCompactViewport ? null : phase === "stalled" ? `Try ${browserName} again` : gatewayEpisode ? `Continue in ${browserName}` : `Sign in with ${browserName}`}
       </button>
     );
   } else if (phase === "settling" || phase === "refreshing" || phase === "checking") {

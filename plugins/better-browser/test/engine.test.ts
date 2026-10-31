@@ -293,6 +293,29 @@ describe("the sync engine", () => {
     expect(calls.filter((call) => call.startsWith("host.apply"))).toEqual(["host.apply changes", "host.apply full"]);
   });
 
+  it("mirrors a gateway's site with a full write, keeping every site when requests fold together", async () => {
+    const { engine, deps, calls } = setup();
+    await engine.heartbeat("thr_1", "tab_1");
+    await settle();
+    await settle();
+    const applies = () => vi.mocked(deps.host).mock.calls.filter(([method]) => method === "apply").map(([, input]) => input);
+    vi.mocked(deps.host).mockClear();
+    calls.length = 0;
+    await engine.syncNow("changes", "sign-in", "thr_1", ["app.example.com"]);
+    expect(calls).not.toContain("host.inspect");
+    expect(applies()).toEqual([expect.objectContaining({ mode: "full", mirrorHosts: ["app.example.com"] })]);
+
+    vi.mocked(deps.host).mockClear();
+    const first = engine.syncNow("changes", "manual", "thr_1");
+    const second = engine.syncNow("full", "sign-in", "thr_1", ["app.example.com"]);
+    const third = engine.syncNow("full", "sign-in", "thr_1", ["other.example.com", "app.example.com"]);
+    await Promise.all([first, second, third]);
+    expect(applies()).toEqual([
+      expect.not.objectContaining({ mirrorHosts: expect.anything() }),
+      expect.objectContaining({ mode: "full", mirrorHosts: ["app.example.com", "other.example.com"] }),
+    ]);
+  });
+
   it("reports a chosen browser that is not installed instead of using another one", async () => {
     const { engine, deps } = setup({ settings: { browser: "arc" } });
     await engine.heartbeat("thr_1", "tab_1");

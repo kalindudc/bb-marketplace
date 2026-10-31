@@ -12,6 +12,10 @@ A bb plugin that makes bb's Browser follow the browser you already use:
   there, the page opens in your browser, where passkeys, Touch ID, security
   keys and Okta Verify work, and the bb tab reloads once the new session
   arrives.
+- **Access gateways.** When a gateway in front of an app checks the browser
+  itself and turns bb's Browser away without a sign-in form, the plugin
+  copies your browser's session for that app and retries it, then offers to
+  open the app in your browser if the gateway still says no.
 - **Cmd+click** (Ctrl+click off macOS) opens a link in your browser, in the
   same profile, instead of a new bb tab.
 - A sync button beside the address bar, with the last sync or any problem in
@@ -44,6 +48,7 @@ without a prompt; if neither answers, the basic password store is tried.
 | `sync` | `true` | Copy sessions into bb's Browser. |
 | `signIn` | `automatic` | `automatic` hands sign-in pages to your browser, `ask` shows a button, `off` leaves them alone. |
 | `signInPages` | empty | More sign-in pages, one per line: `*.example.com`, `login.example.com` or `example.com/login`. |
+| `gatewayPages` | empty | Access gateway pages, one per line in the same form: pages that check your browser or device and turn bb's Browser away without a sign-in form. See [Access gateways](#access-gateways). |
 | `modifierClick` | `true` | Cmd+click (Ctrl+click) opens links in your browser. |
 
 ## CLI
@@ -88,6 +93,40 @@ The Cmd+click handler is a capture-phase click listener in the page's
 isolated world. Each toolbar refresh keeps it on for six seconds, so it
 lapses on its own when the plugin is disabled or the tab is hidden.
 
+### Access gateways
+
+Some access gateways (identity-aware proxies) check the browser or device
+itself, not only who you are: its version, whether it is managed, or a device
+certificate. bb's Browser cannot pass those checks, so the gateway turns it
+away with a page that has no sign-in form, and the sign-in handoff, which waits
+for a form, would never start. List those pages in `gatewayPages`, for example
+`gateway.example.com/auth`.
+
+When a tab stops on a gateway page, the plugin reads the app the gateway
+returns to from the page's URL: the first absolute http(s) address in its
+`rd`, `redirect_url`, `return_to`, `returnTo` or `return_url` parameter.
+(`rd` is the forward-auth convention of oauth2-proxy, Authelia and Traefik;
+OAuth's `redirect_uri` is left out, because it names a callback.) It then
+syncs your browser's cookies and retries the app. For that one site, bb's
+cookies are made to match your browser's exactly: a cookie bb holds there
+that your browser does not, such as a pending request id from bb's own
+attempt, is removed, because some gateways ignore a valid session while one is
+present. Gateways usually let an app's session cookie through without checking
+the browser again, so this retry is often enough.
+
+If the gateway still turns bb away, a Continue button opens the app in your
+browser, which passes the check, and the bb tab returns to the app once the
+new session arrives. It also follows when your browser signs in to the app some
+other way, without Continue. A gateway page that names no app to return to is
+left alone, because the only thing left to open would be the gateway URL. The button is there because the app's address comes from
+the page in the tab, and it opens only the app it named when you pressed it. The plugin opens the app rather than the gateway URL,
+because a gateway URL can carry bb's pending request, and a request completed
+by a different browser is what gateways treat as a stolen sign-in.
+
+A marketplace that redistributes the plugin can list its own gateways by
+default. That default lives in `src/distribution.ts`, so every other file stays
+the same in each copy.
+
 ## Limits
 
 - Session sync works on macOS and Linux. Safari opens links but does not sync.
@@ -103,7 +142,10 @@ lapses on its own when the plugin is disabled or the tab is hidden.
 - Partitioned (CHIPS) cookies are skipped, as bb's own import skips them.
 - Cookies a browser binds to the device cannot be copied by anything.
 - The sign-in handoff waits for a visible sign-in form, so the Okta dashboard
-  and other non-sign-in pages on those hosts are left alone.
+  and other non-sign-in pages on those hosts are left alone. Access gateway
+  pages need no form, so list them precisely, with a path where you can.
+- An access gateway's handoff removes bb's own cookies for the app it returns
+  to when your browser does not hold them.
 
 ## Develop
 

@@ -113,6 +113,10 @@ export interface SyncPlan {
  * value the plugin wrote, so a cookie a site rotated inside bb is never clobbered by a stale copy. `full` ("Sync now"
  * and the sign-in handoff) also writes each unchanged cookie bb lacks or holds with another value, and the first sync
  * of a profile writes every cookie.
+ *
+ * `mirrorHosts` names sites bb should hold exactly as the real browser does: any cookie bb has for one of them that the
+ * real browser does not is removed too. An access gateway's handoff uses it, because a half-finished sign-in inside bb
+ * can leave a cookie (a pending request id) that makes the site ignore the session copied from the real browser.
  */
 export function planSync(input: {
   source: readonly SourceCookie[];
@@ -122,6 +126,7 @@ export function planSync(input: {
   nowSeconds: number;
   /** False when the source could not be read completely, so a missing cookie may only be unreadable. */
   allowRemovals?: boolean;
+  mirrorHosts?: readonly string[];
 }): SyncPlan {
   const jar = new Map<string, string>();
   for (const cookie of input.jar) {
@@ -143,10 +148,22 @@ export function planSync(input: {
     set.push(cookie);
   }
   const remove: CookieRef[] = [];
-  for (const [key, entry] of input.allowRemovals === false ? [] : Object.entries(previous)) {
+  if (input.allowRemovals === false) return { set, remove, memory };
+  const removing = new Set<string>();
+  for (const [key, entry] of Object.entries(previous)) {
     if (memory[key] || jar.get(key) !== entry.v) continue;
     const [name, domain, path] = key.split("\u0000") as [string, string, string];
     remove.push({ name, domain, path });
+    removing.add(key);
+  }
+  const mirrored = new Set((input.mirrorHosts ?? []).map((host) => host.toLowerCase()));
+  if (mirrored.size === 0) return { set, remove, memory };
+  for (const cookie of input.jar) {
+    if (cookie.partitionKey !== undefined || !mirrored.has(cookie.domain.replace(/^\./, "").toLowerCase())) continue;
+    const key = cookieKey(cookie);
+    if (memory[key] || removing.has(key)) continue;
+    remove.push({ name: cookie.name, domain: cookie.domain, path: cookie.path });
+    removing.add(key);
   }
   return { set, remove, memory };
 }
