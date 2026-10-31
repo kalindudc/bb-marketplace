@@ -2,11 +2,12 @@ import {
   experimental_Icon as Icon, experimental_InfoList as InfoList, experimental_InfoListRow as InfoListRow, experimental_InfoSection as InfoSection,
   type ExperimentalThreadContextSegmentInput, type ExperimentalThreadContextSegmentProps, type ExperimentalThreadInfoProps,
 } from "@get-bb/plugin-sdk/app";
+import { useEffect, useRef } from "react";
 import type { PrView } from "../contract";
 import type { Tone } from "./common";
 import { useShuttleQuery } from "./data";
 import { plural, shortKey } from "./format";
-import { rememberPanelPr } from "./prefs";
+import { rememberPanelPr, threadPrsOpen } from "./prefs";
 import { useOpenShuttleTab } from "./tab";
 
 interface Attention {
@@ -95,17 +96,32 @@ export function PullRequestsInfo({ threadId }: ExperimentalThreadInfoProps) {
 
 export const useHasThreadPrs = ({ threadId }: ExperimentalThreadContextSegmentInput) => useThreadPrs(threadId).length > 0;
 
+/** bb does not remember which segment was open, so the list reopens once per thread when it was left open on this device. */
+function useReopen(threadId: string, isExpanded: boolean, onToggle: () => void) {
+  const reopened = useRef<string | null>(null);
+  useEffect(() => {
+    if (reopened.current === threadId) return;
+    reopened.current = threadId;
+    if (threadPrsOpen.get() && !isExpanded) onToggle();
+  }, [threadId, isExpanded, onToggle]);
+}
+
 /** One PR's key and state, or "N PRs" and the worst state among them. */
 export function PullRequestsSummary({ threadId, isExpanded, onToggle }: ExperimentalThreadContextSegmentProps) {
   const prs = useThreadPrs(threadId);
+  useReopen(threadId, isExpanded, onToggle);
   if (prs.length === 0) return null;
   const worst = prs.map(attentionOf).reduce((a, b) => (b.rank > a.rank ? b : a));
   const only = prs.length === 1 ? prs[0]! : null;
   const label = only !== null ? shortKey(only) : `${prs.length} PRs`;
   const named = only !== null ? shortKey(only) : plural(prs.length, "linked PR");
   return (
-    <button type="button" data-segment-summary aria-expanded={isExpanded} onClick={onToggle}
-      aria-label={`Shuttle: ${named}, ${worst.label}`}
+    <button type="button" data-segment-summary aria-expanded={isExpanded}
+      onClick={() => {
+        threadPrsOpen.set(!isExpanded);
+        onToggle();
+      }}
+      aria-label={`Shuttle: ${named}, ${worst.label}`} title={isExpanded ? "Hide the linked PRs" : "Show the linked PRs"}
       className="flex min-h-6 items-center gap-1.5 overflow-hidden rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-state-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
       <Icon name="shuttle/shuttle" fallback="GitPullRequest" className="size-3.5 shrink-0" aria-hidden />
       <span className="truncate font-mono">{label}</span>
@@ -115,15 +131,17 @@ export function PullRequestsSummary({ threadId, isExpanded, onToggle }: Experime
           <span className={`truncate ${TONE_TEXT[worst.tone]}`}>{worst.label}</span>
         </>
       )}
+      <Icon name={isExpanded ? "ChevronDown" : "ChevronRight"} className="size-3 shrink-0" aria-hidden />
     </button>
   );
 }
 
-export function PullRequestsDetails({ threadId }: ExperimentalThreadContextSegmentProps) {
+export function PullRequestsDetails({ threadId, isExpanded }: ExperimentalThreadContextSegmentProps) {
   const prs = useThreadPrs(threadId);
   const openPr = useOpenPr(threadId);
+  if (!isExpanded) return null;
   return (
-    <ul aria-label="Linked pull requests" className="flex flex-col py-1">
+    <ul aria-label="Linked pull requests" className="flex max-h-48 flex-col overflow-y-auto py-1">
       {prs.map((pr) => {
         const attention = attentionOf(pr);
         return (

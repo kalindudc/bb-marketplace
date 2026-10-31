@@ -3,7 +3,7 @@ import { fireEvent, waitFor, within } from "@testing-library/react";
 import { experimental_THREAD_INFO_SECTION_GROUPS, type ExperimentalThreadContextSegmentProps, type ExperimentalThreadInfoProps } from "@get-bb/plugin-sdk/app";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { rpcContract, type PrView } from "../../src/contract";
-import { panelPrs } from "../../src/ui/prefs";
+import { panelPrs, threadPrsOpen } from "../../src/ui/prefs";
 import { agent, app, callsTo, handlers, link, mount, pr, unmountAll } from "./helpers";
 
 afterEach(unmountAll);
@@ -61,9 +61,9 @@ describe("the context segment beside the composer", () => {
     expect(loaded.threadHeaderActions).toEqual([]);
     return registration;
   }
-  async function summary(prs: PrView[]) {
+  async function summary(prs: PrView[], overrides: Partial<ExperimentalThreadContextSegmentProps> = {}) {
     const registration = await segment();
-    const slot = mount<ExperimentalThreadContextSegmentProps>(registration.summary, props, handlers({ threadPrs: () => ({ prs, sent: [] }) }));
+    const slot = mount<ExperimentalThreadContextSegmentProps>(registration.summary, { ...props, ...overrides }, handlers({ threadPrs: () => ({ prs, sent: [] }) }));
     await waitFor(() => expect(callsTo(slot, "threadPrs")).toHaveLength(1));
     return slot;
   }
@@ -73,6 +73,36 @@ describe("the context segment beside the composer", () => {
     const button = await slot.findByRole("button", { name: "Shuttle: get-bb/bb#4411, open" });
     expect(button.textContent).toBe("get-bb/bb#4411·open");
     expect(button.querySelector("[data-icon='shuttle/shuttle']")).not.toBeNull();
+    expect(button.querySelector("[data-icon='ChevronRight']")).not.toBeNull();
+    expect(button.getAttribute("title")).toBe("Show the linked PRs");
+  });
+
+  it("starts folded and remembers on this device whether the list was left open", async () => {
+    const registration = await segment();
+    let toggles = 0;
+    const onToggle = () => { toggles += 1; };
+    const folded = await summary([owned, failing], { onToggle });
+    fireEvent.click(await folded.findByRole("button", { name: /^Shuttle: 2 linked PRs/u }));
+    expect(toggles).toBe(1);
+    expect(threadPrsOpen.get()).toBe(true);
+    expect(window.localStorage.getItem("bb-plugin-shuttle:thread-prs-open")).toBe("true");
+    folded.lifecycle.unmount();
+
+    toggles = 0;
+    const reopened = await summary([owned, failing], { onToggle });
+    await waitFor(() => expect(toggles).toBe(1));
+    reopened.lifecycle.rerender(<registration.summary {...props} onToggle={onToggle} isExpanded />);
+    const open = await reopened.findByRole("button", { name: /^Shuttle: 2 linked PRs/u });
+    expect(open.querySelector("[data-icon='ChevronDown']")).not.toBeNull();
+    fireEvent.click(open);
+    expect(toggles).toBe(2);
+    expect(threadPrsOpen.get()).toBe(false);
+    reopened.lifecycle.unmount();
+
+    toggles = 0;
+    await summary([owned, failing], { onToggle });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(toggles).toBe(0);
   });
 
   it("shows how many PRs and the worst state among them", async () => {
@@ -99,6 +129,14 @@ describe("the context segment beside the composer", () => {
     await slot.behavior.experimental_invalidateRpc(["prs"], "shuttle");
     await slot.findByText("visible");
     slot.lifecycle.unmount();
+  });
+
+  it("shows no details while folded", async () => {
+    const registration = await segment();
+    const details = mount<ExperimentalThreadContextSegmentProps>(registration.details!, props, handlers({ threadPrs: () => ({ prs: [owned, changes], sent: [] }) }));
+    await waitFor(() => expect(callsTo(details, "threadPrs")).toHaveLength(1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(details.container.innerHTML).toBe("");
   });
 
   it("lists each PR in its details, opens the Shuttle tab on the one clicked, and opens it as it was from its action", async () => {

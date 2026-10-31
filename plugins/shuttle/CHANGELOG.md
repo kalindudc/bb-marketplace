@@ -2,6 +2,12 @@
 
 Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` in this repository.
 
+## Unreleased
+
+### Fixed
+
+- The list of a thread's PRs above the composer folds. It used to stay open with a row for every linked PR, however many there were. It now starts folded, and clicking the Shuttle summary opens or closes it. Shuttle remembers on this device whether you left it open, and an open list scrolls after about eight PRs.
+
 ## 0.5.0 (2026-10-30)
 
 ### Added

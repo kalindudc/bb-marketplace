@@ -72,6 +72,9 @@ export function rememberSeen(key: string, at: number): void {
   prSeen.set(Object.fromEntries([...entries.slice(Math.max(0, entries.length - MAX_SEEN + 1)), [key, at]]));
 }
 
+/** Whether the list of a thread's PRs above the composer is open; it starts folded. */
+export const threadPrsOpen = createStored<boolean>("thread-prs-open", false, (value) => (typeof value === "boolean" ? value : null));
+
 /** Sections folded by hand, as "<area>/<title>"; every other section is open. */
 export const folds = createStored<readonly string[]>("folds", [], (value) => (Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : null));
 
@@ -143,5 +146,5 @@ export function useFolding(area: string): Folding {
 
 /** Tests clear localStorage between cases; this reads every remembered value again. */
 export function reloadPrefs(): void {
-  for (const stored of [lastRoute, mineLayout, mineSort, doneSort, boardViews, reviewFilter, folds, scrolls, panelPrs, conversationOrder, hideBotComments, prSeen, inboxView, inboxSwipeHint]) stored.reload();
+  for (const stored of [lastRoute, mineLayout, mineSort, doneSort, boardViews, reviewFilter, folds, scrolls, panelPrs, conversationOrder, hideBotComments, prSeen, inboxView, inboxSwipeHint, threadPrsOpen]) stored.reload();
 }
