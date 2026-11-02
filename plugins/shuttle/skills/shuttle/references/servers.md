@@ -259,7 +259,69 @@ command = "cd ~/src/app && (git worktree add ../app-{number} >&2 || true) && ech
 Provider inputs and the command may use `{number}`, `{repo}`, `{repo_name}`, `{head_ref}`,
 `{base}`, `{head}`, `{server}` and `{slug}` (the key as lowercase letters, digits and dashes).
 In the command they are shell-quoted. The thread opens in the review's project on the machine
-that holds its default checkout.
+that holds its default checkout, unless the provider's workspace names a machine.
+
+### Reviews on a new machine
+
+A provider's workspace can start each review on a new machine of its own, from any bb machine
+provider (`bb machine providers --json` lists them with their inputs schemas), instead of on the
+machine with the project's checkout. `machine.inputs` takes the same placeholders as `inputs`
+and defaults to none. Shuttle names no provider: any machine provider and any environment
+provider that runs on its machines work. bb's `git-worktree` provider gives a plain worktree on
+the new machine.
+
+```toml
+[server.workspace]
+kind = "provider"
+provider = "example-checkout"
+inputs = { branch = "review/{slug}" }
+
+[server.workspace.machine]
+provider = "example-sandbox"
+inputs = { cores = 8 }
+```
+
+Some environments make a new machine for each thread themselves: `bb environment providers
+--json` shows their `machineProviderId`. Such an environment still needs `machine`, set to that
+machine provider, as bb refuses any other machine for it:
+
+```toml
+[server.workspace]
+kind = "provider"
+provider = "example-sandbox-checkout"
+machine = { provider = "example-sandbox-checkout", inputs = { paths = ["src/{repo_name}"] } }
+```
+
+In the settings, the server form lists bb's providers as you type and fills in that machine
+provider when you pick such an environment. The server's Test checks the workspace against what
+bb has now: that both providers exist, that an environment which makes its own machine has that
+machine provider, and that the inputs and machine inputs match their schemas (with sample values
+for the placeholders). It starts no thread, so whether a provider has room is bb's answer when a
+review starts. Empty machine inputs go to bb as none, which a machine provider without inputs
+needs; empty environment inputs go as `{}`, so an environment provider that takes no inputs
+cannot be a review workspace.
+
+What changes when reviews run on new machines:
+
+- A review with a preset whose workspace is the project's default workspace stays where it is;
+  only a preset that asks for its own checkout uses the server's workspace.
+- A machine provider that removes its machines when their threads end, such as a sandbox
+  provider marked ephemeral, keeps the machine while the review thread is unarchived. With
+  "Archive finished review threads" on, Shuttle archives the thread once its review is done,
+  which lets bb remove the machine. A draft you have not posted or discarded keeps both.
+- The PR's next review brings its last review thread back only while that thread's machine is
+  there. Once bb removed it, the review starts in a new thread on a new machine, and the
+  Automation log says why.
+- When bb cannot start a machine now, because its machine provider has no room or is not ready,
+  or the environment provider says it is unavailable, a review you start shows bb's message.
+  An auto review waits instead: the Automation log says so once, with bb's reason, Shuttle tries
+  again at each sync, and after an hour of waiting it records the review as one that could not
+  start. bb gives the same answer when a machine provider refuses the inputs themselves, so that
+  waits too. Waiting does not count toward the daily limit, and a review that comes back after
+  more than an hour without a try, such as a request made again, waits afresh.
+- The review thread works on the new machine, but Shuttle's tools, `shuttle_review_draft`
+  among them, run in bb's server, so the draft comes back to Shuttle as from any review. The
+  read command in the prompt (`{view_command}`) runs on the new machine and must work there.
 
 ## GitHub
 

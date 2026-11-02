@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
+import { SpawnUnavailableError } from "../src/ports";
 import { testConfig, harness, pr } from "./helpers";
 
 describe("sync", () => {
@@ -147,5 +148,71 @@ describe("auto review", () => {
     await h.shuttle.sync();
     await h.shuttle.sync();
     expect(h.shuttle.activity().filter((e) => e.kind === "auto_failed")).toHaveLength(1);
+  });
+
+  it("waits while bb has no machine for a review, tries again at each sync, and gives up after an hour", async () => {
+    const h = harness();
+    await h.shuttle.sync();
+    h.clock.now += 60_000;
+    h.port.spawnError = new SpawnUnavailableError("Already 4 sandboxes (the limit is 4)");
+    h.lists.review_requested = [pr(3), pr(4)];
+    await h.shuttle.sync();
+    const waits = () => h.shuttle.activity().filter((e) => e.kind === "auto_waiting");
+    expect(waits().map((e) => e.text).sort()).toEqual([
+      "Auto review of acme/app#3 waits: Already 4 sandboxes (the limit is 4). Shuttle tries again at each sync for up to an hour.",
+      "Auto review of acme/app#4 waits: Already 4 sandboxes (the limit is 4). Shuttle tries again at each sync for up to an hour.",
+    ]);
+    h.clock.now += 30 * 60_000;
+    await h.shuttle.sync();
+    expect(waits()).toHaveLength(2);
+    expect(h.shuttle.activity().filter((e) => e.kind === "auto_failed")).toHaveLength(0);
+
+    h.port.spawnError = null;
+    await h.shuttle.sync();
+    expect(h.port.spawned.map((s) => s.title).sort()).toEqual(["Review acme/app#3", "Review acme/app#4"]);
+
+    h.port.spawnError = new SpawnUnavailableError("Already 4 sandboxes (the limit is 4)");
+    h.lists.review_requested = [pr(5)];
+    await h.shuttle.sync();
+    h.clock.now += 40 * 60_000;
+    await h.shuttle.sync();
+    h.clock.now += 21 * 60_000;
+    await h.shuttle.sync();
+    await h.shuttle.sync();
+    expect(h.shuttle.activity().filter((e) => e.kind === "auto_failed").map((e) => e.text)).toEqual([
+      "Auto review of acme/app#5 could not start in an hour of waiting: Already 4 sandboxes (the limit is 4)",
+    ]);
+    expect(h.shuttle.activity().filter((e) => e.kind === "auto_capped")).toHaveLength(0);
+  });
+
+  it("waits afresh for a review that comes back long after its last wait, instead of failing it at once", async () => {
+    const h = harness();
+    await h.shuttle.sync();
+    h.clock.now += 60_000;
+    h.port.spawnError = new SpawnUnavailableError("no room");
+    h.lists.review_requested = [pr(3)];
+    await h.shuttle.sync();
+    // The request is withdrawn while the review waits, and comes back hours later.
+    h.lists.review_requested = [];
+    await h.shuttle.sync();
+    h.clock.now += 3 * 3_600_000;
+    h.lists.review_requested = [pr(3)];
+    await h.shuttle.sync();
+    expect(h.shuttle.activity().filter((e) => e.kind === "auto_waiting")).toHaveLength(2);
+    expect(h.shuttle.activity().filter((e) => e.kind === "auto_failed")).toHaveLength(0);
+  });
+
+  it("gives a review at least two syncs before it fails, when syncs are further apart than the hour", async () => {
+    const h = harness();
+    h.settings.syncMinutes = 120;
+    await h.shuttle.sync();
+    h.clock.now += 60_000;
+    h.port.spawnError = new SpawnUnavailableError("no room");
+    h.lists.review_requested = [pr(3)];
+    await h.shuttle.sync();
+    h.clock.now += 120 * 60_000;
+    await h.shuttle.sync();
+    expect(h.shuttle.activity().filter((e) => e.kind === "auto_waiting")).toHaveLength(1);
+    expect(h.shuttle.activity().filter((e) => e.kind === "auto_failed").map((e) => e.text)).toEqual(["Auto review of acme/app#3 could not start in an hour of waiting: no room"]);
   });
 });

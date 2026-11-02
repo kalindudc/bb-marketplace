@@ -134,13 +134,63 @@ describe("Shuttle settings sections", () => {
     const form = slot.container.querySelector<HTMLElement>("[data-server-form]")!;
     expect((within(form).getByRole("textbox", { name: "Read command" }) as HTMLInputElement).value).toBe("lab pr view {number} -R {repo}");
     fireEvent.change(within(form).getByRole("combobox", { name: "Review workspace" }), { target: { value: "provider" } });
-    fireEvent.change(within(form).getByRole("textbox", { name: "Environment provider" }), { target: { value: "my-trees" } });
+    fireEvent.change(within(form).getByRole("combobox", { name: "Environment provider" }), { target: { value: "my-trees" } });
     fireEvent.change(within(form).getByRole("textbox", { name: "Provider inputs" }), { target: { value: "{ nope" } });
     expect((within(form).getByRole("button", { name: "Save server" }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(within(form).getByRole("textbox", { name: "Provider inputs" }), { target: { value: '{ "tree": "shuttle-{number}" }' } });
     fireEvent.click(within(form).getByRole("button", { name: "Save server" }));
     await waitFor(() => expect(saved(slot)).toHaveLength(1));
     expect(saved(slot)[0]!.servers.at(-1)).toEqual({ ...lab, workspace: { kind: "provider", provider: "my-trees", inputs: { tree: "shuttle-{number}" } } });
+  });
+
+  it("puts a server's reviews on a new machine from a machine provider bb has, with its inputs", async () => {
+    const lab = { id: "lab", name: "Lab", kind: "command" as const, enabled: true, sep: "#" as const, pattern: "^https://d/(?<repo>[^/]+/[^/]+)/pull/(?<number>\\d+)", link: "https://d/{repo}/pull/{number}", commands: { view: "sh lab.sh" }, workspace: { kind: "provider" as const, provider: "my-trees", inputs: { tree: "shuttle-{number}" } } };
+    const slot = await section("servers", { getConfig: () => ({ config: config({ servers: [...config().servers, lab] }) }) });
+    fireEvent.click(await slot.findByRole("button", { name: "Edit Lab" }));
+    const form = slot.container.querySelector<HTMLElement>("[data-server-form]")!;
+    await waitFor(() => expect(form.querySelector("datalist#shuttle-environment-providers option[value='sandbox-checkout']")).not.toBeNull());
+    expect(within(form).getByText("My trees: A tree in the repository's own place")).toBeTruthy();
+    expect((within(form).getByRole("combobox", { name: "Review machine" }) as HTMLSelectElement).value).toBe("project");
+    expect(within(form).queryByRole("combobox", { name: "Machine provider" })).toBeNull();
+
+    fireEvent.change(within(form).getByRole("combobox", { name: "Environment provider" }), { target: { value: "sandbox-checkout" } });
+    fireEvent.change(within(form).getByRole("textbox", { name: "Provider inputs" }), { target: { value: '{ "base": "origin/{head_ref}" }' } });
+    fireEvent.change(within(form).getByRole("combobox", { name: "Review machine" }), { target: { value: "new" } });
+    expect((within(form).getByRole("button", { name: "Save server" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(within(form).getByText("Enter the machine provider's id, as bb machine providers lists them.")).toBeTruthy();
+    fireEvent.change(within(form).getByRole("combobox", { name: "Machine provider" }), { target: { value: "sandbox" } });
+    expect(within(form).getByText("Sandbox: A sandbox machine")).toBeTruthy();
+    fireEvent.change(within(form).getByRole("textbox", { name: "Machine inputs" }), { target: { value: "[1]" } });
+    expect(within(form).getByText("The machine inputs must be a JSON object.")).toBeTruthy();
+    fireEvent.change(within(form).getByRole("textbox", { name: "Machine inputs" }), { target: { value: '{ "cores": 8 }' } });
+    fireEvent.click(within(form).getByRole("button", { name: "Save server" }));
+    await waitFor(() => expect(saved(slot)).toHaveLength(1));
+    expect(saved(slot)[0]!.servers.at(-1)!.workspace).toEqual({ kind: "provider", provider: "sandbox-checkout", inputs: { base: "origin/{head_ref}" }, machine: { provider: "sandbox", inputs: { cores: 8 } } });
+  });
+
+  it("gives an environment that makes its own machine that machine provider, and shows a saved machine again", async () => {
+    const lab = { id: "lab", name: "Lab", kind: "command" as const, enabled: true, sep: "#" as const, pattern: "^https://d/(?<repo>[^/]+/[^/]+)/pull/(?<number>\\d+)", link: "https://d/{repo}/pull/{number}", commands: { view: "sh lab.sh" } };
+    const slot = await section("servers", { getConfig: () => ({ config: config({ servers: [...config().servers, lab] }) }) });
+    fireEvent.click(await slot.findByRole("button", { name: "Edit Lab" }));
+    const form = slot.container.querySelector<HTMLElement>("[data-server-form]")!;
+    fireEvent.change(within(form).getByRole("combobox", { name: "Review workspace" }), { target: { value: "provider" } });
+    await waitFor(() => expect(form.querySelector("datalist#shuttle-environment-providers option[value='sandbox-full']")).not.toBeNull());
+    fireEvent.change(within(form).getByRole("combobox", { name: "Environment provider" }), { target: { value: "sandbox-full" } });
+    expect((within(form).getByRole("combobox", { name: "Review machine" }) as HTMLSelectElement).value).toBe("new");
+    expect((within(form).getByRole("combobox", { name: "Machine provider" }) as HTMLInputElement).value).toBe("sandbox");
+    expect(within(form).getByText("Sandbox with checkout makes a new machine for each review with sandbox.")).toBeTruthy();
+    fireEvent.click(within(form).getByRole("button", { name: "Save server" }));
+    await waitFor(() => expect(saved(slot)).toHaveLength(1));
+    const workspace = saved(slot)[0]!.servers.at(-1)!.workspace;
+    expect(workspace).toEqual({ kind: "provider", provider: "sandbox-full", inputs: {}, machine: { provider: "sandbox", inputs: {} } });
+
+    unmountAll();
+    const again = await section("servers", { getConfig: () => ({ config: config({ servers: [...config().servers, { ...lab, workspace: workspace! }] }) }) });
+    fireEvent.click(await again.findByRole("button", { name: "Edit Lab" }));
+    const reopened = again.container.querySelector<HTMLElement>("[data-server-form]")!;
+    expect((within(reopened).getByRole("combobox", { name: "Review machine" }) as HTMLSelectElement).value).toBe("new");
+    expect((within(reopened).getByRole("combobox", { name: "Machine provider" }) as HTMLInputElement).value).toBe("sandbox");
+    expect((within(reopened).getByRole("textbox", { name: "Machine inputs" }) as HTMLTextAreaElement).value).toBe("{}");
   });
 
   it("flags a link pattern without its groups before saving", async () => {

@@ -79,6 +79,8 @@ export async function sendToReviewThread(ctx: Ctx, threadId: string, prompt: str
   if (options.providerId && info.providerId && info.providerId !== options.providerId) {
     throw new ShuttleError(`it runs on ${info.providerId}, and this review asks for ${options.providerId}`);
   }
+  // Its workspace cannot be built again without the machine, so the thread could not run the review.
+  if (info.machineRemoved) throw new ShuttleError(info.archived ? "bb removed its machine after it was archived" : "bb removed its machine");
   const send: SendOptions = { ...(options.model ? { model: options.model } : {}), ...(options.reasoningLevel ? { reasoningLevel: options.reasoningLevel } : {}) };
   const revived = info.archived;
   if (revived) await ctx.port.unarchive(threadId);

@@ -103,3 +103,8 @@ GitHub is built in (through `gh`; set `hostname` for GitHub Enterprise). Any oth
 printing JSON. Leave an operation out and Shuttle hides that list for the server. Add servers
 in bb's Settings, Plugins, Shuttle, or with `bb shuttle config-import`. The full contract, with
 an example, is in [references/servers.md](references/servers.md).
+
+A server's review workspace can also start each review on a new machine from any bb machine
+provider, with `[server.workspace.machine]`; see "Reviews on a new machine" there. A review
+thread on another machine still hands its draft back with `shuttle_review_draft`, which runs in
+bb's server.

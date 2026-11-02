@@ -9,10 +9,13 @@ import type { PrRow, ServerRow } from "./db/store";
 import { describeFailure, primaryStep, RETRYABLE, STEP_LABELS } from "./failures";
 import { linkFor } from "./keys";
 import type { PrSummary } from "./model";
+import { SpawnUnavailableError } from "./ports";
 import { startReview } from "./reviews";
 import { shortKey } from "./prs";
 
 const DAY = 86_400_000;
+/** How long an auto review waits for bb to have a machine or environment for it before it counts as failed. */
+const AUTO_WAIT_MS = 3_600_000;
 const REFRESH_CAP = 30;
 /** One more try after this pause, for a failure that usually passes by itself. */
 export const RETRY_PAUSE_MS = 3_000;
@@ -261,6 +264,12 @@ async function refreshTracked(ctx: Ctx, server: ServerConfig, seen: Set<number>,
   steps.failed("refresh", { ...shown.failure, message: `${shown.key}: ${shown.failure.message}` }, ms, 1, `${failed.length} of ${tracked.length} could not be read: ${names}`, true);
 }
 
+/** A wait is the refusals of one PR head at consecutive syncs: `since` the first, `last` the latest. */
+interface AutoWait {
+  since: number;
+  last: number;
+}
+
 export function globMatch(glob: string, value: string): boolean {
   const re = new RegExp(`^${glob.trim().replace(/[.+^${}()|[\]\\]/gu, "\\$&").replace(/\*/gu, ".*").replace(/\?/gu, ".")}$`, "iu");
   return re.test(value);
@@ -311,11 +320,32 @@ export async function runAutoReviews(ctx: Ctx, serverId: string, signal?: AbortS
       }
       break;
     }
+    const head = `${pr.id}:${pr.head ?? ""}`;
     try {
       await startReview(ctx, { key: pr.key }, "auto");
       started++;
+      ctx.store.deleteKv(`auto_waiting:${head}`);
     } catch (error) {
-      ctx.store.setKv(`auto_failed:${pr.id}:${pr.head ?? ""}`, String(ctx.now()));
+      if (error instanceof SpawnUnavailableError) {
+        const stored = ctx.store.kv(`auto_waiting:${head}`);
+        const wait = stored === null ? null : (JSON.parse(stored) as AutoWait);
+        // A head not tried for over an hour, or for two syncs when they are further apart, waits afresh: its request may have come back.
+        const gap = Math.max(AUTO_WAIT_MS, 2 * ctx.settings().syncMinutes * 60_000);
+        if (wait === null || ctx.now() - wait.last > gap) {
+          ctx.store.setKv(`auto_waiting:${head}`, JSON.stringify({ since: ctx.now(), last: ctx.now() } satisfies AutoWait));
+          ctx.store.addEvent("auto_waiting", `Auto review of ${shortKey(ctx, pr)} waits: ${errText(error)}. Shuttle tries again at each sync for up to an hour.`, pr.id);
+          continue;
+        }
+        if (ctx.now() - wait.since < AUTO_WAIT_MS) {
+          ctx.store.setKv(`auto_waiting:${head}`, JSON.stringify({ ...wait, last: ctx.now() } satisfies AutoWait));
+          continue;
+        }
+        ctx.store.deleteKv(`auto_waiting:${head}`);
+        ctx.store.setKv(`auto_failed:${head}`, String(ctx.now()));
+        ctx.store.addEvent("auto_failed", `Auto review of ${shortKey(ctx, pr)} could not start in an hour of waiting: ${errText(error)}`, pr.id);
+        continue;
+      }
+      ctx.store.setKv(`auto_failed:${head}`, String(ctx.now()));
       ctx.store.addEvent("auto_failed", `Auto review of ${shortKey(ctx, pr)} could not start: ${errText(error)}`, pr.id);
     }
   }

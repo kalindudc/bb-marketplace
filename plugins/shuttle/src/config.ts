@@ -25,6 +25,8 @@ export type WatchMode = (typeof WATCH_MODES)[number];
 
 const command = z.string().trim().min(1).max(4000);
 
+const PROVIDER_ID = /^[a-z0-9][a-z0-9._-]{0,99}$/u;
+
 /**
  * How a review gets its own checkout of this server's PRs, when its preset asks for one. Without
  * it, bb's git worktree. Some repositories refuse worktrees outside their own place (a monorepo may
@@ -33,9 +35,15 @@ const command = z.string().trim().min(1).max(4000);
 export const serverWorkspaceSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("provider"),
-    provider: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,99}$/u, "must be a bb environment provider id such as my-trees"),
+    provider: z.string().regex(PROVIDER_ID, "must be a bb environment provider id such as my-trees"),
     /** The provider's inputs; every string may use {number}, {repo}, {repo_name}, {head_ref}, {base}, {head}, {server} and {slug}. */
     inputs: z.record(z.string(), z.unknown()).default({}),
+    /** A new machine for each review from this bb machine provider, instead of the machine with the project's checkout. */
+    machine: z.object({
+      provider: z.string().regex(PROVIDER_ID, "must be a bb machine provider id, as `bb machine providers` lists them"),
+      /** The machine provider's inputs, with the same placeholders. */
+      inputs: z.record(z.string(), z.unknown()).default({}),
+    }).strict().optional(),
   }).strict(),
   z.object({
     kind: z.literal("command"),

@@ -288,6 +288,10 @@ export class Store {
     this.db.prepare("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").run(key, value);
   }
 
+  deleteKv(key: string): void {
+    this.db.prepare("DELETE FROM kv WHERE key = ?").run(key);
+  }
+
   server(id: string): ServerRow | null {
     return (this.db.prepare("SELECT * FROM servers WHERE id = ?").get(id) as ServerRow | undefined) ?? null;
   }

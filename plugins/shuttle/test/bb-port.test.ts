@@ -1,7 +1,8 @@
 // @vitest-environment node
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
-import { createBbPort } from "../src/bb-port";
+import { createBbPort, spawnErrorOf } from "../src/bb-port";
+import { SpawnUnavailableError } from "../src/ports";
 
 describe("bb port", () => {
   it("creates a worktree review on the machine with the project's default checkout", async () => {
@@ -23,6 +24,85 @@ describe("bb port", () => {
     expect(spawned[1]).toMatchObject({ environment: { type: "project-default" } });
     expect(spawned[2]).toMatchObject({ environment: { type: "provider", environmentProviderId: "my-trees", inputs: { tree: "shuttle-7" }, machine: { type: "existing", hostId: "host_main" } } });
     expect(spawned[3]).toMatchObject({ environment: { type: "host", hostId: "host_main", workspace: { type: "unmanaged", path: "/Users/me/src/trees/shuttle-7" } } });
+  });
+
+  it("asks bb for a new machine from the workspace's machine provider, without looking for the project's checkout", async () => {
+    const spawned: unknown[] = [];
+    const host = createFakePluginHost({
+      pluginId: "shuttle",
+      sdk: {
+        projects: { get: async () => { throw new Error("a new machine needs no checkout"); } },
+        threads: { spawn: async (args: unknown) => (spawned.push(args), { id: "thr_new" }) },
+      } as never,
+    });
+    const port = createBbPort(host.bb);
+    await port.spawnThread({ projectId: "proj_1", title: "Review", prompt: "p", metadata: {}, workspace: { kind: "provider", providerId: "sandbox-checkout", inputs: { base: "main" }, machine: { providerId: "sandbox", inputs: { cores: 4 } } } });
+    expect(spawned[0]).toMatchObject({ environment: { type: "provider", environmentProviderId: "sandbox-checkout", inputs: { base: "main" }, machine: { type: "new", machineProviderId: "sandbox", inputs: { cores: 4 } } } });
+    // bb refuses any inputs, {} included, for a machine provider that takes none, and reads null as {} for one that takes some.
+    await port.spawnThread({ projectId: "proj_1", title: "Review", prompt: "p", metadata: {}, workspace: { kind: "provider", providerId: "sandbox-checkout", inputs: {}, machine: { providerId: "plain", inputs: {} } } });
+    expect((spawned[1] as { environment: unknown }).environment).toEqual({ type: "provider", environmentProviderId: "sandbox-checkout", inputs: {}, machine: { type: "new", machineProviderId: "plain", inputs: null } });
+  });
+
+  it("turns bb's refusals for a machine or environment it cannot start now into a wait, and keeps every other error", async () => {
+    // As bb's SDK builds them: BbHttpError's message is "HTTP <status>: " and bb's own message.
+    const refusal = (status: number, code: string, body: Record<string, unknown> = {}) => Object.assign(new Error(`HTTP ${status}: ${code}: no room`), { status, code, body });
+    expect(spawnErrorOf(refusal(409, "machine_provider_rejected"))).toBeInstanceOf(SpawnUnavailableError);
+    expect(spawnErrorOf(refusal(409, "environment_provider_rejected", { details: { availabilityStatus: "unavailable" } }))).toBeInstanceOf(SpawnUnavailableError);
+    expect(spawnErrorOf(refusal(503, "busy", { retryable: true }))).toBeInstanceOf(SpawnUnavailableError);
+    const bad = refusal(400, "invalid_request");
+    expect(spawnErrorOf(bad)).toBe(bad);
+    const setup = refusal(409, "environment_provider_rejected", { details: { availabilityStatus: "setup-required" } });
+    expect(spawnErrorOf(setup)).toBe(setup);
+
+    const host = createFakePluginHost({
+      pluginId: "shuttle",
+      sdk: { threads: { spawn: async () => { throw refusal(409, "machine_provider_rejected"); } } } as never,
+    });
+    const port = createBbPort(host.bb);
+    const spawning = port.spawnThread({ projectId: "proj_1", title: "Review", prompt: "p", metadata: {}, workspace: { kind: "provider", providerId: "sandbox-checkout", inputs: {}, machine: { providerId: "sandbox", inputs: {} } } });
+    await expect(spawning).rejects.toBeInstanceOf(SpawnUnavailableError);
+    await expect(spawning).rejects.toThrow(/^machine_provider_rejected: no room$/u);
+  });
+
+  it("says when a thread's machine was removed, which bb cannot bring back", async () => {
+    const thread = (id: string, environment: unknown) => ({ id, title: id, archivedAt: 1, projectId: "proj_1", status: "idle", environment });
+    const threads: Record<string, unknown> = {
+      thr_gone: thread("thr_gone", { hostLifecycle: "removed" }),
+      thr_leaving: thread("thr_leaving", { hostLifecycle: "removing" }),
+      thr_stuck: thread("thr_stuck", { hostLifecycle: "cleanup-failed" }),
+      thr_here: thread("thr_here", { hostLifecycle: "active" }),
+      thr_bare: thread("thr_bare", null),
+    };
+    const gets: unknown[] = [];
+    const host = createFakePluginHost({ pluginId: "shuttle", sdk: { threads: { get: async (args: { threadId: string }) => (gets.push(args), threads[args.threadId]) } } as never });
+    const port = createBbPort(host.bb);
+    const removed = async (id: string) => (await port.getThread(id))!.machineRemoved;
+    expect([await removed("thr_gone"), await removed("thr_leaving"), await removed("thr_stuck"), await removed("thr_here"), await removed("thr_bare")]).toEqual([true, true, true, false, false]);
+    expect(gets[0]).toEqual({ threadId: "thr_gone", include: "environment" });
+  });
+
+  it("lists bb's environment providers, with the machine provider a composition starts, and its machine providers", async () => {
+    const asked: unknown[] = [];
+    const host = createFakePluginHost({
+      pluginId: "shuttle",
+      sdk: {
+        environments: {
+          listProviders: async (args?: unknown) => (asked.push(args), [
+            { id: "git-worktree", displayName: "Git worktree", description: null, inputs: { type: "object" }, acceptsEmptyInputs: true, machineProviderId: null, availability: null },
+            { id: "sandbox-full", displayName: "Sandbox with checkout", description: "A sandbox and its checkout", inputs: null, acceptsEmptyInputs: true, machineProviderId: "sandbox", availability: null },
+          ]),
+        },
+        hosts: { experimental_listProviders: async () => [{ id: "sandbox", displayName: "Sandbox", description: "A sandbox", inputs: { type: "object" }, acceptsEmptyInputs: true }] },
+      } as never,
+    });
+    const port = createBbPort(host.bb);
+    expect(await port.environmentProviders()).toEqual([
+      { id: "git-worktree", displayName: "Git worktree", description: null, inputs: { type: "object" }, machineProviderId: null },
+      { id: "sandbox-full", displayName: "Sandbox with checkout", description: "A sandbox and its checkout", inputs: null, machineProviderId: "sandbox" },
+    ]);
+    // Every provider bb has: availability depends on a project and a machine, which a server does not have.
+    expect(asked).toEqual([undefined]);
+    expect(await port.machineProviders()).toEqual([{ id: "sandbox", displayName: "Sandbox", description: "A sandbox", inputs: { type: "object" } }]);
   });
 
   it("lists only unarchived threads, since bb otherwise fills the limit with archived ones", async () => {

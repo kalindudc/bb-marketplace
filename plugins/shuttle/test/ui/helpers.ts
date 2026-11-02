@@ -252,6 +252,15 @@ export function handlers(overrides: Partial<Handlers> = {}): Handlers {
     exportToml: () => ({ toml: "" }),
     importToml: () => ({ changes: [], config: null }),
     skills: () => ({ skills: [{ id: "pr-reviewer", name: "pr-reviewer", description: "Multi-model critic consensus reviews" }] }),
+    workspaceProviders: () => ({
+      environments: [
+        { id: "git-worktree", displayName: "Worktree", description: null, machineProviderId: null },
+        { id: "my-trees", displayName: "My trees", description: "A tree in the repository's own place", machineProviderId: null },
+        { id: "sandbox-checkout", displayName: "Sandbox checkout", description: "A checkout on a sandbox machine", machineProviderId: null },
+        { id: "sandbox-full", displayName: "Sandbox with checkout", description: "A new sandbox and its checkout", machineProviderId: "sandbox" },
+      ],
+      machines: [{ id: "sandbox", displayName: "Sandbox", description: "A sandbox machine" }],
+    }),
     editPr: unexpected("editPr"),
     editOptions: () => ({ labels: [], people: [], teams: [] }),
     mergeOptions: () => mergeOptions(),

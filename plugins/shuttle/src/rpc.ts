@@ -104,6 +104,7 @@ export function registerRpc(bb: BbPluginApi, shuttle: Shuttle): void {
       return { ok: true as const };
     }),
     skills: ({ projectId }) => refusing(async () => ({ skills: await shuttle.skills(projectId) })),
+    workspaceProviders: () => refusing(() => shuttle.workspaceProviders()),
   });
 
   // While a PR's drawer or a thread's PRs are on screen, keep those PRs fresh from their server.

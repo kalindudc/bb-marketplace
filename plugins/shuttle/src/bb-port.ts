@@ -1,11 +1,30 @@
 import type { BbPluginApi, JsonValue } from "@get-bb/plugin-sdk";
-import type { BbPort, SpawnArgs, ThreadInfo } from "./ports";
+import { SpawnUnavailableError, type BbPort, type SpawnArgs, type ThreadInfo } from "./ports";
 
 type ThreadSpawnArgs = Parameters<BbPluginApi["sdk"]["threads"]["spawn"]>[0];
 
 const THREAD_PAGE = 500;
 
-const isNotFound = (error: unknown) => /\b404\b|not[ _]found/iu.test(error instanceof Error ? error.message : String(error));
+const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
+/** bb's own words, without the "HTTP 409: " BbHttpError puts first. */
+const bbMessage = (error: unknown) => message(error).replace(/^HTTP \d{3}: /u, "");
+const isNotFound = (error: unknown) => /\b404\b|not[ _]found/iu.test(message(error));
+
+/**
+ * bb's SDK throws BbHttpError, with the HTTP `status`, bb's error `code` and the parsed `body`. A machine provider that
+ * cannot start a machine now, such as one whose pool is full, makes bb refuse with 409 machine_provider_rejected; an
+ * environment provider whose availability check answers "unavailable" makes it refuse with 409
+ * environment_provider_rejected and details.availabilityStatus. Those, and any error bb marks retryable, may pass soon.
+ */
+export function spawnErrorOf(error: unknown): unknown {
+  const http = (error ?? {}) as { status?: unknown; code?: unknown; body?: unknown };
+  const body = (http.body ?? {}) as { retryable?: unknown; details?: { availabilityStatus?: unknown } | null };
+  const unavailable = http.status === 409 && (http.code === "machine_provider_rejected" || (http.code === "environment_provider_rejected" && body.details?.availabilityStatus === "unavailable"));
+  return body.retryable === true || unavailable ? new SpawnUnavailableError(bbMessage(error)) : error;
+}
+
+/** The environment's `hostLifecycle` once bb removes its machine; a suspended machine stays active, since a message resumes it. */
+const MACHINE_GONE = new Set(["removed", "removing", "cleanup-failed"]);
 
 type ThreadLike = {
   id: string;
@@ -19,6 +38,8 @@ type ThreadLike = {
   updatedAt?: number | null;
   providerId?: string | null;
   canRestoreEnvironment?: boolean;
+  /** Only with `include: "environment"`. */
+  environment?: { hostLifecycle?: string } | null;
 };
 
 function toThread(thread: ThreadLike): ThreadInfo {
@@ -33,6 +54,7 @@ function toThread(thread: ThreadLike): ThreadInfo {
     updatedAt: thread.updatedAt ?? null,
     providerId: thread.providerId ?? null,
     canRestoreEnvironment: thread.canRestoreEnvironment === true,
+    machineRemoved: MACHINE_GONE.has(thread.environment?.hostLifecycle ?? ""),
   };
 }
 
@@ -56,16 +78,25 @@ export function createBbPort(bb: BbPluginApi, setSettings: BbPort["setSettings"]
       case "worktree":
         return { type: "host", hostId: await hostFor(args.projectId), workspace: { type: "managed-worktree", baseBranch: { kind: "default" } } };
       case "provider":
-        return { type: "provider", environmentProviderId: workspace.providerId, inputs: workspace.inputs as JsonValue, machine: { type: "existing", hostId: await hostFor(args.projectId) } };
+        return {
+          type: "provider",
+          environmentProviderId: workspace.providerId,
+          inputs: workspace.inputs as JsonValue,
+          machine: workspace.machine
+            ? // bb refuses any inputs, {} included, from a machine provider that takes none, and reads null as {} for one that takes some.
+              { type: "new", machineProviderId: workspace.machine.providerId, inputs: Object.keys(workspace.machine.inputs).length === 0 ? null : (workspace.machine.inputs as JsonValue) }
+            : { type: "existing", hostId: await hostFor(args.projectId) },
+        };
       case "path":
         return { type: "host", hostId: await hostFor(args.projectId), workspace: { type: "unmanaged", path: workspace.path } };
     }
   };
   return {
     async spawnThread(args) {
+      const environment = await environmentFor(args);
       const thread = await bb.sdk.threads.spawn({
         projectId: args.projectId,
-        environment: await environmentFor(args),
+        environment,
         prompt: args.prompt,
         title: args.title,
         pluginMetadata: args.metadata,
@@ -73,6 +104,8 @@ export function createBbPort(bb: BbPluginApi, setSettings: BbPort["setSettings"]
         ...(args.model ? { model: args.model } : {}),
         ...(args.reasoningLevel ? { reasoningLevel: args.reasoningLevel } : {}),
         ...(args.sectionId ? { sectionId: args.sectionId } : {}),
+      }).catch((error: unknown) => {
+        throw spawnErrorOf(error);
       });
       return thread.id;
     },
@@ -109,7 +142,7 @@ export function createBbPort(bb: BbPluginApi, setSettings: BbPort["setSettings"]
     },
     async getThread(threadId) {
       try {
-        return toThread((await bb.sdk.threads.get({ threadId })) as ThreadLike);
+        return toThread((await bb.sdk.threads.get({ threadId, include: "environment" })) as ThreadLike);
       } catch (error) {
         if (isNotFound(error)) return null;
         throw error;
@@ -139,6 +172,23 @@ export function createBbPort(bb: BbPluginApi, setSettings: BbPort["setSettings"]
     async listSkills(projectId) {
       const result = await bb.sdk.skills.list({ projectId, environmentId: null });
       return result.skills.map((skill) => ({ id: skill.id, name: skill.name, description: skill.description ?? "" }));
+    },
+    async environmentProviders() {
+      return (await bb.sdk.environments.listProviders()).map((provider) => ({
+        id: provider.id,
+        displayName: provider.displayName,
+        description: provider.description,
+        inputs: provider.inputs,
+        machineProviderId: provider.machineProviderId ?? null,
+      }));
+    },
+    async machineProviders() {
+      return (await bb.sdk.hosts.experimental_listProviders()).map((provider) => ({
+        id: provider.id,
+        displayName: provider.displayName,
+        description: provider.description,
+        inputs: provider.inputs,
+      }));
     },
     setSettings,
     publish(tags = ["prs", "servers", "conversation", "boards"]) {

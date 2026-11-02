@@ -1,6 +1,15 @@
 // What Shuttle needs from bb, behind an interface so tests can fake it.
 import type { JsonValue } from "@get-bb/plugin-sdk";
+import { ShuttleError } from "./ctx";
 import type { Workspace } from "./workspaces";
+
+/**
+ * bb cannot start the thread now, though it may soon: its machine provider has no room or is not ready, its environment
+ * provider says it is unavailable, or bb marked the error retryable. The message is bb's.
+ */
+export class SpawnUnavailableError extends ShuttleError {
+  override readonly name = "SpawnUnavailableError";
+}
 
 /** At most how many unarchived threads Shuttle reads when it looks for one, such as for the link dialog or a PR's opener. */
 export const THREAD_SCAN = 5000;
@@ -32,6 +41,28 @@ export interface ThreadInfo {
   providerId?: string | null;
   /** Its workspace was removed after an archive and its provider can build it again. */
   canRestoreEnvironment?: boolean;
+  /** bb removed, or is removing, the machine its workspace was on, so neither can come back. */
+  machineRemoved?: boolean;
+}
+
+/** A bb environment provider, as Shuttle's settings and the server test read it. */
+export interface EnvironmentProviderInfo {
+  id: string;
+  displayName: string;
+  description: string | null;
+  /** The JSON Schema of its inputs; null when it takes none. */
+  inputs: unknown;
+  /** Set on an environment that makes a new machine for each thread: the machine provider it makes it with. */
+  machineProviderId: string | null;
+}
+
+/** A bb machine provider, which can give a thread a new machine of its own. */
+export interface MachineProviderInfo {
+  id: string;
+  displayName: string;
+  description: string | null;
+  /** The JSON Schema of its inputs; null when it takes none. */
+  inputs: unknown;
 }
 
 /** A message's own model and thinking level, for this turn and the ones after it. */
@@ -70,6 +101,9 @@ export interface BbPort {
   threadsById(threadIds: readonly string[]): Promise<ThreadInfo[]>;
   listProjects(): Promise<ProjectInfo[]>;
   listSkills(projectId: string): Promise<SkillInfo[]>;
+  /** Every environment provider bb has, on any machine; bb tells availability only for a project on a machine, so this has none. */
+  environmentProviders(): Promise<EnvironmentProviderInfo[]>;
+  machineProviders(): Promise<MachineProviderInfo[]>;
   /** Changes Shuttle's own bb settings. */
   setSettings(patch: { autoAgent?: boolean; inboxRequests?: boolean }): Promise<void>;
   publish(tags?: string[]): void;

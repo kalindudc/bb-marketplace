@@ -24,6 +24,7 @@ const EVENT_LOOKS: Record<string, Look> = {
   review_failed: { icon: "AlertTriangle", tone: "bad" },
   auto_failed: { icon: "AlertTriangle", tone: "bad" },
   auto_capped: { icon: "Pause", tone: "warn" },
+  auto_waiting: { icon: "Clock", tone: "warn" },
   forwarded: { icon: "Sent", tone: "info" },
   forward_failed: { icon: "AlertTriangle", tone: "bad" },
   sync_ok: { icon: "ArrowReloadHorizontal", tone: "neutral" },

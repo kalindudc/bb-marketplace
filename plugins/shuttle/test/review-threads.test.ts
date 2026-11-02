@@ -2,6 +2,7 @@
 import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import { MIGRATIONS } from "../src/db/schema";
+import { SpawnUnavailableError } from "../src/ports";
 import { harness, pr, testConfig, TEST_SERVER } from "./helpers";
 
 const KEY = "forge:acme/app#3";
@@ -157,6 +158,20 @@ describe("reviving a review thread for the PR's next review", () => {
     await h.shuttle.review({ key: KEY });
     expect(h.port.lifecycle).toEqual([`archive ${threadId}`, `unarchive ${threadId}`, `restore ${threadId}`]);
     expect(h.port.sent.at(-1)!.threadId).toBe(threadId);
+  });
+
+  it("starts a new thread, without bringing the old one back, when bb removed the old one's machine", async () => {
+    const { h, threadId, draftId } = await reviewed();
+    await h.shuttle.discardDraft(KEY, draftId);
+    h.port.threads.set(threadId, { ...h.port.threads.get(threadId)!, machineRemoved: true });
+    // Until the new thread starts, nothing went anywhere, so nothing says it did.
+    h.port.spawnError = new SpawnUnavailableError("no room for another machine");
+    await expect(h.shuttle.review({ key: KEY })).rejects.toThrow("no room for another machine");
+    expect(lastEvent(h, "revive_failed")).toBeUndefined();
+    h.port.spawnError = null;
+    expect((await h.shuttle.review({ key: KEY })).threadId).toBe("thr_spawned2");
+    expect(h.port.lifecycle).toEqual([`archive ${threadId}`]);
+    expect(lastEvent(h, "revive_failed")).toBe("The review of acme/app#3 went to a new thread: \u201cReview acme/app#3\u201d could not take it (bb removed its machine after it was archived).");
   });
 
   it("sends to a review thread that is not archived, as the last one's", async () => {

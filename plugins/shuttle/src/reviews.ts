@@ -67,6 +67,8 @@ export async function startReview(ctx: Ctx, input: ReviewInput, trigger: "auto" 
   let threadId: string | null = null;
   let revived = false;
   let ownThread = false;
+  // Said once the new thread exists: a start that waits for a machine tries the old thread again at the next sync.
+  let notRevived: { text: string; threadId: string } | null = null;
   if (input.threadId) {
     // A thread the user picked keeps its own model unless they changed it for this run.
     const picked = { ...(input.model ? { model: input.model } : {}), ...(input.reasoningLevel ? { reasoningLevel: input.reasoningLevel } : {}) };
@@ -83,7 +85,7 @@ export async function startReview(ctx: Ctx, input: ReviewInput, trigger: "auto" 
         ownThread = true;
       } catch (error) {
         const title = ctx.store.threadTitle(last.thread_id) ?? last.thread_id;
-        ctx.store.addEvent("revive_failed", `The review of ${shortKey(ctx, pr)} went to a new thread: “${title}” could not take it (${errText(error)}).`, pr.id, last.thread_id);
+        notRevived = { text: `The review of ${shortKey(ctx, pr)} went to a new thread: “${title}” could not take it (${errText(error)}).`, threadId: last.thread_id };
       }
     }
   }
@@ -101,6 +103,7 @@ export async function startReview(ctx: Ctx, input: ReviewInput, trigger: "auto" 
       ...(reasoningLevel ? { reasoningLevel } : {}),
       metadata: { shuttle: { pr: pr.key, role: "review" } },
     });
+    if (notRevived !== null) ctx.store.addEvent("revive_failed", notRevived.text, pr.id, notRevived.threadId);
   }
   const role = ctx.store.linkRole(pr.id, threadId) ?? "review";
   await linkPr(ctx, pr, threadId, role, { watch: false });

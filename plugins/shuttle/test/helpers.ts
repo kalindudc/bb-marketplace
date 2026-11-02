@@ -3,7 +3,7 @@ import type { Runner, RunOptions } from "../src/adapters/exec";
 import { DEFAULT_CONFIG, parseConfig, type Config } from "../src/config";
 import { MIGRATIONS } from "../src/db/schema";
 import { Store } from "../src/db/store";
-import type { BbPort, ProjectInfo, SendOptions, SpawnArgs, ThreadInfo } from "../src/ports";
+import type { BbPort, EnvironmentProviderInfo, MachineProviderInfo, ProjectInfo, SendOptions, SpawnArgs, ThreadInfo } from "../src/ports";
 import { DEFAULT_SETTINGS, type Settings } from "../src/settings";
 import { Shuttle } from "../src/shuttle";
 
@@ -29,6 +29,10 @@ export class FakePort implements BbPort {
   publishes = 0;
   invalidations: string[][] = [];
   logs: string[] = [];
+  /** What the next spawns throw, such as bb refusing while a machine provider has no room. */
+  spawnError: Error | null = null;
+  environments: EnvironmentProviderInfo[] = [];
+  machines: MachineProviderInfo[] = [];
   private next = 1;
 
   settingsPatches: Array<{ autoAgent?: boolean; inboxRequests?: boolean }> = [];
@@ -40,6 +44,7 @@ export class FakePort implements BbPort {
     this.settingsPatches.push(patch);
   }
   async spawnThread(args: SpawnArgs): Promise<string> {
+    if (this.spawnError) throw this.spawnError;
     const threadId = `thr_spawned${this.next++}`;
     this.spawned.push({ ...args, threadId });
     this.addThread(threadId, args.title, false, { providerId: args.providerId ?? "pi" });
@@ -93,6 +98,12 @@ export class FakePort implements BbPort {
   }
   async listSkills(): Promise<Array<{ id: string; name: string; description: string }>> {
     return [{ id: "s1", name: "pr-reviewer", description: "Reviews" }];
+  }
+  async environmentProviders(): Promise<EnvironmentProviderInfo[]> {
+    return this.environments;
+  }
+  async machineProviders(): Promise<MachineProviderInfo[]> {
+    return this.machines;
   }
   publish(tags?: string[]): void {
     this.publishes++;

@@ -827,4 +827,12 @@ export const rpcContract = defineContract({
     tags: PRS,
   },
   skills: { input: z.object({ projectId: z.string().max(100).optional() }), output: z.object({ skills: z.array(z.object({ id: z.string(), name: z.string(), description: z.string() })) }) },
+  /** bb's environment and machine providers, for a server's review workspace. */
+  workspaceProviders: {
+    input: z.object({}),
+    output: z.object({
+      environments: z.array(z.object({ id: z.string(), displayName: z.string(), description: z.string().nullable(), machineProviderId: z.string().nullable() })),
+      machines: z.array(z.object({ id: z.string(), displayName: z.string(), description: z.string().nullable() })),
+    }),
+  },
 });

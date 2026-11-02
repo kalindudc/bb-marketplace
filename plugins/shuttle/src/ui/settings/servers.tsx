@@ -28,15 +28,36 @@ interface ServerDraft {
   provider: string;
   /** The provider's inputs as JSON text, checked on save. */
   inputs: string;
+  /** Where a provider's review runs: the machine with the project's checkout, or a new machine for each review. */
+  machineKind: "project" | "new";
+  machineProvider: string;
+  machineInputs: string;
   workspaceCommand: string;
 }
 
-type WorkspaceDraft = Pick<ServerDraft, "workspaceKind" | "provider" | "inputs" | "workspaceCommand">;
+type WorkspaceDraft = Pick<ServerDraft, "workspaceKind" | "provider" | "inputs" | "machineKind" | "machineProvider" | "machineInputs" | "workspaceCommand">;
+
+const NO_MACHINE = { machineKind: "project", machineProvider: "", machineInputs: "{}" } as const;
 
 function workspaceDraftOf(workspace: ServerConfig["workspace"]): WorkspaceDraft {
-  if (workspace?.kind === "provider") return { workspaceKind: "provider", provider: workspace.provider, inputs: JSON.stringify(workspace.inputs, null, 2), workspaceCommand: "" };
-  if (workspace?.kind === "command") return { workspaceKind: "command", provider: "", inputs: "{}", workspaceCommand: workspace.command };
-  return { workspaceKind: "git", provider: "", inputs: "{}", workspaceCommand: "" };
+  if (workspace?.kind === "provider") {
+    const machine = workspace.machine ? { machineKind: "new" as const, machineProvider: workspace.machine.provider, machineInputs: JSON.stringify(workspace.machine.inputs, null, 2) } : NO_MACHINE;
+    return { workspaceKind: "provider", provider: workspace.provider, inputs: JSON.stringify(workspace.inputs, null, 2), ...machine, workspaceCommand: "" };
+  }
+  if (workspace?.kind === "command") return { workspaceKind: "command", provider: "", inputs: "{}", ...NO_MACHINE, workspaceCommand: workspace.command };
+  return { workspaceKind: "git", provider: "", inputs: "{}", ...NO_MACHINE, workspaceCommand: "" };
+}
+
+/** A JSON object typed into a field, or the reason it is not one. */
+function jsonObject(text: string, what: string): { value: Record<string, unknown> } | { problem: string } {
+  let value: unknown;
+  try {
+    value = JSON.parse(text.trim() || "{}");
+  } catch (error) {
+    return { problem: `The ${what} are not JSON: ${(error as Error).message}` };
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return { problem: `The ${what} must be a JSON object.` };
+  return { value: value as Record<string, unknown> };
 }
 
 /** The workspace the draft describes, or the reason it cannot be saved. */
@@ -48,14 +69,14 @@ export function workspaceOf(draft: WorkspaceDraft): { workspace: ServerConfig["w
   }
   const provider = draft.provider.trim();
   if (!provider) return { problem: "Enter the environment provider's id, such as my-trees." };
-  let inputs: unknown;
-  try {
-    inputs = JSON.parse(draft.inputs.trim() || "{}");
-  } catch (error) {
-    return { problem: `The inputs are not JSON: ${(error as Error).message}` };
-  }
-  if (inputs === null || typeof inputs !== "object" || Array.isArray(inputs)) return { problem: "The inputs must be a JSON object." };
-  return { workspace: { kind: "provider", provider, inputs: inputs as Record<string, unknown> } };
+  const inputs = jsonObject(draft.inputs, "inputs");
+  if ("problem" in inputs) return inputs;
+  if (draft.machineKind === "project") return { workspace: { kind: "provider", provider, inputs: inputs.value } };
+  const machineProvider = draft.machineProvider.trim();
+  if (!machineProvider) return { problem: "Enter the machine provider's id, as bb machine providers lists them." };
+  const machineInputs = jsonObject(draft.machineInputs, "machine inputs");
+  if ("problem" in machineInputs) return machineInputs;
+  return { workspace: { kind: "provider", provider, inputs: inputs.value, machine: { provider: machineProvider, inputs: machineInputs.value } } };
 }
 
 const emptyCommands = (): Record<Operation, string> => Object.fromEntries(OPERATIONS.map((op) => [op, ""])) as Record<Operation, string>;
@@ -234,6 +255,16 @@ function ServerForm({ initial, saved, existingIds, saving, onSave, onCancel }: {
   const duplicate = draft.original === null && existingIds.includes(draft.id.trim());
   const workspaceResult = workspaceOf(draft);
   const workspaceProblem = "problem" in workspaceResult ? workspaceResult.problem : null;
+  const providers = useShuttleQuery("workspaceProviders", {}, draft.workspaceKind === "provider");
+  const environments = providers.data?.environments ?? [];
+  const machines = providers.data?.machines ?? [];
+  const environment = environments.find((item) => item.id === draft.provider.trim()) ?? null;
+  const machine = machines.find((item) => item.id === draft.machineProvider.trim()) ?? null;
+  // An environment that makes its own machine takes only that machine provider.
+  const chooseProvider = (value: string) => setDraft((current) => {
+    const own = environments.find((item) => item.id === value.trim())?.machineProviderId ?? null;
+    return own === null ? { ...current, provider: value } : { ...current, provider: value, machineKind: "new", machineProvider: own };
+  });
   const test = async () => {
     const out = await testServer.run({ server: serverOf(draft, saved) });
     if (out !== null) setResults(out.results);
@@ -310,11 +341,49 @@ function ServerForm({ initial, saved, existingIds, saving, onSave, onCancel }: {
         </label>
         {draft.workspaceKind === "provider" && (
           <>
-            <label className={row}><span className={label}>Provider</span><input aria-label="Environment provider" className={`${FIELD} font-mono`} placeholder="my-trees" value={draft.provider} onChange={(event) => set("provider", event.target.value)} /></label>
+            <label className={row}>
+              <span className={label}>Provider</span>
+              <span>
+                <input aria-label="Environment provider" list="shuttle-environment-providers" className={`${FIELD} w-full font-mono`} placeholder="my-trees" value={draft.provider} onChange={(event) => chooseProvider(event.target.value)} />
+                <datalist id="shuttle-environment-providers">
+                  {environments.map((item) => <option key={item.id} value={item.id}>{item.displayName}</option>)}
+                </datalist>
+                {environment !== null && (
+                  <span className="mt-1 block text-xs text-muted-foreground">
+                    {environment.machineProviderId !== null ? `${environment.displayName} makes a new machine for each review with ${environment.machineProviderId}.` : `${environment.displayName}${environment.description ? `: ${environment.description}` : ""}`}
+                  </span>
+                )}
+              </span>
+            </label>
             <label className={row}>
               <span className={label}>Inputs (JSON)</span>
               <textarea aria-label="Provider inputs" rows={3} className={`${FIELD_CODE} w-full`} placeholder='{ "tree": "shuttle-{number}" }' value={draft.inputs} onChange={(event) => set("inputs", event.target.value)} />
             </label>
+            <label className={row}>
+              <span className={label}>Machine</span>
+              <select aria-label="Review machine" className={FIELD} value={draft.machineKind} onChange={(event) => set("machineKind", event.target.value as ServerDraft["machineKind"])}>
+                <option value="project" disabled={environment?.machineProviderId != null}>The machine with the project's checkout</option>
+                <option value="new">A new machine for each review</option>
+              </select>
+            </label>
+            {draft.machineKind === "new" && (
+              <>
+                <label className={row}>
+                  <span className={label}>Machine provider</span>
+                  <span>
+                    <input aria-label="Machine provider" list="shuttle-machine-providers" className={`${FIELD} w-full font-mono`} value={draft.machineProvider} onChange={(event) => set("machineProvider", event.target.value)} />
+                    <datalist id="shuttle-machine-providers">
+                      {machines.map((item) => <option key={item.id} value={item.id}>{item.displayName}</option>)}
+                    </datalist>
+                    {machine !== null && <span className="mt-1 block text-xs text-muted-foreground">{`${machine.displayName}${machine.description ? `: ${machine.description}` : ""}`}</span>}
+                  </span>
+                </label>
+                <label className={row}>
+                  <span className={label}>Machine inputs (JSON)</span>
+                  <textarea aria-label="Machine inputs" rows={3} className={`${FIELD_CODE} w-full`} placeholder="{}" value={draft.machineInputs} onChange={(event) => set("machineInputs", event.target.value)} />
+                </label>
+              </>
+            )}
           </>
         )}
         {draft.workspaceKind === "command" && (
@@ -325,7 +394,7 @@ function ServerForm({ initial, saved, existingIds, saving, onSave, onCancel }: {
           </label>
         )}
         <p className={`text-xs ${workspaceProblem ? "text-destructive-text" : "text-muted-foreground"}`}>
-          {workspaceProblem ?? "Used when a review preset asks for its own checkout. Inputs and the command may use {number}, {repo}, {repo_name}, {head_ref}, {base}, {head}, {server} and {slug}; the command prints the checkout's absolute path on its last line."}
+          {workspaceProblem ?? "Used when a review preset asks for its own checkout. Inputs, machine inputs and the command may use {number}, {repo}, {repo_name}, {head_ref}, {base}, {head}, {server} and {slug}; the command prints the checkout's absolute path on its last line. Test checks the providers and their inputs against bb."}
         </p>
       </div>
       {results !== null && <TestResults results={results} />}

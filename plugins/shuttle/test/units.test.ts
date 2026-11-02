@@ -92,6 +92,27 @@ describe("server workspaces", () => {
     expect(await workspaceFor(worktreePreset, undefined, row(), runProcess)).toEqual({ kind: "worktree" });
   });
 
+  it("puts a provider's review on a new machine of its own, with the machine's inputs filled too", async () => {
+    const { workspaceFor } = await import("../src/workspaces");
+    const provider = { kind: "provider" as const, provider: "sandbox-checkout", inputs: { base: "origin/{head_ref}" }, machine: { provider: "sandbox", inputs: { revision: "{head}", paths: ["src/{repo_name}"] } } };
+    expect(await workspaceFor(worktreePreset, provider, row(), runProcess)).toEqual({
+      kind: "provider",
+      providerId: "sandbox-checkout",
+      inputs: { base: "origin/sam/fix it" },
+      machine: { providerId: "sandbox", inputs: { revision: "abc", paths: ["src/app"] } },
+    });
+    expect(await workspaceFor({ ...worktreePreset, workspace: "project-default" }, provider, row(), runProcess)).toEqual({ kind: "project-default" });
+  });
+
+  it("reads a machine from TOML, with empty inputs by default, and refuses one that is not a provider id", () => {
+    const toml = configToToml(testConfig()).replace("[[preset]]", '[server.workspace]\nkind = "provider"\nprovider = "sandbox-checkout"\n\n[server.workspace.machine]\nprovider = "sandbox"\n\n[[preset]]');
+    expect(configFromToml(toml).servers[0]!.workspace).toEqual({ kind: "provider", provider: "sandbox-checkout", inputs: {}, machine: { provider: "sandbox", inputs: {} } });
+    const bad = { ...TEST_SERVER, workspace: { kind: "provider", provider: "sandbox-checkout", machine: { provider: "Not An Id" } } };
+    expect(() => parseConfig({ ...DEFAULT_CONFIG, servers: [bad] })).toThrow(/machine\.provider: must be a bb machine provider id/u);
+    const command = { ...TEST_SERVER, workspace: { kind: "command", command: "echo /tmp", machine: { provider: "sandbox" } } };
+    expect(() => parseConfig({ ...DEFAULT_CONFIG, servers: [command] })).toThrow(/machine/u);
+  });
+
   it("runs a command with shell-quoted PR data and takes the path on its last line", async () => {
     const { workspaceFor } = await import("../src/workspaces");
     const command = { kind: "command" as const, command: "echo preparing >&2; echo noise; printf '/tmp/trees/%s\\n' {head_ref}" };
@@ -109,6 +130,53 @@ describe("server workspaces", () => {
     await h.shuttle.sync();
     await h.shuttle.review({ key: "forge:acme/app#3" });
     expect(h.port.spawned[0]!.workspace).toEqual({ kind: "provider", providerId: "my-trees", inputs: { tree: "shuttle-3" } });
+  });
+
+  it("tests the review workspace against bb's providers: ids, a composition's own machine provider and inputs", async () => {
+    const h = harness();
+    const schema = (properties: Record<string, unknown>, required: string[] = []) => ({ type: "object", properties, required, additionalProperties: false });
+    h.port.environments = [
+      { id: "my-trees", displayName: "My trees", description: null, inputs: schema({ tree: { type: "string", minLength: 1 } }, ["tree"]), machineProviderId: null },
+      { id: "sandbox-checkout", displayName: "Sandbox checkout", description: null, inputs: schema({ base: { type: "string", pattern: "^[A-Za-z0-9._/-]+$" } }), machineProviderId: null },
+      { id: "sandbox-full", displayName: "Sandbox with checkout", description: null, inputs: schema({ base: { type: "string" } }), machineProviderId: "sandbox" },
+      { id: "bare", displayName: "Bare", description: null, inputs: null, machineProviderId: null },
+    ];
+    h.port.machines = [
+      { id: "sandbox", displayName: "Sandbox", description: "A sandbox", inputs: schema({ cores: { type: "integer", maximum: 20 }, revision: { type: "string", pattern: "^[0-9a-f]{40}$" } }) },
+      { id: "plain", displayName: "Plain", description: null, inputs: null },
+    ];
+    const workspaceRow = async (workspace: unknown) => {
+      const results = await h.shuttle.testServer({ server: { ...TEST_SERVER, ...(workspace === undefined ? {} : { workspace }) } });
+      const row = results.find((result) => result.operation === "workspace")!;
+      return `${row.ok ? "ok" : "fail"}: ${row.detail}`;
+    };
+    expect(await workspaceRow(undefined)).toBe("ok: bb's git worktree, on the machine with the project's checkout");
+    expect(await workspaceRow({ kind: "command", command: "echo /tmp" })).toBe("ok: a command prints the checkout's path; the test does not run it");
+    expect(await workspaceRow({ kind: "provider", provider: "my-trees", inputs: { tree: "shuttle-{number}" } })).toBe("ok: My trees (my-trees), on the machine with the project's checkout");
+    expect(await workspaceRow({ kind: "provider", provider: "sandbox-checkout", inputs: { base: "origin/{head_ref}" }, machine: { provider: "sandbox", inputs: { cores: 8, revision: "{head}" } } })).toBe("ok: Sandbox checkout (sandbox-checkout), on a new Sandbox machine (sandbox) for each review");
+    expect(await workspaceRow({ kind: "provider", provider: "sandbox-full", inputs: {}, machine: { provider: "sandbox", inputs: {} } })).toBe("ok: Sandbox with checkout (sandbox-full), on a new Sandbox machine (sandbox) for each review");
+
+    expect(await workspaceRow({ kind: "provider", provider: "sandbox-checkout", inputs: {}, machine: { provider: "plain", inputs: {} } })).toBe("ok: Sandbox checkout (sandbox-checkout), on a new Plain machine (plain) for each review");
+
+    expect(await workspaceRow({ kind: "provider", provider: "nope", inputs: {} })).toBe('fail: bb has no environment provider "nope"; it has bare, my-trees, sandbox-checkout, sandbox-full');
+    expect(await workspaceRow({ kind: "provider", provider: "sandbox-full", inputs: {} })).toBe("fail: Sandbox with checkout (sandbox-full) makes a new machine for each review with the machine provider sandbox, so the machine must be sandbox");
+    expect(await workspaceRow({ kind: "provider", provider: "my-trees", inputs: {} })).toBe("fail: inputs.tree: Invalid input: expected string, received undefined");
+    expect(await workspaceRow({ kind: "provider", provider: "sandbox-checkout", inputs: {}, machine: { provider: "gone", inputs: {} } })).toBe('fail: bb has no machine provider "gone"; it has plain, sandbox');
+    expect(await workspaceRow({ kind: "provider", provider: "sandbox-checkout", inputs: {}, machine: { provider: "plain", inputs: { cores: 2 } } })).toBe("fail: machine.inputs: Plain (plain) takes none");
+    expect(await workspaceRow({ kind: "provider", provider: "sandbox-checkout", inputs: {}, machine: { provider: "sandbox", inputs: { cores: 64 } } })).toMatch(/^fail: machine\.inputs\.cores: Too big/u);
+    // Shuttle sends {} for an environment provider's empty inputs, since one with a schema refuses none at all.
+    expect(await workspaceRow({ kind: "provider", provider: "bare", inputs: {} })).toBe("fail: inputs: Bare (bare) takes no inputs, and bb refuses the empty inputs Shuttle sends it");
+  });
+
+  it("starts a review on a new machine when the server's workspace names one", async () => {
+    const h = harness(testConfig({
+      servers: [{ ...TEST_SERVER, workspace: { kind: "provider", provider: "sandbox-checkout", inputs: {}, machine: { provider: "sandbox", inputs: { cores: 4 } } } }],
+      presets: [{ id: "p", name: "P", default: true, workspace: "worktree", prompt: "x" }],
+    } as never));
+    h.lists.review_requested = [pr(3)];
+    await h.shuttle.sync();
+    await h.shuttle.review({ key: "forge:acme/app#3" });
+    expect(h.port.spawned[0]!.workspace).toEqual({ kind: "provider", providerId: "sandbox-checkout", inputs: {}, machine: { providerId: "sandbox", inputs: { cores: 4 } } });
   });
 });
 

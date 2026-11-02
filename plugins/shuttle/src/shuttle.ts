@@ -30,6 +30,7 @@ import { allViews, inArea, inboxOf, toView } from "./views";
 import { editOptions, editPr } from "./edit";
 import { LinkCards } from "./link-cards";
 import { deliver, pollWatches } from "./watch";
+import { checkWorkspace } from "./workspaces";
 
 const PROJECTS_TTL_MS = 5 * 60_000;
 /** The link and agent dialogs list the most recent threads; a search reaches the rest. */
@@ -641,6 +642,14 @@ export class Shuttle implements Ctx {
     return { projects: projects.map((p) => ({ id: p.id, name: p.name })), suggested };
   }
 
+  async workspaceProviders(): Promise<{ environments: Array<{ id: string; displayName: string; description: string | null; machineProviderId: string | null }>; machines: Array<{ id: string; displayName: string; description: string | null }> }> {
+    const [environments, machines] = await Promise.all([this.port.environmentProviders(), this.port.machineProviders()]);
+    return {
+      environments: environments.map(({ id, displayName, description, machineProviderId }) => ({ id, displayName, description, machineProviderId })),
+      machines: machines.map(({ id, displayName, description }) => ({ id, displayName, description })),
+    };
+  }
+
   async skills(projectId?: string): Promise<Array<{ id: string; name: string; description: string }>> {
     const id = projectId || this.settings().defaultProject || (await this.projects())[0]?.id;
     if (!id) return [];
@@ -692,6 +701,7 @@ export class Shuttle implements Ctx {
         return `${options.methods.join(", ")}; ${options.state}`;
       });
     }
+    await time("workspace", () => checkWorkspace(this.port, server.id, server.workspace));
     return results;
   }
 
