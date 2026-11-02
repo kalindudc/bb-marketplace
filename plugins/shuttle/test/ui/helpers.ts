@@ -140,6 +140,7 @@ export function draft(overrides: Partial<ReviewDraft> = {}): ReviewDraft {
       { id: "b", severity: "medium", path: "src/header/menu.tsx", line: 31, body: "The menu closes before the action runs." },
       { id: "c", severity: "nit", path: "src/header/README.md", line: null, body: "The README still names the old prop." },
     ],
+    notes: null,
     ...overrides,
   };
 }

@@ -10,6 +10,7 @@ export interface DraftInput {
   summary: string;
   verdict: Verdict;
   findings: Array<{ severity: Severity; path: string; line?: number | null; body: string }>;
+  notes?: string;
 }
 
 export function draftView(ctx: Ctx, row: DraftRow): ReviewDraft {
@@ -25,6 +26,7 @@ export function draftView(ctx: Ctx, row: DraftRow): ReviewDraft {
     summary: row.summary,
     verdict: row.verdict,
     findings: JSON.parse(row.findings) as Finding[],
+    notes: row.notes,
   };
 }
 
@@ -47,6 +49,7 @@ export async function saveDraft(ctx: Ctx, threadId: string, query: string, input
     summary: input.summary,
     verdict: input.verdict,
     findings: JSON.stringify(findings),
+    notes: input.notes?.trim() || null,
   });
   ctx.store.setSnooze(pr.id, null, null);
   ctx.store.addEvent("draft", `\u201c${ctx.store.threadTitle(threadId) ?? threadId}\u201d drafted a review of ${shortKey(ctx, pr)}: ${findings.length} finding${findings.length === 1 ? "" : "s"}, nothing posted.`, pr.id, threadId);

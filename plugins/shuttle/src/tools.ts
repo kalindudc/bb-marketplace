@@ -115,7 +115,7 @@ export function registerTools(bb: BbPluginApi, shuttle: Shuttle): void {
   bb.agents.registerTool({
     name: "shuttle_review_draft",
     description:
-      "Hand your finished review of someone else's pull request to Shuttle as a draft: a summary, the verdict you suggest and each finding with its file and line. The user reads it in Shuttle, picks what to post and posts it as themselves; nothing is posted by this tool. Call it again to replace the draft.",
+      "Hand your finished review of someone else's pull request to Shuttle as a draft: a summary, the verdict you suggest, each finding with its file and line, and optional notes for the user alone. The user reads it in Shuttle, picks what to post and posts it as themselves; nothing is posted by this tool, and the notes never are. Call it again to replace the draft.",
     presentation: { label: { pending: "Saving review draft", completed: "Saved review draft" } },
     parameters: z.object({
       pr,
@@ -131,11 +131,20 @@ export function registerTools(bb: BbPluginApi, shuttle: Shuttle): void {
           }),
         )
         .max(100),
+      notes: z
+        .string()
+        .trim()
+        .max(20_000)
+        .optional()
+        .describe(
+          "Context for the user alone, in Markdown, that Shuttle shows beside the draft and never posted: for example the PR's intent, whether the change achieves it, and whether it is worth doing at all. Leave out what belongs in the summary or a finding.",
+        ),
     }),
-    execute: ({ pr: query, summary, verdict, findings }, tool) =>
+    execute: ({ pr: query, summary, verdict, findings, notes }, tool) =>
       run(async () => {
-        const out = await shuttle.saveDraft(tool.threadId, query, { summary, verdict, findings });
-        return `Saved a draft of ${out.findings} finding${out.findings === 1 ? "" : "s"} for ${out.pr.key}. The user chooses what to post from Shuttle; do not post it yourself.`;
+        const out = await shuttle.saveDraft(tool.threadId, query, { summary, verdict, findings, ...(notes === undefined ? {} : { notes }) });
+        const kept = out.notes ? ", with notes for the user that are never posted" : "";
+        return `Saved a draft of ${out.findings} finding${out.findings === 1 ? "" : "s"} for ${out.pr.key}${kept}. The user chooses what to post from Shuttle; do not post it yourself.`;
       }),
   });
   bb.agents.registerTool({

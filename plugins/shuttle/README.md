@@ -41,7 +41,7 @@ A PR's view reads top to bottom the way a person asks about it:
   (which opens its controls in place) and, on someone else's PR, its size. A row opens the tab
   with the rest.
 - **Tabs:** Overview (description, people, facts and linked threads), Your review (the AI draft
-  to post, on someone else's PR), Conversation (open threads first with the code they are on, then
+  to post, on someone else's PR, with the review's notes for you, which are never posted), Conversation (open threads first with the code they are on, then
   every review and comment, newest first with a button to flip the order), Checks (every check,
   failing first), Changes (commits and each file's path and line counts, never the diff itself)
   and History (what happened on the server and in Shuttle).

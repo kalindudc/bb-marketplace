@@ -256,4 +256,6 @@ export const MIGRATIONS: string[] = [
   )`,
   `CREATE INDEX review_posts_pr ON review_posts (pr_id, id)`,
   `CREATE INDEX review_posts_state ON review_posts (state, server, id)`,
+  // A review's notes for the user: shown beside its draft and never posted.
+  `ALTER TABLE review_drafts ADD COLUMN notes TEXT`,
 ];

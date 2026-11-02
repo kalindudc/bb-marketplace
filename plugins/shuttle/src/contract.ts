@@ -179,6 +179,8 @@ export const reviewDraftSchema = z.object({
   summary: z.string(),
   verdict: z.enum(VERDICTS),
   findings: z.array(findingSchema),
+  /** The review's context for the user, in Markdown; shown beside the draft and never posted. */
+  notes: z.string().nullable(),
 });
 export type ReviewDraft = z.infer<typeof reviewDraftSchema>;
 

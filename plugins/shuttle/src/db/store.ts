@@ -127,6 +127,8 @@ export interface DraftRow {
   verdict: "comment" | "approve" | "changes";
   /** JSON Finding[]. */
   findings: string;
+  /** Context for the user that is never posted, such as the PR's intent and whether it is worth doing. */
+  notes: string | null;
   state: "draft" | "posted" | "discarded";
   created_at: number;
   posted_at: number | null;
@@ -746,13 +748,13 @@ export class Store {
     return this.db.prepare("SELECT * FROM outcomes WHERE at >= ?").all(at) as OutcomeRow[];
   }
 
-  addDraft(row: Pick<DraftRow, "pr_id" | "thread_id" | "review_id" | "head" | "summary" | "verdict" | "findings">): DraftRow {
+  addDraft(row: Pick<DraftRow, "pr_id" | "thread_id" | "review_id" | "head" | "summary" | "verdict" | "findings" | "notes">): DraftRow {
     return this.tx(() => {
       // One live draft per PR: a newer one from the same review replaces it.
       this.db.prepare("UPDATE review_drafts SET state = 'discarded' WHERE pr_id = ? AND state = 'draft'").run(row.pr_id);
       const result = this.db
-        .prepare("INSERT INTO review_drafts (pr_id, thread_id, review_id, head, summary, verdict, findings, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?)")
-        .run(row.pr_id, row.thread_id, row.review_id, row.head, row.summary, row.verdict, row.findings, this.now());
+        .prepare("INSERT INTO review_drafts (pr_id, thread_id, review_id, head, summary, verdict, findings, notes, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?)")
+        .run(row.pr_id, row.thread_id, row.review_id, row.head, row.summary, row.verdict, row.findings, row.notes, this.now());
       return this.draftById(Number(result.lastInsertRowid))!;
     });
   }

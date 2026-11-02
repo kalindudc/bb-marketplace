@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { experimental_Icon as Icon, experimental_usePluginId, UrlLink } from "@get-bb/plugin-sdk/app";
+import { experimental_Icon as Icon, experimental_usePluginId, Markdown, UrlLink } from "@get-bb/plugin-sdk/app";
 import type { MyReview, PostView, PrView, ReviewDraft, Severity } from "../contract";
 import { postText } from "../next";
 import { NextButtons, useActions } from "./actions";
@@ -71,6 +71,15 @@ function DraftReview({ pr, draft }: { pr: PrView; draft: ReviewDraft }) {
             </label>
           </div>
         </div>
+      )}
+      {draft.notes !== null && (
+        <section aria-label="For you" data-draft-notes className="mt-3 rounded-md border border-border bg-card px-3 py-2">
+          <div className="mb-1 flex items-center gap-1.5 text-[12.5px] font-semibold text-foreground">
+            <Icon name="Info" className="size-3.5 text-muted-foreground" aria-hidden />For you
+            <span className="font-normal text-muted-foreground">· Never posted</span>
+          </div>
+          <div className="min-w-0 break-words text-[13px]"><Markdown content={draft.notes} /></div>
+        </section>
       )}
       <div className={LABEL}>Summary</div>
       <FitTextarea aria-label="Summary" rows={2} className={`${FIELD} w-full`} value={summary} onChange={(event) => setSummary(event.target.value)} />

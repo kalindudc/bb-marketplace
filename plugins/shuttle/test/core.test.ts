@@ -343,6 +343,33 @@ describe("reviews from Shuttle", () => {
     expect(h.shuttle.inbox().prs.map((p) => [p.number, p.next.kind])).toEqual([[3, "rereview"]]);
   });
 
+  it("keeps a draft's notes for you beside it and never posts them", async () => {
+    const h = await withWrites();
+    h.lists.review_requested = [pr(3, { head: "h1" })];
+    await h.shuttle.sync();
+    h.views[3] = pr(3, { head: "h1" });
+    const { threadId } = await h.shuttle.review({ key: KEY(3) });
+    const notes = "**Intent:** retry the failed destroy.\n\n**Lean:** doubtful, because the extension that blocked it is still attached.";
+    await h.shuttle.saveDraft(threadId, KEY(3), { summary: "One blocker", verdict: "comment", findings: [], notes });
+    const draft = h.shuttle.detail(KEY(3)).draft!;
+    expect(draft.notes).toBe(notes);
+    await h.shuttle.submitReview(KEY(3), { verdict: "comment", body: draft.summary, findings: [], draftId: draft.id });
+    const call = h.runner.calls.find((c) => c.operation === "review")!;
+    expect(call.env.SHUTTLE_BODY).toBe("One blocker");
+    expect(JSON.stringify(call)).not.toContain("retry the failed destroy");
+  });
+
+  it("keeps no notes for a draft that has none, or only blank ones", async () => {
+    const h = await withWrites();
+    h.lists.review_requested = [pr(3)];
+    await h.shuttle.sync();
+    const { threadId } = await h.shuttle.review({ key: KEY(3) });
+    await h.shuttle.saveDraft(threadId, KEY(3), { summary: "s", verdict: "comment", findings: [] });
+    expect(h.shuttle.detail(KEY(3)).draft!.notes).toBeNull();
+    await h.shuttle.saveDraft(threadId, KEY(3), { summary: "s", verdict: "comment", findings: [], notes: " \n " });
+    expect(h.shuttle.detail(KEY(3)).draft!.notes).toBeNull();
+  });
+
   it("posts a review on someone else's draft PR, which is not a missing review command", async () => {
     const h = await withWrites();
     h.lists.review_requested = [pr(4, { draft: true })];
@@ -485,6 +512,18 @@ describe("the 0.3 migration", () => {
     expect(db.prepare("SELECT thread_id, role FROM links WHERE pr_id = 2 ORDER BY thread_id").all()).toEqual([{ thread_id: "thr_a", role: "reference" }, { thread_id: "thr_b", role: "owner" }]);
     expect(db.prepare("SELECT * FROM requests").all()).toEqual([{ pr_id: 1, reason: "team", first_seen: 5, gone_at: null }]);
     expect(db.prepare("SELECT * FROM sent_items").all()).toEqual([{ pr_id: 2, item_id: "r1", thread_id: "thr_b", at: 0 }]);
+  });
+});
+
+describe("the draft notes migration", () => {
+  it("gives drafts saved before it no notes", () => {
+    const db = new Database(":memory:");
+    const first = MIGRATIONS.indexOf("ALTER TABLE review_drafts ADD COLUMN notes TEXT");
+    expect(first).toBeGreaterThan(0);
+    for (const sql of MIGRATIONS.slice(0, first)) db.exec(sql);
+    db.exec("INSERT INTO review_drafts (pr_id, thread_id, summary, verdict, findings, state, created_at) VALUES (1, 'thr_r', 's', 'comment', '[]', 'draft', 0)");
+    for (const sql of MIGRATIONS.slice(first)) db.exec(sql);
+    expect(db.prepare("SELECT summary, notes FROM review_drafts").all()).toEqual([{ summary: "s", notes: null }]);
   });
 });
 

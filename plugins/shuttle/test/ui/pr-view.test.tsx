@@ -547,7 +547,9 @@ describe("the PR view of someone else's PR", () => {
     expect(panelTab(panel, "review")).toBe("Your review3");
     fireEvent.click(within(panel).getByRole("button", { name: "Choose what to post" }));
     await waitFor(() => expect(panel.querySelector('[aria-selected="true"][data-tab]')!.getAttribute("data-tab")).toBe("review"));
-    expect((await find(panel, "[data-draft]")).textContent).toContain("Findings · 2 of 3 will post");
+    const card = await find(panel, "[data-draft]");
+    expect(card.textContent).toContain("Findings · 2 of 3 will post");
+    expect(within(card).getByRole("region", { name: "For you" }).textContent).toContain("Per-line rounding changes what customers pay.");
   });
 
   it("posts only the ticked findings, as edited, with the draft's id", async () => {
@@ -571,6 +573,29 @@ describe("the PR view of someone else's PR", () => {
       ],
     }]));
     await waitFor(() => expect(toast).toHaveBeenCalledWith("Queued your review of world#2311622: review with 2 comments. Shuttle posts it to Delta in the background.", { id: "shuttle-post-3" }));
+  });
+
+  it("shows the review's notes for you above the draft, and posts without them", async () => {
+    const posted = { ...theirs, draft: { id: 7, findings: 3, at: Date.now() }, next: next({ kind: "post", tone: "info", label: "AI review ready: choose what to post" }) };
+    const notes = "**Intent:** unblock the compact header.\n\n- Lean: worth doing";
+    const { slot, view } = await prPage(posted, { queueReview: () => ({ pr: posted, post: queued({ verdict: "changes", comments: 2, draftId: 7 }) }) }, { draft: draft({ notes }) });
+    const card = await find(tab(await view(), "review"), "[data-draft]");
+    const box = within(card).getByRole("region", { name: "For you" });
+    expect(box.textContent).toContain("Never posted");
+    expect(box.textContent).toContain("unblock the compact header");
+    expect(within(card).queryByRole("textbox", { name: "For you" })).toBeNull();
+    fireEvent.click(within(card).getByRole("button", { name: "Post review · 2 comments" }));
+    await waitFor(() => expect(callsTo(slot, "queueReview")).toHaveLength(1));
+    const sent = JSON.stringify(callsTo(slot, "queueReview")[0]);
+    expect(sent).toContain("Thanks, this unblocks the header.");
+    expect(sent).not.toContain("unblock the compact header");
+  });
+
+  it("shows no notes box for a draft without notes", async () => {
+    const ready = { ...theirs, draft: { id: 7, findings: 3, at: Date.now() }, next: next({ kind: "post", tone: "info", label: "AI review ready" }) };
+    const { view } = await prPage(ready, {}, { draft: draft() });
+    const card = await find(tab(await view(), "review"), "[data-draft]");
+    expect(within(card).queryByRole("region", { name: "For you" })).toBeNull();
   });
 
   it("shows a queued review in Your review with Cancel instead of the draft, and in its status row", async () => {

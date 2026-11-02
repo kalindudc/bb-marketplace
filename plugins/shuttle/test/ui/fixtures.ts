@@ -113,6 +113,7 @@ export const taxDraft: ReviewDraft = {
     { id: "f2", severity: "medium", path: "src/tax/exemptions.ts", line: 23, body: "`applyExemptions` sorts `exemptions` in place, so the module still changes its caller's array." },
     { id: "f3", severity: "nit", path: "src/tax/index.ts", line: 3, body: "Alphabetical re-exports would be easier to scan." },
   ],
+  notes: "- **Intent:** move tax math into a pure module so checkout and invoices share one implementation (the PR description).\n- **Does it get there:** not yet. Per-line rounding changes what customers pay.\n- **Lean:** worth doing once the rounding matches; invoices still carry their own copy of the math.",
 };
 
 export const taxItems: ConversationItem[] = [

@@ -80,6 +80,22 @@ describe("the plugin", () => {
     await lifecycle.dispose();
   });
 
+  it("takes a review's notes for the user through shuttle_review_draft and keeps them out of what posts", async () => {
+    const { behavior, inspection, lifecycle, harness } = await boot();
+    await behavior.callRpc("importToml", { toml: configToToml(testConfig()), apply: true });
+    const tool = inspection.registrations.agentTools.find((t) => t.name === "shuttle_review_draft")!;
+    expect(JSON.stringify(tool.inputSchema)).toMatch(/"notes".*never posted/u);
+    const saved = text(await harness.callAgentTool(
+      "shuttle_review_draft",
+      { pr: "forge:shop/world#2", summary: "Looks right", verdict: "comment", findings: [], notes: "  **Lean:** worth doing.  " },
+      { threadId: "thr_1", projectId: "proj_world" },
+    ));
+    expect(saved).toContain("notes for the user");
+    const detail = (await behavior.callRpc("detail", { key: "forge:shop/world#2" })) as { draft: { summary: string; notes: string | null } };
+    expect(detail.draft).toMatchObject({ summary: "Looks right", notes: "**Lean:** worth doing." });
+    await lifecycle.dispose();
+  });
+
   it("refuses expected failures with typed codes and invalidates its reads after a background change", async () => {
     const { behavior, inspection, lifecycle } = await boot();
     await behavior.callRpc("importToml", { toml: configToToml(testConfig()), apply: true });

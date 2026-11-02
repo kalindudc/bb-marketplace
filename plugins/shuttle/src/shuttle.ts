@@ -567,9 +567,9 @@ export class Shuttle implements Ctx {
     });
   }
 
-  async saveDraft(threadId: string, query: string, input: DraftInput): Promise<{ pr: PrView; findings: number }> {
+  async saveDraft(threadId: string, query: string, input: DraftInput): Promise<{ pr: PrView; findings: number; notes: boolean }> {
     const { pr, draft } = await saveDraft(this, threadId, query, input);
-    return { pr: toView(this, pr), findings: (JSON.parse(draft.findings) as unknown[]).length };
+    return { pr: toView(this, pr), findings: (JSON.parse(draft.findings) as unknown[]).length, notes: draft.notes !== null };
   }
 
   recordOutcomes(threadId: string, query: string, items: Array<{ ref: string; outcome: Outcome; note?: string; commit?: string }>) {
