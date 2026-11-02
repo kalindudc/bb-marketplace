@@ -4,6 +4,10 @@ Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` i
 
 ## Unreleased
 
+### Changed
+
+- The summary and findings of an AI review draft open as tall as their text. They used to open at two or three lines, so a longer finding scrolled inside its box until you dragged it taller. They grow as you type and when the view gets narrower, and you can still drag one taller; it keeps that height while you edit.
+
 ### Fixed
 
 - The list of a thread's PRs above the composer folds. It used to stay open with a row for every linked PR, however many there were. It now starts folded, and clicking the Shuttle summary opens or closes it. Shuttle remembers on this device whether you left it open, and an open list scrolls after about eight PRs.

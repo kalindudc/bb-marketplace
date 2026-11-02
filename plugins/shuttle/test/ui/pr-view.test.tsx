@@ -55,6 +55,28 @@ function prPage(start: PrView, rpc: Partial<Handlers> = {}, extra: { draft?: Rev
   }).then((out) => ({ ...out, view: () => find(out.slot.container, `[data-detail="${start.key}"]`) }));
 }
 
+/**
+ * jsdom lays nothing out, so give textareas a layout: 20px lines, one per line of text, inside a 2px frame,
+ * at the rows they ask for until a height is set. Returns a function that takes it away again.
+ */
+function fakeTextLayout() {
+  const LINE = 20;
+  const FRAME = 2;
+  const inner = (box: HTMLTextAreaElement) => (box.style.height === "" ? box.rows * LINE : Number.parseFloat(box.style.height) - FRAME);
+  const getters: Record<string, (box: HTMLTextAreaElement) => number> = {
+    clientWidth: () => 400,
+    clientHeight: inner,
+    offsetHeight: (box) => inner(box) + FRAME,
+    scrollHeight: (box) => Math.max(box.value.split("\n").length * LINE, inner(box)),
+  };
+  for (const [name, get] of Object.entries(getters)) {
+    Object.defineProperty(HTMLTextAreaElement.prototype, name, { configurable: true, get(this: HTMLTextAreaElement) { return get(this); } });
+  }
+  return () => {
+    for (const name of Object.keys(getters)) Reflect.deleteProperty(HTMLTextAreaElement.prototype, name);
+  };
+}
+
 /** Opens one of the PR view's tabs. */
 function tab(view: HTMLElement, id: string) {
   fireEvent.click(view.querySelector<HTMLElement>(`[data-tab="${id}"]`)!);
@@ -548,6 +570,32 @@ describe("the PR view of someone else's PR", () => {
       ],
     }]));
     await waitFor(() => expect(toasts.success).toHaveBeenCalledWith("Posted your review on Delta: 1 inline, 1 in the body."));
+  });
+
+  it("fits the summary and each finding to their text, and keeps a box you dragged taller", async () => {
+    const restore = fakeTextLayout();
+    try {
+      const posted = { ...theirs, draft: { id: 7, findings: 2, at: Date.now() }, next: next({ kind: "post", tone: "info", label: "AI review ready" }) };
+      const { view } = await prPage(posted, {}, { draft: draft({
+        summary: "One.\nTwo.\nThree.\nFour.",
+        findings: [
+          { id: "a", severity: "high", path: "src/header/actions.tsx", line: 88, body: "Line one.\nLine two.\nLine three." },
+          { id: "b", severity: "medium", path: "src/header/menu.tsx", line: 31, body: "One line." },
+        ],
+      }) });
+      const card = await find(tab(await view(), "review"), "[data-draft]");
+      const summary = within(card).getByRole("textbox", { name: "Summary" }) as HTMLTextAreaElement;
+      expect(summary.style.height).toBe("82px");
+      expect((within(card).getByRole("textbox", { name: "Text of the finding at header/actions.tsx:88" }) as HTMLTextAreaElement).style.height).toBe("62px");
+      expect((within(card).getByRole("textbox", { name: "Text of the finding at header/menu.tsx:31" }) as HTMLTextAreaElement).rows).toBe(1);
+      summary.style.height = "300px";
+      fireEvent.change(summary, { target: { value: "Short." } });
+      expect(summary.style.height).toBe("300px");
+      fireEvent.change(summary, { target: { value: Array.from({ length: 20 }, (_, n) => `Line ${n}.`).join("\n") } });
+      expect(summary.style.height).toBe("402px");
+    } finally {
+      restore();
+    }
   });
 
   it("says a server without a review command needs one in Settings, instead of offering to post", async () => {

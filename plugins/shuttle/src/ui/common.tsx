@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useId, useRef, useState, type ReactElement, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode, type TextareaHTMLAttributes } from "react";
 import { createPortal } from "react-dom";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { experimental_Icon as Icon, experimental_usePluginId } from "@get-bb/plugin-sdk/app";
@@ -128,6 +128,36 @@ export function Checkbox({ checked, label, hint, onChange }: { checked: boolean;
       </span>
     </label>
   );
+}
+
+/**
+ * A textarea as tall as its text: when it opens, as the text grows and when a new width rewraps it.
+ * It only ever grows, so a box you dragged taller keeps its height while you edit.
+ */
+export function FitTextarea(props: TextareaHTMLAttributes<HTMLTextAreaElement> & { value: string }) {
+  const box = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    if (box.current !== null) growToText(box.current);
+  }, [props.value]);
+  useEffect(() => {
+    const node = box.current;
+    if (node === null || typeof ResizeObserver === "undefined") return;
+    let width = node.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (node.clientWidth === width) return;
+      width = node.clientWidth;
+      growToText(node);
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  return <textarea ref={box} {...props} />;
+}
+
+function growToText(box: HTMLTextAreaElement) {
+  // A hidden box measures nothing; its ResizeObserver fits it once it shows.
+  if (box.clientWidth === 0 || box.scrollHeight <= box.clientHeight) return;
+  box.style.height = `${box.scrollHeight + box.offsetHeight - box.clientHeight}px`;
 }
 
 export function ErrorNote({ children }: { children: ReactNode }) {

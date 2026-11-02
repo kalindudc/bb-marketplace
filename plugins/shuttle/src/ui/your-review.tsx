@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { experimental_Icon as Icon, experimental_usePluginId, UrlLink } from "@get-bb/plugin-sdk/app";
 import type { MyReview, PrView, ReviewDraft, Severity } from "../contract";
 import { NextButtons, useActions } from "./actions";
-import { BUTTON, BUTTON_GHOST, BUTTON_PRIMARY_LARGE, FIELD, Segmented } from "./common";
+import { BUTTON, BUTTON_GHOST, BUTTON_PRIMARY_LARGE, FIELD, FitTextarea, Segmented } from "./common";
 import { useShuttleMutation } from "./data";
 import { ago, plural, settingsHref } from "./format";
 import { isLive } from "./pills";
@@ -75,7 +75,7 @@ function DraftReview({ pr, draft }: { pr: PrView; draft: ReviewDraft }) {
         </div>
       )}
       <div className={LABEL}>Summary</div>
-      <textarea aria-label="Summary" rows={3} className={`${FIELD} w-full`} value={summary} onChange={(event) => setSummary(event.target.value)} />
+      <FitTextarea aria-label="Summary" rows={2} className={`${FIELD} w-full`} value={summary} onChange={(event) => setSummary(event.target.value)} />
       <div className={`${LABEL} flex items-center`}>
         <span className="flex-1">Findings <span className="font-normal text-muted-foreground">· {ticked.length} of {findings.length} will post</span></span>
         {findings.length > 0 && (
@@ -96,7 +96,7 @@ function DraftReview({ pr, draft }: { pr: PrView; draft: ReviewDraft }) {
                   {location(finding.path, finding.line)}
                 </span>
               </div>
-              <textarea aria-label={`Text of the finding at ${location(finding.path, finding.line)}`} rows={2} value={finding.body}
+              <FitTextarea aria-label={`Text of the finding at ${location(finding.path, finding.line)}`} rows={1} value={finding.body}
                 onChange={(event) => set(finding.id, { body: event.target.value })}
                 className="mt-1 w-full resize-y rounded border border-transparent bg-transparent px-1 py-0.5 text-[13px] outline-none hover:border-border focus:border-border focus:bg-background" />
             </div>
