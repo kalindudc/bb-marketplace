@@ -66,6 +66,8 @@ export function AgentPill({ pr }: { pr: Pick<PrView, "agent" | "state"> }) {
 
 /** Where your review of someone else's PR stands. */
 export function MyReviewPill({ pr }: { pr: PrView }) {
+  if (pr.post?.state === "failed") return <Pill tone="bad" icon="AlertTriangle">Didn\u2019t post</Pill>;
+  if (pr.post !== null) return <Pill tone="info" icon="Sent">Posting</Pill>;
   if (pr.draft !== null) return <Pill tone="info" icon="Check">Draft ready</Pill>;
   if (pr.lastReview?.state === "running") return <Pill tone="info" icon="Bot">AI reviewing</Pill>;
   if (pr.next.kind === "rereview") return <Pill tone="warn" icon="RotateCcw">Updated since</Pill>;

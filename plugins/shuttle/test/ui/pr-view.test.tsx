@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { toast } from "sonner";
 import type { ConversationItem, PrDetails, PrView, ReviewDraft } from "../../src/contract";
 import { reloadPrefs } from "../../src/ui/prefs";
 import { formatRoute } from "../../src/ui/route";
-import { agent, CAN_ALL, callsTo, config, draft, event, find, item, link, mergeOptions, mine, next, page, pr, unmountAll, type Handlers } from "./helpers";
+import { agent, CAN_ALL, callsTo, config, draft, event, find, item, link, mergeOptions, mine, next, page, post as queued, pr, unmountAll, type Handlers } from "./helpers";
 import { retryDetails, retryItems, retryPr, taxDetails, taxDraft, taxItems, taxPr } from "./fixtures";
 
 const toasts = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn() }));
@@ -551,7 +552,7 @@ describe("the PR view of someone else's PR", () => {
 
   it("posts only the ticked findings, as edited, with the draft's id", async () => {
     const posted = { ...theirs, draft: { id: 7, findings: 3, at: Date.now() }, next: next({ kind: "post", tone: "info", label: "AI review ready: choose what to post", why: "3 findings." }) };
-    const { slot, view } = await prPage(posted, { submitReview: () => ({ pr: posted, placed: 1, inBody: 1 }) }, { draft: draft() });
+    const { slot, view } = await prPage(posted, { queueReview: () => ({ pr: posted, post: queued({ verdict: "comment", comments: 2, draftId: 7 }) }) }, { draft: draft() });
     const card = await find(tab(await view(), "review"), "[data-draft]");
     expect(card.textContent).toContain("Findings · 2 of 3 will post");
     const box = (name: RegExp) => within(card).getByRole("checkbox", { name }) as HTMLInputElement;
@@ -562,14 +563,103 @@ describe("the PR view of someone else's PR", () => {
     fireEvent.change(within(card).getByRole("textbox", { name: "Summary" }), { target: { value: "Two things." } });
     fireEvent.click(within(within(card).getByRole("radiogroup", { name: "Post as" })).getByRole("radio", { name: "Comment" }));
     fireEvent.click(within(card).getByRole("button", { name: "Post review · 2 comments" }));
-    await waitFor(() => expect(callsTo(slot, "submitReview")).toEqual([{
+    await waitFor(() => expect(callsTo(slot, "queueReview")).toEqual([{
       key: theirs.key, verdict: "comment", body: "Two things.", draftId: 7,
       findings: [
         { path: "src/header/actions.tsx", line: 88, body: "The compact prop never reaches the overflow menu." },
         { path: "src/header/README.md", line: null, body: "The README names the old prop." },
       ],
     }]));
-    await waitFor(() => expect(toasts.success).toHaveBeenCalledWith("Posted your review on Delta: 1 inline, 1 in the body."));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Queued your review of world#2311622: review with 2 comments. Shuttle posts it to Delta in the background.", { id: "shuttle-post-3" }));
+  });
+
+  it("shows a queued review in Your review with Cancel instead of the draft, and in its status row", async () => {
+    const waiting = { ...theirs, draft: { id: 7, findings: 3, at: Date.now() }, post: queued({ id: 31, draftId: 7 }), next: next({ kind: "posting", tone: "info", label: "Your review is queued to post" }) };
+    const { slot, view } = await prPage(waiting, { cancelPost: () => ({ pr: theirs }) }, { draft: draft() });
+    const panel = await view();
+    expect(statusRow(panel, "yours").textContent).toContain("Changes requested with 2 comments · queued to post just now");
+    const review = tab(panel, "review");
+    const card = await find(review, "[data-posting]");
+    expect(card.textContent).toContain("Changes requested with 2 comments is queued to post to Delta");
+    expect(card.textContent).toContain("You can leave: Shuttle posts it in the background, after any reviews ahead of it on Delta, and says when it's done.");
+    expect(review.querySelector("[data-draft]")).toBeNull();
+    fireEvent.click(within(card).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(callsTo(slot, "cancelPost")).toEqual([{ id: 31 }]));
+    await waitFor(() => expect(toasts.success).toHaveBeenCalledWith("Cancelled your review of world#2311622. Nothing was posted.", { id: "shuttle-post-31" }));
+  });
+
+  it("shows the review queued the moment Post review is pressed, before the server answers, with nothing to cancel yet", async () => {
+    const ready = { ...theirs, draft: { id: 7, findings: 3, at: Date.now() }, next: next({ kind: "post", tone: "info", label: "AI review ready" }) };
+    const { slot, view } = await prPage(ready, { queueReview: () => new Promise<never>(() => {}) }, { draft: draft() });
+    const review = tab(await view(), "review");
+    fireEvent.click(within(await find(review, "[data-draft]")).getByRole("button", { name: /Post review/u }));
+    const card = await find(review, "[data-posting]");
+    expect(card.textContent).toContain("Changes requested with 2 comments is queued to post to Delta");
+    expect(review.querySelector("[data-draft]")).toBeNull();
+    expect(within(card).queryByRole("button", { name: "Cancel" })).toBeNull();
+    expect(callsTo(slot, "queueReview")).toHaveLength(1);
+  });
+
+  it("greys out Post review, the composer's Approve and Request changes, and Approve… while a review of the PR is queued, but still comments", async () => {
+    const other = { ...theirs, draft: { id: 8, findings: 3, at: Date.now() }, post: queued({ id: 34, verdict: "approve", comments: 0 }), next: next({ kind: "posting", tone: "info", label: "Your review is queued to post" }) };
+    const { slot, view } = await prPage(other, { comment: () => ({ pr: other }) }, { draft: draft({ id: 8 }) });
+    const panel = await view();
+    const editor = await find(tab(panel, "review"), "[data-draft]");
+    const post = within(editor).getByRole("button", { name: "Queued to post" }) as HTMLButtonElement;
+    expect(post.disabled).toBe(true);
+    const composer = await find(tab(panel, "conversation"), "[data-composer]");
+    const box = within(composer).getByRole("textbox");
+    fireEvent.change(box, { target: { value: "Looks right." } });
+    for (const verdict of ["Approve", "Request changes"]) {
+      fireEvent.click(within(within(composer).getByRole("radiogroup", { name: "Post as" })).getByRole("radio", { name: verdict }));
+      expect((within(composer).getByRole("button", { name: "Queued to post" }) as HTMLButtonElement).disabled).toBe(true);
+    }
+    fireEvent.click(within(within(composer).getByRole("radiogroup", { name: "Post as" })).getByRole("radio", { name: "Comment" }));
+    fireEvent.click(within(composer).getByRole("button", { name: "Comment" }));
+    await waitFor(() => expect(callsTo(slot, "comment")).toEqual([{ key: theirs.key, body: "Looks right." }]));
+    expect(callsTo(slot, "queueReview")).toEqual([]);
+  });
+
+  it("offers no Cancel on a review that has started posting", async () => {
+    const posting = { ...theirs, post: queued({ id: 32, state: "posting", verdict: "approve", comments: 0, startedAt: Date.now() - 2 * 60_000 }), next: next({ kind: "posting", tone: "info", label: "Posting your review" }) };
+    const { view } = await prPage(posting);
+    const card = await find(tab(await view(), "review"), "[data-posting]");
+    expect(card.textContent).toContain("Approval is posting to Delta");
+    expect(card.textContent).toContain("started 2m ago");
+    expect(within(card).queryByRole("button", { name: "Cancel" })).toBeNull();
+  });
+
+  it("says why a review didn't post above its draft, and tries it again or dismisses it", async () => {
+    const failed = { ...theirs, draft: { id: 7, findings: 3, at: Date.now() }, post: queued({ id: 33, state: "failed", draftId: 7, error: "Delta refused: line 9 is not part of the diff" }), next: next({ kind: "post_failed", tone: "bad", label: "Your review didn’t post", inbox: true }) };
+    const { slot, view } = await prPage(failed, {
+      retryPost: () => ({ pr: failed, post: queued({ id: 33, state: "queued", draftId: 7 }) }),
+      clearPost: () => ({ pr: { ...failed, post: null } }),
+    }, { draft: draft() });
+    const panel = await view();
+    expect(statusRow(panel, "yours").textContent).toContain("Didn’t post · Delta refused: line 9 is not part of the diff");
+    const review = tab(panel, "review");
+    const alert = await find(review, "[data-post-failed]");
+    expect(alert.textContent).toContain("Your review didn't post (Changes requested with 2 comments): Delta refused: line 9 is not part of the diff");
+    expect(alert.textContent).toContain("Or change the draft below and post it again.");
+    expect(review.querySelector("[data-draft]")).not.toBeNull();
+    fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(callsTo(slot, "retryPost")).toEqual([{ id: 33 }]));
+    fireEvent.click(within(alert).getByRole("button", { name: "Dismiss" }));
+    await waitFor(() => expect(callsTo(slot, "clearPost")).toEqual([{ id: 33 }]));
+  });
+
+  it("says when a review it queued has posted, or didn't, once", async () => {
+    const ready = { ...theirs, draft: { id: 7, findings: 3, at: Date.now() }, next: next({ kind: "post", tone: "info", label: "AI review ready" }) };
+    let reads = 0;
+    const { slot, view } = await prPage(ready, {
+      queueReview: () => ({ pr: ready, post: queued({ id: 41, verdict: "comment", draftId: 7 }) }),
+      posts: () => ({ posts: reads++ === 0 ? [] : [queued({ id: 41, verdict: "comment", draftId: 7, state: "posted", placed: 1, inBody: 1 })] }),
+    }, { draft: draft() });
+    const card = await find(tab(await view(), "review"), "[data-draft]");
+    fireEvent.click(within(card).getByRole("button", { name: /Post review/u }));
+    await waitFor(() => expect(callsTo(slot, "queueReview")).toHaveLength(1));
+    await waitFor(() => expect(toasts.success).toHaveBeenCalledWith("Posted your review of shop/world#2311622 on Delta: 1 inline, 1 in the body.", { id: "shuttle-post-41" }));
+    expect(toasts.success).toHaveBeenCalledTimes(1);
   });
 
   it("fits the summary and each finding to their text, and keeps a box you dragged taller", async () => {
@@ -610,7 +700,7 @@ describe("the PR view of someone else's PR", () => {
 
   it("warns about a draft of an older head, offers no Approve, and posts only once confirmed", async () => {
     const posted = { ...theirs, head: "9f00aaa11", draft: { id: 7, findings: 3, at: Date.now() }, next: next({ kind: "post", tone: "info", label: "AI review ready" }) };
-    const { slot, view } = await prPage(posted, { submitReview: () => ({ pr: posted, placed: 2, inBody: 0 }) }, { draft: draft({ verdict: "approve" }) });
+    const { slot, view } = await prPage(posted, { queueReview: () => ({ pr: posted, post: queued({ verdict: "comment", draftId: 7 }) }) }, { draft: draft({ verdict: "approve" }) });
     const card = await find(tab(await view(), "review"), "[data-draft]");
     expect(within(card).getByRole("alert").textContent).toContain("you can't approve from it");
     const verdicts = within(within(card).getByRole("radiogroup", { name: "Post as" })).getAllByRole("radio").map((radio) => radio.textContent);
@@ -620,7 +710,7 @@ describe("the PR view of someone else's PR", () => {
     fireEvent.click(within(card).getByRole("checkbox", { name: "Post it anyway" }));
     expect(post.disabled).toBe(false);
     fireEvent.click(post);
-    await waitFor(() => expect(callsTo(slot, "submitReview")).toEqual([expect.objectContaining({ verdict: "comment", draftId: 7, staleOk: true })]));
+    await waitFor(() => expect(callsTo(slot, "queueReview")).toEqual([expect.objectContaining({ verdict: "comment", draftId: 7, staleOk: true })]));
   });
 
   it("discards a draft at once, and Undo restores it", async () => {
@@ -643,7 +733,7 @@ describe("the PR view of someone else's PR", () => {
   it("comments, approves or requests changes from the composer", async () => {
     const { slot, view } = await prPage(theirs, {
       comment: () => ({ pr: theirs }),
-      submitReview: () => ({ pr: theirs, placed: 0, inBody: 0 }),
+      queueReview: () => ({ pr: theirs, post: queued({ verdict: "approve", comments: 0 }) }),
     });
     const composer = await find(tab(await view(), "conversation"), "[data-composer]");
     const box = within(composer).getByRole("textbox");
@@ -654,7 +744,8 @@ describe("the PR view of someone else's PR", () => {
     fireEvent.click(within(within(composer).getByRole("radiogroup", { name: "Post as" })).getByRole("radio", { name: "Approve" }));
     fireEvent.change(box, { target: { value: "Ship it." } });
     fireEvent.click(within(composer).getByRole("button", { name: "Approve" }));
-    await waitFor(() => expect(callsTo(slot, "submitReview")).toEqual([{ key: theirs.key, verdict: "approve", body: "Ship it.", findings: [] }]));
+    await waitFor(() => expect(callsTo(slot, "queueReview")).toEqual([{ key: theirs.key, verdict: "approve", body: "Ship it.", findings: [] }]));
+    await waitFor(() => expect((box as HTMLTextAreaElement).value).toBe(""));
     expect(toasts.success.mock.calls.every(([, options]) => options === undefined)).toBe(true);
   });
 
@@ -703,10 +794,10 @@ describe("the PR view of someone else's PR", () => {
   it("re-reviews in the thread of the last review, and offers Approve…", async () => {
     const updated = {
       ...theirs, myReview: { verdict: "changes" as const, at: Date.now() - 2 * 24 * 60 * 60_000, head: "abc1234" },
-      lastReview: { threadId: "thr_last", title: "Review shop/world#2311622", state: "done" as const, preset: "Standard review", trigger: "manual" as const, head: "abc1234", at: Date.now() },
+      lastReview: { threadId: "thr_last", title: "Review shop/world#2311622", state: "done" as const, preset: "Standard review", trigger: "manual" as const, head: "abc1234", at: Date.now(), thread: "idle" as const },
       next: next({ kind: "rereview", tone: "warn", label: "Updated after your review", why: "3 commits and a reply from elvin since your review 2 days ago.", inbox: true, primary: { id: "review", label: "Re-review…" } }),
     };
-    const { slot, view } = await prPage(updated, { review: () => ({ threadId: "thr_last", revived: false }), submitReview: () => ({ pr: updated, placed: 0, inBody: 0 }) });
+    const { slot, view } = await prPage(updated, { review: () => ({ threadId: "thr_last", revived: false }), queueReview: () => ({ pr: updated, post: queued({ verdict: "approve", comments: 0 }) }) });
     const card = await find(tab(await view(), "review"), "[data-your-review]");
     expect(card.textContent).toContain("You requested changes 2d ago");
     expect(card.textContent).toContain("3 commits and a reply from elvin since your review 2 days ago.");
@@ -722,7 +813,8 @@ describe("the PR view of someone else's PR", () => {
     const approve = await slot.findByRole("dialog", { name: "Approve world#2311622" });
     fireEvent.change(within(approve).getByRole("textbox", { name: "Optional comment" }), { target: { value: "Thanks for the fixes." } });
     fireEvent.click(within(approve).getByRole("button", { name: "Approve" }));
-    await waitFor(() => expect(callsTo(slot, "submitReview")).toEqual([{ key: theirs.key, verdict: "approve", body: "Thanks for the fixes.", findings: [] }]));
+    await waitFor(() => expect(callsTo(slot, "queueReview")).toEqual([{ key: theirs.key, verdict: "approve", body: "Thanks for the fixes.", findings: [] }]));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
   it.each([

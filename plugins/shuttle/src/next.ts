@@ -1,6 +1,6 @@
 // What happens next with a PR, decided once on the server so the Inbox, the rows and the PR view
 // always say the same thing. Pure: views.ts gathers the facts.
-import type { AgentView, CheckCounts, InboxRuleKind, MyReview, NextAction, NextKind, NextStep, NextTone, PrState, Reason, Reviewer, ReviewRunView, ReviewState, CheckState } from "./contract";
+import type { AgentView, CheckCounts, InboxRuleKind, MyReview, NextAction, NextKind, NextStep, NextTone, PostView, PrState, Reason, Reviewer, ReviewRunView, ReviewState, CheckState } from "./contract";
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -40,6 +40,8 @@ export interface NextFacts {
   /** A draft, posted or discarded, came from the last review. */
   lastReviewHandled: boolean;
   draft: { findings: number; preset: string | null; auto: boolean } | null;
+  /** Your review waiting or posting, else one that failed to post and is not dismissed. */
+  post: PostView | null;
   myReview: MyReview | null;
   additions: number | null;
   deletions: number | null;
@@ -165,6 +167,12 @@ function mineNext(f: NextFacts): NextStep {
   });
 }
 
+/** "Changes requested with 4 comments", "Approval", "Review with 2 comments" or "Comment". */
+export function postText(post: Pick<PostView, "verdict" | "comments">): string {
+  const what = post.verdict === "approve" ? "Approval" : post.verdict === "changes" ? "Changes requested" : post.comments > 0 ? "Review" : "Comment";
+  return `${what}${post.comments > 0 ? ` with ${plural(post.comments, "comment")}` : ""}`;
+}
+
 const VERDICT_WORDS: Record<MyReview["verdict"], string> = { approve: "approved", changes: "requested changes", comment: "commented", dismissed: "reviewed" };
 
 function size(f: NextFacts): string {
@@ -178,6 +186,24 @@ function othersNext(f: NextFacts): NextStep {
   if (f.state === "closed") return step("closed", "neutral", "Closed", "Closed without merging.");
   const run = f.lastReview;
   const reviewMore = f.can.approve ? [act("approve", "Approve\u2026")] : [];
+  const post = f.post;
+  if (post !== null && post.state !== "failed") {
+    const queued = post.state === "queued";
+    const when = queued ? `Queued ${agoText(f.now - post.at)}; Shuttle posts it after any reviews ahead of it on ${post.serverName}.` : `Started ${agoText(f.now - (post.startedAt ?? post.at))}.`;
+    return step("posting", "info", queued ? "Your review is queued to post" : "Posting your review", `${postText(post)}. ${when}`, {
+      more: queued ? [act("cancel_post", "Cancel")] : [],
+    });
+  }
+  if (post !== null) {
+    // With its draft still there, the draft is where to fix what the server refused.
+    const fromDraft = post.draftId !== null && f.draft !== null;
+    return step("post_failed", "bad", "Your review didn\u2019t post", `${postText(post)}: ${post.error ?? "it failed"}`, {
+      inbox: true,
+      clears: "Leaves when you try again, post another review, or dismiss it.",
+      primary: fromDraft ? act("choose", "Open the draft") : act("retry_post", "Try again"),
+      more: [...(fromDraft ? [act("retry_post", "Try again")] : []), act("clear_post", "Dismiss")],
+    });
+  }
   if (f.draft) {
     const from = f.draft.preset ? ` from ${f.draft.preset}${f.draft.auto ? " (started by auto review)" : ""}` : "";
     return step("post", "info", "AI review ready: choose what to post", `${plural(f.draft.findings, "finding")}${from}. Nothing is posted yet.`, {
@@ -282,7 +308,7 @@ export function ruleMatches(
 }
 
 /** The Inbox's order: what blocks others or waits on you first. */
-export const INBOX_ORDER: readonly NextKind[] = ["agent_waiting", "nobody", "ready_to_merge", "post", "review_failed", "review_done", "rereview", "new_request"];
+export const INBOX_ORDER: readonly NextKind[] = ["agent_waiting", "nobody", "post_failed", "ready_to_merge", "post", "review_failed", "review_done", "rereview", "new_request"];
 
 /** The feedback a "I'll do it" covers: who asked for changes or commented, and failing checks on this head. */
 export function feedbackSignature(reviewers: Reviewer[] | null, checks: CheckState, head: string | null): string[] {

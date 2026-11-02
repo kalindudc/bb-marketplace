@@ -107,7 +107,8 @@ export async function startReview(ctx: Ctx, input: ReviewInput, trigger: "auto" 
   ctx.store.addReview({ pr_id: pr.id, thread_id: threadId, preset: preset.name, trigger, head: pr.head, own_thread: ownThread ? 1 : 0 });
   // A new review makes the last one's unposted draft out of date.
   const stale = ctx.store.liveDraft(pr.id);
-  if (stale) ctx.store.setDraftState(stale.id, "discarded");
+  // One already queued to post is the user's choice, and still posts.
+  if (stale && ctx.store.activePostOfDraft(stale.id) === null) ctx.store.setDraftState(stale.id, "discarded");
   ctx.store.setSnooze(pr.id, null, null);
   const why = trigger === "auto" ? "Auto review" : "Review";
   const back = revived ? ", brought back from the archive" : "";

@@ -14,6 +14,10 @@ and sort; the choice is kept on this device. Pointing at a row, or moving to it 
 shows its next step, Snooze, Dismiss and ⋯; each says what it does, and its key, in a tooltip. A
 row's ⋯ menu holds Snooze and Dismiss too (the only menu on a phone, besides swiping), then its rules.
 
+- **Reviewing** lists your reviews on their way to their servers, then the PRs an AI review is
+  running on, which are out of the Inbox until it finishes or fails: the preset, when it started,
+  whether its thread waits on your answer, and a button to its thread. The Inbox's foot says how
+  many of each there are.
 - **Snooze** hides a PR until later today, tomorrow, next week or until it changes; anything new
   brings it back sooner. The Snoozed tab lists them with when each comes back.
 - **Dismiss** keeps a PR out of the Inbox for good, even when it changes. The Dismissed tab lists
@@ -46,6 +50,14 @@ Beside a list, the view's expand button opens it as a full page, which puts peop
 column of their own on a wide window; a PR's own link opens there too. The ⋯ menu holds copying,
 tracking, snoozing, dismissing from the Inbox, linking a thread, starting an AI review and your
 PR's draft, close and reopen.
+
+Posting a review, from an AI draft, the composer or Approve…, never makes you wait on the server.
+Shuttle checks it at once, queues it and posts it in the background, one review at a time on each
+server and in the order you posted them, checking the PR's head again just before it posts. Your
+review shows it queued, with Cancel until it starts, then posting, and a toast says when it is on the
+server. A review the server refuses comes back to the Inbox under Needs you with the server's
+reason: try it again, change its draft and post that, or dismiss it. A review Shuttle was posting
+when it stopped fails the same way instead of posting twice, so check the PR before you try again.
 
 Shuttle restores each PR's tab, scroll position and folds when its view is recreated, in the page
 and the thread tab. Unfinished comments and replies, open reply boxes, and edits to an AI review
@@ -121,6 +133,7 @@ src/views.ts           PR rows as the UI sees them, and which area each belongs 
 src/agents.ts          a PR's agent thread, its mode, and auto agent
 src/watch.ts           new activity on PRs with an agent: batches, messages, item refs
 src/drafts.ts          AI review drafts and posting reviews
+src/posts.ts           the review queue: checks, cancel, try again, and posts a stopped Shuttle left half done
 src/conversation.ts    a PR's conversation and details, comments, replies, resolving and merging
 src/insights.ts        the numbers and ideas on the Insights page
 src/reviews.ts         review and agent threads from presets

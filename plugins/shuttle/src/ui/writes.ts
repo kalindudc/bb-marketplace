@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import type { AgentMode, AgentTarget, InboxRule, PrView } from "../contract";
 import { patchPr, undoToast, useShuttleMutation } from "./data";
 import { atNine, plural, ruleText, tinyKey, when } from "./format";
+import { usePostWrites } from "./posts";
 
 const WATCH_OF: Record<AgentMode, PrView["watch"]> = { fix: "act", notify: "forward", off: null };
 
@@ -71,6 +72,7 @@ export function usePrWrites(threadIds: readonly string[]) {
   const setSettings = useShuttleMutation("setSettings", ({ autoAgent }, cache) => {
     if (autoAgent !== undefined) cache.update("overview", {}, (current) => ({ ...current, autoAgent }));
   });
+  const posts = usePostWrites();
   const cancelAutoMerge = useShuttleMutation("cancelAutoMerge", ({ key }, cache) => patchPr(cache, key, (pr) => ({ ...pr, autoMerge: false }), threadIds));
 
   const changeMode = async (pr: PrView, mode: AgentMode, undoable = true) => {
@@ -191,7 +193,7 @@ export function usePrWrites(threadIds: readonly string[]) {
     if ((await cancelAutoMerge.run({ key: pr.key })) !== null) toast.success(`Auto-merge is off for ${tinyKey(pr)}.`);
   };
 
-  return { changeMode, giveAgent, setTracked, setSnooze, snoozePrs, dismissPrs, markSeen, addRule, removeRule, undoLast, setHandled, discard, setAutoAgent, cancelAuto };
+  return { changeMode, giveAgent, setTracked, setSnooze, snoozePrs, dismissPrs, markSeen, addRule, removeRule, undoLast, setHandled, discard, setAutoAgent, cancelAuto, ...posts };
 }
 
 export type PrWrites = ReturnType<typeof usePrWrites>;

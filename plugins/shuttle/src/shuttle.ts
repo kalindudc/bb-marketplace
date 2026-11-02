@@ -4,17 +4,18 @@ import { runProcess, sleep, type Runner } from "./adapters/exec";
 import { configChanges, configFromToml, configToToml, ConfigError, parseConfig, serverSchema, type Config, type ServerConfig, type WatchMode } from "./config";
 import type {
   AgentMode, AgentTarget, Area, BoardDetail, BoardSummary, ConversationItem, EventView, InboxRule, InboxRuleKind, InboxView, InsightsView, LinkRole, MergeMethod, MergeOptions, Outcome, Overview, LinkCard, PostFinding, PrChange, PrDetails,
-  PrView, ReviewDraft, ReviewInput, ServerStatus, SyncHistory, SyncRun, SyncStep, SyncStepName, TestResult, ThreadOption, Verdict,
+  PostView, PrView, ReviewDraft, ReviewInput, ServerStatus, SyncHistory, SyncRun, SyncStep, SyncStepName, TestResult, ThreadOption, Verdict,
 } from "./contract";
 import { askAgent, runAutoAgent, setAgent, setAgentMode, type AgentChange } from "./agents";
 import { board as readBoard, boardAdd, boardCreate, boardRemove, boards as listBoards, boardUpdate } from "./boards";
 import { cancelAutoMerge, comment, Conversations, merge, mergeOptions, recordOutcomes, reply, resolve } from "./conversation";
-import { draftView, saveDraft, setDraftState, submitReview, type DraftInput } from "./drafts";
+import { draftView, saveDraft, setDraftState, submitReview, type DraftInput, type SubmitInput } from "./drafts";
+import { cancelPost, clearPost, failInterruptedPosts, inputOf, postView, queueReview, recentPosts, retryPost } from "./posts";
 import { addRule, dismiss, inbox as readInbox, markSeen, removeRule, snooze } from "./inbox";
 import { insights, INSIGHTS_SINCE, snapshotCounts } from "./insights";
 import { feedbackSignature, phaseOf } from "./next";
 import { errText, ShuttleError, type Ctx } from "./ctx";
-import type { EventRow, ServerRow, Store, SyncRunRow } from "./db/store";
+import type { EventRow, PostRow, ServerRow, Store, SyncRunRow } from "./db/store";
 import { THREAD_SCAN, type BbPort, type ProjectInfo } from "./ports";
 import { fetchPr, linkPr, lookup, rememberThread, requirePr, setWatch, shortKey, unlinkPr } from "./prs";
 import { parseKey } from "./keys";
@@ -83,6 +84,8 @@ export class Shuttle implements Ctx {
   private deliveries: Promise<unknown> = Promise.resolve();
   private readonly conversations = new Conversations(this);
   private readonly linkCards = new LinkCards(this, this.conversations);
+  /** The worker posting each server's queued reviews, by server id. */
+  private readonly posters = new Map<string, Promise<void>>();
 
   constructor(deps: ShuttleDeps) {
     this.store = deps.store;
@@ -460,6 +463,88 @@ export class Shuttle implements Ctx {
     return { pr: toView(this, this.store.prById(out.pr.id)!), placed: out.placed, inBody: out.inBody };
   }
 
+  queueReview(key: string, input: SubmitInput): { pr: PrView; post: PostView } {
+    const row = queueReview(this, key, input);
+    this.drainPosts();
+    return { pr: toView(this, this.store.prById(row.pr_id)!), post: postView(this, row) };
+  }
+
+  posts(): PostView[] {
+    return recentPosts(this);
+  }
+
+  cancelPost(id: number): PrView {
+    return toView(this, cancelPost(this, id));
+  }
+
+  retryPost(id: number): { pr: PrView; post: PostView } {
+    const row = retryPost(this, id);
+    this.drainPosts();
+    return { pr: toView(this, this.store.prById(row.pr_id)!), post: postView(this, row) };
+  }
+
+  clearPost(id: number): PrView {
+    return toView(this, clearPost(this, id));
+  }
+
+  /** At start: posts the last run left half done fail for the user to check, and the queue picks up where it stopped. */
+  resumePosts(): void {
+    failInterruptedPosts(this);
+    this.drainPosts();
+  }
+
+  /** Starts a worker for each server with reviews waiting and none running; each posts its server's reviews in order. */
+  drainPosts(): void {
+    if (this.lifetime?.aborted) return;
+    for (const server of this.store.queuedPostServers()) {
+      if (this.posters.has(server)) continue;
+      const run = this.postAll(server)
+        .catch((error: unknown) => this.port.log("warn", `post reviews on ${server}: ${errText(error)}`))
+        .finally(() => {
+          this.posters.delete(server);
+          // A review queued while this worker was finishing still gets one.
+          if (this.store.nextQueuedPost(server) !== null) this.drainPosts();
+        });
+      this.posters.set(server, run);
+    }
+  }
+
+  /** Resolves once no worker is posting. */
+  async postsSettled(): Promise<void> {
+    while (this.posters.size > 0) await Promise.all(this.posters.values());
+  }
+
+  private async postAll(server: string): Promise<void> {
+    for (let row = this.store.nextQueuedPost(server); row !== null && !this.lifetime?.aborted; row = this.store.nextQueuedPost(server)) {
+      await this.postOne(row);
+    }
+  }
+
+  private async postOne(row: PostRow): Promise<void> {
+    const pr = this.store.prById(row.pr_id);
+    this.store.startPost(row.id);
+    this.port.publish();
+    let out: { placed: number; inBody: number };
+    try {
+      if (pr === null) throw new ShuttleError("Shuttle no longer has this PR");
+      out = await submitReview(this, pr.key, inputOf(row));
+    } catch (error) {
+      this.store.finishPost(row.id, { state: "failed", error: errText(error) });
+      this.store.addEvent("post_failed", `Your review of ${pr === null ? "a PR" : shortKey(this, pr)} did not post: ${errText(error)}`, row.pr_id);
+      this.port.publish();
+      return;
+    }
+    // Posted: nothing after this may fail it, or Try again would post it twice.
+    this.store.tx(() => {
+      this.store.finishPost(row.id, { state: "posted", placed: out.placed, inBody: out.inBody });
+      // The latest review of the PR is the one that counts.
+      this.store.clearFailedPosts(row.pr_id, row.id);
+    });
+    this.conversations.forget(pr.key);
+    await this.archiveReviewThreads({ prId: pr.id }).catch((error: unknown) => this.port.log("warn", `archive the review thread of ${pr.key}: ${errText(error)}`));
+    this.port.publish();
+  }
+
   async discardDraft(key: string, draftId: number): Promise<PrView> {
     const pr = setDraftState(this, key, draftId, "discarded");
     // Awaited, so an Undo always finds the thread already archived and brings it back.
@@ -652,6 +737,7 @@ export class Shuttle implements Ctx {
 
   /** The loop's step: a sync when one is due, and the batches whose window passed. */
   async tick(signal?: AbortSignal): Promise<void> {
+    this.drainPosts();
     const last = this.lastFullSync();
     if (last === null || this.now() - last >= this.settings().syncMinutes * 60_000) return this.sync(signal);
     const due = this.config().servers.filter((server) => {

@@ -51,7 +51,7 @@ interface KindGroup {
 }
 
 const KIND_GROUPS: readonly KindGroup[] = [
-  { id: "needs", title: "Needs you", kinds: ["agent_waiting", "nobody"], icon: "AlertTriangle", tone: "bad", description: () => "An agent waits on your answer, or feedback nobody is handling" },
+  { id: "needs", title: "Needs you", kinds: ["agent_waiting", "nobody", "post_failed"], icon: "AlertTriangle", tone: "bad", description: () => "An agent waits on your answer, feedback nobody is handling, or a review that didn't post" },
   { id: "merge", title: "Ready to merge", kinds: ["ready_to_merge"], icon: "GitMerge", tone: "ok", description: () => "Approved, with green checks" },
   { id: "post", title: "AI reviews to post", kinds: ["post", "review_done", "review_failed"], icon: "Sparkles", tone: "info", description: () => "You choose what goes out; nothing is posted yet" },
   { id: "rereview", title: "Updated since your review", kinds: ["rereview"], icon: "RotateCcw", tone: "warn", description: () => "The author pushed or asked again" },
@@ -494,6 +494,18 @@ function InboxList({ data, layout, onGo, onShortcuts }: { data: InboxData; layou
       </span>,
     );
   }
+  const inFlight = [
+    ...(data.posting.length > 0 ? [`${plural(data.posting.length, "review")} posting`] : []),
+    ...(data.reviewing.length > 0 ? [`${plural(data.reviewing.length, "AI review")} running`] : []),
+  ];
+  if (inFlight.length > 0) {
+    foot.push(
+      <span key="reviewing">
+        {inFlight.join(" and ")}:{" "}
+        <button type="button" className="cursor-pointer text-primary hover:underline" onClick={() => onGo({ view: "inbox", tab: "reviewing", key: null })}>Reviewing</button>
+      </span>,
+    );
+  }
   if (data.handled > 0) {
     foot.push(
       <span key="handled">
@@ -579,8 +591,60 @@ function Rules({ rules }: { rules: readonly InboxRule[] }) {
   );
 }
 
+function ListHeading({ title, count }: { title: string; count: number }) {
+  return (
+    <div className="mb-1 mt-3.5 flex min-h-6 items-center gap-2">
+      <b className="text-[11.5px] font-bold uppercase tracking-wider">{title}</b>
+      <span className="text-[11.5px] font-medium text-muted-foreground">{count}</span>
+    </div>
+  );
+}
+
+/** The Reviewing tab: reviews of yours on their way to their servers, then PRs out of the Inbox while an AI review runs on them. */
+function ReviewingList({ data, layout }: { data: InboxData; layout: RowLayout }) {
+  const actions = useActions();
+  const row = (pr: PrView, mode: "posting" | "reviewing", trailing: ReactNode) => (
+    <InboxRow key={pr.key} pr={pr} mode={mode} phone={layout.phone} selected={layout.selected === pr.key} checked={false} selecting={false} cursor={false} active={false} kindChip={false}
+      onOpen={() => layout.onSelect(pr.key)} onCheck={() => {}} trailing={trailing} />
+  );
+  const cancel = (pr: PrView) => pr.post?.state !== "queued" ? undefined : (
+    <Tip text="Take it out of the queue before it posts">
+      <button type="button" className={BUTTON} onClick={() => void actions.writes.cancelPost(pr)}>Cancel</button>
+    </Tip>
+  );
+  const thread = (pr: PrView) => {
+    const run = pr.lastReview;
+    if (run === null) return undefined;
+    const waiting = run.thread === "waiting";
+    return (
+      <Tip text={waiting ? `\u201c${run.title}\u201d asked you something` : `Open \u201c${run.title}\u201d`}>
+        <button type="button" className={BUTTON} onClick={() => actions.openThread(run.threadId)}>{waiting ? "Answer in the thread" : "Open the thread"}</button>
+      </Tip>
+    );
+  };
+  if (data.posting.length === 0 && data.reviewing.length === 0) return <div className="mt-2"><Empty>Nothing is posting, and no AI review is running.</Empty></div>;
+  return (
+    <>
+      {data.posting.length > 0 && (
+        <section aria-label="Posting">
+          <ListHeading title="Posting" count={data.posting.length} />
+          <p className="mb-2 text-[12.5px] text-muted-foreground">Your reviews on their way to their servers. Shuttle posts them in order, one at a time on each server, and you can cancel one until it starts.</p>
+          <ul className="overflow-hidden rounded-lg border border-border bg-card">{data.posting.map((pr) => row(pr, "posting", cancel(pr)))}</ul>
+        </section>
+      )}
+      {data.reviewing.length > 0 && (
+        <section aria-label="AI reviews running">
+          <ListHeading title="AI reviews running" count={data.reviewing.length} />
+          <p className="mb-2 text-[12.5px] text-muted-foreground">When one finishes or fails, its PR comes back to the Inbox, unless you dismissed it or a rule keeps it out.</p>
+          <ul className="overflow-hidden rounded-lg border border-border bg-card">{data.reviewing.map((pr) => row(pr, "reviewing", thread(pr)))}</ul>
+        </section>
+      )}
+    </>
+  );
+}
+
 /** The Snoozed or the Dismissed tab: what is out of the Inbox for now, or for good, and the way back. */
-function OutList({ tab, data, layout }: { tab: InboxTab; data: InboxData; layout: RowLayout }) {
+function OutList({ tab, data, layout }: { tab: Exclude<InboxTab, "reviewing">; data: InboxData; layout: RowLayout }) {
   const { writes } = useActions();
   const back = (pr: PrView) => pr.snoozedUntil ?? Number.POSITIVE_INFINITY;
   const prs = tab === "snoozed"
@@ -608,7 +672,7 @@ function OutList({ tab, data, layout }: { tab: InboxTab; data: InboxData; layout
   );
 }
 
-/** What waits on you, one row each under what to do; then what is snoozed, and what you dismissed. */
+/** What waits on you, one row each under what to do; then what is posting or under AI review, what is snoozed, and what you dismissed. */
 export function InboxView({ tab, layout, onGo }: { tab: InboxTab | "inbox"; layout: RowLayout; onGo(route: Route): void }) {
   const { writes } = useActions();
   const inbox = useShuttleQuery("inbox", {});
@@ -618,6 +682,7 @@ export function InboxView({ tab, layout, onGo }: { tab: InboxTab | "inbox"; layo
   const unseen = data?.prs.filter((pr) => pr.next.inbox && pr.unseen).map((pr) => pr.key) ?? [];
   const tabs = [
     { value: "inbox" as const, label: "Inbox", tip: "What waits on you" },
+    { value: "reviewing" as const, tip: "Your reviews on their way to their servers, and PRs with an AI review running", label: <>{INBOX_TAB_LABELS.reviewing}{data !== undefined && <>{" "}<b className="font-semibold">{data.posting.length + data.reviewing.length}</b></>}</> },
     { value: "snoozed" as const, tip: "What you snoozed, and when each comes back", label: <>{INBOX_TAB_LABELS.snoozed}{data !== undefined && <>{" "}<b className="font-semibold">{data.snoozed.length}</b></>}</> },
     {
       value: "dismissed" as const,
@@ -652,7 +717,8 @@ export function InboxView({ tab, layout, onGo }: { tab: InboxTab | "inbox"; layo
       {data === undefined && inbox.error === null && <div className="py-6 text-sm text-muted-foreground">Loading…</div>}
       {data !== undefined && (tab === "inbox"
         ? <InboxList data={data} layout={layout} onGo={onGo} onShortcuts={() => setShortcuts(true)} />
-        : <OutList tab={tab} data={data} layout={layout} />)}
+        : tab === "reviewing" ? <ReviewingList data={data} layout={layout} />
+          : <OutList tab={tab} data={data} layout={layout} />)}
       {shortcuts && <ShortcutsDialog onClose={() => setShortcuts(false)} />}
     </div>
   );

@@ -59,13 +59,13 @@ export const NEXT_KINDS = [
   // the user's own PRs
   "merged", "closed", "agent_waiting", "nobody", "yours", "agent_on_it", "draft", "auto_merge", "ready_to_merge", "approved_pending", "waiting_review",
   // everyone else's
-  "post", "review_done", "review_failed", "running", "rereview", "reviewed", "new_request", "not_reviewed", "looked_up",
+  "post_failed", "posting", "post", "review_done", "review_failed", "running", "rereview", "reviewed", "new_request", "not_reviewed", "looked_up",
 ] as const;
 export type NextKind = (typeof NEXT_KINDS)[number];
 /** What a next step's buttons do; the UI owns how each one is carried out. */
 export const NEXT_ACTIONS = [
   "merge", "assign_suggested", "pick_agent", "handle", "open_agent", "ready", "nudge", "cancel_auto_merge",
-  "choose", "open_review", "review", "approve", "not_now", "track", "reopen",
+  "choose", "open_review", "review", "approve", "not_now", "track", "reopen", "retry_post", "cancel_post", "clear_post",
 ] as const;
 export type NextAction = (typeof NEXT_ACTIONS)[number];
 /** What an Inbox rule keeps out: every PR by an author, every PR from a repo, or mentions in a repo where you are not asked by name. */
@@ -86,6 +86,8 @@ export const reviewRunSchema = z.object({
   trigger: z.enum(["auto", "manual"]),
   head: z.string().nullable(),
   at: z.number(),
+  /** Its thread as an agent's is: working, waiting on your answer, idle or archived. */
+  thread: z.enum(AGENT_STATUSES),
 });
 export type ReviewRunView = z.infer<typeof reviewRunSchema>;
 
@@ -180,6 +182,32 @@ export const reviewDraftSchema = z.object({
 });
 export type ReviewDraft = z.infer<typeof reviewDraftSchema>;
 
+export const POST_STATES = ["queued", "posting", "posted", "failed", "cancelled"] as const;
+export type PostState = (typeof POST_STATES)[number];
+
+/** A review in Shuttle's queue: waiting its turn on its server, posting, or done. */
+export const postViewSchema = z.object({
+  id: z.number(),
+  key: z.string(),
+  /** The PR as people write it, such as shop/world#12. */
+  display: z.string(),
+  serverName: z.string(),
+  verdict: z.enum(VERDICTS),
+  /** Inline comments to post. */
+  comments: z.number(),
+  draftId: z.number().nullable(),
+  state: z.enum(POST_STATES),
+  /** Why it did not post, in the server's words when it said. */
+  error: z.string().nullable(),
+  placed: z.number().nullable(),
+  inBody: z.number().nullable(),
+  /** When it was queued. */
+  at: z.number(),
+  startedAt: z.number().nullable(),
+  finishedAt: z.number().nullable(),
+});
+export type PostView = z.infer<typeof postViewSchema>;
+
 export const prViewSchema = z.object({
   /** `server:repo#number`, the PR's id everywhere in Shuttle. */
   key: z.string(),
@@ -232,6 +260,8 @@ export const prViewSchema = z.object({
   myReview: myReviewSchema.nullable(),
   /** An AI review draft waiting for you to choose what to post. */
   draft: z.object({ id: z.number(), findings: z.number(), at: z.number() }).nullable(),
+  /** Your review waiting or posting, else one that failed to post and is not dismissed. */
+  post: postViewSchema.nullable(),
   next: nextStepSchema,
   /** Out of the Inbox by a snooze right now, whether until a time or until it changes. */
   snoozed: z.boolean(),
@@ -429,6 +459,10 @@ export const inboxSchema = z.object({
   snoozed: z.array(prViewSchema),
   /** Live dismissed PRs, most recently dismissed first. */
   dismissed: z.array(prViewSchema),
+  /** Live PRs with an AI review running, most recently started first; dismissed ones too, since the review still runs. */
+  reviewing: z.array(prViewSchema),
+  /** PRs with a review of yours waiting or posting, in the queue's order, whatever their state. */
+  posting: z.array(prViewSchema),
   /** Newest first. */
   rules: z.array(inboxRuleSchema),
   /** Requests by name or mention that left the Inbox by age and are still not reviewed; they wait in Reviews. */
@@ -752,10 +786,11 @@ export const rpcContract = defineContract({
   /** A comment on the PR's conversation, as you. */
   comment: { input: z.object({ key, body }), output: prOut, invalidates: CONVERSATION },
   /**
-   * A review as you: a verdict, a body and inline comments. With draftId, the AI draft it came from
-   * is marked posted. Findings the server cannot place on a line go into the body.
+   * A review as you: a verdict, a body and inline comments, queued and posted in the background, in order on each server.
+   * It is checked now against what Shuttle knows, and again against the server's head when it posts. With draftId, the AI
+   * draft it came from is marked posted once it is. Findings the server cannot place on a line go into the body.
    */
-  submitReview: {
+  queueReview: {
     input: z.object({
       key,
       verdict: z.enum(VERDICTS),
@@ -765,9 +800,17 @@ export const rpcContract = defineContract({
       /** Post a draft whose review read an older head: its comments stay on the lines that review read. Never for an approval. */
       staleOk: z.boolean().optional(),
     }),
-    output: z.object({ pr: prViewSchema, placed: z.number(), inBody: z.number() }),
-    invalidates: CONVERSATION,
+    output: z.object({ pr: prViewSchema, post: postViewSchema }),
+    invalidates: PRS,
   },
+  /** Reviews waiting or posting, and those that finished in the last 10 minutes. */
+  posts: { input: z.object({}), output: z.object({ posts: z.array(postViewSchema) }), tags: PRS },
+  /** Take a review that has not started posting out of the queue. */
+  cancelPost: { input: z.object({ id: z.number().int() }), output: prOut, invalidates: PRS },
+  /** Put a review that failed to post back in the queue as it was. */
+  retryPost: { input: z.object({ id: z.number().int() }), output: z.object({ pr: prViewSchema, post: postViewSchema }), invalidates: PRS },
+  /** Stop showing a review that failed to post. */
+  clearPost: { input: z.object({ id: z.number().int() }), output: prOut, invalidates: PRS },
   discardDraft: { input: z.object({ key, draftId: z.number().int() }), output: prOut, invalidates: PRS },
   /** Undo a discard. */
   restoreDraft: { input: z.object({ key, draftId: z.number().int() }), output: prOut, invalidates: PRS },

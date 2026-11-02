@@ -4,6 +4,7 @@ import type { Ctx } from "./ctx";
 import type { InboxRuleRow, LinkRow, PrRow, ServerRow } from "./db/store";
 import { actionsOf, parseLabels, parseReviewers } from "./edit";
 import { agentActive, feedbackSignature, INBOX_ORDER, nextStep, ruleMatches, stepOf, stillHandled, type NextFacts } from "./next";
+import { postView } from "./posts";
 import { globMatch, STEP_OF_REASON } from "./sync";
 
 const DAY = 86_400_000;
@@ -38,10 +39,16 @@ export function agentMode(watch: "act" | "forward" | null): AgentView["mode"] {
   return watch === "act" ? "fix" : watch === "forward" ? "notify" : "off";
 }
 
+/** A thread Shuttle has not read yet is unknown. */
+function threadStatus(thread: { archived: number | null; waiting: number | null; status: string | null } | null): AgentView["status"] {
+  if (thread === null) return "unknown";
+  return thread.archived === 1 ? "archived" : thread.waiting === 1 ? "waiting" : thread.status === null ? "unknown" : ["active", "starting", "pending"].includes(thread.status) ? "working" : "idle";
+}
+
 export function agentOf(ctx: Ctx, pr: PrRow, owner: LinkRow | null = ctx.store.ownerLink(pr.id)): AgentView | null {
   if (!owner) return null;
   const watch = ctx.store.watch(pr.id);
-  const status: AgentView["status"] = owner.archived === 1 ? "archived" : owner.waiting === 1 ? "waiting" : owner.status === null ? "unknown" : ["active", "starting", "pending"].includes(owner.status) ? "working" : "idle";
+  const status = threadStatus(owner);
   const sent = ctx.store.events({ prId: pr.id, threadId: owner.thread_id, kinds: ["forwarded"], limit: 1 })[0];
   return {
     threadId: owner.thread_id,
@@ -109,6 +116,8 @@ function viewOf(ctx: Ctx, pr: PrRow, rules: readonly InboxRuleRow[]): { view: Pr
   const reviewers = parseReviewers(pr.reviewers);
   const checkCounts = pr.check_counts ? (JSON.parse(pr.check_counts) as CheckCounts) : null;
   const draft = pr.mine ? null : ctx.store.liveDraft(pr.id);
+  const postRow = ctx.store.currentPost(pr.id);
+  const post = postRow === null ? null : postView(ctx, postRow, pr);
   const draftFindings = draft ? (JSON.parse(draft.findings) as unknown[]).length : 0;
   const myReview = pr.mine ? null : myReviewOf(ctx, pr);
   const requestedAt = requestedAtOf(ctx, pr, reasonRows);
@@ -123,7 +132,7 @@ function viewOf(ctx: Ctx, pr: PrRow, rules: readonly InboxRuleRow[]): { view: Pr
     // A server removed from the config: its PRs show, with nothing to do on them.
   }
   const lastReview = last
-    ? { threadId: last.thread_id, title: ctx.store.threadTitle(last.thread_id) ?? "Review thread", state: last.state, preset: last.preset, trigger: last.trigger, head: last.head, at: last.created_at }
+    ? { threadId: last.thread_id, title: ctx.store.threadTitle(last.thread_id) ?? "Review thread", state: last.state, preset: last.preset, trigger: last.trigger, head: last.head, at: last.created_at, thread: threadStatus(ctx.store.thread(last.thread_id)) }
     : null;
   const ownRun = pr.mine ? null : ctx.store.reviewThreadOf(pr.id);
   const ownThread = ownRun && ctx.store.linkRole(pr.id, ownRun.thread_id) === "review" ? ctx.store.thread(ownRun.thread_id) : null;
@@ -179,6 +188,7 @@ function viewOf(ctx: Ctx, pr: PrRow, rules: readonly InboxRuleRow[]): { view: Pr
     lastReviewFinishedAt: last?.finished_at ?? null,
     lastReviewHandled: last ? ctx.store.hasDraftSince(pr.id, last.created_at) : false,
     draft: draft ? { findings: draftFindings, preset: last?.preset ?? null, auto: last?.trigger === "auto" } : null,
+    post,
     myReview,
     additions: pr.additions,
     deletions: pr.deletions,
@@ -226,6 +236,7 @@ function viewOf(ctx: Ctx, pr: PrRow, rules: readonly InboxRuleRow[]): { view: Pr
     reviewThread,
     myReview,
     draft: draft ? { id: draft.id, findings: draftFindings, at: draft.created_at } : null,
+    post,
     next,
     snoozed,
     snoozedUntil: snoozed ? (pr.snoozed_until ?? null) : null,

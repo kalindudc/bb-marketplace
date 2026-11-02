@@ -1,7 +1,7 @@
 import { useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import type { NextKind, PrView } from "../contract";
-import { mentionOnly } from "../next";
+import { mentionOnly, postText } from "../next";
 import { NextButton } from "./actions";
 import { Avatar, swatchOf } from "./avatar";
 import { BUTTON_GHOST, Pill, SELECTED_ROW, Tip, TONE_TEXT, onCardClick, type Tone } from "./common";
@@ -176,6 +176,7 @@ const KIND_CHIPS: Partial<Record<NextKind, string>> = {
   agent_waiting: "Agent needs you",
   nobody: "Nobody on it",
   ready_to_merge: "Ready to merge",
+  post_failed: "Didn\u2019t post",
   post: "AI review ready",
   review_done: "AI review done",
   review_failed: "Review failed",
@@ -234,6 +235,7 @@ function inboxFacts(pr: PrView, kindChip: boolean): Fact[] {
   }
   if (pr.draft !== null) out.push({ text: `${plural(pr.draft.findings, "finding")}${pr.lastReview?.trigger === "auto" ? " from auto review" : ""}` });
   if (pr.next.kind === "review_failed" && !kindChip) out.push({ text: "The review thread failed", icon: "AlertTriangle", tone: "bad" });
+  if (pr.next.kind === "post_failed" && pr.post !== null) out.push({ text: pr.post.error ?? "Your review didn\u2019t post", icon: "AlertTriangle", tone: "bad" });
   if (pr.next.kind === "rereview" && pr.myReview !== null) {
     const done = DONE[pr.myReview.verdict];
     // Asked by name again after reviewing: the server lists you as requested once more.
@@ -282,9 +284,38 @@ function FactLine({ items }: { items: readonly ReactNode[] }) {
   );
 }
 
-export type InboxRowMode = "inbox" | "snoozed" | "dismissed";
+export type InboxRowMode = "inbox" | "reviewing" | "posting" | "snoozed" | "dismissed";
+
+/** A review of yours in the queue: whose PR, what it posts, and how long it has waited or posted. */
+function postingFacts(pr: PrView): Fact[] {
+  const post = pr.post;
+  const out: Fact[] = [];
+  if (!pr.mine) out.push({ text: pr.author, strong: true });
+  if (post !== null) {
+    out.push({ text: postText(post), icon: "Sent" });
+    out.push(post.state === "queued" ? { text: `Queued ${ago(post.at)}`, icon: "Clock" } : { text: `Posting, started ${ago(post.startedAt ?? post.at)}`, icon: "Loading" });
+  }
+  return out;
+}
+
+/** A running review: who it is for, which preset since when, and what keeps it from coming back to the Inbox. */
+function reviewingFacts(pr: PrView): Fact[] {
+  const run = pr.lastReview;
+  const out: Fact[] = [{ text: pr.author, strong: true }];
+  if (run !== null) {
+    out.push({ text: run.preset, icon: "Sparkles" });
+    out.push({ text: `${run.trigger === "auto" ? "Auto review started" : "Started"} ${ago(run.at)}` });
+    if (run.thread === "waiting") out.push({ text: "Waits on your answer", icon: "Bot", tone: "warn" });
+    if (run.thread === "archived") out.push({ text: "Thread archived", icon: "Bot", dashed: true });
+  }
+  if (pr.dismissed !== null) out.push({ text: "Dismissed", dashed: true });
+  else if (pr.keptOutBy !== null) out.push({ text: "Kept out by a rule", dashed: true });
+  return out;
+}
 
 function lineTwo(pr: PrView, mode: InboxRowMode, kindChip: boolean): ReactNode[] {
+  if (mode === "posting") return postingFacts(pr).map((fact, index) => <FactView key={`fact-${index}`} fact={fact} />);
+  if (mode === "reviewing") return [...reviewingFacts(pr).map((fact, index) => <FactView key={`fact-${index}`} fact={fact} />), <SizeFact key="size" pr={pr} />];
   if (mode === "snoozed") return [<FactView key="back" fact={{ text: pr.snoozedUntil === null ? "Back when it changes" : `Back ${when(pr.snoozedUntil)}`, icon: "Clock" }} />];
   if (mode === "dismissed") {
     const dismissed = pr.dismissed;
@@ -344,7 +375,7 @@ export interface InboxRowProps {
   onSwipe?: { left(): void; right(): void };
 }
 
-/** A PR in the Inbox, its Snoozed list or its Dismissed list: one row style, about 44 to 58 pixels tall. */
+/** A PR in the Inbox, or its Reviewing (with Posting), Snoozed or Dismissed list: one row style, about 44 to 58 pixels tall. */
 export function InboxRow({ pr, mode, phone, selected, checked, selecting, cursor, active, kindChip, repoChip = true, onOpen, onCheck, onFocus, overlay, menu, trailing, onSwipe }: InboxRowProps) {
   const body = useRef<HTMLDivElement>(null);
   const drag = useRef<{ x: number; y: number; dx: number; active: boolean } | null>(null);

@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { toast } from "sonner";
 import { experimental_Icon as Icon, experimental_usePluginId, UrlLink } from "@get-bb/plugin-sdk/app";
-import type { MyReview, PrView, ReviewDraft, Severity } from "../contract";
+import type { MyReview, PostView, PrView, ReviewDraft, Severity } from "../contract";
+import { postText } from "../next";
 import { NextButtons, useActions } from "./actions";
 import { BUTTON, BUTTON_GHOST, BUTTON_PRIMARY_LARGE, FIELD, FitTextarea, Segmented } from "./common";
-import { useShuttleMutation } from "./data";
 import { ago, plural, settingsHref } from "./format";
 import { isLive } from "./pills";
+import { reviewInQueue, useQueueReview } from "./posts";
 import { usePrState } from "./pr-state";
 
 const SEVERITY_TEXT: Record<Severity, string> = { high: "text-destructive-text", medium: "text-warning-text", low: "text-foreground", nit: "text-muted-foreground" };
@@ -33,19 +33,17 @@ function DraftReview({ pr, draft }: { pr: PrView; draft: ReviewDraft }) {
   const [chosenVerdict, setVerdict] = usePrState(pr.key, "verdict", draft.verdict, scope);
   const verdict = stale && chosenVerdict === "approve" ? "comment" : chosenVerdict;
   const [staleOk, setStaleOk] = useState(false);
-  const submit = useShuttleMutation("submitReview");
+  const submit = useQueueReview();
   const ticked = findings.filter((finding) => finding.on);
   const blank = ticked.some((finding) => finding.body.trim() === "");
   const set = (id: string, patch: Partial<(typeof findings)[number]>) => setFindings((current) => current.map((finding) => (finding.id === id ? { ...finding, ...patch } : finding)));
   const all = ticked.length === findings.length;
+  const inQueue = reviewInQueue(pr);
 
-  const post = async () => {
-    const out = await submit.run({
-      key: pr.key, verdict, body: summary.trim(), draftId: draft.id, ...(stale ? { staleOk } : {}),
-      findings: ticked.map((finding) => ({ path: finding.path, line: finding.line, body: finding.body.trim() })),
-    });
-    if (out !== null) toast.success(`Posted your review on ${pr.serverName}: ${out.placed} inline, ${out.inBody} in the body.`);
-  };
+  const post = () => submit.run(pr, {
+    verdict, body: summary.trim(), draftId: draft.id, ...(stale ? { staleOk } : {}),
+    findings: ticked.map((finding) => ({ path: finding.path, line: finding.line, body: finding.body.trim() })),
+  });
 
   return (
     <div data-draft={draft.id}>
@@ -107,14 +105,16 @@ function DraftReview({ pr, draft }: { pr: PrView; draft: ReviewDraft }) {
       <Segmented label="Post as" value={verdict} options={stale ? VERDICT_OPTIONS.filter((option) => option.value !== "approve") : VERDICT_OPTIONS} onChange={setVerdict} />
       <div className="mt-2.5 flex flex-wrap items-center gap-2">
         {pr.can.review && (
-          <button type="button" className={BUTTON_PRIMARY_LARGE} disabled={submit.isPending || blank || (ticked.length === 0 && summary.trim() === "") || (stale && !staleOk)} onClick={() => void post()}>
-            <Icon name="Sent" className="size-3.5" aria-hidden />Post review · {plural(ticked.length, "comment")}
+          <button type="button" className={BUTTON_PRIMARY_LARGE} disabled={inQueue || submit.isPending || blank || (ticked.length === 0 && summary.trim() === "") || (stale && !staleOk)} onClick={() => void post()}>
+            {inQueue
+              ? <><Icon name="Clock" className="size-3.5" aria-hidden />Queued to post</>
+              : <><Icon name="Sent" className="size-3.5" aria-hidden />Post review · {plural(ticked.length, "comment")}</>}
           </button>
         )}
         <button type="button" className={BUTTON_GHOST} onClick={() => void actions.writes.discard(pr, draft.id)}>Discard draft</button>
       </div>
       {pr.can.review
-        ? <div className={NOTE}>Posts to {pr.serverName} as you: one review with inline comments. Edit a finding's text before you post.</div>
+        ? <div className={NOTE}>Posts to {pr.serverName} as you, in the background: one review with inline comments. Edit a finding's text before you post.</div>
         : <NoReviewCommand pr={pr} />}
     </div>
   );
@@ -127,6 +127,40 @@ function NoReviewCommand({ pr }: { pr: PrView }) {
     <div data-no-review-command className={NOTE}>
       Shuttle can't post this yet: {pr.serverName} has no <span className="font-mono">review</span> command in{" "}
       <UrlLink href={settingsHref(pluginId)} className="text-primary hover:underline">Settings › Servers</UrlLink>. Add one there (Shuttle's Delta adapter, delta.sh, has it), or post it from the review thread.
+    </div>
+  );
+}
+
+/** A review of yours in the queue: what it posts, where it stands, and Cancel until it starts. */
+function Posting({ pr, post }: { pr: PrView; post: PostView }) {
+  const { writes } = useActions();
+  const queued = post.state === "queued";
+  return (
+    <div data-posting={post.id}>
+      <div className="flex items-center gap-2 text-sm">
+        <Icon name="Sent" className="size-4 shrink-0" aria-hidden />
+        <span className="min-w-0 flex-1"><b>{postText(post)}</b> {queued ? "is queued to post" : "is posting"} to {post.serverName}</span>
+        <span className="text-xs text-muted-foreground">{queued ? `queued ${ago(post.at)}` : `started ${ago(post.startedAt ?? post.at)}`}</span>
+      </div>
+      <div aria-hidden className="my-2 h-1 overflow-hidden rounded bg-surface-recessed"><div className="h-full w-2/5 animate-pulse rounded bg-muted-foreground" /></div>
+      {/* Until the server has given it an id, there is nothing to cancel yet. */}
+      {queued && post.id > 0 && <Buttons><button type="button" className={BUTTON} onClick={() => void writes.cancelPost(pr)}><Icon name="X" className="size-3.5" aria-hidden />Cancel</button></Buttons>}
+      <div className={NOTE}>You can leave: Shuttle posts it in the background, after any reviews ahead of it on {post.serverName}, and says when it's done.</div>
+    </div>
+  );
+}
+
+/** A review of yours the server did not take, why, and what to do about it. */
+function PostFailed({ pr, post }: { pr: PrView; post: PostView }) {
+  const { writes } = useActions();
+  return (
+    <div role="alert" data-post-failed={post.id} className="mb-3 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive-text">
+      <div><b className="font-semibold">Your review didn't post</b> ({postText(post)}): {post.error ?? "it failed"}</div>
+      <div className="mt-1.5 flex flex-wrap items-center gap-2">
+        <button type="button" className={BUTTON} onClick={() => void writes.retryPost(pr)}><Icon name="RotateCcw" className="size-3.5" aria-hidden />Try again</button>
+        <button type="button" className={BUTTON_GHOST} onClick={() => void writes.clearPost(pr)}>Dismiss</button>
+        {post.draftId !== null && <span className="text-muted-foreground">Or change the draft below and post it again.</span>}
+      </div>
     </div>
   );
 }
@@ -151,8 +185,17 @@ export function YourReviewCard({ pr, draft }: { pr: PrView; draft: ReviewDraft |
   const comment = pr.can.comment && <button type="button" className={BUTTON_GHOST} onClick={() => actions.compose(pr)}><Icon name="MessageSquare" className="size-3.5" aria-hidden />Comment</button>;
   const approve = pr.can.review && <button type="button" className={BUTTON} onClick={() => actions.approve(pr)}><Icon name="Check" className="size-3.5" aria-hidden />Approve…</button>;
 
+  const post = pr.post;
+  const posting = post !== null && post.state !== "failed" ? post : null;
   let body: ReactNode;
-  if (draft !== null) {
+  if (posting !== null) {
+    body = (
+      <>
+        <Posting pr={pr} post={posting} />
+        {draft !== null && posting.draftId !== draft.id && <div className="mt-4"><DraftReview key={draft.id} pr={pr} draft={draft} /></div>}
+      </>
+    );
+  } else if (draft !== null) {
     body = <DraftReview key={draft.id} pr={pr} draft={draft} />;
   } else if (run?.state === "running") {
     body = (
@@ -212,6 +255,7 @@ export function YourReviewCard({ pr, draft }: { pr: PrView; draft: ReviewDraft |
 
   return (
     <section ref={card} aria-label="Your review" data-your-review className="scroll-mt-28">
+      {post !== null && post.state === "failed" && <PostFailed pr={pr} post={post} />}
       {body}
     </section>
   );

@@ -3,7 +3,7 @@ import { createElement, type ComponentType } from "react";
 import { DEFAULT_CONFIG, type Config } from "../../src/config";
 import {
   rpcContract, type AgentView, type ConversationItem, type EventView, type InboxView, type InsightsView, type LinkView, type MergeOptions,
-  type NextStep, type Overview, type PrView, type ReviewDraft, type ServerStatus,
+  type NextStep, type Overview, type PostView, type PrView, type ReviewDraft, type ServerStatus,
 } from "../../src/contract";
 import { reloadPrefs } from "../../src/ui/prefs";
 import { prStates } from "../../src/ui/pr-state";
@@ -50,6 +50,13 @@ export function next(overrides: Partial<NextStep> = {}): NextStep {
   };
 }
 
+export function post(overrides: Partial<PostView> = {}): PostView {
+  return {
+    id: 3, key: "delta:shop/world#2311622", display: "shop/world#2311622", serverName: "Delta", verdict: "changes", comments: 2, draftId: null,
+    state: "queued", error: null, placed: null, inBody: null, at: NOW - 30_000, startedAt: null, finishedAt: null, ...overrides,
+  };
+}
+
 export function pr(overrides: Partial<PrView> = {}): PrView {
   const repo = overrides.repo ?? "get-bb/bb";
   const number = overrides.number ?? 4411;
@@ -93,6 +100,7 @@ export function pr(overrides: Partial<PrView> = {}): PrView {
     reviewThread: null,
     myReview: null,
     draft: null,
+    post: null,
     next: next(),
     snoozed: false,
     snoozedUntil: null,
@@ -166,7 +174,7 @@ export function overview(overrides: Partial<Overview> = {}): Overview {
 }
 
 export function inbox(overrides: Partial<InboxView> = {}): InboxView {
-  return { prs: [], snoozed: [], dismissed: [], rules: [], olderRequests: 0, handled: 0, ...overrides };
+  return { prs: [], snoozed: [], dismissed: [], reviewing: [], posting: [], rules: [], olderRequests: 0, handled: 0, ...overrides };
 }
 
 export function insights(overrides: Partial<InsightsView> = {}): InsightsView {
@@ -249,7 +257,11 @@ export function handlers(overrides: Partial<Handlers> = {}): Handlers {
     merge: unexpected("merge"),
     cancelAutoMerge: unexpected("cancelAutoMerge"),
     comment: unexpected("comment"),
-    submitReview: unexpected("submitReview"),
+    queueReview: unexpected("queueReview"),
+    posts: () => ({ posts: [] }),
+    cancelPost: unexpected("cancelPost"),
+    retryPost: unexpected("retryPost"),
+    clearPost: unexpected("clearPost"),
     discardDraft: unexpected("discardDraft"),
     restoreDraft: unexpected("restoreDraft"),
     reply: unexpected("reply"),

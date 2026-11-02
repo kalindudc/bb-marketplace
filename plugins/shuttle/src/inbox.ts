@@ -129,10 +129,14 @@ export function inbox(ctx: Ctx): InboxView {
     .filter((v) => isLive(v) && v.snoozed && v.dismissed === null)
     .sort((a, b) => back(a) - back(b) || (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
   const dismissed = views.filter((v) => isLive(v) && v.dismissed !== null).sort((a, b) => b.dismissed!.at - a.dismissed!.at);
+  const reviewing = views.filter((v) => isLive(v) && v.next.kind === "running").sort((a, b) => b.lastReview!.at - a.lastReview!.at);
+  const posting = views.filter((v) => v.post !== null && v.post.state !== "failed").sort((a, b) => a.post!.id - b.post!.id);
   return {
     prs: inboxOf(views),
     snoozed,
     dismissed,
+    reviewing,
+    posting,
     rules: ctx.store.inboxRules().map((rule) => ruleView(ctx, rule, candidates)),
     olderRequests,
     handled: ctx.store.countEvents(AUTOMATION_KINDS, now - DAY_MS),

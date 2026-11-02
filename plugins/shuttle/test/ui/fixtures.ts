@@ -101,7 +101,7 @@ export const taxPr: PrView = pr({
   ],
   links: [link({ threadId: "thr_review", title: "Review acme/checkout#4907", role: "review" })],
   can: CAN_ALL, draft: { id: 7, findings: 3, at: ago(90 * MIN) },
-  lastReview: { threadId: "thr_review", title: "Review acme/checkout#4907", state: "done", preset: "Thorough", trigger: "auto", head: "3e9a7c1000", at: ago(90 * MIN) },
+  lastReview: { threadId: "thr_review", title: "Review acme/checkout#4907", state: "done", preset: "Thorough", trigger: "auto", head: "3e9a7c1000", at: ago(90 * MIN), thread: "archived" },
   next: next({ kind: "post", tone: "info", label: "AI review ready: choose what to post", why: "3 findings from Thorough (started by auto review). Nothing is posted yet.", inbox: true, primary: { id: "choose", label: "Choose what to post" }, more: [{ id: "approve", label: "Approve…" }] }),
 });
 

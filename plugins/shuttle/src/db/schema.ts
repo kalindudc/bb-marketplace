@@ -235,4 +235,25 @@ export const MIGRATIONS: string[] = [
     created_at INTEGER NOT NULL,
     UNIQUE (kind, server, value)
   )`,
+  // The review queue: posting a review returns at once, and Shuttle posts it in the background, one at a time per server.
+  `CREATE TABLE review_posts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pr_id INTEGER NOT NULL,
+    server TEXT NOT NULL,
+    draft_id INTEGER,
+    verdict TEXT NOT NULL CHECK (verdict IN ('comment', 'approve', 'changes')),
+    body TEXT NOT NULL,
+    findings TEXT NOT NULL,
+    stale_ok INTEGER NOT NULL DEFAULT 0,
+    state TEXT NOT NULL CHECK (state IN ('queued', 'posting', 'posted', 'failed', 'cancelled')),
+    error TEXT,
+    placed INTEGER,
+    in_body INTEGER,
+    created_at INTEGER NOT NULL,
+    started_at INTEGER,
+    finished_at INTEGER,
+    cleared_at INTEGER
+  )`,
+  `CREATE INDEX review_posts_pr ON review_posts (pr_id, id)`,
+  `CREATE INDEX review_posts_state ON review_posts (state, server, id)`,
 ];

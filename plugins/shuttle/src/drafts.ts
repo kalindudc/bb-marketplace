@@ -85,21 +85,38 @@ async function currentHead(ctx: Ctx, pr: PrRow): Promise<PrRow> {
   }
 }
 
-export async function submitReview(ctx: Ctx, key: string, input: SubmitInput): Promise<{ pr: PrRow; placed: number; inBody: number }> {
-  let pr = requirePr(ctx, key);
+/** What is refused before anything is sent: a verdict on your own PR, nothing to post, and a draft that is not this PR's or not live. */
+export function checkReview(ctx: Ctx, pr: PrRow, input: SubmitInput): DraftRow | null {
   if (pr.mine === 1 && input.verdict !== "comment") throw new ShuttleError("You can't approve or request changes on your own PR");
   if (!input.body.trim() && !input.findings.length) throw new ShuttleError(input.verdict === "comment" ? "Write something, or pick findings to post" : "Nothing to post");
   const draft = input.draftId !== undefined ? ctx.store.draftById(input.draftId) : null;
   if (input.draftId !== undefined && (!draft || draft.pr_id !== pr.id)) throw new ShuttleError("That draft is not this PR's");
   if (draft && draft.state !== "draft") throw new ShuttleError(`That draft was already ${draft.state}`);
-  if (draft) pr = await currentHead(ctx, pr);
+  return draft;
+}
+
+/** A draft read on another head than `pr`'s posts only its comments, and only once the user confirmed. */
+export function checkHead(ctx: Ctx, pr: PrRow, draft: DraftRow | null, input: SubmitInput): void {
   // A draft that does not say which head it read counts as read on an older one.
   const stale = draft !== null && (draft.head === null || pr.head === null || draft.head !== pr.head);
   const read = draft?.head ? ` at ${draft.head.slice(0, 7)}` : "";
   if (stale && input.verdict === "approve") throw new ShuttleError(`${shortKey(ctx, pr)} may have new commits since the review read it${read}; review it again before you approve`);
   if (stale && !input.staleOk) throw new ShuttleError(`${shortKey(ctx, pr)} may have new commits since the review read it${read}; confirm to post its comments on the lines it read`);
+}
+
+export function reviewAdapter(ctx: Ctx, pr: PrRow) {
   const adapter = ctx.adapter(pr.server);
   if (!adapter.operations().includes("review")) throw new ShuttleError(`${ctx.server(pr.server)?.name ?? pr.server} has no review command, so Shuttle can't post reviews there`);
+  return adapter;
+}
+
+/** Posts the review now; the queue calls this for each review in turn. */
+export async function submitReview(ctx: Ctx, key: string, input: SubmitInput): Promise<{ pr: PrRow; placed: number; inBody: number }> {
+  let pr = requirePr(ctx, key);
+  const draft = checkReview(ctx, pr, input);
+  if (draft) pr = await currentHead(ctx, pr);
+  checkHead(ctx, pr, draft, input);
+  const adapter = reviewAdapter(ctx, pr);
   let posted: { placed: number; inBody: number };
   try {
     posted = await adapter.review(pr.repo, pr.number, { verdict: input.verdict, body: input.body, head: draft ? draft.head : pr.head, comments: input.findings });
@@ -122,6 +139,7 @@ export function setDraftState(ctx: Ctx, key: string, draftId: number, state: "di
   const draft = ctx.store.draftById(draftId);
   if (!draft || draft.pr_id !== pr.id) throw new ShuttleError("That draft is not this PR's");
   if (draft.state === "posted") throw new ShuttleError("That draft was already posted");
+  if (ctx.store.activePostOfDraft(draft.id)) throw new ShuttleError("That draft is queued to post; cancel the post first");
   ctx.store.tx(() => {
     if (state === "draft") {
       const live = ctx.store.liveDraft(pr.id);

@@ -4,6 +4,15 @@ Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` i
 
 ## Unreleased
 
+### Added
+
+- A Reviewing tab in the Inbox. A PR leaves the Inbox while an AI review runs on it and comes back when the review finishes, so until now the only place to find it was a group in Reviews. The tab lists every PR with an AI review running, newest first, with the preset, when it started, whether it was an auto review, and a button to its thread. A row says when the thread waits on your answer, and when the PR is dismissed or a rule keeps it out, since those stay out of the Inbox after the review. The tab shows how many are running, and so does the Inbox's foot, with a link to the tab.
+- A queue for posting reviews. Posting a review used to wait for the server, which on a slow one kept you on the button for a while. Now Shuttle checks the review at once, queues it and posts it in the background, one at a time on each server and in the order you posted them, so you can move on straight away. This covers reviews from an AI draft, from the composer and from Approve….
+  - Your review shows a queued review with Cancel until it starts, then that it is posting. The Reviewing tab lists every review on its way under Posting, with its verdict, its comments and how long it has waited, and a toast says when each one is on the server.
+  - A PR has one review in the queue at a time. From the moment you press Post review until the review is on the server, Post review, the composer's Approve and Request changes, and Approve… read Queued to post and stay greyed out, so a second click can't queue the same review again. Comments still go out.
+  - The PR's head is checked again just before the review posts, as before. A review the server refuses comes back to the Inbox under Needs you with the server's reason, and its draft stays. Try again posts the same review, or change the draft and post it again, or dismiss it.
+  - A review Shuttle was posting when it stopped is marked as failed instead of posted again, since the server may already have it. Check the PR before you try again.
+
 ### Changed
 
 - The summary and findings of an AI review draft open as tall as their text. They used to open at two or three lines, so a longer finding scrolled inside its box until you dragged it taller. They grow as you type and when the view gets narrower, and you can still drag one taller; it keeps that height while you edit.

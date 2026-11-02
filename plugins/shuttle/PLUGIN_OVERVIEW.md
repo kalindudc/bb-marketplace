@@ -2,7 +2,7 @@ See what each PR is waiting on and act without leaving bb. GitHub works out of t
 
 ## Five areas
 
-- **Inbox:** the decisions waiting on you, one row per PR under what to do with it, with what changed since you last opened it marked. Search, group and sort it. Snooze a PR until later today, tomorrow, next week or until it changes, dismiss it for good, or keep out every PR by an author, from a repo, or mentions where you are not asked; the Snoozed and Dismissed tabs list them, with the way back.
+- **Inbox:** the decisions waiting on you, one row per PR under what to do with it, with what changed since you last opened it marked. Search, group and sort it. Snooze a PR until later today, tomorrow, next week or until it changes, dismiss it for good, or keep out every PR by an author, from a repo, or mentions where you are not asked; the Snoozed and Dismissed tabs list them, with the way back. The Reviewing tab lists your reviews on their way to their servers and the PRs an AI review is running on, with the way to each thread.
 - **My PRs:** your open PRs grouped by their next step or shown in a sortable list, followed by merged and closed PRs. Checks, reviews and agents stay beside each PR.
 - **Reviews:** requests from people and teams, mentions and tracked PRs, grouped by where your review stands. Filter by team or hide bots and quiet PRs.
 - **Boards:** saved PR sets for a release, project or handoff, across repositories and servers.
@@ -26,7 +26,7 @@ Each PR's view says what it is, where it stands and what happens next in one car
 
 Git links in thread messages show what they point at on hover: a PR's state and next step, a comment with its code, a commit, a check's result, or an issue with the PRs that close it. Open the PR in Shuttle on the right tab from there. Shuttle draws with your bb theme's own colours.
 
-Merge, comment, reply, resolve threads, request reviewers, manage labels and post reviews as yourself. A thread's Shuttle tab shows its PRs in full. Search cached PRs or paste a link to look one up. Layouts adapt to phones and narrow windows, and lists remember their scroll, sort, filters and folded sections.
+Merge, comment, reply, resolve threads, request reviewers, manage labels and post reviews as yourself. Reviews post in the background, in order on each server, so a slow server never keeps you waiting; the Inbox's Reviewing tab lists them until they are on the server. A thread's Shuttle tab shows its PRs in full. Search cached PRs or paste a link to look one up. Layouts adapt to phones and narrow windows, and lists remember their scroll, sort, filters and folded sections.
 
 ## Setup and tools
 

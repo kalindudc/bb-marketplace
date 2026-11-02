@@ -8,6 +8,7 @@ import { BUTTON, BUTTON_GHOST, BUTTON_PRIMARY, PaneSection, Pill, Segmented } fr
 import { openExternal, undoToast, useShuttleMutation } from "./data";
 import { age, ago, plural, tinyKey } from "./format";
 import { isLive } from "./pills";
+import { reviewInQueue, useQueueReview } from "./posts";
 import { conversationOrder, hideBotComments, type ConversationOrder } from "./prefs";
 import { useStored } from "./remember";
 import { usePrState } from "./pr-state";
@@ -369,7 +370,7 @@ export function Composer({ pr, onDone, autoFocus = false, initialText = "" }: { 
   const [verdict, setVerdict] = usePrState(pr.key, "verdict", options[0]?.value ?? "comment");
   const box = useRef<HTMLTextAreaElement>(null);
   const comment = useShuttleMutation("comment");
-  const submit = useShuttleMutation("submitReview");
+  const submit = useQueueReview();
   const ask = useShuttleMutation("askAgent");
   const busy = comment.isPending || submit.isPending || ask.isPending;
 
@@ -396,8 +397,7 @@ export function Composer({ pr, onDone, autoFocus = false, initialText = "" }: { 
       if ((await comment.run({ key: pr.key, body })) === null) return;
       toast.success(`Commented on ${tinyKey(pr)}.`);
     } else {
-      if ((await submit.run({ key: pr.key, verdict, body, findings: [] })) === null) return;
-      toast.success(`Posted your review of ${tinyKey(pr)} on ${pr.serverName}: ${verdict === "approve" ? "approved" : "changes requested"}.`);
+      if ((await submit.run(pr, { verdict, body, findings: [] })) === null) return;
     }
     setText("");
     onDone?.();
@@ -410,7 +410,9 @@ export function Composer({ pr, onDone, autoFocus = false, initialText = "" }: { 
     onDone?.();
   };
 
-  const label = pr.mine || verdict === "comment" ? "Comment" : verdict === "approve" ? "Approve" : "Request changes";
+  // A comment goes out on its own; a review waits for the one already in the queue.
+  const queued = !pr.mine && verdict !== "comment" && reviewInQueue(pr);
+  const label = queued ? "Queued to post" : pr.mine || verdict === "comment" ? "Comment" : verdict === "approve" ? "Approve" : "Request changes";
   return (
     <div data-composer className="rounded-lg border border-input bg-background focus-within:border-ring">
       <textarea ref={box} aria-label={`Comment on ${tinyKey(pr)}`} autoFocus={autoFocus} rows={3} value={text} placeholder={`Comment on ${tinyKey(pr)}… Markdown works`}
@@ -424,8 +426,8 @@ export function Composer({ pr, onDone, autoFocus = false, initialText = "" }: { 
           </button>
         )}
         {canPost && (
-          <button type="button" className={BUTTON_PRIMARY} disabled={busy || body === ""} onClick={() => void send()}>
-            <Icon name="Sent" className="size-3.5" aria-hidden />{label}
+          <button type="button" className={BUTTON_PRIMARY} disabled={busy || queued || body === ""} title={queued ? "A review of yours is already queued to post on this PR" : undefined} onClick={() => void send()}>
+            <Icon name={queued ? "Clock" : "Sent"} className="size-3.5" aria-hidden />{label}
           </button>
         )}
       </div>

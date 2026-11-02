@@ -6,6 +6,7 @@ import type { PrView, ReviewInput } from "../contract";
 import { BUTTON_GHOST, BUTTON_PRIMARY, BUTTON_SUCCESS, Choice, Dialog, FIELD } from "./common";
 import { useShuttleMutation } from "./data";
 import { tinyKey } from "./format";
+import { reviewInQueue, useQueueReview } from "./posts";
 
 /** The preset the server uses when a review names none. */
 export const defaultPresetOf = (presets: readonly Preset[]): Preset | null => presets.find((preset) => preset.default) ?? presets[0] ?? null;
@@ -82,10 +83,9 @@ export function PresetDialog({ pr, presets, onCustomize, onClose }: { pr: PrView
 /** Approve someone else's PR as you, with an optional comment. */
 export function ApproveDialog({ pr, onClose }: { pr: PrView; onClose(): void }) {
   const [text, setText] = useState("");
-  const submit = useShuttleMutation("submitReview");
+  const submit = useQueueReview();
   const approve = async () => {
-    if ((await submit.run({ key: pr.key, verdict: "approve", body: text.trim(), findings: [] })) === null) return;
-    toast.success(`Approved ${tinyKey(pr)} on ${pr.serverName}.`);
+    if ((await submit.run(pr, { verdict: "approve", body: text.trim(), findings: [] })) === null) return;
     onClose();
   };
   return (
@@ -94,8 +94,8 @@ export function ApproveDialog({ pr, onClose }: { pr: PrView; onClose(): void }) 
         <>
           <span className="flex-1" />
           <button type="button" className={BUTTON_GHOST} onClick={onClose}>Cancel</button>
-          <button type="button" className={BUTTON_SUCCESS} disabled={submit.isPending} onClick={() => void approve()}>
-            <Icon name="Check" className="size-3.5" aria-hidden />Approve
+          <button type="button" className={BUTTON_SUCCESS} disabled={submit.isPending || reviewInQueue(pr)} onClick={() => void approve()}>
+            <Icon name={reviewInQueue(pr) ? "Clock" : "Check"} className="size-3.5" aria-hidden />{reviewInQueue(pr) ? "Queued to post" : "Approve"}
           </button>
         </>
       )}>

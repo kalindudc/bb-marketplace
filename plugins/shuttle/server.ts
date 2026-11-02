@@ -47,6 +47,7 @@ export function createShuttlePlugin(deps: PluginDeps = {}) {
       port.publish();
     });
 
+    app.resumePosts();
     registerRpc(bb, app);
     registerTools(bb, app);
     bb.cli.register(createCli(app));

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import type { ConversationItem, PrDetails, PrView, ReviewDraft } from "../contract";
+import { postText } from "../next";
 import { AgentControls } from "./agent";
 import { NextButtons, useActions } from "./actions";
 import { TONE_TEXT } from "./common";
@@ -124,6 +125,9 @@ function agentRow(pr: PrView): Row | null {
 function yourReviewRow(pr: PrView, draft: ReviewDraft | null): Row | null {
   if (pr.mine || !isLive(pr)) return null;
   const run = pr.lastReview;
+  const post = pr.post;
+  if (post !== null && post.state === "failed") return { id: "yours", label: "Your review", tone: "bad", icon: "AlertTriangle", text: <>{b("Didn\u2019t post")} · {post.error ?? postText(post)}</>, go: "review" };
+  if (post !== null) return { id: "yours", label: "Your review", tone: "info", icon: "Sent", text: <>{b(postText(post))} · {post.state === "queued" ? `queued to post ${ago(post.at)}` : `posting since ${ago(post.startedAt ?? post.at)}`}</>, go: "review" };
   if (draft !== null) {
     const high = draft.findings.filter((finding) => finding.severity === "high").length;
     return { id: "yours", label: "Your review", tone: "info", icon: "Sparkles", text: <>{b("AI draft ready")} · {plural(draft.findings.length, "finding")}{high > 0 && `, ${high} high`} · not posted</>, go: "review" };

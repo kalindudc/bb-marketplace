@@ -74,7 +74,7 @@ describe("the next step of a PR kept out of the Inbox", () => {
     createdAt: null, updatedAt: null, reviewers: [], agent: null, suggestedAgent: null, handled: false, autoMerge: false, snoozed: false, keptOut: false,
     can: { merge: true, comment: true, ready: true, reopen: true, cancelAutoMerge: false, approve: true },
     reasons: [], teams: [], tracked: false, bot: false, requestedAt: null, lastReview: null, lastReviewFinishedAt: null, lastReviewHandled: false,
-    draft: null, myReview: null, additions: 1, deletions: 1, files: 1, inboxRequests: true, inboxRequestDays: 3, ...patch,
+    draft: null, post: null, myReview: null, additions: 1, deletions: 1, files: 1, inboxRequests: true, inboxRequestDays: 3, ...patch,
   });
   it("keeps its step and turns only the Inbox off, like a snooze", () => {
     expect(nextStep(facts({}))).toMatchObject({ kind: "ready_to_merge", inbox: true });
@@ -253,13 +253,37 @@ describe("the Inbox read", () => {
     inbox = h.shuttle.inbox();
     expect(inbox.snoozed.map((v) => v.key)).toEqual([KEY(2)]);
     expect(inbox.dismissed.map((v) => v.key)).toEqual([KEY(1), OTHER]);
-    expect(Object.keys(inbox).sort()).toEqual(["dismissed", "handled", "olderRequests", "prs", "rules", "snoozed"]);
+    expect(Object.keys(inbox).sort()).toEqual(["dismissed", "handled", "olderRequests", "posting", "prs", "reviewing", "rules", "snoozed"]);
     expect(inbox.handled).toBe(0);
     for (let i = 0; i < 12; i++) h.store.addEvent("forwarded", `Sent ${i}`);
     h.store.addEvent("tracked", "Not automation");
     expect(h.shuttle.inbox().handled).toBe(12);
     h.clock.now += DAY + 1;
     expect(h.shuttle.inbox().handled).toBe(0);
+  });
+
+  it("lists PRs with an AI review running, newest first and dismissed ones too, with whether the thread waits on you, until each review ends", async () => {
+    const h = await inboxOfThree();
+    h.views[2] = pr(2, { author: "dana" });
+    h.views[3] = pr(3, { author: "sam", repo: "shop/other" });
+    const first = (await h.shuttle.review({ key: KEY(2) })).threadId;
+    h.clock.now += 1000;
+    h.shuttle.dismiss([OTHER], true);
+    const second = (await h.shuttle.review({ key: OTHER, projectId: "proj_world" })).threadId;
+    let inbox = h.shuttle.inbox();
+    expect(inbox.prs.map((v) => v.key)).toEqual([KEY(1)]);
+    expect(inbox.reviewing.map((v) => v.key)).toEqual([OTHER, KEY(2)]);
+    expect(inbox.reviewing.every((v) => v.next.kind === "running" && !v.next.inbox)).toBe(true);
+
+    h.shuttle.onThreadActive(first);
+    h.shuttle.onInteractionPending(second);
+    expect(h.shuttle.inbox().reviewing.map((v) => v.lastReview?.thread)).toEqual(["waiting", "working"]);
+
+    await h.shuttle.onThreadIdle(first);
+    h.shuttle.onThreadFailed(second);
+    inbox = h.shuttle.inbox();
+    expect(inbox.reviewing).toEqual([]);
+    expect(inbox.prs.map((v) => [v.key, v.next.kind])).toEqual([[KEY(1), "ready_to_merge"], [KEY(2), "review_done"]]);
   });
 
   it("leaves a dismissed PR that merged out of the Dismissed list", async () => {

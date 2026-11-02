@@ -5,7 +5,7 @@ import type { InboxRule, PrView } from "../../src/contract";
 import { snoozeChoices } from "../../src/ui/inbox";
 import { atNine } from "../../src/ui/format";
 import { formatRoute, parseRoute } from "../../src/ui/route";
-import { agent, callsTo, find, HOUR, inbox, lastNavigation, mine, next, NOW, page, pr, setViewport, unmountAll, type Handlers } from "./helpers";
+import { agent, callsTo, find, HOUR, inbox, lastNavigation, mine, next, NOW, page, post as queued, pr, setViewport, unmountAll, type Handlers } from "./helpers";
 
 const toasts = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn() }));
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), toasts) }));
@@ -56,6 +56,16 @@ const snoozedLater = pr({ number: 77, title: "Inventory: move reservations to th
 const snoozedChange = pr({ number: 78, title: "hydrogen: drop the Node 18 shim", author: "bkim", snoozed: true, snoozedUntil: null, next: next({ kind: "rereview", inbox: false, clears: "Leaves when you review again." }) });
 const dismissedNew = pr({ number: 90, title: "Docs: typo sweep across the admin guides", author: "hfox", dismissed: { at: NOW - 24 * HOUR, activity: true }, next: next({ kind: "new_request", inbox: false }) });
 const dismissedQuiet = mine({ number: 88, title: "Lineup: try badges on tabs", dismissed: { at: NOW - 3 * 24 * HOUR, activity: false }, next: next({ kind: "ready_to_merge", inbox: false }) });
+const run = (patch: Partial<NonNullable<PrView["lastReview"]>> = {}) => ({ threadId: "thr_review", title: "Review shop/world#2312070", state: "running" as const, preset: "Thorough", trigger: "manual" as const, head: "abc", at: NOW - 12 * 60_000, thread: "working" as const, ...patch });
+const runningNext = next({ kind: "running", tone: "info", label: "AI review running", why: "Thorough in “Review”, started 12 minutes ago. Its findings land here.", more: [{ id: "open_review", label: "Open the thread" }] });
+const reviewingWorking = pr({ repo: "shop/world", server: "delta", serverName: "Delta", number: 2312070, title: "Checkout: retry the payment session once", author: "elvin", additions: 40, deletions: 6, lastReview: run(), next: runningNext });
+const reviewingWaiting = pr({
+  number: 4420, title: "Sidebar: keep the thread list scroll on reload", author: "rmartin", additions: 12, deletions: 2, dismissed: { at: NOW - 2 * HOUR, activity: false },
+  lastReview: run({ threadId: "thr_waiting", title: "Review get-bb/bb#4420", preset: "Security pass", trigger: "auto", at: NOW - 3 * HOUR, thread: "waiting" }), next: runningNext,
+});
+const postingNext = next({ kind: "posting", tone: "info", label: "Your review is queued to post" });
+const postQueued = pr({ number: 4430, title: "Composer: keep the draft on reload", author: "ana-r", post: queued({ id: 51, key: "github:get-bb/bb#4430", display: "get-bb/bb#4430", serverName: "GitHub" }), next: postingNext });
+const postPosting = pr({ number: 4431, title: "Sidebar: drop the stale badge", author: "bkim", post: queued({ id: 50, key: "github:get-bb/bb#4431", display: "get-bb/bb#4431", serverName: "GitHub", state: "posting", verdict: "approve", comments: 0, startedAt: NOW - 2 * 60_000 }), next: postingNext });
 const rule: InboxRule = { id: 4, kind: "repo", server: "github", serverName: "GitHub", value: "Shopify/polaris", createdAt: NOW - 5 * 24 * HOUR, keeps: ["github:Shopify/polaris#1201", "github:Shopify/polaris#1188"] };
 const mentionRule: InboxRule = { id: 5, kind: "mention", server: "github", serverName: "GitHub", value: "Shopify/web", createdAt: NOW - 14 * 24 * HOUR, keeps: [] };
 
@@ -99,13 +109,13 @@ const tabTo = (node: HTMLElement) => {
 };
 
 describe("the Inbox", () => {
-  it("has a title without a count, its three tabs and a ⋯ menu, and no description", async () => {
-    const { slot } = await inboxPage({}, ALL, "inbox", { snoozed: [snoozedLater, snoozedChange], dismissed: [dismissedNew] });
+  it("has a title without a count, its four tabs and a ⋯ menu, and no description", async () => {
+    const { slot } = await inboxPage({}, ALL, "inbox", { snoozed: [snoozedLater, snoozedChange], dismissed: [dismissedNew], reviewing: [reviewingWorking] });
     await row(slot, waiting.key);
     const heading = slot.container.querySelector("h2")!;
     expect(heading.textContent).toBe("Inbox");
     const tabs = within(slot.getByRole("radiogroup", { name: "Inbox tabs" })).getAllByRole("radio");
-    expect(tabs.map((tab) => tab.textContent)).toEqual(["Inbox", "Snoozed 2", "Dismissed 1"]);
+    expect(tabs.map((tab) => tab.textContent)).toEqual(["Inbox", "Reviewing 1", "Snoozed 2", "Dismissed 1"]);
     expect(tabs[0]!.getAttribute("aria-checked")).toBe("true");
     expect(slot.container.textContent).not.toContain("Decisions waiting on you");
     expect(slot.getByRole("button", { name: "Inbox options" })).toBeTruthy();
@@ -121,7 +131,7 @@ describe("the Inbox", () => {
     expect(needs.getAttribute("title")).toBeNull();
     expect(sections[0]!.textContent).not.toContain("feedback nobody is handling");
     tabTo(needs);
-    expect((await screen.findByRole("tooltip")).textContent).toBe("An agent waits on your answer, or feedback nobody is handling. Fold this section");
+    expect((await screen.findByRole("tooltip")).textContent).toBe("An agent waits on your answer, feedback nobody is handling, or a review that didn't post. Fold this section");
     expect(rowKeys(slot)).toEqual([waiting.key, nobody.key, ready.key, post.key, rereview.key, request.key, mention.key]);
   });
 
@@ -416,6 +426,19 @@ describe("the Inbox", () => {
     expect(line.textContent).toBe("Automation did 2 things today: Automation log");
   });
 
+  it("says in its foot how many reviews are posting and how many AI reviews are running", async () => {
+    const { slot } = await page("inbox", { inbox: () => inbox({ prs: ALL, posting: [postQueued], reviewing: [reviewingWorking] }) });
+    expect((await find(slot.container, "[data-foot]")).textContent).toBe("1 review posting and 1 AI review running: Reviewing");
+  });
+
+  it("says in its foot how many AI reviews are running, linking to Reviewing", async () => {
+    const { slot } = await page("inbox", { inbox: () => inbox({ prs: ALL, reviewing: [reviewingWorking, reviewingWaiting] }) });
+    const foot = await find(slot.container, "[data-foot]");
+    expect(foot.textContent).toBe("2 AI reviews running: Reviewing");
+    fireEvent.click(within(foot).getByRole("button", { name: "Reviewing" }));
+    expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: "inbox~reviewing" } });
+  });
+
   it("says all clear when nothing waits", async () => {
     const { slot } = await page("inbox", { inbox: () => inbox() });
     expect((await find(slot.container, "[data-all-clear]")).textContent).toContain("Nothing waits on you.");
@@ -669,6 +692,54 @@ describe("the Snoozed and Dismissed tabs", () => {
   });
 });
 
+describe("the Reviewing tab", () => {
+  it("lists PRs with an AI review running: the author, the preset, since when, and what holds it out of the Inbox", async () => {
+    const { slot } = await inboxPage({}, ALL, "inbox~reviewing", { reviewing: [reviewingWorking, reviewingWaiting] });
+    const working = await row(slot, reviewingWorking.key);
+    expect(slot.getByRole("region", { name: "AI reviews running" }).textContent).toContain("When one finishes or fails, its PR comes back to the Inbox, unless you dismissed it or a rule keeps it out.");
+    expect(slot.queryByRole("region", { name: "Posting" })).toBeNull();
+    expect(slot.getByRole("radio", { name: "Reviewing 2" }).getAttribute("aria-checked")).toBe("true");
+    expect(rowKeys(slot)).toEqual([reviewingWorking.key, reviewingWaiting.key]);
+    expect(facts(working)).toEqual(["elvin", "Thorough", "Started 12m ago", "S+40−6"]);
+    expect(facts(await row(slot, reviewingWaiting.key))).toEqual(["rmartin", "Security pass", "Auto review started 3h ago", "Waits on your answer", "Dismissed", "S+12−2"]);
+    expect(working.querySelector("[data-age]")).toBeNull();
+  });
+
+  it("opens each review's thread, and asks for an answer where the thread waits on you", async () => {
+    const { slot } = await inboxPage({}, ALL, "inbox~reviewing", { reviewing: [reviewingWorking, reviewingWaiting] });
+    fireEvent.click(within(await row(slot, reviewingWorking.key)).getByRole("button", { name: "Open the thread" }));
+    expect(lastNavigation(slot)).toEqual({ method: "toThread", threadId: "thr_review" });
+    fireEvent.click(within(await row(slot, reviewingWaiting.key)).getByRole("button", { name: "Answer in the thread" }));
+    expect(lastNavigation(slot)).toEqual({ method: "toThread", threadId: "thr_waiting" });
+  });
+
+  it("opens a PR from a click on its row", async () => {
+    const { slot } = await inboxPage({}, ALL, "inbox~reviewing", { reviewing: [reviewingWorking] });
+    fireEvent.click((await row(slot, reviewingWorking.key)).querySelector("[data-title]")!);
+    expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: "inbox~reviewing/delta/shop/world/2312070" } });
+  });
+
+  it("lists your reviews on their way to their servers first, in the queue's order, with Cancel until one starts", async () => {
+    const { slot } = await inboxPage({ cancelPost: () => ({ pr: postQueued }) }, ALL, "inbox~reviewing", { posting: [postPosting, postQueued], reviewing: [reviewingWorking] });
+    const posting = await find(slot.container, "section[aria-label='Posting']");
+    expect(slot.getByRole("radio", { name: "Reviewing 3" }).getAttribute("aria-checked")).toBe("true");
+    expect([...slot.container.querySelectorAll("section")].map((section) => section.getAttribute("aria-label"))).toEqual(["Posting", "AI reviews running"]);
+    expect(posting.textContent).toContain("Shuttle posts them in order, one at a time on each server, and you can cancel one until it starts.");
+    expect(rowKeys(slot)).toEqual([postPosting.key, postQueued.key, reviewingWorking.key]);
+    expect(facts(await row(slot, postPosting.key))).toEqual(["bkim", "Approval", "Posting, started 2m ago"]);
+    // The fixture was queued 30 seconds before the suite started, so how long ago depends on when this test runs.
+    expect(facts(await row(slot, postQueued.key))).toEqual(["ana-r", "Changes requested with 2 comments", expect.stringMatching(/^Queued (just now|\d+m ago)$/u)]);
+    expect(within(await row(slot, postPosting.key)).queryByRole("button", { name: "Cancel" })).toBeNull();
+    fireEvent.click(within(await row(slot, postQueued.key)).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(callsTo(slot, "cancelPost")).toEqual([{ id: 51 }]));
+  });
+
+  it("says when nothing is posting and no AI review is running", async () => {
+    const { slot } = await inboxPage({}, ALL, "inbox~reviewing");
+    expect((await find(slot.container, "[data-empty]")).textContent).toBe("Nothing is posting, and no AI review is running.");
+  });
+});
+
 describe("the Inbox on a phone", () => {
   it("swipes a row left to dismiss it and right to snooze it; a short swipe springs back", async () => {
     setViewport(390);
@@ -835,6 +906,7 @@ describe("Inbox routes", () => {
   it("carries the tab and a selected PR", () => {
     const key = "delta:shop/world#2261179";
     expect(parseRoute("inbox~snoozed")).toEqual({ view: "inbox", tab: "snoozed", key: null });
+    expect(parseRoute("inbox~reviewing")).toEqual({ view: "inbox", tab: "reviewing", key: null });
     expect(parseRoute("inbox~dismissed/delta/shop/world/2261179")).toEqual({ view: "inbox", tab: "dismissed", key });
     expect(parseRoute("inbox~nonsense")).toEqual({ view: "inbox", key: null });
     expect(formatRoute({ view: "inbox", tab: "dismissed", key })).toBe("inbox~dismissed/delta/shop/world/2261179");

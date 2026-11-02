@@ -15,7 +15,7 @@ export const AREA_META: Record<Area, { label: string; icon: string }> = {
   insights: { label: "Insights", icon: "ChartColumn" },
 };
 
-export const INBOX_TAB_LABELS: Record<InboxTab, string> = { snoozed: "Snoozed", dismissed: "Dismissed" };
+export const INBOX_TAB_LABELS: Record<InboxTab, string> = { reviewing: "Reviewing", snoozed: "Snoozed", dismissed: "Dismissed" };
 
 export const INSIGHTS_TAB_LABELS: Record<InsightsTab, string> = { overview: "Overview", log: "Automation log", sync: "Sync" };
 
@@ -42,7 +42,8 @@ export const MINE_GROUPS: readonly Group[] = [
 ];
 
 export const REVIEW_GROUPS: readonly Group[] = [
-  { title: "Ready to post", kinds: ["post", "review_done", "review_failed"], description: "An AI review drafted findings; you choose what goes out" },
+  { title: "Ready to post", kinds: ["post_failed", "post", "review_done", "review_failed"], description: "An AI review drafted findings; you choose what goes out" },
+  { title: "Posting", kinds: ["posting"], description: "Shuttle posts your review in the background" },
   { title: "Updated since your review", kinds: ["rereview"], description: "The author pushed or replied" },
   { title: "AI review running", kinds: ["running"], description: "Findings land here when it finishes" },
   { title: "Not reviewed yet", kinds: ["new_request", "not_reviewed", "looked_up"], description: "Oldest request first" },
@@ -62,6 +63,8 @@ export const NEXT_ICONS: Record<NextKind, string> = {
   ready_to_merge: "GitMerge",
   approved_pending: "GitMerge",
   waiting_review: "Clock",
+  post_failed: "AlertTriangle",
+  posting: "Sent",
   post: "Check",
   review_done: "Bot",
   review_failed: "AlertTriangle",

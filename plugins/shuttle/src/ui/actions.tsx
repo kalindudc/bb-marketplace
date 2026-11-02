@@ -76,6 +76,9 @@ export function runNext(actions: PageActions, pr: PrView, id: NextAction): void 
     case "not_now": return void actions.writes.setSnooze(pr, "update");
     case "track": return void actions.writes.setTracked(pr, true);
     case "reopen": return actions.edits.apply(pr, { kind: "reopen" });
+    case "retry_post": return void actions.writes.retryPost(pr);
+    case "cancel_post": return void actions.writes.cancelPost(pr);
+    case "clear_post": return void actions.writes.clearPost(pr);
   }
 }
 
@@ -93,6 +96,8 @@ const ACTION_ICONS: Partial<Record<NextAction, string>> = {
   approve: "Check",
   track: "Pin",
   reopen: "RotateCcw",
+  retry_post: "RotateCcw",
+  cancel_post: "X",
 };
 
 /** What each next-step button does, for its tooltip. */
@@ -112,6 +117,9 @@ export const ACTION_HINTS: Record<NextAction, string> = {
   not_now: "Leave it out of the Inbox until it changes",
   track: "Keep it in Reviews › Tracked",
   reopen: "Reopen it",
+  retry_post: "Put the same review back in the queue to post",
+  cancel_post: "Take it out of the queue before it posts",
+  clear_post: "Stop showing that it didn't post; nothing is posted",
 };
 
 export function NextButton({ pr, action, primary, small = false }: { pr: PrView; action: { id: NextAction; label: string }; primary: boolean; small?: boolean }) {

@@ -1,7 +1,7 @@
 export const SOURCES = ["all", "asked", "team", "mentioned", "tracked"] as const;
 export type Source = (typeof SOURCES)[number];
-/** The Inbox's own tab has no name in the route; Snoozed and Dismissed ride on it as "inbox~snoozed". */
-export const INBOX_TABS = ["snoozed", "dismissed"] as const;
+/** The Inbox's own tab has no name in the route; Reviewing, Snoozed and Dismissed ride on it as "inbox~snoozed". */
+export const INBOX_TABS = ["reviewing", "snoozed", "dismissed"] as const;
 export type InboxTab = (typeof INBOX_TABS)[number];
 
 export type Route =
@@ -49,7 +49,7 @@ const OLD_SECTIONS: Record<string, (key: string | null) => Route> = {
  * The page's subPath: "inbox", "mine", "done" and "reviews" are their lists, each followed by a
  * selected PR's key as path segments, "insights", "insights/log" and "insights/sync", "pr/<key>" one looked-up PR, and
  * "search/<words>" the search results, the words percent-encoded as one segment, then a selected key.
- * The Inbox's Snoozed and Dismissed tabs are "inbox~snoozed" and "inbox~dismissed", the same way.
+ * The Inbox's Reviewing, Snoozed and Dismissed tabs are "inbox~reviewing", "inbox~snoozed" and "inbox~dismissed", the same way.
  * A Reviews source other than Everything rides on the area as "reviews~team": server ids are lowercase
  * words, so a "~" can never be mistaken for one. A key travels as plain segments: bb encodes the
  * subPath again, so a percent-encoded key would come back still encoded. "" also parses as the Inbox, but the

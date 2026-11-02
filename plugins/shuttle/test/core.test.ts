@@ -51,6 +51,7 @@ const facts = (patch: Partial<NextFacts>): NextFacts => ({
   lastReviewFinishedAt: null,
   lastReviewHandled: false,
   draft: null,
+  post: null,
   myReview: null,
   additions: 10,
   deletions: 2,

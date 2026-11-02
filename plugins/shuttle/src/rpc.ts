@@ -88,7 +88,11 @@ export function registerRpc(bb: BbPluginApi, shuttle: Shuttle): void {
     merge: ({ key, ...input }) => refusing(() => shuttle.merge(key, input)),
     cancelAutoMerge: ({ key }) => refusing(async () => ({ pr: await shuttle.cancelAutoMerge(key) })),
     comment: ({ key, body }) => refusing(async () => ({ pr: await shuttle.comment(key, body) })),
-    submitReview: ({ key, ...input }) => refusing(() => shuttle.submitReview(key, input)),
+    queueReview: ({ key, ...input }) => refusing(() => shuttle.queueReview(key, input)),
+    posts: () => refusing(() => ({ posts: shuttle.posts() })),
+    cancelPost: ({ id }) => refusing(() => ({ pr: shuttle.cancelPost(id) })),
+    retryPost: ({ id }) => refusing(() => shuttle.retryPost(id)),
+    clearPost: ({ id }) => refusing(() => ({ pr: shuttle.clearPost(id) })),
     discardDraft: ({ key, draftId }) => refusing(async () => ({ pr: await shuttle.discardDraft(key, draftId) })),
     restoreDraft: ({ key, draftId }) => refusing(async () => ({ pr: await shuttle.restoreDraft(key, draftId) })),
     reply: ({ key, thread, body }) => refusing(async () => {

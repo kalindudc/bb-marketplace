@@ -191,6 +191,29 @@ export interface ReviewRow {
   archived_at: number | null;
 }
 
+export type PostState = "queued" | "posting" | "posted" | "failed" | "cancelled";
+
+/** A review waiting to post, posting, or done; `findings` is the JSON of the comments to post. */
+export interface PostRow {
+  id: number;
+  pr_id: number;
+  server: string;
+  draft_id: number | null;
+  verdict: "comment" | "approve" | "changes";
+  body: string;
+  findings: string;
+  stale_ok: number;
+  state: PostState;
+  error: string | null;
+  placed: number | null;
+  in_body: number | null;
+  created_at: number;
+  started_at: number | null;
+  finished_at: number | null;
+  /** A failed post the user dismissed, or one a later post of the PR made moot. */
+  cleared_at: number | null;
+}
+
 export interface ThreadRow {
   id: string;
   title: string;
@@ -753,6 +776,81 @@ export class Store {
 
   draftsSince(at: number): DraftRow[] {
     return this.db.prepare("SELECT * FROM review_drafts WHERE created_at >= ?").all(at) as DraftRow[];
+  }
+
+  addPost(row: Pick<PostRow, "pr_id" | "server" | "draft_id" | "verdict" | "body" | "findings" | "stale_ok">): PostRow {
+    const result = this.db
+      .prepare("INSERT INTO review_posts (pr_id, server, draft_id, verdict, body, findings, stale_ok, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?)")
+      .run(row.pr_id, row.server, row.draft_id, row.verdict, row.body, row.findings, row.stale_ok, this.now());
+    return this.postById(Number(result.lastInsertRowid))!;
+  }
+
+  postById(id: number): PostRow | null {
+    return (this.db.prepare("SELECT * FROM review_posts WHERE id = ?").get(id) as PostRow | undefined) ?? null;
+  }
+
+  /** The oldest post still waiting on this server. */
+  nextQueuedPost(server: string): PostRow | null {
+    return (this.db.prepare("SELECT * FROM review_posts WHERE server = ? AND state = 'queued' ORDER BY id LIMIT 1").get(server) as PostRow | undefined) ?? null;
+  }
+
+  queuedPostServers(): string[] {
+    return (this.db.prepare("SELECT DISTINCT server FROM review_posts WHERE state = 'queued'").all() as Array<{ server: string }>).map((row) => row.server);
+  }
+
+  /** Posts waiting or posting, oldest first. */
+  activePosts(): PostRow[] {
+    return this.db.prepare("SELECT * FROM review_posts WHERE state IN ('queued', 'posting') ORDER BY id").all() as PostRow[];
+  }
+
+  /** Posts that finished since a time, newest first. */
+  postsFinishedSince(at: number): PostRow[] {
+    return this.db.prepare("SELECT * FROM review_posts WHERE state IN ('posted', 'failed') AND finished_at >= ? ORDER BY finished_at DESC, id DESC").all(at) as PostRow[];
+  }
+
+  /** The PR's oldest post still waiting or posting, else its newest failed post not cleared. */
+  currentPost(prId: number): PostRow | null {
+    return (this.db
+      .prepare("SELECT * FROM review_posts WHERE pr_id = ? AND (state IN ('queued', 'posting') OR (state = 'failed' AND cleared_at IS NULL)) ORDER BY CASE WHEN state = 'failed' THEN 1 ELSE 0 END, CASE WHEN state = 'failed' THEN -id ELSE id END LIMIT 1")
+      .get(prId) as PostRow | undefined) ?? null;
+  }
+
+  activePostOfPr(prId: number): PostRow | null {
+    return (this.db.prepare("SELECT * FROM review_posts WHERE pr_id = ? AND state IN ('queued', 'posting') ORDER BY id LIMIT 1").get(prId) as PostRow | undefined) ?? null;
+  }
+
+  activePostOfDraft(draftId: number): PostRow | null {
+    return (this.db.prepare("SELECT * FROM review_posts WHERE draft_id = ? AND state IN ('queued', 'posting') LIMIT 1").get(draftId) as PostRow | undefined) ?? null;
+  }
+
+  startPost(id: number): void {
+    this.db.prepare("UPDATE review_posts SET state = 'posting', started_at = ? WHERE id = ?").run(this.now(), id);
+  }
+
+  finishPost(id: number, outcome: { state: "posted"; placed: number; inBody: number } | { state: "failed"; error: string } | { state: "cancelled" }): void {
+    const placed = outcome.state === "posted" ? outcome.placed : null;
+    const inBody = outcome.state === "posted" ? outcome.inBody : null;
+    const error = outcome.state === "failed" ? outcome.error : null;
+    this.db.prepare("UPDATE review_posts SET state = ?, error = ?, placed = ?, in_body = ?, finished_at = ? WHERE id = ?").run(outcome.state, error, placed, inBody, this.now(), id);
+  }
+
+  /** A failed post goes back in the queue as it was. */
+  requeuePost(id: number): void {
+    this.db.prepare("UPDATE review_posts SET state = 'queued', error = NULL, started_at = NULL, finished_at = NULL, cleared_at = NULL, created_at = ? WHERE id = ?").run(this.now(), id);
+  }
+
+  clearPost(id: number): void {
+    this.db.prepare("UPDATE review_posts SET cleared_at = ? WHERE id = ?").run(this.now(), id);
+  }
+
+  /** Failed posts of the PR before `beforeId`, or all of them, no longer need the user. */
+  clearFailedPosts(prId: number, beforeId = Number.MAX_SAFE_INTEGER): void {
+    this.db.prepare("UPDATE review_posts SET cleared_at = ? WHERE pr_id = ? AND state = 'failed' AND cleared_at IS NULL AND id < ?").run(this.now(), prId, beforeId);
+  }
+
+  /** Posts a stopped Shuttle left posting; the server may or may not have them. */
+  interruptedPosts(): PostRow[] {
+    return this.db.prepare("SELECT * FROM review_posts WHERE state = 'posting' ORDER BY id").all() as PostRow[];
   }
 
   addMyReview(row: Omit<MyReviewRow, "id" | "at">): void {
