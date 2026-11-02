@@ -7,14 +7,14 @@ describe("sync", () => {
     const h = harness();
     h.lists.authored = [pr(1, { author: "me" }), pr(2, { author: "me", state: "merged" })];
     h.lists.review_requested = [pr(3)];
-    h.lists.team_requested = [pr(4, { teams: ["@shop/edge"] })];
+    h.lists.team_requested = [pr(4, { teams: ["@acme/edge"] })];
     h.lists.mentioned = [pr(5)];
     await h.shuttle.sync();
     expect(h.shuttle.list("mine").map((p) => p.number)).toEqual([1]);
     expect(h.shuttle.list("done").map((p) => p.number)).toEqual([2]);
     const reviews = h.shuttle.list("reviews");
     expect(reviews.map((p) => p.number).sort()).toEqual([3, 4, 5]);
-    expect(reviews.find((p) => p.number === 4)!).toMatchObject({ reasons: [{ reason: "team", teams: ["@shop/edge"] }], teams: ["edge"] });
+    expect(reviews.find((p) => p.number === 4)!).toMatchObject({ reasons: [{ reason: "team", teams: ["@acme/edge"] }], teams: ["edge"] });
     expect(h.shuttle.overview().servers[0]).toMatchObject({ ok: true, login: "me" });
     const closed = h.runner.calls.find((c) => c.operation === "authored" && c.env.SHUTTLE_STATE === "closed");
     expect(closed?.env.SHUTTLE_SINCE).toBe("2026-10-09");
@@ -41,10 +41,10 @@ describe("sync", () => {
     const h = harness();
     h.views[9] = pr(9, { author: "dana" });
     h.port.addThread("thr_a");
-    await h.shuttle.link("forge:shop/world#9", "thr_a");
+    await h.shuttle.link("forge:acme/app#9", "thr_a");
     h.views[9] = pr(9, { author: "dana", state: "merged" });
     await h.shuttle.sync();
-    expect(h.store.prByKey("forge:shop/world#9")!.state).toBe("merged");
+    expect(h.store.prByKey("forge:acme/app#9")!.state).toBe("merged");
   });
 });
 
@@ -64,22 +64,22 @@ describe("auto review", () => {
     await h.shuttle.sync();
     expect(h.port.spawned).toHaveLength(1);
     const spawned = h.port.spawned[0]!;
-    expect(spawned).toMatchObject({ projectId: "proj_world", providerId: "pi", model: "m1", reasoningLevel: "high", workspace: { kind: "worktree" }, title: "Review shop/world#3" });
-    expect(spawned.prompt).toMatch(/^Review https:\/\/forge\.test\/shop\/world\/pull\/3 Use the `pr-reviewer` skill for this review\.\nforge pr view 3 -R shop\/world\n\nWhen your review is ready, call the shuttle_review_draft tool for forge:shop\/world#3/u);
-    const view = h.shuttle.view("forge:shop/world#3");
-    expect(view.links).toEqual([{ threadId: spawned.threadId, title: "Review shop/world#3", role: "review", archived: false }]);
+    expect(spawned).toMatchObject({ projectId: "proj_app", providerId: "pi", model: "m1", reasoningLevel: "high", workspace: { kind: "worktree" }, title: "Review acme/app#3" });
+    expect(spawned.prompt).toMatch(/^Review https:\/\/forge\.test\/acme\/app\/pull\/3 Use the `pr-reviewer` skill for this review\.\nforge pr view 3 -R acme\/app\n\nWhen your review is ready, call the shuttle_review_draft tool for forge:acme\/app#3/u);
+    const view = h.shuttle.view("forge:acme/app#3");
+    expect(view.links).toEqual([{ threadId: spawned.threadId, title: "Review acme/app#3", role: "review", archived: false }]);
     expect(view.lastReview).toMatchObject({ trigger: "auto", state: "running" });
     h.clock.now += 60_000;
     await h.shuttle.sync();
     expect(h.port.spawned).toHaveLength(1);
     h.shuttle.onThreadIdle(spawned.threadId);
     expect(h.shuttle.inbox().prs.map((p) => [p.number, p.next.kind])).toEqual([[3, "review_done"]]);
-    h.shuttle.snooze(["forge:shop/world#3"], "update");
+    h.shuttle.snooze(["forge:acme/app#3"], "update");
     expect(h.shuttle.inbox().prs).toEqual([]);
   });
 
   it("skips team requests, mentions, my own PRs, drafts and other repos unless configured", async () => {
-    const h = harness(testConfig({ autoReview: { enabled: true, when: ["requested"], drafts: false, preset: "", repos: ["shop/*"], maxPerDay: 8, rerun: "never" } }));
+    const h = harness(testConfig({ autoReview: { enabled: true, when: ["requested"], drafts: false, preset: "", repos: ["acme/*"], maxPerDay: 8, rerun: "never" } }));
     await h.shuttle.sync();
     h.clock.now += 60_000;
     h.lists.review_requested = [pr(3, { state: "draft" }), pr(4, { author: "me" }), pr(5, { repo: "other/repo" })];
@@ -111,7 +111,7 @@ describe("auto review", () => {
     await h.shuttle.sync();
     // The second run goes to the first one's thread.
     expect(h.port.spawned).toHaveLength(1);
-    expect(h.store.reviewsOf(h.store.prByKey("forge:shop/world#3")!.id).map((r) => [r.thread_id, r.head])).toEqual([[h.port.spawned[0]!.threadId, "head3"], [h.port.spawned[0]!.threadId, "newhead"]]);
+    expect(h.store.reviewsOf(h.store.prByKey("forge:acme/app#3")!.id).map((r) => [r.thread_id, r.head])).toEqual([[h.port.spawned[0]!.threadId, "head3"], [h.port.spawned[0]!.threadId, "newhead"]]);
     expect(h.port.sent.map((s) => s.threadId)).toEqual([h.port.spawned[0]!.threadId]);
   });
 
@@ -130,9 +130,9 @@ describe("auto review", () => {
     await h.shuttle.sync();
     h.lists.review_requested = [pr(3), pr(4)];
     await h.shuttle.sync();
-    const before = h.store.reasons(h.store.prByKey("forge:shop/world#3")!.id)[0]!.since;
-    h.store.replaceReasons("forge", "requested", [{ prId: h.store.prByKey("forge:shop/world#4")!.id, teams: [] }], false);
-    expect(h.store.reasons(h.store.prByKey("forge:shop/world#3")!.id)[0]!.since).toBe(before);
+    const before = h.store.reasons(h.store.prByKey("forge:acme/app#3")!.id)[0]!.since;
+    h.store.replaceReasons("forge", "requested", [{ prId: h.store.prByKey("forge:acme/app#4")!.id, teams: [] }], false);
+    expect(h.store.reasons(h.store.prByKey("forge:acme/app#3")!.id)[0]!.since).toBe(before);
   });
 
   it("pauses with the setting, and records a review that cannot start without retrying it", async () => {

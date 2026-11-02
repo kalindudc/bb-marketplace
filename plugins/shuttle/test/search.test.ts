@@ -16,7 +16,7 @@ async function stocked() {
   await h.shuttle.sync();
   // The merged PR is in the store from a look-up, as a closed PR of yours would be after a sync.
   h.views[2] = pr(2, { author: "me", title: "Bump nginx", state: "merged" });
-  await h.shuttle.lookup("forge:shop/world#2");
+  await h.shuttle.lookup("forge:acme/app#2");
   return h;
 }
 
@@ -35,7 +35,7 @@ describe("search", () => {
     expect(numbers(h.shuttle.search("dana").prs)).toEqual([3]);
     expect(numbers(h.shuttle.search("kd/edge-retries").prs)).toEqual([1]);
     expect(numbers(h.shuttle.search("routing").prs)).toEqual([1]);
-    expect(numbers(h.shuttle.search("world#3").prs)).toEqual([3]);
+    expect(numbers(h.shuttle.search("app#3").prs)).toEqual([3]);
     // "#4" is the number, so the 429 in #1's title does not match it; a bare 4 matches anywhere.
     expect(numbers(h.shuttle.search("#4").prs)).toEqual([4]);
     expect(numbers(h.shuttle.search("42").prs)).toEqual([1]);
@@ -48,7 +48,7 @@ describe("search", () => {
     const h = await stocked();
     // #4 matches "edge" only through its author, so the title matches come first, the newer #3 before #1.
     expect(numbers(h.shuttle.search("edge").prs)).toEqual([3, 1, 4]);
-    expect(numbers(h.shuttle.search("shop/world").prs)).toEqual([4, 3, 1, 2]);
+    expect(numbers(h.shuttle.search("acme/app").prs)).toEqual([4, 3, 1, 2]);
   });
 
   it("leaves out the PRs of a disabled server", async () => {

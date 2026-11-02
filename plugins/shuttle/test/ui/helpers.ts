@@ -52,7 +52,7 @@ export function next(overrides: Partial<NextStep> = {}): NextStep {
 
 export function post(overrides: Partial<PostView> = {}): PostView {
   return {
-    id: 3, key: "delta:shop/world#2311622", display: "shop/world#2311622", serverName: "Delta", verdict: "changes", comments: 2, draftId: null,
+    id: 3, key: "lab:acme/app#2311622", display: "acme/app#2311622", serverName: "Lab", verdict: "changes", comments: 2, draftId: null,
     state: "queued", error: null, placed: null, inBody: null, at: NOW - 30_000, startedAt: null, finishedAt: null, ...overrides,
   };
 }
@@ -121,7 +121,7 @@ export function pr(overrides: Partial<PrView> = {}): PrView {
 }
 
 /** One of the user's own PRs. */
-export const mine = (overrides: Partial<PrView> = {}) => pr({ mine: true, author: "kalindudc", reasons: [{ reason: "authored", teams: [] }], requestedAt: null, ...overrides });
+export const mine = (overrides: Partial<PrView> = {}) => pr({ mine: true, author: "robin-c", reasons: [{ reason: "authored", teams: [] }], requestedAt: null, ...overrides });
 
 export const CAN_ALL: PrView["can"] = { merge: true, comment: true, review: true, reply: true, resolve: true };
 
@@ -154,7 +154,7 @@ export function item(overrides: Partial<ConversationItem> = {}): ConversationIte
 
 export function server(overrides: Partial<ServerStatus> = {}): ServerStatus {
   return {
-    id: "github", name: "GitHub", kind: "github", enabled: true, ok: true, login: "kalindudc", error: null,
+    id: "github", name: "GitHub", kind: "github", enabled: true, ok: true, login: "robin-c", error: null,
     lastOkAt: NOW - 60_000, lastSyncAt: NOW - 60_000, durationMs: 1100,
     operations: ["whoami", "authored", "review_requested", "team_requested", "mentioned", "view", "activity"],
     state: "ok", failures: 0, failingSince: null, failure: null, failedSteps: [], stepOkAt: {}, alert: false, nextSyncAt: NOW + 120_000, lastFailedAt: null,
@@ -164,7 +164,7 @@ export function server(overrides: Partial<ServerStatus> = {}): ServerStatus {
 
 export function overview(overrides: Partial<Overview> = {}): Overview {
   return {
-    servers: [server(), server({ id: "delta", name: "Delta", kind: "command", login: "kalindu.decosta" })],
+    servers: [server(), server({ id: "lab", name: "Lab", kind: "command", login: "robin.c" })],
     counts: { inbox: 2, mine: 3, done: 1, reviews: 12 },
     syncedAt: NOW - 60_000,
     syncing: false,

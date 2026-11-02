@@ -93,7 +93,7 @@ export function useEditPrs(threadIds: readonly string[]) {
   const send = async (pr: PrView, change: Change, message: string, undo: { change: Change; message: string } | null) => {
     const result = await mutation.run({ key: pr.key, change });
     if (result === null) return;
-    // Some servers can't go back, such as Delta from ready to draft; the PR the server returned says which.
+    // Some servers can't go back from ready to draft; the PR the server returned says which.
     if (undo === null || !result.pr.actions.includes(undo.change.kind)) toast.success(message);
     else undoToast(message, () => void send(result.pr, undo.change, undo.message, null));
   };

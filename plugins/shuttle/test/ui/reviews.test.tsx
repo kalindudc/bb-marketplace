@@ -8,15 +8,15 @@ afterEach(unmountAll);
 
 const team = (teams: string[]) => ({ reasons: [{ reason: "team" as const, teams }], teams });
 const post = pr({ number: 1, title: "Run contract-test Envoys natively", draft: { id: 3, findings: 4, at: Date.now() }, next: next({ kind: "post", tone: "info", label: "AI review ready: choose what to post", primary: { id: "choose", label: "Choose what to post" } }) });
-const updated = pr({ number: 2, title: "Run Envoy Sorting Hat in the harness", ...team(["edge-infrastructure"]), tracked: true, myReview: { verdict: "changes", at: Date.now() - 2 * DAY, head: "abc" }, next: next({ kind: "rereview", tone: "warn", label: "Updated after your review", primary: { id: "review", label: "Re-review…" } }) });
-const running = pr({ number: 3, title: "Native app routes", ...team(["edge-infrastructure", "core-applications"]), checks: "pending", checkCounts: { passed: 9, failed: 0, pending: 5, total: 14 }, lastReview: { threadId: "thr_r", title: "Review #3", state: "running", preset: "Security pass", trigger: "manual", head: null, at: Date.now(), thread: "working" }, next: next({ kind: "running", label: "AI review running" }) });
+const updated = pr({ number: 2, title: "Run Envoy Sorting Hat in the harness", ...team(["platform"]), tracked: true, myReview: { verdict: "changes", at: Date.now() - 2 * DAY, head: "abc" }, next: next({ kind: "rereview", tone: "warn", label: "Updated after your review", primary: { id: "review", label: "Re-review…" } }) });
+const running = pr({ number: 3, title: "Native app routes", ...team(["platform", "core-applications"]), checks: "pending", checkCounts: { passed: 9, failed: 0, pending: 5, total: 14 }, lastReview: { threadId: "thr_r", title: "Review #3", state: "running", preset: "Security pass", trigger: "manual", head: null, at: Date.now(), thread: "working" }, next: next({ kind: "running", label: "AI review running" }) });
 const oldest = pr({ number: 4, title: "Remove log-only rate limits", requestedAt: Date.now() - 4 * DAY, additions: 12, deletions: 88, next: next({ kind: "not_reviewed", label: "Not reviewed · asked 4d ago", primary: { id: "review", label: "Start AI review" } }) });
 const newest = pr({ number: 5, title: "Add administrators to the Playground account", requestedAt: Date.now() - 2 * HOUR, additions: 24, deletions: 0, checks: "failed", next: next({ kind: "new_request", tone: "info", label: "New review request", inbox: true, primary: { id: "review", label: "Start AI review" } }) });
-const mentioned = pr({ number: 6, title: "Add global auth upstream keepalive", reasons: [{ reason: "mentioned", teams: [] }, { reason: "team", teams: ["edge-infrastructure"] }], teams: ["edge-infrastructure"], requestedAt: null, next: next({ kind: "not_reviewed", label: "Not reviewed" }) });
-const approved = pr({ number: 7, title: "Remove Sorting Hat Lua", ...team(["edge-infrastructure"]), myReview: { verdict: "approve", at: Date.now() - DAY, head: "abc" }, next: next({ kind: "reviewed", tone: "ok", label: "You approved · 1d" }) });
+const mentioned = pr({ number: 6, title: "Add global auth upstream keepalive", reasons: [{ reason: "mentioned", teams: [] }, { reason: "team", teams: ["platform"] }], teams: ["platform"], requestedAt: null, next: next({ kind: "not_reviewed", label: "Not reviewed" }) });
+const approved = pr({ number: 7, title: "Remove Sorting Hat Lua", ...team(["platform"]), myReview: { verdict: "approve", at: Date.now() - DAY, head: "abc" }, next: next({ kind: "reviewed", tone: "ok", label: "You approved · 1d" }) });
 const bot = pr({ number: 8, title: "Bump the minor_versions group", author: "dependabot", bot: true, next: next({ kind: "new_request", label: "New review request" }) });
 const quiet = pr({ number: 9, title: "Clean up routing rules", ...team(["platform-protection"]), quiet: true, next: next({ kind: "not_reviewed", label: "Not reviewed" }) });
-const quietBot = pr({ number: 10, title: "Old actuator clean-up", author: "terraform-actuator", bot: true, quiet: true, next: next({ kind: "not_reviewed", label: "Not reviewed" }) });
+const quietBot = pr({ number: 10, title: "Old deploy clean-up", author: "deploy-bot", bot: true, quiet: true, next: next({ kind: "not_reviewed", label: "Not reviewed" }) });
 const everything = [post, updated, running, oldest, newest, mentioned, approved, bot, quiet, quietBot];
 
 function reviewsPage(subPath = "reviews", prs: PrView[] = everything) {
@@ -58,7 +58,7 @@ describe("Reviews", () => {
     expect(row(updated.key).textContent).toContain("Updated since");
     expect(row(updated.key).textContent).toContain("Tracked");
     expect(row(running.key).textContent).toContain("AI reviewing");
-    expect(row(running.key).textContent).toContain("edge-infrastructure +1");
+    expect(row(running.key).textContent).toContain("platform +1");
     expect(row(running.key).textContent).toContain("Checks 9/14");
     expect(row(approved.key).textContent).toContain("You approved");
     expect(row(mentioned.key).textContent).toContain("Mentioned");
@@ -79,7 +79,7 @@ describe("Reviews", () => {
     await find(slot.container, "[data-group]");
     const select = within(slot.container).getByRole("combobox", { name: "Team" }) as HTMLSelectElement;
     expect([...select.options].map((option) => option.textContent)).toEqual([
-      "All my teams · 5", "edge-infrastructure · 4", "core-applications · 1", "platform-protection · 1",
+      "All my teams · 5", "platform · 4", "core-applications · 1", "platform-protection · 1",
     ]);
     expect(chip(slot.container, /My teams/u).getAttribute("aria-pressed")).toBe("true");
     fireEvent.change(select, { target: { value: "core-applications" } });

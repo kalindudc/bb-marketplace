@@ -1,13 +1,10 @@
 // @vitest-environment node
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { AdapterError, type Adapter } from "../src/adapters/adapter";
 import { CommandAdapter, MERGE_DEFAULTS } from "../src/adapters/command";
-import { runProcess, shellQuote, type RunOptions, type RunResult } from "../src/adapters/exec";
+import type { RunOptions, RunResult } from "../src/adapters/exec";
 import { checkRunOf, GithubAdapter, isPlacementError, listFields, searchQuery, timelineOf, toActivity, toMergeOptions, toSummary } from "../src/adapters/github";
 import { hunkLines } from "../src/model";
 import { DEFAULT_CONFIG, parseConfig, type ServerConfig } from "../src/config";
@@ -527,32 +524,32 @@ const forge = (commands: Record<string, string>) =>
     servers: [{ id: "forge", name: "Forge", kind: "command", pattern: "^https://forge\\.test/(?<repo>[^/]+/[^/]+)/pull/(?<number>\\d+)", link: "https://forge.test/{repo}/pull/{number}", commands: { view: "v", ...commands } }],
   }).servers[0]!;
 const WRITES = { merge: "m", comment: "c", review: "rv", reply: "rp", resolve: "rs" };
-const ref = { SHUTTLE_REPO: "shop/world", SHUTTLE_NUMBER: "7", SHUTTLE_URL: "https://forge.test/shop/world/pull/7" };
+const ref = { SHUTTLE_REPO: "acme/app", SHUTTLE_NUMBER: "7", SHUTTLE_URL: "https://forge.test/acme/app/pull/7" };
 
 describe("command server reads", () => {
   it("passes the new summary and activity fields through", async () => {
     const { run } = recorder((call) => {
       const op = call.env.SHUTTLE_OPERATION;
       if (op === "view") return { json: {
-        repo: "shop/world", number: 7, title: "T", state: "merged", created_at: "2026-10-20T10:00:00Z", closed_at: 1792800000000,
+        repo: "acme/app", number: 7, title: "T", state: "merged", created_at: "2026-10-20T10:00:00Z", closed_at: 1792800000000,
         check_counts: { passed: 3, failed: 1, pending: 0, total: 4 }, my_review: { state: "changes", at: "2026-10-21T10:00:00Z", head: "h1" },
         auto_merge: false, author_bot: true, requested_at: "2026-10-20T11:00:00Z", first_review_at: "2026-10-20T12:00:00Z",
         reviewers: [{ login: "ana", state: "approved", at: "2026-10-22T10:00:00Z", head: "h2" }],
       } };
       if (op === "activity") return { json: { head: "h2", items: [{ id: "c1", kind: "thread", at: "2026-10-22T11:00:00Z", thread: "t-1", resolved: true }] } };
-      if (op === "reviewed") return { json: [{ repo: "shop/world", number: 8, title: "U", state: "open", created_at: "2026-10-19T10:00:00Z" }] };
+      if (op === "reviewed") return { json: [{ repo: "acme/app", number: 8, title: "U", state: "open", created_at: "2026-10-19T10:00:00Z" }] };
       return { code: 1 };
     });
     const adapter = new CommandAdapter(forge({ activity: "a", reviewed: "r" }), run);
-    expect(await adapter.view("shop/world", 7)).toMatchObject({
+    expect(await adapter.view("acme/app", 7)).toMatchObject({
       createdAt: at("2026-10-20T10:00:00Z"), closedAt: 1792800000000, checkCounts: { passed: 3, failed: 1, pending: 0, total: 4 },
       myReview: { verdict: "changes", at: at("2026-10-21T10:00:00Z"), head: "h1" }, autoMerge: false, authorBot: true,
       requestedAt: at("2026-10-20T11:00:00Z"), firstReviewAt: at("2026-10-20T12:00:00Z"),
       reviewers: [{ login: "ana", team: false, state: "approved", at: at("2026-10-22T10:00:00Z"), head: "h2" }],
     });
-    expect((await adapter.activity("shop/world", 7)).items[0]).toMatchObject({ at: at("2026-10-22T11:00:00Z"), thread: "t-1", resolved: true });
-    expect((await adapter.activity("shop/world", 7)).details).toBeNull();
-    expect((await adapter.list("reviewed", {})).rows[0]).toMatchObject({ number: 8, createdAt: at("2026-10-19T10:00:00Z"), myReview: null, url: "https://forge.test/shop/world/pull/8" });
+    expect((await adapter.activity("acme/app", 7)).items[0]).toMatchObject({ at: at("2026-10-22T11:00:00Z"), thread: "t-1", resolved: true });
+    expect((await adapter.activity("acme/app", 7)).details).toBeNull();
+    expect((await adapter.list("reviewed", {})).rows[0]).toMatchObject({ number: 8, createdAt: at("2026-10-19T10:00:00Z"), myReview: null, url: "https://forge.test/acme/app/pull/8" });
     expect(adapter.operations()).toEqual(["reviewed", "view", "activity"]);
   });
 });
@@ -569,7 +566,7 @@ describe("command server PR details", () => {
       merge: { state: "conflicts", detail: "It has conflicts." },
     } }));
     const adapter = new CommandAdapter(forge({ activity: "a" }), run);
-    const activity = await adapter.activity("shop/world", 7, undefined, { detail: true });
+    const activity = await adapter.activity("acme/app", 7, undefined, { detail: true });
     expect(calls[0]!.env).toMatchObject({ SHUTTLE_OPERATION: "activity", SHUTTLE_DETAIL: "1" });
     expect(activity.items[0]).toMatchObject({ hunk: "@@ -1 +1,2 @@\n a\n+b", review: "12" });
     expect(activity.details).toEqual({
@@ -579,13 +576,13 @@ describe("command server PR details", () => {
       timeline: [{ kind: "labeled", at: at("2026-10-22T08:00:00Z"), actor: "sam", subject: "ship", detail: null }],
       merge: { state: "conflicts", detail: "It has conflicts." },
     });
-    await adapter.activity("shop/world", 7);
+    await adapter.activity("acme/app", 7);
     expect(calls[1]!.env).not.toHaveProperty("SHUTTLE_DETAIL");
   });
 
-  it("gives every command the folder of the adapter scripts that ship with this copy", async () => {
+  it("gives every command the reference folder of this copy", async () => {
     const { calls, run } = recorder(() => ({ json: { items: [] } }));
-    await new CommandAdapter(forge({ activity: "a" }), run).activity("shop/world", 7);
+    await new CommandAdapter(forge({ activity: "a" }), run).activity("acme/app", 7);
     const dir = calls[0]!.env.SHUTTLE_SCRIPTS!;
     expect(dir).toBe(fileURLToPath(new URL("../skills/shuttle/references", import.meta.url)));
     expect(spawnSync("/bin/sh", ["-c", 'test -d "$SHUTTLE_SCRIPTS"'], { env: { ...process.env, SHUTTLE_SCRIPTS: dir } }).status).toBe(0);
@@ -597,7 +594,7 @@ describe("command server PR details", () => {
     const files = Array.from({ length: 150 }, (_, i) => ({ path: `f${i}.rs` }));
     const checks = Array.from({ length: 150 }, (_, i) => ({ name: `ci ${i}`, state: i === 149 ? "failed" : "passed" }));
     const { run } = recorder(() => ({ json: { items: [{ id: "t1", kind: "thread", hunk }], commits, files: { total: 900, items: files }, checks } }));
-    const activity = await new CommandAdapter(forge({ activity: "a" }), run).activity("shop/world", 7, undefined, { detail: true });
+    const activity = await new CommandAdapter(forge({ activity: "a" }), run).activity("acme/app", 7, undefined, { detail: true });
     expect(hunk.length).toBeGreaterThan(20_000);
     expect(activity.items[0]!.hunk).toBe(hunk);
     expect(activity.details?.commits).toMatchObject({ total: 150 });
@@ -611,14 +608,14 @@ describe("command server PR details", () => {
 
   it("refuses a details part in the wrong shape, like any other field", async () => {
     const { run } = recorder(() => ({ json: { items: [], checks: [{ name: "ci", state: "exploded" }] } }));
-    await expect(new CommandAdapter(forge({ activity: "a" }), run).activity("shop/world", 7, undefined, { detail: true })).rejects.toThrow(/activity printed JSON in the wrong shape: checks/u);
+    await expect(new CommandAdapter(forge({ activity: "a" }), run).activity("acme/app", 7, undefined, { detail: true })).rejects.toThrow(/activity printed JSON in the wrong shape: checks/u);
   });
 });
 
 describe("command server merge options", () => {
   it("are the defaults without a command", async () => {
     const { calls, run } = recorder();
-    expect(await new CommandAdapter(forge({}), run).mergeOptions("shop/world", 7)).toEqual({ methods: ["squash", "merge"], default: "squash", deleteBranch: false, canAuto: false, state: "unknown", detail: null });
+    expect(await new CommandAdapter(forge({}), run).mergeOptions("acme/app", 7)).toEqual({ methods: ["squash", "merge"], default: "squash", deleteBranch: false, canAuto: false, state: "unknown", detail: null });
     expect(calls).toHaveLength(0);
     expect(MERGE_DEFAULTS.methods).toEqual(["squash", "merge"]);
   });
@@ -627,12 +624,12 @@ describe("command server merge options", () => {
     const answers: unknown[] = [{}, { methods: ["merge", "squash"], default: "squash", delete_branch: true, can_auto: true, state: "blocked", detail: "Needs a review." }, { methods: ["merge"] }, { methods: ["merge"], default: "squash" }, { state: "nope" }];
     const { calls, run } = recorder(() => ({ json: answers.shift() }));
     const adapter = new CommandAdapter(forge({ merge_options: "mo" }), run);
-    expect(await adapter.mergeOptions("shop/world", 7)).toEqual({ methods: ["squash", "merge"], default: "squash", deleteBranch: false, canAuto: false, state: "unknown", detail: null });
+    expect(await adapter.mergeOptions("acme/app", 7)).toEqual({ methods: ["squash", "merge"], default: "squash", deleteBranch: false, canAuto: false, state: "unknown", detail: null });
     expect(calls[0]!.env).toMatchObject({ SHUTTLE_OPERATION: "merge_options", ...ref });
-    expect(await adapter.mergeOptions("shop/world", 7)).toEqual({ methods: ["squash", "merge"], default: "squash", deleteBranch: true, canAuto: true, state: "blocked", detail: "Needs a review." });
-    expect(await adapter.mergeOptions("shop/world", 7)).toMatchObject({ methods: ["merge"], default: "merge" });
-    await expect(adapter.mergeOptions("shop/world", 7)).rejects.toThrow(/default squash is not one of its methods/u);
-    await expect(adapter.mergeOptions("shop/world", 7)).rejects.toThrow(/wrong shape: state/u);
+    expect(await adapter.mergeOptions("acme/app", 7)).toEqual({ methods: ["squash", "merge"], default: "squash", deleteBranch: true, canAuto: true, state: "blocked", detail: "Needs a review." });
+    expect(await adapter.mergeOptions("acme/app", 7)).toMatchObject({ methods: ["merge"], default: "merge" });
+    await expect(adapter.mergeOptions("acme/app", 7)).rejects.toThrow(/default squash is not one of its methods/u);
+    await expect(adapter.mergeOptions("acme/app", 7)).rejects.toThrow(/wrong shape: state/u);
   });
 });
 
@@ -642,12 +639,12 @@ describe("command server writes", () => {
   it("give each command the PR and what to write", async () => {
     const { calls, run } = recorder();
     const adapter = new CommandAdapter(forge(WRITES), run);
-    expect(await adapter.merge("shop/world", 7, { method: "squash", head: "abc", auto: false, deleteBranch: true })).toEqual({ merged: true });
-    expect(await adapter.merge("shop/world", 7, { method: "merge", head: "abc", auto: true, deleteBranch: false, subject: "Ship it" })).toEqual({ merged: false });
-    await adapter.comment("shop/world", 7, "Looks good.");
-    await adapter.reply("shop/world", 7, "t-1", "Done.");
-    await adapter.resolve("shop/world", 7, "t-1", true);
-    await adapter.resolve("shop/world", 7, "t-1", false);
+    expect(await adapter.merge("acme/app", 7, { method: "squash", head: "abc", auto: false, deleteBranch: true })).toEqual({ merged: true });
+    expect(await adapter.merge("acme/app", 7, { method: "merge", head: "abc", auto: true, deleteBranch: false, subject: "Ship it" })).toEqual({ merged: false });
+    await adapter.comment("acme/app", 7, "Looks good.");
+    await adapter.reply("acme/app", 7, "t-1", "Done.");
+    await adapter.resolve("acme/app", 7, "t-1", true);
+    await adapter.resolve("acme/app", 7, "t-1", false);
     const merges = calls.filter((c) => c.env.SHUTTLE_OPERATION === "merge").map((c) => c.env);
     expect(merges[0]).toMatchObject({ ...ref, SHUTTLE_METHOD: "squash", SHUTTLE_HEAD: "abc", SHUTTLE_AUTO: "0", SHUTTLE_DELETE_BRANCH: "1", SHUTTLE_SUBJECT: "" });
     expect(merges[1]).toMatchObject({ SHUTTLE_METHOD: "merge", SHUTTLE_AUTO: "1", SHUTTLE_DELETE_BRANCH: "0", SHUTTLE_SUBJECT: "Ship it" });
@@ -663,275 +660,19 @@ describe("command server writes", () => {
     const { calls, run } = recorder(() => ({ stdout: answers.shift() }));
     const adapter = new CommandAdapter(forge(WRITES), run);
     const post = { verdict: "approve" as const, body: "LGTM", head: null, comments: [{ path: "a.rs", line: 4, body: "nit" }, { path: "b.rs", line: null, body: "file" }] };
-    expect(await adapter.review("shop/world", 7, post)).toEqual({ placed: 2, inBody: 0 });
+    expect(await adapter.review("acme/app", 7, post)).toEqual({ placed: 2, inBody: 0 });
     expect(envOf(calls, "review")).toMatchObject({ ...ref, SHUTTLE_VERDICT: "approve", SHUTTLE_BODY: "LGTM", SHUTTLE_HEAD: "" });
     expect(JSON.parse(envOf(calls, "review").SHUTTLE_COMMENTS!)).toEqual([{ path: "a.rs", line: 4, body: "nit" }, { path: "b.rs", line: null, body: "file" }]);
-    expect(await adapter.review("shop/world", 7, { ...post, head: "abc" })).toEqual({ placed: 1, inBody: 1 });
+    expect(await adapter.review("acme/app", 7, { ...post, head: "abc" })).toEqual({ placed: 1, inBody: 1 });
     expect(calls[1]!.env.SHUTTLE_HEAD).toBe("abc");
-    await expect(adapter.review("shop/world", 7, post)).rejects.toThrow(/review did not print JSON/u);
+    await expect(adapter.review("acme/app", 7, post)).rejects.toThrow(/review did not print JSON/u);
   });
 
   it("fail without their command, and with the command's error", async () => {
-    const { run } = recorder(() => ({ code: 3, stderr: "Delta has no auto-merge" }));
-    await expect(new CommandAdapter(forge({}), run).comment("shop/world", 7, "x")).rejects.toThrow(/Forge has no comment command/u);
-    await expect(new CommandAdapter(forge({}), run).review("shop/world", 7, { verdict: "approve", body: "", head: null, comments: [] })).rejects.toThrow(/has no review command/u);
-    await expect(new CommandAdapter(forge(WRITES), run).merge("shop/world", 7, { method: "squash", head: "a", auto: true, deleteBranch: false })).rejects.toThrow(/merge exited 3: Delta has no auto-merge/u);
-  });
-});
-
-const DELTA = fileURLToPath(new URL("../skills/shuttle/references/delta.sh", import.meta.url));
-const hasJq = spawnSync("jq", ["--version"]).status === 0;
-
-interface DtCall {
-  args: string[];
-  input?: unknown;
-}
-
-describe.skipIf(!hasJq)("delta.sh against a fake dt", () => {
-  const dir = mkdtempSync(join(tmpdir(), "shuttle-dt-"));
-  const log = join(dir, "calls.log");
-  // Answers by path in the shapes Delta's REST API gave live; FAKE_DT_REVIEW_ERROR refuses a review that has comments.
-  writeFileSync(join(dir, "dt"), `#!${process.execPath}
-const fs = require("node:fs");
-const args = process.argv.slice(2);
-const input = args.includes("--input") ? JSON.parse(fs.readFileSync(0, "utf8")) : undefined;
-fs.appendFileSync(process.env.FAKE_DT_LOG, JSON.stringify(input === undefined ? { args } : { args, input }) + "\\n");
-if (process.env.FAKE_DT_DOWN) {
-  console.error(process.env.FAKE_DT_DOWN);
-  process.exit(1);
-}
-if (process.env.FAKE_DT_QUIET) {
-  console.error(process.env.FAKE_DT_QUIET);
-  process.exit(0);
-}
-const path = args[0] === "api" ? args[1].replace(/^repos\\/[^/]+\\/[^/]+\\//, "") : "";
-if (process.env.FAKE_DT_PULL_DOWN && path === "pulls/7") {
-  console.error(process.env.FAKE_DT_PULL_DOWN);
-  process.exit(1);
-}
-const user = (login) => ({ login, type: "User" });
-const answers = {
-  "pulls/7": { number: 7, head: { sha: "h2" }, base: { sha: "b1" }, commits: 2, changed_files: 1800 },
-  "pulls/8": { number: 8, head: { sha: "h8" }, base: { sha: "b8" }, commits: 1, changed_files: 2 },
-  "pulls/8/reviews?per_page=100&page=1": [],
-  "pulls/8/comments?per_page=100&page=1": [],
-  "issues/8/comments?per_page=100&page=1": [],
-  "compare/b8...h8?per_page=100": {
-    total_commits: 1,
-    commits: [{ sha: "c8", commit: { message: "Small\\n\\nBody", author: { name: "Ana" }, committer: { date: "2026-10-21T10:00:00+00:00" } }, author: { login: "ana" } }],
-    files: [{ filename: "a.rs", status: "added", additions: 5, deletions: 0 }, { filename: "b.rs", status: "renamed", additions: 1, deletions: 1 }],
-  },
-  "pulls/7/reviews?per_page=100&page=1": [{ id: 901, node_id: "R1", state: "CHANGES_REQUESTED", body: "Fix it", html_url: "r", submitted_at: "2026-10-22T10:00:00Z", user: user("ana") }],
-  "pulls/7/comments?per_page=100&page=1": [
-    { id: 11, node_id: "C11", thread_id: "t-1", in_reply_to_id: null, resolved: false, path: "a.rs", line: 4, body: "here", html_url: "c", created_at: "2026-10-22T11:00:00Z", user: user("ana"), diff_hunk: "@@ -1,3 +1,4 @@\\n a\\n+b", pull_request_review_id: 901 },
-    { id: 12, node_id: "C12", thread_id: "t-1", in_reply_to_id: 11, resolved: false, path: "a.rs", line: 4, body: "done", html_url: "c", created_at: "2026-10-22T12:00:00Z", user: user("sam"), diff_hunk: "@@ -1,3 +1,4 @@\\n a\\n+b", pull_request_review_id: 902 },
-  ],
-  "pulls/7/commits?per_page=100&page=1": [
-    { sha: "c1", commit: { message: "Start\\n\\nLong body", author: { name: "Ana" }, committer: { date: "2026-10-21T10:00:00Z" } }, author: { login: "ana" } },
-    { sha: "c2", commit: { message: "Fix", author: { name: "Sam" }, committer: { date: "2026-10-21T11:00:00Z" } }, author: null },
-  ],
-  "pulls/7/files?per_page=100": [{ filename: "a.rs", status: "modified", additions: 3, deletions: 1, patch: "@@ never read @@" }, { filename: "b.rs", status: "removed", additions: 0, deletions: 4 }],
-  "issues/7/comments?per_page=100&page=1": [],
-  "pulls/7/merge-readiness": {
-    head: "h2", merge_state_status: "blocked", mergeable: true, viewer: { allowed_methods: ["merge"], can_merge: false },
-    blockers: [{ code: "stacked" }, { code: "required_check_failing", context: "ci@x.iam:reviews" }, { code: "base_policy_denies", message: "main advances through the merge queue" }],
-    status_check_rollup: { contexts: [
-      { kind: "check", producer: "ci@x.iam", name: "reviews", status: "completed", conclusion: "failure", details_url: "d1" },
-      { kind: "status", producer: "ci@x.iam", name: "Required CI", status: "in_progress", details_url: "d2" },
-      { kind: "status", producer: "lint@x.iam", name: "lint", status: "completed", conclusion: "success", details_url: "d3" },
-    ] },
-  },
-};
-if (path === "pulls/7/merge-readiness" && process.env.FAKE_DT_NO_GATE) {
-  console.error("Error: 503: merge gate unavailable");
-  process.exit(1);
-}
-if (path === "pulls/7/reviews" && input && input.comments && process.env.FAKE_DT_REVIEW_ERROR) {
-  console.error(process.env.FAKE_DT_REVIEW_ERROR);
-  process.exit(1);
-}
-if (path in answers) console.log(JSON.stringify(answers[path]));
-else if (path === "pulls/7/reviews") console.log("{}");
-`);
-  chmodSync(join(dir, "dt"), 0o755);
-  const command = (extra = "") => `${extra}FAKE_DT_LOG=${shellQuote(log)} PATH=${shellQuote(dir)}:"$PATH" sh ${shellQuote(DELTA)}`;
-  const ops = ["activity", "merge_options", "merge", "comment", "review", "reply", "resolve"];
-  const delta = (extra = "") => new CommandAdapter(forge(Object.fromEntries(ops.map((op) => [op, command(extra)]))), runProcess);
-  /** The calls since the last look. */
-  const calls = (): DtCall[] => {
-    const text = existsSync(log) ? readFileSync(log, "utf8") : "";
-    writeFileSync(log, "");
-    return text.trim() ? text.trim().split("\n").map((line) => JSON.parse(line) as DtCall) : [];
-  };
-  const on = (repo: string) => ["--host", "https://delta.shopify.io", "-R", repo];
-  const dt = (...args: string[]) => [...args, ...on("shop/world")];
-  const argsOf = (list: DtCall[]) => list.map((c) => c.args);
-
-  it("is valid shell", () => {
-    expect(spawnSync("sh", ["-n", DELTA]).status).toBe(0);
-  });
-
-  it("fails with dt's own error when dt fails, instead of printing nothing", async () => {
-    const down = (error: string) => {
-      const extra = `FAKE_DT_DOWN=${shellQuote(error)} SHUTTLE_DELTA_TEAMS=edge,web `;
-      return new CommandAdapter(forge({ whoami: command(extra), authored: command(extra), team_requested: command(extra), merge_options: command(extra), reply: command(extra) }), runProcess);
-    };
-    const restarting = "Error: 503: walgit: the host serving this repository is restarting; retry in a few seconds";
-    const adapter = down(restarting);
-    const attempts = [() => adapter.whoami(), () => adapter.list("authored", { state: "open" }), () => adapter.list("team_requested", {}), () => adapter.mergeOptions("shop/world", 7), () => adapter.reply("shop/world", 7, "t-1", "ok")];
-    for (const attempt of attempts) {
-      const error = await attempt().catch((e: unknown) => e);
-      expect(error).toBeInstanceOf(AdapterError);
-      expect((error as AdapterError).detail).toMatchObject({ exit: 1, output: restarting });
-    }
-    const signedOut = await down("Error: 401: walgit: unauthorized").whoami().catch((e: unknown) => e as AdapterError);
-    expect((signedOut as AdapterError).detail.output).toBe("Error: 401: walgit: unauthorized\ndelta.sh: Delta did not accept your sign-in; run `dt auth login`, then sync again");
-    // One of activity's parallel reads fails: the others finish first, then the read fails with its error.
-    const pullDown = new CommandAdapter(forge({ activity: command("FAKE_DT_PULL_DOWN='Error: 503: walgit: restarting' ") }), runProcess);
-    const partial = await pullDown.activity("shop/world", 7).catch((e: unknown) => e as AdapterError);
-    expect((partial as AdapterError).detail).toMatchObject({ exit: 1, output: "Error: 503: walgit: restarting" });
-    // dt exits 0 but answers nothing: what it said on stderr still reaches Shuttle.
-    const quiet = new CommandAdapter(forge({ whoami: command("FAKE_DT_QUIET='warning: token refresh failed' ") }), runProcess);
-    await expect(quiet.whoami()).rejects.toThrow("whoami printed nothing: warning: token refresh failed");
-    calls();
-  });
-
-  it("works on the PR's own repository, and refuses one that is not owner/name", async () => {
-    calls();
-    await delta().comment("shop/other", 7, "Hi");
-    await delta().resolve("shop/other", 7, "t-1", true);
-    await delta().mergeOptions("shop/other", 7);
-    expect(argsOf(calls())).toEqual([
-      ["pr", "comment", "7", "--body=Hi", ...on("shop/other")],
-      ["pr", "resolve", "7", "t-1", ...on("shop/other")],
-      ["api", "repos/shop/other/pulls/7/merge-readiness", "-X", "GET", ...on("shop/other")],
-    ]);
-    for (const repo of ["a/b/c", "../x", "shop/world?x=1", "shop/.."]) await expect(delta().comment(repo, 7, "Hi")).rejects.toThrow(/is not owner\/name/u);
-    expect(calls()).toEqual([]);
-  });
-
-  it("reads merge options from the merge gate", async () => {
-    calls();
-    expect(await delta().mergeOptions("shop/world", 7)).toEqual({
-      methods: ["merge"], default: "merge", deleteBranch: false, canAuto: false, state: "blocked",
-      detail: "It is part of a stack; reviews is failing; main advances through the merge queue.",
-    });
-    expect(argsOf(calls())).toEqual([dt("api", "repos/shop/world/pulls/7/merge-readiness", "-X", "GET")]);
-  });
-
-  it("sends failed checks from the merge gate in activity, named by check and head", async () => {
-    const activity = await delta().activity("shop/world", 7);
-    expect(activity.head).toBe("h2");
-    expect(activity.items.map((i) => [i.id, i.kind, i.thread ?? null, i.resolved ?? null])).toEqual([
-      ["R1:CHANGES_REQUESTED", "review", null, null],
-      ["C11", "thread", "t-1", false],
-      ["C12", "thread", "t-1", false],
-      ["check:ci@x.iam:reviews:h2", "check", null, null],
-    ]);
-    expect(activity.items[3]).toMatchObject({ state: "failed", body: "reviews failed", url: "d1", bot: false });
-    const withoutGate = await delta("FAKE_DT_NO_GATE=1 ").activity("shop/world", 7);
-    expect(withoutGate.items.map((i) => i.id)).toEqual(["R1:CHANGES_REQUESTED", "C11", "C12"]);
-  });
-
-  it("adds every check, the commits, the first files, the merge state and thread hunks with SHUTTLE_DETAIL", async () => {
-    calls();
-    const activity = await delta().activity("shop/world", 7, undefined, { detail: true });
-    expect(argsOf(calls()).map((args) => args[1])).toEqual(expect.arrayContaining(["repos/shop/world/pulls/7/files?per_page=100", "repos/shop/world/pulls/7/commits?per_page=100&page=1"]));
-    expect(activity.items.map((i) => [i.id, i.review ?? null, i.hunk ?? null])).toEqual([
-      ["R1:CHANGES_REQUESTED", "901", null],
-      ["C11", "901", "@@ -1,3 +1,4 @@\n a\n+b"],
-      ["C12", "902", null],
-      ["check:ci@x.iam:reviews:h2", null, null],
-    ]);
-    expect(activity.details).toEqual({
-      checks: { total: 3, items: [
-        { name: "reviews", group: "ci", state: "failed", detail: null, required: null, url: "d1", startedAt: null, completedAt: null, itemId: "check:ci@x.iam:reviews:h2" },
-        { name: "Required CI", group: "ci", state: "running", detail: "in progress", required: null, url: "d2", startedAt: null, completedAt: null, itemId: null },
-        { name: "lint", group: "lint", state: "passed", detail: null, required: null, url: "d3", startedAt: null, completedAt: null, itemId: null },
-      ] },
-      commits: { total: 2, items: [{ sha: "c1", message: "Start", author: "ana", at: at("2026-10-21T10:00:00Z") }, { sha: "c2", message: "Fix", author: "Sam", at: at("2026-10-21T11:00:00Z") }] },
-      files: { total: 1800, items: [{ path: "a.rs", additions: 3, deletions: 1, change: "modified" }, { path: "b.rs", additions: 0, deletions: 4, change: "removed" }] },
-      timeline: null,
-      merge: { state: "blocked", detail: "It is part of a stack; reviews is failing; main advances through the merge queue." },
-    });
-    // 1800 files is too many to compare: the files endpoint's first page and the commits instead.
-    expect(argsOf(calls()).map((args) => args[1]).filter((path) => path.includes("compare"))).toEqual([]);
-    // Without SHUTTLE_DETAIL, nothing more is read than before.
-    const light = await delta().activity("shop/world", 7);
-    expect(light.details).toBeNull();
-    expect(argsOf(calls()).map((args) => args[1]).filter((path) => /files|commits/u.test(path))).toEqual([]);
-  });
-
-  it("reads a small PR's commits and files in one compare, without their patches", async () => {
-    calls();
-    const activity = await delta().activity("shop/world", 8, undefined, { detail: true });
-    const read = argsOf(calls()).map((args) => args[1]).filter((path) => /files|commits|compare/u.test(path));
-    expect(read).toEqual(["repos/shop/world/compare/b8...h8?per_page=100"]);
-    expect(activity.details?.commits).toEqual({ total: 1, items: [{ sha: "c8", message: "Small", author: "ana", at: at("2026-10-21T10:00:00Z") }] });
-    expect(activity.details?.files).toEqual({ total: 2, items: [{ path: "a.rs", additions: 5, deletions: 0, change: "added" }, { path: "b.rs", additions: 1, deletions: 1, change: "renamed" }] });
-  });
-
-  it("merges with squash or merge at the head, and refuses what Delta cannot do", async () => {
-    calls();
-    const adapter = delta();
-    await adapter.merge("shop/world", 7, { method: "squash", head: "abc", auto: false, deleteBranch: false, subject: "Title" });
-    await adapter.merge("shop/world", 7, { method: "merge", head: "abc", auto: false, deleteBranch: false });
-    await expect(adapter.merge("shop/world", 7, { method: "squash", head: "abc", auto: true, deleteBranch: false })).rejects.toThrow(/Delta has no auto-merge/u);
-    await expect(adapter.merge("shop/world", 7, { method: "rebase", head: "abc", auto: false, deleteBranch: false })).rejects.toThrow(/squash or merge, not rebase/u);
-    await expect(adapter.merge("shop/world", 7, { method: "merge", head: "abc", auto: false, deleteBranch: true })).rejects.toThrow(/cannot delete the branch/u);
-    expect(argsOf(calls())).toEqual([dt("pr", "merge", "7", "--squash", "--sha", "abc"), dt("pr", "merge", "7", "--sha", "abc")]);
-  });
-
-  it("passes bodies as single arguments, never as shell", async () => {
-    calls();
-    const adapter = delta();
-    const body = `-x $(touch ${join(dir, "pwned")}) "q" \`id\``;
-    await adapter.comment("shop/world", 7, body);
-    await adapter.reply("shop/world", 7, "t-1", "Done.");
-    await adapter.resolve("shop/world", 7, "t-1", true);
-    await adapter.resolve("shop/world", 7, "t-1", false);
-    await expect(adapter.reply("shop/world", 7, "t-9", "x")).rejects.toThrow(/no review comment in thread t-9/u);
-    expect(argsOf(calls())).toEqual([
-      dt("pr", "comment", "7", `--body=${body}`),
-      dt("api", "repos/shop/world/pulls/7/comments?per_page=100&page=1", "-X", "GET"),
-      dt("pr", "comment", "7", "--reply-to", "11", "--body=Done."),
-      dt("pr", "resolve", "7", "t-1"),
-      dt("pr", "unresolve", "7", "t-1"),
-      dt("api", "repos/shop/world/pulls/7/comments?per_page=100&page=1", "-X", "GET"),
-    ]);
-    expect(existsSync(join(dir, "pwned"))).toBe(false);
-  });
-
-  const reviews = dt("api", "repos/shop/world/pulls/7/reviews", "-X", "POST", "--input", "-");
-  const post = { verdict: "changes" as const, body: "Fix it", head: "abc", comments: [{ path: "a.rs", line: 4, body: "here\nthere" }, { path: "b.rs", line: null, body: "file" }] };
-
-  it("posts every review through the API on the head it was shown", async () => {
-    calls();
-    expect(await delta().review("shop/world", 7, { ...post, comments: [] })).toEqual({ placed: 0, inBody: 0 });
-    expect(await delta().review("shop/world", 7, { verdict: "approve", body: "", head: "abc", comments: [] })).toEqual({ placed: 0, inBody: 0 });
-    expect(await delta().review("shop/world", 7, post)).toEqual({ placed: 2, inBody: 0 });
-    expect(await delta().review("shop/world", 7, { ...post, verdict: "comment", head: null, comments: [] })).toEqual({ placed: 0, inBody: 0 });
-    expect(calls()).toEqual([
-      { args: reviews, input: { event: "REQUEST_CHANGES", body: "Fix it", commit_id: "abc" } },
-      { args: reviews, input: { event: "APPROVE", commit_id: "abc" } },
-      { args: reviews, input: { event: "REQUEST_CHANGES", body: "Fix it", commit_id: "abc", comments: [{ path: "a.rs", line: 4, side: "RIGHT", body: "here\nthere" }, { path: "b.rs", body: "file", subject_type: "file" }] } },
-      { args: reviews, input: { event: "COMMENT", body: "Fix it" } },
-    ]);
-    await expect(delta().review("shop/world", 7, { verdict: "comment", body: "", head: "abc", comments: [] })).rejects.toThrow(/needs a body or at least one comment/u);
-    expect(calls()).toEqual([]);
-  });
-
-  it("moves the comments into the body, on the same head, only when Delta cannot place a line", async () => {
-    calls();
-    const placement = "FAKE_DT_REVIEW_ERROR='Error: 422: pull_request_review_thread.line must be part of the diff' ";
-    expect(await delta(placement).review("shop/world", 7, post)).toEqual({ placed: 0, inBody: 2 });
-    const [first, second] = calls();
-    expect(first!.input).toMatchObject({ commit_id: "abc", comments: expect.any(Array) });
-    expect(second).toEqual({ args: reviews, input: { event: "REQUEST_CHANGES", commit_id: "abc", body: "Fix it\n\n- `a.rs:4` here\n  there\n- `b.rs` file" } });
-    for (const refusal of ["Error: 422: commit_id abc is not the head of the pull request", "Error: 422: you have a pending review", "Error: 500: line lookup failed"]) {
-      await expect(delta(`FAKE_DT_REVIEW_ERROR=${shellQuote(refusal)} `).review("shop/world", 7, post)).rejects.toThrow(refusal);
-      expect(calls()).toHaveLength(1);
-    }
+    const { run } = recorder(() => ({ code: 3, stderr: "Lab has no auto-merge" }));
+    await expect(new CommandAdapter(forge({}), run).comment("acme/app", 7, "x")).rejects.toThrow(/Forge has no comment command/u);
+    await expect(new CommandAdapter(forge({}), run).review("acme/app", 7, { verdict: "approve", body: "", head: null, comments: [] })).rejects.toThrow(/has no review command/u);
+    await expect(new CommandAdapter(forge(WRITES), run).merge("acme/app", 7, { method: "squash", head: "a", auto: true, deleteBranch: false })).rejects.toThrow(/merge exited 3: Lab has no auto-merge/u);
   });
 });
 
@@ -940,28 +681,10 @@ describe("GitHub reviewers who are bots", () => {
     const summary = toSummary(node({
       reviewRequests: { nodes: [{ requestedReviewer: { __typename: "Bot", login: "ci-reviewer" } }] },
       latestReviews: { nodes: [
-        { state: "COMMENTED", submittedAt: "2026-10-22T10:00:00Z", commit: { oid: "abc" }, author: { login: "binks-code-reviewer", __typename: "Bot" } },
+        { state: "COMMENTED", submittedAt: "2026-10-22T10:00:00Z", commit: { oid: "abc" }, author: { login: "review-bot", __typename: "Bot" } },
         { state: "APPROVED", submittedAt: "2026-10-22T11:00:00Z", commit: { oid: "abc" }, author: { login: "pascal", __typename: "User" } },
       ] },
     }));
-    expect(summary.reviewers?.map((r) => [r.login, r.bot === true])).toEqual([["ci-reviewer", true], ["binks-code-reviewer", true], ["pascal", false]]);
-  });
-});
-
-describe.skipIf(!hasJq)("delta.sh reviewers", () => {
-  it("marks requested and reviewing accounts Delta types as Bot", () => {
-    const script = readFileSync(DELTA, "utf8");
-    const program = /^REVIEWERS='([\s\S]*?)'$/mu.exec(script)![1]!;
-    const input = [
-      { user: { login: "me" }, requested_reviewers: [{ login: "ci-reviewer", type: "Bot" }, { login: "sam", type: "User" }], requested_teams: [] },
-      [
-        { state: "COMMENTED", user: { login: "scanner", type: "Bot" }, submitted_at: "2026-10-22T10:00:00Z", commit_id: "abc" },
-        { state: "APPROVED", user: { login: "ana", type: "User" }, submitted_at: "2026-10-22T11:00:00Z", commit_id: "abc" },
-      ],
-    ];
-    const out = spawnSync("jq", ["-c", program], { input: JSON.stringify(input), encoding: "utf8" });
-    expect(out.status, out.stderr).toBe(0);
-    const reviewers = JSON.parse(out.stdout) as Array<{ login: string; bot: boolean }>;
-    expect(reviewers.map((r) => [r.login, r.bot])).toEqual([["ci-reviewer", true], ["sam", false], ["ana", false], ["scanner", true]]);
+    expect(summary.reviewers?.map((r) => [r.login, r.bot === true])).toEqual([["ci-reviewer", true], ["review-bot", true], ["pascal", false]]);
   });
 });

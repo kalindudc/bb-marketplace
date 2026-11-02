@@ -13,7 +13,7 @@ afterEach(() => {
   toasts.success.mockReset();
 });
 
-const waiting = mine({ repo: "Shopify/terraform-the-cloud", number: 74066, can: CAN_ALL, reviewers: [{ login: "uzo", team: false, state: "requested" }, { login: "Shopify/edge", team: true, state: "requested" }] });
+const waiting = mine({ repo: "acme/terraform-the-cloud", number: 74066, can: CAN_ALL, reviewers: [{ login: "uzo", team: false, state: "requested" }, { login: "acme/edge", team: true, state: "requested" }] });
 
 const full: InsightsView = insights({
   collectingSince: new Date(2026, 9, 1).getTime(),
@@ -23,11 +23,11 @@ const full: InsightsView = insights({
   requests: [{ week: "Oct 6", asked: 6, team: 13, reviewed: 6 }, { week: "Oct 13", asked: 8, team: 16, reviewed: 5 }],
   openRequests: [{ day: "Oct 19", total: 289, bots: 80, quiet: 55 }, { day: "Oct 20", total: 298, bots: 81, quiet: 57 }],
   ai: [{ preset: "Standard review", drafts: 8, posted: 7, kept: 0.74 }, { preset: "Quick skim", drafts: 1, posted: 0, kept: null }],
-  reviewers: [{ login: "binks-code-reviewer", bot: true, reviews: 14, medianMs: 4 * 60_000 }, { login: "pascal", bot: false, reviews: 9, medianMs: 6 * HOUR }],
+  reviewers: [{ login: "review-bot", bot: true, reviews: 14, medianMs: 4 * 60_000 }, { login: "pascal", bot: false, reviews: 9, medianMs: 6 * HOUR }],
   ideas: [
     { id: "wait", tone: "warn", title: "Waiting for a first review is 41% of your PRs' life.", detail: "terraform-the-cloud#74066 has waited 9 days.", action: { id: "nudge", label: "Nudge #74066's reviewers", key: waiting.key } },
     { id: "agents", tone: "info", title: "4 of your 10 open PRs have no agent.", detail: "Agents fix feedback in a median 41 minutes.", action: { id: "auto_agent", label: "Turn on auto agent", key: null } },
-    { id: "bots", tone: "neutral", title: "81 of your 298 review requests come from bots.", detail: "dependabot and terraform-actuator.", action: { id: "hide_bots", label: "Hide bots in Reviews", key: null } },
+    { id: "bots", tone: "neutral", title: "81 of your 298 review requests come from bots.", detail: "dependabot and deploy-bot.", action: { id: "hide_bots", label: "Hide bots in Reviews", key: null } },
     { id: "nits", tone: "neutral", title: "You post 12% of the nits.", detail: "Tell the preset to skip nits.", action: { id: "edit_preset", label: "Edit the preset", key: null } },
   ],
 });
@@ -78,7 +78,7 @@ describe("Insights", () => {
     expect(slot.container.textContent).toContain("Standard review8774%");
     expect(slot.container.textContent).toContain("Quick skim10—");
     const reviewers = [...slot.container.querySelectorAll("table")].at(-1)!;
-    expect([...reviewers.querySelectorAll("tbody tr")].map((row) => row.textContent)).toEqual(["pascal96.0h", "binks-code-reviewer (bot)144m"]);
+    expect([...reviewers.querySelectorAll("tbody tr")].map((row) => row.textContent)).toEqual(["pascal96.0h", "review-bot (bot)144m"]);
   });
 
   it("reads another range when it is picked", async () => {
@@ -108,10 +108,10 @@ describe("Insights", () => {
 
   it("keeps the old Activity page as the Automation log", async () => {
     const { slot } = await insightsPage("insights/log", full, {
-      activity: () => ({ events: [event({ id: 4, kind: "forwarded", text: "Sent 4 items on infra-central#29278 to its agent.", key: waiting.key, threadId: "thr_agent" })] }),
+      activity: () => ({ events: [event({ id: 4, kind: "forwarded", text: "Sent 4 items on infra-portal#29278 to its agent.", key: waiting.key, threadId: "thr_agent" })] }),
     });
     const row = await find(slot.container, "[data-event='forwarded']");
-    expect(row.textContent).toContain("Sent 4 items on infra-central#29278 to its agent.");
+    expect(row.textContent).toContain("Sent 4 items on infra-portal#29278 to its agent.");
     expect(callsTo(slot, "insights")).toEqual([]);
     fireEvent.click(within(row).getByRole("button", { name: "Open thread" }));
     expect(lastNavigation(slot)).toEqual({ method: "toThread", threadId: "thr_agent" });

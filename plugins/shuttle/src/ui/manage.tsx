@@ -32,7 +32,7 @@ export function LabelChip({ label, onRemove, maxChars }: { label: Label; onRemov
 const ROW_LABELS = 3;
 const ROW_LABEL_CHARS = 24;
 
-/** A list row's labels: the first few, shortened, then how many more. Servers such as Delta add long automatic ones. */
+/** A list row's labels: the first few, shortened, then how many more. Some servers add long automatic ones. */
 export function RowLabels({ labels }: { labels: readonly Label[] | null }) {
   if (labels === null || labels.length === 0) return null;
   const rest = labels.slice(ROW_LABELS);

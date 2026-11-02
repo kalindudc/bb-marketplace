@@ -34,33 +34,33 @@ describe("the plugin", () => {
     await behavior.callRpc("sync", {});
     await new Promise((resolve) => setTimeout(resolve, 50));
     const inflight = (await behavior.callRpc("list", { area: "mine" })) as { prs: Array<{ key: string }> };
-    expect(inflight.prs.map((p) => p.key)).toEqual(["forge:shop/world#1"]);
-    await behavior.callRpc("link", { key: "https://forge.test/shop/world/pull/2", threadId: "thr_1" });
+    expect(inflight.prs.map((p) => p.key)).toEqual(["forge:acme/app#1"]);
+    await behavior.callRpc("link", { key: "https://forge.test/acme/app/pull/2", threadId: "thr_1" });
     const linked = (await behavior.callRpc("threadPrs", { threadId: "thr_1" })) as { prs: Array<{ key: string }> };
-    expect(linked.prs.map((p) => p.key)).toEqual(["forge:shop/world#2"]);
-    const cli = await behavior.runCli(["link", "forge:shop/world#1"], { threadId: "thr_1" } as never);
+    expect(linked.prs.map((p) => p.key)).toEqual(["forge:acme/app#2"]);
+    const cli = await behavior.runCli(["link", "forge:acme/app#1"], { threadId: "thr_1" } as never);
     expect(cli, JSON.stringify(cli)).toMatchObject({ exitCode: 0 });
     const list = await behavior.runCli(["list", "--area", "mine"]);
-    expect(list.stdout).toContain("forge:shop/world#1");
+    expect(list.stdout).toContain("forge:acme/app#1");
 
     const created = text(await harness.callAgentTool(
       "shuttle_board_create",
-      { name: "Release board", prs: ["https://forge.test/shop/world/pull/2"] },
-      { threadId: "thr_1", projectId: "proj_world" },
+      { name: "Release board", prs: ["https://forge.test/acme/app/pull/2"] },
+      { threadId: "thr_1", projectId: "proj_app" },
     ));
     expect(created).toContain("Release board");
     const boards = (await behavior.callRpc("boards", { archived: "include" })) as { boards: Array<{ id: string; name: string; createdBy: string | null }> };
     expect(boards.boards).toMatchObject([{ name: "Release board", createdBy: "thr_1" }]);
     const boardId = boards.boards[0]!.id;
 
-    const add = JSON.parse((await behavior.runCli(["board", "add", boardId, "forge:shop/world#1", "--json"])).stdout) as { added: string[]; alreadyPresent: string[] };
-    expect(add).toMatchObject({ added: ["forge:shop/world#1"], alreadyPresent: [] });
+    const add = JSON.parse((await behavior.runCli(["board", "add", boardId, "forge:acme/app#1", "--json"])).stdout) as { added: string[]; alreadyPresent: string[] };
+    expect(add).toMatchObject({ added: ["forge:acme/app#1"], alreadyPresent: [] });
     const shown = JSON.parse((await behavior.runCli(["board", "show", boardId, "--json"])).stdout) as { board: { id: string }; prs: Array<{ key: string }> };
     expect(shown.board.id).toBe(boardId);
-    expect(shown.prs.map((pr) => pr.key)).toEqual(["forge:shop/world#2", "forge:shop/world#1"]);
-    const member = (await behavior.callRpc("boards", { archived: "include", key: "forge:shop/world#1" })) as { boards: Array<{ id: string }> };
+    expect(shown.prs.map((pr) => pr.key)).toEqual(["forge:acme/app#2", "forge:acme/app#1"]);
+    const member = (await behavior.callRpc("boards", { archived: "include", key: "forge:acme/app#1" })) as { boards: Array<{ id: string }> };
     expect(member.boards.map((board) => board.id)).toEqual([boardId]);
-    expect(text(await harness.callAgentTool("shuttle_board", { id: boardId }, { threadId: "thr_1", projectId: "proj_world" }))).toContain("Release board");
+    expect(text(await harness.callAgentTool("shuttle_board", { id: boardId }, { threadId: "thr_1", projectId: "proj_app" }))).toContain("Release board");
 
     expect(port.invalidations.some((tags) => tags.includes("boards"))).toBe(true);
     const tools = JSON.stringify(inspection.registrations);
@@ -87,11 +87,11 @@ describe("the plugin", () => {
     expect(JSON.stringify(tool.inputSchema)).toMatch(/"notes".*never posted/u);
     const saved = text(await harness.callAgentTool(
       "shuttle_review_draft",
-      { pr: "forge:shop/world#2", summary: "Looks right", verdict: "comment", findings: [], notes: "  **Lean:** worth doing.  " },
-      { threadId: "thr_1", projectId: "proj_world" },
+      { pr: "forge:acme/app#2", summary: "Looks right", verdict: "comment", findings: [], notes: "  **Lean:** worth doing.  " },
+      { threadId: "thr_1", projectId: "proj_app" },
     ));
     expect(saved).toContain("notes for the user");
-    const detail = (await behavior.callRpc("detail", { key: "forge:shop/world#2" })) as { draft: { summary: string; notes: string | null } };
+    const detail = (await behavior.callRpc("detail", { key: "forge:acme/app#2" })) as { draft: { summary: string; notes: string | null } };
     expect(detail.draft).toMatchObject({ summary: "Looks right", notes: "**Lean:** worth doing." });
     await lifecycle.dispose();
   });
@@ -99,15 +99,15 @@ describe("the plugin", () => {
   it("refuses expected failures with typed codes and invalidates its reads after a background change", async () => {
     const { behavior, inspection, lifecycle } = await boot();
     await behavior.callRpc("importToml", { toml: configToToml(testConfig()), apply: true });
-    await expect(behavior.callRpc("watch", { key: "forge:shop/world#99", mode: "act" })).rejects.toMatchObject({ code: "not_found" });
-    await behavior.callRpc("lookup", { query: "forge:shop/world#2" });
-    await expect(behavior.callRpc("watch", { key: "forge:shop/world#2", mode: "act" })).rejects.toMatchObject({ code: "invalid", message: expect.stringContaining("no agent") });
+    await expect(behavior.callRpc("watch", { key: "forge:acme/app#99", mode: "act" })).rejects.toMatchObject({ code: "not_found" });
+    await behavior.callRpc("lookup", { query: "forge:acme/app#2" });
+    await expect(behavior.callRpc("watch", { key: "forge:acme/app#2", mode: "act" })).rejects.toMatchObject({ code: "invalid", message: expect.stringContaining("no agent") });
     const before = inspection.experimental_rpcInvalidations.length;
     await behavior.callRpc("sync", {});
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect(inspection.experimental_rpcInvalidations.slice(before)).toContainEqual(["prs", "servers", "conversation"]);
-    const detail = (await behavior.callRpc("detail", { key: "forge:shop/world#7" })) as { pr: { key: string } };
-    expect(detail.pr.key).toBe("forge:shop/world#2".replace("#2", "#7"));
+    const detail = (await behavior.callRpc("detail", { key: "forge:acme/app#7" })) as { pr: { key: string } };
+    expect(detail.pr.key).toBe("forge:acme/app#2".replace("#2", "#7"));
     await lifecycle.dispose();
   });
 });

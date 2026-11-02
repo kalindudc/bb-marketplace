@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 const own = mine({
-  repo: "Shopify/infra-central", number: 29278, title: "Retry WAF rule deletes that failed for a transient reason", headRef: "kalindudc/cftoken-2-retry-waf-thr_cbektskwyj",
+  repo: "acme/infra-portal", number: 29278, title: "Retry WAF rule deletes that failed for a transient reason", headRef: "robin-c/cftoken-2-retry-waf-thr_cbektskwyj",
   checks: "failed", checkCounts: { passed: 8, failed: 1, pending: 0, total: 9 }, review: "changes", can: CAN_ALL, actions: ["draft", "close", "labels", "reviewers"],
   reviewers: [{ login: "chrisd3r", team: false, state: "changes" }, { login: "dakmcinnis", team: false, state: "requested" }], labels: [],
   agent: agent({ lastSent: { at: Date.now() - 35 * 60_000, text: "Sent 3 comments and 1 failed check" }, auto: true }),
@@ -25,14 +25,14 @@ const own = mine({
   next: next({ kind: "agent_on_it", tone: "info", label: "The agent is on it", why: "“CF token containment 2” is fixing 4 items: changes requested by chrisd3r and rspec (shard 3) failing.", more: [{ id: "open_agent", label: "Open the thread" }] }),
 });
 const theirs = pr({
-  repo: "shop/world", server: "delta", serverName: "Delta", number: 2311622, title: "Run contract-test Envoys natively when Docker is missing", author: "elvin", can: CAN_ALL,
+  repo: "acme/app", server: "lab", serverName: "Lab", number: 2311622, title: "Run contract-test Envoys natively when Docker is missing", author: "elvin", can: CAN_ALL,
   additions: 212, deletions: 40, files: 6, next: next({ kind: "new_request", tone: "info", label: "New review request", why: "elvin asked you 5h ago · M change, 6 files.", inbox: true, primary: { id: "review", label: "Start AI review" } }),
 });
 const ITEMS: ConversationItem[] = [
   item({ id: "c1", author: "chrisd3r", body: "The retry should back off.", thread: "PRRT_1", delivery: "sent", at: Date.now() - 40 * 60_000 }),
   item({ id: "c2", kind: "check", author: null, body: "rspec (shard 3) failed", path: null, line: null, thread: null, url: "https://github.com/logs/1", at: Date.now() - 35 * 60_000 }),
   item({ id: "c3", kind: "review", author: "pascal", state: "approved", body: "LGTM.", path: null, line: null, thread: null, at: Date.now() - 2 * 60 * 60_000 }),
-  item({ id: "c4", author: "binks", bot: true, body: "Log the token id.", thread: "PRRT_2", outcome: { outcome: "fixed", note: null, commit: "7c41d2e9", at: Date.now() }, at: Date.now() - 20 * 60 * 60_000 }),
+  item({ id: "c4", author: "review-bot", bot: true, body: "Log the token id.", thread: "PRRT_2", outcome: { outcome: "fixed", note: null, commit: "7c41d2e9", at: Date.now() }, at: Date.now() - 20 * 60 * 60_000 }),
 ];
 
 /** A server that remembers what the PR view changes, so confirmed reads agree with its predictions. */
@@ -108,8 +108,8 @@ describe("the PR view of your own PR", () => {
   it("says what it is, where it stands and what happens next, then its parts in tabs", async () => {
     const { view } = await prPage(own, {}, { items: ITEMS });
     const panel = await view();
-    expect(panel.querySelector("[data-topbar]")!.textContent).toContain("Shopify/infra-central#29278");
-    expect(panel.querySelector("header")!.textContent).toContain("You want to merge into main from kalindudc/cftoken-2-retry-waf…");
+    expect(panel.querySelector("[data-topbar]")!.textContent).toContain("acme/infra-portal#29278");
+    expect(panel.querySelector("header")!.textContent).toContain("You want to merge into main from robin-c/cftoken-2-retry-waf…");
     const status = within(panel).getByRole("region", { name: "Where it stands" });
     expect(status.querySelector("[data-next-label]")!.textContent).toBe("The agent is on it");
     expect(status.textContent).toContain("“CF token containment 2” is fixing 4 items");
@@ -159,7 +159,7 @@ describe("the PR view of your own PR", () => {
     fireEvent.click(within(statusRow(panel, "agent")).getByRole("button"));
     const card = await find(panel, "[data-agent-card]");
     fireEvent.click(within(card).getByRole("button", { name: "Pick a thread…" }));
-    const dialog = await slot.findByRole("dialog", { name: "Who handles feedback on infra-central#29278?" });
+    const dialog = await slot.findByRole("dialog", { name: "Who handles feedback on infra-portal#29278?" });
     expect(within(dialog).getByRole("radio", { name: /CF token containment 2/u }).getAttribute("aria-checked")).toBe("true");
     fireEvent.click(await within(dialog).findByRole("radio", { name: /Edge capacity scenes/u }));
     fireEvent.click(within(within(dialog).getByRole("radiogroup", { name: "What it does" })).getByRole("radio", { name: "Just tell it" }));
@@ -178,7 +178,7 @@ describe("the PR view of your own PR", () => {
 
   it("starts a new thread as the agent from New thread for this PR", async () => {
     const bare = { ...own, agent: null };
-    const { slot, view } = await prPage(bare, { setAgent: () => ({ pr: { ...bare, agent: agent({ title: "infra-central#29278: fix feedback" }) }, threadId: "thr_new" }) });
+    const { slot, view } = await prPage(bare, { setAgent: () => ({ pr: { ...bare, agent: agent({ title: "infra-portal#29278: fix feedback" }) }, threadId: "thr_new" }) });
     const panel = await view();
     fireEvent.click(within(statusRow(panel, "agent")).getByRole("button"));
     fireEvent.click(within(await find(panel, "[data-agent-card]")).getByRole("button", { name: "New thread for this PR" }));
@@ -506,14 +506,14 @@ const panelTab = (view: HTMLElement, id: string) => view.querySelector(`[data-ta
 describe("the merge dialog", () => {
   const ready = mine({
     ...own, checks: "passed", checkCounts: { passed: 12, failed: 0, pending: 0, total: 12 }, review: "approved",
-    reviewers: [{ login: "pascal", team: false, state: "approved" }, { login: "keisku", team: false, state: "requested" }, { login: "Shopify/app-infra", team: true, state: "requested" }],
+    reviewers: [{ login: "pascal", team: false, state: "approved" }, { login: "keisku", team: false, state: "requested" }, { login: "acme/app-infra", team: true, state: "requested" }],
     next: next({ kind: "ready_to_merge", tone: "ok", label: "Ready to merge", why: "Approved by pascal.", primary: { id: "merge", label: "Merge…" } }),
   });
 
   async function open(options = mergeOptions(), rpc: Partial<Handlers> = {}) {
     const { slot, view } = await prPage(ready, { mergeOptions: () => options, merge: ({ auto }) => ({ pr: { ...ready, state: auto ? "open" : "merged" }, merged: !auto }), ...rpc });
     fireEvent.click(within(await find(await view(), "[data-status]")).getByRole("button", { name: "Merge…" }));
-    const dialog = await slot.findByRole("dialog", { name: "Merge infra-central#29278" });
+    const dialog = await slot.findByRole("dialog", { name: "Merge infra-portal#29278" });
     await within(dialog).findByRole("radiogroup", { name: "How" });
     return { slot, dialog };
   }
@@ -534,7 +534,7 @@ describe("the merge dialog", () => {
     fireEvent.click(within(dialog).getByRole("checkbox", { name: "Delete the branch after merging" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Merge" }));
     await waitFor(() => expect(callsTo(slot, "merge")).toEqual([{ key: ready.key, method: "merge", head: "4be81d0aa", auto: false, deleteBranch: false }]));
-    await waitFor(() => expect(toasts.success).toHaveBeenCalledWith("Merged infra-central#29278 on GitHub (merge)."));
+    await waitFor(() => expect(toasts.success).toHaveBeenCalledWith("Merged infra-portal#29278 on GitHub (merge)."));
     expect(toasts.success.mock.calls[0]![1]).toBeUndefined();
   });
 
@@ -550,7 +550,7 @@ describe("the merge dialog", () => {
     expect(dialog.textContent).toContain("When it can merge");
     fireEvent.click(within(dialog).getByRole("button", { name: "Turn on auto-merge" }));
     await waitFor(() => expect(callsTo(slot, "merge")).toEqual([expect.objectContaining({ auto: true, head: "4be81d0aa" })]));
-    await waitFor(() => expect(toasts.success).toHaveBeenCalledWith("Auto-merge is on for infra-central#29278: it merges once GitHub lets it."));
+    await waitFor(() => expect(toasts.success).toHaveBeenCalledWith("Auto-merge is on for infra-portal#29278: it merges once GitHub lets it."));
   });
 
   it("only merges at once when the server says it can, or cannot tell", async () => {
@@ -564,8 +564,8 @@ describe("the merge dialog", () => {
   });
 
   it("disables Merge and says why when the PR is blocked and cannot merge by itself", async () => {
-    const { dialog } = await open(mergeOptions({ state: "blocked", canAuto: false, detail: "A required review from Shopify/app-infra is missing." }));
-    expect(within(dialog).getByRole("alert").textContent).toBe("A required review from Shopify/app-infra is missing.");
+    const { dialog } = await open(mergeOptions({ state: "blocked", canAuto: false, detail: "A required review from acme/app-infra is missing." }));
+    expect(within(dialog).getByRole("alert").textContent).toBe("A required review from acme/app-infra is missing.");
     expect((within(dialog).getByRole("button", { name: "Merge" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });
@@ -627,7 +627,7 @@ describe("the PR view of someone else's PR", () => {
         { path: "src/header/README.md", line: null, body: "The README names the old prop." },
       ],
     }]));
-    await waitFor(() => expect(toast).toHaveBeenCalledWith("Queued your review of world#2311622: review with 2 comments. Shuttle posts it to Delta in the background.", { id: "shuttle-post-3" }));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Queued your review of app#2311622: review with 2 comments. Shuttle posts it to Lab in the background.", { id: "shuttle-post-3" }));
   });
 
   it("shows the review's notes for you above the draft, and posts without them", async () => {
@@ -660,12 +660,12 @@ describe("the PR view of someone else's PR", () => {
     expect(statusRow(panel, "yours").textContent).toContain("Changes requested with 2 comments · queued to post just now");
     const review = tab(panel, "review");
     const card = await find(review, "[data-posting]");
-    expect(card.textContent).toContain("Changes requested with 2 comments is queued to post to Delta");
-    expect(card.textContent).toContain("You can leave: Shuttle posts it in the background, after any reviews ahead of it on Delta, and says when it's done.");
+    expect(card.textContent).toContain("Changes requested with 2 comments is queued to post to Lab");
+    expect(card.textContent).toContain("You can leave: Shuttle posts it in the background, after any reviews ahead of it on Lab, and says when it's done.");
     expect(review.querySelector("[data-draft]")).toBeNull();
     fireEvent.click(within(card).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(callsTo(slot, "cancelPost")).toEqual([{ id: 31 }]));
-    await waitFor(() => expect(toasts.success).toHaveBeenCalledWith("Cancelled your review of world#2311622. Nothing was posted.", { id: "shuttle-post-31" }));
+    await waitFor(() => expect(toasts.success).toHaveBeenCalledWith("Cancelled your review of app#2311622. Nothing was posted.", { id: "shuttle-post-31" }));
   });
 
   it("shows the review queued the moment Post review is pressed, before the server answers, with nothing to cancel yet", async () => {
@@ -674,7 +674,7 @@ describe("the PR view of someone else's PR", () => {
     const review = tab(await view(), "review");
     fireEvent.click(within(await find(review, "[data-draft]")).getByRole("button", { name: /Post review/u }));
     const card = await find(review, "[data-posting]");
-    expect(card.textContent).toContain("Changes requested with 2 comments is queued to post to Delta");
+    expect(card.textContent).toContain("Changes requested with 2 comments is queued to post to Lab");
     expect(review.querySelector("[data-draft]")).toBeNull();
     expect(within(card).queryByRole("button", { name: "Cancel" })).toBeNull();
     expect(callsTo(slot, "queueReview")).toHaveLength(1);
@@ -704,22 +704,22 @@ describe("the PR view of someone else's PR", () => {
     const posting = { ...theirs, post: queued({ id: 32, state: "posting", verdict: "approve", comments: 0, startedAt: Date.now() - 2 * 60_000 }), next: next({ kind: "posting", tone: "info", label: "Posting your review" }) };
     const { view } = await prPage(posting);
     const card = await find(tab(await view(), "review"), "[data-posting]");
-    expect(card.textContent).toContain("Approval is posting to Delta");
+    expect(card.textContent).toContain("Approval is posting to Lab");
     expect(card.textContent).toContain("started 2m ago");
     expect(within(card).queryByRole("button", { name: "Cancel" })).toBeNull();
   });
 
   it("says why a review didn't post above its draft, and tries it again or dismisses it", async () => {
-    const failed = { ...theirs, draft: { id: 7, findings: 3, at: Date.now() }, post: queued({ id: 33, state: "failed", draftId: 7, error: "Delta refused: line 9 is not part of the diff" }), next: next({ kind: "post_failed", tone: "bad", label: "Your review didn’t post", inbox: true }) };
+    const failed = { ...theirs, draft: { id: 7, findings: 3, at: Date.now() }, post: queued({ id: 33, state: "failed", draftId: 7, error: "Lab refused: line 9 is not part of the diff" }), next: next({ kind: "post_failed", tone: "bad", label: "Your review didn’t post", inbox: true }) };
     const { slot, view } = await prPage(failed, {
       retryPost: () => ({ pr: failed, post: queued({ id: 33, state: "queued", draftId: 7 }) }),
       clearPost: () => ({ pr: { ...failed, post: null } }),
     }, { draft: draft() });
     const panel = await view();
-    expect(statusRow(panel, "yours").textContent).toContain("Didn’t post · Delta refused: line 9 is not part of the diff");
+    expect(statusRow(panel, "yours").textContent).toContain("Didn’t post · Lab refused: line 9 is not part of the diff");
     const review = tab(panel, "review");
     const alert = await find(review, "[data-post-failed]");
-    expect(alert.textContent).toContain("Your review didn't post (Changes requested with 2 comments): Delta refused: line 9 is not part of the diff");
+    expect(alert.textContent).toContain("Your review didn't post (Changes requested with 2 comments): Lab refused: line 9 is not part of the diff");
     expect(alert.textContent).toContain("Or change the draft below and post it again.");
     expect(review.querySelector("[data-draft]")).not.toBeNull();
     fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
@@ -738,7 +738,7 @@ describe("the PR view of someone else's PR", () => {
     const card = await find(tab(await view(), "review"), "[data-draft]");
     fireEvent.click(within(card).getByRole("button", { name: /Post review/u }));
     await waitFor(() => expect(callsTo(slot, "queueReview")).toHaveLength(1));
-    await waitFor(() => expect(toasts.success).toHaveBeenCalledWith("Posted your review of shop/world#2311622 on Delta: 1 inline, 1 in the body.", { id: "shuttle-post-41" }));
+    await waitFor(() => expect(toasts.success).toHaveBeenCalledWith("Posted your review of acme/app#2311622 on Lab: 1 inline, 1 in the body.", { id: "shuttle-post-41" }));
     expect(toasts.success).toHaveBeenCalledTimes(1);
   });
 
@@ -774,7 +774,7 @@ describe("the PR view of someone else's PR", () => {
     const card = await find(tab(await view(), "review"), "[data-draft]");
     expect(within(card).queryByRole("button", { name: /Post review/u })).toBeNull();
     const note = card.querySelector<HTMLElement>("[data-no-review-command]")!;
-    expect(note.textContent).toBe("Shuttle can't post this yet: Delta has no review command in Settings › Servers. Add one there (Shuttle's Delta adapter, delta.sh, has it), or post it from the review thread.");
+    expect(note.textContent).toBe("Shuttle can't post this yet: Lab has no review command in Settings › Servers. Add one there, or post it from the review thread.");
     expect(within(note).getByRole("link", { name: "Settings › Servers" }).getAttribute("href")).toBe("/settings/plugins/shuttle");
   });
 
@@ -865,16 +865,16 @@ describe("the PR view of someone else's PR", () => {
   });
 
   it("shows the conversation's error as a quiet note", async () => {
-    const { view } = await prPage(theirs, {}, { error: "dt exited 1: rate limited" });
+    const { view } = await prPage(theirs, {}, { error: "lab exited 1: rate limited" });
     const conversation = tab(await view(), "conversation");
-    await waitFor(() => expect(conversation.textContent).toContain("dt exited 1: rate limited"));
+    await waitFor(() => expect(conversation.textContent).toContain("lab exited 1: rate limited"));
     expect(within(conversation).queryByRole("alert")).toBeNull();
   });
 
   it("re-reviews in the thread of the last review, and offers Approve…", async () => {
     const updated = {
       ...theirs, myReview: { verdict: "changes" as const, at: Date.now() - 2 * 24 * 60 * 60_000, head: "abc1234" },
-      lastReview: { threadId: "thr_last", title: "Review shop/world#2311622", state: "done" as const, preset: "Standard review", trigger: "manual" as const, head: "abc1234", at: Date.now(), thread: "idle" as const },
+      lastReview: { threadId: "thr_last", title: "Review acme/app#2311622", state: "done" as const, preset: "Standard review", trigger: "manual" as const, head: "abc1234", at: Date.now(), thread: "idle" as const },
       next: next({ kind: "rereview", tone: "warn", label: "Updated after your review", why: "3 commits and a reply from elvin since your review 2 days ago.", inbox: true, primary: { id: "review", label: "Re-review…" } }),
     };
     const { slot, view } = await prPage(updated, { review: () => ({ threadId: "thr_last", revived: false }), queueReview: () => ({ pr: updated, post: queued({ verdict: "approve", comments: 0 }) }) });
@@ -882,15 +882,15 @@ describe("the PR view of someone else's PR", () => {
     expect(card.textContent).toContain("You requested changes 2d ago");
     expect(card.textContent).toContain("3 commits and a reply from elvin since your review 2 days ago.");
     fireEvent.click(within(card).getByRole("button", { name: "Re-review with AI" }));
-    const dialog = await slot.findByRole("dialog", { name: "Re-review world#2311622" });
-    expect(dialog.textContent).toContain("Goes to the same thread, “Review shop/world#2311622”");
+    const dialog = await slot.findByRole("dialog", { name: "Re-review app#2311622" });
+    expect(dialog.textContent).toContain("Goes to the same thread, “Review acme/app#2311622”");
     fireEvent.change(within(dialog).getByRole("textbox", { name: "Note for the reviewer" }), { target: { value: " Check that the fallback is fixed. " } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Start" }));
     await waitFor(() => expect(callsTo(slot, "review")).toEqual([{ key: theirs.key, presetId: "standard", threadId: "thr_last", note: "Check that the fallback is fixed." }]));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
     fireEvent.click(within(card).getByRole("button", { name: "Approve…" }));
-    const approve = await slot.findByRole("dialog", { name: "Approve world#2311622" });
+    const approve = await slot.findByRole("dialog", { name: "Approve app#2311622" });
     fireEvent.change(within(approve).getByRole("textbox", { name: "Optional comment" }), { target: { value: "Thanks for the fixes." } });
     fireEvent.click(within(approve).getByRole("button", { name: "Approve" }));
     await waitFor(() => expect(callsTo(slot, "queueReview")).toEqual([{ key: theirs.key, verdict: "approve", body: "Thanks for the fixes.", findings: [] }]));
@@ -904,7 +904,7 @@ describe("the PR view of someone else's PR", () => {
   ])("starts $preset with an optional reviewer note ($note)", async ({ preset, presetId, text, note }) => {
     const { slot, view } = await prPage(theirs, { review: () => ({ threadId: "thr_review", revived: false }) });
     fireEvent.click(within(await find(tab(await view(), "review"), "[data-your-review]")).getByRole("button", { name: "Start AI review" }));
-    const dialog = await slot.findByRole("dialog", { name: "Start an AI review of world#2311622" });
+    const dialog = await slot.findByRole("dialog", { name: "Start an AI review of app#2311622" });
     fireEvent.change(within(dialog).getByRole("textbox", { name: "Note for the reviewer" }), { target: { value: text } });
     fireEvent.click(within(dialog).getByRole("radio", { name: new RegExp(preset, "u") }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Start" }));
@@ -918,7 +918,7 @@ describe("the PR view of someone else's PR", () => {
     const presets = await slot.findByRole("dialog");
     fireEvent.change(within(presets).getByRole("textbox", { name: "Note for the reviewer" }), { target: { value: " Focus on filters. " } });
     fireEvent.click(within(presets).getByRole("button", { name: "Change for this run…" }));
-    const dialog = await slot.findByRole("dialog", { name: "Review shop/world#2311622" });
+    const dialog = await slot.findByRole("dialog", { name: "Review acme/app#2311622" });
     const note = within(dialog).getByRole("textbox", { name: "Note for the reviewer" }) as HTMLTextAreaElement;
     expect(note.value).toBe(" Focus on filters. ");
     fireEvent.change(note, { target: { value: " Focus on filters and the fallback. " } });
@@ -930,27 +930,27 @@ describe("the PR view of someone else's PR", () => {
     const { slot, view } = await prPage(theirs, { review: () => ({ threadId: "thr_review", revived: false }) });
     fireEvent.click(within(await find(tab(await view(), "review"), "[data-your-review]")).getByRole("button", { name: "Start AI review" }));
     fireEvent.click(within(await slot.findByRole("dialog")).getByRole("button", { name: "Change for this run…" }));
-    const dialog = await slot.findByRole("dialog", { name: "Review shop/world#2311622" });
+    const dialog = await slot.findByRole("dialog", { name: "Review acme/app#2311622" });
     fireEvent.change(within(dialog).getByRole("textbox", { name: "Note for the reviewer" }), { target: { value: " focus on the fallback " } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Start review" }));
     await waitFor(() => expect(callsTo(slot, "review")).toEqual([{ key: theirs.key, presetId: "standard", note: "focus on the fallback", projectId: "prj_bb" }]));
   });
 
   it("sends the next review to its archived review thread, says so, and still offers a new thread", async () => {
-    const back = { ...theirs, reviewThread: { threadId: "thr_old", title: "Review shop/world#2311622", archived: true } };
+    const back = { ...theirs, reviewThread: { threadId: "thr_old", title: "Review acme/app#2311622", archived: true } };
     const { slot, view } = await prPage(back, { review: () => ({ threadId: "thr_old", revived: true }) });
     fireEvent.click(within(await find(tab(await view(), "review"), "[data-your-review]")).getByRole("button", { name: "Start AI review" }));
     const presets = await slot.findByRole("dialog");
-    expect(presets.querySelector("[data-review-thread]")!.textContent).toBe("Goes to its review thread, \u201cReview shop/world#2311622\u201d, brought back from the archive.");
+    expect(presets.querySelector("[data-review-thread]")!.textContent).toBe("Goes to its review thread, \u201cReview acme/app#2311622\u201d, brought back from the archive.");
     fireEvent.click(within(presets).getByRole("button", { name: "Start" }));
     await waitFor(() => expect(callsTo(slot, "review")).toEqual([{ key: theirs.key, presetId: "standard" }]));
     await waitFor(() => expect(toasts.success).toHaveBeenCalledWith("Standard review started in its review thread, brought back from the archive. Its findings land on the PR.", expect.anything()));
 
     fireEvent.click(within(await find(tab(await view(), "review"), "[data-your-review]")).getByRole("button", { name: "Start AI review" }));
     fireEvent.click(within(await slot.findByRole("dialog")).getByRole("button", { name: "Change for this run…" }));
-    const dialog = await slot.findByRole("dialog", { name: "Review shop/world#2311622" });
+    const dialog = await slot.findByRole("dialog", { name: "Review acme/app#2311622" });
     const select = within(dialog).getByRole("combobox", { name: "Thread" }) as HTMLSelectElement;
-    expect([...select.options].map((option) => option.textContent)).toEqual(["Its review thread, \u201cReview shop/world#2311622\u201d (brought back from the archive)", "A new thread"]);
+    expect([...select.options].map((option) => option.textContent)).toEqual(["Its review thread, \u201cReview acme/app#2311622\u201d (brought back from the archive)", "A new thread"]);
     expect(select.value).toBe("thr_old");
     fireEvent.change(select, { target: { value: "" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Start review" }));

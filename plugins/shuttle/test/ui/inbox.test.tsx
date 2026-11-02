@@ -18,47 +18,47 @@ afterEach(() => {
 });
 
 const waiting = mine({
-  repo: "Shopify/infrastructure", number: 85915, title: "Route bb plugin traffic through the shared egress proxy", unseen: true, updatedAt: NOW - 25 * 60_000,
+  repo: "acme/infrastructure", number: 85915, title: "Route bb plugin traffic through the shared egress proxy", unseen: true, updatedAt: NOW - 25 * 60_000,
   agent: agent({ title: "Fix egress proxy review", status: "waiting" }),
   next: next({ kind: "agent_waiting", tone: "warn", label: "The agent needs your answer", why: "“Fix egress proxy review” asked you something in its thread.", inbox: true, clears: "Leaves when you answer in the thread.", primary: { id: "open_agent", label: "Answer in the thread" } }),
 });
 const nobody = mine({
-  repo: "kalindudc/bb-marketplace", number: 94, title: "Loom: retry queued checks after a forge timeout", checks: "failed", checkCounts: { passed: 12, failed: 2, pending: 0, total: 14 },
+  repo: "acme/plugins", number: 94, title: "Loom: retry queued checks after a forge timeout", checks: "failed", checkCounts: { passed: 12, failed: 2, pending: 0, total: 14 },
   review: "changes", reviewers: [{ login: "priya-s", team: false, state: "changes" }], updatedAt: NOW - 2 * HOUR,
   next: next({ kind: "nobody", tone: "bad", label: "Changes requested, and nobody is on it", why: "Changes requested by priya-s and 2 checks failing.", inbox: true, clears: "Leaves when an agent takes it.", primary: { id: "pick_agent", label: "Hand it to an agent" }, more: [{ id: "handle", label: "I'll do it" }] }),
 });
 const ready = mine({
-  repo: "shop/world", server: "delta", serverName: "Delta", number: 2311622, title: "Storefront: cache the shop locale per request", unseen: true, updatedAt: NOW - HOUR,
+  repo: "acme/app", server: "lab", serverName: "Lab", number: 2311622, title: "Storefront: cache the locale per request", unseen: true, updatedAt: NOW - HOUR,
   review: "approved", reviewers: [{ login: "dmorgan", team: false, state: "approved" }, { login: "ana-r", team: false, state: "approved" }],
   next: next({ kind: "ready_to_merge", tone: "ok", label: "Ready to merge", why: "Approved by dmorgan and ana-r, and all 41 checks pass.", inbox: true, clears: "Leaves when it merges.", primary: { id: "merge", label: "Merge…" } }),
 });
 const post = pr({
-  repo: "Shopify/cli", number: 5120, title: "Theme check: stop flagging liquid-doc params", author: "rmartin", additions: 77, deletions: 19, files: 5, updatedAt: NOW - 40 * 60_000,
+  repo: "acme/cli", number: 5120, title: "Theme check: stop flagging liquid-doc params", author: "rmartin", additions: 77, deletions: 19, files: 5, updatedAt: NOW - 40 * 60_000,
   draft: { id: 3, findings: 4, at: NOW - HOUR },
   next: next({ kind: "post", tone: "info", label: "AI review ready: choose what to post", why: "4 findings. Nothing is posted yet.", inbox: true, clears: "Leaves when you post it.", primary: { id: "choose", label: "Choose what to post" } }),
 });
 const rereview = pr({
-  repo: "shop/world", server: "delta", serverName: "Delta", number: 2305510, title: "Admin: keyboard navigation in the bulk editor", author: "lpham", additions: 230, deletions: 88, updatedAt: NOW - 30 * 60_000,
+  repo: "acme/app", server: "lab", serverName: "Lab", number: 2305510, title: "Admin: keyboard navigation in the bulk editor", author: "lpham", additions: 230, deletions: 88, updatedAt: NOW - 30 * 60_000,
   myReview: { verdict: "changes", at: NOW - 2 * 24 * HOUR, head: "aaa" },
   next: next({ kind: "rereview", tone: "warn", label: "Updated after your review", why: "lpham asked you again.", inbox: true, clears: "Leaves when you review again.", primary: { id: "review", label: "Re-review…" } }),
 });
 const request = pr({
-  repo: "shop/world", server: "delta", serverName: "Delta", number: 2312065, title: "Routing: Lua contract spec and oracle", author: "elvin", checks: "pending", checkCounts: { passed: 8, failed: 0, pending: 4, total: 12 }, updatedAt: NOW - 2 * HOUR,
+  repo: "acme/app", server: "lab", serverName: "Lab", number: 2312065, title: "Routing: Lua contract spec and oracle", author: "elvin", checks: "pending", checkCounts: { passed: 8, failed: 0, pending: 4, total: 12 }, updatedAt: NOW - 2 * HOUR,
   next: next({ kind: "new_request", tone: "info", label: "New review request", why: "elvin asked you 2h ago.", inbox: true, clears: "Leaves when you start a review or say Not now.", primary: { id: "review", label: "Start AI review" }, more: [{ id: "not_now", label: "Not now" }] }),
 });
 const mention = pr({
-  repo: "Shopify/infrastructure", number: 86110, title: "Egress: document the proxy allowlist", author: "tlee", reasons: [{ reason: "mentioned", teams: [] }], additions: 45, deletions: 3, updatedAt: NOW - 24 * HOUR,
+  repo: "acme/infrastructure", number: 86110, title: "Egress: document the proxy allowlist", author: "tlee", reasons: [{ reason: "mentioned", teams: [] }], additions: 45, deletions: 3, updatedAt: NOW - 24 * HOUR,
   next: next({ kind: "new_request", tone: "info", label: "Mentioned you", why: "tlee mentioned you 1 day ago.", inbox: true, clears: "Leaves when you start a review.", primary: { id: "review", label: "Start AI review" }, more: [{ id: "not_now", label: "Not now" }] }),
 });
 const ALL = [waiting, nobody, ready, post, rereview, request, mention];
 
 const snoozedLater = pr({ number: 77, title: "Inventory: move reservations to the new queue", author: "cdiaz", snoozed: true, snoozedUntil: NOW + 20 * HOUR, next: next({ kind: "new_request", inbox: false, clears: "Leaves when you start a review." }) });
-const snoozedChange = pr({ number: 78, title: "hydrogen: drop the Node 18 shim", author: "bkim", snoozed: true, snoozedUntil: null, next: next({ kind: "rereview", inbox: false, clears: "Leaves when you review again." }) });
+const snoozedChange = pr({ number: 78, title: "web: drop the Node 18 shim", author: "bkim", snoozed: true, snoozedUntil: null, next: next({ kind: "rereview", inbox: false, clears: "Leaves when you review again." }) });
 const dismissedNew = pr({ number: 90, title: "Docs: typo sweep across the admin guides", author: "hfox", dismissed: { at: NOW - 24 * HOUR, activity: true }, next: next({ kind: "new_request", inbox: false }) });
 const dismissedQuiet = mine({ number: 88, title: "Lineup: try badges on tabs", dismissed: { at: NOW - 3 * 24 * HOUR, activity: false }, next: next({ kind: "ready_to_merge", inbox: false }) });
-const run = (patch: Partial<NonNullable<PrView["lastReview"]>> = {}) => ({ threadId: "thr_review", title: "Review shop/world#2312070", state: "running" as const, preset: "Thorough", trigger: "manual" as const, head: "abc", at: NOW - 12 * 60_000, thread: "working" as const, ...patch });
+const run = (patch: Partial<NonNullable<PrView["lastReview"]>> = {}) => ({ threadId: "thr_review", title: "Review acme/app#2312070", state: "running" as const, preset: "Thorough", trigger: "manual" as const, head: "abc", at: NOW - 12 * 60_000, thread: "working" as const, ...patch });
 const runningNext = next({ kind: "running", tone: "info", label: "AI review running", why: "Thorough in “Review”, started 12 minutes ago. Its findings land here.", more: [{ id: "open_review", label: "Open the thread" }] });
-const reviewingWorking = pr({ repo: "shop/world", server: "delta", serverName: "Delta", number: 2312070, title: "Checkout: retry the payment session once", author: "elvin", additions: 40, deletions: 6, lastReview: run(), next: runningNext });
+const reviewingWorking = pr({ repo: "acme/app", server: "lab", serverName: "Lab", number: 2312070, title: "Checkout: retry the payment session once", author: "elvin", additions: 40, deletions: 6, lastReview: run(), next: runningNext });
 const reviewingWaiting = pr({
   number: 4420, title: "Sidebar: keep the thread list scroll on reload", author: "rmartin", additions: 12, deletions: 2, dismissed: { at: NOW - 2 * HOUR, activity: false },
   lastReview: run({ threadId: "thr_waiting", title: "Review get-bb/bb#4420", preset: "Security pass", trigger: "auto", at: NOW - 3 * HOUR, thread: "waiting" }), next: runningNext,
@@ -66,8 +66,8 @@ const reviewingWaiting = pr({
 const postingNext = next({ kind: "posting", tone: "info", label: "Your review is queued to post" });
 const postQueued = pr({ number: 4430, title: "Composer: keep the draft on reload", author: "ana-r", post: queued({ id: 51, key: "github:get-bb/bb#4430", display: "get-bb/bb#4430", serverName: "GitHub" }), next: postingNext });
 const postPosting = pr({ number: 4431, title: "Sidebar: drop the stale badge", author: "bkim", post: queued({ id: 50, key: "github:get-bb/bb#4431", display: "get-bb/bb#4431", serverName: "GitHub", state: "posting", verdict: "approve", comments: 0, startedAt: NOW - 2 * 60_000 }), next: postingNext });
-const rule: InboxRule = { id: 4, kind: "repo", server: "github", serverName: "GitHub", value: "Shopify/polaris", createdAt: NOW - 5 * 24 * HOUR, keeps: ["github:Shopify/polaris#1201", "github:Shopify/polaris#1188"] };
-const mentionRule: InboxRule = { id: 5, kind: "mention", server: "github", serverName: "GitHub", value: "Shopify/web", createdAt: NOW - 14 * 24 * HOUR, keeps: [] };
+const rule: InboxRule = { id: 4, kind: "repo", server: "github", serverName: "GitHub", value: "acme/ui-kit", createdAt: NOW - 5 * 24 * HOUR, keeps: ["github:acme/ui-kit#1201", "github:acme/ui-kit#1188"] };
+const mentionRule: InboxRule = { id: 5, kind: "mention", server: "github", serverName: "GitHub", value: "acme/web", createdAt: NOW - 14 * 24 * HOUR, keeps: [] };
 
 /** A server that applies snoozes, dismissals and seen marks, so reads after a write agree with what the page predicted. */
 function inboxPage(rpc: Partial<Handlers> = {}, prs: PrView[] = ALL, subPath = "inbox", extra: Partial<ReturnType<typeof inbox>> = {}) {
@@ -154,7 +154,7 @@ describe("the Inbox", () => {
     expect(own.textContent).toContain("#85915");
     expect(own.querySelector("[data-age]")!.textContent).toBe("25m");
     expect(own.querySelector("[data-age]")!.getAttribute("title")).toMatch(/^Last activity /u);
-    expect(own.querySelector("[data-repo]")!.getAttribute("title")).toBe("Shopify/infrastructure on GitHub");
+    expect(own.querySelector("[data-repo]")!.getAttribute("title")).toBe("acme/infrastructure on GitHub");
     expect(own.querySelector("[data-unseen]")).not.toBeNull();
     expect(own.querySelector("[data-title]")!.textContent).toBe("New: Route bb plugin traffic through the shared egress proxy");
     expect(own.querySelector("[data-title] .sr-only")!.textContent).toBe("New: ");
@@ -180,7 +180,7 @@ describe("the Inbox", () => {
     const { slot } = await inboxPage();
     const overlay = (await row(slot, request.key)).querySelector<HTMLElement>("[data-overlay]")!;
     expect(within(overlay).getAllByRole("button").map((button) => button.getAttribute("aria-label") ?? button.textContent))
-      .toEqual(["Start AI review", "Snooze world#2312065", "Dismiss world#2312065 from the Inbox", "More for world#2312065"]);
+      .toEqual(["Start AI review", "Snooze app#2312065", "Dismiss app#2312065 from the Inbox", "More for app#2312065"]);
   });
 
   it("says what each overlay button does in a tooltip, with its key", async () => {
@@ -196,14 +196,14 @@ describe("the Inbox", () => {
     };
     expect(await tip("Start AI review")).toBe("Start an AI review with one of your presets");
     // A tooltip's text ends with its key.
-    expect(await tip("Snooze world#2312065")).toBe("Snooze: hide it until a time you pickS");
-    expect(await tip("Dismiss world#2312065 from the Inbox")).toBe("Dismiss: keep it out of the Inbox for goodE");
-    expect(await tip("More for world#2312065")).toBe("More: snooze, dismiss, or keep PRs like this out");
+    expect(await tip("Snooze app#2312065")).toBe("Snooze: hide it until a time you pickS");
+    expect(await tip("Dismiss app#2312065 from the Inbox")).toBe("Dismiss: keep it out of the Inbox for goodE");
+    expect(await tip("More for app#2312065")).toBe("More: snooze, dismiss, or keep PRs like this out");
   });
 
   it("shows no tooltip for focus that follows a click, as when a menu closed by a click hands focus back, but does after a key", async () => {
     const { slot } = await inboxPage();
-    const more = within(await row(slot, request.key)).getByRole("button", { name: "More for world#2312065" });
+    const more = within(await row(slot, request.key)).getByRole("button", { name: "More for app#2312065" });
     fireEvent.click(document.body);
     act(() => more.focus());
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -216,7 +216,7 @@ describe("the Inbox", () => {
   it("drops a row tooltip's key while rows are selected, since S and E then act on the selection", async () => {
     const { slot } = await inboxPage();
     fireEvent.click(within(await row(slot, waiting.key)).getByRole("checkbox"));
-    tabTo(within(await row(slot, request.key)).getByRole("button", { name: "Dismiss world#2312065 from the Inbox" }));
+    tabTo(within(await row(slot, request.key)).getByRole("button", { name: "Dismiss app#2312065 from the Inbox" }));
     expect((await screen.findByRole("tooltip")).textContent).toBe("Dismiss: keep it out of the Inbox for good");
   });
 
@@ -234,13 +234,13 @@ describe("the Inbox", () => {
     const { slot } = await inboxPage();
     openMenu(await find(slot.container, "[data-view-button]"));
     fireEvent.click(await screen.findByRole("menuitemradio", { name: "Repository" }));
-    await waitFor(() => expect(slot.container.querySelector("[data-section='repo:delta:shop/world']")).not.toBeNull());
+    await waitFor(() => expect(slot.container.querySelector("[data-section='repo:lab:acme/app']")).not.toBeNull());
     const sections = [...slot.container.querySelectorAll<HTMLElement>("[data-section]")].map((section) => section.getAttribute("data-section"));
-    expect(sections).toEqual(["repo:github:kalindudc/bb-marketplace", "repo:delta:shop/world", "repo:github:Shopify/cli", "repo:github:Shopify/infrastructure"]);
+    expect(sections).toEqual(["repo:lab:acme/app", "repo:github:acme/cli", "repo:github:acme/infrastructure", "repo:github:acme/plugins"]);
     const requestRow = await row(slot, request.key);
     expect(requestRow.querySelector("[data-kind-chip]")!.textContent).toBe("New request");
     // The heading names the repo, so its rows do not.
-    expect(slot.container.querySelector("[data-section='repo:delta:shop/world'] > div [data-repo]")).not.toBeNull();
+    expect(slot.container.querySelector("[data-section='repo:lab:acme/app'] > div [data-repo]")).not.toBeNull();
     expect(requestRow.querySelector("[data-repo]")).toBeNull();
     expect(requestRow.textContent).toContain("#2312065");
     // The chip says what the fact would, so the fact goes.
@@ -280,7 +280,7 @@ describe("the Inbox", () => {
     expect(rowKeys(slot)).toEqual([request.key]);
     fireEvent.change(search, { target: { value: "#94" } });
     expect(rowKeys(slot)).toEqual([nobody.key]);
-    fireEvent.change(search, { target: { value: "world locale" } });
+    fireEvent.change(search, { target: { value: "app locale" } });
     expect(rowKeys(slot)).toEqual([ready.key]);
     fireEvent.change(search, { target: { value: "zzz" } });
     expect(slot.container.textContent).toContain("Nothing matches “zzz”.");
@@ -292,7 +292,7 @@ describe("the Inbox", () => {
     const { slot } = await inboxPage();
     await row(slot, waiting.key);
     fireEvent.click(slot.getByRole("checkbox", { name: "Select infrastructure#85915" }));
-    fireEvent.click(slot.getByRole("checkbox", { name: "Select world#2311622" }), { shiftKey: true });
+    fireEvent.click(slot.getByRole("checkbox", { name: "Select app#2311622" }), { shiftKey: true });
     const bar = await find(slot.container, "[data-selection-bar]");
     expect(bar.textContent).toContain("3 selected");
     expect(slot.container.querySelector("input[type='search']")).toBeNull();
@@ -306,7 +306,7 @@ describe("the Inbox", () => {
     const { slot } = await inboxPage();
     await row(slot, waiting.key);
     fireEvent.click(slot.getByRole("checkbox", { name: "Select infrastructure#85915" }));
-    fireEvent.click(slot.getByRole("checkbox", { name: "Select bb-marketplace#94" }));
+    fireEvent.click(slot.getByRole("checkbox", { name: "Select plugins#94" }));
     fireEvent.click(within(await find(slot.container, "[data-selection-bar]")).getByRole("button", { name: "Dismiss" }));
     await waitFor(() => expect(callsTo(slot, "dismiss")).toEqual([{ keys: [waiting.key, nobody.key], on: true }]));
     await waitFor(() => expect(slot.container.querySelector(`[data-row="${waiting.key}"]`)).toBeNull());
@@ -321,7 +321,7 @@ describe("the Inbox", () => {
   it("snoozes the selection from the selection bar until it changes, and Undo brings it back", async () => {
     const { slot } = await inboxPage();
     await row(slot, waiting.key);
-    fireEvent.click(slot.getByRole("checkbox", { name: "Select world#2312065" }));
+    fireEvent.click(slot.getByRole("checkbox", { name: "Select app#2312065" }));
     fireEvent.click(slot.getByRole("checkbox", { name: "Select infrastructure#86110" }));
     openMenu(within(await find(slot.container, "[data-selection-bar]")).getByRole("button", { name: "Snooze 2 PRs" }));
     fireEvent.click(await screen.findByRole("menuitem", { name: /Until it changes/u }));
@@ -333,9 +333,9 @@ describe("the Inbox", () => {
 
   it("dismisses one row from its overlay", async () => {
     const { slot } = await inboxPage();
-    fireEvent.click(within(await row(slot, request.key)).getByRole("button", { name: "Dismiss world#2312065 from the Inbox" }));
+    fireEvent.click(within(await row(slot, request.key)).getByRole("button", { name: "Dismiss app#2312065 from the Inbox" }));
     await waitFor(() => expect(callsTo(slot, "dismiss")).toEqual([{ keys: [request.key], on: true }]));
-    await waitFor(() => expect(toasts.success).toHaveBeenCalledWith("Dismissed world#2312065.", expect.anything()));
+    await waitFor(() => expect(toasts.success).toHaveBeenCalledWith("Dismissed app#2312065.", expect.anything()));
   });
 
   it("offers later today, tomorrow, next week and until it changes, at the times of the user's clock", async () => {
@@ -354,7 +354,7 @@ describe("the Inbox", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date(2026, 9, 28, 14, 5));
     const { slot } = await inboxPage();
-    openMenu(within(await row(slot, request.key)).getByRole("button", { name: "Snooze world#2312065" }));
+    openMenu(within(await row(slot, request.key)).getByRole("button", { name: "Snooze app#2312065" }));
     const menu = await screen.findByRole("menu");
     expect(menu.textContent).toContain("Something new brings it back sooner.");
     fireEvent.click(within(menu).getByRole("menuitem", { name: /Tomorrow/u }));
@@ -362,25 +362,25 @@ describe("the Inbox", () => {
   });
 
   it("keeps PRs like a row's out of the Inbox from its ⋯ menu, with how many leave now, and Undo removes the rule", async () => {
-    const added: InboxRule = { id: 9, kind: "author", server: "delta", serverName: "Delta", value: "elvin", createdAt: NOW, keeps: [request.key] };
+    const added: InboxRule = { id: 9, kind: "author", server: "lab", serverName: "Lab", value: "elvin", createdAt: NOW, keeps: [request.key] };
     const { slot } = await inboxPage({ inboxRuleAdd: () => ({ rule: added, created: true }), inboxRuleRemove: () => ({ ok: true }) });
-    openMenu(within(await row(slot, request.key)).getByRole("button", { name: "More for world#2312065" }));
+    openMenu(within(await row(slot, request.key)).getByRole("button", { name: "More for app#2312065" }));
     const menu = await screen.findByRole("menu");
     expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent))
-      .toEqual(["Snooze…", "Dismiss from the Inbox", "Every PR by @elvin1 in the Inbox", "Every PR from shop/world3 in the Inbox"]);
+      .toEqual(["Snooze…", "Dismiss from the Inbox", "Every PR by @elvin1 in the Inbox", "Every PR from acme/app3 in the Inbox"]);
     expect(menu.textContent).toContain("Keep PRs like this out");
     expect(menu.textContent).toContain("They stay in My PRs and Reviews. Rules are listed under Dismissed, where you can remove them.");
     fireEvent.click(within(menu).getByRole("menuitem", { name: /Every PR by @elvin/u }));
-    await waitFor(() => expect(callsTo(slot, "inboxRuleAdd")).toEqual([{ kind: "author", server: "delta", value: "elvin" }]));
+    await waitFor(() => expect(callsTo(slot, "inboxRuleAdd")).toEqual([{ kind: "author", server: "lab", value: "elvin" }]));
     await waitFor(() => expect(toasts.success).toHaveBeenCalledWith("PRs by @elvin now stay out of the Inbox; 1 PR left it.", expect.anything()));
     toasts.success.mock.calls[0]![1].action.onClick();
     await waitFor(() => expect(callsTo(slot, "inboxRuleRemove")).toEqual([{ id: 9 }]));
   });
 
   it("says a rule that already exists does, and offers no Undo for it", async () => {
-    const existing: InboxRule = { id: 2, kind: "author", server: "delta", serverName: "Delta", value: "elvin", createdAt: NOW - HOUR, keeps: [request.key] };
+    const existing: InboxRule = { id: 2, kind: "author", server: "lab", serverName: "Lab", value: "elvin", createdAt: NOW - HOUR, keeps: [request.key] };
     const { slot } = await inboxPage({ inboxRuleAdd: () => ({ rule: existing, created: false }), inboxRuleRemove: () => ({ ok: true }) });
-    openMenu(within(await row(slot, request.key)).getByRole("button", { name: "More for world#2312065" }));
+    openMenu(within(await row(slot, request.key)).getByRole("button", { name: "More for app#2312065" }));
     fireEvent.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: /Every PR by @elvin/u }));
     await waitFor(() => expect(vi.mocked(toast)).toHaveBeenCalledWith("PRs by @elvin already stay out of the Inbox."));
     expect(toasts.success).not.toHaveBeenCalled();
@@ -392,16 +392,16 @@ describe("the Inbox", () => {
     const { slot } = await inboxPage();
     const rules = async () => within(await screen.findByRole("menu")).getAllByRole("menuitem").map((item) => item.textContent).slice(2);
     openMenu(within(await row(slot, mention.key)).getByRole("button", { name: "More for infrastructure#86110" }));
-    expect(await rules()).toEqual(["Every PR by @tlee1 in the Inbox", "Every PR from Shopify/infrastructure2 in the Inbox", "Mentions in Shopify/infrastructure unless I'm asked1 in the Inbox"]);
+    expect(await rules()).toEqual(["Every PR by @tlee1 in the Inbox", "Every PR from acme/infrastructure2 in the Inbox", "Mentions in acme/infrastructure unless I'm asked1 in the Inbox"]);
     fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
     openMenu(within(await row(slot, waiting.key)).getByRole("button", { name: "More for infrastructure#85915" }));
-    expect(await rules()).toEqual(["Every PR from Shopify/infrastructure2 in the Inbox"]);
+    expect(await rules()).toEqual(["Every PR from acme/infrastructure2 in the Inbox"]);
   });
 
   it("snoozes or dismisses a row from its ⋯ menu", async () => {
     const { slot } = await inboxPage();
-    openMenu(within(await row(slot, request.key)).getByRole("button", { name: "More for world#2312065" }));
+    openMenu(within(await row(slot, request.key)).getByRole("button", { name: "More for app#2312065" }));
     fireEvent.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: /Snooze…/u }));
     await waitFor(() => expect(screen.getByRole("menu").textContent).toContain("Until it changes"));
     fireEvent.click(within(screen.getByRole("menu")).getByRole("menuitem", { name: /Until it changes/u }));
@@ -665,17 +665,17 @@ describe("the Snoozed and Dismissed tabs", () => {
 
     const rules = slot.getByRole("region", { name: "Rules" });
     const items = [...rules.querySelectorAll<HTMLElement>("[data-rule]")];
-    expect(items.map((item) => item.querySelector("[data-rule-text]")!.textContent)).toEqual(["PRs from Shopify/polaris", "Mentions in Shopify/web, when you are not asked to review"]);
-    expect(items[0]!.textContent).toContain("Keeps out polaris#1201, polaris#1188");
+    expect(items.map((item) => item.querySelector("[data-rule-text]")!.textContent)).toEqual(["PRs from acme/ui-kit", "Mentions in acme/web, when you are not asked to review"]);
+    expect(items[0]!.textContent).toContain("Keeps out ui-kit#1201, ui-kit#1188");
     expect(items[1]!.textContent).toContain("Keeps nothing out right now");
 
     fireEvent.click(within(changed).getByRole("button", { name: "Restore" }));
     await waitFor(() => expect(callsTo(slot, "dismiss")).toEqual([{ keys: [dismissedNew.key], on: false }]));
     fireEvent.click(within(items[0]!).getByRole("button", { name: "Remove" }));
     await waitFor(() => expect(callsTo(slot, "inboxRuleRemove")).toEqual([{ id: 4 }]));
-    await waitFor(() => expect(toasts.success).toHaveBeenCalledWith("PRs from Shopify/polaris can come to the Inbox again.", expect.anything()));
+    await waitFor(() => expect(toasts.success).toHaveBeenCalledWith("PRs from acme/ui-kit can come to the Inbox again.", expect.anything()));
     toasts.success.mock.calls.at(-1)![1].action.onClick();
-    await waitFor(() => expect(callsTo(slot, "inboxRuleAdd")).toEqual([{ kind: "repo", server: "github", value: "Shopify/polaris" }]));
+    await waitFor(() => expect(callsTo(slot, "inboxRuleAdd")).toEqual([{ kind: "repo", server: "github", value: "acme/ui-kit" }]));
   });
 
   it("puts no dot on the tab when no dismissed PR changed, and says when nothing is dismissed or ruled out", async () => {
@@ -716,7 +716,7 @@ describe("the Reviewing tab", () => {
   it("opens a PR from a click on its row", async () => {
     const { slot } = await inboxPage({}, ALL, "inbox~reviewing", { reviewing: [reviewingWorking] });
     fireEvent.click((await row(slot, reviewingWorking.key)).querySelector("[data-title]")!);
-    expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: "inbox~reviewing/delta/shop/world/2312070" } });
+    expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: "inbox~reviewing/lab/acme/app/2312070" } });
   });
 
   it("lists your reviews on their way to their servers first, in the queue's order, with Cancel until one starts", async () => {
@@ -752,7 +752,7 @@ describe("the Inbox on a phone", () => {
     };
     const target = await row(slot, request.key);
     expect(target.querySelector("[data-overlay]")).toBeNull();
-    expect(within(target).getByRole("button", { name: "More for world#2312065" })).toBeTruthy();
+    expect(within(target).getByRole("button", { name: "More for app#2312065" })).toBeTruthy();
     swipe(target, -40);
     expect(callsTo(slot, "dismiss")).toEqual([]);
     swipe(target, 120);
@@ -889,7 +889,7 @@ describe("the PR view and the Inbox", () => {
     const { slot } = await view(request);
     fireEvent.click(within(await find(slot.container, "[data-detail]")).getByRole("button", { name: "Not now" }));
     await waitFor(() => expect(callsTo(slot, "snooze")).toEqual([{ keys: [request.key], until: "update" }]));
-    await waitFor(() => expect(toasts.success).toHaveBeenCalledWith("Snoozed world#2312065 until it changes.", expect.anything()));
+    await waitFor(() => expect(toasts.success).toHaveBeenCalledWith("Snoozed app#2312065 until it changes.", expect.anything()));
   });
 
   it("offers Bring back to the Inbox on a PR snoozed until it changes", async () => {
@@ -904,12 +904,12 @@ describe("the PR view and the Inbox", () => {
 
 describe("Inbox routes", () => {
   it("carries the tab and a selected PR", () => {
-    const key = "delta:shop/world#2261179";
+    const key = "lab:acme/app#2261179";
     expect(parseRoute("inbox~snoozed")).toEqual({ view: "inbox", tab: "snoozed", key: null });
     expect(parseRoute("inbox~reviewing")).toEqual({ view: "inbox", tab: "reviewing", key: null });
-    expect(parseRoute("inbox~dismissed/delta/shop/world/2261179")).toEqual({ view: "inbox", tab: "dismissed", key });
+    expect(parseRoute("inbox~dismissed/lab/acme/app/2261179")).toEqual({ view: "inbox", tab: "dismissed", key });
     expect(parseRoute("inbox~nonsense")).toEqual({ view: "inbox", key: null });
-    expect(formatRoute({ view: "inbox", tab: "dismissed", key })).toBe("inbox~dismissed/delta/shop/world/2261179");
+    expect(formatRoute({ view: "inbox", tab: "dismissed", key })).toBe("inbox~dismissed/lab/acme/app/2261179");
     expect(formatRoute({ view: "inbox", tab: "snoozed", key: null })).toBe("inbox~snoozed");
     expect(formatRoute({ view: "inbox", key: null })).toBe("inbox");
   });

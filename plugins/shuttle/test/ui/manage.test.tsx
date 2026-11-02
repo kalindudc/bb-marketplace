@@ -17,12 +17,12 @@ afterEach(() => {
 
 const ALL_ACTIONS: PrView["actions"] = ["ready", "draft", "close", "reopen", "labels", "reviewers"];
 const mine = (overrides: Partial<PrView> = {}) => pr({
-  mine: true, author: "kalindudc", reasons: [], actions: ALL_ACTIONS, requestedAt: null,
+  mine: true, author: "robin-c", reasons: [], actions: ALL_ACTIONS, requestedAt: null,
   labels: [{ name: "bug", color: "d73a4a" }],
   reviewers: [
     { login: "alice-w", team: false, state: "changes" },
     { login: "bchen", team: false, state: "requested" },
-    { login: "Shopify/edge-infrastructure", team: true, state: "requested" },
+    { login: "acme/platform", team: true, state: "requested" },
   ],
   ...overrides,
 });
@@ -43,8 +43,8 @@ async function open(start: PrView, rpc: Partial<Handlers> = {}) {
         { name: "bug", color: "d73a4a", description: "Something isn't working" },
         { name: "cache", color: "1d76db", description: "Caching layers" },
       ],
-      people: ["kalindudc", "alice-w", "bchen", "dana-k"],
-      teams: ["Shopify/edge-infrastructure", "Shopify/cdn"],
+      people: ["robin-c", "alice-w", "bchen", "dana-k"],
+      teams: ["acme/platform", "acme/cdn"],
     }),
     ...rpc,
   }));
@@ -62,7 +62,7 @@ const more = async (view: HTMLElement) => {
 
 describe("changing your own PR from its view", () => {
   it("offers labels, reviewers and the PR's state only on your PRs; others' are to read", async () => {
-    const theirs = pr({ labels: [{ name: "loom", color: null }], reviewers: [{ login: "kalindudc", team: false, state: "requested" }] });
+    const theirs = pr({ labels: [{ name: "loom", color: null }], reviewers: [{ login: "robin-c", team: false, state: "requested" }] });
     const loaded = await app();
     const slot = mount<PluginNavPanelProps>(loaded.navPanels[0]!.component, { subPath: formatRoute({ view: "reviews", source: "all", key: theirs.key }) },
       handlers({ list: () => ({ prs: [theirs] }), detail: () => ({ pr: theirs, events: [], body: "", draft: null }) }));
@@ -71,7 +71,7 @@ describe("changing your own PR from its view", () => {
     expect(within(view).queryByRole("button", { name: "Edit labels" })).toBeNull();
     expect(within(view).queryByRole("button", { name: /Remove label/u })).toBeNull();
     const people = within(view).getByRole("region", { name: "People" });
-    expect(people.querySelector("[data-reviewer='kalindudc']")!.textContent).toContain("Review requested");
+    expect(people.querySelector("[data-reviewer='robin-c']")!.textContent).toContain("Review requested");
     expect(within(people).queryByRole("button")).toBeNull();
     const menu = await more(view);
     expect(within(menu).queryByRole("menuitem", { name: /Convert to draft|Close pull request/u })).toBeNull();
@@ -98,10 +98,10 @@ describe("changing your own PR from its view", () => {
   });
 
   it("says what the server cannot do instead of offering it", async () => {
-    const { view, people } = await open(mine({ serverName: "Delta", actions: ["ready", "close", "labels"] }));
+    const { view, people } = await open(mine({ serverName: "Lab", actions: ["ready", "close", "labels"] }));
     const menu = await more(view);
     expect(within(menu).queryByRole("menuitem", { name: "Convert to draft" })).toBeNull();
-    expect(menu.textContent).toContain("Delta can't convert to draft");
+    expect(menu.textContent).toContain("Lab can't convert to draft");
     expect(within(people()).queryByRole("button", { name: "Request reviewers" })).toBeNull();
     expect(within(people()).queryByRole("button", { name: /Withdraw/u })).toBeNull();
   });
@@ -148,15 +148,15 @@ describe("changing your own PR from its view", () => {
     openMenu(within(people()).getByRole("button", { name: "Request reviewers" }));
     const menu = await screen.findByRole("menu", { name: "Request reviewers" });
     await within(menu).findByRole("menuitemcheckbox", { name: /dana-k/u });
-    expect(within(menu).queryByRole("menuitemcheckbox", { name: /kalindudc/u })).toBeNull();
+    expect(within(menu).queryByRole("menuitemcheckbox", { name: /robin-c/u })).toBeNull();
     const alice = within(menu).getByRole("menuitemcheckbox", { name: /alice-w/u });
     expect(alice.getAttribute("aria-disabled")).toBe("true");
     expect(alice.textContent).toContain("Changes requested: use Ask again");
     fireEvent.click(within(menu).getByRole("menuitemcheckbox", { name: /dana-k/u }));
-    fireEvent.click(within(menu).getByRole("menuitemcheckbox", { name: /Shopify\/cdn/u }));
+    fireEvent.click(within(menu).getByRole("menuitemcheckbox", { name: /acme\/cdn/u }));
     await waitFor(() => expect(edits(slot)).toEqual([
       { kind: "reviewers", add: [{ login: "dana-k", team: false }] },
-      { kind: "reviewers", add: [{ login: "Shopify/cdn", team: true }] },
+      { kind: "reviewers", add: [{ login: "acme/cdn", team: true }] },
     ]));
     fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
 
@@ -177,9 +177,9 @@ describe("changing your own PR from its view", () => {
     openMenu(within(people()).getByRole("button", { name: "Request reviewers" }));
     const menu = await screen.findByRole("menu", { name: "Request reviewers" });
     await within(menu).findByRole("menuitemcheckbox", { name: /dana-k/u });
-    fireEvent.change(within(menu).getByRole("textbox", { name: "Search people and teams" }), { target: { value: "@Shopify/routing" } });
-    fireEvent.click(within(menu).getByRole("menuitem", { name: "Request team Shopify/routing" }));
-    await waitFor(() => expect(edits(slot)).toEqual([{ kind: "reviewers", add: [{ login: "Shopify/routing", team: true }] }]));
+    fireEvent.change(within(menu).getByRole("textbox", { name: "Search people and teams" }), { target: { value: "@acme/routing" } });
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Request team acme/routing" }));
+    await waitFor(() => expect(edits(slot)).toEqual([{ kind: "reviewers", add: [{ login: "acme/routing", team: true }] }]));
   });
 
   it("undoes a change by sending its inverse", async () => {

@@ -135,7 +135,7 @@ function NoReviewCommand({ pr }: { pr: PrView }) {
   return (
     <div data-no-review-command className={NOTE}>
       Shuttle can't post this yet: {pr.serverName} has no <span className="font-mono">review</span> command in{" "}
-      <UrlLink href={settingsHref(pluginId)} className="text-primary hover:underline">Settings › Servers</UrlLink>. Add one there (Shuttle's Delta adapter, delta.sh, has it), or post it from the review thread.
+      <UrlLink href={settingsHref(pluginId)} className="text-primary hover:underline">Settings › Servers</UrlLink>. Add one there, or post it from the review thread.
     </div>
   );
 }

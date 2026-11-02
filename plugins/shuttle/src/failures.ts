@@ -1,7 +1,7 @@
 // Why a sync step failed, in plain words. Pure, so the UI and the CLI word it the same way.
 import type { SyncFailure, SyncFailureKind, SyncStepName } from "./contract";
 
-/** What each step fetches, for sentences such as "Delta failed while Shuttle asked for team requests". */
+/** What each step fetches, for sentences such as "Forge failed while Shuttle asked for team requests". */
 export const STEP_LABELS: Record<SyncStepName, string> = {
   whoami: "who you are",
   authored: "your PRs",

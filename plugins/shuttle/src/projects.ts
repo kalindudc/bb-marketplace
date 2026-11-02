@@ -2,7 +2,7 @@
 // repository, else the only project with that repository's name, else the default setting.
 import type { ProjectInfo } from "./ports";
 
-/** `git@github.com:Shopify/world.git` and `https://github.com/Shopify/world` both become `shopify/world`. */
+/** `git@github.com:Acme/App.git` and `https://github.com/Acme/App` both become `acme/app`. */
 export function remotePath(url: string): string | null {
   const trimmed = url.trim().replace(/\.git$/u, "").replace(/\/+$/u, "");
   const scp = /^[^@/\s]+@[^:/\s]+:(.+)$/u.exec(trimmed);

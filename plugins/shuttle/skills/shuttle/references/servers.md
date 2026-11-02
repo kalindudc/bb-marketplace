@@ -4,42 +4,41 @@
 
 ```toml
 [[server]]
-id = "delta"                     # lowercase, the first part of every key: delta:shop/world#2261179
-name = "Delta"
+id = "forge"                     # lowercase, the first part of every key: forge:acme/app#1234
+name = "Forge"
 kind = "command"
-pattern = '^https://delta\.shopify\.io/(?<repo>[^/]+/[^/]+)/pull/(?<number>\d+)'
-link = "https://delta.shopify.io/{repo}/pull/{number}"
+pattern = '^https://forge\.example\.com/(?<repo>[^/]+/[^/]+)/pull/(?<number>\d+)'
+link = "https://forge.example.com/{repo}/pull/{number}"
 sep = "#"                        # or "!" for GitLab-style group/project!77
-read = "dt pr view {number} -R {repo} --comments"   # how an agent reads the PR; shown in prompts
+read = "forge pr view {number} -R {repo} --comments"   # how an agent reads the PR; shown in prompts
 
 [server.commands]
-whoami = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
-authored = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
-review_requested = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
-view = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
-activity = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
-team_requested = 'SHUTTLE_DELTA_TEAMS=edge-infrastructure sh "$SHUTTLE_SCRIPTS/delta.sh"'
-reviewed = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
-# mentioned left out: Delta refuses the mentions: qualifier
-# Managing your own PRs from Shuttle; draft is left out because Delta can't go back to draft.
-ready = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
-close = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
-reopen = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
-edit_labels = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
-edit_reviewers = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
+whoami = 'sh ~/shuttle/forge.sh'
+authored = 'sh ~/shuttle/forge.sh'
+review_requested = 'sh ~/shuttle/forge.sh'
+view = 'sh ~/shuttle/forge.sh'
+activity = 'sh ~/shuttle/forge.sh'
+team_requested = 'FORGE_TEAMS=platform sh ~/shuttle/forge.sh'
+reviewed = 'sh ~/shuttle/forge.sh'
+# mentioned left out, for a server that cannot search for mentions
+# Managing your own PRs from Shuttle; draft left out, for a server that can't go back to draft.
+ready = 'sh ~/shuttle/forge.sh'
+close = 'sh ~/shuttle/forge.sh'
+reopen = 'sh ~/shuttle/forge.sh'
+edit_labels = 'sh ~/shuttle/forge.sh'
+edit_reviewers = 'sh ~/shuttle/forge.sh'
 # Merging, and writing on the PR's conversation.
-merge_options = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
-merge = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
-comment = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
-review = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
-reply = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
-resolve = 'sh "$SHUTTLE_SCRIPTS/delta.sh"'
+merge_options = 'sh ~/shuttle/forge.sh'
+merge = 'sh ~/shuttle/forge.sh'
+comment = 'sh ~/shuttle/forge.sh'
+review = 'sh ~/shuttle/forge.sh'
+reply = 'sh ~/shuttle/forge.sh'
+resolve = 'sh ~/shuttle/forge.sh'
 ```
 
-`delta.sh` next to this file is a working adapter for Delta through `dt` and `jq`. Run it from
-`$SHUTTLE_SCRIPTS`, the folder of scripts that ships with the installed Shuttle, so each upgrade
-brings its fixes; a copy elsewhere, or a path into a checkout, stays at the version it was copied
-from. `view` is required; every other operation is optional.
+`forge.sh` stands for your adapter: one script can serve every operation by reading
+`SHUTTLE_OPERATION`, or each operation can have its own command. Keep it outside Shuttle's
+install folder, which an upgrade replaces. `view` is required; every other operation is optional.
 
 ## How commands run
 
@@ -50,7 +49,7 @@ the usual tool directories on `PATH`, and a 60-second limit. It gets:
 |---|---|
 | `SHUTTLE_OPERATION` | always: the operation's name, such as authored or edit_labels |
 | `SHUTTLE_SERVER` | always: the server id |
-| `SHUTTLE_SCRIPTS` | always, when the installed Shuttle has it: the folder of adapter scripts, this file's folder |
+| `SHUTTLE_SCRIPTS` | always, when the installed Shuttle has it: this file's folder in the installed Shuttle |
 | `SHUTTLE_STATE` | authored: `open`, or `closed` for merged and closed PRs |
 | `SHUTTLE_SINCE` | authored with `closed`: YYYY-MM-DD, the start of the Done window |
 | `SHUTTLE_REPO`, `SHUTTLE_NUMBER`, `SHUTTLE_URL` | view, activity and every operation below that reads or changes one PR |
@@ -71,9 +70,9 @@ JSON in the wrong shape fails that operation; the other operations still run, an
 the lists that failed keep their last good data. When a command fails, print the reason on
 stderr: Shuttle keeps the end of it, with the exit code, and shows it on Insights › Sync, in
 Settings › Servers and in `bb shuttle status`. An exit 0 that prints nothing counts as a failure
-too, with whatever went to stderr. A line such as ``run `dt auth login` `` on stderr becomes the
+too, with whatever went to stderr. A line such as ``run `forge auth login` `` on stderr becomes the
 fix Shuttle offers to copy. Do not pipe a server call straight into `jq`: without `pipefail`, a
-failed call leaves `jq` to print nothing and exit 0. Capture the answer first, as `delta.sh` does.
+failed call leaves `jq` to print nothing and exit 0. Capture the answer first, then parse it.
 
 Shuttle tries a failed list once more after a server error (HTTP 5xx), a network error or an empty
 answer, at most twice a sync per server, and never after a rate limit (HTTP 429) or a timeout.
@@ -92,10 +91,10 @@ PR from a list it knows is incomplete, so an old request cannot come back lookin
 `view`: one PR summary.
 
 ```json
-{"repo": "shop/world", "number": 2269437, "title": "Upgrade Envoy", "author": "sam.lee",
+{"repo": "acme/app", "number": 1234, "title": "Upgrade Envoy", "author": "sam.lee",
  "state": "open", "draft": false, "url": "https://…", "head": "9f3c2a1…", "head_ref": "sam/envoy",
  "base": "main", "updated_at": "2026-10-23T14:58:00Z", "checks": "passed", "review": "required",
- "additions": 1204, "deletions": 388, "files": 23, "teams": ["@shop/edge-routing"]}
+ "additions": 1204, "deletions": 388, "files": 23, "teams": ["@acme/routing"]}
 ```
 
 `view` may add `"body"`, the description in Markdown; the PR's drawer shows it. Any summary
@@ -238,13 +237,13 @@ The other commands' output is ignored.
 ## Review workspace
 
 A review preset whose workspace is "its own checkout" gets bb's git worktree, unless the PR's
-server says otherwise. Some repositories refuse worktrees outside their own place: World only
-allows them under `~/world/trees`. A server can then name a bb environment provider:
+server says otherwise. Some repositories refuse worktrees outside their own place, such as a monorepo
+that keeps them in its own trees folder. A server can then name a bb environment provider:
 
 ```toml
 [server.workspace]
 kind = "provider"
-provider = "world-tree"
+provider = "my-trees"
 inputs = { tree = "shuttle-{number}" }
 ```
 
@@ -254,7 +253,7 @@ with `/bin/sh` in bb's server process, with a 10-minute limit, so it must be saf
 ```toml
 [server.workspace]
 kind = "command"
-command = "cd ~/world && (dev tree add shuttle-{number} >&2 || true) && echo ~/world/trees/shuttle-{number}/src"
+command = "cd ~/src/app && (git worktree add ../app-{number} >&2 || true) && echo ~/src/app-{number}"
 ```
 
 Provider inputs and the command may use `{number}`, `{repo}`, `{repo_name}`, `{head_ref}`,
@@ -278,29 +277,3 @@ head commit you reviewed. When GitHub refuses a comment's line or path, Shuttle 
 again on the same commit, with every comment written into its body as a `path:line` list; any
 other refusal, such as one about the commit, fails the review. Replies and resolving use the GraphQL mutations
 `addPullRequestReviewThreadReply`, `resolveReviewThread` and `unresolveReviewThread`.
-
-## Delta
-
-`delta.sh` covers every operation except `mentioned` (Delta refuses the `mentions:` qualifier)
-and `draft` (a Delta PR cannot go back to draft). The lists search `SHUTTLE_DELTA_REPO`
-(shop/world unless you set it); every operation on one PR works on that PR's own repository,
-`SHUTTLE_REPO`, and refuses one that is not `owner/name`.
-
-`merge_options` reads Delta's merge gate, `repos/{repo}/pulls/{number}/merge-readiness`, for the
-methods you may use, its blockers and the head's checks; World's main branch always reports
-"main advances through the merge queue". `view` counts the head's checks from the same gate, and
-`activity` sends each failed one as a `check` item whose id is the check and the head it ran on. With
-`SHUTTLE_DETAIL=1` it also sends every check from that gate, the last 100 commits, the first 100
-changed files, the gate's merge state and each thread's `diff_hunk`; Delta's timeline is left out.
-A PR with up to 100 files gets its commits and files from one
-`repos/{repo}/compare/{base}...{head}`, whose files carry no patches. A compare cannot page its
-files, so a larger PR reads the first page of `pulls/{number}/files` (with patches) and its
-commits from `pulls/{number}/commits` instead. Delta has no GraphQL.
-
-`merge` runs `dt pr merge --sha`, which on a stacked PR merges the stack up to it. It refuses
-rebase, auto-merge (Delta has none) and deleting the branch, and leaves out `SHUTTLE_SUBJECT`,
-which `dt pr merge` cannot set. Every review is one POST to the reviews API with `commit_id` set
-to `SHUTTLE_HEAD`, since `dt pr review` cannot name a commit; its comments ride in the same
-request, the way `dt pr review --file-comment` batches them. A 422 about a comment's line or path
-posts it again on the same commit with the comments in its body; any other refusal fails.
-`reply` answers the thread's first comment, since `dt pr comment --reply-to` takes a comment id.

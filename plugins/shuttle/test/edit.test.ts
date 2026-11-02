@@ -22,18 +22,18 @@ const callsOf = (h: Awaited<ReturnType<typeof setup>>, operation: string) => h.r
 describe("actions on a PR", () => {
   it("offers changes only on the user's own PRs, by state and by the server's commands", async () => {
     const h = await setup();
-    expect(h.shuttle.view("forge:shop/world#1").actions).toEqual(["ready", "close", "labels", "reviewers"]);
-    expect(h.shuttle.view("forge:shop/world#2").actions).toEqual(["draft", "close", "labels", "reviewers"]);
-    expect(h.shuttle.view("forge:shop/world#3").actions).toEqual([]);
+    expect(h.shuttle.view("forge:acme/app#1").actions).toEqual(["ready", "close", "labels", "reviewers"]);
+    expect(h.shuttle.view("forge:acme/app#2").actions).toEqual(["draft", "close", "labels", "reviewers"]);
+    expect(h.shuttle.view("forge:acme/app#3").actions).toEqual([]);
     const { draft: _draft, ...noDraft } = EDITS;
     const limited = await setup(noDraft);
-    expect(limited.shuttle.view("forge:shop/world#2").actions).toEqual(["close", "labels", "reviewers"]);
+    expect(limited.shuttle.view("forge:acme/app#2").actions).toEqual(["close", "labels", "reviewers"]);
   });
 
   it("reads labels from lists and keeps them when a later answer has none", async () => {
     const h = await setup();
-    expect(h.shuttle.view("forge:shop/world#1").labels).toEqual([{ name: "bug", color: null }]);
-    expect(h.shuttle.view("forge:shop/world#2").labels).toBeNull();
+    expect(h.shuttle.view("forge:acme/app#1").labels).toEqual([{ name: "bug", color: null }]);
+    expect(h.shuttle.view("forge:acme/app#2").labels).toBeNull();
   });
 });
 
@@ -41,46 +41,46 @@ describe("editPr", () => {
   it("marks a draft ready, records it, and reads the PR back", async () => {
     const h = await setup();
     h.views[1] = pr(1, { author: "me", body: "Hi", reviewers: [{ login: "ana", state: "requested" }] });
-    const view = await h.shuttle.editPr("forge:shop/world#1", { kind: "ready" });
-    expect(callsOf(h, "ready")[0]!.env).toMatchObject({ SHUTTLE_REPO: "shop/world", SHUTTLE_NUMBER: "1" });
+    const view = await h.shuttle.editPr("forge:acme/app#1", { kind: "ready" });
+    expect(callsOf(h, "ready")[0]!.env).toMatchObject({ SHUTTLE_REPO: "acme/app", SHUTTLE_NUMBER: "1" });
     expect(view.state).toBe("open");
     expect(view.reviewers?.map(({ login, team, state }) => ({ login, team, state }))).toEqual([{ login: "ana", team: false, state: "requested" }]);
-    expect(h.shuttle.activity()[0]!.text).toBe("Marked shop/world#1 ready for review.");
+    expect(h.shuttle.activity()[0]!.text).toBe("Marked acme/app#1 ready for review.");
   });
 
   it("keeps the change on screen when reading the PR back fails", async () => {
     const h = await setup();
-    const view = await h.shuttle.editPr("forge:shop/world#2", { kind: "close" });
+    const view = await h.shuttle.editPr("forge:acme/app#2", { kind: "close" });
     expect(view.state).toBe("closed");
-    expect(h.shuttle.list("done").map((p) => p.key)).toContain("forge:shop/world#2");
+    expect(h.shuttle.list("done").map((p) => p.key)).toContain("forge:acme/app#2");
   });
 
   it("passes labels and reviewers to the commands as lines, with teams apart", async () => {
     const h = await setup();
-    await h.shuttle.editPr("forge:shop/world#1", { kind: "labels", add: ["needs tophat", "cache", "cache"], remove: ["bug", "cache"] });
+    await h.shuttle.editPr("forge:acme/app#1", { kind: "labels", add: ["needs tophat", "cache", "cache"], remove: ["bug", "cache"] });
     expect(callsOf(h, "edit_labels")[0]!.env).toMatchObject({ SHUTTLE_ADD: "needs tophat\ncache", SHUTTLE_REMOVE: "bug" });
-    expect(h.shuttle.view("forge:shop/world#1").labels!.map((l) => l.name)).toEqual(["needs tophat", "cache"]);
-    await h.shuttle.editPr("forge:shop/world#1", { kind: "reviewers", add: [{ login: "ana", team: false }, { login: "edge", team: true }], remove: [{ login: "bo", team: false }] });
+    expect(h.shuttle.view("forge:acme/app#1").labels!.map((l) => l.name)).toEqual(["needs tophat", "cache"]);
+    await h.shuttle.editPr("forge:acme/app#1", { kind: "reviewers", add: [{ login: "ana", team: false }, { login: "edge", team: true }], remove: [{ login: "bo", team: false }] });
     expect(callsOf(h, "edit_reviewers")[0]!.env).toMatchObject({ SHUTTLE_ADD: "ana", SHUTTLE_ADD_TEAMS: "edge", SHUTTLE_REMOVE: "bo", SHUTTLE_REMOVE_TEAMS: "" });
-    expect(h.shuttle.view("forge:shop/world#1").reviewers).toEqual([{ login: "ana", team: false, state: "requested" }, { login: "edge", team: true, state: "requested" }]);
+    expect(h.shuttle.view("forge:acme/app#1").reviewers).toEqual([{ login: "ana", team: false, state: "requested" }, { login: "edge", team: true, state: "requested" }]);
   });
 
   it("refuses other people's PRs, changes the state does not allow, and missing commands", async () => {
     const h = await setup();
-    await expect(h.shuttle.editPr("forge:shop/world#3", { kind: "close" })).rejects.toThrow("not one of your PRs");
-    await expect(h.shuttle.editPr("forge:shop/world#1", { kind: "reopen" })).rejects.toThrow("is draft, so it can't be changed that way");
-    await expect(h.shuttle.editPr("forge:shop/world#1", { kind: "labels", add: [], remove: [] })).rejects.toThrow("nothing to change");
+    await expect(h.shuttle.editPr("forge:acme/app#3", { kind: "close" })).rejects.toThrow("not one of your PRs");
+    await expect(h.shuttle.editPr("forge:acme/app#1", { kind: "reopen" })).rejects.toThrow("is draft, so it can't be changed that way");
+    await expect(h.shuttle.editPr("forge:acme/app#1", { kind: "labels", add: [], remove: [] })).rejects.toThrow("nothing to change");
     const { draft: _draft, ...noDraft } = EDITS;
     const limited = await setup(noDraft);
-    await expect(limited.shuttle.editPr("forge:shop/world#2", { kind: "draft" })).rejects.toThrow("Forge has no draft command");
+    await expect(limited.shuttle.editPr("forge:acme/app#2", { kind: "draft" })).rejects.toThrow("Forge has no draft command");
     expect(h.runner.calls.some((c) => ["close", "reopen", "edit_labels"].includes(c.operation))).toBe(false);
   });
 
   it("reports a server's refusal and leaves the PR as it was", async () => {
     const h = await setup();
     h.answers.close = new Error("permission denied");
-    await expect(h.shuttle.editPr("forge:shop/world#2", { kind: "close" })).rejects.toThrow("Forge refused the change: close exited 1: permission denied");
-    expect(h.shuttle.view("forge:shop/world#2").state).toBe("open");
+    await expect(h.shuttle.editPr("forge:acme/app#2", { kind: "close" })).rejects.toThrow("Forge refused the change: close exited 1: permission denied");
+    expect(h.shuttle.view("forge:acme/app#2").state).toBe("open");
   });
 });
 
@@ -91,8 +91,8 @@ describe("editOptions", () => {
     h.answers.edit_options = { labels: ["perf", { name: "bug", color: "#D73A4A", description: "Broken" }], people: ["ana", "me", "zed"] };
     await h.shuttle.sync();
     h.views[2] = pr(2, { author: "me", body: "", reviewers: [{ login: "bo", state: "approved" }, { login: "cdn", team: true, state: "requested" }] });
-    await h.shuttle.lookup("forge:shop/world#2");
-    const options = await h.shuttle.editOptions("forge:shop/world#1");
+    await h.shuttle.lookup("forge:acme/app#2");
+    const options = await h.shuttle.editOptions("forge:acme/app#1");
     expect(options.labels).toEqual([{ name: "bug", color: "d73a4a", description: "Broken" }, { name: "perf", color: null, description: null }]);
     expect(options.people).toEqual(["ana", "zed", "bo"]);
     expect(options.teams).toEqual(["edge", "cdn"]);
@@ -153,7 +153,7 @@ describe("the GitHub adapter's changes", () => {
 describe("a command server's answers", () => {
   it("accepts labels as names or objects and drops a colour it can't read", async () => {
     const runner = fakeRunner(() => ({ ...pr(1), body: "", labels: ["a", { name: "b", color: "#ABCDEF" }, { name: "c", color: "blue" }] }));
-    const view = await new CommandAdapter(testConfig().servers[0]!, runner).view("shop/world", 1);
+    const view = await new CommandAdapter(testConfig().servers[0]!, runner).view("acme/app", 1);
     expect(view.labels).toEqual([{ name: "a", color: null }, { name: "b", color: "abcdef" }, { name: "c", color: null }]);
     expect(view.reviewers).toBeNull();
   });

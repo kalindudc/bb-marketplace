@@ -14,9 +14,9 @@ afterEach(() => {
 });
 
 const THREAD = "thr_stack";
-const base = pr({ repo: "kalindudc/bb-marketplace", number: 118, title: "Loom: the ticket page", mine: true, reasons: [], links: [link({ threadId: THREAD, title: "Loom work", role: "owner" })], agent: agent({ threadId: THREAD, title: "Loom work" }), watch: "act", pendingItems: 2, can: CAN_ALL });
-const middle = pr({ repo: "kalindudc/bb-marketplace", number: 119, title: "Loom: the side column", mine: true, reasons: [], links: [link({ threadId: THREAD, title: "Loom work", role: "owner" }), link({ threadId: "thr_review", title: "Review #119", role: "review" })], agent: agent({ threadId: "thr_other", title: "Loom: side column work" }) });
-const top = pr({ repo: "kalindudc/bb-marketplace", number: 120, title: "Loom: notes", mine: true, reasons: [], links: [link({ threadId: THREAD, title: "Loom work", role: "reference" })], pendingItems: 1 });
+const base = pr({ repo: "acme/plugins", number: 118, title: "Loom: the ticket page", mine: true, reasons: [], links: [link({ threadId: THREAD, title: "Loom work", role: "owner" })], agent: agent({ threadId: THREAD, title: "Loom work" }), watch: "act", pendingItems: 2, can: CAN_ALL });
+const middle = pr({ repo: "acme/plugins", number: 119, title: "Loom: the side column", mine: true, reasons: [], links: [link({ threadId: THREAD, title: "Loom work", role: "owner" }), link({ threadId: "thr_review", title: "Review #119", role: "review" })], agent: agent({ threadId: "thr_other", title: "Loom: side column work" }) });
+const top = pr({ repo: "acme/plugins", number: 120, title: "Loom: notes", mine: true, reasons: [], links: [link({ threadId: THREAD, title: "Loom work", role: "reference" })], pendingItems: 1 });
 
 async function tab(): Promise<ExperimentalTabRegistration> {
   const loaded = await app();
@@ -145,17 +145,17 @@ describe("Shuttle thread tab", () => {
   });
 
   it("looks up a pasted PR and links it to this thread as its owner", async () => {
-    const found = pr({ repo: "shop/world", number: 2261179, server: "delta", serverName: "Delta" });
+    const found = pr({ repo: "acme/app", number: 2261179, server: "lab", serverName: "Lab" });
     const slot = await panel({
       lookup: () => ({ pr: found }),
       link: ({ key }) => ({ pr: { ...found, key } }),
     });
     await slot.findByText(top.title);
     const input = slot.getByRole("textbox", { name: "Link a pull request" });
-    fireEvent.change(input, { target: { value: "https://delta.shopify.io/shop/world/pull/2261179" } });
+    fireEvent.change(input, { target: { value: "https://lab.example.com/acme/app/pull/2261179" } });
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(callsTo(slot, "link")).toEqual([{ key: found.key, threadId: THREAD, role: "owner" }]));
-    expect(callsTo(slot, "lookup")).toEqual([{ query: "https://delta.shopify.io/shop/world/pull/2261179" }]);
+    expect(callsTo(slot, "lookup")).toEqual([{ query: "https://lab.example.com/acme/app/pull/2261179" }]);
   });
 
   it("says so when no PR is linked", async () => {
@@ -165,11 +165,11 @@ describe("Shuttle thread tab", () => {
 });
 
 describe("the branch's GitHub pull request", () => {
-  const branchPr = { number: 512, title: "Retry budget per upstream cluster", url: "https://github.com/Shopify/edge-router/pull/512", state: "open" };
+  const branchPr = { number: 512, title: "Retry budget per upstream cluster", url: "https://github.com/acme/edge-router/pull/512", state: "open" };
 
   it("offers to link the PR GitHub PR Status found for the thread's branch", async () => {
     const pullRequests = vi.fn<PullRequests>(({ keys }) => Object.fromEntries(keys.map((key) => [key, { outcome: "available", pullRequest: branchPr }])));
-    const slot = await panel({ pullRequests, link: ({ key }) => ({ pr: pr({ url: key, repo: "Shopify/edge-router", number: 512 }) }) },
+    const slot = await panel({ pullRequests, link: ({ key }) => ({ pr: pr({ url: key, repo: "acme/edge-router", number: 512 }) }) },
       { sdk: { threads: { get: async () => ({ environmentId: "env_branch_1" }) as never } } });
     const suggestion = await waitFor(() => slot.container.querySelector<HTMLElement>("[data-branch-pr]") ?? Promise.reject(new Error("no suggestion")));
     expect(suggestion.textContent).toContain("This thread's branch has PR #512");
@@ -239,7 +239,7 @@ describe("a PR in full inside the tab", () => {
     fireEvent.click(detail.querySelector<HTMLElement>('[data-tab="conversation"]')!);
     fireEvent.click(await within(detail).findByRole("button", { name: "Reply" }));
     const reply = within(detail).getByRole("textbox", { name: "Reply to tomas" }) as HTMLTextAreaElement;
-    const comment = within(detail).getByRole("textbox", { name: "Comment on bb-marketplace#118" }) as HTMLTextAreaElement;
+    const comment = within(detail).getByRole("textbox", { name: "Comment on plugins#118" }) as HTMLTextAreaElement;
     fireEvent.change(reply, { target: { value: "An unfinished reply" } });
     fireEvent.change(comment, { target: { value: "An unfinished comment" } });
     const scroller = slot.container.querySelector<HTMLElement>("[data-scroller]")!;
@@ -289,7 +289,7 @@ describe("a PR in full inside the tab", () => {
     fireEvent.change(within(detail).getByRole("textbox", { name: "Reply to tomas" }), { target: { value: "It wraps now." } });
     fireEvent.click(within(detail).getAllByRole("button", { name: "Reply" }).at(-1)!);
     await waitFor(() => expect(callsTo(slot, "reply")).toEqual([{ key: base.key, thread: "PRRT_9", body: "It wraps now." }]));
-    fireEvent.change(within(detail).getByRole("textbox", { name: "Comment on bb-marketplace#118" }), { target: { value: "Ready for another look." } });
+    fireEvent.change(within(detail).getByRole("textbox", { name: "Comment on plugins#118" }), { target: { value: "Ready for another look." } });
     fireEvent.click(within(detail).getByRole("button", { name: "Comment" }));
     await waitFor(() => expect(callsTo(slot, "comment")).toEqual([{ key: base.key, body: "Ready for another look." }]));
   });

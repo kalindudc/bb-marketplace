@@ -175,6 +175,7 @@ export interface WatchRow {
   created_at: number;
   checked_at: number | null;
   error: string | null;
+  bots: string | null;
 }
 
 export interface ReviewRow {
@@ -665,6 +666,10 @@ export class Store {
 
   markWatchChecked(prId: number, error: string | null, baselined?: boolean): void {
     this.db.prepare("UPDATE watches SET checked_at = ?, error = ?, baselined = CASE WHEN ? THEN 1 ELSE baselined END WHERE pr_id = ?").run(this.now(), error, baselined ? 1 : 0, prId);
+  }
+
+  setWatchBots(prId: number, bots: string): void {
+    this.db.prepare("UPDATE watches SET bots = ? WHERE pr_id = ?").run(bots, prId);
   }
 
   seenIds(prId: number): Set<string> {

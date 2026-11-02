@@ -22,7 +22,7 @@ export class FakePort implements BbPort {
   lifecycle: string[] = [];
   failArchive = false;
   threads = new Map<string, ThreadInfo>();
-  projects: ProjectInfo[] = [{ id: "proj_world", name: "world", gitRemoteUrl: "git@github.com:Shopify/world.git" }];
+  projects: ProjectInfo[] = [{ id: "proj_app", name: "app", gitRemoteUrl: "git@github.com:acme/app.git" }];
   failSendTo = new Set<string>();
   sections = new Map<string, string>();
   failSections = false;
@@ -34,7 +34,7 @@ export class FakePort implements BbPort {
   settingsPatches: Array<{ autoAgent?: boolean; inboxRequests?: boolean }> = [];
 
   addThread(id: string, title = `Thread ${id}`, archived = false, extra: Partial<ThreadInfo> = {}): void {
-    this.threads.set(id, { id, title, archived, projectId: "proj_world", status: "idle", waiting: false, branch: null, updatedAt: 0, ...extra });
+    this.threads.set(id, { id, title, archived, projectId: "proj_app", status: "idle", waiting: false, branch: null, updatedAt: 0, ...extra });
   }
   async setSettings(patch: { autoAgent?: boolean; inboxRequests?: boolean }): Promise<void> {
     this.settingsPatches.push(patch);
@@ -140,7 +140,7 @@ export function testConfig(patch: Partial<Config> = {}): Config {
 }
 
 export function pr(number: number, extra: Record<string, unknown> = {}) {
-  return { repo: "shop/world", number, title: `PR ${number}`, author: "sam", state: "open", head: `head${number}`, checks: "passed", review: "required", updated_at: "2026-10-23T10:00:00Z", ...extra };
+  return { repo: "acme/app", number, title: `PR ${number}`, author: "sam", state: "open", head: `head${number}`, checks: "passed", review: "required", updated_at: "2026-10-23T10:00:00Z", ...extra };
 }
 
 export interface Harness {

@@ -23,7 +23,7 @@ const activeBoard: BoardSummary = {
   merged: 0,
   preview: [
     { key: "github:acme/desktop#128", title: "Add saved workspaces to the sidebar", state: "open" },
-    { key: "delta:shop/platform#482", title: "Roll out the new session routing contract", state: "draft" },
+    { key: "lab:acme/platform#482", title: "Roll out the new session routing contract", state: "draft" },
   ],
 };
 
@@ -332,8 +332,8 @@ describe("board sorting and grouping", () => {
   });
 
   it("keeps repositories, servers, and authors separate across servers with the same display name", async () => {
-    const delta = { ...older, key: `delta:${older.repo}#11`, server: "delta" };
-    const { slot } = await boardPage("board/release", { board: () => ({ ...populated, prs: [older, delta] }) });
+    const lab = { ...older, key: `lab:${older.repo}#11`, server: "lab" };
+    const { slot } = await boardPage("board/release", { board: () => ({ ...populated, prs: [older, lab] }) });
     await find(slot.container, "[data-pr]");
     for (const group of ["repo", "server", "author"]) {
       change(slot, "Group by", group);

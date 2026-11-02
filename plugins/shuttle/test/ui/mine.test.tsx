@@ -31,7 +31,7 @@ const waitingReview = mine({
   suggestedAgent: { threadId: "thr_cf4", title: "CF token containment 4", why: "Opened this PR: its id is in the branch name" },
   next: next({ kind: "waiting_review", more: [{ id: "nudge", label: "Nudge reviewers" }] }),
 });
-const drafted = mine({ number: 5, title: "Export only failed Monorail requests", state: "draft", agent: agent({ mode: "notify" }), next: next({ kind: "draft", label: "Draft", primary: { id: "ready", label: "Ready for review" } }) });
+const drafted = mine({ number: 5, title: "Export only failed event requests", state: "draft", agent: agent({ mode: "notify" }), next: next({ kind: "draft", label: "Draft", primary: { id: "ready", label: "Ready for review" } }) });
 const open = [waiting, ready, fixing, waitingReview, drafted];
 
 function minePage(rpc: Partial<Handlers> = {}, prs: PrView[] = open, subPath = "mine") {
@@ -112,7 +112,7 @@ describe("My PRs", () => {
   it("puts a nudge for the requested people in the PR's composer", async () => {
     const asking = mine({
       ...waitingReview, can: { merge: false, comment: true, review: false, reply: false, resolve: false },
-      reviewers: [{ login: "wnagele", team: false, state: "requested" }, { login: "Shopify/app-infra", team: true, state: "requested" }, { login: "pascal", team: false, state: "commented" }],
+      reviewers: [{ login: "wnagele", team: false, state: "requested" }, { login: "acme/app-infra", team: true, state: "requested" }, { login: "pascal", team: false, state: "commented" }],
     });
     const { slot, route } = await minePage({}, [asking], formatRoute({ view: "mine", key: asking.key }));
     const view = await find(slot.container, `[data-detail="${asking.key}"]`);

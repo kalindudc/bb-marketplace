@@ -67,7 +67,7 @@ export const SETTINGS = {
     type: "string",
     label: "Bot authors",
     description: "Authors Reviews hides with Hide bots, as globs separated by commas, on top of the accounts a server marks as bots.",
-    default: "dependabot*, renovate*, *[bot], *-actuator, *.gserviceaccount.com",
+    default: "dependabot*, renovate*, *[bot]",
     experimental_schema: z.string().trim().max(1000),
   },
 } satisfies PluginSettingDescriptors;
@@ -85,7 +85,7 @@ export interface Settings {
   botAuthors: string[];
 }
 
-export const DEFAULT_BOT_AUTHORS = "dependabot*, renovate*, *[bot], *-actuator, *.gserviceaccount.com";
+export const DEFAULT_BOT_AUTHORS = "dependabot*, renovate*, *[bot]";
 const globs = (text: string) => text.split(",").map((g) => g.trim()).filter(Boolean);
 
 export const DEFAULT_SETTINGS: Settings = {

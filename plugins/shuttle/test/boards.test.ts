@@ -5,30 +5,30 @@ import { Shuttle } from "../src/shuttle";
 import { Store } from "../src/db/store";
 import { FakePort, harness, memoryDb, pr, TEST_SERVER, testConfig } from "./helpers";
 
-const KEY = (n: number) => `forge:shop/world#${n}`;
-const DELTA_KEY = (n: number) => `delta:shop/platform#${n}`;
-const DELTA_SERVER = {
+const KEY = (n: number) => `forge:acme/app#${n}`;
+const LAB_KEY = (n: number) => `lab:acme/platform#${n}`;
+const LAB_SERVER = {
   ...TEST_SERVER,
-  id: "delta",
-  name: "Delta",
-  pattern: "^https://delta\\.test/(?<repo>[^/]+/[^/]+)/pull/(?<number>\\d+)",
-  link: "https://delta.test/{repo}/pull/{number}",
-  read: "delta pr view {number} -R {repo}",
+  id: "lab",
+  name: "Lab",
+  pattern: "^https://lab\\.test/(?<repo>[^/]+/[^/]+)/pull/(?<number>\\d+)",
+  link: "https://lab.test/{repo}/pull/{number}",
+  read: "lab pr view {number} -R {repo}",
 } as const;
 
 describe("boards", () => {
   it("creates boards with ordered cross-server membership and no PR side effects", async () => {
-    const h = harness(testConfig({ servers: [TEST_SERVER, DELTA_SERVER] as never }));
+    const h = harness(testConfig({ servers: [TEST_SERVER, LAB_SERVER] as never }));
     h.views[1] = pr(1, { author: "me", review: "approved" });
     h.views[3] = pr(3, { author: "me", checks: "failed" });
-    h.views[22] = pr(22, { repo: "shop/platform", author: "dana", state: "merged", review: "approved" });
+    h.views[22] = pr(22, { repo: "acme/platform", author: "dana", state: "merged", review: "approved" });
     await h.shuttle.sync();
 
     const created = await h.shuttle.boardCreate(
       {
         name: "  Release train  ",
         description: "  Shipping set  ",
-        prs: [KEY(3), "https://delta.test/shop/platform/pull/22", KEY(1)],
+        prs: [KEY(3), "https://lab.test/acme/platform/pull/22", KEY(1)],
       },
       "thr_worker",
     );
@@ -42,9 +42,9 @@ describe("boards", () => {
       ready: 1,
       merged: 1,
     });
-    expect(created.board.preview.map((pr: { key: string }) => pr.key)).toEqual([KEY(3), DELTA_KEY(22), KEY(1)]);
-    expect(created.prs.map((pr: { key: string }) => pr.key)).toEqual([KEY(3), DELTA_KEY(22), KEY(1)]);
-    for (const key of [KEY(3), DELTA_KEY(22), KEY(1)]) {
+    expect(created.board.preview.map((pr: { key: string }) => pr.key)).toEqual([KEY(3), LAB_KEY(22), KEY(1)]);
+    expect(created.prs.map((pr: { key: string }) => pr.key)).toEqual([KEY(3), LAB_KEY(22), KEY(1)]);
+    for (const key of [KEY(3), LAB_KEY(22), KEY(1)]) {
       const view = h.shuttle.view(key);
       expect(view.links).toEqual([]);
       expect(view.tracked).toBe(false);
@@ -87,11 +87,11 @@ describe("boards", () => {
     await expect(h.shuttle.boardAdd({ id, prs: [KEY(2), "not a pr"] })).rejects.toThrow(/PR link or a key/i);
     expect(h.shuttle.board(id).prs.map((pr: { key: string }) => pr.key)).toEqual([KEY(1)]);
 
-    const added = await h.shuttle.boardAdd({ id, prs: ["https://forge.test/shop/world/pull/1", KEY(2), KEY(2)] });
+    const added = await h.shuttle.boardAdd({ id, prs: ["https://forge.test/acme/app/pull/1", KEY(2), KEY(2)] });
     expect(added).toEqual({ board: expect.any(Object), added: [KEY(2)], alreadyPresent: [KEY(1)] });
     expect(added.board.prCount).toBe(2);
 
-    const removed = h.shuttle.boardRemove({ id, prs: ["https://forge.test/shop/world/pull/2", "https://forge.test/shop/world/pull/2"] });
+    const removed = h.shuttle.boardRemove({ id, prs: ["https://forge.test/acme/app/pull/2", "https://forge.test/acme/app/pull/2"] });
     expect(removed).toEqual({ board: expect.any(Object), removed: [KEY(2)] });
     expect(h.shuttle.board(id).prs.map((pr: { key: string }) => pr.key)).toEqual([KEY(1)]);
     expect(h.shuttle.boardRemove({ id, prs: [KEY(2)] })).toEqual({ board: expect.any(Object), removed: [] });

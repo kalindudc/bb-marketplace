@@ -31,7 +31,7 @@ describe("keys and links", () => {
   it("parses keys with either sign and links of every server", () => {
     expect(parseKey("gitlab:group/sub/proj!77")).toEqual({ server: "gitlab", repo: "group/sub/proj", number: 77 });
     expect(parseLink("https://github.com/get-bb/bb/pull/4411/files", servers)).toEqual({ server: "github", repo: "get-bb/bb", number: 4411 });
-    expect(parseLink("https://forge.test/shop/world/pull/12", servers)).toEqual({ server: "forge", repo: "shop/world", number: 12 });
+    expect(parseLink("https://forge.test/acme/app/pull/12", servers)).toEqual({ server: "forge", repo: "acme/app", number: 12 });
     expect(() => resolveQuery("nope:a/b#1", servers)).toThrow(/no server called nope/u);
     expect(() => resolveQuery("hello", servers)).toThrow(/no server's link pattern/u);
   });
@@ -40,12 +40,12 @@ describe("keys and links", () => {
 describe("projects", () => {
   it("matches a repo to a project by remote, then by repository name, then the default", () => {
     const projects = [
-      { id: "a", name: "world", gitRemoteUrl: "git@github.com:Shopify/world.git" },
+      { id: "a", name: "app", gitRemoteUrl: "git@github.com:acme/app.git" },
       { id: "b", name: "bb", gitRemoteUrl: "https://github.com/get-bb/bb" },
     ];
-    expect(remotePath("git@github.com:Shopify/world.git")).toBe("shopify/world");
+    expect(remotePath("git@github.com:acme/app.git")).toBe("acme/app");
     expect(matchProject("get-bb/bb", projects, null)).toBe("b");
-    expect(matchProject("shop/world", projects, null)).toBe("a");
+    expect(matchProject("acme/app", projects, null)).toBe("a");
     expect(matchProject("x/y", projects, "b")).toBe("b");
     expect(matchProject("x/y", projects, null)).toBeNull();
   });
@@ -55,8 +55,8 @@ describe("templates and globs", () => {
   it("fills known variables and leaves unknown ones", () => {
     expect(renderTemplate("{url} {nope}", { url: "u" })).toBe("u {nope}");
     expect(globMatch("get-bb/*", "get-bb/bb")).toBe(true);
-    expect(globMatch("shop/world", "Shop/World")).toBe(true);
-    expect(globMatch("shop/*", "other/x")).toBe(false);
+    expect(globMatch("acme/app", "Acme/App")).toBe(true);
+    expect(globMatch("acme/*", "other/x")).toBe(false);
   });
 });
 
@@ -66,8 +66,8 @@ describe("command adapter", () => {
 
   it("runs real shell commands with the PR in the environment", async () => {
     expect(await adapter.whoami()).toBe("me");
-    const view = await adapter.view("shop/world", 7);
-    expect(view).toMatchObject({ repo: "shop/world", number: 7, state: "draft", url: "https://forge.test/shop/world/pull/7", checks: "none" });
+    const view = await adapter.view("acme/app", 7);
+    expect(view).toMatchObject({ repo: "acme/app", number: 7, state: "draft", url: "https://forge.test/acme/app/pull/7", checks: "none" });
   });
 
   it("says what went wrong: exit code, not JSON, wrong shape", async () => {
@@ -82,12 +82,12 @@ describe("command adapter", () => {
 
 describe("server workspaces", () => {
   const worktreePreset = parseConfig({ ...DEFAULT_CONFIG, presets: [{ id: "p", name: "P", default: true, workspace: "worktree", prompt: "x" }] }).presets[0]!;
-  const row = (extra: Record<string, unknown> = {}) => ({ number: 7, repo: "shop/world", server: "delta", head: "abc", head_ref: "sam/fix it", base: "main", ...extra }) as never;
+  const row = (extra: Record<string, unknown> = {}) => ({ number: 7, repo: "acme/app", server: "lab", head: "abc", head_ref: "sam/fix it", base: "main", ...extra }) as never;
 
   it("fills a provider's inputs at any depth, and leaves the project's own workspace alone", async () => {
     const { workspaceFor } = await import("../src/workspaces");
-    const provider = { kind: "provider" as const, provider: "world-tree", inputs: { tree: "shuttle-{number}", zones: ["//areas/{repo_name}"], depth: 1 } };
-    expect(await workspaceFor(worktreePreset, provider, row(), runProcess)).toEqual({ kind: "provider", providerId: "world-tree", inputs: { tree: "shuttle-7", zones: ["//areas/world"], depth: 1 } });
+    const provider = { kind: "provider" as const, provider: "my-trees", inputs: { tree: "shuttle-{number}", paths: ["src/{repo_name}"], depth: 1 } };
+    expect(await workspaceFor(worktreePreset, provider, row(), runProcess)).toEqual({ kind: "provider", providerId: "my-trees", inputs: { tree: "shuttle-7", paths: ["src/app"], depth: 1 } });
     expect(await workspaceFor({ ...worktreePreset, workspace: "project-default" }, provider, row(), runProcess)).toEqual({ kind: "project-default" });
     expect(await workspaceFor(worktreePreset, undefined, row(), runProcess)).toEqual({ kind: "worktree" });
   });
@@ -102,13 +102,13 @@ describe("server workspaces", () => {
 
   it("starts a review in the server's provider", async () => {
     const h = harness(testConfig({
-      servers: [{ ...TEST_SERVER, workspace: { kind: "provider", provider: "world-tree", inputs: { tree: "shuttle-{number}" } } }],
+      servers: [{ ...TEST_SERVER, workspace: { kind: "provider", provider: "my-trees", inputs: { tree: "shuttle-{number}" } } }],
       presets: [{ id: "p", name: "P", default: true, workspace: "worktree", prompt: "x" }],
     } as never));
     h.lists.review_requested = [pr(3)];
     await h.shuttle.sync();
-    await h.shuttle.review({ key: "forge:shop/world#3" });
-    expect(h.port.spawned[0]!.workspace).toEqual({ kind: "provider", providerId: "world-tree", inputs: { tree: "shuttle-3" } });
+    await h.shuttle.review({ key: "forge:acme/app#3" });
+    expect(h.port.spawned[0]!.workspace).toEqual({ kind: "provider", providerId: "my-trees", inputs: { tree: "shuttle-3" } });
   });
 });
 
@@ -117,22 +117,22 @@ describe("descriptions", () => {
     const h = harness();
     h.lists.review_requested = [pr(3)];
     await h.shuttle.sync();
-    expect(h.shuttle.detail("forge:shop/world#3").body).toBeNull();
+    expect(h.shuttle.detail("forge:acme/app#3").body).toBeNull();
     h.views[3] = pr(3, { body: "Explains the change" });
-    await h.shuttle.refreshStale(["forge:shop/world#3"], 60_000);
-    expect(h.shuttle.detail("forge:shop/world#3").body).toBe("Explains the change");
+    await h.shuttle.refreshStale(["forge:acme/app#3"], 60_000);
+    expect(h.shuttle.detail("forge:acme/app#3").body).toBe("Explains the change");
     await h.shuttle.sync();
-    expect(h.shuttle.detail("forge:shop/world#3").body).toBe("Explains the change");
+    expect(h.shuttle.detail("forge:acme/app#3").body).toBe("Explains the change");
     h.views[4] = pr(4);
-    await h.shuttle.lookup("forge:shop/world#4");
-    expect(h.shuttle.detail("forge:shop/world#4").body).toBe("");
+    await h.shuttle.lookup("forge:acme/app#4");
+    expect(h.shuttle.detail("forge:acme/app#4").body).toBe("");
   });
 });
 
 describe("shell safety", () => {
   it("quotes server data in read commands, fills each placeholder once, and refuses hostile repo names", async () => {
     const { fillCommand } = await import("../src/adapters/exec");
-    expect(fillCommand("dt pr view {number} -R {repo} {url}", "a/b", 3, "https://x/y?a=1&b=2")).toBe("dt pr view 3 -R a/b 'https://x/y?a=1&b=2'");
+    expect(fillCommand("lab pr view {number} -R {repo} {url}", "a/b", 3, "https://x/y?a=1&b=2")).toBe("lab pr view 3 -R a/b 'https://x/y?a=1&b=2'");
     expect(fillCommand("x {repo}", "a/b'; echo pwned", 1, "u")).toBe("x 'a/b'\\''; echo pwned'");
     const crafted = fillCommand("x -R {repo} {number}", "x{url}/y{number}", 7, "https://forge.test/p/7?tab=$(printf${IFS}INJECTED)");
     expect(crafted).toBe("x -R 'x{url}/y{number}' 7");
@@ -180,13 +180,13 @@ describe("reviews", () => {
     h.lists.review_requested = [pr(3), pr(4, { repo: "x/unknown" })];
     await h.shuttle.sync();
     h.port.addThread("thr_mine", "Mine");
-    await h.shuttle.review({ key: "forge:shop/world#3", threadId: "thr_mine", note: "focus on filters" });
+    await h.shuttle.review({ key: "forge:acme/app#3", threadId: "thr_mine", note: "focus on filters" });
     expect(h.port.sent[0]).toMatchObject({ threadId: "thr_mine" });
     expect(h.port.sent[0]!.text).toContain("Note from me: focus on filters");
     await expect(h.shuttle.review({ key: "forge:x/unknown#4" })).rejects.toThrow(/no bb project matches x\/unknown/u);
-    h.settings.defaultProject = "proj_world";
+    h.settings.defaultProject = "proj_app";
     await h.shuttle.review({ key: "forge:x/unknown#4" });
-    expect(h.port.spawned[0]).toMatchObject({ projectId: "proj_world", workspace: { kind: "project-default" } });
+    expect(h.port.spawned[0]).toMatchObject({ projectId: "proj_app", workspace: { kind: "project-default" } });
   });
 
   it("files review threads in the configured section, and still starts them when the section cannot be made", async () => {
@@ -194,14 +194,14 @@ describe("reviews", () => {
     h.lists.review_requested = [pr(3), pr(4)];
     await h.shuttle.sync();
     h.settings.reviewSection = "PR reviews";
-    await h.shuttle.review({ key: "forge:shop/world#3" });
-    await h.shuttle.review({ key: "forge:shop/world#4" });
+    await h.shuttle.review({ key: "forge:acme/app#3" });
+    await h.shuttle.review({ key: "forge:acme/app#4" });
     expect(h.port.spawned.map((s) => s.sectionId)).toEqual(["sec_1", "sec_1"]);
     h.port.failSections = true;
-    await h.shuttle.review({ key: "forge:shop/world#3", newThread: true });
+    await h.shuttle.review({ key: "forge:acme/app#3", newThread: true });
     expect(h.port.spawned[2]!.sectionId).toBeUndefined();
     expect(h.shuttle.activity().some((e) => e.kind === "section_failed")).toBe(true);
-    const owner = await h.shuttle.newThread("forge:shop/world#4", "own");
+    const owner = await h.shuttle.newThread("forge:acme/app#4", "own");
     expect(h.port.spawned.find((s) => s.threadId === owner)!.sectionId).toBeUndefined();
   });
 
@@ -209,7 +209,7 @@ describe("reviews", () => {
     const h = harness();
     h.lists.authored = [pr(1, { author: "me" })];
     await h.shuttle.sync();
-    const threadId = await h.shuttle.newThread("forge:shop/world#1", "own");
-    expect(h.shuttle.view("forge:shop/world#1")).toMatchObject({ watch: "act", links: [{ threadId, role: "owner" }] });
+    const threadId = await h.shuttle.newThread("forge:acme/app#1", "own");
+    expect(h.shuttle.view("forge:acme/app#1")).toMatchObject({ watch: "act", links: [{ threadId, role: "owner" }] });
   });
 });

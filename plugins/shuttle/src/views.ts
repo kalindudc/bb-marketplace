@@ -64,7 +64,7 @@ export function isBot(ctx: Ctx, pr: PrRow): boolean {
   return pr.author_bot === 1 || ctx.settings().botAuthors.some((glob) => globMatch(glob, pr.author));
 }
 
-/** Team slugs without @ or org, so GitHub's @Shopify/edge-infrastructure and Delta's @edge-infrastructure match. */
+/** Team slugs without @ or org, so GitHub's @acme/platform and another server's @platform match. */
 export function normalizeTeam(team: string): string {
   return team.replace(/^@/u, "").split("/").pop()!.toLowerCase();
 }

@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { MIGRATIONS } from "../src/db/schema";
 import { harness, pr, testConfig, TEST_SERVER } from "./helpers";
 
-const KEY = "forge:shop/world#3";
+const KEY = "forge:acme/app#3";
 const WRITE_SERVER = { ...TEST_SERVER, enabled: true, sep: "#" as const, commands: { ...TEST_SERVER.commands, comment: "c", review: "rv" } };
 const NO_AUTO = { enabled: false, when: ["requested" as const], drafts: false, preset: "", repos: [], maxPerDay: 8, rerun: "never" as const };
 const PRESET = { id: "std", name: "Standard review", default: true, skill: "", workspace: "worktree" as const, providerId: "pi", model: "gpt-6-sol", reasoningLevel: "xhigh", prompt: "Review {url} at {head}.{note}" };
@@ -37,8 +37,8 @@ describe("archiving Shuttle's review threads", () => {
     await h.shuttle.submitReview(KEY, { verdict: "changes", body: "One race", findings: [{ path: "a.go", line: 3, body: "Race" }], draftId });
     expect(h.port.lifecycle).toEqual([`archive ${threadId}`]);
     expect(archivedIds(h)).toEqual(["thr_critic1", "thr_critic2", threadId].sort());
-    expect(lastEvent(h, "archived")).toBe("Archived the review thread \u201cReview shop/world#3\u201d and its 2 child threads: you posted its review.");
-    expect(h.shuttle.view(KEY).reviewThread).toEqual({ threadId, title: "Review shop/world#3", archived: true });
+    expect(lastEvent(h, "archived")).toBe("Archived the review thread \u201cReview acme/app#3\u201d and its 2 child threads: you posted its review.");
+    expect(h.shuttle.view(KEY).reviewThread).toEqual({ threadId, title: "Review acme/app#3", archived: true });
     // A later sync finds nothing more to do.
     await h.shuttle.sync();
     expect(h.port.lifecycle).toEqual([`archive ${threadId}`]);
@@ -69,7 +69,7 @@ describe("archiving Shuttle's review threads", () => {
     h.lists.review_requested = [pr(3), pr(4)];
     await h.shuttle.sync();
     const one = (await h.shuttle.review({ key: KEY })).threadId;
-    const two = (await h.shuttle.review({ key: "forge:shop/world#4" })).threadId;
+    const two = (await h.shuttle.review({ key: "forge:acme/app#4" })).threadId;
     await h.shuttle.onThreadIdle(one);
     await h.shuttle.onThreadIdle(two);
     await h.shuttle.sync();
@@ -78,7 +78,7 @@ describe("archiving Shuttle's review threads", () => {
     h.views[3] = pr(3);
     await h.shuttle.submitReview(KEY, { verdict: "approve", body: "LGTM", findings: [] });
     expect(h.port.lifecycle).toEqual([`archive ${one}`]);
-    expect(lastEvent(h, "archived")).toBe("Archived the review thread \u201cReview shop/world#3\u201d: you reviewed the PR.");
+    expect(lastEvent(h, "archived")).toBe("Archived the review thread \u201cReview acme/app#3\u201d: you reviewed the PR.");
     h.lists.review_requested = [pr(3)];
     h.views[4] = pr(4, { state: "merged" });
     await h.shuttle.sync();
@@ -142,7 +142,7 @@ describe("reviving a review thread for the PR's next review", () => {
     expect(h.port.sent[0]).toMatchObject({ threadId, options: { model: "gpt-6-sol", reasoningLevel: "xhigh" } });
     expect(h.port.sent[0]!.text).toContain("at h2.");
     expect(h.shuttle.view(KEY)).toMatchObject({ reviewThread: { threadId, archived: false }, lastReview: { threadId, state: "running", head: "h2" } });
-    expect(lastEvent(h, "review")).toBe("Review of shop/world#3 started with Standard review in \u201cReview shop/world#3\u201d, brought back from the archive.");
+    expect(lastEvent(h, "review")).toBe("Review of acme/app#3 started with Standard review in \u201cReview acme/app#3\u201d, brought back from the archive.");
     // The run in the brought-back thread is Shuttle's too, so it is archived when it is done.
     await h.shuttle.onThreadIdle(threadId);
     h.views[3] = pr(3, { head: "h2" });
@@ -178,7 +178,7 @@ describe("reviving a review thread for the PR's next review", () => {
 
     const other = await reviewed([{ ...PRESET, id: "claude", default: false, providerId: "claude-code" }, PRESET]);
     expect((await other.h.shuttle.review({ key: KEY, presetId: "claude" })).threadId).toBe("thr_spawned2");
-    expect(lastEvent(other.h, "revive_failed")).toBe("The review of shop/world#3 went to a new thread: \u201cReview shop/world#3\u201d could not take it (it runs on pi, and this review asks for claude-code).");
+    expect(lastEvent(other.h, "revive_failed")).toBe("The review of acme/app#3 went to a new thread: \u201cReview acme/app#3\u201d could not take it (it runs on pi, and this review asks for claude-code).");
 
     const refused = await reviewed();
     await refused.h.shuttle.discardDraft(KEY, refused.draftId);

@@ -86,10 +86,10 @@ describe("Shuttle settings sections", () => {
   it("tests a server and shows each operation's result", async () => {
     const slot = await section("servers", {
       overview: () => overview({ servers: [server({ operations: ["whoami", "view"] })] }),
-      testServer: () => ({ results: [{ operation: "whoami", ok: true, detail: "kalindudc", ms: 120 }, { operation: "authored", ok: false, detail: "gh: not logged in", ms: 80 }] }),
+      testServer: () => ({ results: [{ operation: "whoami", ok: true, detail: "robin-c", ms: 120 }, { operation: "authored", ok: false, detail: "gh: not logged in", ms: 80 }] }),
     });
     const card = await waitFor(() => slot.container.querySelector<HTMLElement>("[data-server='github']") ?? Promise.reject(new Error("no card")));
-    expect(card.textContent).toContain("Signed in as kalindudc");
+    expect(card.textContent).toContain("Signed in as robin-c");
     fireEvent.click(within(card).getByRole("button", { name: "Test" }));
     await waitFor(() => expect(card.querySelectorAll("[data-test-result]")).toHaveLength(2));
     expect(callsTo(slot, "testServer")).toEqual([{ id: "github" }]);
@@ -128,19 +128,19 @@ describe("Shuttle settings sections", () => {
   });
 
   it("edits a server's review workspace and keeps the fields its form does not show", async () => {
-    const delta = { id: "delta", name: "Delta", kind: "command" as const, enabled: true, sep: "#" as const, pattern: "^https://d/(?<repo>[^/]+/[^/]+)/pull/(?<number>\\d+)", link: "https://d/{repo}/pull/{number}", read: "dt pr view {number} -R {repo}", commands: { view: "sh delta.sh" } };
-    const slot = await section("servers", { getConfig: () => ({ config: config({ servers: [...config().servers, delta] }) }) });
-    fireEvent.click(await slot.findByRole("button", { name: "Edit Delta" }));
+    const lab = { id: "lab", name: "Lab", kind: "command" as const, enabled: true, sep: "#" as const, pattern: "^https://d/(?<repo>[^/]+/[^/]+)/pull/(?<number>\\d+)", link: "https://d/{repo}/pull/{number}", read: "lab pr view {number} -R {repo}", commands: { view: "sh lab.sh" } };
+    const slot = await section("servers", { getConfig: () => ({ config: config({ servers: [...config().servers, lab] }) }) });
+    fireEvent.click(await slot.findByRole("button", { name: "Edit Lab" }));
     const form = slot.container.querySelector<HTMLElement>("[data-server-form]")!;
-    expect((within(form).getByRole("textbox", { name: "Read command" }) as HTMLInputElement).value).toBe("dt pr view {number} -R {repo}");
+    expect((within(form).getByRole("textbox", { name: "Read command" }) as HTMLInputElement).value).toBe("lab pr view {number} -R {repo}");
     fireEvent.change(within(form).getByRole("combobox", { name: "Review workspace" }), { target: { value: "provider" } });
-    fireEvent.change(within(form).getByRole("textbox", { name: "Environment provider" }), { target: { value: "world-tree" } });
+    fireEvent.change(within(form).getByRole("textbox", { name: "Environment provider" }), { target: { value: "my-trees" } });
     fireEvent.change(within(form).getByRole("textbox", { name: "Provider inputs" }), { target: { value: "{ nope" } });
     expect((within(form).getByRole("button", { name: "Save server" }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(within(form).getByRole("textbox", { name: "Provider inputs" }), { target: { value: '{ "tree": "shuttle-{number}" }' } });
     fireEvent.click(within(form).getByRole("button", { name: "Save server" }));
     await waitFor(() => expect(saved(slot)).toHaveLength(1));
-    expect(saved(slot)[0]!.servers.at(-1)).toEqual({ ...delta, workspace: { kind: "provider", provider: "world-tree", inputs: { tree: "shuttle-{number}" } } });
+    expect(saved(slot)[0]!.servers.at(-1)).toEqual({ ...lab, workspace: { kind: "provider", provider: "my-trees", inputs: { tree: "shuttle-{number}" } } });
   });
 
   it("flags a link pattern without its groups before saving", async () => {
@@ -160,17 +160,21 @@ describe("Shuttle settings sections", () => {
   it("saves the automations", async () => {
     const slot = await section("automations");
     fireEvent.click(await slot.findByRole("checkbox", { name: /I am @mentioned/u }));
-    fireEvent.change(slot.getByRole("textbox", { name: "Only these repositories" }), { target: { value: "shop/world, get-bb/*" } });
+    fireEvent.change(slot.getByRole("textbox", { name: "Only these repositories" }), { target: { value: "acme/app, get-bb/*" } });
     fireEvent.change(slot.getByRole("spinbutton", { name: "Auto reviews a day" }), { target: { value: "3" } });
     fireEvent.change(slot.getByRole("combobox", { name: "Auto review preset" }), { target: { value: "quick" } });
     fireEvent.change(slot.getByRole("combobox", { name: "What a new agent does" }), { target: { value: "forward" } });
+    const bots = slot.getByRole("textbox", { name: "Bots an agent still hears from" }) as HTMLInputElement;
+    expect(bots.value).toBe("");
+    fireEvent.change(bots, { target: { value: "review-bot, *-scanner" } });
     fireEvent.click(slot.getByRole("checkbox", { name: /Ignore bots/u }));
+    expect(bots.disabled).toBe(true);
     fireEvent.click(slot.getByRole("checkbox", { name: /A thread that links one of your PRs becomes its agent/u }));
     fireEvent.click(slot.getByRole("button", { name: "Save automations" }));
     await waitFor(() => expect(saved(slot)).toHaveLength(1));
     const next = saved(slot)[0]!;
-    expect(next.autoReview).toMatchObject({ when: ["requested", "mentioned"], repos: ["shop/world", "get-bb/*"], maxPerDay: 3, preset: "quick" });
-    expect(next.watch).toMatchObject({ mode: "forward", ignoreBots: false, autoWatch: false });
+    expect(next.autoReview).toMatchObject({ when: ["requested", "mentioned"], repos: ["acme/app", "get-bb/*"], maxPerDay: 3, preset: "quick" });
+    expect(next.watch).toMatchObject({ mode: "forward", ignoreBots: false, allowBots: ["review-bot", "*-scanner"], autoWatch: false });
     expect(next.presets).toEqual(config().presets);
   });
 

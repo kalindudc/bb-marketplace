@@ -27,13 +27,13 @@ const command = z.string().trim().min(1).max(4000);
 
 /**
  * How a review gets its own checkout of this server's PRs, when its preset asks for one. Without
- * it, bb's git worktree. Some repositories refuse worktrees outside their own place (World wants
- * ~/world/trees), so a server can name a bb environment provider, or a command that prints a path.
+ * it, bb's git worktree. Some repositories refuse worktrees outside their own place (a monorepo may
+ * want them in its own trees folder), so a server can name a bb environment provider, or a command that prints a path.
  */
 export const serverWorkspaceSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("provider"),
-    provider: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,99}$/u, "must be a bb environment provider id such as world-tree"),
+    provider: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,99}$/u, "must be a bb environment provider id such as my-trees"),
     /** The provider's inputs; every string may use {number}, {repo}, {repo_name}, {head_ref}, {base}, {head}, {server} and {slug}. */
     inputs: z.record(z.string(), z.unknown()).default({}),
   }).strict(),
@@ -104,7 +104,7 @@ export const autoReviewSchema = z
     drafts: z.boolean().default(false),
     /** A preset id; empty for the default preset. */
     preset: z.string().max(32).default(""),
-    /** Repository globs such as shop/world or get-bb/*; empty for every repository. */
+    /** Repository globs such as acme/app or acme/*; empty for every repository. */
     repos: z.array(z.string().min(1).max(200)).max(50).default([]),
     maxPerDay: z.number().int().min(0).max(100).default(8),
     rerun: z.enum(["never", "new_head"]).default("never"),
@@ -118,6 +118,8 @@ export const watchSchema = z
     autoWatch: z.boolean().default(true),
     includeChecks: z.boolean().default(true),
     ignoreBots: z.boolean().default(true),
+    /** Bot logins that Ignore bots lets through, with or without GitHub's [bot] suffix. */
+    allowBots: z.array(z.string().trim().regex(/^[^\s,]{1,100}$/u, "must be one login, with no spaces or commas")).max(50).default([]),
     batchMinutes: z.number().int().min(0).max(60).default(2),
     actPrompt: z.string().min(1).max(8000),
   })

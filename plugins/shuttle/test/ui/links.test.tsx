@@ -250,7 +250,7 @@ describe("git links in a thread", () => {
   it("shows an issue's card, colours its links once the card has read it, and opens a PR that closes it in Shuttle", async () => {
     const issue: NonNullable<LinkCard["issue"]> = {
       number: 40, title: "Retries hide gateway outages", state: "completed", author: "sam-rivera", createdAt: Date.now() - 3 * 86_400_000, closedAt: Date.now() - 3_600_000,
-      body: "When the gateway is down, the retries make it look slow instead.", labels: [{ name: "bug", color: "d73a4a" }], assignees: ["kalindudc"], comments: 2,
+      body: "When the gateway is down, the retries make it look slow instead.", labels: [{ name: "bug", color: "d73a4a" }], assignees: ["robin-c"], comments: 2,
       closedBy: [
         { repo: "acme/checkout", number: 4821, title: "Retry card authorization when the payment gateway times out", state: "merged", url: PR_URL, key: retryPr.key },
         { repo: "acme/docs", number: 3, title: "Document the retry budget", state: "open", url: "https://github.com/acme/docs/pull/3", key: null },
@@ -268,7 +268,7 @@ describe("git links in a thread", () => {
     expect(shown.textContent).toContain("sam-rivera opened it 3d ago");
     expect(shown.textContent).toContain("When the gateway is down");
     expect(shown.querySelector('[data-label="bug"]')).not.toBeNull();
-    expect(shown.textContent).toContain("Assigned to kalindudc");
+    expect(shown.textContent).toContain("Assigned to robin-c");
     expect(shown.textContent).toContain("Closed by");
     expect(within(shown).queryByRole("button", { name: /Shuttle/u })).toBeNull();
     // Both links to the issue take its colour from the card's read.

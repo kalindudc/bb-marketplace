@@ -16,7 +16,7 @@ const toneOf = (state: SyncState | null): "ok" | "warn" | "bad" | "neutral" => (
 const listOf = (items: readonly string[]) => new Intl.ListFormat("en", { type: "conjunction" }).format(items);
 const failedLabels = (server: ServerStatus) => listOf(server.failedSteps.map((step) => STEP_LABELS[step]));
 
-/** "Delta's PRs show what Shuttle had at 11:28": the oldest data the failed steps left behind. */
+/** "Forge's PRs show what Shuttle had at 11:28": the oldest data the failed steps left behind. */
 function staleText(server: ServerStatus): string {
   // Who you are brings no PRs. A step that has not passed since Shuttle began keeping steps is as old as the last good sync.
   const times = server.failedSteps.filter((step) => step !== "whoami").map((step) => server.stepOkAt[step] ?? server.lastOkAt).filter((at): at is number => at !== null);

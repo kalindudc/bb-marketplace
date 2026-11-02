@@ -15,7 +15,7 @@ const MODE_TOASTS: Record<AgentMode, (pr: PrView) => string> = {
 
 const SEEN_BATCH = 500;
 
-/** "world#2311622" for one PR, "3 PRs" for more. */
+/** "app#1234" for one PR, "3 PRs" for more. */
 const prsLabel = (prs: readonly PrView[]) => (prs.length === 1 ? tinyKey(prs[0]!) : plural(prs.length, "PR"));
 
 /** The agent a PR has now, as the target that puts it back. */

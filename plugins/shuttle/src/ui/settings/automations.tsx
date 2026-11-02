@@ -43,10 +43,10 @@ function Card({ icon, title, hint, on, onToggle, children }: { icon: string; tit
 /** What Shuttle does by itself: auto reviews, and what agents get sent about your PRs. */
 export function AutomationsSection() {
   const { config, loadError, saving, saveError, save, clearSaveError } = useConfig();
-  const [draft, setDraft] = useState<{ autoReview: AutoReview; watch: Watch; repos: string } | null>(null);
+  const [draft, setDraft] = useState<{ autoReview: AutoReview; watch: Watch; repos: string; bots: string } | null>(null);
   if (config === null) return loadError !== null ? <ErrorNote>Could not load Shuttle's settings: {loadError}</ErrorNote> : <div className="text-sm text-muted-foreground">Loading…</div>;
 
-  const shown = draft ?? { autoReview: config.autoReview, watch: config.watch, repos: config.autoReview.repos.join(", ") };
+  const shown = draft ?? { autoReview: config.autoReview, watch: config.watch, repos: config.autoReview.repos.join(", "), bots: config.watch.allowBots.join(", ") };
   const { autoReview: auto, watch } = shown;
   const setAuto = (patch: Partial<AutoReview>) => {
     clearSaveError();
@@ -60,7 +60,7 @@ export function AutomationsSection() {
     setAuto({ when: AUTO_TRIGGERS.filter((item) => (item === trigger ? on : auto.when.includes(item))) });
   const submit = async () => {
     if (draft === null) return;
-    const next: Config = { ...config, autoReview: { ...draft.autoReview, repos: splitGlobs(draft.repos) }, watch: draft.watch };
+    const next: Config = { ...config, autoReview: { ...draft.autoReview, repos: splitGlobs(draft.repos) }, watch: { ...draft.watch, allowBots: splitGlobs(draft.bots) } };
     if (await save(next, "Saved the automations")) setDraft(null);
   };
   const row = "grid grid-cols-1 items-center gap-1 sm:grid-cols-[10rem_minmax(0,1fr)] sm:gap-3";
@@ -86,7 +86,7 @@ export function AutomationsSection() {
           </label>
           <label className={row}>
             <span className={label}>Only these repositories</span>
-            <input aria-label="Only these repositories" className={`${FIELD} font-mono`} placeholder="Any repository, or globs such as shop/world, get-bb/*" value={shown.repos}
+            <input aria-label="Only these repositories" className={`${FIELD} font-mono`} placeholder="Any repository, or globs such as acme/app, acme/*" value={shown.repos}
               onChange={(event) => { clearSaveError(); setDraft({ ...shown, repos: event.target.value }); }} />
           </label>
           <label className={row}>
@@ -129,6 +129,14 @@ export function AutomationsSection() {
           <Checkbox checked={watch.includeChecks} label="Also send failed checks on the head" onChange={(includeChecks) => setWatch({ includeChecks })} />
           <Checkbox checked={watch.ignoreBots} label="Ignore bots" hint="Reviews and comments from accounts the server marks as bots." onChange={(ignoreBots) => setWatch({ ignoreBots })} />
         </div>
+        <label className={`${row} mt-1.5 text-sm`}>
+          <span className={label}>Except these bots</span>
+          <span className="flex min-w-0 flex-col gap-1">
+            <input aria-label="Bots an agent still hears from" className={`${FIELD} font-mono`} disabled={!watch.ignoreBots} placeholder="No bot, or logins and globs such as review-bot, *-scanner" value={shown.bots}
+              onChange={(event) => { clearSaveError(); setDraft({ ...shown, bots: event.target.value }); }} />
+            <span className="text-xs text-muted-foreground">An agent still gets their reviews and comments, such as an AI reviewer's findings. What a bot said before you add it is not sent.</span>
+          </span>
+        </label>
         <div className={`${row} mt-2 items-start text-sm`}>
           <span className={`${label} pt-1.5`}>What a Fix it agent is asked to do</span>
           <PromptEditor label="What a Fix it agent is asked to do" rows={4} value={watch.actPrompt} variables={ACT_PROMPT_VARIABLES} onChange={(actPrompt) => setWatch({ actPrompt })} />

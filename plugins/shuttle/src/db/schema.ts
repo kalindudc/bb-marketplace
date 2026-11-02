@@ -258,4 +258,6 @@ export const MIGRATIONS: string[] = [
   `CREATE INDEX review_posts_state ON review_posts (state, server, id)`,
   // A review's notes for the user: shown beside its draft and never posted.
   `ALTER TABLE review_drafts ADD COLUMN notes TEXT`,
+  // The bots a watch last heard from: a JSON list of logins and globs, or "*" for every bot. NULL is none, as Ignore bots had it.
+  `ALTER TABLE watches ADD COLUMN bots TEXT`,
 ];

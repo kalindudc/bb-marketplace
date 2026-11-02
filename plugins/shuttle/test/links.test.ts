@@ -10,7 +10,7 @@ const SERVERS = parseConfig({
   ...DEFAULT_CONFIG,
   servers: [
     { id: "github", name: "GitHub", kind: "github", commands: {} },
-    { id: "delta", name: "Delta", kind: "command", pattern: "^https://delta\\.shopify\\.io/(?<repo>[^/]+/[^/]+)/pull/(?<number>\\d+)", link: "https://delta.shopify.io/{repo}/pull/{number}", commands: { view: "v" } },
+    { id: "lab", name: "Lab", kind: "command", pattern: "^https://lab\\.example\\.com/(?<repo>[^/]+/[^/]+)/pull/(?<number>\\d+)", link: "https://lab.example.com/{repo}/pull/{number}", commands: { view: "v" } },
   ],
 }).servers;
 const parse = (url: string) => parseGitLink(url, SERVERS);
@@ -22,7 +22,7 @@ describe("git links", () => {
     expect(parse("https://github.com/acme/api/pull/12/files#diff-1a2b")).toMatchObject({ kind: "pr", part: "files" });
     expect(parse("https://github.com/acme/api/pull/12/commits")).toMatchObject({ kind: "pr", part: "commits" });
     expect(parse("https://github.com/acme/api/pull/12/checks")).toMatchObject({ kind: "pr", part: "checks" });
-    expect(parse("https://delta.shopify.io/shop/world/pull/2261179")).toMatchObject({ kind: "pr", server: "delta", ref: ref("shop/world", 2261179, "delta") });
+    expect(parse("https://lab.example.com/acme/app/pull/2261179")).toMatchObject({ kind: "pr", server: "lab", ref: ref("acme/app", 2261179, "lab") });
     expect(parse("https://github.com/acme/api/pull/123x")).toBeNull();
   });
 
@@ -41,7 +41,7 @@ describe("git links", () => {
     expect(parse("https://github.com/acme/api/actions/runs/88/job/99")).toEqual({ kind: "check", server: "github", repo: "acme/api", run: 88, checkRun: 99, ref: null });
     expect(parse("https://github.com/acme/api/actions/runs/88")).toMatchObject({ kind: "check", run: 88, checkRun: null });
     expect(parse("https://github.com/acme/api/runs/555")).toMatchObject({ kind: "check", checkRun: 555 });
-    expect(parse("https://delta.shopify.io/shop/world/commit/abcdef1")).toMatchObject({ kind: "commit", server: "delta", repo: "shop/world" });
+    expect(parse("https://lab.example.com/acme/app/commit/abcdef1")).toMatchObject({ kind: "commit", server: "lab", repo: "acme/app" });
   });
 
   it("matches a server's pattern only from the start of the link, even when the pattern has no ^", () => {
@@ -53,7 +53,7 @@ describe("git links", () => {
   it("reads an issue, and a comment on one as its issue", () => {
     expect(parse("https://github.com/acme/api/issues/4")).toEqual({ kind: "issue", server: "github", repo: "acme/api", number: 4, ref: null });
     expect(parse("https://github.com/acme/api/issues/4#issuecomment-9")).toMatchObject({ kind: "issue", number: 4 });
-    expect(parse("https://delta.shopify.io/shop/world/issues/7")).toMatchObject({ kind: "issue", server: "delta", repo: "shop/world", number: 7 });
+    expect(parse("https://lab.example.com/acme/app/issues/7")).toMatchObject({ kind: "issue", server: "lab", repo: "acme/app", number: 7 });
     expect(linkKey(parse("https://github.com/acme/api/issues/4")!)).toBe(linkKey(parse("https://github.com/acme/api/issues/4#issuecomment-9")!));
   });
 
@@ -70,7 +70,7 @@ describe("git links", () => {
 });
 
 describe("link cards", () => {
-  const LINK = (n: number, rest = "") => `https://forge.test/shop/world/pull/${n}${rest}`;
+  const LINK = (n: number, rest = "") => `https://forge.test/acme/app/pull/${n}${rest}`;
 
   it("shows a PR from Shuttle's copy, and says when it has not seen one, without asking the server", async () => {
     const h = harness();
@@ -78,13 +78,13 @@ describe("link cards", () => {
     await h.shuttle.sync();
     const calls = h.runner.calls.length;
     const card = await h.shuttle.linkCard(LINK(1, "/files"));
-    expect(card).toMatchObject({ kind: "pr", label: "shop/world#1", tab: "changes", note: null });
+    expect(card).toMatchObject({ kind: "pr", label: "acme/app#1", tab: "changes", note: null });
     expect((await h.shuttle.linkCard(LINK(1))).tab).toBe("overview");
     expect((await h.shuttle.linkCard(LINK(1, "/checks"))).tab).toBe("checks");
     expect((await h.shuttle.linkCard(LINK(1, "/commits"))).tab).toBe("changes");
-    expect(card.pr?.key).toBe("forge:shop/world#1");
+    expect(card.pr?.key).toBe("forge:acme/app#1");
     const unseen = await h.shuttle.linkCard(LINK(9));
-    expect(unseen).toMatchObject({ pr: null, prKey: "forge:shop/world#9", note: "Shuttle hasn't seen shop/world#9 yet." });
+    expect(unseen).toMatchObject({ pr: null, prKey: "forge:acme/app#9", note: "Shuttle hasn't seen acme/app#9 yet." });
     expect(h.runner.calls.length).toBe(calls);
     expect(h.shuttle.linkStates([LINK(1), LINK(9), "https://example.com"])).toEqual([
       { url: LINK(1), kind: "pr", state: "open" },
@@ -110,7 +110,7 @@ describe("link cards", () => {
     const review = await h.shuttle.linkCard(LINK(1, "#pullrequestreview-7"));
     expect(review.review).toMatchObject({ item: { id: "r1" }, comments: 2, open: 1 });
     const gone = await h.shuttle.linkCard(LINK(1, "#issuecomment-404"));
-    expect(gone).toMatchObject({ comment: null, note: "That comment is not on shop/world#1 any more, or Forge did not send it." });
+    expect(gone).toMatchObject({ comment: null, note: "That comment is not on acme/app#1 any more, or Forge did not send it." });
   });
 
   it("places a commit on its PR from the PR's last read, and says what the agent fixed with it", async () => {
@@ -122,27 +122,27 @@ describe("link cards", () => {
     ], commits: [{ sha: "abcdef1234", message: "Fix the retry", author: "me", at: "2026-10-23T11:00:00Z" }] };
     await h.shuttle.sync();
     h.port.addThread("thr_fixer", "Fixer");
-    await h.shuttle.setAgent("forge:shop/world#1", { kind: "existing", threadId: "thr_fixer" }, "fix");
+    await h.shuttle.setAgent("forge:acme/app#1", { kind: "existing", threadId: "thr_fixer" }, "fix");
     const refOf = (body: string) => [...h.port.sent[0]!.text.matchAll(/\[ref ([0-9a-f]{8})\]([^[]*)/gu)].find((found) => found[2]!.includes(body))![1]!;
     const [refId, other] = [refOf("Fix it"), refOf("And this")];
     // A fix reported with an empty commit names no commit, so it is nobody's fix.
-    await h.shuttle.recordOutcomes("thr_fixer", "forge:shop/world#1", [{ ref: refId!, outcome: "fixed", commit: "abcdef1" }, { ref: other!, outcome: "fixed", commit: "" }]);
+    await h.shuttle.recordOutcomes("thr_fixer", "forge:acme/app#1", [{ ref: refId!, outcome: "fixed", commit: "abcdef1" }, { ref: other!, outcome: "fixed", commit: "" }]);
     const onPr = await h.shuttle.linkCard(LINK(1, "/commits/abcdef1"));
     expect(onPr.commit).toMatchObject({ sha: "abcdef1234", message: "Fix the retry", head: true, fixes: [{ author: "ana", body: "Fix it" }] });
     // A commit link on its own still finds its PR by the PR's head.
-    const alone = await h.shuttle.linkCard("https://forge.test/shop/world/commit/abcdef1");
-    expect(alone).toMatchObject({ kind: "commit", label: "shop/world@abcdef1", tab: "changes" });
-    expect(alone.pr?.key).toBe("forge:shop/world#1");
+    const alone = await h.shuttle.linkCard("https://forge.test/acme/app/commit/abcdef1");
+    expect(alone).toMatchObject({ kind: "commit", label: "acme/app@abcdef1", tab: "changes" });
+    expect(alone.pr?.key).toBe("forge:acme/app#1");
     // A PR whose server reported an empty head is nobody's commit.
     h.lists.authored = [...h.lists.authored!, pr(2, { author: "me", head: "" })];
     await h.shuttle.sync();
-    expect(h.shuttle.linkStates(["https://forge.test/shop/world/commit/0000000"])).toEqual([{ url: "https://forge.test/shop/world/commit/0000000", kind: "commit", state: null }]);
-    const stranger = await h.shuttle.linkCard("https://forge.test/shop/world/commit/0000000");
+    expect(h.shuttle.linkStates(["https://forge.test/acme/app/commit/0000000"])).toEqual([{ url: "https://forge.test/acme/app/commit/0000000", kind: "commit", state: null }]);
+    const stranger = await h.shuttle.linkCard("https://forge.test/acme/app/commit/0000000");
     expect(stranger).toMatchObject({ commit: null, pr: null, note: "Shuttle has no PR with 0000000, and Forge cannot be asked about commits here." });
   });
 
   describe("reads from the server", () => {
-    const JOB = (n: number) => `https://forge.test/shop/world/actions/runs/88/job/${n}`;
+    const JOB = (n: number) => `https://forge.test/acme/app/actions/runs/88/job/${n}`;
     const run = (overrides: Partial<CheckRun> = {}): CheckRun => ({ name: "lint", group: null, state: "failed", detail: null, required: null, url: JOB(99), startedAt: null, completedAt: null, itemId: null, ...overrides });
     async function seen() {
       const h = harness();
@@ -153,7 +153,7 @@ describe("link cards", () => {
         { name: "lint", state: "failed", url: JOB(99), required: true },
       ] };
       await h.shuttle.sync();
-      await h.shuttle.conversation("forge:shop/world#1");
+      await h.shuttle.conversation("forge:acme/app#1");
       return h;
     }
 
@@ -162,8 +162,8 @@ describe("link cards", () => {
       const reads: unknown[] = [];
       Object.assign(h.shuttle.adapter("forge"), { checkRun: async (repo: string, ids: unknown): Promise<CheckInfo> => { reads.push([repo, ids]); return { run: run(), head: "abcdef1234", prs: [] }; } });
       const card = await h.shuttle.linkCard(JOB(99));
-      expect(reads).toEqual([["shop/world", { checkRun: 99, run: 88 }]]);
-      expect(card).toMatchObject({ kind: "check", label: "shop/world#1", prKey: "forge:shop/world#1", tab: "checks" });
+      expect(reads).toEqual([["acme/app", { checkRun: 99, run: 88 }]]);
+      expect(card).toMatchObject({ kind: "check", label: "acme/app#1", prKey: "forge:acme/app#1", tab: "checks" });
       expect(card.check).toMatchObject({ name: "lint", url: JOB(99), required: true });
       await h.shuttle.linkCard(JOB(99));
       expect(reads).toHaveLength(1);
@@ -190,7 +190,7 @@ describe("link cards", () => {
       h.clock.now += 61_000;
       const card = await h.shuttle.linkCard(JOB(97));
       expect(reads).toBe(2);
-      expect(card.pr?.key).toBe("forge:shop/world#1");
+      expect(card.pr?.key).toBe("forge:acme/app#1");
       // Not in the PR's own read, so nothing says whether it is required.
       expect(card.check).toMatchObject({ name: "test", required: null });
     });
@@ -202,7 +202,7 @@ describe("link cards", () => {
         reads += 1;
         return { sha: `${sha}00`, message: "Elsewhere", author: "ana", at: null, additions: 1, deletions: 0, checks: null, prs: [] };
       } });
-      const link = "https://forge.test/shop/world/commit/1234567";
+      const link = "https://forge.test/acme/app/commit/1234567";
       expect((await h.shuttle.linkCard(link)).commit).toMatchObject({ sha: "123456700", message: "Elsewhere", fixes: [] });
       await h.shuttle.linkCard(link);
       expect(reads).toBe(1);
@@ -210,11 +210,11 @@ describe("link cards", () => {
   });
 
   describe("issues", () => {
-    const ISSUE = (n: number, rest = "") => `https://forge.test/shop/world/issues/${n}${rest}`;
+    const ISSUE = (n: number, rest = "") => `https://forge.test/acme/app/issues/${n}${rest}`;
     const info = (overrides: Partial<IssueInfo> = {}): IssueInfo => ({
       pr: false, number: 40, title: "Retries hide gateway outages", state: "open", author: "sam", createdAt: 1, closedAt: null, body: "When the gateway is down…",
       labels: [{ name: "bug", color: "d73a4a" }], assignees: ["ana"], comments: 2, url: ISSUE(40),
-      closedBy: [{ repo: "shop/world", number: 1, title: "Old title", state: "open", url: "https://forge.test/shop/world/pull/1" }, { repo: "shop/world", number: 77, title: "Not seen", state: "draft", url: "https://forge.test/shop/world/pull/77" }],
+      closedBy: [{ repo: "acme/app", number: 1, title: "Old title", state: "open", url: "https://forge.test/acme/app/pull/1" }, { repo: "acme/app", number: 77, title: "Not seen", state: "draft", url: "https://forge.test/acme/app/pull/77" }],
       ...overrides,
     });
     async function seen() {
@@ -230,12 +230,12 @@ describe("link cards", () => {
       Object.assign(h.shuttle.adapter("forge"), { issue: async (repo: string, number: number): Promise<IssueInfo> => { reads.push([repo, number]); return info(); } });
       expect(h.shuttle.linkStates([ISSUE(40)])).toEqual([{ url: ISSUE(40), kind: "issue", state: null }]);
       const card = await h.shuttle.linkCard(ISSUE(40, "#issuecomment-5"));
-      expect(reads).toEqual([["shop/world", 40]]);
-      expect(card).toMatchObject({ kind: "issue", label: "shop/world#40", pr: null, prKey: null, note: null });
+      expect(reads).toEqual([["acme/app", 40]]);
+      expect(card).toMatchObject({ kind: "issue", label: "acme/app#40", pr: null, prKey: null, note: null });
       expect(card.issue).toMatchObject({ number: 40, title: "Retries hide gateway outages", state: "open", assignees: ["ana"], comments: 2 });
       expect(card.issue!.closedBy).toEqual([
-        { repo: "shop/world", number: 1, title: "Retry only on 504", state: "open", url: "https://forge.test/shop/world/pull/1", key: "forge:shop/world#1" },
-        { repo: "shop/world", number: 77, title: "Not seen", state: "draft", url: "https://forge.test/shop/world/pull/77", key: null },
+        { repo: "acme/app", number: 1, title: "Retry only on 504", state: "open", url: "https://forge.test/acme/app/pull/1", key: "forge:acme/app#1" },
+        { repo: "acme/app", number: 77, title: "Not seen", state: "draft", url: "https://forge.test/acme/app/pull/77", key: null },
       ]);
       await h.shuttle.linkCard(ISSUE(40));
       expect(reads).toHaveLength(1);
@@ -250,12 +250,12 @@ describe("link cards", () => {
       let reads = 0;
       Object.assign(h.shuttle.adapter("forge"), { issue: async (): Promise<IssueInfo> => { reads += 1; return info({ pr: true, number: 9 }); } });
       const known = await h.shuttle.linkCard(ISSUE(1));
-      expect(known).toMatchObject({ kind: "pr", prKey: "forge:shop/world#1", issue: null });
+      expect(known).toMatchObject({ kind: "pr", prKey: "forge:acme/app#1", issue: null });
       expect(known.pr?.title).toBe("Retry only on 504");
       expect(h.shuttle.linkStates([ISSUE(1)])).toEqual([{ url: ISSUE(1), kind: "pr", state: "open" }]);
       expect(reads).toBe(0);
       const unseen = await h.shuttle.linkCard(ISSUE(9));
-      expect(unseen).toMatchObject({ kind: "pr", pr: null, prKey: "forge:shop/world#9", note: "Shuttle hasn't seen shop/world#9 yet." });
+      expect(unseen).toMatchObject({ kind: "pr", pr: null, prKey: "forge:acme/app#9", note: "Shuttle hasn't seen acme/app#9 yet." });
       expect(reads).toBe(1);
     });
 

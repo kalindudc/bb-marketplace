@@ -1,4 +1,4 @@
-See what each PR is waiting on and act without leaving bb. GitHub works out of the box; Delta, GitLab and other servers use command adapters.
+See what each PR is waiting on and act without leaving bb. GitHub works out of the box; GitLab and other servers use command adapters.
 
 ## Five areas
 
@@ -30,6 +30,6 @@ Merge, comment, reply, resolve threads, request reviewers, manage labels and pos
 
 ## Setup and tools
 
-GitHub uses your authenticated `gh` CLI. Configure other servers with commands that print JSON; a working Delta adapter is included. Settings cover servers, presets, automations, agents and TOML import/export.
+GitHub uses your authenticated `gh` CLI. Configure other servers with commands that print JSON, following the documented contract. Settings cover servers, presets, automations, agents and TOML import/export.
 
 Agents use `shuttle_link`, `shuttle_prs`, `shuttle_review_draft` and `shuttle_feedback_done` for PR work, and the six `shuttle_board*` tools for saved sets. `bb shuttle` offers the same operations from the command line.

@@ -6,6 +6,7 @@ Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` i
 
 ### Added
 
+- Bots an agent still hears from. Ignore bots, on by default, kept every bot away from a PR's agent, so the findings of an AI reviewer or a code scanner never reached the thread working on the PR. Settings, Automations, Agents now has Except these bots under it: logins or globs, with or without GitHub's `[bot]` suffix, that an agent hears from anyway. The list starts empty. A bot added to the list, or every bot when you turn Ignore bots off, starts from what it says next: what it said while it was ignored is not sent, so the change never floods a thread with old comments. In TOML it is `allowBots` under `[watch]`.
 - Notes for you on an AI review draft. A review can hand Shuttle context that is for you alone, such as what the PR is for, whether it gets there and whether it is worth doing at all, so you have it before you decide. Your review shows it above the summary under For you · Never posted, in Markdown. It is never posted: posting sends only the summary and the findings you ticked, and a review queued or tried again carries no notes. `shuttle_review_draft` takes it as `notes`, and the prompt Shuttle adds to every review says what belongs there. Drafts saved before this have none.
 - A Reviewing tab in the Inbox. A PR leaves the Inbox while an AI review runs on it and comes back when the review finishes, so until now the only place to find it was a group in Reviews. The tab lists every PR with an AI review running, newest first, with the preset, when it started, whether it was an auto review, and a button to its thread. A row says when the thread waits on your answer, and when the PR is dismissed or a rule keeps it out, since those stay out of the Inbox after the review. The tab shows how many are running, and so does the Inbox's foot, with a link to the tab.
 - A queue for posting reviews. Posting a review used to wait for the server, which on a slow one kept you on the button for a while. Now Shuttle checks the review at once, queues it and posts it in the background, one at a time on each server and in the order you posted them, so you can move on straight away. This covers reviews from an AI draft, from the composer and from Approve….
@@ -16,9 +17,14 @@ Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` i
 
 ### Changed
 
+- Hidden HTML comments in a review or comment, such as a bot's bookkeeping, are left out of what an agent is sent, so they no longer use up the part of the text it gets.
 - The PR panel beside a list can be made wider or narrower. Drag its left edge, or focus the edge and press the arrow keys (Shift for bigger steps, Home for the narrowest, End for the widest); a double-click puts back the default width of 640 pixels. The list keeps at least 360 pixels. Shuttle remembers the width on this device, and the panel that slides over the list in a narrower window uses it too.
 - The PR view's tabs fit the width. They used to run off the right edge of a narrow panel, so Changes and History were cut off with no sign they were there. Tabs that do not fit now go under More at the end of the bar, which shows a dot when one of them has failing checks, running checks or open threads. The tab you are on always stays in the bar, and the arrow keys still move through every tab.
 - The summary and findings of an AI review draft open as tall as their text. They used to open at two or three lines, so a longer finding scrolled inside its box until you dragged it taller. They grow as you type and when the view gets narrower, and you can still drag one taller; it keeps that height while you edit.
+
+### Removed
+
+- The server-specific adapter script that shipped in `skills/shuttle/references`. Shuttle stays server agnostic: `servers.md` there documents the command contract, and a server that ran that script through `$SHUTTLE_SCRIPTS` needs its own copy outside Shuttle. The default Bot authors no longer name one company's bots; they are `dependabot*`, `renovate*` and `*[bot]`, and any others go in the setting.
 
 ### Fixed
 
@@ -56,7 +62,7 @@ Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` i
 
 - The Inbox leaves other areas their jobs. Its count stays in Shuttle's sidebar, the agents summary is in My PRs, and one line links to Insights › Automation log instead of listing what automation did.
 - Details are read only when you open a PR. The PR view gets its checks, commits, files, timeline, merge state and each thread's code in the same read as its conversation, kept for 30 seconds. Syncs and agent watching read no more than before.
-- For command servers. `activity` gets `SHUTTLE_DETAIL=1` when a PR view opens and may print the same details (see `servers.md`). Every command gets `SHUTTLE_SCRIPTS`, the folder of adapter scripts in the installed Shuttle, so a server that runs a script from there follows each upgrade. When a command server sends no commits or files, the Changes tab says how to add them. The reference Delta adapter sends every detail, and reads a PR with up to 100 files in one compare, without patch text.
+- For command servers. `activity` gets `SHUTTLE_DETAIL=1` when a PR view opens and may print the same details (see `servers.md`). Every command gets `SHUTTLE_SCRIPTS`, the folder of adapter scripts in the installed Shuttle, so a server that runs a script from there follows each upgrade. When a command server sends no commits or files, the Changes tab says how to add them.
 
 ### Fixed
 
@@ -130,7 +136,7 @@ Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` i
 ### Added
 
 - Insights › Sync shows why a server failed. Each server shows its syncs of the last three hours as marks. Under them are the last failed sync step by step (who you are, each list, the linked and tracked PRs), what the command printed, its exit code and the command itself. You can copy all of it. A server that has recovered keeps its last failed sync, folded, in the same detail. The week's failures follow, and each opens to its output. Sync now syncs that server alone.
-- A banner when a server keeps failing. After two failed syncs in a row, every page says which step failed and why in plain words. It also says how old that server's PRs are, and when Shuttle tries again or what you need to do, such as `dt auth login`, with a button that copies it. A refused sign-in shows at once, since waiting will not fix it, and it is what the banner explains even when another step failed first. In the sidebar, a server that is failing, or that failed in the last hour, says why in one line and opens the Sync tab.
+- A banner when a server keeps failing. After two failed syncs in a row, every page says which step failed and why in plain words. It also says how old that server's PRs are, and when Shuttle tries again or what you need to do, such as `gh auth login`, with a button that copies it. A refused sign-in shows at once, since waiting will not fix it, and it is what the banner explains even when another step failed first. In the sidebar, a server that is failing, or that failed in the last hour, says why in one line and opens the Sync tab.
 - Shuttle tries again, a little. A step that fails with a server error, a network error or a cut-short answer is tried once more after 3 seconds. A server gets at most two such retries a sync. A rate limit or a timeout, including a gateway timeout (HTTP 504), is never retried, so a slow server is not asked again for the same slow request. After two failed steps in a row, such as two server errors or timeouts, Shuttle leaves the rest of that server's steps for the next sync. A server that rate-limited Shuttle or is down is not asked about each watched PR in that sync either. GitHub searches, which already retry their own pages, are not retried again on top. After a server's first failed sync, Shuttle syncs that server once more a minute later, so the banner, or the end of the failure, does not wait a whole interval. It does not when any step of that sync was rate-limited.
 
 ### Changed
@@ -140,7 +146,7 @@ Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` i
 
 ### Fixed
 
-- Delta syncs say why they failed. When Delta was briefly down, for example while its host restarted (HTTP 503), `delta.sh` piped the failed `dt` call into `jq`. `jq` printed nothing and exited 0, so Shuttle saw a command that worked and said only "whoami did not print JSON: no output". Now `delta.sh` fails with `dt`'s own error and exit code. When Delta refuses your sign-in, it adds "run `dt auth login`". Any command that exits 0 without its JSON now fails with what it printed on stderr.
+- Command server syncs say why they failed. A command that exits 0 without its JSON, for example because it piped a failed server call into `jq`, now fails with what it printed on stderr, instead of only "whoami did not print JSON: no output".
 
 ## 0.3.5 (2026-10-26)
 
@@ -186,7 +192,7 @@ Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` i
 ### Fixed
 
 - Snooze works on every Inbox card. Feedback nobody is on and an agent waiting on you ignored it, so a snoozed card came straight back.
-- A draft on a server with no `review` command now says so and links to Settings › Servers, instead of saying the server can't post reviews. Servers set up before 0.3, such as Delta through delta.sh, need `comment`, `review`, `reply` and `resolve` added to post from Shuttle.
+- A draft on a server with no `review` command now says so and links to Settings › Servers, instead of saying the server can't post reviews. Command servers set up before 0.3 need `comment`, `review`, `reply` and `resolve` added to post from Shuttle.
 
 ## 0.3.0 (2026-10-24)
 
@@ -211,9 +217,8 @@ A redesign around what you do with pull requests, rather than where they come fr
 
 ### Fixed
 
-- The Delta adapter works on each PR's own repository instead of always shop/world, posts every review with its commit, and sends failed checks to agents.
 - Reloading or updating Shuttle during a sync no longer leaves it stuck with "service sync did not stop", starts no more auto reviews once stopped, and a sync cut short no longer marks its server as failing.
-- Server links go into review prompts only as plain URLs, like titles and authors as one line. Reviewers GitHub or Delta reports as bots are kept apart from people in Insights, and a request withdrawn and asked again counts twice, each in its own week.
+- Server links go into review prompts only as plain URLs, like titles and authors as one line. Reviewers a server reports as bots are kept apart from people in Insights, and a request withdrawn and asked again counts twice, each in its own week.
 
 ### Security
 
@@ -232,7 +237,7 @@ A redesign around what you do with pull requests, rather than where they come fr
 - Shuttle works on a phone. Opening a PR shows it on its own screen, with a bar to go back and a bar at the bottom for Review, Link and Open; Back and the swipe return to the list. The list shows the sections as chips, and the review presets, labels and reviewers open as sheets from the bottom.
 - A "Manage your PR" card on your own PRs: mark a draft ready for review or turn it back into a draft, close or reopen it, add and remove labels, and request or withdraw reviewers or ask someone to review again. Each change goes to the server at once and offers Undo for a few seconds; a change the server refuses is put back, with its reason.
 - PRs show their labels, and the PR panel lists requested reviewers and everyone's latest review. Other people's PRs show them read-only.
-- GitHub uses `gh pr ready`, `gh pr close`, `gh pr reopen` and the REST API for labels and reviewers. Command servers get optional `ready`, `draft`, `close`, `reopen`, `edit_labels`, `edit_reviewers` and `edit_options` commands; the Delta adapter has all but `draft` and `edit_options`, since Delta can't go back to draft.
+- GitHub uses `gh pr ready`, `gh pr close`, `gh pr reopen` and the REST API for labels and reviewers. Command servers get optional `ready`, `draft`, `close`, `reopen`, `edit_labels`, `edit_reviewers` and `edit_options` commands.
 
 ### Changed
 
@@ -243,7 +248,7 @@ A redesign around what you do with pull requests, rather than where they come fr
 
 ### Added
 
-- A server can say how reviews get their own checkout of its PRs, for repositories that refuse bb's git worktree (World only allows worktrees under `~/world/trees`): a bb environment provider such as World tree, with inputs, or a command that prints a checkout's path, such as one around `dev tree add`. Inputs and the command take the PR's number, repo, branches and head; in a command they are shell-quoted. Set it under Review workspace when editing a server.
+- A server can say how reviews get their own checkout of its PRs, for repositories that refuse bb's git worktree: a bb environment provider, with inputs, or a command that prints a checkout's path. Inputs and the command take the PR's number, repo, branches and head; in a command they are shell-quoted. Set it under Review workspace when editing a server.
 
 ### Fixed
 
@@ -253,7 +258,7 @@ A redesign around what you do with pull requests, rather than where they come fr
 
 ### Added
 
-- The PR drawer is wider (up to 640px, at most 45% of the page) and shows the PR's description, rendered as Markdown; a long one is folded until you open it. Lists carry no description, so Shuttle reads it from the server the first time you open a PR. Command servers can send it as `body` from `view`; the Delta adapter does.
+- The PR drawer is wider (up to 640px, at most 45% of the page) and shows the PR's description, rendered as Markdown; a long one is folded until you open it. Lists carry no description, so Shuttle reads it from the server the first time you open a PR. Command servers can send it as `body` from `view`.
 
 ### Fixed
 
@@ -278,7 +283,7 @@ The first release: every pull request that needs you, from any server, in one pl
 
 ### Added
 
-- Servers: GitHub is built in, through `gh`. Any other server is a command server: a link pattern and one shell command per operation, each printing JSON. A working Delta adapter, with team requests, ships in `skills/shuttle/references/delta.sh`. A list a server cuts short never drops PRs it did not reach.
+- Servers: GitHub is built in, through `gh`. Any other server is a command server: a link pattern and one shell command per operation, each printing JSON. A list a server cuts short never drops PRs it did not reach.
 - Lists: Needs you, Requested of me, My teams, Mentioned and Watching, plus your PRs in flight and done. Look up any PR by pasting its link.
 - Threads: link a PR to any thread, or start a new one for it. A thread can own several PRs, and a PR can have several threads. The thread's Info tab and the line above its composer list every PR it owns, and its Shuttle tab offers to link the PR on the thread's branch.
 - Reviews: start one from a preset (skill, agent, model, thinking level, workspace and prompt), or change one run. Auto review starts a review thread when you are requested by name, with a daily limit and a repository filter; requests already waiting at the first sync never start one. Review threads can go to a sidebar section of your choice.

@@ -6,7 +6,7 @@ import { serverText } from "../src/format";
 import { RECHECK_MS, RETRY_PAUSE_MS } from "../src/sync";
 import { harness, pr, RawRun, testConfig, type Harness } from "./helpers";
 
-const RESTARTING = "Error: 503: walgit: the host serving this repository is restarting; retry in a few seconds (git: rerun the command)";
+const RESTARTING = "Error: 503: the host serving this repository is restarting; retry in a few seconds (git: rerun the command)";
 const FORGE = { name: "Forge", kind: "command" };
 
 /** Answers an operation from a queue, one answer per call, then `rest` for every later call. */
@@ -19,7 +19,7 @@ const steps = (h: Harness) => JSON.parse(h.store.lastSyncRun("forge")!.steps) as
 const step = (h: Harness, operation: string) => steps(h).find((s) => s.operation === operation)!;
 
 describe("why a sync step failed", () => {
-  it("names the cause of the failures seen on GitHub and Delta in plain words", () => {
+  it("names the cause of the failures seen on GitHub and Lab in plain words", () => {
     const cases: Array<[string, string, string]> = [
       [`whoami printed nothing: ${RESTARTING}`, "unavailable", "Forge was restarting (HTTP 503)"],
       ["gh exited 1: gh: HTTP 502", "unavailable", "Forge had a server error (HTTP 502)"],
@@ -27,23 +27,23 @@ describe("why a sync step failed", () => {
       ["authored took longer than 60s", "timeout", "Forge took too long to answer"],
       ["view exited 1: 0: client error (Connect) 1: dns error 2: failed to lookup address information", "network", "Shuttle could not reach Forge"],
       ["gh exited 1: gh: API rate limit exceeded (HTTP 403)", "rate_limit", "Forge is limiting how often Shuttle asks (HTTP 403)"],
-      ["whoami exited 1: Error: 401: walgit: unauthorized", "auth", "Forge did not accept your sign-in (HTTP 401)"],
+      ["whoami exited 1: Error: 401: unauthorized", "auth", "Forge did not accept your sign-in (HTTP 401)"],
       ["authored printed JSON in the wrong shape: 0.number: Invalid input", "failed", "authored printed JSON in the wrong shape: 0.number: Invalid input"],
     ];
     for (const [message, kind, summary] of cases) expect(describeFailure(FORGE, { message }), message).toMatchObject({ kind, summary });
   });
 
   it("finds the fix a command printed, and offers gh auth login for GitHub", () => {
-    const delta = describeFailure(FORGE, { message: "whoami exited 1: Error: 401", output: "Error: 401\ndelta.sh: Delta did not accept your sign-in; run `dt auth login`, then sync again", exit: 1, command: "sh delta.sh" });
-    expect(delta).toMatchObject({ kind: "auth", fix: "dt auth login", exit: 1, command: "sh delta.sh" });
+    const lab = describeFailure(FORGE, { message: "whoami exited 1: Error: 401", output: "Error: 401\nlab.sh: Lab did not accept your sign-in; run `lab auth login`, then sync again", exit: 1, command: "sh lab.sh" });
+    expect(lab).toMatchObject({ kind: "auth", fix: "lab auth login", exit: 1, command: "sh lab.sh" });
     expect(describeFailure({ name: "GitHub", kind: "github", hostname: "ghe.test" }, { message: "gh exited 4: To get started with GitHub CLI, please run:  gh auth login" }).fix).toBe("gh auth login --hostname ghe.test");
-    expect(failureAdvice(delta, "11:38")).toBe("Run dt auth login, then sync again.");
+    expect(failureAdvice(lab, "11:38")).toBe("Run lab auth login, then sync again.");
     expect(failureAdvice({ kind: "unavailable", fix: null }, "11:38")).toBe("This usually passes by itself. Shuttle tries again around 11:38.");
   });
 
   it("does not read an exit code or a PR number as an HTTP status", () => {
-    expect(failureKind("authored exited 127: sh: delta.sh: not found")).toBe("failed");
-    expect(failureKind("shop/world#503: was not found")).toBe("failed");
+    expect(failureKind("authored exited 127: sh: lab.sh: not found")).toBe("failed");
+    expect(failureKind("acme/app#503: was not found")).toBe("failed");
   });
 });
 
@@ -64,7 +64,7 @@ describe("sync steps", () => {
 
   it("tries a list that failed with a server error once more after a pause, and passes", async () => {
     const h = harness();
-    answer(h, "team_requested", [new Error(RESTARTING)], [pr(4, { teams: ["@shop/edge"] })]);
+    answer(h, "team_requested", [new Error(RESTARTING)], [pr(4, { teams: ["@acme/edge"] })]);
     await h.shuttle.sync();
     expect(h.pauses).toEqual([RETRY_PAUSE_MS]);
     expect(step(h, "team_requested")).toMatchObject({ status: "ok", attempts: 2, detail: "1 PR" });
@@ -129,7 +129,7 @@ describe("a partial sync", () => {
   it("is a warning: only the PRs of the list that failed are stale, with the time that list last passed", async () => {
     const h = harness();
     h.lists.review_requested = [pr(3)];
-    h.lists.team_requested = [pr(4, { teams: ["@shop/edge"] }), pr(3, { teams: ["@shop/edge"] })];
+    h.lists.team_requested = [pr(4, { teams: ["@acme/edge"] }), pr(3, { teams: ["@acme/edge"] })];
     await h.shuttle.sync();
     const passed = h.clock.now;
     h.clock.now += 180_000;
@@ -195,12 +195,12 @@ describe("telling the user", () => {
 
   it("raises the alert at once when the server needs the user to sign in", async () => {
     const h = harness();
-    h.answers.whoami = new RawRun({ code: 1, stdout: "", stderr: "Error: 401: walgit: unauthorized\ndelta.sh: Delta did not accept your sign-in; run `dt auth login`, then sync again" });
+    h.answers.whoami = new RawRun({ code: 1, stdout: "", stderr: "Error: 401: unauthorized\nlab.sh: Lab did not accept your sign-in; run `lab auth login`, then sync again" });
     await h.shuttle.sync();
     expect(h.pauses).toEqual([]);
     const status = h.shuttle.overview().servers[0]!;
     expect(status).toMatchObject({ failures: 1, alert: true });
-    expect(status.failure).toMatchObject({ kind: "auth", fix: "dt auth login" });
+    expect(status.failure).toMatchObject({ kind: "auth", fix: "lab auth login" });
   });
 
   it("syncs a server that failed once again a minute later, only that server and only once", async () => {
@@ -244,8 +244,8 @@ describe("asking a server in trouble less", () => {
     h.lists.authored = [pr(1, { author: "me" })];
     await h.shuttle.sync();
     h.port.addThread("thr_owner");
-    await h.shuttle.link("forge:shop/world#1", "thr_owner");
-    expect(h.shuttle.view("forge:shop/world#1").agent?.mode).not.toBe("off");
+    await h.shuttle.link("forge:acme/app#1", "thr_owner");
+    expect(h.shuttle.view("forge:acme/app#1").agent?.mode).not.toBe("off");
     await h.shuttle.sync();
     const polled = calls(h, "activity");
     expect(polled).toBeGreaterThan(0);
@@ -290,11 +290,11 @@ describe("the refresh of linked PRs", () => {
     h.lists.authored = [pr(1, { author: "me" })];
     h.port.addThread("thr_owner");
     await h.shuttle.sync();
-    await h.shuttle.link("forge:shop/world#1", "thr_owner");
+    await h.shuttle.link("forge:acme/app#1", "thr_owner");
     h.views[8] = pr(8, { author: "dana" });
     h.views[9] = pr(9, { author: "dana" });
-    await h.shuttle.link("forge:shop/world#8", "thr_owner", "reference");
-    await h.shuttle.link("forge:shop/world#9", "thr_owner", "reference");
+    await h.shuttle.link("forge:acme/app#8", "thr_owner", "reference");
+    await h.shuttle.link("forge:acme/app#9", "thr_owner", "reference");
     h.clock.now += 180_000;
     return h;
   }
@@ -305,8 +305,8 @@ describe("the refresh of linked PRs", () => {
     h.views[9] = new Error("Error: 429: too many requests");
     const polled = calls(h, "activity");
     await h.shuttle.sync();
-    expect(step(h, "refresh")).toMatchObject({ status: "failed", detail: "2 of 2 could not be read: shop/world#8, shop/world#9" });
-    expect(step(h, "refresh").failure).toMatchObject({ kind: "rate_limit", message: "shop/world#9: view exited 1: Error: 429: too many requests" });
+    expect(step(h, "refresh")).toMatchObject({ status: "failed", detail: "2 of 2 could not be read: acme/app#8, acme/app#9" });
+    expect(step(h, "refresh").failure).toMatchObject({ kind: "rate_limit", message: "acme/app#9: view exited 1: Error: 429: too many requests" });
     expect(calls(h, "activity")).toBe(polled);
     expect(h.shuttle.overview().servers[0]!.nextSyncAt).toBeGreaterThan(h.clock.now + RECHECK_MS);
   });
@@ -329,7 +329,7 @@ describe("the refresh of linked PRs", () => {
     h.lists.review_requested = new Error("review_requested printed JSON in the wrong shape: x") as unknown as unknown[];
     await h.shuttle.sync();
     expect(h.shuttle.overview().servers[0]!.failedSteps).toEqual(["review_requested"]);
-    expect(h.shuttle.view("forge:shop/world#8")).toMatchObject({ stale: false, staleSince: null });
+    expect(h.shuttle.view("forge:acme/app#8")).toMatchObject({ stale: false, staleSince: null });
   });
 });
 
@@ -338,12 +338,12 @@ describe("what the status tells the user", () => {
     const h = harness();
     await h.shuttle.sync();
     h.lists.review_requested = new Error("review_requested printed JSON in the wrong shape: x") as unknown as unknown[];
-    h.lists.team_requested = new RawRun({ code: 1, stdout: "", stderr: "Error: 401: walgit: unauthorized\ndelta.sh: Delta did not accept your sign-in; run `dt auth login`, then sync again" }) as unknown as unknown[];
+    h.lists.team_requested = new RawRun({ code: 1, stdout: "", stderr: "Error: 401: unauthorized\nlab.sh: Lab did not accept your sign-in; run `lab auth login`, then sync again" }) as unknown as unknown[];
     h.clock.now += 180_000;
     await h.shuttle.sync();
     const status = h.shuttle.overview().servers[0]!;
     expect(status).toMatchObject({ alert: true, error: "team_requested: Forge did not accept your sign-in (HTTP 401)" });
-    expect(status.failure).toMatchObject({ operation: "team_requested", kind: "auth", fix: "dt auth login" });
+    expect(status.failure).toMatchObject({ operation: "team_requested", kind: "auth", fix: "lab auth login" });
     expect(h.shuttle.syncHistory().servers[0]!.failures[0]).toMatchObject({ operation: "team_requested" });
   });
 });
@@ -404,15 +404,15 @@ describe("linked PRs no list brings", () => {
     h.port.addThread("thr_a");
     h.views[8] = pr(8, { author: "dana" });
     h.views[9] = pr(9, { author: "dana" });
-    await h.shuttle.link("forge:shop/world#8", "thr_a");
-    await h.shuttle.link("forge:shop/world#9", "thr_a");
+    await h.shuttle.link("forge:acme/app#8", "thr_a");
+    await h.shuttle.link("forge:acme/app#9", "thr_a");
     const linkedAt = h.clock.now;
     h.clock.now += 180_000;
     h.views[9] = new Error("view printed JSON in the wrong shape: x");
     await h.shuttle.sync();
     expect(h.shuttle.overview().servers[0]).toMatchObject({ state: "partial", failedSteps: ["refresh"] });
-    expect(h.shuttle.view("forge:shop/world#8")).toMatchObject({ stale: false });
-    expect(h.shuttle.view("forge:shop/world#9")).toMatchObject({ stale: true, staleSince: linkedAt });
+    expect(h.shuttle.view("forge:acme/app#8")).toMatchObject({ stale: false });
+    expect(h.shuttle.view("forge:acme/app#9")).toMatchObject({ stale: true, staleSince: linkedAt });
   });
 });
 

@@ -12,8 +12,8 @@ import { nextStep, ruleMatches, type NextFacts } from "../src/next";
 import { createShuttlePlugin } from "../server";
 import { FakePort, fakeRunner, harness, pr, testConfig } from "./helpers";
 
-const KEY = (n: number) => `forge:shop/world#${n}`;
-const OTHER = "forge:shop/other#3";
+const KEY = (n: number) => `forge:acme/app#${n}`;
+const OTHER = "forge:acme/other#3";
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -24,7 +24,7 @@ async function inboxOfThree() {
   await h.shuttle.sync();
   h.clock.now += HOUR;
   h.lists.authored = [pr(1, { author: "me", review: "approved" })];
-  h.lists.review_requested = [pr(2, { author: "dana" }), pr(3, { author: "sam", repo: "shop/other" })];
+  h.lists.review_requested = [pr(2, { author: "dana" }), pr(3, { author: "sam", repo: "acme/other" })];
   await h.shuttle.sync();
   return h;
 }
@@ -35,7 +35,7 @@ describe("the inbox migration", () => {
     const first = MIGRATIONS.indexOf("ALTER TABLE prs RENAME COLUMN dismissed_at TO snoozed_at");
     expect(first).toBeGreaterThan(0);
     for (const sql of MIGRATIONS.slice(0, first)) db.exec(sql);
-    const insert = db.prepare("INSERT INTO prs (key, server, repo, number, url, title, author, state, checks, review, mine, fetched_at, updated_at, dismissed_at, snoozed_until) VALUES (?, 'forge', 'shop/world', ?, 'u', 't', 'a', 'open', 'none', 'none', 0, ?, ?, ?, ?)");
+    const insert = db.prepare("INSERT INTO prs (key, server, repo, number, url, title, author, state, checks, review, mine, fetched_at, updated_at, dismissed_at, snoozed_until) VALUES (?, 'forge', 'acme/app', ?, 'u', 't', 'a', 'open', 'none', 'none', 0, ?, ?, ?, ?)");
     insert.run(KEY(1), 1, 50, 100, 120, 900);
     insert.run(KEY(2), 2, 70, null, null, null);
     for (const sql of MIGRATIONS.slice(first)) db.exec(sql);
@@ -51,20 +51,20 @@ describe("the inbox migration", () => {
 });
 
 describe("rule matching", () => {
-  const theirs = { mine: false, server: "forge", author: "dana", repo: "shop/world", reasons: ["mentioned" as const] };
+  const theirs = { mine: false, server: "forge", author: "dana", repo: "acme/app", reasons: ["mentioned" as const] };
   it("matches an author's PRs except yours, a repo's PRs including yours, and mentions where you are not asked by name", () => {
     expect(ruleMatches({ kind: "author", server: "forge", value: "dana" }, theirs)).toBe(true);
     expect(ruleMatches({ kind: "author", server: "other", value: "dana" }, theirs)).toBe(false);
     expect(ruleMatches({ kind: "author", server: "forge", value: "dana" }, { ...theirs, mine: true })).toBe(false);
-    expect(ruleMatches({ kind: "repo", server: "forge", value: "shop/world" }, { ...theirs, mine: true })).toBe(true);
-    expect(ruleMatches({ kind: "repo", server: "forge", value: "shop/other" }, theirs)).toBe(false);
-    expect(ruleMatches({ kind: "repo", server: "other", value: "shop/world" }, theirs)).toBe(false);
-    expect(ruleMatches({ kind: "mention", server: "forge", value: "shop/world" }, theirs)).toBe(true);
-    expect(ruleMatches({ kind: "mention", server: "forge", value: "shop/world" }, { ...theirs, reasons: ["mentioned", "team"] })).toBe(true);
-    expect(ruleMatches({ kind: "mention", server: "forge", value: "shop/world" }, { ...theirs, reasons: ["mentioned", "requested"] })).toBe(false);
-    expect(ruleMatches({ kind: "mention", server: "forge", value: "shop/world" }, { ...theirs, reasons: ["team"] })).toBe(false);
-    expect(ruleMatches({ kind: "mention", server: "forge", value: "shop/world" }, { ...theirs, mine: true })).toBe(false);
-    expect(ruleMatches({ kind: "mention", server: "forge", value: "shop/other" }, theirs)).toBe(false);
+    expect(ruleMatches({ kind: "repo", server: "forge", value: "acme/app" }, { ...theirs, mine: true })).toBe(true);
+    expect(ruleMatches({ kind: "repo", server: "forge", value: "acme/other" }, theirs)).toBe(false);
+    expect(ruleMatches({ kind: "repo", server: "other", value: "acme/app" }, theirs)).toBe(false);
+    expect(ruleMatches({ kind: "mention", server: "forge", value: "acme/app" }, theirs)).toBe(true);
+    expect(ruleMatches({ kind: "mention", server: "forge", value: "acme/app" }, { ...theirs, reasons: ["mentioned", "team"] })).toBe(true);
+    expect(ruleMatches({ kind: "mention", server: "forge", value: "acme/app" }, { ...theirs, reasons: ["mentioned", "requested"] })).toBe(false);
+    expect(ruleMatches({ kind: "mention", server: "forge", value: "acme/app" }, { ...theirs, reasons: ["team"] })).toBe(false);
+    expect(ruleMatches({ kind: "mention", server: "forge", value: "acme/app" }, { ...theirs, mine: true })).toBe(false);
+    expect(ruleMatches({ kind: "mention", server: "forge", value: "acme/other" }, theirs)).toBe(false);
   });
 });
 
@@ -92,8 +92,8 @@ describe("snoozing", () => {
     expect(h.shuttle.snooze([KEY(2)], later)[0]).toMatchObject({ snoozed: true, snoozedUntil: later });
     expect(h.shuttle.view(OTHER)).toMatchObject({ snoozed: false, snoozedUntil: null });
     expect(h.store.events({ kinds: ["snoozed"], limit: 5 }).map((e) => e.text)).toEqual([
-      expect.stringMatching(/^Snoozed shop\/world#2 until \w{3} \d+ \w{3}, \d+:\d\d\.$/u),
-      "Snoozed shop/world#1 until it changes.",
+      expect.stringMatching(/^Snoozed acme\/app#2 until \w{3} \d+ \w{3}, \d+:\d\d\.$/u),
+      "Snoozed acme/app#1 until it changes.",
     ]);
     h.clock.now += 4 * HOUR;
     expect(h.shuttle.view(KEY(2))).toMatchObject({ snoozed: false, snoozedUntil: null, next: { inbox: true } });
@@ -108,7 +108,7 @@ describe("snoozing", () => {
     expect(() => h.shuttle.snooze([KEY(1)], h.clock.now + 61 * DAY)).toThrow(/60 days/u);
     expect(h.shuttle.snooze([KEY(1)], h.clock.now + 60 * DAY)[0]!.snoozed).toBe(true);
     h.shuttle.snooze([KEY(1)], null);
-    expect(() => h.shuttle.snooze([KEY(2), KEY(99)], "update")).toThrow(/forge:shop\/world#99/u);
+    expect(() => h.shuttle.snooze([KEY(2), KEY(99)], "update")).toThrow(/forge:acme\/app#99/u);
     expect(h.shuttle.view(KEY(2)).snoozed).toBe(false);
   });
 
@@ -128,18 +128,18 @@ describe("dismissing", () => {
     expect(view).toMatchObject({ dismissed: { at: h.clock.now, activity: false }, snoozed: false, keptOutBy: null, next: { kind: "new_request", inbox: false } });
     expect(h.store.prByKey(KEY(2))).toMatchObject({ snoozed_at: null, snoozed_until: null, inbox_dismissed_at: h.clock.now });
     h.clock.now += 30 * DAY;
-    h.lists.review_requested = [pr(2, { author: "dana", updated_at: iso(h.clock.now - HOUR) }), pr(3, { author: "sam", repo: "shop/other" })];
+    h.lists.review_requested = [pr(2, { author: "dana", updated_at: iso(h.clock.now - HOUR) }), pr(3, { author: "sam", repo: "acme/other" })];
     await h.shuttle.sync();
     expect(h.shuttle.view(KEY(2))).toMatchObject({ dismissed: { activity: true }, next: { inbox: false } });
     expect(h.shuttle.inbox().dismissed.map((v) => v.key)).toEqual([KEY(2)]);
     h.shuttle.dismiss([KEY(2)], false);
     expect(h.shuttle.view(KEY(2)).dismissed).toBeNull();
-    expect(h.store.events({ kinds: ["dismissed", "restored"], limit: 5 }).map((e) => e.text)).toEqual(["shop/world#2 is back in the Inbox.", "Dismissed shop/world#2 from the Inbox."]);
+    expect(h.store.events({ kinds: ["dismissed", "restored"], limit: 5 }).map((e) => e.text)).toEqual(["acme/app#2 is back in the Inbox.", "Dismissed acme/app#2 from the Inbox."]);
   });
 
   it("refuses the whole call when one key is unknown", async () => {
     const h = await inboxOfThree();
-    expect(() => h.shuttle.dismiss([KEY(1), KEY(99)], true)).toThrow(/forge:shop\/world#99/u);
+    expect(() => h.shuttle.dismiss([KEY(1), KEY(99)], true)).toThrow(/forge:acme\/app#99/u);
     expect(h.shuttle.view(KEY(1)).dismissed).toBeNull();
   });
 
@@ -165,11 +165,11 @@ describe("seen", () => {
     expect(h.shuttle.view(KEY(1)).unseen).toBe(true);
     expect(h.store.events({ limit: 50 }).some((e) => e.text.includes("seen"))).toBe(false);
     h.clock.now += HOUR;
-    h.lists.review_requested = [pr(2, { author: "dana", updated_at: iso(h.clock.now) }), pr(3, { author: "sam", repo: "shop/other" })];
+    h.lists.review_requested = [pr(2, { author: "dana", updated_at: iso(h.clock.now) }), pr(3, { author: "sam", repo: "acme/other" })];
     await h.shuttle.sync();
     expect(h.shuttle.view(KEY(2)).unseen).toBe(true);
     expect(h.shuttle.view(OTHER).unseen).toBe(false);
-    expect(() => h.shuttle.markSeen([KEY(99)])).toThrow(/forge:shop\/world#99/u);
+    expect(() => h.shuttle.markSeen([KEY(99)])).toThrow(/forge:acme\/app#99/u);
   });
 
   it("is never touched by a sync, nor are a snooze and a dismissal", async () => {
@@ -207,7 +207,7 @@ describe("rules", () => {
   it("keeps a repo's PRs out, yours too, but leaves dismissed and snoozed PRs out of what it keeps", async () => {
     const h = await inboxOfThree();
     h.shuttle.dismiss([KEY(2)], true);
-    const { rule } = h.shuttle.inboxRuleAdd({ kind: "repo", server: "forge", value: "shop/world" });
+    const { rule } = h.shuttle.inboxRuleAdd({ kind: "repo", server: "forge", value: "acme/app" });
     expect(rule.keeps).toEqual([KEY(1)]);
     expect(h.shuttle.view(KEY(1)).keptOutBy).toBe(rule.id);
     expect(h.shuttle.view(KEY(2)).keptOutBy).toBe(rule.id);
@@ -221,17 +221,17 @@ describe("rules", () => {
     h.lists.mentioned = [pr(4, { author: "dana" }), pr(5, { author: "dana" })];
     h.lists.review_requested = [pr(5, { author: "dana" })];
     await h.shuttle.sync();
-    const { rule } = h.shuttle.inboxRuleAdd({ kind: "mention", server: "forge", value: "shop/world" });
+    const { rule } = h.shuttle.inboxRuleAdd({ kind: "mention", server: "forge", value: "acme/app" });
     expect(rule.keeps).toEqual([KEY(4)]);
     expect(h.shuttle.inbox().prs.map((v) => v.key)).toEqual([KEY(5)]);
   });
 
   it("refuses a server that is not configured, and lists rules newest first", async () => {
     const h = await inboxOfThree();
-    expect(() => h.shuttle.inboxRuleAdd({ kind: "repo", server: "nowhere", value: "shop/world" })).toThrow(/no server called nowhere/u);
+    expect(() => h.shuttle.inboxRuleAdd({ kind: "repo", server: "nowhere", value: "acme/app" })).toThrow(/no server called nowhere/u);
     const { rule: a } = h.shuttle.inboxRuleAdd({ kind: "author", server: "forge", value: "nobody" });
     h.clock.now += 1000;
-    const { rule: b } = h.shuttle.inboxRuleAdd({ kind: "repo", server: "forge", value: "shop/none" });
+    const { rule: b } = h.shuttle.inboxRuleAdd({ kind: "repo", server: "forge", value: "acme/none" });
     expect(h.shuttle.inbox().rules.map((r) => r.id)).toEqual([b.id, a.id]);
     expect(h.shuttle.inbox().rules[1]).toMatchObject({ keeps: [] });
   });
@@ -265,11 +265,11 @@ describe("the Inbox read", () => {
   it("lists PRs with an AI review running, newest first and dismissed ones too, with whether the thread waits on you, until each review ends", async () => {
     const h = await inboxOfThree();
     h.views[2] = pr(2, { author: "dana" });
-    h.views[3] = pr(3, { author: "sam", repo: "shop/other" });
+    h.views[3] = pr(3, { author: "sam", repo: "acme/other" });
     const first = (await h.shuttle.review({ key: KEY(2) })).threadId;
     h.clock.now += 1000;
     h.shuttle.dismiss([OTHER], true);
-    const second = (await h.shuttle.review({ key: OTHER, projectId: "proj_world" })).threadId;
+    const second = (await h.shuttle.review({ key: OTHER, projectId: "proj_app" })).threadId;
     let inbox = h.shuttle.inbox();
     expect(inbox.prs.map((v) => v.key)).toEqual([KEY(1)]);
     expect(inbox.reviewing.map((v) => v.key)).toEqual([OTHER, KEY(2)]);
@@ -325,9 +325,9 @@ describe("the Inbox RPCs", () => {
     const dismissed = (await behavior.callRpc("dismiss", { keys: [KEY(1)], on: true })) as { prs: Array<{ dismissed: unknown }> };
     expect(dismissed.prs[0]!.dismissed).toMatchObject({ activity: false });
     expect(await behavior.callRpc("markSeen", { keys: [KEY(1)] })).toEqual({ ok: true });
-    const added = (await behavior.callRpc("inboxRuleAdd", { kind: "repo", server: "forge", value: "shop/world" })) as { rule: { id: number; keeps: string[] }; created: boolean };
+    const added = (await behavior.callRpc("inboxRuleAdd", { kind: "repo", server: "forge", value: "acme/app" })) as { rule: { id: number; keeps: string[] }; created: boolean };
     expect(added).toMatchObject({ rule: { keeps: [] }, created: true });
-    expect(await behavior.callRpc("inboxRuleAdd", { kind: "repo", server: "forge", value: "shop/world" })).toMatchObject({ rule: { id: added.rule.id }, created: false });
+    expect(await behavior.callRpc("inboxRuleAdd", { kind: "repo", server: "forge", value: "acme/app" })).toMatchObject({ rule: { id: added.rule.id }, created: false });
     await expect(behavior.callRpc("inboxRuleAdd", { kind: "repo", server: "nowhere", value: "x" })).rejects.toMatchObject({ code: "invalid" });
     await expect(behavior.callRpc("inboxRuleAdd", { kind: "repo", server: "forge", value: "" })).rejects.toThrow();
     await expect(behavior.callRpc("inboxRuleAdd", { kind: "team", server: "forge", value: "x" })).rejects.toThrow();

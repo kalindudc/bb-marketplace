@@ -3,7 +3,7 @@
 Every pull request that needs you, from any server, in one place. See
 [PLUGIN_OVERVIEW.md](PLUGIN_OVERVIEW.md) for what it does, and
 [skills/shuttle/references/servers.md](skills/shuttle/references/servers.md) for the command
-adapter contract and a working Delta adapter.
+adapter contract.
 
 ## Inbox
 
@@ -99,6 +99,18 @@ what the style already sets, and when it adds classes through a variable it cann
 Choose **Start AI review** or **Re-review with AI**, pick a preset, and optionally add a
 **Note for the reviewer** with context or areas to focus on. The note applies only to that
 review and stays with you if you open **Change for this run…** for more options.
+
+## Agents
+
+A PR's agent is the thread linked to it as owner. Shuttle reads the PR's activity on every sync and,
+after the batch window, sends the thread what is new: reviews, review comments, conversation
+comments and, if you choose, failed checks on the head. Resolved threads and your own reviews and
+replies are left out, and so are bots while **Ignore bots** is on, except the logins and globs under
+**Except these bots**, which starts empty: add the bots whose comments are about the PR's own change,
+such as an AI reviewer or a code scanner. A bot is what the server marks as one; GitHub's logins match
+with or without `[bot]`.
+Each watch remembers which bots it heard from, so a bot added later, or every bot when Ignore bots is
+turned off, starts from what it says next instead of sending what it said while it was ignored.
 
 ## Boards
 

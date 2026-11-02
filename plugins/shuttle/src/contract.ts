@@ -191,7 +191,7 @@ export type PostState = (typeof POST_STATES)[number];
 export const postViewSchema = z.object({
   id: z.number(),
   key: z.string(),
-  /** The PR as people write it, such as shop/world#12. */
+  /** The PR as people write it, such as acme/app#12. */
   display: z.string(),
   serverName: z.string(),
   verdict: z.enum(VERDICTS),
@@ -337,7 +337,7 @@ export const SYNC_FAILURE_KINDS = ["unavailable", "timeout", "network", "rate_li
 export type SyncFailureKind = (typeof SYNC_FAILURE_KINDS)[number];
 export const syncFailureSchema = z.object({
   kind: z.enum(SYNC_FAILURE_KINDS),
-  /** "Delta was restarting (HTTP 503)". */
+  /** "Forge was restarting (HTTP 503)". */
   summary: z.string(),
   /** Shuttle's own message, as before. */
   message: z.string(),
@@ -345,7 +345,7 @@ export const syncFailureSchema = z.object({
   output: z.string().nullable(),
   exit: z.number().nullable(),
   command: z.string().nullable(),
-  /** A command the user can run to fix it, such as `dt auth login`. */
+  /** A command the user can run to fix it, such as `gh auth login`. */
   fix: z.string().nullable(),
 });
 export type SyncFailure = z.infer<typeof syncFailureSchema>;
@@ -717,7 +717,7 @@ export const rpcContract = defineContract({
   search: { input: z.object({ query: z.string().max(200) }), output: z.object({ prs: z.array(prViewSchema), total: z.number() }), tags: PRS },
   boards: { input: boardsInputSchema, output: z.object({ boards: z.array(boardSummarySchema) }), tags: BOARDS },
   board: { input: boardInputSchema, output: boardDetailSchema, tags: BOARDS },
-  /** A link or a key such as delta:shop/world#2261179; fetched from its server and kept. */
+  /** A link or a key such as forge:acme/app#1234; fetched from its server and kept. */
   lookup: { input: z.object({ query: z.string().min(1).max(500) }), output: prOut, invalidates: PRS },
   activity: { input: z.object({ limit: z.number().int().min(1).max(500).optional() }), output: z.object({ events: z.array(eventViewSchema) }), tags: PRS },
   insights: { input: z.object({ range: z.enum(["7d", "30d", "90d"]) }), output: insightsSchema, tags: PRS },

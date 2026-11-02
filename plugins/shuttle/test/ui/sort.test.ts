@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { rowTime, sortPrs } from "../../src/ui/sort";
 import { DAY, HOUR, mine, NOW } from "./helpers";
 
-const a = mine({ repo: "Shopify/edgey", number: 7, createdAt: NOW - 3 * DAY, updatedAt: NOW - HOUR, additions: 10, deletions: 5 });
+const a = mine({ repo: "zeta/edge", number: 7, createdAt: NOW - 3 * DAY, updatedAt: NOW - HOUR, additions: 10, deletions: 5 });
 const b = mine({ repo: "get-bb/bb", number: 12, createdAt: NOW - DAY, updatedAt: NOW - 2 * HOUR, additions: 400, deletions: 300 });
 const c = mine({ repo: "get-bb/bb", number: 30, createdAt: null, updatedAt: NOW - 3 * HOUR, additions: null, deletions: null });
 const keys = (prs: readonly { key: string }[]) => prs.map((pr) => pr.key);

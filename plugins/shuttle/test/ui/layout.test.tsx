@@ -15,7 +15,7 @@ const first = mine({
   next: next({ kind: "ready_to_merge", tone: "ok", label: "Ready to merge", why: "Approved, and all checks pass.", inbox: true, primary: { id: "merge", label: "Merge…" } }),
 });
 const second = pr({
-  repo: "Shopify/spy-v2", number: 88, title: "Add per-route sampling to the tracer", author: "mia-r", can: CAN_ALL,
+  repo: "acme/deploy-v2", number: 88, title: "Add per-route sampling to the tracer", author: "mia-r", can: CAN_ALL,
   next: next({ kind: "new_request", tone: "info", label: "New review request", inbox: true, primary: { id: "review", label: "Start AI review" } }),
 });
 const selected = (key: string) => formatRoute({ view: "mine", key });
@@ -68,7 +68,7 @@ describe("on a phone", () => {
     const view = await find(slot.container, "[data-phone-pr]");
     await find(view, `[data-detail="${second.key}"]`);
     fireEvent.click(view.querySelector<HTMLElement>("[data-phone-actions] [data-next='review']")!);
-    const sheet = await screen.findByRole("dialog", { name: "Start an AI review of spy-v2#88" });
+    const sheet = await screen.findByRole("dialog", { name: "Start an AI review of deploy-v2#88" });
     expect(slot.container.contains(sheet)).toBe(false);
     expect(sheet.closest("[data-bb-plugin='shuttle'][data-bb-plugin-root]")).not.toBeNull();
     fireEvent.click(within(sheet).getByRole("button", { name: "Start" }));
@@ -76,7 +76,7 @@ describe("on a phone", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
     fireEvent.click(within(view.querySelector<HTMLElement>("[data-phone-actions]")!).getByRole("button", { name: "Comment" }));
-    const composer = await screen.findByRole("dialog", { name: "Comment on spy-v2#88" });
+    const composer = await screen.findByRole("dialog", { name: "Comment on deploy-v2#88" });
     fireEvent.change(within(composer).getByRole("textbox"), { target: { value: "Nice." } });
     fireEvent.click(within(composer).getAllByRole("button", { name: "Comment" }).at(-1)!);
     await waitFor(() => expect(callsTo(slot, "comment")).toEqual([{ key: second.key, body: "Nice." }]));
@@ -92,7 +92,7 @@ describe("on a phone", () => {
     const bar = view.querySelector<HTMLElement>("[data-phone-actions]")!;
     expect(within(bar).queryByRole("button", { name: "Comment" })).toBeNull();
     fireEvent.click(within(bar).getByRole("button", { name: "Review" }));
-    expect(await screen.findByRole("dialog", { name: "Review spy-v2#88" })).toBeTruthy();
+    expect(await screen.findByRole("dialog", { name: "Review deploy-v2#88" })).toBeTruthy();
   });
 
   it("goes back in history to the list it came from", async () => {
@@ -231,7 +231,7 @@ describe("list rows", () => {
   it("show at most three labels, each shortened with its full name as a title, then how many more", async () => {
     const labels: Label[] = [
       { name: "ZoneID: W-5df49c", color: null },
-      { name: "//areas/infra/routing/nginx-routing-modules", color: "0e8a16" },
+      { name: "//paths/infra/routing/nginx-routing-modules", color: "0e8a16" },
       { name: "edge", color: "1d76db" },
       { name: "tophatted", color: null },
       { name: "do-not-merge", color: "b60205" },
@@ -240,8 +240,8 @@ describe("list rows", () => {
     const row = await find(slot.container, `[data-pr="${first.key}"]`);
     const chips = [...row.querySelectorAll<HTMLElement>("[data-label]")];
     expect(chips.map((chip) => chip.getAttribute("data-label"))).toEqual(labels.slice(0, 3).map((label) => label.name));
-    expect(chips[1]!.textContent).toBe("//areas/infra/routing/n…");
-    expect(chips[1]!.getAttribute("title")).toBe("//areas/infra/routing/nginx-routing-modules");
+    expect(chips[1]!.textContent).toBe("//paths/infra/routing/n…");
+    expect(chips[1]!.getAttribute("title")).toBe("//paths/infra/routing/nginx-routing-modules");
     expect(chips[0]!.getAttribute("title")).toBeNull();
     const more = within(row).getByText("+2");
     expect(more.closest("[title]")!.getAttribute("title")).toBe("tophatted\ndo-not-merge");

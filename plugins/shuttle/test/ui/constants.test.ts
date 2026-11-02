@@ -6,7 +6,7 @@ import { checkName, duration, initials, keyLabel, sizeOf } from "../../src/ui/fo
 import { formatRoute, parseRoute } from "../../src/ui/route";
 import { sampleReviewVariables } from "../../src/ui/settings/prompt";
 
-const key = "delta:shop/world#2261179";
+const key = "lab:acme/app#2261179";
 
 describe("page routes", () => {
   it("reads and writes the four areas, a selected PR in each, and a looked-up PR", () => {
@@ -22,12 +22,12 @@ describe("page routes", () => {
 
     expect(formatRoute({ view: "inbox", key: null })).toBe("inbox");
     expect(parseRoute("inbox")).toEqual({ view: "inbox", key: null });
-    expect(formatRoute({ view: "inbox", key })).toBe("inbox/delta/shop/world/2261179");
-    expect(formatRoute({ view: "reviews", source: "all", key })).toBe("reviews/delta/shop/world/2261179");
+    expect(formatRoute({ view: "inbox", key })).toBe("inbox/lab/acme/app/2261179");
+    expect(formatRoute({ view: "reviews", source: "all", key })).toBe("reviews/lab/acme/app/2261179");
     expect(formatRoute({ view: "reviews", source: "asked", key: null })).toBe("reviews~asked");
     expect(formatRoute({ view: "insights", tab: "log" })).toBe("insights/log");
     expect(formatRoute({ view: "insights", tab: "sync" })).toBe("insights/sync");
-    expect(formatRoute({ view: "pr", key })).toBe("pr/delta/shop/world/2261179");
+    expect(formatRoute({ view: "pr", key })).toBe("pr/lab/acme/app/2261179");
     for (const route of [
       { view: "inbox", key }, { view: "mine", key }, { view: "done", key }, { view: "reviews", source: "team", key }, { view: "reviews", source: "tracked", key: null },
       { view: "pr", key: "gitlab:group/sub/proj#77" }, { view: "insights", tab: "overview" },
@@ -55,13 +55,13 @@ describe("page routes", () => {
 
   it("opens 0.2's sections in the new areas, keeping a selected PR", () => {
     expect(parseRoute("needs")).toEqual({ view: "inbox", key: null });
-    expect(parseRoute("needs/delta/shop/world/2261179")).toEqual({ view: "inbox", key });
+    expect(parseRoute("needs/lab/acme/app/2261179")).toEqual({ view: "inbox", key });
     expect(parseRoute("requested")).toEqual({ view: "reviews", source: "asked", key: null });
-    expect(parseRoute("requested/github/Shopify/cdn-detective/1494")).toEqual({ view: "reviews", source: "asked", key: "github:Shopify/cdn-detective#1494" });
+    expect(parseRoute("requested/github/acme/cdn-tools/1494")).toEqual({ view: "reviews", source: "asked", key: "github:acme/cdn-tools#1494" });
     expect(parseRoute("team")).toEqual({ view: "reviews", source: "team", key: null });
     expect(parseRoute("mentioned")).toEqual({ view: "reviews", source: "mentioned", key: null });
-    expect(parseRoute("watching/delta/shop/world/2261179")).toEqual({ view: "reviews", source: "tracked", key });
-    expect(parseRoute("inflight/delta/shop/world/2261179")).toEqual({ view: "mine", key });
+    expect(parseRoute("watching/lab/acme/app/2261179")).toEqual({ view: "reviews", source: "tracked", key });
+    expect(parseRoute("inflight/lab/acme/app/2261179")).toEqual({ view: "mine", key });
     expect(parseRoute("done")).toEqual({ view: "done", key: null });
     expect(parseRoute("activity")).toEqual({ view: "insights", tab: "log" });
   });
@@ -71,11 +71,11 @@ describe("small formatting", () => {
   it("badges a server by its capitals, or its first two letters", () => {
     expect(initials("GitHub")).toBe("GH");
     expect(initials("GitLab (self-hosted)")).toBe("GL");
-    expect(initials("delta")).toBe("De");
+    expect(initials("lab")).toBe("La");
   });
 
   it("drops the server from a key", () => {
-    expect(keyLabel("delta:shop/world#2261179")).toBe("shop/world#2261179");
+    expect(keyLabel("lab:acme/app#2261179")).toBe("acme/app#2261179");
   });
 
   it("sizes a change by its changed lines", () => {

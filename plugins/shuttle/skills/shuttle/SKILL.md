@@ -1,6 +1,6 @@
 ---
 name: shuttle
-description: Use Shuttle, the bb plugin for pull requests on any versioning server. Link a PR to this thread (a thread can own several) so this thread becomes its agent, check the thread's PRs, look one up, start a review, hand a finished review back as a draft, report what you did with forwarded feedback, or add a server such as Delta or GitLab with command adapters. Create, curate, archive, or restore custom PR boards. Covers the shuttle_link, shuttle_unlink, shuttle_prs, shuttle_review_draft, shuttle_feedback_done and shuttle_board tools, `bb shuttle` and `[shuttle]` messages.
+description: Use Shuttle, the bb plugin for pull requests on any versioning server. Link a PR to this thread (a thread can own several) so this thread becomes its agent, check the thread's PRs, look one up, start a review, hand a finished review back as a draft, report what you did with forwarded feedback, or add a server such as GitLab with command adapters. Create, curate, archive, or restore custom PR boards. Covers the shuttle_link, shuttle_unlink, shuttle_prs, shuttle_review_draft, shuttle_feedback_done and shuttle_board tools, `bb shuttle` and `[shuttle]` messages.
 ---
 
 # Shuttle
@@ -10,8 +10,8 @@ them to bb threads, starts review threads from presets, and sends new review act
 to its agent: the one thread linked to it as owner. The user merges, comments and posts reviews
 from Shuttle as themselves; you never post on a PR unless the user asks you to.
 
-A PR's key is `<server>:<repo>#<number>`, for example `github:get-bb/bb#4411` or
-`delta:shop/world#2261179`. Anywhere a PR is asked for, its link works too.
+A PR's key is `<server>:<repo>#<number>`, with `!` instead of `#` on servers that use it, for example `github:get-bb/bb#4411` or
+`gitlab:group/project!42`. Anywhere a PR is asked for, its link works too.
 
 ## Tools
 
@@ -101,5 +101,5 @@ to 200 PR references per call. No board command posts on a PR or changes its age
 GitHub is built in (through `gh`; set `hostname` for GitHub Enterprise). Any other server is a
 `command` server: a link pattern, a link template and one shell command per operation, each
 printing JSON. Leave an operation out and Shuttle hides that list for the server. Add servers
-in bb's Settings, Plugins, Shuttle, or with `bb shuttle config-import`. The full contract and
-a working Delta adapter are in [references/servers.md](references/servers.md).
+in bb's Settings, Plugins, Shuttle, or with `bb shuttle config-import`. The full contract, with
+an example, is in [references/servers.md](references/servers.md).

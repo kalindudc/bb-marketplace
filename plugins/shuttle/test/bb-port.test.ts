@@ -9,7 +9,7 @@ describe("bb port", () => {
     const host = createFakePluginHost({
       pluginId: "shuttle",
       sdk: {
-        projects: { get: async () => ({ id: "proj_1", name: "world", sources: [{ hostId: "host_other", isDefault: false }, { hostId: "host_main", isDefault: true }] }) },
+        projects: { get: async () => ({ id: "proj_1", name: "app", sources: [{ hostId: "host_other", isDefault: false }, { hostId: "host_main", isDefault: true }] }) },
         threads: { spawn: async (args: unknown) => (spawned.push(args), { id: "thr_new" }) },
       } as never,
     });
@@ -17,12 +17,12 @@ describe("bb port", () => {
     const spawn = (workspace: Parameters<typeof port.spawnThread>[0]["workspace"]) => port.spawnThread({ projectId: "proj_1", title: "Review", prompt: "p", workspace, metadata: {} });
     await spawn({ kind: "worktree" });
     await spawn({ kind: "project-default" });
-    await spawn({ kind: "provider", providerId: "world-tree", inputs: { tree: "shuttle-7" } });
-    await spawn({ kind: "path", path: "/Users/me/world/trees/shuttle-7/src" });
+    await spawn({ kind: "provider", providerId: "my-trees", inputs: { tree: "shuttle-7" } });
+    await spawn({ kind: "path", path: "/Users/me/src/trees/shuttle-7" });
     expect(spawned[0]).toMatchObject({ environment: { type: "host", hostId: "host_main", workspace: { type: "managed-worktree" } } });
     expect(spawned[1]).toMatchObject({ environment: { type: "project-default" } });
-    expect(spawned[2]).toMatchObject({ environment: { type: "provider", environmentProviderId: "world-tree", inputs: { tree: "shuttle-7" }, machine: { type: "existing", hostId: "host_main" } } });
-    expect(spawned[3]).toMatchObject({ environment: { type: "host", hostId: "host_main", workspace: { type: "unmanaged", path: "/Users/me/world/trees/shuttle-7/src" } } });
+    expect(spawned[2]).toMatchObject({ environment: { type: "provider", environmentProviderId: "my-trees", inputs: { tree: "shuttle-7" }, machine: { type: "existing", hostId: "host_main" } } });
+    expect(spawned[3]).toMatchObject({ environment: { type: "host", hostId: "host_main", workspace: { type: "unmanaged", path: "/Users/me/src/trees/shuttle-7" } } });
   });
 
   it("lists only unarchived threads, since bb otherwise fills the limit with archived ones", async () => {

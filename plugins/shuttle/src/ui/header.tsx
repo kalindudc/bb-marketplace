@@ -12,7 +12,7 @@ import { useViewport } from "./viewport";
 
 const SEARCH_DELAY_MS = 200;
 
-/** Text that names one PR, for look-up, rather than words to search: a link, or a key such as delta:shop/world#2261179. */
+/** Text that names one PR, for look-up, rather than words to search: a link, or a key such as forge:acme/app#1234. */
 export const isLookupText = (text: string) => /^https?:\/\//iu.test(text.trim()) || parseKey(text) !== null;
 
 /** The look-up field: a link or a key, fetched from its server, then shown on the page. */

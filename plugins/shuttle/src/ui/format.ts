@@ -1,15 +1,15 @@
 import type { InboxRule, PrView } from "../contract";
 
-/** `shop/world#2261179`: the key without its server. */
+/** `acme/app#1234`: the key without its server. */
 export const shortKey = (pr: Pick<PrView, "repo" | "sep" | "number">) => `${pr.repo}${pr.sep}${pr.number}`;
 
-/** `world#2261179`: the repository's last part and the number, for tight rows and titles. */
+/** `app#1234`: the repository's last part and the number, for tight rows and titles. */
 export const tinyKey = (pr: Pick<PrView, "repo" | "sep" | "number">) => `${pr.repo.split("/").at(-1)}${pr.sep}${pr.number}`;
 
-/** `world#2261179` from `delta:shop/world#2261179`. */
+/** `app#1234` from `forge:acme/app#1234`. */
 export const tinyOfKey = (key: string) => keyLabel(key).split("/").at(-1)!;
 
-/** `shop/world#2261179` from `delta:shop/world#2261179`, without a request. */
+/** `acme/app#1234` from `forge:acme/app#1234`, without a request. */
 export const keyLabel = (key: string) => key.slice(key.indexOf(":") + 1);
 
 export const plural = (count: number, word: string, many = `${word}s`) => `${count} ${count === 1 ? word : many}`;
@@ -104,7 +104,7 @@ export function sizeOf(pr: Pick<PrView, "additions" | "deletions">): "S" | "M" |
   return lines < 50 ? "S" : lines < 300 ? "M" : lines < 1000 ? "L" : "XL";
 }
 
-/** "GH" for GitHub, "De" for Delta: what a server badge shows. */
+/** "GH" for GitHub, "Fo" for Forge: what a server badge shows. */
 export function initials(name: string): string {
   const capitals = name.replace(/[^A-Z]/gu, "");
   if (capitals.length >= 2) return capitals.slice(0, 2);

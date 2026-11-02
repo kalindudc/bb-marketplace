@@ -73,15 +73,15 @@ describe("Shuttle page header", () => {
   });
 
   it("looks up a pasted key and selects that PR on the page", async () => {
-    const found = pr({ server: "delta", repo: "shop/world", number: 2261179 });
+    const found = pr({ server: "lab", repo: "acme/app", number: 2261179 });
     const slot = await header({ lookup: () => ({ pr: found }) });
     const input = field(slot);
-    fireEvent.change(input, { target: { value: "delta:shop/world#2261179" } });
+    fireEvent.change(input, { target: { value: "lab:acme/app#2261179" } });
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(slot.inspection.navigateCalls).toEqual([
       { method: "toPluginPanel", path: "shuttle", options: { subPath: formatRoute({ view: "pr", key: found.key }) } },
     ]));
-    expect(callsTo(slot, "lookup")).toEqual([{ query: "delta:shop/world#2261179" }]);
+    expect(callsTo(slot, "lookup")).toEqual([{ query: "lab:acme/app#2261179" }]);
   });
 
   it("shows the server's message when no server's link pattern matches", async () => {

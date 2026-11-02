@@ -6,7 +6,7 @@ import { harness, pr, testConfig, TEST_SERVER } from "./helpers";
 const WRITE_SERVER = { ...TEST_SERVER, enabled: true, sep: "#" as const, commands: { ...TEST_SERVER.commands, comment: "c", review: "rv" } };
 const SECOND_SERVER = { ...WRITE_SERVER, id: "lab", name: "Lab", pattern: "^https://lab\\.test/(?<repo>[^/]+/[^/]+)/pull/(?<number>\\d+)", link: "https://lab.test/{repo}/pull/{number}" };
 const NO_AUTO = { enabled: false, when: ["requested" as const], drafts: false, preset: "", repos: [], maxPerDay: 8, rerun: "never" as const };
-const KEY = (n: number, server = "forge") => `${server}:shop/world#${n}`;
+const KEY = (n: number, server = "forge") => `${server}:acme/app#${n}`;
 const MINUTE = 60_000;
 
 /** Two requests on the forge, with a review command; `servers` adds more. */
@@ -49,7 +49,7 @@ describe("the review queue", () => {
     const { draftId } = await withDraft(h);
     const held = gate(h.shuttle.adapter("forge"));
     const out = h.shuttle.queueReview(KEY(3), { verdict: "changes", body: "Two things", findings: [{ path: "a.go", line: 3, body: "Race" }], draftId });
-    expect(out.post).toMatchObject({ key: KEY(3), display: "shop/world#3", serverName: "Forge", verdict: "changes", comments: 1, draftId, state: "queued" });
+    expect(out.post).toMatchObject({ key: KEY(3), display: "acme/app#3", serverName: "Forge", verdict: "changes", comments: 1, draftId, state: "queued" });
     expect(out.pr.next).toMatchObject({ kind: "posting", inbox: false });
 
     await Promise.resolve();
@@ -65,7 +65,7 @@ describe("the review queue", () => {
     expect(h.shuttle.detail(KEY(3)).draft).toBeNull();
     expect(h.shuttle.posts()).toEqual([expect.objectContaining({ id: out.post.id, state: "posted", placed: 1, inBody: 0 })]);
     expect(h.shuttle.inbox().posting).toEqual([]);
-    expect(h.shuttle.activity(5).map((e) => e.text)).toContain("You requested changes on shop/world#3 with 1 comment.");
+    expect(h.shuttle.activity(5).map((e) => e.text)).toContain("You requested changes on acme/app#3 with 1 comment.");
   });
 
   it("posts one review at a time on each server, in the order they were queued, and servers do not wait on each other", async () => {
@@ -76,7 +76,7 @@ describe("the review queue", () => {
     h.shuttle.queueReview(KEY(3, "lab"), { verdict: "approve", body: "LGTM", findings: [] });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(forge.keys).toEqual([3]);
-    expect(h.shuttle.posts().map((p) => [p.display, p.state])).toEqual([["shop/world#3", "posting"], ["shop/world#4", "queued"], ["shop/world#3", "posted"]]);
+    expect(h.shuttle.posts().map((p) => [p.display, p.state])).toEqual([["acme/app#3", "posting"], ["acme/app#4", "queued"], ["acme/app#3", "posted"]]);
     expect(h.shuttle.view(KEY(4)).next).toMatchObject({ kind: "posting", label: "Your review is queued to post", more: [{ id: "cancel_post" }] });
     expect(h.shuttle.inbox().posting.map((v) => v.post!.id)).toEqual([first.id, second.id]);
     forge.release();
@@ -97,7 +97,7 @@ describe("the review queue", () => {
     held.release();
     await h.shuttle.postsSettled();
     expect(held.keys).toEqual([3]);
-    expect(h.shuttle.activity(5).map((e) => e.text)).toContain("Cancelled your approval on shop/world#4 before it posted.");
+    expect(h.shuttle.activity(5).map((e) => e.text)).toContain("Cancelled your approval on acme/app#4 before it posted.");
   });
 
   it("brings a review the server refused back to the Inbox with why, keeps its draft, and tries it again", async () => {
@@ -112,7 +112,7 @@ describe("the review queue", () => {
     expect(failed.next.why).toMatch(/^Changes requested with 1 comment: Forge refused: /u);
     expect(h.shuttle.inbox().prs[0]!.key).toBe(KEY(3));
     expect(h.shuttle.detail(KEY(3)).draft?.id).toBe(draftId);
-    expect(h.shuttle.activity(1)[0]!.text).toMatch(/^Your review of shop\/world#3 did not post: Forge refused: /u);
+    expect(h.shuttle.activity(1)[0]!.text).toMatch(/^Your review of acme\/app#3 did not post: Forge refused: /u);
 
     h.answers.review = "";
     const again = h.shuttle.retryPost(post.id);
@@ -155,7 +155,7 @@ describe("the review queue", () => {
     expect(() => h.shuttle.queueReview(KEY(3), { verdict: "approve", body: "ok", findings: [], draftId, staleOk: true })).toThrow(/before you approve/u);
     const held = gate(h.shuttle.adapter("forge"));
     h.shuttle.queueReview(KEY(3), { verdict: "comment", body: "ok", findings: [], draftId, staleOk: true });
-    expect(() => h.shuttle.queueReview(KEY(3), { verdict: "comment", body: "ok", findings: [], draftId, staleOk: true })).toThrow("A review of shop/world#3 is already posting; wait for it, or cancel it first");
+    expect(() => h.shuttle.queueReview(KEY(3), { verdict: "comment", body: "ok", findings: [], draftId, staleOk: true })).toThrow("A review of acme/app#3 is already posting; wait for it, or cancel it first");
     await expect(h.shuttle.discardDraft(KEY(3), draftId)).rejects.toThrow(/queued to post/u);
     expect(h.shuttle.posts()).toHaveLength(1);
     held.release();
@@ -167,7 +167,7 @@ describe("the review queue", () => {
     const held = gate(h.shuttle.adapter("forge"));
     h.shuttle.queueReview(KEY(3), { verdict: "comment", body: "First", findings: [] });
     h.shuttle.queueReview(KEY(4), { verdict: "comment", body: "First", findings: [] });
-    expect(() => h.shuttle.queueReview(KEY(4), { verdict: "approve", body: "LGTM", findings: [] })).toThrow("A review of shop/world#4 is already queued to post; wait for it, or cancel it first");
+    expect(() => h.shuttle.queueReview(KEY(4), { verdict: "approve", body: "LGTM", findings: [] })).toThrow("A review of acme/app#4 is already queued to post; wait for it, or cancel it first");
     held.release();
     await h.shuttle.postsSettled();
     h.answers.review = new Error("503");
@@ -177,7 +177,7 @@ describe("the review queue", () => {
     expect(row.state).toBe("failed");
     // A review queued since, here straight into the store, is waiting; trying the old one now would post two reviews.
     h.store.addPost({ pr_id: row.pr_id, server: "forge", draft_id: null, verdict: "comment", body: "Second", findings: "[]", stale_ok: 0 });
-    expect(() => h.shuttle.retryPost(failed.id)).toThrow("A review of shop/world#3 is already queued to post; wait for it, or cancel it first");
+    expect(() => h.shuttle.retryPost(failed.id)).toThrow("A review of acme/app#3 is already queued to post; wait for it, or cancel it first");
   });
 
   it("keeps a queued draft when a new AI review starts, so the review you chose still posts", async () => {

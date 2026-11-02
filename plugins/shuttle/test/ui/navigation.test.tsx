@@ -50,26 +50,26 @@ describe("the page title", () => {
 
   it("names the area and its part, the selected PR and a looked-up PR", async () => {
     expect(await title("")).toEqual({ title: "Inbox" });
-    expect(await title(formatRoute({ view: "inbox", key: "delta:shop/world#2" }))).toEqual({
-      breadcrumbs: [{ label: "Inbox", to: "/plugins/shuttle/shuttle/inbox" }, { label: "shop/world#2" }],
+    expect(await title(formatRoute({ view: "inbox", key: "lab:acme/app#2" }))).toEqual({
+      breadcrumbs: [{ label: "Inbox", to: "/plugins/shuttle/shuttle/inbox" }, { label: "acme/app#2" }],
     });
     expect(await title("mine")).toEqual({ breadcrumbs: [{ label: "My PRs", to: "/plugins/shuttle/shuttle/mine" }, { label: "Open" }] });
     expect(await title("done")).toEqual({ breadcrumbs: [{ label: "My PRs", to: "/plugins/shuttle/shuttle/mine" }, { label: "Merged and closed" }] });
-    expect(await title(formatRoute({ view: "reviews", source: "team", key: "github:Shopify/spy-v2#88" }))).toEqual({
+    expect(await title(formatRoute({ view: "reviews", source: "team", key: "github:acme/deploy-v2#88" }))).toEqual({
       breadcrumbs: [
         { label: "Reviews", to: "/plugins/shuttle/shuttle/reviews" },
         { label: "My teams", to: "/plugins/shuttle/shuttle/reviews~team" },
-        { label: "Shopify/spy-v2#88" },
+        { label: "acme/deploy-v2#88" },
       ],
     });
     expect(await title("insights/log")).toEqual({ breadcrumbs: [{ label: "Insights", to: "/plugins/shuttle/shuttle/insights" }, { label: "Automation log" }] });
     expect(await title("insights/sync")).toEqual({ breadcrumbs: [{ label: "Insights", to: "/plugins/shuttle/shuttle/insights" }, { label: "Sync" }] });
     expect(await title("activity")).toEqual({ breadcrumbs: [{ label: "Insights", to: "/plugins/shuttle/shuttle/insights" }, { label: "Automation log" }] });
-    expect(await title(formatRoute({ view: "pr", key: "delta:shop/world#2261179" }))).toEqual({ breadcrumbs: [{ label: "Look up" }, { label: "shop/world#2261179" }] });
+    expect(await title(formatRoute({ view: "pr", key: "lab:acme/app#2261179" }))).toEqual({ breadcrumbs: [{ label: "Look up" }, { label: "acme/app#2261179" }] });
     expect(await title("search")).toEqual({ title: "Search" });
     expect(await title(formatRoute({ view: "search", query: "edge cache", key: null }))).toEqual({ title: "Search: \u201cedge cache\u201d" });
-    expect(await title(formatRoute({ view: "search", query: "edge", key: "delta:shop/world#2" }))).toEqual({
-      breadcrumbs: [{ label: "Search: \u201cedge\u201d", to: "/plugins/shuttle/shuttle/search/edge" }, { label: "shop/world#2" }],
+    expect(await title(formatRoute({ view: "search", query: "edge", key: "lab:acme/app#2" }))).toEqual({
+      breadcrumbs: [{ label: "Search: \u201cedge\u201d", to: "/plugins/shuttle/shuttle/search/edge" }, { label: "acme/app#2" }],
     });
   });
 });

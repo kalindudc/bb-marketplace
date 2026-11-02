@@ -47,7 +47,7 @@ export function workspaceOf(draft: WorkspaceDraft): { workspace: ServerConfig["w
     return command ? { workspace: { kind: "command", command } } : { problem: "Enter the command that prints the checkout's path." };
   }
   const provider = draft.provider.trim();
-  if (!provider) return { problem: "Enter the environment provider's id, such as world-tree." };
+  if (!provider) return { problem: "Enter the environment provider's id, such as my-trees." };
   let inputs: unknown;
   try {
     inputs = JSON.parse(draft.inputs.trim() || "{}");
@@ -295,7 +295,7 @@ function ServerForm({ initial, saved, existingIds, saving, onSave, onCancel }: {
         <label className={row}>
           <span className={label}>Read command</span>
           <span>
-            <input aria-label="Read command" className={`${FIELD} w-full font-mono`} placeholder={draft.kind === "github" ? "gh pr view {number} -R {repo} --comments (the default)" : "dt pr view {number} -R {repo} --comments"}
+            <input aria-label="Read command" className={`${FIELD} w-full font-mono`} placeholder={draft.kind === "github" ? "gh pr view {number} -R {repo} --comments (the default)" : "forge pr view {number} -R {repo} --comments"}
               value={draft.read} onChange={(event) => set("read", event.target.value)} />
             <span className="mt-1 block text-xs text-muted-foreground">How a review agent reads a PR with its conversation; {"{repo}"}, {"{number}"} and {"{url}"} are filled in, shell-quoted.</span>
           </span>
@@ -304,13 +304,13 @@ function ServerForm({ initial, saved, existingIds, saving, onSave, onCancel }: {
           <span className={label}>Review workspace</span>
           <select aria-label="Review workspace" className={FIELD} value={draft.workspaceKind} onChange={(event) => set("workspaceKind", event.target.value as ServerDraft["workspaceKind"])}>
             <option value="git">bb's git worktree</option>
-            <option value="provider">A bb environment provider, such as World tree</option>
+            <option value="provider">A bb environment provider</option>
             <option value="command">A command that prints a checkout's path</option>
           </select>
         </label>
         {draft.workspaceKind === "provider" && (
           <>
-            <label className={row}><span className={label}>Provider</span><input aria-label="Environment provider" className={`${FIELD} font-mono`} placeholder="world-tree" value={draft.provider} onChange={(event) => set("provider", event.target.value)} /></label>
+            <label className={row}><span className={label}>Provider</span><input aria-label="Environment provider" className={`${FIELD} font-mono`} placeholder="my-trees" value={draft.provider} onChange={(event) => set("provider", event.target.value)} /></label>
             <label className={row}>
               <span className={label}>Inputs (JSON)</span>
               <textarea aria-label="Provider inputs" rows={3} className={`${FIELD_CODE} w-full`} placeholder='{ "tree": "shuttle-{number}" }' value={draft.inputs} onChange={(event) => set("inputs", event.target.value)} />
@@ -320,7 +320,7 @@ function ServerForm({ initial, saved, existingIds, saving, onSave, onCancel }: {
         {draft.workspaceKind === "command" && (
           <label className={row}>
             <span className={label}>Command</span>
-            <input aria-label="Workspace command" className={`${FIELD_CODE} w-full`} placeholder="cd ~/world && dev tree add shuttle-{number} >&2 && echo ~/world/trees/shuttle-{number}/src"
+            <input aria-label="Workspace command" className={`${FIELD_CODE} w-full`} placeholder="cd ~/src/app && git worktree add ../app-{number} >&2 && echo ~/src/app-{number}"
               value={draft.workspaceCommand} onChange={(event) => set("workspaceCommand", event.target.value)} />
           </label>
         )}
@@ -387,12 +387,12 @@ export function ServersSection() {
 }
 
 const COMMAND_SHAPES = `// whoami: one object
-{"login": "kalindudc"}
+{"login": "ana"}
 
 // authored, review_requested, team_requested, mentioned: a JSON array; view: one of these objects
-[{"repo": "shop/world", "number": 2269437, "title": "…", "author": "sam.lee",
+[{"repo": "acme/app", "number": 1234, "title": "…", "author": "sam.lee",
   "state": "open", "draft": false, "head": "9f3c2a1", "updated_at": "2026-10-23T14:58:00Z",
-  "checks": "passed", "review": "required", "teams": ["@shop/edge-routing"]}]
+  "checks": "passed", "review": "required", "teams": ["@acme/routing"]}]
 
 // activity: one object; each item id stays the same until the item changes
 {"head": "a41f7c3", "items": [{"id": "r7", "kind": "review", "author": "ana.k", "bot": false,

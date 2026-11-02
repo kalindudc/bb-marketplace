@@ -15,7 +15,7 @@ const PASSING = ["build (node 22)", "typecheck", "unit / payments", "unit / cart
 
 export const retryPr: PrView = mine({
   repo: "acme/checkout", number: 4821, title: "Retry card authorization when the payment gateway times out", url: "https://github.com/acme/checkout/pull/4821",
-  author: "kalindudc", head: "4a1c9e2f00", headRef: "kalindudc/retry-gateway-timeouts", base: "main", additions: 412, deletions: 89, files: 9,
+  author: "robin-c", head: "4a1c9e2f00", headRef: "robin-c/retry-gateway-timeouts", base: "main", additions: 412, deletions: 89, files: 9,
   createdAt: ago(3 * DAY + 2 * HOUR), updatedAt: ago(17 * MIN), checks: "failed", checkCounts: { passed: 8, failed: 2, pending: 1, total: 11 }, review: "changes",
   labels: [{ name: "payments", color: "1f6feb" }, { name: "needs-qa", color: "d29922" }],
   reviewers: [
@@ -30,10 +30,10 @@ export const retryPr: PrView = mine({
 });
 
 export const retryItems: ConversationItem[] = [
-  item({ id: "IC1", kind: "comment", author: "kalindudc", mine: true, body: "@acme/payments this touches the authorization path. A second look before it ships would be great.", path: null, line: null, thread: null, at: ago(3 * DAY) }),
+  item({ id: "IC1", kind: "comment", author: "robin-c", mine: true, body: "@acme/payments this touches the authorization path. A second look before it ships would be great.", path: null, line: null, thread: null, at: ago(3 * DAY) }),
   item({ id: "IC2", kind: "comment", author: "codecov", bot: true, body: "Coverage is 87.2% (+0.4%).", path: null, line: null, thread: null, at: ago(3 * DAY - 15 * MIN) }),
   item({ id: "T1:C1", author: "priya-n", body: "nit: call this `MAX_BACKOFF_MS` so the unit is obvious.", path: "src/payments/retry.ts", line: 12, thread: "T1", resolved: true, at: ago(125 * MIN), review: "PRR_priya" }),
-  item({ id: "T1:C2", author: "kalindudc", mine: true, body: "Done in 7b13d22.", path: "src/payments/retry.ts", line: 12, thread: "T1", resolved: true, at: ago(121 * MIN) }),
+  item({ id: "T1:C2", author: "robin-c", mine: true, body: "Done in 7b13d22.", path: "src/payments/retry.ts", line: 12, thread: "T1", resolved: true, at: ago(121 * MIN) }),
   item({ id: "R1:APPROVED", kind: "review", author: "priya-n", state: "approved", body: "Looks good overall. The retry budget fits the gateway's 10-second SLA.", path: null, line: null, thread: null, at: ago(2 * HOUR), review: "PRR_priya" }),
   item({ id: "R2:CHANGES_REQUESTED", kind: "review", author: "sam-rivera", state: "changes requested", body: "Two things before this goes in: retry only on timeouts, and fix the jitter order.", path: null, line: null, thread: null, at: ago(HOUR), review: "PRR_sam", delivery: "sent" }),
   item({
@@ -59,10 +59,10 @@ export const retryDetails: PrDetails = {
     ...PASSING.map((name) => run({ name, required: name === "typecheck" || name === "cla" })),
   ] },
   commits: { total: 4, items: [
-    { sha: "1f0d8aa000", message: "Retry card authorization on gateway timeout", author: "kalindudc", at: ago(3 * DAY + 2 * HOUR) },
-    { sha: "7b13d22aa0", message: "Rename the backoff constant to MAX_BACKOFF_MS", author: "kalindudc", at: ago(121 * MIN) },
-    { sha: "9c2e1f0aa0", message: "Record retry attempts in checkout metrics", author: "kalindudc", at: ago(80 * MIN) },
-    { sha: "4a1c9e2f00", message: "Apply jitter before the backoff cap", author: "kalindudc", at: ago(25 * MIN) },
+    { sha: "1f0d8aa000", message: "Retry card authorization on gateway timeout", author: "robin-c", at: ago(3 * DAY + 2 * HOUR) },
+    { sha: "7b13d22aa0", message: "Rename the backoff constant to MAX_BACKOFF_MS", author: "robin-c", at: ago(121 * MIN) },
+    { sha: "9c2e1f0aa0", message: "Record retry attempts in checkout metrics", author: "robin-c", at: ago(80 * MIN) },
+    { sha: "4a1c9e2f00", message: "Apply jitter before the backoff cap", author: "robin-c", at: ago(25 * MIN) },
   ] },
   files: { total: 9, items: [
     { path: "src/payments/gateway.ts", additions: 118, deletions: 41, change: "modified" },
@@ -76,9 +76,9 @@ export const retryDetails: PrDetails = {
     { path: "CHANGELOG.md", additions: 5, deletions: 0, change: "modified" },
   ] },
   timeline: [
-    { kind: "review_requested", at: ago(3 * DAY + 2 * HOUR), actor: "kalindudc", subject: "@acme/payments", detail: null },
-    { kind: "review_requested", at: ago(3 * DAY + 2 * HOUR), actor: "kalindudc", subject: "sam-rivera", detail: null },
-    { kind: "labeled", at: ago(3 * DAY + 2 * HOUR), actor: "kalindudc", subject: "payments", detail: null },
+    { kind: "review_requested", at: ago(3 * DAY + 2 * HOUR), actor: "robin-c", subject: "@acme/payments", detail: null },
+    { kind: "review_requested", at: ago(3 * DAY + 2 * HOUR), actor: "robin-c", subject: "sam-rivera", detail: null },
+    { kind: "labeled", at: ago(3 * DAY + 2 * HOUR), actor: "robin-c", subject: "payments", detail: null },
   ],
   merge: { state: "blocked", detail: "A reviewer requested changes." },
 };
@@ -96,7 +96,7 @@ export const taxPr: PrView = pr({
   labels: [{ name: "tax", color: "2ea043" }, { name: "refactor", color: "a371f7" }],
   reviewers: [
     { login: "lee-m", team: false, state: "approved", at: ago(5 * HOUR), head: "3e9a7c1000" },
-    { login: "kalindudc", team: false, state: "requested" },
+    { login: "robin-c", team: false, state: "requested" },
     { login: "acme/tax", team: true, state: "requested" },
   ],
   links: [link({ threadId: "thr_review", title: "Review acme/checkout#4907", role: "review" })],
@@ -117,10 +117,10 @@ export const taxDraft: ReviewDraft = {
 };
 
 export const taxItems: ConversationItem[] = [
-  item({ id: "IC9", kind: "comment", author: "dana-k", body: "@kalindudc you wrote the original tax code, so you're the best person to check the rounding.", path: null, line: null, thread: null, at: ago(2 * DAY + 4 * HOUR) }),
+  item({ id: "IC9", kind: "comment", author: "dana-k", body: "@robin-c you wrote the original tax code, so you're the best person to check the rounding.", path: null, line: null, thread: null, at: ago(2 * DAY + 4 * HOUR) }),
   item({ id: "T9:C1", author: "lee-m", body: "Could the rate table be a `const` object instead of a class?", path: "src/tax/rates.ts", line: 8, thread: "T9", resolved: true, at: ago(6 * HOUR) }),
   item({ id: "T9:C2", author: "dana-k", body: "Good call, changed in 3e9a7c1.", path: "src/tax/rates.ts", line: 8, thread: "T9", resolved: true, at: ago(5 * HOUR + 30 * MIN) }),
-  item({ id: "R9:APPROVED", kind: "review", author: "lee-m", state: "approved", body: "The layout looks good to me. I'll leave the rounding to @kalindudc.", path: null, line: null, thread: null, at: ago(5 * HOUR) }),
+  item({ id: "R9:APPROVED", kind: "review", author: "lee-m", state: "approved", body: "The layout looks good to me. I'll leave the rounding to @robin-c.", path: null, line: null, thread: null, at: ago(5 * HOUR) }),
 ];
 
 export const taxDetails: PrDetails = {
@@ -134,7 +134,7 @@ export const taxDetails: PrDetails = {
     { path: "src/tax/rates.ts", additions: 96, deletions: 0, change: "added" },
     { path: "src/checkout/summary.ts", additions: 38, deletions: 214, change: "modified" },
   ] },
-  timeline: [{ kind: "review_requested", at: ago(2 * DAY + 4 * HOUR), actor: "dana-k", subject: "kalindudc", detail: null }],
+  timeline: [{ kind: "review_requested", at: ago(2 * DAY + 4 * HOUR), actor: "dana-k", subject: "robin-c", detail: null }],
   merge: { state: "blocked", detail: "It needs an approving review." },
 };
 
@@ -148,6 +148,6 @@ export const mergedPr: PrView = {
 export const mergedDetails: PrDetails = {
   ...retryDetails,
   checks: { total: 11, items: retryDetails.checks!.items.map((check) => ({ ...check, state: "passed" as const, detail: null, itemId: null, completedAt: check.completedAt ?? ago(5 * MIN) })) },
-  timeline: [...retryDetails.timeline!, { kind: "merged", at: ago(4 * MIN), actor: "kalindudc", subject: "e51b0c4", detail: "main" }, { kind: "branch_deleted", at: ago(4 * MIN), actor: "kalindudc", subject: "kalindudc/retry-gateway-timeouts", detail: null }],
+  timeline: [...retryDetails.timeline!, { kind: "merged", at: ago(4 * MIN), actor: "robin-c", subject: "e51b0c4", detail: "main" }, { kind: "branch_deleted", at: ago(4 * MIN), actor: "robin-c", subject: "robin-c/retry-gateway-timeouts", detail: null }],
   merge: null,
 };

@@ -5,7 +5,7 @@ import { errText } from "./ctx";
 import { boardDetailText, boardLine, boardList, prDetail, prList } from "./format";
 import type { Shuttle } from "./shuttle";
 
-const pr = z.string().min(3).max(500).describe("The PR: its link, or a Shuttle key such as github:owner/repo#123 or delta:shop/world#2261179.");
+const pr = z.string().min(3).max(500).describe("The PR: its link, or a Shuttle key such as github:owner/repo#123 or gitlab:group/project!42.");
 
 async function run(fn: () => Promise<string> | string) {
   try {

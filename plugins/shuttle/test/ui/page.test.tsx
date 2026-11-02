@@ -6,7 +6,7 @@ import { callsTo, find, lastNavigation, next, page, pr, unmountAll, type Handler
 afterEach(unmountAll);
 
 const first = pr({ next: next({ kind: "new_request", label: "New review request" }) });
-const second = pr({ repo: "Shopify/spy-v2", number: 88, title: "Add per-route sampling to the tracer", author: "mia-r", reasons: [{ reason: "team", teams: ["edge-routing"] }], teams: ["edge-routing"], next: next({ kind: "not_reviewed", label: "Not reviewed" }) });
+const second = pr({ repo: "acme/deploy-v2", number: 88, title: "Add per-route sampling to the tracer", author: "mia-r", reasons: [{ reason: "team", teams: ["edge-routing"] }], teams: ["edge-routing"], next: next({ kind: "not_reviewed", label: "Not reviewed" }) });
 
 function reviews(subPath: string, rpc: Partial<Handlers> = {}) {
   return page(subPath, {
