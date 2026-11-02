@@ -2,6 +2,22 @@
 
 Forage 0.3.1 gives every BB agent six web-research tools, a Research tab in every thread and a zero-model-turn CLI. It requires BB 0.47 or newer and Plugin SDK 0.6.79.
 
+## Screenshots
+
+Captured in an isolated demo bb researching a fictional docs site (Wattle Queue), in the default theme, light mode.
+
+![Research Activity beside the thread](../../screenshots/forage/activity.jpg)
+
+![The reader with cited lines](../../screenshots/forage/reader.jpg)
+
+![Sources grouped by how they arrived](../../screenshots/forage/sources.jpg)
+
+![Citation cards in a reply](../../screenshots/forage/header-chip.jpg)
+
+![Crawls against their limits](../../screenshots/forage/crawls.jpg)
+
+![The Research page](../../screenshots/forage/research-page.jpg)
+
 ## Tools and one shared runtime
 
 - `web_search` searches one query or up to eight queries. It supports domain/date filters, profiles, explicit providers and fair, host-diverse `includeContent`.

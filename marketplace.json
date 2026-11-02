@@ -128,23 +128,24 @@
         "url": "plugins/forage/icons/forage.svg"
       },
       "screenshots": [
-        "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/forage/research-tab.png",
-        "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/forage/reader.png",
-        "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/forage/check-in-sources.png",
-        "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/forage/crawls.png",
-        "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/forage/thread-research.png",
-        "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/forage/research-page.png"
+        "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/forage/activity.jpg",
+        "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/forage/reader.jpg",
+        "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/forage/sources.jpg",
+        "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/forage/header-chip.jpg",
+        "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/forage/crawls.jpg",
+        "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/forage/research-page.jpg"
       ],
       "tags": [
-        "search",
-        "web",
-        "fetch",
-        "research",
-        "tools",
-        "agents",
+        "web-search",
+        "web-fetch",
+        "citations",
         "sources",
-        "crawl",
-        "privacy"
+        "research",
+        "crawls",
+        "snapshots",
+        "searxng",
+        "privacy",
+        "cli"
       ],
       "author": {
         "name": "Kalindu De Costa",
