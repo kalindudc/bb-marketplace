@@ -111,6 +111,9 @@ export function rememberPanelPr(threadId: string, key: string | null): void {
   panelPrs.set(Object.fromEntries([...entries.slice(Math.max(0, entries.length - MAX_PANEL_PRS + 1)), [threadId, key]]));
 }
 
+/** How wide the PR panel beside or over a list was dragged, in pixels; null is its default width. */
+export const panelWidth = createStored<number | null>("panel-width", null, (value) => (typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.round(value) : null), 250);
+
 /** The page's route; at the root, the route it was last left on. */
 export function routeOf(subPath: string): Route {
   return parseRoute(subPath === "" ? lastRoute.get() ?? "" : subPath);
@@ -146,5 +149,5 @@ export function useFolding(area: string): Folding {
 
 /** Tests clear localStorage between cases; this reads every remembered value again. */
 export function reloadPrefs(): void {
-  for (const stored of [lastRoute, mineLayout, mineSort, doneSort, boardViews, reviewFilter, folds, scrolls, panelPrs, conversationOrder, hideBotComments, prSeen, inboxView, inboxSwipeHint, threadPrsOpen]) stored.reload();
+  for (const stored of [lastRoute, mineLayout, mineSort, doneSort, boardViews, reviewFilter, folds, scrolls, panelPrs, conversationOrder, hideBotComments, prSeen, inboxView, inboxSwipeHint, threadPrsOpen, panelWidth]) stored.reload();
 }

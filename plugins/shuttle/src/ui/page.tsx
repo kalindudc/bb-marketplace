@@ -16,6 +16,7 @@ import { SyncBanner } from "./sync";
 import { isLive } from "./pills";
 import { lastRoute, reviewFilter } from "./prefs";
 import { useStored } from "./remember";
+import { ResizablePanel } from "./resizable-panel";
 import { ReviewsView } from "./reviews";
 import { SearchView } from "./search";
 import { areaOf, formatRoute, parseRoute, type Area, type ListRoute, type Route } from "./route";
@@ -315,9 +316,9 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
           {overlay && (
             <>
               <div data-scrim className="absolute inset-0 z-10 bg-background/60" onClick={closeSelection} />
-              <div ref={prScroller.ref} onScroll={prScroller.onScroll} data-overlay className="absolute inset-y-0 right-0 z-20 w-[min(640px,88%)] overflow-y-auto border-l border-border bg-background shadow-lg animate-in slide-in-from-right duration-200">
-                {detailPanel(closeSelection)}
-              </div>
+              <ResizablePanel overlay>
+                <div ref={prScroller.ref} onScroll={prScroller.onScroll} data-overlay className="min-h-0 flex-1 overflow-y-auto">{detailPanel(closeSelection)}</div>
+              </ResizablePanel>
             </>
           )}
         </div>
@@ -327,7 +328,9 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
     body = (
       <div className="flex h-full min-h-0 flex-row">
         <div ref={scroller.ref} onScroll={scroller.onScroll} data-scroller className="min-w-0 flex-1 overflow-y-auto">{notices}{area}</div>
-        <div ref={prScroller.ref} onScroll={prScroller.onScroll} data-panel className="w-[640px] min-w-0 max-w-[55%] shrink-0 overflow-y-auto border-l border-border">{detailPanel(closeSelection)}</div>
+        <ResizablePanel overlay={false}>
+          <div ref={prScroller.ref} onScroll={prScroller.onScroll} data-panel className="min-h-0 flex-1 overflow-y-auto">{detailPanel(closeSelection)}</div>
+        </ResizablePanel>
       </div>
     );
   } else {

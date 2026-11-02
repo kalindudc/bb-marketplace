@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import type { PrDetails, PrView } from "../contract";
 import { runNext, useActions } from "./actions";
@@ -19,6 +19,7 @@ import { isLive, STATE_LOOKS } from "./pills";
 import { copy, PrMenu, TrackButton } from "./pr-menu";
 import { usePrState, useSeenSince, type PrTab } from "./pr-state";
 import { StatusCard } from "./status";
+import { TabBar, tabId, type TabEntry } from "./tab-bar";
 import { YourReviewCard } from "./your-review";
 
 export { TrackButton } from "./pr-menu";
@@ -153,46 +154,6 @@ function Header({ pr, details, wide }: { pr: PrView; details: PrDetails | null; 
   );
 }
 
-interface TabEntry {
-  id: PrTab;
-  label: string;
-  badge?: { text: string; tone: "neutral" | "bad" | "warn" | "info" };
-}
-
-/** bb's own count badge (bg-surface-recessed, text-2xs), tinted only when it asks for attention. */
-const BADGE_TONES = {
-  neutral: "bg-surface-recessed text-muted-foreground",
-  bad: "bg-surface-destructive text-destructive-text",
-  warn: "bg-warning/10 text-warning-text",
-  info: "bg-surface-recessed text-foreground",
-} as const;
-
-const tabId = (base: string, tab: PrTab) => `${base}-tab-${tab}`;
-
-/** The tabs, with the keyboard pattern of a tab list: one stop in the Tab order, the arrows, Home and End move between tabs. */
-function TabBar({ tabs, current, sticky, inset, barRef, panelId, onTab }: { tabs: readonly TabEntry[]; current: PrTab; sticky: string; inset: boolean; barRef: RefObject<HTMLDivElement | null>; panelId: string; onTab(tab: PrTab): void }) {
-  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    const at = tabs.findIndex((tab) => tab.id === current);
-    const next = event.key === "ArrowRight" ? (at + 1) % tabs.length : event.key === "ArrowLeft" ? (at - 1 + tabs.length) % tabs.length
-      : event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : -1;
-    if (next < 0 || at < 0) return;
-    event.preventDefault();
-    onTab(tabs[next]!.id);
-    barRef.current?.querySelector<HTMLElement>(`[data-tab="${tabs[next]!.id}"]`)?.focus();
-  };
-  return (
-    <div ref={barRef} role="tablist" aria-label="Pull request sections" onKeyDown={onKeyDown} className={`sticky ${sticky} z-10 mt-4 flex gap-0.5 overflow-x-auto border-b border-border bg-background [scrollbar-width:none] ${inset ? "px-2.5" : ""}`}>
-      {tabs.map((tab) => (
-        <button key={tab.id} id={tabId(panelId, tab.id)} type="button" role="tab" aria-selected={tab.id === current} aria-controls={panelId} tabIndex={tab.id === current ? 0 : -1} data-tab={tab.id} onClick={() => onTab(tab.id)}
-          className={`-mb-px inline-flex shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap border-b-2 px-2 py-2.5 text-[13px] ${tab.id === current ? "border-foreground font-semibold text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
-          {tab.label}
-          {tab.badge && <span className={`rounded-full px-1.5 text-2xs font-normal leading-4 tabular-nums ${BADGE_TONES[tab.badge.tone]}`}>{tab.badge.text}</span>}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 /** One PR, the same everywhere: who and what, where it stands, then its parts in tabs. On a phone the page's bars carry its main actions. */
 export function PrDetail({ prKey, onClose, onExpand, onCollapse, phone = false, page = false }: {
   prKey: string;
@@ -302,7 +263,7 @@ export function PrDetail({ prKey, onClose, onExpand, onCollapse, phone = false, 
         <div className={wide ? "grid grid-cols-[minmax(0,1fr)_320px] items-start gap-7 px-6" : ""}>
           <div className="min-w-0">
             <div className={wide ? "" : "px-4"}><StatusCard pr={pr} items={items} details={details} draft={draft} onTab={open} /></div>
-            <TabBar tabs={tabs} current={tab} sticky={phone ? "top-0" : "top-11"} inset={!wide} barRef={tabBar} panelId={panelId} onTab={open} />
+            <TabBar tabs={tabs} current={tab} sticky={phone ? "top-0" : "top-11"} inset={!wide} phone={actions.phone} barRef={tabBar} panelId={panelId} onTab={open} />
             <div ref={pane} id={panelId} role="tabpanel" aria-labelledby={tabId(panelId, tab)} className={`scroll-mt-24 pt-4 ${wide ? "" : "px-4"}`}>{content}</div>
           </div>
           {wide && (

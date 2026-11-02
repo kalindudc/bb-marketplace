@@ -16,6 +16,8 @@ Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` i
 
 ### Changed
 
+- The PR panel beside a list can be made wider or narrower. Drag its left edge, or focus the edge and press the arrow keys (Shift for bigger steps, Home for the narrowest, End for the widest); a double-click puts back the default width of 640 pixels. The list keeps at least 360 pixels. Shuttle remembers the width on this device, and the panel that slides over the list in a narrower window uses it too.
+- The PR view's tabs fit the width. They used to run off the right edge of a narrow panel, so Changes and History were cut off with no sign they were there. Tabs that do not fit now go under More at the end of the bar, which shows a dot when one of them has failing checks, running checks or open threads. The tab you are on always stays in the bar, and the arrow keys still move through every tab.
 - The summary and findings of an AI review draft open as tall as their text. They used to open at two or three lines, so a longer finding scrolled inside its box until you dragged it taller. They grow as you type and when the view gets narrower, and you can still drag one taller; it keeps that height while you edit.
 
 ### Fixed

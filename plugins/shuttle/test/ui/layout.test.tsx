@@ -132,6 +132,60 @@ describe("history", () => {
   });
 });
 
+describe("the PR panel's width", () => {
+  const STORED = "bb-plugin-shuttle:panel-width";
+  const frameOf = async (slot: Awaited<ReturnType<typeof layoutPage>>["slot"], selector: string) => (await find(slot.container, selector)).closest<HTMLElement>("[data-panel-frame]")!;
+
+  it("drags wider from the panel's left edge, is remembered, and a double-click puts the default back", async () => {
+    const { slot } = await layoutPage(selected(first.key));
+    const frame = await frameOf(slot, "[data-panel]");
+    expect(frame.className).toContain("w-[640px]");
+    const edge = within(frame).getByRole("separator", { name: "Resize the PR panel" });
+    expect(edge.getAttribute("aria-valuenow")).toBe("640");
+    fireEvent.pointerDown(edge, { button: 0, clientX: 1000, pointerId: 1 });
+    fireEvent.pointerMove(edge, { clientX: 880, pointerId: 1 });
+    fireEvent.pointerUp(edge, { clientX: 880, pointerId: 1 });
+    expect(frame.style.width).toBe("760px");
+    expect(frame.style.maxWidth).toBe("calc(100% - 360px)");
+    expect(frame.className).not.toContain("w-[640px]");
+    await waitFor(() => expect(window.localStorage.getItem(STORED)).toBe("760"));
+    fireEvent.pointerMove(edge, { clientX: 500, pointerId: 1 });
+    expect(frame.style.width).toBe("760px");
+    fireEvent.pointerDown(edge, { button: 0, clientX: 1000, pointerId: 2 });
+    fireEvent.pointerMove(edge, { clientX: 1900, pointerId: 2 });
+    fireEvent.pointerUp(edge, { clientX: 1900, pointerId: 2 });
+    expect(frame.style.width).toBe("400px");
+    fireEvent.doubleClick(edge);
+    expect(frame.style.width).toBe("");
+    expect(frame.className).toContain("w-[640px]");
+    await waitFor(() => expect(window.localStorage.getItem(STORED)).toBe("null"));
+  });
+
+  it("steps with the arrows from the focused edge, further with Shift, and Home goes to the narrowest", async () => {
+    const { slot } = await layoutPage(selected(first.key));
+    const frame = await frameOf(slot, "[data-panel]");
+    const edge = within(frame).getByRole("separator", { name: "Resize the PR panel" });
+    expect(edge.tabIndex).toBe(0);
+    fireEvent.keyDown(edge, { key: "ArrowLeft" });
+    expect(frame.style.width).toBe("672px");
+    fireEvent.keyDown(edge, { key: "ArrowRight", shiftKey: true });
+    expect(frame.style.width).toBe("544px");
+    expect(edge.getAttribute("aria-valuenow")).toBe("544");
+    fireEvent.keyDown(edge, { key: "Home" });
+    expect(frame.style.width).toBe("400px");
+  });
+
+  it("keeps the width for the panel that slides over the list in a narrower window", async () => {
+    const { slot } = await layoutPage(selected(first.key));
+    fireEvent.keyDown(within(await frameOf(slot, "[data-panel]")).getByRole("separator"), { key: "ArrowLeft", shiftKey: true });
+    setViewport(1000);
+    const frame = await frameOf(slot, "[data-overlay]");
+    expect(frame.style.width).toBe("768px");
+    expect(frame.style.maxWidth).toBe("calc(100% - 48px)");
+    expect(within(frame).getByRole("separator", { name: "Resize the PR panel" })).toBeTruthy();
+  });
+});
+
 describe("in a narrow window", () => {
   it("puts the areas in chips under the header", async () => {
     setViewport(1000);

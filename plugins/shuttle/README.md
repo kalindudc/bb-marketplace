@@ -44,10 +44,15 @@ A PR's view reads top to bottom the way a person asks about it:
   to post, on someone else's PR, with the review's notes for you, which are never posted), Conversation (open threads first with the code they are on, then
   every review and comment, newest first with a button to flip the order), Checks (every check,
   failing first), Changes (commits and each file's path and line counts, never the diff itself)
-  and History (what happened on the server and in Shuttle).
+  and History (what happened on the server and in Shuttle). Tabs that do not fit the width go
+  under More, which shows a dot when one of them has failing or running checks or open threads;
+  the tab you are on always stays in view.
 
-Beside a list, the view's expand button opens it as a full page, which puts people and facts in a
-column of their own on a wide window; a PR's own link opens there too. The ⋯ menu holds copying,
+Beside a list, drag the view's left edge to make it wider or narrower, or focus the edge and use
+the arrow keys; a double-click puts back the default width. Shuttle remembers the width on this
+device, for the panel beside the list and the one that slides over it in a narrower window. The
+view's expand button opens it as a full page, which puts people and facts in a column of their own
+on a wide window; a PR's own link opens there too. The ⋯ menu holds copying,
 tracking, snoozing, dismissing from the Inbox, linking a thread, starting an AI review and your
 PR's draft, close and reopen.
 

@@ -48,7 +48,7 @@ const Context = createContext<PickerContext>({ mode: "menu", close: () => {} });
  * A menu of choices: bb's Radix dropdown in a portal on a desktop, a bottom sheet on a phone.
  * The children mount only while it is open, so they can load what they offer then.
  */
-export function Picker({ phone, title, trigger, triggerClassName, triggerLabel, tip, disabled = false, disabledReason, align = "end", open: shown, onOpenChange, onCloseAutoFocus, children }: {
+export function Picker({ phone, title, trigger, triggerClassName, triggerLabel, tip, disabled = false, disabledReason, align = "end", width = "w-80", open: shown, onOpenChange, onCloseAutoFocus, children }: {
   phone: boolean;
   title: string;
   trigger: ReactNode;
@@ -59,6 +59,8 @@ export function Picker({ phone, title, trigger, triggerClassName, triggerLabel, 
   disabled?: boolean;
   disabledReason?: string;
   align?: "start" | "end";
+  /** The desktop menu's width, as a Tailwind class. */
+  width?: string;
   /** Open from outside too, such as by a key; the picker still says when it closes. */
   open?: boolean;
   onOpenChange?(open: boolean): void;
@@ -100,7 +102,7 @@ export function Picker({ phone, title, trigger, triggerClassName, triggerLabel, 
       {tip === undefined || disabled ? button : <Tip text={tip.text} keys={tip.keys}>{button}</Tip>}
       <DropdownMenu.Portal>
         <DropdownMenu.Content {...scope} align={align} sideOffset={4} collisionPadding={8} onCloseAutoFocus={onCloseAutoFocus}
-          className="z-50 flex max-h-[min(24rem,var(--radix-dropdown-menu-content-available-height))] w-80 flex-col overflow-y-auto rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md">
+          className={`z-50 flex max-h-[min(24rem,var(--radix-dropdown-menu-content-available-height))] ${width} flex-col overflow-y-auto rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md`}>
           <Context.Provider value={{ mode: "menu", close: () => setOpen(false) }}>{children}</Context.Provider>
         </DropdownMenu.Content>
       </DropdownMenu.Portal>

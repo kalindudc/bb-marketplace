@@ -78,6 +78,24 @@ function fakeTextLayout() {
   };
 }
 
+/**
+ * jsdom lays nothing out, so give the tab bar a layout: each tab and More measure 100px, in a bar `width` wide.
+ * Returns a function that takes it away again.
+ */
+function fakeTabLayout(width: number) {
+  const rect = HTMLElement.prototype.getBoundingClientRect;
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+    return this.parentElement?.hasAttribute("data-tab-ruler") ? { x: 0, y: 0, top: 0, left: 0, right: 100, bottom: 36, width: 100, height: 36, toJSON: () => ({}) } : rect.call(this);
+  };
+  Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get(this: HTMLElement) { return this.querySelector(':scope > [role="tablist"]') === null ? 0 : width; } });
+  return () => {
+    vi.unstubAllGlobals();
+    HTMLElement.prototype.getBoundingClientRect = rect;
+    Reflect.deleteProperty(HTMLElement.prototype, "clientWidth");
+  };
+}
+
 /** Opens one of the PR view's tabs. */
 function tab(view: HTMLElement, id: string) {
   fireEvent.click(view.querySelector<HTMLElement>(`[data-tab="${id}"]`)!);
@@ -403,6 +421,43 @@ describe("the PR view of your own PR", () => {
     const pane = panel.querySelector<HTMLElement>('[role="tabpanel"]')!;
     expect(tabs[0]!.getAttribute("aria-controls")).toBe(pane.id);
     expect(pane.getAttribute("aria-labelledby")).toBe(tabs[0]!.id);
+  });
+
+  it("puts the tabs that do not fit under More, which flags failing checks, and keeps the current tab in the bar", async () => {
+    const restore = fakeTabLayout(350);
+    try {
+      const { view } = await prPage(retryPr, {}, { items: retryItems, details: retryDetails });
+      const panel = await view();
+      const list = within(panel).getByRole("tablist");
+      const shown = () => within(list).getAllByRole("tab").map((node) => node.dataset.tab);
+      await waitFor(() => expect(shown()).toEqual(["overview", "conversation"]));
+      const more = within(panel).getByRole("button", { name: "More sections: Checks, Changes, History" });
+      expect(more.querySelector("[data-urgent]")?.getAttribute("data-urgent")).toBe("bad");
+      fireEvent.keyDown(more, { key: "Enter" });
+      const menu = await screen.findByRole("menu");
+      expect(within(menu).getAllByRole("menuitem").map((row) => row.querySelector("[data-tab-more]")?.getAttribute("data-tab-more"))).toEqual(["checks", "changes", "history"]);
+      fireEvent.click(within(menu).getByRole("menuitem", { name: /History/u }));
+      await waitFor(() => expect(shown()).toEqual(["overview", "history"]));
+      expect(within(list).getByRole("tab", { name: "History" }).getAttribute("aria-selected")).toBe("true");
+      expect(panel.querySelector('[role="tabpanel"]')!.getAttribute("aria-labelledby")).toBe(within(list).getByRole("tab", { name: "History" }).id);
+      fireEvent.keyDown(list, { key: "ArrowLeft" });
+      await waitFor(() => expect(shown()).toEqual(["overview", "changes"]));
+      expect(document.activeElement).toBe(within(list).getByRole("tab", { name: /Changes/u }));
+    } finally {
+      restore();
+    }
+  });
+
+  it("shows every tab, with no More, when they fit", async () => {
+    const restore = fakeTabLayout(1000);
+    try {
+      const { view } = await prPage(retryPr, {}, { items: retryItems, details: retryDetails });
+      const panel = await view();
+      await waitFor(() => expect(within(within(panel).getByRole("tablist")).getAllByRole("tab")).toHaveLength(5));
+      expect(panel.querySelector("[data-tabs-more]")).toBeNull();
+    } finally {
+      restore();
+    }
   });
 
   it("says how a command server can list its commits and files when it sent none, and says nothing more for GitHub", async () => {
