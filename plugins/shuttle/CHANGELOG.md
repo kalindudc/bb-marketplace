@@ -2,7 +2,7 @@
 
 Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` in this repository.
 
-## Unreleased
+## 0.6.0 (2026-11-02)
 
 ### Added
 
