@@ -1,19 +1,18 @@
 # Lineup
 
-A bb plugin that adds **Recent** and **Lineup** tabs to bb's own model menu,
-so you pick a model from a short list instead of scrolling every provider's
-catalog.
+A bb plugin that adds a **Lineup** tab to bb's own model menu, so you pick a
+model from a short list instead of scrolling every provider's catalog.
 
-- **Recent** lists the models your threads ran on most recently, newest
-  first. The count is the **Models in Recent** setting (default 25, up to
-  100).
-- **Lineup** lists models you pin. Hover any row in the menu, including bb's
-  own rows, and click its pin. On a touch screen every row shows its pin.
+- The tab lists the models you pin, then the 3 newest models your threads
+  used that are not pinned. Hover any row in the menu, including bb's own
+  rows, and click the pin where its check mark goes. On a touch screen every
+  row shows its pin.
 - Picking a row switches the composer's model as bb's list does. Typing
-  filters the tab and also lists matches from every provider.
-- Tab and Shift+Tab in the search box move between Recent, Lineup and bb's
-  list. The menu reopens on the last tab used, and on bb's list until you
-  choose another.
+  filters the tab, shows every recent match (up to the **Models in Recent**
+  setting, default 25) and lists matches from every provider.
+- Tab and Shift+Tab in the search box switch between Lineup and bb's list.
+  The menu reopens on the last list used, and on bb's list until you choose
+  Lineup.
 - Settings → Plugins → Lineup reorders the lineup and adds models with bb's
   picker.
 - It works in bb's popover menu and in the drawer bb opens instead on a phone
@@ -34,10 +33,10 @@ bb has no plugin API for its model menu, so the frontend adds to the menu bb
 | Part                         | How                                                                            |
 | ---------------------------- | ------------------------------------------------------------------------------ |
 | Knowing which composer opened the menu | An action in each composer (`app.composer.customize`) that renders a hidden span; it watches that composer's model button (`aria-label^="Provider, model and reasoning"`) and finds the menu through its `aria-controls`. Below 768px bb draws the menu in a bottom drawer in `<body>` and the button has no `aria-controls`, so Lineup takes the open drawer (`[data-persistent-drawer-content][data-state="open"]`) that holds the model search box, or the placeholder the drawer shows before its first draw |
-| Tabs, list and pins          | React portals into containers added to bb's menu (in the drawer, the drawer's child that holds the search box): the tabs at the start of bb's provider tab row (or a row of Lineup's own when bb draws none), the list after bb's `[role=listbox][aria-label=Models]`, a pin slot before each row's check mark |
-| Showing a tab                | `data-lineup-view` on the menu; `app.css` hides bb's list and mutes its tab underline while Recent or Lineup is open |
+| Tabs, list and pins          | React portals into containers added to bb's menu (in the drawer, the drawer's child that holds the search box): the tabs at the start of bb's provider tab row (or a row of Lineup's own when bb draws none), the list after bb's `[role=listbox][aria-label=Models]`, a pin slot before each row's check mark, which `app.css` moves onto the hidden check mark of rows that are not selected |
+| Showing a tab                | `data-lineup-view` on the menu; `app.css` hides bb's list and mutes its tab underline while Lineup is open |
 | Picking a model              | `useComposer().setSelection({ providerId, model })`, the same path bb's pickers take |
-| Keys                         | A window capture listener for keys typed in the menu's search box: Tab cycles the three lists; arrows and Enter drive Lineup's list |
+| Keys                         | A window capture listener for keys typed in the menu's search box: Tab switches between Lineup and bb's list; arrows and Enter drive Lineup's list |
 | Recent models                | `server.ts` reads the thread list in pages of 500 (bb's list is not ordered by activity, so the newest threads can be anywhere in it), then reads the last model of the 400 most recently active threads with `bb.sdk.threads.defaultExecutionOptions`, caching by thread and `updatedAt` (`src/recent.ts`); a thread whose model cannot be read is skipped and tried again next time |
 | Model names                  | `bb.sdk.providers.list` and `providers.models`; names drop the provider's brand prefix, as bb's rows do |
 | Lineup and last tab          | One `bb.storage.kv` value. Each write is one change (`pin`, `move` or `setLastView`); the server applies them one at a time to the latest state, each window sends its own in order, and every write publishes `state-changed` so other windows read the state again (a window with a write on its way reads again once it finishes) |

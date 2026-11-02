@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-lineup",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -9,7 +9,7 @@
   },
   "bb": {
     "name": "Lineup",
-    "description": "Adds Recent and Lineup tabs to bb's model menu: the models your threads used most recently, and a short list of models you pin.",
+    "description": "Adds a Lineup tab to bb's model menu: the models you pin, then the few your threads used most recently.",
     "branding": {
       "icon": "Pin"
     },

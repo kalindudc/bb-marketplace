@@ -58,7 +58,7 @@ export default function plugin(bb: BbPluginApi) {
     recentLimit: {
       type: "number",
       label: "Models in Recent",
-      description: `How many of the models your threads used most recently the Recent tab lists (1 to ${MAX_RECENT_LIMIT}).`,
+      description: `How many of the models your threads used most recently a search in the Lineup tab can find. Without a search it shows the 3 newest that are not pinned (1 to ${MAX_RECENT_LIMIT}).`,
       default: DEFAULT_RECENT_LIMIT,
       experimental_schema: z.number().int().min(1).max(MAX_RECENT_LIMIT),
     },

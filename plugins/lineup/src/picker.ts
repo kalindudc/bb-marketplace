@@ -28,6 +28,8 @@ const OWN_TABROW_ATTR = "data-lineup-tabrow";
 const TABS_ATTR = "data-lineup-tabs";
 const LIST_ATTR = "data-lineup-list";
 export const PIN_SLOT_ATTR = "data-lineup-pin-slot";
+/** On a row's trailing span (pin and check mark), so the pin can take the check mark's place. */
+const TRAILING_ATTR = "data-lineup-trailing";
 
 /** bb's tab row classes, for the row Lineup adds when only one provider is enabled. */
 const TABROW_CLASS = "flex shrink-0 items-center gap-0.5 border-b border-border bg-background px-2.5 pt-1";
@@ -147,6 +149,7 @@ export function removeMounts(popover: HTMLElement) {
   for (const node of popover.querySelectorAll(`[${OWN_TABROW_ATTR}], [${TABS_ATTR}], [${LIST_ATTR}], [${PIN_SLOT_ATTR}]`)) {
     node.remove();
   }
+  for (const node of popover.querySelectorAll(`[${TRAILING_ATTR}]`)) node.removeAttribute(TRAILING_ATTR);
   for (const node of popover.querySelectorAll(`[${NATIVE_TABROW_ATTR}], [${NATIVE_LIST_ATTR}]`)) {
     node.removeAttribute(NATIVE_TABROW_ATTR);
     node.removeAttribute(NATIVE_LIST_ATTR);
@@ -168,6 +171,7 @@ export function nativeRowSlots(listbox: HTMLElement): NativeRow[] {
     const title = row.querySelector<HTMLElement>("[title]")?.getAttribute("title");
     const trailing = row.lastElementChild;
     if (!title || !(trailing instanceof HTMLElement) || trailing.hasAttribute("title")) continue;
+    trailing.setAttribute(TRAILING_ATTR, "");
     let slot = trailing.querySelector<HTMLElement>(`:scope > [${PIN_SLOT_ATTR}]`);
     if (slot === null) {
       slot = document.createElement("span");

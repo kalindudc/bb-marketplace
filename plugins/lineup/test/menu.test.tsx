@@ -58,6 +58,7 @@ function setup(
     heldPins?: boolean;
     /** Draw bb's menu in its narrow-screen drawer. */
     drawer?: boolean;
+    recent?: RecentModel[];
   } = {},
 ) {
   let holdStateReads = false;
@@ -89,7 +90,7 @@ function setup(
         if (holdStateReads) await new Promise<void>((resolve) => stateReleases.push(resolve));
         return read;
       },
-      recent: () => ({ models: recent }),
+      recent: () => ({ models: options.recent ?? recent }),
       catalog: () => ({ providers: options.catalog ?? catalog }),
       pin: async (input: unknown) => {
         calls.push(["pin", input]);
@@ -131,40 +132,64 @@ async function openMenu(fake: ReturnType<typeof buildPicker>) {
 
 const tab = (fake: ReturnType<typeof buildPicker>, name: string) =>
   Array.from(fake.popover.querySelectorAll<HTMLButtonElement>("[data-lineup-tabs] button")).find(
-    (button) => button.textContent === name,
+    (button) => (button.getAttribute("aria-label") ?? button.textContent) === name,
   )!;
 const ownRows = (fake: ReturnType<typeof buildPicker>) =>
   Array.from(fake.popover.querySelectorAll<HTMLElement>("[data-lineup-list] [role=option]"));
 
 describe("Lineup in bb's model menu", () => {
-  it("adds Recent and Lineup before bb's provider tabs and keeps bb's list on first open", async () => {
+  it("adds a Lineup tab before bb's provider tabs and keeps bb's list on first open", async () => {
     const { fake } = setup();
     await openMenu(fake);
     const row = fake.popover.firstElementChild!;
     expect(row.firstElementChild!.hasAttribute("data-lineup-tabs")).toBe(true);
-    expect(tab(fake, "Recent")).toBeTruthy();
     expect(tab(fake, "Lineup")).toBeTruthy();
+    expect(tab(fake, "Recent")).toBeUndefined();
     expect(fake.popover.getAttribute("data-lineup-view")).toBe("native");
     expect(ownRows(fake)).toHaveLength(0);
   });
 
-  it("shows models recent threads used, with bb's names, and remembers the tab", async () => {
+  it("shows pinned models, then recent ones that are not pinned, and remembers the tab", async () => {
     const { fake, calls } = setup();
     await openMenu(fake);
-    fireEvent.click(tab(fake, "Recent"));
-    await waitFor(() => expect(ownRows(fake)).toHaveLength(2));
-    expect(fake.popover.getAttribute("data-lineup-view")).toBe("recent");
+    fireEvent.click(tab(fake, "Lineup"));
+    await waitFor(() => expect(ownRows(fake)).toHaveLength(3));
+    expect(fake.popover.getAttribute("data-lineup-view")).toBe("lineup");
+    const groups = Array.from(fake.popover.querySelectorAll("[data-lineup-list] [role=group]"));
+    expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual(["Pinned", "Recent"]);
     expect(ownRows(fake).map((row) => row.textContent)).toEqual([
-      expect.stringContaining("Claude Opus 5.5anthropic4m"),
-      expect.stringContaining("5.52h"),
+      expect.stringContaining("6.1-Sol"),
+      expect.stringContaining("Claude Opus 5.5anthropic"),
+      expect.stringContaining("5.5"),
     ]);
-    expect(calls).toContainEqual(["setLastView", { view: "recent" }]);
+    expect(calls).toContainEqual(["setLastView", { view: "lineup" }]);
+  });
+
+  it("shows three recent models, and every recent match while searching", async () => {
+    const gemini: ModelRef = { providerId: "pi", model: "google/gemini-2.5-flash" };
+    const used = [opus, { providerId: "codex", model: "gpt-5.5" }, gemini, sol].map((ref, index) => ({
+      ...ref,
+      usedAt: now - index * 60_000,
+    }));
+    const { fake } = setup({ state: { lineup: [], lastView: "lineup" }, recent: used });
+    await openMenu(fake);
+    await waitFor(() => expect(ownRows(fake)).toHaveLength(3));
+    expect(ownRows(fake).map((row) => row.textContent)).not.toContainEqual(expect.stringContaining("6.1-Sol"));
+    // A space is not a search, so the cap stays.
+    fireEvent.input(fake.search, { target: { value: " " } });
+    await waitFor(() => expect(fake.search.value).toBe(" "));
+    expect(ownRows(fake)).toHaveLength(3);
+    // "o" matches all four, and all four are recent.
+    fireEvent.input(fake.search, { target: { value: "o" } });
+    await waitFor(() => expect(ownRows(fake)).toHaveLength(4));
+    const groups = Array.from(fake.popover.querySelectorAll("[data-lineup-list] [role=group]"));
+    expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual(["Recent"]);
   });
 
   it("sets the composer's model when a row is picked, and leaves bb's rows alone", async () => {
     const { fake, slot } = setup({ state: { lineup: [sol, opus], lastView: "lineup" } });
     await openMenu(fake);
-    await waitFor(() => expect(ownRows(fake)).toHaveLength(2));
+    await waitFor(() => expect(ownRows(fake)).toHaveLength(3));
     fireEvent.click(ownRows(fake)[1]!);
     await waitFor(() =>
       expect(slot.inspection.composer.selections).toEqual([{ providerId: "pi", model: "anthropic/claude-opus-5-5" }]),
@@ -183,10 +208,12 @@ describe("Lineup in bb's model menu", () => {
   it("pins and unpins from its own rows", async () => {
     const { fake, calls } = setup({ state: { lineup: [sol], lastView: "recent" } });
     await openMenu(fake);
-    await waitFor(() => expect(ownRows(fake)).toHaveLength(2));
-    fireEvent.click(ownRows(fake)[0]!.querySelector('[data-lineup-pin="off"]')!);
+    await waitFor(() => expect(ownRows(fake)).toHaveLength(3));
+    fireEvent.click(ownRows(fake)[1]!.querySelector('[data-lineup-pin="off"]')!);
     await waitFor(() => expect(calls).toContainEqual(["pin", { ...opus, pinned: true }]));
-    await waitFor(() => expect(ownRows(fake)[0]!.querySelector('[data-lineup-pin="on"]')).not.toBeNull());
+    await waitFor(() => expect(ownRows(fake)[1]!.querySelector('[data-lineup-pin="on"]')).not.toBeNull());
+    fireEvent.click(ownRows(fake)[0]!.querySelector('[data-lineup-pin="on"]')!);
+    await waitFor(() => expect(calls).toContainEqual(["pin", { ...sol, pinned: false }]));
   });
 
   it("sends a window's pins one at a time, in the order they were made", async () => {
@@ -244,10 +271,20 @@ describe("Lineup in bb's model menu", () => {
     expect(fake.picked).toEqual([]);
   });
 
+  it("keeps pins on bb's rows in handoff mode, where bb marks the thread's provider tab", async () => {
+    const providers = [nativeProviders[0]!, { ...nativeProviders[1]!, title: "Pi (current thread)" }];
+    const { fake, calls } = setup({ providers });
+    await openMenu(fake);
+    fireEvent.click(fake.tabs()[1]!);
+    await waitFor(() => expect(fake.rows()[0]!.querySelector('[data-lineup-pin="off"]')).not.toBeNull());
+    fireEvent.click(fake.rows()[0]!.querySelector('[data-lineup-pin="off"]')!);
+    await waitFor(() => expect(calls).toContainEqual(["pin", { ...opus, pinned: true }]));
+  });
+
   it("filters as you type and offers matches from every provider", async () => {
     const { fake } = setup({ state: { lineup: [sol], lastView: "lineup" } });
     await openMenu(fake);
-    await waitFor(() => expect(ownRows(fake)).toHaveLength(1));
+    await waitFor(() => expect(ownRows(fake)).toHaveLength(3));
     fireEvent.input(fake.search, { target: { value: "gemini" } });
     await waitFor(() => expect(fake.popover.querySelector("[data-lineup-list]")!.textContent).toContain("All models"));
     expect(ownRows(fake).map((row) => row.textContent)).toEqual([expect.stringContaining("Gemini 2.5 Flash")]);
@@ -256,7 +293,7 @@ describe("Lineup in bb's model menu", () => {
   it("moves through rows with the arrow keys, picks with Enter and changes tab with Tab", async () => {
     const { fake, slot } = setup({ state: { lineup: [sol, opus], lastView: "lineup" } });
     await openMenu(fake);
-    await waitFor(() => expect(ownRows(fake)).toHaveLength(2));
+    await waitFor(() => expect(ownRows(fake)).toHaveLength(3));
     fake.search.focus();
     fireEvent.keyDown(fake.search, { key: "ArrowDown" });
     fireEvent.keyDown(fake.search, { key: "Enter" });
@@ -264,12 +301,11 @@ describe("Lineup in bb's model menu", () => {
     fireEvent.keyDown(fake.search, { key: "Tab" });
     await waitFor(() => expect(fake.popover.getAttribute("data-lineup-view")).toBe("native"));
     fireEvent.keyDown(fake.search, { key: "Tab" });
-    await waitFor(() => expect(fake.popover.getAttribute("data-lineup-view")).toBe("recent"));
+    await waitFor(() => expect(fake.popover.getAttribute("data-lineup-view")).toBe("lineup"));
     // Tab never clicks a provider tab, because that would switch the composer's provider.
     expect(fake.activeTitle()).toBe("Codex");
     fireEvent.keyDown(fake.search, { key: "Tab", shiftKey: true });
-    fireEvent.keyDown(fake.search, { key: "Tab", shiftKey: true });
-    await waitFor(() => expect(fake.popover.getAttribute("data-lineup-view")).toBe("lineup"));
+    await waitFor(() => expect(fake.popover.getAttribute("data-lineup-view")).toBe("native"));
   });
 
   it("goes back to bb's list when a provider tab is clicked", async () => {
@@ -286,7 +322,7 @@ describe("Lineup in bb's model menu", () => {
     const { fake } = setup({ providers: [nativeProviders[1]!], catalog: [catalog[1]!], state: { lineup: [], lastView: "recent" } });
     await openMenu(fake);
     expect(fake.popover.firstElementChild!.hasAttribute("data-lineup-tabrow")).toBe(true);
-    await waitFor(() => expect(tab(fake, "Recent").getAttribute("aria-selected")).toBe("true"));
+    await waitFor(() => expect(tab(fake, "Lineup").getAttribute("aria-selected")).toBe("true"));
     fireEvent.click(tab(fake, "All models"));
     await waitFor(() => expect(fake.popover.getAttribute("data-lineup-view")).toBe("native"));
   });
@@ -304,7 +340,7 @@ describe("Lineup in bb's model menu", () => {
   it("keeps its list as tall as bb's in the popover", async () => {
     const { fake } = setup({ state: { lineup: [sol], lastView: "lineup" } });
     await openMenu(fake);
-    await waitFor(() => expect(ownRows(fake)).toHaveLength(1));
+    await waitFor(() => expect(ownRows(fake)).toHaveLength(3));
     expect(fake.popover.querySelector("[data-lineup-list] [role=listbox]")!.classList).toContain("max-h-64");
   });
 });
@@ -316,20 +352,18 @@ describe("Lineup in bb's model drawer on a narrow screen", () => {
     expect(fake.menu.contains(fake.popover)).toBe(true);
     expect(fake.popover.querySelector("[data-lineup-tabs]")!.parentElement).toBe(fake.tabs()[0]!.parentElement);
     await waitFor(() => expect(fake.popover.getAttribute("data-lineup-view")).toBe("lineup"));
-    await waitFor(() => expect(ownRows(fake)).toHaveLength(2));
+    await waitFor(() => expect(ownRows(fake)).toHaveLength(3));
     fireEvent.click(ownRows(fake)[1]!);
     await waitFor(() =>
       expect(slot.inspection.composer.selections).toEqual([{ providerId: "pi", model: "anthropic/claude-opus-5-5" }]),
     );
-    fireEvent.click(tab(fake, "Recent"));
-    await waitFor(() => expect(ownRows(fake)).toHaveLength(2));
-    expect(ownRows(fake)[0]!.textContent).toContain("Claude Opus 5.5");
+    expect(ownRows(fake)[2]!.textContent).toContain("5.5");
   });
 
   it("lets its list fill the drawer, as bb's does", async () => {
     const { fake } = setup({ drawer: true, state: { lineup: [sol], lastView: "lineup" } });
     await openMenu(fake);
-    await waitFor(() => expect(ownRows(fake)).toHaveLength(1));
+    await waitFor(() => expect(ownRows(fake)).toHaveLength(3));
     expect(fake.popover.querySelector("[data-lineup-list] [role=listbox]")!.classList).not.toContain("max-h-64");
   });
 
@@ -345,7 +379,7 @@ describe("Lineup in bb's model drawer on a narrow screen", () => {
   it("leaves the closed drawer as bb drew it, and comes back when it opens again", async () => {
     const { fake } = setup({ drawer: true, state: { lineup: [sol], lastView: "recent" } });
     await openMenu(fake);
-    await waitFor(() => expect(fake.popover.getAttribute("data-lineup-view")).toBe("recent"));
+    await waitFor(() => expect(fake.popover.getAttribute("data-lineup-view")).toBe("lineup"));
     await act(async () => {
       fake.close();
     });
@@ -353,6 +387,6 @@ describe("Lineup in bb's model drawer on a narrow screen", () => {
     expect(fake.menu.isConnected).toBe(true);
     expect(fake.menu.querySelector("[data-lineup-view]")).toBeNull();
     await openMenu(fake);
-    await waitFor(() => expect(ownRows(fake)).toHaveLength(2));
+    await waitFor(() => expect(ownRows(fake)).toHaveLength(3));
   });
 });

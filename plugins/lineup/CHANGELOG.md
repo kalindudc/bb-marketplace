@@ -2,6 +2,21 @@
 
 Notable changes to Lineup, newest first. Releases are tagged `lineup/vX.Y.Z` in this repository.
 
+## 0.2.0 (2026-11-02)
+
+### Changed
+
+- Recent and Lineup are one Lineup tab: your pinned models, then the 3 newest models your threads used that are not pinned, then, only while you search, matches from every provider. A search shows every recent match, not just 3. A menu that last showed Recent opens on Lineup.
+- The tab is a filled pin icon without a label, and lines up with the search box and the list below it. It is as wide as bb's provider tabs on a touch screen.
+- A row's pin takes the place of the check mark, at the right edge, instead of floating beside it; only the selected row shows both. A pinned model always shows a filled pin, and an unpinned one shows an outline pin while hovered. The pin has no background box.
+- Provider icons in Lineup's rows are drawn in the text colour, as bb's provider tabs are, not in each provider's brand colour.
+- Recent rows no longer show how long ago each model was used.
+
+### Fixed
+
+- Pins on bb's rows keep working in handoff mode, where bb names the thread's provider tab "Pi (current thread)".
+- A search of only spaces no longer lifts the 3-model limit on recent models.
+
 ## 0.1.2 (2026-10-30)
 
 ### Fixed

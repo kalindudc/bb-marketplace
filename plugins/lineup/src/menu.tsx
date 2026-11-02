@@ -17,7 +17,7 @@ import {
   rowTitleIndex,
   sameModel,
   searchCatalog,
-  timeAgo,
+  type CatalogProvider,
   type ModelRef,
   type ResolvedModel,
   type View,
@@ -41,6 +41,10 @@ import { useLineupStore, type LineupStore } from "./store";
 type Composer = ReturnType<typeof useComposer>;
 
 const SEARCH_RESULTS = 30;
+/** Recent models shown under the pinned ones; searching shows every match. */
+const RECENT_SHOWN = 3;
+/** Older builds saved a separate Recent tab; it is now part of the Lineup tab. */
+const unify = (view: View): View => (view === "recent" ? "lineup" : view);
 // Class lists copied from bb's own menu so Lineup's rows look like bb's.
 const LIST_CLASS = "min-h-0 flex-1 overflow-y-auto overscroll-contain px-1 pb-1 pt-0";
 const HEADER_CLASS =
@@ -130,7 +134,6 @@ interface Row {
   key: string;
   model: ResolvedModel | null;
   ref: ModelRef;
-  usedAt?: number;
 }
 
 interface Section {
@@ -162,7 +165,7 @@ function PickerSession({ popover, composer, store }: SessionProps) {
   const [mounts, setMounts] = useState<PickerMounts | null>(null);
   const [nativeRows, setNativeRows] = useState<NativeRow[]>([]);
   const [activeTabTitle, setActiveTabTitle] = useState<string | null>(null);
-  const [view, setView] = useState<View>(store.state?.lastView ?? "native");
+  const [view, setView] = useState<View>(unify(store.state?.lastView ?? "native"));
   const chosen = useRef(false);
   const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState<string | null>(null);
@@ -219,7 +222,7 @@ function PickerSession({ popover, composer, store }: SessionProps) {
 
   // The saved tab can arrive after the menu opened; use it unless the user already chose one.
   useEffect(() => {
-    if (!chosen.current && store.state !== null) setView(store.state.lastView);
+    if (!chosen.current && store.state !== null) setView(unify(store.state.lastView));
   }, [store.state?.lastView]);
 
   useLayoutEffect(() => {
@@ -251,7 +254,8 @@ function PickerSession({ popover, composer, store }: SessionProps) {
     const row = parts?.nativeTabRow;
     if (!row) return;
     const onClick = (event: MouseEvent) => {
-      if (event.target instanceof Element && event.target.closest('button[title][class*="border-b-2"]')) choose("native");
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest('button[title][class*="border-b-2"]') && !target.closest("[data-lineup-tabs]")) choose("native");
     };
     row.addEventListener("click", onClick, true);
     return () => row.removeEventListener("click", onClick, true);
@@ -266,44 +270,40 @@ function PickerSession({ popover, composer, store }: SessionProps) {
 
   const sections = useMemo((): Section[] => {
     if (view === "native") return [];
-    const shown: Row[] = [];
-    let first: Section;
-    if (view === "recent") {
-      for (const recent of store.recent ?? []) {
-        const model = resolveModel(catalog, recent);
-        if (model !== null && matchesQuery(model, query)) {
-          shown.push({ key: modelKey(recent), model, ref: recent, usedAt: recent.usedAt });
-        }
+    const searching = query.trim() !== "";
+    const pinned: Row[] = [];
+    for (const ref of lineup) {
+      const model = resolveModel(catalog, ref);
+      if (model === null ? store.catalog !== null && !searching : matchesQuery(model, query)) {
+        pinned.push({ key: modelKey(ref), model, ref });
       }
-      first = {
-        title: "Recently used by threads",
-        rows: shown,
-        empty:
-          store.recent === null || store.catalog === null
-            ? "Reading recent threads…"
-            : query
-              ? "No recent model matches."
-              : "No thread has run a model offered here yet.",
-      };
-    } else {
-      for (const ref of lineup) {
-        const model = resolveModel(catalog, ref);
-        if (model === null ? store.catalog !== null && query === "" : matchesQuery(model, query)) {
-          shown.push({ key: modelKey(ref), model, ref });
-        }
-      }
-      first = {
-        title: "Lineup",
-        rows: shown,
-        empty: query ? "No model in your lineup matches." : "Your lineup is empty. Hover any model and click its pin to add it.",
-      };
     }
-    const more = searchCatalog(catalog, query, shown.map((row) => row.ref), SEARCH_RESULTS).map((model) => ({
+    const recent: Row[] = [];
+    for (const used of store.recent ?? []) {
+      if (!searching && recent.length >= RECENT_SHOWN) break;
+      if (inLineup(lineup, used)) continue;
+      const model = resolveModel(catalog, used);
+      if (model !== null && matchesQuery(model, query)) recent.push({ key: modelKey(used), model, ref: used });
+    }
+    const shown = [...pinned, ...recent].map((row) => row.ref);
+    const more = searchCatalog(catalog, query, shown, SEARCH_RESULTS).map((model) => ({
       key: `all:${modelKey(model)}`,
       model,
       ref: model as ModelRef,
     }));
-    return more.length > 0 ? [first, { title: "All models", rows: more }] : [first];
+    const out: Section[] = [];
+    if (pinned.length > 0) out.push({ title: "Pinned", rows: pinned });
+    if (recent.length > 0) out.push({ title: "Recent", rows: recent });
+    if (more.length > 0) out.push({ title: "All models", rows: more });
+    if (out.length === 0) {
+      const loading = store.catalog === null || store.recent === null;
+      out.push({
+        title: "Pinned",
+        rows: [],
+        empty: searching ? "No model matches." : loading ? "Loading…" : "Hover any model and click its pin to add it.",
+      });
+    }
+    return out;
   }, [view, store.recent, store.catalog, catalog, lineup, query]);
 
   const rows = useMemo(() => sections.flatMap((section) => section.rows), [sections]);
@@ -369,17 +369,14 @@ function PickerSession({ popover, composer, store }: SessionProps) {
     ? catalog.length === 1
       ? catalog[0]
       : undefined
-    : catalog.filter((provider) => provider.displayName === activeTabTitle).length === 1
-      ? catalog.find((provider) => provider.displayName === activeTabTitle)
-      : undefined;
+    : providerForTab(catalog, activeTabTitle);
   const titleIndex = nativeProvider === undefined ? null : rowTitleIndex(nativeProvider);
 
   return (
     <>
       {createPortal(
         <Contained>
-          <TabButton icon="Clock" label="Recent" active={view === "recent"} onSelect={() => choose("recent")} />
-          <TabButton icon="Pin" label="Lineup" active={view === "lineup"} onSelect={() => choose("lineup")} />
+          <TabButton icon={<PinFilled className="size-4 shrink-0 max-md:pointer-coarse:size-5" />} label="Lineup" className="-ml-0.5" active={view === "lineup"} onSelect={() => choose("lineup")} />
           <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 self-center bg-border" />
           {single ? <TabButton label="All models" active={view === "native"} onSelect={() => choose("native")} /> : null}
         </Contained>,
@@ -422,30 +419,81 @@ function PickerSession({ popover, composer, store }: SessionProps) {
 }
 
 /**
- * Move to the next or previous of Recent, Lineup and bb's own list. bb's
+ * The provider a tab of bb's names, by its title. In handoff mode bb titles
+ * the thread's own provider "Pi (current thread)", so a trailing note in
+ * parentheses is dropped when the full title names no provider.
+ */
+function providerForTab(catalog: readonly CatalogProvider[], title: string | null): CatalogProvider | undefined {
+  if (title === null) return undefined;
+  for (const name of [title, title.replace(/\s*\([^)]*\)$/u, "")]) {
+    const matches = catalog.filter((provider) => provider.displayName === name);
+    if (matches.length === 1) return matches[0];
+    if (matches.length > 1) return undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Switch between Lineup and bb's own list. bb's
  * provider tabs are left out: clicking one also switches the composer's
  * provider, which a key that only browses should not do.
  */
 function cycle(view: View, choose: (view: View) => void, delta: number) {
-  const order: View[] = ["recent", "lineup", "native"];
+  const order: View[] = ["lineup", "native"];
   choose(order[(order.indexOf(view) + delta + order.length) % order.length]!);
 }
 
-function TabButton({ icon, label, active, onSelect }: { icon?: string; label: string; active: boolean; onSelect(): void }) {
+/**
+ * A tab in bb's tab row. With an icon it draws only the icon, sized like bb's
+ * provider tabs, and names itself through `aria-label` and a tooltip.
+ */
+function TabButton({
+  icon,
+  label,
+  active,
+  className,
+  onSelect,
+}: {
+  icon?: ReactNode;
+  label: string;
+  active: boolean;
+  className?: string;
+  onSelect(): void;
+}) {
   return (
     <button
       type="button"
       role="tab"
       aria-selected={active}
+      aria-label={icon === undefined ? undefined : label}
+      title={icon === undefined ? undefined : label}
       className={cn(
-        "flex h-7 shrink-0 items-center justify-center gap-1 border-b-2 px-1.5 text-xs transition-none focus-visible:outline-none max-md:pointer-coarse:h-9",
+        "flex h-7 shrink-0 items-center justify-center border-b-2 text-xs transition-none focus-visible:outline-none max-md:pointer-coarse:h-9",
+        // bb's provider tab size, wider for a finger on a touch screen.
+        icon === undefined ? "px-1.5" : "w-6 max-md:pointer-coarse:w-9",
         active ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
+        className,
       )}
       onClick={onSelect}
     >
-      {icon === undefined ? null : <Icon name={icon} className="size-3.5 shrink-0" />}
-      {label}
+      {icon ?? label}
     </button>
+  );
+}
+
+/** bb's Pin icon (Hugeicons) with its head filled; bb's icon set only has the outline. */
+function PinFilled({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className={className}>
+      <path d="M3 21L8 16" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M13.2585 18.8714C9.51516 18.0215 5.97844 14.4848 5.12853 10.7415C4.99399 10.1489 4.92672 9.85266 5.12161 9.37197C5.3165 8.89129 5.55457 8.74255 6.03071 8.44509C7.10705 7.77265 8.27254 7.55888 9.48209 7.66586C11.1793 7.81598 12.0279 7.89104 12.4512 7.67048C12.8746 7.44991 13.1622 6.93417 13.7376 5.90269L14.4664 4.59604C14.9465 3.73528 15.1866 3.3049 15.7513 3.10202C16.316 2.89913 16.6558 3.02199 17.3355 3.26771C18.9249 3.84236 20.1576 5.07505 20.7323 6.66449C20.978 7.34417 21.1009 7.68401 20.898 8.2487C20.6951 8.8134 20.2647 9.05346 19.4039 9.53358L18.0672 10.2792C17.0376 10.8534 16.5229 11.1406 16.3024 11.568C16.0819 11.9955 16.162 12.8256 16.3221 14.4859C16.4399 15.7068 16.2369 16.88 15.5555 17.9697C15.2577 18.4458 15.1088 18.6839 14.6283 18.8786C14.1477 19.0733 13.8513 19.006 13.2585 18.8714Z"
+        fill="currentColor"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 
@@ -458,7 +506,7 @@ function PinToggle({ label, pinned, onToggle }: { label: string; pinned: boolean
       aria-pressed={pinned}
       aria-label={pinned ? `Remove ${label} from lineup` : `Add ${label} to lineup`}
       data-lineup-pin={pinned ? "on" : "off"}
-      className="inline-flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-state-hover max-md:pointer-coarse:size-7"
+      className="inline-flex size-4 shrink-0 items-center justify-center max-md:pointer-coarse:size-7"
       onPointerEnter={() => setHover(true)}
       onPointerLeave={() => setHover(false)}
       onPointerDown={keepFocus}
@@ -468,7 +516,11 @@ function PinToggle({ label, pinned, onToggle }: { label: string; pinned: boolean
         onToggle();
       }}
     >
-      <Icon name={pinned && hover ? "PinOff" : "Pin"} className="size-3.5 max-md:pointer-coarse:size-5" />
+      {pinned && !hover ? (
+        <PinFilled className="size-3.5 max-md:pointer-coarse:size-5" />
+      ) : (
+        <Icon name={pinned ? "PinOff" : "Pin"} className="size-3.5 max-md:pointer-coarse:size-5" />
+      )}
     </span>
   );
 }
@@ -529,7 +581,8 @@ function OwnList({ sections, highlighted, selected, lineup, mixed, drawer, onHig
                   {mixed ? (
                     <ProviderIcon
                       providerKind="agent"
-                      provider={provider ?? { id: row.ref.providerId }}
+                      // Without its tint, like bb's provider tabs.
+                      provider={{ id: row.ref.providerId, icon: provider?.icon ?? null, logoUrl: provider?.logoUrl ?? null }}
                       aria-hidden
                       className="size-3.5 shrink-0 text-muted-foreground"
                     />
@@ -543,10 +596,7 @@ function OwnList({ sections, highlighted, selected, lineup, mixed, drawer, onHig
                     ) : null}
                   </span>
                 </span>
-                <span className="flex shrink-0 items-center gap-1.5">
-                  {row.usedAt === undefined ? null : (
-                    <span className="tabular-nums text-subtle-foreground">{timeAgo(row.usedAt)}</span>
-                  )}
+                <span data-lineup-trailing="" className="flex shrink-0 items-center gap-1.5">
                   <PinToggle label={name} pinned={inLineup(lineup, row.ref)} onToggle={() => onTogglePin(row.ref)} />
                   <Icon
                     name="Check"

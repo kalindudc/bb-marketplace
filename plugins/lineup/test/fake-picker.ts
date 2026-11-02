@@ -105,7 +105,7 @@ export function buildPicker(providers: FakeProvider[], options: FakePickerOption
     const header = doc.createElement("div");
     header.textContent = "Model";
     listbox.append(header);
-    for (const title of providers[active]!.rows) {
+    for (const [index, title] of providers[active]!.rows.entries()) {
       const row = doc.createElement("button");
       row.setAttribute("role", "option");
       const label = doc.createElement("span");
@@ -113,7 +113,10 @@ export function buildPicker(providers: FakeProvider[], options: FakePickerOption
       label.textContent = title;
       const trailing = doc.createElement("span");
       trailing.className = "flex shrink-0 items-center gap-1.5";
-      trailing.append(doc.createElementNS("http://www.w3.org/2000/svg", "svg"));
+      // bb's check mark; the first provider's first model is the selected one.
+      const check = doc.createElementNS("http://www.w3.org/2000/svg", "svg");
+      check.setAttribute("class", active === 0 && index === 0 ? "opacity-100" : "opacity-0");
+      trailing.append(check);
       row.append(label, trailing);
       row.addEventListener("click", () => picked.push(title));
       listbox.append(row);

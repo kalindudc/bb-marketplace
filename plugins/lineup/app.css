@@ -28,6 +28,23 @@
   color: var(--foreground) !important;
 }
 
+/*
+ * The pin sits where the check mark goes. Only the selected row, whose check
+ * mark shows, keeps the pin beside it instead.
+ */
+[data-lineup-trailing] {
+  position: relative;
+}
+
+[data-lineup-trailing]:not(:has(> .opacity-100)) [data-lineup-pin] {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  /* Above the hidden check mark, which is see-through but would still take the click. */
+  z-index: 1;
+}
+
 /* A pin shows on the row under the pointer or the keyboard, and always once pinned. */
 [data-lineup-pin="off"] {
   visibility: hidden;
@@ -48,7 +65,7 @@
 }
 
 [data-lineup-pin="on"] {
-  color: var(--foreground);
+  color: var(--subtle-foreground);
 }
 
 [data-lineup-pin]:hover {
