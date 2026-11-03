@@ -8,6 +8,7 @@ import { failureAdvice, primaryStep, STEP_LABELS } from "../failures";
 import { BUTTON, BUTTON_GHOST, BUTTON_GHOST_SMALL, BUTTON_PRIMARY, CARD, ErrorNote, HEADING, Pill, ServerBadge, TONE_PANEL, TONE_TEXT, type Tone } from "./common";
 import { messageOf, useShuttleMutation, useShuttleQuery } from "./data";
 import { ago, clock, plural, seconds } from "./format";
+import { LinesSkeleton } from "./skeleton";
 
 type Failing = ServerStatus & { failure: NonNullable<ServerStatus["failure"]> };
 
@@ -286,7 +287,7 @@ export function SyncView() {
   return (
     <>
       {error !== null && <ErrorNote>Could not load the sync history: {messageOf(error)}</ErrorNote>}
-      {overview.data === undefined && error === null && <div className="py-6 text-sm text-muted-foreground">Loading…</div>}
+      {overview.data === undefined && error === null && <LinesSkeleton label="Loading the sync history" rows={2} />}
       {overview.data !== undefined && servers.length === 0 && <div className="py-6 text-sm text-muted-foreground">No server is turned on. Add or turn one on in Settings.</div>}
       {sorted.map((server) => (
         <ServerSync key={server.id} server={server} history={history.data?.servers.find((entry) => entry.id === server.id)} windowMs={history.data?.windowMs ?? 3 * 3_600_000} />

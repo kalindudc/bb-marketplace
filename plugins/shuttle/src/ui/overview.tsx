@@ -13,6 +13,7 @@ import { Picker } from "./picker";
 import { isLive } from "./pills";
 import { copy } from "./pr-menu";
 import { usePrState } from "./pr-state";
+import { TextSkeleton } from "./skeleton";
 
 const LONG_DESCRIPTION = 1500;
 
@@ -23,7 +24,7 @@ export function Description({ prKey, body }: { prKey: string; body: string | nul
   return (
     <PaneSection title="Description">
       {body === null ? (
-        <div className="text-sm text-muted-foreground">Loading the description…</div>
+        <TextSkeleton label="Loading the description" />
       ) : body.trim() === "" ? (
         <div className="text-sm text-muted-foreground">No description.</div>
       ) : (

@@ -12,6 +12,7 @@ import { reviewInQueue, useQueueReview } from "./posts";
 import { conversationOrder, hideBotComments, type ConversationOrder } from "./prefs";
 import { useStored } from "./remember";
 import { usePrState } from "./pr-state";
+import { ConversationSkeleton } from "./skeleton";
 import { isFeedback, Tag, tagOf } from "./tags";
 import { VERDICT_OPTIONS } from "./your-review";
 
@@ -335,7 +336,7 @@ export function Conversation({ pr, items, error, phone, since }: { pr: PrView; i
         </button>
       </div>
       {error !== null && <div className="mb-2 text-xs text-muted-foreground">{error}</div>}
-      {items === undefined && error === null && <div className="text-sm text-muted-foreground">Loading the conversation…</div>}
+      {items === undefined && error === null && <ConversationSkeleton label="Loading the conversation" />}
       {order === "newest" && composer !== null && <div className="mb-5">{composer}</div>}
       {open.length > 0 && (
         <PaneSection title="Open threads" className="mb-5" count={<Pill tone="warn">{open.length}</Pill>} aside={pr.mine && pr.agent !== null && pr.agent.mode !== "off" ? <span className="text-xs text-muted-foreground">New ones go to the agent</span> : undefined}>

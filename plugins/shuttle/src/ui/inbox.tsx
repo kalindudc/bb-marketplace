@@ -13,6 +13,7 @@ import { inboxSwipeHint, inboxView, useFolding, type InboxGrouping, type InboxSo
 import { useStored } from "./remember";
 import type { InboxTab, Route } from "./route";
 import { InboxRow, mentionsYouOnly, RepoChip, type RowLayout } from "./row";
+import { InboxSkeleton } from "./skeleton";
 
 const HOUR = 60 * 60_000;
 const KBD = "rounded border border-b-2 border-border bg-background px-1 font-mono text-[10.5px] leading-[15px] text-muted-foreground";
@@ -724,7 +725,7 @@ export function InboxView({ tab, layout, onGo }: { tab: InboxTab | "inbox"; layo
         </Picker>
       </div>
       {inbox.error !== null && <ErrorNote>Could not load the Inbox: {messageOf(inbox.error)}</ErrorNote>}
-      {data === undefined && inbox.error === null && <div className="py-6 text-sm text-muted-foreground">Loading…</div>}
+      {data === undefined && inbox.error === null && <InboxSkeleton label="Loading the Inbox" />}
       {data !== undefined && (tab === "inbox"
         ? <InboxList data={data} layout={layout} onGo={onGo} onShortcuts={() => setShortcuts(true)} />
         : tab === "reviewing" ? <ReviewingList data={data} layout={layout} />

@@ -18,6 +18,7 @@ import { useStored } from "./remember";
 import { formatRoute } from "./route";
 import { useSurface } from "./surface";
 import { useScrollMemory } from "./scroll";
+import { ThreadTabSkeleton } from "./skeleton";
 import { GITHUB_PR_STATUS, githubPrStatus } from "./tab";
 import { useViewport } from "./viewport";
 import type { PrWrites } from "./writes";
@@ -218,7 +219,7 @@ function PanelList({ threadId, prs, data, writes, onView }: {
     <section data-shuttle-panel aria-label="Shuttle" className="flex h-full min-h-0 flex-col bg-background text-foreground">
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {data.error !== null && <ErrorNote>Could not load this thread's pull requests: {messageOf(data.error)}</ErrorNote>}
-        {prs === undefined && data.error === null && <div className="py-4 text-sm text-muted-foreground">Loading…</div>}
+        {prs === undefined && data.error === null && <ThreadTabSkeleton label="Loading this thread's pull requests" />}
         {prs !== undefined && <BranchSuggestion threadId={threadId} linked={prs} busy={busy} onLink={(url) => void linkPr(url)} />}
         {prs?.length === 0 && (
           <p className="py-2 text-sm text-muted-foreground">No pull request is linked to this thread. Paste a link or key below to link one.</p>

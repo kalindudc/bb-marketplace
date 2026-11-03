@@ -18,6 +18,7 @@ import { Picker } from "./picker";
 import { isLive, STATE_LOOKS } from "./pills";
 import { copy, PrMenu, TrackButton } from "./pr-menu";
 import { usePrState, useSeenSince, type PrTab } from "./pr-state";
+import { DetailSkeleton } from "./skeleton";
 import { StatusCard } from "./status";
 import { TabBar, tabId, type TabEntry } from "./tab-bar";
 import { YourReviewCard } from "./your-review";
@@ -197,12 +198,11 @@ export function PrDetail({ prKey, onClose, onExpand, onCollapse, phone = false, 
     if (intent.kind === "draft") setTab("review");
   }, [intent, prKey, setTab]);
 
+  if (detail.data === undefined && detail.error === null) return <DetailSkeleton label="Loading the pull request" phone={phone} onClose={onClose} />;
   if (detail.data === undefined) {
     return (
       <aside aria-label="Pull request" className="p-4 text-sm text-muted-foreground">
-        {detail.error === null ? "Loading…" : (
-          <ErrorNote>{isNotFound(detail.error) ? `Shuttle does not know ${prKey}. Look it up in the header to fetch it.` : `Could not load ${prKey}: ${messageOf(detail.error)}`}</ErrorNote>
-        )}
+        <ErrorNote>{isNotFound(detail.error) ? `Shuttle does not know ${prKey}. Look it up in the header to fetch it.` : `Could not load ${prKey}: ${messageOf(detail.error)}`}</ErrorNote>
       </aside>
     );
   }

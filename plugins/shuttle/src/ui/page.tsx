@@ -241,7 +241,8 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
   };
 
   const lookedUp = route.view === "pr" ? detail : null;
-  const showDetail = selectedKey !== null && (route.view !== "pr" || detail.data !== undefined);
+  // A PR on its own page draws its own shape while it loads; only a refusal shows the look-up page.
+  const showDetail = selectedKey !== null && (route.view !== "pr" || detail.data !== undefined || detail.error === null);
   const overlay = viewport === "narrow" && isListRoute(route) && showDetail;
   useEffect(() => {
     if (!overlay || dialogOpen) return;
@@ -276,7 +277,6 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
             <button type="button" className={BUTTON} disabled={lookup.isPending} onClick={() => void lookup.run({ query: route.key })}>Fetch it from its server</button>
           </div>
         ) : lookedUp?.error != null && <ErrorNote>{messageOf(lookedUp.error)}</ErrorNote>}
-        {lookedUp?.data === undefined && lookedUp?.error === null && <div className="py-6 text-sm text-muted-foreground">Loading…</div>}
       </div>
     ); break;
   }

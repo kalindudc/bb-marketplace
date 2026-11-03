@@ -12,6 +12,7 @@ import { doneSort, mineLayout, mineSort, useFolding } from "./prefs";
 import { useStored } from "./remember";
 import type { Route } from "./route";
 import { FoldAllButton, GroupList, MineRow, type RowLayout } from "./row";
+import { PrListSkeleton } from "./skeleton";
 import { DONE_SORTS, MINE_SORTS, rowTime, SORT_LABELS, sortPrs, type SortKey } from "./sort";
 
 const OTHER: Group = { title: "Other", kinds: [], description: "" };
@@ -103,7 +104,7 @@ export function MineView({ done, layout, overview, onGo }: { done: boolean; layo
         ? <PageHeading title="Merged and closed" description={`Your PRs from the last ${plural(typeof days === "number" ? days : 14, "day")}.`}>{tabs}</PageHeading>
         : <PageHeading title="My PRs" description={grouped ? "Grouped by what happens next. Each row shows its checks, its reviews and its agent." : "One list, in the order you pick. Each row shows what happens next, its checks, its reviews and its agent."}>{tabs}</PageHeading>}
       {list.error !== null && <ErrorNote>{messageOf(list.error)}</ErrorNote>}
-      {prs === undefined && list.error === null && <div className="py-6 text-sm text-muted-foreground">Loading…</div>}
+      {prs === undefined && list.error === null && <PrListSkeleton label={done ? "Loading your merged and closed PRs" : "Loading your PRs"} />}
       {prs !== undefined && prs.length === 0 && <div className="py-10 text-center text-sm text-muted-foreground">Nothing here.</div>}
       {prs !== undefined && !done && <AutoAgent prs={prs} overview={overview} />}
       {((prs !== undefined && prs.length > 0) || boardSelection.selected.length > 0) && <BoardSelectionToolbar selected={boardSelection.selected} onCreate={() => setBoardDialog("create")} onAdd={() => setBoardDialog("choose")} onClear={boardSelection.clear} />}

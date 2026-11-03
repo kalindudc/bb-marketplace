@@ -8,6 +8,7 @@ import { BoardChooserDialog, BoardFormDialog, BoardSelectionToolbar, useBoardSel
 import { useFolding, type ReviewFilter } from "./prefs";
 import { SOURCES, type Route, type Source } from "./route";
 import { FoldAllButton, GroupList, ReviewRow, type RowLayout } from "./row";
+import { PrListSkeleton } from "./skeleton";
 
 const OTHER: Group = { title: "Other", kinds: [], description: "" };
 
@@ -97,7 +98,7 @@ export function ReviewsView({ source, filter, layout, onFilter, onGo }: {
       </div>
       {(shown.length > 0 || boardSelection.selected.length > 0) && <BoardSelectionToolbar selected={boardSelection.selected} onCreate={() => setBoardDialog("create")} onAdd={() => setBoardDialog("choose")} onClear={boardSelection.clear} />}
       {list.error !== null && <ErrorNote>{messageOf(list.error)}</ErrorNote>}
-      {prs === undefined && list.error === null && <div className="py-6 text-sm text-muted-foreground">Loading…</div>}
+      {prs === undefined && list.error === null && <PrListSkeleton label="Loading the PRs to review" />}
       {prs !== undefined && source === "tracked" && inScope.length === 0 && (
         <div className="mt-2 flex items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
           <Icon name="Pin" className="size-3.5" aria-hidden />Nothing tracked. Paste any PR link in the look-up field, then press Track.

@@ -4,6 +4,7 @@ import { Avatar } from "./avatar";
 import { BUTTON, Pill } from "./common";
 import { openExternal, useShuttleQuery } from "./data";
 import { age, plural, settingsHref } from "./format";
+import { LinesSkeleton } from "./skeleton";
 
 const CHANGE_LOOKS: Record<FileChange, { letter: string; className: string; title: string }> = {
   added: { letter: "A", className: "bg-success/10 text-success", title: "Added" },
@@ -81,7 +82,7 @@ export function ChangesPane({ pr, items, details }: { pr: PrView; items: readonl
       <Icon name="ExternalLink" className="size-3.5" aria-hidden />Open the full diff on {pr.serverName}
     </button>
   );
-  if (items === undefined && details === null) return <div className="text-sm text-muted-foreground">Loading the changes…</div>;
+  if (items === undefined && details === null) return <LinesSkeleton label="Loading the changes" rows={4} />;
   if (commits === null && files === null) {
     return (
       <div data-changes className="flex flex-col items-start gap-2 text-sm text-muted-foreground">

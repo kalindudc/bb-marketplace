@@ -8,6 +8,7 @@ import { BUTTON, BUTTON_DANGER, BUTTON_GHOST, BUTTON_ON, BUTTON_PRIMARY, Dialog,
 import { messageOf, undoToast, useShuttleMutation, useShuttleQuery } from "./data";
 import { StatePill } from "./pills";
 import { FoldAllButton, GroupHeader, MineRow, ReviewRow, type RowLayout } from "./row";
+import { BoardsSkeleton, PrListSkeleton } from "./skeleton";
 import { boardViews, useFolding } from "./prefs";
 import { useStored } from "./remember";
 import { BOARD_GROUP_LABELS, BOARD_SORT_LABELS, DEFAULT_BOARD_VIEW, groupBoardPrs, type BoardGrouping, type BoardSort, type BoardViewPrefs } from "./board-prs";
@@ -419,7 +420,7 @@ export function BoardsView({ tab, onGo }: { tab: "active" | "archived"; onGo(nex
       </div>
       {currentTab === "archived" && <div className="mb-3 rounded-lg border border-border bg-card px-3 py-2 text-sm text-muted-foreground">Archived boards stay here. Restore one to add or remove PRs again.</div>}
       {boards.error !== null && <ErrorNote>Could not load boards: {messageOf(boards.error)}</ErrorNote>}
-      {boards.data === undefined && boards.error === null && <div className="py-6 text-sm text-muted-foreground">Loading boards…</div>}
+      {boards.data === undefined && boards.error === null && <BoardsSkeleton label="Loading boards" />}
       {showEmpty && (
         <div className="py-10 text-center text-sm text-muted-foreground">
           <div className="mx-auto mb-2 size-10 rounded-full border border-border bg-surface-recessed p-2 text-muted-foreground"><Icon name={currentTab === "archived" ? "Archive" : "LayoutGrid"} className="size-6" aria-hidden /></div>
@@ -487,7 +488,7 @@ export function BoardDetailView({ id, layout, onGo }: { id: string; layout: RowL
   }
 
   if (detail === undefined) {
-    return <div className="@container w-full px-4 pb-10 pt-4 sm:px-5"><PageHeading title="Board" description="Loading the saved PR set." /><div className="py-6 text-sm text-muted-foreground">Loading…</div></div>;
+    return <div className="@container w-full px-4 pb-10 pt-4 sm:px-5"><PageHeading title="Board" description="Loading the saved PR set." /><PrListSkeleton label="Loading the board" /></div>;
   }
 
   const board = detail.board;

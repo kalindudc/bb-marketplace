@@ -118,7 +118,9 @@ describe("history", () => {
     fireEvent.click(slot.container.querySelector<HTMLElement>(`[data-pr="${second.key}"]`)!);
     expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: selected(second.key), replace: true } });
     route(selected(second.key));
-    fireEvent.click(await slot.findByRole("button", { name: "Close details" }));
+    // The loading shape has a Close of its own: wait for the PR, so the click is not on the one it replaces.
+    const detail = await find(slot.container, `[data-detail="${second.key}"]`);
+    fireEvent.click(within(detail).getByRole("button", { name: "Close details" }));
     expect(back).toHaveBeenCalledTimes(1);
     expect(slot.inspection.navigateCalls).toHaveLength(2);
   });
@@ -126,7 +128,8 @@ describe("history", () => {
   it("replaces the entry with the list when a PR opened by a link closes, since nothing was pushed", async () => {
     const back = vi.spyOn(window.history, "back").mockImplementation(() => {});
     const { slot } = await layoutPage(selected(first.key));
-    fireEvent.click(await slot.findByRole("button", { name: "Close details" }));
+    const detail = await find(slot.container, `[data-detail="${first.key}"]`);
+    fireEvent.click(within(detail).getByRole("button", { name: "Close details" }));
     expect(back).not.toHaveBeenCalled();
     expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: "mine", replace: true } });
   });

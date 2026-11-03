@@ -8,6 +8,7 @@ import { messageOf, useShuttleQuery } from "./data";
 import { duration, percent, settingsHref } from "./format";
 import { INSIGHTS_TABS, type InsightsTab } from "./route";
 import { INSIGHTS_TAB_LABELS } from "./constants";
+import { InsightsSkeleton } from "./skeleton";
 import { SyncView } from "./sync";
 
 type Range = Insights["range"];
@@ -250,7 +251,7 @@ export function InsightsView({ tab, onTab, onAction, onOpenPr }: { tab: Insights
         </div>
       )}
       {insights.error !== null && <ErrorNote>Could not load Insights: {messageOf(insights.error)}</ErrorNote>}
-      {data === undefined && insights.error === null && <div className="py-6 text-sm text-muted-foreground">Loading…</div>}
+      {data === undefined && insights.error === null && <InsightsSkeleton label="Loading Insights" />}
       {data !== undefined && <Overview data={data} phone={actions.phone} onAction={onAction} />}
     </div>
   );

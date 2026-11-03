@@ -3,6 +3,7 @@ import type { EventView } from "../contract";
 import { ErrorNote, type Tone } from "./common";
 import { messageOf, useShuttleQuery } from "./data";
 import { age, ago } from "./format";
+import { LinesSkeleton } from "./skeleton";
 
 const ACTIVITY_LIMIT = 200;
 
@@ -75,7 +76,7 @@ export function ActivityView({ onOpenPr, onOpenThread }: { onOpenPr(key: string)
   return (
     <div aria-label="Automation log" className="min-w-0">
       {activity.error !== null && <ErrorNote>Could not load the automation log: {messageOf(activity.error)}</ErrorNote>}
-      {events === undefined && activity.error === null && <div className="py-6 text-sm text-muted-foreground">Loading…</div>}
+      {events === undefined && activity.error === null && <LinesSkeleton label="Loading the automation log" />}
       {events?.length === 0 && <div className="py-10 text-center text-sm text-muted-foreground">Nothing yet.</div>}
       {events !== undefined && events.length > 0 && (
         <ul className="rounded-lg border border-border bg-card px-3">

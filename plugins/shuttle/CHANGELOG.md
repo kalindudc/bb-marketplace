@@ -20,6 +20,9 @@ Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` i
 
 ### Changed
 
+- Shuttle now draws the shape of what is coming while its server answers, instead of a lone "Loading…" in an empty panel. The Inbox, My PRs, Reviews, a board, Boards, Insights, the Automation log and Sync show grey rows, cards or figures where their content will be, and so do a PR's view, its description, its conversation and its changes, and a thread's Shuttle tab. The shapes fade in after a moment, so an answer that comes at once never flashes them, and each one tells a screen reader what is loading.
+  - A PR opened beside a list can be closed while it loads.
+  - A PR opened on its own page shows its own shape while it loads, instead of the look-up page. The look-up page now shows only when the server could not find the PR or refused it.
 - An AI review stays under review until its thread hands back a draft or says the review is over. The end of a turn used to end the review, so a review that ran critics, such as the pr-reviewer skill's consensus review, left the Reviewing tab and came to the Inbox as finished without a draft while its critics were still working.
   - A review with nothing happening for 2 hours, in its thread or in the thread's child threads, now counts as gone quiet, and comes to the Inbox as a review that stopped. A thread that waits on your answer never counts as quiet. Before ending a review, Shuttle asks bb whether the thread or a child thread is at work.
   - A review whose thread failed or went quiet runs again when the thread gets back to work, as when bb retries a turn. So does one that a turn's end closed in the 2 hours before this update.
