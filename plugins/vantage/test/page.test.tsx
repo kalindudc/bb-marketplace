@@ -395,6 +395,9 @@ describe("the page", () => {
     const strip = (await view.findByText(/which would count/)).closest("[data-strip]") as HTMLElement;
     expect(strip.textContent).toBe("Compared with origin/main, not master, which would count 2794 commits this branch did not add.Use master");
     expect(slot.container.querySelector("[data-base-line]")?.textContent).toBe("vs origin/main · 1 ahead · 0 behind");
+    // A long base name is cut short in the button, with all of it in the tooltip.
+    expect(within(strip).getByRole("button", { name: "Use master" }).getAttribute("title")).toBe("Use master");
+    expect(within(strip).getByRole("button", { name: "Use master" }).querySelector(".truncate")).not.toBeNull();
     fireEvent.click(within(strip).getByRole("button", { name: "Use master" }));
     await waitFor(() => expect(calls.setWhole).toHaveBeenCalledWith({ key: CHILD.key, whole: true }));
   });

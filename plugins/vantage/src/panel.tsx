@@ -70,7 +70,8 @@ function WorktreeStrip({ rows, selectedKey, view, archivedHidden, onPick, onChan
   const chosen = rows.find((row) => row.worktree.key === picked);
   if (chosen !== undefined && !shown.includes(chosen)) shown = [...shown.slice(0, fit - 1), chosen];
   const more = rows.filter((row) => !shown.includes(row));
-  const chip = (selected: boolean) => `inline-flex h-7 max-w-48 cursor-pointer items-center gap-1.5 rounded-md border px-2 text-xs ${
+  // A chip gives up its title down to CHIP_PX's worth, so two always fit in the room useChipsThatFit measured.
+  const chip = (selected: boolean) => `inline-flex h-7 min-w-24 max-w-48 cursor-pointer items-center gap-1.5 rounded-md border px-2 text-xs ${
     selected ? "border-foreground/40 bg-card font-medium text-foreground" : "border-border-seam text-muted-foreground hover:bg-state-hover hover:text-foreground"}`;
   // The chips give up their titles first, then scroll; the menu and All changes stay in reach outside them.
   return (

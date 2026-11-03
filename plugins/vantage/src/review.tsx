@@ -120,7 +120,12 @@ function WholeButton({ whole, label, onWhole }: { whole: boolean; label: string;
       },
     );
   };
-  return <button type="button" className={BUTTON} disabled={pending} onClick={click}>{label}</button>;
+  // A base can be a long branch name, so the label is cut short and the tooltip has all of it.
+  return (
+    <button type="button" className={`${BUTTON} min-w-0 max-w-full`} title={label} disabled={pending} onClick={click}>
+      <span className="truncate">{label}</span>
+    </button>
+  );
 }
 
 function Strip({ tone, icon, children, actions }: { tone: "attention" | "destructive" | "warning" | "info"; icon: string; children: ReactNode; actions?: ReactNode }) {

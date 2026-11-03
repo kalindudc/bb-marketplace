@@ -130,6 +130,8 @@ describe("the thread's Vantage tab", () => {
       // 450px less 190 for the menu and All changes leaves room for two 120px chips.
       const { slot } = await mountPanel(2, many);
       expect(within(strip(slot)).getByRole("button", { name: /2 more/ })).toBeTruthy();
+      // Chips shrink to a floor instead of holding their full width, so the second one is not cut off.
+      expect(chip(slot, /^This thread/).className).toContain("min-w-24");
     } finally {
       globalThis.ResizeObserver = original;
     }
