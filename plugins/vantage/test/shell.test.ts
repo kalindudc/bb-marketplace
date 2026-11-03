@@ -20,8 +20,6 @@ function setup(options: Setup = {}) {
   const all = options.threads ?? [makeThreadResponse({ id: "thr_1", title: "Parent", environmentId: "env_1" })];
   const byId = new Map(all.map((thread) => [thread.id, thread]));
   const envs = new Map((options.environments ?? [environment()]).map((env) => [env.id, env]));
-  const status = vi.fn(async () => { throw new Error("the shell must not read a status"); });
-  const diffFiles = vi.fn(async () => { throw new Error("the shell must not diff"); });
   const sdk = {
     threads: {
       get: vi.fn(async ({ threadId }: { threadId: string }) => byId.get(threadId)!),
@@ -30,26 +28,29 @@ function setup(options: Setup = {}) {
         threads: [{ threadId: "thr_1", descendantIds: all.filter((thread) => thread.id !== "thr_1").map((thread) => thread.id) }],
       })),
     },
-    environments: { status, diffFiles, get: vi.fn(async ({ environmentId }: { environmentId: string }) => envs.get(environmentId)!) },
+    environments: { get: vi.fn(async ({ environmentId }: { environmentId: string }) => envs.get(environmentId)!) },
     projects: { list: vi.fn(async () => projects) },
     hosts: { list: vi.fn(async () => [{ id: "host_1", name: "Laptop" }]) },
   };
   const edits = { get: vi.fn(async () => { throw new Error("the shell must not scan events"); }), peek: vi.fn(() => undefined), forget: vi.fn() };
   const host = vi.fn(async () => { throw new Error("the shell must not call the host"); });
   const deps = { sdk: sdk as unknown as PluginBbSdk, host: host as unknown as HostCall, edits, allOptions: { windowHours: 24, maxThreads: 200 } } as CollectDeps;
-  return { deps, sdk, edits, host, status, diffFiles };
+  return { deps, sdk, edits, host };
 }
+
+const cleanStatus = {
+  outcome: "available", branch: "feature/work", head: "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2", base: "origin/main", skippedBase: null,
+  aheadCount: 0, behindCount: 0, commits: [], uncommitted: [], committed: [], truncated: false,
+} as const;
 
 const TREE = { kind: "tree", threadId: "thr_1" } as const;
 const shell = (deps: CollectDeps, includeArchived = true) => buildShell(deps, { target: TREE, includeArchived });
 
 describe("buildShell", () => {
   it("makes no git, status, diff, event or host call", async () => {
-    const { deps, host, status, diffFiles, edits } = setup();
+    const { deps, host, edits } = setup();
     await shell(deps);
     expect(host).not.toHaveBeenCalled();
-    expect(status).not.toHaveBeenCalled();
-    expect(diffFiles).not.toHaveBeenCalled();
     expect(edits.get).not.toHaveBeenCalled();
   });
 
@@ -67,12 +68,12 @@ describe("buildShell", () => {
     const { deps } = setup();
     const overview = await shell(deps);
     expect(overview.worktrees).toEqual([{
-      key: "host_1:/work/one", ref: { kind: "workspace", environmentId: "env_1", base: "origin/main" }, label: "Project", projectId: "proj_1",
+      key: "host_1:/work/one", ref: { kind: "workspace", environmentId: "env_1", base: "origin/main", root: "/work/one", hostId: "host_1" }, label: "Project", projectId: "proj_1",
       hostId: "host_1", hostName: "Laptop", root: "/work/one", branch: "feature/work", base: "origin/main", kind: "workspace", threadIds: ["thr_1"],
       state: "loading", message: null, aheadCount: null, behindCount: null, uncommitted: [], committed: [], commits: [], onBase: false, threadCommits: [],
     }]);
     expect(overview.repos).toEqual([{
-      key: "host_1:/work/one", ref: { kind: "workspace", environmentId: "env_1", base: "origin/main" }, label: "Project", projectId: "proj_1",
+      key: "host_1:/work/one", ref: { kind: "workspace", environmentId: "env_1", base: "origin/main", root: "/work/one", hostId: "host_1" }, label: "Project", projectId: "proj_1",
       root: "/work/one", hostId: "host_1", hostName: "Laptop", branch: "feature/work", base: null, aheadCount: null, threadIds: ["thr_1"],
       state: "loading", message: null, files: [], otherFiles: [], truncated: false, totals: { files: 0, additions: 0, deletions: 0 }, threadCommits: [],
     }]);
@@ -112,17 +113,18 @@ describe("buildShell", () => {
     expect(cold.worktrees[0]?.key).toBe("host_1:/work/repo/pkg");
 
     const resolving = vi.fn(async (method: string, input: { paths?: string[] }) => {
+      if (method === "checkoutStatus") return cleanStatus;
       if (method !== "resolveRoots") throw new Error(`unexpected ${method}`);
       return { results: (input.paths ?? []).map((path) => (
         path.startsWith("/work/repo") ? { path, root: "/work/repo", relative: path.slice("/work/repo/".length) } : { path, root: null, relative: null }
       )) };
     });
-    const status = { outcome: "unavailable", failure: { code: "path_not_found", message: "x", workspacePath: "/x" } };
     const full = await buildOverview(
-      { ...deps, roots, host: resolving as unknown as HostCall, sdk: { ...deps.sdk, environments: { ...deps.sdk.environments, status: async () => status, diffFiles: async () => status } } as unknown as PluginBbSdk, edits: { get: async () => ({ records: [], primaryCwd: null, workDirs: [], commitRuns: [], lastEventAt: null }), peek: () => undefined, forget: vi.fn() } },
+      { ...deps, roots, host: resolving as unknown as HostCall, edits: { get: async () => ({ records: [], primaryCwd: null, workDirs: [], commitRuns: [], lastEventAt: null }), peek: () => undefined, forget: vi.fn() } },
       { target: TREE, scope: "uncommitted", includeArchived: true },
     );
-    expect(full.worktrees[0]?.key).toBe("host_1:/work/repo");
+    expect(full.worktrees[0]).toMatchObject({ key: "host_1:/work/repo", state: "ready" });
+    expect(resolving).toHaveBeenCalledWith("checkoutStatus", expect.objectContaining({ root: "/work/repo" }), expect.objectContaining({ hostId: "host_1" }));
     const warm = await shell({ ...deps, roots });
     expect(warm.worktrees.map((entry) => entry.key)).toEqual(full.worktrees.map((entry) => entry.key));
     expect(warm.repos.map((entry) => entry.key)).toEqual(full.repos.map((entry) => entry.key));
@@ -172,23 +174,14 @@ describe("buildShell", () => {
       makeThreadResponse({ id: "thr_done", environmentId: "env_2", updatedAt: now - 60_000, archivedAt: now - 60_000 }),
     ];
     const environments = [environment(), environment({ id: "env_2", path: "/work/two" })];
-    const { deps, sdk } = setup({ threads, environments, archived: [threads[1]!] });
+    const { deps } = setup({ threads, environments, archived: [threads[1]!] });
     const outline = await buildShell(deps, { target: { kind: "all" }, includeArchived: true });
     expect(outline.worktrees.map((entry) => entry.key)).toEqual(["host_1:/work/one", "host_1:/work/two"]);
     expect(outline.repos.map((entry) => entry.key)).toEqual(["host_1:/work/one", "host_1:/work/two"]);
-    sdk.environments.status.mockImplementation((async () => ({
-      outcome: "available",
-      workspace: {
-        branch: { currentBranch: "feature/work", defaultBranch: "main" },
-        checkout: { kind: "branch", branchName: "feature/work", headSha: null },
-        mergeBase: null,
-        workingTree: { deletions: 0, fileCount: 0, files: [], hasUncommittedChanges: false, insertions: 0, lineStatsComplete: true, state: "clean" },
-      },
-    })) as never);
     deps.edits = { get: vi.fn(async () => ({ records: [], primaryCwd: null, workDirs: [], commitRuns: [], lastEventAt: null })), peek: vi.fn(() => undefined), forget: vi.fn() } as unknown as CollectDeps["edits"];
-    deps.host = (async () => ({ results: [] })) as unknown as HostCall;
+    deps.host = (async (method: string) => (method === "checkoutStatus" ? cleanStatus : { results: [] })) as unknown as HostCall;
     const full = await buildOverview(deps, { target: { kind: "all" }, scope: "uncommitted", includeArchived: true });
-    expect(full.worktrees.map((entry) => entry.key)).toEqual(["host_1:/work/one", "host_1:/work/two"]);
+    expect(full.worktrees.map((entry) => [entry.key, entry.state])).toEqual([["host_1:/work/one", "ready"], ["host_1:/work/two", "ready"]]);
     expect(full.repos.map((entry) => entry.key)).toEqual(["host_1:/work/one", "host_1:/work/two"]);
   });
 

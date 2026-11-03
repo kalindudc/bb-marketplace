@@ -143,6 +143,56 @@ export function isSafeRef(ref: string): boolean {
   return /^[A-Za-z0-9._/@-]+$/.test(ref) && !ref.startsWith("-") && !ref.includes("..");
 }
 
+export const FOLDER_SAMPLE = 20;
+export interface UntrackedFolder { path: string; files: number; repository: boolean; sample: string[] }
+
+/**
+ * Folds each untracked folder that is a repository of its own, or holds more than `limit` files, into one entry.
+ * `collapsed`: the untracked folders `git ls-files --others --directory` prints, each ending in `/`. `entries` are
+ * `git status --untracked-files=all` entries, which list a nested repository as its folder, also ending in `/`.
+ */
+export function foldUntracked(
+  entries: readonly GitEntry[], collapsed: readonly string[], limit: number,
+): { entries: GitEntry[]; folders: UntrackedFolder[] } {
+  const dirs = new Set(collapsed.filter((path) => path.endsWith("/")));
+  // Each untracked entry belongs to the outermost collapsed folder above it, found by walking its own path once.
+  const groups = new Map<string, GitEntry[]>();
+  for (const entry of entries) {
+    if (entry.code !== "??") continue;
+    let at = entry.path.indexOf("/");
+    while (at !== -1) {
+      const prefix = entry.path.slice(0, at + 1);
+      if (dirs.has(prefix)) {
+        const group = groups.get(prefix) ?? [];
+        group.push(entry);
+        groups.set(prefix, group);
+        break;
+      }
+      at = entry.path.indexOf("/", at + 1);
+    }
+  }
+  const folders: UntrackedFolder[] = [];
+  const folded = new Set<GitEntry>();
+  for (const [dir, inside] of [...groups].sort(([a], [b]) => (a < b ? -1 : 1))) {
+    const repository = inside.some((entry) => entry.path.endsWith("/"));
+    const files = inside.filter((entry) => !entry.path.endsWith("/"));
+    if (!repository && files.length <= limit) continue;
+    for (const entry of inside) folded.add(entry);
+    folders.push({ path: dir, files: files.length, repository, sample: files.slice(0, FOLDER_SAMPLE).map((entry) => entry.path) });
+  }
+  return { entries: entries.filter((entry) => !folded.has(entry)), folders };
+}
+
+// Of the candidate bases, the one the fewest commits on HEAD are ahead of; on a tie, a remote-tracking branch, then the earlier one.
+export function closestBase(candidates: readonly { name: string; ahead: number }[]): { name: string; ahead: number } | null {
+  let best: { name: string; ahead: number } | null = null;
+  const remote = (name: string) => name.startsWith("origin/");
+  for (const candidate of candidates) {
+    if (best === null || candidate.ahead < best.ahead || (candidate.ahead === best.ahead && remote(candidate.name) && !remote(best.name))) best = candidate;
+  }
+  return best;
+}
+
 export function truncatePatch(patch: string, limit: number = PATCH_LIMIT): { patch: string; truncated: boolean } {
   if (patch.length <= limit) return { patch, truncated: false };
   const newline = patch.lastIndexOf("\n", limit - 1);

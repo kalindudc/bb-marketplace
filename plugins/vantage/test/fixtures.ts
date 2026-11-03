@@ -239,6 +239,7 @@ export function sidebarThread(overrides: Partial<PluginSidebarThread> = {}): Plu
     titleFallback: null,
     displayTitle: "Parent thread",
     parentThreadId: null,
+    parentNotifications: "auto",
     lifecycleOwnerThreadId: null,
     sourceThreadId: null,
     sectionId: null,

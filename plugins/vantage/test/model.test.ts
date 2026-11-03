@@ -63,6 +63,17 @@ describe("buildRows", () => {
     expect(buildRows(input({}, { live: idle, marks }))[0]).toMatchObject({ bucket: "reviewed", progress: { reviewed: 1, total: 1 } });
   });
 
+  it("leaves a folded untracked folder out of review progress, and a worktree with only one out of the list", () => {
+    const folder = fileChange({ path: "vendor/", status: "untracked", untracked: true, additions: null, deletions: null, folder: { files: 900, repository: true, sample: [] } });
+    const idle = new Map([["thr_1", sidebarThread({ id: "thr_1", indicator: "none" })]]);
+    const marks: Record<string, ReviewMarks> = { w1: { [markId("uncommitted", "src/a.ts")]: signature(file) } };
+    const withFolder = { ...one, uncommitted: [file, folder] };
+    const onlyFolder = worktree({ key: "w4", threadIds: ["thr_3"], uncommitted: [folder] });
+    const rows = buildRows(input({ worktrees: [withFolder, onlyFolder] }, { live: idle, marks }));
+    expect(rows.map((row) => row.worktree.key)).toEqual(["w1"]);
+    expect(rows[0]).toMatchObject({ bucket: "reviewed", progress: { reviewed: 1, total: 1 } });
+  });
+
   it("says a review has started only once a file is ticked, and has no progress before the files are read", () => {
     expect(reviewStarted({ progress: { reviewed: 0, total: 3 } })).toBe(false);
     expect(reviewStarted({ progress: { reviewed: 1, total: 3 } })).toBe(true);

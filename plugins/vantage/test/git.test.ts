@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  EMPTY_TREE, FILE_LIMIT, LOG_FORMAT, PATCH_LIMIT, REFLOG_SLACK_MS, commitsInWindows, countDiffLines, isSafeRef, isSafeRelativePath, isSafeSha,
-  parseLog, parseNameStatusZ, parseNumstatZ, parseReflog, parseStatusZ, splitToplevel, statusFromCode, truncatePatch,
+  EMPTY_TREE, FILE_LIMIT, FOLDER_SAMPLE, LOG_FORMAT, PATCH_LIMIT, REFLOG_SLACK_MS, closestBase, commitsInWindows, countDiffLines, foldUntracked,
+  isSafeRef, isSafeRelativePath, isSafeSha, parseLog, parseNameStatusZ, parseNumstatZ, parseReflog, parseStatusZ, splitToplevel, statusFromCode,
+  truncatePatch,
 } from "../src/git";
 
 const z = (...parts: string[]) => parts.map((part) => `${part}\0`).join("");
@@ -239,5 +240,44 @@ describe("commitsInWindows", () => {
 
   it("finds nothing without windows", () => {
     expect(commitsInWindows([at("a", 1_000)], [])).toEqual([]);
+  });
+});
+
+describe("foldUntracked", () => {
+  const untracked = (path: string) => ({ path, previousPath: null, code: "??" });
+  const modified = (path: string) => ({ path, previousPath: null, code: " M" });
+
+  it("folds a folder with more files than the limit, and leaves tracked changes and small folders alone", () => {
+    const entries = [modified("src/a.ts"), ...["1", "2", "3"].map((name) => untracked(`vendor/${name}.js`)), untracked("notes/one.txt")];
+    const result = foldUntracked(entries, ["vendor/", "notes/"], 2);
+    expect(result.entries.map((entry) => entry.path)).toEqual(["src/a.ts", "notes/one.txt"]);
+    expect(result.folders).toEqual([{ path: "vendor/", files: 3, repository: false, sample: ["vendor/1.js", "vendor/2.js", "vendor/3.js"] }]);
+  });
+
+  it("folds a folder holding a repository of its own, whatever its size, and the folders inside a folded one go with it", () => {
+    const entries = [untracked("copy/"), untracked("tools/clone/"), untracked("tools/run.sh")];
+    const result = foldUntracked(entries, ["copy/", "tools/"], 200);
+    expect(result.entries).toEqual([]);
+    expect(result.folders).toEqual([
+      { path: "copy/", files: 0, repository: true, sample: [] },
+      { path: "tools/", files: 1, repository: true, sample: ["tools/run.sh"] },
+    ]);
+  });
+
+  it("keeps only the first few files as a sample", () => {
+    const entries = Array.from({ length: FOLDER_SAMPLE + 5 }, (_, index) => untracked(`big/${String(index).padStart(3, "0")}`));
+    const [folder] = foldUntracked(entries, ["big/"], 1).folders;
+    expect(folder).toMatchObject({ files: FOLDER_SAMPLE + 5 });
+    expect(folder!.sample).toHaveLength(FOLDER_SAMPLE);
+  });
+});
+
+describe("closestBase", () => {
+  it("picks the base the fewest commits are ahead of, a remote-tracking one on a tie, and the earlier one otherwise", () => {
+    expect(closestBase([{ name: "main", ahead: 504 }, { name: "origin/main", ahead: 1 }])).toEqual({ name: "origin/main", ahead: 1 });
+    expect(closestBase([{ name: "feature/parent", ahead: 1 }, { name: "origin/feature/parent", ahead: 1 }, { name: "origin/main", ahead: 2 }]))
+      .toEqual({ name: "origin/feature/parent", ahead: 1 });
+    expect(closestBase([{ name: "develop", ahead: 3 }, { name: "trunk", ahead: 3 }])).toEqual({ name: "develop", ahead: 3 });
+    expect(closestBase([])).toBeNull();
   });
 });

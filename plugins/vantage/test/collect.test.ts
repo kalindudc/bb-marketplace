@@ -1,14 +1,13 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { PluginBbSdk } from "@get-bb/plugin-sdk";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import {
   buildOverview, collectTree, pathsToResolve, planRepos, type CollectDeps, type Environment, type HostCall, type HostInfo, type ProjectInfo,
   type ResolvedRoots,
 } from "../src/collect";
-import { overviewSchema, type OverviewTarget, type ThreadSummary } from "../src/contract";
+import { overviewSchema, type GitFile, type HostOutput, type OverviewTarget, type ThreadSummary } from "../src/contract";
 import type { EditRecord, ThreadEdits } from "../src/edits";
 import { createRepoCache } from "../src/repo-cache";
-import { BB_DEADLINE_MS } from "../src/sources";
 import { createRootCache } from "../src/root-cache";
 import { destroyedEnvironment, environment, threadSummary } from "./fixtures";
 
@@ -262,12 +261,11 @@ describe("planRepos removed environments and folders below the repository root",
     expect(plans[0]?.ref).toEqual({ kind: "workspace", environmentId: "env_sub", base: "origin/main", root: "/repos/mono", hostId: "host_1" });
   });
 
-  it("reads a workspace bb's status was too slow for with git at its root", () => {
+  it("gives a workspace at its repository root that root and its machine, so git reads it there", () => {
     const repo = environment({ id: "env_big", path: "/repos/mono", mergeBaseBranch: "origin/main" });
     const input = { threads: [threadSummary({ id: "a", environmentId: "env_big" })], environments: [repo], roots: roots("host_1", { "/repos/mono": own("/repos/mono") }) };
-    expect(plan(input).plans[0]?.ref).toEqual({ kind: "workspace", environmentId: "env_big", base: "origin/main" });
-    const slow = planRepos({ ...input, environments: new Map([["env_big", repo]]), edits: new Map(), projects, hosts, slowWorkspaces: new Set(["env_big"]) });
-    expect(slow.plans[0]?.ref).toEqual({ kind: "workspace", environmentId: "env_big", base: "origin/main", root: "/repos/mono", hostId: "host_1" });
+    expect(plan(input).plans[0]?.ref).toEqual({ kind: "workspace", environmentId: "env_big", base: "origin/main", root: "/repos/mono", hostId: "host_1" });
+    expect(plan({ ...input, roots: new Map() }).plans[0]?.ref).toEqual({ kind: "workspace", environmentId: "env_big", base: "origin/main", root: "/repos/mono", hostId: "host_1" });
   });
 
   it("lets an environment at the repository root speak for a repository an environment below the root shares", () => {
@@ -278,8 +276,8 @@ describe("planRepos removed environments and folders below the repository root",
       roots: roots("host_1", { "/repos/mono/services/api": { root: "/repos/mono", relative: "services/api" }, "/repos/mono": own("/repos/mono") }),
     });
     expect(plans).toHaveLength(1);
-    expect(plans[0]).toMatchObject({ threadIds: ["a", "b"], ref: { kind: "workspace", environmentId: "env_top" } });
-    expect(plans[0]?.ref).not.toHaveProperty("root");
+    expect(plans[0]).toMatchObject({ threadIds: ["a", "b"] });
+    expect(plans[0]?.ref).toEqual({ kind: "workspace", environmentId: "env_top", base: "origin/main", root: "/repos/mono", hostId: "host_1" });
   });
 });
 
@@ -297,7 +295,7 @@ describe("planRepos worked checkouts", () => {
   it("marks a checkout worked when the same thread edited a file in it and ran commands in it", () => {
     const plans = side({ a: edits([record({ path: "/clones/side/pkg/lib.rs" })], null, ["/tmp/scratch", "~/clones/side/pkg"]) });
     expect(plans.map((entry) => entry.ref)).toEqual([
-      { kind: "workspace", environmentId: "env_1", base: "origin/main" },
+      { kind: "workspace", environmentId: "env_1", base: "origin/main", root: "/work/one", hostId: "host_1" },
       { kind: "checkout", hostId: "host_1", root: "/clones/side", base: null, worked: true },
     ]);
     expect(plans[1]).toMatchObject({ label: "Project", projectId: "proj_1", threadIds: ["a"] });
@@ -419,27 +417,21 @@ function threads(count: number) {
   return Array.from({ length: count }, (_, index) => makeThreadResponse({ id: `thr_c${index}`, parentThreadId: "thr_1", environmentId: null }));
 }
 
-const statusOf = (uncommitted: string[], committed: string[] = []) => ({
-  outcome: "available",
-  workspace: {
-    branch: { currentBranch: "feature/work", defaultBranch: "main" },
-    checkout: { kind: "branch", branchName: "feature/work", headSha: "abc" },
-    mergeBase: {
-      aheadCount: committed.length, behindCount: 0, baseRef: "origin/main", mergeBaseBranch: "origin/main", commits: [], deletions: 0, fileCount: committed.length,
-      files: committed.map((path) => ({ path, status: "M", insertions: 1, deletions: 0 })), hasCommittedUnmergedChanges: committed.length > 0,
-      insertions: 0, lineStatsComplete: true,
-    },
-    workingTree: {
-      files: uncommitted.map((path) => ({ path, status: "M", insertions: 1, deletions: 0 })), fileCount: uncommitted.length, insertions: 0, deletions: 0,
-      hasUncommittedChanges: uncommitted.length > 0, lineStatsComplete: true, state: "clean",
-    },
-  },
+type CheckoutStatus = HostOutput<"checkoutStatus">;
+const gitFile = (path: string, overrides: Partial<GitFile> = {}): GitFile => ({
+  path, previousPath: null, status: "modified", additions: 1, deletions: 0, binary: false, ...overrides,
 });
+const statusWith = (uncommitted: GitFile[], overrides: Partial<Extract<CheckoutStatus, { outcome: "available" }>> = {}): CheckoutStatus => ({
+  outcome: "available", branch: "feature/work", head: "e".repeat(40), base: "origin/main", skippedBase: null, aheadCount: 0, behindCount: 0,
+  commits: [], uncommitted, committed: [], truncated: false, ...overrides,
+});
+const statusOf = (uncommitted: string[], committed: string[] = []): CheckoutStatus =>
+  statusWith(uncommitted.map((path) => gitFile(path)), { committed: committed.map((path) => gitFile(path)), aheadCount: committed.length });
+const NO_FILES = { outcome: "available", branch: null, base: "origin/main", aheadCount: 0, behindCount: 0, commits: [], files: [], truncated: false };
 
-const statusWith = (files: Array<{ path: string; status: string; insertions: number | null; deletions: number | null }>) => {
-  const base = statusOf([]);
-  return { ...base, workspace: { ...base.workspace, workingTree: { ...base.workspace.workingTree, files, fileCount: files.length } } };
-};
+type HostMock = HostCall & ReturnType<typeof vi.fn>;
+const callsOf = (host: HostMock, method: string) => host.mock.calls.filter(([called]) => called === method);
+const statusCalls = (host: HostMock) => callsOf(host, "checkoutStatus");
 
 interface Setup {
   threads?: ReturnType<typeof makeThreadResponse>[];
@@ -448,9 +440,11 @@ interface Setup {
   projects?: ProjectInfo[];
   hosts?: Array<{ id: string; name: string }>;
   edits?: Record<string, ThreadEdits>;
+  /** Answers every host method `status` and `repoFiles` leave to it. */
   host?: HostCall;
-  diffFiles?: (args: { environmentId: string }) => unknown;
-  status?: (args: { environmentId: string }) => unknown;
+  /** Answers checkoutStatus; `environmentId` is the live environment at that root, if any. */
+  status?: (args: { root: string; environmentId: string | undefined }) => unknown;
+  repoFiles?: (args: { root: string }) => unknown;
 }
 
 function setup(options: Setup) {
@@ -471,15 +465,11 @@ function setup(options: Setup) {
       })),
     },
     environments: {
-      status: vi.fn(async (args: { environmentId: string }) => options.status?.(args) ?? statusOf([])),
       get: vi.fn(async ({ environmentId }: { environmentId: string }) => {
         const found = envs.get(environmentId);
         if (found === undefined) throw new Error(`no environment ${environmentId}`);
         return found;
       }),
-      diffFiles: vi.fn(async (args: { environmentId: string }) => (
-        options.diffFiles?.(args) ?? { outcome: "available", files: [], initialPatches: [], mergeBaseRef: null, shortstat: "", truncated: false }
-      )),
     },
     projects: { list: vi.fn(async () => options.projects ?? projects) },
     hosts: { list: vi.fn(async () => options.hosts ?? hosts) },
@@ -493,7 +483,9 @@ function setup(options: Setup) {
     ...[...envs.values()].flatMap((env) => (env.path === null ? [] : [env.path])),
     ...(options.projects ?? projects).flatMap((project) => project.sources.map((source) => source.path)),
   ];
-  const host = vi.fn(options.host ?? (async (method: string, input: { paths?: string[] }) => {
+  const fallback = options.host ?? (async (method: string, input: { paths?: string[] }) => {
+    if (method === "checkoutStatus") return statusOf([]);
+    if (method === "repoFiles") return NO_FILES;
     if (method !== "resolveRoots") throw new Error(`unexpected ${method}`);
     return {
       results: (input.paths ?? []).map((path) => {
@@ -501,10 +493,25 @@ function setup(options: Setup) {
         return root === undefined ? { path, root: null, relative: null } : { path, root, relative: path.slice(root.length + 1) };
       }),
     };
-  })) as unknown as HostCall & ReturnType<typeof vi.fn>;
+  });
+  const host = vi.fn(async (method: string, input: { root?: string; paths?: string[] }, hostOptions: { hostId: string; signal?: AbortSignal }) => {
+    if (method === "checkoutStatus" && options.status !== undefined) {
+      const environmentId = [...envs.values()].find((env) => env.path === input.root)?.id;
+      return options.status({ root: input.root!, environmentId });
+    }
+    if (method === "repoFiles" && options.repoFiles !== undefined) return options.repoFiles({ root: input.root! });
+    return (fallback as (...args: unknown[]) => Promise<unknown>)(method, input, hostOptions);
+  }) as unknown as HostMock;
   const allOptions = { windowHours: 24, maxThreads: 200 };
   return { deps: { sdk: sdk as unknown as PluginBbSdk, host, edits, allOptions } as CollectDeps, sdk, edits, host };
 }
+
+// Roots the server already knows, so the early status reads start before the edit index finishes.
+const warmRoots = (...paths: string[]) => {
+  const cache = createRootCache();
+  for (const path of paths) cache.store("host_1", path, own(path));
+  return cache;
+};
 
 describe("collectTree", () => {
   it("lists the thread and every descendant, archived and hidden ones included, with titles and depths", async () => {
@@ -641,7 +648,7 @@ describe("buildOverview worktrees", () => {
   });
 
   it("lists a worktree for each workspace, with its status counts and machine name", async () => {
-    const { deps, sdk } = twoWorktrees();
+    const { deps, host } = twoWorktrees();
     const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
     expect(overviewSchema.safeParse(overview).success).toBe(true);
     expect(overview.worktrees.map((entry) => [entry.key, entry.kind, entry.branch, entry.hostName, entry.threadIds])).toEqual([
@@ -650,8 +657,20 @@ describe("buildOverview worktrees", () => {
     ]);
     expect(overview.worktrees[1]).toMatchObject({ aheadCount: 1, behindCount: 0, projectId: "proj_1" });
     expect(overview.worktrees[1]?.uncommitted.map((file) => file.path)).toEqual(["b.ts"]);
-    expect(sdk.environments.status).toHaveBeenCalledTimes(2);
-    expect(sdk.environments.status).toHaveBeenCalledWith({ environmentId: "env_1", mergeBaseBranch: "origin/main", signal: expect.any(AbortSignal) });
+    expect(statusCalls(host).map((call) => call.slice(1))).toEqual([
+      [{ root: "/work/one", base: "origin/main", pick: true, folderLimit: 200 }, { hostId: "host_1", signal: undefined }],
+      [{ root: "/work/two", base: "origin/main", pick: true, folderLimit: 200 }, { hostId: "host_1", signal: undefined }],
+    ]);
+  });
+
+  it("reads a worktree the user asked to see whole with nothing picked, and the others with the closest base", async () => {
+    const { deps, host } = twoWorktrees();
+    const overview = await buildOverview({ ...deps, whole: new Set(["host_1:/work/two"]) }, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
+    expect(statusCalls(host).map(([, input]) => [input.root, input.pick])).toEqual([["/work/one", true], ["/work/two", false]]);
+    expect(overview.worktrees.map((entry) => entry.whole)).toEqual([undefined, true]);
+    const closest = setup({});
+    await buildOverview({ ...closest.deps, counting: { pick: false, folderLimit: 200, historyThreshold: 50, historyShare: 10 } }, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
+    expect(statusCalls(closest.host).map(([, input]) => input.pick)).toEqual([false]);
   });
 
   it("flags a file two worktrees of one project both changed", async () => {
@@ -671,96 +690,6 @@ describe("buildOverview worktrees", () => {
   });
 });
 
-describe("buildOverview workspaces bb's status is too slow for", () => {
-  const ROOT = "/repos/mono";
-  const available = {
-    outcome: "available", branch: "agent/work", base: "origin/main", aheadCount: 1, behindCount: 50000, truncated: false,
-    commits: [{ sha: "abc1234", shortSha: "abc1234", subject: "Work", authorName: "Agent", authoredAt: 1000 }],
-    uncommitted: [{ path: "services/api/new.rb", previousPath: null, status: "untracked", additions: 2, deletions: 0, binary: false }],
-    committed: [{ path: "services/api/done.rb", previousPath: null, status: "modified", additions: 3, deletions: 1, binary: false }],
-  };
-  const resolveAt = (paths: string[] = []) => ({ results: paths.map((path) => ({ path, root: path === ROOT ? ROOT : null, relative: path === ROOT ? "" : null })) });
-  const slowSetup = (status?: () => unknown) => {
-    const host = vi.fn(async (method: string, input: { paths?: string[] }) => {
-      if (method === "resolveRoots") return resolveAt(input.paths);
-      if (method === "checkoutStatus") return available;
-      throw new Error(`unexpected ${method}`);
-    }) as unknown as HostCall & ReturnType<typeof vi.fn>;
-    return setup({ host, status, environments: [environment({ id: "env_1", path: ROOT, mergeBaseBranch: "origin/main" })] });
-  };
-  const build = (deps: CollectDeps, scope: "uncommitted" | "branch" = "uncommitted") =>
-    buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope, includeArchived: true });
-  const gitCalls = (host: ReturnType<typeof vi.fn>) => host.mock.calls.filter(([method]) => method === "checkoutStatus");
-
-  afterEach(() => { vi.useRealTimers(); });
-
-  it("stops waiting for bb after the deadline, reads the workspace with git, and keeps doing so", async () => {
-    vi.useFakeTimers();
-    const { deps, sdk, host } = slowSetup(() => new Promise(() => {}));
-    const slowWorkspaces = new Set<string>();
-    const shared = { ...deps, cache: createRepoCache(), roots: createRootCache(), slowWorkspaces };
-    const first = build(shared);
-    await vi.advanceTimersByTimeAsync(BB_DEADLINE_MS);
-    const overview = await first;
-    expect(overviewSchema.safeParse(overview).success).toBe(true);
-    expect(overview.worktrees[0]).toMatchObject({ root: ROOT, aheadCount: 1, behindCount: 50000, state: "ready" });
-    expect(overview.worktrees[0]?.ref).toEqual({ kind: "workspace", environmentId: "env_1", base: "origin/main", root: ROOT, hostId: "host_1" });
-    expect(overview.repos[0]?.ref).toEqual(overview.worktrees[0]?.ref);
-    expect(overview.repos[0]?.files.map((file) => file.path)).toEqual(["services/api/new.rb"]);
-    expect([...slowWorkspaces]).toEqual(["env_1"]);
-    shared.cache.clear();
-    await build(shared);
-    expect(sdk.environments.status).toHaveBeenCalledTimes(1);
-    expect(gitCalls(host)).toHaveLength(2);
-  });
-
-  it("keeps asking bb when it answers in time", async () => {
-    const { deps, sdk, host } = slowSetup();
-    const slowWorkspaces = new Set<string>();
-    const overview = await build({ ...deps, slowWorkspaces });
-    expect(overview.worktrees[0]?.ref).not.toHaveProperty("root");
-    expect(slowWorkspaces.size).toBe(0);
-    expect(sdk.environments.status).toHaveBeenCalled();
-    expect(gitCalls(host)).toHaveLength(0);
-  });
-
-  it("reads a workspace already known to be slow with one git call on the host and none through bb", async () => {
-    const { deps, sdk, host } = slowSetup();
-    const overview = await build({ ...deps, cache: createRepoCache(), roots: createRootCache(), slowWorkspaces: new Set(["env_1"]) });
-    expect(overview.worktrees[0]?.committed.map((file) => file.path)).toEqual(["services/api/done.rb"]);
-    expect(sdk.environments.status).not.toHaveBeenCalled();
-    expect(gitCalls(host)).toEqual([["checkoutStatus", { root: ROOT, base: "origin/main" }, { hostId: "host_1", signal: undefined }]]);
-  });
-
-  it("drops the cached git read when bb reports a change to the environment", async () => {
-    const { deps, host } = slowSetup();
-    const cache = createRepoCache();
-    const run = () => build({ ...deps, cache, roots: createRootCache(), slowWorkspaces: new Set(["env_1"]) });
-    await run();
-    await run();
-    cache.invalidateEnvironment("env_1");
-    await run();
-    expect(gitCalls(host)).toHaveLength(2);
-  });
-
-  it("falls back to git for the branch scope too", async () => {
-    vi.useFakeTimers();
-    const { deps, sdk, host } = slowSetup();
-    sdk.environments.diffFiles.mockImplementation(() => new Promise(() => {}));
-    host.mockImplementation((async (method: string, input: { paths?: string[] }) => {
-      if (method === "repoFiles") return { outcome: "available", branch: null, base: "origin/main", aheadCount: 1, behindCount: null, commits: [], truncated: false, files: [] };
-      if (method === "resolveRoots") return resolveAt(input.paths);
-      return available;
-    }) as never);
-    const slowWorkspaces = new Set<string>();
-    const pending = build({ ...deps, slowWorkspaces }, "branch");
-    await vi.advanceTimersByTimeAsync(BB_DEADLINE_MS);
-    await pending;
-    expect(host.mock.calls.find(([method]) => method === "repoFiles")?.[1]).toEqual({ root: ROOT, target: { type: "merge-base", base: "origin/main" } });
-    expect([...slowWorkspaces]).toEqual(["env_1"]);
-  });
-});
-
 describe("buildOverview worked checkouts", () => {
   const TREE_ROOT = "/clones/side";
   const gitFile = (path: string, additions = 1) => ({ path, previousPath: null, status: "modified", additions, deletions: 0, binary: false });
@@ -772,9 +701,10 @@ describe("buildOverview worked checkouts", () => {
           : { path, root: path === "/work/one" ? path : null, relative: path === "/work/one" ? "" : null }),
       };
     }
+    if (method === "checkoutStatus" && (input as { root?: string }).root !== TREE_ROOT) return statusOf([]);
     if (method === "checkoutStatus") {
       return {
-        outcome: "available", branch: "side-work", base: "origin/main", aheadCount: 2, behindCount: 0, truncated: false,
+        outcome: "available", branch: "side-work", head: "d".repeat(40), base: "origin/main", skippedBase: null, aheadCount: 2, behindCount: 0, truncated: false,
         commits: [{ sha: "abc1234", shortSha: "abc1234", subject: "Cut copies", authorName: "Agent", authoredAt: 1000 }],
         uncommitted: [gitFile("pkg/lib.rs", 3), gitFile("pkg/shell-only.rs", 5)], committed: [gitFile("pkg/committed.rs", 8)],
         ...status,
@@ -797,15 +727,15 @@ describe("buildOverview worked checkouts", () => {
     expect(row.committed.map((file) => file.path)).toEqual(["pkg/committed.rs"]);
     expect(row.commits.map((commit) => commit.subject)).toEqual(["Cut copies"]);
     const repo = overview.repos.find((entry) => entry.ref.kind === "checkout")!;
-    expect(repo.ref).toEqual({ kind: "checkout", hostId: "host_1", root: TREE_ROOT, base: null, worked: true });
+    expect(repo.ref).toEqual({ kind: "checkout", hostId: "host_1", root: TREE_ROOT, base: "origin/main", worked: true });
     expect(repo.files.map((file) => [file.path, file.edits?.count ?? null])).toEqual([["pkg/lib.rs", 1], ["pkg/shell-only.rs", null]]);
     expect(repo.otherFiles).toEqual([]);
-    expect(host.mock.calls.filter(([method]) => method === "checkoutStatus")).toEqual([
-      ["checkoutStatus", { root: TREE_ROOT, base: null }, { hostId: "host_1", signal: undefined }],
+    expect(host.mock.calls.filter(([method, input]) => method === "checkoutStatus" && input.root === TREE_ROOT)).toEqual([
+      ["checkoutStatus", { root: TREE_ROOT, base: null, pick: true, folderLimit: 200 }, { hostId: "host_1", signal: undefined }],
     ]);
   });
 
-  it("asks for the merge-base diff when the scope is branch, and keeps the row", async () => {
+  it("asks for the merge-base diff against the base its row was read against when the scope is branch, and keeps the row", async () => {
     const host = sideHost();
     host.mockImplementation((async (method: string, input: { paths?: string[] }) => {
       if (method === "repoFiles") {
@@ -815,8 +745,10 @@ describe("buildOverview worked checkouts", () => {
     }) as never);
     const { deps } = setup({ edits: sideEdits, host, environments: [environment({ id: "env_1", path: "/work/one" })] });
     const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "branch", includeArchived: true });
-    expect(host.mock.calls.find(([method]) => method === "repoFiles")?.[1]).toEqual({ root: TREE_ROOT, target: { type: "merge-base", base: null } });
+    expect(host.mock.calls.find(([method, input]) => method === "repoFiles" && input.root === TREE_ROOT)?.[1])
+      .toEqual({ root: TREE_ROOT, target: { type: "merge-base", base: "origin/main" }, folderLimit: 200 });
     expect(overview.worktrees.map((entry) => entry.kind)).toEqual(["workspace", "checkout"]);
+    expect(overview.repos.find((entry) => entry.ref.kind === "checkout")?.ref).toMatchObject({ base: "origin/main" });
   });
 
   it("shows the row as unavailable when the host cannot read the checkout", async () => {
@@ -834,8 +766,8 @@ describe("buildOverview", () => {
       environments: [environment({ id: "env_1", path: "/work/one" })],
       edits: { thr_1: edits([record({ path: "/work/one/src/a.ts" }), record({ path: "/work/one/src/done.ts", kind: "add" })]) },
       status: () => statusWith([
-        { path: "src/a.ts", status: "M", insertions: 3, deletions: 1 },
-        { path: "src/other.ts", status: "??", insertions: 4, deletions: 0 },
+        gitFile("src/a.ts", { additions: 3, deletions: 1 }),
+        gitFile("src/other.ts", { status: "untracked", additions: 4, deletions: 0 }),
       ]),
     });
     const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
@@ -854,18 +786,10 @@ describe("buildOverview", () => {
   });
 
   it("lists the commits a thread made on its base branch in its worktree and its repository", async () => {
-    const onMain = statusOf([]);
-    const status = {
-      ...onMain,
-      workspace: {
-        ...onMain.workspace,
-        checkout: { kind: "branch", branchName: "main", headSha: "abc" },
-        mergeBase: { ...onMain.workspace.mergeBase, baseRef: "main", mergeBaseBranch: "main" },
-      },
-    };
+    const status = statusWith([], { branch: "main", base: "main" });
     const shipped = { sha: "f".repeat(40), shortSha: "fffffff", subject: "Add the parser", authorName: "Ada", authoredAt: 1_700_000_000_000 };
     const resolve = async (method: string, input: { paths?: string[] }) => {
-      if (method === "threadCommits") return { outcome: "available", commits: [shipped] };
+      if (method === "threadCommits") return { outcome: "available", commits: [shipped], since: "0".repeat(40) };
       if (method !== "resolveRoots") throw new Error(`unexpected ${method}`);
       return { results: (input.paths ?? []).map((path) => ({ path, root: "/work/one", relative: path === "/work/one" ? "" : path.slice("/work/one/".length) })) };
     };
@@ -886,11 +810,28 @@ describe("buildOverview", () => {
   });
 
   it("asks for the branch diff against the base when the scope is branch", async () => {
-    const { deps, sdk } = setup({});
+    const { deps, host } = setup({});
     await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "branch", includeArchived: true });
-    expect(sdk.environments.diffFiles).toHaveBeenCalledWith({
-      environmentId: "env_1", target: "all", mergeBaseBranch: "origin/main", signal: expect.any(AbortSignal),
+    expect(callsOf(host, "repoFiles").map((call) => call.slice(1))).toEqual([
+      [{ root: "/work/one", target: { type: "merge-base", base: "origin/main" }, folderLimit: 200 }, { hostId: "host_1", signal: undefined }],
+    ]);
+  });
+
+  it("reads a workspace's committed changes against the base its worktree was read against, in the branch scope", async () => {
+    const { deps, host } = setup({
+      status: () => statusWith([], { base: "origin/feature/work", skippedBase: { name: "origin/main", aheadCount: 30 }, aheadCount: 1 }),
+      repoFiles: () => ({ ...NO_FILES, base: "origin/feature/work", aheadCount: 1, files: [gitFile("src/mine.ts")] }),
     });
+    const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "branch", includeArchived: true });
+    expect(callsOf(host, "repoFiles").map(([, input]) => input)).toEqual([
+      { root: "/work/one", target: { type: "merge-base", base: "origin/feature/work" }, folderLimit: 200 },
+    ]);
+    expect(overview.worktrees[0]).toMatchObject({ base: "origin/feature/work", skippedBase: { name: "origin/main", aheadCount: 30 } });
+    expect(overview.repos[0]).toMatchObject({ base: "origin/feature/work", ref: { base: "origin/feature/work" } });
+    expect(overview.repos[0]?.files.map((file) => file.path)).toEqual(["src/mine.ts"]);
+    // Later patch reads use the repository's ref, so it carries the base the worktree was read against in either scope.
+    const uncommitted = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
+    expect(uncommitted.repos[0]?.ref).toMatchObject({ base: "origin/feature/work" });
   });
 
   it("folds a checkout's other changes and keeps the files the agents touched", async () => {
@@ -914,6 +855,7 @@ describe("buildOverview", () => {
       environments: [environment({ id: "env_1", path: "/work/one" })],
       edits: { thr_1: edits([record({ path: "/code/commons/a.md" }), record({ path: "/code/commons/gone.md" })]) },
       host,
+      status: () => statusOf([]),
     });
     const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
     const checkout = overview.repos.find((entry) => entry.ref.kind === "checkout")!;
@@ -934,23 +876,21 @@ describe("buildOverview", () => {
       hosts: [{ id: "host_1", name: "Laptop" }, { id: "host_2", name: "Dev box" }],
       host: (async (method: string, input: { paths?: string[] }, options: { hostId: string }) => {
         if (options.hostId === "host_2") throw new Error("host is offline");
+        if (method === "checkoutStatus") return statusOf([]);
         return { results: (input.paths ?? []).map((path) => ({ path, root: path, relative: "" })) };
       }) as unknown as HostCall,
-      status: ({ environmentId }) => {
-        if (environmentId === "env_2") throw new Error("Dev box is not connected");
-        return statusOf([]);
-      },
     });
     const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
     expect(overview.repos.map((entry) => [entry.hostName, entry.state])).toEqual([["Laptop", "ready"], ["Dev box", "unavailable"]]);
-    expect(overview.repos[1]?.message).toBe("Dev box is not connected");
+    expect(overview.repos[1]?.message).toBe("host is offline");
+    expect(overview.worktrees.map((entry) => [entry.hostName, entry.state])).toEqual([["Laptop", "ready"], ["Dev box", "unavailable"]]);
     expect(overview.warnings).toEqual(["Could not reach Dev box: host is offline"]);
     expect(overviewSchema.safeParse(overview).success).toBe(true);
   });
 
-  it("marks a workspace unavailable when bb cannot read its status", async () => {
+  it("marks a workspace unavailable when git cannot read its status", async () => {
     const { deps } = setup({
-      status: () => ({ outcome: "unavailable", failure: { code: "path_not_found", message: "The folder is gone", workspacePath: "/work/one" } }),
+      status: () => ({ outcome: "unavailable", reason: "git-failed", message: "The folder is gone" }),
     });
     const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
     expect(overview.repos[0]).toMatchObject({ state: "unavailable", message: "The folder is gone", files: [] });
@@ -985,14 +925,14 @@ describe("buildOverview", () => {
     const host = (async (method: string, input: { paths?: string[] }) => ({
       results: (input.paths ?? []).map((path) => (path.startsWith("/tmp/") ? { path, root: null, relative: null } : { path, root: path, relative: "" })),
     })) as unknown as HostCall;
-    const { deps } = setup({ edits: { thr_1: edits(records) }, host });
+    const { deps } = setup({ edits: { thr_1: edits(records) }, host, status: () => statusOf([]) });
     const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
     expect(overview.otherFiles).toHaveLength(200);
     expect(overview.otherFiles[0]).toMatchObject({ path: "/tmp/file-000.txt", status: "modified", edits: { count: 1 } });
   });
 
   it("caps a repo at 500 files and says it was cut", async () => {
-    const files = Array.from({ length: 520 }, (_, index) => ({ path: `f${String(index).padStart(3, "0")}.ts`, status: "M", insertions: 1, deletions: 0 }));
+    const files = Array.from({ length: 520 }, (_, index) => gitFile(`f${String(index).padStart(3, "0")}.ts`));
     const { deps } = setup({ status: () => statusWith(files) });
     const overview = await buildOverview(deps, { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
     expect(overview.repos[0]?.files).toHaveLength(500);
@@ -1093,33 +1033,34 @@ describe("buildOverview for every thread", () => {
       buildOverview(deps, { target, scope: "uncommitted", includeArchived: true, ...(refresh === undefined ? {} : { refresh }) });
 
     it("reads each repository and worktree once, and again after its thread changed", async () => {
-      const { deps, sdk } = twoProjects();
+      const { deps, host } = twoProjects();
       const cache = createRepoCache();
       await ask({ ...deps, cache });
-      expect(sdk.environments.status).toHaveBeenCalledTimes(3);
-      expect(sdk.environments.diffFiles).not.toHaveBeenCalled();
+      expect(statusCalls(host)).toHaveLength(3);
+      expect(callsOf(host, "repoFiles")).toHaveLength(0);
       await ask({ ...deps, cache });
-      expect(sdk.environments.status).toHaveBeenCalledTimes(3);
+      expect(statusCalls(host)).toHaveLength(3);
       cache.invalidateThreads(["thr_2"]);
       await ask({ ...deps, cache });
-      expect(sdk.environments.status).toHaveBeenCalledTimes(4);
+      expect(statusCalls(host)).toHaveLength(4);
     });
 
     it("reads an environment again after bb reports it changed", async () => {
-      const { deps, sdk } = twoProjects();
+      const { deps, host } = twoProjects();
       const cache = createRepoCache();
       await ask({ ...deps, cache });
       cache.invalidateEnvironment("env_3");
       await ask({ ...deps, cache });
-      expect(sdk.environments.status).toHaveBeenCalledTimes(4);
+      expect(statusCalls(host)).toHaveLength(4);
+      expect(statusCalls(host)[3]?.[1]).toMatchObject({ root: "/work/three" });
     });
 
     it("clears the cache on a refresh, so everything is read again", async () => {
-      const { deps, sdk } = twoProjects();
+      const { deps, host } = twoProjects();
       const cache = createRepoCache();
       await ask({ ...deps, cache });
       await ask({ ...deps, cache }, ALL, true);
-      expect(sdk.environments.status).toHaveBeenCalledTimes(6);
+      expect(statusCalls(host)).toHaveLength(6);
     });
 
     it("keeps live edits out of the cache: a recorded repository follows the latest edits", async () => {
@@ -1135,14 +1076,14 @@ describe("buildOverview for every thread", () => {
     });
 
     it("serves a single thread's tree too, and shares its reads with the page", async () => {
-      const { deps, sdk } = twoProjects();
+      const { deps, host } = twoProjects();
       const cache = createRepoCache();
       const tree: OverviewTarget = { kind: "tree", threadId: "thr_1" };
       await ask({ ...deps, cache }, tree);
       await ask({ ...deps, cache }, tree);
-      expect(sdk.environments.status).toHaveBeenCalledTimes(3);
+      expect(statusCalls(host)).toHaveLength(3);
       await ask({ ...deps, cache }, ALL);
-      expect(sdk.environments.status).toHaveBeenCalledTimes(3);
+      expect(statusCalls(host)).toHaveLength(3);
     });
   });
 });
@@ -1165,69 +1106,56 @@ describe("buildOverview phases", () => {
     return { opened, release };
   };
 
-  it("reads a workspace's status once for its worktree and its repository, and never calls diffFiles in the uncommitted scope", async () => {
-    const { deps, sdk } = twoEnvironments({ status: () => statusOf(["a.ts"]) });
+  it("reads a workspace's status once for its worktree and its repository, and never diffs in the uncommitted scope", async () => {
+    const { deps, host } = twoEnvironments({ status: () => statusOf(["a.ts"]) });
     const overview = await ask(deps);
-    expect(sdk.environments.status).toHaveBeenCalledTimes(2);
-    expect(sdk.environments.diffFiles).not.toHaveBeenCalled();
+    expect(statusCalls(host)).toHaveLength(2);
+    expect(callsOf(host, "repoFiles")).toHaveLength(0);
     expect(overview.repos.map((entry) => entry.files.map((file) => file.path))).toEqual([["a.ts"], ["a.ts"]]);
     expect(overview.worktrees.map((entry) => entry.uncommitted.map((file) => file.path))).toEqual([["a.ts"], ["a.ts"]]);
   });
 
   it("asks for the branch diff once per workspace in the branch scope, next to the status", async () => {
-    const { deps, sdk } = twoEnvironments();
+    const { deps, host } = twoEnvironments();
     await ask(deps, "branch");
-    expect(sdk.environments.diffFiles).toHaveBeenCalledTimes(2);
-    expect(sdk.environments.status).toHaveBeenCalledTimes(2);
+    expect(callsOf(host, "repoFiles")).toHaveLength(2);
+    expect(statusCalls(host)).toHaveLength(2);
   });
 
-  it("starts reading workspace status while the edit index is still running", async () => {
-    const { deps, sdk, edits: index } = twoEnvironments();
+  it("starts reading workspace status while the edit index is still running, once their roots are known", async () => {
+    const { deps, host, edits: index } = twoEnvironments();
     const held = gate();
     index.get.mockImplementation(async () => {
       await held.opened;
       return { records: [], primaryCwd: null, workDirs: [], commitRuns: [], lastEventAt: null };
     });
-    const pending = ask(deps);
-    await vi.waitFor(() => expect(sdk.environments.status).toHaveBeenCalledTimes(2));
+    const pending = ask({ ...deps, roots: warmRoots("/work/one", "/work/two") });
+    await vi.waitFor(() => expect(statusCalls(host)).toHaveLength(2));
     held.release();
     await pending;
-    expect(sdk.environments.status).toHaveBeenCalledTimes(2);
-  });
-
-  it("starts the branch diff while the edit index is still running", async () => {
-    const { deps, sdk, edits: index } = twoEnvironments();
-    const held = gate();
-    index.get.mockImplementation(async () => {
-      await held.opened;
-      return { records: [], primaryCwd: null, workDirs: [], commitRuns: [], lastEventAt: null };
-    });
-    const pending = ask(deps, "branch");
-    await vi.waitFor(() => expect(sdk.environments.diffFiles).toHaveBeenCalledTimes(2));
-    held.release();
-    await pending;
+    expect(statusCalls(host)).toHaveLength(2);
   });
 
   it("starts at most 8 early status reads at a time", async () => {
     const many = Array.from({ length: 20 }, (_, index) => index + 1);
-    const { deps, sdk, edits: index } = setup({
-      threads: many.map((n) => makeThreadResponse({ id: `thr_${n}`, parentThreadId: n === 1 ? null : "thr_1", environmentId: `env_${n}` })),
-      environments: many.map((n) => environment({ id: `env_${n}`, path: `/work/${n}` })),
-    });
     const heldEdits = gate();
     const heldStatus = gate();
+    const { deps, host, edits: index } = setup({
+      threads: many.map((n) => makeThreadResponse({ id: `thr_${n}`, parentThreadId: n === 1 ? null : "thr_1", environmentId: `env_${n}` })),
+      environments: many.map((n) => environment({ id: `env_${n}`, path: `/work/${n}` })),
+      status: async () => {
+        await heldStatus.opened;
+        return statusOf([]);
+      },
+    });
     index.get.mockImplementation(async () => {
       await heldEdits.opened;
       return { records: [], primaryCwd: null, workDirs: [], commitRuns: [], lastEventAt: null };
     });
-    sdk.environments.status.mockImplementation(async () => {
-      await heldStatus.opened;
-      return statusOf([]);
-    });
-    const pending = ask(deps);
-    await vi.waitFor(() => expect(sdk.environments.status).toHaveBeenCalledTimes(8));
+    const pending = ask({ ...deps, roots: warmRoots(...many.map((n) => `/work/${n}`)) });
+    await vi.waitFor(() => expect(statusCalls(host)).toHaveLength(8));
     await new Promise((resolve) => setTimeout(resolve, 5));
-    expect(sdk.environments.status).toHaveBeenCalledTimes(8);
+    expect(statusCalls(host)).toHaveLength(8);
     heldStatus.release();
     heldEdits.release();
     await pending;
@@ -1254,48 +1182,48 @@ describe("buildOverview phases", () => {
       return edits([record({ path: "/work/one/src/a.ts" })]);
     });
     const pending = ask(deps);
-    await vi.waitFor(() => expect(host).toHaveBeenCalledTimes(1));
-    expect(host.mock.calls[0]?.[1].paths).toEqual(expect.arrayContaining(["/work/one"]));
-    expect(host.mock.calls[0]?.[1].paths).not.toContain("/work/one/src/a.ts");
+    await vi.waitFor(() => expect(callsOf(host, "resolveRoots")).toHaveLength(1));
+    expect(callsOf(host, "resolveRoots")[0]?.[1].paths).toEqual(expect.arrayContaining(["/work/one"]));
+    expect(callsOf(host, "resolveRoots")[0]?.[1].paths).not.toContain("/work/one/src/a.ts");
     held.release();
     await pending;
-    expect(host).toHaveBeenCalledTimes(2);
-    expect(host.mock.calls[1]?.[1].paths).toEqual(["/work/one/src/a.ts"]);
+    expect(callsOf(host, "resolveRoots")).toHaveLength(2);
+    expect(callsOf(host, "resolveRoots")[1]?.[1].paths).toEqual(["/work/one/src/a.ts"]);
   });
 
   it("serves a second tree build within a minute without a status call, and sends resolveRoots only the paths it lacks", async () => {
-    const { deps, sdk, host, edits: index } = twoEnvironments();
+    const { deps, host, edits: index } = twoEnvironments();
     const cache = createRepoCache();
     const roots = createRootCache();
     await ask({ ...deps, cache, roots });
-    expect(sdk.environments.status).toHaveBeenCalledTimes(2);
+    expect(statusCalls(host)).toHaveLength(2);
     const firstCalls = host.mock.calls.length;
     index.get.mockImplementation(async (threadId: string) => (threadId === "thr_1" ? edits([record({ path: "/work/one/new.ts" })]) : { records: [], primaryCwd: null, workDirs: [], commitRuns: [], lastEventAt: null }));
     await ask({ ...deps, cache, roots });
-    expect(sdk.environments.status).toHaveBeenCalledTimes(2);
+    expect(statusCalls(host)).toHaveLength(2);
     const later = host.mock.calls.slice(firstCalls);
     expect(later).toHaveLength(1);
     expect(later[0]?.[1].paths).toEqual(["/work/one/new.ts"]);
   });
 
   it("reads the status again for a tree after one of its threads changed", async () => {
-    const { deps, sdk } = twoEnvironments();
+    const { deps, host } = twoEnvironments();
     const cache = createRepoCache();
     await ask({ ...deps, cache });
     cache.invalidateThreads(["thr_2"]);
     await ask({ ...deps, cache });
-    expect(sdk.environments.status).toHaveBeenCalledTimes(3);
+    expect(statusCalls(host)).toHaveLength(3);
   });
 
   it("on a hard refresh drops the tree's cached reads and roots, and forgets its edits", async () => {
-    const { deps, sdk, host, edits: index } = twoEnvironments();
+    const { deps, host, edits: index } = twoEnvironments();
     const cache = createRepoCache();
     const roots = createRootCache();
     await ask({ ...deps, cache, roots });
-    const resolved = host.mock.calls.length;
+    const resolved = callsOf(host, "resolveRoots").length;
     await ask({ ...deps, cache, roots }, "uncommitted", true);
-    expect(sdk.environments.status).toHaveBeenCalledTimes(4);
-    expect(host.mock.calls.length).toBeGreaterThan(resolved);
+    expect(statusCalls(host)).toHaveLength(4);
+    expect(callsOf(host, "resolveRoots").length).toBeGreaterThan(resolved);
     expect(index.forget).toHaveBeenCalledWith(["thr_1", "thr_2"]);
   });
 

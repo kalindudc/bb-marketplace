@@ -1,43 +1,31 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { PluginBbSdk } from "@get-bb/plugin-sdk";
 import type { CollectDeps, HostCall, RepoPlan, Touched } from "../src/collect";
-import type { PatchInput, RepoRef } from "../src/contract";
+import type { GitFile, HostOutput, PatchInput, RepoRef } from "../src/contract";
 import type { EditRecord } from "../src/edits";
-import { BB_DEADLINE_MS, loadCommitFiles, loadFileSides, loadPatch, loadRepoFiles, loadWorkspaceStatus, recordedFile } from "../src/sources";
+import { loadCommitFiles, loadFileSides, loadPatch, loadRepoFiles, loadWorkspaceStatus, recordedFile } from "../src/sources";
 
-const AVAILABLE = { outcome: "available", initialPatches: [], mergeBaseRef: null, shortstat: "", truncated: false };
-const diffFile = (overrides: object = {}) => ({
-  path: "src/a.ts", previousPath: null, changeKind: "modified", additions: 2, deletions: 1, binary: false, origin: "tracked", loadMode: "auto",
-  ...overrides,
+const gitFile = (overrides: Partial<GitFile> = {}): GitFile => ({
+  path: "src/a.ts", previousPath: null, status: "modified", additions: 2, deletions: 1, binary: false, ...overrides,
 });
 
-const emptyStatus = (files: object[] = []) => ({
-  outcome: "available",
-  workspace: {
-    branch: { currentBranch: "feature/work", defaultBranch: "main" },
-    checkout: { kind: "branch", branchName: "feature/work", headSha: "abc" },
-    mergeBase: null,
-    workingTree: { files, fileCount: files.length, insertions: 0, deletions: 0, hasUncommittedChanges: files.length > 0, lineStatsComplete: true, state: "clean" },
-  },
+const checkoutStatus = (overrides: Partial<Extract<HostOutput<"checkoutStatus">, { outcome: "available" }>> = {}): HostOutput<"checkoutStatus"> => ({
+  outcome: "available", branch: "feature/work", head: "f".repeat(40), base: "origin/main", skippedBase: null, aheadCount: 0, behindCount: 0,
+  commits: [], uncommitted: [], committed: [], truncated: false, ...overrides,
 });
 
-function deps(overrides: { diffFiles?: unknown; diffPatch?: unknown; host?: unknown; status?: unknown } = {}) {
-  const status = vi.fn(async (..._args: unknown[]) => overrides.status ?? emptyStatus());
-  const diffFiles = vi.fn(async (..._args: unknown[]) => overrides.diffFiles ?? { ...AVAILABLE, files: [] });
-  const diffPatch = vi.fn(async (..._args: unknown[]) => overrides.diffPatch ?? { outcome: "available", patches: [] });
-  const host = vi.fn(async (..._args: unknown[]) => overrides.host ?? {
+// `status` answers checkoutStatus; `host` answers every other host method.
+function deps(overrides: { host?: unknown; status?: unknown } = {}) {
+  const host = vi.fn(async (method: string, ..._args: unknown[]) => (method === "checkoutStatus" ? (overrides.status ?? checkoutStatus()) : (overrides.host ?? {
     outcome: "available", branch: null, base: null, aheadCount: null, behindCount: null, commits: [], files: [], truncated: false,
-  });
-  return {
-    deps: { sdk: { environments: { diffFiles, diffPatch, status } } as unknown as PluginBbSdk, host: host as unknown as HostCall, edits: {} as CollectDeps["edits"] },
-    diffFiles, diffPatch, host, status,
-  };
+  })));
+  return { deps: { sdk: {} as PluginBbSdk, host: host as unknown as HostCall, edits: {} as CollectDeps["edits"] }, host };
 }
 
 const planOf = (ref: RepoRef, touched: Map<string, Touched> = new Map()): RepoPlan => ({
   key: "k", ref, label: "L", projectId: "proj_1", root: "/repo", hostId: "host_1", threadIds: ["thr_1"], touched,
 });
-const workspace = (base: string | null): RepoRef => ({ kind: "workspace", environmentId: "env_1", base });
+const workspace = (base: string | null): RepoRef => ({ kind: "workspace", environmentId: "env_1", base, root: "/repos/mono", hostId: "host_1" });
 const gitWorkspace: RepoRef = { kind: "workspace", environmentId: "env_1", base: "origin/main", root: "/repos/mono", hostId: "host_1" };
 const checkout: RepoRef = { kind: "checkout", hostId: "host_1", root: "/repo", base: null };
 const branch: RepoRef = { kind: "branch", hostId: "host_1", root: "/repo", base: "origin/main", head: "feature/old" };
@@ -49,45 +37,41 @@ const touched = (records: EditRecord[], threadIds = ["thr_1"], rawPaths = ["a.ts
   threadIds: new Set(threadIds), rawPaths: new Set(rawPaths), records,
 });
 
-describe("loadWorkspaceStatus deadline", () => {
-  afterEach(() => { vi.useRealTimers(); });
+describe("loadWorkspaceStatus", () => {
+  it("reads a workspace with git at its repository root, like a checkout, with the counting settings", async () => {
+    const { deps: d, host } = deps({ status: checkoutStatus({ base: "origin/feature/work", skippedBase: { name: "origin/main", aheadCount: 9 } }) });
+    const status = await loadWorkspaceStatus(d, workspace("origin/main") as Extract<RepoRef, { kind: "workspace" }>, ["thr_1"]);
+    expect(host.mock.calls).toEqual([[
+      "checkoutStatus", { root: "/repos/mono", base: "origin/main", pick: true, folderLimit: 200 }, { hostId: "host_1", signal: undefined },
+    ]]);
+    expect(status).toMatchObject({ state: "ready", branch: "feature/work", base: "origin/feature/work", skippedBase: { name: "origin/main", aheadCount: 9 } });
+    const counted = { ...d, counting: { pick: true, folderLimit: 30, historyThreshold: 50, historyShare: 10 } };
+    await loadWorkspaceStatus(counted, workspace(null) as Extract<RepoRef, { kind: "workspace" }>, ["thr_1"], undefined, false);
+    expect(host.mock.calls[1]?.[1]).toEqual({ root: "/repos/mono", base: null, pick: false, folderLimit: 30 });
+  });
 
-  it("reports bb's silence as an error when there is no folder to read with git instead", async () => {
-    vi.useFakeTimers();
-    const { deps: d } = deps();
-    const slowWorkspaces = new Set<string>();
-    (d.sdk.environments.status as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => new Promise(() => {}));
-    const pending = loadWorkspaceStatus({ ...d, slowWorkspaces }, { kind: "workspace", environmentId: "env_1", base: null }, ["thr_1"]);
-    const failed = expect(pending).rejects.toThrow("bb took too long to read this workspace");
-    await vi.advanceTimersByTimeAsync(BB_DEADLINE_MS);
-    await failed;
-    expect(slowWorkspaces.size).toBe(0);
+  it("refuses a workspace ref that does not say where its repository is", async () => {
+    const { deps: d, host } = deps();
+    expect(() => loadWorkspaceStatus(d, { kind: "workspace", environmentId: "env_1", base: null }, ["thr_1"])).toThrow("refresh Vantage");
+    expect(host).not.toHaveBeenCalled();
   });
 });
 
 describe("loadRepoFiles targets", () => {
-  it("reads a workspace's uncommitted changes from its status and, for the branch scope, diffs everything since its base", async () => {
-    const { deps: d, diffFiles, status } = deps();
+  it("reads a workspace's uncommitted changes from its status and, for the branch scope, diffs everything since its merge base", async () => {
+    const { deps: d, host } = deps();
     await loadRepoFiles(d, planOf(workspace("origin/main")), "uncommitted");
-    expect(status.mock.calls).toEqual([[{ environmentId: "env_1", mergeBaseBranch: "origin/main", signal: expect.any(AbortSignal) }]]);
-    expect(diffFiles).not.toHaveBeenCalled();
     await loadRepoFiles(d, planOf(workspace("origin/main")), "branch");
-    expect(diffFiles.mock.calls).toEqual([[{ environmentId: "env_1", target: "all", mergeBaseBranch: "origin/main", signal: expect.any(AbortSignal) }]]);
-    expect(status).toHaveBeenCalledTimes(1);
-  });
-
-  it("reads the uncommitted changes from the status for the branch scope too when there is no base", async () => {
-    const { deps: d, diffFiles, status } = deps();
-    const result = await loadRepoFiles(d, planOf(workspace(null)), "branch");
-    expect(diffFiles).not.toHaveBeenCalled();
-    expect(status.mock.calls[0]?.[0]).not.toHaveProperty("mergeBaseBranch");
-    expect(result).toMatchObject({ base: null });
+    expect(host.mock.calls).toEqual([
+      ["checkoutStatus", { root: "/repos/mono", base: "origin/main", pick: true, folderLimit: 200 }, { hostId: "host_1", signal: undefined }],
+      ["repoFiles", { root: "/repos/mono", target: { type: "merge-base", base: "origin/main" }, folderLimit: 200 }, { hostId: "host_1", signal: undefined }],
+    ]);
   });
 
   it("reports the base a workspace was compared with", async () => {
-    const { deps: d } = deps();
-    expect(await loadRepoFiles(d, planOf(workspace("origin/main")), "branch")).toMatchObject({ base: "origin/main" });
-    expect(await loadRepoFiles(d, planOf(workspace("origin/main")), "uncommitted")).toMatchObject({ base: null });
+    const { deps: d } = deps({ host: { outcome: "available", branch: null, base: "origin/main", aheadCount: 1, behindCount: 0, commits: [], files: [], truncated: false } });
+    expect(await loadRepoFiles(d, planOf(workspace("origin/main")), "branch")).toMatchObject({ base: "origin/main", aheadCount: 1 });
+    expect(await loadRepoFiles(d, planOf(workspace("origin/main")), "uncommitted")).toMatchObject({ base: null, aheadCount: null });
   });
 
   it("asks the host for a checkout's uncommitted changes or its changes since the merge base", async () => {
@@ -95,8 +79,8 @@ describe("loadRepoFiles targets", () => {
     await loadRepoFiles(d, planOf(checkout), "uncommitted");
     await loadRepoFiles(d, planOf(checkout), "branch");
     expect(host.mock.calls).toEqual([
-      ["repoFiles", { root: "/repo", target: { type: "uncommitted" } }, { hostId: "host_1", signal: undefined }],
-      ["repoFiles", { root: "/repo", target: { type: "merge-base", base: null } }, { hostId: "host_1", signal: undefined }],
+      ["repoFiles", { root: "/repo", target: { type: "uncommitted" }, folderLimit: 200 }, { hostId: "host_1", signal: undefined }],
+      ["repoFiles", { root: "/repo", target: { type: "merge-base", base: null }, folderLimit: 200 }, { hostId: "host_1", signal: undefined }],
     ]);
   });
 
@@ -110,16 +94,17 @@ describe("loadRepoFiles targets", () => {
 });
 
 describe("loadRepoFiles results", () => {
-  it("maps a workspace's files, including untracked, too large, renamed and type-changed ones", async () => {
+  it("maps a workspace's files, including untracked, renamed, type-changed, binary and folded ones", async () => {
+    const folder = { files: 900, repository: false, sample: ["vendor/a.js"] };
     const { deps: d } = deps({
-      diffFiles: {
-        ...AVAILABLE, truncated: true,
+      host: {
+        outcome: "available", branch: null, base: "origin/main", aheadCount: 1, behindCount: 0, commits: [], truncated: true,
         files: [
-          diffFile({ path: "new.txt", changeKind: "added", origin: "untracked", additions: 3, deletions: 0 }),
-          diffFile({ path: "huge.json", loadMode: "too_large", additions: 90_000 }),
-          diffFile({ path: "b.ts", previousPath: "a.ts", changeKind: "renamed" }),
-          diffFile({ path: "link", changeKind: "type_changed" }),
-          diffFile({ path: "pic.png", binary: true, additions: 0, deletions: 0, changeKind: "added" }),
+          gitFile({ path: "new.txt", status: "untracked", additions: 3, deletions: 0 }),
+          gitFile({ path: "b.ts", previousPath: "a.ts", status: "renamed" }),
+          gitFile({ path: "link", status: "type-changed" }),
+          gitFile({ path: "pic.png", status: "added", binary: true, additions: null, deletions: null }),
+          gitFile({ path: "vendor/", status: "untracked", additions: null, deletions: null, folder }),
         ],
       },
     });
@@ -128,24 +113,28 @@ describe("loadRepoFiles results", () => {
     expect(result.truncated).toBe(true);
     expect(result.files).toEqual([
       { path: "new.txt", previousPath: null, status: "untracked", additions: 3, deletions: 0, binary: false, untracked: true, tooLarge: false, edits: null },
-      { path: "huge.json", previousPath: null, status: "modified", additions: 90_000, deletions: 1, binary: false, untracked: false, tooLarge: true, edits: null },
       { path: "b.ts", previousPath: "a.ts", status: "renamed", additions: 2, deletions: 1, binary: false, untracked: false, tooLarge: false, edits: null },
       { path: "link", previousPath: null, status: "type-changed", additions: 2, deletions: 1, binary: false, untracked: false, tooLarge: false, edits: null },
-      { path: "pic.png", previousPath: null, status: "added", additions: 0, deletions: 0, binary: true, untracked: false, tooLarge: false, edits: null },
+      { path: "pic.png", previousPath: null, status: "added", additions: null, deletions: null, binary: true, untracked: false, tooLarge: false, edits: null },
+      { path: "vendor/", previousPath: null, status: "untracked", additions: null, deletions: null, binary: false, untracked: true, tooLarge: false, edits: null, folder },
     ]);
   });
 
-  it("maps a workspace's uncommitted files from its status, with the counts bb reports", async () => {
+  it("maps a workspace's uncommitted files from its status, with the counts git reports", async () => {
     const { deps: d } = deps({
-      status: emptyStatus([
-        { path: "a.ts", status: "M", insertions: 2, deletions: 1 },
-        { path: "new.txt", status: "??", insertions: 3, deletions: 0 },
-        { path: "pic.png", status: "A", insertions: null, deletions: null },
-      ]),
+      status: checkoutStatus({
+        truncated: true,
+        uncommitted: [
+          gitFile({ path: "a.ts" }),
+          gitFile({ path: "new.txt", status: "untracked", additions: 3, deletions: 0 }),
+          gitFile({ path: "pic.png", status: "added", additions: null, deletions: null, binary: true }),
+        ],
+        committed: [gitFile({ path: "committed.ts" })],
+      }),
     });
     const result = await loadRepoFiles(d, planOf(workspace("origin/main")), "uncommitted");
     expect(result).toEqual({
-      branch: null, base: null, aheadCount: null, truncated: false,
+      branch: null, base: null, aheadCount: null, truncated: true,
       files: [
         { path: "a.ts", previousPath: null, status: "modified", additions: 2, deletions: 1, binary: false, untracked: false, tooLarge: false, edits: null },
         { path: "new.txt", previousPath: null, status: "untracked", additions: 3, deletions: 0, binary: false, untracked: true, tooLarge: false, edits: null },
@@ -154,13 +143,12 @@ describe("loadRepoFiles results", () => {
     });
   });
 
-  it("makes a workspace unavailable with bb's message", async () => {
-    const notApplicable = { outcome: "not_applicable", reason: "non_git_environment", message: "Not a git workspace" };
-    const failed = { outcome: "unavailable", failure: { code: "path_not_found", message: "Folder is gone", workspacePath: "/x" } };
-    expect(await loadRepoFiles(deps({ status: notApplicable }).deps, planOf(workspace(null)), "uncommitted")).toEqual({ unavailable: "Not a git workspace" });
+  it("makes a workspace unavailable with the host's message", async () => {
+    const gone = { outcome: "unavailable", reason: "not-a-repo", message: "raw" };
+    const failed = { outcome: "unavailable", reason: "git-failed", message: "Folder is gone" };
+    expect(await loadRepoFiles(deps({ status: gone }).deps, planOf(workspace(null)), "uncommitted")).toEqual({ unavailable: "This folder is no longer a git repository" });
     expect(await loadRepoFiles(deps({ status: failed }).deps, planOf(workspace(null)), "uncommitted")).toEqual({ unavailable: "Folder is gone" });
-    expect(await loadRepoFiles(deps({ diffFiles: notApplicable }).deps, planOf(workspace("origin/main")), "branch")).toEqual({ unavailable: "Not a git workspace" });
-    expect(await loadRepoFiles(deps({ diffFiles: failed }).deps, planOf(workspace("origin/main")), "branch")).toEqual({ unavailable: "Folder is gone" });
+    expect(await loadRepoFiles(deps({ host: failed }).deps, planOf(workspace("origin/main")), "branch")).toEqual({ unavailable: "Folder is gone" });
   });
 
   it("returns a checkout's host files with branch, base and counts", async () => {
@@ -238,32 +226,9 @@ describe("loadPatch", () => {
     ref, path: "src/a.ts", previousPath: null, untracked: false, scope: "uncommitted", sha: null, ...overrides,
   });
 
-  it("returns the first patch bb's diffPatch gives for a workspace, with the scope's target", async () => {
-    const { deps: d, diffPatch } = deps({
-      diffPatch: { outcome: "available", patches: [{ path: "src/a.ts", patch: "--- a\n+++ b\n+x", truncated: true }, { path: "other", patch: "no", truncated: false }] },
-    });
-    expect(await loadPatch(d, input(workspace("origin/main")))).toEqual({ patch: "--- a\n+++ b\n+x", truncated: true, binary: false });
-    await loadPatch(d, input(workspace("origin/main"), { scope: "branch" }));
-    await loadPatch(d, input(workspace(null), { scope: "branch" }));
-    expect(diffPatch.mock.calls.map((call) => (call as unknown[])[0])).toEqual([
-      { environmentId: "env_1", paths: ["src/a.ts"], target: { type: "uncommitted" }, signal: undefined },
-      { environmentId: "env_1", paths: ["src/a.ts"], target: { type: "all", mergeBaseBranch: "origin/main" }, signal: undefined },
-      { environmentId: "env_1", paths: ["src/a.ts"], target: { type: "uncommitted" }, signal: undefined },
-    ]);
-  });
-
-  it("flags a binary patch and tolerates a missing one", async () => {
-    const binary = deps({ diffPatch: { outcome: "available", patches: [{ path: "p.png", patch: "Binary files a/p.png and b/p.png differ\n", truncated: false }] } });
-    expect(await loadPatch(binary.deps, input(workspace(null)))).toMatchObject({ binary: true });
-    const empty = deps({ diffPatch: { outcome: "available", patches: [] } });
-    expect(await loadPatch(empty.deps, input(workspace(null)))).toEqual({ patch: "", truncated: false, binary: false });
-  });
-
-  it("raises bb's message when a workspace patch is unavailable", async () => {
-    const failed = deps({ diffPatch: { outcome: "unavailable", failure: { code: "unknown", message: "Cannot diff", workspacePath: "/x" } } });
+  it("raises the host's message when a workspace patch is unavailable", async () => {
+    const failed = deps({ host: { outcome: "unavailable", reason: "git-failed", message: "Cannot diff" } });
     await expect(loadPatch(failed.deps, input(workspace(null)))).rejects.toThrow("Cannot diff");
-    const na = deps({ diffPatch: { outcome: "not_applicable", reason: "non_git_environment", message: "Not git" } });
-    await expect(loadPatch(na.deps, input(workspace(null)))).rejects.toThrow("Not git");
   });
 
   it("asks the host for a checkout's patch, with the untracked flag and rename source", async () => {
@@ -302,27 +267,6 @@ describe("loadPatch committed and per-commit", () => {
   });
   const patchCall = (call: unknown) => (call as unknown[])[0];
 
-  it("asks bb for a workspace's committed changes against its base", async () => {
-    const { deps: d, diffPatch } = deps({ diffPatch: { outcome: "available", patches: [{ path: "src/a.ts", patch: "+c", truncated: false }] } });
-    expect(await loadPatch(d, input(workspace("origin/main")))).toEqual({ patch: "+c", truncated: false, binary: false });
-    expect(patchCall(diffPatch.mock.calls[0])).toEqual({
-      environmentId: "env_1", paths: ["src/a.ts"], target: { type: "branch_committed", mergeBaseBranch: "origin/main" }, signal: undefined,
-    });
-  });
-
-  it("cannot show committed changes of a workspace that has no base", async () => {
-    await expect(loadPatch(deps().deps, input(workspace(null)))).rejects.toThrow("no base");
-  });
-
-  it("asks bb for one commit's patch, whatever the scope", async () => {
-    const { deps: d, diffPatch } = deps();
-    await loadPatch(d, input(workspace("origin/main"), { sha: SHA }));
-    await loadPatch(d, input(workspace(null), { sha: SHA, scope: "uncommitted" }));
-    expect(diffPatch.mock.calls.map((call) => (patchCall(call) as { target: unknown }).target)).toEqual([
-      { type: "commit", sha: SHA }, { type: "commit", sha: SHA },
-    ]);
-  });
-
   it("asks the host for a branch's committed range or for one of its commits", async () => {
     const { deps: d, host } = deps({ host: { outcome: "available", patch: "+x", truncated: false, binary: false } });
     await loadPatch(d, input(branch));
@@ -333,8 +277,8 @@ describe("loadPatch committed and per-commit", () => {
     ]);
   });
 
-  it("asks the host at the repository root for every patch of a workspace read with git, not bb", async () => {
-    const { deps: d, host, diffPatch } = deps({ host: { outcome: "available", patch: "+x", truncated: false, binary: false } });
+  it("asks the host at the repository root for every patch of a workspace", async () => {
+    const { deps: d, host } = deps({ host: { outcome: "available", patch: "+x", truncated: false, binary: false } });
     await loadPatch(d, input(gitWorkspace, { scope: "uncommitted" }));
     await loadPatch(d, input(gitWorkspace, { scope: "branch" }));
     await loadPatch(d, input(gitWorkspace));
@@ -345,7 +289,6 @@ describe("loadPatch committed and per-commit", () => {
       { root: "/repos/mono", path: "src/a.ts", previousPath: null, untracked: false, target: { type: "committed", base: "origin/main" } },
       { root: "/repos/mono", path: "src/a.ts", previousPath: null, untracked: false, target: { type: "commit", sha: SHA } },
     ]);
-    expect(diffPatch).not.toHaveBeenCalled();
   });
 
   it("asks the host for a checkout's commits since its merge base, or for one of its commits", async () => {
@@ -361,25 +304,9 @@ describe("loadPatch committed and per-commit", () => {
 describe("loadCommitFiles", () => {
   const SHA = "abc1234def";
 
-  it("maps the files bb lists for a workspace's commit like a workspace diff", async () => {
-    const { deps: d, diffFiles } = deps({
-      diffFiles: {
-        ...AVAILABLE,
-        files: [diffFile({ path: "b.ts", previousPath: "a.ts", changeKind: "renamed" }), diffFile({ path: "link", changeKind: "type_changed" })],
-      },
-    });
-    const result = await loadCommitFiles(d, { ref: workspace("origin/main"), sha: SHA });
-    expect(diffFiles.mock.calls[0]?.[0]).toEqual({ environmentId: "env_1", target: "commit", sha: SHA, signal: undefined });
-    expect(result.files.map((file) => [file.path, file.previousPath, file.status, file.edits])).toEqual([
-      ["b.ts", "a.ts", "renamed", null], ["link", null, "type-changed", null],
-    ]);
-  });
-
-  it("raises bb's message when a workspace's commit cannot be listed", async () => {
-    const failed = deps({ diffFiles: { outcome: "unavailable", failure: { code: "unknown", message: "No such commit", workspacePath: "/x" } } });
+  it("raises the host's message when a workspace's commit cannot be listed", async () => {
+    const failed = deps({ host: { outcome: "unavailable", reason: "git-failed", message: "No such commit" } });
     await expect(loadCommitFiles(failed.deps, { ref: workspace(null), sha: SHA })).rejects.toThrow("No such commit");
-    const na = deps({ diffFiles: { outcome: "not_applicable", reason: "non_git_environment", message: "Not git" } });
-    await expect(loadCommitFiles(na.deps, { ref: workspace(null), sha: SHA })).rejects.toThrow("Not git");
   });
 
   it("asks the host for a branch's commit", async () => {
@@ -398,13 +325,12 @@ describe("loadCommitFiles", () => {
     await expect(loadCommitFiles(failed.deps, { ref: branch, sha: SHA })).rejects.toThrow("The commit was not found");
   });
 
-  it("asks the host at the repository root for the commit of a workspace read with git, not bb", async () => {
-    const { deps: d, host, diffFiles } = deps({
+  it("asks the host at the repository root for the commit of a workspace", async () => {
+    const { deps: d, host } = deps({
       host: { outcome: "available", branch: null, base: null, aheadCount: null, behindCount: null, commits: [], truncated: false, files: [] },
     });
     await loadCommitFiles(d, { ref: gitWorkspace, sha: SHA });
     expect(host.mock.calls[0]).toEqual(["repoFiles", { root: "/repos/mono", target: { type: "commit", sha: SHA } }, { hostId: "host_1", signal: undefined }]);
-    expect(diffFiles).not.toHaveBeenCalled();
   });
 
   it("asks the host for a checkout's commit", async () => {
@@ -424,43 +350,25 @@ describe("loadFileSides", () => {
   const input = (scope: PatchInput["scope"], extra: Partial<PatchInput> = {}): PatchInput => ({
     ref: workspace("origin/main"), path: "src/a.ts", previousPath: null, untracked: false, scope, sha: null, ...extra,
   });
-  const sidesDeps = (diffFile: (args: { side: string }) => Promise<unknown>) => {
-    const made = deps({ diffFiles: { ...AVAILABLE, files: [], mergeBaseRef: "b".repeat(40) } });
-    const fake = vi.fn(diffFile);
-    (made.deps.sdk.environments as unknown as { diffFile: typeof fake }).diffFile = fake;
-    return { ...made, diffFile: fake };
-  };
-  const text = (content: string) => ({ content, contentEncoding: "utf8", sizeBytes: content.length, path: "src/a.ts" });
 
-  it("reads the old side of committed and branch changes at the merge base, not at the tip of the base branch", async () => {
-    const { deps: d, diffFile, diffFiles } = sidesDeps(async ({ side }) => text(side));
+  it("asks the host at a workspace's repository root for both sides, with each scope's target", async () => {
+    const { deps: d, host } = deps({ host: { outcome: "available", old: "old", new: "new" } });
     expect(await loadFileSides(d, input("committed"))).toEqual({ old: "old", new: "new" });
-    expect(diffFiles).toHaveBeenCalledWith(expect.objectContaining({ environmentId: "env_1", target: "branch_committed", mergeBaseBranch: "origin/main" }));
-    expect(diffFile).toHaveBeenCalledWith(expect.objectContaining({ side: "old", target: "branch_committed", mergeBaseRef: "b".repeat(40), path: "src/a.ts" }));
     await loadFileSides(d, input("branch"));
-    expect(diffFile).toHaveBeenCalledWith(expect.objectContaining({ side: "old", target: "all", mergeBaseRef: "b".repeat(40) }));
-  });
-
-  it("asks for no merge base for an uncommitted change or one commit, and reads a renamed file's old side at its old path", async () => {
-    const { deps: d, diffFile, diffFiles } = sidesDeps(async ({ side }) => text(side));
-    await loadFileSides(d, input("uncommitted", { previousPath: "src/old.ts" }));
-    expect(diffFile).toHaveBeenCalledWith(expect.objectContaining({ side: "old", target: "uncommitted", path: "src/old.ts" }));
+    await loadFileSides(d, input("uncommitted", { previousPath: "src/old.ts", untracked: true }));
     await loadFileSides(d, input("committed", { sha: "c".repeat(40) }));
-    expect(diffFile).toHaveBeenCalledWith(expect.objectContaining({ target: "commit", sha: "c".repeat(40) }));
-    expect(diffFiles).not.toHaveBeenCalled();
+    expect(host.mock.calls).toEqual([
+      ["fileSides", { root: "/repos/mono", path: "src/a.ts", previousPath: null, untracked: false, target: { type: "committed", base: "origin/main" } }, { hostId: "host_1", signal: undefined }],
+      ["fileSides", { root: "/repos/mono", path: "src/a.ts", previousPath: null, untracked: false, target: { type: "merge-base", base: "origin/main" } }, { hostId: "host_1", signal: undefined }],
+      ["fileSides", { root: "/repos/mono", path: "src/a.ts", previousPath: "src/old.ts", untracked: true, target: { type: "uncommitted" } }, { hostId: "host_1", signal: undefined }],
+      ["fileSides", { root: "/repos/mono", path: "src/a.ts", previousPath: null, untracked: false, target: { type: "commit", sha: "c".repeat(40) } }, { hostId: "host_1", signal: undefined }],
+    ]);
   });
 
-  it("answers a side the file does not have with nothing, and lets any other failure through", async () => {
-    const missing = Object.assign(new Error("HTTP 404: not found"), { status: 404, code: "ENOENT" });
-    const { deps: d } = sidesDeps(async ({ side }) => { if (side === "old") throw missing; return text("new"); });
-    expect(await loadFileSides(d, input("uncommitted"))).toEqual({ old: null, new: "new" });
-    const offline = Object.assign(new Error("HTTP 503: host offline"), { status: 503, code: "host_offline" });
-    const { deps: down } = sidesDeps(async () => { throw offline; });
-    await expect(loadFileSides(down, input("uncommitted"))).rejects.toThrow("host offline");
-  });
-
-  it("sends no content for a binary or oversized side", async () => {
-    const { deps: d } = sidesDeps(async ({ side }) => (side === "old" ? { ...text("x"), contentEncoding: "base64" } : { ...text("y"), sizeBytes: 2 * 1024 * 1024 }));
-    expect(await loadFileSides(d, input("uncommitted"))).toEqual({ old: null, new: null });
+  it("raises the host's message, and answers a recorded repository with no sides", async () => {
+    const failed = deps({ host: { outcome: "unavailable", reason: "git-failed", message: "host offline" } });
+    await expect(loadFileSides(failed.deps, input("uncommitted"))).rejects.toThrow("host offline");
+    expect(await loadFileSides(failed.deps, input("uncommitted", { ref: { kind: "recorded" } }))).toEqual({ old: null, new: null });
+    expect(failed.host).toHaveBeenCalledTimes(1);
   });
 });

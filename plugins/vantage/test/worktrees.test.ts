@@ -1,55 +1,49 @@
 import { describe, expect, it, vi } from "vitest";
 import type { PluginBbSdk } from "@get-bb/plugin-sdk";
 import type { CollectDeps, Environment, HostCall, RepoPlan } from "../src/collect";
-import type { RepoRef } from "../src/contract";
+import type { GitFile, HostOutput, RepoRef } from "../src/contract";
 import { createRepoCache } from "../src/repo-cache";
-import { fileFromStatus, loadRepoFiles } from "../src/sources";
+import { loadRepoFiles } from "../src/sources";
 import { findSharedFiles, loadWorktrees, primaryThreadId } from "../src/worktrees";
 import { branchWorktree, destroyedEnvironment, environment, fileChange, worktree } from "./fixtures";
 
-type Status = { path: string; status: string; insertions: number | null; deletions: number | null };
-const statusFile = (path: string, status = "M", insertions: number | null = 1, deletions: number | null = 0): Status => ({
-  path, status, insertions, deletions,
+type Status = HostOutput<"checkoutStatus">;
+type Available = Extract<Status, { outcome: "available" }>;
+const gitFile = (path: string, status: GitFile["status"] = "modified", additions: number | null = 1, deletions: number | null = 0): GitFile => ({
+  path, previousPath: null, status, additions, deletions, binary: false,
 });
-const sdkCommit = (n: number, authoredAt = 1_700_000_000_000 + n) => ({
-  sha: `${String(n).padStart(40, "0")}`, shortSha: String(n).padStart(7, "0"), subject: `Commit ${n}`, authorName: "Ada", authoredAt,
+const hostCommit = (n: number) => ({
+  sha: `${String(n).padStart(40, "0")}`, shortSha: String(n).padStart(7, "0"), subject: `Commit ${n}`, authorName: "Ada", authoredAt: 1_700_000_000_000 + n,
 });
+const HEAD = "f".repeat(40);
 
-function available(overrides: { branchName?: string | null; mergeBase?: object | null; workingTree?: object } = {}) {
-  const mergeBase = overrides.mergeBase === undefined
-    ? { aheadCount: 0, behindCount: 0, baseRef: "origin/main", commits: [], deletions: 0, fileCount: 0, files: [], hasCommittedUnmergedChanges: false,
-      insertions: 0, lineStatsComplete: true, mergeBaseBranch: "origin/main" }
-    : overrides.mergeBase;
+function available(overrides: Partial<Available> = {}): Status {
   return {
-    outcome: "available",
-    workspace: {
-      branch: { currentBranch: "feature/work", defaultBranch: "main" },
-      checkout: { kind: "branch", branchName: overrides.branchName === undefined ? "feature/work" : overrides.branchName, headSha: "abc" },
-      mergeBase,
-      workingTree: { files: [], fileCount: 0, insertions: 0, deletions: 0, hasUncommittedChanges: false, lineStatsComplete: true, state: "clean", ...overrides.workingTree },
-    },
+    outcome: "available", branch: "feature/work", head: HEAD, base: "origin/main", skippedBase: null, aheadCount: 0, behindCount: 0,
+    commits: [], uncommitted: [], committed: [], truncated: false, ...overrides,
   };
 }
 
-function setup(options: { status?: (environmentId: string) => unknown | Promise<unknown>; host?: unknown } = {}) {
-  const status = vi.fn(async (args: { environmentId: string }) => {
-    const result = options.status === undefined ? available() : await options.status(args.environmentId);
-    if (result instanceof Error) throw result;
-    return result;
+type HostOptions = { hostId: string; signal?: AbortSignal };
+function setup(options: { status?: (root: string) => unknown | Promise<unknown>; host?: unknown } = {}) {
+  const host = vi.fn(async (method: string, input: { root: string }, _options?: HostOptions): Promise<unknown> => {
+    if (method === "checkoutStatus") {
+      const result = options.status === undefined ? available() : await options.status(input.root);
+      if (result instanceof Error) throw result;
+      return result;
+    }
+    return options.host ?? { outcome: "available", branch: "feature/old", base: "origin/main", aheadCount: 0, behindCount: 0, commits: [], files: [], truncated: false };
   });
-  const host = vi.fn(async (..._args: unknown[]) =>
-    options.host ?? { outcome: "available", branch: "feature/old", base: "origin/main", aheadCount: 0, behindCount: 0, commits: [], files: [], truncated: false });
-  const deps: CollectDeps = {
-    sdk: { environments: { status } } as unknown as PluginBbSdk,
-    host: host as unknown as HostCall,
-    edits: {} as CollectDeps["edits"],
-  };
-  return { deps, status, host };
+  const deps: CollectDeps = { sdk: {} as PluginBbSdk, host: host as unknown as HostCall, edits: {} as CollectDeps["edits"] };
+  const statusCalls = () => host.mock.calls.filter(([method]) => method === "checkoutStatus");
+  return { deps, host, statusCalls };
 }
 
-const workspaceRef = (environmentId: string, base: string | null = "origin/main"): RepoRef => ({ kind: "workspace", environmentId, base });
+const workspaceRef = (n: number, base: string | null = "origin/main"): RepoRef => ({
+  kind: "workspace", environmentId: `env_${n}`, base, root: `/work/${n}`, hostId: "host_1",
+});
 const workspacePlan = (n: number, overrides: Partial<RepoPlan> = {}): RepoPlan => ({
-  key: `host_1:/work/${n}`, ref: workspaceRef(`env_${n}`), label: "Project", projectId: "proj_1", root: `/work/${n}`, hostId: "host_1",
+  key: `host_1:/work/${n}`, ref: workspaceRef(n), label: "Project", projectId: "proj_1", root: `/work/${n}`, hostId: "host_1",
   threadIds: [`thr_${n}`], touched: new Map(), ...overrides,
 });
 const branchPlan = (overrides: Partial<RepoPlan> = {}): RepoPlan => ({
@@ -68,75 +62,71 @@ const recordedPlan: RepoPlan = {
 const environments = (...list: Environment[]): ReadonlyMap<string, Environment> => new Map(list.map((env) => [env.id, env]));
 const names = new Map([["host_1", "Laptop"]]);
 
-describe("fileFromStatus", () => {
-  it.each([
-    ["A", "added"], ["M", "modified"], ["D", "deleted"], ["R", "renamed"], ["C", "copied"], ["U", "unmerged"], ["?", "untracked"], ["??", "untracked"],
-  ])("maps the letter %s to %s", (letter, expected) => {
-    expect(fileFromStatus(statusFile("a.ts", letter, 3, 1))).toMatchObject({ status: expected, untracked: letter.startsWith("?") });
-  });
-
-  it("keeps the counts, and treats two null counts as a binary file", () => {
-    expect(fileFromStatus(statusFile("a.ts", "M", 3, 1))).toEqual({
-      path: "a.ts", previousPath: null, status: "modified", additions: 3, deletions: 1, binary: false, untracked: false, tooLarge: false, edits: null,
-    });
-    expect(fileFromStatus(statusFile("pic.png", "A", null, null))).toMatchObject({ additions: null, deletions: null, binary: true });
-    expect(fileFromStatus(statusFile("odd.txt", "M", 2, null))).toMatchObject({ additions: 2, deletions: null, binary: false });
-  });
-});
-
 describe("loadWorktrees workspaces", () => {
-  it("takes the branch, counts, files and commits from one status call per worktree", async () => {
-    const { deps, status, host } = setup({
+  it("takes the branch, counts, files and commits from one host status call per worktree, at its repository root", async () => {
+    const { deps, host, statusCalls } = setup({
       status: () => available({
-        workingTree: { files: [statusFile("src/a.ts"), statusFile("new.txt", "??", 4, 0)] },
-        mergeBase: {
-          aheadCount: 2, behindCount: 3, baseRef: "origin/main", mergeBaseBranch: "origin/main", commits: [sdkCommit(2), sdkCommit(1)],
-          files: [statusFile("src/b.ts", "A", 5, 0)],
-        },
+        uncommitted: [gitFile("src/a.ts"), gitFile("new.txt", "untracked", 4, 0)],
+        aheadCount: 2, behindCount: 3, commits: [hostCommit(2), hostCommit(1)], committed: [gitFile("src/b.ts", "added", 5, 0)],
       }),
     });
     const [result] = await loadWorktrees(deps, [workspacePlan(1)], environments(environment({ id: "env_1" })), names);
-    expect(status).toHaveBeenCalledTimes(1);
-    expect(status.mock.calls[0]?.[0]).toEqual({ environmentId: "env_1", mergeBaseBranch: "origin/main", signal: expect.any(AbortSignal) });
-    expect(host).not.toHaveBeenCalled();
+    expect(host).toHaveBeenCalledTimes(1);
+    expect(statusCalls()[0]?.slice(1)).toEqual([
+      { root: "/work/1", base: "origin/main", pick: true, folderLimit: 200 }, { hostId: "host_1", signal: undefined },
+    ]);
     expect(result).toMatchObject({
       key: "host_1:/work/1", kind: "workspace", label: "Project", projectId: "proj_1", hostId: "host_1", hostName: "Laptop", root: "/work/1",
-      branch: "feature/work", base: "origin/main", threadIds: ["thr_1"], state: "ready", message: null, aheadCount: 2, behindCount: 3,
+      branch: "feature/work", base: "origin/main", threadIds: ["thr_1"], state: "ready", message: null, aheadCount: 2, behindCount: 3, skippedBase: null,
     });
-    expect(result?.ref).toEqual({ kind: "workspace", environmentId: "env_1", base: "origin/main" });
+    expect(result?.ref).toEqual(workspaceRef(1));
     expect(result?.uncommitted.map((file) => [file.path, file.status])).toEqual([["src/a.ts", "modified"], ["new.txt", "untracked"]]);
     expect(result?.committed.map((file) => [file.path, file.status])).toEqual([["src/b.ts", "added"]]);
     expect(result?.commits.map((entry) => entry.subject)).toEqual(["Commit 2", "Commit 1"]);
   });
 
+  it("reads its later diffs against the base the host compared with, and keeps the base it skipped", async () => {
+    const { deps } = setup({ status: () => available({ base: "origin/feature/work", skippedBase: { name: "origin/main", aheadCount: 40 }, aheadCount: 1 }) });
+    const [result] = await loadWorktrees(deps, [workspacePlan(1)], environments(environment({ id: "env_1" })), names);
+    expect(result).toMatchObject({ base: "origin/feature/work", skippedBase: { name: "origin/main", aheadCount: 40 }, aheadCount: 1 });
+    expect(result?.ref).toEqual(workspaceRef(1, "origin/feature/work"));
+  });
+
+  it("keeps no base for later reads when none resolved, so they show uncommitted files instead of failing", async () => {
+    const { deps } = setup({ status: () => available({ base: null, aheadCount: null, behindCount: null }) });
+    const [result] = await loadWorktrees(deps, [workspacePlan(1, { ref: workspaceRef(1, "main") })], environments(environment({ id: "env_1" })), names);
+    expect(result?.ref).toEqual(workspaceRef(1, null));
+    expect(result?.head).toBe(HEAD);
+  });
+
+  it("reads a worktree the user asked to see whole against its recorded base, with nothing picked", async () => {
+    const { deps, statusCalls } = setup();
+    const whole = { ...deps, whole: new Set(["host_1:/work/1"]) };
+    const result = await loadWorktrees(whole, [workspacePlan(1), workspacePlan(2)], environments(environment({ id: "env_1" }), environment({ id: "env_2" })), names);
+    expect(statusCalls().map(([, input]) => [input.root, (input as { pick?: boolean }).pick])).toEqual([["/work/1", false], ["/work/2", true]]);
+    expect(result.map((entry) => entry.whole)).toEqual([true, undefined]);
+  });
+
   it("says when a worktree works on its base branch, before any commits its threads made are known", async () => {
-    const onMain = setup({
-      status: () => available({
-        branchName: "main",
-        mergeBase: { aheadCount: 0, behindCount: 0, baseRef: "main", mergeBaseBranch: "main", commits: [], files: [] },
-      }),
-    });
-    const [main] = await loadWorktrees(onMain.deps, [workspacePlan(1, { ref: workspaceRef("env_1", "main") })], environments(environment({ id: "env_1" })), names);
+    const onMain = setup({ status: () => available({ branch: "main", base: "main" }) });
+    const [main] = await loadWorktrees(onMain.deps, [workspacePlan(1, { ref: workspaceRef(1, "main") })], environments(environment({ id: "env_1" })), names);
     expect(main).toMatchObject({ branch: "main", base: "main", onBase: true, threadCommits: [] });
     const [feature] = await loadWorktrees(setup().deps, [workspacePlan(1)], environments(environment({ id: "env_1" })), names);
     expect(feature).toMatchObject({ branch: "feature/work", base: "origin/main", onBase: false, threadCommits: [] });
   });
 
   it("asks without a base when the plan has none", async () => {
-    const { deps, status } = setup();
-    await loadWorktrees(deps, [workspacePlan(1, { ref: workspaceRef("env_1", null) })], environments(environment({ id: "env_1" })), names);
-    expect(status.mock.calls[0]?.[0]).not.toHaveProperty("mergeBaseBranch", expect.anything());
+    const { deps, statusCalls } = setup();
+    await loadWorktrees(deps, [workspacePlan(1, { ref: workspaceRef(1, null) })], environments(environment({ id: "env_1" })), names);
+    expect(statusCalls()[0]?.[1]).toMatchObject({ base: null });
   });
 
   it("keeps the first 100 commits and 500 files of each list", async () => {
-    const many = (count: number, prefix: string) => Array.from({ length: count }, (_, index) => statusFile(`${prefix}/${index}.ts`));
+    const many = (count: number, prefix: string) => Array.from({ length: count }, (_, index) => gitFile(`${prefix}/${index}.ts`));
     const { deps } = setup({
       status: () => available({
-        workingTree: { files: many(600, "w") },
-        mergeBase: {
-          aheadCount: 150, behindCount: 0, baseRef: "origin/main", mergeBaseBranch: "origin/main",
-          commits: Array.from({ length: 150 }, (_, index) => sdkCommit(index + 1)), files: many(520, "c"),
-        },
+        uncommitted: many(600, "w"), committed: many(520, "c"), aheadCount: 150,
+        commits: Array.from({ length: 100 }, (_, index) => hostCommit(index + 1)),
       }),
     });
     const [result] = await loadWorktrees(deps, [workspacePlan(1)], environments(environment({ id: "env_1" })), names);
@@ -147,44 +137,30 @@ describe("loadWorktrees workspaces", () => {
   });
 
   it("gives empty committed files and null counts when there is no base", async () => {
-    const { deps } = setup({ status: () => available({ mergeBase: null, workingTree: { files: [statusFile("a.ts")] } }) });
-    const [result] = await loadWorktrees(deps, [workspacePlan(1, { ref: workspaceRef("env_1", null) })], environments(environment({ id: "env_1" })), names);
+    const { deps } = setup({ status: () => available({ base: null, aheadCount: null, behindCount: null, uncommitted: [gitFile("a.ts")] }) });
+    const [result] = await loadWorktrees(deps, [workspacePlan(1, { ref: workspaceRef(1, null) })], environments(environment({ id: "env_1" })), names);
     expect(result).toMatchObject({ state: "ready", base: null, aheadCount: null, behindCount: null, committed: [], commits: [] });
     expect(result?.uncommitted).toHaveLength(1);
   });
 
-  it("reads the commit time as milliseconds, whether bb sent seconds or milliseconds", async () => {
-    const { deps } = setup({
-      status: () => available({
-        mergeBase: {
-          aheadCount: 2, behindCount: 0, baseRef: "origin/main", mergeBaseBranch: "origin/main", files: [],
-          commits: [sdkCommit(2, 1_700_000_000), sdkCommit(1, 1_700_000_000_000)],
-        },
-      }),
-    });
-    const [result] = await loadWorktrees(deps, [workspacePlan(1)], environments(environment({ id: "env_1" })), names);
-    expect(result?.commits.map((entry) => entry.authoredAt)).toEqual([1_700_000_000_000, 1_700_000_000_000]);
-  });
-
   it("has no branch for a detached checkout", async () => {
-    const detached = { ...available(), workspace: { ...available().workspace, checkout: { kind: "detached", headSha: "abc" } } };
-    const { deps } = setup({ status: () => detached });
+    const { deps } = setup({ status: () => available({ branch: null }) });
     const [result] = await loadWorktrees(deps, [workspacePlan(1)], environments(environment({ id: "env_1" })), names);
     expect(result).toMatchObject({ state: "ready", branch: null });
   });
 
-  it("makes one worktree unavailable when bb cannot read it, without touching the others", async () => {
+  it("makes one worktree unavailable when git cannot read it, without touching the others", async () => {
     const responses: Record<string, unknown> = {
-      env_1: { outcome: "not_applicable", reason: "non_git_environment", message: "Not a git workspace" },
-      env_2: new Error("socket hang up"),
-      env_3: { outcome: "unavailable", failure: { code: "path_not_found", message: "Folder is gone", workspacePath: "/work/3" } },
-      env_4: available({ workingTree: { files: [statusFile("ok.ts")] } }),
+      "/work/1": { outcome: "unavailable", reason: "not-a-repo", message: "not a git repository" },
+      "/work/2": new Error("socket hang up"),
+      "/work/3": { outcome: "unavailable", reason: "git-failed", message: "Folder is gone" },
+      "/work/4": available({ uncommitted: [gitFile("ok.ts")] }),
     };
-    const { deps } = setup({ status: (id) => responses[id] });
+    const { deps } = setup({ status: (root) => responses[root] });
     const list = [1, 2, 3, 4].map((n) => environment({ id: `env_${n}`, branchName: `branch-${n}` }));
     const result = await loadWorktrees(deps, [1, 2, 3, 4].map((n) => workspacePlan(n)), environments(...list), names);
     expect(result.map((entry) => [entry.state, entry.message])).toEqual([
-      ["unavailable", "Not a git workspace"], ["unavailable", "socket hang up"], ["unavailable", "Folder is gone"], ["ready", null],
+      ["unavailable", "This folder is no longer a git repository"], ["unavailable", "socket hang up"], ["unavailable", "Folder is gone"], ["ready", null],
     ]);
     expect(result[0]).toMatchObject({ branch: "branch-1", aheadCount: null, behindCount: null, uncommitted: [], committed: [], commits: [] });
     expect(result[3]?.uncommitted).toHaveLength(1);
@@ -208,11 +184,11 @@ describe("loadWorktrees workspaces", () => {
   });
 
   it("gives one worktree to several threads on one environment, keeping their order", async () => {
-    const { deps, status } = setup();
+    const { deps, statusCalls } = setup();
     const result = await loadWorktrees(deps, [workspacePlan(1, { threadIds: ["thr_a", "thr_b"] })], environments(environment({ id: "env_1" })), names);
     expect(result).toHaveLength(1);
     expect(result[0]?.threadIds).toEqual(["thr_a", "thr_b"]);
-    expect(status).toHaveBeenCalledTimes(1);
+    expect(statusCalls()).toHaveLength(1);
   });
 });
 
@@ -220,15 +196,14 @@ describe("loadWorktrees branches", () => {
   const destroyed = destroyedEnvironment({ id: "env_9", hostId: "host_1", branchName: "feature/old", projectId: "proj_7" });
 
   it("reads an archived branch from the host range, with ahead, behind, commits and no uncommitted files", async () => {
-    const { deps, status, host } = setup({
+    const { deps, host } = setup({
       host: {
         outcome: "available", branch: "feature/old", base: "origin/main", aheadCount: 2, behindCount: 5, truncated: false,
-        commits: [sdkCommit(2), sdkCommit(1)],
+        commits: [hostCommit(2), hostCommit(1)],
         files: [{ path: "a.ts", previousPath: null, status: "added", additions: 3, deletions: 0, binary: false }],
       },
     });
     const [result] = await loadWorktrees(deps, [branchPlan()], environments(destroyed), names);
-    expect(status).not.toHaveBeenCalled();
     expect(host.mock.calls).toEqual([[
       "repoFiles", { root: "/code/proj", target: { type: "range", base: "origin/main", head: "feature/old" } }, { hostId: "host_1", signal: undefined },
     ]]);
@@ -264,69 +239,80 @@ describe("loadWorktrees branches", () => {
 
 describe("shared loads", () => {
   function shared() {
-    const base = setup({ status: () => available({ workingTree: { files: [statusFile("src/a.ts"), statusFile("new.txt", "??", 4, 0)] } }) });
-    const diffFiles = vi.fn(async (..._args: unknown[]) => ({
-      outcome: "available", files: [], initialPatches: [], mergeBaseRef: null, shortstat: "", truncated: false,
-    }));
+    const base = setup({ status: () => available({ uncommitted: [gitFile("src/a.ts"), gitFile("new.txt", "untracked", 4, 0)] }) });
     let now = 0;
     const cache = createRepoCache({ now: () => now });
-    const deps: CollectDeps = { ...base.deps, sdk: { environments: { status: base.status, diffFiles } } as unknown as PluginBbSdk, cache };
-    return { ...base, deps, diffFiles, cache, advance: (ms: number) => { now += ms; } };
+    const deps: CollectDeps = { ...base.deps, cache };
+    return { ...base, deps, cache, advance: (ms: number) => { now += ms; } };
   }
   const env = environments(environment({ id: "env_1" }));
 
   it("serves a worktree row and an uncommitted repository from one status call", async () => {
-    const { deps, status, diffFiles } = shared();
-    const [rows, repo] = await Promise.all([loadWorktrees(deps, [workspacePlan(1)], env, names), loadRepoFiles(deps, workspacePlan(1), "uncommitted")]);
-    expect(status).toHaveBeenCalledTimes(1);
-    expect(diffFiles).not.toHaveBeenCalled();
+    const { deps, host } = shared();
+    const [rows, repo] = await Promise.all([loadWorktrees(deps, [workspacePlan(1)], env, names), loadRepoFiles(deps, workspacePlan(1), "uncommitted", undefined, true)]);
+    expect(host.mock.calls.map(([method]) => method)).toEqual(["checkoutStatus"]);
     expect(rows[0]?.uncommitted.map((file) => file.path)).toEqual(["src/a.ts", "new.txt"]);
     if (!("files" in repo)) throw new Error("expected files");
     expect(repo.files.map((file) => [file.path, file.status])).toEqual([["src/a.ts", "modified"], ["new.txt", "untracked"]]);
     expect(repo).toMatchObject({ base: null, aheadCount: null, truncated: false });
   });
 
-  it("still asks for the branch diff in the branch scope, and shares the status with the row", async () => {
-    const { deps, status, diffFiles } = shared();
+  it("still asks for the merge-base diff in the branch scope, and shares the status with the row", async () => {
+    const { deps, host, statusCalls } = shared();
     await Promise.all([loadWorktrees(deps, [workspacePlan(1)], env, names), loadRepoFiles(deps, workspacePlan(1), "branch")]);
-    expect(diffFiles).toHaveBeenCalledTimes(1);
-    expect(diffFiles.mock.calls[0]?.[0]).toEqual({ environmentId: "env_1", target: "all", mergeBaseBranch: "origin/main", signal: expect.any(AbortSignal) });
-    expect(status).toHaveBeenCalledTimes(1);
+    expect(host.mock.calls.filter(([method]) => method === "repoFiles").map((call) => call.slice(1))).toEqual([[
+      { root: "/work/1", target: { type: "merge-base", base: "origin/main" }, folderLimit: 200 }, { hostId: "host_1", signal: undefined },
+    ]]);
+    expect(statusCalls()).toHaveLength(1);
   });
 
   it("reads the status again for a different base", async () => {
-    const { deps, status } = shared();
+    const { deps, statusCalls } = shared();
     await loadWorktrees(deps, [workspacePlan(1)], env, names);
-    await loadWorktrees(deps, [workspacePlan(1, { ref: workspaceRef("env_1", "main") })], env, names);
-    expect(status).toHaveBeenCalledTimes(2);
+    await loadWorktrees(deps, [workspacePlan(1, { ref: workspaceRef(1, "main") })], env, names);
+    expect(statusCalls()).toHaveLength(2);
   });
 
-  it("reads the status again after the thread that works there changed", async () => {
-    const { deps, status, cache } = shared();
+  it("reads the status again with nothing picked, or with another folder limit", async () => {
+    const { deps, statusCalls } = shared();
+    await loadWorktrees(deps, [workspacePlan(1)], env, names);
+    await loadWorktrees({ ...deps, whole: new Set(["host_1:/work/1"]) }, [workspacePlan(1)], env, names);
+    await loadWorktrees({ ...deps, counting: { pick: true, folderLimit: 50, historyThreshold: 50, historyShare: 10 } }, [workspacePlan(1)], env, names);
+    await loadWorktrees(deps, [workspacePlan(1)], env, names);
+    expect(statusCalls().map(([, input]) => input)).toEqual([
+      { root: "/work/1", base: "origin/main", pick: true, folderLimit: 200 },
+      { root: "/work/1", base: "origin/main", pick: false, folderLimit: 200 },
+      { root: "/work/1", base: "origin/main", pick: true, folderLimit: 50 },
+    ]);
+  });
+
+  it("reads the status again after the thread that works there changed, or its environment did", async () => {
+    const { deps, statusCalls, cache } = shared();
     await loadWorktrees(deps, [workspacePlan(1)], env, names);
     await loadWorktrees(deps, [workspacePlan(1)], env, names);
-    expect(status).toHaveBeenCalledTimes(1);
+    expect(statusCalls()).toHaveLength(1);
     cache.invalidateThreads(["thr_1"]);
     await loadWorktrees(deps, [workspacePlan(1)], env, names);
-    expect(status).toHaveBeenCalledTimes(2);
+    expect(statusCalls()).toHaveLength(2);
+    cache.invalidateEnvironment("env_1");
+    await loadWorktrees(deps, [workspacePlan(1)], env, names);
+    expect(statusCalls()).toHaveLength(3);
   });
 
   it("makes an uncommitted repository unavailable when the status is", async () => {
-    const { deps } = shared();
-    const failed = setup({ status: () => ({ outcome: "unavailable", failure: { code: "path_not_found", message: "Folder is gone", workspacePath: "/x" } }) });
-    expect(await loadRepoFiles({ ...deps, sdk: { environments: { status: failed.status } } as unknown as PluginBbSdk }, workspacePlan(1), "uncommitted"))
-      .toEqual({ unavailable: "Folder is gone" });
+    const failed = setup({ status: () => ({ outcome: "unavailable", reason: "git-failed", message: "Folder is gone" }) });
+    expect(await loadRepoFiles(failed.deps, workspacePlan(1), "uncommitted")).toEqual({ unavailable: "Folder is gone" });
   });
 
   it("does not hand a caller's abort signal to a load that other callers share, but does when nothing is shared", async () => {
-    const { deps, status, cache } = shared();
-    // Aborts the caller while bb's call is in flight and notes whether bb's call saw it.
-    const original = status.getMockImplementation()!;
+    const { deps, host, cache } = shared();
+    // Aborts the caller while the host call is in flight and notes whether the host call saw it.
+    const original = host.getMockImplementation()!;
     const seen: boolean[] = [];
-    const abortDuring = (caller: AbortController) => status.mockImplementationOnce(async (args) => {
+    const abortDuring = (caller: AbortController) => host.mockImplementationOnce(async (method, input, options) => {
       caller.abort();
-      seen.push((args as unknown as { signal: AbortSignal }).signal.aborted);
-      return original(args);
+      seen.push(options?.signal?.aborted === true);
+      return original(method, input, options);
     });
     const sharedCaller = new AbortController();
     abortDuring(sharedCaller);
@@ -383,6 +369,14 @@ describe("findSharedFiles", () => {
       { projectId: "p1", path: "README.md", worktreeKeys: ["a", "b"] },
       { projectId: "p1", path: "x.ts", worktreeKeys: ["b", "c"] },
     ]);
+  });
+
+  it("leaves out folded untracked folders", () => {
+    const folder = { files: 900, repository: false, sample: [] };
+    expect(findSharedFiles([
+      worktree({ key: "a", uncommitted: [fileChange({ path: "node_modules/", status: "untracked", folder })] }),
+      worktree({ key: "b", uncommitted: [fileChange({ path: "node_modules/", status: "untracked", folder })] }),
+    ])).toEqual([]);
   });
 
   it("needs two different worktrees, and never joins projects", () => {

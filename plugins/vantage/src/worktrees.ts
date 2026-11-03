@@ -3,7 +3,7 @@ import type { RepoRef, SharedFile, Worktree } from "./contract";
 import { mapLimit } from "./limit";
 import { isOnBase } from "./thread-commits";
 import {
-  checkoutWorktreeStatus, gitFileChange, hostMessage, loadBranchRange, loadCheckoutStatus, loadWorkspaceStatus, MAX_COMMITS, MAX_FILES,
+  checkoutWorktreeStatus, gitFileChange, hostMessage, loadBranchRange, loadCheckoutStatus, loadWorkspaceStatus, MAX_COMMITS, MAX_FILES, picksBase,
   unavailableStatus, type WorktreeStatus,
 } from "./sources";
 
@@ -54,10 +54,15 @@ async function loadBranch(
 }
 
 async function loadCheckout(
-  deps: CollectDeps, ref: Extract<RepoRef, { kind: "checkout" }>, threadIds: readonly string[], signal?: AbortSignal,
+  deps: CollectDeps, ref: Extract<RepoRef, { kind: "checkout" }>, threadIds: readonly string[], signal: AbortSignal | undefined, pick: boolean,
 ): Promise<WorktreeStatus> {
-  return checkoutWorktreeStatus(await loadCheckoutStatus(deps, ref, threadIds, signal), ref.base);
+  return checkoutWorktreeStatus(await loadCheckoutStatus(deps, ref, threadIds, signal, null, pick), ref.base);
 }
+
+// Later reads of a worktree's diffs use the base its status was read against, with nothing picked again. A worktree with
+// no base to compare with keeps none, so those reads show its uncommitted files instead of failing on a missing branch.
+const readAgainst = <R extends Extract<RepoRef, { kind: "workspace" | "checkout" }>>(ref: R, status: WorktreeStatus): R =>
+  (status.state === "ready" ? { ...ref, base: status.base } : ref);
 
 const plannedBranch = (plan: WorktreePlan, environments: ReadonlyMap<string, Environment>): string | null =>
   plan.ref.kind === "branch" ? plan.ref.head : plan.ref.kind === "workspace" ? (environments.get(plan.ref.environmentId)?.branchName ?? null) : null;
@@ -75,11 +80,15 @@ export async function loadWorktrees(
         const status = await loadBranch(deps, ref, plan.threadIds, signal);
         return status === null ? null : { ...identity, ...status };
       }
-      if (ref.kind === "checkout") return { ...identity, ...(await loadCheckout(deps, ref, plan.threadIds, signal)) };
-      const at = plan.root === null || plan.hostId === null ? undefined : { hostId: plan.hostId, root: plan.root };
-      const status = await loadWorkspaceStatus(deps, ref, plan.threadIds, signal, at);
+      const pick = picksBase(deps, plan.key);
+      const whole = deps.whole?.has(plan.key) === true ? { whole: true } : {};
+      if (ref.kind === "checkout") {
+        const status = await loadCheckout(deps, ref, plan.threadIds, signal, pick);
+        return { ...identity, ...status, ...whole, ref: readAgainst(ref, status) };
+      }
+      const status = await loadWorkspaceStatus(deps, ref, plan.threadIds, signal, pick);
       return {
-        ...identity, ...status, branch: status.branch ?? (status.state === "unavailable" ? branch : null),
+        ...identity, ...status, ...whole, ref: readAgainst(ref, status), branch: status.branch ?? (status.state === "unavailable" ? branch : null),
         uncommitted: status.uncommitted.slice(0, MAX_FILES),
       };
     } catch (error) {
@@ -119,6 +128,7 @@ export function findSharedFiles(worktrees: readonly Worktree[]): SharedFile[] {
     const paths = byProject.get(worktree.projectId) ?? new Map<string, Set<string>>();
     byProject.set(worktree.projectId, paths);
     for (const file of [...worktree.uncommitted, ...worktree.committed]) {
+      if (file.folder !== undefined) continue;
       const keys = paths.get(file.path) ?? new Set<string>();
       keys.add(worktree.key);
       paths.set(file.path, keys);

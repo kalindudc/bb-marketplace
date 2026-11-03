@@ -3,7 +3,7 @@ import type { Worktree } from "./contract";
 import type { ThreadEdits } from "./edits";
 import type { TimeWindow } from "./git";
 import { mapLimit } from "./limit";
-import { hostMessage, loadThreadCommits } from "./sources";
+import { checkoutWorktreeStatus, DEFAULT_COUNTING, hostMessage, loadCheckoutStatus, loadThreadCommits } from "./sources";
 
 export const MAX_WINDOWS = 200;
 const CONCURRENCY = 8;
@@ -59,4 +59,55 @@ export async function attachThreadCommits(
     }
   });
   return { worktrees: attached, warnings };
+}
+
+// A worktree whose branch is far ahead of its base, where its threads made only a small share of those commits, such as
+// a long-lived branch an agent checked out to change a few files.
+export function wantsHistoryLeftOut(
+  worktree: Pick<Worktree, "state" | "kind" | "aheadCount" | "whole">, threshold: number,
+): boolean {
+  return threshold > 0 && worktree.state === "ready" && worktree.kind !== "branch" && worktree.whole !== true
+    && worktree.aheadCount !== null && worktree.aheadCount > threshold;
+}
+
+export const fewEnough = (kept: number, ahead: number, sharePercent: number): boolean => kept * 100 < ahead * sharePercent;
+
+// Reads such a worktree again against the commit before its threads' first one, so only their commits and its uncommitted
+// files show and count. With no commits of theirs, that is HEAD itself.
+export async function leaveOutHistory(
+  deps: CollectDeps, worktrees: readonly Worktree[], attribution: Attribution, signal?: AbortSignal,
+): Promise<{ worktrees: Worktree[]; warnings: string[] }> {
+  const { historyThreshold, historyShare } = deps.counting ?? DEFAULT_COUNTING;
+  const warnings: string[] = [];
+  const result = await mapLimit(worktrees, CONCURRENCY, async (worktree): Promise<Worktree> => {
+    if (!wantsHistoryLeftOut(worktree, historyThreshold) || worktree.ref.kind === "branch") return worktree;
+    const ahead = worktree.aheadCount!;
+    const environmentId = worktree.ref.kind === "workspace" ? worktree.ref.environmentId : null;
+    const at = { hostId: worktree.hostId, root: worktree.root };
+    try {
+      // Without every thread's events, a commit of theirs could go unseen and be left out with the rest.
+      if (worktree.threadIds.some((threadId) => !attribution.edits.has(threadId))) return worktree;
+      const windows = commitWindows(worktree.threadIds, attribution.edits, attribution.running, attribution.now);
+      const made = windows.length === 0
+        ? { outcome: "available" as const, commits: [], total: 0, since: null }
+        : await loadThreadCommits(deps, at, windows, worktree.threadIds, environmentId, signal);
+      if (made.outcome === "unavailable") throw new Error(hostMessage(made));
+      const kept = made.total;
+      if (!fewEnough(kept, ahead, historyShare)) return worktree;
+      const since = kept === 0 ? (worktree.head ?? null) : made.since;
+      if (since === null) return worktree;
+      const trimmed = checkoutWorktreeStatus(
+        await loadCheckoutStatus(deps, { kind: "checkout", ...at, base: since }, worktree.threadIds, signal, environmentId, false), since,
+      );
+      if (trimmed.state !== "ready") return worktree;
+      return {
+        ...worktree, committed: trimmed.committed, commits: trimmed.commits, uncommitted: trimmed.uncommitted, aheadCount: trimmed.aheadCount,
+        ref: { ...worktree.ref, base: since }, leftOut: { aheadCount: ahead, kept },
+      };
+    } catch (error) {
+      warnings.push(`Could not tell which commits in ${worktree.root} its threads made: ${errorMessage(error)}`);
+      return worktree;
+    }
+  });
+  return { worktrees: result, warnings };
 }

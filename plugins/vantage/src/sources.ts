@@ -1,6 +1,6 @@
 import type { CollectDeps, RepoPlan, Touched } from "./collect";
 import type {
-  Commit, CommitFilesInput, CommitFilesOutput, FileChange, FileSidesOutput, GitFile, HostOutput, HostTarget, PatchInput, PatchOutput, RepoRef, Scope, Worktree,
+  CommitFilesInput, CommitFilesOutput, FileChange, FileSidesOutput, GitFile, HostOutput, HostTarget, PatchInput, PatchOutput, RepoRef, Scope, Worktree,
 } from "./contract";
 
 export type LiveFiles = { files: FileChange[]; branch: string | null; base: string | null; aheadCount: number | null; truncated: boolean };
@@ -8,39 +8,28 @@ export type LiveFiles = { files: FileChange[]; branch: string | null; base: stri
 type WorkspaceRef = Extract<RepoRef, { kind: "workspace" }>;
 type BranchRef = Extract<RepoRef, { kind: "branch" }>;
 type CheckoutRef = Extract<RepoRef, { kind: "checkout" }>;
-/** Where a workspace is read with git when bb does not answer in time: its repository root and machine. */
+/** Where a repository is read with git: its root and machine. */
 export type GitAt = { hostId: string; root: string };
-type StatusFile = { path: string; status: string; insertions: number | null; deletions: number | null };
-// What git and bb report about a worktree; a cached entry holds only this, never who works in it or what they committed.
+// What git reports about a worktree; a cached entry holds only this, never who works in it or what they committed.
 export type WorktreeStatus = Omit<
-  Worktree, "key" | "ref" | "label" | "projectId" | "hostId" | "hostName" | "root" | "kind" | "threadIds" | "onBase" | "threadCommits"
+  Worktree, "key" | "ref" | "label" | "projectId" | "hostId" | "hostName" | "root" | "kind" | "threadIds" | "onBase" | "threadCommits" | "leftOut" | "whole"
 >;
 type HostUnavailableResult = Extract<HostOutput<"repoFiles">, { outcome: "unavailable" }>;
-type DiffTarget = { type: "uncommitted" } | { type: "all"; mergeBaseBranch: string };
-type PatchTarget = DiffTarget | { type: "branch_committed"; mergeBaseBranch: string } | { type: "commit"; sha: string };
-type DiffFilesResult = Awaited<ReturnType<CollectDeps["sdk"]["environments"]["diffFiles"]>>;
-type WorkspaceDiffFile = Extract<DiffFilesResult, { outcome: "available" }>["files"][number];
 
-const BINARY_PATCH = /^Binary files .* differ$/m;
 export const MAX_FILES = 500;
 export const MAX_COMMITS = 100;
 const MAX_MESSAGE = 1000;
-const SECONDS_BELOW = 1e12;
 // A branch that is gone does not come back, so that answer is kept far longer than the default.
 const MISSING_REF_TTL_MS = 10 * 60_000;
-// bb's status and diff calls have taken more than 30 seconds on a repository far behind its base branch. After this long
-// Vantage stops waiting and reads the workspace with git on its machine, and keeps doing so: git gives the same numbers.
-export const BB_DEADLINE_MS = 10_000;
 
-class TooSlow extends Error {
-  constructor() {
-    super("bb took too long to read this workspace");
-  }
-}
+/** How Vantage decides what a thread changed; the settings of the same names. */
+export interface Counting { pick: boolean; folderLimit: number; historyThreshold: number; historyShare: number }
+export const DEFAULT_COUNTING: Counting = { pick: true, folderLimit: 200, historyThreshold: 50, historyShare: 10 };
+const countingOf = (deps: CollectDeps): Counting => deps.counting ?? DEFAULT_COUNTING;
 
-const STATUS_BY_LETTER: Record<string, FileChange["status"]> = {
-  A: "added", M: "modified", D: "deleted", R: "renamed", C: "copied", U: "unmerged", "?": "untracked", "??": "untracked",
-};
+// Whether a worktree compares with the closest base: the setting, unless the user asked to see that worktree whole.
+export const picksBase = (deps: Pick<CollectDeps, "counting" | "whole">, key: string): boolean =>
+  (deps.counting?.pick ?? true) && deps.whole?.has(key) !== true;
 
 export function hostMessage(result: HostUnavailableResult): string {
   return result.reason === "not-a-repo" ? "This folder is no longer a git repository" : result.message;
@@ -50,21 +39,10 @@ export function gitFileChange(file: GitFile): FileChange {
   return { ...file, untracked: file.status === "untracked", tooLarge: false, edits: null };
 }
 
-export function fileFromStatus(file: StatusFile): FileChange {
-  const status = STATUS_BY_LETTER[file.status] ?? "modified";
-  return {
-    path: file.path, previousPath: null, status, additions: file.insertions, deletions: file.deletions,
-    binary: file.insertions === null && file.deletions === null, untracked: status === "untracked", tooLarge: false, edits: null,
-  };
-}
-
-// bb does not say whether `authoredAt` is seconds or milliseconds.
-const toMilliseconds = (value: number): number => (value < SECONDS_BELOW ? value * 1000 : value);
-
 export function unavailableStatus(message: string, branch: string | null, base: string | null): WorktreeStatus {
   return {
     branch, base, state: "unavailable", message: message.slice(0, MAX_MESSAGE),
-    aheadCount: null, behindCount: null, uncommitted: [], committed: [], commits: [],
+    aheadCount: null, behindCount: null, uncommitted: [], committed: [], commits: [], skippedBase: null,
   };
 }
 
@@ -77,80 +55,11 @@ async function shared<T>(
   return deps.cache.get(key, { threadIds, environmentId }, () => read(), ttlFor);
 }
 
-async function beforeDeadline<T>(read: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
-  const controller = new AbortController();
-  const forward = () => controller.abort(signal?.reason);
-  signal?.addEventListener("abort", forward, { once: true });
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const late = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      reject(new TooSlow());
-      controller.abort();
-    }, BB_DEADLINE_MS);
-  });
-  try {
-    return await Promise.race([read(controller.signal), late]);
-  } finally {
-    clearTimeout(timer);
-    signal?.removeEventListener("abort", forward);
-  }
-}
-
-// Asks bb first; when bb misses the deadline and the workspace's root is known, remembers it and asks git instead.
-async function bbOrGit<T>(
-  deps: CollectDeps, environmentId: string, at: GitAt | undefined, fromBb: (signal: AbortSignal) => Promise<T>,
-  fromGit: (at: GitAt, signal?: AbortSignal) => Promise<T>, signal?: AbortSignal,
-): Promise<T> {
-  try {
-    return await beforeDeadline(fromBb, signal);
-  } catch (error) {
-    if (!(error instanceof TooSlow) || at === undefined) throw error;
-    deps.slowWorkspaces?.add(environmentId);
-    return fromGit(at, signal);
-  }
-}
-
-async function readWorkspaceStatus(deps: CollectDeps, ref: WorkspaceRef, signal?: AbortSignal): Promise<WorktreeStatus> {
-  const result = await deps.sdk.environments.status({
-    environmentId: ref.environmentId, ...(ref.base === null ? {} : { mergeBaseBranch: ref.base }), signal,
-  });
-  if (result.outcome === "not_applicable") return unavailableStatus(result.message, null, ref.base);
-  if (result.outcome === "unavailable") return unavailableStatus(result.failure.message, null, ref.base);
-  const { checkout, mergeBase, workingTree } = result.workspace;
-  const commits = (mergeBase?.commits ?? []).slice(0, MAX_COMMITS).map((commit): Commit => ({
-    sha: commit.sha, shortSha: commit.shortSha, subject: commit.subject, authorName: commit.authorName,
-    authoredAt: toMilliseconds(commit.authoredAt),
-  }));
-  return {
-    branch: "branchName" in checkout ? checkout.branchName : null,
-    base: mergeBase?.mergeBaseBranch ?? null,
-    state: "ready",
-    message: null,
-    aheadCount: mergeBase?.aheadCount ?? null,
-    behindCount: mergeBase?.behindCount ?? null,
-    // The worktree list cuts this at MAX_FILES; the repository view counts the whole list to tell whether it was cut.
-    uncommitted: workingTree.files.map(fileFromStatus),
-    committed: (mergeBase?.files ?? []).slice(0, MAX_FILES).map(fileFromStatus),
-    commits,
-  };
-}
-
-// `at`: where to read the workspace with git if bb does not answer in time.
+// Every workspace is read with git at its repository root, on its machine, like a checkout; its environment's events clear the entry.
 export function loadWorkspaceStatus(
-  deps: CollectDeps, ref: WorkspaceRef, threadIds: readonly string[], signal?: AbortSignal, at?: GitAt,
+  deps: CollectDeps, ref: WorkspaceRef, threadIds: readonly string[], signal?: AbortSignal, pick?: boolean,
 ): Promise<WorktreeStatus> {
-  const checkout = atRoot(ref) ?? (at !== undefined && deps.slowWorkspaces?.has(ref.environmentId) === true ? gitCheckout(at, ref.base) : null);
-  if (checkout !== null) {
-    return loadCheckoutStatus(deps, checkout, threadIds, signal, ref.environmentId).then((result) => checkoutWorktreeStatus(result, ref.base));
-  }
-  const read = (own?: AbortSignal) => bbOrGit(
-    deps, ref.environmentId, at, (bounded) => readWorkspaceStatus(deps, ref, bounded),
-    async (git, gitSignal) => checkoutWorktreeStatus(
-      await deps.host("checkoutStatus", { root: git.root, base: ref.base }, { hostId: git.hostId, signal: gitSignal }), ref.base,
-    ),
-    own,
-  );
-  return shared(deps, `ws\0${ref.environmentId}\0${ref.base ?? ""}`, ref.environmentId, threadIds, read, signal);
+  return loadCheckoutStatus(deps, atRoot(ref), threadIds, signal, ref.environmentId, pick).then((result) => checkoutWorktreeStatus(result, ref.base));
 }
 
 export function loadBranchRange(
@@ -165,13 +74,16 @@ export function loadBranchRange(
   );
 }
 
-// One read serves a worked checkout's worktree row and its uncommitted files in the repository view. A workspace read
-// this way passes its environment, so bb's workspace events clear the entry.
+// One read serves a worktree row and its uncommitted files in the repository view. A workspace passes its environment, so
+// bb's workspace events clear the entry. `pick` defaults to the setting.
 export function loadCheckoutStatus(
-  deps: CollectDeps, ref: CheckoutRef, threadIds: readonly string[], signal?: AbortSignal, environmentId: string | null = null,
+  deps: CollectDeps, ref: CheckoutRef, threadIds: readonly string[], signal?: AbortSignal, environmentId: string | null = null, pick?: boolean,
 ): Promise<HostOutput<"checkoutStatus">> {
-  const read = (own?: AbortSignal) => deps.host("checkoutStatus", { root: ref.root, base: ref.base }, { hostId: ref.hostId, signal: own });
-  return shared(deps, `co\0${ref.hostId}\0${ref.root}\0${ref.base ?? ""}`, environmentId, threadIds, read, signal);
+  const counting = countingOf(deps);
+  const picking = pick ?? counting.pick;
+  const input = { root: ref.root, base: ref.base, pick: picking, folderLimit: counting.folderLimit };
+  const read = (own?: AbortSignal) => deps.host("checkoutStatus", input, { hostId: ref.hostId, signal: own });
+  return shared(deps, `co\0${ref.hostId}\0${ref.root}\0${ref.base ?? ""}\0${picking ? "pick" : "as-is"}\0${counting.folderLimit}`, environmentId, threadIds, read, signal);
 }
 
 // The windows are part of the key: a commit command that starts, or one that is still running, asks git again.
@@ -192,30 +104,14 @@ export function checkoutWorktreeStatus(result: HostOutput<"checkoutStatus">, bas
     uncommitted: result.uncommitted.slice(0, MAX_FILES).map(gitFileChange),
     committed: result.committed.slice(0, MAX_FILES).map(gitFileChange),
     commits: result.commits.slice(0, MAX_COMMITS),
+    skippedBase: result.skippedBase,
+    head: result.head,
   };
-}
-
-function workspaceTarget(ref: WorkspaceRef, scope: Scope): DiffTarget {
-  return scope === "branch" && ref.base !== null ? { type: "all", mergeBaseBranch: ref.base } : { type: "uncommitted" };
 }
 
 function hostTarget(ref: Exclude<RepoRef, { kind: "workspace" | "recorded" }>, scope: Scope): HostTarget {
   if (ref.kind === "branch") return { type: "range", base: ref.base, head: ref.head };
   return scope === "branch" ? { type: "merge-base", base: ref.base } : { type: "uncommitted" };
-}
-
-function workspaceFile(file: WorkspaceDiffFile): FileChange {
-  return {
-    path: file.path,
-    previousPath: file.previousPath,
-    status: file.origin === "untracked" ? "untracked" : file.changeKind === "type_changed" ? "type-changed" : file.changeKind,
-    additions: file.additions,
-    deletions: file.deletions,
-    binary: file.binary,
-    untracked: file.origin === "untracked",
-    tooLarge: file.loadMode === "too_large",
-    edits: null,
-  };
 }
 
 export function recordedFile(path: string, touched: Touched): FileChange {
@@ -239,55 +135,37 @@ export function recordedLiveFiles(plan: RepoPlan): LiveFiles {
   return { files, branch: null, base: null, aheadCount: null, truncated: false };
 }
 
-export function loadWorkspaceDiff(
-  deps: CollectDeps, ref: WorkspaceRef & { base: string }, threadIds: readonly string[], signal?: AbortSignal, at?: GitAt,
-): Promise<LiveFiles | { unavailable: string }> {
-  const fromBb = async (bounded: AbortSignal): Promise<LiveFiles | { unavailable: string }> => {
-    const result = await deps.sdk.environments.diffFiles({ environmentId: ref.environmentId, target: "all", mergeBaseBranch: ref.base, signal: bounded });
-    if (result.outcome === "not_applicable") return { unavailable: result.message };
-    if (result.outcome === "unavailable") return { unavailable: result.failure.message };
-    return { files: result.files.map(workspaceFile), branch: null, base: ref.base, aheadCount: null, truncated: result.truncated };
-  };
-  const fromGit = (git: GitAt, gitSignal?: AbortSignal) => loadGitBranchFiles(deps, gitCheckout(git, ref.base), gitSignal);
-  const read = (own?: AbortSignal) => bbOrGit(deps, ref.environmentId, at, fromBb, fromGit, own);
-  return shared(deps, `df\0${ref.environmentId}\0${ref.base}`, ref.environmentId, threadIds, read, signal);
-}
-
 async function loadGitBranchFiles(deps: CollectDeps, checkout: CheckoutRef, signal?: AbortSignal): Promise<LiveFiles | { unavailable: string }> {
-  const result = await deps.host("repoFiles", { root: checkout.root, target: hostTarget(checkout, "branch") }, { hostId: checkout.hostId, signal });
+  const input = { root: checkout.root, target: hostTarget(checkout, "branch"), folderLimit: countingOf(deps).folderLimit };
+  const result = await deps.host("repoFiles", input, { hostId: checkout.hostId, signal });
   if (result.outcome === "unavailable") return { unavailable: hostMessage(result) };
   return { files: result.files.map(gitFileChange), branch: null, base: result.base, aheadCount: result.aheadCount, truncated: result.truncated };
 }
 
+// `pick`: whether the worktree row of this repository picked its base; its uncommitted files come from the same read.
 export async function loadRepoFiles(
-  deps: CollectDeps, plan: RepoPlan, scope: Scope, signal?: AbortSignal,
+  deps: CollectDeps, plan: RepoPlan, scope: Scope, signal?: AbortSignal, pick?: boolean,
 ): Promise<LiveFiles | { unavailable: string } | { missingRef: true }> {
   const { ref } = plan;
   if (ref.kind === "recorded") return recordedLiveFiles(plan);
-  if (ref.kind === "workspace" && atRoot(ref) !== null) {
-    const checkout = atRoot(ref)!;
+  if (ref.kind === "workspace") {
+    const checkout = atRoot(ref);
     if (scope === "uncommitted") {
-      const status = await loadCheckoutStatus(deps, checkout, plan.threadIds, signal, ref.environmentId);
+      const status = await loadCheckoutStatus(deps, checkout, plan.threadIds, signal, ref.environmentId, pick);
       if (status.outcome === "unavailable") return { unavailable: hostMessage(status) };
       return { files: status.uncommitted.map(gitFileChange), branch: null, base: null, aheadCount: null, truncated: status.truncated };
     }
     return loadGitBranchFiles(deps, checkout, signal);
   }
-  if (ref.kind === "workspace") {
-    const at = plan.root === null || plan.hostId === null ? undefined : { hostId: plan.hostId, root: plan.root };
-    if (scope === "branch" && ref.base !== null) return loadWorkspaceDiff(deps, { ...ref, base: ref.base }, plan.threadIds, signal, at);
-    const status = await loadWorkspaceStatus(deps, ref, plan.threadIds, signal, at);
-    if (status.state === "unavailable") return { unavailable: status.message ?? "bb could not read this workspace" };
-    return { files: status.uncommitted, branch: null, base: null, aheadCount: null, truncated: false };
-  }
   if (ref.kind === "checkout" && ref.worked === true && scope === "uncommitted") {
-    const status = await loadCheckoutStatus(deps, ref, plan.threadIds, signal);
+    const status = await loadCheckoutStatus(deps, ref, plan.threadIds, signal, null, pick);
     if (status.outcome === "unavailable") return { unavailable: hostMessage(status) };
     return { files: status.uncommitted.map(gitFileChange), branch: status.branch, base: null, aheadCount: null, truncated: status.truncated };
   }
+  const folderLimit = countingOf(deps).folderLimit;
   const result = ref.kind === "branch"
     ? await loadBranchRange(deps, ref, plan.threadIds, signal)
-    : await deps.host("repoFiles", { root: ref.root, target: hostTarget(ref, scope) }, { hostId: ref.hostId, signal });
+    : await deps.host("repoFiles", { root: ref.root, target: hostTarget(ref, scope), folderLimit }, { hostId: ref.hostId, signal });
   if (result.outcome === "unavailable") {
     return ref.kind === "branch" && result.reason === "missing-ref" ? { missingRef: true } : { unavailable: hostMessage(result) };
   }
@@ -299,16 +177,10 @@ export async function loadRepoFiles(
 
 const gitCheckout = (at: GitAt, base: string | null): CheckoutRef => ({ kind: "checkout", hostId: at.hostId, root: at.root, base });
 
-// A workspace Vantage reads with git is read like a checkout at its repository root.
-export function atRoot(ref: WorkspaceRef): CheckoutRef | null {
-  return ref.root === undefined || ref.hostId === undefined ? null : gitCheckout({ hostId: ref.hostId, root: ref.root }, ref.base);
-}
-
-function workspacePatchTarget(ref: WorkspaceRef, input: PatchInput): PatchTarget {
-  if (input.sha !== null) return { type: "commit", sha: input.sha };
-  if (input.scope !== "committed") return workspaceTarget(ref, input.scope);
-  if (ref.base === null) throw new Error("This worktree has no base branch, so there are no committed changes to show");
-  return { type: "branch_committed", mergeBaseBranch: ref.base };
+// A workspace is read like a checkout at its repository root. A ref from Vantage 0.8 or earlier has no root; reloading gives one.
+export function atRoot(ref: WorkspaceRef): CheckoutRef {
+  if (ref.root === undefined || ref.hostId === undefined) throw new Error("This worktree's location is not known yet; refresh Vantage");
+  return gitCheckout({ hostId: ref.hostId, root: ref.root }, ref.base);
 }
 
 function hostPatchTarget(ref: Exclude<RepoRef, { kind: "workspace" | "recorded" }>, input: PatchInput): HostTarget {
@@ -317,106 +189,32 @@ function hostPatchTarget(ref: Exclude<RepoRef, { kind: "workspace" | "recorded" 
   return ref.kind === "branch" ? hostTarget(ref, "branch") : { type: "committed", base: ref.base };
 }
 
+const asGit = (ref: Exclude<RepoRef, { kind: "recorded" }>): Exclude<RepoRef, { kind: "workspace" | "recorded" }> =>
+  ref.kind === "workspace" ? atRoot(ref) : ref;
+
 export async function loadPatch(deps: CollectDeps, input: PatchInput, signal?: AbortSignal): Promise<PatchOutput> {
-  const { path } = input;
-  const ref = input.ref.kind === "workspace" ? (atRoot(input.ref) ?? input.ref) : input.ref;
-  if (ref.kind === "recorded") throw new Error("Use recordedEdits");
-  if (ref.kind === "workspace") {
-    const result = await deps.sdk.environments.diffPatch({
-      environmentId: ref.environmentId, paths: [path], target: workspacePatchTarget(ref, input), signal,
-    });
-    if (result.outcome === "not_applicable") throw new Error(result.message);
-    if (result.outcome === "unavailable") throw new Error(result.failure.message);
-    const first = result.patches[0];
-    return first === undefined
-      ? { patch: "", truncated: false, binary: false }
-      : { patch: first.patch, truncated: first.truncated, binary: BINARY_PATCH.test(first.patch) };
-  }
+  if (input.ref.kind === "recorded") throw new Error("Use recordedEdits");
+  const ref = asGit(input.ref);
   const result = await deps.host("repoPatch", {
-    root: ref.root, path, previousPath: input.previousPath, untracked: input.untracked, target: hostPatchTarget(ref, input),
+    root: ref.root, path: input.path, previousPath: input.previousPath, untracked: input.untracked, target: hostPatchTarget(ref, input),
   }, { hostId: ref.hostId, signal });
   if (result.outcome === "unavailable") throw new Error(hostMessage(result));
   return { patch: result.patch, truncated: result.truncated, binary: result.binary };
 }
 
 export async function loadCommitFiles(deps: CollectDeps, input: CommitFilesInput, signal?: AbortSignal): Promise<CommitFilesOutput> {
-  const { sha } = input;
-  const ref = input.ref.kind === "workspace" ? (atRoot(input.ref) ?? input.ref) : input.ref;
-  if (ref.kind === "workspace") {
-    const result = await deps.sdk.environments.diffFiles({ environmentId: ref.environmentId, target: "commit", sha, signal });
-    if (result.outcome === "not_applicable") throw new Error(result.message);
-    if (result.outcome === "unavailable") throw new Error(result.failure.message);
-    return { files: result.files.map(workspaceFile) };
-  }
-  if (ref.kind === "branch" || ref.kind === "checkout") {
-    const result = await deps.host("repoFiles", { root: ref.root, target: { type: "commit", sha } }, { hostId: ref.hostId, signal });
-    if (result.outcome === "unavailable") throw new Error(hostMessage(result));
-    return { files: result.files.map(gitFileChange) };
-  }
-  throw new Error("Commits are not available for this repository");
-}
-
-const SIDE_LIMIT = 1024 * 1024;
-
-type DiffFileTarget =
-  | { target: "uncommitted" }
-  | { target: "branch_committed" | "all"; mergeBaseRef: string }
-  | { target: "commit"; sha: string };
-
-function diffFileTarget(target: PatchTarget): DiffFileTarget {
-  if (target.type === "uncommitted") return { target: "uncommitted" };
-  if (target.type === "commit") return { target: "commit", sha: target.sha };
-  return { target: target.type, mergeBaseRef: target.mergeBaseBranch };
-}
-
-// bb answers a side the file does not have with a 404; every other failure is a real error.
-const isMissing = (error: unknown): boolean => {
-  const failure = error as { status?: unknown; code?: unknown } | null;
-  return failure !== null && typeof failure === "object" && (failure.status === 404 || failure.code === "ENOENT");
-};
-
-async function workspaceSide(
-  deps: CollectDeps, environmentId: string, path: string, side: "old" | "new", target: DiffFileTarget, signal?: AbortSignal,
-): Promise<string | null> {
-  try {
-    const result = await deps.sdk.environments.diffFile({ environmentId, path, side, ...target, signal });
-    if (result.contentEncoding !== "utf8" || result.sizeBytes > SIDE_LIMIT || result.content.includes("\0")) return null;
-    return result.content;
-  } catch (error) {
-    if (isMissing(error)) return null;
-    throw error;
-  }
-}
-
-// bb reads the old side at the revision it is given, so it needs the merge base itself, not the base branch's tip; its
-// own diff panel passes the merge base that diffFiles reports. One answer serves every file of the workspace.
-function workspaceMergeBase(deps: CollectDeps, ref: WorkspaceRef & { base: string }, signal?: AbortSignal): Promise<string | null> {
-  const read = async (own?: AbortSignal) => {
-    const result = await deps.sdk.environments.diffFiles({ environmentId: ref.environmentId, target: "branch_committed", mergeBaseBranch: ref.base, signal: own });
-    return result.outcome === "available" ? result.mergeBaseRef : null;
-  };
-  return shared(deps, `mb\0${ref.environmentId}\0${ref.base}`, ref.environmentId, [], read, signal);
+  if (input.ref.kind === "recorded") throw new Error("Commits are not available for this repository");
+  const ref = asGit(input.ref);
+  const result = await deps.host("repoFiles", { root: ref.root, target: { type: "commit", sha: input.sha } }, { hostId: ref.hostId, signal });
+  if (result.outcome === "unavailable") throw new Error(hostMessage(result));
+  return { files: result.files.map(gitFileChange) };
 }
 
 export async function loadFileSides(deps: CollectDeps, input: PatchInput, signal?: AbortSignal): Promise<FileSidesOutput> {
-  const { path, previousPath } = input;
-  const ref = input.ref.kind === "workspace" ? (atRoot(input.ref) ?? input.ref) : input.ref;
-  if (ref.kind === "recorded") return { old: null, new: null };
-  if (ref.kind === "workspace") {
-    let target = diffFileTarget(workspacePatchTarget(ref, input));
-    if (target.target === "branch_committed" || target.target === "all") {
-      const mergeBase = ref.base === null ? null : await workspaceMergeBase(deps, { ...ref, base: ref.base }, signal);
-      if (mergeBase === null) return { old: null, new: null };
-      target = { target: target.target, mergeBaseRef: mergeBase };
-    }
-    const [old, next] = await Promise.all([
-      input.untracked ? null : workspaceSide(deps, ref.environmentId, previousPath ?? path, "old", target, signal),
-      workspaceSide(deps, ref.environmentId, path, "new", target, signal),
-    ]);
-    return { old, new: next };
-  }
+  if (input.ref.kind === "recorded") return { old: null, new: null };
+  const ref = asGit(input.ref);
   const result = await deps.host("fileSides", {
-    root: ref.root, path, previousPath, untracked: input.untracked, target: hostPatchTarget(ref, input),
+    root: ref.root, path: input.path, previousPath: input.previousPath, untracked: input.untracked, target: hostPatchTarget(ref, input),
   }, { hostId: ref.hostId, signal });
   if (result.outcome === "unavailable") throw new Error(hostMessage(result));
   return { old: result.old, new: result.new };

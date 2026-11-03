@@ -6,8 +6,8 @@ import { createVantageStore, type VantageSnapshot, type VantageStore } from "./s
 
 // The page and its sidebar, title bar and Agent tab are separate React trees, and so are a thread's tab, composer segment
 // and Info section. Each surface shares one store per target; it outlives its last reader briefly, so moving between
-// views does not load everything again.
-export type Surface = "page" | "thread";
+// views does not load everything again. "sidebar" is the line under bb's thread rows, which never shows archived threads.
+export type Surface = "page" | "thread" | "sidebar";
 
 const LINGER_MS = 30_000;
 export const EMPTY_SNAPSHOT: VantageSnapshot = { status: "loading", overview: null, scope: "uncommitted", refreshing: false, error: null };
@@ -21,7 +21,10 @@ const entries = new Map<string, Entry>();
 export const sessionKey = (surface: Surface, target: OverviewTarget): string =>
   `${surface}\0${target.kind === "tree" ? `tree\0${target.threadId}` : "all"}`;
 
-function acquire(key: string, target: OverviewTarget, includeArchived: boolean, rpc: Rpc, sdk: Sdk): Entry {
+// The sidebar's line is a glance, so its store of every recent thread reloads at most every 30 seconds.
+const SIDEBAR_REFRESH_DELAY_MS = 30_000;
+
+function acquire(key: string, surface: Surface, target: OverviewTarget, includeArchived: boolean, rpc: Rpc, sdk: Sdk): Entry {
   let entry = entries.get(key);
   if (entry === undefined) {
     const client = { rpc, sdk };
@@ -30,6 +33,7 @@ function acquire(key: string, target: OverviewTarget, includeArchived: boolean, 
       sdk: { subscribe: (options) => client.sdk.subscribe(options) },
       target,
       includeArchived,
+      ...(surface === "sidebar" ? { refreshDelayMs: SIDEBAR_REFRESH_DELAY_MS } : {}),
     });
     entry = { store, refs: 0, timer: null, client };
     entries.set(key, entry);
@@ -69,7 +73,7 @@ export function useSession(surface: Surface, target: OverviewTarget | null, incl
   const [entry, setEntry] = useState<{ key: string; entry: Entry } | null>(null);
   useEffect(() => {
     if (key === null || target === null) return;
-    const acquired = acquire(key, target, includeArchived, rpc, sdk);
+    const acquired = acquire(key, surface, target, includeArchived, rpc, sdk);
     setEntry({ key, entry: acquired });
     return () => release(key, acquired);
     // The entry follows the key; the archived choice is applied below without replacing it.

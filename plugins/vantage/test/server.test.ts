@@ -14,26 +14,13 @@ const row = (seq: number, item: object) => ({ id: `e${seq}`, scope: { kind: "thr
 const fileChangeRow = (seq: number, changes: object[], status = "completed") =>
   row(seq, { type: "fileChange", id: `i${seq}`, status, approvalStatus: null, changes });
 
-const diffFile = (path: string) => ({
-  path, previousPath: null, changeKind: "modified", additions: 1, deletions: 0, binary: false, origin: "tracked", loadMode: "auto",
-});
+const gitFile = (path: string) => ({ path, previousPath: null, status: "modified", additions: 1, deletions: 0, binary: false });
 
-const statusOf = (uncommitted: string[], committed: string[] = [], branchName = "feature/work") => ({
-  outcome: "available",
-  workspace: {
-    branch: { currentBranch: branchName, defaultBranch: "main" },
-    checkout: { kind: "branch", branchName, headSha: "abc" },
-    mergeBase: {
-      aheadCount: committed.length, behindCount: 0, baseRef: "origin/main", mergeBaseBranch: "origin/main", deletions: 0, fileCount: committed.length,
-      commits: committed.map((_, index) => ({ sha: `${index + 1}`.padStart(40, "0"), shortSha: `${index + 1}`.padStart(7, "0"), subject: "Work", authorName: "Ada", authoredAt: 1_700_000_000_000 })),
-      files: committed.map((path) => ({ path, status: "M", insertions: 1, deletions: 0 })), hasCommittedUnmergedChanges: committed.length > 0,
-      insertions: 0, lineStatsComplete: true,
-    },
-    workingTree: {
-      files: uncommitted.map((path) => ({ path, status: "M", insertions: 1, deletions: 0 })), fileCount: uncommitted.length, insertions: 0, deletions: 0,
-      hasUncommittedChanges: uncommitted.length > 0, lineStatsComplete: true, state: "clean",
-    },
-  },
+// What the host's checkoutStatus answers for a worktree.
+const statusOf = (uncommitted: string[], committed: string[] = [], branch = "feature/work") => ({
+  outcome: "available", branch, head: "e".repeat(40), base: "origin/main", skippedBase: null, aheadCount: committed.length, behindCount: 0,
+  commits: committed.map((_, index) => ({ sha: `${index + 1}`.padStart(40, "0"), shortSha: `${index + 1}`.padStart(7, "0"), subject: "Work", authorName: "Ada", authoredAt: 1_700_000_000_000 })),
+  uncommitted: uncommitted.map(gitFile), committed: committed.map(gitFile), truncated: false,
 });
 
 interface TreeThread { id: string; title: string; parentThreadId: string | null; environmentId: string | null; status?: string }
@@ -93,11 +80,6 @@ function start(options: {
       },
       environments: {
         get: async ({ environmentId }: { environmentId: string }) => envs[environmentId] ?? env,
-        status: async ({ environmentId }: { environmentId: string }) => options.status?.(environmentId) ?? statusOf(["src/a.ts"]),
-        diffFiles: async () => ({
-          outcome: "available", files: (options.files ?? ["src/a.ts"]).map(diffFile), initialPatches: [], mergeBaseRef: null, shortstat: "", truncated: false,
-        }),
-        diffPatch: async () => ({ outcome: "available", patches: [{ path: "src/a.ts", patch: "+hello", truncated: false }] }),
       },
       projects: { list: async () => [{ id: "proj_1", name: "Project", sources: [] }] },
       hosts: { list: async () => [{ id: "host_1", name: "Laptop", status: "connected" }] },
@@ -111,6 +93,15 @@ function start(options: {
         const rootOf = (path: string) => ["/work/one", "/work/two"].find((root) => path === root || path.startsWith(`${root}/`)) ?? null;
         return { results: paths.map((path) => { const root = rootOf(path); return root === null ? { path, root: null, relative: null } : { path, root, relative: path.slice(root.length + 1) }; }) };
       }
+      if (method === "checkoutStatus") {
+        const root = (input as { root: string }).root;
+        const id = Object.values(envs).find((entry) => entry.path === root)?.id ?? root;
+        return options.status?.(id) ?? statusOf(["src/a.ts"]);
+      }
+      if (method === "repoFiles") {
+        return { outcome: "available", branch: null, base: "origin/main", aheadCount: 0, behindCount: 0, commits: [], files: (options.files ?? ["src/a.ts"]).map(gitFile), truncated: false };
+      }
+      if (method === "repoPatch") return { outcome: "available", patch: "+hello", truncated: false, binary: false };
       throw new Error(`unexpected host call ${method}`);
     },
   });
@@ -125,7 +116,7 @@ describe("server", () => {
     const { harness, ready } = start();
     await ready;
     expect(harness.registrations.rpcMethods).toEqual([
-      "shell", "overview", "patch", "fileSides", "commitFiles", "recordedEdits", "reviewed", "setReviewed",
+      "shell", "overview", "patch", "fileSides", "commitFiles", "recordedEdits", "reviewed", "setReviewed", "setWhole",
     ]);
     expect(harness.registrations.cli?.name).toBe("vantage");
     expect(harness.logEntries).toContainEqual({ level: "info", message: "loaded" });
@@ -158,17 +149,18 @@ describe("server", () => {
     await expect(harness.behavior.callRpc("shell", { target: { kind: "tree", threadId: "thr_1" } })).rejects.toThrow();
   });
 
-  it("answers patch for a workspace with the branch scope through bb's diffPatch", async () => {
+  it("answers patch for a workspace with the branch scope through the host at its repository root", async () => {
     const { harness, ready } = start();
     await ready;
     const result = await harness.behavior.callRpc("patch", {
-      ref: { kind: "workspace", environmentId: "env_1", base: "origin/main" },
+      ref: { kind: "workspace", environmentId: "env_1", base: "origin/main", root: "/work/one", hostId: "host_1" },
       path: "src/a.ts", previousPath: null, untracked: false, scope: "branch", sha: null,
     });
     expect(result).toEqual({ patch: "+hello", truncated: false, binary: false });
-    expect(harness.inspection.sdk.callsTo("environments.diffPatch")).toEqual([[
-      { environmentId: "env_1", paths: ["src/a.ts"], target: { type: "all", mergeBaseBranch: "origin/main" }, signal: undefined },
-    ]]);
+    expect(harness.experimental_hostRpcCalls).toMatchObject([{
+      method: "repoPatch", hostId: "host_1",
+      input: { root: "/work/one", path: "src/a.ts", previousPath: null, untracked: false, target: { type: "merge-base", base: "origin/main" } },
+    }]);
   });
 
   it("answers patch for a checkout through the host", async () => {
@@ -218,8 +210,9 @@ describe("server", () => {
 describe("server: every thread", () => {
   const ALL = { target: { kind: "all" }, scope: "uncommitted", includeArchived: false };
   const TWO = { tree: [PARENT, CHILD], status: (id: string) => (id === "env_1" ? statusOf(["README.md"]) : statusOf(["b.ts"], ["README.md"], "child-work")) };
-  const diffs = (harness: { inspection: { sdk: { callsTo(path: string): unknown[][] } } }) => harness.inspection.sdk.callsTo("environments.diffFiles").length;
-  const statuses = (harness: { inspection: { sdk: { callsTo(path: string): unknown[][] } } }) => harness.inspection.sdk.callsTo("environments.status").length;
+  type Calls = { experimental_hostRpcCalls: ReadonlyArray<{ method: string }> };
+  const diffs = (harness: Calls) => harness.experimental_hostRpcCalls.filter((call) => call.method === "repoFiles").length;
+  const statuses = (harness: Calls) => harness.experimental_hostRpcCalls.filter((call) => call.method === "checkoutStatus").length;
   const threadEvent = (id: string, eventTypes?: string[]) => ({
     id, changes: ["events-appended"], ...(eventTypes === undefined ? {} : { metadata: { eventTypes } }),
   });
@@ -254,7 +247,7 @@ describe("server: every thread", () => {
     expect(await harness.behavior.callRpc("overview", ALL)).toMatchObject({ windowHours: 6 });
   });
 
-  it("answers a second all overview from the cache, without asking bb for any status", async () => {
+  it("answers a second all overview from the cache, without asking git for any status", async () => {
     const { harness, ready } = start(TWO);
     await ready;
     await harness.behavior.callRpc("overview", ALL);
@@ -388,6 +381,39 @@ describe("server: every thread", () => {
     expect(await harness.behavior.callRpc("reviewed", { keys: ["host_1:/work/one"] })).toEqual({ "host_1:/work/one": {} });
   });
 
+  it("tells the open windows a worktree's reviewed marks changed after saving them", async () => {
+    const { harness, ready } = start(TWO);
+    await ready;
+    await harness.behavior.callRpc("setReviewed", { key: "host_1:/work/one", marks: [{ mark: "uncommitted\0src/a.ts", signature: "modified:1:0:" }] });
+    expect(JSON.stringify(harness.inspection.experimental_rpcInvalidations)).toContain("vantage:reviewed:host_1:/work/one");
+  });
+
+  it("reads a worktree the user asked to see whole with nothing picked, and tells open pages", async () => {
+    const { harness, ready } = start(TWO);
+    await ready;
+    const tree = { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true, refresh: true };
+    const picks = () => harness.experimental_hostRpcCalls.filter((call) => call.method === "checkoutStatus")
+      .map((call) => [(call.input as { root: string }).root, (call.input as { pick: boolean }).pick]);
+    expect(await harness.behavior.callRpc("setWhole", { key: "host_1:/work/two", whole: true })).toEqual({ ok: true });
+    expect(harness.inspection.realtimeSignals).toEqual([{ channel: "vantage:settings", payload: {} }]);
+    const whole = overviewSchema.parse(await harness.behavior.callRpc("overview", tree));
+    expect(picks()).toEqual([["/work/one", true], ["/work/two", false]]);
+    expect(whole.worktrees.map((entry) => entry.whole)).toEqual([undefined, true]);
+    await harness.behavior.callRpc("setWhole", { key: "host_1:/work/two", whole: false });
+    await harness.behavior.callRpc("overview", tree);
+    expect(picks().slice(2)).toEqual([["/work/one", true], ["/work/two", true]]);
+  });
+
+  it("reads every worktree as it is when the closest base setting is off", async () => {
+    const { harness, ready } = start(TWO);
+    await ready;
+    await harness.behavior.setSettings({ closestBase: false, folderLimit: 40 });
+    await harness.behavior.callRpc("overview", { target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived: true });
+    expect(harness.experimental_hostRpcCalls.filter((call) => call.method === "checkoutStatus").map((call) => call.input)).toEqual([
+      { root: "/work/one", base: "origin/main", pick: false, folderLimit: 40 }, { root: "/work/two", base: "origin/main", pick: false, folderLimit: 40 },
+    ]);
+  });
+
   it("stops listening when the plugin is disposed", async () => {
     const { harness, ready, subscriptions, unsubscribed } = start(TWO);
     await ready;
@@ -404,7 +430,7 @@ describe("server: shell and archived threads", () => {
   const TREE = (includeArchived: boolean) => ({ target: { kind: "tree", threadId: "thr_1" }, scope: "uncommitted", includeArchived });
   const ids = (overview: { threads: Array<{ id: string }> }) => overview.threads.map((thread) => thread.id);
 
-  it("answers shell with a partial overview of loading rows, without asking bb or the host for any git state", async () => {
+  it("answers shell with a partial overview of loading rows, without asking the host for any git state", async () => {
     const { harness, ready } = start(TWO);
     await ready;
     const parsed = overviewSchema.parse(await harness.behavior.callRpc("shell", { target: { kind: "all" }, includeArchived: false }));
@@ -412,9 +438,7 @@ describe("server: shell and archived threads", () => {
     expect(parsed.worktrees.map((entry) => [entry.threadIds, entry.state, entry.branch])).toEqual([
       [["thr_1"], "loading", "feature/work"], [["thr_2"], "loading", "child-work"],
     ]);
-    for (const path of ["environments.status", "environments.diffFiles", "threads.events.list"]) {
-      expect(harness.inspection.sdk.callsTo(path), path).toHaveLength(0);
-    }
+    expect(harness.inspection.sdk.callsTo("threads.events.list")).toHaveLength(0);
     expect(harness.experimental_hostRpcCalls).toHaveLength(0);
   });
 
@@ -514,7 +538,7 @@ describe("bb vantage --archived", () => {
 describe("server worktrees", () => {
   const TWO = { tree: [PARENT, CHILD], status: (id: string) => (id === "env_1" ? statusOf(["README.md"]) : statusOf(["b.ts"], ["README.md"], "child-work")) };
   const SHA = "abc1234def";
-  const WORKSPACE = { kind: "workspace", environmentId: "env_1", base: "origin/main" };
+  const WORKSPACE = { kind: "workspace", environmentId: "env_1", base: "origin/main", root: "/work/one", hostId: "host_1" };
   const BRANCH = { kind: "branch", hostId: "host_1", root: "/code/proj", base: "origin/main", head: "feature/old" };
   const CHECKOUT = { kind: "checkout", hostId: "host_1", root: "/code/commons", base: null };
   const patch = (ref: object, extra: object) => ({ ref, path: "src/a.ts", previousPath: null, untracked: false, scope: "uncommitted", ...extra });
@@ -528,7 +552,7 @@ describe("server worktrees", () => {
     expect(parsed.threads.map((thread) => thread.status)).toEqual(["idle", "active"]);
   });
 
-  it("answers commitFiles for a workspace through bb and for a branch through the host", async () => {
+  it("answers commitFiles for a workspace, a branch and a checkout through the host", async () => {
     const { harness, ready } = start({
       hostResult: (call) => call.method === "repoFiles"
         ? { outcome: "available", branch: null, base: null, aheadCount: null, behindCount: null, commits: [], truncated: false,
@@ -536,9 +560,9 @@ describe("server worktrees", () => {
         : undefined,
     });
     await ready;
-    const viaBb = await harness.behavior.callRpc("commitFiles", { ref: WORKSPACE, sha: SHA });
-    expect(viaBb).toMatchObject({ files: [{ path: "src/a.ts", status: "modified" }] });
-    expect(harness.inspection.sdk.callsTo("environments.diffFiles")[0]?.[0]).toEqual({ environmentId: "env_1", target: "commit", sha: SHA, signal: undefined });
+    const viaWorkspace = await harness.behavior.callRpc("commitFiles", { ref: WORKSPACE, sha: SHA });
+    expect(viaWorkspace).toMatchObject({ files: [{ path: "lib.ts", status: "added" }] });
+    expect(harness.experimental_hostRpcCalls.at(-1)).toMatchObject({ method: "repoFiles", hostId: "host_1", input: { root: "/work/one", target: { type: "commit", sha: SHA } } });
     const viaHost = await harness.behavior.callRpc("commitFiles", { ref: BRANCH, sha: SHA });
     expect(viaHost).toMatchObject({ files: [{ path: "lib.ts", status: "added" }] });
     expect(harness.experimental_hostRpcCalls.at(-1)).toMatchObject({ method: "repoFiles", hostId: "host_1", input: { root: "/code/proj", target: { type: "commit", sha: SHA } } });
@@ -554,13 +578,11 @@ describe("server worktrees", () => {
     await ready;
     await harness.behavior.callRpc("patch", patch(WORKSPACE, { scope: "committed" }));
     await harness.behavior.callRpc("patch", patch(WORKSPACE, { scope: "committed", sha: SHA }));
-    expect(harness.inspection.sdk.callsTo("environments.diffPatch").map((call) => (call[0] as { target: unknown }).target)).toEqual([
-      { type: "branch_committed", mergeBaseBranch: "origin/main" }, { type: "commit", sha: SHA },
-    ]);
     await harness.behavior.callRpc("patch", patch(BRANCH, { scope: "committed" }));
     await harness.behavior.callRpc("patch", patch(BRANCH, { scope: "committed", sha: SHA }));
-    expect(harness.experimental_hostRpcCalls.filter((call) => call.method === "repoPatch").map((call) => (call.input as { target: unknown }).target)).toEqual([
-      { type: "range", base: "origin/main", head: "feature/old" }, { type: "commit", sha: SHA },
+    expect(harness.experimental_hostRpcCalls.filter((call) => call.method === "repoPatch").map((call) => [(call.input as { root: string }).root, (call.input as { target: unknown }).target])).toEqual([
+      ["/work/one", { type: "committed", base: "origin/main" }], ["/work/one", { type: "commit", sha: SHA }],
+      ["/code/proj", { type: "range", base: "origin/main", head: "feature/old" }], ["/code/proj", { type: "commit", sha: SHA }],
     ]);
   });
 
@@ -816,7 +838,9 @@ describe("bb vantage changes", () => {
     await ready;
     const result = await harness.behavior.runCli(["changes", "--thread", "thr_1", "--scope", "branch", "--json"], {});
     expect(JSON.parse(result.stdout)).toMatchObject({ threadId: "thr_1", scope: "branch" });
-    expect(harness.inspection.sdk.callsTo("environments.diffFiles")[0]?.[0]).toMatchObject({ target: "all", mergeBaseBranch: "origin/main" });
+    expect(harness.experimental_hostRpcCalls.find((call) => call.method === "repoFiles")).toMatchObject({
+      hostId: "host_1", input: { root: "/work/one", target: { type: "merge-base", base: "origin/main" } },
+    });
   });
 
   it("caps a repository at 50 files in the text output", async () => {
@@ -932,9 +956,11 @@ describe("formatOverview", () => {
 });
 
 describe("output limit", () => {
+  // Long enough that 500 files go past the CLI's output limit, whatever the SDK sets it to.
+  const LONG_DIR = "d/".repeat(Math.ceil(PLUGIN_CLI_OUTPUT_MAX_BYTES / 500 / 2));
   const huge = (): Overview => overview({
     repos: [repo({
-      files: Array.from({ length: 500 }, (_, index) => fileChange({ path: `${"d/".repeat(2000)}file-${index}.ts` })),
+      files: Array.from({ length: 500 }, (_, index) => fileChange({ path: `${LONG_DIR}file-${index}.ts` })),
     })],
   });
 
@@ -950,7 +976,7 @@ describe("output limit", () => {
   });
 
   it("trims the files and commits of a worktrees JSON that would not fit", async () => {
-    const files = Array.from({ length: 500 }, (_, index) => fileChange({ path: `${"d/".repeat(2000)}file-${index}.ts` }));
+    const files = Array.from({ length: 500 }, (_, index) => fileChange({ path: `${LONG_DIR}file-${index}.ts` }));
     const big = overview({ worktrees: [worktree({ uncommitted: files, committed: files, commits: Array.from({ length: 100 }, () => commit()) })] });
     const cli = createCli(async () => big, async (id) => id);
     for (const argv of [["worktrees", "--json"], ["worktree", "thr_1", "--json"]]) {

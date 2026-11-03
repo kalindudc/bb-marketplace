@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { act, fireEvent, screen, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginCommandContext } from "@get-bb/plugin-sdk/app";
 import { PANEL_ACTION_ID, createCommands } from "../src/commands";
@@ -43,56 +42,21 @@ describe("plugin app", () => {
     expect(app.threadInfoSections.map(({ id, group }) => ({ id, group }))).toEqual([{ id: "worktrees", group: "2_changes" }]);
     expect(app.threadActions.map(({ id, group }) => ({ id, group }))).toEqual([{ id: "review", group: "1_open" }]);
     expect(app.appOverlays.map(({ id }) => id)).toEqual(["attention"]);
-    expect(app.threadHeaderActions.map(({ id, title }) => ({ id, title }))).toEqual([{ id: "open", title: "Vantage" }]);
+    expect(app.threadHeaderActions).toEqual([]);
+    expect(app.threadContextCardSections.map(({ id, title, group, order }) => ({ id, title, group, order }))).toEqual([
+      { id: "worktrees", title: "Worktrees", group: "1_related", order: 5 },
+    ]);
+    expect(app.threadRowMetadata.map(({ id, order }) => ({ id, order }))).toEqual([{ id: "changes", order: 50 }]);
+    expect(app.threadRowMetadata[0]!.useData).toBeTypeOf("function");
     expect(app.contentScripts).toHaveLength(0);
-  });
-
-  it("opens the thread tab from the header button", async () => {
-    const app = await loadPluginApp(() => import("../app"));
-    const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: "thr_1", projectId: "proj_1", isCompactViewport: false }, {
-      pluginId: "vantage", openThreadPanel: () => true,
-    });
-    const button = within(slot.container).getByRole("button", { name: "Open Vantage" });
-    expect(button.querySelector("[data-icon='FolderGit']")).not.toBeNull();
-    fireEvent.click(button);
-    expect(slot.inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "changes" } }]);
-    slot.lifecycle.unmount();
-  });
-
-  it("leaves the phone header to bb, since the panel launcher already opens the tab", async () => {
-    const app = await loadPluginApp(() => import("../app"));
-    const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: "thr_1", projectId: "proj_1", isCompactViewport: true }, {
-      pluginId: "vantage", openThreadPanel: () => true,
-    });
-    expect(within(slot.container).queryByRole("button")).toBeNull();
-    slot.lifecycle.unmount();
-  });
-
-  it("names Vantage in a tooltip on hover and keyboard focus, not a native title", async () => {
-    const app = await loadPluginApp(() => import("../app"));
-    const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: "thr_1", projectId: "proj_1", isCompactViewport: false }, {
-      pluginId: "vantage", openThreadPanel: () => true,
-    });
-    const button = within(slot.container).getByRole("button", { name: "Open Vantage" });
-    expect(button.hasAttribute("title")).toBe(false);
-    fireEvent.pointerMove(button, { pointerType: "mouse" });
-    expect((await screen.findByRole("tooltip")).textContent).toBe("Vantage: what this thread and its child threads changed");
-    fireEvent.pointerLeave(button, { pointerType: "mouse" });
-    slot.lifecycle.unmount();
-
-    const again = renderSlot(app.threadHeaderActions[0]!, { threadId: "thr_1", projectId: "proj_1", isCompactViewport: false }, {
-      pluginId: "vantage", openThreadPanel: () => true,
-    });
-    fireEvent.keyDown(document.body, { key: "Tab" });
-    act(() => within(again.container).getByRole("button", { name: "Open Vantage" }).focus());
-    expect((await screen.findByRole("tooltip")).textContent).toBe("Vantage: what this thread and its child threads changed");
-    again.lifecycle.unmount();
   });
 });
 
 describe("commands", () => {
   const context = (overrides: Partial<PluginCommandContext> = {}): PluginCommandContext => ({
-    threadId: "thr_1", projectId: "proj_1", openPanel: vi.fn(() => true), ...overrides,
+    threadId: "thr_1", projectId: "proj_1",
+    experimental_panel: { openTab: vi.fn(() => true), toggleTab: vi.fn(() => true), selectTab: vi.fn(() => true), closeTab: vi.fn(() => true), close: vi.fn(() => true), getTabs: vi.fn() },
+    ...overrides,
   });
 
   it("registers one command, without a default shortcut", () => {
@@ -108,7 +72,7 @@ describe("commands", () => {
     const ready = context();
     expect(open.isAvailable?.(ready)).toBe(true);
     await open.run(ready);
-    expect(ready.openPanel).toHaveBeenCalledWith({ actionId: "changes" });
+    expect(ready.experimental_panel.openTab).toHaveBeenCalledWith({ tab: { id: "changes", context: { kind: "thread" }, availability: "action" } });
   });
 });
 
@@ -122,12 +86,12 @@ describe("manifest", () => {
       name: "Vantage", branding: { icon: "FolderGit" }, server: "./server.ts", app: "./app.tsx", host: "./host.ts",
       skills: ["./skills"],
     });
-    expect(manifest.engines).toEqual({ bb: ">=0.47", bbPluginSdk: ">=0.6.75" });
+    expect(manifest.engines).toEqual({ bb: ">=0.48.1", bbPluginSdk: ">=0.6.104" });
   });
 
-  it("keeps the SDK a dev dependency pinned to the version bb 0.47 ships, and bundles zod", () => {
+  it("keeps the SDK a dev dependency pinned to the version bb 0.48.1 ships, and bundles zod", () => {
     expect(manifest.dependencies).toEqual({ zod: "^4.3.6" });
-    expect(manifest.devDependencies["@get-bb/plugin-sdk"]).toBe("0.6.75");
+    expect(manifest.devDependencies["@get-bb/plugin-sdk"]).toBe("0.6.104");
   });
 });
 

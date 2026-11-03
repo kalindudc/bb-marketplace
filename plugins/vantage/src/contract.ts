@@ -25,6 +25,10 @@ export type Commit = z.infer<typeof commitSchema>;
 
 const GIT_STATUSES = ["added", "modified", "deleted", "renamed", "copied", "type-changed", "unmerged", "untracked"] as const;
 
+// An untracked folder Vantage shows as one entry and leaves out of every count: a repository of its own, or one with
+// more files than the folder limit. `path` ends in `/`; `sample` holds the first few of its files.
+export const folderSchema = z.object({ files: count, repository: z.boolean(), sample: z.array(relativePath).max(20) }).strict();
+
 const gitFileShape = {
   path: relativePath,
   previousPath: relativePath.nullable(),
@@ -32,6 +36,7 @@ const gitFileShape = {
   additions: count.nullable(),
   deletions: count.nullable(),
   binary: z.boolean(),
+  folder: folderSchema.optional(),
 };
 
 export const gitFileSchema = z.object(gitFileShape).strict();
@@ -53,6 +58,10 @@ export const hostUnavailableSchema = z.object({
 }).strict();
 export type HostUnavailable = z.infer<typeof hostUnavailableSchema>;
 
+const folderLimit = z.number().int().min(1).max(1_000_000).optional();
+// The base a checkout was compared with instead of the one asked for, and how many commits that one would have counted.
+export const skippedBaseSchema = z.object({ name: text, aheadCount: count }).strict();
+
 export const hostContract = defineContract({
   resolveRoots: {
     input: z.object({ paths: z.array(resolvablePath).max(2000) }).strict(),
@@ -65,7 +74,7 @@ export const hostContract = defineContract({
     }).strict(),
   },
   repoFiles: {
-    input: z.object({ root: absolutePath, target: hostTargetSchema }).strict(),
+    input: z.object({ root: absolutePath, target: hostTargetSchema, folderLimit }).strict(),
     output: z.discriminatedUnion("outcome", [
       z.object({
         outcome: z.literal("available"),
@@ -80,13 +89,16 @@ export const hostContract = defineContract({
       hostUnavailableSchema,
     ]),
   },
+  // `pick`: compare with the closest of the likely bases rather than only `base`.
   checkoutStatus: {
-    input: z.object({ root: absolutePath, base: text.nullable() }).strict(),
+    input: z.object({ root: absolutePath, base: text.nullable(), pick: z.boolean().optional(), folderLimit }).strict(),
     output: z.discriminatedUnion("outcome", [
       z.object({
         outcome: z.literal("available"),
         branch: text.nullable(),
+        head: shaSchema.nullable(),
         base: text.nullable(),
+        skippedBase: skippedBaseSchema.nullable(),
         aheadCount: count.nullable(),
         behindCount: count.nullable(),
         commits: z.array(commitSchema).max(100),
@@ -104,7 +116,9 @@ export const hostContract = defineContract({
       windows: z.array(z.object({ start: count, end: count }).strict()).min(1).max(200),
     }).strict(),
     output: z.discriminatedUnion("outcome", [
-      z.object({ outcome: z.literal("available"), commits: z.array(commitSchema).max(100) }).strict(),
+      // `since`: the commit before the oldest of them, so diffing from it shows only their work; null with none.
+      // `total`: how many there are; `commits` lists the newest 100.
+      z.object({ outcome: z.literal("available"), commits: z.array(commitSchema).max(100), total: count, since: shaSchema.nullable() }).strict(),
       hostUnavailableSchema,
     ]),
   },
@@ -147,8 +161,8 @@ export type HostMethod = keyof typeof hostContract & string;
 export type HostInput<M extends HostMethod> = z.input<(typeof hostContract)[M]["input"]>;
 export type HostOutput<M extends HostMethod> = z.output<(typeof hostContract)[M]["output"]>;
 
-// `root` and `hostId`: set when Vantage reads the workspace with git at its repository root instead of through bb. That
-// is a folder below the root, where bb's diffs come back empty, and a workspace bb's status did not answer in time.
+// `root` and `hostId`: the repository root and machine Vantage reads the workspace with git at. Every ref has them now;
+// one kept from Vantage 0.8 or earlier does not, and its reads ask for a refresh.
 const workspaceRefSchema = z.object({
   kind: z.literal("workspace"), environmentId: text, base: text.nullable(), root: absolutePath.optional(), hostId: text.optional(),
 }).strict();
@@ -226,6 +240,15 @@ export const worktreeSchema = z.object({
   onBase: z.boolean(),
   // Commits its threads made that are not ahead of the base: on the base branch itself, or already merged into it.
   threadCommits: z.array(commitSchema),
+  // The base asked for when a closer one was picked.
+  skippedBase: skippedBaseSchema.nullable().optional(),
+  // The commit HEAD points at, from the same read.
+  head: shaSchema.nullable().optional(),
+  // The branch was far ahead of its base and its threads made few of those commits, so only their work is shown and counted:
+  // `aheadCount` commits ahead of `base`, `kept` of them by its threads.
+  leftOut: z.object({ aheadCount: count, kept: count }).strict().nullable().optional(),
+  // The user chose to see the whole branch against the base asked for, with nothing picked or left out.
+  whole: z.boolean().optional(),
 }).strict();
 export type Worktree = z.infer<typeof worktreeSchema>;
 
@@ -348,6 +371,9 @@ export type SetReviewedInput = z.infer<typeof setReviewedInputSchema>;
 
 export const reviewedTag = (key: string): string => `vantage:reviewed:${key}`;
 
+export const setWholeInputSchema = z.object({ key: text.min(1), whole: z.boolean() }).strict();
+export type SetWholeInput = z.infer<typeof setWholeInputSchema>;
+
 export const rpcContract = defineContract({
   shell: { input: shellInputSchema, output: overviewSchema },
   overview: { input: overviewInputSchema, output: overviewSchema },
@@ -360,5 +386,8 @@ export const rpcContract = defineContract({
     output: z.record(text, reviewMarksSchema),
     keyTags: (key) => [reviewedTag(key)],
   },
-  setReviewed: { input: setReviewedInputSchema, output: reviewMarksSchema, invalidates: (input) => [reviewedTag(input.key)] },
+  // The server marks the key's tag stale once the marks are saved.
+  setReviewed: { input: setReviewedInputSchema, output: reviewMarksSchema },
+  // Shows one worktree's whole branch against the base bb asked for, or goes back to counting only its threads' work.
+  setWhole: { input: setWholeInputSchema, output: z.object({ ok: z.literal(true) }).strict() },
 });

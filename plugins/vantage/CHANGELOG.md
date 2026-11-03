@@ -2,6 +2,34 @@
 
 Notable changes to Vantage, newest first. Releases are tagged `vantage/vX.Y.Z` in this repository.
 
+## Unreleased
+
+### Added
+
+- A Worktrees section in bb's thread context card (bb 0.48.1, `threadContextCard` experiment): at most three child worktrees that changed something, waiting on you first, with their line counts, an "N more" row and one row for shared files that opens the overlaps page. bb shows the card beside the transcript only when the pane has room.
+- A line under each thread's row in bb's sidebar with its line counts and shared-file count, shown when bb's `threadRowMetadata` experiment and Organize → Rows → Metadata are on. A worktree's numbers go to its own thread only.
+- Four settings for what counts as a thread's work: "Compare with the closest base branch" (on), "Leave out branch history above this many commits" (50), "Share of those commits a thread must have made to see the whole branch" (10%) and "Fold untracked folders with more files than this" (200).
+- A review says when Vantage compared with another base than bb's, or left a branch's history out, with "Use master" or "Show all N" to see the whole branch and "Count only its work" to go back. The choice is kept per worktree.
+
+### Changed
+
+- Every worktree is read with git on its machine. Vantage compares it with whichever likely base its branch is fewest commits ahead of: the base bb records, that branch on origin, origin's default branch, origin/main or origin/master, or a base branch's own upstream. A checkout on `main` compared with a stale `master` no longer counts 2,794 commits, and a branch compared with a local `main` 122 commits behind origin no longer counts 504.
+- When a branch is far ahead of its base and its threads made few of those commits, only their commits and the uncommitted files are shown and counted.
+- An untracked folder with more files than the limit, or one holding a git repository such as a clone, is one entry that no count includes, with its first files on request.
+- A worktree's row, status and numbers belong to the thread nearest the tree's root; other threads in it, such as read-only reviewers, are named in its header.
+- The segment above the composer shows only while bb shows thread context there. Its numbers always show and its words take only the row's spare room, so it is about 60px in a full row; opened, it lists at most three lines instead of a list up to 256px tall.
+- The thread's Vantage tab opens on a strip of worktrees, the thread's own first, and on its own worktree, instead of a list to drill into. All changes is the strip's last chip.
+- One line names every file a worktree shares with others, instead of one strip per file and worktree. The scope switch's first button reads "This thread's work" or "Its work".
+
+### Removed
+
+- The Vantage button in the thread header; the SDK no longer has that slot. The card, the segment, the Info tab, the palette and the tab launcher open the tab.
+- Reading worktrees through bb's environment status and diff calls, and the 10-second fallback to git. SDK 0.6.104 removed those calls.
+
+### Compatibility
+
+- Needs bb 0.48.1 or later and builds with SDK 0.6.104. Without the thread context card experiment, Vantage uses the segment above the composer. Turning off bb's own changed-files summary (`bb plugin config bb--git set showGitChanges false`) leaves one summary per thread.
+
 ## 0.8.0 (2026-10-28)
 
 ### Changed

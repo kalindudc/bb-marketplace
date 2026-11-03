@@ -7,18 +7,18 @@ import type { FileChange, HostInput, HostMethod, HostOutput, Overview, OverviewT
 import { mapLimit } from "./limit";
 import { createRepoCache, planCached, type RepoCache } from "./repo-cache";
 import { createRootCache, type RootCache, type RootEntry } from "./root-cache";
-import { loadRepoFiles, loadWorkspaceDiff, loadWorkspaceStatus, recordedFile, recordedLiveFiles, type LiveFiles } from "./sources";
-import { attachThreadCommits } from "./thread-commits";
+import { loadRepoFiles, loadWorkspaceStatus, picksBase, recordedFile, recordedLiveFiles, type Counting, type LiveFiles } from "./sources";
+import { attachThreadCommits, leaveOutHistory } from "./thread-commits";
 import { findSharedFiles, loadingWorktrees, loadWorktrees } from "./worktrees";
 
 export type Environment = Awaited<ReturnType<PluginBbSdk["environments"]["get"]>>;
 export type HostCall = <M extends HostMethod>(
   method: M, input: HostInput<M>, options: { hostId: string; signal?: AbortSignal },
 ) => Promise<HostOutput<M>>;
-/** `slowWorkspaces`: environments bb's status did not answer in time, read with git from then on. */
+/** `counting`: the counting settings, the defaults when left out. `whole`: worktrees the user asked to see whole, by key. */
 export interface CollectDeps {
   sdk: PluginBbSdk; host: HostCall; edits: EditIndex; allOptions?: Omit<AllOptions, "now">; cache?: RepoCache; roots?: RootCache;
-  slowWorkspaces?: Set<string>;
+  counting?: Counting; whole?: ReadonlySet<string>;
 }
 
 export interface Touched { threadIds: Set<string>; rawPaths: Set<string>; records: EditRecord[] }
@@ -48,18 +48,20 @@ const isLive = (env: Environment): env is LiveEnvironment =>
 const isDestroyed = (env: Environment): boolean =>
   env.status === "destroyed" || env.lifecycle.phase === "destroyed" || env.path === null;
 const baseOf = (env: Environment): string | null => env.mergeBaseBranch ?? env.defaultBranch ?? null;
-// Vantage reads a workspace with git at its repository root when bb cannot: a folder below the root, where bb's diffs
-// come back empty, and a workspace bb's status did not answer in time.
-function workspaceRef(
-  env: LiveEnvironment, found: RootEntry | null | undefined, slow: boolean,
-): { ref: Extract<RepoRef, { kind: "workspace" }>; root: string; below: boolean } {
+// Vantage reads every workspace with git at its repository root, on its machine. A folder below the root is read there too,
+// so its paths are the repository's.
+function workspaceRef(env: LiveEnvironment, found: RootEntry | null | undefined): { ref: Extract<RepoRef, { kind: "workspace" }>; root: string; below: boolean } {
   const root = found?.root ?? env.path;
   const below = found != null && found.root !== null && found.relative !== null && found.relative !== "";
-  const base = baseOf(env);
-  const ref = below || slow
-    ? { kind: "workspace" as const, environmentId: env.id, base, root, hostId: env.hostId }
-    : { kind: "workspace" as const, environmentId: env.id, base };
-  return { ref, root, below };
+  return { ref: { kind: "workspace", environmentId: env.id, base: baseOf(env), root, hostId: env.hostId }, root, below };
+}
+
+// A worktree's own thread speaks for it: the one nearest the tree's root, such as the parent reviewers ran beside.
+function ownerFirst<T extends { threadIds: string[] }>(worktrees: readonly T[], threads: readonly ThreadSummary[]): T[] {
+  const depth = new Map(threads.map((thread) => [thread.id, thread.depth]));
+  return worktrees.map((worktree) => ({
+    ...worktree, threadIds: [...worktree.threadIds].sort((a, b) => (depth.get(a) ?? 0) - (depth.get(b) ?? 0)),
+  }));
 }
 
 export async function collectTree(
@@ -169,7 +171,7 @@ export function pathsToResolve(input: {
 export function planRepos(input: {
   threads: readonly ThreadSummary[]; environments: ReadonlyMap<string, Environment>;
   edits: ReadonlyMap<string, ThreadEdits>; roots: ResolvedRoots;
-  projects: readonly ProjectInfo[]; hosts: readonly HostInfo[]; slowWorkspaces?: ReadonlySet<string>;
+  projects: readonly ProjectInfo[]; hosts: readonly HostInfo[];
 }): { plans: RepoPlan[]; otherFiles: RepoPlan["touched"] } {
   const { threads, environments, edits, roots, projects } = input;
   const plans = new Map<string, RepoPlan>();
@@ -213,11 +215,11 @@ export function planRepos(input: {
     if (env === undefined) continue;
     const base = baseOf(env);
     if (isLive(env)) {
-      const { ref, root, below } = workspaceRef(env, resolved(env.hostId, env.path), input.slowWorkspaces?.has(env.id) ?? false);
+      const { ref, root, below } = workspaceRef(env, resolved(env.hostId, env.path));
       const key = `${env.hostId}:${root}`;
       const shared = plans.get(key);
       // When an environment below the repository root and one at the root share a repository, the root one speaks for it.
-      if (shared !== undefined && shared.ref.kind === "workspace" && shared.ref.root !== undefined && !below) shared.ref = ref;
+      if (shared !== undefined && shared.ref.kind === "workspace" && !below) shared.ref = ref;
       const plan = open(key, () => ({
         key, ref, label: projectName(env) ?? posix.basename(root), projectId: env.projectId, root, hostId: env.hostId, threadIds: [], touched: new Map(),
       }), thread.id);
@@ -350,7 +352,8 @@ function toRepo(plan: RepoPlan, loaded: LiveFiles | { unavailable: string }, hos
   }
   files.sort(byPath);
   others.sort(byPath);
-  const totals = files.reduce((sum, file) => (file.status === "clean" ? sum : {
+  // An agent's recorded edit with no change now, and a folded untracked folder, are listed but not counted.
+  const totals = files.reduce((sum, file) => (file.status === "clean" || file.folder !== undefined ? sum : {
     files: sum.files + 1, additions: sum.additions + (file.additions ?? 0), deletions: sum.deletions + (file.deletions ?? 0),
   }), { files: 0, additions: 0, deletions: 0 });
   return {
@@ -413,20 +416,18 @@ async function resolveMissing(
 }
 
 // Starts the git reads every live workspace needs, so they run while the edit index and the root lookups do.
-// Later phases ask the cache for the same loads and share these promises.
+// Later phases ask the cache for the same loads and share these promises. A folder below its repository root is only
+// known as one once its root is cached; until then this read is of the folder and is not shared.
 function startWorkspaceLoads(
-  deps: CollectDeps, threads: readonly ThreadSummary[], environments: ReadonlyMap<string, Environment>, scope: Scope, signal?: AbortSignal,
+  deps: CollectDeps, threads: readonly ThreadSummary[], environments: ReadonlyMap<string, Environment>, signal?: AbortSignal,
 ): Promise<unknown> {
   return mapLimit([...environments.values()].filter(isLive), FETCH_CONCURRENCY, async (env) => {
-    // A folder below its repository root is only known as one once its root is cached; until then its first load asks bb.
-    const { ref, root } = workspaceRef(env, deps.roots?.peek(env.hostId, env.path), deps.slowWorkspaces?.has(env.id) ?? false);
-    const at = { hostId: env.hostId, root };
+    const known = deps.roots?.peek(env.hostId, env.path);
+    if (known === undefined) return;
+    const { ref, root } = workspaceRef(env, known);
     const threadIds = threads.filter((thread) => thread.environmentId === env.id).map((thread) => thread.id);
     // A failed read is not cached, so the phase that needs it asks again and reports the failure itself.
-    await Promise.all([
-      loadWorkspaceStatus(deps, ref, threadIds, signal, at),
-      scope === "branch" && ref.base !== null && ref.root === undefined ? loadWorkspaceDiff(deps, { ...ref, base: ref.base }, threadIds, signal, at) : undefined,
-    ]).catch(() => undefined);
+    await loadWorkspaceStatus(deps, ref, threadIds, signal, picksBase(deps, `${env.hostId}:${root}`)).catch(() => undefined);
   });
 }
 
@@ -435,9 +436,7 @@ export async function buildOverview(
 ): Promise<Overview> {
   const { target } = input;
   // A build with no shared cache still shares reads between its own phases.
-  const scoped = {
-    ...deps, cache: deps.cache ?? createRepoCache(), roots: deps.roots ?? createRootCache(), slowWorkspaces: deps.slowWorkspaces ?? new Set<string>(),
-  };
+  const scoped = { ...deps, cache: deps.cache ?? createRepoCache(), roots: deps.roots ?? createRootCache() };
   const { sdk, edits } = scoped;
   const warnings: string[] = [];
   const listed = listProjectsAndHosts(sdk, warnings, signal);
@@ -456,7 +455,7 @@ export async function buildOverview(
   const hostName = (hostId: string) => hosts.find((entry) => entry.id === hostId)?.name ?? hostId;
   const failedHosts = new Set<string>();
 
-  void startWorkspaceLoads(scoped, tree.threads, tree.environments, input.scope, signal);
+  void startWorkspaceLoads(scoped, tree.threads, tree.environments, signal);
   const noEdits = new Map<string, ThreadEdits>();
   const [editList] = await Promise.all([
     mapLimit(tree.threads, FETCH_CONCURRENCY, async (thread) => {
@@ -488,30 +487,27 @@ export async function buildOverview(
     })));
   }
 
-  const { plans, otherFiles } = planRepos({
-    threads: tree.threads, environments: tree.environments, edits: editMap, roots, projects, hosts, slowWorkspaces: scoped.slowWorkspaces,
-  });
-  const [settled, loadedWorktrees] = await Promise.all([
-    Promise.allSettled(plans.map((plan) => planCached(scoped.cache, plan, input.scope, () => loadRepoFiles(scoped, plan, input.scope, signal)))),
-    loadWorktrees(scoped, plans, tree.environments, new Map(hosts.map((host) => [host.id, host.name])), signal),
-  ]);
-  // A workspace bb was too slow for during this build is read with git from now on, and so are its diffs.
-  const readWithGit = new Map<string, Extract<RepoRef, { kind: "workspace" }>>();
-  for (const plan of plans) {
-    if (plan.ref.kind !== "workspace" || plan.ref.root !== undefined || plan.root === null || plan.hostId === null) continue;
-    if (!scoped.slowWorkspaces.has(plan.ref.environmentId)) continue;
-    plan.ref = { ...plan.ref, root: plan.root, hostId: plan.hostId };
-    readWithGit.set(plan.key, plan.ref);
-  }
+  const { plans, otherFiles } = planRepos({ threads: tree.threads, environments: tree.environments, edits: editMap, roots, projects, hosts });
+  // The worktrees go first: each decides the base its repository's committed changes are read against.
+  const loadedWorktrees = await loadWorktrees(scoped, plans, tree.environments, new Map(hosts.map((host) => [host.id, host.name])), signal);
   const running = new Set(tree.threads.filter((thread) => RUNNING.has(thread.status)).map((thread) => thread.id));
-  const attributed = await attachThreadCommits(scoped, loadedWorktrees, { edits: editMap, running, now: Date.now() }, signal);
-  warnings.push(...attributed.warnings);
-  const worktrees = attributed.worktrees.map((worktree) => {
-    const ref = readWithGit.get(worktree.key);
-    return ref === undefined ? worktree : { ...worktree, ref };
-  });
+  const attribution = { edits: editMap, running, now: Date.now() };
+  const trimmed = await leaveOutHistory(scoped, loadedWorktrees, attribution, signal);
+  const attributed = await attachThreadCommits(scoped, trimmed.worktrees, attribution, signal);
+  warnings.push(...trimmed.warnings, ...attributed.warnings);
+  const worktrees = ownerFirst(attributed.worktrees, tree.threads);
   const madeIn = new Map(worktrees.map((worktree) => [worktree.key, worktree.threadCommits]));
-  const repos = plans.map((plan, index): Repo => {
+  const effectiveBase = new Map(worktrees.map((worktree) => [worktree.key, worktree.ref.base]));
+  // A repository's uncommitted files come from its worktree row's own read; its committed ones from the base that row chose.
+  const withBase = (plan: RepoPlan): RepoPlan => (plan.ref.kind === "recorded" || !effectiveBase.has(plan.key)
+    ? plan : { ...plan, ref: { ...plan.ref, base: effectiveBase.get(plan.key)! } });
+  const settled = await Promise.allSettled(plans.map((plan) => {
+    const read = input.scope === "branch" ? withBase(plan) : plan;
+    const variant = `${input.scope}\0${read.ref.kind === "recorded" ? "" : (read.ref.base ?? "")}\0${picksBase(scoped, plan.key)}`;
+    return planCached(scoped.cache, read, variant, () => loadRepoFiles(scoped, read, input.scope, signal, picksBase(scoped, plan.key)));
+  }));
+  const repos = plans.map((original, index): Repo => {
+    const plan = withBase(original);
     const outcome = settled[index]!;
     const name = plan.hostId === null ? null : hostName(plan.hostId);
     if (outcome.status === "rejected") return toRepo(plan, { unavailable: errorMessage(outcome.reason) }, name, null);
@@ -558,9 +554,7 @@ export async function buildShell(deps: CollectDeps, input: ShellInput, signal?: 
   const roots: ResolvedRoots = new Map([...wanted].map(([hostId, paths]) => [
     hostId, new Map(paths.map((path) => [path, deps.roots?.peek(hostId, path) ?? { root: path, relative: "" }])),
   ]));
-  const planned = planRepos({
-    threads: tree.threads, environments: tree.environments, edits, roots, projects, hosts, slowWorkspaces: deps.slowWorkspaces,
-  }).plans;
+  const planned = planRepos({ threads: tree.threads, environments: tree.environments, edits, roots, projects, hosts }).plans;
   const plans = planned.filter((plan) => plan.ref.kind !== "checkout" || plan.ref.worked === true);
   const hostNames = new Map(hosts.map((host) => [host.id, host.name]));
   return {
@@ -570,7 +564,7 @@ export async function buildShell(deps: CollectDeps, input: ShellInput, signal?: 
     scope: "uncommitted",
     threads: tree.threads,
     repos: archivedLast(plans.map((plan) => loadingRepo(plan, tree.environments, plan.hostId === null ? null : (hostNames.get(plan.hostId) ?? plan.hostId))), tree.threads),
-    worktrees: archivedLast(loadingWorktrees(plans, tree.environments, hostNames), tree.threads),
+    worktrees: archivedLast(ownerFirst(loadingWorktrees(plans, tree.environments, hostNames), tree.threads), tree.threads),
     sharedFiles: [],
     otherFiles: [],
     environmentIds: [...tree.environments.keys()],

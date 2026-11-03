@@ -80,6 +80,7 @@ async function mount(subPath: string, options: Options = {}, part: "page" | "sid
     }),
     send: vi.fn(async (_input: { threadId: string; mode: string; input: unknown[] }) => ({ ok: true, delivery: "sent" })),
     commitFiles: vi.fn(async () => ({ files: [fileChange({ path: "README.md", additions: 2, deletions: 0 })] })),
+    setWhole: vi.fn(async (_input: { key: string; whole: boolean }) => ({ ok: true })),
   };
   const registration = part === "page" ? page : part === "sidebar" ? { component: page.experimental_sidebar! } : app.tabs.find((tab) => tab.id === "agent")!;
   const slot = renderSlot<PluginNavPanelProps, typeof rpcContract>(registration as never, { subPath }, {
@@ -93,6 +94,7 @@ async function mount(subPath: string, options: Options = {}, part: "page" | "sid
       commitFiles: calls.commitFiles,
       reviewed: ({ keys }: { keys: string[] }) => Object.fromEntries(keys.map((entry) => [entry, stored[entry] ?? {}])),
       setReviewed: calls.setReviewed,
+      setWhole: calls.setWhole,
     } as never,
     sdk: { subscribe: (() => () => {}) as never, threads: { send: calls.send as never, retry: vi.fn() as never }, terminals: { create: vi.fn() as never } },
     sidebarThreads: { status: "ready", threads: SIDEBAR },
@@ -215,7 +217,7 @@ describe("the page", () => {
     const committedOnly = worktree({ ...CHILD, uncommitted: [] });
     const { slot } = await mount(`tree/thr_root/worktree/${key(CHILD.key)}`, { overview: tree({ worktrees: [ROOT, committedOnly, QUIET] }) });
     const view = within(slot.container);
-    await waitFor(() => expect(view.getByRole("button", { name: /^All changes/ }).getAttribute("aria-pressed")).toBe("true"));
+    await waitFor(() => expect(view.getByRole("button", { name: /^Its work/ }).getAttribute("aria-pressed")).toBe("true"));
     fireEvent.click(view.getByRole("button", { name: /^Not committed/ }));
     expect(view.getByRole("button", { name: /^Not committed/ }).getAttribute("aria-pressed")).toBe("true");
     expect(view.getByText("Nothing uncommitted.")).toBeTruthy();
@@ -233,7 +235,7 @@ describe("the page", () => {
     expect(view.getByRole("button", { name: "src/lib folder" }).getAttribute("aria-expanded")).toBe("false");
     expect(treeFiles(slot.container)).toEqual([]);
     fireEvent.click(view.getByRole("button", { name: "src/lib folder" }));
-    fireEvent.click(view.getByRole("button", { name: /^All changes/ }));
+    fireEvent.click(view.getByRole("button", { name: /^Its work/ }));
     expect(treeFiles(slot.container)).toEqual(["src/lib/round.js", "src/money.js", "README.md"]);
   });
 
@@ -377,11 +379,81 @@ describe("the page", () => {
   it("warns about a file another worktree also changed, and offers to ask for a rebase", async () => {
     const { slot } = await mount(`tree/thr_root/worktree/${key(CHILD.key)}`);
     const view = within(slot.container);
-    const strip = (await view.findAllByText(/is also changed in/))[0]!.closest("[data-strip]") as HTMLElement;
-    expect(strip.textContent).toContain("README.md");
+    const strip = (await view.findAllByText(/also changed in/))[0]!.closest("[data-strip]") as HTMLElement;
+    expect(strip.textContent).toMatch(/^1 file also changed in .+, so merging may conflict\./);
+    expect(slot.container.querySelectorAll("[data-strip='warning']")).toHaveLength(1);
+    expect(strip.querySelector("[title]")?.getAttribute("title")).toBe("README.md");
     fireEvent.click(within(strip).getByRole("button", { name: /Ask to rebase onto/ }));
     expect(comments.get(CHILD.key)).toHaveLength(1);
     expect(comments.get(CHILD.key)[0]).toMatchObject({ path: "README.md", part: "committed" });
+  });
+
+  it("says which base it compared with when it picked a closer one, and offers the one bb records", async () => {
+    const picked = tree({ worktrees: [ROOT, { ...CHILD, base: "origin/main", skippedBase: { name: "master", aheadCount: 2794 }, aheadCount: 1, behindCount: 0 }, QUIET] });
+    const { slot, calls } = await mount(`tree/thr_root/worktree/${key(CHILD.key)}`, { overview: picked });
+    const view = within(slot.container);
+    const strip = (await view.findByText(/which would count/)).closest("[data-strip]") as HTMLElement;
+    expect(strip.textContent).toBe("Compared with origin/main, not master, which would count 2794 commits this branch did not add.Use master");
+    expect(slot.container.querySelector("[data-base-line]")?.textContent).toBe("vs origin/main · 1 ahead · 0 behind");
+    fireEvent.click(within(strip).getByRole("button", { name: "Use master" }));
+    await waitFor(() => expect(calls.setWhole).toHaveBeenCalledWith({ key: CHILD.key, whole: true }));
+  });
+
+  it("says when it left a branch's history out, and shows the whole branch when asked", async () => {
+    const trimmed = tree({ worktrees: [ROOT, { ...CHILD, leftOut: { aheadCount: 612, kept: 2 }, aheadCount: 2, behindCount: 3 }, QUIET] });
+    const { slot, calls } = await mount(`tree/thr_root/worktree/${key(CHILD.key)}`, { overview: trimmed });
+    const view = within(slot.container);
+    const strip = (await view.findByText(/ahead of/)).closest("[data-strip]") as HTMLElement;
+    expect(strip.textContent).toBe("This branch is 612 commits ahead of origin/main, and its threads made 2 of them. Showing those 2 and the uncommitted files.Show all 612");
+    expect(slot.container.querySelector("[data-base-line]")?.textContent).toBe("vs origin/main · 612 ahead · 3 behind");
+    fireEvent.click(within(strip).getByRole("button", { name: "Show all 612" }));
+    await waitFor(() => expect(calls.setWhole).toHaveBeenCalledWith({ key: CHILD.key, whole: true }));
+  });
+
+  it("says so when the whole-branch choice could not be saved, and lets the button be clicked again", async () => {
+    const { toast } = await import("sonner");
+    const picked = tree({ worktrees: [ROOT, { ...CHILD, skippedBase: { name: "master", aheadCount: 2794 } }, QUIET] });
+    const { slot, calls } = await mount(`tree/thr_root/worktree/${key(CHILD.key)}`, { overview: picked });
+    calls.setWhole.mockRejectedValueOnce(new Error("kv is down"));
+    const button = await within(slot.container).findByRole("button", { name: "Use master" });
+    fireEvent.click(button);
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("kv is down")));
+    expect(button.hasAttribute("disabled")).toBe(false);
+  });
+
+  it("offers a rebase onto the worktree it shares the most files with when it shares files with several", async () => {
+    const other = worktree({ key: "host_1:/work/other", threadIds: ["thr_quiet"], root: "/work/other", label: "Shop", uncommitted: [fileChange({ path: "README.md" })] });
+    const shared = tree({ worktrees: [ROOT, CHILD, other], sharedFiles: [sharedFile({ projectId: "proj_1", path: "README.md", worktreeKeys: [ROOT.key, CHILD.key, other.key] })] });
+    const { slot } = await mount(`tree/thr_root/worktree/${key(CHILD.key)}`, { overview: shared });
+    const strip = (await within(slot.container).findAllByText(/also changed in/))[0]!.closest("[data-strip]") as HTMLElement;
+    expect(strip.textContent).toMatch(/1 file also changed in .+, and 1 in /);
+    expect(within(strip).getByRole("button", { name: /Ask to rebase onto/ })).toBeTruthy();
+  });
+
+  it("offers to count only its threads' work again for a worktree shown whole", async () => {
+    const whole = tree({ worktrees: [ROOT, { ...CHILD, whole: true }, QUIET] });
+    const { slot, calls } = await mount(`tree/thr_root/worktree/${key(CHILD.key)}`, { overview: whole });
+    fireEvent.click(await within(slot.container).findByRole("button", { name: "Count only its work" }));
+    await waitFor(() => expect(calls.setWhole).toHaveBeenCalledWith({ key: CHILD.key, whole: false }));
+  });
+
+  it("shows a folded untracked folder as one line no count includes, with its files on request", async () => {
+    const folder = fileChange({ path: "vendor/", status: "untracked", untracked: true, additions: null, deletions: null, folder: { files: 3000, repository: false, sample: ["vendor/a.js", "vendor/b.js"] } });
+    const folded = tree({ worktrees: [ROOT, { ...CHILD, uncommitted: [...CHILD.uncommitted, folder] }, QUIET] });
+    const { slot, calls } = await mount(`tree/thr_root/worktree/${key(CHILD.key)}`, { overview: folded });
+    const view = within(slot.container);
+    const row = await waitFor(() => {
+      const found = slot.container.querySelector("[data-folder='vendor/']");
+      if (found === null) throw new Error("no folder yet");
+      return found as HTMLElement;
+    });
+    expect(row.textContent).toContain("untracked · 3000 files · not counted");
+    expect(slot.container.querySelector("[data-file-card='vendor/']")).toBeNull();
+    expect(view.getByRole("button", { name: /^Its work/ }).textContent).toBe("Its work2");
+    fireEvent.click(within(row).getByRole("button", { name: "Show files" }));
+    expect(row.textContent).toContain("vendor/a.js");
+    expect(row.textContent).toContain("and 2998 more files");
+    expect(calls.patch.mock.calls.some(([input]) => input.path === "vendor/")).toBe(false);
   });
 
   it("compares an overlapping file on the overlaps page and guesses whether it will conflict", async () => {

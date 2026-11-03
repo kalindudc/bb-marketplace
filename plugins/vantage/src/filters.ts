@@ -1,4 +1,5 @@
 import type { FileChange, Overview, Repo, Worktree } from "./contract";
+import { fileCount } from "./counted";
 
 export interface PageFilter { text: string; projectId: string | null; changedOnly: boolean }
 export const DEFAULT_FILTER: PageFilter = { text: "", projectId: null, changedOnly: true };
@@ -25,7 +26,8 @@ export function filterWorktrees(overview: Overview, filter: PageFilter): Worktre
   const titles = new Map(overview.threads.map((thread) => [thread.id, thread.title]));
   return overview.worktrees.filter((worktree) => {
     if (filter.projectId !== null && worktree.projectId !== filter.projectId) return false;
-    const changed = worktree.uncommitted.length + worktree.committed.length > 0 || worktree.state === "unavailable" || maybeChanged(overview, worktree);
+    // A folded untracked folder alone is not a change to review.
+    const changed = fileCount(worktree) > 0 || worktree.state === "unavailable" || maybeChanged(overview, worktree);
     if (filter.changedOnly && !changed) return false;
     return matches([
       ...worktree.threadIds.map((id) => titles.get(id) ?? ""),

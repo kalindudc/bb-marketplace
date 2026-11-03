@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { experimental_useRpcKeyedQuery, experimental_useRpcMutation } from "@get-bb/plugin-sdk/app";
 import { rpcContract, type FileChange, type ReviewMarks, type Worktree } from "./contract";
+import { countedFiles } from "./counted";
 
 // Which change of a file a mark is for: the uncommitted one, the one committed on the branch, or one commit's.
 export type Part = "uncommitted" | "committed" | `commit:${string}`;
@@ -15,10 +16,11 @@ export const markId = (part: Part, path: string): string => `${part}\0${path}`;
 export const signature = (file: FileChange): string =>
   [file.status, file.additions ?? "", file.deletions ?? "", file.previousPath ?? ""].join(":");
 
+// The parts a person reviews: a folded untracked folder has no tick, so it never holds a worktree back from done.
 export function worktreeParts(worktree: Pick<Worktree, "uncommitted" | "committed">): FilePart[] {
   return [
-    ...worktree.uncommitted.map((file) => ({ part: "uncommitted" as const, file })),
-    ...worktree.committed.map((file) => ({ part: "committed" as const, file })),
+    ...countedFiles(worktree.uncommitted).map((file) => ({ part: "uncommitted" as const, file })),
+    ...countedFiles(worktree.committed).map((file) => ({ part: "committed" as const, file })),
   ];
 }
 
@@ -41,6 +43,12 @@ export function useReviewMarks(keys: readonly string[]): Record<string, ReviewMa
 }
 
 export type SetReviewed = (key: string, parts: readonly FilePart[], reviewed: boolean) => Promise<void>;
+
+// Shows a worktree's whole branch against the base bb records, or goes back to counting only its threads' work.
+export function useSetWhole(): (key: string, whole: boolean) => Promise<unknown> {
+  const { mutate } = experimental_useRpcMutation({ contract: rpcContract, method: "setWhole" });
+  return useCallback((key, whole) => mutate({ key, whole }), [mutate]);
+}
 
 export function useSetReviewed(): SetReviewed {
   const { mutate } = experimental_useRpcMutation({

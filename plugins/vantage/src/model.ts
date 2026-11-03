@@ -56,6 +56,11 @@ export function firstToOpen(rows: readonly Row[]): Row | null {
 }
 const ORDER: Record<Bucket, number> = { needs: 0, review: 1, working: 2, reviewed: 3, unavailable: 4, archived: 5 };
 
+const URGENCY: Record<Bucket, number> = { needs: 0, unavailable: 1, review: 2, working: 3, reviewed: 4, archived: 5 };
+// In the order a person should look at them: waiting on you, unreadable, ready, working, done; within each, one that shares a file first.
+export const urgentFirst = (rows: readonly Row[]): Row[] => [...rows].sort((a, b) =>
+  URGENCY[a.bucket] - URGENCY[b.bucket] || Number(b.overlaps.length > 0) - Number(a.overlaps.length > 0));
+
 const sum = (files: readonly FileChange[], field: "additions" | "deletions"): number => files.reduce((total, file) => total + (file[field] ?? 0), 0);
 export const plural = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? "" : "s"}`;
 

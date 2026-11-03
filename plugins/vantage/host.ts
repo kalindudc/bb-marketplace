@@ -7,8 +7,9 @@ import { promisify } from "node:util";
 import { experimental_defineHostEntry } from "@get-bb/plugin-sdk";
 import { hostContract, type GitFile, type HostInput, type HostOutput, type HostTarget, type HostUnavailable } from "./src/contract";
 import {
-  EMPTY_TREE, FILE_LIMIT, LOG_FORMAT, REFLOG_FORMAT, commitsInWindows, isSafeRef, isSafeRelativePath, isSafeSha, parseLog, parseNameStatusZ,
-  parseNumstatZ, parseReflog, parseStatusZ, splitToplevel, statusFromCode, truncatePatch, type GitEntry, type NumstatEntry,
+  EMPTY_TREE, FILE_LIMIT, LOG_FORMAT, REFLOG_FORMAT, closestBase, commitsInWindows, foldUntracked, isSafeRef, isSafeRelativePath, isSafeSha,
+  parseLog, parseNameStatusZ, parseNumstatZ, parseReflog, parseStatusZ, splitToplevel, statusFromCode, truncatePatch, type GitEntry,
+  type NumstatEntry, type UntrackedFolder,
 } from "./src/git";
 import { mapLimit } from "./src/limit";
 
@@ -20,6 +21,9 @@ const BINARY_SNIFF_BYTES = 8000;
 const COMMIT_LIMIT = 100;
 const SIDE_LIMIT = 1024 * 1024;
 const REFLOG_LIMIT = 5000;
+const DEFAULT_FOLDER_LIMIT = 200;
+// A branch with one of these names is a base itself, so its own upstream is a base to compare it with.
+const BASE_NAMES = new Set(["main", "master", "trunk", "develop"]);
 
 class Unavailable extends Error {
   constructor(readonly reason: HostUnavailable["reason"], message: string) {
@@ -108,6 +112,64 @@ async function currentBranch(root: string, signal?: AbortSignal): Promise<string
   const result = await runGit(root, ["rev-parse", "--abbrev-ref", "HEAD"], signal);
   const name = result.stdout.trim();
   return result.code === 0 && name !== "" && name !== "HEAD" ? name : null;
+}
+
+async function headSha(root: string, signal?: AbortSignal): Promise<string | null> {
+  const result = await runGit(root, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"], signal);
+  const sha = result.stdout.trim();
+  return result.code === 0 && isSafeSha(sha) ? sha : null;
+}
+
+async function upstreamOf(root: string, signal?: AbortSignal): Promise<string | null> {
+  const result = await runGit(root, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], signal);
+  const name = result.stdout.trim();
+  return result.code === 0 && isSafeRef(name) ? name : null;
+}
+
+// The bases a checkout may have been started from: the one asked for and its copy on origin, origin's default branch,
+// origin/main and origin/master, and for a branch that is a base itself, its upstream.
+async function baseCandidates(root: string, requested: string | null, branch: string | null, signal?: AbortSignal): Promise<string[]> {
+  const names: string[] = [];
+  const add = (name: string | null) => { if (name !== null && isSafeRef(name) && !names.includes(name)) names.push(name); };
+  add(requested);
+  if (requested !== null && !requested.startsWith("origin/")) add(`origin/${requested}`);
+  add(await defaultBase(root, signal));
+  add("origin/main");
+  add("origin/master");
+  const short = (name: string) => name.replace(/^origin\//, "");
+  if (branch !== null && (BASE_NAMES.has(branch) || names.some((name) => short(name) === branch))) {
+    add(await upstreamOf(root, signal));
+    add(`origin/${branch}`);
+  }
+  return names;
+}
+
+interface ChosenBase { base: string; commit: string; skipped: { name: string; aheadCount: number } | null }
+
+// With `pick`, the candidate the fewest commits on HEAD are ahead of, so a stale or local base branch does not count
+// every commit made upstream since then as this checkout's work. A base that does not resolve is never picked.
+async function chooseBase(root: string, requested: string | null, pick: boolean, branch: string | null, signal?: AbortSignal): Promise<ChosenBase | null> {
+  if (!pick) {
+    const found = await optionalMergeBase(root, requested, signal);
+    return found === null ? null : { ...found, skipped: null };
+  }
+  if (requested !== null) checkRef(requested);
+  const names = await baseCandidates(root, requested, branch, signal);
+  const measured = await Promise.all(names.map(async (name) => {
+    if (!(await hasCommit(root, name, signal))) return null;
+    const count = await runGit(root, ["rev-list", "--count", `${name}..HEAD`], signal);
+    const ahead = Number(count.stdout.trim());
+    return count.code === 0 && Number.isInteger(ahead) ? { name, ahead } : null;
+  }));
+  const usable = measured.filter((entry) => entry !== null);
+  const best = closestBase(usable);
+  if (best === null) return null;
+  const mergeBase = await runGit(root, ["merge-base", "HEAD", best.name], signal);
+  const commit = mergeBase.stdout.trim();
+  if (mergeBase.code !== 0 || commit === "") return null;
+  const asked = requested === null ? undefined : usable.find((entry) => entry.name === requested);
+  const skipped = asked !== undefined && asked.name !== best.name && asked.ahead > best.ahead ? { name: asked.name, aheadCount: asked.ahead } : null;
+  return { base: best.name, commit, skipped };
 }
 
 async function headTree(root: string, signal?: AbortSignal): Promise<string> {
@@ -202,28 +264,54 @@ async function capped(root: string, entries: GitEntry[], stats: ReadonlyMap<stri
 
 const STATUS_ARGS = ["status", "--porcelain=v1", "-z", "--untracked-files=all"] as const;
 
-async function uncommittedFiles(root: string, signal?: AbortSignal): Promise<{ files: GitFile[]; truncated: boolean }> {
+const folderFile = (folder: UntrackedFolder): GitFile => ({
+  path: folder.path, previousPath: null, status: "untracked", additions: null, deletions: null, binary: false,
+  folder: { files: folder.files, repository: folder.repository, sample: folder.sample },
+});
+
+// Untracked folders too big to read file by file, or holding a repository of their own, become one entry each.
+async function withFolders(
+  root: string, entries: GitEntry[], limit: number, signal?: AbortSignal,
+): Promise<{ entries: GitEntry[]; folders: GitFile[] }> {
+  if (!entries.some((entry) => entry.code === "??")) return { entries, folders: [] };
+  const listing = await mustGit(root, ["ls-files", "--others", "--exclude-standard", "--directory", "--no-empty-directory", "-z"], signal);
+  const folded = foldUntracked(entries, listing.split("\0").filter((path) => path.endsWith("/")), limit);
+  return { entries: folded.entries, folders: folded.folders.map(folderFile) };
+}
+
+async function cappedWithFolders(
+  root: string, entries: GitEntry[], stats: ReadonlyMap<string, NumstatEntry>, limit: number, signal?: AbortSignal,
+): Promise<{ files: GitFile[]; truncated: boolean }> {
+  const folded = await withFolders(root, entries, limit, signal);
+  const { files, truncated } = await capped(root, folded.entries, stats);
+  return { files: [...files, ...folded.folders].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)), truncated };
+}
+
+async function uncommittedFiles(root: string, limit: number, signal?: AbortSignal): Promise<{ files: GitFile[]; truncated: boolean }> {
   const tree = await headTree(root, signal);
   const [status, numstat] = await Promise.all([
     mustGit(root, STATUS_ARGS, signal),
     mustGit(root, ["diff", "--numstat", "-z", "-M", tree], signal),
   ]);
-  return capped(root, parseStatusZ(status), parseNumstatZ(numstat));
+  return cappedWithFolders(root, parseStatusZ(status), parseNumstatZ(numstat), limit, signal);
 }
 
-async function committedFiles(root: string, revisions: readonly string[], untracked: boolean, signal?: AbortSignal): Promise<{ files: GitFile[]; truncated: boolean }> {
+async function committedFiles(
+  root: string, revisions: readonly string[], untracked: boolean, signal?: AbortSignal, limit = DEFAULT_FOLDER_LIMIT,
+): Promise<{ files: GitFile[]; truncated: boolean }> {
   const [nameStatus, numstat, status] = await Promise.all([
     mustGit(root, ["diff", "--name-status", "-z", "-M", ...revisions], signal),
     mustGit(root, ["diff", "--numstat", "-z", "-M", ...revisions], signal),
     untracked ? mustGit(root, STATUS_ARGS, signal) : Promise.resolve(""),
   ]);
   const entries = [...parseNameStatusZ(nameStatus), ...parseStatusZ(status).filter((entry) => entry.code === "??")];
-  return capped(root, entries, parseNumstatZ(numstat));
+  return untracked ? cappedWithFolders(root, entries, parseNumstatZ(numstat), limit, signal) : capped(root, entries, parseNumstatZ(numstat));
 }
 
 async function repoFiles(input: HostInput<"repoFiles">, signal: AbortSignal): Promise<HostOutput<"repoFiles">> {
   return guard(async () => {
     const { root, target } = input;
+    const limit = input.folderLimit ?? DEFAULT_FOLDER_LIMIT;
     await verifyRoot(root, signal);
     if (target.type === "range") {
       const range = await resolveRange(root, target.base, target.head, signal);
@@ -251,11 +339,11 @@ async function repoFiles(input: HostInput<"repoFiles">, signal: AbortSignal): Pr
     const branch = await currentBranch(root, signal);
     const mergeBase = target.type === "merge-base" ? await resolveMergeBase(root, target.base, signal) : null;
     if (mergeBase === null) {
-      const { files, truncated } = await uncommittedFiles(root, signal);
+      const { files, truncated } = await uncommittedFiles(root, limit, signal);
       return { outcome: "available" as const, branch, base: null, aheadCount: null, behindCount: null, commits: [], files, truncated };
     }
     const [{ files, truncated }, ahead] = await Promise.all([
-      committedFiles(root, [mergeBase.commit], true, signal),
+      committedFiles(root, [mergeBase.commit], true, signal, limit),
       mustGit(root, ["rev-list", "--count", `${mergeBase.commit}..HEAD`], signal),
     ]);
     return {
@@ -269,12 +357,14 @@ async function checkoutStatus(input: HostInput<"checkoutStatus">, signal: AbortS
   return guard(async () => {
     const { root } = input;
     await verifyRoot(root, signal);
-    const [branch, uncommitted, mergeBase] = await Promise.all([
-      currentBranch(root, signal), uncommittedFiles(root, signal), optionalMergeBase(root, input.base, signal),
+    const branch = await currentBranch(root, signal);
+    const [head, uncommitted, mergeBase] = await Promise.all([
+      headSha(root, signal), uncommittedFiles(root, input.folderLimit ?? DEFAULT_FOLDER_LIMIT, signal),
+      chooseBase(root, input.base, input.pick === true, branch, signal),
     ]);
     if (mergeBase === null) {
       return {
-        outcome: "available" as const, branch, base: null, aheadCount: null, behindCount: null, commits: [],
+        outcome: "available" as const, branch, head, base: null, skippedBase: null, aheadCount: null, behindCount: null, commits: [],
         uncommitted: uncommitted.files, committed: [], truncated: uncommitted.truncated,
       };
     }
@@ -285,10 +375,26 @@ async function checkoutStatus(input: HostInput<"checkoutStatus">, signal: AbortS
     ]);
     const [behind, ahead] = counts.trim().split(/\s+/).map(Number);
     return {
-      outcome: "available" as const, branch, base: mergeBase.base, aheadCount: ahead ?? null, behindCount: behind ?? null,
+      outcome: "available" as const, branch, head, base: mergeBase.base, skippedBase: mergeBase.skipped, aheadCount: ahead ?? null, behindCount: behind ?? null,
       commits: parseLog(log), uncommitted: uncommitted.files, committed: committed.files, truncated: uncommitted.truncated || committed.truncated,
     };
   });
+}
+
+// The commit just before the oldest of these: the parent of their common ancestor when it is one of them, the ancestor
+// itself when it is not. Null for a root commit, which has nothing before it, and when a merge lies between it and HEAD:
+// a diff from there would bring in everything the merge did, so those threads' work cannot be shown on its own.
+async function sinceCommit(root: string, shas: readonly string[], signal: AbortSignal): Promise<string | null> {
+  const common = shas.length === 1 ? shas[0]! : (await runGit(root, ["merge-base", "--octopus", ...shas], signal)).stdout.trim();
+  if (!isSafeSha(common)) return null;
+  let since = common;
+  if (shas.includes(common)) {
+    const parent = await runGit(root, ["rev-parse", "--verify", "--quiet", `${common}^`], signal);
+    since = parent.stdout.trim();
+    if (parent.code !== 0 || !isSafeSha(since)) return null;
+  }
+  const merges = await runGit(root, ["rev-list", "--merges", "--count", `${since}..HEAD`], signal);
+  return merges.code === 0 && merges.stdout.trim() === "0" ? since : null;
 }
 
 // A checkout with no reflog, such as one with no commits yet, has no commits to find.
@@ -297,14 +403,18 @@ async function threadCommits(input: HostInput<"threadCommits">, signal: AbortSig
     const { root, windows } = input;
     await verifyRoot(root, signal);
     const reflog = await runGit(root, ["log", "-g", "--date=unix", `--format=${REFLOG_FORMAT}`, "-n", String(REFLOG_LIMIT), "HEAD"], signal);
-    if (reflog.code !== 0) return { outcome: "available" as const, commits: [] };
+    if (reflog.code !== 0) return { outcome: "available" as const, commits: [], total: 0, since: null };
     const candidates = commitsInWindows(parseReflog(reflog.stdout), windows);
     // An amended, reset or rebased commit is no longer on the branch, and one made on another branch never was.
     const onHead = await mapLimit(candidates, 8, async (sha) => (await runGit(root, ["merge-base", "--is-ancestor", sha, "HEAD"], signal)).code === 0);
-    const shas = candidates.filter((_, index) => onHead[index]).slice(0, COMMIT_LIMIT);
-    if (shas.length === 0) return { outcome: "available" as const, commits: [] };
-    const log = await mustGit(root, ["log", "--no-walk=unsorted", `--format=${LOG_FORMAT}`, ...shas], signal);
-    return { outcome: "available" as const, commits: parseLog(log) };
+    const all = candidates.filter((_, index) => onHead[index]);
+    if (all.length === 0) return { outcome: "available" as const, commits: [], total: 0, since: null };
+    // Only the newest are listed; the count and the starting commit cover every one of them.
+    const [log, since] = await Promise.all([
+      mustGit(root, ["log", "--no-walk=unsorted", `--format=${LOG_FORMAT}`, ...all.slice(0, COMMIT_LIMIT)], signal),
+      sinceCommit(root, all, signal),
+    ]);
+    return { outcome: "available" as const, commits: parseLog(log), total: all.length, since };
   });
 }
 

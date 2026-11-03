@@ -11,7 +11,7 @@ import { LiveThreadsProvider, resolveLive, useLiveThread, useSidebarIndex } from
 import { firstToOpen, plural } from "./model";
 import { Overlaps } from "./overlaps";
 import { Review, isTyping } from "./review";
-import { useSetReviewed } from "./reviewed";
+import { useSetReviewed, useSetWhole } from "./reviewed";
 import { formatRoute, parseRoute, type PageRoute } from "./route";
 import { reloadLoaded } from "./loaded";
 import { useSession, useShared } from "./session";
@@ -57,7 +57,7 @@ const rootTitle = (overview: Overview | null, route: PageRoute, title: string | 
 function useOpenAgent() {
   const panel = experimental_useAppPanel();
   return useCallback(() => {
-    panel.experimental_openTab({ surface: { kind: "current" }, tab: { id: AGENT_TAB_ID, context: { kind: "nav-panel", panelId: PAGE_PANEL_ID }, availability: "fixed" } });
+    panel.openTab({ tab: { id: AGENT_TAB_ID, context: { kind: "nav-panel", panelId: PAGE_PANEL_ID }, availability: "fixed" } });
   }, [panel]);
 }
 
@@ -105,6 +105,7 @@ function PageScreen({ subPath }: PluginNavPanelProps) {
   const openAgent = useOpenAgent();
   const loaders = useLoaders();
   const setReviewed = useSetReviewed();
+  const setWhole = useSetWhole();
   const text = useShared(pageText);
   const { overview } = snapshot;
   const data = usePageRows(overview);
@@ -171,7 +172,7 @@ function PageScreen({ subPath }: PluginNavPanelProps) {
     const review = (
       <Review key={shown.worktree.key} overview={overview} row={shown} index={index} total={data.order.length} compact={narrow} currentThreadId={null} currentHostId={null}
         terminal="environment" marks={data.marks[shown.worktree.key]} titleOf={data.titleOf} branchOf={data.branchOf} comments={comments}
-        loaders={loaders} setReviewed={setReviewed} onStep={step}
+        loaders={loaders} setReviewed={setReviewed} onStep={step} onWhole={(whole) => setWhole(shown.worktree.key, whole).then(() => store?.refresh())}
         onMessage={openAgent} onCompare={compare} onSent={openAgent} />
     );
     // A compact review is one column with no scroll area of its own.

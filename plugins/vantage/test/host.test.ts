@@ -427,6 +427,83 @@ describe("repoPatch", () => {
   });
 });
 
+describe("checkoutStatus with the closest base", () => {
+  type Status = Extract<HostOutput<"checkoutStatus">, { outcome: "available" }>;
+  let stale: string;
+  let renamed: string;
+  let folders: string;
+  const statusOf = async (root: string, base: string | null, pick: boolean, folderLimit?: number): Promise<Status> => {
+    const output = await harness.experimental_call("checkoutStatus", { root, base, pick, ...(folderLimit === undefined ? {} : { folderLimit }) });
+    if (output.outcome !== "available") throw new Error(`unavailable: ${output.message}`);
+    return output;
+  };
+
+  beforeAll(() => {
+    const upstream = join(scratch, "pick-upstream");
+    mkdirSync(upstream);
+    git(upstream, "init", "-q", "-b", "main");
+    for (const name of ["a", "b", "c"]) {
+      put(upstream, `${name}.txt`, `${name}\n`);
+      commitAll(upstream, `upstream ${name}`);
+    }
+    // A local main left two commits behind origin/main, and a branch started from origin/main.
+    stale = join(scratch, "pick-stale");
+    execFileSync("git", ["clone", "-q", upstream, stale]);
+    git(stale, "checkout", "-q", "-b", "feature", "origin/main");
+    git(stale, "branch", "-f", "main", "HEAD~2");
+    put(stale, "mine.txt", "mine\n");
+    commitAll(stale, "my one commit");
+
+    // A checkout on main, level with origin/main, whose recorded base is an old master.
+    renamed = join(scratch, "pick-renamed");
+    execFileSync("git", ["clone", "-q", upstream, renamed]);
+    git(renamed, "branch", "master", "HEAD~2");
+
+    folders = join(scratch, "pick-folders");
+    execFileSync("git", ["clone", "-q", upstream, folders]);
+    for (const name of ["1", "2", "3", "4", "5"]) put(folders, `vendor/lib/${name}.js`, "x\n");
+    put(folders, "small/one.txt", "one\n");
+    put(folders, "small/two.txt", "two\n");
+    const clone = join(folders, "copy");
+    execFileSync("git", ["clone", "-q", upstream, clone]);
+  });
+
+  it("compares with origin/main instead of a local main that fell behind, and says what it skipped", async () => {
+    const picked = await statusOf(stale, "main", true);
+    expect(picked).toMatchObject({ branch: "feature", base: "origin/main", aheadCount: 1, skippedBase: { name: "main", aheadCount: 3 } });
+    expect(picked.committed.map((file) => file.path)).toEqual(["mine.txt"]);
+    expect(picked.head).toBe(git(stale, "rev-parse", "HEAD").trim());
+    const asked = await statusOf(stale, "main", false);
+    expect(asked).toMatchObject({ base: "main", aheadCount: 3, skippedBase: null });
+    expect(asked.committed.map((file) => file.path).sort()).toEqual(["b.txt", "c.txt", "mine.txt"]);
+  });
+
+  it("treats a checkout on main as level with origin/main, not ahead of an old master", async () => {
+    const picked = await statusOf(renamed, "master", true);
+    expect(picked).toMatchObject({ branch: "main", base: "origin/main", aheadCount: 0, committed: [], skippedBase: { name: "master", aheadCount: 2 } });
+    expect(await statusOf(renamed, "master", false)).toMatchObject({ base: "master", aheadCount: 2 });
+  });
+
+  it("keeps the base asked for when nothing is closer", async () => {
+    expect(await statusOf(work, "origin/main", true)).toMatchObject({ base: "origin/main", aheadCount: 1, skippedBase: null });
+  });
+
+  it("folds an untracked folder above the limit and one holding a repository into one entry each", async () => {
+    const status = await statusOf(folders, null, true, 3);
+    const paths = status.uncommitted.map((file) => file.path);
+    expect(paths).toEqual(["copy/", "small/one.txt", "small/two.txt", "vendor/"]);
+    expect(byPath(status.uncommitted, "vendor/")).toMatchObject({
+      status: "untracked", additions: null, deletions: null,
+      folder: { files: 5, repository: false, sample: ["vendor/lib/1.js", "vendor/lib/2.js", "vendor/lib/3.js", "vendor/lib/4.js", "vendor/lib/5.js"] },
+    });
+    expect(byPath(status.uncommitted, "copy/")?.folder).toMatchObject({ repository: true });
+    expect(byPath(status.uncommitted, "small/one.txt")).toMatchObject({ additions: 1 });
+    expect(byPath(status.uncommitted, "small/one.txt")).not.toHaveProperty("folder");
+    const roomy = await statusOf(folders, null, true, 10);
+    expect(roomy.uncommitted.map((file) => file.path)).toEqual(["copy/", "small/one.txt", "small/two.txt", "vendor/lib/1.js", "vendor/lib/2.js", "vendor/lib/3.js", "vendor/lib/4.js", "vendor/lib/5.js"]);
+  });
+});
+
 describe("threadCommits", () => {
   let mainline: string;
   const gitAt = (cwd: string, seconds: number, ...args: string[]) =>
@@ -460,13 +537,40 @@ describe("threadCommits", () => {
     expect(result.commits[0]).toMatchObject({ authorName: "Test", shortSha: expect.stringMatching(/^[0-9a-f]{7,}$/) });
   });
 
+  it("names the commit before the oldest of them, so a diff from it shows only their work", async () => {
+    const sha = (rev: string) => git(mainline, "rev-parse", rev).trim();
+    const base = sha("main~3");
+    const both = await threadCommits(mainline, [around(2000), around(4000)]);
+    expect(both).toMatchObject({ outcome: "available", since: base });
+    expect(await threadCommits(mainline, [around(4000)])).toMatchObject({ since: sha("main~1") });
+    // The root commit has nothing before it.
+    expect(await threadCommits(mainline, [around(1000)])).toMatchObject({ since: null });
+  });
+
+  it("counts every one of them, and names no starting commit when a merge came after it", async () => {
+    expect(await threadCommits(mainline, [around(2000), around(4000)])).toMatchObject({ total: 2 });
+    const merging = join(scratch, "merging");
+    execFileSync("git", ["clone", "-q", mainline, merging]);
+    git(merging, "checkout", "-q", "-b", "work");
+    put(merging, "mine.txt", "mine\n");
+    git(merging, "add", "-A");
+    gitAt(merging, 6000, "commit", "-q", "-m", "mine");
+    git(merging, "checkout", "-q", "main");
+    put(merging, "theirs.txt", "theirs\n");
+    commitAll(merging, "theirs on main");
+    git(merging, "checkout", "-q", "work");
+    gitAt(merging, 7000, "merge", "-q", "--no-ff", "-m", "merge main", "main");
+    const result = await threadCommits(merging, [around(6000)]);
+    expect(result).toMatchObject({ outcome: "available", total: 1, since: null });
+  });
+
   it("leaves out commits made outside every window", async () => {
     const result = await threadCommits(mainline, [around(2000)]);
     expect(result.outcome === "available" && result.commits.map((commit) => commit.subject)).toEqual(["mine 1"]);
   });
 
   it("finds nothing in a repository with no commits, and refuses a folder that is not one", async () => {
-    expect(await threadCommits(unborn, [around(2000)])).toEqual({ outcome: "available", commits: [] });
+    expect(await threadCommits(unborn, [around(2000)])).toEqual({ outcome: "available", commits: [], total: 0, since: null });
     expect(await threadCommits(plain, [around(2000)])).toMatchObject({ outcome: "unavailable", reason: "not-a-repo" });
   });
 });

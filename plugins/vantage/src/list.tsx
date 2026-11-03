@@ -1,4 +1,5 @@
 import { memo, type ReactNode } from "react";
+import { fileCount } from "./counted";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { isWorking } from "./live";
 import { plural, reviewStarted, type Chip, type Group, type Outside, type Row } from "./model";
@@ -69,7 +70,7 @@ function why(row: Row, titleOf: (key: string) => string): { tone: string; text: 
       : { tone: "text-muted-foreground", text: `${row.progress.reviewed} of ${row.progress.total} files checked` };
   }
   if (row.bucket === "reviewed") return { tone: "text-success", text: "All files checked" };
-  return { tone: "text-muted-foreground", text: `${plural(row.worktree.uncommitted.length + row.worktree.committed.length, "file")} to read` };
+  return { tone: "text-muted-foreground", text: `${plural(fileCount(row.worktree), "file")} to read` };
 }
 
 function RowView({ row, selected, under, titleOf, onOpen }: { row: Row; selected: boolean; under: string | null; titleOf(key: string): string; onOpen(key: string): void }) {

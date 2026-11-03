@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { CollectDeps, HostCall } from "../src/collect";
 import type { ThreadEdits } from "../src/edits";
 import { createRepoCache } from "../src/repo-cache";
-import { attachThreadCommits, commitWindows, isOnBase, MAX_WINDOWS } from "../src/thread-commits";
+import { attachThreadCommits, commitWindows, fewEnough, isOnBase, leaveOutHistory, MAX_WINDOWS, wantsHistoryLeftOut } from "../src/thread-commits";
 import { branchWorktree, checkoutWorktree, commit, worktree } from "./fixtures";
 
 type Run = ThreadEdits["commitRuns"][number];
@@ -100,5 +100,97 @@ describe("attachThreadCommits", () => {
     expect(host).toHaveBeenCalledTimes(1);
     await attachThreadCommits(cached, [onMain], { edits: new Map([["thr_1", threadEdits([run(1_000, 3_000)])]]), running: new Set(), now: 3 });
     expect(host).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("leaveOutHistory", () => {
+  const SINCE = "a".repeat(40);
+  const HEAD = "b".repeat(40);
+  const theirs = commit({ sha: "c".repeat(40), shortSha: "ccccccc", subject: "One of mine" });
+  const file = (path: string) => ({ path, previousPath: null, status: "added" as const, additions: 3, deletions: 0, binary: false });
+  const far = worktree({
+    aheadCount: 612, behindCount: 4, base: "origin/main", head: HEAD, committed: Array.from({ length: 40 }, (_, index) => ({ ...file(`old/${index}.ts`), untracked: false, tooLarge: false, edits: null })),
+    ref: { kind: "workspace", environmentId: "env_1", base: "origin/main", root: "/work/one", hostId: "host_1" },
+  });
+  const edits = new Map([["thr_1", threadEdits([run(1_000, 2_000)])]]);
+  const attribution = { edits, running: new Set<string>(), now: 10_000 };
+
+  function setup(made: unknown, counting = { pick: true, folderLimit: 200, historyThreshold: 50, historyShare: 10 }) {
+    const host = vi.fn(async (method: string, input: { base?: string }) => {
+      if (method === "threadCommits") return made;
+      if (method === "checkoutStatus") {
+        return {
+          outcome: "available", branch: "feature/work", head: HEAD, base: input.base, skippedBase: null, aheadCount: input.base === SINCE ? 1 : 612, behindCount: 0,
+          commits: input.base === SINCE ? [theirs] : [], uncommitted: [file("wip.ts")], committed: input.base === SINCE ? [file("mine.ts")] : [], truncated: false,
+        };
+      }
+      throw new Error(`unexpected ${method}`);
+    });
+    return { deps: { host: host as unknown as HostCall, cache: createRepoCache(), counting } as unknown as CollectDeps, host };
+  }
+
+  it("shows only its threads' commits and the uncommitted files when they made few of the commits ahead", async () => {
+    const { deps, host } = setup({ outcome: "available", commits: [theirs], total: 1, since: SINCE });
+    const { worktrees, warnings } = await leaveOutHistory(deps, [far], attribution);
+    expect(warnings).toEqual([]);
+    expect(worktrees[0]).toMatchObject({
+      base: "origin/main", aheadCount: 1, behindCount: 4, leftOut: { aheadCount: 612, kept: 1 },
+      ref: { base: SINCE }, commits: [theirs],
+    });
+    expect(worktrees[0]!.committed.map((entry) => entry.path)).toEqual(["mine.ts"]);
+    expect(host).toHaveBeenCalledWith("checkoutStatus", { root: "/work/one", base: SINCE, pick: false, folderLimit: 200 }, expect.anything());
+  });
+
+  it("compares with HEAD when its threads made none of the commits, so only uncommitted files are left", async () => {
+    const { deps, host } = setup({ outcome: "available", commits: [], total: 0, since: null });
+    const { worktrees } = await leaveOutHistory(deps, [far], attribution);
+    // HEAD comes from the row's own read: one more read, against HEAD, and none just to learn it.
+    expect(host.mock.calls.filter(([method]) => method === "checkoutStatus").map(([, input]) => input.base)).toEqual([HEAD]);
+    expect(worktrees[0]).toMatchObject({ leftOut: { aheadCount: 612, kept: 0 }, ref: { base: HEAD } });
+  });
+
+  it("keeps the whole branch below the threshold, for a worktree shown whole, and when its threads made enough of the commits", async () => {
+    const { deps, host } = setup({ outcome: "available", commits: Array.from({ length: 70 }, () => theirs), total: 70, since: SINCE });
+    expect((await leaveOutHistory(deps, [worktree({ aheadCount: 50 }), worktree({ aheadCount: 612, whole: true })], attribution)).worktrees.map((entry) => entry.leftOut)).toEqual([undefined, undefined]);
+    expect(host).not.toHaveBeenCalled();
+    expect((await leaveOutHistory(deps, [far], attribution)).worktrees[0]).toBe(far);
+    const off = setup({ outcome: "available", commits: [], total: 0, since: null }, { pick: true, folderLimit: 200, historyThreshold: 0, historyShare: 10 });
+    expect((await leaveOutHistory(off.deps, [far], attribution)).worktrees[0]).toBe(far);
+  });
+
+  it("judges the share by every commit of its threads, not the 100 it lists", async () => {
+    const { deps } = setup({ outcome: "available", commits: Array.from({ length: 100 }, () => theirs), total: 250, since: SINCE });
+    expect((await leaveOutHistory(deps, [{ ...far, aheadCount: 2000 }], attribution)).worktrees[0]!.leftOut).toBeUndefined();
+  });
+
+  it("keeps the whole branch when a merge stands between its threads' first commit and HEAD, or a thread's events did not load", async () => {
+    const merged = setup({ outcome: "available", commits: [theirs], total: 1, since: null });
+    expect((await leaveOutHistory(merged.deps, [far], attribution)).worktrees[0]).toBe(far);
+    const unknown = setup({ outcome: "available", commits: [], total: 0, since: null });
+    expect((await leaveOutHistory(unknown.deps, [{ ...far, threadIds: ["thr_1", "thr_unread"] }], attribution)).worktrees[0]!.leftOut).toBeUndefined();
+    expect(unknown.host).not.toHaveBeenCalled();
+  });
+
+  it("keeps the whole branch and warns when git cannot say which commits are its threads'", async () => {
+    const { deps } = setup({ outcome: "unavailable", reason: "git-failed", message: "boom" });
+    const { worktrees, warnings } = await leaveOutHistory(deps, [far], attribution);
+    expect(worktrees[0]).toBe(far);
+    expect(warnings).toEqual(["Could not tell which commits in /work/one its threads made: boom"]);
+  });
+});
+
+describe("history rule", () => {
+  it("applies above the threshold to a readable worktree that is not a kept branch or shown whole", () => {
+    expect(wantsHistoryLeftOut({ state: "ready", kind: "workspace", aheadCount: 51, whole: undefined }, 50)).toBe(true);
+    expect(wantsHistoryLeftOut({ state: "ready", kind: "workspace", aheadCount: 50, whole: undefined }, 50)).toBe(false);
+    expect(wantsHistoryLeftOut({ state: "ready", kind: "branch", aheadCount: 500, whole: undefined }, 50)).toBe(false);
+    expect(wantsHistoryLeftOut({ state: "ready", kind: "checkout", aheadCount: 500, whole: true }, 50)).toBe(false);
+    expect(wantsHistoryLeftOut({ state: "ready", kind: "checkout", aheadCount: 500, whole: undefined }, 0)).toBe(false);
+  });
+
+  it("counts a share below the percentage as few", () => {
+    expect(fewEnough(2, 612, 10)).toBe(true);
+    expect(fewEnough(61, 612, 10)).toBe(true);
+    expect(fewEnough(62, 612, 10)).toBe(false);
   });
 });

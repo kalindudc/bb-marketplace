@@ -6,6 +6,7 @@ import {
 import { toast } from "sonner";
 import type { Commit, CommitFilesInput, CommitFilesOutput, FileChange, Overview, PatchScope, ReviewMarks, ThreadSummary, Worktree } from "./contract";
 import { composeReview, useComments, type Comment, type CommentStore } from "./comments";
+import { countedFiles, isFolder } from "./counted";
 import { FileCard, ICON_BUTTON, type Composing, type FileLoaders } from "./file-card";
 import { FileTree } from "./file-tree-view";
 import { isWorking, needsYou, usePullRequest } from "./live";
@@ -49,6 +50,8 @@ export interface ReviewProps {
   onMessage(): void;
   onCompare(path: string): void;
   onSent(): void;
+  // Shows the whole branch against the base bb records, or goes back to counting only its threads' work.
+  onWhole?(whole: boolean): unknown;
   // The thread tab puts its own Changes and Chat switch here.
   toolbar?: ReactNode;
 }
@@ -60,7 +63,7 @@ const errorMessage = (error: unknown): string => (error instanceof Error ? error
 export function threadTarget(sidebar: PluginSidebarThread): PluginThreadActionTarget {
   return {
     id: sidebar.id, projectId: sidebar.projectId, parentThreadId: sidebar.parentThreadId, archivedAt: sidebar.archivedAt,
-    pinnedAt: sidebar.pinnedAt, sectionId: sidebar.sectionId, isUnread: sidebar.isUnread, status: sidebar.status,
+    pinnedAt: sidebar.pinnedAt, sectionId: sidebar.sectionId, isUnread: sidebar.isUnread, status: sidebar.status, parentNotifications: sidebar.parentNotifications,
     environment: sidebar.environment?.id ? { id: sidebar.environment.id, path: sidebar.environment.path } : null,
   };
 }
@@ -102,6 +105,22 @@ export function PullRequestChip({ environmentId }: { environmentId: string | nul
       #{pr.number} {pr.state}{pr.state === "merged" || pr.checks === "no_checks" || pr.checks === "unknown" ? "" : ` · checks ${pr.checks}`}
     </span>
   );
+}
+
+// Waits for the server before it can be clicked again, and says so when the choice could not be saved.
+function WholeButton({ whole, label, onWhole }: { whole: boolean; label: string; onWhole(whole: boolean): unknown }) {
+  const [pending, setPending] = useState(false);
+  const click = () => {
+    setPending(true);
+    Promise.resolve(onWhole(whole)).then(
+      () => setPending(false),
+      (error: unknown) => {
+        setPending(false);
+        toast.error(`Could not change what this worktree counts: ${errorMessage(error)}`);
+      },
+    );
+  };
+  return <button type="button" className={BUTTON} disabled={pending} onClick={click}>{label}</button>;
 }
 
 function Strip({ tone, icon, children, actions }: { tone: "attention" | "destructive" | "warning" | "info"; icon: string; children: ReactNode; actions?: ReactNode }) {
@@ -148,6 +167,43 @@ export function scopeFrom(stored: string | undefined, worktree: Pick<Worktree, "
   if (stored === "committed") return emptyBesideOthers(worktree.committed, worktree.uncommitted) ? "all" : "committed";
   if (stored?.startsWith("commit:") && commits.some((commit) => commit.sha === stored.slice(7))) return stored as ChangeScope;
   return "all";
+}
+
+const countFiles = (files: readonly FileChange[]): number => countedFiles(files).length;
+
+function FolderRow({ file }: { file: FileChange }) {
+  const [open, setOpen] = useState(false);
+  const folder = file.folder!;
+  const what = folder.repository ? "a git repository of its own" : plural(folder.files, "file");
+  return (
+    <div data-folder={file.path} className="mb-2 rounded-lg border border-border-seam bg-card text-xs">
+      <div className="flex flex-wrap items-center gap-2 px-3 py-2">
+        <Icon name="Folder" className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+        <span className="min-w-0 truncate font-mono text-[11px] text-foreground">{file.path}</span>
+        <span className="min-w-0 flex-1 text-muted-foreground">untracked · {what} · not counted</span>
+        {folder.sample.length > 0 && (
+          <button type="button" aria-expanded={open} onClick={() => setOpen((shown) => !shown)} className={BUTTON}>{open ? "Hide files" : "Show files"}</button>
+        )}
+      </div>
+      {open && (
+        <ul className="border-t border-border-seam px-3 py-2 font-mono text-[11px] text-muted-foreground">
+          {folder.sample.map((path) => <li key={path} className="truncate">{path}</li>)}
+          {folder.files > folder.sample.length && <li>and {plural(folder.files - folder.sample.length, "more file")}</li>}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// The line under the branch: what the worktree is compared with, and how far ahead and behind it is.
+export function baseLine(worktree: Pick<Worktree, "base" | "onBase" | "aheadCount" | "behindCount" | "leftOut">): string | null {
+  if (worktree.base === null) return null;
+  if (worktree.onBase) return `on ${worktree.base}, its base branch`;
+  const ahead = worktree.leftOut != null ? worktree.leftOut.aheadCount : worktree.aheadCount;
+  const parts = [`vs ${worktree.base}`];
+  if (ahead !== null) parts.push(`${ahead} ahead`);
+  if (worktree.behindCount !== null) parts.push(`${worktree.behindCount} behind`);
+  return parts.join(" · ");
 }
 
 function partsFor(worktree: Worktree, scope: ChangeScope, commitFiles: readonly FileChange[] | null): FilePart[] {
@@ -295,7 +351,7 @@ function SendBar({ row, comments, compact, root, onDiscard, onDone, onSent, send
 export function Review(props: ReviewProps) {
   const {
     overview, row, index, total, compact = false, currentThreadId, currentHostId, terminal, marks, titleOf, branchOf, comments: commentStore,
-    loaders, setReviewed, onStep, onMessage, onCompare, onSent, toolbar,
+    loaders, setReviewed, onStep, onMessage, onCompare, onSent, onWhole, toolbar,
   } = props;
   const { worktree } = row;
   const sdk = useSdk();
@@ -328,7 +384,9 @@ export function Review(props: ReviewProps) {
   const commitSha = scope.startsWith("commit:") ? scope.slice(7) : null;
   const [commitState, retryCommit] = useLoaded<CommitFilesOutput>(`commitFiles\0${worktree.key}\0${commitSha ?? ""}`, commitSha !== null,
     () => loaders.commitFiles({ ref: worktree.ref, sha: commitSha! }));
-  const parts = partsFor(worktree, scope, commitState.status === "ready" ? commitState.value.files : null);
+  const allParts = partsFor(worktree, scope, commitState.status === "ready" ? commitState.value.files : null);
+  const parts = allParts.filter((part) => !isFolder(part.file));
+  const folders = allParts.filter((part) => isFolder(part.file));
   const cardKey = useCallback((part: FilePart) => `${worktree.key}\0${part.part}\0${part.file.path}`, [worktree.key]);
   const reviewedPart = (part: FilePart) => isReviewed(marks, part);
   const shown = hide ? parts.filter((part) => !reviewedPart(part)) : parts;
@@ -427,15 +485,19 @@ export function Review(props: ReviewProps) {
   const retry = () => {
     sdk.threads.retry({ threadId: row.threadId }).then(() => toast("Retrying the failed turn"), (error: unknown) => toast.error(`Could not retry: ${errorMessage(error)}`));
   };
-  const askRebase = (path: string, otherKey: string) => {
+  const askRebase = (paths: readonly string[], otherKey: string) => {
     const other = titleOf(otherKey);
     const branch = branchOf(otherKey);
+    const path = paths[0]!;
+    const files = paths.length === 1 ? path : `${paths.slice(0, 5).join(", ")}${paths.length > 5 ? ` and ${plural(paths.length - 5, "more file")}` : ""}`;
     commentStore.add(worktree.key, {
       path, part: worktree.uncommitted.some((file) => file.path === path) ? "uncommitted" : "committed", quote: "",
-      text: `This file is also changed in "${other}"${branch === null ? "" : ` on ${branch}`}. Commit your work, rebase onto ${branch ?? "that branch"} and resolve the conflict in ${path}, keeping both changes.`,
+      text: `${paths.length === 1 ? "This file is" : "These files are"} also changed in "${other}"${branch === null ? "" : ` on ${branch}`}. Commit your work, rebase onto ${branch ?? "that branch"} and resolve the conflicts in ${files}, keeping both changes.`,
     });
   };
 
+  // The other threads that work in this worktree, such as read-only reviewers; the row and its numbers are its own thread's.
+  const alsoHere = worktree.threadIds.filter((id) => id !== row.threadId).map((id) => threads.get(id)?.title ?? id);
   const status = statusLabel(row);
   const answer = row.live.indicator === "waiting-for-input" && !row.live.archived;
   const wide = !compact && treeOn;
@@ -456,22 +518,46 @@ export function Review(props: ReviewProps) {
   } else if (isWorking(row.live)) {
     strips.push(<Strip key="working" tone="info" icon="Clock"><b className="font-semibold">Still working.</b> These diffs update as the agent edits.</Strip>);
   }
-  if (!row.live.archived) {
-    for (const overlap of row.overlaps) {
-      for (const otherKey of overlap.otherKeys) {
-        strips.push(
-          <Strip key={`overlap\0${overlap.path}\0${otherKey}`} tone="warning" icon="AlertTriangle"
-            actions={<>
-              <button type="button" className={BUTTON} onClick={() => onCompare(overlap.path)}>Compare</button>
-              {worktree.kind !== "branch" && !compact && (
-                <button type="button" className={BUTTON} onClick={() => askRebase(overlap.path, otherKey)}>Ask to rebase onto {titleOf(otherKey)}</button>
-              )}
-            </>}>
-            <b className="font-semibold font-mono">{overlap.path}</b> is also changed in <b className="font-semibold">{titleOf(otherKey)}</b>, so merging both branches may conflict.
-          </Strip>,
-        );
-      }
-    }
+  if (!row.live.archived && row.overlaps.length > 0) {
+    // One line for every file it shares, however many: each file also carries a mark in the tree and on its card.
+    const byOther = new Map<string, string[]>();
+    for (const overlap of row.overlaps) for (const otherKey of overlap.otherKeys) byOther.set(otherKey, [...(byOther.get(otherKey) ?? []), overlap.path]);
+    const others = [...byOther].sort((a, b) => b[1].length - a[1].length);
+    const sentence = others.map(([otherKey, paths], at) => (at === 0 ? `${plural(paths.length, "file")} also changed in ${titleOf(otherKey)}` : `${paths.length} in ${titleOf(otherKey)}`));
+    const [firstKey, firstPaths] = others[0]!;
+    strips.push(
+      <Strip key="overlaps" tone="warning" icon="AlertTriangle"
+        actions={<>
+          <button type="button" className={BUTTON} onClick={() => onCompare(row.overlaps[0]!.path)}>Compare</button>
+          {worktree.kind !== "branch" && !compact && (
+            <button type="button" className={BUTTON} onClick={() => askRebase(firstPaths, firstKey)}>Ask to rebase onto {titleOf(firstKey)}</button>
+          )}
+        </>}>
+        <span title={row.overlaps.map((overlap) => overlap.path).join("\n")}>{sentence.join(", and ")}, so merging may conflict.</span>
+      </Strip>,
+    );
+  }
+  if (worktree.whole === true) {
+    strips.push(
+      <Strip key="whole" tone="info" icon="GitBranch" actions={onWhole && <WholeButton whole={false} label="Count only its work" onWhole={onWhole} />}>
+        Showing the whole branch against <b className="font-semibold">{worktree.base ?? "its base"}</b>, as you asked.
+      </Strip>,
+    );
+  } else if (worktree.leftOut != null) {
+    const { aheadCount, kept } = worktree.leftOut;
+    strips.push(
+      <Strip key="left-out" tone="warning" icon="GitBranch" actions={onWhole && <WholeButton whole label={`Show all ${aheadCount}`} onWhole={onWhole} />}>
+        This branch is {plural(aheadCount, "commit")} ahead of <b className="font-semibold">{worktree.base}</b>, and {kept === 0 ? "Vantage found none of them made by its threads." : `its threads made ${kept} of them.`}
+        {kept === 0 ? " Showing only the uncommitted files." : ` Showing ${kept === 1 ? "that commit" : `those ${kept}`} and the uncommitted files.`}
+      </Strip>,
+    );
+  } else if (worktree.skippedBase != null) {
+    const skipped = worktree.skippedBase;
+    strips.push(
+      <Strip key="base" tone="info" icon="Info" actions={onWhole && <WholeButton whole label={`Use ${skipped.name}`} onWhole={onWhole} />}>
+        Compared with <b className="font-semibold">{worktree.base}</b>, not <b className="font-semibold">{skipped.name}</b>, which would count {plural(skipped.aheadCount, "commit")} this branch did not add.
+      </Strip>,
+    );
   }
 
   const empty = scope === "uncommitted"
@@ -508,12 +594,14 @@ export function Review(props: ReviewProps) {
             <button type="button" aria-label="Copy the branch name" onClick={() => copy(worktree.branch!)} className={ICON_BUTTON}><Icon name="Copy" className="size-3" aria-hidden /></button>
           </span>
         )}
-        {worktree.onBase
-          ? <span>on {worktree.base}, its base branch</span>
-          : worktree.behindCount !== null && worktree.behindCount > 0
-            ? <span className="text-warning-text">{plural(worktree.behindCount, "commit")} behind {worktree.base}</span>
-            : worktree.base !== null && worktree.behindCount === 0 && <span>Up to date with {worktree.base}</span>}
-        {worktree.aheadCount !== null && worktree.aheadCount > 0 && <span>{worktree.aheadCount} ahead</span>}
+        {baseLine(worktree) !== null && (
+          <span data-base-line className={`inline-flex items-center gap-1 ${!worktree.onBase && (worktree.behindCount ?? 0) > 0 ? "text-warning-text" : ""}`}>
+            <Icon name="GitMerge" className="size-3 shrink-0" aria-hidden />{baseLine(worktree)}
+          </span>
+        )}
+        {alsoHere.length > 0 && (
+          <span title={alsoHere.join("\n")}>also here: {alsoHere.length === 1 ? alsoHere[0] : plural(alsoHere.length, "other thread")}</span>
+        )}
         <PullRequestChip environmentId={worktree.ref.kind === "workspace" ? worktree.ref.environmentId : null} />
         {!compact && <span className="inline-flex items-center gap-1"><Icon name="Laptop" fallback="Folder" className="size-3" aria-hidden />{worktree.hostName}</span>}
         {worktree.kind === "checkout" && <span title={worktree.root} className="truncate font-mono text-[11px] text-subtle-foreground">in {worktree.root}</span>}
@@ -557,7 +645,7 @@ export function Review(props: ReviewProps) {
         </button>
       )}
       <div role="group" aria-label="Which changes" className="inline-flex rounded-md bg-surface-recessed p-0.5">
-        {([["all", "All changes", worktree.uncommitted.length + worktree.committed.length], ["uncommitted", "Not committed", worktree.uncommitted.length], ["committed", "Committed", worktree.committed.length]] as const)
+        {([["all", own ? "This thread's work" : "Its work", countFiles(worktree.uncommitted) + countFiles(worktree.committed)], ["uncommitted", "Not committed", countFiles(worktree.uncommitted)], ["committed", "Committed", countFiles(worktree.committed)]] as const)
           .filter(([id]) => !(id === "uncommitted" && worktree.kind === "branch"))
           .map(([id, label, count]) => (
             <button key={id} type="button" aria-pressed={scope === id} onClick={() => setScope(id)}
@@ -607,7 +695,7 @@ export function Review(props: ReviewProps) {
       </p>
     );
   } else if (commitSha !== null && commitState.status !== "ready") content = <SkeletonRows count={2} label="Loading the files of this commit…" />;
-  else if (parts.length === 0) content = <p className="p-4 text-sm text-muted-foreground">{empty}</p>;
+  else if (parts.length === 0 && folders.length === 0) content = <p className="p-4 text-sm text-muted-foreground">{empty}</p>;
   else {
     content = (
       <>
@@ -640,6 +728,7 @@ export function Review(props: ReviewProps) {
           </p>
         )}
         {shown.length === 0 && parts.length > 0 && <p className="px-1 pb-3 text-sm text-muted-foreground">Every file here is reviewed.</p>}
+        {folders.map((part) => <FolderRow key={cardKey(part)} file={part.file} />)}
       </>
     );
   }
