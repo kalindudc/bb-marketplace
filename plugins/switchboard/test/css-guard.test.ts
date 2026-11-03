@@ -44,6 +44,9 @@ describe("theme conformance", () => {
     expect(body).toBeDefined();
     expect(body).not.toMatch(/line-clamp|overflow: hidden|text-overflow|white-space: nowrap/);
     expect(body).toMatch(/overflow-wrap: anywhere/);
+    // bb's ThreadTitle puts each run of text in a `truncate whitespace-pre` span, which never wraps on its own.
+    expect(css).toMatch(/^\.sb-info-title > span \{[^}]*white-space: pre-wrap/m);
+    expect(css).toMatch(/^\.sb-info-title > \* \{[^}]*max-width: 100%/m);
   });
 
   it("adds no gap after the title when bb's row metadata line has no items", () => {

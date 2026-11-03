@@ -120,7 +120,7 @@ describe("info card", () => {
     expect(view.getByText("Marketplace › cortex")).toBeTruthy();
     expect(view.getByText("↳ Child of Sidebar redesign")).toBeTruthy();
     expect(view.getByText("kalindudc/hover-card")).toBeTruthy();
-    expect(view.getByText("Parent").nextElementSibling!.textContent).toBe("Notified on every outcome");
+    expect(view.getByText("Parent").nextElementSibling!.textContent).toBe("Always notified");
     expect(view.getByText("Pull request").nextElementSibling!.textContent).toBe("#12 Open · Checks passing");
     expect(view.getByText("#12 Open").classList.contains("sb-info-tone-good")).toBe(true);
     expect(view.getByText("Checks passing").classList.contains("sb-info-tone-good")).toBe(true);
@@ -150,7 +150,7 @@ describe("info card", () => {
     const css = readFileSync(join(process.cwd(), "src/switchboard.css"), "utf8");
     expect(css.match(/\.sb-info-single\s*\{([^}]*)\}/)?.[1]).toMatch(/flex-wrap:\s*nowrap/);
     expect(view.getByText("↳ 2 children · 1 running")).toBeTruthy();
-    expect(view.getByText("Parent notified on every outcome")).toBeTruthy();
+    expect(view.getByText("Parent always notified")).toBeTruthy();
     expect(view.getByText("Checks passing").classList.contains("sb-info-tone-good")).toBe(true);
     expect(view.getByText("#12 Open").classList.contains("sb-info-tone-good")).toBe(true);
     expect(view.getByText("Approved").className).not.toMatch(/sb-info-tone/);
@@ -171,7 +171,7 @@ describe("info card", () => {
     expect(view.getByText(new RegExp(`· ${cost.replace(/[$.]/g, "\\$&")}`))).toBeTruthy();
     expect(await view.findByText("↑1 ↓4 vs origin/main")).toBeTruthy();
     expect(view.getByText("Managed worktree")).toBeTruthy();
-    expect(view.getByText("Notified on every outcome")).toBeTruthy();
+    expect(view.getByText("Always notified")).toBeTruthy();
     expect(view.getByText("#12 Open").parentElement!.textContent).toBe("#12 Open · Checks passing · Approved");
   });
 

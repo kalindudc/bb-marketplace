@@ -191,6 +191,9 @@
 .sb-info-top { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted-foreground); }
 .sb-info-kbd { margin-left: auto; color: var(--subtle-foreground); }
 .sb-info-title { margin: 4px 0 2px; font-size: 13px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+/* bb's ThreadTitle puts each run of text in a `truncate whitespace-pre` span, which never wraps on its own. */
+.sb-info-title > span { white-space: pre-wrap; }
+.sb-info-title > * { max-width: 100%; }
 .sb-info-crumb, .sb-info-muted { color: var(--muted-foreground); }
 .sb-info-crumb { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sb-info-text { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }

@@ -91,7 +91,7 @@ export function changesLabel(changes: Changes): string {
   return uncommitted ? `${label} · ${uncommitted.files.toLocaleString()} uncommitted` : label;
 }
 
-const PARENT_LABEL = { auto: "Notified on every outcome", stuck: "Notified when stuck", off: "Not notified" } as const;
+const PARENT_LABEL = { auto: "Always notified", stuck: "Notified when stuck", off: "Not notified" } as const;
 export function parentLabel(thread: PluginSidebarThread): string | null {
   return thread.parentThreadId ? PARENT_LABEL[thread.parentNotifications] : null;
 }

@@ -2,6 +2,13 @@
 
 Notable changes to Switchboard, newest first. Releases are tagged `switchboard/vX.Y.Z` in this repository.
 
+## 0.4.1 (2026-11-03)
+
+### Fixed
+
+- The info card's thread title wraps inside the card. In 0.4.0 a title longer than one line ran past the card's right edge, because bb draws title text in spans that never wrap; the card now lets them wrap, breaks long words such as paths, and keeps a long mention pill to the card's width.
+- A child's Parent line reads "Always notified" instead of "Notified on every outcome", which was cut off in the At a glance card.
+
 ## 0.4.0 (2026-11-03)
 
 ### Added

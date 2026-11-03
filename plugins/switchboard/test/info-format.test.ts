@@ -160,7 +160,7 @@ describe("background and children", () => {
 
   it("says whether a child notifies its parent, and nothing for a root thread", () => {
     expect(parentLabel(sidebarThread())).toBeNull();
-    expect(parentLabel(sidebarThread({ parentThreadId: "p" }))).toBe("Notified on every outcome");
+    expect(parentLabel(sidebarThread({ parentThreadId: "p" }))).toBe("Always notified");
     expect(parentLabel(sidebarThread({ parentThreadId: "p", parentNotifications: "stuck" }))).toBe("Notified when stuck");
     expect(parentLabel(sidebarThread({ parentThreadId: "p", parentNotifications: "off" }))).toBe("Not notified");
   });
