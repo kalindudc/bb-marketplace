@@ -51,7 +51,7 @@ the usual tool directories on `PATH`, and a 60-second limit. It gets:
 | `SHUTTLE_SERVER` | always: the server id |
 | `SHUTTLE_SCRIPTS` | always, when the installed Shuttle has it: this file's folder in the installed Shuttle |
 | `SHUTTLE_STATE` | authored: `open`, or `closed` for merged and closed PRs |
-| `SHUTTLE_SINCE` | authored with `closed`: YYYY-MM-DD, the start of the Done window |
+| `SHUTTLE_SINCE` | authored with `closed`: YYYY-MM-DD, the start of the Done window about once an hour and after the Done setting changes, and otherwise the day of the last read that came in full less five minutes; print every merged or closed PR updated on or after that day |
 | `SHUTTLE_REPO`, `SHUTTLE_NUMBER`, `SHUTTLE_URL` | view, activity and every operation below that reads or changes one PR |
 | `SHUTTLE_ADD`, `SHUTTLE_REMOVE` | edit_labels: label names; edit_reviewers: user logins; one per line |
 | `SHUTTLE_ADD_TEAMS`, `SHUTTLE_REMOVE_TEAMS` | edit_reviewers: team slugs, one per line |
@@ -113,6 +113,7 @@ Any summary may also add these, and Shuttle uses whichever it gets:
 | `check_counts` | `{"passed", "failed", "pending", "total"}`: the head's checks by outcome |
 | `my_review` | Your own latest review: `{"state", "at", "head"}`, where `state` is `approved`, `changes`, `commented` or `dismissed` and `head` is the commit it reviewed. Keep it when you are asked again since |
 | `auto_merge` | `true` when the PR will merge by itself once its checks pass |
+| `in_merge_queue` | `true` while the PR waits in the repository's own merge queue, `false` once it does not; My PRs then shows it as In the merge queue |
 | `author_bot` | `true` when a bot opened it |
 | `requested_at` | When you or your team were last asked to review it |
 | `first_review_at` | When someone other than the author, and not a bot, first reviewed it |
@@ -123,6 +124,13 @@ commit. Times are ISO 8601 strings or milliseconds since the epoch.
 `none`; `review` is `approved`, `changes`, `required` or `none`. Only `repo`, `number`, `title`
 and `state` are required.
 
+Every 30 seconds, Shuttle reads your open PRs that have a merge pending (auto-merge on, in the merge
+queue, or merged from Shuttle while the PR stayed open) with `view`, at most 3 of them at a time and
+the ones it asked about longest ago first, so a merge shows within a minute or so instead of at the
+next sync. A PR pending on auto-merge or the merge queue for more than an hour is read at most every
+five minutes. A server that rate-limited Shuttle, refused the sign-in or looks down is not asked
+again until its next sync.
+
 `activity`: the review activity of one PR.
 
 ```json
@@ -132,6 +140,12 @@ and `state` are required.
   {"id": "c12", "kind": "thread", "author": "tom", "body": "Reuse the buffer.", "path": "src/cpu.rs", "line": 42}
 ]}
 ```
+
+`activity` may also print the PR's own `state` (`open`, `draft`, `merged` or `closed`), with
+`draft`, `closed_at` and `updated_at` as in a summary. Watching runs `activity` on every sync, so
+a PR that merged or closed shows as such straight away instead of at the next list read. Print
+`updated_at` with `state`: an answer whose `updated_at` is older than what Shuttle has never
+changes the PR's state.
 
 `kind` is `review`, `thread` (a review comment on a line or file), `comment` or `check` (a
 failed check). An `id` must stay the same while the item does not change and change when it does

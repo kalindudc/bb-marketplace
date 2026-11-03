@@ -71,7 +71,7 @@ describe("rule matching", () => {
 describe("the next step of a PR kept out of the Inbox", () => {
   const facts = (patch: Partial<NextFacts>): NextFacts => ({
     now: Date.parse("2026-10-23T12:00:00Z"), mine: true, state: "open", checks: "passed", checkCounts: null, review: "approved", head: "h1", author: "me",
-    createdAt: null, updatedAt: null, reviewers: [], agent: null, suggestedAgent: null, handled: false, autoMerge: false, snoozed: false, keptOut: false,
+    createdAt: null, updatedAt: null, reviewers: [], agent: null, suggestedAgent: null, handled: false, autoMerge: false, inMergeQueue: false, snoozed: false, keptOut: false,
     can: { merge: true, comment: true, ready: true, reopen: true, cancelAutoMerge: false, approve: true },
     reasons: [], teams: [], tracked: false, bot: false, requestedAt: null, lastReview: null, lastReviewFinishedAt: null, lastReviewHandled: false,
     draft: null, post: null, merge: null, myReview: null, additions: 1, deletions: 1, files: 1, inboxRequests: true, inboxRequestDays: 3, ...patch,

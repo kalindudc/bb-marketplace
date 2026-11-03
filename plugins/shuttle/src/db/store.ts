@@ -48,6 +48,7 @@ export interface PrRow {
   /** JSON MyReview, as the server last said. */
   my_review: string | null;
   auto_merge: number | null;
+  in_merge_queue: number | null;
   author_bot: number | null;
   requested_at: number | null;
   first_review_at: number | null;
@@ -97,6 +98,20 @@ export interface SyncRunRow {
 }
 
 const DAY_MS = 86_400_000;
+
+/**
+ * The updated_at of a change Shuttle made and could not read back: just past the server's last, in the
+ * server's clock, so an older read cannot undo it and the server's next change always can. The host's
+ * clock may run ahead of the server's.
+ */
+export const afterServer = (updatedAt: number | null): number | null => (updatedAt === null ? null : updatedAt + 1);
+
+/**
+ * An upsert's answer names another state than the stored row, from before the row's last change: a snapshot taken
+ * before a merge, close or reopen, written after it. The newer state stays, whichever way it went.
+ */
+const STALE_STATE = `(excluded.state != prs.state AND excluded.updated_at IS NOT NULL
+  AND prs.updated_at IS NOT NULL AND excluded.updated_at < prs.updated_at)`;
 
 export interface ReasonRow {
   pr_id: number;
@@ -363,23 +378,28 @@ export class Store {
     return (this.db.prepare("SELECT * FROM sync_runs WHERE server = ? ORDER BY at DESC, id DESC LIMIT 1").get(server) as SyncRunRow | undefined) ?? null;
   }
 
-  /** Inserts or refreshes a PR from its server's summary. `mine` only ever turns on. */
+  /**
+   * Inserts or refreshes a PR from its server's summary. `mine` only ever turns on. An answer read before the PR
+   * merged or closed never makes it open again; a real reopen is newer, so it gets through.
+   */
   upsertPr(server: string, summary: PrSummary, url: string, mine: boolean): PrRow {
     const key = prKey({ server, repo: summary.repo, number: summary.number });
     this.db
       .prepare(
         `INSERT INTO prs (key, server, repo, number, url, title, author, state, checks, review, head, head_ref, base, additions, deletions, files, updated_at, mine, fetched_at, body, labels, reviewers, viewed_at,
-           created_at, closed_at, check_counts, my_review, auto_merge, author_bot, requested_at, first_review_at)
+           created_at, closed_at, check_counts, my_review, auto_merge, in_merge_queue, author_bot, requested_at, first_review_at)
          VALUES (@key, @server, @repo, @number, @url, @title, @author, @state, @checks, @review, @head, @head_ref, @base, @additions, @deletions, @files, @updated_at, @mine, @fetched_at, @body,
-           @labels, @reviewers, @viewed_at, @created_at, @closed_at, @check_counts, @my_review, @auto_merge, @author_bot, @requested_at, @first_review_at)
-         ON CONFLICT (key) DO UPDATE SET url = excluded.url, title = excluded.title, author = excluded.author, state = excluded.state, checks = excluded.checks,
+           @labels, @reviewers, @viewed_at, @created_at, @closed_at, @check_counts, @my_review, @auto_merge, @in_merge_queue, @author_bot, @requested_at, @first_review_at)
+         ON CONFLICT (key) DO UPDATE SET url = excluded.url, title = excluded.title, author = excluded.author,
+         state = CASE WHEN ${STALE_STATE} THEN prs.state ELSE excluded.state END, checks = excluded.checks,
          review = excluded.review, head = excluded.head, head_ref = COALESCE(excluded.head_ref, prs.head_ref), base = COALESCE(excluded.base, prs.base),
          additions = COALESCE(excluded.additions, prs.additions), deletions = COALESCE(excluded.deletions, prs.deletions), files = COALESCE(excluded.files, prs.files),
-         updated_at = COALESCE(excluded.updated_at, prs.updated_at), mine = MAX(prs.mine, excluded.mine), fetched_at = excluded.fetched_at,
+         updated_at = CASE WHEN ${STALE_STATE} THEN prs.updated_at ELSE COALESCE(excluded.updated_at, prs.updated_at) END, mine = MAX(prs.mine, excluded.mine), fetched_at = excluded.fetched_at,
          body = COALESCE(excluded.body, prs.body), labels = COALESCE(excluded.labels, prs.labels), reviewers = COALESCE(excluded.reviewers, prs.reviewers),
          viewed_at = COALESCE(excluded.viewed_at, prs.viewed_at), created_at = COALESCE(excluded.created_at, prs.created_at),
-         closed_at = CASE WHEN excluded.state IN ('merged', 'closed') THEN COALESCE(excluded.closed_at, prs.closed_at, excluded.fetched_at) ELSE NULL END,
+         closed_at = CASE WHEN ${STALE_STATE} THEN prs.closed_at WHEN excluded.state IN ('merged', 'closed') THEN COALESCE(excluded.closed_at, prs.closed_at, excluded.fetched_at) ELSE NULL END,
          check_counts = excluded.check_counts, my_review = COALESCE(excluded.my_review, prs.my_review), auto_merge = COALESCE(excluded.auto_merge, prs.auto_merge),
+         in_merge_queue = COALESCE(excluded.in_merge_queue, prs.in_merge_queue),
          author_bot = COALESCE(excluded.author_bot, prs.author_bot), requested_at = COALESCE(excluded.requested_at, prs.requested_at),
          first_review_at = COALESCE(excluded.first_review_at, prs.first_review_at)`,
       )
@@ -413,6 +433,7 @@ export class Store {
         check_counts: summary.checkCounts ? JSON.stringify(summary.checkCounts) : null,
         my_review: summary.myReview ? JSON.stringify(summary.myReview) : null,
         auto_merge: summary.autoMerge === null ? null : summary.autoMerge ? 1 : 0,
+        in_merge_queue: summary.inMergeQueue === null ? null : summary.inMergeQueue ? 1 : 0,
         author_bot: summary.authorBot === null ? null : summary.authorBot ? 1 : 0,
         requested_at: summary.requestedAt,
         first_review_at: summary.firstReviewAt,
@@ -966,6 +987,18 @@ export class Store {
   /** Failed merges of the PR before `beforeId`, or all of them, no longer need the user. */
   clearFailedMerges(prId: number, beforeId = Number.MAX_SAFE_INTEGER): void {
     this.db.prepare("UPDATE merges SET cleared_at = ? WHERE pr_id = ? AND state = 'failed' AND cleared_at IS NULL AND id < ?").run(this.now(), prId, beforeId);
+  }
+
+  /**
+   * The user's open PRs on a server with a merge pending: auto-merge on, in the server's merge queue, a merge in
+   * Shuttle's queue, or one the server took since `sentSince` while the PR stayed open. The least recently read first.
+   */
+  /** `own`: 1 when the merge pending is Shuttle's: queued, running, or sent since `sentSince`. */
+  pendingMergePrs(server: string, sentSince: number): Array<PrRow & { own: number }> {
+    return this.db.prepare(`SELECT * FROM (SELECT p.*, EXISTS (SELECT 1 FROM merges m WHERE m.pr_id = p.id
+        AND (m.state IN ('queued', 'merging') OR (m.state = 'done' AND m.outcome = 'sent' AND m.finished_at >= ?))) AS own
+      FROM prs p WHERE p.server = ? AND p.mine = 1 AND p.state IN ('open', 'draft'))
+      WHERE own = 1 OR auto_merge = 1 OR in_merge_queue = 1 ORDER BY id`).all(sentSince, server) as Array<PrRow & { own: number }>;
   }
 
   /** Merges a stopped Shuttle left merging; the server may or may not have merged them. */

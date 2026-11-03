@@ -4,7 +4,8 @@ import type { SyncFailure, SyncFailureKind, SyncStepName } from "./contract";
 /** What each step fetches, for sentences such as "Forge failed while Shuttle asked for team requests". */
 export const STEP_LABELS: Record<SyncStepName, string> = {
   whoami: "who you are",
-  authored: "your PRs",
+  authored: "your open PRs",
+  authored_closed: "your merged and closed PRs",
   review_requested: "review requests",
   team_requested: "team requests",
   mentioned: "mentions",

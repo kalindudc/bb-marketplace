@@ -230,6 +230,16 @@ describe("the merge queue", () => {
     expect(h.shuttle.view(KEY(1))).toMatchObject({ merge: null, next: { kind: "ready_to_merge" } });
   });
 
+  it("shows In the merge queue when the server says so, rather than Shuttle's guess that it may be", async () => {
+    const h = await queue([WRITE_SERVER], new Set([1]));
+    Object.defineProperty(h.views, 1, { configurable: true, get: () => mine(1, { in_merge_queue: merged(h).length > 0 }) });
+    h.shuttle.queueMerge(KEY(1), SQUASH);
+    await h.shuttle.mergesSettled();
+    expect(h.shuttle.activity(5).map((e) => e.text)).toContain("Added acme/app#1 to the merge queue on Forge.");
+    expect(h.shuttle.merges()[0]).toMatchObject({ state: "done", outcome: "sent" });
+    expect(h.shuttle.view(KEY(1))).toMatchObject({ state: "open", inMergeQueue: true, merge: null, next: { kind: "in_merge_queue", inbox: false } });
+  });
+
   it("turns on auto-merge in the background", async () => {
     const h = await queue();
     const held = gate(h.shuttle.adapter("forge"));

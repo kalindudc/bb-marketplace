@@ -26,6 +26,8 @@ export interface NextFacts {
   suggestedAgent: { title: string } | null;
   handled: boolean;
   autoMerge: boolean;
+  /** It waits in the repository's own merge queue, such as GitHub's. */
+  inMergeQueue: boolean;
   snoozed: boolean;
   /** Dismissed from the Inbox, or a rule keeps it out. */
   keptOut: boolean;
@@ -150,11 +152,8 @@ function mineNext(f: NextFacts): NextStep {
     const note = feedback ? `${capital(feedbackText(f))}. ` : "";
     return step("draft", "neutral", "Draft", `${note}Reviewers are not notified until it is ready.`, { primary: f.can.ready ? act("ready", "Ready for review") : null });
   }
-  if (feedback && !active) {
+  if (feedback && !active && !f.handled) {
     const what = feedbackText(f);
-    if (f.handled) {
-      return step("yours", "neutral", "You\u2019re on it", `You took ${what} yourself. New feedback brings it back to your Inbox.`, { more: [act("pick_agent", "Hand it to an agent")] });
-    }
     const why = agent === null ? "It has no agent" : agent.status === "archived" ? "Its agent\u2019s thread is archived" : "Its agent is off";
     return step("nobody", "bad", f.review === "changes" ? "Changes requested, and nobody is on it" : "Checks fail, and nobody is on it", `${capital(what)}. ${why}, so nothing has been sent anywhere.`, {
       inbox: true,
@@ -162,6 +161,11 @@ function mineNext(f: NextFacts): NextStep {
       primary: f.suggestedAgent ? act("assign_suggested", "Hand it to its thread") : act("pick_agent", "Hand it to an agent"),
       more: [act("handle", "I\u2019ll do it")],
     });
+  }
+  // The server is merging it already: feedback someone has is for the merge queue's checks to settle.
+  if (f.inMergeQueue) return step("in_merge_queue", "ok", "In the merge queue", "It merges once the repository's merge queue has run its checks on it.");
+  if (feedback && !active) {
+    return step("yours", "neutral", "You\u2019re on it", `You took ${feedbackText(f)} yourself. New feedback brings it back to your Inbox.`, { more: [act("pick_agent", "Hand it to an agent")] });
   }
   if (feedback && active) {
     const what = feedbackText(f);

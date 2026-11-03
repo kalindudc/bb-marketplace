@@ -688,3 +688,126 @@ describe("GitHub reviewers who are bots", () => {
     expect(summary.reviewers?.map((r) => [r.login, r.bot === true])).toEqual([["ci-reviewer", true], ["review-bot", true], ["pascal", false]]);
   });
 });
+
+describe("merge queues and fresh state", () => {
+  const query = (call: Call) => call.args.find((arg) => arg.startsWith("query="))!;
+  const empty = { headRefOid: "abc", reviews: { nodes: [] }, reviewThreads: { nodes: [] }, comments: { nodes: [] }, commits: { nodes: [] } };
+
+  it("reads whether a GitHub PR waits in the merge queue, and says nothing when GitHub did not", async () => {
+    expect(toSummary(node({ isInMergeQueue: true })).inMergeQueue).toBe(true);
+    expect(toSummary(node({ isInMergeQueue: false })).inMergeQueue).toBe(false);
+    expect(toSummary(node()).inMergeQueue).toBeNull();
+    const { calls, run } = recorder(() => ({ json: { data: { repository: { pullRequest: node({ isInMergeQueue: true }) } } } }));
+    expect((await new GithubAdapter(github(), run).view("acme/api", 7)).inMergeQueue).toBe(true);
+    expect(query(calls[0]!)).toContain("isInMergeQueue");
+  });
+
+  it("asks again without the merge queue on a GitHub Enterprise server that lacks it, and remembers", async () => {
+    const missing = { code: 1, stderr: "gh: Field 'isInMergeQueue' doesn't exist on type 'PullRequest'", stdout: JSON.stringify({ errors: [{ message: "Field 'isInMergeQueue' doesn't exist on type 'PullRequest'" }] }) };
+    const { calls, run } = recorder((call) => (query(call).includes("isInMergeQueue") ? missing : query(call).includes("search(")
+      ? { json: { data: { search: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [node()] } } } }
+      : { json: { data: { repository: { pullRequest: node() } } } }));
+    const gh = new GithubAdapter(github("ghe.acme.io"), run);
+    expect(await gh.view("acme/api", 7)).toMatchObject({ number: 7, inMergeQueue: null });
+    expect((await gh.list("authored", {})).rows).toHaveLength(1);
+    expect(calls.map((call) => query(call).includes("isInMergeQueue"))).toEqual([true, false, false]);
+    // Exit 0 with only errors, as some servers answer, is the same refusal.
+    const quiet = recorder((call) => (query(call).includes("isInMergeQueue") ? { json: { errors: [{ message: "Field 'isInMergeQueue' doesn't exist on type 'PullRequest'" }] } } : { json: { data: { repository: { pullRequest: node() } } } }));
+    expect((await new GithubAdapter(github(), quiet.run).view("acme/api", 7)).number).toBe(7);
+    expect(quiet.calls).toHaveLength(2);
+    // Any other refusal fails as before.
+    const other = recorder(() => ({ code: 1, stderr: "gh: Field 'nope' doesn't exist on type 'PullRequest'" }));
+    await expect(new GithubAdapter(github(), other.run).view("acme/api", 7)).rejects.toThrow(/nope/u);
+    expect(other.calls).toHaveLength(1);
+  });
+
+  it("asks again without the merge queue for every request that asked for it, when two were sent at once", async () => {
+    const missing = { code: 1, stderr: "gh: Field 'isInMergeQueue' doesn't exist on type 'PullRequest'" };
+    const { calls, run } = recorder((call) => (query(call).includes("isInMergeQueue") ? missing : { json: { data: { repository: { pullRequest: node() } } } }));
+    const gh = new GithubAdapter(github("ghe.acme.io"), run);
+    const both = await Promise.allSettled([gh.view("acme/api", 7), gh.view("acme/api", 7)]);
+    expect(both.map((read) => read.status)).toEqual(["fulfilled", "fulfilled"]);
+    expect(calls.map((call) => query(call).includes("isInMergeQueue"))).toEqual([true, true, false, false]);
+  });
+
+  it("counts a PR whose read has an error under its alias as not read, even when the rest of it came", async () => {
+    const { run } = recorder(() => ({
+      code: 1,
+      stderr: "gh: Something went wrong while executing your query.",
+      stdout: JSON.stringify({
+        data: { p0: { pullRequest: node({ number: 1 }) }, p1: { pullRequest: node({ number: 2 }) } },
+        errors: [{ path: ["p0", "pullRequest", "autoMergeRequest"], message: "Something went wrong while executing your query." }],
+      }),
+    }));
+    const out = await new GithubAdapter(github(), run).viewMany([{ repo: "acme/api", number: 1 }, { repo: "acme/api", number: 2 }]);
+    expect(out[0]).toEqual({ repo: "acme/api", number: 1, summary: null, error: "Something went wrong while executing your query." });
+    expect(out[1]).toMatchObject({ number: 2, summary: { number: 2 }, error: null });
+  });
+
+  it("reads many PRs in batches of ten, and keeps the PRs GitHub found when it could not find one", async () => {
+    const { calls, run } = recorder((call) => {
+      const aliases = [...query(call).matchAll(/(p\d+): repository/gu)].map((m) => m[1]!);
+      const data: Record<string, unknown> = {};
+      const errors: unknown[] = [];
+      for (const alias of aliases) {
+        const number = Number(call.args.find((arg) => arg.startsWith(`${alias}n=`))!.split("=")[1]);
+        if (number === 13) {
+          data[alias] = { pullRequest: null };
+          errors.push({ type: "NOT_FOUND", path: [alias, "pullRequest"], message: "Could not resolve to a PullRequest with the number of 13." });
+        } else data[alias] = { pullRequest: node({ number, state: number === 4 ? "MERGED" : "OPEN", mergedAt: number === 4 ? "2026-10-23T11:00:00Z" : null, isInMergeQueue: number === 5 }) };
+      }
+      // gh exits 1 when the answer has errors, and still prints it.
+      return errors.length ? { code: 1, stderr: "gh: Could not resolve to a PullRequest with the number of 13.", stdout: JSON.stringify({ data, errors }) } : { json: { data } };
+    });
+    const gh = new GithubAdapter(github(), run);
+    const refs = Array.from({ length: 23 }, (_, i) => ({ repo: "acme/api", number: i + 1 }));
+    const out = await gh.viewMany(refs);
+    expect(calls.map((call) => [...query(call).matchAll(/: repository\(/gu)].length)).toEqual([10, 10, 3]);
+    expect(out).toHaveLength(23);
+    expect(out[3]).toMatchObject({ repo: "acme/api", number: 4, summary: { state: "merged", closedAt: at("2026-10-23T11:00:00Z") }, error: null });
+    expect(out[4]!.summary!.inMergeQueue).toBe(true);
+    expect(out[12]).toEqual({ repo: "acme/api", number: 13, summary: null, error: "Could not resolve to a PullRequest with the number of 13." });
+    expect(out.filter((row) => row.summary !== null)).toHaveLength(22);
+    expect(query(calls[0]!)).toContain("p0: repository(owner: $p0o, name: $p0r) { pullRequest(number: $p0n)");
+
+    // A batch that fails as a whole fails only its own PRs.
+    let first = true;
+    const flaky = recorder((call) => {
+      if (first) {
+        first = false;
+        return { code: 1, stderr: "gh: HTTP 502" };
+      }
+      const aliases = [...query(call).matchAll(/(p\d+): repository/gu)].map((m) => m[1]!);
+      return { json: { data: Object.fromEntries(aliases.map((alias) => [alias, { pullRequest: node({ number: Number(call.args.find((arg) => arg.startsWith(`${alias}n=`))!.split("=")[1]) }) }])) } };
+    });
+    const mixed = await new GithubAdapter(github(), flaky.run).viewMany(refs.slice(0, 12));
+    expect(mixed.slice(0, 10).every((row) => row.summary === null && /HTTP 502/u.test(row.error ?? ""))).toBe(true);
+    expect(mixed.slice(10).map((row) => row.summary?.number)).toEqual([11, 12]);
+  });
+
+  it("reads the PR's state with watching's light activity read, not with the PR view's", async () => {
+    const { calls, run } = recorder(() => ({ json: { data: { repository: { pullRequest: { ...empty, state: "MERGED", isDraft: false, mergedAt: "2026-10-23T11:00:00Z", closedAt: "2026-10-23T11:00:00Z", updatedAt: "2026-10-23T11:00:01Z" } } } } }));
+    const gh = new GithubAdapter(github(), run);
+    expect((await gh.activity("acme/api", 7)).pr).toEqual({ state: "merged", closedAt: at("2026-10-23T11:00:00Z"), updatedAt: at("2026-10-23T11:00:01Z") });
+    await gh.activity("acme/api", 7, undefined, { detail: true });
+    expect(query(calls[0]!)).toMatch(/\bstate isDraft mergedAt closedAt updatedAt\b/u);
+    expect(query(calls[1]!)).not.toContain("mergedAt");
+    expect(toActivity({ ...empty, state: "OPEN", isDraft: true, updatedAt: "2026-10-23T11:00:01Z" }).pr).toEqual({ state: "draft", closedAt: null, updatedAt: at("2026-10-23T11:00:01Z") });
+    expect(toActivity(empty).pr).toBeNull();
+  });
+
+  it("takes a command server's merge queue and an activity read's state when it prints them", async () => {
+    const { run } = recorder((call) => {
+      if (call.env.SHUTTLE_OPERATION === "view") return { json: { repo: "acme/app", number: 7, title: "T", state: "open", in_merge_queue: true } };
+      return { json: { head: "h2", items: [], state: "merged", closed_at: "2026-10-23T11:00:00Z", updated_at: "2026-10-23T11:00:01Z" } };
+    });
+    const adapter = new CommandAdapter(forge({ activity: "a" }), run);
+    expect((await adapter.view("acme/app", 7)).inMergeQueue).toBe(true);
+    expect((await adapter.activity("acme/app", 7)).pr).toEqual({ state: "merged", closedAt: at("2026-10-23T11:00:00Z"), updatedAt: at("2026-10-23T11:00:01Z") });
+    const plain = recorder((call) => (call.env.SHUTTLE_OPERATION === "view" ? { json: { repo: "acme/app", number: 7, title: "T", state: "open" } } : { json: { items: [], state: "open", draft: true } }));
+    const bare = new CommandAdapter(forge({ activity: "a" }), plain.run);
+    expect((await bare.view("acme/app", 7)).inMergeQueue).toBeNull();
+    expect((await bare.activity("acme/app", 7)).pr).toEqual({ state: "draft", closedAt: null, updatedAt: null });
+    expect((bare as Adapter).viewMany).toBeUndefined();
+  });
+});

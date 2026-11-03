@@ -69,8 +69,11 @@ at once, and Shuttle merges in the background, one PR at a time on each server a
 chose them. My PRs lists them under Merging, and the PR's card has Cancel until the merge starts.
 Just before it merges, Shuttle reads the PR from its server and merges only while it is open and
 still at the head you saw. It decides what happened from the PR it reads back afterwards, so a PR a
-repository's own merge queue took stays open and shows as Sent to merge, instead of merged or ready
-to merge, for up to a day while it is still at that head. A merge that
+repository's own merge queue took stays open, under Merging: as In the merge queue when the server
+says so, or as Sent to merge for up to a day while it is still at that head, instead of merged or
+ready to merge. Every 30 seconds, even while a sync runs, Shuttle reads your PRs with a merge
+pending, so a merge that lands, there or anywhere else, shows within a minute or so. A PR that has
+waited on auto-merge or a merge queue for more than an hour is read every five minutes instead. A merge that
 does not go through comes back to the Inbox under Needs you with the server's reason. Try again runs
 the same merge, or, when someone pushed since, Merge… lets you look at the new commits first.
 
@@ -119,7 +122,9 @@ failed or went quiet runs again when the thread gets back to work.
 
 ## Agents
 
-A PR's agent is the thread linked to it as owner. Shuttle reads the PR's activity on every sync and,
+A PR's agent is the thread linked to it as owner. Shuttle reads the PR's activity on every sync, three
+PRs at a time, which also tells it when the PR merged or closed (an answer older than what Shuttle
+has never changes that), and,
 after the batch window, sends the thread what is new: reviews, review comments, conversation
 comments and, if you choose, failed checks on the head. Resolved threads and your own reviews and
 replies are left out, and so are bots while **Ignore bots** is on, except the logins and globs under
@@ -151,6 +156,27 @@ remembers that choice separately for each board on this device.
 Threads can find, inspect, create, update, and curate boards with the `shuttle_board*` tools.
 See the bundled [Shuttle skill](skills/shuttle/SKILL.md) for the inputs and CLI commands.
 
+## Syncing
+
+Servers sync at the same time, and each one at most once at a time. **Sync now** on one server
+starts that server's sync at once, or joins it when one is already running, rather than waiting for
+the other servers. The steps after the servers, such as thread titles and sending agents what is
+new, run once the servers are done and never hold up the next sync of a server.
+
+Shuttle's loop runs every 30 seconds and never waits for a sync. It starts a full sync when one is
+due and none is running, rechecks a server whose sync failed, and on every tick reads the PRs with a
+merge pending (the fast lane), ends reviews that went quiet and sends agents what is new. The fast
+lane reads each server on its own and leaves alone a server that is syncing. After a rate limit, a
+refused sign-in, or a failure that says the server is down, in a sync or in the fast lane, Shuttle
+asks that server nothing more until its next sync.
+
+On each server Shuttle reads your open PRs first and shows them as soon as they land. It then reads
+the other lists two at a time, and each list shows as soon as it lands. Merged and closed PRs are
+read since the last read that came in full, less five minutes, with the whole Done window read
+about once an hour and at the next sync after the Done setting changes, so a sync does not read two
+weeks of closed PRs every time. Linked and tracked PRs that no list brought are read three at a time,
+at most 30 a sync, and so are open PRs of yours that neither your open nor your closed PRs brought.
+
 ## Layout
 
 ```
@@ -159,7 +185,7 @@ app.tsx                the Shuttle page, thread panel tab, header chip and setti
 src/config.ts          servers, presets and automations (stored in the plugin database)
 src/boards.ts          saved PR sets, board activity, archive guards and membership operations
 src/adapters/          the built-in GitHub adapter (gh) and the command adapter
-src/sync.ts            one server sync, step by step with bounded retries, and the auto reviews it calls for
+src/sync.ts            one server sync, list by list with bounded retries, and the auto reviews it calls for
 src/failures.ts        why a sync step failed, in plain words, for the UI, the CLI and the Automation log
 src/next.ts            the next-step rule every PR's Inbox row, list row and banner show, and Inbox rules
 src/inbox.ts           the Inbox's read, snoozes, dismissals, seen marks and rules
@@ -169,6 +195,7 @@ src/watch.ts           new activity on PRs with an agent: batches, messages, ite
 src/drafts.ts          AI review drafts and posting reviews
 src/posts.ts           the review queue: checks, cancel, try again, and posts a stopped Shuttle left half done
 src/merges.ts          the merge queue for your own PRs, the same way
+src/fast-lane.ts       each tick, reads the state of your PRs with a merge pending
 src/review-runs.ts     when a review run ends: a draft, the thread saying so, a failure, or hours of quiet
 src/conversation.ts    a PR's conversation and details, comments, replies, resolving and merging
 src/insights.ts        the numbers and ideas on the Insights page

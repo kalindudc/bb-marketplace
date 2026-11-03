@@ -2,9 +2,10 @@
 import { z } from "zod";
 import { OPERATIONS, type ListOperation, type Operation, type ServerConfig } from "../config";
 import type { CheckCounts, CheckRun, CheckState, FileChange, MergeMethod, MergeOptions, MyReview, PrChange, PrDetails, PrState, Reviewer, ReviewerState, ReviewState, RunState, TimelineEvent, TimelineKind } from "../contract";
+import { failureKind } from "../failures";
 import { linkFor } from "../keys";
-import type { Activity, ActivityItem, EditOptions, PrSummary } from "../model";
-import { AdapterError, changeOperation, type ActivityOptions, type Adapter, type CheckInfo, type CommitInfo, type IssueInfo, type ListOptions, type ListResult, type MergeInput, type ReviewComment, type ReviewPost, type ReviewPosted } from "./adapter";
+import type { Activity, ActivityItem, ActivityState, EditOptions, PrSummary } from "../model";
+import { AdapterError, changeOperation, type ActivityOptions, type Adapter, type CheckInfo, type CommitInfo, type IssueInfo, type ListOptions, type ListResult, type MergeInput, type PrRead, type ReviewComment, type ReviewPost, type ReviewPosted } from "./adapter";
 import { fillCommand, outputTail, runProcess, shellQuote, tail, type RunResult, type Runner } from "./exec";
 
 const GH_TIMEOUT_MS = 45_000;
@@ -20,9 +21,14 @@ const GITHUB_TIMEOUT = /HTTP 50[234]|unexpected end of JSON input|couldn't respo
 /** `gh api graphql`: what ran, without its query or body. */
 const ghCommand = (args: readonly string[]) => ["gh", ...args.slice(0, 2)].join(" ");
 
+/** GitHub Enterprise servers before merge queues have no such field; the adapter leaves it out of every query once one says so. */
+const MERGE_QUEUE_FIELDS = "isInMergeQueue";
+const NO_MERGE_QUEUE = /Field '(?:isInMergeQueue|mergeQueueEntry)' doesn't exist/u;
+/** PRs per batched read: GitHub ends a request after 10s, and a search page of 25 full PRs took about 6s. */
+export const VIEW_MANY_SIZE = 10;
 // Counts by state rather than the contexts themselves, so a list of 300 PRs stays light.
 const SUMMARY_FIELDS = `number title url isDraft state reviewDecision headRefOid headRefName baseRefName createdAt updatedAt closedAt mergedAt additions deletions changedFiles
-  author { login __typename } repository { nameWithOwner } autoMergeRequest { enabledAt }
+  author { login __typename } repository { nameWithOwner } autoMergeRequest { enabledAt } ${MERGE_QUEUE_FIELDS}
   commits(last: 1) { nodes { commit { statusCheckRollup { state contexts { totalCount checkRunCountsByState { state count } statusContextCountsByState { state count } } } } } }
   labels(first: 30) { nodes { name color } }
   latestReviews(first: 30) { nodes { state submittedAt viewerDidAuthor commit { oid } author { login __typename } } }
@@ -81,8 +87,10 @@ function activityQuery(detail: boolean): string {
         ... on HeadRefDeletedEvent { createdAt actor { login } headRefName }
         ... on BaseRefChangedEvent { createdAt actor { login } previousRefName currentRefName } } }`
     : "";
+  // Watching reads every watched PR on each sync, so its light read also says when one merged or closed.
+  const state = detail ? "" : "state isDraft mergedAt closedAt updatedAt";
   return `query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) {
-    headRefOid
+    headRefOid ${state}
     reviews(last: 50) { nodes { id state body url submittedAt ${WHO} } }
     reviewThreads(last: 50) { nodes { id isResolved path line ${threadExtra} comments(last: 20) { nodes { id body url createdAt ${WHO} ${commentExtra} } } } }
     comments(last: 50) { nodes { id body url createdAt ${WHO} } }
@@ -116,6 +124,7 @@ const summaryNode = z.object({
   author: actor,
   repository: z.object({ nameWithOwner: z.string() }),
   autoMergeRequest: z.object({ enabledAt: z.string().nullable() }).nullish(),
+  isInMergeQueue: z.boolean().optional(),
   commits: z.object({
     nodes: z.array(
       z.object({
@@ -167,7 +176,7 @@ export function searchQuery(operation: ListOperation, options: ListOptions): str
   const base = "is:pr archived:false sort:updated-desc";
   switch (operation) {
     case "authored":
-      return options.state === "closed" ? `${base} author:@me is:closed updated:>=${options.since}` : `${base} author:@me is:open`;
+      return options.state === "closed" ? `${base} author:@me is:closed updated:>=${options.sinceAt ?? options.since}` : `${base} author:@me is:open`;
     case "review_requested":
       return `${base} is:open user-review-requested:@me`;
     case "team_requested":
@@ -296,6 +305,7 @@ export function toSummary(node: SummaryNode): PrSummary {
     checkCounts: checkCountsOf(node),
     myReview: myReviewOf(node),
     autoMerge: Boolean(node.autoMergeRequest),
+    inMergeQueue: node.isInMergeQueue ?? null,
     authorBot: isBot(node.author),
     requestedAt: requestedAtOf(node),
     firstReviewAt: firstReviewAtOf(node),
@@ -369,6 +379,11 @@ const activityNode = z.object({
       }),
     ),
   }),
+  // Only without detail: the PR's own state.
+  state: z.enum(["OPEN", "CLOSED", "MERGED"]).optional(),
+  mergedAt: z.string().nullish(),
+  closedAt: z.string().nullish(),
+  updatedAt: z.string().optional(),
   // Only with detail: what the PR view shows besides the conversation.
   isDraft: z.boolean().optional(),
   mergeable: z.string().optional(),
@@ -418,7 +433,13 @@ export function toActivity(node: z.infer<typeof activityNode>): Activity {
     const name = context.name ?? context.context ?? "check";
     items.push({ id: checkItemId(context.id, head), kind: "check", author: null, bot: false, state: "failed", body: `${name} failed`, url: context.detailsUrl ?? context.targetUrl ?? null, path: null, line: null, at: ms(context.completedAt ?? context.createdAt), thread: null, resolved: null });
   }
-  return { head, items, details: node.commitList === undefined ? null : detailsOf(node, contexts, head) };
+  return { head, items, details: node.commitList === undefined ? null : detailsOf(node, contexts, head), pr: activityStateOf(node) };
+}
+
+function activityStateOf(node: z.infer<typeof activityNode>): ActivityState | null {
+  if (!node.state) return null;
+  const state: PrState = node.state === "MERGED" ? "merged" : node.state === "CLOSED" ? "closed" : node.isDraft ? "draft" : "open";
+  return { state, closedAt: state === "merged" ? ms(node.mergedAt ?? node.closedAt) : state === "closed" ? ms(node.closedAt) : null, updatedAt: ms(node.updatedAt) };
 }
 
 /** A failed check's id is the check and the head it ran on, so the same failure on a new head is new again. */
@@ -638,6 +659,15 @@ function apiDetail(stdout: string): string {
   }
 }
 
+interface GraphqlError {
+  message?: string;
+  path?: Array<string | number>;
+}
+interface GraphqlAnswer {
+  data: unknown;
+  errors: GraphqlError[];
+}
+
 export class GithubAdapter implements Adapter {
   constructor(
     readonly server: ServerConfig,
@@ -682,19 +712,47 @@ export class GithubAdapter implements Adapter {
     return result.stdout;
   }
 
-  private async graphql<S extends z.ZodType>(operation: Operation, query: string, vars: Record<string, string | number>, schema: S, signal?: AbortSignal): Promise<z.output<S>> {
+  /** False once the server said it has no merge queue fields. */
+  private mergeQueue = true;
+
+  /**
+   * GitHub's answer. With `partial`, an answer with data and errors, which gh exits 1 on, is still an answer:
+   * a PR it could not read is a null with an error naming its alias.
+   */
+  private async graphqlAnswer(operation: Operation, query: string, vars: Record<string, string | number>, signal?: AbortSignal, partial = false): Promise<GraphqlAnswer> {
+    // What this request asked, not the flag now: a request sent at the same time may have changed it since.
+    const asked = this.mergeQueue;
+    try {
+      return await this.post(operation, asked ? query : query.replaceAll(MERGE_QUEUE_FIELDS, ""), vars, signal, partial);
+    } catch (error) {
+      if (!asked || !(error instanceof AdapterError) || !NO_MERGE_QUEUE.test(error.message)) throw error;
+      this.mergeQueue = false;
+      return this.post(operation, query.replaceAll(MERGE_QUEUE_FIELDS, ""), vars, signal, partial);
+    }
+  }
+
+  private async post(operation: Operation, query: string, vars: Record<string, string | number>, signal: AbortSignal | undefined, partial: boolean): Promise<GraphqlAnswer> {
     const args = ["api", "graphql", ...this.hostArgs(), "-f", `query=${query}`];
     for (const [name, value] of Object.entries(vars)) args.push(typeof value === "number" ? "-F" : "-f", `${name}=${value}`);
-    const out = await this.gh(operation, args, signal);
-    let parsed: unknown;
+    const result = await this.call(operation, args, signal);
+    let parsed: { data?: unknown; errors?: GraphqlError[] } | undefined;
     try {
-      parsed = JSON.parse(out);
+      parsed = JSON.parse(result.stdout) as typeof parsed;
     } catch {
-      throw new AdapterError(operation, "gh did not print JSON");
+      parsed = undefined;
     }
-    const errors = (parsed as { errors?: Array<{ message?: string }> }).errors;
-    const result = schema.safeParse((parsed as { data?: unknown }).data);
-    if (!result.success) throw new AdapterError(operation, errors?.length ? `GitHub: ${errors.map((e) => e.message).join("; ")}` : `unexpected answer from GitHub: ${result.error.issues[0]?.message ?? ""}`);
+    const data = parsed?.data;
+    if (result.code !== 0 && !(partial && typeof data === "object" && data !== null)) throw this.failure(operation, result, args);
+    if (parsed === undefined || typeof parsed !== "object" || parsed === null) throw new AdapterError(operation, "gh did not print JSON");
+    const errors = Array.isArray(parsed.errors) ? parsed.errors : [];
+    if (errors.some((e) => NO_MERGE_QUEUE.test(e.message ?? ""))) throw new AdapterError(operation, `GitHub: ${errors.map((e) => e.message).join("; ")}`);
+    return { data, errors };
+  }
+
+  private async graphql<S extends z.ZodType>(operation: Operation, query: string, vars: Record<string, string | number>, schema: S, signal?: AbortSignal): Promise<z.output<S>> {
+    const { data, errors } = await this.graphqlAnswer(operation, query, vars, signal);
+    const result = schema.safeParse(data);
+    if (!result.success) throw new AdapterError(operation, errors.length ? `GitHub: ${errors.map((e) => e.message).join("; ")}` : `unexpected answer from GitHub: ${result.error.issues[0]?.message ?? ""}`);
     return result.data;
   }
 
@@ -752,6 +810,52 @@ export class GithubAdapter implements Adapter {
     const node = data.repository?.pullRequest;
     if (!node) throw new AdapterError("view", `${repo}#${number} was not found`);
     return toSummary(node);
+  }
+
+  /**
+   * Reads PRs in aliased batches; a PR GitHub could not read, or a batch that failed, comes back with its error and
+   * does not fail the rest. Once GitHub says it is limiting Shuttle, the PRs left get that answer without asking.
+   */
+  async viewMany(refs: ReadonlyArray<{ repo: string; number: number }>, signal?: AbortSignal): Promise<PrRead[]> {
+    const out: PrRead[] = [];
+    let limited: string | null = null;
+    for (let start = 0; start < refs.length; start += VIEW_MANY_SIZE) {
+      const batch = refs.slice(start, start + VIEW_MANY_SIZE);
+      if (limited !== null) {
+        out.push(...batch.map((ref) => ({ ...ref, summary: null, error: limited })));
+        continue;
+      }
+      const reads = await this.viewBatch(batch, signal).catch((error: unknown) => batch.map((ref) => ({ ...ref, summary: null, error: (error as Error).message })));
+      limited = reads.find((read) => read.error !== null && failureKind(read.error) === "rate_limit")?.error ?? null;
+      out.push(...reads);
+    }
+    return out;
+  }
+
+  private async viewBatch(refs: ReadonlyArray<{ repo: string; number: number }>, signal?: AbortSignal): Promise<PrRead[]> {
+    const vars: Record<string, string | number> = {};
+    const params: string[] = [];
+    const fields: string[] = [];
+    refs.forEach((ref, i) => {
+      const { owner, name, number } = this.repoVars(ref.repo, ref.number);
+      Object.assign(vars, { [`p${i}o`]: owner, [`p${i}r`]: name, [`p${i}n`]: number });
+      params.push(`$p${i}o: String!, $p${i}r: String!, $p${i}n: Int!`);
+      fields.push(`p${i}: repository(owner: $p${i}o, name: $p${i}r) { pullRequest(number: $p${i}n) { ...pr } }`);
+    });
+    const query = `query(${params.join(", ")}) { ${fields.join("\n")} } fragment pr on PullRequest { ${SUMMARY_FIELDS} }`;
+    const { data, errors } = await this.graphqlAnswer("view", query, vars, signal, true);
+    const answer = z.record(z.string(), z.object({ pullRequest: z.unknown() }).nullable()).safeParse(data);
+    if (!answer.success) throw new AdapterError("view", `unexpected answer from GitHub: ${answer.error.issues[0]?.message ?? ""}`);
+    return refs.map((ref, i) => {
+      const alias = `p${i}`;
+      const own = errors.filter((e) => e.path?.[0] === alias);
+      const node = summaryNode.safeParse(answer.data[alias]?.pullRequest);
+      // A field that errored reads as null, which would pass for a real value such as auto-merge off.
+      if (node.success && own.length === 0) return { ...ref, summary: toSummary(node.data), error: null };
+      const said = own.map((e) => e.message).filter(Boolean).join("; ");
+      const why = node.success ? "GitHub could not read all of it" : answer.data[alias]?.pullRequest == null ? `${ref.repo}#${ref.number} was not found` : `unexpected answer from GitHub: ${node.error.issues[0]?.message ?? ""}`;
+      return { ...ref, summary: null, error: said || why };
+    });
   }
 
   async activity(repo: string, number: number, signal?: AbortSignal, options: ActivityOptions = {}): Promise<Activity> {

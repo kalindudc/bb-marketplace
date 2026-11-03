@@ -60,7 +60,7 @@ export type TimelineKind = (typeof TIMELINE_KINDS)[number];
  */
 export const NEXT_KINDS = [
   // the user's own PRs
-  "merged", "closed", "merge_failed", "merging", "agent_waiting", "nobody", "yours", "agent_on_it", "draft", "auto_merge", "ready_to_merge", "approved_pending", "waiting_review",
+  "merged", "closed", "merge_failed", "merging", "in_merge_queue", "agent_waiting", "nobody", "yours", "agent_on_it", "draft", "auto_merge", "ready_to_merge", "approved_pending", "waiting_review",
   // everyone else's
   "post_failed", "posting", "post", "review_done", "review_failed", "running", "rereview", "reviewed", "new_request", "not_reviewed", "looked_up",
 ] as const;
@@ -317,6 +317,8 @@ export const prViewSchema = z.object({
   handled: z.boolean(),
   /** GitHub's auto-merge is on: it merges when its checks pass. */
   autoMerge: z.boolean(),
+  /** It waits in the repository's own merge queue, such as GitHub's. */
+  inMergeQueue: z.boolean(),
   /** The server's last sync failed every list that brings this PR, so it may be out of date. */
   stale: z.boolean(),
   /** When one of those lists last passed: the age of what this row shows. */
@@ -389,7 +391,7 @@ export const syncFailureSchema = z.object({
 export type SyncFailure = z.infer<typeof syncFailureSchema>;
 
 /** A sync's steps, in order: who the user is, each list, then the linked and tracked PRs no list covered. */
-export const SYNC_STEPS = ["whoami", "authored", "review_requested", "team_requested", "mentioned", "reviewed", "refresh"] as const;
+export const SYNC_STEPS = ["whoami", "authored", "authored_closed", "review_requested", "team_requested", "mentioned", "reviewed", "refresh"] as const;
 export type SyncStepName = (typeof SYNC_STEPS)[number];
 export const syncStepSchema = z.object({
   operation: z.enum(SYNC_STEPS),

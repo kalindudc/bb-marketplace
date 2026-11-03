@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { SyncStep } from "../src/contract";
 import { describeFailure, failureAdvice, failureKind } from "../src/failures";
 import { serverText } from "../src/format";
@@ -71,16 +71,42 @@ describe("sync steps", () => {
     expect(h.shuttle.overview().servers[0]).toMatchObject({ ok: true, state: "ok", failures: 0, alert: false });
   });
 
-  it("never tries again after a rate limit or an error that will not pass, and leaves the rest after a rate limit", async () => {
+  it("never tries again after a rate limit or an error that will not pass, and starts no list after a rate limit", async () => {
     const h = harness();
     h.lists.authored = new Error("authored printed JSON in the wrong shape: 0.number: Invalid input") as unknown as unknown[];
-    h.lists.team_requested = new Error("Error: 429: slow down") as unknown as unknown[];
+    h.lists.review_requested = new Error("Error: 429: slow down") as unknown as unknown[];
     await h.shuttle.sync();
     expect(h.pauses).toEqual([]);
-    expect(calls(h, "authored")).toBe(1);
-    expect(calls(h, "team_requested")).toBe(1);
+    // Open and closed PRs of yours, each asked once.
+    expect(calls(h, "authored")).toBe(2);
+    expect(calls(h, "review_requested")).toBe(1);
+    // Two lists are read at once: one already asked when the rate limit came still answers, and none starts after it.
     expect(calls(h, "mentioned")).toBe(0);
     expect(step(h, "mentioned")).toMatchObject({ status: "skipped", detail: "Not run: Forge is limiting how often Shuttle asks (HTTP 429)" });
+  });
+
+  it("sends no retry after a list read at the same time hit a rate limit during the pause", async () => {
+    const h = harness();
+    h.lists.authored_closed = new Error(RESTARTING) as unknown as unknown[];
+    h.lists.review_requested = new Error("Error: 429: slow down") as unknown as unknown[];
+    let paused!: () => void;
+    const pausing = new Promise<void>((resolve) => (paused = resolve));
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    Object.assign(h.shuttle, { pause: async () => (paused(), held) });
+    const asked: string[] = [];
+    const requested = h.hold("review_requested");
+    const sync = h.shuttle.sync();
+    await pausing;
+    requested.release();
+    await vi.waitFor(() => expect(calls(h, "review_requested")).toBe(1));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const before = h.runner.calls.length;
+    release();
+    await sync;
+    for (const call of h.runner.calls.slice(before)) asked.push(call.operation === "authored" ? `authored ${call.env.SHUTTLE_STATE}` : call.operation);
+    expect(asked).toEqual([]);
+    expect(step(h, "authored_closed")).toMatchObject({ status: "skipped", detail: "Not run: Forge is limiting how often Shuttle asks (HTTP 429)" });
   });
 
   it("does not run a request that timed out again in the same sync", async () => {
@@ -97,13 +123,14 @@ describe("sync steps", () => {
     const h = harness();
     for (const operation of ["authored", "review_requested", "team_requested", "mentioned"]) h.lists[operation] = new Error(RESTARTING) as unknown as unknown[];
     await h.shuttle.sync();
-    // authored: open and closed lists are one step; it and review_requested each fail twice, then the rest wait.
+    // Open PRs fail twice. Closed PRs and review requests are read at once: closed PRs take the last retry,
+    // review requests fail a second step in a row while it pauses, and nothing is asked after that.
     expect(h.pauses).toEqual([RETRY_PAUSE_MS, RETRY_PAUSE_MS]);
-    expect(calls(h, "authored")).toBe(2);
-    expect(calls(h, "review_requested")).toBe(2);
-    expect(calls(h, "team_requested") + calls(h, "mentioned")).toBe(0);
+    expect(h.runner.calls.map((c) => (c.operation === "authored" ? `authored ${c.env.SHUTTLE_STATE}` : c.operation))).toEqual([
+      "whoami", "authored open", "authored open", "authored closed", "review_requested",
+    ]);
     expect(steps(h).map((s) => [s.operation, s.status])).toEqual([
-      ["whoami", "ok"], ["authored", "failed"], ["review_requested", "failed"], ["team_requested", "skipped"], ["mentioned", "skipped"],
+      ["whoami", "ok"], ["authored", "failed"], ["authored_closed", "skipped"], ["review_requested", "failed"], ["team_requested", "skipped"], ["mentioned", "skipped"],
     ]);
     expect(step(h, "mentioned").detail).toBe("Not run: Forge failed twice in a row, so Shuttle leaves it until the next sync");
     expect(h.shuttle.overview().servers[0]!.state).toBe("failed");
@@ -117,6 +144,7 @@ describe("sync steps", () => {
     expect(steps(h).map((s) => [s.operation, s.status, s.detail])).toEqual([
       ["whoami", "failed", null],
       ["authored", "skipped", "Not run: Shuttle could not tell who you are"],
+      ["authored_closed", "skipped", "Not run: Shuttle could not tell who you are"],
       ["review_requested", "skipped", "Not run: Shuttle could not tell who you are"],
       ["team_requested", "skipped", "Not run: Shuttle could not tell who you are"],
       ["mentioned", "skipped", "Not run: Shuttle could not tell who you are"],
@@ -144,6 +172,18 @@ describe("a partial sync", () => {
     expect(h.store.events({ kinds: ["sync_partial"], limit: 5 }).map((e) => e.text)).toEqual([
       "Forge synced, except team requests: team_requested exited 1: team_requested printed JSON in the wrong shape: items: Invalid input. Those PRs show the last good data.",
     ]);
+  });
+
+  it("marks a PR of yours that left the open list as old while the closed list fails, since it may have merged", async () => {
+    const h = harness();
+    h.lists.authored = [pr(1, { author: "me" }), pr(2, { author: "me" })];
+    await h.shuttle.sync();
+    h.clock.now += 180_000;
+    h.lists.authored = [pr(1, { author: "me" })];
+    h.lists.authored_closed = new Error("authored printed JSON in the wrong shape: x") as unknown as unknown[];
+    await h.shuttle.sync();
+    expect(h.shuttle.overview().servers[0]).toMatchObject({ state: "partial", failedSteps: ["authored_closed"] });
+    expect(h.shuttle.list("mine").map((p) => [p.number, p.stale])).toEqual([[1, false], [2, true]]);
   });
 
   it("still runs auto reviews for the lists that passed", async () => {
@@ -206,34 +246,42 @@ describe("telling the user", () => {
   it("syncs a server that failed once again a minute later, only that server and only once", async () => {
     const h = harness();
     await h.shuttle.tick();
+    await h.shuttle.syncsSettled();
     h.answers.whoami = new Error(RESTARTING);
     h.clock.now += h.settings.syncMinutes * 60_000;
     await h.shuttle.tick();
+    await h.shuttle.syncsSettled();
     const failedAt = h.shuttle.overview().servers[0]!.lastSyncAt!;
     expect(h.shuttle.overview().servers[0]!.nextSyncAt).toBe(failedAt + RECHECK_MS);
     const before = calls(h, "whoami");
     h.clock.now = failedAt + RECHECK_MS - 1_000;
     await h.shuttle.tick();
+    await h.shuttle.syncsSettled();
     expect(calls(h, "whoami")).toBe(before);
     h.clock.now = failedAt + RECHECK_MS;
     await h.shuttle.tick();
+    await h.shuttle.syncsSettled();
     // The recheck: whoami and its one retry.
     expect(calls(h, "whoami")).toBe(before + 2);
     expect(h.shuttle.overview().servers[0]).toMatchObject({ failures: 2, alert: true });
     h.clock.now += RECHECK_MS;
     await h.shuttle.tick();
+    await h.shuttle.syncsSettled();
     expect(calls(h, "whoami")).toBe(before + 2);
   });
 
   it("never syncs sooner after a rate limit", async () => {
     const h = harness();
     await h.shuttle.tick();
+    await h.shuttle.syncsSettled();
     h.answers.whoami = new Error("Error: 429: too many requests");
     h.clock.now += h.settings.syncMinutes * 60_000;
     await h.shuttle.tick();
+    await h.shuttle.syncsSettled();
     const before = calls(h, "whoami");
     h.clock.now += RECHECK_MS * 2;
     await h.shuttle.tick();
+    await h.shuttle.syncsSettled();
     expect(calls(h, "whoami")).toBe(before);
   });
 });
@@ -270,16 +318,19 @@ describe("asking a server in trouble less", () => {
   it("does not sync sooner when any step of the failed sync was rate-limited", async () => {
     const h = harness();
     await h.shuttle.tick();
+    await h.shuttle.syncsSettled();
     h.lists.review_requested = new Error(RESTARTING) as unknown as unknown[];
     h.lists.team_requested = new Error("Error: 429: too many requests") as unknown as unknown[];
     h.clock.now += h.settings.syncMinutes * 60_000;
     await h.shuttle.tick();
+    await h.shuttle.syncsSettled();
     // The rate limit is what the status shows: it explains why the rest did not run.
     expect(h.shuttle.overview().servers[0]!.failure).toMatchObject({ kind: "rate_limit", operation: "team_requested" });
     expect(step(h, "review_requested").failure?.kind).toBe("unavailable");
     const before = calls(h, "whoami");
     h.clock.now += RECHECK_MS;
     await h.shuttle.tick();
+    await h.shuttle.syncsSettled();
     expect(calls(h, "whoami")).toBe(before);
   });
 });
@@ -352,9 +403,15 @@ describe("syncing some servers", () => {
   const forge = testConfig().servers[0]!;
   const two = () => testConfig({ servers: [forge, { ...forge, id: "other", name: "Other", pattern: "^https://other\\.test/(?<repo>[^/]+/[^/]+)/pull/(?<number>\\d+)", link: "https://other.test/{repo}/pull/{number}" }] });
 
-  it("runs a request for another server after the sync in progress, instead of answering it with that sync", async () => {
+  it("runs a request for another server at once, beside the sync in progress", async () => {
     const h = harness(two());
-    await Promise.all([h.shuttle.sync(undefined, ["forge"]), h.shuttle.sync(undefined, ["other"])]);
+    const slow = h.hold("whoami", { server: "forge" });
+    const first = h.shuttle.sync(undefined, ["forge"]);
+    await slow.reached;
+    await h.shuttle.sync(undefined, ["other"]);
+    expect(h.shuttle.overview().servers.map((s) => [s.id, s.state])).toEqual([["forge", null], ["other", "ok"]]);
+    slow.release();
+    await first;
     expect(h.shuttle.overview().servers.map((s) => [s.id, s.state])).toEqual([["forge", "ok"], ["other", "ok"]]);
   });
 
@@ -367,10 +424,11 @@ describe("syncing some servers", () => {
     const before = calls(h, "whoami");
     h.clock.now += 60_000;
     await h.shuttle.tick();
+    await h.shuttle.syncsSettled();
     expect(calls(h, "whoami")).toBe(before + 2);
   });
 
-  it("answers a request the sync in progress already covers with that sync", async () => {
+  it("answers a request for a server whose sync is in progress with that sync", async () => {
     const h = harness(two());
     await Promise.all([h.shuttle.sync(), h.shuttle.sync(undefined, ["other"])]);
     expect(calls(h, "whoami")).toBe(2);

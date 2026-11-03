@@ -1,5 +1,6 @@
 // @vitest-environment node
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { SyncStep } from "../src/contract";
 import { SpawnUnavailableError } from "../src/ports";
 import { testConfig, harness, pr } from "./helpers";
 
@@ -46,6 +47,168 @@ describe("sync", () => {
     h.views[9] = pr(9, { author: "dana", state: "merged" });
     await h.shuttle.sync();
     expect(h.store.prByKey("forge:acme/app#9")!.state).toBe("merged");
+  });
+});
+
+describe("the lists of a server", () => {
+  const steps = (h: ReturnType<typeof harness>) => JSON.parse(h.store.lastSyncRun("forge")!.steps) as SyncStep[];
+  const closedSince = (h: ReturnType<typeof harness>) => h.runner.calls.filter((c) => c.operation === "authored" && c.env.SHUTTLE_STATE === "closed").map((c) => c.env.SHUTTLE_SINCE);
+
+  it("shows your open PRs as soon as their list lands, before the other lists answer", async () => {
+    const h = harness();
+    h.lists.authored = [pr(1, { author: "me" })];
+    h.lists.review_requested = [pr(3)];
+    const seen: number[][] = [];
+    const publish = h.port.publish.bind(h.port);
+    h.port.publish = (tags) => {
+      seen.push(h.shuttle.list("mine").map((p) => p.number));
+      publish(tags);
+    };
+    const slow = h.hold("review_requested");
+    const sync = h.shuttle.sync();
+    await slow.reached;
+    await vi.waitFor(() => expect(seen).toContainEqual([1]));
+    slow.release();
+    await sync;
+  });
+
+  it("publishes once after each list, so each list shows when it lands", async () => {
+    const h = harness();
+    h.lists.review_requested = [pr(3)];
+    const publishes = h.port.publishes;
+    await h.shuttle.sync();
+    // The sync's start, open and closed PRs, three request lists, the server's end and the sync's end.
+    expect(h.port.publishes - publishes).toBe(8);
+  });
+
+  it("keeps your open PRs when the closed list fails, and says which one failed", async () => {
+    const h = harness();
+    h.lists.authored = [pr(1, { author: "me" })];
+    h.lists.authored_closed = new Error("authored printed JSON in the wrong shape: 0.number: Invalid input") as unknown as unknown[];
+    await h.shuttle.sync();
+    expect(h.shuttle.list("mine").map((p) => p.number)).toEqual([1]);
+    expect(steps(h).map((s) => [s.operation, s.status, s.detail])).toEqual([
+      ["whoami", "ok", "Signed in as me"],
+      ["authored", "ok", "1 open"],
+      ["authored_closed", "failed", null],
+      ["review_requested", "ok", "0 PRs"],
+      ["team_requested", "ok", "0 PRs"],
+      ["mentioned", "ok", "0 PRs"],
+    ]);
+    expect(h.shuttle.overview().servers[0]).toMatchObject({ state: "partial", failedSteps: ["authored_closed"] });
+  });
+
+  it("reads merged and closed PRs since the last read, with the whole window about once an hour", async () => {
+    const h = harness();
+    h.lists.authored = [pr(1, { author: "me", state: "merged" })];
+    await h.shuttle.sync();
+    h.clock.now += 3 * 60_000;
+    h.lists.authored = [pr(2, { author: "me", state: "closed" })];
+    await h.shuttle.sync();
+    // The first read was at 12:00, less a margin of five minutes: still that day.
+    expect(closedSince(h)).toEqual(["2026-10-09", "2026-10-23"]);
+    expect(steps(h).find((s) => s.operation === "authored_closed")!.detail).toBe("1 merged or closed since the last read");
+    const reasons = (n: number) => h.store.reasons(h.store.prByKey(`forge:acme/app#${n}`)!.id).map((r) => r.reason);
+    // A read since the last one did not see PR 1, which keeps its reason.
+    expect([reasons(1), reasons(2)]).toEqual([["authored"], ["authored"]]);
+    h.clock.now += 60 * 60_000;
+    await h.shuttle.sync();
+    expect(closedSince(h)).toEqual(["2026-10-09", "2026-10-23", "2026-10-09"]);
+    expect([reasons(1), reasons(2)]).toEqual([[], ["authored"]]);
+  });
+
+  it("moves the closed read's checkpoint only after a read that came in full", async () => {
+    const h = harness();
+    const list = vi.spyOn(h.shuttle.adapter("forge"), "list");
+    const sinceAt = () => list.mock.calls.filter((call) => call[1].state === "closed").map((call) => call[1].sinceAt);
+    // The first read over the whole window is cut short, so the next one reads the whole window again.
+    h.lists.authored_closed = { items: [], complete: false } as unknown as unknown[];
+    await h.shuttle.sync();
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    expect(sinceAt()).toEqual(["2026-10-09T12:00:00+00:00", "2026-10-09T12:03:00+00:00"]);
+    // A read since the last one that is cut short leaves the next read starting where it did.
+    h.lists.authored_closed = [];
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    h.lists.authored_closed = { items: [], complete: false } as unknown as unknown[];
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    expect(sinceAt().slice(2)).toEqual(["2026-10-09T12:06:00+00:00", "2026-10-23T12:01:00+00:00", "2026-10-23T12:01:00+00:00"]);
+  });
+
+  it("reads the whole Done window at the next sync after it changes", async () => {
+    const h = harness();
+    await h.shuttle.sync();
+    h.clock.now += 3 * 60_000;
+    h.settings.doneDays = 30;
+    await h.shuttle.sync();
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    expect(closedSince(h)).toEqual(["2026-10-09", "2026-09-23", "2026-10-23"]);
+  });
+
+  it("reads a PR of yours that left the open list on its own when the closed read since the last one did not bring it", async () => {
+    const h = harness();
+    h.lists.authored = [pr(1, { author: "me" }), pr(2, { author: "me" }), pr(3, { author: "me" })];
+    await h.shuttle.sync();
+    h.clock.now += 3 * 60_000;
+    // All three left the open list, and the closed read since the last one missed them.
+    h.lists.authored = [];
+    h.views[1] = pr(1, { author: "me", state: "merged", updated_at: "2026-10-23T12:02:00Z" });
+    h.views[2] = pr(2, { author: "dana" });
+    await h.shuttle.sync();
+    const reasons = (n: number) => h.store.reasons(h.store.prByKey(`forge:acme/app#${n}`)!.id).map((r) => r.reason);
+    expect(h.runner.calls.filter((c) => c.operation === "view").map((c) => Number(c.env.SHUTTLE_NUMBER)).sort()).toEqual([1, 2, 3]);
+    // Merged: it is yours, in Done. Someone else's now: not yours. Not read: it keeps its reason and waits.
+    expect([reasons(1), reasons(2), reasons(3)]).toEqual([["authored"], [], ["authored"]]);
+    expect(h.shuttle.list("done").map((p) => p.number)).toEqual([1]);
+    expect(h.shuttle.list("mine").map((p) => p.number)).not.toContain(1);
+    // The read over the whole window confirms PR 3 is gone.
+    h.clock.now += 60 * 60_000;
+    await h.shuttle.sync();
+    expect(reasons(3)).toEqual([]);
+  });
+
+  it("asks GitHub for closed PRs from the exact time of the last read, less the margin", async () => {
+    const h = harness();
+    await h.shuttle.sync();
+    const list = vi.spyOn(h.shuttle.adapter("forge"), "list");
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    expect(list.mock.calls.find((call) => call[1].state === "closed")?.[1]).toEqual({ state: "closed", since: "2026-10-23", sinceAt: "2026-10-23T11:55:00+00:00" });
+  });
+
+  it("moves a PR of yours that merged elsewhere from Mine to Done when the closed list brings it", async () => {
+    const h = harness();
+    h.lists.authored = [pr(1, { author: "me" }), pr(2, { author: "me" })];
+    await h.shuttle.sync();
+    h.clock.now += 3 * 60_000;
+    h.lists.authored = [pr(1, { author: "me" }), pr(2, { author: "me", state: "merged" })];
+    await h.shuttle.sync();
+    expect(h.shuttle.list("mine").map((p) => p.number)).toEqual([1]);
+    expect(h.shuttle.list("done").map((p) => p.number)).toEqual([2]);
+  });
+
+  it("reads linked PRs a few at a time, and still reads each one once", async () => {
+    const h = harness();
+    h.port.addThread("thr_a");
+    for (const n of [7, 8, 9, 10]) {
+      h.views[n] = pr(n, { author: "dana" });
+      await h.shuttle.link(`forge:acme/app#${n}`, "thr_a", "reference");
+    }
+    h.clock.now += 180_000;
+    const held = [h.hold("view"), h.hold("view"), h.hold("view")];
+    const before = h.runner.calls.filter((c) => c.operation === "view").length;
+    const sync = h.shuttle.sync();
+    await Promise.all(held.map((hold) => hold.reached));
+    expect(h.runner.calls.filter((c) => c.operation === "view").length - before).toBe(3);
+    for (const hold of held) hold.release();
+    await sync;
+    expect(h.runner.calls.filter((c) => c.operation === "view").length - before).toBe(4);
+    expect(steps(h).find((s) => s.operation === "refresh")).toMatchObject({ status: "ok", detail: "4 PRs" });
   });
 });
 

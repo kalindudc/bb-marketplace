@@ -11,6 +11,7 @@ import { board as readBoard, boardAdd, boardCreate, boardRemove, boards as listB
 import { cancelAutoMerge, comment, Conversations, merge, mergeOptions, recordOutcomes, reply, resolve, type MergeOutcome } from "./conversation";
 import { draftView, saveDraft, setDraftState, submitReview, type DraftInput, type SubmitInput } from "./drafts";
 import { cancelPost, clearPost, failInterruptedPosts, inputOf, postView, queueReview, recentPosts, retryPost } from "./posts";
+import { FastLane, type BackOffKind } from "./fast-lane";
 import { cancelMerge, clearMerge, failInterruptedMerges, mergeInputOf, mergeView, queueMerge, recentMerges, retryMerge } from "./merges";
 import { addRule, dismiss, inbox as readInbox, markSeen, removeRule, snooze } from "./inbox";
 import { insights, INSIGHTS_SINCE, snapshotCounts } from "./insights";
@@ -83,10 +84,27 @@ export class Shuttle implements Ctx {
   private readonly lifetime?: AbortSignal;
   private readonly adapters = new Map<string, { json: string; adapter: Adapter }>();
   private projectCache: { at: number; projects: ProjectInfo[] } | null = null;
-  private syncing: Promise<void> | null = null;
-  /** The servers the running sync covers; null for all of them. */
-  private syncingScope: readonly string[] | null = null;
+  /** Each server's running sync, by server id: its lists, then its auto reviews and watched PRs. */
+  private readonly serverSyncs = new Map<string, Promise<boolean>>();
+  /** The steps after the servers' syncs, and the one run waiting to follow it. */
+  private finishing: Promise<void> | null = null;
+  private finishNext: Promise<void> | null = null;
+  /** Auto reviews take turns, so servers syncing together keep to the daily limit. */
+  private autoReviews: Promise<unknown> = Promise.resolve();
   private deliveries: Promise<unknown> = Promise.resolve();
+  /** The full sync a tick started and that is still running; a tick starts no other while it runs. */
+  private fullSync: Promise<void> | null = null;
+  /** Every sync a tick started and that is still running, full or a recheck. */
+  private readonly ticked = new Set<Promise<void>>();
+  /**
+   * Servers left alone until their next sync finishes: a sync step or a fast-lane read hit a rate limit or a
+   * refused sign-in, or the server looks down. The fast lane and the early recheck both go by `backOff`.
+   */
+  /** Why each server is left alone until its next sync, and since when. */
+  private readonly backOffs = new Map<string, { kind: BackOffKind; at: number }>();
+  /** When each server's sync started that last came through without a back-off. */
+  private readonly cleanSince = new Map<string, number>();
+  private readonly fastLane = new FastLane(this, { backOff: (id) => this.backOff(id), holdOff: (id, kind, askedAt) => this.holdOff(id, kind, askedAt) });
   private readonly conversations = new Conversations(this);
   private readonly linkCards = new LinkCards(this, this.conversations);
   /** The worker posting each server's queued reviews, by server id. */
@@ -167,7 +185,7 @@ export class Shuttle implements Ctx {
     };
     const servers = this.config().servers.map((server) => this.serverStatus(server));
     const syncedAt = servers.reduce<number | null>((max, s) => (s.lastSyncAt !== null && (max === null || s.lastSyncAt > max) ? s.lastSyncAt : max), null);
-    return { servers, counts, syncedAt, syncing: this.syncing !== null, paused: this.settings().pauseAutomations, autoAgent: this.settings().autoAgent };
+    return { servers, counts, syncedAt, syncing: this.serverSyncs.size > 0 || this.finishing !== null, paused: this.settings().pauseAutomations, autoAgent: this.settings().autoAgent };
   }
 
   private serverStatus(server: ServerConfig): ServerStatus {
@@ -801,62 +819,154 @@ export class Shuttle implements Ctx {
     return results;
   }
 
-  /** Syncs every enabled server, or only those in `only`, runs the auto reviews and checks watched PRs. One sync at a time. */
+  /**
+   * Syncs every enabled server, or only those in `only`, runs the auto reviews and checks watched PRs. Servers
+   * sync at the same time, each at most once at a time: a request for a server whose sync is under way joins it.
+   */
   sync(signal: AbortSignal | undefined = this.lifetime, only?: readonly string[]): Promise<void> {
     if (only !== undefined) for (const id of only) if (!this.server(id)) throw new ShuttleError(`no server called ${id}`);
-    if (this.syncing) {
-      // A request for servers the running sync does not cover runs after it, rather than being answered by it.
-      const scope = this.syncingScope;
-      const covered = scope === null || (only !== undefined && only.every((id) => scope.includes(id)));
-      const after = covered ? this.syncing : this.syncing.then(() => this.sync(signal, only), () => this.sync(signal, only));
-      // The loop's tick must not wait out a sync the UI started once the loop itself is asked to stop.
-      return signal ? settleOrAbort(after, signal) : after;
-    }
-    this.syncingScope = only ?? null;
-    this.syncing = (async () => {
-      this.port.publish();
+    const servers = this.config().servers.filter((server) => server.enabled && (only === undefined || only.includes(server.id)));
+    const runs = signal?.aborted ? [] : servers.map((server) => this.serverSyncs.get(server.id) ?? this.runServer(server, signal));
+    const work = (async () => {
       try {
-        for (const server of this.config().servers) {
-          if (!server.enabled || signal?.aborted || (only !== undefined && !only.includes(server.id))) continue;
-          const result = await syncServer(this, server, signal);
-          // A partial sync still brought the lists that passed; only their requests start auto reviews.
-          if ((result.state === "ok" || result.state === "partial") && !signal?.aborted) await runAutoReviews(this, server.id, signal, new Set(result.passed));
-          // A server that rate-limited Shuttle or looks down is not asked about each watched PR too.
-          if (!signal?.aborted && result.backOff === null) await pollWatches(this, server.id, signal);
-        }
+        const results = await Promise.allSettled(runs);
+        const failure = results.find((result) => result.status === "rejected");
+        if (failure) throw failure.reason;
         if (signal?.aborted) return;
-        if (only === undefined) this.store.setKv(FULL_SYNC_AT, String(this.now()));
-        await this.refreshThreadTitles();
-        await this.autoAgent(signal).catch((error: unknown) => this.port.log("warn", `auto agent: ${errText(error)}`));
-        this.record();
-        await this.deliver();
-        // After the lists: a PR that merged or closed since the last sync is done with its review thread.
-        if (!signal?.aborted) await this.archiveReviewThreads();
+        // A server whose run was stopped did not sync, so the next tick tries the full sync again.
+        if (only === undefined && results.every((result) => result.status === "fulfilled" && result.value)) this.store.setKv(FULL_SYNC_AT, String(this.now()));
+        await this.finishSync(signal);
       } finally {
-        this.syncing = null;
-        this.syncingScope = null;
         this.port.publish();
       }
     })();
-    return this.syncing;
+    // The loop's tick must not wait out a server's sync the UI started once the loop itself is asked to stop.
+    return signal ? settleOrAbort(work, signal) : work;
   }
 
-  /** The loop's step: a sync when one is due, and the batches whose window passed. */
+  /** Whether that server's sync is running. */
+  syncingServer(id: string): boolean {
+    return this.serverSyncs.has(id);
+  }
+
+  /** One server's lists, then its auto reviews and watched PRs; true when it finished rather than stopped. */
+  private runServer(server: ServerConfig, signal?: AbortSignal): Promise<boolean> {
+    const run = (async () => {
+      const started = this.now();
+      const result = await syncServer(this, server, signal);
+      if (result.state !== "stopped") {
+        if (result.backOff !== null) this.backOffs.set(server.id, { kind: result.backOff, at: this.now() });
+        else {
+          // Only a back-off from a read asked after this sync started is newer news than the sync; it stays.
+          if ((this.backOffs.get(server.id)?.at ?? -Infinity) < started) this.backOffs.delete(server.id);
+          this.cleanSince.set(server.id, started);
+        }
+      }
+      // A partial sync still brought the lists that passed; only their requests start auto reviews.
+      if ((result.state === "ok" || result.state === "partial") && !signal?.aborted) {
+        const turn = this.autoReviews.then(() => runAutoReviews(this, server.id, signal, new Set(result.passed)));
+        this.autoReviews = turn.catch(() => {});
+        await turn;
+      }
+      // A server that rate-limited Shuttle or looks down is not asked about each watched PR too.
+      if (!signal?.aborted && result.backOff === null) await pollWatches(this, server.id, signal);
+      return result.state !== "stopped" && !signal?.aborted;
+    })().finally(() => this.serverSyncs.delete(server.id));
+    this.serverSyncs.set(server.id, run);
+    this.port.publish();
+    return run;
+  }
+
+  /**
+   * The steps after the servers' syncs, which hold none of them up. They never run twice at once: a sync that
+   * finishes while they run waits for one more run after it, shared with any other sync that does.
+   */
+  private finishSync(signal?: AbortSignal): Promise<void> {
+    if (this.finishing === null) {
+      const run = this.afterSync(signal).finally(() => {
+        if (this.finishing === run) this.finishing = null;
+      });
+      this.finishing = run;
+      return run;
+    }
+    this.finishNext ??= this.finishing
+      .catch(() => {})
+      .then(() => {
+        this.finishNext = null;
+        return this.finishSync(signal);
+      });
+    return this.finishNext;
+  }
+
+  private async afterSync(signal?: AbortSignal): Promise<void> {
+    await this.refreshThreadTitles();
+    await this.autoAgent(signal).catch((error: unknown) => this.port.log("warn", `auto agent: ${errText(error)}`));
+    this.record();
+    await this.deliver();
+    // After the lists: a PR that merged or closed since the last sync is done with its review thread.
+    if (!signal?.aborted) await this.archiveReviewThreads();
+  }
+
+  /**
+   * Why a server is left alone until its next sync, or null: it backed off, or its last sync failed, which the
+   * sync's own recheck follows up.
+   */
+  private backOff(id: string): string | null {
+    return this.backOffs.get(id)?.kind ?? (this.store.server(id)?.state === "failed" ? "failed" : null);
+  }
+
+  /** A fast-lane read asked before a sync that has since come through clean says nothing new about the server. */
+  private holdOff(id: string, kind: BackOffKind, askedAt: number): void {
+    if (askedAt < (this.cleanSince.get(id) ?? -Infinity)) return;
+    this.backOffs.set(id, { kind, at: askedAt });
+  }
+
+  /**
+   * The loop's step, which never waits on a sync or a fast-lane read: it starts a full sync when one is due and
+   * none is running, rechecks a server whose first sync failed, reads the pending merges of every server not
+   * syncing, and delivers the batches whose window passed.
+   */
   async tick(signal?: AbortSignal): Promise<void> {
     this.drainPosts();
     this.drainMerges();
     await endQuietReviews(this).catch((error: unknown) => this.port.log("warn", `quiet reviews: ${errText(error)}`));
+    if (signal?.aborted) return;
     const last = this.lastFullSync();
-    if (last === null || this.now() - last >= this.settings().syncMinutes * 60_000) return this.sync(signal);
+    // FULL_SYNC_AT moves only once every server of a full sync finished, so the running one is what says it is under way.
+    if (this.fullSync === null && (last === null || this.now() - last >= this.settings().syncMinutes * 60_000)) {
+      const full = this.inBackground(this.sync(signal)).finally(() => {
+        if (this.fullSync === full) this.fullSync = null;
+      });
+      this.fullSync = full;
+    }
     const due = this.config().servers.filter((server) => {
-      if (!server.enabled) return false;
+      if (!server.enabled || this.syncingServer(server.id) || this.backOffs.get(server.id)?.kind === "rate_limit") return false;
       const row = this.store.server(server.id);
       const run = row?.failures === 1 ? this.store.lastSyncRun(server.id) : null;
       const at = this.recheckAt(row, kindsOf(run));
       return at !== null && this.now() >= at;
     });
-    if (due.length > 0) return this.sync(signal, due.map((server) => server.id));
+    if (due.length > 0) this.inBackground(this.sync(signal, due.map((server) => server.id)));
+    // A server whose sync just started is read by that sync.
+    this.fastLane.start((id) => this.syncingServer(id), signal);
     await this.deliver();
+  }
+
+  /** Keeps a sync the tick started, for syncsSettled, and logs how it failed. */
+  private inBackground(work: Promise<void>): Promise<void> {
+    const run = work.catch((error: unknown) => this.port.log("warn", `sync: ${errText(error)}`)).finally(() => this.ticked.delete(run));
+    this.ticked.add(run);
+    return run;
+  }
+
+  /** Resolves once the syncs ticks started are over, or were stopped. */
+  async syncsSettled(): Promise<void> {
+    while (this.ticked.size > 0) await Promise.all(this.ticked);
+  }
+
+  /** Resolves once no fast-lane read is running. */
+  fastLaneSettled(): Promise<void> {
+    return this.fastLane.settled();
   }
 
   /** Titles and states of linked threads: bb's list has whether one waits on the user, a single read does not. */

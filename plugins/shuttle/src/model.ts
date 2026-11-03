@@ -54,6 +54,8 @@ export const prSummarySchema = z.object({
   /** The signed-in user's own latest review. */
   my_review: myReviewInputSchema.nullish(),
   auto_merge: z.boolean().nullish(),
+  /** The PR waits in the repository's merge queue. */
+  in_merge_queue: z.boolean().nullish(),
   author_bot: z.boolean().nullish(),
   /** When the user or their team was last asked to review. */
   requested_at: time,
@@ -90,6 +92,8 @@ export interface PrSummary {
   myReview: MyReview | null;
   /** null when the server did not say, so the stored value stays. */
   autoMerge: boolean | null;
+  /** null when the server did not say, as a GitHub Enterprise server without merge queues, so the stored value stays. */
+  inMergeQueue: boolean | null;
   authorBot: boolean | null;
   requestedAt: number | null;
   firstReviewAt: number | null;
@@ -124,6 +128,7 @@ export function toSummary(raw: z.output<typeof prSummarySchema>): PrSummary {
     checkCounts: raw.check_counts ?? null,
     myReview: raw.my_review ? { verdict: MY_VERDICT[raw.my_review.state], at: raw.my_review.at, head: raw.my_review.head ?? null } : null,
     autoMerge: raw.auto_merge ?? null,
+    inMergeQueue: raw.in_merge_queue ?? null,
     authorBot: raw.author_bot ?? null,
     requestedAt: raw.requested_at,
     firstReviewAt: raw.first_review_at,
@@ -192,6 +197,13 @@ const fileInputSchema = z.object({
 }).transform((f) => ({ path: f.path, additions: f.additions ?? null, deletions: f.deletions ?? null, change: f.change }));
 const timelineInputSchema = z.object({ kind: z.enum(TIMELINE_KINDS), at: time, actor: text(200).nullish(), subject: text(1000).nullish(), detail: text(1000).nullish() });
 
+/** The PR's own state, as watching's activity read saw it; it learns of merges and closes between syncs. */
+export interface ActivityState {
+  state: PrState;
+  closedAt: number | null;
+  updatedAt: number | null;
+}
+
 /**
  * One PR's review activity. With SHUTTLE_DETAIL set, a server may add what the PR view shows besides:
  * every check, the commits, the changed files (paths and counts, never contents), other timeline events
@@ -206,11 +218,17 @@ export const activitySchema = z.object({
   files: capped(fileInputSchema, "first").nullish(),
   timeline: z.array(timelineInputSchema).max(300).nullish(),
   merge: z.object({ state: z.enum(MERGE_STATES), detail: text(2000).nullish() }).nullish(),
-}).transform(({ head, items, checks, commits, files, timeline, merge }): { head?: string | null; items: ActivityItem[]; details: PrDetails | null } => {
+  state: z.enum(["open", "draft", "merged", "closed"]).nullish(),
+  draft: z.boolean().nullish(),
+  closed_at: time,
+  updated_at: time,
+}).transform(({ head, items, checks, commits, files, timeline, merge, state, draft, closed_at, updated_at }): { head?: string | null; items: ActivityItem[]; details: PrDetails | null; pr: ActivityState | null } => {
   const given = [checks, commits, files, timeline, merge].some((part) => part !== undefined && part !== null);
+  const done = state === "merged" || state === "closed";
   return {
     head,
     items,
+    pr: state ? { state: state === "open" && draft ? "draft" : state, closedAt: done ? closed_at : null, updatedAt: updated_at } : null,
     details: given ? {
       checks: checks ?? null,
       commits: commits ?? null,

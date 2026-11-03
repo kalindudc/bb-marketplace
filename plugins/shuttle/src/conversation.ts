@@ -4,7 +4,7 @@ import type { MergeInput } from "./adapters/adapter";
 import type { WriteOperation } from "./config";
 import type { ConversationItem, MergeOptions, Outcome, PrDetails } from "./contract";
 import { errText, ShuttleError, type Ctx } from "./ctx";
-import type { PrRow } from "./db/store";
+import { afterServer, type PrRow } from "./db/store";
 import { readBack } from "./drafts";
 import { parseKey } from "./keys";
 import { fetchPr, lookup, requirePr, shortKey } from "./prs";
@@ -174,12 +174,16 @@ export async function merge(ctx: Ctx, key: string, input: MergeInput): Promise<{
   let outcome: MergeOutcome;
   if (after?.state === "merged" || (merged && after === null)) {
     // Without a read-back, the server's own answer is all there is.
-    if (after === null) ctx.store.patchPr(pr.id, { state: "merged", closed_at: ctx.now(), updated_at: ctx.now() });
+    // From the row as it is now: a read that landed while the server merged may have a newer time than `pr`.
+    if (after === null) ctx.store.patchPr(pr.id, { state: "merged", closed_at: ctx.now(), updated_at: afterServer(ctx.store.prById(pr.id)?.updated_at ?? pr.updated_at) });
     ctx.store.addEvent("merged", `You merged ${name} (${input.method}${input.deleteBranch ? ", branch deleted" : ""}).`, pr.id);
     outcome = "merged";
   } else if (!merged) {
     ctx.store.addEvent("auto_merge", `Auto-merge is on for ${name}: it merges (${input.method}) when its checks pass.`, pr.id);
     outcome = "auto_merge";
+  } else if (after?.in_merge_queue === 1) {
+    ctx.store.addEvent("merge_sent", `Added ${name} to the merge queue on ${serverName(ctx, pr)}.`, pr.id);
+    outcome = "sent";
   } else {
     ctx.store.addEvent("merge_sent", `${serverName(ctx, pr)} took the merge of ${name}, and it is still open: it may be waiting in the repository's merge queue.`, pr.id);
     outcome = "sent";

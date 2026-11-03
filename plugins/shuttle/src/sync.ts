@@ -1,9 +1,9 @@
-// One sync of a server: who the user is there, every list it supports, and a refresh of the
-// linked and watched PRs no list covered. Each step is recorded with why it failed, for the Sync tab.
-// Then the auto reviews the new requests call for.
-import { AdapterError } from "./adapters/adapter";
+// One sync of a server: who the user is there, your open PRs, every other list it supports, and a
+// refresh of the linked and watched PRs no list covered. Each list shows as soon as it lands. Each step
+// is recorded with why it failed, for the Sync tab. Then the auto reviews the new requests call for.
+import { AdapterError, type ListResult } from "./adapters/adapter";
 import { LIST_OPERATIONS, type ListOperation, type ServerConfig } from "./config";
-import type { Reason, SyncFailure, SyncState, SyncStep, SyncStepName } from "./contract";
+import { SYNC_STEPS, type Reason, type SyncFailure, type SyncState, type SyncStep, type SyncStepName } from "./contract";
 import { errText, type Ctx } from "./ctx";
 import type { PrRow, ServerRow } from "./db/store";
 import { describeFailure, primaryStep, RETRYABLE, STEP_LABELS } from "./failures";
@@ -17,6 +17,14 @@ const DAY = 86_400_000;
 /** How long an auto review waits for bb to have a machine or environment for it before it counts as failed. */
 const AUTO_WAIT_MS = 3_600_000;
 const REFRESH_CAP = 30;
+/** Linked and tracked PRs read at once. */
+const REFRESH_AT_ONCE = 3;
+/** Lists of one server read at once, after the open PRs of yours that go first on their own. */
+const LISTS_AT_ONCE = 2;
+/** A closed read since the last one starts this much earlier, for a PR the server's search indexed late. */
+export const CLOSED_MARGIN_MS = 5 * 60_000;
+/** How often the closed list is read over the whole Done window, which also lets go of PRs that left it. */
+export const CLOSED_FULL_MS = 3_600_000;
 /** One more try after this pause, for a failure that usually passes by itself. */
 export const RETRY_PAUSE_MS = 3_000;
 /** Tries again per server per sync, so a server in trouble is asked only a little more. */
@@ -43,6 +51,28 @@ export interface SyncResult {
 }
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
+const more = (list: ListResult) => (list.complete ? "" : ", more than Shuttle reads");
+const isLive = (pr: PrRow) => pr.state === "open" || pr.state === "draft";
+
+/** Runs `fn` over `items` in order, at most `limit` at a time. */
+async function atOnce<T>(items: readonly T[], limit: number, fn: (item: T, index: number) => Promise<void>): Promise<void> {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const index = next++;
+      await fn(items[index]!, index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+}
+
+/** When the closed list was last read in full, when over the whole Done window, and how many days that window was. */
+interface ClosedRead {
+  at: number;
+  fullAt: number;
+  doneDays?: number;
+}
+const closedReadKey = (server: string) => `closed_read:${server}`;
 
 /**
  * Runs a sync's steps and records each. A failure that usually passes gets one more try after a
@@ -88,8 +118,10 @@ class Steps {
         if (attempts === 1 && !retried && RETRYABLE.has(failure.kind) && this.retries > 0) {
           this.retries--;
           await this.ctx.pause(RETRY_PAUSE_MS, this.signal);
-          if (!this.signal?.aborted) continue;
-          return undefined;
+          if (this.signal?.aborted) return undefined;
+          // A step read at the same time may have hit a rate limit or found the server down during the pause.
+          if (this.stop !== null) return void this.skip(operation);
+          continue;
         }
         this.failed(operation, failure, this.ctx.now() - started, attempts, null);
         return undefined;
@@ -111,6 +143,11 @@ class Steps {
 
   passed(): void {
     this.downInARow = 0;
+  }
+
+  /** In the Sync tab's order, whichever finished first. */
+  ordered(): SyncStep[] {
+    return [...this.steps].sort((a, b) => SYNC_STEPS.indexOf(a.operation) - SYNC_STEPS.indexOf(b.operation));
   }
 
   /** Counts failures that say the server is down; true at the second in a row. */
@@ -135,48 +172,97 @@ export async function syncServer(ctx: Ctx, server: ServerConfig, signal?: AbortS
     if (kind !== undefined && DOWN.has(kind)) steps.backOff = "down";
   }
   const seen = new Set<number>();
+  /** PRs of yours still open here that neither authored list brought: the refresh reads each on its own. */
+  const unsure = new Set<number>();
   let listed = 0;
-  for (const operation of LIST_OPERATIONS) {
-    if (signal?.aborted) break;
-    if (!supported.has(operation)) continue;
-    const lists = await steps.run(
-      operation,
-      async () =>
-        operation === "authored"
-          ? [
-              await adapter.list(operation, { state: "open" }, signal),
-              await adapter.list(operation, { state: "closed", since: new Date(ctx.now() - ctx.settings().doneDays * DAY).toISOString().slice(0, 10) }, signal),
-            ]
-          : [await adapter.list(operation, {}, signal)],
-      (lists) => {
-        const more = lists.every((list) => list.complete) ? "" : ", more than Shuttle reads";
-        return operation === "authored" ? `${lists[0]!.rows.length} open, ${lists[1]!.rows.length} merged or closed${more}` : `${plural(lists[0]!.rows.length, "PR")}${more}`;
-      },
-    );
-    if (lists === undefined) continue;
-    const rows: PrSummary[] = lists.flatMap((list) => list.rows);
-    const complete = lists.every((list) => list.complete);
+  /** Writes a list's PRs and reasons and shows them at once; a list that is not complete never drops a reason. */
+  const land = (reason: Reason, rows: readonly PrSummary[], complete: boolean) => {
     const reasonRows = ctx.store.tx(() =>
       rows.map((summary) => {
-        const pr = ctx.store.upsertPr(server.id, summary, summary.url ?? linkFor(server, summary.repo, summary.number), operation === "authored");
+        const pr = ctx.store.upsertPr(server.id, summary, summary.url ?? linkFor(server, summary.repo, summary.number), reason === "authored");
         seen.add(pr.id);
         return { prId: pr.id, teams: summary.teams };
       }),
     );
-    // Closed PRs keep `authored` so Done can list them; the other reasons only describe open PRs.
-    ctx.store.replaceReasons(server.id, REASON_OF[operation], reasonRows, complete);
+    ctx.store.replaceReasons(server.id, reason, reasonRows, complete);
     listed += rows.length;
+    ctx.port.publish();
+    return reasonRows;
+  };
+  // Your open PRs first and on their own: they are what you look for, and no slow list holds them up.
+  let open: { rows: Array<{ prId: number; teams: string[] }>; complete: boolean } | undefined;
+  if (supported.has("authored") && !signal?.aborted) {
+    const list = await steps.run("authored", () => adapter.list("authored", { state: "open" }, signal), (list) => `${list.rows.length} open${more(list)}`);
+    if (list !== undefined) open = { rows: land("authored", list.rows, false), complete: list.complete };
   }
-  if (!signal?.aborted) await refreshTracked(ctx, server, seen, steps, signal);
+  const readClosed = async () => {
+    const before = ctx.store.kv(closedReadKey(server.id));
+    const last = before === null ? null : (JSON.parse(before) as ClosedRead);
+    const asked = ctx.now();
+    const doneDays = ctx.settings().doneDays;
+    const window = asked - doneDays * DAY;
+    // A wider Done window than the last full read's has older PRs that no read since then brought.
+    const full = last === null || asked - last.fullAt >= CLOSED_FULL_MS || last.doneDays !== doneDays;
+    const from = full ? window : Math.max(window, last.at - CLOSED_MARGIN_MS);
+    const since = new Date(from).toISOString();
+    const list = await steps.run(
+      "authored_closed",
+      () => adapter.list("authored", { state: "closed", since: since.slice(0, 10), sinceAt: `${since.slice(0, 19)}+00:00` }, signal),
+      (list) => `${list.rows.length} merged or closed${full ? "" : " since the last read"}${more(list)}`,
+    );
+    if (list === undefined) return;
+    const closed = land("authored", list.rows, false);
+    // A read cut short may have missed a merge, so the next one starts where this one did.
+    if (!list.complete) return;
+    ctx.store.setKv(closedReadKey(server.id), JSON.stringify({ at: asked, fullAt: full ? asked : last.fullAt, doneDays } satisfies ClosedRead));
+    if (open !== undefined && open.complete) for (const id of settleAuthored(ctx, server.id, [...open.rows, ...closed], full)) unsure.add(id);
+  };
+  const others = LIST_OPERATIONS.filter((operation) => operation !== "authored" && supported.has(operation)).map((operation) => async () => {
+    const list = await steps.run(operation, () => adapter.list(operation, {}, signal), (list) => `${plural(list.rows.length, "PR")}${more(list)}`);
+    if (list !== undefined) land(REASON_OF[operation], list.rows, list.complete);
+  });
+  const lists = supported.has("authored") ? [readClosed, ...others] : others;
+  await atOnce(lists, LISTS_AT_ONCE, async (read) => {
+    if (!signal?.aborted) await read();
+  });
+  if (!signal?.aborted) await refreshTracked(ctx, server, seen, steps, signal, { unsure, login });
   // A sync cut short by a stop says nothing about the server; the next one does.
   if (signal?.aborted) return { server: server.id, state: "stopped", ok: false, listed, errors: ["stopped"], passed: [], backOff: null };
   const now = ctx.now();
-  const state = stateOf(steps.steps);
-  saveRun(ctx, server, before, { state, steps: steps.steps, login, started, now });
+  const ordered = steps.ordered();
+  const state = stateOf(ordered);
+  saveRun(ctx, server, before, { state, steps: ordered, login, started, now });
   ctx.port.publish();
-  const errors = steps.steps.flatMap((step) => (step.failure ? [`${step.operation}: ${step.failure.message}`] : []));
-  const passed = steps.steps.filter((step) => step.status === "ok").map((step) => step.operation);
+  const errors = ordered.flatMap((step) => (step.failure ? [`${step.operation}: ${step.failure.message}`] : []));
+  const passed = ordered.filter((step) => step.status === "ok").map((step) => step.operation);
   return { server: server.id, state, ok: state === "ok", listed, errors, passed, backOff: steps.backOff };
+}
+
+/**
+ * Once both authored lists passed in full: a PR of yours in neither is no longer listed as yours, which only
+ * a full read can say. A read since the last one did not see older closed PRs, nor a merge its search had not
+ * indexed yet, so it keeps every reason and returns the open PRs of yours it did not see, for a read of each.
+ */
+function settleAuthored(ctx: Ctx, serverId: string, seen: ReadonlyArray<{ prId: number; teams: string[] }>, full: boolean): number[] {
+  const keep = new Map(seen.map((row) => [row.prId, row.teams]));
+  const unsure: number[] = [];
+  if (!full) {
+    for (const row of ctx.store.reasonRows("authored")) {
+      if (row.server !== serverId || keep.has(row.pr_id)) continue;
+      const pr = ctx.store.prById(row.pr_id);
+      if (pr === null) continue;
+      keep.set(row.pr_id, JSON.parse(row.teams) as string[]);
+      if (isLive(pr)) unsure.push(pr.id);
+    }
+  }
+  ctx.store.replaceReasons(serverId, "authored", [...keep].map(([prId, teams]) => ({ prId, teams })), true);
+  return unsure;
+}
+
+/** Lets go of `authored` on a PR its own read says someone else wrote. */
+function dropAuthored(ctx: Ctx, serverId: string, prId: number): void {
+  const rows = ctx.store.reasonRows("authored").filter((row) => row.server === serverId && row.pr_id !== prId);
+  ctx.store.replaceReasons(serverId, "authored", rows.map((row) => ({ prId: row.pr_id, teams: JSON.parse(row.teams) as string[] })), true);
 }
 
 /** failed: Shuttle could not tell who you are, or no list came; partial: some steps failed and the rest are current. */
@@ -223,36 +309,43 @@ function saveRun(ctx: Ctx, server: ServerConfig, before: ServerRow | null, run: 
   if (ok && !wasOk) ctx.store.addEvent("sync_ok", `${server.name} syncs again.`);
 }
 
-/** Linked, watched, tracked and active-board open PRs that no list covered this round, such as someone else's PR you track. */
-async function refreshTracked(ctx: Ctx, server: ServerConfig, seen: Set<number>, steps: Steps, signal?: AbortSignal): Promise<void> {
+/**
+ * Linked, watched, tracked and active-board open PRs that no list covered this round, such as someone else's
+ * PR you track, and open PRs of yours that the authored lists no longer brought.
+ */
+async function refreshTracked(ctx: Ctx, server: ServerConfig, seen: Set<number>, steps: Steps, signal: AbortSignal | undefined, mine: { unsure: ReadonlySet<number>; login: string | null }): Promise<void> {
   const tracked = ctx.store
     .allPrs()
     .filter((pr) => pr.server === server.id && !seen.has(pr.id) && (pr.state === "open" || pr.state === "draft"))
-    .filter((pr) => pr.tracked === 1 || ctx.store.watch(pr.id) !== null || ctx.store.linksOf(pr.id).length > 0 || ctx.store.prInActiveBoard(pr.id))
+    .filter((pr) => mine.unsure.has(pr.id) || pr.tracked === 1 || ctx.store.watch(pr.id) !== null || ctx.store.linksOf(pr.id).length > 0 || ctx.store.prInActiveBoard(pr.id))
     .sort((a, b) => a.fetched_at - b.fetched_at)
     .slice(0, REFRESH_CAP);
   if (tracked.length === 0) return;
   if (steps.stop !== null) return steps.skip("refresh");
   const adapter = ctx.adapter(server.id);
   const started = ctx.now();
-  const failed: Array<{ key: string; failure: SyncFailure }> = [];
+  const failed: Array<{ index: number; key: string; failure: SyncFailure }> = [];
   let read = 0;
+  let halted = false;
   // Each PR is read once: one that fails waits for the next sync rather than a retry.
-  for (const pr of tracked) {
-    if (signal?.aborted) return;
+  await atOnce(tracked, REFRESH_AT_ONCE, async (pr, index) => {
+    if (halted || signal?.aborted) return;
     try {
       const summary = await adapter.view(pr.repo, pr.number, signal);
       if (summary.repo.toLowerCase() !== pr.repo.toLowerCase() || summary.number !== pr.number) throw new Error(`answered for ${summary.repo}#${summary.number}`);
       ctx.store.upsertPr(server.id, { ...summary, repo: pr.repo }, summary.url ?? pr.url, false);
+      if (mine.unsure.has(pr.id) && mine.login !== null && summary.author !== "" && summary.author.toLowerCase() !== mine.login.toLowerCase()) dropAuthored(ctx, server.id, pr.id);
       read++;
       steps.passed();
     } catch (error) {
       if (signal?.aborted) return;
       const failure = steps.failureOf(error);
-      failed.push({ key: shortKey(ctx, pr), failure });
-      if (failure.kind === "rate_limit" || steps.down(failure)) break;
+      failed.push({ index, key: shortKey(ctx, pr), failure });
+      if (failure.kind === "rate_limit" || steps.down(failure)) halted = true;
     }
-  }
+  });
+  if (signal?.aborted) return;
+  failed.sort((a, b) => a.index - b.index);
   const ms = ctx.now() - started;
   if (failed.length === 0) {
     steps.steps.push({ operation: "refresh", status: "ok", ms, attempts: 1, detail: plural(read, "PR"), failure: null });

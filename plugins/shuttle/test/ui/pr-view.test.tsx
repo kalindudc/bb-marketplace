@@ -596,6 +596,17 @@ describe("the merge dialog", () => {
     await waitFor(() => expect(toasts.success).toHaveBeenCalledWith("Cancelled the merge of infra-portal#29278. Nothing changed on GitHub.", { id: "shuttle-merge-62" }));
   });
 
+  it("says a PR waits in the repository's merge queue, and offers no other merge", async () => {
+    const waiting = { ...ready, inMergeQueue: true, autoMerge: false, next: next({ kind: "in_merge_queue", tone: "ok", label: "In the merge queue", why: "It merges once the repository's merge queue has run its checks on it." }) };
+    const { view } = await prPage(waiting, {});
+    const panel = await view();
+    const row = statusRow(panel, "merge");
+    expect(row.textContent).toContain("In the merge queue. It merges once the queue's checks pass.");
+    expect(within(row).queryByRole("button")).toBeNull();
+    expect(within(tab(panel, "overview")).queryByRole("button", { name: "Merge…" })).toBeNull();
+    expect(panel.querySelector("[data-status]")!.getAttribute("data-status")).toBe("in_merge_queue");
+  });
+
   it("says why a merge didn't go through, and tries it again, opens Merge… or dismisses it", async () => {
     const failed = {
       ...ready, merge: mergeRun({ id: 63, state: "failed", error: "GitHub refused: gh exited 1: Base branch was modified" }),

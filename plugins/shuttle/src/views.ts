@@ -29,10 +29,12 @@ export function staleness(server: ServerRow | null, pr: { reasons: readonly Reas
   const failed = new Set<string>(JSON.parse(server.failed_steps) as string[]);
   if (pr.reasons.length === 0) return pr.refreshed && failed.has("refresh") ? { stale: true, since: pr.fetchedAt } : { stale: false, since: null };
   const { reasons } = pr;
-  const steps = [...new Set(reasons.map((reason) => STEP_OF_REASON[reason]))];
-  if (!steps.every((step) => failed.has(step))) return { stale: false, since: null };
+  // A PR of yours that the open list did not bring may have merged or closed, which only the closed list says.
+  const failedOf = (step: string) => (step === "authored" ? ["authored", "authored_closed"] : [step]).filter((s) => failed.has(s));
+  const down = [...new Set(reasons.map((reason) => STEP_OF_REASON[reason]))].map(failedOf);
+  if (down.some((steps) => steps.length === 0)) return { stale: false, since: null };
   const okAt = server.steps_ok_at ? (JSON.parse(server.steps_ok_at) as Record<string, number>) : {};
-  const times = steps.map((step) => okAt[step]).filter((at): at is number => at !== undefined);
+  const times = down.flat().map((step) => okAt[step]).filter((at): at is number => at !== undefined);
   return { stale: true, since: times.length > 0 ? Math.max(...times) : server.last_ok_at };
 }
 
@@ -122,7 +124,8 @@ function viewOf(ctx: Ctx, pr: PrRow, rules: readonly InboxRuleRow[]): { view: Pr
   // A failed merge of a PR that merged or closed since needs nothing more; one the server took stays while the PR waits at that head.
   const open = pr.state === "open" || pr.state === "draft";
   const mergeRow = pr.mine === 1 ? ctx.store.currentMerge(pr.id) ?? (open ? ctx.store.sentMerge(pr.id, ctx.now() - SENT_MERGE_MS) : null) : null;
-  const shown = mergeRow !== null && (mergeRow.state === "done" ? pr.head === mergeRow.head : mergeRow.state !== "failed" || open);
+  // A server that says the PR is in its merge queue says more than Shuttle's guess that it may be.
+  const shown = mergeRow !== null && (mergeRow.state === "done" ? pr.head === mergeRow.head && pr.in_merge_queue !== 1 : mergeRow.state !== "failed" || open);
   const merge = shown ? mergeView(ctx, mergeRow, pr) : null;
   const draftFindings = draft ? (JSON.parse(draft.findings) as unknown[]).length : 0;
   const myReview = pr.mine ? null : myReviewOf(ctx, pr);
@@ -178,6 +181,7 @@ function viewOf(ctx: Ctx, pr: PrRow, rules: readonly InboxRuleRow[]): { view: Pr
     suggestedAgent: suggested,
     handled,
     autoMerge: pr.auto_merge === 1,
+    inMergeQueue: pr.in_merge_queue === 1,
     snoozed,
     keptOut: dismissedAt !== null || ruleId !== null,
     can: {
@@ -256,6 +260,7 @@ function viewOf(ctx: Ctx, pr: PrRow, rules: readonly InboxRuleRow[]): { view: Pr
     unseen: pr.seen_at === null || (pr.updated_at ?? 0) > pr.seen_at,
     handled,
     autoMerge: pr.auto_merge === 1,
+    inMergeQueue: pr.in_merge_queue === 1,
     stale: freshness.stale,
     staleSince: freshness.since,
     pendingItems: watch ? ctx.store.pendingCount(pr.id) : 0,

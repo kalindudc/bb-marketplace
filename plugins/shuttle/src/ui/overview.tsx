@@ -151,7 +151,7 @@ export function About({ pr, details, compact = false }: { pr: PrView; details: P
   if (pr.closedAt !== null && (pr.state === "merged" || pr.state === "closed")) rows.push([pr.state === "merged" ? "Merged" : "Closed", <>{date(pr.closedAt)} <span className="text-muted-foreground">({ago(pr.closedAt)})</span></>]);
   if (pr.mine && isLive(pr)) {
     rows.push(["Auto-merge", pr.autoMerge ? "On: it merges when its checks pass" : pr.merge !== null && pr.merge.auto && mergeInQueue(pr) ? "Off: queued to turn on" : (
-      <>Off{pr.can.merge && !mergeInQueue(pr) && <button type="button" className="ml-2 cursor-pointer text-primary hover:underline" onClick={() => actions.merge(pr)}>Merge…</button>}</>
+      <>Off{pr.can.merge && !mergeInQueue(pr) && !pr.inMergeQueue && <button type="button" className="ml-2 cursor-pointer text-primary hover:underline" onClick={() => actions.merge(pr)}>Merge…</button>}</>
     )]);
   }
   const reasons = pr.mine ? null : reasonsOf(pr);

@@ -284,4 +284,6 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE reviews ADD COLUMN active_at INTEGER`,
   `ALTER TABLE reviews ADD COLUMN ended_by TEXT`,
   `ALTER TABLE reviews ADD COLUMN note TEXT`,
+  // Whether the PR waits in the repository's own merge queue, such as GitHub's; NULL while the server has not said.
+  `ALTER TABLE prs ADD COLUMN in_merge_queue INTEGER`,
 ];

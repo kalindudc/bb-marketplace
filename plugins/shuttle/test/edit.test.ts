@@ -55,6 +55,20 @@ describe("editPr", () => {
     expect(h.shuttle.list("done").map((p) => p.key)).toContain("forge:acme/app#2");
   });
 
+  it("stamps a change it could not read back just after the newest time Shuttle has, even one that landed while the server worked", async () => {
+    const h = await setup();
+    const id = h.store.prByKey("forge:acme/app#2")!.id;
+    const newer = Date.parse("2026-10-23T11:00:00Z");
+    const adapter = h.shuttle.adapter("forge");
+    const real = adapter.change.bind(adapter);
+    adapter.change = async (repo, number, change, signal) => {
+      await real(repo, number, change, signal);
+      h.store.patchPr(id, { updated_at: newer });
+    };
+    const view = await h.shuttle.editPr("forge:acme/app#2", { kind: "close" });
+    expect(view).toMatchObject({ state: "closed", updatedAt: newer + 1 });
+  });
+
   it("passes labels and reviewers to the commands as lines, with teams apart", async () => {
     const h = await setup();
     await h.shuttle.editPr("forge:acme/app#1", { kind: "labels", add: ["needs tophat", "cache", "cache"], remove: ["bug", "cache"] });

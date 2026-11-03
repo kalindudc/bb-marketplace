@@ -104,6 +104,7 @@ const history = (): SyncHistory => ({
         steps: [
           step("whoami", "failed", { attempts: 2, ms: 8400, failure: { ...failure(), operation: undefined } as unknown as SyncStep["failure"] }),
           step("authored", "skipped", { detail: "Not run: Shuttle could not tell who you are" }),
+          step("authored_closed", "skipped", { detail: "Not run: Shuttle could not tell who you are" }),
         ],
       },
       failures: [
@@ -127,8 +128,10 @@ describe("Insights › Sync", () => {
     expect(card.textContent).toContain("about 6.1s a sync");
     expect([...card.querySelectorAll("[data-mark]")].map((node) => node.getAttribute("data-mark"))).toEqual(["ok", "failed", "failed"]);
     expect(card.textContent).toContain(`Why the ${clock(SINCE + 3 * 60_000)} sync failed`);
-    expect([...card.querySelectorAll("[data-step]")].map((node) => [node.getAttribute("data-step"), node.getAttribute("data-status")])).toEqual([["whoami", "failed"], ["authored", "skipped"]]);
+    expect([...card.querySelectorAll("[data-step]")].map((node) => [node.getAttribute("data-step"), node.getAttribute("data-status")])).toEqual([["whoami", "failed"], ["authored", "skipped"], ["authored_closed", "skipped"]]);
     expect(card.querySelector("[data-step='whoami']")!.textContent).toContain("tried 2 times");
+    expect(card.querySelector("[data-step='authored']")!.textContent).toContain("your open PRs");
+    expect(card.querySelector("[data-step='authored_closed']")!.textContent).toContain("your merged and closed PRs");
     const printed = card.querySelector<HTMLElement>("[data-printed]")!;
     expect(printed.textContent).toContain(RESTARTING);
     expect(printed.textContent).toContain("exit 1");

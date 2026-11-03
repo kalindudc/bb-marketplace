@@ -217,6 +217,10 @@ describe("github adapter", () => {
     expect(searchQuery("authored", { state: "closed", since: "2026-10-01" })).toContain("is:closed updated:>=2026-10-01");
   });
 
+  it("searches closed PRs from an exact time when it has one, which GitHub's search takes", () => {
+    expect(searchQuery("authored", { state: "closed", since: "2026-10-23", sinceAt: "2026-10-23T11:55:00+00:00" })).toContain("is:closed updated:>=2026-10-23T11:55:00+00:00");
+  });
+
   it("keeps real review activity, resolved threads marked, and failed checks", () => {
     const who = (login: string, bot = false) => ({ login, __typename: bot ? "Bot" : "User" });
     const activity = toActivity({

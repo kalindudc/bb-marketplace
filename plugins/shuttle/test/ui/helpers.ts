@@ -129,6 +129,7 @@ export function pr(overrides: Partial<PrView> = {}): PrView {
     unseen: false,
     handled: false,
     autoMerge: false,
+    inMergeQueue: false,
     stale: false,
     staleSince: null,
     pendingItems: 0,

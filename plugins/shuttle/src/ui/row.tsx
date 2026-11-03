@@ -177,6 +177,7 @@ const KIND_CHIPS: Partial<Record<NextKind, string>> = {
   agent_waiting: "Agent needs you",
   nobody: "Nobody on it",
   ready_to_merge: "Ready to merge",
+  in_merge_queue: "In merge queue",
   merge_failed: "Didn\u2019t merge",
   post_failed: "Didn\u2019t post",
   post: "AI review ready",

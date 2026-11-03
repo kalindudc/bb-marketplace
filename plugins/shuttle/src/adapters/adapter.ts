@@ -7,6 +7,8 @@ export interface ListOptions {
   state?: "open" | "closed";
   /** YYYY-MM-DD. */
   since?: string;
+  /** The exact start of `since`, such as 2026-10-23T11:55:00+00:00, for a server whose search takes a time. */
+  sinceAt?: string;
 }
 
 export interface MergeInput {
@@ -92,12 +94,22 @@ export interface ListResult {
   complete: boolean;
 }
 
+/** One PR of a batched read: its summary, or why the server could not read it. */
+export interface PrRead {
+  repo: string;
+  number: number;
+  summary: PrSummary | null;
+  error: string | null;
+}
+
 export interface Adapter {
   readonly server: ServerConfig;
   operations(): Operation[];
   whoami(signal?: AbortSignal): Promise<string>;
   list(operation: ListOperation, options: ListOptions, signal?: AbortSignal): Promise<ListResult>;
   view(repo: string, number: number, signal?: AbortSignal): Promise<PrSummary>;
+  /** Reads several PRs in few requests, where the server can; one that fails does not fail the others. */
+  viewMany?(refs: ReadonlyArray<{ repo: string; number: number }>, signal?: AbortSignal): Promise<PrRead[]>;
   /** With `detail`, also what the PR view shows besides the conversation; watching asks without it, so syncs stay light. */
   activity(repo: string, number: number, signal?: AbortSignal, options?: ActivityOptions): Promise<Activity>;
   /** Changes the PR on its server; resolves once the server accepted the change. */

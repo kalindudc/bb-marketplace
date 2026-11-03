@@ -106,6 +106,7 @@ function mergeRow(pr: PrView, details: PrDetails | null, onMerge: (() => void) |
     const when = queued.state === "queued" ? `queued ${ago(queued.at)}` : `started ${ago(queued.startedAt ?? queued.at)}`;
     return { id: "merge", label: "Merge", tone: "info", icon: queued.state === "queued" ? "Clock" : "Loading", text: <>{b(queued.state === "queued" ? "Queued" : queued.auto ? "Turning on auto-merge" : "Merging")} · {mergeText(queued)} · {when}</> };
   }
+  if (pr.inMergeQueue) return { id: "merge", label: "Merge", tone: "ok", icon: "GitMerge", text: <>{b("In the merge queue.")} It merges once the queue's checks pass.</> };
   if (pr.autoMerge) return { id: "merge", label: "Merge", tone: "ok", icon: "GitMerge", text: <>{b("Auto-merge is on.")} It merges when its required checks pass.</>, ...(onMerge ? { act: onMerge } : {}) };
   const merge = details?.merge ?? null;
   if (merge === null || merge.state === "unknown") return null;

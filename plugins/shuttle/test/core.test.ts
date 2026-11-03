@@ -4,11 +4,13 @@ import { MIGRATIONS } from "../src/db/schema";
 import { feedbackSignature, nextStep, stillHandled, type NextFacts } from "../src/next";
 import Database from "better-sqlite3";
 import { Shuttle } from "../src/shuttle";
+import { prSummarySchema, toSummary } from "../src/model";
 import { harness, pr, testConfig, TEST_SERVER } from "./helpers";
 
 const WRITE_SERVER = { ...TEST_SERVER, enabled: true, sep: "#" as const, commands: { ...TEST_SERVER.commands, merge: "mg", merge_options: "mo", comment: "c", review: "rv", reply: "rp", resolve: "rs" } };
 const KEY = (n: number) => `forge:acme/app#${n}`;
 const HOUR = 3_600_000;
+const toSummaryOf = (raw: Record<string, unknown>) => toSummary(prSummarySchema.parse(raw));
 const DAY = 24 * HOUR;
 
 async function withWrites() {
@@ -39,6 +41,7 @@ const facts = (patch: Partial<NextFacts>): NextFacts => ({
   suggestedAgent: null,
   handled: false,
   autoMerge: false,
+  inMergeQueue: false,
   snoozed: false,
   keptOut: false,
   can: { merge: true, comment: true, ready: true, reopen: true, cancelAutoMerge: false, approve: true },
@@ -82,6 +85,26 @@ describe("the next-step rule", () => {
     expect(nextStep({ ...approved, can: { ...approved.can, merge: false } }).primary).toBeNull();
     expect(nextStep({ ...approved, checks: "pending" })).toMatchObject({ kind: "approved_pending", inbox: false });
     expect(nextStep({ ...approved, autoMerge: true }).kind).toBe("auto_merge");
+  });
+
+  it("says your PR waits in the server's merge queue ahead of auto-merge and ready to merge, after Shuttle's own queue", () => {
+    const approved = facts({ review: "approved", autoMerge: true, inMergeQueue: true });
+    expect(nextStep(approved)).toMatchObject({ kind: "in_merge_queue", tone: "ok", label: "In the merge queue", inbox: false, primary: null });
+    expect(nextStep(approved).why).toBe("It merges once the repository's merge queue has run its checks on it.");
+    expect(nextStep({ ...approved, autoMerge: false }).kind).toBe("in_merge_queue");
+    const queued = { id: 1, key: "k", display: "acme/app#1", serverName: "Forge", method: "squash" as const, auto: false, deleteBranch: false, head: "h1", state: "queued" as const, outcome: null, error: null, at: approved.now, startedAt: null, finishedAt: null };
+    expect(nextStep({ ...approved, merge: queued }).kind).toBe("merging");
+    expect(nextStep({ ...approved, state: "merged" }).kind).toBe("merged");
+  });
+
+  it("keeps an agent waiting on you and feedback nobody handles in the Inbox while the PR waits in the merge queue", () => {
+    const agent = { threadId: "t", title: "Fixer", mode: "fix" as const, status: "waiting" as const, auto: false, lastSent: null };
+    const queued = facts({ review: "approved", inMergeQueue: true });
+    expect(nextStep({ ...queued, agent })).toMatchObject({ kind: "agent_waiting", inbox: true });
+    expect(nextStep({ ...queued, checks: "failed" })).toMatchObject({ kind: "nobody", inbox: true });
+    // Feedback someone already has is for the merge queue's checks to settle.
+    expect(nextStep({ ...queued, checks: "failed", handled: true }).kind).toBe("in_merge_queue");
+    expect(nextStep({ ...queued, checks: "failed", agent: { ...agent, status: "idle" } }).kind).toBe("in_merge_queue");
   });
 
   it("brings new requests by name to the Inbox for a few days, but not team requests or bots", () => {
@@ -445,6 +468,34 @@ describe("writes", () => {
     expect(h.runner.calls.find((c) => c.operation === "merge")!.env).toMatchObject({ SHUTTLE_METHOD: "squash", SHUTTLE_HEAD: "abc1234", SHUTTLE_AUTO: "1", SHUTTLE_DELETE_BRANCH: "1" });
     const done = await h.shuttle.merge(KEY(1), { method: "merge", head: "abc1234", auto: false, deleteBranch: false });
     expect(done).toMatchObject({ outcome: "merged", pr: { state: "merged" } });
+  });
+
+  it("stamps a change it could not read back just past the server's last time, so the host's clock never blocks the server's next change", async () => {
+    const h = harness(testConfig({ servers: [{ ...WRITE_SERVER, commands: { ...WRITE_SERVER.commands, close: "cl", reopen: "ro" } }] as never }));
+    h.answers.close = "";
+    h.answers.merge = "";
+    h.lists.authored = [pr(1, { author: "me", updated_at: "2026-10-23T10:00:00Z" }), pr(2, { author: "me", review: "approved", head: "abc1234", updated_at: "2026-10-23T10:00:00Z" })];
+    await h.shuttle.sync();
+    // The host's clock reads 12:00, the server's closed it at 11:00 and reopened it at 11:01; the read after the close failed.
+    await h.shuttle.editPr(KEY(1), { kind: "close" });
+    expect(h.store.prByKey(KEY(1))).toMatchObject({ state: "closed", updated_at: Date.parse("2026-10-23T10:00:00.001Z") });
+    h.store.upsertPr("forge", toSummaryOf(pr(1, { author: "me", updated_at: "2026-10-23T10:00:00Z" })), "u", true);
+    expect(h.store.prByKey(KEY(1))!.state).toBe("closed");
+    h.store.upsertPr("forge", toSummaryOf(pr(1, { author: "me", updated_at: "2026-10-23T11:01:00Z" })), "u", true);
+    expect(h.store.prByKey(KEY(1))!.state).toBe("open");
+    // A merge without a read-back keeps an older snapshot out the same way.
+    let merged = false;
+    Object.defineProperty(h.views, 2, { get: () => (merged ? new Error("timed out") : pr(2, { author: "me", review: "approved", head: "abc1234", updated_at: "2026-10-23T10:00:00Z" })) });
+    const adapter = h.shuttle.adapter("forge");
+    const realMerge = adapter.merge.bind(adapter);
+    adapter.merge = async (...args) => {
+      const out = await realMerge(...args);
+      merged = true;
+      return out;
+    };
+    expect(await h.shuttle.merge(KEY(2), { method: "squash", head: "abc1234", auto: false, deleteBranch: false })).toMatchObject({ outcome: "merged" });
+    expect(h.store.prByKey(KEY(2))).toMatchObject({ state: "merged", updated_at: Date.parse("2026-10-23T10:00:00.001Z") });
+    expect(h.store.upsertPr("forge", toSummaryOf(pr(2, { author: "me", updated_at: "2026-10-23T10:00:00Z" })), "u", true).state).toBe("merged");
   });
 
   it("comments, replies and resolves as the user, and says when the server can't", async () => {

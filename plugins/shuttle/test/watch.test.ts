@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 import { DEFAULT_CONFIG } from "../src/config";
+import { toSummary, prSummarySchema } from "../src/model";
+import { pollWatches } from "../src/watch";
 import { harness, pr, testConfig } from "./helpers";
 
 const review = (id: string, author = "ana", extra: Record<string, unknown> = {}) => ({ id, kind: "review", author, state: "changes requested", body: `Fix ${id}`, ...extra });
@@ -226,5 +228,24 @@ describe("watched PRs", () => {
     h.port.addThread("thr_owner");
     await h.shuttle.link("forge:acme/app#1", "thr_owner");
     expect(h.shuttle.inbox().prs).toEqual([]);
+  });
+
+  it("takes a state from an activity read only when it is not older than what Shuttle has, either way", async () => {
+    const h = await setup();
+    await h.shuttle.link("forge:acme/app#1", "thr_owner");
+    await pollWatches(h.shuttle, "forge");
+    const at = (time: string) => Date.parse(`2026-10-23T${time}Z`);
+    // A view stored the reopen at 12:00:20 while the activity read that saw it closed at 12:00:10 was on its way.
+    h.store.upsertPr("forge", toSummary(prSummarySchema.parse(pr(1, { author: "me", updated_at: "2026-10-23T12:00:20Z" }))), "u", true);
+    h.activity[1] = { items: [], state: "closed", closed_at: "2026-10-23T12:00:10Z", updated_at: "2026-10-23T12:00:10Z" };
+    await pollWatches(h.shuttle, "forge");
+    expect(h.store.prByKey("forge:acme/app#1")).toMatchObject({ state: "open", closed_at: null, updated_at: at("12:00:20") });
+    h.activity[1] = { items: [], state: "open", draft: true, updated_at: "2026-10-23T12:00:30Z" };
+    await pollWatches(h.shuttle, "forge");
+    expect(h.store.prByKey("forge:acme/app#1")).toMatchObject({ state: "draft", updated_at: at("12:00:30") });
+    // Without a time to compare the answer stands, and the stored time stays.
+    h.activity[1] = { items: [], state: "closed" };
+    await pollWatches(h.shuttle, "forge");
+    expect(h.store.prByKey("forge:acme/app#1")).toMatchObject({ state: "closed", updated_at: at("12:00:30") });
   });
 });

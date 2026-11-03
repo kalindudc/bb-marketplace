@@ -3,7 +3,7 @@ import { AdapterError } from "./adapters/adapter";
 import type { ChangeOperation } from "./config";
 import type { Label, PrAction, PrChange, Reviewer } from "./contract";
 import { errText, ShuttleError, type Ctx } from "./ctx";
-import type { PrRow } from "./db/store";
+import { afterServer, type PrRow } from "./db/store";
 import { parseKey } from "./keys";
 import { fetchPr, requirePr, shortKey } from "./prs";
 
@@ -74,25 +74,25 @@ function describe(change: PrChange, name: string): string {
 }
 
 /** What the server will show after the change, so the PR reads right even when the read-back fails. */
-function patchFor(pr: PrRow, change: PrChange, now: number): Parameters<Ctx["store"]["patchPr"]>[1] {
+function patchFor(pr: PrRow, change: PrChange): Parameters<Ctx["store"]["patchPr"]>[1] {
   switch (change.kind) {
     case "ready":
-      return { state: "open", updated_at: now };
+      return { state: "open", updated_at: afterServer(pr.updated_at) };
     case "draft":
-      return { state: "draft", updated_at: now };
+      return { state: "draft", updated_at: afterServer(pr.updated_at) };
     case "close":
-      return { state: "closed", updated_at: now };
+      return { state: "closed", updated_at: afterServer(pr.updated_at) };
     case "reopen":
-      return { state: "open", updated_at: now };
+      return { state: "open", updated_at: afterServer(pr.updated_at) };
     case "labels": {
       const labels = (parseLabels(pr.labels) ?? []).filter((l) => !change.remove.includes(l.name));
       for (const name of change.add) if (!labels.some((l) => l.name === name)) labels.push({ name, color: null });
-      return { labels: JSON.stringify(labels), updated_at: now };
+      return { labels: JSON.stringify(labels), updated_at: afterServer(pr.updated_at) };
     }
     case "reviewers": {
       const same = (a: { login: string; team: boolean }, b: { login: string; team: boolean }) => a.login === b.login && a.team === b.team;
       const reviewers = (parseReviewers(pr.reviewers) ?? []).filter((r) => !change.add.some((a) => same(a, r)) && !(r.state === "requested" && change.remove.some((x) => same(x, r))));
-      return { reviewers: JSON.stringify([...change.add.map((r) => ({ login: r.login, team: r.team, state: "requested" as const })), ...reviewers]), updated_at: now };
+      return { reviewers: JSON.stringify([...change.add.map((r) => ({ login: r.login, team: r.team, state: "requested" as const })), ...reviewers]), updated_at: afterServer(pr.updated_at) };
     }
   }
 }
@@ -117,7 +117,8 @@ export async function editPr(ctx: Ctx, key: string, raw: PrChange): Promise<PrRo
     if (error instanceof AdapterError) throw new ShuttleError(`${server?.name ?? pr.server} refused the change: ${error.message}`);
     throw error;
   }
-  ctx.store.patchPr(pr.id, patchFor(pr, change, ctx.now()));
+  // From the row as it is now: a read that landed while the server worked may have a newer time than `pr`.
+  ctx.store.patchPr(pr.id, patchFor(ctx.store.prById(pr.id) ?? pr, change));
   ctx.store.addEvent("edit", describe(change, name), pr.id);
   const ref = parseKey(key);
   if (ref) await fetchPr(ctx, ref).catch((error: unknown) => ctx.port.log("warn", `read back ${key}: ${errText(error)}`));

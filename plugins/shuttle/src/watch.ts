@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import type { Config } from "./config";
 import { errText, type Ctx } from "./ctx";
 import type { PrRow } from "./db/store";
-import type { ActivityItem } from "./model";
+import type { ActivityItem, ActivityState } from "./model";
 import { promptVars, renderTemplate } from "./reviews";
 import { inert } from "./templates";
 import { shortKey } from "./prs";
@@ -44,21 +44,51 @@ export function keepItem(ctx: Ctx, pr: PrRow, item: ActivityItem): boolean {
   return true;
 }
 
+/** Watched PRs read at once: enough to keep a sync short, few enough to stay well inside a server's limits. */
+const POLL_CONCURRENCY = 3;
+
+/** Runs `fn` on every item, at most `limit` at a time. */
+async function eachLimit<T>(items: readonly T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  const lane = async () => {
+    while (next < items.length) await fn(items[next++]!);
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, lane));
+}
+
+/**
+ * Records a merge, close, reopen or draft change the activity read saw. An answer older than what Shuttle
+ * has never wins, whichever way it goes: a read can be on its way while a newer one lands.
+ */
+function learnState(ctx: Ctx, prId: number, seen: ActivityState | null): boolean {
+  const pr = ctx.store.prById(prId);
+  if (!pr || !seen || seen.state === pr.state) return false;
+  if (seen.updatedAt !== null && pr.updated_at !== null && seen.updatedAt < pr.updated_at) return false;
+  const done = seen.state === "merged" || seen.state === "closed";
+  ctx.store.patchPr(pr.id, { state: seen.state, closed_at: done ? (seen.closedAt ?? ctx.now()) : null, updated_at: seen.updatedAt ?? pr.updated_at });
+  return true;
+}
+
 export async function pollWatches(ctx: Ctx, serverId?: string, signal?: AbortSignal, prId?: number): Promise<void> {
   const enabled = new Set(ctx.config().servers.filter((s) => s.enabled).map((s) => s.id));
   const heard = JSON.stringify(botsHeard(ctx.config().watch));
-  for (const watch of ctx.store.watches()) {
+  const due = ctx.store.watches().flatMap((watch) => {
     const pr = ctx.store.prById(watch.pr_id);
-    if (!pr || !enabled.has(pr.server) || (serverId && pr.server !== serverId) || (prId !== undefined && pr.id !== prId)) continue;
-    if (pr.state !== "open" && pr.state !== "draft") continue;
+    if (!pr || !enabled.has(pr.server) || (serverId && pr.server !== serverId) || (prId !== undefined && pr.id !== prId)) return [];
+    return pr.state === "open" || pr.state === "draft" ? [{ watch, pr }] : [];
+  });
+  let changed = false;
+  await eachLimit(due, POLL_CONCURRENCY, async ({ watch, pr }) => {
+    if (signal?.aborted) return;
     try {
       const activity = await ctx.adapter(pr.server).activity(pr.repo, pr.number, signal);
+      if (learnState(ctx, pr.id, activity.pr ?? null)) changed = true;
       const items = activity.items.filter((item) => keepItem(ctx, pr, item));
       if (!watch.baselined) {
         ctx.store.markSeen(pr.id, items.map((i) => i.id));
         ctx.store.markWatchChecked(pr.id, null, true);
         ctx.store.setWatchBots(pr.id, heard);
-        continue;
+        return;
       }
       const seen = ctx.store.seenIds(pr.id);
       // An agent that already had an item (before its mode went off and on again) does not get it twice.
@@ -74,11 +104,12 @@ export async function pollWatches(ctx: Ctx, serverId?: string, signal?: AbortSig
       const added = ctx.store.addPending(pr.id, unseen.filter((i) => !old.has(i.id)));
       ctx.store.markWatchChecked(pr.id, null);
       if (watch.bots !== heard) ctx.store.setWatchBots(pr.id, heard);
-      if (added) ctx.port.publish();
+      if (added) changed = true;
     } catch (error) {
       ctx.store.markWatchChecked(pr.id, errText(error));
     }
-  }
+  });
+  if (changed) ctx.port.publish();
 }
 
 export { inert } from "./templates";

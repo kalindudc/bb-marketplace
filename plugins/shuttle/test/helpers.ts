@@ -131,7 +131,7 @@ export function fakeRunner(respond: Responder): Runner & { calls: Array<{ operat
     const env = options.env ?? {};
     const operation = env.SHUTTLE_OPERATION ?? "";
     calls.push({ operation, env });
-    const value = respond(operation, env);
+    const value = await respond(operation, env);
     if (value instanceof RawRun) return { timedOut: false, ...value.result };
     if (value instanceof Error) return { code: 1, stdout: "", stderr: value.message, timedOut: false };
     return { code: 0, stdout: typeof value === "string" ? value : JSON.stringify(value), stderr: "", timedOut: false };
@@ -171,6 +171,30 @@ export interface Harness {
   runner: ReturnType<typeof fakeRunner>;
   /** Every retry pause, in ms; each moves the clock. */
   pauses: number[];
+  /** Holds the next call of `operation`, on `server` and with `state` when given, until it is released. */
+  hold: (operation: string, match?: { server?: string; state?: "open" | "closed" }) => Hold;
+}
+
+export interface Hold {
+  /** Settles once the held call is waiting. */
+  reached: Promise<void>;
+  release: () => void;
+}
+
+interface Waiting extends Hold {
+  operation: string;
+  server?: string;
+  state?: string;
+  reach: () => void;
+  released: Promise<void>;
+}
+
+export function holdOf(operation: string, match: { server?: string; state?: string } = {}): Waiting {
+  let reach!: () => void;
+  let release!: () => void;
+  const reached = new Promise<void>((resolve) => (reach = resolve));
+  const released = new Promise<void>((resolve) => (release = resolve));
+  return { operation, ...match, reached, reach, release, released };
 }
 
 export function harness(config: Config = testConfig()): Harness {
@@ -183,8 +207,17 @@ export function harness(config: Config = testConfig()): Harness {
   const views: Record<number, unknown> = {};
   const activity: Record<number, unknown> = {};
   const answers: Record<string, unknown> = {};
-  const runner = fakeRunner((operation, env) => {
+  const holds: Waiting[] = [];
+  const runner = fakeRunner(async (operation, env) => {
+    const held = holds.findIndex((h) => h.operation === operation && (h.server === undefined || h.server === env.SHUTTLE_SERVER) && (h.state === undefined || h.state === env.SHUTTLE_STATE));
+    if (held >= 0) {
+      const [waiting] = holds.splice(held, 1);
+      waiting!.reach();
+      await waiting!.released;
+    }
     if (operation === "whoami") return answers.whoami ?? { login: "me" };
+    // `authored_closed` answers the closed authored list on its own, such as with an error.
+    if (operation === "authored" && env.SHUTTLE_STATE === "closed" && "authored_closed" in lists) return lists.authored_closed;
     const authored = lists.authored;
     if (operation === "authored" && !Array.isArray(authored)) return authored;
     if (operation === "authored") return (authored as Array<{ state: string }>).filter((row) => (env.SHUTTLE_STATE === "closed" ? row.state === "merged" || row.state === "closed" : row.state === "open" || row.state === "draft"));
@@ -200,5 +233,10 @@ export function harness(config: Config = testConfig()): Harness {
     clock.now += ms;
   };
   const shuttle = new Shuttle({ store, port, now: () => clock.now, settings: () => settings, runner, pause });
-  return { shuttle, store, port, clock, settings, lists, views, activity, answers, runner, pauses };
+  const hold = (operation: string, match: { server?: string; state?: "open" | "closed" } = {}) => {
+    const waiting = holdOf(operation, match);
+    holds.push(waiting);
+    return waiting;
+  };
+  return { shuttle, store, port, clock, settings, lists, views, activity, answers, runner, pauses, hold };
 }
