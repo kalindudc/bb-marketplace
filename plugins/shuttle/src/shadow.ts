@@ -86,11 +86,12 @@ export function autoPostInsights(ctx: Ctx, range: AutoPostInsights["range"]): Au
   let failures = 0;
   const durations: number[] = [];
 
-  for (const draft of ctx.store.gatedDraftsSince(from)) {
+  // A range covers drafts checked in it, which may be older drafts checked again.
+  for (const draft of ctx.store.gatedDrafts()) {
     const pr = ctx.store.prById(draft.pr_id);
     if (!pr) continue;
     const gate = parseGate(draft.gate);
-    if (gate === null) continue;
+    if (gate === null || gate.at < from) continue;
     // Holds of the whole draft, not the note that no finding passed.
     const draftHeld = gate.reasons.some((reason) => reason !== NO_FINDING_PASSED);
     const findings = JSON.parse(draft.findings) as Finding[];
@@ -139,7 +140,7 @@ export function autoPostInsights(ctx: Ctx, range: AutoPostInsights["range"]): Au
     const outcome = draft.state === "posted" ? "posted" : draft.state === "draft" ? "pending" : draft.discard_reason === "user" ? "discarded" : "superseded";
     const failed = gate.findings.flatMap((f) => f.checks.filter((c) => !c.ok)).map((c) => c.reason);
     recent.push({
-      draftId: draft.id, key: pr.key, display: shortKey(ctx, pr), title: pr.title, at: draft.created_at, verdict: draft.verdict,
+      draftId: draft.id, key: pr.key, display: shortKey(ctx, pr), title: pr.title, at: gate.at, verdict: draft.verdict,
       decision: gate.decision, findings: findings.length, posting: gate.posting.length, outcome, agreed, against,
       reason: gate.decision === "post" ? null : (gate.reasons[0] ?? failed[0] ?? null),
     });

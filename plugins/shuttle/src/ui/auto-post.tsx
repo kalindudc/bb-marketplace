@@ -67,7 +67,7 @@ function RepoCard({ repo, target }: { repo: Repo; target: number }) {
         <thead><tr><th>Auto post</th><th className="!text-right">You posted</th><th className="!text-right">You dropped</th><th className="!text-right">Not decided</th></tr></thead>
         <tbody>
           <tr><td>Would post</td><td className="text-right">{repo.agreed}{repo.edited ? <span className="text-muted-foreground"> ({repo.edited} edited)</span> : null}</td><td className="text-right">{repo.against}</td><td className="text-right">{repo.pending}</td></tr>
-          <tr><td>Held</td><td className="text-right">{repo.missed}</td><td className="text-right">{repo.held}</td><td className="text-right text-muted-foreground">\u2014</td></tr>
+          <tr><td>Held</td><td className="text-right">{repo.missed}</td><td className="text-right">{repo.held}</td><td className="text-right text-muted-foreground">{"\u2014"}</td></tr>
         </tbody>
       </table>
       <div className="mt-2 text-[11.5px] text-muted-foreground">

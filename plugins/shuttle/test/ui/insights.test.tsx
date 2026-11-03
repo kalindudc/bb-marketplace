@@ -125,6 +125,7 @@ describe("Insights", () => {
     ]);
     expect(card.querySelector("[data-proof]")!.textContent).toContain("41 more agreeing findings in a row would prove the target.");
     expect(card.querySelector("[data-confusion]")!.textContent).toContain("Would post9 (2 edited)12");
+    expect(card.querySelector("[data-confusion]")!.textContent).toContain("Held14\u2014");
     expect(card.textContent).toContain("12 drafts suggested approving; you posted 9 and discarded 1.");
     expect(slot.container.querySelectorAll("[data-chart='scatter'] circle")).toHaveLength(2);
     expect(slot.container.querySelector("[data-hold-reasons]")!.textContent).toContain("approvals are not auto-posted yet12");

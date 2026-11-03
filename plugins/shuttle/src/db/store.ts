@@ -853,8 +853,8 @@ export class Store {
   }
 
   /** Drafts auto post decided about, oldest first. */
-  gatedDraftsSince(at: number): DraftRow[] {
-    return this.db.prepare("SELECT * FROM review_drafts WHERE gate IS NOT NULL AND created_at >= ? ORDER BY created_at, id").all(at) as DraftRow[];
+  gatedDrafts(): DraftRow[] {
+    return this.db.prepare("SELECT * FROM review_drafts WHERE gate IS NOT NULL ORDER BY created_at, id").all() as DraftRow[];
   }
 
   hasDraftSince(prId: number, at: number): boolean {
