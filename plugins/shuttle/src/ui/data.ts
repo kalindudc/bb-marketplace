@@ -66,13 +66,13 @@ export function patchPr(cache: Cache, key: string, patch: (pr: PrView) => PrView
 
 /**
  * The Inbox's lists after a patch: a PR moves to Snoozed or Dismissed, or back, at once. The rest stay in `prs`, where
- * the page shows only those whose step is in the Inbox. Reviewing and Posting follow the review, which no patch changes.
+ * the page shows only those whose step is in the Inbox. Reviewing, Posting and Merging follow the queues, which no patch changes.
  */
 function sortInbox(current: InboxView, each: (pr: PrView) => PrView): InboxView {
   const all = [...current.prs, ...current.snoozed, ...current.dismissed].map(each);
   const dismissed = all.filter((pr) => pr.dismissed !== null);
   const snoozed = all.filter((pr) => pr.dismissed === null && pr.snoozed);
-  return { ...current, prs: all.filter((pr) => pr.dismissed === null && !pr.snoozed), snoozed, dismissed, reviewing: current.reviewing.map(each), posting: current.posting.map(each) };
+  return { ...current, prs: all.filter((pr) => pr.dismissed === null && !pr.snoozed), snoozed, dismissed, reviewing: current.reviewing.map(each), posting: current.posting.map(each), merging: current.merging.map(each) };
 }
 
 /** Every thread a PR's lists in thread tabs may be cached under. */

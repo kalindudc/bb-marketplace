@@ -1,9 +1,10 @@
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers, type RenderSlotOptions, type RenderedSlot } from "@get-bb/plugin-sdk/testing/app";
 import { createElement, type ComponentType } from "react";
+import { afterEach, beforeEach, vi } from "vitest";
 import { DEFAULT_CONFIG, type Config } from "../../src/config";
 import {
   rpcContract, type AgentView, type ConversationItem, type EventView, type InboxView, type InsightsView, type LinkView, type MergeOptions,
-  type NextStep, type Overview, type PostView, type PrView, type ReviewDraft, type ServerStatus,
+  type MergeView, type NextStep, type Overview, type PostView, type PrView, type ReviewDraft, type ServerStatus,
 } from "../../src/contract";
 import { reloadPrefs } from "../../src/ui/prefs";
 import { prStates } from "../../src/ui/pr-state";
@@ -15,6 +16,16 @@ export type PullRequests = (input: { keys: string[] }) => Record<string, unknown
 export const NOW = Date.now();
 export const HOUR = 60 * 60_000;
 export const DAY = 24 * HOUR;
+
+// Fixtures are stamped when their file loads, and a busy machine can take a minute to reach a test, so "just now" would
+// read "1m ago": each test starts the clock at NOW again, and it runs on from there.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"], shouldAdvanceTime: true });
+  vi.setSystemTime(NOW);
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 // jsdom has no matchMedia. This one answers min- and max-width queries against a width the tests set.
 const DESKTOP = 1440;
@@ -54,6 +65,14 @@ export function post(overrides: Partial<PostView> = {}): PostView {
   return {
     id: 3, key: "lab:acme/app#2311622", display: "acme/app#2311622", serverName: "Lab", verdict: "changes", comments: 2, draftId: null,
     state: "queued", error: null, placed: null, inBody: null, at: NOW - 30_000, startedAt: null, finishedAt: null, ...overrides,
+  };
+}
+
+/** A merge of one of your PRs in Shuttle's queue; `own` in pr-view tests is its PR. */
+export function mergeRun(overrides: Partial<MergeView> = {}): MergeView {
+  return {
+    id: 5, key: "github:acme/infra-portal#29278", display: "acme/infra-portal#29278", serverName: "GitHub", method: "squash", auto: false, deleteBranch: true,
+    head: "4be81d0aa", state: "queued", outcome: null, error: null, at: NOW - 30_000, startedAt: null, finishedAt: null, ...overrides,
   };
 }
 
@@ -101,6 +120,7 @@ export function pr(overrides: Partial<PrView> = {}): PrView {
     myReview: null,
     draft: null,
     post: null,
+    merge: null,
     next: next(),
     snoozed: false,
     snoozedUntil: null,
@@ -175,7 +195,7 @@ export function overview(overrides: Partial<Overview> = {}): Overview {
 }
 
 export function inbox(overrides: Partial<InboxView> = {}): InboxView {
-  return { prs: [], snoozed: [], dismissed: [], reviewing: [], posting: [], rules: [], olderRequests: 0, handled: 0, ...overrides };
+  return { prs: [], snoozed: [], dismissed: [], reviewing: [], posting: [], merging: [], rules: [], olderRequests: 0, handled: 0, ...overrides };
 }
 
 export function insights(overrides: Partial<InsightsView> = {}): InsightsView {
@@ -264,7 +284,11 @@ export function handlers(overrides: Partial<Handlers> = {}): Handlers {
     editPr: unexpected("editPr"),
     editOptions: () => ({ labels: [], people: [], teams: [] }),
     mergeOptions: () => mergeOptions(),
-    merge: unexpected("merge"),
+    queueMerge: unexpected("queueMerge"),
+    merges: () => ({ merges: [] }),
+    cancelMerge: unexpected("cancelMerge"),
+    retryMerge: unexpected("retryMerge"),
+    clearMerge: unexpected("clearMerge"),
     cancelAutoMerge: unexpected("cancelAutoMerge"),
     comment: unexpected("comment"),
     queueReview: unexpected("queueReview"),

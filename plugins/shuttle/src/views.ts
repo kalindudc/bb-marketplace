@@ -4,6 +4,7 @@ import type { Ctx } from "./ctx";
 import type { InboxRuleRow, LinkRow, PrRow, ServerRow } from "./db/store";
 import { actionsOf, parseLabels, parseReviewers } from "./edit";
 import { agentActive, feedbackSignature, INBOX_ORDER, nextStep, ruleMatches, stepOf, stillHandled, type NextFacts } from "./next";
+import { mergeView, SENT_MERGE_MS } from "./merges";
 import { postView } from "./posts";
 import { globMatch, STEP_OF_REASON } from "./sync";
 
@@ -118,6 +119,11 @@ function viewOf(ctx: Ctx, pr: PrRow, rules: readonly InboxRuleRow[]): { view: Pr
   const draft = pr.mine ? null : ctx.store.liveDraft(pr.id);
   const postRow = ctx.store.currentPost(pr.id);
   const post = postRow === null ? null : postView(ctx, postRow, pr);
+  // A failed merge of a PR that merged or closed since needs nothing more; one the server took stays while the PR waits at that head.
+  const open = pr.state === "open" || pr.state === "draft";
+  const mergeRow = pr.mine === 1 ? ctx.store.currentMerge(pr.id) ?? (open ? ctx.store.sentMerge(pr.id, ctx.now() - SENT_MERGE_MS) : null) : null;
+  const shown = mergeRow !== null && (mergeRow.state === "done" ? pr.head === mergeRow.head : mergeRow.state !== "failed" || open);
+  const merge = shown ? mergeView(ctx, mergeRow, pr) : null;
   const draftFindings = draft ? (JSON.parse(draft.findings) as unknown[]).length : 0;
   const myReview = pr.mine ? null : myReviewOf(ctx, pr);
   const requestedAt = requestedAtOf(ctx, pr, reasonRows);
@@ -132,7 +138,10 @@ function viewOf(ctx: Ctx, pr: PrRow, rules: readonly InboxRuleRow[]): { view: Pr
     // A server removed from the config: its PRs show, with nothing to do on them.
   }
   const lastReview = last
-    ? { threadId: last.thread_id, title: ctx.store.threadTitle(last.thread_id) ?? "Review thread", state: last.state, preset: last.preset, trigger: last.trigger, head: last.head, at: last.created_at, thread: threadStatus(ctx.store.thread(last.thread_id)) }
+    ? {
+      threadId: last.thread_id, title: ctx.store.threadTitle(last.thread_id) ?? "Review thread", state: last.state, preset: last.preset, trigger: last.trigger, head: last.head, at: last.created_at,
+      thread: threadStatus(ctx.store.thread(last.thread_id)), endedBy: last.ended_by, note: last.note,
+    }
     : null;
   const ownRun = pr.mine ? null : ctx.store.reviewThreadOf(pr.id);
   const ownThread = ownRun && ctx.store.linkRole(pr.id, ownRun.thread_id) === "review" ? ctx.store.thread(ownRun.thread_id) : null;
@@ -189,6 +198,7 @@ function viewOf(ctx: Ctx, pr: PrRow, rules: readonly InboxRuleRow[]): { view: Pr
     lastReviewHandled: last ? ctx.store.hasDraftSince(pr.id, last.created_at) : false,
     draft: draft ? { findings: draftFindings, preset: last?.preset ?? null, auto: last?.trigger === "auto" } : null,
     post,
+    merge,
     myReview,
     additions: pr.additions,
     deletions: pr.deletions,
@@ -237,6 +247,7 @@ function viewOf(ctx: Ctx, pr: PrRow, rules: readonly InboxRuleRow[]): { view: Pr
     myReview,
     draft: draft ? { id: draft.id, findings: draftFindings, at: draft.created_at } : null,
     post,
+    merge,
     next,
     snoozed,
     snoozedUntil: snoozed ? (pr.snoozed_until ?? null) : null,

@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import type { ConversationItem, PrDetails, PrView, ReviewDraft } from "../contract";
-import { postText } from "../next";
+import { mergeText, postText } from "../next";
 import { AgentControls } from "./agent";
 import { NextButtons, useActions } from "./actions";
 import { TONE_TEXT } from "./common";
@@ -94,6 +94,18 @@ function mergeRow(pr: PrView, details: PrDetails | null, onMerge: (() => void) |
     };
   }
   if (pr.state === "closed") return { id: "merge", label: "Merge", tone: "neutral", icon: "GitPullRequestClosed", text: <>{b("Closed")} without merging{pr.closedAt !== null && <span className="text-muted-foreground"> · {ago(pr.closedAt)}</span>}</>, go: "history" };
+  // Your merge in Shuttle's queue says more than the server's state: the card's buttons cancel it or try it again.
+  const queued = pr.merge;
+  if (queued !== null && queued.state === "failed") {
+    return { id: "merge", label: "Merge", tone: "bad", icon: "AlertTriangle", text: <>{b(queued.auto ? "Auto-merge didn\u2019t turn on" : "Didn\u2019t go through")} · {queued.error ?? mergeText(queued)}</>, ...(onMerge ? { act: onMerge } : {}) };
+  }
+  if (queued !== null && queued.state === "done") {
+    return { id: "merge", label: "Merge", tone: "info", icon: "GitMerge", text: <>{b("Sent")} · {queued.serverName} took it {ago(queued.finishedAt ?? queued.at)} and it is still open, perhaps in the repository's merge queue</>, ...(onMerge ? { act: onMerge } : {}) };
+  }
+  if (queued !== null) {
+    const when = queued.state === "queued" ? `queued ${ago(queued.at)}` : `started ${ago(queued.startedAt ?? queued.at)}`;
+    return { id: "merge", label: "Merge", tone: "info", icon: queued.state === "queued" ? "Clock" : "Loading", text: <>{b(queued.state === "queued" ? "Queued" : queued.auto ? "Turning on auto-merge" : "Merging")} · {mergeText(queued)} · {when}</> };
+  }
   if (pr.autoMerge) return { id: "merge", label: "Merge", tone: "ok", icon: "GitMerge", text: <>{b("Auto-merge is on.")} It merges when its required checks pass.</>, ...(onMerge ? { act: onMerge } : {}) };
   const merge = details?.merge ?? null;
   if (merge === null || merge.state === "unknown") return null;

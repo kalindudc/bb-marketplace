@@ -148,6 +148,22 @@ export function registerTools(bb: BbPluginApi, shuttle: Shuttle): void {
       }),
   });
   bb.agents.registerTool({
+    name: "shuttle_review_done",
+    description:
+      "Tell Shuttle your review of someone else's pull request is over without a draft for the user, or that you could not finish it (failed). Shuttle stops showing the PR as under review and shows your note to the user. Not needed after shuttle_review_draft, which ends the review by itself, and not needed while you wait on child threads such as critics: a turn that ends does not end the review.",
+    presentation: { label: { pending: "Ending the review", completed: "Ended the review" } },
+    parameters: z.object({
+      pr,
+      note: z.string().trim().min(1).max(2000).describe("What the user should know, in a sentence or two: why there is no draft, or what stopped the review."),
+      failed: z.boolean().optional().describe("true when you could not finish the review; left out, it finished without a draft."),
+    }),
+    execute: ({ pr: query, note, failed }, tool) =>
+      run(async () => {
+        const view = await shuttle.endReview(tool.threadId, query, { note, failed: failed === true });
+        return `Shuttle counts the review of ${view.key} as ${failed ? "not finished" : "finished without a draft"}, and shows your note to the user.`;
+      }),
+  });
+  bb.agents.registerTool({
     name: "shuttle_feedback_done",
     description:
       "Tell Shuttle what you did with review feedback it sent you on a pull request, by the [ref …] on each item: fixed (give the commit), replied, declined, or question when you need the user's decision. The user sees it beside each comment in Shuttle.",

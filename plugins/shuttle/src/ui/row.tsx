@@ -8,7 +8,7 @@ import { BUTTON_GHOST, Pill, SELECTED_ROW, Tip, TONE_TEXT, onCardClick, type Ton
 import { NEXT_ICONS, type Group } from "./constants";
 import { age, ago, clock, plural, shortKey, sizeOf, tinyKey, when } from "./format";
 import { RowLabels } from "./manage";
-import { AgentPill, ChecksPill, isLive, MyReviewPill, ReasonPills, ReviewPill, SizeChip, StalePill } from "./pills";
+import { AgentPill, ChecksPill, isLive, MergePill, MyReviewPill, ReasonPills, ReviewPill, SizeChip, StalePill } from "./pills";
 import type { Folding } from "./prefs";
 
 const THREE_DAYS = 3 * 24 * 60 * 60_000;
@@ -67,6 +67,7 @@ export function MineRow({ pr, layout, time = pr.updatedAt === null ? null : age(
       {group !== undefined && <span data-row-group><Pill tone={NEXT_TONES[pr.next.tone]} icon={NEXT_ICONS[pr.next.kind]}>{group}</Pill></span>}
       {isLive(pr) ? (
         <>
+          <MergePill pr={pr} />
           <ChecksPill pr={pr} />
           <ReviewPill pr={pr} />
           <AgentPill pr={pr} />
@@ -176,6 +177,7 @@ const KIND_CHIPS: Partial<Record<NextKind, string>> = {
   agent_waiting: "Agent needs you",
   nobody: "Nobody on it",
   ready_to_merge: "Ready to merge",
+  merge_failed: "Didn\u2019t merge",
   post_failed: "Didn\u2019t post",
   post: "AI review ready",
   review_done: "AI review done",
@@ -236,6 +238,7 @@ function inboxFacts(pr: PrView, kindChip: boolean): Fact[] {
   if (pr.draft !== null) out.push({ text: `${plural(pr.draft.findings, "finding")}${pr.lastReview?.trigger === "auto" ? " from auto review" : ""}` });
   if (pr.next.kind === "review_failed" && !kindChip) out.push({ text: "The review thread failed", icon: "AlertTriangle", tone: "bad" });
   if (pr.next.kind === "post_failed" && pr.post !== null) out.push({ text: pr.post.error ?? "Your review didn\u2019t post", icon: "AlertTriangle", tone: "bad" });
+  if (pr.next.kind === "merge_failed" && pr.merge !== null) out.push({ text: pr.merge.error ?? "Your merge didn\u2019t go through", icon: "AlertTriangle", tone: "bad" });
   if (pr.next.kind === "rereview" && pr.myReview !== null) {
     const done = DONE[pr.myReview.verdict];
     // Asked by name again after reviewing: the server lists you as requested once more.
@@ -306,6 +309,7 @@ function reviewingFacts(pr: PrView): Fact[] {
     out.push({ text: run.preset, icon: "Sparkles" });
     out.push({ text: `${run.trigger === "auto" ? "Auto review started" : "Started"} ${ago(run.at)}` });
     if (run.thread === "waiting") out.push({ text: "Waits on your answer", icon: "Bot", tone: "warn" });
+    if (run.thread === "idle") out.push({ text: "Thread idle, review still open", icon: "Clock", dashed: true });
     if (run.thread === "archived") out.push({ text: "Thread archived", icon: "Bot", dashed: true });
   }
   if (pr.dismissed !== null) out.push({ text: "Dismissed", dashed: true });

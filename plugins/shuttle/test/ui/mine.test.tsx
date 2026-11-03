@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, waitFor, within } from "@testing-library/react";
 import type { PrView } from "../../src/contract";
 import { formatRoute } from "../../src/ui/route";
-import { agent, callsTo, DAY, find, lastNavigation, mine, next, overview, page, unmountAll, type Handlers } from "./helpers";
+import { agent, callsTo, DAY, find, lastNavigation, mergeRun, mine, next, overview, page, unmountAll, type Handlers } from "./helpers";
 
 const toasts = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn() }));
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), toasts) }));
@@ -56,6 +56,26 @@ describe("My PRs", () => {
     expect(keysIn(group(slot, "Waiting for review"))).toEqual([waitingReview.key]);
     expect(keysIn(group(slot, "Drafts"))).toEqual([drafted.key]);
     expect(callsTo(slot, "list")).toEqual([{ area: "mine" }]);
+  });
+
+  it("puts PRs with a merge on its way first, and one that didn't go through under Needs you, each with a pill", async () => {
+    const queued = mine({ number: 6, title: "Drop the v1 webhook", review: "approved", merge: mergeRun({ id: 71 }), next: next({ kind: "merging", tone: "info", label: "Queued to merge", more: [{ id: "cancel_merge", label: "Cancel" }] }) });
+    const merging = mine({ number: 7, title: "Bump the SDK", review: "approved", merge: mergeRun({ id: 70, state: "merging", startedAt: Date.now() }), next: next({ kind: "merging", tone: "info", label: "Merging" }) });
+    const failed = mine({
+      number: 8, title: "Rename the queue table", review: "approved", merge: mergeRun({ id: 69, state: "failed", error: "GitHub refused: Base branch was modified" }),
+      next: next({ kind: "merge_failed", tone: "bad", label: "Your merge didn’t go through", inbox: true, primary: { id: "retry_merge", label: "Try again" } }),
+    });
+    const { slot } = await minePage({ retryMerge: () => ({ pr: failed, merge: mergeRun({ id: 69 }) }) }, [merging, queued, failed, ready]);
+    await find(slot.container, "[data-group]");
+    expect([...slot.container.querySelectorAll("[data-group]")].map((node) => node.getAttribute("data-group"))).toEqual(["Merging", "Needs you", "Ready to merge"]);
+    expect(keysIn(group(slot, "Merging")).sort()).toEqual([merging.key, queued.key].sort());
+    expect(keysIn(group(slot, "Needs you"))).toEqual([failed.key]);
+    const row = (key: string) => slot.container.querySelector<HTMLElement>(`[data-pr="${key}"]`)!;
+    expect(row(queued.key).textContent).toContain("Queued to merge");
+    expect(row(merging.key).textContent).toContain("Merging");
+    expect(row(failed.key).textContent).toContain("Didn’t merge");
+    fireEvent.click(within(row(failed.key)).getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(callsTo(slot, "retryMerge")).toEqual([{ id: 69 }]));
   });
 
   it("shows each row's checks, review and agent, and its next step on the right", async () => {

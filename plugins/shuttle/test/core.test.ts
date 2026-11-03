@@ -52,6 +52,7 @@ const facts = (patch: Partial<NextFacts>): NextFacts => ({
   lastReviewHandled: false,
   draft: null,
   post: null,
+  merge: null,
   myReview: null,
   additions: 10,
   deletions: 2,
@@ -434,13 +435,16 @@ describe("writes", () => {
     h.lists.authored = [pr(1, { author: "me", review: "approved", head: "abc1234" })];
     h.lists.review_requested = [pr(2)];
     await h.shuttle.sync();
+    // The server's read after each merge command says what that command did.
+    const ran = (auto: "0" | "1") => h.runner.calls.some((c) => c.operation === "merge" && c.env.SHUTTLE_AUTO === auto);
+    Object.defineProperty(h.views, 1, { get: () => pr(1, { author: "me", review: "approved", head: "abc1234", auto_merge: ran("1"), state: ran("0") ? "merged" : "open" }) });
     expect(h.shuttle.view(KEY(1)).can).toMatchObject({ merge: true, comment: true, review: false });
     await expect(h.shuttle.merge(KEY(2), { method: "squash", head: "abc1234", auto: false, deleteBranch: false })).rejects.toThrow(/not one of your PRs/u);
     const auto = await h.shuttle.merge(KEY(1), { method: "squash", head: "abc1234", auto: true, deleteBranch: true });
-    expect(auto).toMatchObject({ merged: false, pr: { autoMerge: true, next: { kind: "auto_merge" } } });
+    expect(auto).toMatchObject({ outcome: "auto_merge", pr: { autoMerge: true, next: { kind: "auto_merge" } } });
     expect(h.runner.calls.find((c) => c.operation === "merge")!.env).toMatchObject({ SHUTTLE_METHOD: "squash", SHUTTLE_HEAD: "abc1234", SHUTTLE_AUTO: "1", SHUTTLE_DELETE_BRANCH: "1" });
     const done = await h.shuttle.merge(KEY(1), { method: "merge", head: "abc1234", auto: false, deleteBranch: false });
-    expect(done).toMatchObject({ merged: true, pr: { state: "merged" } });
+    expect(done).toMatchObject({ outcome: "merged", pr: { state: "merged" } });
   });
 
   it("comments, replies and resolves as the user, and says when the server can't", async () => {

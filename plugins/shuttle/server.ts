@@ -48,6 +48,7 @@ export function createShuttlePlugin(deps: PluginDeps = {}) {
     });
 
     app.resumePosts();
+    app.resumeMerges();
     registerRpc(bb, app);
     registerTools(bb, app);
     bb.cli.register(createCli(app));
@@ -61,8 +62,8 @@ export function createShuttlePlugin(deps: PluginDeps = {}) {
         bb.log.warn(`${name}: ${errText(error)}`);
       }
     };
-    bb.events.on("thread.idle", ({ thread }) => safe("thread.idle", () => app.onThreadIdle(thread.id)));
-    bb.events.on("thread.active", ({ thread }) => safe("thread.active", () => app.onThreadActive(thread.id)));
+    bb.events.on("thread.idle", ({ thread }) => safe("thread.idle", () => app.onThreadIdle(thread.id, thread.parentThreadId)));
+    bb.events.on("thread.active", ({ thread }) => safe("thread.active", () => app.onThreadActive(thread.id, thread.parentThreadId)));
     bb.events.on("interaction.pending", ({ thread }) => safe("interaction.pending", () => app.onInteractionPending(thread.id)));
     bb.events.on("thread.failed", ({ thread }) => safe("thread.failed", () => app.onThreadFailed(thread.id)));
     bb.events.on("thread.archived", ({ thread }) => safe("thread.archived", () => app.onThreadArchived(thread.id)));

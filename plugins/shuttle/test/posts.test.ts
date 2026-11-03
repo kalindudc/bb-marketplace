@@ -85,6 +85,26 @@ describe("the review queue", () => {
     expect(h.shuttle.posts().filter((p) => p.state === "posted")).toHaveLength(3);
   });
 
+  it("puts a review tried again behind the reviews already waiting", async () => {
+    const h = await queue();
+    h.lists.review_requested = [pr(3, { head: "h1" }), pr(4, { head: "h1" }), pr(5, { head: "h1" })];
+    await h.shuttle.sync();
+    h.answers.review = new Error("503");
+    const first = h.shuttle.queueReview(KEY(3), { verdict: "approve", body: "LGTM", findings: [] }).post;
+    await h.shuttle.postsSettled();
+    h.answers.review = "";
+    const held = gate(h.shuttle.adapter("forge"));
+    h.shuttle.queueReview(KEY(4), { verdict: "approve", body: "LGTM", findings: [] });
+    h.clock.now += 1000;
+    h.shuttle.queueReview(KEY(5), { verdict: "approve", body: "LGTM", findings: [] });
+    h.clock.now += 1000;
+    h.shuttle.retryPost(first.id);
+    expect(h.shuttle.inbox().posting.map((v) => v.key)).toEqual([KEY(4), KEY(5), KEY(3)]);
+    held.release();
+    await h.shuttle.postsSettled();
+    expect(held.keys).toEqual([4, 5, 3]);
+  });
+
   it("cancels a review that has not started posting, and refuses to cancel one that has", async () => {
     const h = await queue();
     const held = gate(h.shuttle.adapter("forge"));

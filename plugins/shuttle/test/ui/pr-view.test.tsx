@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import type { ConversationItem, PrDetails, PrView, ReviewDraft } from "../../src/contract";
 import { reloadPrefs } from "../../src/ui/prefs";
 import { formatRoute } from "../../src/ui/route";
-import { agent, CAN_ALL, callsTo, config, draft, event, find, item, link, mergeOptions, mine, next, page, post as queued, pr, unmountAll, type Handlers } from "./helpers";
+import { agent, CAN_ALL, callsTo, config, draft, event, find, item, link, mergeOptions, mergeRun, mine, next, page, post as queued, pr, unmountAll, type Handlers } from "./helpers";
 import { retryDetails, retryItems, retryPr, taxDetails, taxDraft, taxItems, taxPr } from "./fixtures";
 
 const toasts = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn() }));
@@ -511,19 +511,23 @@ describe("the merge dialog", () => {
   });
 
   async function open(options = mergeOptions(), rpc: Partial<Handlers> = {}) {
-    const { slot, view } = await prPage(ready, { mergeOptions: () => options, merge: ({ auto }) => ({ pr: { ...ready, state: auto ? "open" : "merged" }, merged: !auto }), ...rpc });
+    const { slot, view } = await prPage(ready, {
+      mergeOptions: () => options,
+      queueMerge: ({ method, auto, deleteBranch }) => ({ pr: ready, merge: mergeRun({ id: 61, method, auto, deleteBranch }) }),
+      ...rpc,
+    });
     fireEvent.click(within(await find(await view(), "[data-status]")).getByRole("button", { name: "Merge…" }));
     const dialog = await slot.findByRole("dialog", { name: "Merge infra-portal#29278" });
     await within(dialog).findByRole("radiogroup", { name: "How" });
-    return { slot, dialog };
+    return { slot, dialog, view };
   }
 
-  it("merges with the PR's head and the chosen method", async () => {
+  it("queues the merge with the PR's head and the chosen method, and closes at once", async () => {
     const { slot, dialog } = await open();
     expect(dialog.textContent).toContain("All 12 checks pass");
     expect(dialog.textContent).toContain("Approved by pascal");
     expect(dialog.textContent).toContain("1 requested reviewer has not reviewed.");
-    expect(dialog.textContent).toContain("Merges only if nobody pushed since you looked (head 4be81d0).");
+    expect(dialog.textContent).toContain("Merges only if nobody pushed since you looked (head 4be81d0). Shuttle does it in the background, after any merges ahead of it on GitHub, and reads the PR again just before.");
     const rebase = within(dialog).getByRole("radio", { name: /Rebase and merge/u });
     expect(rebase.getAttribute("aria-disabled")).toBe("true");
     expect(rebase.textContent).toContain("Not allowed in this repository");
@@ -533,24 +537,85 @@ describe("the merge dialog", () => {
     expect(within(dialog).queryByRole("textbox", { name: "Commit title" })).toBeNull();
     fireEvent.click(within(dialog).getByRole("checkbox", { name: "Delete the branch after merging" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Merge" }));
-    await waitFor(() => expect(callsTo(slot, "merge")).toEqual([{ key: ready.key, method: "merge", head: "4be81d0aa", auto: false, deleteBranch: false }]));
-    await waitFor(() => expect(toasts.success).toHaveBeenCalledWith("Merged infra-portal#29278 on GitHub (merge)."));
-    expect(toasts.success.mock.calls[0]![1]).toBeUndefined();
+    await waitFor(() => expect(callsTo(slot, "queueMerge")).toEqual([{ key: ready.key, method: "merge", head: "4be81d0aa", auto: false, deleteBranch: false }]));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Queued infra-portal#29278: merge commit. Shuttle does it on GitHub in the background.", { id: "shuttle-merge-61" }));
+    await waitFor(() => expect(slot.queryByRole("dialog", { name: "Merge infra-portal#29278" })).toBeNull());
+    expect(toasts.success).not.toHaveBeenCalled();
   });
 
   it("sends the commit title with a squash", async () => {
     const { slot, dialog } = await open();
     fireEvent.change(within(dialog).getByRole("textbox", { name: "Commit title" }), { target: { value: "Retry WAF deletes (#29278)" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Merge" }));
-    await waitFor(() => expect(callsTo(slot, "merge")).toEqual([{ key: ready.key, method: "squash", head: "4be81d0aa", auto: false, deleteBranch: true, subject: "Retry WAF deletes (#29278)" }]));
+    await waitFor(() => expect(callsTo(slot, "queueMerge")).toEqual([{ key: ready.key, method: "squash", head: "4be81d0aa", auto: false, deleteBranch: true, subject: "Retry WAF deletes (#29278)" }]));
   });
 
   it("turns on auto-merge when the PR cannot merge yet but can by itself", async () => {
     const { slot, dialog } = await open(mergeOptions({ state: "pending", detail: "2 checks are still running." }));
     expect(dialog.textContent).toContain("When it can merge");
     fireEvent.click(within(dialog).getByRole("button", { name: "Turn on auto-merge" }));
-    await waitFor(() => expect(callsTo(slot, "merge")).toEqual([expect.objectContaining({ auto: true, head: "4be81d0aa" })]));
-    await waitFor(() => expect(toasts.success).toHaveBeenCalledWith("Auto-merge is on for infra-portal#29278: it merges once GitHub lets it."));
+    await waitFor(() => expect(callsTo(slot, "queueMerge")).toEqual([expect.objectContaining({ auto: true, head: "4be81d0aa" })]));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Queued infra-portal#29278: auto-merge with a squash, and delete the branch. Shuttle does it on GitHub in the background.", { id: "shuttle-merge-61" }));
+  });
+
+  it("shows the merge queued the moment Merge is pressed, before the server answers", async () => {
+    const { slot, dialog, view } = await open(mergeOptions(), { queueMerge: () => new Promise<never>(() => {}) });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Merge" }));
+    const panel = await view();
+    await waitFor(() => expect(panel.querySelector("[data-next-label]")!.textContent).toBe("Queued to merge"));
+    expect(statusRow(panel, "merge").textContent).toContain("Queued · Squash and merge, and delete the branch · queued just now");
+    // Until the server has given the merge an id there is nothing to cancel yet.
+    expect(within(panel.querySelector<HTMLElement>("[data-status]")!).queryByRole("button", { name: "Cancel" })).toBeNull();
+    expect(callsTo(slot, "queueMerge")).toHaveLength(1);
+  });
+
+  it("says when a merge it queued went through, or didn't, once", async () => {
+    let reads = 0;
+    const { dialog } = await open(mergeOptions(), {
+      merges: () => ({ merges: reads++ === 0 ? [] : [mergeRun({ id: 61, state: "done", finishedAt: Date.now() })] }),
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Merge" }));
+    await waitFor(() => expect(toasts.success).toHaveBeenCalledWith("Merged acme/infra-portal#29278 on GitHub (squash), and deleted its branch.", { id: "shuttle-merge-61" }));
+    expect(toasts.success).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a queued merge in the card with Cancel, and no other way to merge it until it is done", async () => {
+    const queuedPr = {
+      ...ready, merge: mergeRun({ id: 62 }),
+      next: next({ kind: "merging", tone: "info", label: "Queued to merge", why: "Squash and merge, and delete the branch. Queued just now.", more: [{ id: "cancel_merge", label: "Cancel" }] }),
+    };
+    const { slot, view } = await prPage(queuedPr, { cancelMerge: () => ({ pr: { ...ready, merge: null } }) });
+    const panel = await view();
+    const row = statusRow(panel, "merge");
+    expect(row.textContent).toContain("Queued · Squash and merge, and delete the branch · queued just now");
+    // A queued merge's row opens nothing: the card's Cancel is the way to change it.
+    expect(within(row).queryByRole("button")).toBeNull();
+    expect(within(tab(panel, "overview")).queryByRole("button", { name: "Merge…" })).toBeNull();
+    fireEvent.click(within(panel.querySelector<HTMLElement>("[data-status]")!).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(callsTo(slot, "cancelMerge")).toEqual([{ id: 62 }]));
+    await waitFor(() => expect(toasts.success).toHaveBeenCalledWith("Cancelled the merge of infra-portal#29278. Nothing changed on GitHub.", { id: "shuttle-merge-62" }));
+  });
+
+  it("says why a merge didn't go through, and tries it again, opens Merge… or dismisses it", async () => {
+    const failed = {
+      ...ready, merge: mergeRun({ id: 63, state: "failed", error: "GitHub refused: gh exited 1: Base branch was modified" }),
+      next: next({ kind: "merge_failed", tone: "bad", label: "Your merge didn’t go through", inbox: true, primary: { id: "retry_merge", label: "Try again" }, more: [{ id: "merge", label: "Merge…" }, { id: "clear_merge", label: "Dismiss" }] }),
+    };
+    const { slot, view } = await prPage(failed, {
+      retryMerge: () => ({ pr: failed, merge: mergeRun({ id: 63 }) }),
+      clearMerge: () => ({ pr: { ...failed, merge: null } }),
+      mergeOptions: () => mergeOptions(),
+    });
+    const panel = await view();
+    expect(statusRow(panel, "merge").textContent).toContain("Didn’t go through · GitHub refused: gh exited 1: Base branch was modified");
+    const card = panel.querySelector<HTMLElement>("[data-status]")!;
+    fireEvent.click(within(card).getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(callsTo(slot, "retryMerge")).toEqual([{ id: 63 }]));
+    await waitFor(() => expect(toast).toHaveBeenCalledWith("Trying infra-portal#29278 again. Shuttle does it on GitHub in the background.", { id: "shuttle-merge-63" }));
+    fireEvent.click(within(card).getByRole("button", { name: "Dismiss" }));
+    await waitFor(() => expect(callsTo(slot, "clearMerge")).toEqual([{ id: 63 }]));
+    fireEvent.click(within(statusRow(panel, "merge")).getByRole("button"));
+    expect(await slot.findByRole("dialog", { name: "Merge infra-portal#29278" })).toBeTruthy();
   });
 
   it("only merges at once when the server says it can, or cannot tell", async () => {
@@ -874,7 +939,7 @@ describe("the PR view of someone else's PR", () => {
   it("re-reviews in the thread of the last review, and offers Approve…", async () => {
     const updated = {
       ...theirs, myReview: { verdict: "changes" as const, at: Date.now() - 2 * 24 * 60 * 60_000, head: "abc1234" },
-      lastReview: { threadId: "thr_last", title: "Review acme/app#2311622", state: "done" as const, preset: "Standard review", trigger: "manual" as const, head: "abc1234", at: Date.now(), thread: "idle" as const },
+      lastReview: { threadId: "thr_last", title: "Review acme/app#2311622", state: "done" as const, preset: "Standard review", trigger: "manual" as const, head: "abc1234", at: Date.now(), thread: "idle" as const, endedBy: "draft" as const, note: null },
       next: next({ kind: "rereview", tone: "warn", label: "Updated after your review", why: "3 commits and a reply from elvin since your review 2 days ago.", inbox: true, primary: { id: "review", label: "Re-review…" } }),
     };
     const { slot, view } = await prPage(updated, { review: () => ({ threadId: "thr_last", revived: false }), queueReview: () => ({ pr: updated, post: queued({ verdict: "approve", comments: 0 }) }) });

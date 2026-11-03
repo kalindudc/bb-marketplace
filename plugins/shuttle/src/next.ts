@@ -1,12 +1,14 @@
 // What happens next with a PR, decided once on the server so the Inbox, the rows and the PR view
 // always say the same thing. Pure: views.ts gathers the facts.
-import type { AgentView, CheckCounts, InboxRuleKind, MyReview, NextAction, NextKind, NextStep, NextTone, PostView, PrState, Reason, Reviewer, ReviewRunView, ReviewState, CheckState } from "./contract";
+import type { AgentView, CheckCounts, InboxRuleKind, MergeView, MyReview, NextAction, NextKind, NextStep, NextTone, PostView, PrState, Reason, Reviewer, ReviewRunView, ReviewState, CheckState } from "./contract";
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 /** A PR of yours waiting this long for a first review reads as a warning. */
 const SLOW_REVIEW_MS = 2 * DAY;
+/** A running review that nothing has happened in for this long, in its thread or the thread's child threads, has gone quiet. */
+export const REVIEW_QUIET_MS = 2 * HOUR;
 
 export interface NextFacts {
   now: number;
@@ -42,6 +44,8 @@ export interface NextFacts {
   draft: { findings: number; preset: string | null; auto: boolean } | null;
   /** Your review waiting or posting, else one that failed to post and is not dismissed. */
   post: PostView | null;
+  /** On your own PR: your merge waiting or running, else one that failed and is not dismissed. */
+  merge: MergeView | null;
   myReview: MyReview | null;
   additions: number | null;
   deletions: number | null;
@@ -93,9 +97,44 @@ const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 /** The agent can receive feedback: it exists, is on, and its thread is not archived. */
 export const agentActive = (agent: AgentView | null): agent is AgentView => agent !== null && agent.mode !== "off" && agent.status !== "archived";
 
+const METHOD_WORDS: Record<MergeView["method"], string> = { squash: "Squash and merge", merge: "Merge commit", rebase: "Rebase and merge" };
+
+/** "Squash and merge, and delete the branch" or "Auto-merge with a rebase". */
+export function mergeText(merge: Pick<MergeView, "method" | "auto" | "deleteBranch">): string {
+  const how = merge.auto ? `Auto-merge with ${merge.method === "squash" ? "a squash" : merge.method === "rebase" ? "a rebase" : "a merge commit"}` : METHOD_WORDS[merge.method];
+  return `${how}${merge.deleteBranch ? ", and delete the branch" : ""}`;
+}
+
+/** Your merge in the queue, or the one that did not go through. */
+function mergeStep(f: NextFacts, merge: MergeView): NextStep {
+  const what = mergeText(merge);
+  if (merge.state === "done") {
+    return step("merging", "info", "Sent to merge", `${merge.serverName} took the merge ${agoText(f.now - (merge.finishedAt ?? merge.at))}, and the PR is still open: it may be waiting in the repository's merge queue. Shuttle shows it merged once ${merge.serverName} says so.`, {
+      more: f.can.merge ? [act("merge", "Merge\u2026")] : [],
+    });
+  }
+  if (merge.state !== "failed") {
+    const queued = merge.state === "queued";
+    const label = queued ? (merge.auto ? "Auto-merge is queued to turn on" : "Queued to merge") : merge.auto ? "Turning on auto-merge" : "Merging";
+    const when = queued ? `Queued ${agoText(f.now - merge.at)}; Shuttle does it after any merges ahead of it on ${merge.serverName}.` : `Started ${agoText(f.now - (merge.startedAt ?? merge.at))}.`;
+    return step("merging", "info", label, `${what}. ${when}`, { more: queued ? [act("cancel_merge", "Cancel")] : [] });
+  }
+  // New commits since: the same merge again would be refused, so the way on is to look and merge the new head.
+  const moved = f.head !== null && f.head !== merge.head;
+  const again = f.can.merge ? act("merge", "Merge\u2026") : null;
+  return step("merge_failed", "bad", merge.auto ? "Auto-merge didn\u2019t turn on" : "Your merge didn\u2019t go through", `${what}: ${merge.error ?? "it failed"}`, {
+    inbox: true,
+    clears: "Leaves when you try again, merge it another way, or dismiss it.",
+    primary: moved || !f.can.merge ? again : act("retry_merge", "Try again"),
+    more: [...(!moved && again !== null ? [again] : []), act("clear_merge", "Dismiss")],
+  });
+}
+
 function mineNext(f: NextFacts): NextStep {
   if (f.state === "merged") return step("merged", "neutral", "Merged", "Merged.");
   if (f.state === "closed") return step("closed", "neutral", "Closed", "Closed without merging.", { primary: f.can.reopen ? act("reopen", "Reopen") : null });
+  // What you asked for last says what happens next, ahead of feedback that came before it.
+  if (f.merge !== null) return mergeStep(f, f.merge);
   const agent = f.agent;
   const active = agentActive(agent) ? agent : null;
   if (active?.status === "waiting") {
@@ -213,14 +252,21 @@ function othersNext(f: NextFacts): NextStep {
     });
   }
   if (run?.state === "running") {
-    return step("running", "info", "AI review running", `${run.preset} in \u201c${run.title}\u201d, started ${agoText(f.now - run.at)}. Its findings land here.`, {
+    // A turn that ends is not the review's end: the thread may be waiting on child threads, such as critics.
+    const idle = run.thread === "idle" ? " Its thread is idle for now, perhaps waiting on its child threads." : "";
+    return step("running", "info", "AI review running", `${run.preset} in \u201c${run.title}\u201d, started ${agoText(f.now - run.at)}.${idle} Its findings land here.`, {
       more: [act("open_review", "Open the thread")],
     });
   }
   const my = f.myReview;
   const reviewedAfterRun = my?.at != null && f.lastReviewFinishedAt !== null && my.at >= f.lastReviewFinishedAt;
   if (run?.state === "failed" && !reviewedAfterRun) {
-    return step("review_failed", "bad", "The review thread failed", `\u201c${run.title}\u201d stopped with an error.`, {
+    const [label, why] = run.endedBy === "quiet"
+      ? ["The review went quiet", `Nothing happened in \u201c${run.title}\u201d or its child threads for ${plural(REVIEW_QUIET_MS / HOUR, "hour")}, and it handed back no draft.`]
+      : run.endedBy === "thread"
+        ? ["The review couldn\u2019t finish", `\u201c${run.title}\u201d says: ${run.note ?? "it could not finish the review."}`]
+        : ["The review thread failed", `\u201c${run.title}\u201d stopped with an error.`];
+    return step("review_failed", "bad", label, why, {
       inbox: true,
       clears: "Leaves when you start another review, or when you snooze it.",
       primary: act("review", "Try again\u2026"),
@@ -228,7 +274,8 @@ function othersNext(f: NextFacts): NextStep {
     });
   }
   if (run?.state === "done" && !f.lastReviewHandled && !reviewedAfterRun) {
-    return step("review_done", "info", "AI review finished", `${run.preset} finished in \u201c${run.title}\u201d without a draft for Shuttle. Read it in its thread.`, {
+    const said = run.endedBy === "thread" && run.note !== null ? ` It says: ${run.note}` : " Read it in its thread.";
+    return step("review_done", "info", "AI review finished", `${run.preset} finished in \u201c${run.title}\u201d without a draft for Shuttle.${said}`, {
       inbox: true,
       clears: "Leaves when you review it, or when you snooze it.",
       primary: act("open_review", "Read it in its thread"),
@@ -308,7 +355,7 @@ export function ruleMatches(
 }
 
 /** The Inbox's order: what blocks others or waits on you first. */
-export const INBOX_ORDER: readonly NextKind[] = ["agent_waiting", "nobody", "post_failed", "ready_to_merge", "post", "review_failed", "review_done", "rereview", "new_request"];
+export const INBOX_ORDER: readonly NextKind[] = ["agent_waiting", "nobody", "merge_failed", "post_failed", "ready_to_merge", "post", "review_failed", "review_done", "rereview", "new_request"];
 
 /** The feedback a "I'll do it" covers: who asked for changes or commented, and failing checks on this head. */
 export function feedbackSignature(reviewers: Reviewer[] | null, checks: CheckState, head: string | null): string[] {

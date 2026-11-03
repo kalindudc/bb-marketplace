@@ -1,6 +1,6 @@
 ---
 name: shuttle
-description: Use Shuttle, the bb plugin for pull requests on any versioning server. Link a PR to this thread (a thread can own several) so this thread becomes its agent, check the thread's PRs, look one up, start a review, hand a finished review back as a draft, report what you did with forwarded feedback, or add a server such as GitLab with command adapters. Create, curate, archive, or restore custom PR boards. Covers the shuttle_link, shuttle_unlink, shuttle_prs, shuttle_review_draft, shuttle_feedback_done and shuttle_board tools, `bb shuttle` and `[shuttle]` messages.
+description: Use Shuttle, the bb plugin for pull requests on any versioning server. Link a PR to this thread (a thread can own several) so this thread becomes its agent, check the thread's PRs, look one up, start a review, hand a finished review back as a draft, report what you did with forwarded feedback, or add a server such as GitLab with command adapters. Create, curate, archive, or restore custom PR boards. Covers the shuttle_link, shuttle_unlink, shuttle_prs, shuttle_review_draft, shuttle_review_done, shuttle_feedback_done and shuttle_board tools, `bb shuttle` and `[shuttle]` messages.
 ---
 
 # Shuttle
@@ -21,6 +21,7 @@ A PR's key is `<server>:<repo>#<number>`, with `!` instead of `#` on servers tha
 | `shuttle_unlink({ pr })` | Remove the link; the thread stops receiving that PR's feedback. |
 | `shuttle_prs({ pr? })` | The thread's PRs with state, checks, review decision, agent, what happens next and unsent items; or one PR in detail, fetched fresh. |
 | `shuttle_review_draft({ pr, summary, verdict, findings, notes? })` | In a review thread: hand your finished review to Shuttle. `verdict` is comment, approve or changes; each finding has `severity` (high, medium, low, nit), `path`, `line` (in the new version of the file; leave out for a file-level finding) and `body` written as you would post it. `notes` is optional Markdown for the user alone, such as the PR's intent, whether it gets there and whether it is worth doing; Shuttle shows it beside the draft and never posts it, so keep anything the author should read in the summary or a finding. The user picks what to post in Shuttle. Call it again to replace the draft. |
+| `shuttle_review_done({ pr, note, failed? })` | In a review thread: say the review is over without a draft, or with `failed: true` that you could not finish it. `note` is a sentence or two for the user, such as why there is no draft. Not needed after `shuttle_review_draft`, and not while you wait on child threads such as critics: the end of a turn does not end the review. |
 | `shuttle_feedback_done({ pr, items })` | After you deal with forwarded feedback: each item's `ref` with `outcome` fixed (give `commit`), replied, declined, or question when you need the user's decision, and an optional one-line `note`. |
 
 After you open a pull request, link it with `shuttle_link` so its feedback comes back here.

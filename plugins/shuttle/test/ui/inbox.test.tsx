@@ -5,7 +5,7 @@ import type { InboxRule, PrView } from "../../src/contract";
 import { snoozeChoices } from "../../src/ui/inbox";
 import { atNine } from "../../src/ui/format";
 import { formatRoute, parseRoute } from "../../src/ui/route";
-import { agent, callsTo, find, HOUR, inbox, lastNavigation, mine, next, NOW, page, post as queued, pr, setViewport, unmountAll, type Handlers } from "./helpers";
+import { agent, callsTo, find, HOUR, inbox, lastNavigation, mergeRun, mine, next, NOW, page, post as queued, pr, setViewport, unmountAll, type Handlers } from "./helpers";
 
 const toasts = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn() }));
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), toasts) }));
@@ -56,7 +56,7 @@ const snoozedLater = pr({ number: 77, title: "Inventory: move reservations to th
 const snoozedChange = pr({ number: 78, title: "web: drop the Node 18 shim", author: "bkim", snoozed: true, snoozedUntil: null, next: next({ kind: "rereview", inbox: false, clears: "Leaves when you review again." }) });
 const dismissedNew = pr({ number: 90, title: "Docs: typo sweep across the admin guides", author: "hfox", dismissed: { at: NOW - 24 * HOUR, activity: true }, next: next({ kind: "new_request", inbox: false }) });
 const dismissedQuiet = mine({ number: 88, title: "Lineup: try badges on tabs", dismissed: { at: NOW - 3 * 24 * HOUR, activity: false }, next: next({ kind: "ready_to_merge", inbox: false }) });
-const run = (patch: Partial<NonNullable<PrView["lastReview"]>> = {}) => ({ threadId: "thr_review", title: "Review acme/app#2312070", state: "running" as const, preset: "Thorough", trigger: "manual" as const, head: "abc", at: NOW - 12 * 60_000, thread: "working" as const, ...patch });
+const run = (patch: Partial<NonNullable<PrView["lastReview"]>> = {}) => ({ threadId: "thr_review", title: "Review acme/app#2312070", state: "running" as const, preset: "Thorough", trigger: "manual" as const, head: "abc", at: NOW - 12 * 60_000, thread: "working" as const, endedBy: null, note: null, ...patch });
 const runningNext = next({ kind: "running", tone: "info", label: "AI review running", why: "Thorough in “Review”, started 12 minutes ago. Its findings land here.", more: [{ id: "open_review", label: "Open the thread" }] });
 const reviewingWorking = pr({ repo: "acme/app", server: "lab", serverName: "Lab", number: 2312070, title: "Checkout: retry the payment session once", author: "elvin", additions: 40, deletions: 6, lastReview: run(), next: runningNext });
 const reviewingWaiting = pr({
@@ -131,7 +131,7 @@ describe("the Inbox", () => {
     expect(needs.getAttribute("title")).toBeNull();
     expect(sections[0]!.textContent).not.toContain("feedback nobody is handling");
     tabTo(needs);
-    expect((await screen.findByRole("tooltip")).textContent).toBe("An agent waits on your answer, feedback nobody is handling, or a review that didn't post. Fold this section");
+    expect((await screen.findByRole("tooltip")).textContent).toBe("An agent waits on your answer, feedback nobody is handling, or a merge or review that didn't go through. Fold this section");
     expect(rowKeys(slot)).toEqual([waiting.key, nobody.key, ready.key, post.key, rereview.key, request.key, mention.key]);
   });
 
@@ -431,6 +431,26 @@ describe("the Inbox", () => {
     expect((await find(slot.container, "[data-foot]")).textContent).toBe("1 review posting and 1 AI review running: Reviewing");
   });
 
+  it("says in its foot how many merges are on their way, linking to My PRs", async () => {
+    const merging = mine({ number: 91, title: "Drop the v1 webhook", merge: mergeRun({ id: 71 }), next: next({ kind: "merging", tone: "info", label: "Queued to merge" }) });
+    const { slot } = await page("inbox", { inbox: () => inbox({ prs: ALL, merging: [merging] }) });
+    const foot = await find(slot.container, "[data-foot]");
+    expect(foot.textContent).toBe("1 merge on its way: My PRs");
+    fireEvent.click(within(foot).getByRole("button", { name: "My PRs" }));
+    expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: "mine" } });
+  });
+
+  it("puts a merge that didn't go through under Needs you, with the server's reason", async () => {
+    const failed = mine({
+      number: 92, title: "Rename the queue table", merge: mergeRun({ id: 69, state: "failed", error: "GitHub refused: Base branch was modified" }),
+      next: next({ kind: "merge_failed", tone: "bad", label: "Your merge didn’t go through", inbox: true, primary: { id: "retry_merge", label: "Try again" } }),
+    });
+    const { slot } = await inboxPage({}, [failed, ...ALL]);
+    const node = await row(slot, failed.key);
+    expect(node.closest("section")!.getAttribute("aria-label")).toBe("Needs you");
+    expect(facts(node)).toContain("GitHub refused: Base branch was modified");
+  });
+
   it("says in its foot how many AI reviews are running, linking to Reviewing", async () => {
     const { slot } = await page("inbox", { inbox: () => inbox({ prs: ALL, reviewing: [reviewingWorking, reviewingWaiting] }) });
     const foot = await find(slot.container, "[data-foot]");
@@ -696,13 +716,20 @@ describe("the Reviewing tab", () => {
   it("lists PRs with an AI review running: the author, the preset, since when, and what holds it out of the Inbox", async () => {
     const { slot } = await inboxPage({}, ALL, "inbox~reviewing", { reviewing: [reviewingWorking, reviewingWaiting] });
     const working = await row(slot, reviewingWorking.key);
-    expect(slot.getByRole("region", { name: "AI reviews running" }).textContent).toContain("When one finishes or fails, its PR comes back to the Inbox, unless you dismissed it or a rule keeps it out.");
+    expect(slot.getByRole("region", { name: "AI reviews running" }).textContent).toContain("When one finishes or stops, its PR comes back to the Inbox, unless you dismissed it or a rule keeps it out.");
     expect(slot.queryByRole("region", { name: "Posting" })).toBeNull();
     expect(slot.getByRole("radio", { name: "Reviewing 2" }).getAttribute("aria-checked")).toBe("true");
     expect(rowKeys(slot)).toEqual([reviewingWorking.key, reviewingWaiting.key]);
     expect(facts(working)).toEqual(["elvin", "Thorough", "Started 12m ago", "S+40−6"]);
     expect(facts(await row(slot, reviewingWaiting.key))).toEqual(["rmartin", "Security pass", "Auto review started 3h ago", "Waits on your answer", "Dismissed", "S+12−2"]);
     expect(working.querySelector("[data-age]")).toBeNull();
+  });
+
+  it("keeps a review whose thread is idle, since it may be waiting on its critics, and says so", async () => {
+    const idle = { ...reviewingWorking, lastReview: run({ thread: "idle" }) };
+    const { slot } = await inboxPage({}, ALL, "inbox~reviewing", { reviewing: [idle] });
+    expect(facts(await row(slot, idle.key))).toEqual(["elvin", "Thorough", "Started 12m ago", "Thread idle, review still open", "S+40−6"]);
+    expect(slot.getByRole("region", { name: "AI reviews running" }).textContent).toContain("A review runs until its thread hands back a draft or says it is over, even while the thread waits on child threads such as critics. One with nothing happening for 2 hours counts as gone quiet.");
   });
 
   it("opens each review's thread, and asks for an answer where the thread waits on you", async () => {

@@ -15,9 +15,9 @@ shows its next step, Snooze, Dismiss and ⋯; each says what it does, and its ke
 row's ⋯ menu holds Snooze and Dismiss too (the only menu on a phone, besides swiping), then its rules.
 
 - **Reviewing** lists your reviews on their way to their servers, then the PRs an AI review is
-  running on, which are out of the Inbox until it finishes or fails: the preset, when it started,
-  whether its thread waits on your answer, and a button to its thread. The Inbox's foot says how
-  many of each there are.
+  running on, which are out of the Inbox until it finishes or stops: the preset, when it started,
+  whether its thread waits on your answer or is idle, and a button to its thread. The Inbox's foot
+  says how many of each there are, and how many merges are on their way.
 - **Snooze** hides a PR until later today, tomorrow, next week or until it changes; anything new
   brings it back sooner. The Snoozed tab lists them with when each comes back.
 - **Dismiss** keeps a PR out of the Inbox for good, even when it changes. The Dismissed tab lists
@@ -64,6 +64,16 @@ server. A review the server refuses comes back to the Inbox under Needs you with
 reason: try it again, change its draft and post that, or dismiss it. A review Shuttle was posting
 when it stopped fails the same way instead of posting twice, so check the PR before you try again.
 
+Merging one of your PRs, or turning on its auto-merge, works the same way. The Merge dialog closes
+at once, and Shuttle merges in the background, one PR at a time on each server and in the order you
+chose them. My PRs lists them under Merging, and the PR's card has Cancel until the merge starts.
+Just before it merges, Shuttle reads the PR from its server and merges only while it is open and
+still at the head you saw. It decides what happened from the PR it reads back afterwards, so a PR a
+repository's own merge queue took stays open and shows as Sent to merge, instead of merged or ready
+to merge, for up to a day while it is still at that head. A merge that
+does not go through comes back to the Inbox under Needs you with the server's reason. Try again runs
+the same merge, or, when someone pushed since, Merge… lets you look at the new commits first.
+
 Shuttle restores each PR's tab, scroll position and folds when its view is recreated, in the page
 and the thread tab. Unfinished comments and replies, open reply boxes, and edits to an AI review
 draft stay in this browser tab's session. Sending a comment or reply clears its text. A new AI
@@ -99,6 +109,13 @@ what the style already sets, and when it adds classes through a variable it cann
 Choose **Start AI review** or **Re-review with AI**, pick a preset, and optionally add a
 **Note for the reviewer** with context or areas to focus on. The note applies only to that
 review and stays with you if you open **Change for this run…** for more options.
+
+A review runs until its thread hands back a draft with `shuttle_review_draft`, or says it is over
+with `shuttle_review_done`. The end of a turn does not end it, so a review that waits on critics or
+other child threads stays under Reviewing. A review with nothing happening for 2 hours, in its
+thread or the threads under it, counts as gone quiet and comes to the Inbox. Shuttle asks bb first, so
+a thread at work, or one waiting on your answer, keeps its review running. A review whose thread
+failed or went quiet runs again when the thread gets back to work.
 
 ## Agents
 
@@ -151,6 +168,8 @@ src/agents.ts          a PR's agent thread, its mode, and auto agent
 src/watch.ts           new activity on PRs with an agent: batches, messages, item refs
 src/drafts.ts          AI review drafts and posting reviews
 src/posts.ts           the review queue: checks, cancel, try again, and posts a stopped Shuttle left half done
+src/merges.ts          the merge queue for your own PRs, the same way
+src/review-runs.ts     when a review run ends: a draft, the thread saying so, a failure, or hours of quiet
 src/conversation.ts    a PR's conversation and details, comments, replies, resolving and merging
 src/insights.ts        the numbers and ideas on the Insights page
 src/reviews.ts         review and agent threads from presets

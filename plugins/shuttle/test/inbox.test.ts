@@ -74,7 +74,7 @@ describe("the next step of a PR kept out of the Inbox", () => {
     createdAt: null, updatedAt: null, reviewers: [], agent: null, suggestedAgent: null, handled: false, autoMerge: false, snoozed: false, keptOut: false,
     can: { merge: true, comment: true, ready: true, reopen: true, cancelAutoMerge: false, approve: true },
     reasons: [], teams: [], tracked: false, bot: false, requestedAt: null, lastReview: null, lastReviewFinishedAt: null, lastReviewHandled: false,
-    draft: null, post: null, myReview: null, additions: 1, deletions: 1, files: 1, inboxRequests: true, inboxRequestDays: 3, ...patch,
+    draft: null, post: null, merge: null, myReview: null, additions: 1, deletions: 1, files: 1, inboxRequests: true, inboxRequestDays: 3, ...patch,
   });
   it("keeps its step and turns only the Inbox off, like a snooze", () => {
     expect(nextStep(facts({}))).toMatchObject({ kind: "ready_to_merge", inbox: true });
@@ -253,7 +253,7 @@ describe("the Inbox read", () => {
     inbox = h.shuttle.inbox();
     expect(inbox.snoozed.map((v) => v.key)).toEqual([KEY(2)]);
     expect(inbox.dismissed.map((v) => v.key)).toEqual([KEY(1), OTHER]);
-    expect(Object.keys(inbox).sort()).toEqual(["dismissed", "handled", "olderRequests", "posting", "prs", "reviewing", "rules", "snoozed"]);
+    expect(Object.keys(inbox).sort()).toEqual(["dismissed", "handled", "merging", "olderRequests", "posting", "prs", "reviewing", "rules", "snoozed"]);
     expect(inbox.handled).toBe(0);
     for (let i = 0; i < 12; i++) h.store.addEvent("forwarded", `Sent ${i}`);
     h.store.addEvent("tracked", "Not automation");
@@ -279,7 +279,10 @@ describe("the Inbox read", () => {
     h.shuttle.onInteractionPending(second);
     expect(h.shuttle.inbox().reviewing.map((v) => v.lastReview?.thread)).toEqual(["waiting", "working"]);
 
+    // A turn that ends leaves the review running: the thread may be waiting on its critics.
     await h.shuttle.onThreadIdle(first);
+    expect(h.shuttle.inbox().reviewing.map((v) => [v.key, v.lastReview?.thread])).toEqual([[OTHER, "waiting"], [KEY(2), "idle"]]);
+    await h.shuttle.endReview(first, KEY(2), { note: "Nothing worth a comment.", failed: false });
     h.shuttle.onThreadFailed(second);
     inbox = h.shuttle.inbox();
     expect(inbox.reviewing).toEqual([]);

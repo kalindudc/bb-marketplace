@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { experimental_Icon as Icon, useSettings } from "@get-bb/plugin-sdk/app";
 import type { InboxRule, InboxRuleKind, InboxView as InboxData, NextKind, NextTone, PrView } from "../contract";
-import { INBOX_ORDER, ruleMatches } from "../next";
+import { INBOX_ORDER, REVIEW_QUIET_MS, ruleMatches } from "../next";
 import { NextButton, useActions } from "./actions";
 import { BUTTON, BUTTON_GHOST, Dialog, ErrorNote, escapedByTip, ICON_GHOST, ICON_GHOST_SMALL, PAGE, Segmented, Tip, TONE_TEXT } from "./common";
 import { INBOX_TAB_LABELS } from "./constants";
@@ -51,7 +51,7 @@ interface KindGroup {
 }
 
 const KIND_GROUPS: readonly KindGroup[] = [
-  { id: "needs", title: "Needs you", kinds: ["agent_waiting", "nobody", "post_failed"], icon: "AlertTriangle", tone: "bad", description: () => "An agent waits on your answer, feedback nobody is handling, or a review that didn't post" },
+  { id: "needs", title: "Needs you", kinds: ["agent_waiting", "nobody", "merge_failed", "post_failed"], icon: "AlertTriangle", tone: "bad", description: () => "An agent waits on your answer, feedback nobody is handling, or a merge or review that didn't go through" },
   { id: "merge", title: "Ready to merge", kinds: ["ready_to_merge"], icon: "GitMerge", tone: "ok", description: () => "Approved, with green checks" },
   { id: "post", title: "AI reviews to post", kinds: ["post", "review_done", "review_failed"], icon: "Sparkles", tone: "info", description: () => "You choose what goes out; nothing is posted yet" },
   { id: "rereview", title: "Updated since your review", kinds: ["rereview"], icon: "RotateCcw", tone: "warn", description: () => "The author pushed or asked again" },
@@ -506,6 +506,14 @@ function InboxList({ data, layout, onGo, onShortcuts }: { data: InboxData; layou
       </span>,
     );
   }
+  if (data.merging.length > 0) {
+    foot.push(
+      <span key="merging">
+        {plural(data.merging.length, "merge")} on {data.merging.length === 1 ? "its" : "their"} way:{" "}
+        <button type="button" className="cursor-pointer text-primary hover:underline" onClick={() => onGo({ view: "mine", key: null })}>My PRs</button>
+      </span>,
+    );
+  }
   if (data.handled > 0) {
     foot.push(
       <span key="handled">
@@ -635,7 +643,9 @@ function ReviewingList({ data, layout }: { data: InboxData; layout: RowLayout })
       {data.reviewing.length > 0 && (
         <section aria-label="AI reviews running">
           <ListHeading title="AI reviews running" count={data.reviewing.length} />
-          <p className="mb-2 text-[12.5px] text-muted-foreground">When one finishes or fails, its PR comes back to the Inbox, unless you dismissed it or a rule keeps it out.</p>
+          <p className="mb-2 text-[12.5px] text-muted-foreground">
+            A review runs until its thread hands back a draft or says it is over, even while the thread waits on child threads such as critics. One with nothing happening for {plural(REVIEW_QUIET_MS / 3_600_000, "hour")} counts as gone quiet. When one finishes or stops, its PR comes back to the Inbox, unless you dismissed it or a rule keeps it out.
+          </p>
           <ul className="overflow-hidden rounded-lg border border-border bg-card">{data.reviewing.map((pr) => row(pr, "reviewing", thread(pr)))}</ul>
         </section>
       )}

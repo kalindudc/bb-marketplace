@@ -8,6 +8,7 @@ import { useShuttleMutation, useShuttleQuery } from "./data";
 import { useEditPr } from "./edit";
 import { ago, clock, plural } from "./format";
 import { REVIEWER_LOOKS, ReviewerChoices } from "./manage";
+import { mergeInQueue } from "./merges";
 import { Picker } from "./picker";
 import { isLive } from "./pills";
 import { copy } from "./pr-menu";
@@ -149,8 +150,8 @@ export function About({ pr, details, compact = false }: { pr: PrView; details: P
   if (pr.createdAt !== null) rows.push(["Opened", <>{date(pr.createdAt)} <span className="text-muted-foreground">({ago(pr.createdAt)})</span></>]);
   if (pr.closedAt !== null && (pr.state === "merged" || pr.state === "closed")) rows.push([pr.state === "merged" ? "Merged" : "Closed", <>{date(pr.closedAt)} <span className="text-muted-foreground">({ago(pr.closedAt)})</span></>]);
   if (pr.mine && isLive(pr)) {
-    rows.push(["Auto-merge", pr.autoMerge ? "On: it merges when its checks pass" : (
-      <>Off{pr.can.merge && <button type="button" className="ml-2 cursor-pointer text-primary hover:underline" onClick={() => actions.merge(pr)}>Merge…</button>}</>
+    rows.push(["Auto-merge", pr.autoMerge ? "On: it merges when its checks pass" : pr.merge !== null && pr.merge.auto && mergeInQueue(pr) ? "Off: queued to turn on" : (
+      <>Off{pr.can.merge && !mergeInQueue(pr) && <button type="button" className="ml-2 cursor-pointer text-primary hover:underline" onClick={() => actions.merge(pr)}>Merge…</button>}</>
     )]);
   }
   const reasons = pr.mine ? null : reasonsOf(pr);

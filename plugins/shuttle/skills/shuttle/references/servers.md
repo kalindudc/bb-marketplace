@@ -222,11 +222,17 @@ default, `delete_branch` and `can_auto` false, and state `unknown`.
 
 | Operation | What it does |
 |---|---|
-| `merge` | Merges with `SHUTTLE_METHOD`, only while the head is `SHUTTLE_HEAD`. Exit 0 means it merged, or with `SHUTTLE_AUTO=1` that auto-merge is on. Exit non-zero, with the reason on stderr, for what the server cannot do |
+| `merge` | Merges with `SHUTTLE_METHOD`, only while the head is `SHUTTLE_HEAD`. Exit 0 means the server took the merge, or with `SHUTTLE_AUTO=1` that auto-merge is on. Exit non-zero, with the reason on stderr, for what the server cannot do |
 | `comment` | Posts `SHUTTLE_BODY` on the PR's conversation |
 | `review` | Submits a review with `SHUTTLE_VERDICT`, `SHUTTLE_BODY` and the comments in `SHUTTLE_COMMENTS` |
 | `reply` | Replies with `SHUTTLE_BODY` in the review thread `SHUTTLE_THREAD` |
 | `resolve` | Resolves the review thread `SHUTTLE_THREAD`, or reopens it with `SHUTTLE_RESOLVED=0` |
+
+Shuttle runs `view` just before `merge`, and merges only while the PR is open and still at the head
+the user saw. It runs `view` again afterwards and decides from that what happened: `merged` there
+means it merged, and a PR still open after an exit 0 counts as taken but not merged yet, as in a
+repository's own merge queue. When the first `view` fails, Shuttle does not merge; when only the
+second one fails, it trusts the exit code.
 
 `review` may print `{"placed": 3, "in_body": 1}`: how many comments landed on their lines, and
 how many it could not place and wrote into the review's body instead. When it prints nothing,

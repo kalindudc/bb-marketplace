@@ -17,6 +17,9 @@ export type ReviewState = (typeof REVIEW_STATES)[number];
 export const LINK_ROLES = ["owner", "review", "reference"] as const;
 export type LinkRole = (typeof LINK_ROLES)[number];
 export const REVIEW_RUN_STATES = ["running", "done", "failed"] as const;
+/** What ended a review run: its thread handed back a draft, said it was over, failed, nothing happened in it for hours, or a newer review of the PR started. */
+export const REVIEW_ENDS = ["draft", "thread", "failed", "quiet", "replaced"] as const;
+export type ReviewEnd = (typeof REVIEW_ENDS)[number];
 export const REVIEWER_STATES = ["requested", "approved", "changes", "commented", "dismissed"] as const;
 export type ReviewerState = (typeof REVIEWER_STATES)[number];
 /** What the user can change on a PR of theirs right now, given its state and its server's commands. */
@@ -57,7 +60,7 @@ export type TimelineKind = (typeof TIMELINE_KINDS)[number];
  */
 export const NEXT_KINDS = [
   // the user's own PRs
-  "merged", "closed", "agent_waiting", "nobody", "yours", "agent_on_it", "draft", "auto_merge", "ready_to_merge", "approved_pending", "waiting_review",
+  "merged", "closed", "merge_failed", "merging", "agent_waiting", "nobody", "yours", "agent_on_it", "draft", "auto_merge", "ready_to_merge", "approved_pending", "waiting_review",
   // everyone else's
   "post_failed", "posting", "post", "review_done", "review_failed", "running", "rereview", "reviewed", "new_request", "not_reviewed", "looked_up",
 ] as const;
@@ -66,6 +69,7 @@ export type NextKind = (typeof NEXT_KINDS)[number];
 export const NEXT_ACTIONS = [
   "merge", "assign_suggested", "pick_agent", "handle", "open_agent", "ready", "nudge", "cancel_auto_merge",
   "choose", "open_review", "review", "approve", "not_now", "track", "reopen", "retry_post", "cancel_post", "clear_post",
+  "retry_merge", "cancel_merge", "clear_merge",
 ] as const;
 export type NextAction = (typeof NEXT_ACTIONS)[number];
 /** What an Inbox rule keeps out: every PR by an author, every PR from a repo, or mentions in a repo where you are not asked by name. */
@@ -88,6 +92,10 @@ export const reviewRunSchema = z.object({
   at: z.number(),
   /** Its thread as an agent's is: working, waiting on your answer, idle or archived. */
   thread: z.enum(AGENT_STATUSES),
+  /** What ended it; null while it runs, and for runs that ended with a turn before Shuttle waited for child threads. */
+  endedBy: z.enum(REVIEW_ENDS).nullable(),
+  /** What the thread said when it ended the review itself. */
+  note: z.string().nullable(),
 });
 export type ReviewRunView = z.infer<typeof reviewRunSchema>;
 
@@ -210,6 +218,34 @@ export const postViewSchema = z.object({
 });
 export type PostView = z.infer<typeof postViewSchema>;
 
+export const MERGE_RUN_STATES = ["queued", "merging", "done", "failed", "cancelled"] as const;
+export type MergeRunState = (typeof MERGE_RUN_STATES)[number];
+
+/** A merge of one of your PRs in Shuttle's queue: waiting its turn on its server, merging, or done. */
+export const mergeViewSchema = z.object({
+  id: z.number(),
+  key: z.string(),
+  /** The PR as people write it, such as shop/world#12. */
+  display: z.string(),
+  serverName: z.string(),
+  method: z.enum(MERGE_METHODS),
+  /** Turn on the server's auto-merge instead of merging now. */
+  auto: z.boolean(),
+  deleteBranch: z.boolean(),
+  /** It merges only while the PR is still at this commit. */
+  head: z.string(),
+  state: z.enum(MERGE_RUN_STATES),
+  /** What a done merge did: merged, turned on auto-merge, or was taken by the server while the PR stayed open, as in a repository's own merge queue. */
+  outcome: z.enum(["merged", "auto_merge", "sent"]).nullable(),
+  /** Why it did not go through, in the server's words when it said. */
+  error: z.string().nullable(),
+  /** When it was queued. */
+  at: z.number(),
+  startedAt: z.number().nullable(),
+  finishedAt: z.number().nullable(),
+});
+export type MergeView = z.infer<typeof mergeViewSchema>;
+
 export const prViewSchema = z.object({
   /** `server:repo#number`, the PR's id everywhere in Shuttle. */
   key: z.string(),
@@ -264,6 +300,8 @@ export const prViewSchema = z.object({
   draft: z.object({ id: z.number(), findings: z.number(), at: z.number() }).nullable(),
   /** Your review waiting or posting, else one that failed to post and is not dismissed. */
   post: postViewSchema.nullable(),
+  /** On your own open PR: your merge waiting or running, else one that failed and is not dismissed. */
+  merge: mergeViewSchema.nullable(),
   next: nextStepSchema,
   /** Out of the Inbox by a snooze right now, whether until a time or until it changes. */
   snoozed: z.boolean(),
@@ -465,6 +503,8 @@ export const inboxSchema = z.object({
   reviewing: z.array(prViewSchema),
   /** PRs with a review of yours waiting or posting, in the queue's order, whatever their state. */
   posting: z.array(prViewSchema),
+  /** Your PRs with a merge waiting or running, in the queue's order. */
+  merging: z.array(prViewSchema),
   /** Newest first. */
   rules: z.array(inboxRuleSchema),
   /** Requests by name or mention that left the Inbox by age and are still not reviewed; they wait in Reviews. */
@@ -778,12 +818,24 @@ export const rpcContract = defineContract({
   },
   /** How this PR can merge: the repository's methods and whether it can merge now. Untagged; read when the dialog opens. */
   mergeOptions: { input: z.object({ key }), output: mergeOptionsSchema },
-  /** Merge one of your PRs, only while its head is still `head`; with `auto`, once its checks pass. */
-  merge: {
+  /**
+   * Merge one of your PRs, only while its head is still `head`; with `auto`, turn on the server's auto-merge instead.
+   * Queued and carried out in the background, in order on each server. It is checked now against what Shuttle knows,
+   * and again against the PR as its server has it just before it merges.
+   */
+  queueMerge: {
     input: z.object({ key, method: z.enum(MERGE_METHODS), head: z.string().min(7).max(100), auto: z.boolean(), deleteBranch: z.boolean(), subject: z.string().trim().max(500).optional() }),
-    output: z.object({ pr: prViewSchema, merged: z.boolean() }),
-    invalidates: CONVERSATION,
+    output: z.object({ pr: prViewSchema, merge: mergeViewSchema }),
+    invalidates: PRS,
   },
+  /** Merges waiting or running, and those that finished in the last 10 minutes. */
+  merges: { input: z.object({}), output: z.object({ merges: z.array(mergeViewSchema) }), tags: PRS },
+  /** Take a merge that has not started out of the queue. */
+  cancelMerge: { input: z.object({ id: z.number().int() }), output: prOut, invalidates: PRS },
+  /** Put a merge that failed back in the queue as it was. */
+  retryMerge: { input: z.object({ id: z.number().int() }), output: z.object({ pr: prViewSchema, merge: mergeViewSchema }), invalidates: PRS },
+  /** Stop showing a merge that failed. */
+  clearMerge: { input: z.object({ id: z.number().int() }), output: prOut, invalidates: PRS },
   cancelAutoMerge: { input: z.object({ key }), output: prOut, invalidates: PRS },
   /** A comment on the PR's conversation, as you. */
   comment: { input: z.object({ key, body }), output: prOut, invalidates: CONVERSATION },

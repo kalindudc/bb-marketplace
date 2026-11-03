@@ -3,24 +3,26 @@ import { adapterFor, type Adapter } from "./adapters";
 import { runProcess, sleep, type Runner } from "./adapters/exec";
 import { configChanges, configFromToml, configToToml, ConfigError, parseConfig, serverSchema, type Config, type ServerConfig, type WatchMode } from "./config";
 import type {
-  AgentMode, AgentTarget, Area, BoardDetail, BoardSummary, ConversationItem, EventView, InboxRule, InboxRuleKind, InboxView, InsightsView, LinkRole, MergeMethod, MergeOptions, Outcome, Overview, LinkCard, PostFinding, PrChange, PrDetails,
+  AgentMode, AgentTarget, Area, BoardDetail, BoardSummary, ConversationItem, EventView, InboxRule, InboxRuleKind, InboxView, InsightsView, LinkRole, MergeMethod, MergeOptions, MergeView, Outcome, Overview, LinkCard, PostFinding, PrChange, PrDetails,
   PostView, PrView, ReviewDraft, ReviewInput, ServerStatus, SyncHistory, SyncRun, SyncStep, SyncStepName, TestResult, ThreadOption, Verdict,
 } from "./contract";
 import { askAgent, runAutoAgent, setAgent, setAgentMode, type AgentChange } from "./agents";
 import { board as readBoard, boardAdd, boardCreate, boardRemove, boards as listBoards, boardUpdate } from "./boards";
-import { cancelAutoMerge, comment, Conversations, merge, mergeOptions, recordOutcomes, reply, resolve } from "./conversation";
+import { cancelAutoMerge, comment, Conversations, merge, mergeOptions, recordOutcomes, reply, resolve, type MergeOutcome } from "./conversation";
 import { draftView, saveDraft, setDraftState, submitReview, type DraftInput, type SubmitInput } from "./drafts";
 import { cancelPost, clearPost, failInterruptedPosts, inputOf, postView, queueReview, recentPosts, retryPost } from "./posts";
+import { cancelMerge, clearMerge, failInterruptedMerges, mergeInputOf, mergeView, queueMerge, recentMerges, retryMerge } from "./merges";
 import { addRule, dismiss, inbox as readInbox, markSeen, removeRule, snooze } from "./inbox";
 import { insights, INSIGHTS_SINCE, snapshotCounts } from "./insights";
 import { feedbackSignature, phaseOf } from "./next";
 import { errText, ShuttleError, type Ctx } from "./ctx";
-import type { EventRow, PostRow, ServerRow, Store, SyncRunRow } from "./db/store";
+import type { EventRow, MergeRow, PostRow, ServerRow, Store, SyncRunRow } from "./db/store";
 import { THREAD_SCAN, type BbPort, type ProjectInfo } from "./ports";
 import { fetchPr, linkPr, lookup, rememberThread, requirePr, setWatch, shortKey, unlinkPr } from "./prs";
 import { parseKey } from "./keys";
 import { matchProject } from "./projects";
 import { archiveDoneReviewThreads, unarchiveForDraft } from "./review-threads";
+import { endQuietReviews, endReview, resumeReviews } from "./review-runs";
 import { startReview } from "./reviews";
 import { searchPrs } from "./search";
 import type { Settings } from "./settings";
@@ -39,6 +41,8 @@ const DAY_MS = 86_400_000;
 /** How far back the Sync tab's marks go. */
 const HISTORY_WINDOW_MS = 3 * 3_600_000;
 const FULL_SYNC_AT = "full_sync_at";
+/** How far up from a thread at work Shuttle looks for the review it belongs to: critics, their helpers, and theirs. */
+const THREAD_ANCESTORS = 4;
 
 const stepsOf = (run: SyncRunRow) => JSON.parse(run.steps) as SyncStep[];
 const toRun = (run: SyncRunRow): SyncRun => ({ id: run.id, at: run.at, durationMs: run.duration_ms, state: run.state, steps: stepsOf(run) });
@@ -87,6 +91,10 @@ export class Shuttle implements Ctx {
   private readonly linkCards = new LinkCards(this, this.conversations);
   /** The worker posting each server's queued reviews, by server id. */
   private readonly posters = new Map<string, Promise<void>>();
+  /** The worker carrying out each server's queued merges, by server id. */
+  private readonly mergers = new Map<string, Promise<void>>();
+  /** Each thread's parent, as bb's events name it, so work deep under a review thread counts as the review at work. */
+  private readonly parents = new Map<string, string>();
 
   constructor(deps: ShuttleDeps) {
     this.store = deps.store;
@@ -447,14 +455,97 @@ export class Shuttle implements Ctx {
     return mergeOptions(this, key);
   }
 
-  async merge(key: string, input: { method: MergeMethod; head: string; auto: boolean; deleteBranch: boolean; subject?: string }): Promise<{ pr: PrView; merged: boolean }> {
+  async merge(key: string, input: { method: MergeMethod; head: string; auto: boolean; deleteBranch: boolean; subject?: string }): Promise<{ pr: PrView; outcome: MergeOutcome }> {
     const out = await merge(this, key, input);
     this.conversations.forget(key);
-    return { pr: toView(this, out.pr), merged: out.merged };
+    return { pr: toView(this, out.pr), outcome: out.outcome };
   }
 
   async cancelAutoMerge(key: string): Promise<PrView> {
     return toView(this, await cancelAutoMerge(this, key));
+  }
+
+  queueMerge(key: string, input: { method: MergeMethod; head: string; auto: boolean; deleteBranch: boolean; subject?: string }): { pr: PrView; merge: MergeView } {
+    const row = queueMerge(this, key, input);
+    this.drainMerges();
+    // Read again: a worker with nothing ahead of it has already started on it.
+    return { pr: toView(this, this.store.prById(row.pr_id)!), merge: mergeView(this, this.store.mergeById(row.id)!) };
+  }
+
+  merges(): MergeView[] {
+    return recentMerges(this);
+  }
+
+  cancelMerge(id: number): PrView {
+    return toView(this, cancelMerge(this, id));
+  }
+
+  retryMerge(id: number): { pr: PrView; merge: MergeView } {
+    const row = retryMerge(this, id);
+    this.drainMerges();
+    return { pr: toView(this, this.store.prById(row.pr_id)!), merge: mergeView(this, this.store.mergeById(row.id)!) };
+  }
+
+  clearMerge(id: number): PrView {
+    return toView(this, clearMerge(this, id));
+  }
+
+  /** At start: merges the last run left under way fail for the user to check, and the queue picks up where it stopped. */
+  resumeMerges(): void {
+    failInterruptedMerges(this);
+    this.drainMerges();
+  }
+
+  /** Starts a worker for each server with merges waiting and none running; each carries out its server's merges in order. */
+  drainMerges(): void {
+    if (this.lifetime?.aborted) return;
+    for (const server of this.store.queuedMergeServers()) {
+      if (this.mergers.has(server)) continue;
+      const run = this.mergeAll(server)
+        .catch((error: unknown) => this.port.log("warn", `merge PRs on ${server}: ${errText(error)}`))
+        .finally(() => {
+          this.mergers.delete(server);
+          // A merge queued while this worker was finishing still gets one.
+          if (this.store.nextQueuedMerge(server) !== null) this.drainMerges();
+        });
+      this.mergers.set(server, run);
+    }
+  }
+
+  /** Resolves once no worker is merging. */
+  async mergesSettled(): Promise<void> {
+    while (this.mergers.size > 0) await Promise.all(this.mergers.values());
+  }
+
+  private async mergeAll(server: string): Promise<void> {
+    for (let row = this.store.nextQueuedMerge(server); row !== null && !this.lifetime?.aborted; row = this.store.nextQueuedMerge(server)) {
+      await this.mergeOne(row);
+    }
+  }
+
+  private async mergeOne(row: MergeRow): Promise<void> {
+    const pr = this.store.prById(row.pr_id);
+    this.store.startMerge(row.id);
+    this.port.publish();
+    const name = pr === null ? "a PR" : shortKey(this, pr);
+    let outcome: MergeOutcome;
+    try {
+      if (pr === null) throw new ShuttleError("Shuttle no longer has this PR");
+      outcome = (await merge(this, pr.key, mergeInputOf(row))).outcome;
+    } catch (error) {
+      this.store.finishMerge(row.id, { state: "failed", error: errText(error) });
+      this.store.addEvent("merge_failed", row.auto === 1 ? `Auto-merge did not turn on for ${name}: ${errText(error)}` : `Your merge of ${name} did not go through: ${errText(error)}`, row.pr_id);
+      this.port.publish();
+      return;
+    }
+    // Done: nothing after this may fail it, or Try again would merge it twice.
+    this.store.tx(() => {
+      this.store.finishMerge(row.id, { state: "done", outcome });
+      // The latest merge of the PR is the one that counts.
+      this.store.clearFailedMerges(row.pr_id, row.id);
+    });
+    this.conversations.forget(pr.key);
+    this.port.publish();
   }
 
   async submitReview(key: string, input: { verdict: Verdict; body: string; findings: PostFinding[]; draftId?: number; staleOk?: boolean }): Promise<{ pr: PrView; placed: number; inBody: number }> {
@@ -571,6 +662,11 @@ export class Shuttle implements Ctx {
   async saveDraft(threadId: string, query: string, input: DraftInput): Promise<{ pr: PrView; findings: number; notes: boolean }> {
     const { pr, draft } = await saveDraft(this, threadId, query, input);
     return { pr: toView(this, pr), findings: (JSON.parse(draft.findings) as unknown[]).length, notes: draft.notes !== null };
+  }
+
+  /** Called by a review thread's shuttle_review_done tool. */
+  async endReview(threadId: string, query: string, input: { note: string; failed: boolean }): Promise<PrView> {
+    return toView(this, await endReview(this, threadId, query, input));
   }
 
   recordOutcomes(threadId: string, query: string, items: Array<{ ref: string; outcome: Outcome; note?: string; commit?: string }>) {
@@ -748,6 +844,8 @@ export class Shuttle implements Ctx {
   /** The loop's step: a sync when one is due, and the batches whose window passed. */
   async tick(signal?: AbortSignal): Promise<void> {
     this.drainPosts();
+    this.drainMerges();
+    await endQuietReviews(this).catch((error: unknown) => this.port.log("warn", `quiet reviews: ${errText(error)}`));
     const last = this.lastFullSync();
     if (last === null || this.now() - last >= this.settings().syncMinutes * 60_000) return this.sync(signal);
     const due = this.config().servers.filter((server) => {
@@ -781,29 +879,29 @@ export class Shuttle implements Ctx {
     }
   }
 
-  /** A review thread that finishes after its review was done, such as one still writing when its draft was posted, is archived now. */
-  onThreadIdle(threadId: string): Promise<number> {
-    this.markIdle(threadId);
+  /**
+   * A turn ended. Its review keeps running, since the thread may wait on child threads such as critics; a draft, the
+   * thread's shuttle_review_done, a failure or hours of quiet end it. A review thread whose review was already done,
+   * such as one still writing when its draft was posted, is archived now.
+   */
+  onThreadIdle(threadId: string, parentThreadId: string | null = null): Promise<number> {
+    const known = this.store.setThreadStatus(threadId, "idle", false);
+    this.touchReviews(threadId, parentThreadId);
+    if (known) this.port.publish();
     return this.archiveReviewThreads({ threadId });
   }
 
-  private markIdle(threadId: string): void {
-    const known = this.store.setThreadStatus(threadId, "idle", false);
-    const running = this.store.runningReviewsOfThread(threadId);
-    for (const review of running) {
-      this.store.finishReview(review.id, "done");
-      const pr = this.store.prById(review.pr_id);
-      const draft = pr ? this.store.liveDraft(pr.id) : null;
-      const name = pr ? shortKey(this, pr) : "a PR";
-      const findings = draft && draft.created_at >= review.created_at ? (JSON.parse(draft.findings) as unknown[]).length : null;
-      const text = findings !== null ? `${review.trigger === "auto" ? "Auto review" : "Review"} of ${name} finished: ${findings} finding${findings === 1 ? "" : "s"} drafted, nothing posted.` : `${review.trigger === "auto" ? "Auto review" : "Review"} of ${name} finished; read it in its thread.`;
-      this.store.addEvent("review_done", text, review.pr_id, threadId);
-    }
-    if (running.length || known) this.port.publish();
+  onThreadActive(threadId: string, parentThreadId: string | null = null): void {
+    const known = this.store.setThreadStatus(threadId, "active", false);
+    this.touchReviews(threadId, parentThreadId);
+    if (resumeReviews(this, threadId) > 0 || known) this.port.publish();
   }
 
-  onThreadActive(threadId: string): void {
-    if (this.store.setThreadStatus(threadId, "active", false)) this.port.publish();
+  /** The thread, or a thread anywhere under a review thread, was at work just now, so its review is not quiet. */
+  private touchReviews(threadId: string, parentThreadId: string | null): void {
+    if (parentThreadId !== null) this.parents.set(threadId, parentThreadId);
+    let id: string | undefined = threadId;
+    for (let depth = 0; id !== undefined && depth <= THREAD_ANCESTORS; depth += 1, id = this.parents.get(id)) this.store.touchReviews(id);
   }
 
   /** The thread asked the user something; an agent's question puts its PR in the Inbox. */
@@ -815,7 +913,7 @@ export class Shuttle implements Ctx {
     this.store.setThreadStatus(threadId, "error", false);
     const running = this.store.runningReviewsOfThread(threadId);
     for (const review of running) {
-      this.store.finishReview(review.id, "failed");
+      this.store.finishReview(review.id, "failed", "failed");
       this.store.addEvent("review_failed", `The review thread \u201c${this.store.threadTitle(threadId) ?? threadId}\u201d failed.`, review.pr_id, threadId);
     }
     if (running.length) this.port.publish();
@@ -828,6 +926,7 @@ export class Shuttle implements Ctx {
   }
 
   onThreadDeleted(threadId: string): void {
+    this.parents.delete(threadId);
     this.store.forgetThread(threadId);
     this.port.publish();
   }

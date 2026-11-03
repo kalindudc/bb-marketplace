@@ -4,6 +4,8 @@ import { SpawnUnavailableError, type BbPort, type SpawnArgs, type ThreadInfo } f
 type ThreadSpawnArgs = Parameters<BbPluginApi["sdk"]["threads"]["spawn"]>[0];
 
 const THREAD_PAGE = 500;
+/** A review's critics and helpers; a busy one among the first this many is enough to know the review is at work. */
+const CHILD_LIMIT = 100;
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 /** bb's own words, without the "HTTP 409: " BbHttpError puts first. */
@@ -163,6 +165,10 @@ export function createBbPort(bb: BbPluginApi, setSettings: BbPort["setSettings"]
     async threadsById(threadIds) {
       if (threadIds.length === 0) return [];
       const threads = (await bb.sdk.threads.list({ threadIds, limit: threadIds.length })) as ThreadLike[];
+      return threads.map(toThread);
+    },
+    async childThreads(threadId) {
+      const threads = (await bb.sdk.threads.list({ parentThreadId: threadId, archived: false, limit: CHILD_LIMIT })) as ThreadLike[];
       return threads.map(toThread);
     },
     async listProjects() {

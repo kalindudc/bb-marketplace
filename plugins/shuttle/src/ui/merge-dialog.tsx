@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { toast } from "sonner";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { MERGE_METHODS, type MergeMethod, type PrView } from "../contract";
 import { BUTTON_GHOST, BUTTON_SUCCESS, Choice, Dialog, ErrorNote, FIELD, LABEL } from "./common";
-import { messageOf, useShuttleMutation, useShuttleQuery } from "./data";
+import { messageOf, useShuttleQuery } from "./data";
 import { plural, tinyKey } from "./format";
+import { mergeInQueue, useQueueMerge } from "./merges";
 
 const METHODS: Record<MergeMethod, { title: string; hint: string }> = {
   squash: { title: "Squash and merge", hint: "One commit on the base branch" },
@@ -30,10 +30,11 @@ function Line({ tone, icon, children }: { tone: string; icon: string; children: 
   );
 }
 
-/** Merge one of your PRs from Shuttle, only while its head is the one you saw; or turn on auto-merge. */
+/** Merge one of your PRs from Shuttle, only while its head is the one you saw; or turn on auto-merge. Shuttle does it in the background. */
 export function MergeDialog({ pr, onClose }: { pr: PrView; onClose(): void }) {
   const options = useShuttleQuery("mergeOptions", { key: pr.key });
-  const merge = useShuttleMutation("merge");
+  const queue = useQueueMerge();
+  const inQueue = mergeInQueue(pr);
   const [chosen, setChosen] = useState<MergeMethod | null>(null);
   const [subject, setSubject] = useState(`${pr.title} (${pr.sep}${pr.number})`);
   const [deleteChoice, setDeleteChoice] = useState<boolean | null>(null);
@@ -53,12 +54,8 @@ export function MergeDialog({ pr, onClose }: { pr: PrView; onClose(): void }) {
 
   const submit = async () => {
     if (method === null || head === null) return;
-    const out = await merge.run({ key: pr.key, method, head, auto, deleteBranch, ...(method === "squash" && subject.trim() !== "" ? { subject: subject.trim() } : {}) });
-    if (out === null) return;
-    toast.success(out.merged
-      ? `Merged ${tinyKey(pr)} on ${pr.serverName} (${method})${deleteBranch ? ", and deleted its branch" : ""}.`
-      : `Auto-merge is on for ${tinyKey(pr)}: it merges once ${pr.serverName} lets it.`);
-    onClose();
+    const out = await queue.run(pr, { method, head, auto, deleteBranch, ...(method === "squash" && subject.trim() !== "" ? { subject: subject.trim() } : {}) });
+    if (out !== null) onClose();
   };
 
   return (
@@ -67,8 +64,10 @@ export function MergeDialog({ pr, onClose }: { pr: PrView; onClose(): void }) {
         <>
           <span className="flex-1" />
           <button type="button" className={BUTTON_GHOST} onClick={onClose}>Cancel</button>
-          <button type="button" className={BUTTON_SUCCESS} disabled={loaded === undefined || stuck || method === null || head === null || merge.isPending} onClick={() => void submit()}>
-            <Icon name="GitMerge" className="size-3.5" aria-hidden />{auto ? "Turn on auto-merge" : "Merge"}
+          <button type="button" className={BUTTON_SUCCESS} disabled={loaded === undefined || stuck || method === null || head === null || queue.isPending || inQueue} title={inQueue ? "A merge of this PR is already queued; cancel it first to merge another way" : undefined} onClick={() => void submit()}>
+            {inQueue
+              ? <><Icon name="Clock" className="size-3.5" aria-hidden />Queued to merge</>
+              : <><Icon name="GitMerge" className="size-3.5" aria-hidden />{auto ? "Turn on auto-merge" : "Merge"}</>}
           </button>
         </>
       )}>
@@ -122,7 +121,12 @@ export function MergeDialog({ pr, onClose }: { pr: PrView; onClose(): void }) {
             Delete the branch after merging
           </label>
           {head !== null
-            ? <div className="mt-2 text-xs text-muted-foreground">Merges only if nobody pushed since you looked (head <span className="font-mono">{head.slice(0, 7)}</span>).</div>
+            ? (
+              <div className="mt-2 text-xs text-muted-foreground">
+                Merges only if nobody pushed since you looked (head <span className="font-mono">{head.slice(0, 7)}</span>).{" "}
+                Shuttle does it in the background, after any merges ahead of it on {pr.serverName}, and reads the PR again just before.
+              </div>
+            )
             : <div className="mt-2 text-xs text-destructive-text">Shuttle does not know this PR's head yet. Sync, then try again.</div>}
         </>
       )}

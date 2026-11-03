@@ -2,6 +2,30 @@
 
 Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` in this repository.
 
+## Unreleased
+
+### Added
+
+- A queue for merging your own PRs. Merging used to wait for the server, which on a slow one kept you in the Merge dialog. Now Shuttle checks the merge at once, queues it and merges in the background, one at a time on each server and in the order you chose them, so the dialog closes straight away. A merge you try again goes after the ones already waiting. Turning on auto-merge goes through the same queue.
+  - My PRs lists every merge on its way under Merging at the top, with Queued to merge or Merging on its row. The PR's card says how it will merge and how long it has waited, with Cancel until it starts. The Inbox's foot says how many merges are on their way, with a link to My PRs, and a toast says how each one went.
+  - A PR has one merge in the queue at a time. While it waits, the Merge dialog's button reads Queued to merge and stays greyed out, and the overview offers no other Merge….
+  - Shuttle reads the PR from its server just before it merges, and merges only while the PR is open and still at the head you saw. A merge that does not go through comes back to the Inbox under Needs you with the server's reason. Try again runs the same merge. When someone pushed since, Try again is replaced by Merge…, so you look at the new commits first. Dismiss it, or merge another way.
+  - A merge Shuttle was running when it stopped is marked as failed instead of run again, since it may have gone through. The next sync shows whether it did.
+- `shuttle_review_done`, a tool for a review thread to say the review is over without a draft, or that it could not finish, in its own words. The PR then leaves Reviewing and shows the note. Every review prompt now says when to use it.
+
+### Changed
+
+- An AI review stays under review until its thread hands back a draft or says the review is over. The end of a turn used to end the review, so a review that ran critics, such as the pr-reviewer skill's consensus review, left the Reviewing tab and came to the Inbox as finished without a draft while its critics were still working.
+  - A review with nothing happening for 2 hours, in its thread or in the thread's child threads, now counts as gone quiet, and comes to the Inbox as a review that stopped. A thread that waits on your answer never counts as quiet. Before ending a review, Shuttle asks bb whether the thread or a child thread is at work.
+  - A review whose thread failed or went quiet runs again when the thread gets back to work, as when bb retries a turn. So does one that a turn's end closed in the 2 hours before this update.
+  - A new review of a PR ends any older one of it still running, so the older one never goes quiet two hours later.
+  - The Reviewing tab says when a review's thread is idle and the review is still open.
+
+### Fixed
+
+- A review you try again now posts after the reviews already waiting on its server, instead of ahead of them.
+- Shuttle no longer says it merged a PR that the server only took, as when GitHub adds a PR to the repository's own merge queue. It decides from the PR it reads back after the merge. A PR still open then shows as Sent to merge, with the note that it may be waiting in the merge queue, instead of "You merged" or Ready to merge, for up to a day while it stays at that head.
+
 ## 0.6.0 (2026-11-02)
 
 ### Added

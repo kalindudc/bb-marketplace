@@ -64,6 +64,16 @@ export function AgentPill({ pr }: { pr: Pick<PrView, "agent" | "state"> }) {
   );
 }
 
+/** Your merge of your own PR, while it waits, runs, or did not go through. */
+export function MergePill({ pr }: { pr: Pick<PrView, "merge"> }) {
+  const merge = pr.merge;
+  if (merge === null) return null;
+  if (merge.state === "failed") return <Pill tone="bad" icon="AlertTriangle">{merge.auto ? "Auto-merge didn\u2019t turn on" : "Didn\u2019t merge"}</Pill>;
+  if (merge.state === "done") return <Pill tone="info" icon="GitMerge">Sent to merge</Pill>;
+  if (merge.state === "merging") return <Pill tone="info" icon="GitMerge">{merge.auto ? "Turning on auto-merge" : "Merging"}</Pill>;
+  return <Pill tone="info" icon="Clock">{merge.auto ? "Auto-merge queued" : "Queued to merge"}</Pill>;
+}
+
 /** Where your review of someone else's PR stands. */
 export function MyReviewPill({ pr }: { pr: PrView }) {
   if (pr.post?.state === "failed") return <Pill tone="bad" icon="AlertTriangle">Didn\u2019t post</Pill>;

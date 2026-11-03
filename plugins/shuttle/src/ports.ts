@@ -99,6 +99,8 @@ export interface BbPort {
   listThreads(limit: number): Promise<ThreadInfo[]>;
   /** These threads, archived or not, at most 200 ids; unknown and deleted ids are left out. */
   threadsById(threadIds: readonly string[]): Promise<ThreadInfo[]>;
+  /** The thread's unarchived child threads, such as the critics a review starts. */
+  childThreads(threadId: string): Promise<ThreadInfo[]>;
   listProjects(): Promise<ProjectInfo[]>;
   listSkills(projectId: string): Promise<SkillInfo[]>;
   /** Every environment provider bb has, on any machine; bb tells availability only for a project on a machine, so this has none. */

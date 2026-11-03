@@ -192,7 +192,16 @@ export interface ReviewRow {
   own_thread: number;
   /** When Shuttle archived the thread after this run; null while it has not. */
   archived_at: number | null;
+  /** When Shuttle last saw its thread, or a child thread of it, at work; null on runs from before Shuttle kept it. */
+  active_at: number | null;
+  /** What ended it; null while it runs, and on runs that ended when a turn did, before Shuttle waited for child threads. */
+  ended_by: ReviewEnd | null;
+  /** The thread's words when it said the review was over. */
+  note: string | null;
 }
+
+/** A draft came back, the thread said so, the thread failed, nothing happened in it for too long, or a newer review replaced it. */
+export type ReviewEnd = "draft" | "thread" | "failed" | "quiet" | "replaced";
 
 export type PostState = "queued" | "posting" | "posted" | "failed" | "cancelled";
 
@@ -214,6 +223,30 @@ export interface PostRow {
   started_at: number | null;
   finished_at: number | null;
   /** A failed post the user dismissed, or one a later post of the PR made moot. */
+  cleared_at: number | null;
+}
+
+export type MergeRunState = "queued" | "merging" | "done" | "failed" | "cancelled";
+
+/** A merge of one of the user's PRs waiting its turn, merging, or done; `auto` turns on the server's auto-merge instead. */
+export interface MergeRow {
+  id: number;
+  pr_id: number;
+  server: string;
+  method: "squash" | "merge" | "rebase";
+  /** It merges only while the PR is still at this commit. */
+  head: string;
+  auto: number;
+  delete_branch: number;
+  subject: string | null;
+  state: MergeRunState;
+  /** What a done merge did: merged, turned on auto-merge, or was taken by the server while the PR stayed open. */
+  outcome: "merged" | "auto_merge" | "sent" | null;
+  error: string | null;
+  created_at: number;
+  started_at: number | null;
+  finished_at: number | null;
+  /** A failed merge the user dismissed, or one a later merge of the PR made moot. */
   cleared_at: number | null;
 }
 
@@ -800,9 +833,9 @@ export class Store {
     return (this.db.prepare("SELECT * FROM review_posts WHERE id = ?").get(id) as PostRow | undefined) ?? null;
   }
 
-  /** The oldest post still waiting on this server. */
+  /** The post waiting longest on this server; one tried again waits from when it was queued again. */
   nextQueuedPost(server: string): PostRow | null {
-    return (this.db.prepare("SELECT * FROM review_posts WHERE server = ? AND state = 'queued' ORDER BY id LIMIT 1").get(server) as PostRow | undefined) ?? null;
+    return (this.db.prepare("SELECT * FROM review_posts WHERE server = ? AND state = 'queued' ORDER BY created_at, id LIMIT 1").get(server) as PostRow | undefined) ?? null;
   }
 
   queuedPostServers(): string[] {
@@ -811,7 +844,7 @@ export class Store {
 
   /** Posts waiting or posting, oldest first. */
   activePosts(): PostRow[] {
-    return this.db.prepare("SELECT * FROM review_posts WHERE state IN ('queued', 'posting') ORDER BY id").all() as PostRow[];
+    return this.db.prepare("SELECT * FROM review_posts WHERE state IN ('queued', 'posting') ORDER BY created_at, id").all() as PostRow[];
   }
 
   /** Posts that finished since a time, newest first. */
@@ -864,6 +897,82 @@ export class Store {
     return this.db.prepare("SELECT * FROM review_posts WHERE state = 'posting' ORDER BY id").all() as PostRow[];
   }
 
+  addMerge(row: Pick<MergeRow, "pr_id" | "server" | "method" | "head" | "auto" | "delete_branch" | "subject">): MergeRow {
+    const result = this.db
+      .prepare("INSERT INTO merges (pr_id, server, method, head, auto, delete_branch, subject, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?)")
+      .run(row.pr_id, row.server, row.method, row.head, row.auto, row.delete_branch, row.subject, this.now());
+    return this.mergeById(Number(result.lastInsertRowid))!;
+  }
+
+  mergeById(id: number): MergeRow | null {
+    return (this.db.prepare("SELECT * FROM merges WHERE id = ?").get(id) as MergeRow | undefined) ?? null;
+  }
+
+  /** The merge waiting longest on this server; one tried again waits from when it was queued again. */
+  nextQueuedMerge(server: string): MergeRow | null {
+    return (this.db.prepare("SELECT * FROM merges WHERE server = ? AND state = 'queued' ORDER BY created_at, id LIMIT 1").get(server) as MergeRow | undefined) ?? null;
+  }
+
+  queuedMergeServers(): string[] {
+    return (this.db.prepare("SELECT DISTINCT server FROM merges WHERE state = 'queued'").all() as Array<{ server: string }>).map((row) => row.server);
+  }
+
+  /** Merges waiting or merging, oldest first. */
+  activeMerges(): MergeRow[] {
+    return this.db.prepare("SELECT * FROM merges WHERE state IN ('queued', 'merging') ORDER BY created_at, id").all() as MergeRow[];
+  }
+
+  /** Merges that finished since a time, newest first. */
+  mergesFinishedSince(at: number): MergeRow[] {
+    return this.db.prepare("SELECT * FROM merges WHERE state IN ('done', 'failed') AND finished_at >= ? ORDER BY finished_at DESC, id DESC").all(at) as MergeRow[];
+  }
+
+  /** The PR's oldest merge still waiting or merging, else its newest failed merge not cleared. */
+  currentMerge(prId: number): MergeRow | null {
+    return (this.db
+      .prepare("SELECT * FROM merges WHERE pr_id = ? AND (state IN ('queued', 'merging') OR (state = 'failed' AND cleared_at IS NULL)) ORDER BY CASE WHEN state = 'failed' THEN 1 ELSE 0 END, CASE WHEN state = 'failed' THEN -id ELSE id END LIMIT 1")
+      .get(prId) as MergeRow | undefined) ?? null;
+  }
+
+  /** The PR's latest done merge, when the server took it and left the PR open, and it finished since `since`. */
+  sentMerge(prId: number, since: number): MergeRow | null {
+    const row = (this.db.prepare("SELECT * FROM merges WHERE pr_id = ? AND state = 'done' ORDER BY finished_at DESC, id DESC LIMIT 1").get(prId) as MergeRow | undefined) ?? null;
+    return row !== null && row.outcome === "sent" && (row.finished_at ?? 0) >= since ? row : null;
+  }
+
+  activeMergeOfPr(prId: number): MergeRow | null {
+    return (this.db.prepare("SELECT * FROM merges WHERE pr_id = ? AND state IN ('queued', 'merging') ORDER BY id LIMIT 1").get(prId) as MergeRow | undefined) ?? null;
+  }
+
+  startMerge(id: number): void {
+    this.db.prepare("UPDATE merges SET state = 'merging', started_at = ? WHERE id = ?").run(this.now(), id);
+  }
+
+  finishMerge(id: number, end: { state: "done"; outcome: NonNullable<MergeRow["outcome"]> } | { state: "failed"; error: string } | { state: "cancelled" }): void {
+    const error = end.state === "failed" ? end.error : null;
+    const outcome = end.state === "done" ? end.outcome : null;
+    this.db.prepare("UPDATE merges SET state = ?, outcome = ?, error = ?, finished_at = ? WHERE id = ?").run(end.state, outcome, error, this.now(), id);
+  }
+
+  /** A failed merge goes back in the queue as it was. */
+  requeueMerge(id: number): void {
+    this.db.prepare("UPDATE merges SET state = 'queued', outcome = NULL, error = NULL, started_at = NULL, finished_at = NULL, cleared_at = NULL, created_at = ? WHERE id = ?").run(this.now(), id);
+  }
+
+  clearMerge(id: number): void {
+    this.db.prepare("UPDATE merges SET cleared_at = ? WHERE id = ?").run(this.now(), id);
+  }
+
+  /** Failed merges of the PR before `beforeId`, or all of them, no longer need the user. */
+  clearFailedMerges(prId: number, beforeId = Number.MAX_SAFE_INTEGER): void {
+    this.db.prepare("UPDATE merges SET cleared_at = ? WHERE pr_id = ? AND state = 'failed' AND cleared_at IS NULL AND id < ?").run(this.now(), prId, beforeId);
+  }
+
+  /** Merges a stopped Shuttle left merging; the server may or may not have merged them. */
+  interruptedMerges(): MergeRow[] {
+    return this.db.prepare("SELECT * FROM merges WHERE state = 'merging' ORDER BY id").all() as MergeRow[];
+  }
+
   addMyReview(row: Omit<MyReviewRow, "id" | "at">): void {
     this.db.prepare("INSERT INTO my_reviews (pr_id, verdict, head, at, findings) VALUES (?, ?, ?, ?, ?)").run(row.pr_id, row.verdict, row.head, this.now(), row.findings);
   }
@@ -913,10 +1022,10 @@ export class Store {
     return (this.db.prepare("SELECT COUNT(*) AS n FROM pending_items WHERE pr_id = ?").get(prId) as { n: number }).n;
   }
 
-  addReview(row: Omit<ReviewRow, "id" | "finished_at" | "state" | "created_at" | "archived_at">): ReviewRow {
+  addReview(row: Omit<ReviewRow, "id" | "finished_at" | "state" | "created_at" | "archived_at" | "active_at" | "ended_by" | "note">): ReviewRow {
     const result = this.db
-      .prepare("INSERT INTO reviews (pr_id, thread_id, preset, trigger, head, state, created_at, own_thread) VALUES (?, ?, ?, ?, ?, 'running', ?, ?)")
-      .run(row.pr_id, row.thread_id, row.preset, row.trigger, row.head, this.now(), row.own_thread);
+      .prepare("INSERT INTO reviews (pr_id, thread_id, preset, trigger, head, state, created_at, own_thread, active_at) VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?)")
+      .run(row.pr_id, row.thread_id, row.preset, row.trigger, row.head, this.now(), row.own_thread, this.now());
     return this.db.prepare("SELECT * FROM reviews WHERE id = ?").get(result.lastInsertRowid) as ReviewRow;
   }
 
@@ -957,17 +1066,44 @@ export class Store {
     return this.db.prepare("SELECT * FROM reviews WHERE pr_id = ? ORDER BY created_at, id").all(prId) as ReviewRow[];
   }
 
+  /** A newer review of the PR is the one that counts, wherever the older ones run. */
+  replaceRunningReviews(prId: number): number {
+    return this.db.prepare("UPDATE reviews SET state = 'done', finished_at = ?, ended_by = 'replaced' WHERE pr_id = ? AND state = 'running'").run(this.now(), prId).changes;
+  }
+
   runningReviewsOfThread(threadId: string): ReviewRow[] {
     return this.db.prepare("SELECT * FROM reviews WHERE thread_id = ? AND state = 'running'").all(threadId) as ReviewRow[];
   }
 
-  finishReview(id: number, state: "done" | "failed"): void {
-    this.db.prepare("UPDATE reviews SET state = ?, finished_at = ? WHERE id = ?").run(state, this.now(), id);
+  finishReview(id: number, state: "done" | "failed", by: ReviewEnd, note: string | null = null): void {
+    this.db.prepare("UPDATE reviews SET state = ?, finished_at = ?, ended_by = ?, note = ? WHERE id = ?").run(state, this.now(), by, note, id);
   }
 
-  /** A follow-up turn in a review thread starts it again. */
+  /** A thread that failed or went quiet and then works again is reviewing again. */
   restartReview(id: number): void {
-    this.db.prepare("UPDATE reviews SET state = 'running', finished_at = NULL WHERE id = ?").run(id);
+    this.db.prepare("UPDATE reviews SET state = 'running', finished_at = NULL, ended_by = NULL, note = NULL, active_at = ? WHERE id = ?").run(this.now(), id);
+  }
+
+  /** The thread, or a child thread of it, is at work: its running reviews are not quiet. */
+  touchReviews(threadId: string): number {
+    return this.db.prepare("UPDATE reviews SET active_at = ? WHERE thread_id = ? AND state = 'running'").run(this.now(), threadId).changes;
+  }
+
+  /** Ends a run as gone quiet only if it still runs and nothing was seen at work in it since `before`; false when something was. */
+  endQuietReview(id: number, before: number): boolean {
+    return this.db
+      .prepare("UPDATE reviews SET state = 'failed', finished_at = ?, ended_by = 'quiet', note = NULL WHERE id = ? AND state = 'running' AND COALESCE(active_at, created_at) < ?")
+      .run(this.now(), id, before).changes > 0;
+  }
+
+  /** Running reviews nothing has been seen at work in since `before`, oldest first. */
+  quietReviews(before: number): ReviewRow[] {
+    return this.db.prepare("SELECT * FROM reviews WHERE state = 'running' AND COALESCE(active_at, created_at) < ? ORDER BY id").all(before) as ReviewRow[];
+  }
+
+  /** The runs in this thread that are still their PR's latest review. */
+  latestRunsOfThread(threadId: string): ReviewRow[] {
+    return this.db.prepare("SELECT r.* FROM reviews r WHERE r.thread_id = ? AND r.id = (SELECT MAX(id) FROM reviews WHERE pr_id = r.pr_id) ORDER BY r.id").all(threadId) as ReviewRow[];
   }
 
   reviewsSince(at: number): ReviewRow[] {

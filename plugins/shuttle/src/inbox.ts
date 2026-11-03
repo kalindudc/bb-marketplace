@@ -130,13 +130,16 @@ export function inbox(ctx: Ctx): InboxView {
     .sort((a, b) => back(a) - back(b) || (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
   const dismissed = views.filter((v) => isLive(v) && v.dismissed !== null).sort((a, b) => b.dismissed!.at - a.dismissed!.at);
   const reviewing = views.filter((v) => isLive(v) && v.next.kind === "running").sort((a, b) => b.lastReview!.at - a.lastReview!.at);
-  const posting = views.filter((v) => v.post !== null && v.post.state !== "failed").sort((a, b) => a.post!.id - b.post!.id);
+  // In the queue's order: by when each was queued, so one tried again goes after those already waiting.
+  const posting = views.filter((v) => v.post !== null && v.post.state !== "failed").sort((a, b) => a.post!.at - b.post!.at || a.post!.id - b.post!.id);
+  const merging = views.filter((v) => v.merge?.state === "queued" || v.merge?.state === "merging").sort((a, b) => a.merge!.at - b.merge!.at || a.merge!.id - b.merge!.id);
   return {
     prs: inboxOf(views),
     snoozed,
     dismissed,
     reviewing,
     posting,
+    merging,
     rules: ctx.store.inboxRules().map((rule) => ruleView(ctx, rule, candidates)),
     olderRequests,
     handled: ctx.store.countEvents(AUTOMATION_KINDS, now - DAY_MS),

@@ -73,6 +73,8 @@ describe("archiving Shuttle's review threads", () => {
     const two = (await h.shuttle.review({ key: "forge:acme/app#4" })).threadId;
     await h.shuttle.onThreadIdle(one);
     await h.shuttle.onThreadIdle(two);
+    await h.shuttle.endReview(one, KEY, { note: "Read it in the thread.", failed: false });
+    await h.shuttle.endReview(two, "forge:acme/app#4", { note: "Read it in the thread.", failed: false });
     await h.shuttle.sync();
     expect(h.port.lifecycle).toEqual([]);
     h.clock.now += 60_000;
@@ -146,6 +148,7 @@ describe("reviving a review thread for the PR's next review", () => {
     expect(lastEvent(h, "review")).toBe("Review of acme/app#3 started with Standard review in \u201cReview acme/app#3\u201d, brought back from the archive.");
     // The run in the brought-back thread is Shuttle's too, so it is archived when it is done.
     await h.shuttle.onThreadIdle(threadId);
+    await h.shuttle.endReview(threadId, KEY, { note: "Nothing new since the last review.", failed: false });
     h.views[3] = pr(3, { head: "h2" });
     await h.shuttle.submitReview(KEY, { verdict: "approve", body: "LGTM", findings: [] });
     expect(h.port.lifecycle.at(-1)).toBe(`archive ${threadId}`);

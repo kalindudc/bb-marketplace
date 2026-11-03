@@ -260,4 +260,28 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE review_drafts ADD COLUMN notes TEXT`,
   // The bots a watch last heard from: a JSON list of logins and globs, or "*" for every bot. NULL is none, as Ignore bots had it.
   `ALTER TABLE watches ADD COLUMN bots TEXT`,
+  // The merge queue: merging one of your PRs returns at once, and Shuttle merges it in the background, one at a time per server.
+  `CREATE TABLE merges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pr_id INTEGER NOT NULL,
+    server TEXT NOT NULL,
+    method TEXT NOT NULL CHECK (method IN ('squash', 'merge', 'rebase')),
+    head TEXT NOT NULL,
+    auto INTEGER NOT NULL DEFAULT 0,
+    delete_branch INTEGER NOT NULL DEFAULT 0,
+    subject TEXT,
+    state TEXT NOT NULL CHECK (state IN ('queued', 'merging', 'done', 'failed', 'cancelled')),
+    outcome TEXT CHECK (outcome IN ('merged', 'auto_merge', 'sent')),
+    error TEXT,
+    created_at INTEGER NOT NULL,
+    started_at INTEGER,
+    finished_at INTEGER,
+    cleared_at INTEGER
+  )`,
+  `CREATE INDEX merges_pr ON merges (pr_id, id)`,
+  `CREATE INDEX merges_state ON merges (state, server, id)`,
+  // A review run ends when its thread hands back a draft, says it is over, fails, or goes quiet; a turn that ends does not.
+  `ALTER TABLE reviews ADD COLUMN active_at INTEGER`,
+  `ALTER TABLE reviews ADD COLUMN ended_by TEXT`,
+  `ALTER TABLE reviews ADD COLUMN note TEXT`,
 ];

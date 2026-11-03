@@ -10,6 +10,7 @@ import { openExternal, useShuttleQuery } from "./data";
 import { useEditPrs } from "./edit";
 import { tinyKey } from "./format";
 import { LinkDialog, type LinkRequest } from "./link-dialog";
+import { useMergeToasts } from "./merges";
 import { usePostToasts } from "./posts";
 import { MergeDialog } from "./merge-dialog";
 import { ApproveDialog, PresetDialog } from "./review-button";
@@ -49,6 +50,7 @@ export function useSurface({ phone, sheetComposer, selected, select, threadIds }
   const writes = usePrWrites(threadIds);
   const edits = useEditPrs(threadIds);
   usePostToasts();
+  useMergeToasts();
 
   const raise = (key: string, kind: Intent["kind"], fill?: { text: string } | { nudge: true }) => {
     nonce.current += 1;

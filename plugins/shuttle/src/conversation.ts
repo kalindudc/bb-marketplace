@@ -6,7 +6,8 @@ import type { ConversationItem, MergeOptions, Outcome, PrDetails } from "./contr
 import { errText, ShuttleError, type Ctx } from "./ctx";
 import type { PrRow } from "./db/store";
 import { readBack } from "./drafts";
-import { lookup, requirePr, shortKey } from "./prs";
+import { parseKey } from "./keys";
+import { fetchPr, lookup, requirePr, shortKey } from "./prs";
 import { itemRef } from "./watch";
 import { AdapterError } from "./adapters/adapter";
 import { hunkLines } from "./model";
@@ -128,21 +129,63 @@ export async function mergeOptions(ctx: Ctx, key: string): Promise<MergeOptions>
   }
 }
 
-export async function merge(ctx: Ctx, key: string, input: MergeInput): Promise<{ pr: PrRow; merged: boolean }> {
-  const pr = requirePr(ctx, key);
-  if (pr.mine !== 1) throw new ShuttleError(`${shortKey(ctx, pr)} is not one of your PRs; Shuttle only merges your own`);
-  if (pr.state !== "open") throw new ShuttleError(`${shortKey(ctx, pr)} is ${pr.state}, so it can't merge`);
-  const { merged } = await write(ctx, pr, "merge", () => ctx.adapter(pr.server).merge(pr.repo, pr.number, input));
-  if (merged) {
-    ctx.store.patchPr(pr.id, { state: "merged", closed_at: ctx.now(), updated_at: ctx.now() });
-    ctx.store.addEvent("merged", `You merged ${shortKey(ctx, pr)} (${input.method}${input.deleteBranch ? ", branch deleted" : ""}).`, pr.id);
-  } else {
-    ctx.store.patchPr(pr.id, { auto_merge: 1 });
-    ctx.store.addEvent("auto_merge", `Auto-merge is on for ${shortKey(ctx, pr)}: it merges (${input.method}) when its checks pass.`, pr.id);
+/** merged: the server merged it; auto_merge: it turned auto-merge on; sent: it took the merge, and the PR is still open, as in a repository's own merge queue. */
+export type MergeOutcome = "merged" | "auto_merge" | "sent";
+
+/** What is refused before anything is sent: someone else's PR, one that is not open, one with commits since `head`, and a server that can't merge. */
+export function checkMerge(ctx: Ctx, pr: PrRow, input: Pick<MergeInput, "head">): void {
+  const name = shortKey(ctx, pr);
+  if (pr.mine !== 1) throw new ShuttleError(`${name} is not one of your PRs; Shuttle only merges your own`);
+  if (pr.state === "merged") throw new ShuttleError(`${name} has already merged`);
+  if (pr.state === "draft") throw new ShuttleError(`${name} is a draft; mark it ready for review, then merge it`);
+  if (pr.state !== "open") throw new ShuttleError(`${name} is ${pr.state}, so it can't merge`);
+  if (pr.head !== null && pr.head !== input.head) {
+    throw new ShuttleError(`${name} has new commits since you chose to merge it at ${input.head.slice(0, 7)} (it is at ${pr.head.slice(0, 7)} now); look at them, then merge again`);
   }
-  await readBack(ctx, pr);
+  if (!ctx.adapter(pr.server).operations().includes("merge")) throw new ShuttleError(`${serverName(ctx, pr)} has no merge command, so Shuttle can't merge there`);
+}
+
+/** The PR as its server has it now, so a merge never goes through on a head or a state the user did not see. */
+async function current(ctx: Ctx, pr: PrRow): Promise<PrRow> {
+  const ref = parseKey(pr.key);
+  if (!ref) return pr;
+  try {
+    return await fetchPr(ctx, ref);
+  } catch (error) {
+    throw new ShuttleError(`Could not read ${shortKey(ctx, pr)} on ${serverName(ctx, pr)} just before merging it, so it did not merge: ${errText(error)}`);
+  }
+}
+
+/** Merges now, after reading the PR from its server; the queue calls this for each merge in turn. */
+export async function merge(ctx: Ctx, key: string, input: MergeInput): Promise<{ pr: PrRow; outcome: MergeOutcome }> {
+  checkMerge(ctx, requirePr(ctx, key), input);
+  const pr = await current(ctx, requirePr(ctx, key));
+  checkMerge(ctx, pr, input);
+  const { merged } = await write(ctx, pr, "merge", () => ctx.adapter(pr.server).merge(pr.repo, pr.number, input));
+  const name = shortKey(ctx, pr);
+  // Auto-merge is on as asked until the read-back says otherwise; a server that leaves the field out keeps it on.
+  if (!merged) ctx.store.patchPr(pr.id, { auto_merge: 1 });
+  // The PR as the server has it now says what happened: a repository with its own merge queue takes the merge and leaves it open.
+  const ref = parseKey(pr.key);
+  const after = ref === null ? null : await fetchPr(ctx, ref).catch((error: unknown) => {
+    ctx.port.log("warn", `read back ${pr.key}: ${errText(error)}`);
+    return null;
+  });
+  let outcome: MergeOutcome;
+  if (after?.state === "merged" || (merged && after === null)) {
+    // Without a read-back, the server's own answer is all there is.
+    if (after === null) ctx.store.patchPr(pr.id, { state: "merged", closed_at: ctx.now(), updated_at: ctx.now() });
+    ctx.store.addEvent("merged", `You merged ${name} (${input.method}${input.deleteBranch ? ", branch deleted" : ""}).`, pr.id);
+    outcome = "merged";
+  } else if (!merged) {
+    ctx.store.addEvent("auto_merge", `Auto-merge is on for ${name}: it merges (${input.method}) when its checks pass.`, pr.id);
+    outcome = "auto_merge";
+  } else {
+    ctx.store.addEvent("merge_sent", `${serverName(ctx, pr)} took the merge of ${name}, and it is still open: it may be waiting in the repository's merge queue.`, pr.id);
+    outcome = "sent";
+  }
   ctx.port.publish();
-  return { pr: ctx.store.prById(pr.id)!, merged };
+  return { pr: ctx.store.prById(pr.id)!, outcome };
 }
 
 export async function cancelAutoMerge(ctx: Ctx, key: string): Promise<PrRow> {

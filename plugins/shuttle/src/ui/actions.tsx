@@ -79,6 +79,9 @@ export function runNext(actions: PageActions, pr: PrView, id: NextAction): void 
     case "retry_post": return void actions.writes.retryPost(pr);
     case "cancel_post": return void actions.writes.cancelPost(pr);
     case "clear_post": return void actions.writes.clearPost(pr);
+    case "retry_merge": return void actions.writes.retryMerge(pr);
+    case "cancel_merge": return void actions.writes.cancelMerge(pr);
+    case "clear_merge": return void actions.writes.clearMerge(pr);
   }
 }
 
@@ -98,6 +101,8 @@ const ACTION_ICONS: Partial<Record<NextAction, string>> = {
   reopen: "RotateCcw",
   retry_post: "RotateCcw",
   cancel_post: "X",
+  retry_merge: "RotateCcw",
+  cancel_merge: "X",
 };
 
 /** What each next-step button does, for its tooltip. */
@@ -120,6 +125,9 @@ export const ACTION_HINTS: Record<NextAction, string> = {
   retry_post: "Put the same review back in the queue to post",
   cancel_post: "Take it out of the queue before it posts",
   clear_post: "Stop showing that it didn't post; nothing is posted",
+  retry_merge: "Put the same merge back in the queue, at the same head",
+  cancel_merge: "Take it out of the queue before it starts",
+  clear_merge: "Stop showing that it didn't go through; nothing changes on the PR",
 };
 
 export function NextButton({ pr, action, primary, small = false }: { pr: PrView; action: { id: NextAction; label: string }; primary: boolean; small?: boolean }) {

@@ -73,7 +73,9 @@ describe("auto review", () => {
     h.clock.now += 60_000;
     await h.shuttle.sync();
     expect(h.port.spawned).toHaveLength(1);
-    h.shuttle.onThreadIdle(spawned.threadId);
+    await h.shuttle.onThreadIdle(spawned.threadId);
+    expect(h.shuttle.inbox().prs).toEqual([]);
+    await h.shuttle.endReview(spawned.threadId, "forge:acme/app#3", { note: "It looks fine.", failed: false });
     expect(h.shuttle.inbox().prs.map((p) => [p.number, p.next.kind])).toEqual([[3, "review_done"]]);
     h.shuttle.snooze(["forge:acme/app#3"], "update");
     expect(h.shuttle.inbox().prs).toEqual([]);

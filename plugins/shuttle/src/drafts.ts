@@ -51,6 +51,8 @@ export async function saveDraft(ctx: Ctx, threadId: string, query: string, input
     findings: JSON.stringify(findings),
     notes: input.notes?.trim() || null,
   });
+  // The draft is what the review was for, whatever the thread does next.
+  if (review?.state === "running") ctx.store.finishReview(review.id, "done", "draft");
   ctx.store.setSnooze(pr.id, null, null);
   ctx.store.addEvent("draft", `\u201c${ctx.store.threadTitle(threadId) ?? threadId}\u201d drafted a review of ${shortKey(ctx, pr)}: ${findings.length} finding${findings.length === 1 ? "" : "s"}, nothing posted.`, pr.id, threadId);
   ctx.port.publish();

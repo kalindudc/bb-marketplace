@@ -34,7 +34,8 @@ export interface Group {
 }
 
 export const MINE_GROUPS: readonly Group[] = [
-  { title: "Needs you", kinds: ["agent_waiting", "nobody", "yours"], description: "Feedback nobody is handling, or an agent waiting on your answer" },
+  { title: "Merging", kinds: ["merging"], description: "Shuttle merges them in the background, in order on each server" },
+  { title: "Needs you", kinds: ["merge_failed", "agent_waiting", "nobody", "yours"], description: "A merge that didn't go through, feedback nobody is handling, or an agent waiting on your answer" },
   { title: "Ready to merge", kinds: ["ready_to_merge", "auto_merge", "approved_pending"], description: "Approved with green checks" },
   { title: "Agent on it", kinds: ["agent_on_it"], description: "Its agent has the feedback and is working" },
   { title: "Waiting for review", kinds: ["waiting_review"], description: "Nothing to do but wait, or nudge" },
@@ -54,6 +55,8 @@ export const REVIEW_GROUPS: readonly Group[] = [
 export const NEXT_ICONS: Record<NextKind, string> = {
   merged: "GitMerge",
   closed: "GitPullRequestClosed",
+  merge_failed: "AlertTriangle",
+  merging: "GitMerge",
   agent_waiting: "Bot",
   nobody: "AlertTriangle",
   yours: "UserRound",
