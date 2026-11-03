@@ -11,7 +11,10 @@
     "name": "Vantage",
     "description": "See every worktree your parallel agents work in, review what each one changed, and send your comments back to the agent that made the change. A full-screen Vantage page lists every recent thread's worktrees in bb's sidebar, grouped by what needs doing, and shows one worktree's changes as a stream of diffs with a file tree, side-by-side view and expandable context, plus an overlaps page for files two worktrees both changed and an All changes view by repository. Vantage counts only what a thread did: it compares each worktree with the closest base branch, leaves out branch history its threads did not write, and folds clones and big untracked folders into one uncounted entry. Inside a thread, a Vantage tab with a strip of its worktrees, a Worktrees section in bb's thread context card or a small segment above the composer, an Info section and a sidebar line show its child threads' worktrees. Every thread shows its real state and every file has a Reviewed tick, with nothing to turn on.",
     "branding": {
-      "icon": "FolderGit"
+      "icon": "./icons/vantage.svg",
+      "experimental_icons": {
+        "vantage": "./icons/vantage.svg"
+      }
     },
     "server": "./server.ts",
     "app": "./app.tsx",

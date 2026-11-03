@@ -184,8 +184,10 @@ than the limit, the page says so.
 
 ![A parent thread with its Vantage tab open: its child threads' worktrees grouped into Waiting on you and Ready to review, and the one-line summary "4 child worktrees · 1 waiting on you · 2 shared files" above the composer](../../screenshots/vantage/side-panel.png)
 
-- **The Vantage tab** opens from the thread context card, the segment above
-  the composer, the Info tab, the palette ("Vantage: Show changes across
+- **The Vantage tab** opens from the thread header's Vantage button (a
+  labelled button bb draws after the workspace's Open button, which closes the
+  tab again and folds into the thread menu on a narrow pane), the thread
+  context card, the segment above the composer, the Info tab, the palette ("Vantage: Show changes across
   repositories") or the side panel's tab launcher. A strip at its top has one
   chip per worktree: the thread's own ("This thread") first, then its child
   threads' with the one that needs you first, and All changes at the end;
@@ -566,7 +568,8 @@ or steers a turn of the worktree's thread, as typing them into its chat would.
   segment above the composer shows only without the card and shrinks to its
   numbers when the row is full. The thread tab opens on a strip of worktrees,
   one shared-files line replaces a strip per file, and the sidebar can show a
-  thread's line counts. Needs bb 0.48.1; the header button is gone.
+  thread's line counts. The header's Vantage button is a labelled button bb
+  draws, which also closes the tab. Needs bb 0.48.1.
 - **0.8.0**: one list, one place. The page no longer draws an overview beside
   the worktree list: it opens the worktree that needs you first, and Escape,
   the metric cards and the Up next list are gone. Statuses read as people

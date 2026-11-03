@@ -7,7 +7,7 @@ See every worktree your parallel agents work in, review what each one changed, a
 - Comments on files, optionally quoting lines, sent to the agent as one message now or after its turn. The page's Agent tab holds its chat.
 - An overlaps page for files two worktrees both changed, with a guess at whether merging will conflict and an "ask to rebase" comment.
 - All changes: everything the threads changed, by repository, including checkouts edited by path and archived branches.
-- In a thread: a tab that opens on a strip of its worktrees, its own first; a Worktrees section in bb's thread context card, which bb shows only when the pane has room; without the card, a small segment above the composer that shrinks to its numbers when the row is full; counts in the Info tab; and an optional line under each sidebar row.
+- In a thread: a Vantage button in the header that opens a tab on a strip of its worktrees, its own first; a Worktrees section in bb's thread context card, which bb shows only when the pane has room; without the card, a small segment above the composer that shrinks to its numbers when the row is full; counts in the Info tab; and an optional line under each sidebar row.
 
 ## Honest counts
 

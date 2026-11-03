@@ -19,11 +19,11 @@ Notable changes to Vantage, newest first. Releases are tagged `vantage/vX.Y.Z` i
 - A worktree's row, status and numbers belong to the thread nearest the tree's root; other threads in it, such as read-only reviewers, are named in its header.
 - The segment above the composer shows only while bb shows thread context there. Its numbers always show and its words take only the row's spare room, so it is about 60px in a full row; opened, it lists at most three lines instead of a list up to 256px tall.
 - The thread's Vantage tab opens on a strip of worktrees, the thread's own first, and on its own worktree, instead of a list to drill into. All changes is the strip's last chip.
+- The Vantage button in the thread header is a labelled "Vantage" button that bb draws after the workspace's Open button, through bb 0.48's header thread actions, because SDK 0.6.104 dropped the slot the icon button used. Clicking it again closes the tab, and on a narrow pane it folds into the thread menu.
 - One line names every file a worktree shares with others, instead of one strip per file and worktree. The scope switch's first button reads "This thread's work" or "Its work".
 
 ### Removed
 
-- The Vantage button in the thread header; the SDK no longer has that slot. The card, the segment, the Info tab, the palette and the tab launcher open the tab.
 - Reading worktrees through bb's environment status and diff calls, and the 10-second fallback to git. SDK 0.6.104 removed those calls.
 
 ### Compatibility

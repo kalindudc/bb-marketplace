@@ -1,13 +1,14 @@
 import { useMemo, useSyncExternalStore, type ReactNode } from "react";
 import {
   experimental_Icon as Icon, experimental_InfoList as InfoList, experimental_InfoListRow as InfoListRow, experimental_InfoSection as InfoSection,
-  experimental_ThreadContextCardRow as CardRow, experimental_useAppPanel, experimental_useThreadContextKind, useBbNavigate,
+  experimental_ThreadContextCardRow as CardRow, experimental_useAppPanel, experimental_usePanelTabs, experimental_useThreadContextKind, useBbNavigate,
   type ExperimentalThreadContextCardProps, type ExperimentalThreadContextSegmentInput, type ExperimentalThreadContextSegmentProps,
   type ExperimentalThreadInfoProps, type ExperimentalThreadRowMetadataDataInput, type ExperimentalThreadRowMetadataProps,
   type PluginThreadActionRegistration, useRealtime,
 } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import { createArchivedPreference } from "./archived-preference";
+import { Hint } from "./hint";
 import { PANEL_ACTION_ID } from "./commands";
 import type { Overview } from "./contract";
 import { fileCount } from "./counted";
@@ -20,6 +21,8 @@ import { useSession } from "./session";
 import { useRows, type RowsData } from "./use-rows";
 
 const archivedPreference = createArchivedPreference(window, "panel");
+// Vantage's own icon, declared in package.json, so bb draws it on its rail, tab strip and menus even while the app loads.
+export const VANTAGE_ICON = "vantage/vantage";
 // The most child worktrees the composer's list and the thread context card show; the tab has the rest.
 const SHOWN = 3;
 
@@ -114,7 +117,7 @@ function SegmentSummaryView({ threadId, isExpanded, onToggle }: ExperimentalThre
     <button type="button" aria-expanded={isExpanded} onClick={onToggle} data-vantage-segment aria-label={`Worktrees: ${sentence}`}
       title={isExpanded ? "Hide the worktrees" : sentence}
       className="flex h-6 min-w-min max-w-max flex-1 cursor-pointer items-center gap-1 overflow-hidden rounded-md px-1.5 text-xs text-muted-foreground hover:bg-state-hover hover:text-foreground">
-      <Icon name="FolderGit" className="size-3.5 shrink-0" aria-hidden />
+      <Icon name={VANTAGE_ICON} className="size-3.5 shrink-0" aria-hidden />
       {loading
         ? <Words>Child worktrees</Words>
         : (
@@ -179,7 +182,7 @@ function SegmentDetailsView({ threadId, isExpanded }: ExperimentalThreadContextS
       )}
       {rest > 0 && (
         <button type="button" onClick={() => open(threadId)} className={`${DETAIL_ROW} text-muted-foreground hover:text-foreground`}>
-          <Icon name="FolderGit" className="size-3.5" aria-hidden />
+          <Icon name={VANTAGE_ICON} className="size-3.5" aria-hidden />
           <span className="min-w-0 truncate">{plural(rest, "more child worktree")}</span>
           <span className="whitespace-nowrap text-brand">Open the tab ›</span>
         </button>
@@ -209,7 +212,7 @@ function CardSectionView({ threadId }: Pick<ExperimentalThreadContextCardProps, 
         <CardRow key={row.worktree.key} leading={<StatusGlyph row={row} />} label={row.title} title={`${row.live.title} · ${why(row, data)}`}
           trailing={<LineCounts additions={row.additions} deletions={row.deletions} />} onClick={() => open(threadId, row.worktree.key)} />
       ))}
-      {rest > 0 && <CardRow icon="FolderGit" label={plural(rest, "more child worktree")} onClick={() => open(threadId)} />}
+      {rest > 0 && <CardRow icon={VANTAGE_ICON} label={plural(rest, "more child worktree")} onClick={() => open(threadId)} />}
       {shared.length > 0 && (
         <CardRow icon="AlertTriangle" label={<span className="text-warning-text">{plural(shared.length, "shared file")}</span>}
           title={shared.slice(0, 10).join("\n")} trailing={<span className="text-warning-text">Compare</span>} onClick={compare} />
@@ -298,15 +301,58 @@ export function RowLineItem({ thread, data }: ExperimentalThreadRowMetadataProps
   );
 }
 
+const VANTAGE_TAB = { id: PANEL_ACTION_ID, context: { kind: "thread" as const }, availability: "action" as const };
+
+// bb's labelled header button, for a bb that no longer draws plugin components in the thread header.
+export const headerAction: PluginThreadActionRegistration = {
+  id: "open",
+  title: "Vantage",
+  icon: VANTAGE_ICON,
+  group: "1_open",
+  order: 90,
+  placement: "header",
+  item: ({ experimental_panel }) => ({
+    label: "Vantage",
+    icon: VANTAGE_ICON,
+    run: () => {
+      if (!experimental_panel.openTab({ tab: VANTAGE_TAB })) toast.error("bb could not open the Vantage tab");
+    },
+  }),
+};
+
+interface HeaderButtonProps { threadId: string; projectId: string; isCompactViewport: boolean }
+
+// Opens the thread's Vantage tab, or closes the side panel while that tab is the one showing.
+export function VantageHeaderButton({ isCompactViewport }: HeaderButtonProps) {
+  const panel = experimental_useAppPanel();
+  const tabs = experimental_usePanelTabs();
+  const selected = tabs.tabs.find((tab) => tab.key === tabs.selectedKey);
+  const showing = tabs.open && selected?.detail.kind === "plugin" && selected.detail.tab.id === PANEL_ACTION_ID;
+  // A phone header has no room to spare, and the panel launcher already lists the tab.
+  if (isCompactViewport) return null;
+  const toggle = () => {
+    if (showing) panel.close();
+    else if (!panel.openTab({ tab: VANTAGE_TAB })) toast.error("bb could not open the Vantage tab");
+  };
+  return (
+    <Hint label={showing ? "Hide Vantage" : "Vantage: what this thread and its child threads changed"}>
+      <button type="button" aria-label={showing ? "Hide Vantage" : "Open Vantage"} aria-pressed={showing} onClick={toggle}
+        className={`inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md hover:bg-state-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${showing ? "text-foreground" : "text-muted-foreground"}`}>
+        <Icon name={VANTAGE_ICON} className="size-4" aria-hidden />
+      </button>
+    </Hint>
+  );
+}
+
 export const openAction: PluginThreadActionRegistration = {
   id: "review",
   title: "Review changes in Vantage",
-  icon: "FolderGit",
+  icon: VANTAGE_ICON,
   group: "1_open",
   order: 90,
   item: ({ thread, navigate }) => ({
     label: "Review changes in Vantage",
-    icon: "FolderGit",
+    icon: VANTAGE_ICON,
     run: () => { navigate.toPluginPanel("vantage", { subPath: `tree/${thread.id}` }); },
   }),
 };
