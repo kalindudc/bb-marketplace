@@ -28,6 +28,19 @@ describe("thread status", () => {
     expect(rowState(sidebarThread({ status: "unknown" as never, indicator: "unknown" as never }))).toBe("idle");
   });
 
+  it("shows an unread reply over background agents, commands and queued messages, as bb 0.48 does", () => {
+    const activity = (key: keyof ReturnType<typeof sidebarThread>["activity"]) => ({ ...sidebarThread().activity, [key]: 1 });
+    for (const background of [{ activity: activity("backgroundAgents") }, { activity: activity("backgroundCommands") },
+      { indicator: "background-agent" as const }, { indicator: "background-command" as const }, { indicator: "queued-waiting" as const }]) {
+      expect(rowState(sidebarThread({ ...background, isUnread: true }))).toBe("unread");
+      expect(rowState(sidebarThread(background))).toBe("running");
+    }
+    for (const live of [{ status: "active" as const }, { runtimeStatus: "provisioning" as const }, { activity: activity("workflows") },
+      { activity: activity("planMode") }, { activity: activity("goals") }, { indicator: "runtime" as const }, { indicator: "workflow" as const }]) {
+      expect(rowState(sidebarThread({ ...live, isUnread: true }))).toBe("running");
+    }
+  });
+
   it("uses unread then idle, and computes ranked rollups", () => {
     expect(rowState(sidebarThread({ isUnread: true }))).toBe("unread");
     expect(rowState(sidebarThread())).toBe("idle");

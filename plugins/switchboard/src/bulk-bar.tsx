@@ -15,13 +15,17 @@ export interface BulkBarProps {
   canSnooze?: boolean;
 }
 
-export function BulkBar({ count, childCount, groups, onMove, onArchive, onClear, onSnooze, canSnooze }: BulkBarProps) {
-  const targets: { key: GroupKey; name: string; hue: Group["hue"] }[] = [
+export function moveTargets(groups: readonly Group[]): { key: GroupKey; name: string; hue: Group["hue"] }[] {
+  return [
     { key: "pinned", name: "Pinned", hue: null },
     ...groups.filter((group) => group.kind === "section").map((group) =>
       ({ key: group.key, name: group.section!.name, hue: group.hue })),
     { key: "loose", name: "Threads", hue: null },
   ];
+}
+
+export function BulkBar({ count, childCount, groups, onMove, onArchive, onClear, onSnooze, canSnooze }: BulkBarProps) {
+  const targets = moveTargets(groups);
   return <div className="sb-bulk-bar mt-2 flex min-w-0 items-center gap-1 border border-sidebar-border bg-sidebar-accent px-2 text-xs text-sidebar-foreground"
     aria-label="Selected threads">
     <span className="mr-auto whitespace-nowrap font-medium">{count} selected</span>

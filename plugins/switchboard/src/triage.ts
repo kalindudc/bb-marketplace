@@ -1,6 +1,6 @@
 import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import type { SnoozeEntry, SortMode } from "./layout";
-import { STATE_ORDER, worstState } from "./status";
+import { hasBackgroundWork, STATE_ORDER, worstState } from "./status";
 import type { TreeNode } from "./tree";
 
 const DAY = 86_400_000;
@@ -16,7 +16,7 @@ export function isStale(node: TreeNode, now: number, staleDays: number): boolean
 }
 
 export function canSnooze(node: TreeNode): boolean {
-  return (node.state === "idle" || node.state === "unread") && node.children.every(canSnooze);
+  return (node.state === "idle" || node.state === "unread") && !hasBackgroundWork(node.thread) && node.children.every(canSnooze);
 }
 
 export function isSnoozed(node: TreeNode, entry: SnoozeEntry | undefined, now: number): boolean {

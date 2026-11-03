@@ -1,18 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import type { PluginBrowserBbSdk, PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 import type { InfoCardMode } from "./settings";
-import type { ExecutionOptions, Interactions, Outline, Usage, WorkspaceStatus } from "./info-format";
+import { resetGitStatus } from "./git-status";
+import type { ExecutionOptions, Interactions, Outline, Usage } from "./info-format";
 
 export type Resource<T> = { status: "loading" } | { status: "ready"; value: T } | { status: "error" };
 export interface Loader<T> { key: string; load(): Promise<T>; delayMs: number; prefetch: boolean }
 export interface InfoLoaders {
   options: Loader<ExecutionOptions>; usage: Loader<Usage | null>; outline: Loader<Outline> | null;
-  asks: Loader<Interactions> | null; changes: Loader<WorkspaceStatus> | null;
+  asks: Loader<Interactions> | null;
 }
 
 const MAX_AGE_MS = 2_000;
 const MAX_ENTRIES = 200;
-const GIT_DELAY_MS = 250;
 const values = new Map<string, { value: unknown; at: number }>();
 const inflight = new Map<string, Promise<unknown>>();
 
@@ -77,7 +77,6 @@ export function useCached<T>(loader: Loader<T> | null): Resource<T> | null {
 
 export function infoLoaders(sdk: PluginBrowserBbSdk, thread: PluginSidebarThread, mode: Exclude<InfoCardMode, "off">): InfoLoaders {
   const threadId = thread.id;
-  const environmentId = thread.environment?.id ?? null;
   return {
     options: { key: `options:${threadId}`, delayMs: 0, prefetch: true,
       load: async () => sdk.threads.defaultExecutionOptions({ threadId }) },
@@ -87,12 +86,6 @@ export function infoLoaders(sdk: PluginBrowserBbSdk, thread: PluginSidebarThread
       load: async () => sdk.threads.conversationOutline({ threadId }) },
     asks: thread.hasPendingInteraction ? { key: `asks:${threadId}`, delayMs: 0, prefetch: true,
       load: async () => sdk.threads.interactions.list({ threadId }) } : null,
-    // Without mergeBaseBranch, status reports no merge base and committed work reads as clean.
-    changes: environmentId === null ? null : { key: `changes:${environmentId}`, delayMs: GIT_DELAY_MS, prefetch: false,
-      load: async () => {
-        const { mergeBaseBranch } = await sdk.environments.get({ environmentId });
-        return sdk.environments.status({ environmentId, ...(mergeBaseBranch ? { mergeBaseBranch } : {}) });
-      } },
   };
 }
 
@@ -105,4 +98,5 @@ export function prefetchInfo(loaders: InfoLoaders): void {
 export function resetInfoCache(): void {
   values.clear();
   inflight.clear();
+  resetGitStatus();
 }

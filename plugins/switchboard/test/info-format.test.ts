@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  askSummary, backgroundLabels, changesLabel, changesSummary, childrenLabel, costLabel, modelLabel,
+  askSummary, backgroundLabels, changesLabel, changesSummary, childrenLabel, costLabel, modelLabel, parentLabel,
   outlineSummary, permissionLabel, rootThread, tokens, usageSummary,
   type Interactions, type Outline, type Usage, type WorkspaceStatus,
 } from "../src/info-format";
@@ -156,6 +156,13 @@ describe("background and children", () => {
     expect(backgroundLabels(sidebarThread({
       activity: { backgroundAgents: 3, backgroundCommands: 0, workflows: 2, planMode: 0, goals: 0 }, queuedWork: "failed",
     }))).toEqual(["3 agents", "2 workflows", "Queued message failed"]);
+  });
+
+  it("says whether a child notifies its parent, and nothing for a root thread", () => {
+    expect(parentLabel(sidebarThread())).toBeNull();
+    expect(parentLabel(sidebarThread({ parentThreadId: "p" }))).toBe("Notified on every outcome");
+    expect(parentLabel(sidebarThread({ parentThreadId: "p", parentNotifications: "stuck" }))).toBe("Notified when stuck");
+    expect(parentLabel(sidebarThread({ parentThreadId: "p", parentNotifications: "off" }))).toBe("Not notified");
   });
 
   it("counts visible direct children and their non-idle states", () => {

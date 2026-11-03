@@ -40,6 +40,16 @@ describe("triage", () => {
     expect(isSnoozed(urgent!, { at: now, until: now + DAY }, now)).toBe(false);
   });
 
+  it("keeps an unread family with background work awake, though it shows as unread", () => {
+    const busy = { ...sidebarThread().activity, backgroundCommands: 1 };
+    const [family] = nodes(sidebarThread({ id: "parent" }),
+      sidebarThread({ id: "child", parentThreadId: "parent", isUnread: true, activity: busy }));
+    expect(family!.children[0]!.state).toBe("unread");
+    expect(canSnooze(family!)).toBe(false);
+    const [queued] = nodes(sidebarThread({ isUnread: true, indicator: "background-agent" }));
+    expect(canSnooze(queued!)).toBe(false);
+  });
+
   it("uses tomorrow's local hour even across midnight and a month end", () => {
     expect(nextWake(new Date(2025, 0, 31, 23, 59).getTime(), 9)).toBe(new Date(2025, 1, 1, 9).getTime());
     expect(nextWake(new Date(2025, 2, 1, 0, 1).getTime(), 0)).toBe(new Date(2025, 2, 2, 0).getTime());

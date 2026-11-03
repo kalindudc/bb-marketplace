@@ -1,15 +1,14 @@
-import { memo, useMemo, useState } from "react";
+import { memo, useMemo, useRef, useState, type MouseEvent, type PointerEvent } from "react";
 import type { DragController } from "./use-drag";
 import type { PluginSidebarThread, PluginThreadActionTarget, PluginThreadActionsInlineItem } from "@get-bb/plugin-sdk/app";
 import {
   ThreadTitle, experimental_Icon as Icon, experimental_THREAD_ACTION_GROUPS as ACTION_GROUPS, experimental_ThreadActionsContextMenu as ThreadActionsContextMenu,
   experimental_ThreadActionsMenu as ThreadActionsMenu, experimental_ThreadStatusGlyph as ThreadStatusGlyph,
-  experimental_useSidebarThreadSplit,
+  experimental_ThreadRowMetadata as ThreadRowMetadata, experimental_useSidebarThreadSplit,
   experimental_useThreadActions, useBbNavigate, useSidebarThreadDraft,
   useSidebarThreadRowStatus, useSidebarThreadShortcut,
 } from "@get-bb/plugin-sdk/app";
 import { InfoCard, useInfoCardMode } from "./info-card";
-import { usePullRequest } from "./pull-request";
 import type { CollapseKey, HueId } from "./layout";
 import type { RowModel } from "./rows";
 import type { SelectionRun } from "./selection";
@@ -42,24 +41,27 @@ export interface ThreadRowProps {
   wakeLabel?: string;
   onSnooze?(): void;
   onWake?(): void;
+  bulk?: RowBulk;
+}
+
+/** bb's menu for a multi-row selection, given only to the selected rows. */
+export interface RowBulk {
+  threads: readonly PluginThreadActionTarget[];
+  inline: readonly PluginThreadActionsInlineItem[];
+  onEscape(): void;
 }
 
 const QUICK_ACTIONS = ["bb--core/archive"];
 
 export function toActionTarget(thread: PluginSidebarThread): PluginThreadActionTarget {
-  const { id, projectId, parentThreadId, archivedAt, pinnedAt, sectionId, isUnread, status, environment } = thread;
-  return { id, projectId, parentThreadId, archivedAt, pinnedAt, sectionId, isUnread, status,
+  const { id, projectId, parentThreadId, parentNotifications, archivedAt, pinnedAt, sectionId, isUnread, status, environment } = thread;
+  return { id, projectId, parentThreadId, parentNotifications, archivedAt, pinnedAt, sectionId, isUnread, status,
     environment: environment?.id ? { id: environment.id, path: environment.path } : null };
-}
-
-function PullRequestTag({ environmentId }: { environmentId: string | null | undefined }) {
-  const pullRequest = usePullRequest(environmentId);
-  return pullRequest && <span className="sb-pr-badge relative z-1 min-w-0 max-w-16 shrink truncate border border-sidebar-border font-mono text-muted-foreground">#{pullRequest.number}</span>;
 }
 
 function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, onToggle,
   drag, isSelected, selectedRun, isDragging, dropState, flash, onSelect, onKeyboardMove,
-  variant = "tree", parentTitle, hue, stale, wakeLabel, onSnooze, onWake }: ThreadRowProps) {
+  variant = "tree", parentTitle, hue, stale, wakeLabel, onSnooze, onWake, bulk }: ThreadRowProps) {
   const { thread, state, depth, guides, isLast, childCount, collapsed, rollup, rollupCount } = row;
   const [menuOpen, setMenuOpen] = useState(false);
   const split = experimental_useSidebarThreadSplit(thread.id);
@@ -71,6 +73,21 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
   const target = toActionTarget(thread);
   const quickActions = experimental_useThreadActions(target, { keys: QUICK_ACTIONS });
   const snoozeUntil = onSnooze && formatWakeLabel(nextWake(now, settings.snoozeHour), now);
+  const linkRef = useRef<HTMLAnchorElement>(null);
+  const onLinkPointerDown = (event: PointerEvent<HTMLElement>) => {
+    split.splitProps.onPointerDown?.(event);
+    if (variant === "tree") drag?.onRowPointerDown(event, thread.id);
+  };
+  // A metadata item draws above the row link, so a click on it would otherwise not open the thread.
+  const forwardClick = (event: MouseEvent<HTMLElement>) => {
+    event.stopPropagation();
+    const { altKey, ctrlKey, metaKey, shiftKey, button } = event;
+    linkRef.current?.dispatchEvent(new window.MouseEvent("click",
+      { bubbles: true, cancelable: true, altKey, ctrlKey, metaKey, shiftKey, button }));
+  };
+  const metadata = !thread.parentThreadId && settings.showPullRequests &&
+    <span className="sb-row-meta relative z-1" onPointerDown={onLinkPointerDown} onClick={forwardClick}>
+      <ThreadRowMetadata thread={thread} /></span>;
   const inline = useMemo<PluginThreadActionsInlineItem[] | undefined>(() => onSnooze && [{
     key: "switchboard/snooze", group: ACTION_GROUPS.state,
     action: { label: `Snooze until ${snoozeUntil}`, icon: "Clock", run: onSnooze },
@@ -93,7 +110,7 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
     {row.crossProject && <span className="sb-meta relative z-1 min-w-0 max-w-20 shrink truncate font-mono text-subtle-foreground" title={row.crossProject}>{row.crossProject}</span>}
     {settings.density !== "two-line" && branch && <span className="sb-meta relative z-1 min-w-0 max-w-20 shrink truncate font-mono text-subtle-foreground" title={branch}>{branch}</span>}
     {settings.density !== "two-line" && count}
-    {!thread.parentThreadId && settings.showPullRequests && <PullRequestTag environmentId={thread.environment?.id} />}
+    {metadata}
   </>;
   const withQuickActions = variant === "tree" || variant === "archived";
   const withMenu = withQuickActions || variant === "lane";
@@ -102,7 +119,8 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
       disabled={action.disabled} className="sb-control sb-icon-button text-muted-foreground"
       onClick={() => { void action.run(); }}><Icon name={action.icon} className="size-3.5" aria-hidden /></button>)}
   </span>;
-  return <ThreadActionsContextMenu thread={target} inline={inline} dragging={isDragging}>
+  return <ThreadActionsContextMenu thread={target} inline={bulk ? bulk.inline : inline} dragging={isDragging}
+    experimental_bulkThreads={bulk?.threads} onEscapeKeyDown={bulk?.onEscape}>
     <div data-sb-row="" data-thread-id={thread.id} data-depth={depth} data-last-child={isLast}
       data-open-children={childCount > 0 && !collapsed} data-collapsed={collapsed}
       data-active={isActive} data-selected={isSelected} data-run={selectedRun}
@@ -131,15 +149,12 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
         className="sb-caret absolute z-10 grid place-items-center text-2xs text-subtle-foreground hover:text-sidebar-foreground"
         style={{ left: `calc(var(--sb-base) + ${depth} * var(--sb-indent) - 16px)` }}>{collapsed ? "▸" : "▾"}</button>}
       <InfoCard thread={thread} state={state} projectName={projectName} stale={stale === true} now={now}>
-      <a href={thread.href} data-sidebar-thread-shortcut-target={variant === "tree" || variant === "lane" ? "" : undefined}
+      <a ref={linkRef} href={thread.href} data-sidebar-thread-shortcut-target={variant === "tree" || variant === "lane" ? "" : undefined}
         data-sidebar-thread-id={variant === "tree" || variant === "lane" ? thread.id : undefined}
         aria-label={thread.displayTitle} aria-current={isActive ? "page" : undefined}
         aria-keyshortcuts={variant === "tree" ? shortcut?.ariaKeyshortcuts : undefined}
         className="sb-row-link absolute inset-0 z-0" draggable={false} {...split.splitProps}
-        onPointerDown={(event) => {
-          split.splitProps.onPointerDown?.(event);
-          if (variant === "tree") drag?.onRowPointerDown(event, thread.id);
-        }}
+        onPointerDown={onLinkPointerDown}
         onClick={(event) => {
           if (variant === "tree" && drag?.consumeClick()) { event.preventDefault(); event.stopPropagation(); return; }
           if (variant === "tree" && (event.altKey || event.shiftKey)) {
@@ -166,7 +181,7 @@ function ThreadRowView({ row, isActive, settings, now, projectName, onNavigate, 
           : <StatusGlyph state={state} label={label} spin={state === "running"} />}
       </span>
       {settings.density === "two-line" ? <span className="sb-two-line-stack pointer-events-none relative z-1 flex min-w-0 flex-1 flex-col">
-        <span className="sb-two-line-title sb-row-line flex min-w-0 items-center">{title}{!thread.parentThreadId && settings.showPullRequests && <PullRequestTag environmentId={thread.environment?.id} />}{age}</span>
+        <span className="sb-two-line-title sb-row-line flex min-w-0 items-center">{title}{metadata}{age}</span>
         <span className="sb-two-line-meta sb-row-line flex min-w-0 items-center truncate font-mono text-subtle-foreground">
           {variant === "lane" && parentTitle ? <span className="truncate" title={parentTitle}>{parentTitle}</span> :
             <span className="truncate">{projectName}</span>}{branch && <span className="truncate">{branch}</span>}
@@ -202,4 +217,4 @@ export const ThreadRow = memo(ThreadRowView, (left, right) =>
   left.onSelect === right.onSelect && left.onKeyboardMove === right.onKeyboardMove &&
   left.variant === right.variant && left.parentTitle === right.parentTitle && left.hue === right.hue &&
   left.stale === right.stale && left.wakeLabel === right.wakeLabel &&
-  left.onSnooze === right.onSnooze && left.onWake === right.onWake);
+  left.onSnooze === right.onSnooze && left.onWake === right.onWake && left.bulk === right.bulk);

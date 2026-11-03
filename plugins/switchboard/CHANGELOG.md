@@ -2,6 +2,25 @@
 
 Notable changes to Switchboard, newest first. Releases are tagged `switchboard/vX.Y.Z` in this repository.
 
+## 0.4.0 (2026-11-03)
+
+### Added
+
+- Root thread rows draw bb's row metadata after the title. That is GitHub PR Status's badge, with the pull request number in its state's colour, an amber dot while checks run and a red cross when they fail or the branch conflicts, plus any other plugin's row items. It replaces Switchboard's own grey number and follows the Pull request badges setting.
+- Right-clicking a selected row, with two or more rows selected, opens bb's thread menu for the whole selection: Mark read, Pin, Notifications, Notify parent, Archive and Delete, then Switchboard's Move to and Snooze for every selected thread. Escape closes the menu and clears the selection. The selection bar is unchanged.
+- A child thread's info card says whether the child notifies its parent: on every outcome, only when stuck, or not at all.
+
+### Changed
+
+- The info card shows the thread's whole title, wrapping long words such as paths, instead of cutting it off after two lines.
+- An unread reply now shows over background agents, background commands and waiting queued messages, as bb's own sidebar does since 0.48. A thread with a finished reply and a dev server still running shows the unread dot, counts as unread in the chips and section counts, and sits in the Unread lane, but still cannot be snoozed while that work runs. Runtime work, workflows, plan mode and goals still show as running.
+- The info card colours pull request states and checks with bb's state colours: open and passing checks in green, merged in purple, closed and failing checks in red, pending checks in amber, and drafts muted. At a glance now also shows the checks result.
+- The info card's git changes come from bb's Git plugin, which refreshes them when the workspace's files or branches change. When the Git plugin is disabled or cannot read the workspace, Changes shows Unavailable.
+
+### Compatibility
+
+- Requires bb 0.48.1 or newer (plugin SDK 0.6.104), up from SDK 0.6.79. bb 0.48 retired the environment git reads that earlier versions of the info card used.
+
 ## 0.3.9 (2026-10-28)
 
 ### Changed

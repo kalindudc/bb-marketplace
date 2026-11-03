@@ -43,7 +43,6 @@ const values = {
   interactions: [{ id: "i", threadId: "t", turnId: "u", createdAt: 1, status: "pending", statusReason: null, resolvedAt: null, resolution: null,
     providerId: "pi", providerRequestId: "r", providerThreadId: "x", payload: { kind: "approval", availableDecisions: ["allow_once"], reason: null,
       subject: { kind: "command", itemId: "c", command: "terraform plan", cwd: null, actions: [], sessionGrant: null } } }],
-  environment: { mergeBaseBranch: "origin/main" },
   status: { outcome: "available", workspace: { branch: { currentBranch: "b", defaultBranch: "main" }, checkout: { kind: "branch", branchName: "b", headSha: null },
     mergeBase: { aheadCount: 1, behindCount: 4, baseRef: "abc", commits: [], deletions: 71, fileCount: 21, files: [], hasCommittedUnmergedChanges: true,
       insertions: 2621, lineStatsComplete: true, mergeBaseBranch: "origin/main" },
@@ -52,33 +51,38 @@ const values = {
 
 function sdkFakes() {
   const pending = { options: deferred<unknown>(), context: deferred<unknown>(), outline: deferred<unknown>(),
-    interactions: deferred<unknown>(), environment: deferred<unknown>(), status: deferred<unknown>() };
+    interactions: deferred<unknown>(), status: deferred<unknown>() };
   const sdk = {
     threads: {
       defaultExecutionOptions: () => pending.options.promise, context: () => pending.context.promise,
       conversationOutline: () => pending.outline.promise, interactions: { list: () => pending.interactions.promise },
     },
-    environments: { get: () => pending.environment.promise, status: () => pending.status.promise },
   } as unknown as PluginSdkTestFakes;
+  const status = async ({ keys }: { keys: string[] }) => {
+    const row = await pending.status.promise;
+    return Object.fromEntries(keys.map((key) => [key, row]));
+  };
   const resolveAll = () => act(async () => {
     for (const key of Object.keys(pending) as (keyof typeof pending)[]) pending[key].resolve(values[key]);
   });
-  return { sdk, pending, resolveAll };
+  return { sdk, pending, resolveAll, status };
 }
+type GitStatusHandler = (input: { keys: string[] }) => Promise<Record<string, unknown>>;
 
 function Harness({ mode, isSuppressed, ...props }: ThreadRowProps & { mode: InfoCardMode; isSuppressed(): boolean }) {
   return <InfoCardProvider mode={mode} sdk={useSdk()} isSuppressed={isSuppressed}><ThreadRow {...props} /></InfoCardProvider>;
 }
 
-function mount(mode: InfoCardMode, options: { row?: PluginSidebarThread; stale?: boolean; isSuppressed?: () => boolean } & Pick<RenderSlotOptions, "sdk"> = {}) {
+function mount(mode: InfoCardMode, options: { row?: PluginSidebarThread; stale?: boolean; isSuppressed?: () => boolean;
+  status?: GitStatusHandler } & Pick<RenderSlotOptions, "sdk"> = {}) {
   const shown = options.row ?? thread;
   const props = { mode, isSuppressed: options.isSuppressed ?? (() => false), settings: DEFAULT_SETTINGS, now: NOW, projectName: "Marketplace",
     isActive: false, onNavigate: vi.fn(), stale: options.stale ?? false,
     row: { thread: shown, state: rowState(shown), depth: 0, guides: "", isLast: true, childCount: 0, collapsed: false,
       rollup: null, rollupCount: 0, crossProject: null, dim: false } };
   const slot = renderSlot({ component: Harness }, props, { sidebarThreads: { threads, sections: [sidebarSection("s", "cortex")] },
-    providers: { status: "ready", providers }, rpc: { pullRequests: () => ({ e: { outcome: "available", pullRequest } }) },
-    sdk: options.sdk ?? sdkFakes().sdk });
+    providers: { status: "ready", providers }, sdk: options.sdk ?? sdkFakes().sdk,
+    rpc: { pullRequests: () => ({ e: { outcome: "available", pullRequest } }), status: (input: unknown) => (options.status ?? sdkFakes().status)(input as { keys: string[] }) } });
   const link = screen.getByRole("link", { name: "Hover card" });
   return { slot, link, row: slot.container.querySelector<HTMLElement>("[data-sb-row]")! };
 }
@@ -106,8 +110,8 @@ describe("info card", () => {
   });
 
   it("paints free fields at once and fills fetched ones in place, without the outline, at a glance", async () => {
-    const { sdk, resolveAll } = sdkFakes();
-    const { slot, link } = mount("glance", { sdk });
+    const { sdk, resolveAll, status } = sdkFakes();
+    const { slot, link } = mount("glance", { sdk, status });
     focus(link);
     await screen.findByRole("tooltip");
     const view = within(card()!);
@@ -116,7 +120,10 @@ describe("info card", () => {
     expect(view.getByText("Marketplace › cortex")).toBeTruthy();
     expect(view.getByText("↳ Child of Sidebar redesign")).toBeTruthy();
     expect(view.getByText("kalindudc/hover-card")).toBeTruthy();
-    expect(view.getByText("#12 Open")).toBeTruthy();
+    expect(view.getByText("Parent").nextElementSibling!.textContent).toBe("Notified on every outcome");
+    expect(view.getByText("Pull request").nextElementSibling!.textContent).toBe("#12 Open · Checks passing");
+    expect(view.getByText("#12 Open").classList.contains("sb-info-tone-good")).toBe(true);
+    expect(view.getByText("Checks passing").classList.contains("sb-info-tone-good")).toBe(true);
     expect(card()!.querySelectorAll(".sb-info-skeleton")).toHaveLength(3);
     await resolveAll();
     expect(await view.findByText("claude-opus-5 · Extra high")).toBeTruthy();
@@ -128,8 +135,8 @@ describe("info card", () => {
   });
 
   it("summarises the conversation and says what a waiting thread needs, in the briefing", async () => {
-    const { sdk, resolveAll } = sdkFakes();
-    const { link } = mount("briefing", { sdk, row: waiting });
+    const { sdk, resolveAll, status } = sdkFakes();
+    const { link } = mount("briefing", { sdk, status, row: waiting });
     focus(link);
     await screen.findByRole("tooltip");
     const view = within(card()!);
@@ -143,13 +150,16 @@ describe("info card", () => {
     const css = readFileSync(join(process.cwd(), "src/switchboard.css"), "utf8");
     expect(css.match(/\.sb-info-single\s*\{([^}]*)\}/)?.[1]).toMatch(/flex-wrap:\s*nowrap/);
     expect(view.getByText("↳ 2 children · 1 running")).toBeTruthy();
-    expect(view.getByText("Checks passing")).toBeTruthy();
+    expect(view.getByText("Parent notified on every outcome")).toBeTruthy();
+    expect(view.getByText("Checks passing").classList.contains("sb-info-tone-good")).toBe(true);
+    expect(view.getByText("#12 Open").classList.contains("sb-info-tone-good")).toBe(true);
+    expect(view.getByText("Approved").className).not.toMatch(/sb-info-tone/);
     expect(view.getByText("Created 2d ago · MacBook Pro")).toBeTruthy();
   });
 
   it("shows provider, permissions and cost in full details", async () => {
-    const { sdk, resolveAll } = sdkFakes();
-    const { link } = mount("full", { sdk });
+    const { sdk, resolveAll, status } = sdkFakes();
+    const { link } = mount("full", { sdk, status });
     focus(link);
     await screen.findByRole("tooltip");
     const view = within(card()!);
@@ -161,39 +171,86 @@ describe("info card", () => {
     expect(view.getByText(new RegExp(`· ${cost.replace(/[$.]/g, "\\$&")}`))).toBeTruthy();
     expect(await view.findByText("↑1 ↓4 vs origin/main")).toBeTruthy();
     expect(view.getByText("Managed worktree")).toBeTruthy();
-    expect(view.getByText("#12 Open · Checks passing · Approved")).toBeTruthy();
+    expect(view.getByText("Notified on every outcome")).toBeTruthy();
+    expect(view.getByText("#12 Open").parentElement!.textContent).toBe("#12 Open · Checks passing · Approved");
   });
 
-  it("delays git status by 250 ms, reuses results when reopened, and marks failures unavailable", async () => {
+  it("reads git status from bb's Git plugin after 250 ms, reuses it when reopened, and marks failures unavailable", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     vi.setSystemTime(NOW);
     const calls: string[] = [];
     const sdk = {
       threads: { defaultExecutionOptions: async () => { calls.push("options"); throw new Error("down"); },
         context: async () => { calls.push("context"); return values.context; } },
-      environments: { get: async () => { calls.push("get"); return values.environment; },
-        status: async () => { calls.push("status"); return values.status; } },
     } as unknown as PluginSdkTestFakes;
-    const { link } = mount("glance", { sdk });
+    const status = async ({ keys }: { keys: string[] }) => {
+      calls.push(`status ${keys.join(",")}`);
+      return Object.fromEntries(keys.map((key) => [key, values.status]));
+    };
+    const { link } = mount("glance", { sdk, status });
     focus(link);
     await act(async () => { await Promise.resolve(); });
     expect(calls).toEqual(["options", "context"]);
     await act(async () => { vi.advanceTimersByTime(249); });
-    expect(calls).not.toContain("get");
+    expect(calls).not.toContain("status e");
     await act(async () => { vi.advanceTimersByTime(1); });
-    expect(calls).toEqual(["options", "context", "get", "status"]);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(calls).toEqual(["options", "context", "status e"]);
     const view = within(card()!);
     expect(view.getByText("Unavailable")).toBeTruthy();
     expect(view.getByText("109k / 1M · 11%")).toBeTruthy();
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(view.getByText(/· 21 files/)).toBeTruthy();
     act(() => link.blur());
     expect(card()).toBeNull();
     calls.length = 0;
     await act(async () => { vi.advanceTimersByTime(1_000); });
     focus(link);
-    await act(async () => { vi.advanceTimersByTime(300); });
-    expect(calls).toEqual(["options"]);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(calls).toContain("options");
+    expect(calls).not.toContain("context");
     expect(within(card()!).getByText("109k / 1M · 11%")).toBeTruthy();
+    expect(within(card()!).getByText(/· 21 files/)).toBeTruthy();
+  });
+
+  it("marks git changes unavailable when bb's Git plugin fails a row or cannot answer", async () => {
+    const failed = mount("glance", { status: async ({ keys }) => Object.fromEntries(keys.map((key) => [key, { outcome: "failed", message: "git crashed" }])) });
+    focus(failed.link);
+    await screen.findByRole("tooltip");
+    expect(await within(card()!).findByText("Unavailable")).toBeTruthy();
+    failed.slot.unmount();
+    resetInfoCache();
+    const missing = mount("glance", { status: async () => { throw new Error("bb--git is disabled"); } });
+    focus(missing.link);
+    await screen.findByRole("tooltip");
+    expect(await within(card()!).findByText("Unavailable")).toBeTruthy();
+  });
+
+  it("colours each pull request state and checks result with bb's state tokens", async () => {
+    const cases = [
+      [{ state: "merged", checks: { state: "failing" } }, "sb-info-tone-merged", "Checks failing", "sb-info-tone-bad"],
+      [{ state: "closed", checks: { state: "pending" } }, "sb-info-tone-bad", "Checks pending", "sb-info-tone-warn"],
+      [{ state: "draft", checks: { state: "none" } }, "sb-info-tone-muted", null, null],
+    ] as const;
+    for (const [change, stateTone, checks, checksTone] of cases) {
+      const pr = { ...pullRequest, ...change };
+      const slot = renderSlot({ component: Harness }, { mode: "glance", isSuppressed: () => false, settings: DEFAULT_SETTINGS, now: NOW,
+        projectName: "Marketplace", isActive: false, onNavigate: vi.fn(), stale: false,
+        row: { thread, state: rowState(thread), depth: 0, guides: "", isLast: true, childCount: 0, collapsed: false,
+          rollup: null, rollupCount: 0, crossProject: null, dim: false } },
+      { sidebarThreads: { threads, sections: [] }, providers: { status: "ready", providers }, sdk: sdkFakes().sdk,
+        rpc: { pullRequests: () => ({ e: { outcome: "available", pullRequest: pr } }), status: () => new Promise(() => {}) } });
+      focus(screen.getByRole("link", { name: "Hover card" }));
+      const view = within(await screen.findByRole("tooltip").then(() => card()!));
+      const label = `#12 ${pr.state[0]!.toUpperCase()}${pr.state.slice(1)}`;
+      expect((await view.findByText(label)).classList.contains(stateTone)).toBe(true);
+      if (checks) expect(view.getByText(checks).classList.contains(checksTone!)).toBe(true);
+      slot.unmount();
+    }
+    const css = readFileSync(join(process.cwd(), "src/switchboard.css"), "utf8");
+    for (const [tone, token] of [["good", "--success-foreground"], ["merged", "--pr-merged"], ["bad", "--destructive-text"],
+      ["warn", "--warning-text"], ["muted", "--subtle-foreground"]])
+      expect(css).toMatch(new RegExp(`\\.sb-info-tone-${tone} \\{ color: var\\(${token}\\); \\}`));
   });
 
   it("closes when the pointer leaves before the opened card renders", () => {

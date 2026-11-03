@@ -1,9 +1,12 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
-import { experimental_useSidebarThreads, useBbNavigate, useSdk, type PluginThreadListProps } from "@get-bb/plugin-sdk/app";
+import {
+  experimental_THREAD_ACTION_GROUPS as ACTION_GROUPS, experimental_useSidebarThreads, useBbNavigate, useSdk,
+  type PluginThreadListProps,
+} from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import { applyPlan } from "./apply-plan";
 import { archivedThreads } from "./archived";
-import { BulkBar } from "./bulk-bar";
+import { BulkBar, moveTargets } from "./bulk-bar";
 import { registerListHandlers } from "./commands";
 import { DropIndicator, DragGhost } from "./drop-indicator";
 import { indexGroups, planDrop, planKeyboardMove, type DropPlan } from "./drop-plan";
@@ -22,7 +25,7 @@ import { useLayout } from "./use-layout";
 import { useDrag } from "./use-drag";
 import { useNow } from "./use-now";
 import { useSwitchboardSettings } from "./use-settings";
-import { ThreadRow } from "./thread-row";
+import { ThreadRow, toActionTarget, type RowBulk } from "./thread-row";
 import { buildModel, type Group, type TreeNode } from "./tree";
 import { canSnooze, lastActivity, nextWake, wakeLabel } from "./triage";
 import { useUpdateSettings } from "./use-update-settings";
@@ -193,6 +196,22 @@ export function ThreadList(props: PluginThreadListProps) {
       setSelection(EMPTY_SELECTION);
     } catch (cause) { toast.error(message(cause)); }
   };
+  const bulkActions = useRef({ move: onBulkMove, snooze: onBulkSnooze });
+  bulkActions.current = { move: onBulkMove, snooze: onBulkSnooze };
+  const canBulkSnooze = roots.length > 0 && roots.every(canSnoozeId);
+  const wakeAt = wakeLabel(nextWake(now, settings.snoozeHour), now);
+  const bulk = useMemo<RowBulk | undefined>(() => {
+    if (settings.view !== "sections" || selection.ids.size < 2) return undefined;
+    const threads = index.visualIds.filter((id) => selection.ids.has(id)).map((id) => toActionTarget(index.byId.get(id)!.node.thread));
+    const count = `${threads.length} threads`;
+    return { threads, onEscape: () => setSelection(EMPTY_SELECTION), inline: [
+      { key: "switchboard/move", group: ACTION_GROUPS.organize, action: { label: `Move ${count} to`, icon: "SectionMove",
+        choices: { items: moveTargets(groups).map(({ key, name }) => ({ id: key, label: name })) },
+        run: ({ value }) => { if (value) bulkActions.current.move(value as GroupKey); } } },
+      { key: "switchboard/snooze", group: ACTION_GROUPS.state, action: { label: `Snooze ${count} until ${wakeAt}`, icon: "Clock",
+        disabled: !canBulkSnooze, run: () => bulkActions.current.snooze() } },
+    ] };
+  }, [settings.view, selection.ids, index, groups, canBulkSnooze, wakeAt]);
   const onArchiveStale = async (group: Group) => {
     const stale = group.roots.filter((root) => root.stale);
     if (!stale.length) return;
@@ -330,7 +349,7 @@ export function ThreadList(props: PluginThreadListProps) {
       settings={settings} onSettingsChange={updateSettings}
       onChange={(next) => { setFilter(next); setSelection(EMPTY_SELECTION); }} onNewSection={onNewSection} />
     {settings.view === "sections" && selection.ids.size > 0 && <BulkBar count={selection.ids.size} childCount={childCount} groups={groups}
-      canSnooze={roots.length > 0 && roots.every(canSnoozeId)} onSnooze={onBulkSnooze}
+      canSnooze={canBulkSnooze} onSnooze={onBulkSnooze}
       onMove={onBulkMove} onArchive={() => { void onBulkArchive(); }} onClear={() => setSelection(EMPTY_SELECTION)} />}
     {sidebar.status === "error" && <p className="px-3 py-3 text-muted-foreground">Could not load threads</p>}
     {sidebar.status === "ready" && settings.view === "sections" && current?.subject.kind === "threads" && !groups.some((group) => group.kind === "pinned") &&
@@ -404,6 +423,7 @@ export function ThreadList(props: PluginThreadListProps) {
           flash={flashIds.has(row.thread.id)} onSelect={onSelect} onKeyboardMove={onKeyboardMove}
           stale={index.byId.get(row.thread.id)?.node.stale}
           onSnooze={canSnoozeId(row.thread.id) ? () => onSnoozeId(row.thread.id) : undefined}
+          bulk={selection.ids.has(row.thread.id) ? bulk : undefined}
           onNavigate={onNavigate} onToggle={onToggle} />)}
       </div>}
     </section>

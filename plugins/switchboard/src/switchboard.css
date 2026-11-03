@@ -37,7 +37,9 @@
   pointer-events: none; z-index: 0;
 }
 .sb-meta, .sb-two-line-meta { font-size: 11px; }
-.sb-pr-badge { font-size: 11px; line-height: 16px; padding: 0 5px; border-radius: var(--radius-sm, max(0px, calc(var(--radius) - 4px))); }
+/* Sized to its items, so bb's metadata line, which grows to fill its parent, never takes width from the title. */
+.sb-row-meta { display: flex; flex: 0 1 auto; min-width: 0; max-width: 7rem; overflow: hidden; margin-left: calc(-1 * var(--sb-gap)); }
+.sb-row-meta > [data-thread-row-metadata] { margin-left: var(--sb-gap); }
 .sb-two-line-stack { gap: 3px; }
 .sb-two-line-title { min-height: 18px; line-height: 18px; }
 .sb-two-line-meta { min-height: 15px; line-height: 15px; }
@@ -188,10 +190,7 @@
 .sb-info-full { width: 360px; }
 .sb-info-top { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted-foreground); }
 .sb-info-kbd { margin-left: auto; color: var(--subtle-foreground); }
-.sb-info-title {
-  margin: 4px 0 2px; font-size: 13px; font-weight: 600; line-height: 1.35; overflow: hidden;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-}
+.sb-info-title { margin: 4px 0 2px; font-size: 13px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
 .sb-info-crumb, .sb-info-muted { color: var(--muted-foreground); }
 .sb-info-crumb { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sb-info-text { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
@@ -222,6 +221,11 @@
 .sb-info-ask { margin-top: 8px; padding: 6px 8px; border-radius: var(--radius-md); background: color-mix(in oklch, var(--attention) 12%, transparent); }
 .sb-info-sep { margin: 10px -14px; border-top: 1px solid var(--border); }
 .sb-info-foot { font-size: 11px; color: var(--subtle-foreground); }
+.sb-info-tone-good { color: var(--success-foreground); }
+.sb-info-tone-merged { color: var(--pr-merged); }
+.sb-info-tone-bad { color: var(--destructive-text); }
+.sb-info-tone-warn { color: var(--warning-text); }
+.sb-info-tone-muted { color: var(--subtle-foreground); }
 .sb-info-added { color: var(--diff-added); }
 .sb-info-removed { color: var(--diff-removed); }
 .sb-info-mono { font-family: var(--font-mono); font-size: 11.5px; }

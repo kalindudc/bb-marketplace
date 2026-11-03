@@ -237,4 +237,37 @@ describe("thread row", () => {
     } }));
     expect(target.environment).toEqual({ id: "env", path: "/work" });
   });
+
+  it("draws bb's row metadata after a root thread's title and hands presses on it to the row", () => {
+    const drag = { onRowPointerDown: vi.fn(), consumeClick: vi.fn(() => false) };
+    const onSelect = vi.fn();
+    const { slot, onNavigate } = mount({ drag, onSelect });
+    const meta = slot.container.querySelector<HTMLElement>("[data-thread-row-metadata]")!;
+    expect(meta.getAttribute("data-thread-row-metadata")).toBe("t");
+    expect(meta.parentElement!.classList.contains("sb-row-meta")).toBe(true);
+    expect(slot.container.querySelector(".sb-pr-badge")).toBeNull();
+    const anchor = screen.getByRole("link", { name: "A thread" });
+    anchor.addEventListener("click", (event) => event.preventDefault());
+    fireEvent.pointerDown(meta, { pointerType: "mouse", button: 0 });
+    expect(drag.onRowPointerDown).toHaveBeenCalledWith(expect.anything(), "t");
+    fireEvent.click(meta);
+    expect(onNavigate).toHaveBeenCalledOnce();
+    fireEvent.click(meta, { shiftKey: true });
+    expect(onSelect).toHaveBeenCalledWith("t", "range");
+    expect(onNavigate).toHaveBeenCalledOnce();
+    slot.unmount();
+    const child = mount({ row: { ...row, thread: sidebarThread({ id: "c", parentThreadId: "t", displayTitle: "A thread" }) } });
+    expect(child.slot.container.querySelector("[data-thread-row-metadata]")).toBeNull();
+    child.slot.unmount();
+    const off = mount({ settings: { ...DEFAULT_SETTINGS, showPullRequests: false } });
+    expect(off.slot.container.querySelector("[data-thread-row-metadata]")).toBeNull();
+    off.slot.unmount();
+    const twoLine = mount({ settings: { ...DEFAULT_SETTINGS, density: "two-line" } });
+    expect(twoLine.slot.container.querySelector(".sb-two-line-title [data-thread-row-metadata]")).not.toBeNull();
+    twoLine.slot.unmount();
+  });
+
+  it("tells bb's menu whether a child notifies its parent", () => {
+    expect(toActionTarget(sidebarThread({ parentThreadId: "p", parentNotifications: "stuck" })).parentNotifications).toBe("stuck");
+  });
 });

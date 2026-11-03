@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
-import type { PluginThreadListProps } from "@get-bb/plugin-sdk/app";
+import type { PluginThreadActionTarget, PluginThreadListProps } from "@get-bb/plugin-sdk/app";
 import type { RpcContract } from "../src/rpc";
 import type { CollapseKey, HueId } from "../src/layout";
 import { layoutWriteFakes, sidebarProject, sidebarSection, sidebarThread } from "./fixtures";
@@ -18,7 +18,8 @@ const threads = [
   sidebarThread({ id: "r", displayTitle: "Review", sectionId: "s", isUnread: true, createdAt: 10 }),
 ].map((thread) => ({ ...thread, href: `/projects/p/threads/${thread.id}` }));
 
-async function mount(sectionProjects: Record<string, string> = {}) {
+async function mount(sectionProjects: Record<string, string> = {},
+  threadBulkActions?: (threads: readonly PluginThreadActionTarget[]) => never[]) {
   const app = await loadPluginApp(() => import("../app"));
   let layout = { sectionOrder: [] as string[], sectionHues: {} as Record<string, HueId>,
     collapsed: [] as CollapseKey[], order: {} as Record<string, string[]>, sectionSort: {}, snoozes: {}, sectionProjects };
@@ -55,7 +56,7 @@ async function mount(sectionProjects: Record<string, string> = {}) {
         layout = { ...layout, sectionProjects: next }; return { sectionProjects: next };
       },
     },
-    sdk: sdk as never,
+    sdk: sdk as never, ...(threadBulkActions ? { threadBulkActions } : {}),
   });
   await waitFor(() => expect(slot.rpcCalls.some((call) => call.method === "getLayout")).toBe(true));
   return slot;
@@ -103,6 +104,31 @@ describe("organize in the sidebar", () => {
     await waitFor(() => expect(sdkCalls(slot, "threads.archive").map((call) => call.args[0])).toEqual([
       { threadId: "a" }, { threadId: "b" },
     ]));
+    slot.unmount();
+  });
+
+  it("opens bb's menu for the whole selection on right-click, with Move to and Snooze for every selected thread", async () => {
+    const seen: string[][] = [];
+    const slot = await mount({}, (targets) => { seen.push(targets.map((target) => target.id)); return []; });
+    fireEvent.click(link("A"), { altKey: true });
+    fireEvent.click(link("B"), { altKey: true });
+    const row = (id: string) => slot.container.querySelector<HTMLElement>(`[data-sb-row][data-thread-id="${id}"]`)!;
+    fireEvent.contextMenu(row("b"));
+    const menu = screen.getByRole("menu", { name: "Actions for 2 threads" });
+    expect(seen.at(-1)).toEqual(["a", "b"]);
+    expect(within(menu).getByRole("menuitem", { name: /Move 2 threads to/ })).toBeTruthy();
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /Snooze 2 threads until/ }));
+    await waitFor(() => expect(slot.rpcCalls.find((call) => call.method === "snooze")?.input)
+      .toMatchObject({ threadIds: ["a", "b"] }));
+    expect(screen.queryByText("2 selected")).toBeNull();
+    fireEvent.click(link("A"), { altKey: true });
+    fireEvent.click(link("B"), { altKey: true });
+    fireEvent.contextMenu(row("a"));
+    fireEvent.keyDown(screen.getByRole("menu", { name: "Actions for 2 threads" }), { key: "Escape" });
+    expect(screen.queryByText("2 selected")).toBeNull();
+    fireEvent.click(link("A"), { altKey: true });
+    fireEvent.contextMenu(row("b"));
+    expect(screen.queryByRole("menu", { name: /Actions for/ })).toBeNull();
     slot.unmount();
   });
 

@@ -118,10 +118,6 @@ describe("infoLoaders", () => {
         conversationOutline: record("outline", { items: [], maxSeq: 0 }),
         interactions: { list: record("interactions", []) },
       },
-      environments: {
-        get: record("get", { mergeBaseBranch: "origin/main" }),
-        status: record("status", { outcome: "not_applicable", reason: "non_git_environment", message: "" }),
-      },
     } as unknown as PluginBrowserBbSdk;
     return { sdk, calls };
   }
@@ -134,20 +130,18 @@ describe("infoLoaders", () => {
     expect(idle.usage.key).toBe("usage:t");
     expect(idle.outline).toBeNull();
     expect(idle.asks).toBeNull();
-    expect(idle.changes).toBeNull();
     const busy = infoLoaders(sdk, sidebarThread({ id: "t", hasPendingInteraction: true, environment }), "briefing");
     expect(busy.outline?.key).toBe("outline:t");
     expect(busy.asks?.key).toBe("asks:t");
-    expect(busy.changes).toMatchObject({ key: "changes:e", delayMs: 250, prefetch: false });
     for (const entry of [busy.options, busy.usage, busy.outline, busy.asks]) expect(entry).toMatchObject({ delayMs: 0, prefetch: true });
     expect(infoLoaders(sdk, sidebarThread(), "full").outline).not.toBeNull();
   });
 
-  it("passes the environment's merge base to git status and unwraps usage", async () => {
+  it("leaves git status to bb's Git plugin and unwraps usage", async () => {
     const { sdk, calls } = fakeSdk();
     const loaders = infoLoaders(sdk, sidebarThread({ id: "t", environment }), "glance");
-    await loaders.changes!.load();
-    expect(calls).toEqual([["get", { environmentId: "e" }], ["status", { environmentId: "e", mergeBaseBranch: "origin/main" }]]);
+    expect(Object.keys(loaders)).not.toContain("changes");
+    expect(calls).toEqual([]);
     await expect(loaders.usage.load()).resolves.toEqual({ usedTokens: 1, modelContextWindow: 10, estimated: false });
   });
 

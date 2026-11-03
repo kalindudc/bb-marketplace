@@ -39,6 +39,19 @@ describe("theme conformance", () => {
     expect(css).toMatch(/font-family: var\(--font-mono\)/);
   });
 
+  it("shows the info card's whole thread title, wrapping long words instead of clipping", () => {
+    const body = css.match(/^\.sb-info-title \{([^}]+)\}/m)?.[1];
+    expect(body).toBeDefined();
+    expect(body).not.toMatch(/line-clamp|overflow: hidden|text-overflow|white-space: nowrap/);
+    expect(body).toMatch(/overflow-wrap: anywhere/);
+  });
+
+  it("adds no gap after the title when bb's row metadata line has no items", () => {
+    // bb hides an empty line with display: none, which drops its margin and leaves the wrapper's negative one.
+    expect(css).toMatch(/^\.sb-row-meta \{[^}]*margin-left: calc\(-1 \* var\(--sb-gap\)\)/m);
+    expect(css).toMatch(/^\.sb-row-meta > \[data-thread-row-metadata\] \{[^}]*margin-left: var\(--sb-gap\)/m);
+  });
+
   it("uses the destructive foreground rather than white or the page background", () => {
     expect(css).toMatch(/\.sb-drop-pill-bad \{[^}]*color: var\(--destructive-foreground\)/);
     for (const name of ["section-menu.tsx", "bulk-bar.tsx"]) {

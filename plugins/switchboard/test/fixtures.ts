@@ -20,7 +20,7 @@ export const layoutWriteFakes = {
 export function sidebarThread(overrides: Partial<PluginSidebarThread> = {}): PluginSidebarThread {
   return {
     id: "t", projectId: "p", title: "Thread", titleFallback: null, displayTitle: "Thread",
-    parentThreadId: null, lifecycleOwnerThreadId: null, sourceThreadId: null,
+    parentThreadId: null, lifecycleOwnerThreadId: null, sourceThreadId: null, parentNotifications: "auto",
     sectionId: null, originKind: null, originPluginId: null, providerId: "pi",
     status: "idle", runtimeStatus: "idle", queuedWork: "none", hasPendingInteraction: false,
     activity: { workflows: 0, backgroundAgents: 0, backgroundCommands: 0, planMode: 0, goals: 0 },

@@ -12,11 +12,19 @@ export function rowState(thread: PluginSidebarThread): RowState {
   if (thread.status === "error" || thread.queuedWork === "failed" ||
       thread.indicator === "unread-error" || thread.indicator === "queued-failed") return "failed";
   if (thread.hasPendingInteraction || thread.indicator === "waiting-for-input") return "needs";
+  const { activity } = thread;
   if (thread.status === "starting" || thread.status === "active" || thread.status === "stopping" ||
       thread.runtimeStatus === "provisioning" || thread.runtimeStatus === "waiting-for-host" ||
-      Object.values(thread.activity).some((count) => count > 0) ||
-      ["runtime", "background-agent", "background-command", "workflow", "goal", "plan-mode", "queued-waiting"].includes(thread.indicator)) return "running";
-  return thread.isUnread ? "unread" : "idle";
+      activity.workflows > 0 || activity.planMode > 0 || activity.goals > 0 ||
+      ["runtime", "workflow", "goal", "plan-mode"].includes(thread.indicator)) return "running";
+  // bb's own order: an unread reply outranks background agents, background commands and waiting queued messages.
+  if (thread.isUnread) return "unread";
+  return hasBackgroundWork(thread) ? "running" : "idle";
+}
+
+export function hasBackgroundWork(thread: PluginSidebarThread): boolean {
+  return thread.activity.backgroundAgents > 0 || thread.activity.backgroundCommands > 0 ||
+    ["background-agent", "background-command", "queued-waiting"].includes(thread.indicator);
 }
 
 export function worstState(states: Iterable<RowState>): RowState {

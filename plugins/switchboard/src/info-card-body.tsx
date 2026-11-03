@@ -1,8 +1,9 @@
-import { useMemo, type ReactElement, type ReactNode } from "react";
+import { Fragment, useMemo, type ReactElement, type ReactNode } from "react";
 import {
   ThreadTitle, experimental_useProviders,
   experimental_useSidebarThreads, useSidebarThreadShortcut, type PluginBrowserBbSdk, type PluginSidebarThread,
 } from "@get-bb/plugin-sdk/app";
+import { useGitStatus } from "./git-status";
 import { infoLoaders, useCached, type Resource } from "./info-data";
 import * as format from "./info-format";
 import { StatusGlyph } from "./status-glyph";
@@ -17,6 +18,8 @@ const PR_CHECKS: Partial<Record<PullRequest["checks"]["state"], string>> =
   { passing: "Checks passing", pending: "Checks pending", failing: "Checks failing" };
 const PR_REVIEW: Partial<Record<PullRequest["review"]["state"], string>> =
   { review_requested: "Review requested", approved: "Approved", changes_requested: "Changes requested" };
+const PR_TONE: Record<PullRequest["state"], string> = { open: "good", merged: "merged", closed: "bad", draft: "muted" };
+const CHECKS_TONE: Partial<Record<PullRequest["checks"]["state"], string>> = { passing: "good", pending: "warn", failing: "bad" };
 
 const count = (value: number, one: string, many: string) => `${value.toLocaleString()} ${value === 1 ? one : many}`;
 const ago = (now: number, at: number) => {
@@ -60,9 +63,16 @@ function aheadBehind(status: format.WorkspaceStatus, withBase: boolean): string 
   return `↑${changes.ahead.toLocaleString()} ↓${changes.behind.toLocaleString()}${withBase ? ` vs ${changes.base}` : ""}`;
 }
 
-const pullRequestWords = (pr: PullRequest) =>
-  [`#${pr.number} ${PR_STATE[pr.state]}`, PR_CHECKS[pr.checks.state], PR_REVIEW[pr.review.state]]
-    .filter((word): word is string => word !== undefined);
+interface Word { text: string; tone?: string }
+const pullRequestWords = (pr: PullRequest, withReview = true): Word[] => {
+  const checks = PR_CHECKS[pr.checks.state];
+  const review = withReview ? PR_REVIEW[pr.review.state] : undefined;
+  return [{ text: `#${pr.number} ${PR_STATE[pr.state]}`, tone: PR_TONE[pr.state] },
+    ...(checks ? [{ text: checks, tone: CHECKS_TONE[pr.checks.state] }] : []), ...(review ? [{ text: review }] : [])];
+};
+const tone = (word: Word) => word.tone ? `sb-info-tone-${word.tone}` : "";
+const joined = (words: Word[]) => words.map((word, index) =>
+  <Fragment key={word.text}>{index > 0 && " · "}<span className={tone(word) || undefined}>{word.text}</span></Fragment>);
 
 export function InfoCardBody({ thread, state, projectName, stale, now, mode, sdk }: { thread: PluginSidebarThread; state: RowState;
   projectName: string; stale: boolean; now: number; mode: Exclude<InfoCardMode, "off">; sdk: PluginBrowserBbSdk }): ReactElement {
@@ -72,12 +82,12 @@ export function InfoCardBody({ thread, state, projectName, stale, now, mode, sdk
   const shortcut = useSidebarThreadShortcut(thread.id);
   const environmentId = thread.environment?.id ?? null;
   // The loaders read only these fields of the thread, so a streaming thread keeps its loaders.
-  const loaders = useMemo(() => infoLoaders(sdk, thread, mode), [sdk, thread.id, environmentId, thread.hasPendingInteraction, mode]);
+  const loaders = useMemo(() => infoLoaders(sdk, thread, mode), [sdk, thread.id, thread.hasPendingInteraction, mode]);
   const options = useCached(loaders.options)!;
   const usage = useCached(loaders.usage)!;
   const outline = useCached(loaders.outline);
   const asks = useCached(loaders.asks);
-  const changes = useCached(loaders.changes);
+  const changes = useGitStatus(environmentId);
 
   const provider = providers.find((entry) => entry.id === thread.providerId);
   const reasoning = (value: NonNullable<format.ExecutionOptions>) =>
@@ -89,6 +99,7 @@ export function InfoCardBody({ thread, state, projectName, stale, now, mode, sdk
   const section = sidebar.sections.find((entry) => entry.id === sectionId)?.name ?? "Threads";
   const parent = thread.parentThreadId ? sidebar.threads.find((entry) => entry.id === thread.parentThreadId)?.displayTitle : undefined;
   const children = format.childrenLabel(sidebar.threads, thread.id);
+  const notifies = format.parentLabel(thread);
   const background = format.backgroundLabels(thread);
   const age = ageLabel(now, lastActivity(thread));
   const ask = asks && !(asks.status === "ready" && format.askSummary(asks.value) === null) && asks;
@@ -114,7 +125,8 @@ export function InfoCardBody({ thread, state, projectName, stale, now, mode, sdk
       {branch ? <><dt>Branch</dt><dd className="sb-info-mono">{branch}</dd></> :
         machine && <><dt>Machine</dt><dd>{machine}</dd></>}
       {changes && <><dt>Changes</dt><dd><Field resource={changes}>{changesText}</Field></dd></>}
-      {pullRequest && <><dt>Pull request</dt><dd>#{pullRequest.number} {PR_STATE[pullRequest.state]}</dd></>}
+      {pullRequest && <><dt>Pull request</dt><dd>{joined(pullRequestWords(pullRequest, false))}</dd></>}
+      {notifies && <><dt>Parent</dt><dd>{notifies}</dd></>}
     </dl>
   </>;
 
@@ -142,9 +154,11 @@ export function InfoCardBody({ thread, state, projectName, stale, now, mode, sdk
       <Field resource={changes}>{changesText}</Field>
       <span className="sb-info-muted sb-info-mono"><Field resource={changes}>{(value) => aheadBehind(value, false)}</Field></span>
     </div>}
-    {pullRequest && <div className="sb-info-line">{pullRequestWords(pullRequest).map((word) => <span key={word} className="sb-info-chip">{word}</span>)}</div>}
-    {(children || background.length > 0) && <div className="sb-info-line">
+    {pullRequest && <div className="sb-info-line">{pullRequestWords(pullRequest).map((word) =>
+      <span key={word.text} className={`sb-info-chip ${tone(word)}`}>{word.text}</span>)}</div>}
+    {(children || notifies || background.length > 0) && <div className="sb-info-line">
       {children && <span className="sb-info-chip">↳ {children}</span>}
+      {notifies && <span className="sb-info-chip">Parent {notifies.toLowerCase()}</span>}
       {background.map((word) => <span key={word} className="sb-info-chip">{word}</span>)}
     </div>}
     <div className="sb-info-sep" />
@@ -166,10 +180,11 @@ export function InfoCardBody({ thread, state, projectName, stale, now, mode, sdk
       {cell("Messages", outline ? <Field resource={outline}>{messages}</Field> : "—")}
       {cell("Children", children ?? "—")}
       {cell("Background", background.length ? background.join(", ") : "—")}
+      {notifies && cell("Parent", notifies, true)}
       {cell("Branch", branch ? <span className="sb-info-mono">{branch}</span> : "—", true)}
       {cell("Changes", changes ? <Field resource={changes}>{changesText}</Field> : "—")}
       {cell("Base", changes ? <Field resource={changes}>{(value) => aheadBehind(value, true)}</Field> : "—")}
-      {cell("Pull request", pullRequest ? pullRequestWords(pullRequest).join(" · ") : "—", true)}
+      {cell("Pull request", pullRequest ? joined(pullRequestWords(pullRequest)) : "—", true)}
       {cell("Machine", machine ?? "—")}
       {cell("Environment", thread.environment ? thread.environment.isWorktree ? "Managed worktree" : "Checkout" : "—")}
       {cell("Created", ago(now, thread.createdAt))}

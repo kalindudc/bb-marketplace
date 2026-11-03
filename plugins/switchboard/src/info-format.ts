@@ -1,11 +1,12 @@
 import type { PluginBrowserBbSdk, PluginSidebarThread } from "@get-bb/plugin-sdk/app";
+import type { GitStatus } from "./git-status";
 import { countStates, rowState, STATE_ORDER } from "./status";
 
 export type ExecutionOptions = Awaited<ReturnType<PluginBrowserBbSdk["threads"]["defaultExecutionOptions"]>>;
 export type Usage = NonNullable<Awaited<ReturnType<PluginBrowserBbSdk["threads"]["context"]>>["usage"]>;
 export type Outline = Awaited<ReturnType<PluginBrowserBbSdk["threads"]["conversationOutline"]>>;
 export type Interactions = Awaited<ReturnType<PluginBrowserBbSdk["threads"]["interactions"]["list"]>>;
-export type WorkspaceStatus = Awaited<ReturnType<PluginBrowserBbSdk["environments"]["status"]>>;
+export type WorkspaceStatus = GitStatus;
 export interface Stat { insertions: number; deletions: number; files: number }
 export interface Changes { committed: Stat | null; uncommitted: Stat | null; ahead: number; behind: number; base: string | null }
 
@@ -88,6 +89,11 @@ export function changesLabel(changes: Changes): string {
   const label = `+${shown.insertions.toLocaleString()} −${shown.deletions.toLocaleString()} · ${plural(shown.files, "file")}`;
   if (!committed) return `${label} uncommitted`;
   return uncommitted ? `${label} · ${uncommitted.files.toLocaleString()} uncommitted` : label;
+}
+
+const PARENT_LABEL = { auto: "Notified on every outcome", stuck: "Notified when stuck", off: "Not notified" } as const;
+export function parentLabel(thread: PluginSidebarThread): string | null {
+  return thread.parentThreadId ? PARENT_LABEL[thread.parentNotifications] : null;
 }
 
 export function backgroundLabels(thread: PluginSidebarThread): string[] {
