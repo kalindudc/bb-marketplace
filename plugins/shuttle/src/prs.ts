@@ -5,6 +5,7 @@ import type { LinkRole } from "./contract";
 import { NotFoundError, ShuttleError, type Ctx } from "./ctx";
 import type { PrRow } from "./db/store";
 import { displayKey, linkFor, parseKey, resolveQuery, type PrRef } from "./keys";
+import type { PrSummary } from "./model";
 
 /** A stored PR, or fetched from its server and stored when Shuttle has not seen it yet. */
 export async function lookup(ctx: Ctx, query: string, refresh = false): Promise<PrRow> {
@@ -15,6 +16,11 @@ export async function lookup(ctx: Ctx, query: string, refresh = false): Promise<
 }
 
 export async function fetchPr(ctx: Ctx, ref: PrRef): Promise<PrRow> {
+  return (await fetchPrSummary(ctx, ref)).pr;
+}
+
+/** fetchPr, with the server's own answer: stored rows keep fields an answer leaves out, such as an older head's size. */
+export async function fetchPrSummary(ctx: Ctx, ref: PrRef): Promise<{ pr: PrRow; summary: PrSummary }> {
   const server = ctx.server(ref.server);
   if (!server) throw new ShuttleError(`no server called ${ref.server}`);
   const summary = await ctx.adapter(ref.server).view(ref.repo, ref.number);
@@ -25,7 +31,7 @@ export async function fetchPr(ctx: Ctx, ref: PrRef): Promise<PrRow> {
   const mine = summary.author !== "" && summary.author === ctx.store.server(ref.server)?.login;
   const pr = ctx.store.upsertPr(ref.server, { ...summary, repo: ref.repo }, summary.url ?? linkFor(server, ref.repo, ref.number), mine);
   ctx.port.publish();
-  return pr;
+  return { pr, summary };
 }
 
 export function requirePr(ctx: Ctx, key: string): PrRow {

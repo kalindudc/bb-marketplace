@@ -102,6 +102,11 @@ export interface PrRead {
   error: string | null;
 }
 
+export interface PrFile {
+  path: string;
+  patch: string | null;
+}
+
 export interface Adapter {
   readonly server: ServerConfig;
   operations(): Operation[];
@@ -126,6 +131,10 @@ export interface Adapter {
   checkRun?(repo: string, ids: { checkRun: number | null; run: number | null }, signal?: AbortSignal): Promise<CheckInfo>;
   /** Reads an issue for a link card; a server that cannot leaves it out. */
   issue?(repo: string, number: number, signal?: AbortSignal): Promise<IssueInfo>;
+  /** The PR's changed files with their diffs (null for a binary or very large file), for auto post's checks. */
+  files?(repo: string, number: number, signal?: AbortSignal): Promise<PrFile[]>;
+  /** A file's text at a commit, or null when the file is not there. */
+  fileAt?(repo: string, ref: string, path: string, signal?: AbortSignal): Promise<string | null>;
   /** GitHub only: turns auto-merge off. Absent where the server has no auto-merge. */
   cancelAutoMerge?(repo: string, number: number, signal?: AbortSignal): Promise<void>;
   comment(repo: string, number: number, body: string, signal?: AbortSignal): Promise<void>;

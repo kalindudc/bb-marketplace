@@ -3,6 +3,7 @@ import { createElement, type ComponentType } from "react";
 import { afterEach, beforeEach, vi } from "vitest";
 import { DEFAULT_CONFIG, type Config } from "../../src/config";
 import {
+  type AutoPostInsights,
   rpcContract, type AgentView, type ConversationItem, type EventView, type InboxView, type InsightsView, type LinkView, type MergeOptions,
   type MergeView, type NextStep, type Overview, type PostView, type PrView, type ReviewDraft, type ServerStatus,
 } from "../../src/contract";
@@ -162,6 +163,8 @@ export function draft(overrides: Partial<ReviewDraft> = {}): ReviewDraft {
       { id: "c", severity: "nit", path: "src/header/README.md", line: null, body: "The README still names the old prop." },
     ],
     notes: null,
+    assessment: null,
+    gate: null,
     ...overrides,
   };
 }
@@ -210,6 +213,10 @@ export function insights(overrides: Partial<InsightsView> = {}): InsightsView {
   };
 }
 
+export function autoPostInsights(overrides: Partial<AutoPostInsights> = {}): AutoPostInsights {
+  return { range: "30d", target: 0.9, repos: [], reasons: [], points: [], verifier: { runs: 0, failures: 0, medianMs: null }, recent: [], ...overrides };
+}
+
 export const mergeOptions = (overrides: Partial<MergeOptions> = {}): MergeOptions => ({
   methods: ["squash", "merge"], default: "squash", deleteBranch: true, canAuto: true, state: "clean", detail: null, ...overrides,
 });
@@ -245,6 +252,7 @@ export function handlers(overrides: Partial<Handlers> = {}): Handlers {
     search: () => ({ prs: [], total: 0 }),
     activity: () => ({ events: [] }),
     insights: () => insights(),
+    autoPostInsights: () => autoPostInsights(),
     sync: () => ({ ok: true }),
     syncHistory: () => ({ windowMs: 3 * 3_600_000, servers: [] }),
     link: unexpected("link"),
@@ -298,6 +306,7 @@ export function handlers(overrides: Partial<Handlers> = {}): Handlers {
     retryPost: unexpected("retryPost"),
     clearPost: unexpected("clearPost"),
     discardDraft: unexpected("discardDraft"),
+    checkDraft: unexpected("checkDraft"),
     restoreDraft: unexpected("restoreDraft"),
     reply: unexpected("reply"),
     resolve: unexpected("resolve"),

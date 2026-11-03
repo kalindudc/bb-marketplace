@@ -6,7 +6,7 @@ import { z } from "zod";
 export const OPERATIONS = [
   "whoami", "authored", "review_requested", "team_requested", "mentioned", "reviewed", "view", "activity",
   "ready", "draft", "close", "reopen", "edit_labels", "edit_reviewers", "edit_options",
-  "merge", "merge_options", "comment", "review", "reply", "resolve",
+  "merge", "merge_options", "comment", "review", "reply", "resolve", "files", "file",
 ] as const;
 export type Operation = (typeof OPERATIONS)[number];
 export const LIST_OPERATIONS = ["authored", "review_requested", "team_requested", "mentioned", "reviewed"] as const;
@@ -133,12 +133,56 @@ export const watchSchema = z
   })
   .strict();
 
+export const AUTO_POST_MODES = ["off", "shadow"] as const;
+export type AutoPostMode = (typeof AUTO_POST_MODES)[number];
+export const AUTO_POST_SEVERITIES = ["low", "medium", "high"] as const;
+/**
+ * The fast verifier: no tools, skills, context files or session, run from the temp directory so no project's own
+ * resources load, so it judges only the evidence Shuttle hands it on stdin. Extensions still load, since some set
+ * up the model's credentials; add `--no-extensions -e <that extension>` to the command to leave the rest out.
+ */
+export const DEFAULT_VERIFIER_COMMAND =
+  'cd "${TMPDIR:-/tmp}" && pi -p --no-tools --no-skills --no-prompt-templates --no-themes --no-context-files --no-session --system-prompt "You audit one code review finding and reply with JSON only." --model fireworks/fireworks:accounts/fireworks/models/kimi-k3 --thinking low';
+const repoGlob = z.string().trim().min(1).max(200);
+const unit = (fallback: number) => z.number().min(0).max(1).default(fallback);
+
+export const autoPostRepoSchema = z
+  .object({
+    repo: repoGlob,
+    mode: z.enum(AUTO_POST_MODES).default("shadow"),
+    /** The repository's review standards, in a few lines, for the verifier. */
+    guidelines: z.string().max(4000).default(""),
+    /** Path globs: a draft whose PR changes one of these files is held for you. */
+    holdPaths: z.array(repoGlob).max(50).default([]),
+  })
+  .strict();
+export type AutoPostRepo = z.infer<typeof autoPostRepoSchema>;
+
+export const autoPostSchema = z
+  .object({
+    repos: z.array(autoPostRepoSchema).max(50).default([]),
+    verifier: command.default(DEFAULT_VERIFIER_COMMAND),
+    verifierTimeoutSeconds: z.number().int().min(10).max(600).default(120),
+    /** The lowest severity that can post; nits never do. */
+    minSeverity: z.enum(AUTO_POST_SEVERITIES).default("medium"),
+    maxComments: z.number().int().min(1).max(20).default(5),
+    /** A PR with more changed lines than this is held for you. */
+    maxLines: z.number().int().min(10).max(100_000).default(800),
+    /** The share of auto-posted findings you would have posted yourself. */
+    targetPrecision: z.number().min(0.5).max(1).default(0.9),
+    floors: z.object({ holds: unit(0.7), worth: unit(0.7) }).strict().prefault({}),
+  })
+  .strict();
+export type AutoPost = z.infer<typeof autoPostSchema>;
+
 export const configSchema = z
   .object({
     servers: z.array(serverSchema).max(20),
     presets: z.array(presetSchema).min(1).max(20),
     autoReview: autoReviewSchema,
     watch: watchSchema,
+    // A config saved before auto post existed has no autoPost; prefault parses {} so every inner default applies.
+    autoPost: autoPostSchema.prefault({}),
   })
   .strict()
   .superRefine((config, ctx) => {
@@ -200,8 +244,8 @@ export function presetById(config: Config, id: string | undefined | null): Prese
 
 /** TOML for export. Arrays of tables read as [[server]] and [[preset]], like the docs. */
 export function configToToml(config: Config): string {
-  const { servers, presets, autoReview, watch } = config;
-  return `${stringifyToml({ server: servers, preset: presets, auto_review: autoReview, watch })}\n`;
+  const { servers, presets, autoReview, watch, autoPost } = config;
+  return `${stringifyToml({ server: servers, preset: presets, auto_review: autoReview, watch, auto_post: autoPost })}\n`;
 }
 
 export function configFromToml(toml: string): Config {
@@ -211,14 +255,15 @@ export function configFromToml(toml: string): Config {
   } catch (error) {
     throw new ConfigError(`the TOML does not parse: ${(error as Error).message}`);
   }
-  const known = new Set(["server", "preset", "auto_review", "watch"]);
+  const known = new Set(["server", "preset", "auto_review", "watch", "auto_post"]);
   const unknown = Object.keys(raw).filter((key) => !known.has(key));
-  if (unknown.length) throw new ConfigError(`unknown table ${unknown.join(", ")}; expected [[server]], [[preset]], [auto_review] and [watch]`);
+  if (unknown.length) throw new ConfigError(`unknown table ${unknown.join(", ")}; expected [[server]], [[preset]], [auto_review], [watch] and [auto_post]`);
   return parseConfig({
     servers: raw.server ?? DEFAULT_CONFIG.servers,
     presets: raw.preset ?? DEFAULT_CONFIG.presets,
     autoReview: raw.auto_review ?? {},
     watch: { actPrompt: DEFAULT_ACT_PROMPT, ...((raw.watch as object | undefined) ?? {}) },
+    autoPost: raw.auto_post ?? {},
   });
 }
 
@@ -239,5 +284,6 @@ export function configChanges(before: Config, after: Config): string[] {
   }
   if (JSON.stringify(before.autoReview) !== JSON.stringify(after.autoReview)) out.push("changes auto review");
   if (JSON.stringify(before.watch) !== JSON.stringify(after.watch)) out.push("changes watched PRs");
+  if (JSON.stringify(before.autoPost) !== JSON.stringify(after.autoPost)) out.push("changes auto post");
   return out;
 }

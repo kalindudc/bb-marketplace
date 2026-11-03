@@ -4,6 +4,7 @@ import type { Config } from "../../config";
 import { BUTTON_GHOST, BUTTON_PRIMARY, CARD, Checkbox, ErrorNote, FIELD, Toggle } from "../common";
 import { AUTO_TRIGGERS, WATCH_MODES } from "../constants";
 import { ACT_PROMPT_VARIABLES } from "../../templates";
+import { AutoPostCard, fromAutoPostDraft, toAutoPostDraft, type AutoPostDraft } from "./auto-post";
 import { PromptEditor } from "./prompt-editor";
 import { useConfig } from "./use-config";
 
@@ -43,10 +44,10 @@ function Card({ icon, title, hint, on, onToggle, children }: { icon: string; tit
 /** What Shuttle does by itself: auto reviews, and what agents get sent about your PRs. */
 export function AutomationsSection() {
   const { config, loadError, saving, saveError, save, clearSaveError } = useConfig();
-  const [draft, setDraft] = useState<{ autoReview: AutoReview; watch: Watch; repos: string; bots: string } | null>(null);
+  const [draft, setDraft] = useState<{ autoReview: AutoReview; watch: Watch; repos: string; bots: string; autoPost: AutoPostDraft } | null>(null);
   if (config === null) return loadError !== null ? <ErrorNote>Could not load Shuttle's settings: {loadError}</ErrorNote> : <div className="text-sm text-muted-foreground">Loading…</div>;
 
-  const shown = draft ?? { autoReview: config.autoReview, watch: config.watch, repos: config.autoReview.repos.join(", "), bots: config.watch.allowBots.join(", ") };
+  const shown = draft ?? { autoReview: config.autoReview, watch: config.watch, repos: config.autoReview.repos.join(", "), bots: config.watch.allowBots.join(", "), autoPost: toAutoPostDraft(config.autoPost) };
   const { autoReview: auto, watch } = shown;
   const setAuto = (patch: Partial<AutoReview>) => {
     clearSaveError();
@@ -60,7 +61,7 @@ export function AutomationsSection() {
     setAuto({ when: AUTO_TRIGGERS.filter((item) => (item === trigger ? on : auto.when.includes(item))) });
   const submit = async () => {
     if (draft === null) return;
-    const next: Config = { ...config, autoReview: { ...draft.autoReview, repos: splitGlobs(draft.repos) }, watch: { ...draft.watch, allowBots: splitGlobs(draft.bots) } };
+    const next: Config = { ...config, autoReview: { ...draft.autoReview, repos: splitGlobs(draft.repos) }, watch: { ...draft.watch, allowBots: splitGlobs(draft.bots) }, autoPost: fromAutoPostDraft(draft.autoPost) };
     if (await save(next, "Saved the automations")) setDraft(null);
   };
   const row = "grid grid-cols-1 items-center gap-1 sm:grid-cols-[10rem_minmax(0,1fr)] sm:gap-3";
@@ -142,6 +143,8 @@ export function AutomationsSection() {
           <PromptEditor label="What a Fix it agent is asked to do" rows={4} value={watch.actPrompt} variables={ACT_PROMPT_VARIABLES} onChange={(actPrompt) => setWatch({ actPrompt })} />
         </div>
       </Card>
+
+      <AutoPostCard value={shown.autoPost} onChange={(autoPost) => { clearSaveError(); setDraft({ ...shown, autoPost }); }} />
 
       <div className="flex items-center justify-end gap-2">
         {draft !== null && <span className="flex-1 text-xs text-muted-foreground">Unsaved changes</span>}

@@ -17,6 +17,8 @@ export interface Ctx {
   projects(): Promise<ProjectInfo[]>;
   /** Runs a user-configured command, such as a server workspace command. */
   run: Runner;
+  /** Aborts when Shuttle stops, so background work such as auto post's verifier stops with it. */
+  readonly lifetime?: AbortSignal;
   /** Waits before a retry; resolves at once on abort. */
   pause(ms: number, signal?: AbortSignal): Promise<void>;
 }

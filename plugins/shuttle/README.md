@@ -120,6 +120,44 @@ thread or the threads under it, counts as gone quiet and comes to the Inbox. Shu
 a thread at work, or one waiting on your answer, keeps its review running. A review whose thread
 failed or went quiet runs again when the thread gets back to work.
 
+### Auto post (shadow mode)
+
+Auto post decides, for each AI review draft in a repository you opt in, whether Shuttle could post it
+for you. For now it only runs in shadow mode: it records the decision on the draft and never posts.
+Turn it on per repository in **Settings › Automations › Auto post**. It is off everywhere by default.
+
+A finding would post only when it clears every check:
+
+- **Safety:** no @mentions, bot commands, HTML comments, invisible characters, links outside the PR's
+  server, or anything that looks like a secret.
+- **Accuracy:** a majority of the review's critics kept it (at least two), every excerpt the reviewer
+  quoted (at least 12 characters) is in the code at the head the review read, within three lines of
+  the lines it cites, and the verifier scores it as holding.
+- **Quality:** at least the minimum severity (medium by default, so nits never post), on a line, and
+  scored by the verifier as worth posting.
+- **Alignment:** outside the repository's held paths. The repository's guidelines go to the verifier.
+
+A draft as a whole is held when the PR has new commits since the review, is a draft, was written by
+a bot, is larger than the line limit or of unknown size, changes a held path, has a summary that fails
+the safety check, or when the reviewer rated it high risk or raised a concern about the PR as a whole. Comment reviews only: approvals and requests for changes are
+held for now.
+
+The verifier is a fast model that runs as a command with no tools, so it judges only what Shuttle
+gives it: the finding, the lines the reviewer quoted, the file's diff and the code around the line.
+It never sees the PR's description. The default runs Kimi K3 at low thinking through `pi -p`, from the
+temp directory with tools, skills and context files off; extensions still load, since some provide the
+model's credentials, so add `--no-extensions -e <that extension>` to leave the rest out. Any command
+that reads the prompt on stdin and prints `{"holds", "worth_posting", "reason"}` works. Only findings
+that pass every other check, in a draft nothing else holds, go to it, and no more than could post.
+
+The draft's Your review tab shows what auto post would do, with a chip on each finding whose tooltip
+lists every check and the verifier's scores. **Check again** runs the checks once more, and so does
+`bb shuttle gate <pr>`. Posting a draft records which findings you kept, edited or dropped, and a
+discard records whether you discarded it or a newer review replaced it. **Insights › Auto post**
+compares the two per repository: precision, its 95% lower bound against your target, how many more
+agreeing findings would prove the target, what auto post held that you posted, why drafts were held,
+how the verifier scored each finding, and the latest decisions.
+
 ## Agents
 
 A PR's agent is the thread linked to it as owner. Shuttle reads the PR's activity on every sync, three

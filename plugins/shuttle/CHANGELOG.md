@@ -6,6 +6,13 @@ Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` i
 
 ### Added
 
+- Auto post, in shadow mode. For each AI review draft in a repository you opt in under Settings › Automations › Auto post, Shuttle records whether it could post the draft for you, and never posts. A finding qualifies only when it passes safety (no mentions, bot commands, hidden text, outside links or secrets), accuracy (a majority of the review's critics kept it, every quoted line is in the code at the head, and a fast verifier says it holds), quality (medium or higher, on a line, worth posting) and alignment (outside held paths, judged against the repository's guidelines). New commits, a PR draft, a bot author, a large PR, a held path, a high-risk rating or concern, or a verdict other than comment hold the whole draft.
+  - The verifier is a command with no tools, by default Kimi K3 through `pi -p`. It sees only the finding, its quotes, the diff and the code around the line, never the PR's description.
+  - The draft shows the decision, a chip per finding with every check, and Check again; `bb shuttle gate <pr>` does the same.
+  - `shuttle_review_draft` takes critic votes, quoted evidence and a category per finding, and an assessment of the PR.
+  - Insights › Auto post compares shadow decisions with what you posted, per repository: precision, its 95% lower bound against your target, what it held that you posted, why drafts were held, the verifier's scores and the latest decisions.
+  - Command servers can read files for it with the optional `files` and `file` commands. TOML exports gain an `[auto_post]` table, which older Shuttles refuse.
+- Posting a draft records which findings you kept, edited or dropped; a discard records whether you or a newer review discarded it.
 - A queue for merging your own PRs. Merging used to wait for the server, which on a slow one kept you in the Merge dialog. Now Shuttle checks the merge at once, queues it and merges in the background, one at a time on each server and in the order you chose them, so the dialog closes straight away. A merge you try again goes after the ones already waiting. Turning on auto-merge goes through the same queue.
   - My PRs lists every merge on its way under Merging at the top, with Queued to merge or Merging on its row. The PR's card says how it will merge and how long it has waited, with Cancel until it starts. The Inbox's foot says how many merges are on their way, with a link to My PRs, and a toast says how each one went.
   - A PR has one merge in the queue at a time. While it waits, the Merge dialog's button reads Queued to merge and stays greyed out, and the overview offers no other Merge….

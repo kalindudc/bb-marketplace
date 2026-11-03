@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { experimental_Icon as Icon, experimental_usePluginId, UrlLink } from "@get-bb/plugin-sdk/app";
 import type { InsightsView as Insights } from "../contract";
 import { useActions } from "./actions";
@@ -10,35 +10,14 @@ import { INSIGHTS_TABS, type InsightsTab } from "./route";
 import { INSIGHTS_TAB_LABELS } from "./constants";
 import { InsightsSkeleton } from "./skeleton";
 import { SyncView } from "./sync";
+import { AutoPostView } from "./auto-post";
+import { color, Kpi, Panel } from "./insight-parts";
 
 type Range = Insights["range"];
 type Idea = Insights["ideas"][number];
 export type IdeaAction = NonNullable<Idea["action"]>;
 
 const RANGES = (["7d", "30d", "90d"] as const).map((value) => ({ value, label: value }));
-// bb defines no chart colours inside a plugin's page; every theme defines a terminal palette, so a series takes one of its colours.
-const FALLBACKS = ["var(--ansi-4)", "var(--ansi-3)", "var(--ansi-2)", "var(--ansi-5)", "var(--ansi-6)", "var(--ansi-1)"];
-const color = (n: number) => `var(--chart-${n}, ${FALLBACKS[(n - 1) % FALLBACKS.length]})`;
-
-function Kpi({ label, value, sub, warn = false }: { label: string; value: string; sub: string; warn?: boolean }) {
-  return (
-    <div data-kpi={label} className="rounded-lg border border-border bg-card px-3 py-2.5">
-      <div className="text-[11px] text-muted-foreground">{label}</div>
-      <div className={`mt-px text-xl font-bold ${warn ? "text-warning-text" : ""}`}>{value}</div>
-      <div className="text-[11px] text-muted-foreground">{sub}</div>
-    </div>
-  );
-}
-
-function Panel({ title, sub, children }: { title: ReactNode; sub: string; children: ReactNode }) {
-  return (
-    <section className="min-w-0 rounded-lg border border-border bg-card px-3.5 py-3">
-      <h3 className="flex items-center gap-1.5 text-[13px] font-semibold">{title}</h3>
-      <div className="mb-2.5 mt-0.5 text-[11.5px] text-muted-foreground">{sub}</div>
-      {children}
-    </section>
-  );
-}
 
 /** Shares as one bar with a legend; each part's share is of the parts' total. */
 function SegBar({ label, parts }: { label: string; parts: { label: string; value: number; color: string }[] }) {
@@ -226,6 +205,14 @@ export function InsightsView({ tab, onTab, onAction, onOpenPr }: { tab: Insights
       <div className={PAGE}>
         <PageHeading title="Insights" description="How each server syncs, and why a sync failed.">{tabs}</PageHeading>
         <SyncView />
+      </div>
+    );
+  }
+  if (tab === "autopost") {
+    return (
+      <div className={PAGE}>
+        <PageHeading title="Insights" description="What auto post would have posted in shadow mode, against what you posted.">{tabs}</PageHeading>
+        <AutoPostView onOpenPr={onOpenPr} />
       </div>
     );
   }

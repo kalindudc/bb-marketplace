@@ -64,6 +64,7 @@ the usual tool directories on `PATH`, and a 60-second limit. It gets:
 | `SHUTTLE_COMMENTS` | review: a JSON array of `{"path", "line", "body"}`, where `line` is a line of the new file, or `null` for a comment on the whole file |
 | `SHUTTLE_THREAD` | reply and resolve: an activity item's `thread` |
 | `SHUTTLE_RESOLVED` | resolve: `1` to resolve the thread, `0` to reopen it |
+| `SHUTTLE_REF`, `SHUTTLE_PATH` | file: the commit and the file's path in the repository (with `SHUTTLE_REPO`) |
 
 A command must exit 0 and print one JSON document. A non-zero exit, output that is not JSON or
 JSON in the wrong shape fails that operation; the other operations still run, and the PRs of
@@ -181,7 +182,7 @@ the view leaves out the parts it did not get. Every part is optional:
   `skipped`, and `item` is the id of a failed check's `check` item, so the view can say what its
   agent got.
 - `commits` are the last 100, oldest first, and `files` the first 100, with paths and line counts
-  only. Shuttle never reads file contents. `total` says how many there are in all; a bare array
+  only. The PR view never reads file contents (auto post does, with `file`). `total` says how many there are in all; a bare array
   counts as all of them. A longer list, up to 5000, is cut to its last 100 commits or first 100
   files.
 - `timeline` kinds are `review_requested`, `review_request_removed`, `labeled`, `unlabeled`,
@@ -253,6 +254,16 @@ how many it could not place and wrote into the review's body instead. When it pr
 Shuttle counts every comment as placed.
 
 The other commands' output is ignored.
+
+## Files for auto post
+
+Auto post checks the lines a reviewer quoted against the code, so it needs to read files. Both
+commands are optional; without them, auto post holds every draft on the server.
+
+| Operation | Prints |
+|---|---|
+| `files` | The PR's changed files with their diffs: `[{"path": "src/a.go", "patch": "@@ -1,3 +1,4 @@\n..."}]`, or `{"files": [...]}`. `patch` is the unified diff of that file, or `null` for a binary or very large file |
+| `file` | The file `SHUTTLE_PATH` at commit `SHUTTLE_REF`: `{"content": "..."}`, or `{"content": null}` when the file is not there |
 
 ## Review workspace
 

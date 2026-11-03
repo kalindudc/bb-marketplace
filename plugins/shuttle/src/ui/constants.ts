@@ -17,7 +17,7 @@ export const AREA_META: Record<Area, { label: string; icon: string }> = {
 
 export const INBOX_TAB_LABELS: Record<InboxTab, string> = { reviewing: "Reviewing", snoozed: "Snoozed", dismissed: "Dismissed" };
 
-export const INSIGHTS_TAB_LABELS: Record<InsightsTab, string> = { overview: "Overview", log: "Automation log", sync: "Sync" };
+export const INSIGHTS_TAB_LABELS: Record<InsightsTab, string> = { overview: "Overview", autopost: "Auto post", log: "Automation log", sync: "Sync" };
 
 export const SOURCE_META: Record<Source, { label: string; chip: string }> = {
   all: { label: "Everything", chip: "Everything" },
@@ -118,6 +118,8 @@ export const OPERATION_LABELS: Record<(typeof OPERATIONS)[number], string> = {
   review: "Post a review",
   reply: "Reply in a review thread",
   resolve: "Resolve or reopen a review thread",
+  files: "A PR's changed files and their diffs, for auto post",
+  file: "A file at a commit, for auto post",
 };
 
 type Operation = (typeof OPERATIONS)[number];

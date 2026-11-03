@@ -1,7 +1,7 @@
 // The RPC contract between Shuttle's server and its UI, and the shapes both sides share.
 import { defineContract } from "./define-contract";
 import { z } from "zod";
-import { configSchema, WATCH_MODES } from "./config";
+import { AUTO_POST_MODES, configSchema, WATCH_MODES } from "./config";
 
 /** The page's lists. The Inbox has its own read; Insights too. */
 export const AREAS = ["mine", "done", "reviews"] as const;
@@ -165,6 +165,19 @@ export const myReviewSchema = z.object({
 });
 export type MyReview = z.infer<typeof myReviewSchema>;
 
+/** A line range the reviewer relied on, quoted exactly as it is at the head the review read. */
+export const evidenceSchema = z.object({
+  path: z.string(),
+  from: z.number().int().positive(),
+  to: z.number().int().positive(),
+  quote: z.string(),
+});
+export type Evidence = z.infer<typeof evidenceSchema>;
+
+/** How the review's critics voted on a finding: KEEP votes out of the critics that voted. */
+export const consensusSchema = z.object({ keep: z.number().int().min(0), total: z.number().int().min(1) });
+export type Consensus = z.infer<typeof consensusSchema>;
+
 export const findingSchema = z.object({
   id: z.string(),
   severity: z.enum(SEVERITIES),
@@ -172,8 +185,42 @@ export const findingSchema = z.object({
   /** A line in the new version of the file; null for a file-level finding. */
   line: z.number().int().positive().nullable(),
   body: z.string(),
+  evidence: z.array(evidenceSchema).optional(),
+  consensus: consensusSchema.nullable().optional(),
+  category: z.string().optional(),
 });
 export type Finding = z.infer<typeof findingSchema>;
+
+/** The reviewer's view of the PR as a whole: how risky it is, and concerns such as signs of a careless or generated change. */
+export const assessmentSchema = z.object({ risk: z.enum(["low", "medium", "high"]), concerns: z.array(z.string()) });
+export type Assessment = z.infer<typeof assessmentSchema>;
+
+export const GATE_CHECKS = ["safety", "accuracy", "quality", "alignment"] as const;
+export type GateCheck = (typeof GATE_CHECKS)[number];
+export const gateCheckSchema = z.object({ check: z.enum(GATE_CHECKS), ok: z.boolean(), reason: z.string() });
+export const gateFindingSchema = z.object({
+  id: z.string(),
+  pass: z.boolean(),
+  checks: z.array(gateCheckSchema),
+  /** The verifier's scores, 0 to 1; null when it did not run for this finding. */
+  holds: z.number().nullable(),
+  worth: z.number().nullable(),
+  why: z.string().nullable(),
+});
+export type GateFinding = z.infer<typeof gateFindingSchema>;
+/** What auto post decided about a draft. In shadow mode it only records the decision; it never posts. */
+export const gateSchema = z.object({
+  mode: z.literal("shadow"),
+  decision: z.enum(["post", "hold"]),
+  /** Why the draft as a whole is held; empty when it would post. */
+  reasons: z.array(z.string()),
+  /** The findings that would post, at most maxComments, highest severity first. */
+  posting: z.array(z.string()),
+  findings: z.array(gateFindingSchema),
+  at: z.number(),
+  ms: z.number(),
+});
+export type Gate = z.infer<typeof gateSchema>;
 
 export const reviewDraftSchema = z.object({
   id: z.number(),
@@ -189,6 +236,9 @@ export const reviewDraftSchema = z.object({
   findings: z.array(findingSchema),
   /** The review's context for the user, in Markdown; shown beside the draft and never posted. */
   notes: z.string().nullable(),
+  assessment: assessmentSchema.nullable(),
+  /** Auto post's decision, for a repository in shadow mode; null when it did not run (yet). */
+  gate: gateSchema.nullable(),
 });
 export type ReviewDraft = z.infer<typeof reviewDraftSchema>;
 
@@ -701,6 +751,60 @@ export const insightsSchema = z.object({
 });
 export type InsightsView = z.infer<typeof insightsSchema>;
 
+/** What a finding auto post judged turned out to be, by what the user did with its draft. */
+export const SHADOW_LABELS = ["agreed", "against", "pending", "missed", "held"] as const;
+export type ShadowLabel = (typeof SHADOW_LABELS)[number];
+/** How auto post's shadow decisions compare with what the user posted, per repository. */
+export const autoPostInsightsSchema = z.object({
+  range: z.enum(["7d", "30d", "90d"]),
+  target: z.number(),
+  repos: z.array(z.object({
+    /** The repository glob from settings. */
+    repo: z.string(),
+    mode: z.enum(AUTO_POST_MODES),
+    drafts: z.number(),
+    wouldPost: z.number(),
+    /** Findings it would have posted that you posted too, edited or not; of those, edited. */
+    agreed: z.number(),
+    edited: z.number(),
+    /** Findings it would have posted that you dropped, or whose draft you discarded. */
+    against: z.number(),
+    /** Findings it would have posted whose draft you have not decided yet. */
+    pending: z.number(),
+    /** Findings it held, at or above the minimum severity, that you posted. */
+    missed: z.number(),
+    /** Findings it held that you did not post. */
+    held: z.number(),
+    precision: z.number().nullable(),
+    /** The 95% lower bound of precision (Wilson). */
+    lowerBound: z.number().nullable(),
+    /** Agreeing findings in a row still needed for the lower bound to reach the target; null when out of reach. */
+    needed: z.number().nullable(),
+    approvals: z.object({ drafts: z.number(), posted: z.number(), discarded: z.number() }),
+  })),
+  /** Why drafts and findings were held, most frequent first. */
+  reasons: z.array(z.object({ check: z.string(), reason: z.string(), count: z.number() })),
+  /** The verifier's scores for each finding it judged, with what became of the finding. */
+  points: z.array(z.object({ holds: z.number(), worth: z.number(), label: z.enum(SHADOW_LABELS) })),
+  verifier: z.object({ runs: z.number(), failures: z.number(), medianMs: z.number().nullable() }),
+  recent: z.array(z.object({
+    draftId: z.number(),
+    key: z.string(),
+    display: z.string(),
+    title: z.string(),
+    at: z.number(),
+    verdict: z.enum(VERDICTS),
+    decision: z.enum(["post", "hold"]),
+    findings: z.number(),
+    posting: z.number(),
+    outcome: z.enum(["posted", "discarded", "superseded", "pending"]),
+    agreed: z.number(),
+    against: z.number(),
+    reason: z.string().nullable(),
+  })),
+});
+export type AutoPostInsights = z.infer<typeof autoPostInsightsSchema>;
+
 export const threadOptionSchema = z.object({ id: z.string(), title: z.string(), projectId: z.string().nullable(), status: z.string(), updatedAt: z.number().nullable() });
 export type ThreadOption = z.infer<typeof threadOptionSchema>;
 export const projectOptionSchema = z.object({ id: z.string(), name: z.string() });
@@ -738,7 +842,8 @@ export const agentTargetSchema = z.discriminatedUnion("kind", [
 export type AgentTarget = z.infer<typeof agentTargetSchema>;
 
 const body = z.string().trim().min(1).max(60_000);
-export const postFindingSchema = z.object({ path: z.string().min(1).max(1000), line: z.number().int().positive().nullable(), body: z.string().trim().min(1).max(20_000) });
+/** `id` names the draft finding it came from, so Shuttle can tell kept, edited and dropped findings apart. */
+export const postFindingSchema = z.object({ id: z.string().max(20).optional(), path: z.string().min(1).max(1000), line: z.number().int().positive().nullable(), body: z.string().trim().min(1).max(20_000) });
 export type PostFinding = z.infer<typeof postFindingSchema>;
 
 // Reads carry tags and writes declare what they invalidate; background syncs invalidate "prs" and "servers" from the server.
@@ -763,6 +868,8 @@ export const rpcContract = defineContract({
   lookup: { input: z.object({ query: z.string().min(1).max(500) }), output: prOut, invalidates: PRS },
   activity: { input: z.object({ limit: z.number().int().min(1).max(500).optional() }), output: z.object({ events: z.array(eventViewSchema) }), tags: PRS },
   insights: { input: z.object({ range: z.enum(["7d", "30d", "90d"]) }), output: insightsSchema, tags: PRS },
+  /** Auto post's shadow decisions against what the user posted, for the Insights tab. */
+  autoPostInsights: { input: z.object({ range: z.enum(["7d", "30d", "90d"]) }), output: autoPostInsightsSchema, tags: () => ["prs", "config"] },
   /** Every enabled server, or only `server`. */
   sync: { input: z.object({ server: z.string().min(1).max(100).optional() }), output: ok, invalidates: () => ["prs", "servers", "conversation"] },
   /** Each server's syncs of the last three hours, its last failed sync in full and its failures of the last week. */
@@ -868,6 +975,8 @@ export const rpcContract = defineContract({
   /** Stop showing a review that failed to post. */
   clearPost: { input: z.object({ id: z.number().int() }), output: prOut, invalidates: PRS },
   discardDraft: { input: z.object({ key, draftId: z.number().int() }), output: prOut, invalidates: PRS },
+  /** Run auto post's checks on a live draft again, such as after the verifier failed. Never posts. */
+  checkDraft: { input: z.object({ key, draftId: z.number().int() }), output: prOut, invalidates: PRS },
   /** Undo a discard. */
   restoreDraft: { input: z.object({ key, draftId: z.number().int() }), output: prOut, invalidates: PRS },
   reply: { input: z.object({ key, thread: z.string().min(1).max(300), body }), output: ok, invalidates: CONVERSATION },

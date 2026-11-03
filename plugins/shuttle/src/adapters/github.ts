@@ -5,7 +5,7 @@ import type { CheckCounts, CheckRun, CheckState, FileChange, MergeMethod, MergeO
 import { failureKind } from "../failures";
 import { linkFor } from "../keys";
 import type { Activity, ActivityItem, ActivityState, EditOptions, PrSummary } from "../model";
-import { AdapterError, changeOperation, type ActivityOptions, type Adapter, type CheckInfo, type CommitInfo, type IssueInfo, type ListOptions, type ListResult, type MergeInput, type PrRead, type ReviewComment, type ReviewPost, type ReviewPosted } from "./adapter";
+import { AdapterError, changeOperation, type ActivityOptions, type Adapter, type CheckInfo, type CommitInfo, type IssueInfo, type ListOptions, type ListResult, type MergeInput, type PrFile, type PrRead, type ReviewComment, type ReviewPost, type ReviewPosted } from "./adapter";
 import { fillCommand, outputTail, runProcess, shellQuote, tail, type RunResult, type Runner } from "./exec";
 
 const GH_TIMEOUT_MS = 45_000;
@@ -932,6 +932,25 @@ export class GithubAdapter implements Adapter {
     if (input.subject) args.push("--subject", input.subject);
     await this.gh("merge", args, signal);
     return { merged: !input.auto };
+  }
+
+  async files(repo: string, number: number, signal?: AbortSignal): Promise<PrFile[]> {
+    const out = await this.gh("files", ["api", ...this.hostArgs(), "--paginate", `repos/${repo}/pulls/${number}/files?per_page=100`, "--jq", ".[] | {path: .filename, patch: .patch}"], signal);
+    const row = z.object({ path: z.string(), patch: z.string().nullable().optional() });
+    return out.split("\n").filter((line) => line.trim()).map((line) => {
+      const parsed = row.safeParse(JSON.parse(line));
+      if (!parsed.success) throw new AdapterError("files", `gh printed a file in the wrong shape: ${tail(line, 1, 200)}`);
+      return { path: parsed.data.path, patch: parsed.data.patch ?? null };
+    });
+  }
+
+  async fileAt(repo: string, ref: string, path: string, signal?: AbortSignal): Promise<string | null> {
+    const encoded = path.split("/").map(encodeURIComponent).join("/");
+    const args = ["api", ...this.hostArgs(), "-H", "Accept: application/vnd.github.raw", `repos/${repo}/contents/${encoded}?ref=${encodeURIComponent(ref)}`];
+    const result = await this.call("file", args, signal);
+    if (result.code === 0) return result.stdout;
+    if (/\b404\b|Not Found/u.test(`${result.stderr}\n${result.stdout}`)) return null;
+    throw this.failure("file", result, args);
   }
 
   async commit(repo: string, sha: string, signal?: AbortSignal): Promise<CommitInfo> {

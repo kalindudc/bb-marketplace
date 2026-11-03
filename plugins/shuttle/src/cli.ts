@@ -263,6 +263,29 @@ export function createCli(shuttle: Shuttle): PluginCliRegistration {
             return out(result.revived ? `Brought review thread ${result.threadId} back from the archive for ${known.key}.` : `Started the review of ${known.key} in thread ${result.threadId}.`);
           }),
       }),
+      gate: cliCommand({
+        summary: "Run auto post's checks on a PR's AI review draft now and print the decision; shadow mode never posts",
+        positionals: [PR],
+        options: { json },
+        run: ({ options, positionals }) =>
+          guarded(async () => {
+            const known = await shuttle.lookup(positionals.pr);
+            const live = shuttle.detail(known.key).draft;
+            if (live === null) throw new PluginCliError(`${known.key} has no AI review draft to check`);
+            await shuttle.checkDraft(known.key, live.id);
+            const gate = shuttle.detail(known.key).draft?.gate ?? null;
+            if (options.json) return out(toJson(gate));
+            if (gate === null) return out(`Auto post did not check the draft on ${known.key}; see bb shuttle show ${known.key} for its activity.`);
+            const lines = [`Auto post (shadow) would ${gate.decision === "post" ? `post ${gate.posting.length} finding${gate.posting.length === 1 ? "" : "s"}` : "hold the draft"} on ${known.key}, in ${(gate.ms / 1000).toFixed(1)}s. Nothing was posted.`];
+            for (const reason of gate.reasons) lines.push(`  held: ${reason}`);
+            for (const finding of gate.findings) {
+              const failed = finding.checks.find((check) => !check.ok);
+              const scores = finding.holds === null ? "" : ` (holds ${finding.holds.toFixed(2)}, worth ${finding.worth?.toFixed(2)})`;
+              lines.push(`  ${finding.id}: ${gate.posting.includes(finding.id) ? "would post" : failed ? `held, ${failed.check}: ${failed.reason}` : "passed"}${scores}`);
+            }
+            return out(lines.join("\n"));
+          }),
+      }),
       sync: cliCommand({
         summary: "Sync every server now, or one with --server, run due auto reviews and check watched PRs",
         options: { server: { type: "string", description: "Only this server, by id." }, json },

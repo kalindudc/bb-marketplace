@@ -34,6 +34,7 @@ export function registerRpc(bb: BbPluginApi, shuttle: Shuttle): void {
     lookup: ({ query }) => refusing(async () => ({ pr: await shuttle.lookup(query) })),
     activity: ({ limit }) => refusing(() => ({ events: shuttle.activity(limit) })),
     insights: ({ range }) => refusing(() => shuttle.insights(range)),
+    autoPostInsights: ({ range }) => refusing(() => shuttle.autoPostInsights(range)),
     // A sync can take a minute on a slow server; the page follows it through overview.syncing.
     sync: ({ server }) => refusing(() => {
       if (server !== undefined && !shuttle.server(server)) throw new ShuttleError(`no server called ${server}`);
@@ -98,6 +99,7 @@ export function registerRpc(bb: BbPluginApi, shuttle: Shuttle): void {
     retryPost: ({ id }) => refusing(() => shuttle.retryPost(id)),
     clearPost: ({ id }) => refusing(() => ({ pr: shuttle.clearPost(id) })),
     discardDraft: ({ key, draftId }) => refusing(async () => ({ pr: await shuttle.discardDraft(key, draftId) })),
+    checkDraft: ({ key, draftId }) => refusing(async () => ({ pr: await shuttle.checkDraft(key, draftId) })),
     restoreDraft: ({ key, draftId }) => refusing(async () => ({ pr: await shuttle.restoreDraft(key, draftId) })),
     reply: ({ key, thread, body }) => refusing(async () => {
       await shuttle.reply(key, thread, body);

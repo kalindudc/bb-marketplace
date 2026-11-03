@@ -59,6 +59,8 @@ const EVENT_LOOKS: Record<string, Look> = {
   handled: { icon: "UserRound", tone: "neutral" },
   edit: { icon: "Edit", tone: "neutral" },
   config: { icon: "Settings", tone: "neutral" },
+  gate: { icon: "Eye", tone: "info" },
+  gate_failed: { icon: "AlertTriangle", tone: "warn" },
 };
 const PLAIN_LOOK: Look = { icon: "ListView", tone: "neutral" };
 

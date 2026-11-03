@@ -115,7 +115,7 @@ export async function startReview(ctx: Ctx, input: ReviewInput, trigger: "auto" 
   // A new review makes the last one's unposted draft out of date.
   const stale = ctx.store.liveDraft(pr.id);
   // One already queued to post is the user's choice, and still posts.
-  if (stale && ctx.store.activePostOfDraft(stale.id) === null) ctx.store.setDraftState(stale.id, "discarded");
+  if (stale && ctx.store.activePostOfDraft(stale.id) === null) ctx.store.setDraftState(stale.id, "discarded", null, "superseded");
   ctx.store.setSnooze(pr.id, null, null);
   const why = trigger === "auto" ? "Auto review" : "Review";
   const back = revived ? ", brought back from the archive" : "";
@@ -138,7 +138,7 @@ async function reviewSectionId(ctx: Ctx, pr: PrRow): Promise<string | null> {
 
 /** Added to every review prompt, whatever the preset says, so the draft comes back to Shuttle to post. */
 export const DRAFT_PROMPT =
-  "When your review is ready, call the shuttle_review_draft tool for {key} with a short summary, the verdict you suggest (comment, approve or changes) and each finding: its severity (high, medium, low or nit), the file path, the line in the new version of the file, and the comment as you would post it. Put context that is for me alone, not the author, in notes: for example what the PR is for, whether it gets there, and whether it is worth doing at all. Shuttle shows the draft and its notes to me to choose what to post and never posts the notes; do not post anything on the pull request yourself. Shuttle counts the review as running until then, even while you wait on child threads such as critics; if it ends without a draft, call shuttle_review_done for {key} and say why.";
+  "When your review is ready, call the shuttle_review_draft tool for {key} with a short summary, the verdict you suggest (comment, approve or changes) and each finding: its severity (high, medium, low or nit), the file path, the line in the new version of the file, and the comment as you would post it. Put context that is for me alone, not the author, in notes: for example what the PR is for, whether it gets there, and whether it is worth doing at all. For each finding, also give its evidence (the lines you relied on, quoted exactly as they are at the head you read) and, when critics voted on it, their votes; and give an assessment of the PR as a whole: its risk, and concerns such as a description that does not match the diff. Shuttle shows the draft and its notes to me to choose what to post and never posts the notes; do not post anything on the pull request yourself. Shuttle counts the review as running until then, even while you wait on child threads such as critics; if it ends without a draft, call shuttle_review_done for {key} and say why.";
 
 export function renderPromptFor(ctx: Ctx, pr: PrRow, preset: Preset, extra: { skill?: string; note?: string }): string {
   const vars = promptVars(ctx, pr, extra);

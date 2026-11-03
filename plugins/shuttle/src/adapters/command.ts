@@ -4,7 +4,7 @@ import { OPERATIONS, type ListOperation, type Operation, type ServerConfig } fro
 import { linkFor } from "../keys";
 import type { MergeOptions, PrChange } from "../contract";
 import { activitySchema, editOptionsSchema, mergeOptionsInputSchema, prSummarySchema, reviewPostedSchema, toSummary, whoamiSchema, type Activity, type EditOptions, type PrSummary } from "../model";
-import { AdapterError, changeOperation, type ActivityOptions, type Adapter, type ListOptions, type ListResult, type MergeInput, type ReviewPost, type ReviewPosted } from "./adapter";
+import { AdapterError, changeOperation, type ActivityOptions, type Adapter, type ListOptions, type ListResult, type MergeInput, type PrFile, type ReviewPost, type ReviewPosted } from "./adapter";
 import { fillCommand, outputTail, runProcess, shellQuote, tail, type RunResult, type Runner } from "./exec";
 import { SCRIPTS_DIR } from "../scripts";
 
@@ -172,6 +172,17 @@ export class CommandAdapter implements Adapter {
 
   async resolve(repo: string, number: number, thread: string, resolved: boolean, signal?: AbortSignal): Promise<void> {
     await this.exec("resolve", { ...this.refEnv(repo, number), SHUTTLE_THREAD: thread, SHUTTLE_RESOLVED: flag(resolved) }, signal);
+  }
+
+  async files(repo: string, number: number, signal?: AbortSignal): Promise<PrFile[]> {
+    const file = z.object({ path: z.string().min(1), patch: z.string().nullable().optional() });
+    const value = this.parse("files", z.union([z.array(file).max(5000), z.object({ files: z.array(file).max(5000) })]), await this.json("files", this.refEnv(repo, number), signal));
+    return (Array.isArray(value) ? value : value.files).map((row) => ({ path: row.path, patch: row.patch ?? null }));
+  }
+
+  async fileAt(repo: string, ref: string, path: string, signal?: AbortSignal): Promise<string | null> {
+    const value = this.parse("file", z.object({ content: z.string().nullable() }), await this.json("file", { SHUTTLE_REPO: repo, SHUTTLE_REF: ref, SHUTTLE_PATH: path }, signal));
+    return value.content;
   }
 
   readCommand(repo: string, number: number, url: string): string {

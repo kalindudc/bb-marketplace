@@ -3,6 +3,7 @@ import { adapterFor, type Adapter } from "./adapters";
 import { runProcess, sleep, type Runner } from "./adapters/exec";
 import { configChanges, configFromToml, configToToml, ConfigError, parseConfig, serverSchema, type Config, type ServerConfig, type WatchMode } from "./config";
 import type {
+  AutoPostInsights,
   AgentMode, AgentTarget, Area, BoardDetail, BoardSummary, ConversationItem, EventView, InboxRule, InboxRuleKind, InboxView, InsightsView, LinkRole, MergeMethod, MergeOptions, MergeView, Outcome, Overview, LinkCard, PostFinding, PrChange, PrDetails,
   PostView, PrView, ReviewDraft, ReviewInput, ServerStatus, SyncHistory, SyncRun, SyncStep, SyncStepName, TestResult, ThreadOption, Verdict,
 } from "./contract";
@@ -15,6 +16,8 @@ import { FastLane, type BackOffKind } from "./fast-lane";
 import { cancelMerge, clearMerge, failInterruptedMerges, mergeInputOf, mergeView, queueMerge, recentMerges, retryMerge } from "./merges";
 import { addRule, dismiss, inbox as readInbox, markSeen, removeRule, snooze } from "./inbox";
 import { insights, INSIGHTS_SINCE, snapshotCounts } from "./insights";
+import { autoPostRepo, gateDraft } from "./gate";
+import { autoPostInsights } from "./shadow";
 import { feedbackSignature, phaseOf } from "./next";
 import { errText, ShuttleError, type Ctx } from "./ctx";
 import type { EventRow, MergeRow, PostRow, ServerRow, Store, SyncRunRow } from "./db/store";
@@ -81,7 +84,7 @@ export class Shuttle implements Ctx {
   readonly now: () => number;
   readonly settings: () => Settings;
   private readonly runner?: Runner;
-  private readonly lifetime?: AbortSignal;
+  readonly lifetime?: AbortSignal;
   private readonly adapters = new Map<string, { json: string; adapter: Adapter }>();
   private projectCache: { at: number; projects: ProjectInfo[] } | null = null;
   /** Each server's running sync, by server id: its lists, then its auto reviews and watched PRs. */
@@ -312,6 +315,21 @@ export class Shuttle implements Ctx {
 
   insights(range: InsightsView["range"]): InsightsView {
     return insights(this, range);
+  }
+
+  autoPostInsights(range: AutoPostInsights["range"]): AutoPostInsights {
+    return autoPostInsights(this, range);
+  }
+
+  /** Runs auto post's checks on a live draft again and waits for them. Never posts. */
+  async checkDraft(key: string, draftId: number): Promise<PrView> {
+    const pr = requirePr(this, key);
+    const draft = this.store.draftById(draftId);
+    if (!draft || draft.pr_id !== pr.id) throw new ShuttleError("That draft is not this PR's");
+    if (draft.state !== "draft") throw new ShuttleError(`That draft was already ${draft.state}`);
+    if (autoPostRepo(this.config(), pr.repo) === null) throw new ShuttleError(`Auto post is off for ${pr.repo}; set it to shadow in Settings › Automations first`);
+    await gateDraft(this, draft.id);
+    return toView(this, this.store.prById(pr.id)!);
   }
 
   view(key: string): PrView {

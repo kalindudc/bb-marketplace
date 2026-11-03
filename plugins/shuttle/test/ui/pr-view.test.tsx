@@ -699,8 +699,8 @@ describe("the PR view of someone else's PR", () => {
     await waitFor(() => expect(callsTo(slot, "queueReview")).toEqual([{
       key: theirs.key, verdict: "comment", body: "Two things.", draftId: 7,
       findings: [
-        { path: "src/header/actions.tsx", line: 88, body: "The compact prop never reaches the overflow menu." },
-        { path: "src/header/README.md", line: null, body: "The README names the old prop." },
+        { id: "a", path: "src/header/actions.tsx", line: 88, body: "The compact prop never reaches the overflow menu." },
+        { id: "c", path: "src/header/README.md", line: null, body: "The README names the old prop." },
       ],
     }]));
     await waitFor(() => expect(toast).toHaveBeenCalledWith("Queued your review of app#2311622: review with 2 comments. Shuttle posts it to Lab in the background.", { id: "shuttle-post-3" }));
@@ -720,6 +720,41 @@ describe("the PR view of someone else's PR", () => {
     const sent = JSON.stringify(callsTo(slot, "queueReview")[0]);
     expect(sent).toContain("Thanks, this unblocks the header.");
     expect(sent).not.toContain("unblock the compact header");
+  });
+
+  it("shows what auto post would do with the draft in shadow mode, finding by finding, and checks it again", async () => {
+    const ready = { ...theirs, draft: { id: 7, findings: 3, at: Date.now() }, next: next({ kind: "post", tone: "info", label: "AI review ready" }) };
+    const check = (id: string, ok: boolean, reason: string) => ({ check: "accuracy" as const, ok, reason: `${reason}${id}` });
+    const gate = {
+      mode: "shadow" as const, decision: "post" as const, reasons: [], posting: ["a"], at: Date.now() - 60_000, ms: 4200,
+      findings: [
+        { id: "a", pass: true, checks: [check("a", true, "3 of 3 critics kept it ")], holds: 0.91, worth: 0.82, why: "The prop is dropped." },
+        { id: "b", pass: false, checks: [check("b", false, "no critic votes ")], holds: null, worth: null, why: null },
+      ],
+    };
+    const { slot, view } = await prPage(ready, { checkDraft: () => ({ pr: ready }) }, { draft: draft({ gate }) });
+    const card = await find(tab(await view(), "review"), "[data-draft]");
+    const note = within(card).getByRole("region", { name: "Auto post" });
+    expect(note.textContent).toContain("Auto post would post 1 finding");
+    expect(note.textContent).toContain("shadow mode, nothing is posted");
+    expect(card.querySelector("[data-finding='a'] [data-gate-finding='post']")!.textContent).toBe("would post");
+    const held = card.querySelector("[data-finding='b'] [data-gate-finding='held']")!;
+    expect(held.textContent).toBe("held: no critic votes b");
+    expect(card.querySelector("[data-finding='a'] [data-gate-finding]")!.getAttribute("title")).toContain("Verifier: holds 0.91, worth posting 0.82. The prop is dropped.");
+    fireEvent.click(within(note).getByRole("button", { name: "Check again" }));
+    await waitFor(() => expect(callsTo(slot, "checkDraft")).toEqual([{ key: theirs.key, draftId: 7 }]));
+  });
+
+  it("says why auto post would hold a draft", async () => {
+    const ready = { ...theirs, draft: { id: 7, findings: 3, at: Date.now() }, next: next({ kind: "post", tone: "info", label: "AI review ready" }) };
+    const passed = { id: "a", pass: true, checks: [{ check: "safety" as const, ok: true, reason: "fine" }], holds: null, worth: null, why: null };
+    const gate = { mode: "shadow" as const, decision: "hold" as const, reasons: ["the reviewer rated the PR high risk", "approvals are not auto-posted yet"], posting: [], at: Date.now(), ms: 10, findings: [passed] };
+    const { view } = await prPage(ready, {}, { draft: draft({ gate }) });
+    const note = within(await find(tab(await view(), "review"), "[data-draft]")).getByRole("region", { name: "Auto post" });
+    expect(note.getAttribute("data-gate")).toBe("hold");
+    expect(note.textContent).toContain("Auto post would hold this draft");
+    expect([...note.querySelectorAll("li")].map((li) => li.textContent)).toEqual(["the reviewer rated the PR high risk", "approvals are not auto-posted yet"]);
+    expect(document.querySelector("[data-finding='a'] [data-gate-finding='passed']")!.textContent).toBe("passed, draft held");
   });
 
   it("shows no notes box for a draft without notes", async () => {

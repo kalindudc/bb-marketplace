@@ -228,7 +228,7 @@ function CommandTable({ operations, commands, onChange }: { operations: readonly
             </td>
             <td className="py-1.5">
               <input aria-label={`${op} command`} className={`${FIELD_CODE} w-full`} value={commands[op]}
-                placeholder={op === "view" ? "Required" : MANAGE_OPERATIONS.includes(op) || CONVERSATION_OPERATIONS.includes(op) ? "Leave empty if the server can't" : "Leave empty to skip this list"}
+                placeholder={op === "view" ? "Required" : MANAGE_OPERATIONS.includes(op) || CONVERSATION_OPERATIONS.includes(op) || op === "files" || op === "file" ? "Leave empty if the server can't" : "Leave empty to skip this list"}
                 onChange={(event) => onChange({ ...commands, [op]: event.target.value })} />
             </td>
           </tr>

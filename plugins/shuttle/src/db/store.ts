@@ -148,6 +148,14 @@ export interface DraftRow {
   created_at: number;
   posted_at: number | null;
   posted_findings: number | null;
+  /** JSON Assessment: the reviewer's view of the PR as a whole. */
+  assessment: string | null;
+  /** JSON Gate: auto post's decision in shadow mode. */
+  gate: string | null;
+  /** JSON FindingOutcome[]: what the user did with each finding when they posted the draft. */
+  outcome: string | null;
+  /** Who discarded it: the user, or a newer draft or review that replaced it. */
+  discard_reason: "user" | "superseded" | null;
 }
 
 export interface MyReviewRow {
@@ -811,13 +819,13 @@ export class Store {
     return this.db.prepare("SELECT * FROM outcomes WHERE at >= ?").all(at) as OutcomeRow[];
   }
 
-  addDraft(row: Pick<DraftRow, "pr_id" | "thread_id" | "review_id" | "head" | "summary" | "verdict" | "findings" | "notes">): DraftRow {
+  addDraft(row: Pick<DraftRow, "pr_id" | "thread_id" | "review_id" | "head" | "summary" | "verdict" | "findings" | "notes"> & { assessment?: string | null }): DraftRow {
     return this.tx(() => {
       // One live draft per PR: a newer one from the same review replaces it.
-      this.db.prepare("UPDATE review_drafts SET state = 'discarded' WHERE pr_id = ? AND state = 'draft'").run(row.pr_id);
+      this.db.prepare("UPDATE review_drafts SET state = 'discarded', discard_reason = 'superseded' WHERE pr_id = ? AND state = 'draft'").run(row.pr_id);
       const result = this.db
-        .prepare("INSERT INTO review_drafts (pr_id, thread_id, review_id, head, summary, verdict, findings, notes, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?)")
-        .run(row.pr_id, row.thread_id, row.review_id, row.head, row.summary, row.verdict, row.findings, row.notes, this.now());
+        .prepare("INSERT INTO review_drafts (pr_id, thread_id, review_id, head, summary, verdict, findings, notes, assessment, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?)")
+        .run(row.pr_id, row.thread_id, row.review_id, row.head, row.summary, row.verdict, row.findings, row.notes, row.assessment ?? null, this.now());
       return this.draftById(Number(result.lastInsertRowid))!;
     });
   }
@@ -830,9 +838,23 @@ export class Store {
     return (this.db.prepare("SELECT * FROM review_drafts WHERE pr_id = ? AND state = 'draft' ORDER BY id DESC LIMIT 1").get(prId) as DraftRow | undefined) ?? null;
   }
 
-  setDraftState(id: number, state: DraftRow["state"], postedFindings: number | null = null): void {
-    this.db.prepare("UPDATE review_drafts SET state = ?, posted_at = CASE WHEN ? = 'posted' THEN ? ELSE posted_at END, posted_findings = COALESCE(?, posted_findings) WHERE id = ?")
-      .run(state, state, this.now(), postedFindings, id);
+  /** A discard says who discarded it; any other state clears that. */
+  setDraftState(id: number, state: DraftRow["state"], postedFindings: number | null = null, reason: "user" | "superseded" | null = null): void {
+    this.db.prepare("UPDATE review_drafts SET state = ?, posted_at = CASE WHEN ? = 'posted' THEN ? ELSE posted_at END, posted_findings = COALESCE(?, posted_findings), discard_reason = ? WHERE id = ?")
+      .run(state, state, this.now(), postedFindings, state === "discarded" ? reason : null, id);
+  }
+
+  setDraftGate(id: number, gate: string): void {
+    this.db.prepare("UPDATE review_drafts SET gate = ? WHERE id = ?").run(gate, id);
+  }
+
+  setDraftOutcome(id: number, outcome: string): void {
+    this.db.prepare("UPDATE review_drafts SET outcome = ? WHERE id = ?").run(outcome, id);
+  }
+
+  /** Drafts auto post decided about, oldest first. */
+  gatedDraftsSince(at: number): DraftRow[] {
+    return this.db.prepare("SELECT * FROM review_drafts WHERE gate IS NOT NULL AND created_at >= ? ORDER BY created_at, id").all(at) as DraftRow[];
   }
 
   hasDraftSince(prId: number, at: number): boolean {

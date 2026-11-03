@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { experimental_Icon as Icon, experimental_usePluginId, Markdown, UrlLink } from "@get-bb/plugin-sdk/app";
-import type { MyReview, PostView, PrView, ReviewDraft, Severity } from "../contract";
+import type { GateFinding, MyReview, PostView, PrView, ReviewDraft, Severity } from "../contract";
 import { postText } from "../next";
 import { NextButtons, useActions } from "./actions";
 import { BUTTON, BUTTON_GHOST, BUTTON_PRIMARY_LARGE, FIELD, FitTextarea, Segmented } from "./common";
+import { useShuttleMutation } from "./data";
 import { ago, plural, settingsHref } from "./format";
 import { isLive } from "./pills";
 import { reviewInQueue, useQueueReview } from "./posts";
@@ -22,6 +23,41 @@ const LABEL = "mb-1.5 mt-4 text-[12.5px] font-semibold text-foreground";
 
 const location = (path: string, line: number | null) => `${path.split("/").slice(-2).join("/")}${line === null ? "" : `:${line}`}`;
 
+const CHECK_NAMES = { safety: "Safety", accuracy: "Accuracy", quality: "Quality", alignment: "Alignment" } as const;
+
+/** What auto post made of one finding, as a chip beside it, with every check in its tooltip. */
+function GateChip({ finding, posting }: { finding: GateFinding; posting: boolean }) {
+  const failed = finding.checks.find((check) => !check.ok);
+  const scores = finding.holds === null ? "" : `\nVerifier: holds ${finding.holds.toFixed(2)}, worth posting ${finding.worth?.toFixed(2) ?? "?"}${finding.why ? `. ${finding.why}` : ""}`;
+  const title = `${finding.checks.map((check) => `${check.ok ? "\u2713" : "\u2717"} ${CHECK_NAMES[check.check]}: ${check.reason}`).join("\n")}${scores}`;
+  const text = posting ? "would post" : failed ? `held: ${failed.reason}` : "passed, draft held";
+  const tone = posting ? "border-success/40 text-success" : failed ? "border-border text-muted-foreground" : "border-warning/40 text-warning-text";
+  return <span data-gate-finding={posting ? "post" : failed ? "held" : "passed"} title={title} className={`min-w-0 truncate rounded border px-1 text-[10.5px] ${tone}`}>{text}</span>;
+}
+
+/** Auto post's shadow decision on the draft: what it would do and why. It never posts. */
+function GateNote({ pr, draft }: { pr: PrView; draft: ReviewDraft }) {
+  const check = useShuttleMutation("checkDraft");
+  const gate = draft.gate;
+  if (gate === null) return null;
+  const post = gate.decision === "post";
+  return (
+    <section aria-label="Auto post" data-gate={gate.decision} className={`mt-3 rounded-md border px-3 py-2 text-xs ${post ? "border-success/40 bg-success/5" : "border-border bg-card"}`}>
+      <div className="flex flex-wrap items-center gap-1.5 text-[12.5px] font-semibold text-foreground">
+        <Icon name="Eye" className="size-3.5 text-muted-foreground" aria-hidden />
+        Auto post would {post ? `post ${plural(gate.posting.length, "finding")}` : "hold this draft"}
+        <span className="font-normal text-muted-foreground">· shadow mode, nothing is posted · checked {ago(gate.at)}</span>
+        <button type="button" className="ml-auto cursor-pointer text-xs font-normal text-primary disabled:opacity-60" disabled={check.isPending} onClick={() => void check.run({ key: pr.key, draftId: draft.id })}>
+          {check.isPending ? "Checking\u2026" : "Check again"}
+        </button>
+      </div>
+      {!post && gate.reasons.length > 0 && (
+        <ul className="mt-1 list-disc pl-5 text-muted-foreground">{gate.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
+      )}
+    </section>
+  );
+}
+
 /** An AI draft: tick the findings to post, edit their text, pick the verdict, and post one review. */
 function DraftReview({ pr, draft }: { pr: PrView; draft: ReviewDraft }) {
   const actions = useActions();
@@ -39,10 +75,11 @@ function DraftReview({ pr, draft }: { pr: PrView; draft: ReviewDraft }) {
   const set = (id: string, patch: Partial<(typeof findings)[number]>) => setFindings((current) => current.map((finding) => (finding.id === id ? { ...finding, ...patch } : finding)));
   const all = ticked.length === findings.length;
   const inQueue = reviewInQueue(pr);
+  const gated = new Map((draft.gate?.findings ?? []).map((finding) => [finding.id, finding]));
 
   const post = () => submit.run(pr, {
     verdict, body: summary.trim(), draftId: draft.id, ...(stale ? { staleOk } : {}),
-    findings: ticked.map((finding) => ({ path: finding.path, line: finding.line, body: finding.body.trim() })),
+    findings: ticked.map((finding) => ({ id: finding.id, path: finding.path, line: finding.line, body: finding.body.trim() })),
   });
 
   return (
@@ -72,6 +109,7 @@ function DraftReview({ pr, draft }: { pr: PrView; draft: ReviewDraft }) {
           </div>
         </div>
       )}
+      <GateNote pr={pr} draft={draft} />
       {draft.notes !== null && (
         <section aria-label="For you" data-draft-notes className="mt-3 rounded-md border border-border bg-card px-3 py-2">
           <div className="mb-1 flex items-center gap-1.5 text-[12.5px] font-semibold text-foreground">
@@ -102,6 +140,7 @@ function DraftReview({ pr, draft }: { pr: PrView; draft: ReviewDraft }) {
                 <span title={`${finding.path}${finding.line === null ? "" : `:${finding.line}`}`} className="truncate rounded border border-border bg-background px-1 font-mono text-[11px] text-muted-foreground">
                   {location(finding.path, finding.line)}
                 </span>
+                {gated.get(finding.id) && <GateChip finding={gated.get(finding.id)!} posting={draft.gate?.posting.includes(finding.id) ?? false} />}
               </div>
               <FitTextarea aria-label={`Text of the finding at ${location(finding.path, finding.line)}`} rows={1} value={finding.body}
                 onChange={(event) => set(finding.id, { body: event.target.value })}

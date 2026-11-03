@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, waitFor, within } from "@testing-library/react";
 import type { InsightsView } from "../../src/contract";
 import { formatRoute } from "../../src/ui/route";
-import { callsTo, CAN_ALL, DAY, event, find, HOUR, insights, lastNavigation, mine, page, unmountAll } from "./helpers";
+import { autoPostInsights, callsTo, CAN_ALL, config, DAY, event, find, HOUR, insights, lastNavigation, mine, page, unmountAll } from "./helpers";
 
 const toasts = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn() }));
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), toasts) }));
@@ -104,6 +104,43 @@ describe("Insights", () => {
     const view = await find(slot.container, `[data-detail="${waiting.key}"]`);
     const box = await waitFor(() => within(view).getByRole("textbox", { name: "Comment on terraform-the-cloud#74066" }) as HTMLTextAreaElement);
     await waitFor(() => expect(box.value).toBe("@uzo could one of you take a look when you have a moment? It is a M change: +86 −12."));
+  });
+
+  it("shows auto post's shadow record per repository, why drafts were held, and the latest decisions", async () => {
+    const record = autoPostInsights({
+      target: 0.9,
+      repos: [{
+        repo: "Shopify/terraform-the-cloud", mode: "shadow", drafts: 6, wouldPost: 3, agreed: 9, edited: 2, against: 1, pending: 2, missed: 1, held: 4,
+        precision: 0.9, lowerBound: 0.596, needed: 41, approvals: { drafts: 12, posted: 9, discarded: 1 },
+      }],
+      reasons: [{ check: "draft", reason: "approvals are not auto-posted yet", count: 12 }, { check: "accuracy", reason: "no critic votes", count: 3 }],
+      points: [{ holds: 0.9, worth: 0.8, label: "agreed" }, { holds: 0.75, worth: 0.72, label: "against" }],
+      verifier: { runs: 11, failures: 1, medianMs: 8400 },
+      recent: [{ draftId: 4, key: waiting.key, display: "terraform-the-cloud#74066", title: "Move the WAF rules", at: Date.now() - HOUR, verdict: "comment", decision: "post", findings: 3, posting: 2, outcome: "posted", agreed: 2, against: 0, reason: null }],
+    });
+    const { slot } = await insightsPage("insights/autopost", full, { autoPostInsights: ({ range }: { range: "7d" | "30d" | "90d" }) => ({ ...record, range }), getConfig: () => ({ config: config() }) });
+    const card = await find(slot.container, "[data-auto-post-repo='Shopify/terraform-the-cloud']");
+    expect([...card.querySelectorAll("[data-kpi]")].map((tile) => tile.textContent)).toEqual([
+      "Precision90%9 of 10 decided findings", "Proven at least60%95% lower bound, target 90%", "Missed1held findings you posted", "Waiting on you2findings it would post",
+    ]);
+    expect(card.querySelector("[data-proof]")!.textContent).toContain("41 more agreeing findings in a row would prove the target.");
+    expect(card.querySelector("[data-confusion]")!.textContent).toContain("Would post9 (2 edited)12");
+    expect(card.textContent).toContain("12 drafts suggested approving; you posted 9 and discarded 1.");
+    expect(slot.container.querySelectorAll("[data-chart='scatter'] circle")).toHaveLength(2);
+    expect(slot.container.querySelector("[data-hold-reasons]")!.textContent).toContain("approvals are not auto-posted yet12");
+    expect(callsTo(slot, "insights")).toEqual([]);
+    expect(callsTo(slot, "autoPostInsights")).toEqual([{ range: "30d" }]);
+    const recent = slot.container.querySelector("[data-recent-decisions]") as HTMLElement;
+    expect(recent.textContent).toContain("Would post 2 of 3");
+    fireEvent.click(within(recent).getByRole("button", { name: "terraform-the-cloud#74066" }));
+    expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: formatRoute({ view: "pr", key: waiting.key }) } });
+  });
+
+  it("says how to turn auto post on when no repository is in shadow mode", async () => {
+    const { slot } = await insightsPage("insights/autopost", full, { getConfig: () => ({ config: config() }) });
+    const empty = await find(slot.container, "[data-auto-post-empty]");
+    expect(empty.textContent).toContain("Auto post is off");
+    expect(empty.textContent).toContain("Settings › Automations › Auto post");
   });
 
   it("keeps the old Activity page as the Automation log", async () => {

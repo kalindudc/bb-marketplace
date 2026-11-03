@@ -1,16 +1,38 @@
 // AI review drafts: a review thread hands Shuttle its findings, and the user chooses what to post.
 import { AdapterError } from "./adapters/adapter";
-import type { Finding, PostFinding, ReviewDraft, Severity, Verdict } from "./contract";
+import { type Assessment, type Consensus, type Evidence, type Finding, type PostFinding, type ReviewDraft, type Severity, type Verdict } from "./contract";
 import { errText, ShuttleError, type Ctx } from "./ctx";
 import type { DraftRow, PrRow } from "./db/store";
 import { parseKey } from "./keys";
+import { autoPostRepo, gateDraft, parseGate } from "./gate";
 import { fetchPr, lookup, requirePr, shortKey } from "./prs";
 
 export interface DraftInput {
   summary: string;
   verdict: Verdict;
-  findings: Array<{ severity: Severity; path: string; line?: number | null; body: string }>;
+  findings: Array<{ severity: Severity; path: string; line?: number | null; body: string; evidence?: Evidence[]; consensus?: Consensus | null; category?: string }>;
   notes?: string;
+  assessment?: Assessment;
+}
+
+/** What the user did with one finding of a draft they posted. */
+export interface FindingOutcome {
+  id: string;
+  outcome: "kept" | "edited" | "dropped";
+}
+
+/**
+ * Kept when posted as drafted, edited when posted with other text, dropped when not posted. Null when no posted
+ * finding names its draft finding, as from an older client: then nothing is known per finding, and nothing is recorded.
+ */
+export function outcomesOf(drafted: readonly Finding[], posted: readonly PostFinding[]): FindingOutcome[] | null {
+  if (posted.length > 0 && posted.every((f) => f.id === undefined)) return null;
+  const byId = new Map(posted.filter((f) => f.id !== undefined).map((f) => [f.id!, f]));
+  return drafted.map((finding) => {
+    const post = byId.get(finding.id);
+    if (!post) return { id: finding.id, outcome: "dropped" };
+    return { id: finding.id, outcome: post.body.trim() === finding.body.trim() ? "kept" : "edited" };
+  });
 }
 
 export function draftView(ctx: Ctx, row: DraftRow): ReviewDraft {
@@ -27,6 +49,9 @@ export function draftView(ctx: Ctx, row: DraftRow): ReviewDraft {
     verdict: row.verdict,
     findings: JSON.parse(row.findings) as Finding[],
     notes: row.notes,
+    assessment: row.assessment ? (JSON.parse(row.assessment) as Assessment) : null,
+    // A gate stored by an older or newer Shuttle in another shape shows as not checked, never as a broken draft.
+    gate: parseGate(row.gate),
   };
 }
 
@@ -40,7 +65,12 @@ export async function saveDraft(ctx: Ctx, threadId: string, query: string, input
   if (latest && latest.thread_id !== threadId) {
     throw new ShuttleError(`a newer review of ${shortKey(ctx, pr)} runs in \u201c${ctx.store.threadTitle(latest.thread_id) ?? latest.thread_id}\u201d; this thread's draft is out of date`);
   }
-  const findings: Finding[] = input.findings.map((f, index) => ({ id: `f${index + 1}`, severity: f.severity, path: f.path, line: f.line ?? null, body: f.body }));
+  const findings: Finding[] = input.findings.map((f, index) => ({
+    id: `f${index + 1}`, severity: f.severity, path: f.path, line: f.line ?? null, body: f.body,
+    ...(f.evidence?.length ? { evidence: f.evidence } : {}),
+    ...(f.consensus ? { consensus: f.consensus } : {}),
+    ...(f.category ? { category: f.category } : {}),
+  }));
   const draft = ctx.store.addDraft({
     pr_id: pr.id,
     thread_id: threadId,
@@ -50,12 +80,15 @@ export async function saveDraft(ctx: Ctx, threadId: string, query: string, input
     verdict: input.verdict,
     findings: JSON.stringify(findings),
     notes: input.notes?.trim() || null,
+    assessment: input.assessment ? JSON.stringify(input.assessment) : null,
   });
   // The draft is what the review was for, whatever the thread does next.
   if (review?.state === "running") ctx.store.finishReview(review.id, "done", "draft");
   ctx.store.setSnooze(pr.id, null, null);
   ctx.store.addEvent("draft", `\u201c${ctx.store.threadTitle(threadId) ?? threadId}\u201d drafted a review of ${shortKey(ctx, pr)}: ${findings.length} finding${findings.length === 1 ? "" : "s"}, nothing posted.`, pr.id, threadId);
   ctx.port.publish();
+  // Auto post checks the draft in the background, so the review thread's call returns at once.
+  if (autoPostRepo(ctx.config(), pr.repo) !== null) void gateDraft(ctx, draft.id);
   return { pr, draft };
 }
 
@@ -128,7 +161,11 @@ export async function submitReview(ctx: Ctx, key: string, input: SubmitInput): P
   } catch (error) {
     refused(ctx, pr, error);
   }
-  if (draft) ctx.store.setDraftState(draft.id, "posted", input.findings.length);
+  if (draft) {
+    ctx.store.setDraftState(draft.id, "posted", input.findings.length);
+    const outcomes = outcomesOf(JSON.parse(draft.findings) as Finding[], input.findings);
+    if (outcomes !== null) ctx.store.setDraftOutcome(draft.id, JSON.stringify(outcomes));
+  }
   // What you reviewed is what the draft read, so new commits after it still bring the PR back.
   ctx.store.addMyReview({ pr_id: pr.id, verdict: input.verdict, head: draft?.head ?? pr.head, findings: input.findings.length });
   ctx.store.setSnooze(pr.id, null, null);
@@ -139,6 +176,7 @@ export async function submitReview(ctx: Ctx, key: string, input: SubmitInput): P
   return { pr: ctx.store.prById(pr.id)!, ...posted };
 }
 
+/** The user's own discard or restore of a draft; a draft replaced by a newer one is marked superseded instead. */
 export function setDraftState(ctx: Ctx, key: string, draftId: number, state: "discarded" | "draft"): PrRow {
   const pr = requirePr(ctx, key);
   const draft = ctx.store.draftById(draftId);
@@ -148,9 +186,9 @@ export function setDraftState(ctx: Ctx, key: string, draftId: number, state: "di
   ctx.store.tx(() => {
     if (state === "draft") {
       const live = ctx.store.liveDraft(pr.id);
-      if (live && live.id !== draft.id) ctx.store.setDraftState(live.id, "discarded");
+      if (live && live.id !== draft.id) ctx.store.setDraftState(live.id, "discarded", null, "superseded");
     }
-    ctx.store.setDraftState(draft.id, state);
+    ctx.store.setDraftState(draft.id, state, null, state === "discarded" ? "user" : null);
   });
   ctx.port.publish();
   return pr;

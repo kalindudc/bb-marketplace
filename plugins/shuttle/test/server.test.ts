@@ -42,6 +42,14 @@ describe("the plugin", () => {
     expect(cli, JSON.stringify(cli)).toMatchObject({ exitCode: 0 });
     const list = await behavior.runCli(["list", "--area", "mine"]);
     expect(list.stdout).toContain("forge:acme/app#1");
+    const gate = await behavior.runCli(["gate", "forge:acme/app#2"]);
+    expect(JSON.stringify(gate)).toContain("forge:acme/app#2 has no AI review draft to check");
+    expect(gate).toMatchObject({ exitCode: 1 });
+    const impossible = text(await harness.callAgentTool("shuttle_review_draft", {
+      pr: "forge:acme/app#2", summary: "s", verdict: "comment",
+      findings: [{ severity: "high", path: "a.go", line: 1, body: "b", consensus: { keep: 2, total: 1 } }],
+    }, { threadId: "thr_1", projectId: "proj_app" }).catch((error: unknown) => String(error)));
+    expect(impossible).toContain("keep cannot be more than total");
 
     const created = text(await harness.callAgentTool(
       "shuttle_board_create",

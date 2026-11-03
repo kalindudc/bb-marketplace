@@ -286,4 +286,9 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE reviews ADD COLUMN note TEXT`,
   // Whether the PR waits in the repository's own merge queue, such as GitHub's; NULL while the server has not said.
   `ALTER TABLE prs ADD COLUMN in_merge_queue INTEGER`,
+  // Auto post: the reviewer's view of the PR, the gate's decision, what the user did with each finding, and why a draft was discarded.
+  `ALTER TABLE review_drafts ADD COLUMN assessment TEXT`,
+  `ALTER TABLE review_drafts ADD COLUMN gate TEXT`,
+  `ALTER TABLE review_drafts ADD COLUMN outcome TEXT`,
+  `ALTER TABLE review_drafts ADD COLUMN discard_reason TEXT CHECK (discard_reason IN ('user', 'superseded'))`,
 ];

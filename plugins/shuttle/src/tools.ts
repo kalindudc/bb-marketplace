@@ -128,9 +128,37 @@ export function registerTools(bb: BbPluginApi, shuttle: Shuttle): void {
             path: z.string().trim().min(1).max(1000).describe("The file, relative to the repository root."),
             line: z.number().int().positive().nullable().optional().describe("The line in the new version of the file; leave out for the whole file."),
             body: z.string().trim().min(1).max(20_000).describe("The comment, as it would be posted."),
+            evidence: z
+              .array(
+                z.object({
+                  path: z.string().trim().min(1).max(1000),
+                  from: z.number().int().positive(),
+                  to: z.number().int().positive(),
+                  quote: z.string().min(1).max(4000).describe("The lines, copied exactly as they are at the head you read."),
+                }),
+              )
+              .max(5)
+              .optional()
+              .describe("Up to five excerpts of code the finding relies on, in any file of the repository. Shuttle checks each quote against the code before auto post may use the finding."),
+            consensus: z
+              .object({ keep: z.number().int().min(0).max(20), total: z.number().int().min(1).max(20) })
+              .refine((votes) => votes.keep <= votes.total, "keep cannot be more than total")
+              .nullable()
+              .optional()
+              .describe("When critics voted on the finding: how many kept it, out of the critics that voted. Leave out when no critics ran."),
+            category: z.string().trim().max(60).optional().describe("One or two words, such as correctness, security, operability or docs."),
           }),
         )
         .max(100),
+      assessment: z
+        .object({
+          risk: z.enum(["low", "medium", "high"]),
+          concerns: z.array(z.string().trim().min(1).max(300)).max(10),
+        })
+        .optional()
+        .describe(
+          "Your view of the PR as a whole: its risk, and concerns about the change itself rather than one line, such as a description that claims changes the diff does not make, tests changed to pass, unrelated files, or claims you could not verify. Empty concerns when there are none.",
+        ),
       notes: z
         .string()
         .trim()
@@ -140,9 +168,9 @@ export function registerTools(bb: BbPluginApi, shuttle: Shuttle): void {
           "Context for the user alone, in Markdown, that Shuttle shows beside the draft and never posted: for example the PR's intent, whether the change achieves it, and whether it is worth doing at all. Leave out what belongs in the summary or a finding.",
         ),
     }),
-    execute: ({ pr: query, summary, verdict, findings, notes }, tool) =>
+    execute: ({ pr: query, summary, verdict, findings, notes, assessment }, tool) =>
       run(async () => {
-        const out = await shuttle.saveDraft(tool.threadId, query, { summary, verdict, findings, ...(notes === undefined ? {} : { notes }) });
+        const out = await shuttle.saveDraft(tool.threadId, query, { summary, verdict, findings, ...(notes === undefined ? {} : { notes }), ...(assessment === undefined ? {} : { assessment }) });
         const kept = out.notes ? ", with notes for the user that are never posted" : "";
         return `Saved a draft of ${out.findings} finding${out.findings === 1 ? "" : "s"} for ${out.pr.key}${kept}. The user chooses what to post from Shuttle; do not post it yourself.`;
       }),

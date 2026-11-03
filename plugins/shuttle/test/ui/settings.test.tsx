@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { fireEvent, waitFor, within } from "@testing-library/react";
 import type { PluginSettingsSectionProps } from "@get-bb/plugin-sdk/app";
-import type { Config } from "../../src/config";
+import { DEFAULT_VERIFIER_COMMAND, type Config } from "../../src/config";
 import { app, callsTo, config, handlers, mount, server, overview, unmountAll, type Handlers } from "./helpers";
 
 afterEach(unmountAll);
@@ -226,6 +226,30 @@ describe("Shuttle settings sections", () => {
     expect(next.autoReview).toMatchObject({ when: ["requested", "mentioned"], repos: ["acme/app", "get-bb/*"], maxPerDay: 3, preset: "quick" });
     expect(next.watch).toMatchObject({ mode: "forward", ignoreBots: false, allowBots: ["review-bot", "*-scanner"], autoWatch: false });
     expect(next.presets).toEqual(config().presets);
+  });
+
+  it("turns on auto post's shadow mode for a repository, with its guidelines, held paths and bar", async () => {
+    const slot = await section("automations");
+    await slot.findByText("Auto post");
+    expect(slot.getByText("Off everywhere. Add a repository to start shadow mode there.")).toBeTruthy();
+    fireEvent.click(slot.getByRole("button", { name: "Add repository" }));
+    fireEvent.change(slot.getByRole("textbox", { name: "Repository 1" }), { target: { value: " Shopify/terraform-the-cloud " } });
+    expect((slot.getByRole("combobox", { name: "Mode for repository 1" }) as HTMLSelectElement).value).toBe("shadow");
+    fireEvent.change(slot.getByRole("textbox", { name: "Guidelines for repository 1" }), { target: { value: "Actuator plans are the source of truth." } });
+    fireEvent.change(slot.getByRole("textbox", { name: "Held paths for repository 1" }), { target: { value: "terraform/*/iam/*, *.sql" } });
+    fireEvent.click(slot.getByRole("button", { name: "Add repository" }));
+    fireEvent.change(slot.getByRole("combobox", { name: "Lowest severity that can post" }), { target: { value: "high" } });
+    fireEvent.change(slot.getByRole("spinbutton", { name: "Lowest verifier score that the finding holds" }), { target: { value: "0.8" } });
+    fireEvent.change(slot.getByRole("spinbutton", { name: "Target precision" }), { target: { value: "0.95" } });
+    expect(slot.getByText("about 1 in 20 auto-posted findings you would not have posted")).toBeTruthy();
+    fireEvent.change(slot.getByRole("textbox", { name: "Verifier command" }), { target: { value: "my-verifier --json" } });
+    fireEvent.click(slot.getByRole("button", { name: "Use the default (Kimi K3 through pi)" }));
+    fireEvent.click(slot.getByRole("button", { name: "Save automations" }));
+    await waitFor(() => expect(saved(slot)).toHaveLength(1));
+    expect(saved(slot)[0]!.autoPost).toMatchObject({
+      repos: [{ repo: "Shopify/terraform-the-cloud", mode: "shadow", guidelines: "Actuator plans are the source of truth.", holdPaths: ["terraform/*/iam/*", "*.sql"] }],
+      minSeverity: "high", targetPrecision: 0.95, floors: { holds: 0.8, worth: 0.7 }, verifier: DEFAULT_VERIFIER_COMMAND,
+    });
   });
 
   it("names agents, not watching, in the automations", async () => {
