@@ -65,7 +65,7 @@ export function createShuttlePlugin(deps: PluginDeps = {}) {
     bb.events.on("thread.idle", ({ thread }) => safe("thread.idle", () => app.onThreadIdle(thread.id, thread.parentThreadId)));
     bb.events.on("thread.active", ({ thread }) => safe("thread.active", () => app.onThreadActive(thread.id, thread.parentThreadId)));
     bb.events.on("interaction.pending", ({ thread }) => safe("interaction.pending", () => app.onInteractionPending(thread.id)));
-    bb.events.on("thread.failed", ({ thread }) => safe("thread.failed", () => app.onThreadFailed(thread.id)));
+    bb.events.on("thread.failed", ({ thread, error }) => safe("thread.failed", () => app.onThreadFailed(thread.id, { error, environmentId: thread.environmentId })));
     bb.events.on("thread.archived", ({ thread }) => safe("thread.archived", () => app.onThreadArchived(thread.id)));
     bb.events.on("thread.deleted", ({ thread }) => safe("thread.deleted", () => app.onThreadDeleted(thread.id)));
 

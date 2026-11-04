@@ -296,4 +296,8 @@ export const MIGRATIONS: string[] = [
   // Drafts posted before this: the review the user posted closest to it, within a minute.
   // The gap is a column of its own because older SQLite cannot read the outer row in a correlated ORDER BY.
   `UPDATE review_drafts SET posted_verdict = (SELECT verdict FROM (SELECT m.verdict, abs(m.at - review_drafts.posted_at) AS gap, m.id FROM my_reviews m WHERE m.pr_id = review_drafts.pr_id AND m.verdict IN ('comment', 'approve', 'changes') AND m.at BETWEEN review_drafts.posted_at - 60000 AND review_drafts.posted_at + 60000) ORDER BY gap, id LIMIT 1) WHERE state = 'posted'`,
+  // The options a review run started with, so a run whose thread could not set up its workspace starts again in a new one,
+  // and which try of that review the run is.
+  `ALTER TABLE reviews ADD COLUMN input TEXT`,
+  `ALTER TABLE reviews ADD COLUMN attempt INTEGER NOT NULL DEFAULT 1`,
 ];

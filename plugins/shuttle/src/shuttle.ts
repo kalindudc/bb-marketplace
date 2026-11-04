@@ -26,7 +26,7 @@ import { fetchPr, linkPr, lookup, rememberThread, requirePr, setWatch, shortKey,
 import { parseKey } from "./keys";
 import { matchProject } from "./projects";
 import { archiveDoneReviewThreads, unarchiveForDraft } from "./review-threads";
-import { endQuietReviews, endReview, resumeReviews } from "./review-runs";
+import { endQuietReviews, endReview, failReviewsOfThread, resumeReviews, type ThreadFailure } from "./review-runs";
 import { startReview } from "./reviews";
 import { searchPrs } from "./search";
 import type { Settings } from "./settings";
@@ -1082,14 +1082,10 @@ export class Shuttle implements Ctx {
     if (this.store.setThreadStatus(threadId, null, true)) this.port.publish();
   }
 
-  onThreadFailed(threadId: string): void {
+  /** Its running reviews end; one whose workspace could not be set up starts again in a new thread (review-runs.ts). */
+  async onThreadFailed(threadId: string, failure: ThreadFailure = { error: null }): Promise<void> {
     this.store.setThreadStatus(threadId, "error", false);
-    const running = this.store.runningReviewsOfThread(threadId);
-    for (const review of running) {
-      this.store.finishReview(review.id, "failed", "failed");
-      this.store.addEvent("review_failed", `The review thread \u201c${this.store.threadTitle(threadId) ?? threadId}\u201d failed.`, review.pr_id, threadId);
-    }
-    if (running.length) this.port.publish();
+    await failReviewsOfThread(this, threadId, failure);
   }
 
   async onThreadArchived(threadId: string): Promise<void> {

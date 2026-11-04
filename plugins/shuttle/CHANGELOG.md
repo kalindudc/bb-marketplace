@@ -17,6 +17,11 @@ Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` i
 
 - The shipped Standard review preset asks four questions of every PR: what it changes, why, how well the implementation gets there, and whether it should be done at all. A finding needs a clear failure, a realistic path and checkable evidence on a changed line, and the reviewer tries to disprove it first; style and generic test requests are left out. Presets you saved keep their prompts; **Use the shipped prompt** in a preset's editor switches one to it.
 
+### Fixed
+
+- A review whose thread could not set up its workspace starts again in a new thread. A machine or environment provider that fails, such as an Aquifer sandbox too slow to set up, failed the thread before its agent ran, and Shuttle counted the review as failed. Starting it again sent the review to that same thread, which on Aquifer failed again within a second. Now Shuttle starts the same review, with its preset, overrides and note, in a new thread, up to twice, and the Automation log says why. After three threads in a row it stops and says so, and the PR comes to the Inbox with The review thread couldn't be set up. An auto review isn't started again while automations are paused or auto review is off. A run that never got a workspace doesn't count toward auto review's daily limit.
+- Start AI review, and Try again on a failed review, go to a new thread when the PR's last review thread never got a workspace, instead of sending to it.
+
 ## 0.7.0 (2026-11-04)
 
 ### Added

@@ -2,7 +2,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
+import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
 import { configToToml } from "../src/config";
 import { createShuttlePlugin } from "../server";
@@ -123,6 +123,24 @@ describe("the plugin", () => {
     expect(inspection.experimental_rpcInvalidations.slice(before)).toContainEqual(["prs", "servers", "conversation"]);
     const detail = (await behavior.callRpc("detail", { key: "forge:acme/app#7" })) as { pr: { key: string } };
     expect(detail.pr.key).toBe("forge:acme/app#2".replace("#2", "#7"));
+    await lifecycle.dispose();
+  });
+
+  it("hands bb's thread.failed to Shuttle with whether the thread got a workspace, so only a setup failure starts the review again", async () => {
+    const { behavior, lifecycle, harness, port } = await boot();
+    await behavior.callRpc("importToml", { toml: configToToml(testConfig()), apply: true });
+    await behavior.callRpc("lookup", { query: "forge:acme/app#2" });
+    const { threadId } = (await behavior.callRpc("review", { key: "forge:acme/app#2" })) as { threadId: string };
+    // Not bb's "Provisioning thread failed", so only the environment it reports can say the workspace never came.
+    const failed = (id: string, environmentId: string | null) =>
+      harness.emitThreadEvent("thread.failed", { thread: makeThreadResponse({ id, status: "error", environmentId }), error: "The machine went away" });
+    expect((await failed(threadId, "env_1")).errors).toEqual([]);
+    expect(port.spawned).toHaveLength(1);
+
+    const { threadId: second } = (await behavior.callRpc("review", { key: "forge:acme/app#2", newThread: true })) as { threadId: string };
+    expect((await failed(second, null)).errors).toEqual([]);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(port.spawned.map((s) => s.threadId)).toEqual([threadId, second, "thr_spawned3"]);
     await lifecycle.dispose();
   });
 });

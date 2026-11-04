@@ -40,6 +40,7 @@ type ThreadLike = {
   updatedAt?: number | null;
   providerId?: string | null;
   canRestoreEnvironment?: boolean;
+  environmentId?: string | null;
   /** Only with `include: "environment"`. */
   environment?: { hostLifecycle?: string } | null;
 };
@@ -57,6 +58,7 @@ function toThread(thread: ThreadLike): ThreadInfo {
     providerId: thread.providerId ?? null,
     canRestoreEnvironment: thread.canRestoreEnvironment === true,
     machineRemoved: MACHINE_GONE.has(thread.environment?.hostLifecycle ?? ""),
+    ...(thread.environmentId !== undefined ? { hasWorkspace: thread.environmentId !== null } : {}),
   };
 }
 

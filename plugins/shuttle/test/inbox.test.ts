@@ -283,7 +283,7 @@ describe("the Inbox read", () => {
     await h.shuttle.onThreadIdle(first);
     expect(h.shuttle.inbox().reviewing.map((v) => [v.key, v.lastReview?.thread])).toEqual([[OTHER, "waiting"], [KEY(2), "idle"]]);
     await h.shuttle.endReview(first, KEY(2), { note: "Nothing worth a comment.", failed: false });
-    h.shuttle.onThreadFailed(second);
+    await h.shuttle.onThreadFailed(second);
     inbox = h.shuttle.inbox();
     expect(inbox.reviewing).toEqual([]);
     expect(inbox.prs.map((v) => [v.key, v.next.kind])).toEqual([[KEY(1), "ready_to_merge"], [KEY(2), "review_done"]]);

@@ -269,7 +269,9 @@ function othersNext(f: NextFacts): NextStep {
       ? ["The review went quiet", `Nothing happened in \u201c${run.title}\u201d or its child threads for ${plural(REVIEW_QUIET_MS / HOUR, "hour")}, and it handed back no draft.`]
       : run.endedBy === "thread"
         ? ["The review couldn\u2019t finish", `\u201c${run.title}\u201d says: ${run.note ?? "it could not finish the review."}`]
-        : ["The review thread failed", `\u201c${run.title}\u201d stopped with an error.`];
+        : run.endedBy === "setup"
+          ? ["The review thread couldn\u2019t be set up", `bb could not set up the workspace of \u201c${run.title}\u201d, so the review never started.${(run.attempt ?? 1) > 1 ? ` Shuttle tried ${run.attempt} times, each in a new thread.` : ""}`]
+          : ["The review thread failed", `\u201c${run.title}\u201d stopped with an error.`];
     return step("review_failed", "bad", label, why, {
       inbox: true,
       clears: "Leaves when you start another review, or when you snooze it.",

@@ -5,6 +5,7 @@ import { errText, ShuttleError, type Ctx } from "./ctx";
 import type { PrRow, ReviewRow } from "./db/store";
 import { REVIEW_QUIET_MS } from "./next";
 import { lookup, shortKey } from "./prs";
+import { startReview, type ReviewOptions } from "./reviews";
 
 const BUSY = new Set(["active", "starting", "pending"]);
 /** While bb cannot answer, each review it cannot check is logged at most this often, not at every tick. */
@@ -44,6 +45,73 @@ export async function endReview(ctx: Ctx, threadId: string, query: string, input
   );
   ctx.port.publish();
   return pr;
+}
+
+/** How many times a review whose thread could not set up its workspace starts again, each time in a new thread. */
+export const SETUP_RETRIES = 2;
+
+/** What bb's thread.failed says about the thread. */
+export interface ThreadFailure {
+  /** bb's latest error message for it, such as "Provisioning thread failed". */
+  error: string | null;
+  /** Null when the thread has no workspace; left out when unknown. */
+  environmentId?: string | null;
+}
+
+/** bb could not set up the thread's workspace (a machine or environment provider failed), so its agent never ran. */
+export function isSetupFailure(failure: ThreadFailure): boolean {
+  return failure.environmentId === null || /\bprovisioning\b/iu.test(failure.error ?? "");
+}
+
+/**
+ * The thread failed, so its running reviews end. A review whose thread could not set up its workspace never started:
+ * it starts again in a new thread, up to SETUP_RETRIES times, since a provider's failure is often one bad machine.
+ */
+export async function failReviewsOfThread(ctx: Ctx, threadId: string, failure: ThreadFailure): Promise<number> {
+  const setup = isSetupFailure(failure);
+  const running = ctx.store.runningReviewsOfThread(threadId);
+  // Every run ends before anything is awaited, so a second event for the thread finds none to start again.
+  for (const run of running) ctx.store.finishReview(run.id, "failed", setup ? "setup" : "failed");
+  for (const run of running) {
+    if (setup) await startAgain(ctx, run);
+    else ctx.store.addEvent("review_failed", `The review thread \u201c${title(ctx, threadId)}\u201d failed.`, run.pr_id, threadId);
+  }
+  if (running.length) ctx.port.publish();
+  return running.length;
+}
+
+async function startAgain(ctx: Ctx, run: ReviewRow): Promise<void> {
+  const pr = ctx.store.prById(run.pr_id);
+  const failed = `\u201c${title(ctx, run.thread_id)}\u201d could not set up its workspace`;
+  const name = pr ? shortKey(ctx, pr) : "a PR";
+  // Only the PR's latest review starts again: one started since is the one that counts, and a closed PR needs none.
+  if (!pr || (pr.state !== "open" && pr.state !== "draft") || ctx.store.lastReview(pr.id)?.id !== run.id) {
+    ctx.store.addEvent("review_failed", `The review thread ${failed}.`, run.pr_id, run.thread_id);
+    return;
+  }
+  // An auto review starts again only while auto reviews would start at all (sync.ts runAutoReviews).
+  const stopped = run.trigger !== "auto" ? null : ctx.settings().pauseAutomations ? "automations are paused" : !ctx.config().autoReview.enabled ? "auto review is off" : null;
+  if (stopped !== null) {
+    ctx.store.addEvent("review_failed", `${failed}. Shuttle did not start the auto review of ${name} again: ${stopped}.`, pr.id, run.thread_id);
+    return;
+  }
+  if (run.attempt > SETUP_RETRIES) {
+    ctx.store.addEvent(
+      "review_failed",
+      `Shuttle stopped starting the review of ${name} again: ${run.attempt} threads in a row could not set up their workspaces. Start it again once the machine or environment provider works.`,
+      pr.id,
+      run.thread_id,
+    );
+    return;
+  }
+  const options = run.input ? (JSON.parse(run.input) as ReviewOptions) : {};
+  try {
+    await startReview(ctx, { ...options, key: pr.key, newThread: true }, run.trigger, run.attempt + 1);
+  } catch (error) {
+    ctx.store.addEvent("review_failed", `${failed}, and the review of ${name} could not start again in a new thread: ${errText(error)}`, pr.id, run.thread_id);
+    return;
+  }
+  ctx.store.addEvent("review_retry", `The review of ${name} starts again in a new thread (try ${run.attempt + 1} of ${SETUP_RETRIES + 1}): ${failed}.`, pr.id, run.thread_id);
 }
 
 /** A thread at work, or waiting on the user's answer, under `threadId`. */
@@ -96,7 +164,7 @@ export async function endQuietReviews(ctx: Ctx): Promise<number> {
 /** Ended by something that may not have been the review's end: the thread failing, going quiet, or a turn ending before an upgrade. */
 function mayResume(ctx: Ctx, run: ReviewRow): boolean {
   if (run.state === "running") return false;
-  if (run.ended_by === "failed" || run.ended_by === "quiet") return true;
+  if (run.ended_by === "failed" || run.ended_by === "setup" || run.ended_by === "quiet") return true;
   // Before Shuttle waited for child threads, a turn's end ended the review; one that ended so lately may be waiting on its critics.
   return run.ended_by === null && run.state === "done" && run.finished_at !== null && ctx.now() - run.finished_at < REVIEW_QUIET_MS;
 }

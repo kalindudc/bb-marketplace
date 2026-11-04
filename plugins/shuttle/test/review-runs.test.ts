@@ -166,7 +166,7 @@ describe("a review run", () => {
 
   it("runs again when a thread that failed or went quiet gets back to work, but not after a draft or after it ended the review", async () => {
     const { h, threadId } = await reviewing();
-    h.shuttle.onThreadFailed(threadId);
+    await h.shuttle.onThreadFailed(threadId);
     expect(h.shuttle.view(KEY).next).toMatchObject({ kind: "review_failed", label: "The review thread failed" });
     h.shuttle.onThreadActive(threadId);
     expect(run(h)).toMatchObject({ state: "running", endedBy: null });
@@ -219,5 +219,126 @@ describe("a review run", () => {
   it("tells the review thread how to end without a draft", async () => {
     const { h } = await reviewing();
     expect(h.port.spawned[0]!.prompt).toContain("Shuttle counts the review as running until then, even while you wait on child threads such as critics; if it ends without a draft, call shuttle_review_done for forge:acme/app#3 and say why.");
+  });
+});
+
+/** What bb says when a thread's workspace could not be set up: thread.failed with no environment left. */
+const SETUP_FAILED = { error: "Provisioning thread failed", environmentId: null };
+/** bb's thread after that: in error, with no workspace. */
+const setupFailed = (h: ReturnType<typeof harness>, id: string) => h.port.threads.set(id, { ...h.port.threads.get(id)!, status: "error", hasWorkspace: false });
+
+describe("a review whose thread could not be set up", () => {
+  it("starts again in a new thread, twice at most, then says it gave up", async () => {
+    const h = harness(testConfig({ autoReview: NO_AUTO }));
+    h.lists.review_requested = [pr(3)];
+    await h.shuttle.sync();
+    const { threadId: first } = await h.shuttle.review({ key: KEY, model: "m2", note: "Look at the retry loop." });
+    setupFailed(h, first);
+    await h.shuttle.onThreadFailed(first, SETUP_FAILED);
+
+    expect(h.port.spawned.map((s) => s.threadId)).toEqual([first, "thr_spawned2"]);
+    const second = h.port.spawned[1]!;
+    // The same review: the same prompt, with the run's own model and note, in a new thread.
+    expect(second).toMatchObject({ title: "Review acme/app#3", model: "m2", prompt: h.port.spawned[0]!.prompt });
+    expect(second.prompt).toContain("Note from me: Look at the retry loop.");
+    expect(h.store.reviewsOf(h.store.prByKey(KEY)!.id).map((r) => [r.thread_id, r.state, r.ended_by, r.trigger])).toEqual([
+      [first, "failed", "setup", "manual"],
+      ["thr_spawned2", "running", null, "manual"],
+    ]);
+    expect(run(h)).toMatchObject({ state: "running", thread: expect.anything() });
+    const texts = h.shuttle.activity(5).map((e) => e.text);
+    expect(texts).toContain("The review of acme/app#3 starts again in a new thread (try 2 of 3): \u201cReview acme/app#3\u201d could not set up its workspace.");
+
+    setupFailed(h, "thr_spawned2");
+    await h.shuttle.onThreadFailed("thr_spawned2", SETUP_FAILED);
+    expect(h.port.spawned).toHaveLength(3);
+    setupFailed(h, "thr_spawned3");
+    await h.shuttle.onThreadFailed("thr_spawned3", SETUP_FAILED);
+    expect(h.port.spawned).toHaveLength(3);
+    expect(h.shuttle.activity(1)[0]!.text).toBe("Shuttle stopped starting the review of acme/app#3 again: 3 threads in a row could not set up their workspaces. Start it again once the machine or environment provider works.");
+    expect(h.shuttle.view(KEY).next).toMatchObject({
+      kind: "review_failed", label: "The review thread couldn\u2019t be set up",
+      why: "bb could not set up the workspace of \u201cReview acme/app#3\u201d, so the review never started. Shuttle tried 3 times, each in a new thread.",
+    });
+    // A thread Shuttle started again elsewhere stays over; the last one runs again if you get it to work yourself.
+    h.shuttle.onThreadActive(first);
+    h.shuttle.onThreadActive("thr_spawned3");
+    expect(h.store.reviewsOf(h.store.prByKey(KEY)!.id).map((r) => r.state)).toEqual(["failed", "failed", "running"]);
+  });
+
+  it("tries an auto review again as an auto review that the daily limit doesn't count", async () => {
+    const h = harness(testConfig({ autoReview: { ...NO_AUTO, enabled: true, maxPerDay: 1 } }));
+    await h.shuttle.sync();
+    h.clock.now += 60_000;
+    h.lists.review_requested = [pr(3)];
+    await h.shuttle.sync();
+    const first = h.port.spawned[0]!.threadId;
+    setupFailed(h, first);
+    await h.shuttle.onThreadFailed(first, SETUP_FAILED);
+    expect(h.port.spawned).toHaveLength(2);
+    expect(run(h)).toMatchObject({ trigger: "auto", state: "running" });
+    expect(h.store.autoReviewsSince(0)).toBe(1);
+  });
+
+  it("leaves an auto review failed while automations are paused or auto review is off, and still tries a manual one", async () => {
+    for (const stop of ["paused", "off"] as const) {
+      const h = harness(testConfig({ autoReview: { ...NO_AUTO, enabled: true } }));
+      await h.shuttle.sync();
+      h.clock.now += 60_000;
+      h.lists.review_requested = [pr(3)];
+      await h.shuttle.sync();
+      const first = h.port.spawned[0]!.threadId;
+      if (stop === "paused") h.settings.pauseAutomations = true;
+      else h.store.saveConfig(testConfig({ autoReview: NO_AUTO }));
+      setupFailed(h, first);
+      await h.shuttle.onThreadFailed(first, SETUP_FAILED);
+      expect(h.port.spawned).toHaveLength(1);
+      expect(run(h)).toMatchObject({ state: "failed", endedBy: "setup" });
+      const why = stop === "paused" ? "automations are paused" : "auto review is off";
+      expect(h.shuttle.activity(1)[0]!.text).toBe(`\u201cReview acme/app#3\u201d could not set up its workspace. Shuttle did not start the auto review of acme/app#3 again: ${why}.`);
+
+      await h.shuttle.review({ key: KEY });
+      const manual = h.port.spawned[1]!.threadId;
+      setupFailed(h, manual);
+      await h.shuttle.onThreadFailed(manual, SETUP_FAILED);
+      expect(h.port.spawned).toHaveLength(3);
+    }
+  });
+
+  it("is not tried again after an agent's failure, a newer review, or a PR that closed", async () => {
+    const agent = await reviewing();
+    await agent.h.shuttle.onThreadFailed(agent.threadId, { error: "The provider stopped", environmentId: "env_1" });
+    expect(agent.h.port.spawned).toHaveLength(1);
+    expect(run(agent.h)).toMatchObject({ state: "failed", endedBy: "failed" });
+
+    const newer = await reviewing();
+    await newer.h.shuttle.review({ key: KEY, newThread: true });
+    await newer.h.shuttle.onThreadFailed(newer.threadId, SETUP_FAILED);
+    expect(newer.h.port.spawned).toHaveLength(2);
+
+    const closed = await reviewing();
+    (closed.h.store as unknown as { db: Database.Database }).db.prepare("UPDATE prs SET state = 'closed' WHERE id = ?").run(closed.h.store.prByKey(KEY)!.id);
+    await closed.h.shuttle.onThreadFailed(closed.threadId, SETUP_FAILED);
+    expect(closed.h.port.spawned).toHaveLength(1);
+  });
+
+  it("says so when the new thread cannot start, and leaves the review failed", async () => {
+    const { h, threadId } = await reviewing();
+    h.port.spawnError = new Error("bb is restarting");
+    await h.shuttle.onThreadFailed(threadId, SETUP_FAILED);
+    expect(run(h)).toMatchObject({ state: "failed", endedBy: "setup" });
+    expect(h.shuttle.activity(1)[0]!.text).toBe("\u201cReview acme/app#3\u201d could not set up its workspace, and the review of acme/app#3 could not start again in a new thread: bb is restarting");
+  });
+
+  it("Try again starts a new thread instead of sending to the one that has no workspace", async () => {
+    const { h, threadId } = await reviewing();
+    h.port.spawnError = new Error("bb is restarting");
+    setupFailed(h, threadId);
+    await h.shuttle.onThreadFailed(threadId, SETUP_FAILED);
+    h.port.spawnError = null;
+    const again = await h.shuttle.review({ key: KEY });
+    expect(again.threadId).toBe("thr_spawned2");
+    expect(h.port.sent).toEqual([]);
+    expect(h.shuttle.activity(5).map((e) => e.text)).toContain("The review of acme/app#3 went to a new thread: \u201cReview acme/app#3\u201d could not take it (its workspace was never set up).");
   });
 });

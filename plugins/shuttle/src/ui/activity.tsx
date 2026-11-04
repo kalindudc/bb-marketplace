@@ -23,6 +23,7 @@ const EVENT_LOOKS: Record<string, Look> = {
   review: { icon: "Bot", tone: "info" },
   review_done: { icon: "Bot", tone: "info" },
   review_failed: { icon: "AlertTriangle", tone: "bad" },
+  review_retry: { icon: "ArrowReloadHorizontal", tone: "warn" },
   auto_failed: { icon: "AlertTriangle", tone: "bad" },
   auto_capped: { icon: "Pause", tone: "warn" },
   auto_waiting: { icon: "Clock", tone: "warn" },

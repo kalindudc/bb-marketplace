@@ -17,8 +17,8 @@ export type ReviewState = (typeof REVIEW_STATES)[number];
 export const LINK_ROLES = ["owner", "review", "reference"] as const;
 export type LinkRole = (typeof LINK_ROLES)[number];
 export const REVIEW_RUN_STATES = ["running", "done", "failed"] as const;
-/** What ended a review run: its thread handed back a draft, said it was over, failed, nothing happened in it for hours, or a newer review of the PR started. */
-export const REVIEW_ENDS = ["draft", "thread", "failed", "quiet", "replaced"] as const;
+/** What ended a review run: its thread handed back a draft, said it was over, failed, could not set up its workspace, nothing happened in it for hours, or a newer review of the PR started. */
+export const REVIEW_ENDS = ["draft", "thread", "failed", "setup", "quiet", "replaced"] as const;
 export type ReviewEnd = (typeof REVIEW_ENDS)[number];
 export const REVIEWER_STATES = ["requested", "approved", "changes", "commented", "dismissed"] as const;
 export type ReviewerState = (typeof REVIEWER_STATES)[number];
@@ -96,6 +96,8 @@ export const reviewRunSchema = z.object({
   endedBy: z.enum(REVIEW_ENDS).nullable(),
   /** What the thread said when it ended the review itself. */
   note: z.string().nullable(),
+  /** Which try of the review it is, when Shuttle started it again after a thread that could not set up its workspace. */
+  attempt: z.number().int().positive().optional(),
 });
 export type ReviewRunView = z.infer<typeof reviewRunSchema>;
 

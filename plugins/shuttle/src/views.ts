@@ -143,7 +143,7 @@ function viewOf(ctx: Ctx, pr: PrRow, rules: readonly InboxRuleRow[]): { view: Pr
   const lastReview = last
     ? {
       threadId: last.thread_id, title: ctx.store.threadTitle(last.thread_id) ?? "Review thread", state: last.state, preset: last.preset, trigger: last.trigger, head: last.head, at: last.created_at,
-      thread: threadStatus(ctx.store.thread(last.thread_id)), endedBy: last.ended_by, note: last.note,
+      thread: threadStatus(ctx.store.thread(last.thread_id)), endedBy: last.ended_by, note: last.note, attempt: last.attempt,
     }
     : null;
   const ownRun = pr.mine ? null : ctx.store.reviewThreadOf(pr.id);

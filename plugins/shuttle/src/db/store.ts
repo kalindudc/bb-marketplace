@@ -223,10 +223,17 @@ export interface ReviewRow {
   ended_by: ReviewEnd | null;
   /** The thread's words when it said the review was over. */
   note: string | null;
+  /** JSON of the options it started with (ReviewOptions), so it can start again in a new thread; null on older runs. */
+  input: string | null;
+  /** Which try of the review it is: 1, or more when Shuttle started it again after a thread that could not set up its workspace. */
+  attempt: number;
 }
 
-/** A draft came back, the thread said so, the thread failed, nothing happened in it for too long, or a newer review replaced it. */
-export type ReviewEnd = "draft" | "thread" | "failed" | "quiet" | "replaced";
+/**
+ * A draft came back, the thread said so, the thread failed, its workspace could not be set up, nothing happened in it
+ * for too long, or a newer review replaced it.
+ */
+export type ReviewEnd = "draft" | "thread" | "failed" | "setup" | "quiet" | "replaced";
 
 export type PostState = "queued" | "posting" | "posted" | "failed" | "cancelled";
 
@@ -1089,10 +1096,10 @@ export class Store {
     return (this.db.prepare("SELECT COUNT(*) AS n FROM pending_items WHERE pr_id = ?").get(prId) as { n: number }).n;
   }
 
-  addReview(row: Omit<ReviewRow, "id" | "finished_at" | "state" | "created_at" | "archived_at" | "active_at" | "ended_by" | "note">): ReviewRow {
+  addReview(row: Omit<ReviewRow, "id" | "finished_at" | "state" | "created_at" | "archived_at" | "active_at" | "ended_by" | "note" | "input" | "attempt"> & { input?: string | null; attempt?: number }): ReviewRow {
     const result = this.db
-      .prepare("INSERT INTO reviews (pr_id, thread_id, preset, trigger, head, state, created_at, own_thread, active_at) VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?)")
-      .run(row.pr_id, row.thread_id, row.preset, row.trigger, row.head, this.now(), row.own_thread, this.now());
+      .prepare("INSERT INTO reviews (pr_id, thread_id, preset, trigger, head, state, created_at, own_thread, active_at, input, attempt) VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)")
+      .run(row.pr_id, row.thread_id, row.preset, row.trigger, row.head, this.now(), row.own_thread, this.now(), row.input ?? null, row.attempt ?? 1);
     return this.db.prepare("SELECT * FROM reviews WHERE id = ?").get(result.lastInsertRowid) as ReviewRow;
   }
 
@@ -1177,8 +1184,9 @@ export class Store {
     return this.db.prepare("SELECT * FROM reviews WHERE created_at >= ?").all(at) as ReviewRow[];
   }
 
+  /** A run whose thread could not set up its workspace never reviewed anything, so the daily limit leaves it out. */
   autoReviewsSince(at: number): number {
-    return (this.db.prepare("SELECT COUNT(*) AS n FROM reviews WHERE trigger = 'auto' AND created_at >= ?").get(at) as { n: number }).n;
+    return (this.db.prepare("SELECT COUNT(*) AS n FROM reviews WHERE trigger = 'auto' AND created_at >= ? AND ended_by IS NOT 'setup'").get(at) as { n: number }).n;
   }
 
   addEvent(kind: string, text: string, prId: number | null = null, threadId: string | null = null): void {

@@ -81,6 +81,18 @@ describe("bb port", () => {
     expect(gets[0]).toEqual({ threadId: "thr_gone", include: "environment" });
   });
 
+  it("says whether bb set up a thread's workspace, and nothing when bb doesn't say", async () => {
+    const threads: Record<string, unknown> = {
+      thr_set: { id: "thr_set", title: "Set", archivedAt: null, projectId: "proj_1", status: "idle", environmentId: "env_1" },
+      thr_failed: { id: "thr_failed", title: "Failed", archivedAt: null, projectId: "proj_1", status: "error", environmentId: null },
+      thr_old: { id: "thr_old", title: "Old", archivedAt: null, projectId: "proj_1", status: "idle" },
+    };
+    const host = createFakePluginHost({ pluginId: "shuttle", sdk: { threads: { get: async (args: { threadId: string }) => threads[args.threadId] } } as never });
+    const port = createBbPort(host.bb);
+    const workspace = async (id: string) => (await port.getThread(id))!.hasWorkspace;
+    expect([await workspace("thr_set"), await workspace("thr_failed"), await workspace("thr_old")]).toEqual([true, false, undefined]);
+  });
+
   it("lists bb's environment providers, with the machine provider a composition starts, and its machine providers", async () => {
     const asked: unknown[] = [];
     const host = createFakePluginHost({

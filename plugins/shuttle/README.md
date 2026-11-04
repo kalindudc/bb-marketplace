@@ -144,6 +144,11 @@ thread or the threads under it, counts as gone quiet and comes to the Inbox. Shu
 a thread at work, or one waiting on your answer, keeps its review running. A review whose thread
 failed or went quiet runs again when the thread gets back to work.
 
+A thread whose workspace bb could not set up, because a machine or environment provider failed,
+never ran its agent. Shuttle starts the same review again in a new thread, up to twice, and
+then stops and brings the PR to the Inbox. An auto review isn't started again while
+automations are paused or auto review is off. The PR's next review also skips such a thread.
+
 ### Auto post (shadow mode)
 
 Auto post decides, for each AI review draft in a repository you opt in, whether Shuttle could post it

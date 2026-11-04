@@ -81,6 +81,8 @@ export async function sendToReviewThread(ctx: Ctx, threadId: string, prompt: str
   }
   // Its workspace cannot be built again without the machine, so the thread could not run the review.
   if (info.machineRemoved) throw new ShuttleError(info.archived ? "bb removed its machine after it was archived" : "bb removed its machine");
+  // Sent again, bb would set up the same workspace that just failed, under the same keys.
+  if (info.status === "error" && info.hasWorkspace === false) throw new ShuttleError("its workspace was never set up");
   const send: SendOptions = { ...(options.model ? { model: options.model } : {}), ...(options.reasoningLevel ? { reasoningLevel: options.reasoningLevel } : {}) };
   const revived = info.archived;
   if (revived) await ctx.port.unarchive(threadId);

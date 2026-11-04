@@ -354,6 +354,13 @@ What changes when reviews run on new machines:
   start. bb gives the same answer when a machine provider refuses the inputs themselves, so that
   waits too. Waiting does not count toward the daily limit, and a review that comes back after
   more than an hour without a try, such as a request made again, waits afresh.
+- A new machine that fails while bb sets it up, such as a sandbox too slow to finish its
+  setup, fails the review thread before its agent runs. Shuttle starts the same review again
+  in a new thread, so on a new machine, up to twice, and the Automation log says so. After
+  three threads in a row it stops, and the PR comes to the Inbox as a review whose thread
+  couldn't be set up. An auto review isn't started again while automations are paused or
+  auto review is off. Those runs don't count toward the daily limit. The PR's next review
+  skips a thread that never got a workspace, rather than sending to it again.
 - The review thread works on the new machine, but Shuttle's tools, `shuttle_review_draft`
   among them, run in bb's server, so the draft comes back to Shuttle as from any review. The
   read command in the prompt (`{view_command}`) runs on the new machine and must work there.

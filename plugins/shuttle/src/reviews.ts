@@ -47,6 +47,15 @@ export async function projectFor(ctx: Ctx, pr: PrRow, explicit?: string): Promis
   return projectId;
 }
 
+/** What a review run started with, besides its PR and thread: enough to start the same review again in a new thread. */
+export type ReviewOptions = Omit<ReviewInput, "key" | "threadId" | "newThread">;
+
+function optionsOf(input: ReviewInput, preset: Preset): ReviewOptions {
+  const { key: _key, threadId: _threadId, newThread: _newThread, ...options } = input;
+  // The preset it ran with, so a later change to the auto review's preset doesn't change a run started again.
+  return { ...options, presetId: preset.id };
+}
+
 export interface ReviewStarted {
   threadId: string;
   preset: Preset;
@@ -54,7 +63,8 @@ export interface ReviewStarted {
   revived: boolean;
 }
 
-export async function startReview(ctx: Ctx, input: ReviewInput, trigger: "auto" | "manual"): Promise<ReviewStarted> {
+/** `attempt` above 1: Shuttle starts the review again after a thread that could not set up its workspace (review-runs.ts). */
+export async function startReview(ctx: Ctx, input: ReviewInput, trigger: "auto" | "manual", attempt = 1): Promise<ReviewStarted> {
   const pr = requirePr(ctx, input.key);
   const config = ctx.config();
   const preset = presetById(config, input.presetId ?? (trigger === "auto" ? config.autoReview.preset : undefined));
@@ -110,7 +120,7 @@ export async function startReview(ctx: Ctx, input: ReviewInput, trigger: "auto" 
   ctx.store.tx(() => {
     // An older run still open, in this thread or another, would otherwise wait out the quiet timeout and fail.
     ctx.store.replaceRunningReviews(pr.id);
-    ctx.store.addReview({ pr_id: pr.id, thread_id: threadId, preset: preset.name, trigger, head: pr.head, own_thread: ownThread ? 1 : 0 });
+    ctx.store.addReview({ pr_id: pr.id, thread_id: threadId, preset: preset.name, trigger, head: pr.head, own_thread: ownThread ? 1 : 0, input: JSON.stringify(optionsOf(input, preset)), attempt });
   });
   // A new review makes the last one's unposted draft out of date.
   const stale = ctx.store.liveDraft(pr.id);

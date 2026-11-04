@@ -43,6 +43,8 @@ export interface ThreadInfo {
   canRestoreEnvironment?: boolean;
   /** bb removed, or is removing, the machine its workspace was on, so neither can come back. */
   machineRemoved?: boolean;
+  /** bb set up a workspace for it; false for a thread whose workspace setup failed, left out when unknown. */
+  hasWorkspace?: boolean;
 }
 
 /** A bb environment provider, as Shuttle's settings and the server test read it. */
