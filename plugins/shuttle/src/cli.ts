@@ -64,7 +64,7 @@ export function createCli(shuttle: Shuttle): PluginCliRegistration {
           }),
       }),
       search: cliCommand({
-        summary: "Find PRs Shuttle already has by words in their title, repository, number, author, branches, labels or description, title matches first",
+        summary: "Find PRs Shuttle already has by words in their title, repository, number, author, branches, labels or description: open PRs first, then title matches",
         positionals: [{ name: "words", description: "Every word must match; #123 is a PR number.", required: true, variadic: true }],
         options: { json },
         run: ({ options, positionals }) =>
