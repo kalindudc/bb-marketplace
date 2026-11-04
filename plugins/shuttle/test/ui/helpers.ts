@@ -189,7 +189,7 @@ export function server(overrides: Partial<ServerStatus> = {}): ServerStatus {
 export function overview(overrides: Partial<Overview> = {}): Overview {
   return {
     servers: [server(), server({ id: "lab", name: "Lab", kind: "command", login: "robin.c" })],
-    counts: { inbox: 2, mine: 3, done: 1, reviews: 12 },
+    counts: { inbox: 2, mine: 3, done: 1, reviews: 12, reviewed: 4 },
     syncedAt: NOW - 60_000,
     syncing: false,
     paused: false,

@@ -17,6 +17,7 @@ import { isLive } from "./pills";
 import { lastRoute, reviewFilter } from "./prefs";
 import { useStored } from "./remember";
 import { ResizablePanel } from "./resizable-panel";
+import { ReviewedView } from "./reviewed";
 import { ReviewsView } from "./reviews";
 import { SearchView } from "./search";
 import { areaOf, formatRoute, parseRoute, type Area, type ListRoute, type Route } from "./route";
@@ -35,7 +36,7 @@ const AREA_ROUTES: Record<Area, Route> = {
 };
 const INBOX: Route = AREA_ROUTES.inbox;
 
-const isListRoute = (route: Route): route is ListRoute => route.view === "inbox" || route.view === "mine" || route.view === "done" || route.view === "reviews" || route.view === "search" || route.view === "board";
+const isListRoute = (route: Route): route is ListRoute => route.view === "inbox" || route.view === "mine" || route.view === "done" || route.view === "reviews" || route.view === "reviewed" || route.view === "search" || route.view === "board";
 
 function countOf(area: Area, overview: Overview | undefined): number | null {
   if (overview === undefined || area === "insights" || area === "boards") return null;
@@ -154,8 +155,8 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
 
   const selectedKey = route.view === "insights" || route.view === "boards" ? null : route.key;
   const inbox = useShuttleQuery("inbox", {}, route.view === "inbox");
-  const listArea = route.view === "mine" || route.view === "done" || route.view === "reviews" ? route.view : "mine";
-  const list = useShuttleQuery("list", { area: listArea }, route.view === "mine" || route.view === "done" || route.view === "reviews");
+  const listArea = route.view === "mine" || route.view === "done" || route.view === "reviews" || route.view === "reviewed" ? route.view : "mine";
+  const list = useShuttleQuery("list", { area: listArea }, listArea === route.view);
   const detail = useShuttleQuery("detail", { key: selectedKey ?? "" }, selectedKey !== null);
   const lookup = useShuttleMutation("lookup");
   const known = [...(inbox.data?.prs ?? []), ...(inbox.data?.snoozed ?? []), ...(inbox.data?.dismissed ?? []), ...(list.data?.prs ?? []), ...(detail.data ? [detail.data.pr] : [])];
@@ -214,7 +215,8 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
       return window.history.back();
     }
     const pr = detail.data?.pr;
-    const home: Route = pr === undefined || !pr.mine ? { view: "reviews", source: "all", key } : pr.state === "merged" || pr.state === "closed" ? { view: "done", key } : { view: "mine", key };
+    const closed = pr !== undefined && (pr.state === "merged" || pr.state === "closed");
+    const home: Route = pr === undefined || !pr.mine ? (closed && pr.myReview !== null ? { view: "reviewed", key } : { view: "reviews", source: "all", key }) : closed ? { view: "done", key } : { view: "mine", key };
     go(home, true);
   };
 
@@ -264,6 +266,7 @@ export function ShuttlePage({ subPath }: PluginNavPanelProps) {
     case "mine":
     case "done": area = <MineView done={route.view === "done"} layout={layout} overview={overview.data} onGo={go} />; break;
     case "reviews": area = <ReviewsView source={route.source} filter={filter} layout={layout} onFilter={setFilter} onGo={go} />; break;
+    case "reviewed": area = <ReviewedView layout={layout} onGo={go} />; break;
     case "boards": area = <BoardsView tab={route.tab} onGo={go} />; break;
     case "board": area = <BoardDetailView id={route.id} layout={layout} onGo={go} />; break;
     case "search": area = <SearchView query={route.query} layout={layout} />; break;

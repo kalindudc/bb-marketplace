@@ -72,7 +72,7 @@ that PR.
 ## CLI
 
 `bb shuttle status` (each server's last sync, and when one failed, the step, why, what its command printed and
-what happens next), `bb shuttle list [--area inbox|mine|done|reviews]`, `bb shuttle search <words…>`
+what happens next), `bb shuttle list [--area inbox|mine|done|reviews|reviewed]`, `bb shuttle search <words…>`
 (the PRs Shuttle already has; every word must match, and a quoted `"#123"` is a PR number), `bb shuttle show <pr>`,
 `bb shuttle link <pr> [--thread <id>] [--role owner|review|reference]`,
 `bb shuttle unlink <pr> [--thread <id>]`,

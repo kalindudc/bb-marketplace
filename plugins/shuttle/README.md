@@ -172,6 +172,20 @@ with or without `[bot]`.
 Each watch remembers which bots it heard from, so a bot added later, or every bot when Ignore bots is
 turned off, starts from what it says next instead of sending what it said while it was ignored.
 
+## Reviewed by me
+
+Reviews › Reviewed by me lists every PR of someone else's that you reviewed, whether it is still
+open, merged or closed, with your verdict and when you gave it. Open it with **Reviewed by me** in
+the Inbox's header or **R** in the Inbox, with **Reviewed** at the top of Reviews, or from the sidebar. Filter it by state and verdict, and sort it by when you
+reviewed, when it was updated or merged, when it opened, repository or size. Shuttle remembers
+the sort and the filters on this device.
+
+Shuttle reads the merged and closed PRs you reviewed from the last 90 days, or as many as the
+**Reviewed history covers** setting says, up to 365. The first read covers the whole window, and
+later reads only what changed since, so the history costs one small request a sync. A PR stays in
+the list once Shuttle has it, even after it leaves the window. Each read keeps at most the 300 most
+recently updated PRs, as every list does.
+
 ## Boards
 
 Save a specific set of PRs as a board, across repositories and servers. Create an empty board,
@@ -212,7 +226,8 @@ On each server Shuttle reads your open PRs first and shows them as soon as they 
 the other lists two at a time, and each list shows as soon as it lands. Merged and closed PRs are
 read since the last read that came in full, less five minutes, with the whole Done window read
 about once an hour and at the next sync after the Done setting changes, so a sync does not read two
-weeks of closed PRs every time. Linked and tracked PRs that no list brought are read three at a time,
+weeks of closed PRs every time. The merged and closed PRs you reviewed are read the same way, since
+the last read, with the whole Reviewed history window read only the first time and when it grows. Linked and tracked PRs that no list brought are read three at a time,
 at most 30 a sync, and so are open PRs of yours that neither your open nor your closed PRs brought.
 
 ## Layout

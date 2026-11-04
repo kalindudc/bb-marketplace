@@ -218,6 +218,8 @@ export function harness(config: Config = testConfig()): Harness {
     if (operation === "whoami") return answers.whoami ?? { login: "me" };
     // `authored_closed` answers the closed authored list on its own, such as with an error.
     if (operation === "authored" && env.SHUTTLE_STATE === "closed" && "authored_closed" in lists) return lists.authored_closed;
+    // `reviewed_closed` answers the closed reviewed list; without it, `reviewed` answers both, as a command that predates it does.
+    if (operation === "reviewed" && env.SHUTTLE_STATE === "closed" && "reviewed_closed" in lists) return lists.reviewed_closed;
     const authored = lists.authored;
     if (operation === "authored" && !Array.isArray(authored)) return authored;
     if (operation === "authored") return (authored as Array<{ state: string }>).filter((row) => (env.SHUTTLE_STATE === "closed" ? row.state === "merged" || row.state === "closed" : row.state === "open" || row.state === "draft"));

@@ -8,7 +8,7 @@ import { BUTTON_GHOST, Pill, SELECTED_ROW, Tip, TONE_TEXT, onCardClick, type Ton
 import { NEXT_ICONS, type Group } from "./constants";
 import { age, ago, clock, plural, shortKey, sizeOf, tinyKey, when } from "./format";
 import { RowLabels } from "./manage";
-import { AgentPill, ChecksPill, isLive, MergePill, MyReviewPill, ReasonPills, ReviewPill, SizeChip, StalePill } from "./pills";
+import { AgentPill, ChecksPill, isLive, MergePill, MyReviewPill, ReasonPills, ReviewPill, SizeChip, StalePill, StatePill } from "./pills";
 import type { Folding } from "./prefs";
 
 const THREE_DAYS = 3 * 24 * 60 * 60_000;
@@ -97,6 +97,36 @@ export function ReviewRow({ pr, layout }: { pr: PrView; layout: RowLayout }) {
       <MyReviewPill pr={pr} />
       <ReasonPills pr={pr} />
       {pr.checks !== "passed" && <ChecksPill pr={pr} />}
+      <StalePill pr={pr} />
+      <RowLabels labels={pr.labels} />
+    </>
+  );
+  return <Row pr={pr} layout={layout} meta={meta} pills={pills} />;
+}
+
+const VERDICT_LOOKS: Record<NonNullable<PrView["myReview"]>["verdict"], { tone: Tone; icon: string; label: string }> = {
+  approve: { tone: "ok", icon: "Check", label: "You approved" },
+  changes: { tone: "bad", icon: "CircleX", label: "You requested changes" },
+  comment: { tone: "neutral", icon: "MessageSquare", label: "You commented" },
+  dismissed: { tone: "neutral", icon: "X", label: "Your review was dismissed" },
+};
+
+/** A PR you reviewed: your verdict, whether it merged, and the time its list is sorted by. */
+export function ReviewedRow({ pr, layout, time }: { pr: PrView; layout: RowLayout; time: string | null }) {
+  const verdict = pr.myReview === null ? null : VERDICT_LOOKS[pr.myReview.verdict];
+  const meta = (
+    <>
+      <span className="truncate font-mono" title={shortKey(pr)}>{tinyKey(pr)}</span>
+      <span className="truncate">· {pr.author}</span>
+      <SizeChip pr={{ ...pr, size: sizeOf(pr) }} />
+      {time !== null && <span className="shrink-0">· {time}</span>}
+    </>
+  );
+  const pills = (
+    <>
+      {verdict !== null && <span data-verdict={pr.myReview!.verdict}><Pill tone={verdict.tone} icon={verdict.icon}>{verdict.label}</Pill></span>}
+      <StatePill state={pr.state} />
+      {isLive(pr) && pr.next.kind === "rereview" && <Pill tone="warn" icon="RotateCcw">Updated since</Pill>}
       <StalePill pr={pr} />
       <RowLabels labels={pr.labels} />
     </>

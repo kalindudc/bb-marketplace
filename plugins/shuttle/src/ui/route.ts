@@ -9,6 +9,8 @@ export type Route =
   | { view: "mine"; key: string | null }
   | { view: "done"; key: string | null }
   | { view: "reviews"; source: Source; key: string | null }
+  /** Other people's PRs you reviewed, open, merged and closed. */
+  | { view: "reviewed"; key: string | null }
   | { view: "boards"; tab: "active" | "archived" }
   | { view: "board"; id: string; key: string | null }
   | { view: "insights"; tab: InsightsTab }
@@ -22,12 +24,13 @@ export type InsightsTab = (typeof INSIGHTS_TABS)[number];
 /** A route that shows a list, with the PR selected in it. */
 export type ListRoute = Exclude<Route, { view: "insights" | "pr" | "boards" }>;
 
-/** The four areas of the page; Merged and closed sits under My PRs. */
+/** The areas of the page; Merged and closed sits under My PRs, and Reviewed by me under Reviews. */
 export type Area = "inbox" | "mine" | "reviews" | "boards" | "insights";
 
 /** A looked-up PR and search results belong to no area. */
 export function areaOf(route: Route): Area | null {
   if (route.view === "done") return "mine";
+  if (route.view === "reviewed") return "reviews";
   if (route.view === "boards" || route.view === "board") return "boards";
   if (route.view === "pr" || route.view === "search") return null;
   return route.view;
@@ -46,7 +49,7 @@ const OLD_SECTIONS: Record<string, (key: string | null) => Route> = {
 };
 
 /**
- * The page's subPath: "inbox", "mine", "done" and "reviews" are their lists, each followed by a
+ * The page's subPath: "inbox", "mine", "done", "reviews" and "reviewed" are their lists, each followed by a
  * selected PR's key as path segments, "insights", "insights/autopost", "insights/log" and "insights/sync", "pr/<key>" one looked-up PR, and
  * "search/<words>" the search results, the words percent-encoded as one segment, then a selected key.
  * The Inbox's Reviewing, Snoozed and Dismissed tabs are "inbox~reviewing", "inbox~snoozed" and "inbox~dismissed", the same way.
@@ -64,7 +67,7 @@ export function parseRoute(subPath: string): Route {
     const tab = INBOX_TABS.find((item) => item === inbox[1]);
     return tab === undefined ? { view: "inbox", key } : { view: "inbox", tab, key };
   }
-  if (first === "mine" || first === "done") return { view: first, key };
+  if (first === "mine" || first === "done" || first === "reviewed") return { view: first, key };
   if (first === "boards") return { view: "boards", tab: rest[0] === "archived" ? "archived" : "active" };
   if (first === "board") return rest.length === 0 ? { view: "boards", tab: "active" } : { view: "board", id: decoded(rest[0]!), key: rest.length > 1 ? keyFromSegments(rest.slice(1)) : null };
   if (first === "insights") return rest.length === 1 && (rest[0] === "log" || rest[0] === "sync" || rest[0] === "autopost") ? { view: "insights", tab: rest[0] } : { view: "insights", tab: "overview" };
@@ -97,7 +100,8 @@ export function formatRoute(route: Route): string {
       return route.key === null ? area : `${area}/${keySegments(route.key)}`;
     }
     case "mine":
-    case "done": return route.key === null ? route.view : `${route.view}/${keySegments(route.key)}`;
+    case "done":
+    case "reviewed": return route.key === null ? route.view : `${route.view}/${keySegments(route.key)}`;
     case "reviews": {
       const area = route.source === "all" ? "reviews" : `reviews~${route.source}`;
       return route.key === null ? area : `${area}/${keySegments(route.key)}`;

@@ -39,9 +39,10 @@ const REQUESTED_FIELDS = `viewerDidAuthor timelineItems(itemTypes: [REVIEW_REQUE
 const FIRST_REVIEW_FIELDS = "reviews(first: 20) { nodes { state submittedAt author { login __typename } } }";
 
 /** Only the lists that ask the user read when they were asked; only the author's read the first review. */
-export function listFields(operation: ListOperation): string {
+export function listFields(operation: ListOperation, options: ListOptions = {}): string {
   if (operation === "authored") return `${SUMMARY_FIELDS} ${FIRST_REVIEW_FIELDS}`;
-  if (operation === "mentioned") return SUMMARY_FIELDS;
+  // A merged or closed PR asks nobody any more.
+  if (operation === "mentioned" || (operation === "reviewed" && options.state === "closed")) return SUMMARY_FIELDS;
   return `${SUMMARY_FIELDS} ${REQUESTED_FIELDS}`;
 }
 
@@ -184,7 +185,7 @@ export function searchQuery(operation: ListOperation, options: ListOptions): str
     case "mentioned":
       return `${base} is:open mentions:@me`;
     case "reviewed":
-      return `${base} is:open reviewed-by:@me -author:@me`;
+      return options.state === "closed" ? `${base} is:closed reviewed-by:@me -author:@me updated:>=${options.sinceAt ?? options.since}` : `${base} is:open reviewed-by:@me -author:@me`;
   }
 }
 
@@ -765,7 +766,7 @@ export class GithubAdapter implements Adapter {
 
   async list(operation: ListOperation, options: ListOptions, signal?: AbortSignal): Promise<ListResult> {
     const query = `query($q: String!, $first: Int!, $after: String) { search(query: $q, type: ISSUE, first: $first, after: $after) {
-      pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { ${listFields(operation)} } } } }`;
+      pageInfo { hasNextPage endCursor } nodes { ... on PullRequest { ${listFields(operation, options)} } } } }`;
     const schema = z.object({
       search: z.object({ pageInfo: z.object({ hasNextPage: z.boolean(), endCursor: z.string().nullable() }), nodes: z.array(z.union([summaryNode, z.object({}).strict()])) }),
     });

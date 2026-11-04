@@ -243,6 +243,7 @@ const SHORTCUTS: readonly [readonly string[], string][] = [
   [["E"], "Dismiss the selected PRs, or this one"],
   [["S"], "Snooze the selected PRs, or this one"],
   [["U"], "Undo the last change"],
+  [["R"], "Reviewed by me: every PR you reviewed"],
   [["/"], "Search"],
   [["Esc"], "Close the menu, then clear the selection"],
 ];
@@ -404,6 +405,9 @@ function InboxList({ data, layout, onGo, onShortcuts }: { data: InboxData; layou
         handled();
         if (!writes.undoLast()) toast("Nothing to undo.");
         return;
+      case "r":
+        handled();
+        return onGo({ view: "reviewed", key: null });
       case "/":
         handled();
         return search.current?.focus();
@@ -687,6 +691,7 @@ function OutList({ tab, data, layout }: { tab: Exclude<InboxTab, "reviewing">; d
 export function InboxView({ tab, layout, onGo }: { tab: InboxTab | "inbox"; layout: RowLayout; onGo(route: Route): void }) {
   const { writes } = useActions();
   const inbox = useShuttleQuery("inbox", {});
+  const reviewed = useShuttleQuery("overview", {}).data?.counts.reviewed;
   const [shortcuts, setShortcuts] = useState(false);
   const data = inbox.data;
   const fresh = data?.dismissed.filter((pr) => pr.dismissed?.activity).length ?? 0;
@@ -715,6 +720,12 @@ export function InboxView({ tab, layout, onGo }: { tab: InboxTab | "inbox"; layo
           <Segmented label="Inbox tabs" value={tab} options={tabs} onChange={(next) => onGo(next === "inbox" ? { view: "inbox", key: null } : { view: "inbox", tab: next, key: null })} />
         </div>
         <span className="flex-1" />
+        <Tip text="Every PR you reviewed, merged ones too" keys={tab === "inbox" && !layout.phone ? "R" : undefined}>
+          <button type="button" data-reviewed-link className={BUTTON_GHOST} onClick={() => onGo({ view: "reviewed", key: null })}>
+            <Icon name="CircleCheck" fallback="Check" className="size-3.5" aria-hidden />Reviewed by me
+            {reviewed !== undefined && <b className="font-semibold text-foreground">{reviewed}</b>}
+          </button>
+        </Tip>
         <Picker phone={layout.phone} title="Inbox options" triggerClassName={ICON_GHOST} tip={{ text: "Mark all as seen, or see the keyboard shortcuts" }} trigger={<Icon name="MoreHorizontal" className="size-4" aria-hidden />}>
           <PickerAction onSelect={() => void writes.markSeen(unseen)}><Icon name="Eye" fallback="Check" className="size-3.5 text-muted-foreground" aria-hidden />Mark all as seen</PickerAction>
           {!layout.phone && (

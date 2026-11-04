@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import type { PrView } from "../contract";
-import { ErrorNote, FIELD_SMALL, PAGE, PageHeading } from "./common";
+import { ErrorNote, FIELD_SMALL, PAGE, PageHeading, Segmented } from "./common";
 import { REVIEW_GROUPS, SOURCE_META, type Group } from "./constants";
 import { messageOf, useShuttleQuery } from "./data";
 import { BoardChooserDialog, BoardFormDialog, BoardSelectionToolbar, useBoardSelection } from "./boards";
@@ -43,6 +43,14 @@ function Toggle({ on, label, count, onChange }: { on: boolean; label: string; co
   );
 }
 
+/** Reviews' two lists: the PRs that wait on your review, and the ones you reviewed. */
+export function ReviewsTabs({ value, onGo }: { value: "reviews" | "reviewed"; onGo(route: Route): void }) {
+  return (
+    <Segmented label="Reviews" value={value} onChange={(view) => onGo(view === "reviews" ? { view, source: "all", key: null } : { view, key: null })}
+      options={[{ value: "reviews" as const, label: "To review" }, { value: "reviewed" as const, label: "Reviewed" }]} />
+  );
+}
+
 /** Other people's PRs in one list: pick a source, hide bots and quiet ones, grouped by where your review stands. */
 export function ReviewsView({ source, filter, layout, onFilter, onGo }: {
   source: Source;
@@ -77,7 +85,9 @@ export function ReviewsView({ source, filter, layout, onFilter, onGo }: {
 
   return (
     <div className={PAGE}>
-      <PageHeading title="Reviews" description="Other people's PRs: ones that ask you or your teams, mention you, or that you track. Grouped by where your review stands." />
+      <PageHeading title="Reviews" description="Other people's PRs: ones that ask you or your teams, mention you, or that you track. Grouped by where your review stands.">
+        <ReviewsTabs value="reviews" onGo={onGo} />
+      </PageHeading>
       <div role="group" aria-label="Source" className="mb-2 flex gap-1.5 overflow-x-auto [scrollbar-width:none]">
         {SOURCES.map((item) => (
           <button key={item} type="button" aria-pressed={item === source} className={chip(item === source)} onClick={() => onGo({ view: "reviews", source: item, key: null })}>

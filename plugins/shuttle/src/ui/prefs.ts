@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { createStored, useStored } from "./remember";
 import { formatRoute, parseRoute, type Route } from "./route";
-import { DONE_SORTS, MINE_SORTS, type SortKey } from "./sort";
+import { DONE_SORTS, MINE_SORTS, REVIEWED_SORTS, type SortKey } from "./sort";
 import { BOARD_GROUP_LABELS, BOARD_SORT_LABELS, DEFAULT_BOARD_VIEW, type BoardGrouping, type BoardSort, type BoardViewPrefs } from "./board-prs";
 
 // What the page remembers on this device, so it opens where it was left and the way it was left.
@@ -16,6 +16,17 @@ export interface ReviewFilter {
 
 export const DEFAULT_FILTER: ReviewFilter = { team: "all", hideBots: true, hideQuiet: true };
 
+export const REVIEWED_STATES = ["all", "open", "merged", "closed"] as const;
+export type ReviewedState = (typeof REVIEWED_STATES)[number];
+export const REVIEWED_VERDICTS = ["all", "approve", "changes", "comment"] as const;
+export type ReviewedVerdict = (typeof REVIEWED_VERDICTS)[number];
+
+/** Which of the PRs you reviewed Reviews › Reviewed by me shows. */
+export interface ReviewedFilter {
+  state: ReviewedState;
+  verdict: ReviewedVerdict;
+}
+
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 const oneOf = <T extends string>(options: readonly T[]) => (value: unknown): T | null => (options.includes(value as T) ? (value as T) : null);
 
@@ -24,6 +35,9 @@ export const lastRoute = createStored<string | null>("last-route", null, (value)
 export const mineLayout = createStored<MineLayout>("mine-layout", "grouped", oneOf<MineLayout>(["grouped", "list"]));
 export const mineSort = createStored<SortKey>("mine-sort", MINE_SORTS[0]!, oneOf(MINE_SORTS));
 export const doneSort = createStored<SortKey>("done-sort", DONE_SORTS[0]!, oneOf(DONE_SORTS));
+export const reviewedSort = createStored<SortKey>("reviewed-sort", REVIEWED_SORTS[0]!, oneOf(REVIEWED_SORTS));
+export const reviewedFilter = createStored<ReviewedFilter>("reviewed-filter", { state: "all", verdict: "all" }, (value) =>
+  isRecord(value) ? { state: oneOf(REVIEWED_STATES)(value.state) ?? "all", verdict: oneOf(REVIEWED_VERDICTS)(value.verdict) ?? "all" } : null);
 export const boardViews = createStored<Readonly<Record<string, BoardViewPrefs>>>("board-views", {}, (value) => {
   if (!isRecord(value)) return null;
   const parseSort = oneOf<BoardSort>(Object.keys(BOARD_SORT_LABELS) as BoardSort[]);
@@ -149,5 +163,5 @@ export function useFolding(area: string): Folding {
 
 /** Tests clear localStorage between cases; this reads every remembered value again. */
 export function reloadPrefs(): void {
-  for (const stored of [lastRoute, mineLayout, mineSort, doneSort, boardViews, reviewFilter, folds, scrolls, panelPrs, conversationOrder, hideBotComments, prSeen, inboxView, inboxSwipeHint, threadPrsOpen, panelWidth]) stored.reload();
+  for (const stored of [lastRoute, mineLayout, mineSort, doneSort, reviewedSort, reviewedFilter, boardViews, reviewFilter, folds, scrolls, panelPrs, conversationOrder, hideBotComments, prSeen, inboxView, inboxSwipeHint, threadPrsOpen, panelWidth]) stored.reload();
 }

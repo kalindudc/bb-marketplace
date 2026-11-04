@@ -109,8 +109,21 @@ describe("the sidebar", () => {
     expect(within(nav).getByRole("button", { name: /Asked me/u }).getAttribute("aria-current")).toBe("page");
     expect(within(nav).getByRole("button", { name: /My teams/u }).textContent).toBe("My teams1");
     expect(within(nav).getByRole("button", { name: /Tracked/u }).textContent).toBe("Tracked1");
+    expect(within(nav).getByRole("button", { name: /Reviewed by me/u }).textContent).toBe("Reviewed by me4");
     fireEvent.click(within(nav).getByRole("button", { name: /Mentioned me/u }));
-    expect(slot.inspection.navigateCalls).toEqual([{ method: "toPluginPanel", path: "shuttle", options: { subPath: "reviews~mentioned" } }]);
+    fireEvent.click(within(nav).getByRole("button", { name: /Reviewed by me/u }));
+    expect(slot.inspection.navigateCalls).toEqual([
+      { method: "toPluginPanel", path: "shuttle", options: { subPath: "reviews~mentioned" } },
+      { method: "toPluginPanel", path: "shuttle", options: { subPath: "reviewed" } },
+    ]);
+  });
+
+  it("keeps Reviews open on Reviewed by me, with no source current", async () => {
+    const slot = await sidebar("reviewed");
+    const nav = slot.getByRole("navigation", { name: "Shuttle areas" });
+    await waitFor(() => expect(within(nav).getByRole("button", { name: /Reviewed by me/u }).getAttribute("aria-current")).toBe("page"));
+    expect(within(nav).getByRole("button", { name: /^Reviews/u }).getAttribute("aria-current")).toBe("page");
+    expect(within(nav).getByRole("button", { name: /Everything/u }).getAttribute("aria-current")).toBeNull();
   });
 
   it("ends with each server's health and sync time, and whether automations are paused", async () => {

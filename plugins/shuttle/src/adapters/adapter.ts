@@ -3,7 +3,7 @@ import type { CheckRun, CheckState, MergeMethod, MergeOptions, PrChange, Verdict
 import type { Activity, EditOptions, PrSummary } from "../model";
 
 export interface ListOptions {
-  /** authored only: open PRs, or closed and merged ones updated since `since`. */
+  /** authored and reviewed only: open PRs, or closed and merged ones updated since `since`. */
   state?: "open" | "closed";
   /** YYYY-MM-DD. */
   since?: string;

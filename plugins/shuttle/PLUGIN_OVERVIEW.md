@@ -4,7 +4,7 @@ See what each PR is waiting on and act without leaving bb. GitHub works out of t
 
 - **Inbox:** the decisions waiting on you, one row per PR under what to do with it, with what changed since you last opened it marked. Search, group and sort it. Snooze a PR until later today, tomorrow, next week or until it changes, dismiss it for good, or keep out every PR by an author, from a repo, or mentions where you are not asked; the Snoozed and Dismissed tabs list them, with the way back. The Reviewing tab lists your reviews on their way to their servers and the PRs an AI review is running on, with the way to each thread.
 - **My PRs:** your open PRs grouped by their next step or shown in a sortable list, followed by merged and closed PRs. Checks, reviews and agents stay beside each PR.
-- **Reviews:** requests from people and teams, mentions and tracked PRs, grouped by where your review stands. Filter by team or hide bots and quiet PRs.
+- **Reviews:** requests from people and teams, mentions and tracked PRs, grouped by where your review stands, plus every PR you reviewed, even merged. Filter by team, hide bots and quiet PRs.
 - **Boards:** saved PR sets for a release, project or handoff, across repositories and servers.
 - **Insights:** review and merge times, feedback handled by agents, AI review results, auto post's shadow record and the automation log. Sync explains failed steps.
 
@@ -12,7 +12,7 @@ See what each PR is waiting on and act without leaving bb. GitHub works out of t
 
 Create a board or save selected PRs from a list. Add members by searching Shuttle or pasting links and keys, filter the set, duplicate it, or remove members with confirmation and Undo. A PR can belong to several boards. Status stays live; merged and closed PRs remain until removed.
 
-Archive a board without losing its PRs, then restore it before editing membership. Its timestamped activity log folds to its heading. Board membership never assigns agents or changes review tracking or feedback delivery.
+Archive a board without losing its PRs, then restore it before editing membership. Its activity log folds to its heading. Board membership never assigns agents or changes review tracking or feedback delivery.
 
 ## Work with agents
 

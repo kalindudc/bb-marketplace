@@ -536,6 +536,93 @@ describe("the reviewed list", () => {
     expect(view.reasons).toEqual([{ reason: "reviewed", teams: [] }]);
     expect(view.next.kind).toBe("reviewed");
     expect(h.shuttle.list("reviews").map((p) => p.number)).toEqual([8]);
+    // The closed read got the same open PR from a command that predates it, and kept none of it.
+    expect(h.shuttle.list("reviewed").map((p) => [p.number, p.state])).toEqual([[8, "open"]]);
+  });
+});
+
+describe("your review history", () => {
+  const reviewer = () => harness(testConfig({ servers: [{ ...TEST_SERVER, enabled: true, sep: "#" as const, commands: { ...TEST_SERVER.commands, reviewed: "rd" } }] }));
+  const review = (at: string, state = "approved") => ({ my_review: { state, at, head: "h" } });
+  const since = (h: ReturnType<typeof harness>) => h.runner.calls.filter((c) => c.operation === "reviewed" && c.env.SHUTTLE_STATE === "closed").map((c) => c.env.SHUTTLE_SINCE);
+  const step = (h: ReturnType<typeof harness>) => (JSON.parse(h.store.lastSyncRun("forge")!.steps) as Array<{ operation: string; status: string; detail: string | null }>).find((s) => s.operation === "reviewed_closed");
+
+  it("keeps the merged and closed PRs you reviewed beside the open ones, with no reason", async () => {
+    const h = reviewer();
+    h.answers.reviewed = [pr(8, review("2026-10-22T10:00:00Z"))];
+    h.lists.reviewed_closed = [pr(9, { state: "merged", closed_at: "2026-10-01T10:00:00Z", ...review("2026-09-30T10:00:00Z") }), pr(10, { state: "closed", ...review("2026-09-01T10:00:00Z", "changes") })];
+    await h.shuttle.sync();
+    expect(h.shuttle.list("reviewed").map((p) => [p.number, p.state, p.myReview?.verdict])).toEqual([[8, "open", "approve"], [9, "merged", "approve"], [10, "closed", "changes"]]);
+    expect(h.shuttle.list("reviews").map((p) => p.number)).toEqual([8]);
+    expect(h.shuttle.view(KEY(9)).reasons).toEqual([]);
+    expect(h.shuttle.overview().counts).toMatchObject({ reviews: 1, reviewed: 3 });
+    expect(step(h)).toMatchObject({ status: "ok", detail: "2 merged or closed PRs from the last 90 days" });
+  });
+
+  it("reads the whole window once, then only since the last read, and the whole window again when it grows", async () => {
+    const h = reviewer();
+    h.answers.reviewed = [];
+    h.lists.reviewed_closed = [];
+    await h.shuttle.sync();
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    expect(step(h)!.detail).toBe("0 merged or closed PRs since the last read");
+    h.settings.reviewedDays = 30;
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    h.settings.reviewedDays = 180;
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    // A narrower window reads since the last read; one wider than any read so far reads all of it.
+    expect(since(h)).toEqual(["2026-07-25", "2026-10-23", "2026-10-23", "2026-04-26"]);
+    expect(step(h)!.detail).toBe("0 merged or closed PRs from the last 180 days");
+  });
+
+  it("moves on after a read of the whole window that the server cut short, but reads again from the same point after a short later read", async () => {
+    const h = reviewer();
+    h.answers.reviewed = [];
+    h.lists.reviewed_closed = { items: [], complete: false } as unknown as unknown[];
+    await h.shuttle.sync();
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    h.clock.now += DAY;
+    await h.shuttle.sync();
+    // The second read is since the first and cut short too, so the third starts where the second did.
+    expect(since(h)).toEqual(["2026-07-25", "2026-10-23", "2026-10-23"]);
+    expect(step(h)!.detail).toBe("0 merged or closed PRs since the last read, more than Shuttle reads");
+  });
+
+  it("moves a PR you reviewed from Reviews to its history when it merges", async () => {
+    const h = reviewer();
+    h.answers.reviewed = [pr(8, review("2026-10-22T10:00:00Z"))];
+    h.lists.reviewed_closed = [];
+    await h.shuttle.sync();
+    expect(h.shuttle.list("reviews").map((p) => p.number)).toEqual([8]);
+    h.answers.reviewed = [];
+    h.lists.reviewed_closed = [pr(8, { state: "merged", ...review("2026-10-22T10:00:00Z") })];
+    h.clock.now += 3 * 60_000;
+    await h.shuttle.sync();
+    expect(h.shuttle.list("reviews")).toEqual([]);
+    expect(h.shuttle.list("reviewed").map((p) => [p.number, p.state])).toEqual([[8, "merged"]]);
+  });
+
+  it("counts a review you posted from Shuttle before the server lists it, and never your own PRs", async () => {
+    const h = reviewer();
+    h.answers.reviewed = [];
+    h.lists.reviewed_closed = [];
+    h.lists.review_requested = [pr(3)];
+    h.lists.authored = [pr(1, { author: "me", state: "merged", ...review("2026-10-22T10:00:00Z") })];
+    await h.shuttle.sync();
+    expect(h.shuttle.list("reviewed")).toEqual([]);
+    h.store.addMyReview({ pr_id: h.store.prByKey(KEY(3))!.id, verdict: "approve", head: "head3", findings: 0 });
+    expect(h.shuttle.list("reviewed").map((p) => [p.number, p.myReview?.verdict])).toEqual([[3, "approve"]]);
+  });
+
+  it("leaves a server without a reviewed list alone", async () => {
+    const h = harness();
+    await h.shuttle.sync();
+    expect(h.runner.calls.some((c) => c.operation === "reviewed")).toBe(false);
+    expect(step(h)).toBeUndefined();
   });
 });
 

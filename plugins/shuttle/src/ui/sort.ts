@@ -8,13 +8,17 @@ export const SORT_LABELS = {
   closed: "Recently merged",
   repo: "Repository",
   size: "Largest first",
+  reviewed: "Recently reviewed",
+  reviewedOldest: "Reviewed longest ago",
 } as const;
 export type SortKey = keyof typeof SORT_LABELS;
 
 /** The first of each is the list's default; for open PRs it is the order the server sends. */
 export const MINE_SORTS: readonly SortKey[] = ["updated", "newest", "oldest", "repo", "size"];
 export const DONE_SORTS: readonly SortKey[] = ["closed", "newest", "oldest", "repo", "size"];
+export const REVIEWED_SORTS: readonly SortKey[] = ["reviewed", "reviewedOldest", "updated", "closed", "newest", "oldest", "repo", "size"];
 
+const reviewedAt = (pr: PrView) => pr.myReview?.at ?? null;
 const lines = (pr: PrView) => (pr.additions === null || pr.deletions === null ? null : pr.additions + pr.deletions);
 // A missing time or size goes last in either direction.
 const desc = (a: number | null, b: number | null) => (a === null ? (b === null ? 0 : 1) : b === null ? -1 : b - a);
@@ -27,6 +31,8 @@ const COMPARE: Record<SortKey, (a: PrView, b: PrView) => number> = {
   closed: (a, b) => desc(a.closedAt, b.closedAt),
   repo: (a, b) => a.repo.localeCompare(b.repo, undefined, { sensitivity: "base" }) || a.server.localeCompare(b.server) || b.number - a.number,
   size: (a, b) => desc(lines(a), lines(b)),
+  reviewed: (a, b) => desc(reviewedAt(a), reviewedAt(b)),
+  reviewedOldest: (a, b) => asc(reviewedAt(a), reviewedAt(b)),
 };
 
 /** A sorted copy. Ties go to the most recently updated, then the key, so rows never swap places between syncs. */
@@ -38,5 +44,6 @@ export function sortPrs(prs: readonly PrView[], key: SortKey): PrView[] {
 export function rowTime(pr: PrView, key: SortKey): string | null {
   if (key === "newest" || key === "oldest") return pr.createdAt === null ? null : `opened ${ago(pr.createdAt)}`;
   if (key === "closed") return pr.closedAt === null ? null : `${pr.state === "merged" ? "merged" : "closed"} ${ago(pr.closedAt)}`;
+  if (key === "reviewed" || key === "reviewedOldest") return pr.myReview?.at == null ? null : `reviewed ${ago(pr.myReview.at)}`;
   return pr.updatedAt === null ? null : age(pr.updatedAt);
 }

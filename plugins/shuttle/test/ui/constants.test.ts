@@ -13,6 +13,7 @@ describe("page routes", () => {
     expect(parseRoute("")).toEqual({ view: "inbox", key: null });
     expect(parseRoute("mine")).toEqual({ view: "mine", key: null });
     expect(parseRoute("done")).toEqual({ view: "done", key: null });
+    expect(parseRoute("reviewed")).toEqual({ view: "reviewed", key: null });
     expect(parseRoute("reviews")).toEqual({ view: "reviews", source: "all", key: null });
     expect(parseRoute("reviews~team")).toEqual({ view: "reviews", source: "team", key: null });
     expect(parseRoute("insights")).toEqual({ view: "insights", tab: "overview" });
@@ -29,7 +30,7 @@ describe("page routes", () => {
     expect(formatRoute({ view: "insights", tab: "sync" })).toBe("insights/sync");
     expect(formatRoute({ view: "pr", key })).toBe("pr/lab/acme/app/2261179");
     for (const route of [
-      { view: "inbox", key }, { view: "mine", key }, { view: "done", key }, { view: "reviews", source: "team", key }, { view: "reviews", source: "tracked", key: null },
+      { view: "inbox", key }, { view: "mine", key }, { view: "done", key }, { view: "reviewed", key }, { view: "reviewed", key: null }, { view: "reviews", source: "team", key }, { view: "reviews", source: "tracked", key: null },
       { view: "pr", key: "gitlab:group/sub/proj#77" }, { view: "insights", tab: "overview" },
     ] as const) {
       expect(parseRoute(formatRoute(route))).toEqual(route);

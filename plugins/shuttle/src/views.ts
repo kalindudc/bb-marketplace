@@ -281,6 +281,8 @@ export function inArea(view: PrView, area: Area, ctx: Ctx): boolean {
       return view.mine && !live && (view.closedAt ?? view.updatedAt ?? 0) >= ctx.now() - ctx.settings().doneDays * DAY;
     case "reviews":
       return !view.mine && live && (view.reasons.length > 0 || view.tracked || view.myReview !== null || view.draft !== null || view.lastReview !== null);
+    case "reviewed":
+      return !view.mine && view.myReview !== null;
   }
 }
 

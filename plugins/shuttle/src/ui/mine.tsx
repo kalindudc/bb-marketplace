@@ -54,7 +54,7 @@ const LAYOUTS = [
   { value: "list" as const, label: "List", icon: "ListView" },
 ];
 
-function SortSelect({ value, options, onChange }: { value: SortKey; options: readonly SortKey[]; onChange(next: SortKey): void }) {
+export function SortSelect({ value, options, onChange }: { value: SortKey; options: readonly SortKey[]; onChange(next: SortKey): void }) {
   return (
     <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
       <Icon name="Sort" fallback="ChevronDown" className="size-3.5" aria-hidden />

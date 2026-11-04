@@ -44,8 +44,8 @@ const archivedBoard: BoardSummary = {
 
 function boardPage(subPath: string, rpc: Partial<Handlers> = {}) {
   return page(subPath, {
-    overview: () => overview({ servers: [server()], counts: { inbox: 2, mine: 3, done: 1, reviews: 12 } }),
-    list: ({ area }: { area: "mine" | "done" | "reviews" }) => ({ prs: area === "mine" ? [mine({ number: 1, title: "Retry 429s in the edge router" }), mine({ number: 2, title: "Edge cache keys" })] : [] }),
+    overview: () => overview({ servers: [server()], counts: { inbox: 2, mine: 3, done: 1, reviews: 12, reviewed: 4 } }),
+    list: ({ area }: { area: "mine" | "done" | "reviews" | "reviewed" }) => ({ prs: area === "mine" ? [mine({ number: 1, title: "Retry 429s in the edge router" }), mine({ number: 2, title: "Edge cache keys" })] : [] }),
     detail: ({ key }: { key: string }) => ({ pr: mine({ number: key.endsWith("#1") ? 1 : 2, title: key.endsWith("#1") ? "Retry 429s in the edge router" : "Edge cache keys" }), events: [], body: "", draft: null }),
     search: () => ({ prs: [], total: 0 }),
     activity: () => ({ events: [] }),

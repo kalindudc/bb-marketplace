@@ -50,8 +50,8 @@ the usual tool directories on `PATH`, and a 60-second limit. It gets:
 | `SHUTTLE_OPERATION` | always: the operation's name, such as authored or edit_labels |
 | `SHUTTLE_SERVER` | always: the server id |
 | `SHUTTLE_SCRIPTS` | always, when the installed Shuttle has it: this file's folder in the installed Shuttle |
-| `SHUTTLE_STATE` | authored: `open`, or `closed` for merged and closed PRs |
-| `SHUTTLE_SINCE` | authored with `closed`: YYYY-MM-DD, the start of the Done window about once an hour and after the Done setting changes, and otherwise the day of the last read that came in full less five minutes; print every merged or closed PR updated on or after that day |
+| `SHUTTLE_STATE` | authored and reviewed: `open`, or `closed` for merged and closed PRs; reviewed gets no `SHUTTLE_STATE` for its open list |
+| `SHUTTLE_SINCE` | authored with `closed`: YYYY-MM-DD, the start of the Done window about once an hour and after the Done setting changes, and otherwise the day of the last read that came in full less five minutes; reviewed with `closed`: the start of the Reviewed history window at the first read and when the window grows, and otherwise the day of the last read less five minutes. Print every merged or closed PR updated on or after that day |
 | `SHUTTLE_REPO`, `SHUTTLE_NUMBER`, `SHUTTLE_URL` | view, activity and every operation below that reads or changes one PR |
 | `SHUTTLE_ADD`, `SHUTTLE_REMOVE` | edit_labels: label names; edit_reviewers: user logins; one per line |
 | `SHUTTLE_ADD_TEAMS`, `SHUTTLE_REMOVE_TEAMS` | edit_reviewers: team slugs, one per line |
@@ -87,7 +87,11 @@ uses it to tell your PRs and your own comments apart.
 `authored`, `review_requested`, `team_requested`, `mentioned`, `reviewed`: an array of PR
 summaries, or `{"items": [...], "complete": false}` when the server cut the list short.
 `reviewed` lists open PRs of other people that you have reviewed, whether or not you are still
-asked. Shuttle never drops a
+asked. With `SHUTTLE_STATE=closed` it lists the merged and closed ones updated since
+`SHUTTLE_SINCE`, for Reviews › Reviewed by me. Print each one's `my_review`: the history lists
+only the PRs that carry one, so a server whose search leaves it out needs a read of each PR's
+reviews. A command that ignores `SHUTTLE_STATE` prints its open PRs again, which Shuttle leaves
+out of that read, so the history then holds only the PRs Shuttle saw while they were open. Shuttle never drops a
 PR from a list it knows is incomplete, so an old request cannot come back looking new.
 `view`: one PR summary.
 
@@ -358,7 +362,8 @@ What changes when reviews run on new machines:
 
 `kind = "github"` needs no commands: Shuttle uses `gh api graphql`. Requested of me is
 `user-review-requested:@me`, My teams is `review-requested:@me -user-review-requested:@me`,
-Reviewed is `reviewed-by:@me -author:@me`, and each list reads up to 300 of the most recently
+Reviewed is `reviewed-by:@me -author:@me`, with `is:closed` and `updated:>=` for the merged and
+closed PRs of your review history, and each list reads up to 300 of the most recently
 updated PRs. Changes to your own PRs go through `gh pr ready` (with `--undo` for back to draft),
 `gh pr close`, `gh pr reopen`, and the REST API through `gh api` for labels and requested
 reviewers.

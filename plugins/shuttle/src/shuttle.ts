@@ -185,6 +185,7 @@ export class Shuttle implements Ctx {
       mine: views.filter((v) => inArea(v, "mine", this)).length,
       done: views.filter((v) => inArea(v, "done", this)).length,
       reviews: views.filter((v) => inArea(v, "reviews", this)).length,
+      reviewed: views.filter((v) => inArea(v, "reviewed", this)).length,
     };
     const servers = this.config().servers.map((server) => this.serverStatus(server));
     const syncedAt = servers.reduce<number | null>((max, s) => (s.lastSyncAt !== null && (max === null || s.lastSyncAt > max) ? s.lastSyncAt : max), null);

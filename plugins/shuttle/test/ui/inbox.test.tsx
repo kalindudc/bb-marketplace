@@ -495,11 +495,34 @@ describe("the Inbox", () => {
     openMenu(await slot.findByRole("button", { name: "Inbox options" }));
     fireEvent.click(await screen.findByRole("menuitem", { name: "Keyboard shortcuts" }));
     const dialog = await slot.findByRole("dialog", { name: "Keyboard shortcuts" });
-    for (const text of ["Next and previous PR", "Open it", "Select it", "Dismiss", "Snooze", "Undo", "Search", "Close the menu, then clear the selection"]) expect(dialog.textContent).toContain(text);
+    for (const text of ["Next and previous PR", "Open it", "Select it", "Dismiss", "Snooze", "Undo", "Reviewed by me", "Search", "Close the menu, then clear the selection"]) expect(dialog.textContent).toContain(text);
+  });
+
+  it("goes to Reviewed by me from the header, with its count, on every tab", async () => {
+    const { slot } = await inboxPage();
+    const link = await find(slot.container, "[data-reviewed-link]");
+    await waitFor(() => expect(link.textContent).toBe("Reviewed by me4"));
+    fireEvent.click(link);
+    expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: "reviewed" } });
+    slot.lifecycle.unmount();
+    const snoozed = await inboxPage({}, ALL, "inbox~snoozed");
+    fireEvent.click(await find(snoozed.slot.container, "[data-reviewed-link]"));
+    expect(lastNavigation(snoozed.slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: "reviewed" } });
   });
 });
 
 describe("the Inbox's keys", () => {
+  it("goes to Reviewed by me with R, but not while typing", async () => {
+    const { slot } = await inboxPage();
+    await row(slot, waiting.key);
+    const search = slot.getByRole("searchbox");
+    const before = slot.inspection.navigateCalls.length;
+    fireEvent.keyDown(search, { key: "r" });
+    expect(slot.inspection.navigateCalls).toHaveLength(before);
+    press("r");
+    expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: "reviewed" } });
+  });
+
   it("moves a cursor with J and K, opens with Enter, selects with X and clears with Escape", async () => {
     const { slot } = await inboxPage();
     await row(slot, waiting.key);

@@ -53,7 +53,7 @@ export function ShuttleSidebar({ subPath }: PluginNavPanelProps) {
   const pluginId = experimental_usePluginId();
   const overview = useShuttleQuery("overview", {});
   const route = routeOf(subPath);
-  const reviewsOpen = route.view === "reviews";
+  const reviewsOpen = route.view === "reviews" || route.view === "reviewed";
   const reviews = useShuttleQuery("list", { area: "reviews" }, reviewsOpen);
   const counts = overview.data?.counts;
   const sources = reviews.data === undefined ? null : sourceCounts(reviews.data.prs);
@@ -75,8 +75,9 @@ export function ShuttleSidebar({ subPath }: PluginNavPanelProps) {
       )}
       <NavItem icon={AREA_META.reviews.icon} label="Reviews" count={counts?.reviews ?? null} on={reviewsOpen} onClick={() => go({ view: "reviews", source: "all", key: null })} />
       {reviewsOpen && SOURCES.map((source) => (
-        <NavItem key={source} sub label={SOURCE_META[source].label} count={sources?.[source] ?? null} on={route.source === source} onClick={() => go({ view: "reviews", source, key: null })} />
+        <NavItem key={source} sub label={SOURCE_META[source].label} count={sources?.[source] ?? null} on={route.view === "reviews" && route.source === source} onClick={() => go({ view: "reviews", source, key: null })} />
       ))}
+      {reviewsOpen && <NavItem sub label="Reviewed by me" count={counts?.reviewed ?? null} on={route.view === "reviewed"} onClick={() => go({ view: "reviewed", key: null })} />}
       <NavItem icon={AREA_META.boards.icon} label="Boards" count={boards.data?.boards.length ?? null} on={boardsOpen} onClick={() => go({ view: "boards", tab: "active" })} />
       {boardsOpen && boards.data !== undefined && boards.data.boards.map((board) => (
         <NavItem key={board.id} sub label={board.name} count={board.prCount} on={route.view === "board" && route.id === board.id} onClick={() => go({ view: "board", id: board.id, key: null })} />

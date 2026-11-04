@@ -123,6 +123,13 @@ describe("GitHub summaries", () => {
     expect(searchQuery("reviewed", {})).toBe("is:pr archived:false sort:updated-desc is:open reviewed-by:@me -author:@me");
   });
 
+  it("reads the merged and closed PRs you reviewed from the exact time, without the request fields", () => {
+    const closed = { state: "closed" as const, since: "2026-07-25", sinceAt: "2026-07-25T12:00:00+00:00" };
+    expect(searchQuery("reviewed", closed)).toBe("is:pr archived:false sort:updated-desc is:closed reviewed-by:@me -author:@me updated:>=2026-07-25T12:00:00+00:00");
+    expect(listFields("reviewed", closed)).not.toMatch(/timelineItems|reviews\(first/u);
+    expect(listFields("reviewed", closed)).toContain("latestReviews(first: 30)");
+  });
+
   it("lists reviewed PRs with the request fields, on the server's host", async () => {
     const { calls, run } = recorder(() => ({ json: { data: { search: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [node({ timelineItems: { nodes: [] } }), {}] } } } }));
     const list = await new GithubAdapter(github("ghe.acme.io"), run).list("reviewed", {});

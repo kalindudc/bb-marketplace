@@ -24,6 +24,13 @@ export const SETTINGS = {
     default: 14,
     experimental_schema: z.number().int().min(1).max(90),
   },
+  reviewedDays: {
+    type: "number",
+    label: "Reviewed history covers (days)",
+    description: "How far back Shuttle reads the merged and closed PRs you reviewed, for Reviews › Reviewed. PRs it already has stay in the list.",
+    default: 90,
+    experimental_schema: z.number().int().min(1).max(365),
+  },
   reviewSection: {
     type: "string",
     label: "Section for review threads",
@@ -76,6 +83,7 @@ export interface Settings {
   pauseAutomations: boolean;
   syncMinutes: number;
   doneDays: number;
+  reviewedDays: number;
   defaultProject: string;
   reviewSection: string;
   archiveReviewThreads: boolean;
@@ -92,6 +100,7 @@ export const DEFAULT_SETTINGS: Settings = {
   pauseAutomations: false,
   syncMinutes: 3,
   doneDays: 14,
+  reviewedDays: 90,
   defaultProject: "",
   reviewSection: "",
   archiveReviewThreads: true,
@@ -107,6 +116,7 @@ export function toSettings(values: Record<string, unknown>): Settings {
     pauseAutomations: values.pauseAutomations === true,
     syncMinutes: num(values.syncMinutes, DEFAULT_SETTINGS.syncMinutes),
     doneDays: num(values.doneDays, DEFAULT_SETTINGS.doneDays),
+    reviewedDays: num(values.reviewedDays, DEFAULT_SETTINGS.reviewedDays),
     defaultProject: typeof values.defaultProject === "string" ? values.defaultProject : "",
     reviewSection: typeof values.reviewSection === "string" ? values.reviewSection.trim() : "",
     archiveReviewThreads: values.archiveReviewThreads !== false,

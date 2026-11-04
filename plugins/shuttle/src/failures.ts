@@ -10,6 +10,7 @@ export const STEP_LABELS: Record<SyncStepName, string> = {
   team_requested: "team requests",
   mentioned: "mentions",
   reviewed: "PRs you reviewed",
+  reviewed_closed: "merged and closed PRs you reviewed",
   refresh: "linked and tracked PRs",
 };
 

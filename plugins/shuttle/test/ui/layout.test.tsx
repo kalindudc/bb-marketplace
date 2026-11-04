@@ -32,7 +32,7 @@ function layoutPage(subPath: string, rpc: Partial<Handlers> = {}) {
 describe("on a phone", () => {
   it("switches areas from a tab bar with the Inbox's count, and rows open the PR", async () => {
     setViewport(390);
-    const { slot } = await layoutPage("mine", { overview: () => overview({ counts: { inbox: 7, mine: 1, done: 0, reviews: 1 } }) });
+    const { slot } = await layoutPage("mine", { overview: () => overview({ counts: { inbox: 7, mine: 1, done: 0, reviews: 1, reviewed: 0 } }) });
     const row = await find(slot.container, `[data-pr="${first.key}"]`);
     const tabs = slot.getByRole("navigation", { name: "Areas" });
     expect(within(tabs).getAllByRole("button").map((button) => button.textContent)).toEqual(["Inbox7", "My PRs", "Reviews", "Boards", "Insights"]);

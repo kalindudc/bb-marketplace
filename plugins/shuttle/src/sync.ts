@@ -74,6 +74,13 @@ interface ClosedRead {
 }
 const closedReadKey = (server: string) => `closed_read:${server}`;
 
+/** When the merged and closed PRs you reviewed were last read, and the widest history window read in full. */
+interface ReviewedRead {
+  at: number;
+  days: number;
+}
+const reviewedReadKey = (server: string) => `reviewed_closed_read:${server}`;
+
 /**
  * Runs a sync's steps and records each. A failure that usually passes gets one more try after a
  * pause, within a small budget per sync; a rate limit, or a server down for two steps in a row,
@@ -221,7 +228,36 @@ export async function syncServer(ctx: Ctx, server: ServerConfig, signal?: AbortS
     const list = await steps.run(operation, () => adapter.list(operation, {}, signal), (list) => `${plural(list.rows.length, "PR")}${more(list)}`);
     if (list !== undefined) land(REASON_OF[operation], list.rows, list.complete);
   });
-  const lists = supported.has("authored") ? [readClosed, ...others] : others;
+  // Your review history: no list asks you about these PRs, so they land with no reason.
+  const readReviewedClosed = async () => {
+    const before = ctx.store.kv(reviewedReadKey(server.id));
+    const last = before === null ? null : (JSON.parse(before) as ReviewedRead);
+    const asked = ctx.now();
+    const days = ctx.settings().reviewedDays;
+    const window = asked - days * DAY;
+    // Nothing leaves the history, so the whole window is read only once, and again when it grows.
+    const full = last === null || days > last.days;
+    const from = full ? window : Math.max(window, last.at - CLOSED_MARGIN_MS);
+    const since = new Date(from).toISOString();
+    const list = await steps.run(
+      "reviewed_closed",
+      () => adapter.list("reviewed", { state: "closed", since: since.slice(0, 10), sinceAt: `${since.slice(0, 19)}+00:00` }, signal),
+      (list) => `${plural(list.rows.length, "merged or closed PR")}${full ? ` from the last ${plural(days, "day")}` : " since the last read"}${more(list)}`,
+    );
+    if (list === undefined) return;
+    // A command that predates this read prints your open reviewed PRs again; the reviewed list has those.
+    const closed = list.rows.filter((summary) => summary.state === "merged" || summary.state === "closed");
+    ctx.store.tx(() => {
+      for (const summary of closed) seen.add(ctx.store.upsertPr(server.id, summary, summary.url ?? linkFor(server, summary.repo, summary.number), false).id);
+    });
+    listed += closed.length;
+    ctx.port.publish();
+    // Reading the whole window again cannot get past the server's cap, so only a later read cut short is read again.
+    if (!full && !list.complete) return;
+    ctx.store.setKv(reviewedReadKey(server.id), JSON.stringify({ at: asked, days: full ? days : last.days } satisfies ReviewedRead));
+  };
+  const history = supported.has("reviewed") ? [readReviewedClosed] : [];
+  const lists = [...(supported.has("authored") ? [readClosed] : []), ...others, ...history];
   await atOnce(lists, LISTS_AT_ONCE, async (read) => {
     if (!signal?.aborted) await read();
   });

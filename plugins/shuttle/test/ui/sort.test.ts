@@ -31,6 +31,16 @@ describe("sorting PRs", () => {
     expect(keys(list)).toEqual([c.key, a.key, b.key]);
   });
 
+  it("sorts by when you reviewed either way, with PRs you never reviewed last", () => {
+    const recent = mine({ number: 1, myReview: { verdict: "approve", at: NOW - HOUR, head: null } });
+    const old = mine({ number: 2, myReview: { verdict: "changes", at: NOW - 5 * DAY, head: null } });
+    const unknown = mine({ number: 3, myReview: { verdict: "comment", at: null, head: null } });
+    expect(keys(sortPrs([old, unknown, recent], "reviewed"))).toEqual([recent.key, old.key, unknown.key]);
+    expect(keys(sortPrs([recent, unknown, old], "reviewedOldest"))).toEqual([old.key, recent.key, unknown.key]);
+    expect(rowTime(old, "reviewed")).toBe("reviewed 5d ago");
+    expect(rowTime(unknown, "reviewedOldest")).toBeNull();
+  });
+
   it("shows the time the list is sorted by", () => {
     expect(rowTime(a, "updated")).toBe("1h");
     expect(rowTime(a, "newest")).toBe("opened 3d ago");

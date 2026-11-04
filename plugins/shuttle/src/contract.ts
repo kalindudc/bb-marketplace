@@ -4,7 +4,7 @@ import { z } from "zod";
 import { AUTO_POST_MODES, configSchema, WATCH_MODES } from "./config";
 
 /** The page's lists. The Inbox has its own read; Insights too. */
-export const AREAS = ["mine", "done", "reviews"] as const;
+export const AREAS = ["mine", "done", "reviews", "reviewed"] as const;
 export type Area = (typeof AREAS)[number];
 export const REASONS = ["authored", "requested", "team", "mentioned", "reviewed"] as const;
 export type Reason = (typeof REASONS)[number];
@@ -441,7 +441,7 @@ export const syncFailureSchema = z.object({
 export type SyncFailure = z.infer<typeof syncFailureSchema>;
 
 /** A sync's steps, in order: who the user is, each list, then the linked and tracked PRs no list covered. */
-export const SYNC_STEPS = ["whoami", "authored", "authored_closed", "review_requested", "team_requested", "mentioned", "reviewed", "refresh"] as const;
+export const SYNC_STEPS = ["whoami", "authored", "authored_closed", "review_requested", "team_requested", "mentioned", "reviewed", "reviewed_closed", "refresh"] as const;
 export type SyncStepName = (typeof SYNC_STEPS)[number];
 export const syncStepSchema = z.object({
   operation: z.enum(SYNC_STEPS),
@@ -523,7 +523,7 @@ export type EventView = z.infer<typeof eventViewSchema>;
 
 export const overviewSchema = z.object({
   servers: z.array(serverStatusSchema),
-  counts: z.object({ inbox: z.number(), mine: z.number(), done: z.number(), reviews: z.number() }),
+  counts: z.object({ inbox: z.number(), mine: z.number(), done: z.number(), reviews: z.number(), reviewed: z.number() }),
   syncedAt: z.number().nullable(),
   syncing: z.boolean(),
   paused: z.boolean(),

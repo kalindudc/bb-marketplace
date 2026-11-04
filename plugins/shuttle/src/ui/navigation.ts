@@ -23,6 +23,7 @@ function crumbsOf(route: Route, boardName?: string): { label: string; route: Rou
     case "mine": return [{ label: AREA_META.mine.label, route: { view: "mine", key: null } }, { label: "Open", route: { view: "mine", key: null } }];
     case "done": return [{ label: AREA_META.mine.label, route: { view: "mine", key: null } }, { label: "Merged and closed", route: { view: "done", key: null } }];
     case "reviews": return [{ label: AREA_META.reviews.label, route: { view: "reviews", source: "all", key: null } }, { label: SOURCE_META[route.source].label, route: { ...route, key: null } }];
+    case "reviewed": return [{ label: AREA_META.reviews.label, route: { view: "reviews", source: "all", key: null } }, { label: "Reviewed by me", route: { view: "reviewed", key: null } }];
     case "boards": return [{ label: AREA_META.boards.label, route: { view: "boards", tab: route.tab } }];
     case "board": return [{ label: AREA_META.boards.label, route: { view: "boards", tab: "active" } }, { label: boardName ?? "Board", route: { view: "board", id: route.id, key: null } }];
     case "insights": return [{ label: AREA_META.insights.label, route: { view: "insights", tab: "overview" } }, { label: INSIGHTS_TAB_LABELS[route.tab], route }];
