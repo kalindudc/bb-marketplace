@@ -5,6 +5,20 @@ Every pull request that needs you, from any server, in one place. See
 [skills/shuttle/references/servers.md](skills/shuttle/references/servers.md) for the command
 adapter contract.
 
+## Screenshots
+
+Captured in an isolated demo bb with made-up PRs on two fictional command servers (Acme and Acme Lab), in the default theme, light mode.
+
+![The Inbox, grouped by what to do](../../screenshots/shuttle/inbox.jpg)
+
+![A PR beside My PRs, with its status card and agent](../../screenshots/shuttle/pr-view.jpg)
+
+![An AI review draft with auto post's shadow decision](../../screenshots/shuttle/review-draft.jpg)
+
+![Reviews, grouped by where your review stands](../../screenshots/shuttle/reviews.jpg)
+
+![A saved board for a release](../../screenshots/shuttle/board.jpg)
+
 ## Inbox
 
 The Inbox lists what waits on you, one row per PR under what to do with it: Needs you, Ready to

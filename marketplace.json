@@ -390,6 +390,13 @@
       "icon": {
         "url": "plugins/shuttle/icons/shuttle.svg"
       },
+      "screenshots": [
+        "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/shuttle/inbox.jpg",
+        "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/shuttle/pr-view.jpg",
+        "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/shuttle/review-draft.jpg",
+        "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/shuttle/reviews.jpg",
+        "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/shuttle/board.jpg"
+      ],
       "tags": [
         "pull-requests",
         "code-review",
