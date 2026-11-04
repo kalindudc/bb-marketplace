@@ -11,7 +11,7 @@ const second = pr({ repo: "acme/deploy-v2", number: 88, title: "Add per-route sa
 function reviews(subPath: string, rpc: Partial<Handlers> = {}) {
   return page(subPath, {
     list: ({ area }) => ({ prs: area === "reviews" ? [first, second] : [] }),
-    detail: ({ key }) => ({ pr: [first, second].find((item) => item.key === key)!, events: [], body: "## What changes\n\nAdds **compact** headers.", draft: null }),
+    detail: ({ key }) => ({ pr: [first, second].find((item) => item.key === key)!, events: [], body: "## What changes\n\nAdds **compact** headers.", draft: null, drafts: 0 }),
     ...rpc,
   });
 }
@@ -103,7 +103,7 @@ describe("Shuttle page", () => {
     const { slot } = await page(formatRoute({ view: "pr", key: second.key }), {
       detail: ({ key }) => {
         if (!known) throw Object.assign(new Error(`no pull request ${key}`), { code: "not_found" });
-        return { pr: second, events: [], body: "", draft: null };
+        return { pr: second, events: [], body: "", draft: null, drafts: 0 };
       },
       lookup: () => {
         known = true;

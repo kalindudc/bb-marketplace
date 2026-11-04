@@ -137,6 +137,13 @@ export const AUTO_POST_MODES = ["off", "shadow"] as const;
 export type AutoPostMode = (typeof AUTO_POST_MODES)[number];
 export const AUTO_POST_SEVERITIES = ["low", "medium", "high"] as const;
 /**
+ * What a reviewer's concern about the PR as a whole is about: the description does not match the diff, changes outside
+ * the PR's purpose (unrelated files, tests changed to pass), something the reviewer could not verify or run, CI, approval
+ * or merge state, a design or behaviour point, or no kind given (older reviews).
+ */
+export const CONCERN_KINDS = ["description", "scope", "unverified", "process", "design", "other"] as const;
+export type ConcernKind = (typeof CONCERN_KINDS)[number];
+/**
  * The fast verifier: no tools, skills, context files or session, run from the temp directory so no project's own
  * resources load, so it judges only the evidence Shuttle hands it on stdin. Extensions still load, since some set
  * up the model's credentials; add `--no-extensions -e <that extension>` to the command to leave the rest out.
@@ -154,6 +161,8 @@ export const autoPostRepoSchema = z
     guidelines: z.string().max(4000).default(""),
     /** Path globs: a draft whose PR changes one of these files is held for you. */
     holdPaths: z.array(repoGlob).max(50).default([]),
+    /** Author globs judged like people although they count as bots, such as an agent account that opens PRs for someone. */
+    allowAuthors: z.array(repoGlob).max(50).default([]),
   })
   .strict();
 export type AutoPostRepo = z.infer<typeof autoPostRepoSchema>;
@@ -171,6 +180,26 @@ export const autoPostSchema = z
     /** The share of auto-posted findings you would have posted yourself. */
     targetPrecision: z.number().min(0.5).max(1).default(0.9),
     floors: z.object({ holds: unit(0.7), worth: unit(0.7) }).strict().prefault({}),
+    /** The kinds of reviewer concern that hold a draft: comments by default only for signs of a careless change; approvals for more. */
+    holdConcerns: z
+      .object({
+        comment: z.array(z.enum(CONCERN_KINDS)).max(CONCERN_KINDS.length).default(["description", "scope", "other"]),
+        approve: z.array(z.enum(CONCERN_KINDS)).max(CONCERN_KINDS.length).default(["description", "scope", "unverified", "process", "other"]),
+      })
+      .strict()
+      .prefault({}),
+    /** Approvals, recorded in shadow mode: the largest PR one could approve, and the share of them you must agree with. */
+    approvals: z
+      .object({
+        maxLines: z.number().int().min(1).max(100_000).default(200),
+        target: z.number().min(0.5).max(1).default(0.98),
+        /** The highest finding severity an approval may carry as comments; above it the PR is not approved. */
+        maxSeverity: z.enum(["nit", "low", "medium"]).default("low"),
+        /** passed: every check passed (or there are none); not_failed: checks may still be running. */
+        checks: z.enum(["passed", "not_failed"]).default("passed"),
+      })
+      .strict()
+      .prefault({}),
   })
   .strict();
 export type AutoPost = z.infer<typeof autoPostSchema>;
@@ -204,6 +233,17 @@ export type Config = z.infer<typeof configSchema>;
 export const DEFAULT_REVIEW_PROMPT = [
   "Review the pull request {url} ({key}, head {head}): {title}.",
   "{skill_line}Read it with: {view_command}",
+  "",
+  "Answer four questions about it:",
+  "1. What: what does the PR change? Read the diff and the changed files, not only the description, and say where the two differ (a description concern).",
+  "2. Why: what problem does it solve, and for whom? Use the description, linked issues and the code around the change.",
+  "3. How: does the implementation get there? Look for defects the change introduces or makes worse: crashes and type errors, security or permission gaps, lost or wrong data, broken compatibility for deployed callers, serious performance problems such as N+1 queries, unbounded work or races, missed error handling or transaction boundaries, and config or rollout mistakes.",
+  "4. Should: is it worth doing at all, and is this the right way? Say so when a simpler change, something that already exists, or no change would do; when it duplicates or works around a pattern the codebase already has; or when the risk outweighs the benefit.",
+  "What, Why, Should and your overall view of How go in your notes for me. Each defect you find becomes a finding, and the summary tells the author in a few lines what you found.",
+  "",
+  "A finding needs a clear failure, a realistic way to reach it, and evidence a reviewer can check. Before keeping one, try to disprove it: drop it when earlier validation prevents it, later code handles it, a test whose assertions show that exact case works, or it rests on a guess about how a language or library behaves. Follow the repository's own instructions and conventions, such as AGENTS.md. Comment only on lines the PR changes, at the smallest line or range that causes the problem, and check each line number against the file at the head you read. Leave out style, naming, formatting and generic requests for more tests; a missing test matters only when it lets a concrete regression through, so describe the regression.",
+  "Severity: high for a likely crash, security hole, data loss, outage, or a break for deployed callers with no safe migration; medium for wrong behaviour, a performance regression, missed error handling or a compatibility risk with bounded impact; low for a real defect with small impact; nit for a one-line point that is not a defect, never style, naming or formatting.",
+  "",
   "Draft your findings with file and line references. Do not post anything on the pull request until I confirm what to post.{note}",
 ].join("\n");
 

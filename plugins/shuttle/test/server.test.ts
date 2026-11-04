@@ -50,6 +50,13 @@ describe("the plugin", () => {
       findings: [{ severity: "high", path: "a.go", line: 1, body: "b", consensus: { keep: 2, total: 1 } }],
     }, { threadId: "thr_1", projectId: "proj_app" }).catch((error: unknown) => String(error)));
     expect(impossible).toContain("keep cannot be more than total");
+    const kinds = text(await harness.callAgentTool("shuttle_review_draft", {
+      pr: "forge:acme/app#2", summary: "s", verdict: "comment", findings: [],
+      assessment: { risk: "low", concerns: [{ kind: "unverified", text: "Could not run the tests." }, "An older plain concern."] },
+    }, { threadId: "thr_1", projectId: "proj_app" }).catch((error: unknown) => String(error)));
+    expect(kinds).not.toContain("Invalid");
+    const draft = (await behavior.callRpc("detail", { key: "forge:acme/app#2" })) as { draft: { assessment: unknown } | null };
+    expect(draft.draft?.assessment).toEqual({ risk: "low", concerns: [{ kind: "unverified", text: "Could not run the tests." }, { kind: "other", text: "An older plain concern." }] });
 
     const created = text(await harness.callAgentTool(
       "shuttle_board_create",

@@ -278,12 +278,25 @@ export function createCli(shuttle: Shuttle): PluginCliRegistration {
             if (gate === null) return out(`Auto post did not check the draft on ${known.key}; see bb shuttle show ${known.key} for its activity.`);
             const lines = [`Auto post (shadow) would ${gate.decision === "post" ? `post ${gate.posting.length} finding${gate.posting.length === 1 ? "" : "s"}` : "hold the draft"} on ${known.key}, in ${(gate.ms / 1000).toFixed(1)}s. Nothing was posted.`];
             for (const reason of gate.reasons) lines.push(`  held: ${reason}`);
+            if (gate.approval) lines.push(`  approval: ${gate.approval.decision === "approve" ? "would approve" : `would not approve: ${gate.approval.reasons.join("; ")}`}`);
             for (const finding of gate.findings) {
               const failed = finding.checks.find((check) => !check.ok);
               const scores = finding.holds === null ? "" : ` (holds ${finding.holds.toFixed(2)}, worth ${finding.worth?.toFixed(2)})`;
               lines.push(`  ${finding.id}: ${gate.posting.includes(finding.id) ? "would post" : failed ? `held, ${failed.check}: ${failed.reason}` : "passed"}${scores}`);
             }
             return out(lines.join("\n"));
+          }),
+      }),
+      rescore: cliCommand({
+        summary: "Judge again the findings of every draft auto post checked lately, posted and discarded ones too, with today's settings and verifier; never posts",
+        options: { days: { type: "string", description: "How far back, in days (30 by default)." }, json },
+        run: ({ options }) =>
+          guarded(async () => {
+            const days = options.days === undefined ? 30 : Number(options.days);
+            if (!Number.isInteger(days) || days < 1 || days > 365) throw new PluginCliError("--days must be a whole number from 1 to 365");
+            const result = await shuttle.rescoreDrafts(days);
+            if (options.json) return out(toJson(result));
+            return out(`Judged the findings of ${result.drafts} draft${result.drafts === 1 ? "" : "s"} again: ${result.judged} judged by the verifier, ${result.failures} failed. Nothing was posted.`);
           }),
       }),
       sync: cliCommand({

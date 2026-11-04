@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
-import type { Preset } from "../../config";
-import { BUTTON, BUTTON_GHOST, BUTTON_GHOST_DANGER, BUTTON_PRIMARY, CARD, ErrorNote, FIELD, Pill } from "../common";
+import { DEFAULT_REVIEW_PROMPT, type Preset } from "../../config";
+import { BUTTON, BUTTON_GHOST, BUTTON_GHOST_DANGER, BUTTON_GHOST_SMALL, BUTTON_PRIMARY, CARD, ErrorNote, FIELD, Pill } from "../common";
 import { WORKSPACES } from "../constants";
 import { ExecutionPicker, executionOf, withExecution, type Execution } from "../execution";
 import { defaultPresetOf, presetSummary } from "../review-button";
@@ -55,7 +55,14 @@ function PresetEditor({ preset, isNew, canDelete, onChange, onExecution, onMakeD
         {WORKSPACES.map((workspace) => <option key={workspace} value={workspace}>{WORKSPACE_LABELS[workspace]}</option>)}
       </select>
       <span className={`${label} self-start pt-1.5`}>Prompt</span>
-      <PromptEditor label="Prompt template" value={preset.prompt} variables={PROMPT_VARIABLES} onChange={(prompt) => onChange({ prompt })} />
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <PromptEditor label="Prompt template" value={preset.prompt} variables={PROMPT_VARIABLES} onChange={(prompt) => onChange({ prompt })} />
+        {preset.prompt !== DEFAULT_REVIEW_PROMPT && (
+          <button type="button" className={`${BUTTON_GHOST_SMALL} self-start`} onClick={() => onChange({ prompt: DEFAULT_REVIEW_PROMPT })}>
+            Use the shipped prompt (what, why, how and should)
+          </button>
+        )}
+      </div>
       <span className={`${label} self-start pt-1.5`}>Preview</span>
       <div data-prompt-preview className="whitespace-pre-wrap rounded-md border border-border bg-background px-3 py-2.5 text-xs">
         {renderTemplate(preset.prompt, sampleReviewVariables(preset.skill.trim()))}

@@ -1,10 +1,10 @@
 // AI review drafts: a review thread hands Shuttle its findings, and the user chooses what to post.
 import { AdapterError } from "./adapters/adapter";
-import { type Assessment, type Consensus, type Evidence, type Finding, type PostFinding, type ReviewDraft, type Severity, type Verdict } from "./contract";
+import { type Consensus, type ReviewHistoryItem, type Evidence, type Finding, type PostFinding, type ReviewDraft, type Severity, type Verdict } from "./contract";
 import { errText, ShuttleError, type Ctx } from "./ctx";
 import type { DraftRow, PrRow } from "./db/store";
 import { parseKey } from "./keys";
-import { autoPostRepo, gateDraft, parseGate } from "./gate";
+import { autoPostRepo, gateDraft, normalizeAssessment, parseAssessment, parseGate, type AssessmentInput } from "./gate";
 import { fetchPr, lookup, requirePr, shortKey } from "./prs";
 
 export interface DraftInput {
@@ -12,7 +12,7 @@ export interface DraftInput {
   verdict: Verdict;
   findings: Array<{ severity: Severity; path: string; line?: number | null; body: string; evidence?: Evidence[]; consensus?: Consensus | null; category?: string }>;
   notes?: string;
-  assessment?: Assessment;
+  assessment?: AssessmentInput;
 }
 
 /** What the user did with one finding of a draft they posted. */
@@ -49,9 +49,32 @@ export function draftView(ctx: Ctx, row: DraftRow): ReviewDraft {
     verdict: row.verdict,
     findings: JSON.parse(row.findings) as Finding[],
     notes: row.notes,
-    assessment: row.assessment ? (JSON.parse(row.assessment) as Assessment) : null,
+    assessment: parseAssessment(row.assessment),
     // A gate stored by an older or newer Shuttle in another shape shows as not checked, never as a broken draft.
     gate: parseGate(row.gate),
+  };
+}
+
+/** An earlier draft as the Your review tab lists it. */
+export function historyView(ctx: Ctx, row: DraftRow): ReviewHistoryItem {
+  const review = row.review_id !== null ? ctx.store.reviewsOf(row.pr_id).find((r) => r.id === row.review_id) ?? null : null;
+  return {
+    id: row.id,
+    threadId: row.thread_id,
+    threadTitle: ctx.store.threadTitle(row.thread_id) ?? "Review thread",
+    preset: review?.preset ?? null,
+    trigger: review?.trigger ?? null,
+    head: row.head,
+    at: row.created_at,
+    state: row.state === "posted" ? "posted" : row.state === "discarded" ? "discarded" : "unposted",
+    discardReason: row.state === "discarded" ? row.discard_reason : null,
+    suggested: row.verdict,
+    posted: row.state === "posted" ? row.posted_verdict : null,
+    postedAt: row.posted_at,
+    summary: row.summary,
+    notes: row.notes,
+    findings: (JSON.parse(row.findings) as unknown[]).length,
+    postedFindings: row.state === "posted" ? row.posted_findings : null,
   };
 }
 
@@ -80,7 +103,7 @@ export async function saveDraft(ctx: Ctx, threadId: string, query: string, input
     verdict: input.verdict,
     findings: JSON.stringify(findings),
     notes: input.notes?.trim() || null,
-    assessment: input.assessment ? JSON.stringify(input.assessment) : null,
+    assessment: input.assessment ? JSON.stringify(normalizeAssessment(input.assessment)) : null,
   });
   // The draft is what the review was for, whatever the thread does next.
   if (review?.state === "running") ctx.store.finishReview(review.id, "done", "draft");
@@ -164,7 +187,7 @@ export async function submitReview(ctx: Ctx, key: string, input: SubmitInput): P
   if (draft) {
     ctx.store.setDraftState(draft.id, "posted", input.findings.length);
     const outcomes = outcomesOf(JSON.parse(draft.findings) as Finding[], input.findings);
-    if (outcomes !== null) ctx.store.setDraftOutcome(draft.id, JSON.stringify(outcomes));
+    ctx.store.setDraftOutcome(draft.id, outcomes === null ? null : JSON.stringify(outcomes), input.verdict);
   }
   // What you reviewed is what the draft read, so new commits after it still bring the PR back.
   ctx.store.addMyReview({ pr_id: pr.id, verdict: input.verdict, head: draft?.head ?? pr.head, findings: input.findings.length });

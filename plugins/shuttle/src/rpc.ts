@@ -35,6 +35,7 @@ export function registerRpc(bb: BbPluginApi, shuttle: Shuttle): void {
     activity: ({ limit }) => refusing(() => ({ events: shuttle.activity(limit) })),
     insights: ({ range }) => refusing(() => shuttle.insights(range)),
     autoPostInsights: ({ range }) => refusing(() => shuttle.autoPostInsights(range)),
+    reviewHistory: ({ key }) => refusing(() => shuttle.reviewHistory(key)),
     // A sync can take a minute on a slow server; the page follows it through overview.syncing.
     sync: ({ server }) => refusing(() => {
       if (server !== undefined && !shuttle.server(server)) throw new ShuttleError(`no server called ${server}`);

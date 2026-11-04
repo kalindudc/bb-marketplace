@@ -207,12 +207,13 @@ export function PrDetail({ prKey, onClose, onExpand, onCollapse, phone = false, 
     );
   }
 
-  const { pr, body, draft, events } = detail.data;
+  const { pr, body, draft, events, drafts } = detail.data;
   const items = conversation.data?.items;
   const details = conversation.data?.details ?? null;
   const conversationError = conversation.data?.error ?? (conversation.error === null ? null : messageOf(conversation.error));
   const lookedUp = pr.next.kind === "looked_up" && !pr.tracked;
-  const reviewTab = !pr.mine && isLive(pr);
+  // A merged or closed PR keeps the tab when an AI review ran on it or left a draft, for the notes its reviews left.
+  const reviewTab = !pr.mine && (isLive(pr) || pr.lastReview !== null || drafts > 0);
   const tab: PrTab = storedTab === "review" && !reviewTab ? "overview" : storedTab;
   const wide = page && width >= WIDE_PX;
 

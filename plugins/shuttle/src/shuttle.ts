@@ -3,20 +3,20 @@ import { adapterFor, type Adapter } from "./adapters";
 import { runProcess, sleep, type Runner } from "./adapters/exec";
 import { configChanges, configFromToml, configToToml, ConfigError, parseConfig, serverSchema, type Config, type ServerConfig, type WatchMode } from "./config";
 import type {
-  AutoPostInsights,
+  AutoPostInsights, ReviewHistoryItem,
   AgentMode, AgentTarget, Area, BoardDetail, BoardSummary, ConversationItem, EventView, InboxRule, InboxRuleKind, InboxView, InsightsView, LinkRole, MergeMethod, MergeOptions, MergeView, Outcome, Overview, LinkCard, PostFinding, PrChange, PrDetails,
   PostView, PrView, ReviewDraft, ReviewInput, ServerStatus, SyncHistory, SyncRun, SyncStep, SyncStepName, TestResult, ThreadOption, Verdict,
 } from "./contract";
 import { askAgent, runAutoAgent, setAgent, setAgentMode, type AgentChange } from "./agents";
 import { board as readBoard, boardAdd, boardCreate, boardRemove, boards as listBoards, boardUpdate } from "./boards";
 import { cancelAutoMerge, comment, Conversations, merge, mergeOptions, recordOutcomes, reply, resolve, type MergeOutcome } from "./conversation";
-import { draftView, saveDraft, setDraftState, submitReview, type DraftInput, type SubmitInput } from "./drafts";
+import { draftView, historyView, saveDraft, setDraftState, submitReview, type DraftInput, type SubmitInput } from "./drafts";
 import { cancelPost, clearPost, failInterruptedPosts, inputOf, postView, queueReview, recentPosts, retryPost } from "./posts";
 import { FastLane, type BackOffKind } from "./fast-lane";
 import { cancelMerge, clearMerge, failInterruptedMerges, mergeInputOf, mergeView, queueMerge, recentMerges, retryMerge } from "./merges";
 import { addRule, dismiss, inbox as readInbox, markSeen, removeRule, snooze } from "./inbox";
 import { insights, INSIGHTS_SINCE, snapshotCounts } from "./insights";
-import { autoPostRepo, gateDraft } from "./gate";
+import { autoPostRepo, gateDraft, parseGate, rescoreDraft } from "./gate";
 import { autoPostInsights } from "./shadow";
 import { feedbackSignature, phaseOf } from "./next";
 import { errText, ShuttleError, type Ctx } from "./ctx";
@@ -318,8 +318,49 @@ export class Shuttle implements Ctx {
     return insights(this, range);
   }
 
+  reviewHistory(key: string): { items: ReviewHistoryItem[] } {
+    const pr = requirePr(this, key);
+    // Once the PR is merged or closed, a draft never posted is history too, with the notes it left. A draft a newer one of
+    // the same review run replaced is an earlier try of that review, so only the newest of each run shows; review threads
+    // are reused by later runs, so a run is its review, not its thread.
+    const live = pr.state === "open" || pr.state === "draft";
+    const rows = this.store.pastDrafts(pr.id);
+    const items = rows.filter((row, at) => !(row.discard_reason === "superseded" && row.review_id !== null && rows.slice(0, at).some((newer) => newer.review_id === row.review_id)));
+    return { items: items.filter((row) => !live || row.state !== "draft").map((row) => historyView(this, row)) };
+  }
+
   autoPostInsights(range: AutoPostInsights["range"]): AutoPostInsights {
     return autoPostInsights(this, range);
+  }
+
+  /**
+   * Judges again the findings of every draft auto post checked in the last `days`, posted and discarded ones too, so
+   * the shadow record covers drafts held before the verifier ran on every draft. Never posts.
+   */
+  async rescoreDrafts(days: number): Promise<{ drafts: number; judged: number; failures: number }> {
+    const since = this.now() - days * 86_400_000;
+    let drafts = 0;
+    let judged = 0;
+    let failures = 0;
+    for (const row of this.store.gatedDrafts()) {
+      const stored = parseGate(row.gate);
+      if (stored === null || stored.at < since || row.discard_reason === "superseded") continue;
+      let result: Awaited<ReturnType<typeof rescoreDraft>>;
+      try {
+        result = await rescoreDraft(this, row.id);
+      } catch (error) {
+        this.port.log("warn", `auto post could not judge draft ${row.id} again: ${errText(error)}`);
+        failures++;
+        continue;
+      }
+      if (result === null) continue;
+      drafts++;
+      judged += result.judged;
+      failures += result.failed;
+    }
+    if (drafts || failures) this.store.addEvent("gate", `Auto post judged the findings of ${drafts} checked draft${drafts === 1 ? "" : "s"} again: ${judged} judged, ${failures} could not be judged and kept what they had. Nothing was posted.`);
+    this.port.publish();
+    return { drafts, judged, failures };
   }
 
   /** Runs auto post's checks on a live draft again and waits for them. Never posts. */
@@ -337,14 +378,17 @@ export class Shuttle implements Ctx {
     return toView(this, requirePr(this, key));
   }
 
-  detail(key: string): { pr: PrView; events: EventView[]; body: string | null; draft: ReviewDraft | null } {
+  detail(key: string): { pr: PrView; events: EventView[]; body: string | null; draft: ReviewDraft | null; drafts: number } {
     const pr = requirePr(this, key);
     const draft = pr.mine ? null : this.store.liveDraft(pr.id);
-    return { pr: toView(this, pr), events: this.store.events({ prId: pr.id, limit: 50 }).map(toEventView), body: pr.body, draft: draft ? draftView(this, draft) : null };
+    return {
+      pr: toView(this, pr), events: this.store.events({ prId: pr.id, limit: 50 }).map(toEventView), body: pr.body,
+      draft: draft ? draftView(this, draft) : null, drafts: pr.mine ? 0 : this.store.draftCount(pr.id),
+    };
   }
 
   /** A deep link to a PR Shuttle has not stored yet looks it up on its server first. */
-  async detailOrLookup(key: string): Promise<{ pr: PrView; events: EventView[]; body: string | null; draft: ReviewDraft | null }> {
+  async detailOrLookup(key: string): Promise<ReturnType<Shuttle["detail"]>> {
     if (!this.store.prByKey(key)) await lookup(this, key);
     return this.detail(key);
   }

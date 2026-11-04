@@ -1,6 +1,7 @@
 // Agent tools. Names start with shuttle_ so they never collide with PR Desk's while both run.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { CONCERN_KINDS } from "./config";
 import { errText } from "./ctx";
 import { boardDetailText, boardLine, boardList, prDetail, prList } from "./format";
 import type { Shuttle } from "./shuttle";
@@ -153,11 +154,23 @@ export function registerTools(bb: BbPluginApi, shuttle: Shuttle): void {
       assessment: z
         .object({
           risk: z.enum(["low", "medium", "high"]),
-          concerns: z.array(z.string().trim().min(1).max(300)).max(10),
+          concerns: z
+            .array(
+              z.union([
+                z.object({
+                  kind: z.enum(CONCERN_KINDS).describe(
+                    "description: the description claims what the diff does not do, or leaves out what it does; scope: changes outside the PR's purpose, such as unrelated files or tests changed to pass; unverified: a claim or result you could not check or run; process: CI, approvals, conflicts or merge state; design: a design or behaviour point the user should weigh; other: none of these.",
+                  ),
+                  text: z.string().trim().min(1).max(300),
+                }),
+                z.string().trim().min(1).max(300),
+              ]),
+            )
+            .max(10),
         })
         .optional()
         .describe(
-          "Your view of the PR as a whole: its risk, and concerns about the change itself rather than one line, such as a description that claims changes the diff does not make, tests changed to pass, unrelated files, or claims you could not verify. Empty concerns when there are none.",
+          "Your view of the PR as a whole: its risk, and each concern about the change itself rather than one line, with its kind, such as a description that claims changes the diff does not make, tests changed to pass, unrelated files, or claims you could not verify. Empty concerns when there are none.",
         ),
       notes: z
         .string()

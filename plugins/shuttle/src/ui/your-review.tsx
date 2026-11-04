@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { experimental_Icon as Icon, experimental_usePluginId, Markdown, UrlLink } from "@get-bb/plugin-sdk/app";
-import type { GateFinding, MyReview, PostView, PrView, ReviewDraft, Severity } from "../contract";
+import type { GateFinding, MyReview, PostView, PrView, ReviewDraft, ReviewHistoryItem, Severity } from "../contract";
 import { postText } from "../next";
 import { NextButtons, useActions } from "./actions";
 import { BUTTON, BUTTON_GHOST, BUTTON_PRIMARY_LARGE, FIELD, FitTextarea, Segmented } from "./common";
-import { useShuttleMutation } from "./data";
+import { useShuttleMutation, useShuttleQuery } from "./data";
 import { ago, plural, settingsHref } from "./format";
 import { isLive } from "./pills";
 import { reviewInQueue, useQueueReview } from "./posts";
@@ -53,6 +53,12 @@ function GateNote({ pr, draft }: { pr: PrView; draft: ReviewDraft }) {
       </div>
       {!post && gate.reasons.length > 0 && (
         <ul className="mt-1 list-disc pl-5 text-muted-foreground">{gate.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
+      )}
+      {gate.approval && (
+        <div data-gate-approval={gate.approval.decision} className="mt-1.5 border-t border-border pt-1.5">
+          <span className="font-semibold text-foreground">{gate.approval.decision === "approve" ? "The approval rules would approve this PR" : "The approval rules would not approve this PR"}</span>
+          {gate.approval.reasons.length > 0 && <ul className="mt-0.5 list-disc pl-5 text-muted-foreground">{gate.approval.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>}
+        </div>
       )}
     </section>
   );
@@ -217,6 +223,51 @@ function Buttons({ children }: { children: ReactNode }) {
   return <div className="flex flex-wrap items-center gap-2">{children}</div>;
 }
 
+const POSTED_AS: Record<ReviewDraft["verdict"], string> = { approve: "you approved", comment: "you commented", changes: "you requested changes" };
+
+function historyFate(item: ReviewHistoryItem): string {
+  if (item.state === "unposted") return "never posted";
+  if (item.state === "discarded") return item.discardReason === "superseded" ? "replaced by a newer review" : "you discarded it";
+  const posted = item.posted === null ? "you posted it" : POSTED_AS[item.posted];
+  return item.postedFindings === null ? posted : `${posted} with ${plural(item.postedFindings, "comment")}`;
+}
+
+/** One earlier review: when, what it suggested and what became of it, its notes for you, and its summary folded. */
+function EarlierReview({ item, open }: { item: ReviewHistoryItem; open: boolean }) {
+  const actions = useActions();
+  return (
+    <li data-earlier-review={item.id} className="border-t border-border py-2.5 first:border-t-0">
+      <div className="flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
+        <b className="text-foreground">{item.preset ?? "AI review"}</b>
+        <span>· {ago(item.at)}</span>
+        {item.head !== null && <span>· on <span className="font-mono">{item.head.slice(0, 7)}</span></span>}
+        <span>· suggested {item.suggested === "changes" ? "requesting changes" : item.suggested === "approve" ? "approving" : "a comment"}, {historyFate(item)}</span>
+        <button type="button" className="cursor-pointer text-primary hover:underline" onClick={() => actions.openThread(item.threadId)}>open its thread</button>
+      </div>
+      {item.notes !== null
+        ? <div data-earlier-notes className="mt-1.5 min-w-0 break-words rounded-md border border-border bg-card px-3 py-2 text-[13px]"><Markdown content={item.notes} /></div>
+        : <div className="mt-1 text-xs text-muted-foreground">No notes for you.</div>}
+      <details className="mt-1.5 text-xs" open={open && item.notes === null}>
+        <summary className="cursor-pointer text-muted-foreground">Summary{item.findings ? ` and ${plural(item.findings, "finding")}` : ""}</summary>
+        <div className="mt-1 min-w-0 whitespace-pre-wrap break-words text-[13px]">{item.summary}</div>
+      </details>
+    </li>
+  );
+}
+
+/** The PR's earlier AI reviews with the notes they left for you, newest first; nothing when there are none. */
+function EarlierReviews({ pr }: { pr: PrView }) {
+  const history = useShuttleQuery("reviewHistory", { key: pr.key });
+  const items = history.data?.items ?? [];
+  if (items.length === 0) return null;
+  return (
+    <section aria-label="Earlier reviews" data-earlier-reviews className="mt-5">
+      <div className="mb-1.5 text-[12.5px] font-semibold text-foreground">Earlier reviews <span className="font-normal text-muted-foreground">· notes for you, never posted</span></div>
+      <ul>{items.map((item, index) => <EarlierReview key={item.id} item={item} open={index === 0} />)}</ul>
+    </section>
+  );
+}
+
 /** Where your review of someone else's PR stands, and what you can do about it: the Your review tab. */
 export function YourReviewCard({ pr, draft }: { pr: PrView; draft: ReviewDraft | null }) {
   const actions = useActions();
@@ -227,7 +278,8 @@ export function YourReviewCard({ pr, draft }: { pr: PrView; draft: ReviewDraft |
     card.current.scrollIntoView?.({ block: "start", behavior: "smooth" });
     done(intent);
   }, [intent, done, pr.key]);
-  if (!isLive(pr)) return null;
+  // A merged or closed PR keeps only its earlier reviews.
+  if (!isLive(pr)) return <section ref={card} aria-label="Your review" data-your-review className="scroll-mt-28"><EarlierReviews pr={pr} /></section>;
   const next = pr.next;
   const run = pr.lastReview;
   const comment = pr.can.comment && <button type="button" className={BUTTON_GHOST} onClick={() => actions.compose(pr)}><Icon name="MessageSquare" className="size-3.5" aria-hidden />Comment</button>;
@@ -305,6 +357,7 @@ export function YourReviewCard({ pr, draft }: { pr: PrView; draft: ReviewDraft |
     <section ref={card} aria-label="Your review" data-your-review className="scroll-mt-28">
       {post !== null && post.state === "failed" && <PostFailed pr={pr} post={post} />}
       {body}
+      <EarlierReviews pr={pr} />
     </section>
   );
 }

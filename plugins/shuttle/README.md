@@ -127,6 +127,16 @@ Choose **Start AI review** or **Re-review with AI**, pick a preset, and optional
 **Note for the reviewer** with context or areas to focus on. The note applies only to that
 review and stays with you if you open **Change for this run…** for more options.
 
+Shuttle ships one preset, **Standard review**. It has the reviewer answer four questions about the
+PR: what it changes (from the diff, not only the description), why, how well the implementation gets
+there, and whether it should be done at all, for example when it duplicates something the codebase
+already has. The answers go to your notes; each defect found on the way becomes a finding, and the
+summary tells the author what was found. A finding needs a clear failure, a realistic way to reach
+it and evidence you can check, on a line the PR changes, and the reviewer tries to disprove it before
+keeping it. Style and generic test requests are left out. Edit it, or add presets, in **Settings ›
+Review presets**. Presets you saved keep their prompts; **Use the shipped prompt** in a preset's
+editor switches one to this one.
+
 A review runs until its thread hands back a draft with `shuttle_review_draft`, or says it is over
 with `shuttle_review_done`. The end of a turn does not end it, so a review that waits on critics or
 other child threads stays under Reviewing. A review with nothing happening for 2 hours, in its
@@ -151,10 +161,24 @@ A finding would post only when it clears every check:
   scored by the verifier as worth posting.
 - **Alignment:** outside the repository's held paths. The repository's guidelines go to the verifier.
 
-A draft as a whole is held when the PR has new commits since the review, is a draft, was written by
-a bot, is larger than the line limit or of unknown size, changes a held path, has a summary that fails
-the safety check, or when the reviewer rated it high risk or raised a concern about the PR as a whole. Comment reviews only: approvals and requests for changes are
-held for now.
+A draft as a whole is held from posting its comments when the PR has new commits since the review, is
+a draft, was written by a bot (other than the repository's allowed authors), is larger than the line
+limit or of unknown size, changes a held path, has a summary that fails the safety check, or when the
+reviewer rated it high risk or raised a concern of a kind set to hold comments. Concerns have kinds:
+the description does not match the diff, changes outside the PR's purpose, something the reviewer
+could not verify, CI or merge state, a design point, or none given. By default only the first two, and
+concerns without a kind, hold comments. Requests for changes are never auto-posted.
+
+Every finding is judged on its own whatever holds its draft, so shadow mode learns from every review:
+the record to prove is how often a finding the gate would pass is one you post. The dashboard shows
+apart what would actually post once the draft rules apply.
+
+Approvals have their own rules, checked on every draft but one asking for changes, since you may approve
+a draft the review only commented on. The rules would approve a PR that is open at the head the review
+read, no larger than the approval limit (200 lines by default), with checks passed (or none failed, if
+you choose), no requested changes, no bot author outside the allowed ones, a low-risk assessment with no
+concern of a kind set to hold approvals, and no finding above the allowed severity (low by default, posted
+as comments). Shadow mode records the decision against the verdict you posted; nothing is approved.
 
 The verifier is a fast model that runs as a command with no tools, so it judges only what Shuttle
 gives it: the finding, the lines the reviewer quoted, the file's diff and the code around the line.
@@ -162,15 +186,23 @@ It never sees the PR's description. The default runs Kimi K3 at low thinking thr
 temp directory with tools, skills and context files off; extensions still load, since some provide the
 model's credentials, so add `--no-extensions -e <that extension>` to leave the rest out. Any command
 that reads the prompt on stdin and prints `{"holds", "worth_posting", "reason"}` works. Only findings
-that pass every other check, in a draft nothing else holds, go to it, and no more than could post.
+that pass every other check go to it, at most eight a draft.
 
 The draft's Your review tab shows what auto post would do, with a chip on each finding whose tooltip
-lists every check and the verifier's scores. **Check again** runs the checks once more, and so does
-`bb shuttle gate <pr>`. Posting a draft records which findings you kept, edited or dropped, and a
+lists every check and the verifier's scores, and whether the approval rules would approve. **Check
+again** runs the checks once more, and so does `bb shuttle gate <pr>`. `bb shuttle rescore` judges the
+findings of drafts checked in the last 30 days again, posted ones included, keeping each draft's holds.
+Posting a draft records which findings you kept, edited or dropped and the verdict you posted, and a
 discard records whether you discarded it or a newer review replaced it. **Insights › Auto post**
-compares the two per repository: precision, its 95% lower bound against your target, how many more
-agreeing findings would prove the target, what auto post held that you posted, why drafts were held,
-how the verifier scored each finding, and the latest decisions.
+compares them per repository: for findings and for approvals, precision, its 95% lower bound against
+its target, how many more agreeing ones would prove it, and what was held that you posted; then why
+drafts were held, how the verifier scored each finding, and the latest decisions.
+
+### Earlier reviews
+
+The Your review tab lists the PR's earlier AI reviews under the current one, newest first: when each
+ran, what it suggested, what you did with it, its notes for you, and its summary. A merged or closed
+PR keeps the tab for them when an AI review ran on it, and a draft you never posted joins them there.
 
 ## Agents
 

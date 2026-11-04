@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { fireEvent, waitFor, within } from "@testing-library/react";
 import type { PluginSettingsSectionProps } from "@get-bb/plugin-sdk/app";
-import { DEFAULT_VERIFIER_COMMAND, type Config } from "../../src/config";
+import { DEFAULT_REVIEW_PROMPT, DEFAULT_VERIFIER_COMMAND, type Config } from "../../src/config";
 import { app, callsTo, config, handlers, mount, server, overview, unmountAll, type Handlers } from "./helpers";
 
 afterEach(unmountAll);
@@ -47,6 +47,20 @@ describe("Shuttle settings sections", () => {
       ["standard", "Deep review", false, "critique", "openai/gpt-5.2"],
       ["quick", "Quick skim", true, "", undefined],
     ]);
+  });
+
+  it("switches a saved preset to the shipped prompt, and offers it only when the prompt differs", async () => {
+    const slot = await section("presets");
+    const standard = await waitFor(() => slot.container.querySelector<HTMLElement>("[data-preset-editor='standard']") ?? Promise.reject(new Error("no editor")));
+    expect(within(standard).queryByRole("button", { name: /Use the shipped prompt/u })).toBeNull();
+    fireEvent.click(slot.getByRole("button", { name: /Quick skim/u }));
+    const quick = slot.container.querySelector<HTMLElement>("[data-preset-editor='quick']")!;
+    fireEvent.click(within(quick).getByRole("button", { name: "Use the shipped prompt (what, why, how and should)" }));
+    expect(within(quick).queryByRole("button", { name: /Use the shipped prompt/u })).toBeNull();
+    expect(quick.querySelector("[data-prompt-preview]")!.textContent).toContain("4. Should:");
+    fireEvent.click(slot.getByRole("button", { name: "Save presets" }));
+    await waitFor(() => expect(saved(slot)).toHaveLength(1));
+    expect(saved(slot)[0]!.presets.map((preset) => preset.prompt)).toEqual([DEFAULT_REVIEW_PROMPT, DEFAULT_REVIEW_PROMPT]);
   });
 
   it("puts a preset back on bb's default agent and model", async () => {
@@ -244,13 +258,22 @@ describe("Shuttle settings sections", () => {
     expect(slot.getByText("about 1 in 20 auto-posted findings you would not have posted")).toBeTruthy();
     fireEvent.change(slot.getByRole("textbox", { name: "Verifier command" }), { target: { value: "my-verifier --json" } });
     fireEvent.click(slot.getByRole("button", { name: "Use the default (Kimi K3 through pi)" }));
+    fireEvent.change(slot.getByRole("textbox", { name: "Allowed authors for repository 1" }), { target: { value: "terraform-actuator, aquifer-*" } });
+    const concerns = slot.container.querySelector("[data-concern-holds]") as HTMLElement;
+    fireEvent.click(within(concerns).getAllByRole("checkbox", { name: /CI, approvals, conflicts or merge state/u })[1]!);
+    fireEvent.click(within(concerns).getAllByRole("checkbox", { name: /A design or behaviour point/u })[0]!);
+    fireEvent.change(slot.getByRole("spinbutton", { name: "Largest PR an approval may cover" }), { target: { value: "120" } });
+    fireEvent.change(slot.getByRole("combobox", { name: "Highest finding severity an approval may carry" }), { target: { value: "nit" } });
+    fireEvent.change(slot.getByRole("combobox", { name: "Checks an approval needs" }), { target: { value: "not_failed" } });
     fireEvent.click(slot.getByRole("button", { name: "Save automations" }));
     await waitFor(() => expect(saved(slot)).toHaveLength(1));
     expect(saved(slot)[0]!.autoPost).toMatchObject({
-      repos: [{ repo: "Shopify/terraform-the-cloud", mode: "shadow", guidelines: "Actuator plans are the source of truth.", holdPaths: ["terraform/*/iam/*", "*.sql"] }],
+      holdConcerns: { comment: ["description", "scope", "design", "other"], approve: ["description", "scope", "unverified", "other"] },
+      approvals: { maxLines: 120, maxSeverity: "nit", checks: "not_failed", target: 0.98 },
+      repos: [{ repo: "Shopify/terraform-the-cloud", mode: "shadow", guidelines: "Actuator plans are the source of truth.", holdPaths: ["terraform/*/iam/*", "*.sql"], allowAuthors: ["terraform-actuator", "aquifer-*"] }],
       minSeverity: "high", targetPrecision: 0.95, floors: { holds: 0.8, worth: 0.7 }, verifier: DEFAULT_VERIFIER_COMMAND,
     });
-  });
+  }, 20_000);
 
   it("names agents, not watching, in the automations", async () => {
     const slot = await section("automations");

@@ -33,7 +33,7 @@ async function open(start: PrView, rpc: Partial<Handlers> = {}) {
   const loaded = await app();
   const slot = mount<PluginNavPanelProps>(loaded.navPanels[0]!.component, { subPath: formatRoute({ view: "mine", key: start.key }) }, handlers({
     list: ({ area }) => ({ prs: area === "mine" ? [current] : [] }),
-    detail: () => ({ pr: current, events: [], body: "", draft: null }),
+    detail: () => ({ pr: current, events: [], body: "", draft: null, drafts: 0 }),
     editPr: ({ change }) => {
       current = applyChange(current, change as Change, new Map());
       return { pr: current };
@@ -65,7 +65,7 @@ describe("changing your own PR from its view", () => {
     const theirs = pr({ labels: [{ name: "loom", color: null }], reviewers: [{ login: "robin-c", team: false, state: "requested" }] });
     const loaded = await app();
     const slot = mount<PluginNavPanelProps>(loaded.navPanels[0]!.component, { subPath: formatRoute({ view: "reviews", source: "all", key: theirs.key }) },
-      handlers({ list: () => ({ prs: [theirs] }), detail: () => ({ pr: theirs, events: [], body: "", draft: null }) }));
+      handlers({ list: () => ({ prs: [theirs] }), detail: () => ({ pr: theirs, events: [], body: "", draft: null, drafts: 0 }) }));
     const view = await waitFor(() => slot.container.querySelector<HTMLElement>("[data-detail]") ?? Promise.reject(new Error("no PR view")));
     expect(view.querySelector("[data-chips] [data-label='loom']")).not.toBeNull();
     expect(within(view).queryByRole("button", { name: "Edit labels" })).toBeNull();

@@ -24,7 +24,7 @@ const reviewSelected = (key: string) => formatRoute({ view: "reviews", source: "
 function layoutPage(subPath: string, rpc: Partial<Handlers> = {}) {
   return page(subPath, {
     list: ({ area }) => ({ prs: area === "mine" ? [first] : area === "reviews" ? [second] : [] }),
-    detail: ({ key }) => ({ pr: [first, second].find((item) => item.key === key)!, events: [], body: "", draft: null }),
+    detail: ({ key }) => ({ pr: [first, second].find((item) => item.key === key)!, events: [], body: "", draft: null, drafts: 0 }),
     ...rpc,
   });
 }
@@ -86,7 +86,7 @@ describe("on a phone", () => {
   it("names the bottom bar's composer button by what it can do", async () => {
     setViewport(390);
     const reviewOnly = { ...second, can: { ...second.can, comment: false, review: true } };
-    const { slot } = await layoutPage(reviewSelected(second.key), { detail: () => ({ pr: reviewOnly, events: [], body: "", draft: null }) });
+    const { slot } = await layoutPage(reviewSelected(second.key), { detail: () => ({ pr: reviewOnly, events: [], body: "", draft: null, drafts: 0 }) });
     const view = await find(slot.container, "[data-phone-pr]");
     await find(view, `[data-detail="${second.key}"]`);
     const bar = view.querySelector<HTMLElement>("[data-phone-actions]")!;

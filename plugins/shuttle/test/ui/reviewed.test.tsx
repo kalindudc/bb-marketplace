@@ -14,7 +14,7 @@ const everything = [merged, open, closed];
 function reviewedPage(prs: PrView[] = everything, subPath = "reviewed") {
   return page(subPath, {
     list: ({ area }) => ({ prs: area === "reviewed" ? prs : [] }),
-    detail: ({ key }) => ({ pr: prs.find((item) => item.key === key)!, events: [], body: "", draft: null }),
+    detail: ({ key }) => ({ pr: prs.find((item) => item.key === key)!, events: [], body: "", draft: null, drafts: 0 }),
   });
 }
 

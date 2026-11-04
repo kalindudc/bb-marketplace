@@ -36,13 +36,13 @@ const ITEMS: ConversationItem[] = [
 ];
 
 /** A server that remembers what the PR view changes, so confirmed reads agree with its predictions. */
-function prPage(start: PrView, rpc: Partial<Handlers> = {}, extra: { draft?: ReviewDraft | null; items?: ConversationItem[]; details?: PrDetails | null; error?: string | null } = {}) {
+function prPage(start: PrView, rpc: Partial<Handlers> = {}, extra: { draft?: ReviewDraft | null; drafts?: number; items?: ConversationItem[]; details?: PrDetails | null; error?: string | null } = {}) {
   let current = start;
   const area = start.mine ? "mine" : "reviews";
   const route = start.mine ? formatRoute({ view: "mine", key: start.key }) : formatRoute({ view: "reviews", source: "all", key: start.key });
   return page(route, {
     list: ({ area: asked }) => ({ prs: asked === area ? [current] : [] }),
-    detail: () => ({ pr: current, events: [], body: "## What changes\n\nRetries **5xx** deletes.", draft: extra.draft ?? null }),
+    detail: () => ({ pr: current, events: [], body: "## What changes\n\nRetries **5xx** deletes.", draft: extra.draft ?? null, drafts: extra.drafts ?? (extra.draft ? 1 : 0) }),
     conversation: () => ({ items: extra.items ?? [], details: extra.details ?? null, error: extra.error ?? null, fetchedAt: Date.now() }),
     setAgentMode: ({ mode }) => {
       current = { ...current, agent: current.agent === null ? null : { ...current.agent, mode } };
@@ -300,7 +300,7 @@ describe("the PR view of your own PR", () => {
     let current = own;
     const { slot, view } = await prPage(own, {
       list: () => ({ prs: [current] }),
-      detail: () => ({ pr: current, events: [], body: "", draft: null }),
+      detail: () => ({ pr: current, events: [], body: "", draft: null, drafts: 0 }),
       unlink: ({ threadId }) => {
         current = { ...current, links: current.links.filter((entry) => entry.threadId !== threadId) };
         return { pr: current };
@@ -479,7 +479,7 @@ describe("the PR view of your own PR", () => {
 
   it("tells the PR's history from its server and from Shuttle, newest first", async () => {
     const events = [event({ id: 9, at: Date.now() - 58 * 60_000, kind: "forwarded", text: "Sent 2 review comments to “Retry gateway timeouts”", threadId: "thr_agent" })];
-    const { slot, view } = await prPage(retryPr, { detail: () => ({ pr: retryPr, events, body: "", draft: null }) }, { items: retryItems, details: retryDetails });
+    const { slot, view } = await prPage(retryPr, { detail: () => ({ pr: retryPr, events, body: "", draft: null, drafts: 0 }) }, { items: retryItems, details: retryDetails });
     const history = tab(await view(), "history");
     await waitFor(() => expect(history.textContent).toContain("You committed 4a1c9e2 Apply jitter before the backoff cap"));
     expect(history.textContent).toContain("You asked @acme/payments to review");
@@ -755,6 +755,52 @@ describe("the PR view of someone else's PR", () => {
     expect(note.textContent).toContain("Auto post would hold this draft");
     expect([...note.querySelectorAll("li")].map((li) => li.textContent)).toEqual(["the reviewer rated the PR high risk", "approvals are not auto-posted yet"]);
     expect(document.querySelector("[data-finding='a'] [data-gate-finding='passed']")!.textContent).toBe("passed, draft held");
+  });
+
+  it("shows whether the approval rules would approve, below the comment decision", async () => {
+    const ready = { ...theirs, draft: { id: 7, findings: 3, at: Date.now() }, next: next({ kind: "post", tone: "info", label: "AI review ready" }) };
+    const gate = { mode: "shadow" as const, decision: "hold" as const, reasons: ["approvals post through the approval rules"], posting: [], at: Date.now(), ms: 10, findings: [], approval: { decision: "hold" as const, reasons: ["checks are still running"] } };
+    const { view } = await prPage(ready, {}, { draft: draft({ gate }) });
+    const note = within(await find(tab(await view(), "review"), "[data-draft]")).getByRole("region", { name: "Auto post" });
+    const approval = note.querySelector("[data-gate-approval='hold']")!;
+    expect(approval.textContent).toContain("The approval rules would not approve this PR");
+    expect(approval.textContent).toContain("checks are still running");
+  });
+
+  it("lists earlier reviews with their notes under the draft, and keeps them on a merged PR", async () => {
+    const item = (id: number, patch: Record<string, unknown>) => ({
+      id, threadId: "thr_review", threadTitle: "Review", preset: "Thorough", trigger: "auto", head: "3e9a7c1000", at: Date.now() - id * 3_600_000,
+      state: "posted", discardReason: null, suggested: "comment", posted: "approve", postedAt: Date.now(), summary: `Summary ${id}`, notes: `Notes ${id}`, findings: 2, postedFindings: 1, ...patch,
+    });
+    const history = { items: [item(1, {}), item(2, { state: "discarded", discardReason: "superseded", posted: null, postedFindings: null, notes: null }), item(3, { state: "unposted", posted: null, postedAt: null, postedFindings: null })] };
+    const ready = { ...theirs, draft: { id: 7, findings: 3, at: Date.now() }, next: next({ kind: "post", tone: "info", label: "AI review ready" }) };
+    const { slot, view } = await prPage(ready, { reviewHistory: () => history as never }, { draft: draft() });
+    const earlier = await find(tab(await view(), "review"), "[data-earlier-reviews]");
+    const rows = [...earlier.querySelectorAll("[data-earlier-review]")];
+    expect(rows.map((row) => row.getAttribute("data-earlier-review"))).toEqual(["1", "2", "3"]);
+    expect(rows[0]!.textContent).toContain("suggested a comment, you approved with 1 comment");
+    expect(rows[0]!.querySelector("[data-earlier-notes]")!.textContent).toContain("Notes 1");
+    expect(rows[1]!.textContent).toContain("replaced by a newer review");
+    expect(rows[1]!.textContent).toContain("No notes for you.");
+    expect(rows[2]!.textContent).toContain("suggested a comment, never posted");
+    expect(callsTo(slot, "reviewHistory")).toEqual([{ key: theirs.key }]);
+
+    unmountAll();
+    const merged = { ...theirs, state: "merged" as const, draft: null, lastReview: { threadId: "thr_review", title: "Review", state: "done" as const, preset: "Thorough", trigger: "auto" as const, head: "3e9a7c1000", at: Date.now(), thread: "archived" as const, endedBy: "draft" as const, note: null } };
+    const after = await prPage(merged, { reviewHistory: () => history as never }, { draft: null });
+    const mergedEarlier = await find(tab(await after.view(), "review"), "[data-earlier-reviews]");
+    expect(mergedEarlier.querySelector("[data-earlier-notes]")!.textContent).toContain("Notes 1");
+
+    // A draft handed back from a thread Shuttle did not start has no review run, but its notes still keep the tab.
+    unmountAll();
+    const untracked = { ...merged, lastReview: null };
+    const withDrafts = await prPage(untracked, { reviewHistory: () => history as never }, { draft: null, drafts: 1 });
+    expect((await withDrafts.view()).querySelector('[data-tab="review"]')).not.toBeNull();
+    unmountAll();
+    const none = await prPage(untracked, {}, { draft: null, drafts: 0 });
+    const plain = await none.view();
+    expect(plain.querySelector('[data-tab="overview"]')).not.toBeNull();
+    expect(plain.querySelector('[data-tab="review"]')).toBeNull();
   });
 
   it("shows no notes box for a draft without notes", async () => {

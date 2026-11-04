@@ -12,32 +12,35 @@ type Repo = AutoPostInsights["repos"][number];
 
 const RANGES = (["7d", "30d", "90d"] as const).map((value) => ({ value, label: value }));
 const LABEL_TEXT: Record<ShadowLabel, string> = {
-  agreed: "Would post, you posted",
-  against: "Would post, you dropped",
-  pending: "Would post, not decided yet",
+  agreed: "Would pass, you posted",
+  against: "Would pass, you dropped",
+  pending: "Would pass, not decided yet",
   missed: "Held, you posted",
   held: "Held, you dropped",
 };
 const LABEL_COLOR: Record<ShadowLabel, string> = { agreed: color(3), against: color(6), pending: color(1), missed: color(5), held: color(2) };
 const OUTCOME_TEXT = { posted: "You posted it", discarded: "You discarded it", superseded: "Replaced by a newer review", pending: "Not decided yet" } as const;
+const VERDICT_TEXT = { approve: "approved", comment: "commented", changes: "requested changes" } as const;
 const table = "w-full border-collapse text-xs [&_td]:border-t [&_td]:border-border [&_td]:px-1 [&_td]:py-1.5 [&_th]:px-1 [&_th]:pb-1 [&_th]:text-left [&_th]:text-[11px] [&_th]:font-medium [&_th]:text-muted-foreground";
 
 const ratio = (value: number | null) => (value === null ? "\u2014" : percent(value));
 const oneIn = (precision: number) => (precision >= 1 ? "none" : `1 in ${Math.round(1 / (1 - precision))}`);
 
-/** How close a repository's record is to proving the target: its lower bound on a bar, with the target marked. */
-function Proof({ repo, target }: { repo: Repo; target: number }) {
-  const lower = repo.lowerBound ?? 0;
-  const decided = repo.agreed + repo.against;
+type ShadowRow = Repo["findings"] | Repo["approvals"];
+
+/** How close a record is to proving its target: the lower bound on a bar, with the target marked. */
+function Proof({ id, record, target, noun }: { id: string; record: ShadowRow; target: number; noun: string }) {
+  const lower = record.lowerBound ?? 0;
+  const decided = record.agreed + record.against;
   const status = decided === 0
-    ? "No decided findings yet."
-    : repo.lowerBound !== null && repo.lowerBound >= target
-      ? `The record proves the target: with 95% confidence, at most ${oneIn(target)} auto-posted findings would be ones you drop.`
-      : repo.needed === null
-        ? "Out of reach at this record: too many findings it would post were dropped."
-        : `${plural(repo.needed, "more agreeing finding")} in a row would prove the target.`;
+    ? `No decided ${noun}s yet.`
+    : record.lowerBound !== null && record.lowerBound >= target
+      ? `The record proves the target: with 95% confidence, at most ${oneIn(target)} would be ${noun}s you would not have posted.`
+      : record.needed === null
+        ? `Out of reach at this record: too many ${noun}s it would post were ones you did not.`
+        : `${plural(record.needed, `more agreeing ${noun}`)} in a row would prove the target.`;
   return (
-    <div data-proof={repo.repo}>
+    <div data-proof={id}>
       <div role="img" aria-label={`Lower bound ${percent(lower)} of a ${percent(target)} target`} className="relative h-2.5 overflow-hidden rounded-full bg-background">
         <div className="h-full rounded-full" style={{ width: `${Math.max(0, Math.min(1, lower)) * 100}%`, background: lower >= target ? color(3) : color(1) }} />
         <div aria-hidden className="absolute inset-y-0 w-0.5 bg-foreground" style={{ left: `${target * 100}%` }} />
@@ -47,31 +50,55 @@ function Proof({ repo, target }: { repo: Repo; target: number }) {
   );
 }
 
-function RepoCard({ repo, target }: { repo: Repo; target: number }) {
-  const decided = repo.agreed + repo.against;
+/** The record as a two-by-three table: what auto post would do, against what you did. */
+function Confusion({ id, record, would, held, edited }: { id: string; record: ShadowRow; would: string; held: string; edited?: number }) {
+  return (
+    <table className={`${table} mt-3`} data-confusion={id}>
+      <thead><tr><th>Auto post</th><th className="!text-right">You did</th><th className="!text-right">You did not</th><th className="!text-right">Not decided</th></tr></thead>
+      <tbody>
+        <tr><td>{would}</td><td className="text-right">{record.agreed}{edited ? <span className="text-muted-foreground"> ({edited} edited)</span> : null}</td><td className="text-right">{record.against}</td><td className="text-right">{record.pending}</td></tr>
+        <tr><td>{held}</td><td className="text-right">{record.missed}</td><td className="text-right">{record.held}</td><td className="text-right text-muted-foreground">{"\u2014"}</td></tr>
+      </tbody>
+    </table>
+  );
+}
+
+function RepoCard({ repo, target, approvalTarget }: { repo: Repo; target: number; approvalTarget: number }) {
+  const { findings, policy, approvals } = repo;
+  const decided = findings.agreed + findings.against;
+  const approvalsDecided = approvals.agreed + approvals.against;
   return (
     <section data-auto-post-repo={repo.repo} className="min-w-0 rounded-lg border border-border bg-card px-3.5 py-3">
       <div className="mb-2.5 flex flex-wrap items-center gap-2">
         <h3 className="min-w-0 truncate font-mono text-[13px] font-semibold">{repo.repo}</h3>
         <Pill tone={repo.mode === "shadow" ? "info" : "neutral"} icon={repo.mode === "shadow" ? "Eye" : undefined}>{repo.mode === "shadow" ? "Shadow" : "Off"}</Pill>
-        <span className="ml-auto text-[11.5px] text-muted-foreground">{plural(repo.drafts, "draft")} checked, {repo.wouldPost} would post</span>
+        <span className="ml-auto text-[11.5px] text-muted-foreground">{plural(repo.drafts, "draft")} checked, {plural(findings.judged, "finding")} judged</span>
       </div>
-      <div className="grid grid-cols-2 gap-2.5 @3xl:grid-cols-4">
-        <Kpi label="Precision" value={ratio(repo.precision)} sub={decided ? `${repo.agreed} of ${decided} decided findings` : "no decided findings"} />
-        <Kpi label="Proven at least" value={ratio(repo.lowerBound)} sub={`95% lower bound, target ${percent(target)}`} warn={repo.lowerBound !== null && repo.lowerBound < target} />
-        <Kpi label="Missed" value={String(repo.missed)} sub="held findings you posted" />
-        <Kpi label="Waiting on you" value={String(repo.pending)} sub="findings it would post" />
+      <div data-record="findings">
+        <div className="mb-1.5 text-[12px] font-semibold">Comments: the gate's judgment of each finding</div>
+        <div className="grid grid-cols-2 gap-2.5 @3xl:grid-cols-4">
+          <Kpi label="Precision" value={ratio(findings.precision)} sub={decided ? `${findings.agreed} of ${decided} decided findings` : "no decided findings"} />
+          <Kpi label="Proven at least" value={ratio(findings.lowerBound)} sub={`95% lower bound, target ${percent(target)}`} warn={findings.lowerBound !== null && findings.lowerBound < target} />
+          <Kpi label="Missed" value={String(findings.missed)} sub="held findings you posted" />
+          <Kpi label="Waiting on you" value={String(findings.pending)} sub="findings it would pass" />
+        </div>
+        <div className="mt-3"><Proof id={`${repo.repo}:findings`} record={findings} target={target} noun="finding" /></div>
+        <Confusion id={repo.repo} record={findings} would="Would pass" held="Held" edited={findings.edited} />
+        <div data-policy className="mt-2 text-[11.5px] text-muted-foreground">
+          Would actually post, once the draft rules apply: {plural(policy.drafts, "draft")} with {plural(policy.findings, "finding")}
+          {policy.agreed + policy.against > 0 ? `; you posted ${policy.agreed} of those and dropped ${policy.against}` : ""}.
+        </div>
       </div>
-      <div className="mt-3"><Proof repo={repo} target={target} /></div>
-      <table className={`${table} mt-3`} data-confusion={repo.repo}>
-        <thead><tr><th>Auto post</th><th className="!text-right">You posted</th><th className="!text-right">You dropped</th><th className="!text-right">Not decided</th></tr></thead>
-        <tbody>
-          <tr><td>Would post</td><td className="text-right">{repo.agreed}{repo.edited ? <span className="text-muted-foreground"> ({repo.edited} edited)</span> : null}</td><td className="text-right">{repo.against}</td><td className="text-right">{repo.pending}</td></tr>
-          <tr><td>Held</td><td className="text-right">{repo.missed}</td><td className="text-right">{repo.held}</td><td className="text-right text-muted-foreground">{"\u2014"}</td></tr>
-        </tbody>
-      </table>
-      <div className="mt-2 text-[11.5px] text-muted-foreground">
-        Approvals, for later: {plural(repo.approvals.drafts, "draft")} suggested approving; you posted {repo.approvals.posted} and discarded {repo.approvals.discarded}.
+      <div data-record="approvals" className="mt-4 border-t border-border pt-3">
+        <div className="mb-1.5 text-[12px] font-semibold">Approvals: would the approval rules approve</div>
+        <div className="grid grid-cols-2 gap-2.5 @3xl:grid-cols-4">
+          <Kpi label="Would approve" value={String(approvals.wouldApprove)} sub={`of ${plural(approvals.drafts, "draft")} checked`} />
+          <Kpi label="Precision" value={ratio(approvals.precision)} sub={approvalsDecided ? `${approvals.agreed} of ${approvalsDecided} you approved` : "no decided approvals"} />
+          <Kpi label="Proven at least" value={ratio(approvals.lowerBound)} sub={`95% lower bound, target ${percent(approvalTarget)}`} warn={approvals.lowerBound !== null && approvals.lowerBound < approvalTarget} />
+          <Kpi label="Missed" value={String(approvals.missed)} sub="held, and you approved" />
+        </div>
+        <div className="mt-3"><Proof id={`${repo.repo}:approvals`} record={approvals} target={approvalTarget} noun="approval" /></div>
+        <Confusion id={`${repo.repo}:approvals`} record={approvals} would="Would approve" held="Held" />
       </div>
     </section>
   );
@@ -123,7 +150,7 @@ function Reasons({ reasons }: { reasons: AutoPostInsights["reasons"] }) {
       {reasons.map((reason) => (
         <li key={`${reason.check}:${reason.reason}`} className="text-xs">
           <div className="flex items-baseline gap-2">
-            <span className="w-16 shrink-0 text-[10.5px] uppercase tracking-wide text-muted-foreground">{reason.check === "draft" ? "Draft" : reason.check}</span>
+            <span className="w-16 shrink-0 text-[10.5px] uppercase tracking-wide text-muted-foreground">{reason.check === "draft" ? "Draft" : reason.check === "approval" ? "Approval" : reason.check}</span>
             <span className="min-w-0 flex-1 truncate" title={reason.reason}>{reason.reason}</span>
             <b>{reason.count}</b>
           </div>
@@ -139,7 +166,7 @@ function Recent({ rows, onOpenPr }: { rows: AutoPostInsights["recent"]; onOpenPr
   return (
     <div className="overflow-x-auto">
       <table className={table} data-recent-decisions>
-        <thead><tr><th>PR</th><th>Checked</th><th>Auto post</th><th>You</th><th>Why it held</th></tr></thead>
+        <thead><tr><th>PR</th><th>Checked</th><th>Comments</th><th>Approval</th><th>You</th><th>Why it held</th></tr></thead>
         <tbody>
           {rows.map((row) => (
             <tr key={row.draftId}>
@@ -152,9 +179,14 @@ function Recent({ rows, onOpenPr }: { rows: AutoPostInsights["recent"]; onOpenPr
                 {row.decision === "post"
                   ? <Pill tone="ok" icon="Check">Would post {row.posting} of {row.findings}</Pill>
                   : <Pill tone="neutral">Held</Pill>}
+                {row.passing > 0 && row.decision !== "post" && <div className="text-[11px] text-muted-foreground">{row.passing} of {row.findings} pass the gate</div>}
               </td>
               <td className="whitespace-nowrap">
-                {OUTCOME_TEXT[row.outcome]}
+                {row.approval === null ? <span className="text-muted-foreground">{"\u2014"}</span>
+                  : row.approval === "approve" ? <Pill tone="ok" icon="Check">Would approve</Pill> : <Pill tone="neutral">Held</Pill>}
+              </td>
+              <td className="whitespace-nowrap">
+                {row.outcome === "posted" && row.posted ? `You ${VERDICT_TEXT[row.posted]}` : OUTCOME_TEXT[row.outcome]}
                 {row.decision === "post" && row.agreed + row.against > 0 && <div className="text-[11px] text-muted-foreground">{row.agreed} agreed, {row.against} not</div>}
               </td>
               <td className="max-w-[22rem] text-muted-foreground"><span className="line-clamp-2">{row.reason ?? "\u2014"}</span></td>
@@ -194,7 +226,7 @@ export function AutoPostView({ onOpenPr }: { onOpenPr(key: string): void }) {
       {data !== undefined && data.repos.length > 0 && (
         <>
           <div className="grid grid-cols-1 gap-3 @[90rem]:grid-cols-2">
-            {data.repos.map((repo, index) => <RepoCard key={`${index}:${repo.repo}`} repo={repo} target={data.target} />)}
+            {data.repos.map((repo, index) => <RepoCard key={`${index}:${repo.repo}`} repo={repo} target={data.target} approvalTarget={data.approvalTarget} />)}
           </div>
           <div className="mt-3 grid grid-cols-1 gap-3 @4xl:grid-cols-2">
             <Panel title="How the verifier scored each finding" sub={`${plural(data.verifier.runs, "finding")} judged, ${data.verifier.failures} failed; median ${data.verifier.medianMs === null ? "\u2014" : seconds(data.verifier.medianMs)} to check a draft`}>

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, waitFor, within } from "@testing-library/react";
 import type { InsightsView } from "../../src/contract";
 import { formatRoute } from "../../src/ui/route";
-import { autoPostInsights, callsTo, CAN_ALL, config, DAY, event, find, HOUR, insights, lastNavigation, mine, page, unmountAll } from "./helpers";
+import { autoPostInsights, shadowRepo, callsTo, CAN_ALL, config, DAY, event, find, HOUR, insights, lastNavigation, mine, page, unmountAll } from "./helpers";
 
 const toasts = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn() }));
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), toasts) }));
@@ -35,7 +35,7 @@ const full: InsightsView = insights({
 function insightsPage(subPath = "insights", data: InsightsView = full, rpc = {}) {
   return page(subPath, {
     insights: ({ range }) => ({ ...data, range }),
-    detail: () => ({ pr: waiting, events: [], body: "", draft: null }),
+    detail: () => ({ pr: waiting, events: [], body: "", draft: null, drafts: 0 }),
     setSettings: () => ({ ok: true }),
     ...rpc,
   });
@@ -109,30 +109,41 @@ describe("Insights", () => {
   it("shows auto post's shadow record per repository, why drafts were held, and the latest decisions", async () => {
     const record = autoPostInsights({
       target: 0.9,
-      repos: [{
-        repo: "Shopify/terraform-the-cloud", mode: "shadow", drafts: 6, wouldPost: 3, agreed: 9, edited: 2, against: 1, pending: 2, missed: 1, held: 4,
-        precision: 0.9, lowerBound: 0.596, needed: 41, approvals: { drafts: 12, posted: 9, discarded: 1 },
-      }],
-      reasons: [{ check: "draft", reason: "approvals are not auto-posted yet", count: 12 }, { check: "accuracy", reason: "no critic votes", count: 3 }],
+      repos: [shadowRepo({
+        repo: "Shopify/terraform-the-cloud", drafts: 6,
+        findings: { agreed: 9, edited: 2, against: 1, pending: 2, missed: 1, held: 4, precision: 0.9, lowerBound: 0.596, needed: 41, judged: 13 },
+        policy: { drafts: 1, findings: 2, agreed: 1, against: 0 },
+        approvals: { drafts: 12, wouldApprove: 5, agreed: 4, against: 1, pending: 0, missed: 3, held: 4, precision: 0.8, lowerBound: 0.38, needed: 190 },
+      })],
+      reasons: [{ check: "approval", reason: "checks are still running", count: 7 }, { check: "accuracy", reason: "no critic votes", count: 3 }],
       points: [{ holds: 0.9, worth: 0.8, label: "agreed" }, { holds: 0.75, worth: 0.72, label: "against" }],
       verifier: { runs: 11, failures: 1, medianMs: 8400 },
-      recent: [{ draftId: 4, key: waiting.key, display: "terraform-the-cloud#74066", title: "Move the WAF rules", at: Date.now() - HOUR, verdict: "comment", decision: "post", findings: 3, posting: 2, outcome: "posted", agreed: 2, against: 0, reason: null }],
+      recent: [{ draftId: 4, key: waiting.key, display: "terraform-the-cloud#74066", title: "Move the WAF rules", at: Date.now() - HOUR, verdict: "comment", decision: "hold", findings: 3, passing: 2, posting: 0, approval: "approve", outcome: "posted", posted: "approve", agreed: 2, against: 0, reason: "a bot wrote the PR" }],
     });
     const { slot } = await insightsPage("insights/autopost", full, { autoPostInsights: ({ range }: { range: "7d" | "30d" | "90d" }) => ({ ...record, range }), getConfig: () => ({ config: config() }) });
     const card = await find(slot.container, "[data-auto-post-repo='Shopify/terraform-the-cloud']");
-    expect([...card.querySelectorAll("[data-kpi]")].map((tile) => tile.textContent)).toEqual([
-      "Precision90%9 of 10 decided findings", "Proven at least60%95% lower bound, target 90%", "Missed1held findings you posted", "Waiting on you2findings it would post",
+    const comments = card.querySelector("[data-record='findings']")!;
+    expect([...comments.querySelectorAll("[data-kpi]")].map((tile) => tile.textContent)).toEqual([
+      "Precision90%9 of 10 decided findings", "Proven at least60%95% lower bound, target 90%", "Missed1held findings you posted", "Waiting on you2findings it would pass",
     ]);
-    expect(card.querySelector("[data-proof]")!.textContent).toContain("41 more agreeing findings in a row would prove the target.");
-    expect(card.querySelector("[data-confusion]")!.textContent).toContain("Would post9 (2 edited)12");
-    expect(card.querySelector("[data-confusion]")!.textContent).toContain("Held14\u2014");
-    expect(card.textContent).toContain("12 drafts suggested approving; you posted 9 and discarded 1.");
+    expect(comments.querySelector("[data-proof]")!.textContent).toContain("41 more agreeing findings in a row would prove the target.");
+    expect(comments.querySelector("[data-confusion]")!.textContent).toContain("Would pass9 (2 edited)12");
+    expect(comments.querySelector("[data-confusion]")!.textContent).toContain("Held14\u2014");
+    expect(comments.querySelector("[data-policy]")!.textContent).toContain("1 draft with 2 findings; you posted 1 of those and dropped 0.");
+    const approvals = card.querySelector("[data-record='approvals']")!;
+    expect([...approvals.querySelectorAll("[data-kpi]")].map((tile) => tile.textContent)).toEqual([
+      "Would approve5of 12 drafts checked", "Precision80%4 of 5 you approved", "Proven at least38%95% lower bound, target 98%", "Missed3held, and you approved",
+    ]);
+    expect(approvals.querySelector("[data-proof]")!.textContent).toContain("190 more agreeing approvals in a row would prove the target.");
+    expect(card.textContent).toContain("13 findings judged");
     expect(slot.container.querySelectorAll("[data-chart='scatter'] circle")).toHaveLength(2);
-    expect(slot.container.querySelector("[data-hold-reasons]")!.textContent).toContain("approvals are not auto-posted yet12");
+    expect(slot.container.querySelector("[data-hold-reasons]")!.textContent).toContain("Approvalchecks are still running7");
     expect(callsTo(slot, "insights")).toEqual([]);
     expect(callsTo(slot, "autoPostInsights")).toEqual([{ range: "30d" }]);
     const recent = slot.container.querySelector("[data-recent-decisions]") as HTMLElement;
-    expect(recent.textContent).toContain("Would post 2 of 3");
+    expect(recent.textContent).toContain("2 of 3 pass the gate");
+    expect(recent.textContent).toContain("Would approve");
+    expect(recent.textContent).toContain("You approved");
     fireEvent.click(within(recent).getByRole("button", { name: "terraform-the-cloud#74066" }));
     expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: formatRoute({ view: "pr", key: waiting.key }) } });
   });

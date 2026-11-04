@@ -1,7 +1,7 @@
 // The RPC contract between Shuttle's server and its UI, and the shapes both sides share.
 import { defineContract } from "./define-contract";
 import { z } from "zod";
-import { AUTO_POST_MODES, configSchema, WATCH_MODES } from "./config";
+import { AUTO_POST_MODES, CONCERN_KINDS, configSchema, WATCH_MODES } from "./config";
 
 /** The page's lists. The Inbox has its own read; Insights too. */
 export const AREAS = ["mine", "done", "reviews", "reviewed"] as const;
@@ -192,7 +192,9 @@ export const findingSchema = z.object({
 export type Finding = z.infer<typeof findingSchema>;
 
 /** The reviewer's view of the PR as a whole: how risky it is, and concerns such as signs of a careless or generated change. */
-export const assessmentSchema = z.object({ risk: z.enum(["low", "medium", "high"]), concerns: z.array(z.string()) });
+export const concernSchema = z.object({ kind: z.enum(CONCERN_KINDS), text: z.string() });
+export type Concern = z.infer<typeof concernSchema>;
+export const assessmentSchema = z.object({ risk: z.enum(["low", "medium", "high"]), concerns: z.array(concernSchema) });
 export type Assessment = z.infer<typeof assessmentSchema>;
 
 export const GATE_CHECKS = ["safety", "accuracy", "quality", "alignment"] as const;
@@ -206,6 +208,8 @@ export const gateFindingSchema = z.object({
   holds: z.number().nullable(),
   worth: z.number().nullable(),
   why: z.string().nullable(),
+  /** Passed every other check but was past the verifier's limit for one draft, so it says nothing about the gate. */
+  unjudged: z.boolean().optional(),
 });
 export type GateFinding = z.infer<typeof gateFindingSchema>;
 /** What auto post decided about a draft. In shadow mode it only records the decision; it never posts. */
@@ -217,8 +221,12 @@ export const gateSchema = z.object({
   /** The findings that would post, at most maxComments, highest severity first. */
   posting: z.array(z.string()),
   findings: z.array(gateFindingSchema),
+  /** Whether the approval rules would approve the PR, whatever verdict the draft suggests; one asking for changes is held. Shadow mode never approves. */
+  approval: z.object({ decision: z.enum(["approve", "hold"]), reasons: z.array(z.string()) }).nullable().optional(),
   at: z.number(),
   ms: z.number(),
+  /** When its findings were judged again by `bb shuttle rescore`; the draft's own holds are kept from `at`. */
+  rescoredAt: z.number().optional(),
 });
 export type Gate = z.infer<typeof gateSchema>;
 
@@ -241,6 +249,30 @@ export const reviewDraftSchema = z.object({
   gate: gateSchema.nullable(),
 });
 export type ReviewDraft = z.infer<typeof reviewDraftSchema>;
+
+/** An earlier AI review of the PR: what it suggested, what became of it, and the notes it left for the user. */
+export const reviewHistoryItemSchema = z.object({
+  id: z.number(),
+  threadId: z.string(),
+  threadTitle: z.string(),
+  preset: z.string().nullable(),
+  trigger: z.enum(["auto", "manual"]).nullable(),
+  head: z.string().nullable(),
+  at: z.number(),
+  state: z.enum(["posted", "discarded", "unposted"]),
+  /** Who discarded it: the user, or a newer review that replaced it; null when posted. */
+  discardReason: z.enum(["user", "superseded"]).nullable(),
+  suggested: z.enum(VERDICTS),
+  /** The verdict the user posted from it, when Shuttle knows it. */
+  posted: z.enum(VERDICTS).nullable(),
+  postedAt: z.number().nullable(),
+  summary: z.string(),
+  notes: z.string().nullable(),
+  findings: z.number(),
+  /** How many findings the user posted from it; null when not posted. */
+  postedFindings: z.number().nullable(),
+});
+export type ReviewHistoryItem = z.infer<typeof reviewHistoryItemSchema>;
 
 export const POST_STATES = ["queued", "posting", "posted", "failed", "cancelled"] as const;
 export type PostState = (typeof POST_STATES)[number];
@@ -754,35 +786,42 @@ export type InsightsView = z.infer<typeof insightsSchema>;
 /** What a finding auto post judged turned out to be, by what the user did with its draft. */
 export const SHADOW_LABELS = ["agreed", "against", "pending", "missed", "held"] as const;
 export type ShadowLabel = (typeof SHADOW_LABELS)[number];
+/** A record of shadow decisions against the user's: would-pass items they took, refused, have not decided, took although held, and refused while held. */
+const recordSchema = z.object({
+  agreed: z.number(),
+  against: z.number(),
+  pending: z.number(),
+  missed: z.number(),
+  held: z.number(),
+  precision: z.number().nullable(),
+  /** The 95% lower bound of precision (Wilson). */
+  lowerBound: z.number().nullable(),
+  /** Agreeing items in a row still needed for the lower bound to reach the target; null when out of reach. */
+  needed: z.number().nullable(),
+});
+export type ShadowRecord = z.infer<typeof recordSchema>;
+
 /** How auto post's shadow decisions compare with what the user posted, per repository. */
 export const autoPostInsightsSchema = z.object({
   range: z.enum(["7d", "30d", "90d"]),
   target: z.number(),
+  approvalTarget: z.number(),
   repos: z.array(z.object({
     /** The repository glob from settings. */
     repo: z.string(),
     mode: z.enum(AUTO_POST_MODES),
     drafts: z.number(),
-    wouldPost: z.number(),
-    /** Findings it would have posted that you posted too, edited or not; of those, edited. */
-    agreed: z.number(),
-    edited: z.number(),
-    /** Findings it would have posted that you dropped, or whose draft you discarded. */
-    against: z.number(),
-    /** Findings it would have posted whose draft you have not decided yet. */
-    pending: z.number(),
-    /** Findings it held, at or above the minimum severity, that you posted. */
-    missed: z.number(),
-    /** Findings it held that you did not post. */
-    held: z.number(),
-    precision: z.number().nullable(),
-    /** The 95% lower bound of precision (Wilson). */
-    lowerBound: z.number().nullable(),
-    /** Agreeing findings in a row still needed for the lower bound to reach the target; null when out of reach. */
-    needed: z.number().nullable(),
-    approvals: z.object({ drafts: z.number(), posted: z.number(), discarded: z.number() }),
+    /**
+     * The gate's judgment of each finding, whatever held its draft: would it pass, against whether you posted it. This is
+     * the record to prove. Of `agreed`, `edited` were posted with other text.
+     */
+    findings: recordSchema.extend({ edited: z.number(), judged: z.number() }),
+    /** What would actually post once the draft rules apply: drafts, findings, and how many of those you posted or dropped. */
+    policy: z.object({ drafts: z.number(), findings: z.number(), agreed: z.number(), against: z.number() }),
+    /** Every checked draft: would the approval rules approve, against whether you approved. */
+    approvals: recordSchema.extend({ drafts: z.number(), wouldApprove: z.number() }),
   })),
-  /** Why drafts and findings were held, most frequent first. */
+  /** Why drafts, approvals and findings were held, most frequent first. */
   reasons: z.array(z.object({ check: z.string(), reason: z.string(), count: z.number() })),
   /** The verifier's scores for each finding it judged, with what became of the finding. */
   points: z.array(z.object({ holds: z.number(), worth: z.number(), label: z.enum(SHADOW_LABELS) })),
@@ -796,8 +835,13 @@ export const autoPostInsightsSchema = z.object({
     verdict: z.enum(VERDICTS),
     decision: z.enum(["post", "hold"]),
     findings: z.number(),
+    /** Findings that pass the gate's own checks, whatever holds the draft. */
+    passing: z.number(),
     posting: z.number(),
+    approval: z.enum(["approve", "hold"]).nullable(),
     outcome: z.enum(["posted", "discarded", "superseded", "pending"]),
+    /** The verdict you posted, when you posted it. */
+    posted: z.enum(VERDICTS).nullable(),
     agreed: z.number(),
     against: z.number(),
     reason: z.string().nullable(),
@@ -857,7 +901,12 @@ export const rpcContract = defineContract({
   inbox: { input: z.object({}), output: inboxSchema, tags: PRS },
   list: { input: z.object({ area: z.enum(AREAS) }), output: z.object({ prs: z.array(prViewSchema) }), tags: PRS },
   /** body is the description, or null until Shuttle has fetched the PR itself (lists carry none). */
-  detail: { input: z.object({ key }), output: z.object({ pr: prViewSchema, events: z.array(eventViewSchema), body: z.string().nullable(), draft: reviewDraftSchema.nullable() }), tags: PRS },
+  detail: {
+    input: z.object({ key }),
+    /** `drafts` counts every AI review draft Shuttle holds for the PR, so a closed PR keeps the tab that lists them. */
+    output: z.object({ pr: prViewSchema, events: z.array(eventViewSchema), body: z.string().nullable(), draft: reviewDraftSchema.nullable(), drafts: z.number() }),
+    tags: PRS,
+  },
   /** The PR's reviews, comments and failed checks, and the details its view shows, read from its server (kept for 30 seconds). */
   conversation: { input: z.object({ key }), output: z.object({ items: z.array(conversationItemSchema), details: prDetailsSchema.nullable(), error: z.string().nullable(), fetchedAt: z.number() }), tags: () => ["conversation"] },
   /** PRs Shuttle already has whose title, repository, number, author, branches or labels hold every word; no server is asked. */
@@ -975,6 +1024,8 @@ export const rpcContract = defineContract({
   /** Stop showing a review that failed to post. */
   clearPost: { input: z.object({ id: z.number().int() }), output: prOut, invalidates: PRS },
   discardDraft: { input: z.object({ key, draftId: z.number().int() }), output: prOut, invalidates: PRS },
+  /** The PR's earlier AI reviews, newest first, with the notes each left for the user. */
+  reviewHistory: { input: z.object({ key }), output: z.object({ items: z.array(reviewHistoryItemSchema) }), tags: PRS },
   /** Run auto post's checks on a live draft again, such as after the verifier failed. Never posts. */
   checkDraft: { input: z.object({ key, draftId: z.number().int() }), output: prOut, invalidates: PRS },
   /** Undo a discard. */

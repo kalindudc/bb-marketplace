@@ -156,6 +156,8 @@ export interface DraftRow {
   outcome: string | null;
   /** Who discarded it: the user, or a newer draft or review that replaced it. */
   discard_reason: "user" | "superseded" | null;
+  /** The verdict the user posted from it. */
+  posted_verdict: "comment" | "approve" | "changes" | null;
 }
 
 export interface MyReviewRow {
@@ -848,8 +850,18 @@ export class Store {
     this.db.prepare("UPDATE review_drafts SET gate = ? WHERE id = ?").run(gate, id);
   }
 
-  setDraftOutcome(id: number, outcome: string): void {
-    this.db.prepare("UPDATE review_drafts SET outcome = ? WHERE id = ?").run(outcome, id);
+  setDraftOutcome(id: number, outcome: string | null, verdict: DraftRow["posted_verdict"]): void {
+    this.db.prepare("UPDATE review_drafts SET outcome = ?, posted_verdict = ? WHERE id = ?").run(outcome, verdict, id);
+  }
+
+  /** How many AI review drafts Shuttle holds for the PR, in any state. */
+  draftCount(prId: number): number {
+    return (this.db.prepare("SELECT count(*) AS n FROM review_drafts WHERE pr_id = ?").get(prId) as { n: number }).n;
+  }
+
+  /** The PR's drafts, the live one too, newest first: what its reviews said, notes and all. */
+  pastDrafts(prId: number, limit = 40): DraftRow[] {
+    return this.db.prepare("SELECT * FROM review_drafts WHERE pr_id = ? ORDER BY id DESC LIMIT ?").all(prId, limit) as DraftRow[];
   }
 
   /** Drafts auto post decided about, oldest first. */

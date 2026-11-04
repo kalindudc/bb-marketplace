@@ -46,7 +46,7 @@ function boardPage(subPath: string, rpc: Partial<Handlers> = {}) {
   return page(subPath, {
     overview: () => overview({ servers: [server()], counts: { inbox: 2, mine: 3, done: 1, reviews: 12, reviewed: 4 } }),
     list: ({ area }: { area: "mine" | "done" | "reviews" | "reviewed" }) => ({ prs: area === "mine" ? [mine({ number: 1, title: "Retry 429s in the edge router" }), mine({ number: 2, title: "Edge cache keys" })] : [] }),
-    detail: ({ key }: { key: string }) => ({ pr: mine({ number: key.endsWith("#1") ? 1 : 2, title: key.endsWith("#1") ? "Retry 429s in the edge router" : "Edge cache keys" }), events: [], body: "", draft: null }),
+    detail: ({ key }: { key: string }) => ({ pr: mine({ number: key.endsWith("#1") ? 1 : 2, title: key.endsWith("#1") ? "Retry 429s in the edge router" : "Edge cache keys" }), events: [], body: "", draft: null, drafts: 0 }),
     search: () => ({ prs: [], total: 0 }),
     activity: () => ({ events: [] }),
     boards: ({ archived }: { archived?: "exclude" | "include" | "only" }) => ({
@@ -684,7 +684,7 @@ describe("board management safeguards", () => {
     const other: BoardSummary = { ...activeBoard, id: "edge", name: "Edge work", description: "", preview: [] };
     let on = [activeBoard, archivedBoard];
     const { slot } = await boardPage(formatRoute({ view: "pr", key: member.key }), {
-      detail: () => ({ pr: member, events: [], body: "", draft: null }),
+      detail: () => ({ pr: member, events: [], body: "", draft: null, drafts: 0 }),
       boards: ({ key, archived }) => ({ boards: key === member.key ? on : archived === "exclude" ? [activeBoard, other] : [] }),
       boardAdd: ({ id }) => {
         const board = [activeBoard, other].find((item) => item.id === id)!;
@@ -720,7 +720,7 @@ describe("board management safeguards", () => {
 
   it("starts a board with the PR from its view, and stays on the PR", async () => {
     const { slot } = await boardPage(formatRoute({ view: "pr", key: member.key }), {
-      detail: () => ({ pr: member, events: [], body: "", draft: null }),
+      detail: () => ({ pr: member, events: [], body: "", draft: null, drafts: 0 }),
       boards: () => ({ boards: [] }),
     });
     fireEvent.keyDown(await slot.findByRole("button", { name: "Boards for this PR" }), { key: "Enter" });

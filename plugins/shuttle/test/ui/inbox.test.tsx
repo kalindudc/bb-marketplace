@@ -83,7 +83,7 @@ function inboxPage(rpc: Partial<Handlers> = {}, prs: PrView[] = ALL, subPath = "
       snoozed: views.filter((view) => view.dismissed === null && view.snoozed),
       dismissed: views.filter((view) => view.dismissed !== null),
     }),
-    detail: ({ key }) => ({ pr: views.find((item) => item.key === key)!, events: [], body: "", draft: null }),
+    detail: ({ key }) => ({ pr: views.find((item) => item.key === key)!, events: [], body: "", draft: null, drafts: 0 }),
     dismiss: ({ keys, on }) => ({ prs: patch(keys, (view) => ({ ...view, dismissed: on ? { at: NOW, activity: false } : null, next: { ...view.next, inbox: !on && view.next.clears !== null } })) }),
     snooze: ({ keys, until }) => ({
       prs: patch(keys, (view) => ({ ...view, snoozed: until !== null, snoozedUntil: typeof until === "number" ? until : null, next: { ...view.next, inbox: until === null && view.next.clears !== null } })),
@@ -854,7 +854,7 @@ describe("the PR view and the Inbox", () => {
     let current = start;
     return page(formatRoute({ view: "reviews", source: "all", key: start.key }), {
       list: ({ area }) => ({ prs: area === "reviews" ? [current] : [] }),
-      detail: () => ({ pr: current, events: [], body: "", draft: null }),
+      detail: () => ({ pr: current, events: [], body: "", draft: null, drafts: 0 }),
       snooze: ({ until }) => {
         current = { ...current, snoozed: until !== null, snoozedUntil: typeof until === "number" ? until : null };
         return { prs: [current] };
@@ -892,7 +892,7 @@ describe("the PR view and the Inbox", () => {
     let current = pr();
     const { slot } = await page(formatRoute({ view: "reviews", source: "all", key: current.key }), {
       list: ({ area }) => ({ prs: area === "reviews" ? [current] : [] }),
-      detail: () => ({ pr: current, events: [], body: "", draft: null }),
+      detail: () => ({ pr: current, events: [], body: "", draft: null, drafts: 0 }),
       markSeen: () => ({ ok: true }),
     });
     await find(slot.container, `[data-detail="${current.key}"]`);

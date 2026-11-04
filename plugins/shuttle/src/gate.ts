@@ -3,8 +3,8 @@
 // decision: nothing here posts.
 import type { PrFile } from "./adapters/adapter";
 import { tail } from "./adapters/exec";
-import type { AutoPost, AutoPostRepo, Config } from "./config";
-import { gateSchema, type Assessment, type Evidence, type Finding, type Gate, type GateCheck, type GateFinding, type Severity } from "./contract";
+import { CONCERN_KINDS, type AutoPost, type AutoPostRepo, type ConcernKind, type Config } from "./config";
+import { gateSchema, type Assessment, type Concern, type Evidence, type Finding, type Gate, type GateCheck, type GateFinding, type Severity } from "./contract";
 import { errText, type Ctx } from "./ctx";
 import type { DraftRow, PrRow } from "./db/store";
 import { parseKey } from "./keys";
@@ -81,6 +81,45 @@ export function parseGate(text: string | null): Gate | null {
   }
 }
 
+/** A reviewer's assessment as the tool takes it: concerns with a kind, or plain text from older reviewers. */
+export type AssessmentInput = { risk: Assessment["risk"]; concerns: Array<string | Concern> };
+
+/** An assessment with every concern given a kind; a concern without one, as older reviews wrote them, is "other". */
+export function normalizeAssessment(input: AssessmentInput): Assessment {
+  return {
+    risk: input.risk,
+    concerns: input.concerns.map((concern) => (typeof concern === "string" ? { kind: "other" as const, text: concern } : concern)),
+  };
+}
+
+/** A stored assessment, or null when there is none or it is not one this Shuttle can read. */
+export function parseAssessment(text: string | null): Assessment | null {
+  if (!text) return null;
+  try {
+    const value = JSON.parse(text) as { risk?: unknown; concerns?: unknown };
+    if (value.risk !== "low" && value.risk !== "medium" && value.risk !== "high") return null;
+    if (!Array.isArray(value.concerns)) return null;
+    const concerns = value.concerns.flatMap((c): Array<string | Concern> => {
+      if (typeof c === "string") return [c];
+      if (c && typeof c === "object" && typeof (c as Concern).text === "string" && CONCERN_KINDS.includes((c as Concern).kind)) return [{ kind: (c as Concern).kind, text: (c as Concern).text }];
+      return [];
+    });
+    return normalizeAssessment({ risk: value.risk, concerns });
+  } catch {
+    return null;
+  }
+}
+
+/** What each kind of concern is about, in the words a held draft gives. */
+export const CONCERN_TEXT: Record<ConcernKind, string> = {
+  description: "the description not matching the diff",
+  scope: "changes outside the PR's purpose",
+  unverified: "something the reviewer could not verify",
+  process: "CI, approvals or merge state",
+  design: "a design or behaviour point",
+  other: "the PR",
+};
+
 /** The reason a draft gets when nothing else held it and no finding passed, as opposed to a hold of the whole draft. */
 export const NO_FINDING_PASSED = "no finding passed every check";
 
@@ -132,14 +171,18 @@ export const VERIFIER_INSTRUCTIONS = [
   '{"holds": <number from 0 to 1: how likely the finding is correct about this code>, "worth_posting": <number from 0 to 1: how likely an experienced reviewer of this repository would post it, meaning it is correct, introduced or made worse by this change, matters in practice, and is not a nit, a style preference, speculation or intended behaviour>, "reason": "<one sentence>"}',
 ].join("\n");
 
-export function verifierPrompt(input: { repo: string; guidelines: string; finding: Finding; quotes: readonly Evidence[]; patch: string | null; excerpt: string | null }): string {
+/** The verifier's diff when the PR has commits after the reviewed one: its diff now would cover code the review never read. */
+export const MOVED_PATCH = "(not shown: the pull request has commits after the one the review read, so its diff now covers other changes; judge from the file at the reviewed commit)";
+
+export function verifierPrompt(input: { repo: string; guidelines: string; finding: Finding; quotes: readonly Evidence[]; patch: string | null; excerpt: string | null; moved?: boolean }): string {
   const { finding } = input;
   const parts = [VERIFIER_INSTRUCTIONS, "", `Repository: ${input.repo}`];
   if (input.guidelines.trim()) parts.push("", "The repository's review guidelines:", input.guidelines.trim());
   parts.push("", `File: ${finding.path}${finding.line === null ? "" : ` (line ${finding.line})`}`, "", "Finding:", finding.body);
   for (const quote of input.quotes) parts.push("", `The reviewer relied on ${quote.path} lines ${quote.from}-${quote.to}:`, "```", quote.quote, "```");
-  parts.push("", "Change to this file in the pull request (unified diff):", "```diff", input.patch === null ? "(no diff: the pull request does not change this file, or the server did not send one)" : firstLines(input.patch, MAX_PATCH_LINES), "```");
-  if (input.excerpt !== null) parts.push("", "The file at the pull request's head:", "```", input.excerpt, "```");
+  const patch = input.moved ? MOVED_PATCH : input.patch === null ? "(no diff: the pull request does not change this file, or the server did not send one)" : firstLines(input.patch, MAX_PATCH_LINES);
+  parts.push("", "Change to this file in the pull request (unified diff):", "```diff", patch, "```");
+  if (input.excerpt !== null) parts.push("", input.moved ? "The file at the commit the review read:" : "The file at the pull request's head:", "```", input.excerpt, "```");
   return parts.join("\n");
 }
 
@@ -182,60 +225,70 @@ function hostsOf(pr: PrRow): string[] {
   }
 }
 
-/** What auto post makes of the draft, or null when its repository is not in shadow mode. Never posts. */
-export async function runGate(ctx: Ctx, pr: PrRow, draft: DraftRow): Promise<Gate | null> {
-  const config = ctx.config().autoPost;
-  const repo = autoPostRepo(ctx.config(), pr.repo);
-  if (repo === null) return null;
-  const started = ctx.now();
-  const findings = JSON.parse(draft.findings) as Finding[];
-  const assessment = draft.assessment ? (JSON.parse(draft.assessment) as Assessment) : null;
-  const reasons: string[] = [];
-  const head = draft.head ?? pr.head;
+/** Findings the verifier judges in one draft, highest severity first; past this a finding is left unjudged. */
+export const JUDGE_LIMIT = 8;
 
-  if (draft.head === null || pr.head === null || draft.head !== pr.head) reasons.push("the PR has new commits since the review read it");
-  if (pr.state === "draft") reasons.push("the PR is a draft");
-  if (pr.state === "merged" || pr.state === "closed") reasons.push(`the PR is ${pr.state}`);
-  if (isBot(ctx, pr)) reasons.push("a bot wrote the PR");
-  if (pr.additions === null || pr.deletions === null) reasons.push(`${ctx.server(pr.server)?.name ?? pr.server} did not say how large the PR is`);
-  else if (pr.additions + pr.deletions > config.maxLines) reasons.push(`the PR changes ${pr.additions + pr.deletions} lines, more than ${config.maxLines}`);
-  if (draft.verdict === "approve") reasons.push("approvals are not auto-posted yet");
-  if (draft.verdict === "changes") reasons.push("requests for changes are not auto-posted");
-  if (assessment === null) reasons.push("the review gave no risk assessment of the PR");
-  else {
-    if (assessment.risk === "high") reasons.push("the reviewer rated the PR high risk");
-    if (assessment.concerns.length) reasons.push(`the reviewer raised a concern: ${assessment.concerns[0]}`);
-  }
+type Judged = GateFinding & { severity: Severity; order: number };
 
-  const hosts = hostsOf(pr);
-  const summaryProblems = safetyProblems(draft.summary, hosts);
-  if (summaryProblems.length) reasons.push(`the summary: ${summaryProblems.join("; ")}`);
+/** What the gate reads of a PR at one commit: its changed files and their diffs, and files' text, read once each. */
+interface Reads {
+  files: PrFile[] | null;
+  /** Why files cannot be read, which fails every finding's accuracy. */
+  problem: string | null;
+  /** The PR has commits after the one read, so the server's diff is of other code and the verifier does not get it. */
+  moved: boolean;
+  read(path: string): Promise<string | null>;
+  patchOf(path: string): string | null;
+}
 
-  const signal = ctx.lifetime;
+async function reads(ctx: Ctx, pr: PrRow, head: string | null): Promise<Reads> {
   const adapter = ctx.adapter(pr.server);
+  const signal = ctx.lifetime;
   let files: PrFile[] | null = null;
-  let readProblem: string | null = null;
-  if (!adapter.files || !adapter.fileAt || !adapter.operations().includes("files") || !adapter.operations().includes("file")) readProblem = `${ctx.server(pr.server)?.name ?? pr.server} cannot read files, so quotes cannot be checked`;
-  else if (head === null) readProblem = "the review did not say which commit it read";
+  let problem: string | null = null;
+  if (!adapter.files || !adapter.fileAt || !adapter.operations().includes("files") || !adapter.operations().includes("file")) problem = `${ctx.server(pr.server)?.name ?? pr.server} cannot read files, so quotes cannot be checked`;
+  else if (head === null) problem = NO_HEAD;
   else {
     try {
       files = await adapter.files(pr.repo, pr.number, signal);
     } catch (error) {
-      readProblem = `could not read the PR's files: ${errText(error)}`;
+      problem = `${READ_FAILED}${errText(error)}`;
     }
   }
-  if (readProblem) reasons.push(readProblem);
-  const held = files?.find((file) => repo.holdPaths.some((glob) => globMatch(glob, file.path)));
-  if (held) reasons.push(`it changes ${held.path}, a path held for you`);
-
   const contents = new Map<string, Promise<string | null>>();
-  const read = (path: string) => {
-    if (!contents.has(path)) contents.set(path, repoPath(path) ? adapter.fileAt!(pr.repo, head!, path, signal).catch(() => null) : Promise.resolve(null));
-    return contents.get(path)!;
+  const moved = head !== null && pr.head !== head;
+  return {
+    files,
+    problem,
+    moved,
+    read: (path) => {
+      if (problem !== null) return Promise.resolve(null);
+      if (!contents.has(path)) contents.set(path, repoPath(path) ? adapter.fileAt!(pr.repo, head!, path, signal).catch(() => null) : Promise.resolve(null));
+      return contents.get(path)!;
+    },
+    patchOf: (path) => (moved ? null : files?.find((file) => file.path === path)?.patch ?? null),
   };
-  const patchOf = (path: string) => files?.find((file) => file.path === path)?.patch ?? null;
+}
 
-  const results: Array<GateFinding & { severity: Severity; order: number }> = [];
+/** Reasons that come from reading the PR's files, which a later check reads again; matched whole, never inside other text. */
+function readProblems(ctx: Ctx, pr: PrRow): (reason: string) => boolean {
+  const cannot = `${ctx.server(pr.server)?.name ?? pr.server} cannot read files, so quotes cannot be checked`;
+  return (reason) => reason === cannot || reason === NO_HEAD || reason.startsWith(READ_FAILED);
+}
+
+const NO_HEAD = "the review did not say which commit it read";
+const READ_FAILED = "could not read the PR's files: ";
+
+const bySeverity = (a: Judged, b: Judged) => RANK[b.severity] - RANK[a.severity] || a.order - b.order;
+
+/**
+ * The gate's judgment of each finding on its own: safety, severity, critic votes, quotes, held paths, then the verifier
+ * for those that pass the rest. It runs whatever holds the draft, so shadow mode learns from every review.
+ */
+async function judgeFindings(ctx: Ctx, pr: PrRow, findings: readonly Finding[], repo: AutoPostRepo, from: Reads): Promise<Judged[]> {
+  const config = ctx.config().autoPost;
+  const hosts = hostsOf(pr);
+  const results: Judged[] = [];
   for (const [order, finding] of findings.entries()) {
     const checks: Check[] = [];
     const problems = safetyProblems(finding.body, hosts);
@@ -254,14 +307,14 @@ export async function runGate(ctx: Ctx, pr: PrRow, draft: DraftRow): Promise<Gat
     const quotes = finding.evidence ?? [];
     const badPath = [finding.path, ...quotes.map((quote) => quote.path)].find((path) => !repoPath(path));
     if (badPath !== undefined) checks.push({ check: "safety", ok: false, reason: `${JSON.stringify(badPath.slice(0, 80))} is not a path inside the repository` });
-    if (readProblem) checks.push({ check: "accuracy", ok: false, reason: readProblem });
+    if (from.problem) checks.push({ check: "accuracy", ok: false, reason: from.problem });
     else if (quotes.length === 0) checks.push({ check: "accuracy", ok: false, reason: "no quoted evidence" });
     else {
       const missing: string[] = [];
       const unread: string[] = [];
       const short = quotes.some((quote) => squash(quote.quote).replace(/\s/gu, "").length < MIN_QUOTE);
       for (const quote of quotes) {
-        const content = await read(quote.path);
+        const content = await from.read(quote.path);
         if (content === null) unread.push(quote.path);
         else if (!quoteFound(content, quote.quote, quote.from, quote.to)) missing.push(`${quote.path}:${quote.from}`);
       }
@@ -272,23 +325,23 @@ export async function runGate(ctx: Ctx, pr: PrRow, draft: DraftRow): Promise<Gat
       checks.push({ check: "accuracy", ok: !short && unread.length === 0 && missing.length === 0, reason });
     }
     // The verifier must see the cited line itself, not only the quotes, which may come from other files.
-    if (!readProblem && finding.line !== null && (await read(finding.path)) === null) checks.push({ check: "accuracy", ok: false, reason: `could not read ${finding.path} at the head` });
+    if (!from.problem && finding.line !== null && (await from.read(finding.path)) === null) checks.push({ check: "accuracy", ok: false, reason: `could not read ${finding.path} at the head` });
     const pathHeld = repo.holdPaths.some((glob) => globMatch(glob, finding.path));
     checks.push({ check: "alignment", ok: !pathHeld, reason: pathHeld ? `${finding.path} is a path held for you` : "outside the held paths" });
     results.push({ id: finding.id, pass: checks.every((c) => c.ok), checks, holds: null, worth: null, why: null, severity: finding.severity, order });
   }
 
-  // The verifier costs money and time, so it judges only findings that passed everything else, in a draft nothing else
-  // holds, and no more of them than could post.
+  // The verifier costs money and time, so it judges only findings that passed everything else, at most JUDGE_LIMIT.
   const timeoutMs = config.verifierTimeoutSeconds * 1000;
-  const candidates = reasons.length ? [] : results.filter((row) => row.pass).sort((a, b) => RANK[b.severity] - RANK[a.severity] || a.order - b.order);
-  for (const row of candidates.slice(config.maxComments)) {
-    row.checks.push({ check: "quality", ok: false, reason: `beyond the ${config.maxComments}-comment limit` });
+  const candidates = results.filter((row) => row.pass).sort(bySeverity);
+  for (const row of candidates.slice(JUDGE_LIMIT)) {
+    row.checks.push({ check: "quality", ok: false, reason: `past the verifier's limit of ${JUDGE_LIMIT} findings a draft` });
     row.pass = false;
+    row.unjudged = true;
   }
-  await pool(candidates.slice(0, config.maxComments), 3, async (row) => {
+  await pool(candidates.slice(0, JUDGE_LIMIT), 3, async (row) => {
     const finding = findings[row.order]!;
-    const content = finding.line === null ? null : await read(finding.path);
+    const content = finding.line === null ? null : await from.read(finding.path);
     if (finding.line !== null && content === null) {
       row.checks.push({ check: "accuracy", ok: false, reason: `could not read ${finding.path} at the head` });
       row.pass = false;
@@ -299,10 +352,12 @@ export async function runGate(ctx: Ctx, pr: PrRow, draft: DraftRow): Promise<Gat
       guidelines: repo.guidelines,
       finding,
       quotes: finding.evidence ?? [],
-      patch: patchOf(finding.path),
+      patch: from.patchOf(finding.path),
       excerpt: content === null || finding.line === null ? null : numbered(content, finding.line),
+      moved: from.moved,
     });
-    const verdict = await verify(ctx, config, prompt, timeoutMs, signal);
+    if (from.moved) row.checks.push({ check: "accuracy", ok: true, reason: "judged without the diff, since the PR has commits after the one the review read" });
+    const verdict = await verify(ctx, config, prompt, timeoutMs, ctx.lifetime);
     if (typeof verdict === "string") {
       row.checks.push({ check: "accuracy", ok: false, reason: `verifier failed: ${verdict}` });
     } else {
@@ -314,18 +369,191 @@ export async function runGate(ctx: Ctx, pr: PrRow, draft: DraftRow): Promise<Gat
     }
     row.pass = row.checks.every((c) => c.ok);
   });
+  return results;
+}
 
-  const passing = results.filter((row) => row.pass).sort((a, b) => RANK[b.severity] - RANK[a.severity] || a.order - b.order);
-  if (passing.length === 0 && reasons.length === 0) reasons.push(NO_FINDING_PASSED);
-  const posting = reasons.length ? [] : passing.slice(0, config.maxComments).map((row) => row.id);
+/** An author who counts as a bot, unless the repository lists them as one who acts for people. */
+function botAuthor(ctx: Ctx, pr: PrRow, repo: AutoPostRepo): boolean {
+  return isBot(ctx, pr) && !repo.allowAuthors.some((glob) => globMatch(glob, pr.author));
+}
+
+/** The first concern of a kind that holds, as a reason; null when none does. */
+function concernReason(assessment: Assessment, kinds: readonly ConcernKind[]): string | null {
+  const concern = assessment.concerns.find((c) => kinds.includes(c.kind));
+  return concern ? `the reviewer raised a concern about ${CONCERN_TEXT[concern.kind]}: ${concern.text}` : null;
+}
+
+function sizeReason(ctx: Ctx, pr: PrRow, max: number): string | null {
+  if (pr.additions === null || pr.deletions === null) return `${ctx.server(pr.server)?.name ?? pr.server} did not say how large the PR is`;
+  const size = pr.additions + pr.deletions;
+  return size > max ? `the PR changes ${size} lines, more than ${max}` : null;
+}
+
+function heldPathReason(repo: AutoPostRepo, from: Reads): string | null {
+  const held = from.files?.find((file) => repo.holdPaths.some((glob) => globMatch(glob, file.path)));
+  return held ? `it changes ${held.path}, a path held for you` : null;
+}
+
+/** What holds the whole draft from posting as a comment review, whatever its findings. */
+function draftReasons(ctx: Ctx, pr: PrRow, draft: DraftRow, repo: AutoPostRepo, assessment: Assessment | null, from: Reads): string[] {
+  const config = ctx.config().autoPost;
+  const reasons: string[] = [];
+  if (draft.head === null || pr.head === null || draft.head !== pr.head) reasons.push("the PR has new commits since the review read it");
+  if (pr.state === "draft") reasons.push("the PR is a draft");
+  if (pr.state === "merged" || pr.state === "closed") reasons.push(`the PR is ${pr.state}`);
+  if (botAuthor(ctx, pr, repo)) reasons.push("a bot wrote the PR");
+  const size = sizeReason(ctx, pr, config.maxLines);
+  if (size) reasons.push(size);
+  if (draft.verdict === "approve") reasons.push(APPROVAL_ROUTE);
+  if (draft.verdict === "changes") reasons.push(CHANGES_ROUTE);
+  if (assessment === null) reasons.push("the review gave no risk assessment of the PR");
+  else {
+    if (assessment.risk === "high") reasons.push("the reviewer rated the PR high risk");
+    const concern = concernReason(assessment, config.holdConcerns.comment);
+    if (concern) reasons.push(concern);
+  }
+  const summary = safetyProblems(draft.summary, hostsOf(pr));
+  if (summary.length) reasons.push(`the summary: ${summary.join("; ")}`);
+  if (from.problem) reasons.push(from.problem);
+  const held = heldPathReason(repo, from);
+  if (held) reasons.push(held);
+  return reasons;
+}
+
+const APPROVAL_SEVERITY = { nit: 0, low: 1, medium: 2 } as const;
+
+/** Reasons every draft of one verdict gets, which say nothing about the draft itself. */
+export const APPROVAL_ROUTE = "approvals post through the approval rules";
+export const ASKS_CHANGES = "the review asks for changes";
+export const CHANGES_ROUTE = "requests for changes are not auto-posted";
+
+/** The approval rules that read the PR itself, which can change while the draft is checked; checked again after it. */
+function prApprovalReasons(ctx: Ctx, pr: PrRow, draft: DraftRow, repo: AutoPostRepo): string[] {
+  const rules = ctx.config().autoPost.approvals;
+  const reasons: string[] = [];
+  if (draft.head === null || pr.head === null || draft.head !== pr.head) reasons.push("the PR has new commits since the review read it");
+  if (pr.state !== "open") reasons.push(pr.state === "draft" ? "the PR is a draft" : `the PR is ${pr.state}`);
+  if (botAuthor(ctx, pr, repo)) reasons.push("a bot wrote the PR");
+  const size = sizeReason(ctx, pr, rules.maxLines);
+  if (size) reasons.push(size);
+  if (pr.checks === "failed") reasons.push("checks failed");
+  else if (pr.checks === "pending" && rules.checks === "passed") reasons.push("checks are still running");
+  // A server reports no checks right after a push and while workflows wait for approval, not only without CI.
+  else if (pr.checks === "none" && rules.checks === "passed") reasons.push("the server reported no checks");
+  if (pr.review === "changes") reasons.push("a reviewer requested changes");
+  return reasons;
+}
+
+/**
+ * Whether the approval rules would approve the PR. An approval carries as comments only the findings that pass the gate;
+ * the severity rule reads every finding, since one the gate drops still shows the reviewer saw a problem. It runs for
+ * every draft but one asking for changes, since the user approves some drafts a review only commented on. Never approves.
+ */
+function approvalDecision(ctx: Ctx, pr: PrRow, draft: DraftRow, repo: AutoPostRepo, assessment: Assessment | null, findings: readonly Finding[], from: Reads): NonNullable<Gate["approval"]> {
+  const config = ctx.config().autoPost;
+  const rules = config.approvals;
+  const reasons: string[] = [];
+  if (draft.verdict === "changes") reasons.push(ASKS_CHANGES);
+  reasons.push(...prApprovalReasons(ctx, pr, draft, repo));
+  const above = findings.filter((f) => RANK[f.severity] > APPROVAL_SEVERITY[rules.maxSeverity]);
+  if (above.length) reasons.push(`the review has ${above.length} finding${above.length === 1 ? "" : "s"} above ${rules.maxSeverity}`);
+  if (assessment === null) reasons.push("the review gave no risk assessment of the PR");
+  else {
+    if (assessment.risk !== "low") reasons.push(`the reviewer rated the PR ${assessment.risk} risk`);
+    const concern = concernReason(assessment, config.holdConcerns.approve);
+    if (concern) reasons.push(concern);
+  }
+  const summary = safetyProblems(draft.summary, hostsOf(pr));
+  if (summary.length) reasons.push(`the summary: ${summary.join("; ")}`);
+  if (repo.holdPaths.length) {
+    if (from.files === null) reasons.push("could not check the held paths");
+    else {
+      const held = from.files.find((file) => repo.holdPaths.some((glob) => globMatch(glob, file.path)));
+      if (held) reasons.push(`it changes ${held.path}, a path held for you`);
+    }
+  }
+  return { decision: reasons.length ? "hold" : "approve", reasons };
+}
+
+/** What would post: the passing findings, at most maxComments and highest severity first, unless the draft is held. */
+function decide(results: readonly Judged[], reasons: string[], maxComments: number): Pick<Gate, "decision" | "reasons" | "posting" | "findings"> {
+  const passing = results.filter((row) => row.pass).sort(bySeverity);
+  const held = reasons.filter((reason) => reason !== NO_FINDING_PASSED);
+  if (passing.length === 0 && held.length === 0) held.push(NO_FINDING_PASSED);
+  const posting = held.length ? [] : passing.slice(0, maxComments).map((row) => row.id);
   return {
-    mode: "shadow",
     decision: posting.length ? "post" : "hold",
-    reasons,
+    reasons: held,
     posting,
     findings: results.map(({ severity: _severity, order: _order, ...row }) => row),
+  };
+}
+
+/** What auto post makes of the draft, or null when its repository is not in shadow mode. Never posts. */
+export async function runGate(ctx: Ctx, pr: PrRow, draft: DraftRow): Promise<Gate | null> {
+  const config = ctx.config().autoPost;
+  const repo = autoPostRepo(ctx.config(), pr.repo);
+  if (repo === null) return null;
+  const started = ctx.now();
+  const findings = JSON.parse(draft.findings) as Finding[];
+  const assessment = parseAssessment(draft.assessment);
+  const from = await reads(ctx, pr, draft.head ?? pr.head);
+  const reasons = draftReasons(ctx, pr, draft, repo, assessment, from);
+  const results = await judgeFindings(ctx, pr, findings, repo, from);
+  return {
+    mode: "shadow",
+    ...decide(results, reasons, config.maxComments),
+    approval: approvalDecision(ctx, pr, draft, repo, assessment, findings, from),
     at: ctx.now(),
     ms: ctx.now() - started,
+  };
+}
+
+/** What judging a draft again made of it: the gate to store, how many findings got a verdict, and how many failed to. */
+export interface Rescore {
+  gate: Gate;
+  judged: number;
+  failed: number;
+}
+
+/** A check that failed because a file could not be read or the verifier could not run, which says nothing about the finding. */
+export function unreadable(reason: string): boolean {
+  return reason.startsWith("verifier failed") || /^could not read .+ at the head$/u.test(reason) || reason.startsWith(READ_FAILED) || reason === NO_HEAD || reason.endsWith(" cannot read files, so quotes cannot be checked");
+}
+
+const transient = (row: GateFinding) => row.checks.some((c) => !c.ok && unreadable(c.reason));
+
+/**
+ * Judges a checked draft's findings again, at the commit its review read, with today's settings and verifier. The draft's
+ * own holds and approval decision stay as they were when it was checked, since they depend on the PR as it was then. A
+ * stored judgment is never traded for a failure: a draft whose files cannot be read stays as it was, and so does each
+ * finding whose file read or verifier run fails this time.
+ */
+export async function rescoreGate(ctx: Ctx, pr: PrRow, draft: DraftRow, stored: Gate): Promise<Rescore | null> {
+  const config = ctx.config().autoPost;
+  const repo = autoPostRepo(ctx.config(), pr.repo);
+  if (repo === null) return null;
+  // A review that never said which commit it read has nothing to judge again at any commit.
+  if (draft.head === null) return null;
+  const findings = JSON.parse(draft.findings) as Finding[];
+  const from = await reads(ctx, pr, draft.head);
+  if (from.problem) return { gate: stored, judged: 0, failed: findings.length };
+  // Reasons that belonged to reading files are reread now, with the held paths a failed read could not check; the rest
+  // describe the PR at review time.
+  const readProblem = readProblems(ctx, pr);
+  const kept = stored.reasons.filter((reason) => !readProblem(reason));
+  const held = heldPathReason(repo, from);
+  if (held && !kept.includes(held)) kept.push(held);
+  const fresh = await judgeFindings(ctx, pr, findings, repo, from);
+  const before = new Map(stored.findings.map((row) => [row.id, row]));
+  const results = fresh.map((row) => {
+    const old = before.get(row.id);
+    return old && transient(row) ? { ...row, ...old } : row;
+  });
+  return {
+    gate: { ...stored, ...decide(results, kept, config.maxComments), approval: stored.approval ?? null, rescoredAt: ctx.now() },
+    judged: fresh.filter((row) => row.holds !== null).length,
+    failed: fresh.filter(transient).length,
   };
 }
 
@@ -365,6 +593,37 @@ async function freshPr(ctx: Ctx, pr: PrRow): Promise<PrRow> {
 }
 
 /**
+ * Judges a checked draft's findings again and stores the result, for any draft but one a newer draft replaced. Returns
+ * null when there is nothing to judge: no stored gate, a superseded draft, or a repository not in shadow mode.
+ */
+export function rescoreDraft(ctx: Ctx, draftId: number): Promise<Rescore | null> {
+  const byDraft = running.get(ctx.store) ?? new Map<number, Promise<Gate | null>>();
+  running.set(ctx.store, byDraft);
+  const before = byDraft.get(draftId) ?? Promise.resolve(null);
+  const work: Promise<Rescore | null> = before.catch(() => null).then(async () => {
+    const draft = ctx.store.draftById(draftId);
+    const pr = draft ? ctx.store.prById(draft.pr_id) : null;
+    const stored = parseGate(draft?.gate ?? null);
+    if (!draft || !pr || stored === null || draft.discard_reason === "superseded" || ctx.lifetime?.aborted) return null;
+    if (autoPostRepo(ctx.config(), pr.repo) === null) return null;
+    const unread = { gate: stored, judged: 0, failed: (JSON.parse(draft.findings) as unknown[]).length };
+    // The stored head may be older than the server's, and the server's diff is always of its head; read it around the work.
+    const current = await freshPr(ctx, pr).catch(() => null);
+    if (current === null) return unread;
+    const result = await rescoreGate(ctx, current, draft, stored);
+    const after = await freshPr(ctx, current).catch(() => null);
+    if (result === null || after === null || after.head !== current.head) return result === null ? null : unread;
+    if (result.gate !== stored) ctx.store.setDraftGate(draft.id, JSON.stringify(result.gate));
+    return result;
+  });
+  const gate = work.then((result) => result?.gate ?? null, () => null).finally(() => {
+    if (byDraft.get(draftId) === gate) byDraft.delete(draftId);
+  });
+  byDraft.set(draftId, gate);
+  return work;
+}
+
+/**
  * Runs the gate on a draft, stores its decision and logs it. Errors are logged, never thrown at the review thread.
  * The PR is read fresh first, and a PR whose head or state changed while it was checked is held, so a decision never
  * describes code other than what the review read.
@@ -397,15 +656,27 @@ export function gateDraft(ctx: Ctx, draftId: number): Promise<Gate | null> {
       } catch {
         after = null;
       }
-      if (after === null) gate = { ...gate, decision: "hold", posting: [], reasons: [...gate.reasons.filter((r) => r !== NO_FINDING_PASSED), "could not read the PR again after the check; check it again"] };
-      else if (after.head !== pr.head || after.state !== pr.state) {
-        gate = { ...gate, decision: "hold", posting: [], reasons: [...gate.reasons.filter((r) => r !== NO_FINDING_PASSED), "the PR changed while it was being checked; check it again"] };
+      const changed = after === null ? "could not read the PR again after the check; check it again"
+        : after.head !== pr.head || after.state !== pr.state ? "the PR changed while it was being checked; check it again" : null;
+      if (changed) {
+        gate = {
+          ...gate, decision: "hold", posting: [], reasons: [...gate.reasons.filter((r) => r !== NO_FINDING_PASSED), changed],
+          approval: gate.approval ? { decision: "hold", reasons: [...gate.approval.reasons, changed] } : null,
+        };
+      } else if (after !== null && gate.approval) {
+        // Checks and reviews can change without a push; an approval must hold on what either reading saw.
+        const repo = autoPostRepo(ctx.config(), pr.repo);
+        const late = repo ? prApprovalReasons(ctx, after, draft, repo).filter((reason) => !gate!.approval!.reasons.includes(reason)) : [];
+        if (late.length) gate = { ...gate, approval: { decision: "hold", reasons: [...gate.approval.reasons, ...late] } };
       }
       ctx.store.setDraftGate(draft.id, JSON.stringify(gate));
       const count = gate.posting.length;
-      const text = gate.decision === "post"
-        ? `Auto post (shadow) would post ${count} finding${count === 1 ? "" : "s"} of the draft on ${shortKey(ctx, pr)}; nothing was posted.`
-        : `Auto post (shadow) would hold the draft on ${shortKey(ctx, pr)}: ${gate.reasons[0] ?? NO_FINDING_PASSED}.`;
+      const judged = gate.findings.filter((f) => f.holds !== null).length;
+      const comments = gate.decision === "post"
+        ? `would post ${count} finding${count === 1 ? "" : "s"}`
+        : `would hold the comments (${gate.reasons[0] ?? NO_FINDING_PASSED})`;
+      const approval = gate.approval ? `; ${gate.approval.decision === "approve" ? "would approve" : `would not approve (${gate.approval.reasons[0]})`}` : "";
+      const text = `Auto post (shadow) on ${shortKey(ctx, pr)}: ${comments}${approval}; judged ${judged} finding${judged === 1 ? "" : "s"}. Nothing was posted.`;
       ctx.store.addEvent("gate", text, pr.id, draft.thread_id);
       ctx.port.publish();
       return gate;

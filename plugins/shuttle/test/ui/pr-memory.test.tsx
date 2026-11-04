@@ -11,7 +11,7 @@ const body = "A long PR description. ".repeat(100);
 const rpc = () => handlers({
   list: () => ({ prs: [own, other] }),
   threadPrs: () => ({ prs: [own], sent: [] }),
-  detail: ({ key }) => ({ pr: key === own.key ? own : other, events: [], body, draft: null }),
+  detail: ({ key }) => ({ pr: key === own.key ? own : other, events: [], body, draft: null, drafts: 0 }),
   conversation: () => ({ items: [item({ author: "alice" })], details: null, error: null, fetchedAt: Date.now() }),
 });
 
@@ -126,7 +126,7 @@ describe("PR view session memory", () => {
 
   it("restores edits to an AI review only for the same draft", async () => {
     let current = draft();
-    const custom = { ...rpc(), detail: () => ({ pr: other, events: [], body, draft: current }) };
+    const custom = { ...rpc(), detail: () => ({ pr: other, events: [], body, draft: current, drafts: 1 }) };
     const subPath = formatRoute({ view: "reviews", source: "all", key: other.key });
     const first = await page(subPath, custom);
     openTab(await find(first.slot.container, "[data-detail]"), "review");

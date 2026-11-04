@@ -34,7 +34,7 @@ async function panel(rpc: Partial<Handlers> & { pullRequests?: PullRequests } = 
   return mount<ExperimentalThreadActionTabProps>(registration.component as never, { threadId: THREAD, params: { threadId: THREAD } }, {
     ...handlers({
       threadPrs: () => ({ prs, sent: [event({ id: 7, kind: "forwarded", text: "tomas approved: sent with the act prompt", key: base.key, threadId: THREAD })] }),
-      detail: ({ key }) => ({ pr: prs.find((item) => item.key === key) ?? base, events: [], body: "## Why\n\nThe ticket page shows **every** stage.", draft: null }),
+      detail: ({ key }) => ({ pr: prs.find((item) => item.key === key) ?? base, events: [], body: "## Why\n\nThe ticket page shows **every** stage.", draft: null, drafts: 0 }),
       conversation: () => ({ items: [item({ id: "c1", author: "tomas", body: "Can the stage list wrap?", thread: "PRRT_9" })], details: null, error: null, fetchedAt: Date.now() }),
       setAgentMode: ({ key, mode }) => change(key, (item) => ({ ...item, agent: item.agent === null ? null : { ...item.agent, mode } })),
       setAgent: ({ key, target }) => ({ ...change(key, (item) => ({ ...item, agent: target.kind === "existing" ? agent({ threadId: target.threadId, title: "Loom work" }) : null })), threadId: THREAD }),
@@ -223,7 +223,7 @@ describe("a PR in full inside the tab", () => {
   });
 
   it("keeps the open PR, scroll container, expanded sections and drafts through a background refresh", async () => {
-    const detailData = { pr: base, events: [], body: "A long description. ".repeat(100), draft: null };
+    const detailData = { pr: base, events: [], body: "A long description. ".repeat(100), draft: null, drafts: 0 };
     const conversationData = { items: [item({ author: "tomas", thread: "PRRT_9" })], details: null, error: null, fetchedAt: Date.now() };
     let refreshing = false;
     let finishPrs: (value: { prs: PrView[]; sent: [] }) => void;

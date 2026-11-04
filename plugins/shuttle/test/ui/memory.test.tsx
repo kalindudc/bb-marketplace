@@ -12,7 +12,7 @@ const other = mine({ number: 22, title: "Page Edge Infrastructure when token che
 function shuttle(subPath: string, prs: PrView[] = [open, other]) {
   return page(subPath, {
     list: ({ area }) => ({ prs: area === "mine" ? prs : [] }),
-    detail: ({ key }) => ({ pr: prs.find((item) => item.key === key)!, events: [], body: "", draft: null }),
+    detail: ({ key }) => ({ pr: prs.find((item) => item.key === key)!, events: [], body: "", draft: null, drafts: 0 }),
   });
 }
 

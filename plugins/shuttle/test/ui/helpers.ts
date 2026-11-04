@@ -214,7 +214,18 @@ export function insights(overrides: Partial<InsightsView> = {}): InsightsView {
 }
 
 export function autoPostInsights(overrides: Partial<AutoPostInsights> = {}): AutoPostInsights {
-  return { range: "30d", target: 0.9, repos: [], reasons: [], points: [], verifier: { runs: 0, failures: 0, medianMs: null }, recent: [], ...overrides };
+  return { range: "30d", target: 0.9, approvalTarget: 0.98, repos: [], reasons: [], points: [], verifier: { runs: 0, failures: 0, medianMs: null }, recent: [], ...overrides };
+}
+
+const RECORD = { agreed: 0, against: 0, pending: 0, missed: 0, held: 0, precision: null, lowerBound: null, needed: null };
+type ShadowRepo = AutoPostInsights["repos"][number];
+export function shadowRepo(overrides: { repo?: string; drafts?: number; findings?: Partial<ShadowRepo["findings"]>; policy?: Partial<ShadowRepo["policy"]>; approvals?: Partial<ShadowRepo["approvals"]> } = {}): ShadowRepo {
+  return {
+    repo: overrides.repo ?? "acme/app", mode: "shadow", drafts: overrides.drafts ?? 0,
+    findings: { ...RECORD, edited: 0, judged: 0, ...overrides.findings },
+    policy: { drafts: 0, findings: 0, agreed: 0, against: 0, ...overrides.policy },
+    approvals: { ...RECORD, drafts: 0, wouldApprove: 0, ...overrides.approvals },
+  };
 }
 
 export const mergeOptions = (overrides: Partial<MergeOptions> = {}): MergeOptions => ({
@@ -307,6 +318,7 @@ export function handlers(overrides: Partial<Handlers> = {}): Handlers {
     clearPost: unexpected("clearPost"),
     discardDraft: unexpected("discardDraft"),
     checkDraft: unexpected("checkDraft"),
+    reviewHistory: () => ({ items: [] }),
     restoreDraft: unexpected("restoreDraft"),
     reply: unexpected("reply"),
     resolve: unexpected("resolve"),

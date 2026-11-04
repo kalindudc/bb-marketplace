@@ -17,7 +17,7 @@ const all = [yours, theirs, merged];
 function searchPage(subPath: string, rpc: Partial<Handlers> = {}, prs: PrView[] = all, total = prs.length) {
   return page(subPath, {
     search: ({ query }) => (query === "" ? { prs: [], total: 0 } : { prs, total }),
-    detail: ({ key }) => ({ pr: prs.find((item) => item.key === key)!, events: [], body: "", draft: null }),
+    detail: ({ key }) => ({ pr: prs.find((item) => item.key === key)!, events: [], body: "", draft: null, drafts: 0 }),
     ...rpc,
   });
 }

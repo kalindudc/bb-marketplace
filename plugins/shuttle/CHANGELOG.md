@@ -2,6 +2,21 @@
 
 Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` in this repository.
 
+## Unreleased
+
+### Added
+
+- Auto post judges every finding in shadow mode, whatever holds its draft, so the record fills from every review. Insights › Auto post now shows, per repository, the gate's judgment of each finding against what you posted, what would actually post once the draft rules apply, and an approval record. `bb shuttle rescore` judges the findings of drafts checked in the last 30 days again, posted ones included.
+- Approval rules in shadow mode. For every draft but one asking for changes, Shuttle records whether it would approve the PR: open at the head the review read, small (200 lines by default), checks passed, no requested changes, a low-risk assessment, no finding above low, which posts as a comment. Insights compares it with the verdict you posted, against a 98% target. Nothing is approved.
+- Reviewer concerns have kinds: the description does not match the diff, changes outside the PR's purpose, something the reviewer could not verify, CI or merge state, a design point, or none given. Settings choose which kinds hold comments (by default the first two and unkinded ones) and which hold approvals.
+- Allowed authors per repository: bot accounts, such as an agent account that opens PRs for someone, that auto post judges like people.
+- The Your review tab lists the PR's earlier AI reviews, with the notes each left for you, what it suggested and what you did with it. A merged or closed PR keeps the tab for them, with any draft never posted.
+- Posting a draft records the verdict you posted, and drafts posted before take it from your reviews.
+
+### Changed
+
+- The shipped Standard review preset asks four questions of every PR: what it changes, why, how well the implementation gets there, and whether it should be done at all. A finding needs a clear failure, a realistic path and checkable evidence on a changed line, and the reviewer tries to disprove it first; style and generic test requests are left out. Presets you saved keep their prompts; **Use the shipped prompt** in a preset's editor switches one to it.
+
 ## 0.7.0 (2026-11-04)
 
 ### Added

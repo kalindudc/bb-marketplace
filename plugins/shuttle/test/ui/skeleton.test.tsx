@@ -11,7 +11,7 @@ afterEach(unmountAll);
 const pending = () => new Promise<never>(() => {});
 
 const asked = pr({ next: next({ kind: "new_request", label: "New review request", inbox: true }) });
-const detailOf = (body: string | null = "## Why\n\nIt samples per route.") => () => ({ pr: asked, events: [], body, draft: null });
+const detailOf = (body: string | null = "## Why\n\nIt samples per route.") => () => ({ pr: asked, events: [], body, draft: null, drafts: 0 });
 
 describe("Shuttle while its server has not answered", () => {
   it.each<[string, Partial<Handlers>, string]>([

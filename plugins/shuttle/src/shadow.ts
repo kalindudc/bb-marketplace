@@ -3,7 +3,7 @@ import type { AutoPostInsights, Finding, ShadowLabel } from "./contract";
 import type { Ctx } from "./ctx";
 import type { DraftRow } from "./db/store";
 import type { FindingOutcome } from "./drafts";
-import { NO_FINDING_PASSED, parseGate } from "./gate";
+import { APPROVAL_ROUTE, ASKS_CHANGES, CHANGES_ROUTE, NO_FINDING_PASSED, parseGate, unreadable } from "./gate";
 import { shortKey } from "./prs";
 import { globMatch } from "./sync";
 
@@ -54,6 +54,7 @@ export function decisionsOf(draft: DraftRow): Map<string, Decided> {
  */
 export function bucket(reason: string): string {
   return reason
+    .replace(/^(the reviewer raised a concern about [^:]+):.*$/u, "$1")
     .replace(/^(the reviewer raised a concern):.*$/u, "$1")
     .replace(/^(the summary):.*$/u, "$1 is not safe to post")
     .replace(/^could not read .+ at the head$/u, "could not read a file at the head")
@@ -62,16 +63,33 @@ export function bucket(reason: string): string {
     .replace(/^".*" is not a path inside the repository$/u, "a path is not inside the repository")
     .replace(/ \([^)]*\)$/u, "")
     .replace(/^could not read the PR's files: .*$/u, "could not read the PR's files")
-    .replace(/\d+(\.\d+)?/gu, "N");
+    .replace(/\d+(\.\d+)?/gu, "N")
+    .replace(/\bN finding\b/gu, "N findings");
+}
+
+type Tally = { agreed: number; against: number; pending: number; missed: number; held: number };
+const tally = (): Tally => ({ agreed: 0, against: 0, pending: 0, missed: 0, held: 0 });
+
+/** Where a shadow decision lands against the user's: `would` is what auto post would do, `took` what the user did. */
+function labelOf(would: boolean, took: "yes" | "no" | "pending" | null): ShadowLabel | null {
+  if (took === null) return null;
+  if (would) return took === "yes" ? "agreed" : took === "no" ? "against" : "pending";
+  return took === "yes" ? "missed" : took === "no" ? "held" : null;
+}
+
+function finish<T extends Tally>(row: T, target: number): T & { precision: number | null; lowerBound: number | null; needed: number | null } {
+  const decided = row.agreed + row.against;
+  return { ...row, precision: decided ? row.agreed / decided : null, lowerBound: wilsonLower(row.agreed, decided), needed: neededFor(row.agreed, row.against, target) };
 }
 
 export function autoPostInsights(ctx: Ctx, range: AutoPostInsights["range"]): AutoPostInsights {
   const config = ctx.config().autoPost;
   const from = ctx.now() - RANGE_DAYS[range] * DAY;
   const repos = config.repos.map((repo) => ({
-    repo: repo.repo, mode: repo.mode, drafts: 0, wouldPost: 0, agreed: 0, edited: 0, against: 0, pending: 0, missed: 0, held: 0,
-    precision: null as number | null, lowerBound: null as number | null, needed: null as number | null,
-    approvals: { drafts: 0, posted: 0, discarded: 0 },
+    repo: repo.repo, mode: repo.mode, drafts: 0,
+    findings: { ...tally(), edited: 0, judged: 0 },
+    policy: { drafts: 0, findings: 0, agreed: 0, against: 0 },
+    approvals: { ...tally(), drafts: 0, wouldApprove: 0 },
   }));
   const reasons = new Map<string, { check: string; reason: string; count: number }>();
   const count = (check: string, reason: string) => {
@@ -86,43 +104,43 @@ export function autoPostInsights(ctx: Ctx, range: AutoPostInsights["range"]): Au
   let failures = 0;
   const durations: number[] = [];
 
-  // A range covers drafts checked in it, which may be older drafts checked again.
   for (const draft of ctx.store.gatedDrafts()) {
     const pr = ctx.store.prById(draft.pr_id);
     if (!pr) continue;
     const gate = parseGate(draft.gate);
     if (gate === null || gate.at < from) continue;
-    // Holds of the whole draft, not the note that no finding passed.
-    const draftHeld = gate.reasons.some((reason) => reason !== NO_FINDING_PASSED);
     const findings = JSON.parse(draft.findings) as Finding[];
     const severity = new Map(findings.map((f) => [f.id, f.severity]));
     const decided = decisionsOf(draft);
     const index = config.repos.findIndex((repo) => globMatch(repo.repo, pr.repo));
     const row = index >= 0 ? repos[index]! : null;
     durations.push(gate.ms);
-    for (const reason of gate.reasons) count("draft", reason);
+    for (const reason of gate.reasons) if (reason !== NO_FINDING_PASSED && reason !== APPROVAL_ROUTE && reason !== CHANGES_ROUTE) count("draft", reason);
+    for (const reason of gate.approval?.reasons ?? []) if (reason !== ASKS_CHANGES) count("approval", reason);
     let agreed = 0;
     let against = 0;
     for (const finding of gate.findings) {
       const verdict = decided.get(finding.id) ?? "pending";
-      const posted = verdict === "kept" || verdict === "edited";
-      const would = gate.posting.includes(finding.id);
+      const failedVerifier = finding.checks.some((c) => c.reason.startsWith("verifier failed"));
       for (const check of finding.checks) if (!check.ok) count(check.check, check.reason.startsWith("verifier failed") ? "verifier failed" : check.reason);
-      if (finding.holds !== null || finding.checks.some((c) => c.reason.startsWith("verifier failed"))) runs++;
-      if (finding.checks.some((c) => c.reason.startsWith("verifier failed"))) failures++;
-      let label: ShadowLabel | null = null;
-      if (would) {
-        if (posted) label = "agreed";
-        else if (verdict === "dropped") label = "against";
-        else if (verdict === "pending") label = "pending";
-      } else if (posted && !draftHeld && RANK[severity.get(finding.id) ?? "nit"] >= RANK[config.minSeverity]) label = "missed";
-      else if (verdict === "dropped") label = "held";
+      if (finding.holds !== null || failedVerifier) runs++;
+      if (failedVerifier) failures++;
+      // Not a judgment: a finding past the verifier's limit, one held only because a file or the verifier could not be read,
+      // and a passing one the verifier never scored (from a check before every finding went to it).
+      const failedChecks = finding.checks.filter((c) => !c.ok);
+      const unread = failedChecks.length > 0 && failedChecks.every((c) => unreadable(c.reason));
+      if (finding.unjudged || unread || (finding.pass && finding.holds === null)) continue;
+      const took = verdict === "kept" || verdict === "edited" ? "yes" : verdict === "dropped" ? "no" : verdict === "pending" ? "pending" : null;
+      // A finding below the minimum severity is not the gate's to post, so posting it is no miss.
+      const label = labelOf(finding.pass, finding.pass || RANK[severity.get(finding.id) ?? "nit"] >= RANK[config.minSeverity] || took !== "yes" ? took : null);
       if (row && label) {
-        if (label === "agreed") { row.agreed++; if (verdict === "edited") row.edited++; }
-        else if (label === "against") row.against++;
-        else if (label === "pending") row.pending++;
-        else if (label === "missed") row.missed++;
-        else row.held++;
+        row.findings[label]++;
+        if (label === "agreed" && verdict === "edited") row.findings.edited++;
+      }
+      if (row && finding.holds !== null) row.findings.judged++;
+      if (row && gate.posting.includes(finding.id)) {
+        if (took === "yes") row.policy.agreed++;
+        if (took === "no") row.policy.against++;
       }
       if (label === "agreed") agreed++;
       if (label === "against") against++;
@@ -130,34 +148,38 @@ export function autoPostInsights(ctx: Ctx, range: AutoPostInsights["range"]): Au
     }
     if (row) {
       row.drafts++;
-      if (gate.decision === "post") row.wouldPost++;
-      if (draft.verdict === "approve") {
+      if (gate.decision === "post") {
+        row.policy.drafts++;
+        row.policy.findings += gate.posting.length;
+      }
+      if (gate.approval) {
         row.approvals.drafts++;
-        if (draft.state === "posted") row.approvals.posted++;
-        if (draft.state === "discarded" && draft.discard_reason === "user") row.approvals.discarded++;
+        const would = gate.approval.decision === "approve";
+        if (would) row.approvals.wouldApprove++;
+        const took = draft.state === "draft" ? "pending"
+          : draft.state === "posted" ? (draft.posted_verdict === null ? null : draft.posted_verdict === "approve" ? "yes" : "no")
+          : draft.discard_reason === "user" ? "no" : null;
+        const label = labelOf(would, took);
+        if (label) row.approvals[label]++;
       }
     }
     const outcome = draft.state === "posted" ? "posted" : draft.state === "draft" ? "pending" : draft.discard_reason === "user" ? "discarded" : "superseded";
     const failed = gate.findings.flatMap((f) => f.checks.filter((c) => !c.ok)).map((c) => c.reason);
     recent.push({
       draftId: draft.id, key: pr.key, display: shortKey(ctx, pr), title: pr.title, at: gate.at, verdict: draft.verdict,
-      decision: gate.decision, findings: findings.length, posting: gate.posting.length, outcome, agreed, against,
+      decision: gate.decision, findings: findings.length, passing: gate.findings.filter((f) => f.pass).length, posting: gate.posting.length,
+      approval: gate.approval?.decision ?? null, outcome, posted: draft.state === "posted" ? draft.posted_verdict : null, agreed, against,
       reason: gate.decision === "post" ? null : (gate.reasons[0] ?? failed[0] ?? null),
     });
   }
 
-  for (const row of repos) {
-    const decided = row.agreed + row.against;
-    row.precision = decided ? row.agreed / decided : null;
-    row.lowerBound = wilsonLower(row.agreed, decided);
-    row.needed = neededFor(row.agreed, row.against, config.targetPrecision);
-  }
   durations.sort((a, b) => a - b);
   return {
     range,
     target: config.targetPrecision,
-    repos,
-    reasons: [...reasons.values()].sort((a, b) => b.count - a.count).slice(0, 12),
+    approvalTarget: config.approvals.target,
+    repos: repos.map((row) => ({ ...row, findings: finish(row.findings, config.targetPrecision), approvals: finish(row.approvals, config.approvals.target) })),
+    reasons: [...reasons.values()].sort((a, b) => b.count - a.count).slice(0, 14),
     points,
     verifier: { runs, failures, medianMs: durations.length ? durations[Math.floor(durations.length / 2)]! : null },
     recent: recent.reverse().slice(0, 50),

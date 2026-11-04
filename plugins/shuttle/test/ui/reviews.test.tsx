@@ -22,7 +22,7 @@ const everything = [post, updated, running, oldest, newest, mentioned, approved,
 function reviewsPage(subPath = "reviews", prs: PrView[] = everything) {
   return page(subPath, {
     list: ({ area }) => ({ prs: area === "reviews" ? prs : [] }),
-    detail: ({ key }) => ({ pr: prs.find((item) => item.key === key)!, events: [], body: "", draft: null }),
+    detail: ({ key }) => ({ pr: prs.find((item) => item.key === key)!, events: [], body: "", draft: null, drafts: 0 }),
   });
 }
 

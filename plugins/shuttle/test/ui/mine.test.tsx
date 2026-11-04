@@ -37,7 +37,7 @@ const open = [waiting, ready, fixing, waitingReview, drafted];
 function minePage(rpc: Partial<Handlers> = {}, prs: PrView[] = open, subPath = "mine") {
   return page(subPath, {
     list: ({ area }) => ({ prs: area === "mine" ? prs : [] }),
-    detail: ({ key }) => ({ pr: prs.find((item) => item.key === key)!, events: [], body: "", draft: null }),
+    detail: ({ key }) => ({ pr: prs.find((item) => item.key === key)!, events: [], body: "", draft: null, drafts: 0 }),
     ...rpc,
   });
 }
