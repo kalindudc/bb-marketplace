@@ -45,10 +45,11 @@ Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` i
 
 ### Fixed
 
+- A PR that asks more than 50 teams for review, as a large monorepo change can, no longer fails the whole list it is on. Delta's team requests stopped syncing on one that asked 62.
 - A PR you reviewed no longer stays open in Reviews after it merges or closes: Shuttle stopped reading it once it left the open list. The review history read now brings the merge or close.
 - A review you try again now posts after the reviews already waiting on its server, instead of ahead of them.
 - Shuttle no longer says it merged a PR that the server only took, as when GitHub adds a PR to the repository's own merge queue. It decides from the PR it reads back after the merge. A PR still open then shows under Merging, as In the merge queue when the server says so, or as Sent to merge, with the note that it may be waiting in a merge queue, for up to a day while it stays at that head, instead of "You merged" or Ready to merge.
-- A merged or closed PR no longer turns open again when a sync's list, read just before the merge, is written just after it, and a reopened PR no longer closes again from an answer read before the reopen. Shuttle keeps the newer state when an answer is older than what it has, whichever way the state went. A merge, close or other change that Shuttle made and could not read back counts as just after the server's last update, not as the time on your machine, so a clock that runs ahead never holds back the server's next change.
+- A merged or closed PR no longer turns open again from a sync's list read just before the merge, nor a reopened PR closed again from an answer read before the reopen: Shuttle keeps the newer state either way. A change Shuttle made and could not read back counts as just after the server's last update, not your machine's time, so a clock running ahead never holds back the server's next change.
 
 ## 0.6.0 (2026-11-02)
 

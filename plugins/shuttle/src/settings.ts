@@ -27,7 +27,7 @@ export const SETTINGS = {
   reviewedDays: {
     type: "number",
     label: "Reviewed history covers (days)",
-    description: "How far back Shuttle reads the merged and closed PRs you reviewed, for Reviews › Reviewed. PRs it already has stay in the list.",
+    description: "How far back Shuttle reads the merged and closed PRs you reviewed, for Reviews › Reviewed by me. PRs it already has stay in the list.",
     default: 90,
     experimental_schema: z.number().int().min(1).max(365),
   },

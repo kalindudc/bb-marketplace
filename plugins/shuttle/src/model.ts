@@ -41,7 +41,8 @@ export const prSummarySchema = z.object({
   additions: z.number().int().nonnegative().nullish(),
   deletions: z.number().int().nonnegative().nullish(),
   files: z.number().int().nonnegative().nullish(),
-  teams: z.array(text(200)).max(50).nullish(),
+  // No count limit: a monorepo PR can ask dozens of owning teams, and the command's output is already capped.
+  teams: z.array(text(200)).nullish(),
   /** view only: the description, in the server's Markdown. */
   body: text(65_536).nullish(),
   labels: z.array(labelInputSchema).max(200).nullish(),

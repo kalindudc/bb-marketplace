@@ -54,6 +54,15 @@ describe("the lists of a server", () => {
   const steps = (h: ReturnType<typeof harness>) => JSON.parse(h.store.lastSyncRun("forge")!.steps) as SyncStep[];
   const closedSince = (h: ReturnType<typeof harness>) => h.runner.calls.filter((c) => c.operation === "authored" && c.env.SHUTTLE_STATE === "closed").map((c) => c.env.SHUTTLE_SINCE);
 
+  it("keeps a PR that asks more teams than any one person belongs to, such as a monorepo change with 62 owners", async () => {
+    const h = harness();
+    const teams = Array.from({ length: 62 }, (_, i) => `@acme/team-${i}`);
+    h.lists.team_requested = [pr(4, { teams }), pr(5, { teams: ["@acme/edge"] })];
+    await h.shuttle.sync();
+    expect(steps(h).find((s) => s.operation === "team_requested")).toMatchObject({ status: "ok", detail: "2 PRs" });
+    expect(h.shuttle.list("reviews").find((p) => p.number === 4)!.teams).toHaveLength(62);
+  });
+
   it("shows your open PRs as soon as their list lands, before the other lists answer", async () => {
     const h = harness();
     h.lists.authored = [pr(1, { author: "me" })];
