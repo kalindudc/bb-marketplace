@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
-import { reconcileOrphanScopes } from "../../src/sources/policy.ts";
+import { isSensitiveUrl, reconcileOrphanScopes } from "../../src/sources/policy.ts";
+import { assertRemoteForwardableUrl, RemoteForwardingError } from "../../src/web/readers/policy.ts";
+import { SENSITIVE_QUERY_KEYS } from "../../src/web/sensitive-query.ts";
 import { artifact, attempt, createRepository, projectScope, structured, threadScope } from "./helpers.ts";
 
 describe("capture policy", () => {
@@ -31,6 +33,28 @@ describe("capture policy", () => {
 			assert.equal(receipt.warning?.code, "POLICY_BLOCKED");
 			assert.equal((db.prepare("SELECT COUNT(*) AS count FROM forage_sources").get() as { count: number }).count, 0);
 			assert.doesNotMatch(JSON.stringify(receipt), /secret/);
+		}
+	});
+
+	it("does not store pages whose URLs carry common secret-parameter variants, but stores benign look-alikes", () => {
+		for (const query of ["api_key=hunter2", "client_secret=hunter2", "refresh_token=hunter2", "X-Amz-Signature=hunter2", "Password=hunter2"]) {
+			const { repository, db } = createRepository();
+			const receipt = repository.recordRetrieval({ scope: threadScope(), origin: "fetch", artifact: artifact("body", { finalUrl: `https://example.com/file?${query}` }), attempt: attempt() });
+			assert.equal(receipt.persisted, false, query);
+			assert.equal(receipt.warning?.code, "POLICY_BLOCKED");
+			assert.equal((db.prepare("SELECT COUNT(*) AS count FROM forage_sources").get() as { count: number }).count, 0);
+			assert.doesNotMatch(JSON.stringify(receipt), /hunter2/);
+		}
+		const { repository } = createRepository();
+		const benign = repository.recordRetrieval({ scope: threadScope(), origin: "fetch", artifact: artifact("body", { finalUrl: "https://example.com/search?keyword=x&monkey=1" }), attempt: attempt() });
+		assert.equal(benign.persisted, true);
+	});
+
+	it("applies one sensitive-name list to capture and to remote forwarding", async () => {
+		for (const name of SENSITIVE_QUERY_KEYS) {
+			const url = `https://example.com/page?${name.toUpperCase()}=v`;
+			assert.equal(isSensitiveUrl(url), true, name);
+			await assert.rejects(() => assertRemoteForwardableUrl(url), RemoteForwardingError, name);
 		}
 	});
 

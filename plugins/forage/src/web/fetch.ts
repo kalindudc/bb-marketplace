@@ -705,8 +705,13 @@ async function fetchVerifiedMarkdownAlternate(
 	};
 }
 
-function githubRequestIsCredentialed(rewrite: Rewrite | undefined, options: FetchOptions): boolean {
-	return options.credentialed === true || Boolean(rewrite && hasGithubCredential());
+export function githubRequestIsCredentialed(rewrite: Rewrite | undefined, options: FetchOptions): boolean {
+	if (options.credentialed === true) return true;
+	// A token counts as sent only on the paths that send it: tree/issue reads go through
+	// the authenticated API (readable mode) or the authenticated raw request. README/blob
+	// rewrites fetch public raw content unauthenticated, so a token in the environment
+	// alone must not mark them credentialed (and so restricted for capture).
+	return Boolean(rewrite && (rewrite.kind === "github-tree" || rewrite.kind === "github-issue") && hasGithubCredential());
 }
 
 function cloneCacheResult(value: FetchedContent, startedAt: number, cache: "hit" | "revalidated", status = value.status): FetchedContent {

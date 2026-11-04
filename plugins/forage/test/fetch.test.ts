@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { afterAll, beforeAll, describe, it } from "vitest";
 import { CONFIG_DEFAULTS, type WebConfig } from "../src/web/config.ts";
 import { createByteBudget, createDeadline } from "../src/web/deadline.ts";
-import { cacheClear, cacheGet, cacheSet, cacheStats, fetchContent, findPassages, hasGithubCredential, normalizeUrl, rewriteUrl, sliceContent } from "../src/web/fetch.ts";
+import { cacheClear, cacheGet, cacheSet, cacheStats, fetchContent, findPassages, githubRequestIsCredentialed, hasGithubCredential, normalizeUrl, rewriteUrl, sliceContent } from "../src/web/fetch.ts";
 import { type TestServer, html, startServer } from "./_server.ts";
 
 function config(overrides: Partial<WebConfig> = {}): WebConfig {
@@ -69,6 +69,14 @@ describe("rewriteUrl (GitHub)", () => {
 		process.env.GITHUB_TOKEN = "placeholder-not-used";
 		try {
 			assert.equal(hasGithubCredential(), true);
+			// Only the reads that send the credential are credentialed: tree/issue go
+			// through the authenticated API or raw request, README/blob fetch public raw
+			// content without it.
+			assert.equal(githubRequestIsCredentialed(undefined, { mode: "readable", config: config() }), false);
+			assert.equal(githubRequestIsCredentialed({ kind: "github-readme", url: "", meta: {} }, { mode: "readable", config: config() }), false);
+			assert.equal(githubRequestIsCredentialed({ kind: "github-raw", url: "", meta: {} }, { mode: "raw", config: config() }), false);
+			assert.equal(githubRequestIsCredentialed({ kind: "github-tree", url: "", fallback: "", meta: {} }, { mode: "readable", config: config() }), true);
+			assert.equal(githubRequestIsCredentialed({ kind: "github-issue", url: "", fallback: "", meta: {} }, { mode: "raw", config: config() }), true);
 		} finally {
 			if (previous === undefined) delete process.env.GITHUB_TOKEN;
 			else process.env.GITHUB_TOKEN = previous;

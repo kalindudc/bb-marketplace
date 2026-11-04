@@ -26,6 +26,14 @@ describe("remote reader forwarding policy", () => {
 		await assert.rejects(() => assertRemoteForwardableUrl("https://example.com/page?code=benign"), RemoteForwardingError);
 	});
 
+	it("rejects common secret-parameter variants and presigned URLs, but not name substrings", async () => {
+		for (const query of ["api_key=k", "apikey=k", "client_secret=s", "refresh_token=t", "id_token=t", "password=p", "private_key=k", "X-Amz-Signature=sig", "X-Amz-Credential=c", "x-goog-signature=sig"]) {
+			await assert.rejects(() => assertRemoteForwardableUrl(`https://example.com/page?${query}`), RemoteForwardingError, query);
+		}
+		// Exact matching is deliberate: "key" as a substring would block benign ?keyword=.
+		await assert.doesNotReject(() => assertRemoteForwardableUrl("https://public.example/page?keyword=x&monkey=1", { resolver: publicResolver }));
+	});
+
 	it("strips URL fragments before remote forwarding", async () => {
 		const url = await assertRemoteForwardableUrl("https://public.example/Case?Q=A#access_token=secret", { resolver: publicResolver });
 		assert.equal(url.href, "https://public.example/Case?Q=A");

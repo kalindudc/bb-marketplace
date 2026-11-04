@@ -23,7 +23,10 @@ describe("activity summaries", () => {
   expect(cleanUrl("https://user:pw@example.com/a?token=abc#x")).toBe("https://example.com/a");
   expect(cleanUrl("https://example.com/search?q=queues")).toBe("https://example.com/search?q=queues");
   expect(cleanUrl("https://example.com/cb#access_token=SECRET")).toBe("https://example.com/cb");
-  expect(cleanUrl("https://example.com/a?api_key=sk-live-1&page=2")).toBe("https://example.com/a?page=2");
+  // A name on the shared sensitive list drops the whole query, as ?token= does.
+  expect(cleanUrl("https://example.com/a?api_key=sk-live-1&page=2")).toBe("https://example.com/a");
+  // A name that only looks secret loses just that parameter.
+  expect(cleanUrl("https://example.com/a?my_auth_header=sk-live-1&page=2")).toBe("https://example.com/a?page=2");
   expect(cleanUrl("https://s3.example.com/o?X-Amz-Credential=c&X-Amz-Signature=s")).toBe("https://s3.example.com/o");
   expect(scrub('Unsupported URL scheme "ftp:" in "ftp://alice:s3cret@files.example.com/x"', 300)).not.toContain("s3cret");
  });

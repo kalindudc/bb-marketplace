@@ -1,6 +1,6 @@
 # Forage
 
-Forage 0.3.1 gives every BB agent six web-research tools, a Research tab in every thread and a zero-model-turn CLI. It requires BB 0.47 or newer and Plugin SDK 0.6.79.
+Forage 0.3.2 gives every BB agent six web-research tools, a Research tab in every thread and a zero-model-turn CLI. It requires BB 0.47 or newer and Plugin SDK 0.6.79.
 
 ## Screenshots
 
@@ -66,7 +66,7 @@ Private uses only configured SearXNG search, direct readers and the local crawl 
 
 Every direct redirect is revalidated and DNS-pinned. Private/loopback/link-local targets are blocked by default. Enabling local private-network access is NOT consent to forward those URLs to vendors. Remote adapters reject sensitive query keys, userinfo, local names and non-public locally resolved addresses before forwarding. Vendor-side redirects cannot be DNS-pinned by Forage.
 
-Restricted same-thread capture is a separate setting, OFF by default. Enabling it is a storage choice, not a human-identity security boundary. Disabling it blocks restricted reads until re-enabled or deleted. Export excludes restricted sources unless explicitly selected in their thread. Credentials, headers and cookies are never stored. Capture rejects sensitive URL keys (`token,key,secret,signature,sig,auth,access_token,code,session`, decoded and case-insensitive) in provenance, structured links and bounded content URL tokens. This conservative heuristic may reject benign code parameters and is not a general secret detector. Scope isolation is product isolation, not protection from a shell-capable agent or a local user reading SQLite.
+Restricted same-thread capture is a separate setting, OFF by default. Enabling it is a storage choice, not a human-identity security boundary. Disabling it blocks restricted reads until re-enabled or deleted. Export excludes restricted sources unless explicitly selected in their thread. Credentials, headers and cookies are never stored. Capture and remote readers reject the same sensitive URL keys (`token`, `key`, `secret`, `signature`, `sig`, `auth`, `access_token`, `code`, `session` and common variants such as `api_key`, `client_secret`, `refresh_token` and presigned `X-Amz-Signature`; the full list is in `src/web/sensitive-query.ts`; decoded, exact and case-insensitive) in provenance, structured links and bounded content URL tokens. This conservative heuristic may reject benign code parameters and is not a general secret detector. Scope isolation is product isolation, not protection from a shell-capable agent or a local user reading SQLite.
 
 ## Managed crawl limits
 

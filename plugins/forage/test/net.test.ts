@@ -16,7 +16,7 @@ import {
 	validateUrl,
 	vetUrl,
 } from "../src/web/net.ts";
-import { createByteBudget, createDeadline } from "../src/web/deadline.ts";
+import { DeadlineError, createByteBudget, createDeadline } from "../src/web/deadline.ts";
 import { type TestServer, html, startServer } from "./_server.ts";
 
 describe("address classification", () => {
@@ -393,5 +393,28 @@ describe("helpers", () => {
 		await assert.rejects(second, /timed out/i);
 		await first;
 		assert.equal(secondStarted, false);
+	});
+	it("reports a deadline whose timer fires a millisecond early as a timeout, not a cancel", async () => {
+		const limit = createLimiter(1);
+		let release!: () => void;
+		const first = limit(() => new Promise<void>((resolve) => { release = resolve; }));
+		const controller = new AbortController();
+		const early = { expiresAt: Date.now() + 1, signal: controller.signal, remainingMs: () => 1, throwIfExpired: () => undefined, dispose: () => undefined };
+		const second = limit(async () => undefined, { deadline: early });
+		controller.abort(new DeadlineError("operation"));
+		await assert.rejects(second, /limiter queue timed out/i);
+		release();
+		await first;
+	});
+	it("still reports a caller's abort of queued work as a cancel", async () => {
+		const limit = createLimiter(1);
+		let release!: () => void;
+		const first = limit(() => new Promise<void>((resolve) => { release = resolve; }));
+		const controller = new AbortController();
+		const second = limit(async () => undefined, { timeoutMs: 10_000, signal: controller.signal });
+		controller.abort(new Error("caller went away"));
+		await assert.rejects(second, /Limiter task cancelled/);
+		release();
+		await first;
 	});
 });

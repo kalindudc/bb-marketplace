@@ -2,6 +2,14 @@
 
 Notable changes to Forage, newest first. Releases are tagged `forage/vX.Y.Z` in this repository.
 
+## 0.3.2 (2026-11-03)
+
+### Fixed
+
+- Forage no longer saves a page whose address carries a credential under a common name such as `api_key`, `client_secret`, `refresh_token`, `password` or a presigned `X-Amz-Signature`, and it no longer sends such an address to a remote reader. Saving and remote readers now check one shared list of names, so they can't drift apart. Names still have to match exactly, so an ordinary `?keyword=` address is saved as before.
+- GitHub README and file pages are saved again when `GITHUB_TOKEN` or `GH_TOKEN` is set. The token was never sent for those pages, but Forage treated them as credentialed and refused to save them. Only tree and issue reads, which do send the token, count as credentialed.
+- A queued request that runs out of time reports a timeout, not "Limiter task cancelled". Node can fire the timer a millisecond early, and Forage took that for a cancel.
+
 ## 0.3.1 (2026-10-29)
 
 ### Fixed

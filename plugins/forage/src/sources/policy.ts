@@ -1,7 +1,7 @@
 import { sourceScopeKey } from "../web/contracts.ts";
+import { isSensitiveQueryName } from "../web/sensitive-query.ts";
 import type { AccessDescriptor, RecordRetrievalInput, ScopeAuthorityResult, SourceRepository, SourceScope } from "./model.ts";
 
-const SENSITIVE_QUERY_KEYS = new Set(["token", "key", "secret", "signature", "sig", "auth", "access_token", "code", "session"]);
 const URL_TOKEN_LIMIT = 4096;
 const URL_TOKEN = /https?:\/\/[^\s<>()"'`]+/giu;
 
@@ -20,7 +20,7 @@ export function isSensitiveUrl(value: string): boolean {
 	}
 	if (url.username !== "" || url.password !== "") return true;
 	for (const key of url.searchParams.keys()) {
-		if (SENSITIVE_QUERY_KEYS.has(key.toLocaleLowerCase("en-US"))) return true;
+		if (isSensitiveQueryName(key)) return true;
 	}
 	return false;
 }

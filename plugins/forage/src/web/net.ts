@@ -602,7 +602,10 @@ export function createLimiter(concurrency: number): <T>(task: () => Promise<T>, 
 				else resolve(value as T);
 			};
 			const onAbort = () => {
-				if (!started) finish(deadline && deadline.remainingMs() <= 0 ? new DeadlineError("limiter queue") : new Error("Limiter task cancelled"));
+				// The abort reason, not only remainingMs(): Node can fire the deadline's timer a
+				// millisecond before Date.now() reaches expiresAt, which read as a cancel.
+				const timedOut = deadline && (deadline.signal.reason instanceof DeadlineError || deadline.remainingMs() <= 0);
+				if (!started) finish(timedOut ? new DeadlineError("limiter queue") : new Error("Limiter task cancelled"));
 			};
 			const run = () => {
 				if (settled) {

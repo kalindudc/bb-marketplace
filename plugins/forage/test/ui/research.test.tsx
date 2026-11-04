@@ -120,10 +120,12 @@ describe("Forage frontend", () => {
   expect(await view.findByText("Line 850 of the long page.")).toBeTruthy();
   expect(view.queryByText("Line 1 of the long page.")).toBeNull();
   fireEvent.click(await view.findByRole("button", { name: /Show lines 410–809/u }));
-  expect(await view.findByText("Line 410 of the long page.")).toBeTruthy();
+  await waitFor(() => expect(view.getByText("Line 410 of the long page.")).toBeTruthy(), { timeout: 3_000 });
   fireEvent.change(view.getByLabelText("Find in page"), { target: { value: "Line 5 of" } });
   fireEvent.keyDown(view.getByLabelText("Find in page"), { key: "Enter" });
-  expect(await view.findByText("Line 5 of the long page.")).toBeTruthy();
+  // The miss wraps the search to the top of the page, then re-windows the reader:
+  // three RPC round-trips before the line can render, over the default 1 s on CI.
+  await waitFor(() => expect(view.getByText("Line 5 of the long page.")).toBeTruthy(), { timeout: 5_000 });
  });
 
  it("does not quote or record a citation whose phrase is not on the page", async () => {
