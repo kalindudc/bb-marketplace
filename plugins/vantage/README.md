@@ -203,16 +203,18 @@ than the limit, the page says so.
   you first, each with its status and line counts, one "N more" row, and one
   row for the files two worktrees both changed, which opens the overlaps page.
   bb places the card beside the transcript when the pane has room and behind
-  a header button when it does not, so Vantage takes no room above the
-  composer.
-- **Above the composer**, only while bb shows thread context there (bb's card
-  experiment off), one segment sums up the child threads' worktrees. Its
-  numbers always show (`2`, a waiting count and a shared-file count, about
-  60px); the words ("child worktrees · 1 waiting on you · 8 shared files") take
-  only the row's spare room, and a narrow composer hides them. It shows only
-  once a child thread has changed something. Clicked, it lists at most three
-  lines: the worktrees that need a person most, the shared files, and one row
-  for the rest when there are more.
+  a header button when it does not.
+- **Above the composer**, one segment sums up what the thread and its child
+  threads changed: the thread's own line counts (`+475 −39`, compared with the
+  closest base), then the number of child worktrees, how many wait on you and
+  how many files two worktrees share. The numbers always show, about 60 to
+  120px; the words ("33 files", "child worktrees", "waiting on you", "shared
+  files") take only the row's spare room, and a narrow composer hides them. It
+  shows once the thread or a child thread has changed something, with bb's
+  thread context card on or off: a plugin cannot tell whether bb has the card
+  on screen or behind its header button. Clicked, it lists at most three
+  lines: the thread's own worktree, the child worktrees that need a person
+  most, the shared files, and one row for the rest when there are more.
 - **The Info tab** has a Worktrees section with counts: waiting on you, ready
   to review and shared files. It does not repeat the panel's list.
 - **The sidebar** can show a thread's line counts, and how many of its files
@@ -564,9 +566,9 @@ or steers a turn of the worktree's thread, as typing them into its chat would.
   every worktree with git, compares it with the closest base branch, leaves
   out branch history its threads did not write, and folds big untracked
   folders and clones into one uncounted entry, with four settings for the
-  rules. In a thread, its worktrees move into bb's thread context card; the
-  segment above the composer shows only without the card and shrinks to its
-  numbers when the row is full. The thread tab opens on a strip of worktrees,
+  rules. In a thread, its child worktrees get a section in bb's thread context
+  card, and the segment above the composer shows the thread's own line counts
+  and its child worktrees, shrinking to its numbers when the row is full. The thread tab opens on a strip of worktrees,
   one shared-files line replaces a strip per file, and the sidebar can show a
   thread's line counts. The header's Vantage button is a labelled button bb
   draws, which also closes the tab. Needs bb 0.48.1.

@@ -1,7 +1,7 @@
 import { useMemo, useSyncExternalStore, type ReactNode } from "react";
 import {
   experimental_Icon as Icon, experimental_InfoList as InfoList, experimental_InfoListRow as InfoListRow, experimental_InfoSection as InfoSection,
-  experimental_ThreadContextCardRow as CardRow, experimental_useAppPanel, experimental_usePanelTabs, experimental_useThreadContextKind, useBbNavigate,
+  experimental_ThreadContextCardRow as CardRow, experimental_useAppPanel, experimental_usePanelTabs, useBbNavigate,
   type ExperimentalThreadContextCardProps, type ExperimentalThreadContextSegmentInput, type ExperimentalThreadContextSegmentProps,
   type ExperimentalThreadInfoProps, type ExperimentalThreadRowMetadataDataInput, type ExperimentalThreadRowMetadataProps,
   type PluginThreadActionRegistration, useRealtime,
@@ -47,16 +47,17 @@ function useTree(threadId: string | null): { data: RowsData; loading: boolean } 
 
 // Its child threads' worktrees, not the thread's own checkout: that one is what bb's changes segment already shows.
 const childRows = (data: RowsData, threadId: string): Row[] => data.rows.filter((row) => row.threadId !== threadId && row.bucket !== "archived");
+// The thread's own worktree, when it changed something.
+const ownRow = (data: RowsData, threadId: string): Row | null => data.rows.find((row) => row.threadId === threadId) ?? null;
 
 const sharedPaths = (rows: readonly Row[]): string[] => [...new Set(rows.flatMap((row) => row.overlaps.map((overlap) => overlap.path)))];
 
-// Above the composer only while bb shows thread context there, and once a child thread has changed something, so it never
-// spends a line saying there is nothing. With the thread context card, its section shows the same worktrees.
+// Above the composer whenever the thread or a child thread changed something. It shows with bb's thread context card too:
+// a plugin cannot tell whether bb has the card on screen or tucked behind its header button, so hiding the segment would
+// leave a thread with no summary whenever the card is unpinned or the pane is narrow.
 export function useSegmentVisible(input: Pick<ExperimentalThreadContextSegmentInput, "threadId">): boolean {
-  const banner = experimental_useThreadContextKind() === "banner";
-  const children = useHasChildren(input);
-  const { data } = useTree(banner && children ? input.threadId : null);
-  return banner && children && childRows(data, input.threadId).length > 0;
+  const { data } = useTree(input.threadId);
+  return ownRow(data, input.threadId) !== null || childRows(data, input.threadId).length > 0;
 }
 
 function useOpenTab() {
@@ -88,6 +89,8 @@ export function why(row: Row, data: RowsData): string {
   return row.bucket === "working" ? `Still working · ${files}` : `Ready to review · ${files}`;
 }
 
+const compact = (value: number): string => (value >= 10_000 ? `${Math.round(value / 1000)}k` : value >= 1000 ? `${(value / 1000).toFixed(1)}k` : String(value));
+
 function LineCounts({ additions, deletions }: { additions: number; deletions: number }) {
   return <span className="whitespace-nowrap font-mono text-[11px] tabular-nums"><span className="text-diff-added">+{additions}</span> <span className="text-diff-removed">−{deletions}</span></span>;
 }
@@ -101,29 +104,48 @@ function Words({ children, className = "" }: { children: ReactNode; className?: 
   );
 }
 
-export function segmentSentence(count: number, needs: number, shared: number): string {
-  return [plural(count, "child worktree"), needs > 0 ? `${needs} waiting on you` : null, shared > 0 ? plural(shared, "shared file") : null]
-    .filter((part) => part !== null).join(" · ");
+export function segmentSentence(own: Pick<Row, "additions" | "deletions"> | null, count: number, needs: number, shared: number): string {
+  return [
+    own === null ? null : `this thread +${own.additions} −${own.deletions}`,
+    count > 0 ? plural(count, "child worktree") : null,
+    needs > 0 ? `${needs} waiting on you` : null,
+    shared > 0 ? plural(shared, "shared file") : null,
+  ].filter((part) => part !== null).join(" · ");
 }
 
 function SegmentSummaryView({ threadId, isExpanded, onToggle }: ExperimentalThreadContextSegmentProps) {
   const { data, loading } = useTree(threadId);
+  const own = ownRow(data, threadId);
   const rows = childRows(data, threadId);
   const needs = rows.filter((row) => row.bucket === "needs").length;
-  const shared = sharedPaths(rows).length;
-  const sentence = loading ? "Child worktrees" : segmentSentence(rows.length, needs, shared);
+  const shared = sharedPaths(own === null ? rows : [own, ...rows]).length;
+  const files = own === null ? 0 : fileCount(own.worktree);
+  const sentence = loading ? "Changes" : segmentSentence(own, rows.length, needs, shared);
   // The numbers always show; the words grow into the row's spare room, so the segment is about 60px when the row is full.
   return (
-    <button type="button" aria-expanded={isExpanded} onClick={onToggle} data-vantage-segment aria-label={`Worktrees: ${sentence}`}
-      title={isExpanded ? "Hide the worktrees" : sentence}
+    <button type="button" aria-expanded={isExpanded} onClick={onToggle} data-vantage-segment aria-label={`Vantage: ${sentence}`}
+      title={isExpanded ? "Hide the details" : sentence}
       className="flex h-6 min-w-min max-w-max flex-1 cursor-pointer items-center gap-1 overflow-hidden rounded-md px-1.5 text-xs text-muted-foreground hover:bg-state-hover hover:text-foreground">
       <Icon name={VANTAGE_ICON} className="size-3.5 shrink-0" aria-hidden />
       {loading
-        ? <Words>Child worktrees</Words>
+        ? <Words>Changes</Words>
         : (
           <>
-            <span className="shrink-0 tabular-nums text-foreground">{rows.length}</span>
-            <Words>{rows.length === 1 ? "child worktree" : "child worktrees"}</Words>
+            {own !== null && (
+              <>
+                <span data-own className="shrink-0 whitespace-nowrap font-mono text-[11px] tabular-nums">
+                  <span className="text-diff-added">+{compact(own.additions)}</span> <span className="text-diff-removed">−{compact(own.deletions)}</span>
+                </span>
+                <Words>{plural(files, "file")}</Words>
+              </>
+            )}
+            {rows.length > 0 && (
+              <>
+                {own !== null && <Icon name="GitBranch" className="ml-0.5 size-3 shrink-0" aria-hidden />}
+                <span className="shrink-0 tabular-nums text-foreground">{rows.length}</span>
+                <Words>{rows.length === 1 ? "child worktree" : "child worktrees"}</Words>
+              </>
+            )}
             {needs > 0 && (
               <>
                 <Icon name="SideChat" className="ml-0.5 size-3 shrink-0 text-foreground" aria-hidden />
@@ -156,7 +178,8 @@ function SegmentDetailsView({ threadId, isExpanded }: ExperimentalThreadContextS
   const open = useOpenTab();
   const compare = useCompare(threadId);
   if (!isExpanded) return null;
-  const rows = urgentFirst(childRows(data, threadId));
+  const own = ownRow(data, threadId);
+  const rows = [...(own === null ? [] : [own]), ...urgentFirst(childRows(data, threadId))];
   const shared = sharedPaths(rows);
   // At most three lines, and a fourth only when something is left out: the composer moves up by about 80px, not 256.
   const room = SHOWN - (shared.length > 0 ? 1 : 0);
@@ -164,7 +187,7 @@ function SegmentDetailsView({ threadId, isExpanded }: ExperimentalThreadContextS
   const rest = rows.length - shown.length;
   return (
     <div data-vantage-segment-details className="py-1 text-xs">
-      {loading && <p className="px-2 py-1 text-muted-foreground">Loading worktrees…</p>}
+      {loading && <p className="px-2 py-1 text-muted-foreground">Loading changes…</p>}
       {shown.map((row) => (
         <button key={row.worktree.key} type="button" onClick={() => open(threadId, row.worktree.key)} className={DETAIL_ROW}>
           {/* An idle thread's glyph draws nothing, so the cell keeps the grid's first column. */}
@@ -183,7 +206,7 @@ function SegmentDetailsView({ threadId, isExpanded }: ExperimentalThreadContextS
       {rest > 0 && (
         <button type="button" onClick={() => open(threadId)} className={`${DETAIL_ROW} text-muted-foreground hover:text-foreground`}>
           <Icon name={VANTAGE_ICON} className="size-3.5" aria-hidden />
-          <span className="min-w-0 truncate">{plural(rest, "more child worktree")}</span>
+          <span className="min-w-0 truncate">{plural(rest, "more worktree")}</span>
           <span className="whitespace-nowrap text-brand">Open the tab ›</span>
         </button>
       )}
@@ -285,7 +308,6 @@ export function useRowLines(_input: ExperimentalThreadRowMetadataDataInput): Row
   return useMemo(() => rowLines(snapshot.overview), [snapshot.overview]);
 }
 
-const compact = (value: number): string => (value >= 10_000 ? `${Math.round(value / 1000)}k` : value >= 1000 ? `${(value / 1000).toFixed(1)}k` : String(value));
 
 export function RowLineItem({ thread, data }: ExperimentalThreadRowMetadataProps<RowLines>) {
   const line = data.get(thread.id);

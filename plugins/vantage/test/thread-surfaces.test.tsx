@@ -49,7 +49,7 @@ describe("the composer segment", () => {
     const segment = app.threadContextSegments[0]!;
     const onToggle = vi.fn();
     const slot = renderSlot<object, typeof rpcContract>({ component: segment.summary } as never, { ...PROPS, segments: [], isExpanded: false, onToggle }, options());
-    const button = await within(slot.container).findByRole("button", { name: "Worktrees: 2 child worktrees · 1 waiting on you · 1 shared file" });
+    const button = await within(slot.container).findByRole("button", { name: "Vantage: 2 child worktrees · 1 waiting on you · 1 shared file" });
     expect(button.className).toContain("min-w-min");
     expect(button.className).toContain("flex-1");
     const words = [...button.querySelectorAll("[data-promptbox-hide-compact]")].map((entry) => entry.textContent);
@@ -62,19 +62,38 @@ describe("the composer segment", () => {
     slot.lifecycle.unmount();
   });
 
-  it("shows above the composer only while bb shows thread context there and a child worktree has changes", async () => {
+  it("shows a thread's own changes first, for a thread with no child threads too", async () => {
+    const alone = overview({
+      threadId: "thr_root", target: { kind: "tree", threadId: "thr_root" }, threads: [threadSummary({ id: "thr_root" })],
+      worktrees: [worktree({ key: "w_root", threadIds: ["thr_root"], uncommitted: [fileChange({ path: "a.ts", additions: 1200, deletions: 39 }), fileChange({ path: "b.ts", additions: 4, deletions: 0 })] })],
+      sharedFiles: [],
+    });
+    const app = await loadPluginApp(() => import("../app"));
+    const slot = renderSlot<object, typeof rpcContract>({ component: app.threadContextSegments[0]!.summary } as never,
+      { ...PROPS, segments: [], isExpanded: false, onToggle: vi.fn() }, options(alone));
+    const button = await within(slot.container).findByRole("button", { name: "Vantage: this thread +1204 −39" });
+    expect(button.querySelector("[data-own]")?.textContent).toBe("+1.2k −39");
+    expect([...button.querySelectorAll("[data-promptbox-hide-compact]")].map((entry) => entry.textContent)).toEqual(["2 files"]);
+    slot.lifecycle.unmount();
+  });
+
+  it("shows above the composer whenever the thread or a child changed something, with bb's card on or off", async () => {
     const app = await loadPluginApp(() => import("../app"));
     const useVisible = app.threadContextSegments[0]!.useVisible!;
     function Probe() {
       return <span data-visible={String(useVisible({ threadId: "thr_root", projectId: "proj_1", environment: null } as never))} />;
     }
-    const banner = renderSlot<object, typeof rpcContract>({ component: Probe } as never, {}, options());
-    await waitFor(() => expect(banner.container.querySelector("[data-visible]")?.getAttribute("data-visible")).toBe("true"));
-    banner.lifecycle.unmount();
-    const card = renderSlot<object, typeof rpcContract>({ component: Probe } as never, {}, { ...options(), threadContextKind: "card" as const });
+    const visible = (slot: ReturnType<typeof renderSlot>) => slot.container.querySelector("[data-visible]")?.getAttribute("data-visible");
+    for (const threadContextKind of ["banner", "card"] as const) {
+      const slot = renderSlot<object, typeof rpcContract>({ component: Probe } as never, {}, { ...options(), threadContextKind });
+      await waitFor(() => expect(visible(slot)).toBe("true"));
+      slot.lifecycle.unmount();
+    }
+    disposeSessions();
+    const empty = renderSlot<object, typeof rpcContract>({ component: Probe } as never, {}, options(overview({ ...TREE, worktrees: [], sharedFiles: [] })));
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(card.container.querySelector("[data-visible]")?.getAttribute("data-visible")).toBe("false");
-    card.lifecycle.unmount();
+    expect(visible(empty)).toBe("false");
+    empty.lifecycle.unmount();
   });
 
   it("draws nothing below the row while folded", async () => {
@@ -116,7 +135,7 @@ describe("the composer segment", () => {
     const slot = renderSlot<object, typeof rpcContract>({ component: app.threadContextSegments[0]!.details! } as never,
       { ...PROPS, segments: [], isExpanded: true, onToggle: vi.fn() },
       { ...options(many), sidebarThreads: { status: "ready" as const, threads: [SIDEBAR[0]!, ...["c", "d", "e", "f"].map((id) => sidebarThread({ id: `thr_${id}`, displayTitle: id.toUpperCase(), parentThreadId: "thr_root" }))] } });
-    const more = await within(slot.container).findByRole("button", { name: /1 more child worktree/ });
+    const more = await within(slot.container).findByRole("button", { name: /1 more worktree/ });
     expect(within(slot.container).getAllByRole("button")).toHaveLength(4);
     fireEvent.click(more);
     expect(slot.inspection.experimental_panelCalls).toHaveLength(1);
