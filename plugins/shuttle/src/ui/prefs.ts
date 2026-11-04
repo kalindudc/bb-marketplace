@@ -86,6 +86,12 @@ export function rememberSeen(key: string, at: number): void {
   prSeen.set(Object.fromEntries([...entries.slice(Math.max(0, entries.length - MAX_SEEN + 1)), [key, at]]));
 }
 
+/** Each list's keyword filter, by list, such as "inbox", "mine" or "board/<id>"; kept for this tab's session only. */
+export const keywordFilters = createStored<Readonly<Record<string, string>>>("keywords", {}, (value) => {
+  if (!isRecord(value)) return null;
+  return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1] !== ""));
+}, 0, "sessionStorage");
+
 /** Whether the list of a thread's PRs above the composer is open; it starts folded. */
 export const threadPrsOpen = createStored<boolean>("thread-prs-open", false, (value) => (typeof value === "boolean" ? value : null));
 
@@ -163,5 +169,5 @@ export function useFolding(area: string): Folding {
 
 /** Tests clear localStorage between cases; this reads every remembered value again. */
 export function reloadPrefs(): void {
-  for (const stored of [lastRoute, mineLayout, mineSort, doneSort, reviewedSort, reviewedFilter, boardViews, reviewFilter, folds, scrolls, panelPrs, conversationOrder, hideBotComments, prSeen, inboxView, inboxSwipeHint, threadPrsOpen, panelWidth]) stored.reload();
+  for (const stored of [lastRoute, mineLayout, mineSort, doneSort, reviewedSort, reviewedFilter, boardViews, reviewFilter, folds, scrolls, panelPrs, conversationOrder, hideBotComments, prSeen, inboxView, inboxSwipeHint, threadPrsOpen, panelWidth, keywordFilters]) stored.reload();
 }

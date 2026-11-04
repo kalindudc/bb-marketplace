@@ -44,6 +44,32 @@ row's ⋯ menu holds Snooze and Dismiss too (the only menu on a phone, besides s
 Several rows can be snoozed or dismissed at once. Snoozes, dismissals and rules have Undo, and a
 phone swipes a row left to dismiss it or right to snooze it.
 
+## Filters and search
+
+Every list has a keyword filter: the Inbox and its Reviewing, Snoozed and Dismissed tabs, My PRs
+and Merged and closed, Reviews, Reviewed by me, and each board. A PR stays when every word is in
+its title, repository, description, author, branches, labels or server's name; `#123` matches PR
+numbers that start with 123, and `@dana` matches dana.
+
+The PRs with the most words in the title come first, then those with the most in the repository,
+then in the author, branches and labels, and last those that match only through their
+description. The list keeps its groups, and its own sort orders the PRs that rank the same. The
+field says how many PRs match, Escape or its ✕ clears it, and / puts the cursor in it. Each list
+keeps its words for the rest of the session; the Inbox's tabs share theirs. In Reviews, a line says
+how many matches Hide bots and Hide quiet keep out.
+
+The header's search field finds PRs the same way among every PR Shuttle has, and so do a board's
+Add PRs dialog and `bb shuttle search`. There, open PRs come before merged and closed ones, so a long
+history never crowds them out of the 50 shown; the ranking above orders each.
+
+GitHub's lists read each PR's description, so a word in it finds PRs you never opened in Shuttle.
+A command server's PRs match on their descriptions once Shuttle has them: from `view`, or from its
+lists when they print `body`. A template's `<!-- … -->` comments are not part of the match. Words in
+titles and the rest match as you type; matches that need a description come from Shuttle's server a
+moment later, and a row only ever shows when every word is known to be on it. When descriptions
+cannot be searched, the field shows a warning and the rest still matches. While Inbox rows are
+selected, the selection bar shows the words, with a way to clear them.
+
 ## PR view
 
 A PR's view reads top to bottom the way a person asks about it:
@@ -294,6 +320,8 @@ src/failures.ts        why a sync step failed, in plain words, for the UI, the C
 src/next.ts            the next-step rule every PR's Inbox row, list row and banner show, and Inbox rules
 src/inbox.ts           the Inbox's read, snoozes, dismissals, seen marks and rules
 src/views.ts           PR rows as the UI sees them, and which area each belongs in
+src/match.ts           keyword matching and ranking, shared by search and the page's list filters
+src/search.ts          search over the PRs Shuttle has, and the PRs only their descriptions match
 src/agents.ts          a PR's agent thread, its mode, and auto agent
 src/watch.ts           new activity on PRs with an agent: batches, messages, item refs
 src/drafts.ts          AI review drafts and posting reviews

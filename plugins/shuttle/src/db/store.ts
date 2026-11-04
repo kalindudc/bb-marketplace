@@ -397,9 +397,10 @@ export class Store {
 
   /**
    * Inserts or refreshes a PR from its server's summary. `mine` only ever turns on. An answer read before the PR
-   * merged or closed never makes it open again; a real reopen is newer, so it gets through.
+   * merged or closed never makes it open again; a real reopen is newer, so it gets through. `viewed` says the PR
+   * was read by itself, which brings what lists may lack, such as its reviewers; by default a read with a description is.
    */
-  upsertPr(server: string, summary: PrSummary, url: string, mine: boolean): PrRow {
+  upsertPr(server: string, summary: PrSummary, url: string, mine: boolean, viewed = summary.body !== null): PrRow {
     const key = prKey({ server, repo: summary.repo, number: summary.number });
     this.db
       .prepare(
@@ -443,8 +444,7 @@ export class Store {
         body: summary.body,
         labels: summary.labels ? JSON.stringify(summary.labels) : null,
         reviewers: summary.reviewers ? JSON.stringify(summary.reviewers) : null,
-        // Only a view carries the description, so it marks the read as a full one.
-        viewed_at: summary.body !== null ? this.now() : null,
+        viewed_at: viewed ? this.now() : null,
         created_at: summary.createdAt,
         closed_at: summary.state === "merged" || summary.state === "closed" ? summary.closedAt : null,
         check_counts: summary.checkCounts ? JSON.stringify(summary.checkCounts) : null,
@@ -483,9 +483,18 @@ export class Store {
       .get(server, repo, sha, sha, sha) as PrRow | undefined) ?? null;
   }
 
-  allPrs(): PrRow[] {
-    return this.db.prepare("SELECT * FROM prs ORDER BY COALESCE(updated_at, fetched_at) DESC").all() as PrRow[];
+  /**
+   * Every PR, the most recently updated first. Descriptions are most of the table's bytes and only search reads
+   * them, so without `bodies` each row's body is null.
+   */
+  allPrs(options: { bodies: true }): PrRow[];
+  allPrs(): Array<PrRow & { body: null }>;
+  allPrs(options: { bodies?: boolean } = {}): PrRow[] {
+    if (options.bodies) return this.db.prepare("SELECT * FROM prs ORDER BY COALESCE(updated_at, fetched_at) DESC").all() as PrRow[];
+    this.prColumns ??= (this.db.prepare("SELECT name FROM pragma_table_info('prs')").all() as { name: string }[]).map((column) => (column.name === "body" ? "NULL AS body" : `"${column.name}"`)).join(", ");
+    return this.db.prepare(`SELECT ${this.prColumns} FROM prs ORDER BY COALESCE(updated_at, fetched_at) DESC`).all() as PrRow[];
   }
+  private prColumns: string | undefined;
 
   /** `at` null brings the PR back; `until` null keeps it out until the PR changes. */
   setSnooze(prId: number, at: number | null, until: number | null): void {

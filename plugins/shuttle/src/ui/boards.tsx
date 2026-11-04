@@ -6,6 +6,7 @@ import { PANEL_PATH } from "./constants";
 import { ago, clock, plural, shortKey } from "./format";
 import { BUTTON, BUTTON_DANGER, BUTTON_GHOST, BUTTON_ON, BUTTON_PRIMARY, Dialog, ErrorNote, FIELD, FIELD_SMALL, ICON_GHOST_LARGE, PageHeading } from "./common";
 import { messageOf, undoToast, useShuttleMutation, useShuttleQuery } from "./data";
+import { KeywordField, NoMatches, useKeywordFilter, useKeywordQuery } from "./keywords";
 import { StatePill } from "./pills";
 import { FoldAllButton, GroupHeader, MineRow, ReviewRow, type RowLayout } from "./row";
 import { BoardsSkeleton, PrListSkeleton } from "./skeleton";
@@ -314,7 +315,7 @@ export function BoardAddDialog({ board, existingKeys, onClose }: { board: BoardS
         <>
           <label className="mb-3 block text-sm font-medium text-foreground">
             Search PRs
-            <input aria-label="Search PRs" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Title, repo, author, or number…" className={`${FIELD} mt-1.5 w-full`} autoFocus />
+            <input aria-label="Search PRs" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Title, repo, description, author, or number…" className={`${FIELD} mt-1.5 w-full`} autoFocus />
           </label>
           {searchResults.error !== null && <ErrorNote>Could not search Shuttle: {messageOf(searchResults.error)}</ErrorNote>}
           {query.trim() !== "" && searchResults.data === undefined && searchResults.error === null && <div className="py-4 text-sm text-muted-foreground">Searching…</div>}
@@ -437,15 +438,11 @@ export function BoardsView({ tab, onGo }: { tab: "active" | "archived"; onGo(nex
 
 type BoardStatus = "all" | "attention" | "ready" | "waiting" | "draft" | "merged" | "closed";
 
-function boardFiltersVisible(pr: PrView, query: string, status: BoardStatus) {
-  const matchesStatus = status === "all" || (status === "attention" ? pr.next.inbox && pr.next.kind !== "ready_to_merge"
+function hasStatus(pr: PrView, status: BoardStatus) {
+  return status === "all" || (status === "attention" ? pr.next.inbox && pr.next.kind !== "ready_to_merge"
     : status === "ready" ? pr.next.kind === "ready_to_merge"
     : status === "waiting" ? pr.next.kind === "waiting_review"
     : pr.state === status);
-  if (!matchesStatus) return false;
-  const needle = query.trim().toLowerCase();
-  if (needle === "") return true;
-  return `${pr.title} ${pr.repo} ${pr.number} ${pr.author} ${pr.key} ${shortKey(pr)} ${pr.serverName}`.toLowerCase().includes(needle);
 }
 
 const STATUS_LABELS: Record<BoardStatus, string> = {
@@ -463,13 +460,13 @@ export function BoardDetailView({ id, layout, onGo }: { id: string; layout: RowL
   const update = useShuttleMutation("boardUpdate");
   const remove = useShuttleMutation("boardRemove");
   const addBack = useShuttleMutation("boardAdd");
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useKeywordQuery(`board/${id}`);
+  const keyword = useKeywordFilter(query);
   const [dialog, setDialog] = useState<null | { kind: "edit" | "duplicate" | "add" | "archive" | "tools" | "remove" | "create" | "choose" }>(null);
   const [status, setStatus] = useState<BoardStatus>("all");
   const selection = useSelectedKeys();
   useEffect(() => {
     selection.clear();
-    setQuery("");
     setStatus("all");
     setDialog(null);
   }, [id, selection.clear]);
@@ -494,8 +491,9 @@ export function BoardDetailView({ id, layout, onGo }: { id: string; layout: RowL
   const board = detail.board;
   const archived = board.archivedAt !== null;
   const prs = detail.prs;
-  const filtered = prs.filter((pr) => boardFiltersVisible(pr, query, status));
-  const visible = view.sort === "saved" ? filtered : sortPrs(filtered, view.sort);
+  const filtered = prs.filter((pr) => hasStatus(pr, status));
+  // The best keyword matches first; the sort orders equals.
+  const visible = keyword.apply(view.sort === "saved" ? filtered : sortPrs(filtered, view.sort));
   const sections = groupBoardPrs(visible, view.group);
   const removeSelected = async () => {
     if (selection.selected.length === 0) return;
@@ -587,10 +585,8 @@ export function BoardDetailView({ id, layout, onGo }: { id: string; layout: RowL
   );
   const caption = phone ? "text-xs text-muted-foreground" : "text-muted-foreground";
   const search = (
-    <label className={`flex items-center gap-2 rounded-md border border-border bg-background px-2.5 py-1.5 text-sm text-muted-foreground ${phone ? "w-full" : "min-w-[14rem] flex-1 sm:max-w-md"}`}>
-      <Icon name="Search" className="size-4 shrink-0" aria-hidden />
-      <input aria-label="Filter board PRs" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter PRs in this board…" className="min-w-0 flex-1 bg-transparent outline-none" />
-    </label>
+    <KeywordField value={query} onChange={setQuery} label="Filter board PRs" placeholder="Filter by title, repo or description" phone={phone}
+      count={prs.length === 0 ? undefined : { shown: visible.length, total: filtered.length }} unavailable={keyword.unavailable} className={phone ? "w-full" : "min-w-[14rem] flex-1 sm:max-w-md"} />
   );
   const selects = [
     // Under its "Status" caption a phone's select only needs "All".
@@ -645,9 +641,9 @@ export function BoardDetailView({ id, layout, onGo }: { id: string; layout: RowL
       {archived && <div className="mt-4 rounded-lg border border-border bg-card px-3 py-2 text-sm text-muted-foreground">This board is archived. Restore it to add or remove PRs.</div>}
       {filters}
       {selection.selected.length > 0 && !archived && <SelectionBar count={selection.selected.length} onRemove={() => setDialog({ kind: "remove" })} onClear={selection.clear} onCreate={() => setDialog({ kind: "create" })} onAdd={() => setDialog({ kind: "choose" })} />}
-      {visible.length === 0 && (
-        <div className="py-10 text-center text-sm text-muted-foreground">{prs.length === 0 ? "This board is empty." : "No matching PRs."}</div>
-      )}
+      {visible.length === 0 && (keyword.active && filtered.length > 0
+        ? <NoMatches query={keyword.query} onClear={() => setQuery("")} />
+        : <div className="py-10 text-center text-sm text-muted-foreground">{prs.length === 0 ? "This board is empty." : "No matching PRs."}</div>)}
       {visible.length > 0 && view.group === "none" && (
         <ul aria-label="Board PRs" className="overflow-hidden rounded-lg border border-border bg-card">{visible.map(row)}</ul>
       )}

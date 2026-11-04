@@ -120,6 +120,9 @@ describe("GitHub summaries", () => {
       expect(listFields(op)).not.toContain("reviews(first");
     }
     expect(listFields("mentioned")).not.toMatch(/timelineItems|reviews\(first/u);
+    // Every list reads descriptions, for the keyword filters.
+    for (const op of ["authored", "review_requested", "team_requested", "mentioned", "reviewed"] as const) expect(listFields(op)).toMatch(/\sbody(\s|$)/u);
+    expect(listFields("reviewed", { state: "closed" })).toMatch(/\sbody(\s|$)/u);
     expect(searchQuery("reviewed", {})).toBe("is:pr archived:false sort:updated-desc is:open reviewed-by:@me -author:@me");
   });
 

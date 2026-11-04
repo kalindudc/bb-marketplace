@@ -14,7 +14,7 @@ const GROUPS: readonly (Group & { has(pr: PrView): boolean })[] = [
   { title: "Merged and closed", kinds: [], description: "", has: (pr) => !isLive(pr) },
 ];
 
-const DESCRIPTION = "Finds the PRs Shuttle already has by their title, repository, number, author, branches or labels. Every word must match; #123 is a PR number. Paste a link instead to look up a PR Shuttle has not seen.";
+const DESCRIPTION = "Finds the PRs Shuttle already has by their title, repository, number, author, branches, labels or description. Every word must match; #123 is a PR number. Words in the title rank first, then in the repository, then the rest. Paste a link instead to look up a PR Shuttle has not seen.";
 
 /** The PRs Shuttle has that match the header's search words, open ones first. */
 export function SearchView({ query, layout }: { query: string; layout: RowLayout }) {

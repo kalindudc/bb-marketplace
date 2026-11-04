@@ -29,6 +29,7 @@ export function registerRpc(bb: BbPluginApi, shuttle: Shuttle): void {
     linkCard: ({ url }) => refusing(() => shuttle.linkCard(url)),
     linkStates: ({ urls }) => refusing(() => ({ links: shuttle.linkStates(urls) })),
     search: ({ query }) => refusing(() => shuttle.search(query)),
+    descriptionMatches: ({ query }) => refusing(() => ({ keys: shuttle.descriptionMatches(query) })),
     boards: ({ query, archived, key }) => refusing(() => shuttle.boards({ query, archived, key })),
     board: ({ id }) => refusing(() => shuttle.board(id)),
     lookup: ({ query }) => refusing(async () => ({ pr: await shuttle.lookup(query) })),

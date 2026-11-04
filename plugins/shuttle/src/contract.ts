@@ -902,7 +902,7 @@ export const rpcContract = defineContract({
   overview: { input: z.object({}), output: overviewSchema, tags: () => ["prs", "servers", "config"] },
   inbox: { input: z.object({}), output: inboxSchema, tags: PRS },
   list: { input: z.object({ area: z.enum(AREAS) }), output: z.object({ prs: z.array(prViewSchema) }), tags: PRS },
-  /** body is the description, or null until Shuttle has fetched the PR itself (lists carry none). */
+  /** body is the description, or null until a read brought it: GitHub's lists carry it, other servers' maybe only the PR's own read. */
   detail: {
     input: z.object({ key }),
     /** `drafts` counts every AI review draft Shuttle holds for the PR, so a closed PR keeps the tab that lists them. */
@@ -911,8 +911,16 @@ export const rpcContract = defineContract({
   },
   /** The PR's reviews, comments and failed checks, and the details its view shows, read from its server (kept for 30 seconds). */
   conversation: { input: z.object({ key }), output: z.object({ items: z.array(conversationItemSchema), details: prDetailsSchema.nullable(), error: z.string().nullable(), fetchedAt: z.number() }), tags: () => ["conversation"] },
-  /** PRs Shuttle already has whose title, repository, number, author, branches or labels hold every word; no server is asked. */
+  /**
+   * PRs Shuttle already has whose title, repository, number, author, branches, labels or description hold every word:
+   * open ones first, then those with the most words in the title, then in the repository, then the rest. No server is asked.
+   */
   search: { input: z.object({ query: z.string().max(200) }), output: z.object({ prs: z.array(prViewSchema), total: z.number() }), tags: PRS },
+  /**
+   * The keys of the PRs that hold a word only in their description. A list's keyword filter ranks every PR itself
+   * from what each PrView carries, which has no description, and from which of these words the description must hold.
+   */
+  descriptionMatches: { input: z.object({ query: z.string().max(200) }), output: z.object({ keys: z.array(z.string()) }), tags: PRS },
   boards: { input: boardsInputSchema, output: z.object({ boards: z.array(boardSummarySchema) }), tags: BOARDS },
   board: { input: boardInputSchema, output: boardDetailSchema, tags: BOARDS },
   /** A link or a key such as forge:acme/app#1234; fetched from its server and kept. */

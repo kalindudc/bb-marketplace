@@ -7,6 +7,7 @@ import { messageOf, useShuttleQuery } from "./data";
 import { BoardChooserDialog, BoardFormDialog, BoardSelectionToolbar, useBoardSelection } from "./boards";
 import { useFolding, type ReviewFilter } from "./prefs";
 import { SOURCES, type Route, type Source } from "./route";
+import { KeywordField, NoMatches, useKeywordFilter, useKeywordQuery } from "./keywords";
 import { FoldAllButton, GroupList, ReviewRow, type RowLayout } from "./row";
 import { PrListSkeleton } from "./skeleton";
 
@@ -60,6 +61,8 @@ export function ReviewsView({ source, filter, layout, onFilter, onGo }: {
   onGo(route: Route): void;
 }) {
   const list = useShuttleQuery("list", { area: "reviews" });
+  const [query, setQuery] = useKeywordQuery("reviews");
+  const keyword = useKeywordFilter(query);
   const boardSelection = useBoardSelection();
   const [boardDialog, setBoardDialog] = useState<null | "create" | "choose">(null);
   useEffect(() => boardSelection.clear(), [source]);
@@ -71,7 +74,11 @@ export function ReviewsView({ source, filter, layout, onFilter, onGo }: {
   const inScope = (prs ?? []).filter((pr) => inSource(pr, source) && (source !== "team" || team === "all" || pr.teams.includes(team)));
   const bots = inScope.filter((pr) => pr.bot).length;
   const quiet = inScope.filter((pr) => pr.quiet && !pr.bot).length;
-  const shown = inScope.filter((pr) => !(filter.hideBots && pr.bot) && !(filter.hideQuiet && pr.quiet));
+  const unfiltered = inScope.filter((pr) => !(filter.hideBots && pr.bot) && !(filter.hideQuiet && pr.quiet));
+  const shown = keyword.active ? unfiltered.filter((pr) => keyword.rank(pr) !== null) : unfiltered;
+  // What the words match among the PRs Hide bots and Hide quiet keep out.
+  const kept = new Set(unfiltered);
+  const hiddenMatches = keyword.active ? inScope.filter((pr) => !kept.has(pr) && keyword.rank(pr) !== null).length : 0;
   const chip = (on: boolean) => `inline-flex shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs ${on ? "border-input bg-state-active text-foreground" : "border-border text-muted-foreground hover:text-foreground"}`;
   const selectedSet = useMemo(() => new Set(boardSelection.selected), [boardSelection.selected]);
   const row = (pr: PrView) => <ReviewRow key={pr.key} pr={pr} layout={{ ...layout, selection: { checked: selectedSet.has(pr.key), onToggle: () => boardSelection.toggle(pr.key) } }} />;
@@ -80,7 +87,8 @@ export function ReviewsView({ source, filter, layout, onFilter, onGo }: {
   const folding = useFolding("reviews");
   const sections = [...REVIEW_GROUPS, OTHER].map((group) => {
     const members = group === OTHER ? shown.filter((pr) => !grouped.has(pr.next.kind)) : shown.filter((pr) => group.kinds.includes(pr.next.kind));
-    return { group, prs: group.title === "Not reviewed yet" ? oldestFirst(members) : members };
+    // The best keyword matches first; the group's own order sorts equals.
+    return { group, prs: keyword.apply(group.title === "Not reviewed yet" ? oldestFirst(members) : members) };
   }).filter((section) => section.prs.length > 0);
 
   return (
@@ -96,6 +104,9 @@ export function ReviewsView({ source, filter, layout, onFilter, onGo }: {
         ))}
       </div>
       <div className="mb-1 flex flex-wrap items-center gap-1.5">
+        {prs !== undefined && prs.length > 0 && (
+          <KeywordField value={query} onChange={setQuery} label="Filter the PRs to review" count={{ shown: shown.length, total: unfiltered.length }} unavailable={keyword.unavailable} phone={layout.phone} className="w-72 @max-[560px]:w-full" />
+        )}
         {source === "team" && (
           <select aria-label="Team" className={FIELD_SMALL} value={team} onChange={(event) => onFilter({ ...filter, team: event.target.value })}>
             <option value="all">All my teams · {teamPrs.length}</option>
@@ -114,7 +125,11 @@ export function ReviewsView({ source, filter, layout, onFilter, onGo }: {
           <Icon name="Pin" className="size-3.5" aria-hidden />Nothing tracked. Paste any PR link in the look-up field, then press Track.
         </div>
       )}
-      {prs !== undefined && source !== "tracked" && shown.length === 0 && (
+      {prs !== undefined && keyword.active && unfiltered.length > 0 && shown.length === 0 && <NoMatches query={keyword.query} onClear={() => setQuery("")} hidden={hiddenMatches} />}
+      {prs !== undefined && keyword.active && shown.length > 0 && hiddenMatches > 0 && (
+        <p data-hidden-matches className="mb-1 text-xs text-muted-foreground">{hiddenMatches === 1 ? "1 more PR matches" : `${hiddenMatches} more PRs match`}, hidden by the filters above.</p>
+      )}
+      {prs !== undefined && source !== "tracked" && unfiltered.length === 0 && (
         <div className="py-10 text-center text-sm text-muted-foreground">{inScope.length === 0 ? "Nothing here." : "Everything here is hidden by the filters above."}</div>
       )}
       {sections.map((section) => <GroupList key={section.group.title} group={section.group} prs={section.prs} layout={layout} row={row} folding={folding} />)}

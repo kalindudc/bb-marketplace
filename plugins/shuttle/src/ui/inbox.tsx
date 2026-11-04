@@ -12,6 +12,7 @@ import { Picker, PickerAction, PickerGroup, PickerRadio, PickerSeparator } from 
 import { inboxSwipeHint, inboxView, useFolding, type InboxGrouping, type InboxSort } from "./prefs";
 import { useStored } from "./remember";
 import type { InboxTab, Route } from "./route";
+import { KeywordField, NoMatches, useKeywordFilter, useKeywordQuery, type KeywordFilter } from "./keywords";
 import { InboxRow, mentionsYouOnly, RepoChip, type RowLayout } from "./row";
 import { InboxSkeleton } from "./skeleton";
 
@@ -92,8 +93,10 @@ function compare(sort: InboxSort) {
   };
 }
 
-function sectionsOf(prs: readonly PrView[], group: InboxGrouping, sort: InboxSort): Section[] {
-  const sorted = [...prs].sort(compare(sort));
+/** The best keyword matches first in each section, while the filter holds words. */
+function sectionsOf(prs: readonly PrView[], group: InboxGrouping, sort: InboxSort, byRank: (a: PrView, b: PrView) => number = () => 0): Section[] {
+  const order = compare(sort);
+  const sorted = [...prs].sort((a, b) => byRank(a, b) || order(a, b));
   if (group === "none") return sorted.length === 0 ? [] : [{ key: "all", prs: sorted, heading: null }];
   if (group === "repo") {
     const repos = [...new Map(sorted.map((pr) => [`${pr.server}:${pr.repo}`, pr])).entries()].sort(([, a], [, b]) => a.repo.localeCompare(b.repo) || a.server.localeCompare(b.server));
@@ -103,18 +106,6 @@ function sectionsOf(prs: readonly PrView[], group: InboxGrouping, sort: InboxSor
   return [...KIND_GROUPS, OTHER_GROUP]
     .map((item) => ({ key: `kind:${item.id}`, prs: sorted.filter((pr) => groupOf(pr) === item), heading: { group: item } }))
     .filter((section) => section.prs.length > 0);
-}
-
-/** Every word must be in the title, repo or author; "#12" matches a number that starts with 12. */
-function matcher(query: string) {
-  const words = query.toLowerCase().split(/\s+/u).filter(Boolean);
-  return (pr: PrView) => {
-    const hay = `${pr.title} ${pr.repo} ${pr.author} ${tinyKey(pr)}`.toLowerCase();
-    return words.every((word) => {
-      if (/^[#!]\d/u.test(word)) return String(pr.number).startsWith(word.slice(1));
-      return hay.includes(word.replace(/^@/u, ""));
-    });
-  };
 }
 
 const RULE_ICONS: Record<InboxRuleKind, string> = { author: "UserRound", repo: "Folder", mention: "AtSign" };
@@ -244,7 +235,7 @@ const SHORTCUTS: readonly [readonly string[], string][] = [
   [["S"], "Snooze the selected PRs, or this one"],
   [["U"], "Undo the last change"],
   [["R"], "Reviewed by me: every PR you reviewed"],
-  [["/"], "Search"],
+  [["/"], "Filter the Inbox by keyword"],
   [["Esc"], "Close the menu, then clear the selection"],
 ];
 
@@ -291,8 +282,22 @@ type Menu = { kind: "snooze" | "more"; key: string } | null;
 /** The selection bar's snooze menu, as opposed to one row's. */
 const SELECTION = "";
 
+/** The words that filter every tab of the Inbox, and the field that holds them. */
+interface InboxKeywords {
+  query: string;
+  setQuery(next: string): void;
+  filter: KeywordFilter;
+}
+
+function InboxKeywordField({ keywords, count, phone }: { keywords: InboxKeywords; count: { shown: number; total: number }; phone: boolean }) {
+  return (
+    <KeywordField value={keywords.query} onChange={keywords.setQuery} label="Search the Inbox" placeholder="Title, repo, description, author or #number"
+      count={count} unavailable={keywords.filter.unavailable} phone={phone} className="w-80 shrink @max-[560px]:flex-1" />
+  );
+}
+
 /** The Inbox tab: search, View, sections of rows, and the keys that move through them. */
-function InboxList({ data, layout, onGo, onShortcuts }: { data: InboxData; layout: RowLayout; onGo(route: Route): void; onShortcuts(): void }) {
+function InboxList({ data, layout, keywords, onGo, onShortcuts }: { data: InboxData; layout: RowLayout; keywords: InboxKeywords; onGo(route: Route): void; onShortcuts(): void }) {
   const { writes } = useActions();
   const phone = layout.phone;
   const prefs = useStored(inboxView);
@@ -300,16 +305,15 @@ function InboxList({ data, layout, onGo, onShortcuts }: { data: InboxData; layou
   const folding = useFolding("inbox");
   const setting = useSettings().values?.inboxRequestDays;
   const days = typeof setting === "number" ? setting : 3;
-  const [query, setQuery] = useState("");
+  const { setQuery, filter } = keywords;
   const [checked, setChecked] = useState<ReadonlySet<string>>(new Set());
   const [cursor, setCursor] = useState<string | null>(null);
   const [menu, setMenu] = useState<Menu>(null);
   const anchor = useRef<string | null>(null);
-  const search = useRef<HTMLInputElement>(null);
 
   const all = data.prs.filter((pr) => pr.next.inbox);
-  const shown = query.trim() === "" ? all : all.filter(matcher(query));
-  const sections = sectionsOf(shown, prefs.group, prefs.sort);
+  const shown = filter.active ? all.filter((pr) => filter.rank(pr) !== null) : all;
+  const sections = sectionsOf(shown, prefs.group, prefs.sort, filter.compare);
   const visible = sections.filter((section) => !folding.folded(section.key)).flatMap((section) => section.prs);
   const order = visible.map((pr) => pr.key);
   const selection = [...visible, ...all.filter((pr) => !order.includes(pr.key))].filter((pr) => checked.has(pr.key));
@@ -408,9 +412,6 @@ function InboxList({ data, layout, onGo, onShortcuts }: { data: InboxData; layou
       case "r":
         handled();
         return onGo({ view: "reviewed", key: null });
-      case "/":
-        handled();
-        return search.current?.focus();
       case "?":
         handled();
         return onShortcuts();
@@ -436,6 +437,16 @@ function InboxList({ data, layout, onGo, onShortcuts }: { data: InboxData; layou
           className="ml-2.5 mr-1 size-[15px] cursor-pointer accent-foreground" />
       </Tip>
       <b className="mr-1 text-[12.5px] font-semibold">{selection.length} selected</b>
+      {filter.active && (
+        // The field gives way to this bar; the words still filter the rows under it.
+        <span data-selection-filter className="inline-flex min-w-0 items-center gap-1 rounded-full border border-border py-0.5 pl-2 pr-0.5 text-xs text-muted-foreground">
+          <Icon name="Search" className="size-3 shrink-0" aria-hidden />
+          <span className="max-w-[12rem] truncate">{`\u201c${filter.query}\u201d`}</span>
+          <button type="button" aria-label="Clear the filter" title="Clear the filter" className={ICON_GHOST_SMALL} onClick={() => setQuery("")}>
+            <Icon name="X" className="size-3" aria-hidden />
+          </button>
+        </span>
+      )}
       <SnoozeMenu prs={selection} phone={phone} {...menuOf("snooze", SELECTION)} triggerClassName={BUTTON} triggerLabel={`Snooze ${plural(selection.length, "PR")}`}
         tip={{ text: `Snooze the ${plural(selection.length, "selected PR")} until a time you pick`, keys: "S" }}
         trigger={<><Icon name="Clock" className="size-3.5" aria-hidden />Snooze<Icon name="ChevronDown" className="size-3" aria-hidden /></>}
@@ -452,12 +463,7 @@ function InboxList({ data, layout, onGo, onShortcuts }: { data: InboxData; layou
     </div>
   ) : (
     <div data-toolbar className="sticky top-0 z-10 flex min-h-11 items-center gap-1.5 bg-background py-2">
-      <label className="flex h-7 w-80 min-w-0 shrink items-center gap-1.5 rounded-md border border-input bg-background px-2 text-muted-foreground focus-within:ring-1 focus-within:ring-ring @max-[560px]:flex-1">
-        <Icon name="Search" className="size-3.5 shrink-0" aria-hidden />
-        <input ref={search} type="search" aria-label="Search the Inbox" placeholder="Title, repo, author or #number" value={query} autoComplete="off" onChange={(event) => setQuery(event.target.value)}
-          className="min-w-0 flex-1 bg-transparent text-[12.5px] text-foreground outline-none placeholder:text-muted-foreground" />
-        {!phone && <kbd aria-hidden className={KBD}>/</kbd>}
-      </label>
+      <InboxKeywordField keywords={keywords} count={{ shown: shown.length, total: all.length }} phone={phone} />
       <span className="flex-1 @max-[560px]:hidden" />
       <ViewMenu phone={phone} />
     </div>
@@ -546,12 +552,7 @@ function InboxList({ data, layout, onGo, onShortcuts }: { data: InboxData; layou
           <span><b className="font-semibold text-foreground">All clear.</b> Nothing waits on you.</span>
         </div>
       )}
-      {all.length > 0 && shown.length === 0 && (
-        <div className="mt-3.5 flex items-center gap-2 rounded-lg border border-border bg-card px-3.5 py-3 text-[13px] text-muted-foreground">
-          <span>Nothing matches “{query.trim()}”.</span>
-          <button type="button" className="cursor-pointer text-primary hover:underline" onClick={() => setQuery("")}>Clear</button>
-        </div>
-      )}
+      {all.length > 0 && shown.length === 0 && <NoMatches query={filter.query} onClear={() => setQuery("")} />}
       {sections.map((section) => {
         const folded = folding.folded(section.key);
         return (
@@ -614,8 +615,11 @@ function ListHeading({ title, count }: { title: string; count: number }) {
 }
 
 /** The Reviewing tab: reviews of yours on their way to their servers, then PRs out of the Inbox while an AI review runs on them. */
-function ReviewingList({ data, layout }: { data: InboxData; layout: RowLayout }) {
+function ReviewingList({ data, layout, keywords }: { data: InboxData; layout: RowLayout; keywords: InboxKeywords }) {
   const actions = useActions();
+  const posting = keywords.filter.apply(data.posting);
+  const reviewing = keywords.filter.apply(data.reviewing);
+  const total = data.posting.length + data.reviewing.length;
   const row = (pr: PrView, mode: "posting" | "reviewing", trailing: ReactNode) => (
     <InboxRow key={pr.key} pr={pr} mode={mode} phone={layout.phone} selected={layout.selected === pr.key} checked={false} selecting={false} cursor={false} active={false} kindChip={false}
       onOpen={() => layout.onSelect(pr.key)} onCheck={() => {}} trailing={trailing} />
@@ -635,23 +639,25 @@ function ReviewingList({ data, layout }: { data: InboxData; layout: RowLayout })
       </Tip>
     );
   };
-  if (data.posting.length === 0 && data.reviewing.length === 0) return <div className="mt-2"><Empty>Nothing is posting, and no AI review is running.</Empty></div>;
+  if (total === 0) return <div className="mt-2"><Empty>Nothing is posting, and no AI review is running.</Empty></div>;
   return (
     <>
-      {data.posting.length > 0 && (
+      <div className="mt-2 flex"><InboxKeywordField keywords={keywords} count={{ shown: posting.length + reviewing.length, total }} phone={layout.phone} /></div>
+      {posting.length + reviewing.length === 0 && <NoMatches query={keywords.filter.query} onClear={() => keywords.setQuery("")} />}
+      {posting.length > 0 && (
         <section aria-label="Posting">
-          <ListHeading title="Posting" count={data.posting.length} />
+          <ListHeading title="Posting" count={posting.length} />
           <p className="mb-2 text-[12.5px] text-muted-foreground">Your reviews on their way to their servers. Shuttle posts them in order, one at a time on each server, and you can cancel one until it starts.</p>
-          <ul className="overflow-hidden rounded-lg border border-border bg-card">{data.posting.map((pr) => row(pr, "posting", cancel(pr)))}</ul>
+          <ul className="overflow-hidden rounded-lg border border-border bg-card">{posting.map((pr) => row(pr, "posting", cancel(pr)))}</ul>
         </section>
       )}
-      {data.reviewing.length > 0 && (
+      {reviewing.length > 0 && (
         <section aria-label="AI reviews running">
-          <ListHeading title="AI reviews running" count={data.reviewing.length} />
+          <ListHeading title="AI reviews running" count={reviewing.length} />
           <p className="mb-2 text-[12.5px] text-muted-foreground">
             A review runs until its thread hands back a draft or says it is over, even while the thread waits on child threads such as critics. One with nothing happening for {plural(REVIEW_QUIET_MS / 3_600_000, "hour")} counts as gone quiet. When one finishes or stops, its PR comes back to the Inbox, unless you dismissed it or a rule keeps it out.
           </p>
-          <ul className="overflow-hidden rounded-lg border border-border bg-card">{data.reviewing.map((pr) => row(pr, "reviewing", thread(pr)))}</ul>
+          <ul className="overflow-hidden rounded-lg border border-border bg-card">{reviewing.map((pr) => row(pr, "reviewing", thread(pr)))}</ul>
         </section>
       )}
     </>
@@ -659,19 +665,21 @@ function ReviewingList({ data, layout }: { data: InboxData; layout: RowLayout })
 }
 
 /** The Snoozed or the Dismissed tab: what is out of the Inbox for now, or for good, and the way back. */
-function OutList({ tab, data, layout }: { tab: Exclude<InboxTab, "reviewing">; data: InboxData; layout: RowLayout }) {
+function OutList({ tab, data, layout, keywords }: { tab: Exclude<InboxTab, "reviewing">; data: InboxData; layout: RowLayout; keywords: InboxKeywords }) {
   const { writes } = useActions();
   const back = (pr: PrView) => pr.snoozedUntil ?? Number.POSITIVE_INFINITY;
-  const prs = tab === "snoozed"
+  const all = tab === "snoozed"
     ? data.snoozed.slice().sort((a, b) => back(a) - back(b))
     : data.dismissed.slice().sort((a, b) => (b.dismissed?.at ?? 0) - (a.dismissed?.at ?? 0));
+  const prs = keywords.filter.apply(all);
   const note = tab === "snoozed"
     ? "They come back at the time shown, or sooner if something new happens."
     : "They stay out of the Inbox, even when they change. My PRs and Reviews still list them.";
   return (
     <>
       <p className="mb-2.5 mt-2 text-[12.5px] text-muted-foreground">{note}</p>
-      {prs.length === 0 ? <Empty>{tab === "snoozed" ? "Nothing is snoozed." : "Nothing is dismissed."}</Empty> : (
+      {all.length > 0 && <div className="mb-2 flex"><InboxKeywordField keywords={keywords} count={{ shown: prs.length, total: all.length }} phone={layout.phone} /></div>}
+      {all.length === 0 ? <Empty>{tab === "snoozed" ? "Nothing is snoozed." : "Nothing is dismissed."}</Empty> : prs.length === 0 ? <NoMatches query={keywords.filter.query} onClear={() => keywords.setQuery("")} /> : (
         <ul className="overflow-hidden rounded-lg border border-border bg-card">
           {prs.map((pr) => (
             <InboxRow key={pr.key} pr={pr} mode={tab} phone={layout.phone} selected={layout.selected === pr.key} checked={false} selecting={false} cursor={false} active={false} kindChip={false}
@@ -692,6 +700,8 @@ export function InboxView({ tab, layout, onGo }: { tab: InboxTab | "inbox"; layo
   const { writes } = useActions();
   const inbox = useShuttleQuery("inbox", {});
   const reviewed = useShuttleQuery("overview", {}).data?.counts.reviewed;
+  const [query, setQuery] = useKeywordQuery("inbox");
+  const keywords: InboxKeywords = { query, setQuery, filter: useKeywordFilter(query) };
   const [shortcuts, setShortcuts] = useState(false);
   const data = inbox.data;
   const fresh = data?.dismissed.filter((pr) => pr.dismissed?.activity).length ?? 0;
@@ -738,9 +748,9 @@ export function InboxView({ tab, layout, onGo }: { tab: InboxTab | "inbox"; layo
       {inbox.error !== null && <ErrorNote>Could not load the Inbox: {messageOf(inbox.error)}</ErrorNote>}
       {data === undefined && inbox.error === null && <InboxSkeleton label="Loading the Inbox" />}
       {data !== undefined && (tab === "inbox"
-        ? <InboxList data={data} layout={layout} onGo={onGo} onShortcuts={() => setShortcuts(true)} />
-        : tab === "reviewing" ? <ReviewingList data={data} layout={layout} />
-          : <OutList tab={tab} data={data} layout={layout} />)}
+        ? <InboxList data={data} layout={layout} keywords={keywords} onGo={onGo} onShortcuts={() => setShortcuts(true)} />
+        : tab === "reviewing" ? <ReviewingList data={data} layout={layout} keywords={keywords} />
+          : <OutList tab={tab} data={data} layout={layout} keywords={keywords} />)}
       {shortcuts && <ShortcutsDialog onClose={() => setShortcuts(false)} />}
     </div>
   );

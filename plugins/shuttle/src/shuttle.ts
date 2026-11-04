@@ -28,7 +28,7 @@ import { matchProject } from "./projects";
 import { archiveDoneReviewThreads, unarchiveForDraft } from "./review-threads";
 import { endQuietReviews, endReview, failReviewsOfThread, resumeReviews, type ThreadFailure } from "./review-runs";
 import { startReview } from "./reviews";
-import { searchPrs } from "./search";
+import { descriptionMatches, searchPrs } from "./search";
 import type { Settings } from "./settings";
 import { primaryStep } from "./failures";
 import { RECHECK_MS, runAutoReviews, syncServer } from "./sync";
@@ -286,6 +286,10 @@ export class Shuttle implements Ctx {
     return searchPrs(this, query);
   }
 
+  descriptionMatches(query: string): ReturnType<typeof descriptionMatches> {
+    return descriptionMatches(this, query);
+  }
+
   boards(input: { query?: string; archived?: "exclude" | "include" | "only"; key?: string } = {}): { boards: BoardSummary[] } {
     return listBoards(this, input);
   }
@@ -400,7 +404,7 @@ export class Shuttle implements Ctx {
       const pr = this.store.prByKey(key);
       const ref = parseKey(key);
       if (!pr || !ref) continue;
-      // Lists carry no description or reviewers on every server, so the PR on screen is read by itself:
+      // Lists may carry no description or reviewers, so the PR on screen is read by itself:
       // once when it was never read that way, and again every maxAgeMs while it is open.
       const open = pr.state === "open" || pr.state === "draft";
       if (pr.viewed_at !== null && (!open || this.now() - pr.viewed_at < maxAgeMs)) continue;

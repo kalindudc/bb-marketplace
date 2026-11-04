@@ -283,7 +283,7 @@ describe("board sorting and grouping", () => {
     const section = slot.getByRole("region", { name: "Open" });
     expect(keysIn(section)).toEqual([newer.key, older.key]);
     expect(within(section).getByRole("button", { name: /^Open\s*2$/u })).toBeTruthy();
-    fireEvent.change(slot.getByRole("textbox", { name: "Filter board PRs" }), { target: { value: "Older" } });
+    fireEvent.change(slot.getByRole("searchbox", { name: "Filter board PRs" }), { target: { value: "Older" } });
     expect(keysIn(section)).toEqual([older.key]);
     expect(within(section).getByRole("button", { name: /^Open\s*1$/u })).toBeTruthy();
     change(slot, "Board status", "merged");
@@ -457,13 +457,13 @@ describe("board management safeguards", () => {
     });
     const first = await find(slot.container, `[data-pr="${member.key}"]`);
     fireEvent.click(within(first).getByRole("checkbox"));
-    fireEvent.change(slot.getByRole("textbox", { name: "Filter board PRs" }), { target: { value: "Retry" } });
+    fireEvent.change(slot.getByRole("searchbox", { name: "Filter board PRs" }), { target: { value: "Retry" } });
     fireEvent.click(slot.getByRole("button", { name: "Add PRs" }));
     expect(await slot.findByRole("dialog", { name: "Add PRs" })).toBeTruthy();
     route("board/other");
     await slot.findByRole("heading", { name: "Other board" });
     await waitFor(() => expect(slot.queryByRole("dialog")).toBeNull());
-    expect((slot.getByRole("textbox", { name: "Filter board PRs" }) as HTMLInputElement).value).toBe("");
+    expect((slot.getByRole("searchbox", { name: "Filter board PRs" }) as HTMLInputElement).value).toBe("");
     expect((within(await find(slot.container, `[data-pr="${member.key}"]`)).getByRole("checkbox") as HTMLInputElement).checked).toBe(false);
     expect(slot.queryByText("1 selected")).toBeNull();
   });
@@ -536,7 +536,7 @@ describe("board management safeguards", () => {
   it.each(["#1", "bb#1", "get-bb/bb#1", "github:get-bb/bb#1", "GitHub"])("filters board PRs by identifier or server %s", async (query) => {
     const { slot } = await boardPage("board/release", { board: () => populated });
     await find(slot.container, `[data-pr="${member.key}"]`);
-    fireEvent.change(slot.getByRole("textbox", { name: "Filter board PRs" }), { target: { value: query } });
+    fireEvent.change(slot.getByRole("searchbox", { name: "Filter board PRs" }), { target: { value: query } });
     expect(slot.container.querySelector(`[data-pr="${member.key}"]`)).toBeTruthy();
   });
 

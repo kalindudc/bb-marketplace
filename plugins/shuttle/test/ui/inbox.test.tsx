@@ -283,7 +283,7 @@ describe("the Inbox", () => {
     fireEvent.change(search, { target: { value: "app locale" } });
     expect(rowKeys(slot)).toEqual([ready.key]);
     fireEvent.change(search, { target: { value: "zzz" } });
-    expect(slot.container.textContent).toContain("Nothing matches “zzz”.");
+    expect(slot.container.textContent).toContain("Nothing here matches “zzz”.");
     fireEvent.click(slot.getByRole("button", { name: "Clear" }));
     expect(rowKeys(slot)).toHaveLength(ALL.length);
   });
@@ -495,7 +495,7 @@ describe("the Inbox", () => {
     openMenu(await slot.findByRole("button", { name: "Inbox options" }));
     fireEvent.click(await screen.findByRole("menuitem", { name: "Keyboard shortcuts" }));
     const dialog = await slot.findByRole("dialog", { name: "Keyboard shortcuts" });
-    for (const text of ["Next and previous PR", "Open it", "Select it", "Dismiss", "Snooze", "Undo", "Reviewed by me", "Search", "Close the menu, then clear the selection"]) expect(dialog.textContent).toContain(text);
+    for (const text of ["Next and previous PR", "Open it", "Select it", "Dismiss", "Snooze", "Undo", "Reviewed by me", "Filter the Inbox by keyword", "Close the menu, then clear the selection"]) expect(dialog.textContent).toContain(text);
   });
 
   it("goes to Reviewed by me from the header, with its count, on every tab", async () => {

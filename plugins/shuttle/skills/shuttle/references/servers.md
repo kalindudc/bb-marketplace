@@ -102,8 +102,9 @@ PR from a list it knows is incomplete, so an old request cannot come back lookin
  "additions": 1204, "deletions": 388, "files": 23, "teams": ["@acme/routing"]}
 ```
 
-`view` may add `"body"`, the description in Markdown; the PR's drawer shows it. Any summary
-may add `"labels"`, as names or `{"name", "color", "description"}` with a hex colour. `view` may
+`view` may add `"body"`, the description in Markdown; the PR's drawer shows it. A list's
+summaries may add it too, so the keyword filters find words in descriptions of PRs never opened
+in Shuttle. Any summary may add `"labels"`, as names or `{"name", "color", "description"}` with a hex colour. `view` may
 add `"reviewers"`: `[{"login": "ana", "team": false, "state": "requested"}]`, where `state` is
 `requested`, `approved`, `changes`, `commented` or `dismissed`. List requested reviewers first,
 then the latest review of everyone else. Leave a field out when the server's answer has no such

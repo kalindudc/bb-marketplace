@@ -38,12 +38,16 @@ const REQUESTED_FIELDS = `viewerDidAuthor timelineItems(itemTypes: [REVIEW_REQUE
   requestedReviewer { __typename ... on Team { combinedSlug } ... on User { isViewer } } } } }`;
 const FIRST_REVIEW_FIELDS = "reviews(first: 20) { nodes { state submittedAt author { login __typename } } }";
 
-/** Only the lists that ask the user read when they were asked; only the author's read the first review. */
+/**
+ * Only the lists that ask the user read when they were asked; only the author's read the first review. Every list
+ * reads the description, so the page's keyword filters find words in it.
+ */
 export function listFields(operation: ListOperation, options: ListOptions = {}): string {
-  if (operation === "authored") return `${SUMMARY_FIELDS} ${FIRST_REVIEW_FIELDS}`;
+  const fields = `${SUMMARY_FIELDS} body`;
+  if (operation === "authored") return `${fields} ${FIRST_REVIEW_FIELDS}`;
   // A merged or closed PR asks nobody any more.
-  if (operation === "mentioned" || (operation === "reviewed" && options.state === "closed")) return SUMMARY_FIELDS;
-  return `${SUMMARY_FIELDS} ${REQUESTED_FIELDS}`;
+  if (operation === "mentioned" || (operation === "reviewed" && options.state === "closed")) return fields;
+  return `${fields} ${REQUESTED_FIELDS}`;
 }
 
 const WHO = "author { login __typename }";

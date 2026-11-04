@@ -261,6 +261,7 @@ export function handlers(overrides: Partial<Handlers> = {}): Handlers {
     linkStates: ({ urls }) => ({ links: urls.map((url) => ({ url, kind: null, state: null })) }),
     lookup: unexpected("lookup"),
     search: () => ({ prs: [], total: 0 }),
+    descriptionMatches: () => ({ keys: [] }),
     activity: () => ({ events: [] }),
     insights: () => insights(),
     autoPostInsights: () => autoPostInsights(),

@@ -2,7 +2,7 @@ See what each PR is waiting on and act without leaving bb. GitHub works out of t
 
 ## Five areas
 
-- **Inbox:** the decisions waiting on you, one row per PR under what to do with it, with what changed since you last opened it marked. Search, group and sort it. Snooze a PR until later today, tomorrow, next week or until it changes, dismiss it for good, or keep out every PR by an author, from a repo, or mentions where you are not asked; the Snoozed and Dismissed tabs list them, with the way back. The Reviewing tab lists your reviews on their way to their servers and the PRs an AI review is running on, with the way to each thread.
+- **Inbox:** the decisions waiting on you, one row per PR under what to do with it, with what changed since you last opened it marked. Filter, group and sort it. Snooze a PR until later today, tomorrow, next week or until it changes, dismiss it for good, or keep out every PR by an author, from a repo, or mentions where you are not asked; the Snoozed and Dismissed tabs list them, with the way back. The Reviewing tab lists your reviews on their way to their servers and the PRs an AI review is running on, with the way to each thread.
 - **My PRs:** your open PRs grouped by their next step or shown in a sortable list, followed by merged and closed PRs. Checks, reviews and agents stay beside each PR.
 - **Reviews:** requests from people and teams, mentions and tracked PRs, grouped by where your review stands, plus every PR you reviewed, even merged. Filter by team, hide bots and quiet PRs.
 - **Boards:** saved PR sets for a release, project or handoff, across repositories and servers.
@@ -10,9 +10,9 @@ See what each PR is waiting on and act without leaving bb. GitHub works out of t
 
 ## Saved PR boards
 
-Create a board or save selected PRs from a list. Add members by searching Shuttle or pasting links and keys, filter the set, duplicate it, or remove members with confirmation and Undo. A PR can belong to several boards. Status stays live; merged and closed PRs remain until removed.
+Create a board or save selected PRs from a list. Add members by searching Shuttle or pasting links and keys, filter or duplicate the set, or remove members with confirmation and Undo. A PR can belong to several boards. Status stays live; merged and closed PRs remain until removed.
 
-Archive a board without losing its PRs, then restore it before editing membership. Its activity log folds to its heading. Board membership never assigns agents or changes review tracking or feedback delivery.
+Archive a board without losing its PRs, then restore it before editing membership. Its activity log folds to its heading. Board membership never changes agents, tracking or feedback delivery.
 
 ## Work with agents
 
@@ -22,11 +22,11 @@ Start reviews from presets for the skill, model and workspace, or enable auto re
 
 ## Act on PRs
 
-Each PR's view says what it is, where it stands and what happens next in one card, then shows the rest in tabs: an overview, your review, the conversation with open threads first, every check, a summary of its commits and files, and its history. Open it as a full page, or put it on boards from there.
+Each PR's view says what it is, where it stands and what happens next in one card, then shows the rest in tabs: an overview, your review, the conversation with open threads first, every check, a summary of its commits and files, and its history. Open it as a full page or put it on boards.
 
-Git links in thread messages show what they point at on hover: a PR, a comment with its code, a commit, a check, or an issue with the PRs that close it. Open the PR in Shuttle on the right tab from there. Shuttle draws with your bb theme's own colours.
+Git links in thread messages show what they point at on hover: a PR, a comment with its code, a commit, a check, or an issue with the PRs that close it. Open the PR in Shuttle on the right tab from there. Shuttle uses your bb theme's colours.
 
-Merge, comment, reply, resolve, request reviewers, manage labels and post reviews as yourself. Merges and reviews run in the background, in order on each server, so a slow server never keeps you waiting; My PRs and the Inbox's Reviewing tab list them until done. A thread's Shuttle tab shows its PRs in full. Search cached PRs or paste a link. Layouts adapt to phones and narrow windows; lists remember their scroll, sort, filters and folds.
+Merge, comment, reply, resolve, request reviewers, manage labels and post reviews as yourself. Merges and reviews run in the background, in order per server; My PRs and the Inbox's Reviewing tab list them until done. A thread's Shuttle tab shows its PRs in full. Filter any list by keyword, title matches first, then repo, then description; search every cached PR or paste a link. Layouts adapt to phones and narrow windows; lists remember their scroll, sort, filters and folds.
 
 ## Setup and tools
 

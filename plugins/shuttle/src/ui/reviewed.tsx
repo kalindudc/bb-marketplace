@@ -11,6 +11,7 @@ import { REVIEWED_STATES, REVIEWED_VERDICTS, reviewedFilter, reviewedSort, type 
 import { useStored } from "./remember";
 import { ReviewsTabs } from "./reviews";
 import type { Route } from "./route";
+import { KeywordField, NoMatches, useKeywordFilter, useKeywordQuery } from "./keywords";
 import { ReviewedRow, type RowLayout } from "./row";
 import { PrListSkeleton } from "./skeleton";
 import { REVIEWED_SORTS, rowTime, sortPrs } from "./sort";
@@ -36,11 +37,15 @@ export function ReviewedView({ layout, onGo }: { layout: RowLayout; onGo(route: 
   const days = useSettings().values?.reviewedDays;
   const sort = useStored(reviewedSort);
   const filter = useStored(reviewedFilter);
+  const [query, setQuery] = useKeywordQuery("reviewed");
+  const keyword = useKeywordFilter(query);
   const boardSelection = useBoardSelection();
   const [boardDialog, setBoardDialog] = useState<null | "create" | "choose">(null);
   const prs = list.data?.prs;
   const byVerdict = useMemo(() => (prs ?? []).filter((pr) => hasVerdict(pr, filter.verdict)), [prs, filter.verdict]);
-  const shown = useMemo(() => (prs === undefined ? undefined : sortPrs(byVerdict.filter((pr) => inState(pr, filter.state)), sort)), [prs, byVerdict, filter.state, sort]);
+  const filtered = useMemo(() => (prs === undefined ? undefined : sortPrs(byVerdict.filter((pr) => inState(pr, filter.state)), sort)), [prs, byVerdict, filter.state, sort]);
+  // The best keyword matches first; the sort orders equals.
+  const shown = useMemo(() => (filtered === undefined ? undefined : keyword.apply(filtered)), [filtered, keyword]);
   const counts = Object.fromEntries(REVIEWED_STATES.map((state) => [state, byVerdict.filter((pr) => inState(pr, state)).length])) as Record<ReviewedState, number>;
   const selectedSet = useMemo(() => new Set(boardSelection.selected), [boardSelection.selected]);
   const chip = (on: boolean) => `inline-flex shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs ${on ? "border-input bg-state-active text-foreground" : "border-border text-muted-foreground hover:text-foreground"}`;
@@ -52,6 +57,9 @@ export function ReviewedView({ layout, onGo }: { layout: RowLayout; onGo(route: 
         <ReviewsTabs value="reviewed" onGo={onGo} />
       </PageHeading>
       <div className="mb-1 flex flex-wrap items-center gap-1.5">
+        {prs !== undefined && prs.length > 0 && (
+          <KeywordField value={query} onChange={setQuery} label="Filter the PRs you reviewed" count={{ shown: shown!.length, total: filtered!.length }} unavailable={keyword.unavailable} phone={layout.phone} className="w-72 @max-[560px]:w-full" />
+        )}
         <div role="group" aria-label="State" className="flex gap-1.5 overflow-x-auto [scrollbar-width:none]">
           {REVIEWED_STATES.map((state) => (
             <button key={state} type="button" data-state-filter={state} aria-pressed={state === filter.state} className={chip(state === filter.state)} onClick={() => reviewedFilter.set({ ...filter, state })}>
@@ -69,7 +77,8 @@ export function ReviewedView({ layout, onGo }: { layout: RowLayout; onGo(route: 
       {((shown !== undefined && shown.length > 0) || boardSelection.selected.length > 0) && <BoardSelectionToolbar selected={boardSelection.selected} onCreate={() => setBoardDialog("create")} onAdd={() => setBoardDialog("choose")} onClear={boardSelection.clear} />}
       {list.error !== null && <ErrorNote>{messageOf(list.error)}</ErrorNote>}
       {prs === undefined && list.error === null && <PrListSkeleton label="Loading the PRs you reviewed" />}
-      {shown !== undefined && shown.length === 0 && (
+      {filtered !== undefined && filtered.length > 0 && shown!.length === 0 && <NoMatches query={keyword.query} onClear={() => setQuery("")} />}
+      {filtered !== undefined && filtered.length === 0 && (
         <div className="py-10 text-center text-sm text-muted-foreground">{prs!.length === 0 ? "No reviews yet. PRs you review show here, and stay after they merge." : "Nothing matches the filters above."}</div>
       )}
       {shown !== undefined && shown.length > 0 && <ul aria-label="Pull requests" className="mt-2 overflow-hidden rounded-lg border border-border bg-card">{shown.map(row)}</ul>}

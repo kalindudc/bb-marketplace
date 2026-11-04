@@ -2,6 +2,26 @@
 
 Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` in this repository.
 
+## Unreleased
+
+### Added
+
+- A keyword filter on every list: the Inbox and its Reviewing, Snoozed and Dismissed tabs, My PRs, Merged and closed, Reviews, Reviewed by me and each board. A PR stays when every word is in its title, repository, description, author, branches, labels or server's name; `#123` matches PR numbers that start with 123, and `@dana` matches dana. The PRs with the most words in the title come first, then in the repository, then in the author, branches and labels, then in the description. Groups stay, and the list's own sort orders the PRs that rank the same.
+  - The field counts the matches, Escape or its ✕ clears it, and / puts the cursor in it. Each list keeps its words for the session, and the Inbox's tabs share theirs. While Inbox rows are selected, the selection bar shows the words, with a way to clear them.
+  - In Reviews, a line says how many matches Hide bots and Hide quiet keep out.
+  - Titles and the rest match as you type. The page has no descriptions, so Shuttle's server names the PRs that match only through theirs, a moment later. A row only ever shows when every word is known to be on it, and when descriptions cannot be searched the field shows a warning.
+  - A description template's `<!-- … -->` comments are left out of the match.
+- GitHub's lists read each PR's description, so a word in it finds PRs you never opened in Shuttle. A command server's lists may print `body` for the same. Lists, the Inbox and Insights read PRs without their descriptions; only search reads them.
+
+### Changed
+
+- Search, in the header, a board's Add PRs dialog and `bb shuttle search`, also finds words in descriptions. Open PRs still come first; among them, and among merged and closed ones, PRs rank by where the words are, the same way as the filters, instead of title matches first and then the rest.
+- The Inbox's search and a board's filter match like every other list: a board's filter needs each word rather than the whole phrase, and both read branches, labels and descriptions too.
+
+### Fixed
+
+- A command server's list that printed `body` counted as the PR's own read, so the PR on screen was never read by itself for what lists lack, such as its reviewers. Only a PR's own read counts now.
+
 ## 0.8.0 (2026-11-04)
 
 ### Added

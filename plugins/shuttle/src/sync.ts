@@ -186,7 +186,8 @@ export async function syncServer(ctx: Ctx, server: ServerConfig, signal?: AbortS
   const land = (reason: Reason, rows: readonly PrSummary[], complete: boolean) => {
     const reasonRows = ctx.store.tx(() =>
       rows.map((summary) => {
-        const pr = ctx.store.upsertPr(server.id, summary, summary.url ?? linkFor(server, summary.repo, summary.number), reason === "authored");
+        // A list's description makes no full read: the PR's own read still brings what lists lack.
+        const pr = ctx.store.upsertPr(server.id, summary, summary.url ?? linkFor(server, summary.repo, summary.number), reason === "authored", false);
         seen.add(pr.id);
         return { prId: pr.id, teams: summary.teams };
       }),
@@ -248,7 +249,7 @@ export async function syncServer(ctx: Ctx, server: ServerConfig, signal?: AbortS
     // A command that predates this read prints your open reviewed PRs again; the reviewed list has those.
     const closed = list.rows.filter((summary) => summary.state === "merged" || summary.state === "closed");
     ctx.store.tx(() => {
-      for (const summary of closed) seen.add(ctx.store.upsertPr(server.id, summary, summary.url ?? linkFor(server, summary.repo, summary.number), false).id);
+      for (const summary of closed) seen.add(ctx.store.upsertPr(server.id, summary, summary.url ?? linkFor(server, summary.repo, summary.number), false, false).id);
     });
     listed += closed.length;
     ctx.port.publish();
