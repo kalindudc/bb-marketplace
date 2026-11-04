@@ -718,10 +718,13 @@ function markSeen(ctx: EngineCtx, ticket: TicketRow, keys: readonly string[]): v
   ctx.store.updateTicket(ticket.id, { pr_seen_json: JSON.stringify([...seen]) });
 }
 
-/** A human's reply on a ticket whose pull request is open starts a fix round, whatever the forge can tell Loom. */
-export async function humanFixRound(ctx: EngineCtx, ticket: TicketRow, reply: PostRow): Promise<boolean> {
+/**
+ * A reply on a ticket whose pull request is open starts a fix round, whatever the forge can tell Loom: the human's, or the
+ * planner's, whose comments on the pull request come from its author's account and so never count as feedback.
+ */
+export async function humanFixRound(ctx: EngineCtx, ticket: TicketRow, reply: PostRow, from: "human" | "planner" = "human"): Promise<boolean> {
   if (ticket.state !== "pr_open" || !delivers(ctx, ticket.project_id)) return false;
-  const item: FeedbackItem = { kind: "reply", author: "the human", body: reply.body, url: null, state: null, path: null, line: null };
+  const item: FeedbackItem = { kind: "reply", author: `the ${from}`, body: reply.body, url: null, state: null, path: null, line: null };
   return startFixRound(ctx, ticket, { checks: [], items: [item], seen: [], ignored: { bots: 0, own: 0 }, skipped: [], foreign: null, human: true, replyId: reply.id });
 }
 

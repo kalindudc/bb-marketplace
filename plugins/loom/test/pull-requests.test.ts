@@ -4,7 +4,7 @@ import type { PostRow, ThreadRow } from "../src/db/store";
 import type { HostOutput } from "../src/host-contract";
 import { Engine } from "../src/engine";
 import { pollPullRequests, runMergeQueue, settleMerges } from "../src/merge";
-import { askForPrTexts, handInPrText, onPrWriterIdle, resumePrAsks, unchangedFix } from "../src/pull-requests";
+import { humanFixRound, askForPrTexts, handInPrText, onPrWriterIdle, resumePrAsks, unchangedFix } from "../src/pull-requests";
 import type { LoomSettings } from "../src/record";
 import { approve, settleReviews, spawnReviewers } from "../src/review";
 import { deliverHandBacks } from "../src/slots";
@@ -861,6 +861,18 @@ describe("a human reply on an open pull request", () => {
     expect(message).toContain("The human replied on the ticket about its open pull request (fix round 1)");
     expect(message).toContain("Also log the row count.");
     expect(dataOf("pr_feedback")[0]!.data).toMatchObject({ human: true, round: 1 });
+  });
+
+  it("starts one for the planner's post too, which the worker gets as the planner's", async () => {
+    const e = makeEngine();
+    h = e;
+    const worker = await openPr();
+    const post = h.ctx.store.addPost({ project_id: project().id, ticket_id: ticket().id, parent_id: null, author_kind: "planner", author_thread_id: "thr_plan", kind: "reply", body: "Merge origin/main into the branch.", data_json: "{}" });
+    expect(await humanFixRound(h.ctx, ticket(), post, "planner")).toBe(true);
+    expect(ticket()).toMatchObject({ state: "working", pr_rounds: 1 });
+    const message = h.bb.sent(worker.thread_id!).at(-1)!;
+    expect(message).toContain("The planner replied on the ticket about its open pull request (fix round 1)");
+    expect(message).toContain("Merge origin/main into the branch.");
   });
 
   it("leaves the reply on the ticket while the project is paused", async () => {

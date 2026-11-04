@@ -12,7 +12,7 @@ import { discoverText, gatherFacts, type RepoTarget } from "./discover";
 import type { Engine } from "./engine";
 import { LoomError, type ProposeResult, type Projects } from "./projects";
 import { specReviewBlocks } from "./format";
-import { handInPrText, REPLIES_PER_ROUND, replyToItem } from "./pull-requests";
+import { handInPrText, humanFixRound, REPLIES_PER_ROUND, replyToItem } from "./pull-requests";
 import { usesNewMachine } from "./environments";
 import { approve, checkOutReview, requestChanges } from "./review";
 import { ticketPatchSchema, ticketSpecSchema } from "./spec";
@@ -257,13 +257,17 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
 
   bb.agents.registerTool({
     name: "loom_post",
-    description: "Post on a ticket's thread, for example your answer to a blocked ticket before you requeue it. reply_to answers one post by its #id.",
+    description: "Post on a ticket's thread, for example your answer to a blocked ticket before you requeue it. On a ticket whose pull request is open, the post starts a fix round that its worker gets, as a human reply does: use it to ask for a change such as merging the base branch in. reply_to answers one post by its #id.",
     presentation: { label: { pending: "Posting on a Loom ticket", completed: "Posted on a Loom ticket" } },
     parameters: z.object({ key: z.string().min(1).max(40), text: z.string().min(1).max(20_000), reply_to: z.number().int().positive().optional() }),
     execute: ({ key, text, reply_to }, tool) =>
-      run(() => {
+      run(async () => {
         planner(tool.threadId, key);
         const post = projects.post(key, { body: text, parentId: reply_to, author: "planner", threadId: tool.threadId });
+        if (await humanFixRound(ctx, ctx.store.ticketByKey(key)!, post, "planner")) {
+          engine.kick();
+          return `Posted #${post.id} on ${key}. Its pull request is open, so this starts a fix round: the ticket's worker gets your post.`;
+        }
         return `Posted #${post.id} on ${key}.`;
       }),
   });

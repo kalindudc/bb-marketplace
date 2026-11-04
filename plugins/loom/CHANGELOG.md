@@ -15,6 +15,16 @@ Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this
 - A ticket's move to `pr_open` when Loom opens its pull request now records `opened: true` in its event, which `pr.opened` reads; a move back after a fix round or a catch-up does not.
 - A spec without `[[hook]]` tables parses and hashes as before. Changing a hook keeps the spec review, since hooks are what the human asked for.
 
+## 0.30.4 (2026-11-04)
+
+### Added
+
+- The planner's `loom_post` on a ticket whose pull request is open starts a fix round, as a human reply does, and the worker's message says the planner asked. The planner had no way to ask an open pull request's worker for a change such as merging the base branch in: its comments on the pull request come from the author's account, which Loom ignores as the worker's own, and `bb loom post` is the human's.
+
+### Compatibility
+
+- No migration.
+
 ## 0.30.3 (2026-10-28)
 
 ### Fixed

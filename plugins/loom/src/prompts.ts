@@ -920,8 +920,9 @@ function foreignTipLines(foreign: ForeignTip | null): string[] {
 }
 
 export function prFeedbackText(a: { key: string; url: string | null; round: number; counted: number; max: number; checks: FeedbackCheck[]; items: FeedbackItem[]; skipped?: Skipped[]; foreign: ForeignTip | null; forge?: ForgeSpec; signature?: string; restored?: boolean }): { summary: string; detail: string } {
-  const human = a.items.some((item) => item.kind === "reply");
-  const what = human ? "The human replied on the ticket about its open pull request" : a.url === null ? "The pull request needs fixes" : `The pull request ${a.url} needs fixes`;
+  const reply = a.items.find((item) => item.kind === "reply");
+  const human = reply !== undefined;
+  const what = human ? `${reply.author === "the planner" ? "The planner" : "The human"} replied on the ticket about its open pull request` : a.url === null ? "The pull request needs fixes" : `The pull request ${a.url} needs fixes`;
   const merge = foreignTipLines(a.foreign);
   return {
     summary: `[loom] ${a.key}: ${what} (fix round ${a.round}${human ? "" : `; ${a.counted} of the ${a.max} the pull request may start`}). Address it, then call loom_submit({ summary }).`,
