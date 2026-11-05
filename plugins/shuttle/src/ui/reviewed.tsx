@@ -11,8 +11,8 @@ import { REVIEWED_STATES, REVIEWED_VERDICTS, reviewedFilter, reviewedSort, type 
 import { useStored } from "./remember";
 import { ReviewsTabs } from "./reviews";
 import type { Route } from "./route";
-import { KeywordField, NoMatches, useKeywordFilter, useKeywordQuery } from "./keywords";
-import { ReviewedRow, type RowLayout } from "./row";
+import { KeywordField, NoMatches, useListFilter } from "./keywords";
+import { ProgressiveRows, ReviewedRow, type RowLayout } from "./row";
 import { PrListSkeleton } from "./skeleton";
 import { REVIEWED_SORTS, rowTime, sortPrs } from "./sort";
 
@@ -37,8 +37,7 @@ export function ReviewedView({ layout, onGo }: { layout: RowLayout; onGo(route: 
   const days = useSettings().values?.reviewedDays;
   const sort = useStored(reviewedSort);
   const filter = useStored(reviewedFilter);
-  const [query, setQuery] = useKeywordQuery("reviewed");
-  const keyword = useKeywordFilter(query);
+  const { query, setQuery, filter: keyword } = useListFilter("reviewed");
   const boardSelection = useBoardSelection();
   const [boardDialog, setBoardDialog] = useState<null | "create" | "choose">(null);
   const prs = list.data?.prs;
@@ -49,7 +48,13 @@ export function ReviewedView({ layout, onGo }: { layout: RowLayout; onGo(route: 
   const counts = Object.fromEntries(REVIEWED_STATES.map((state) => [state, byVerdict.filter((pr) => inState(pr, state)).length])) as Record<ReviewedState, number>;
   const selectedSet = useMemo(() => new Set(boardSelection.selected), [boardSelection.selected]);
   const chip = (on: boolean) => `inline-flex shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs ${on ? "border-input bg-state-active text-foreground" : "border-border text-muted-foreground hover:text-foreground"}`;
-  const row = (pr: PrView) => <ReviewedRow key={pr.key} pr={pr} layout={{ ...layout, selection: { checked: selectedSet.has(pr.key), onToggle: () => boardSelection.toggle(pr.key) } }} time={rowTime(pr, sort)} />;
+  const { toggle } = boardSelection;
+  // Rebuilt only when what the rows show changes, not on every keystroke in the filter.
+  const rows = useMemo(() => shown !== undefined && shown.length > 0 && (
+    <ul aria-label="Pull requests" className="mt-2 overflow-hidden rounded-lg border border-border bg-card">
+      <ProgressiveRows prs={shown} row={(pr) => <ReviewedRow key={pr.key} pr={pr} layout={{ ...layout, selection: { checked: selectedSet.has(pr.key), onToggle: () => toggle(pr.key) } }} time={rowTime(pr, sort)} />} />
+    </ul>
+  ), [shown, layout, selectedSet, toggle, sort]);
   const span = plural(typeof days === "number" ? days : 90, "day");
   return (
     <div className={PAGE}>
@@ -81,7 +86,7 @@ export function ReviewedView({ layout, onGo }: { layout: RowLayout; onGo(route: 
       {filtered !== undefined && filtered.length === 0 && (
         <div className="py-10 text-center text-sm text-muted-foreground">{prs!.length === 0 ? "No reviews yet. PRs you review show here, and stay after they merge." : "Nothing matches the filters above."}</div>
       )}
-      {shown !== undefined && shown.length > 0 && <ul aria-label="Pull requests" className="mt-2 overflow-hidden rounded-lg border border-border bg-card">{shown.map(row)}</ul>}
+      {rows}
       {boardDialog === "choose" && <BoardChooserDialog prs={boardSelection.selected} onClose={() => setBoardDialog(null)} onCreateBoard={() => setBoardDialog("create")} />}
       {boardDialog === "create" && <BoardFormDialog mode="create" prs={boardSelection.selected} onClose={() => setBoardDialog(null)} />}
     </div>

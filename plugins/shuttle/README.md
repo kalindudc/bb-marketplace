@@ -68,7 +68,9 @@ lists when they print `body`. A template's `<!-- … -->` comments are not part 
 titles and the rest match as you type; matches that need a description come from Shuttle's server a
 moment later, and a row only ever shows when every word is known to be on it. When descriptions
 cannot be searched, the field shows a warning and the rest still matches. While Inbox rows are
-selected, the selection bar shows the words, with a way to clear them.
+selected, the selection bar shows the words, with a way to clear them. A keystroke repaints the
+field at once; the rows follow in a render the next keystroke can drop, and only rows whose content
+changed are drawn again.
 
 ## PR view
 
@@ -287,6 +289,11 @@ See the bundled [Shuttle skill](skills/shuttle/SKILL.md) for the inputs and CLI 
 
 ## Syncing
 
+Opening a list asks no server and rebuilds nothing. Shuttle keeps every PR's view and search text in
+memory, however many PRs it has, and the Inbox, every list, the overview, Insights and search read
+from that index. It is built once after anything changes, just before the page hears of the change,
+and again in the background when only the clock could have changed it, at most once a minute.
+
 Servers sync at the same time, and each one at most once at a time. **Sync now** on one server
 starts that server's sync at once, or joins it when one is already running, rather than waiting for
 the other servers. The steps after the servers, such as thread titles and sending agents what is
@@ -319,9 +326,9 @@ src/sync.ts            one server sync, list by list with bounded retries, and t
 src/failures.ts        why a sync step failed, in plain words, for the UI, the CLI and the Automation log
 src/next.ts            the next-step rule every PR's Inbox row, list row and banner show, and Inbox rules
 src/inbox.ts           the Inbox's read, snoozes, dismissals, seen marks and rules
-src/views.ts           PR rows as the UI sees them, and which area each belongs in
+src/views.ts           PR rows as the UI sees them, which area each belongs in, and the index of every PR's view
 src/match.ts           keyword matching and ranking, shared by search and the page's list filters
-src/search.ts          search over the PRs Shuttle has, and the PRs only their descriptions match
+src/search.ts          search over the PRs Shuttle has from an index of their search text, and the PRs only their descriptions match
 src/agents.ts          a PR's agent thread, its mode, and auto agent
 src/watch.ts           new activity on PRs with an agent: batches, messages, item refs
 src/drafts.ts          AI review drafts and posting reviews

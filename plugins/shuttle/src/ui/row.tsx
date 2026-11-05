@@ -1,4 +1,4 @@
-import { useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { memo, startTransition, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import type { NextKind, PrView } from "../contract";
 import { mentionOnly, postText } from "../next";
@@ -23,6 +23,19 @@ export interface RowLayout {
   onSelect(key: string): void;
 }
 
+/**
+ * Whether a list row would draw the same. A list builds every row's layout and toggle afresh on each render, so
+ * comparing them as objects would redraw every row on each keystroke in its filter. A row's toggle always toggles its
+ * own PR, so only whether it has one counts; the selected PR counts only when it is this one.
+ */
+function sameRow<P extends { pr: PrView; layout: RowLayout }>(a: P, b: P): boolean {
+  const keys = Object.keys(a) as (keyof P)[];
+  if (keys.length !== Object.keys(b).length || keys.some((key) => key !== "layout" && a[key] !== b[key])) return false;
+  const [x, y] = [a.layout, b.layout];
+  return (x.selected === a.pr.key) === (y.selected === b.pr.key) && x.compact === y.compact && x.phone === y.phone && x.onSelect === y.onSelect
+    && (x.selection === undefined) === (y.selection === undefined) && x.selection?.checked === y.selection?.checked;
+}
+
 function Row({ pr, layout, meta, pills }: { pr: PrView; layout: RowLayout; meta: ReactNode; pills: ReactNode }) {
   const selected = pr.key === layout.selected || layout.selection?.checked === true;
   const primary = pr.next.primary;
@@ -34,7 +47,8 @@ function Row({ pr, layout, meta, pills }: { pr: PrView; layout: RowLayout; meta:
   };
   return (
     <li data-pr={pr.key} data-next={pr.next.kind} tabIndex={0} aria-current={selected ? "true" : undefined} onClick={onCardClick(() => layout.onSelect(pr.key))} onKeyDown={onKey}
-      className={`flex cursor-pointer items-start gap-2.5 border-t border-border px-3.5 py-2.5 first:border-t-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${selected ? SELECTED_ROW : "hover:bg-state-hover"}`}>
+      // Rows off screen skip style, layout and paint until scrolled to; a list of hundreds opens and scrolls without it.
+      className={`flex cursor-pointer items-start gap-2.5 border-t border-border px-3.5 py-2.5 [contain-intrinsic-size:auto_68px] [content-visibility:auto] first:border-t-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${selected ? SELECTED_ROW : "hover:bg-state-hover"}`}>
       {layout.selection && (
         <input type="checkbox" aria-label={`Select ${pr.title}`} checked={layout.selection.checked} onChange={() => layout.selection?.onToggle()} className="mt-1 size-4 shrink-0 cursor-pointer accent-foreground" />
       )}
@@ -55,7 +69,7 @@ function Row({ pr, layout, meta, pills }: { pr: PrView; layout: RowLayout; meta:
  * One of your PRs: its checks, its reviews and its agent, and its next step on the right. `time` is the time its list
  * is sorted by; `group` names the section it would sit in, for a list that is not grouped.
  */
-export function MineRow({ pr, layout, time = pr.updatedAt === null ? null : age(pr.updatedAt), group }: { pr: PrView; layout: RowLayout; time?: string | null; group?: string }) {
+export const MineRow = memo(function MineRow({ pr, layout, time = pr.updatedAt === null ? null : age(pr.updatedAt), group }: { pr: PrView; layout: RowLayout; time?: string | null; group?: string }) {
   const meta = (
     <>
       <span className="truncate font-mono" title={shortKey(pr)}>{tinyKey(pr)}</span>
@@ -79,10 +93,10 @@ export function MineRow({ pr, layout, time = pr.updatedAt === null ? null : age(
     </>
   );
   return <Row pr={pr} layout={layout} meta={meta} pills={pills} />;
-}
+}, sameRow);
 
 /** Someone else's PR: its size, how long it has asked you, where your review stands and why it is here. */
-export function ReviewRow({ pr, layout }: { pr: PrView; layout: RowLayout }) {
+export const ReviewRow = memo(function ReviewRow({ pr, layout }: { pr: PrView; layout: RowLayout }) {
   const waited = pr.requestedAt === null ? null : Date.now() - pr.requestedAt;
   const meta = (
     <>
@@ -102,7 +116,7 @@ export function ReviewRow({ pr, layout }: { pr: PrView; layout: RowLayout }) {
     </>
   );
   return <Row pr={pr} layout={layout} meta={meta} pills={pills} />;
-}
+}, sameRow);
 
 const VERDICT_LOOKS: Record<NonNullable<PrView["myReview"]>["verdict"], { tone: Tone; icon: string; label: string }> = {
   approve: { tone: "ok", icon: "Check", label: "You approved" },
@@ -112,7 +126,7 @@ const VERDICT_LOOKS: Record<NonNullable<PrView["myReview"]>["verdict"], { tone: 
 };
 
 /** A PR you reviewed: your verdict, whether it merged, and the time its list is sorted by. */
-export function ReviewedRow({ pr, layout, time }: { pr: PrView; layout: RowLayout; time: string | null }) {
+export const ReviewedRow = memo(function ReviewedRow({ pr, layout, time }: { pr: PrView; layout: RowLayout; time: string | null }) {
   const verdict = pr.myReview === null ? null : VERDICT_LOOKS[pr.myReview.verdict];
   const meta = (
     <>
@@ -132,7 +146,7 @@ export function ReviewedRow({ pr, layout, time }: { pr: PrView; layout: RowLayou
     </>
   );
   return <Row pr={pr} layout={layout} meta={meta} pills={pills} />;
-}
+}, sameRow);
 
 export function GroupHeader({ title, count, description, layout, folded, onFold }: {
   title: string;
@@ -165,13 +179,29 @@ export function GroupHeader({ title, count, description, layout, folded, onFold 
 }
 
 /** The PRs whose next step is one of a group's kinds, under the group's title; nothing when none is. */
+/** Rows a list draws at once; the rest follow in a render that typing or a click can interrupt. */
+const FIRST_ROWS = 50;
+
+/**
+ * A long list's rows: the first ones at once, so a list of hundreds opens without a wait, then every row. Once a
+ * list showed every row it keeps showing them all.
+ */
+export function ProgressiveRows({ prs, row }: { prs: readonly PrView[]; row(pr: PrView): ReactNode }) {
+  const [all, setAll] = useState(prs.length <= FIRST_ROWS);
+  const more = !all && prs.length > FIRST_ROWS;
+  useEffect(() => {
+    if (more) startTransition(() => setAll(true));
+  }, [more]);
+  return <>{(more ? prs.slice(0, FIRST_ROWS) : prs).map(row)}</>;
+}
+
 export function GroupList({ group, prs, layout, row, folding }: { group: Group; prs: readonly PrView[]; layout: RowLayout; row(pr: PrView): ReactNode; folding?: Folding }) {
   if (prs.length === 0) return null;
   const folded = folding?.folded(group.title) ?? false;
   return (
     <section aria-label={group.title} data-group={group.title} data-folded={folded ? "" : undefined}>
       <GroupHeader title={group.title} count={prs.length} description={group.description} layout={layout} folded={folded} onFold={folding && (() => folding.toggle(group.title))} />
-      {!folded && <ul className="overflow-hidden rounded-lg border border-border bg-card">{prs.map(row)}</ul>}
+      {!folded && <ul className="overflow-hidden rounded-lg border border-border bg-card"><ProgressiveRows prs={prs} row={row} /></ul>}
     </section>
   );
 }

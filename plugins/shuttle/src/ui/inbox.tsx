@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { experimental_Icon as Icon, useSettings } from "@get-bb/plugin-sdk/app";
 import type { InboxRule, InboxRuleKind, InboxView as InboxData, NextKind, NextTone, PrView } from "../contract";
@@ -12,7 +12,7 @@ import { Picker, PickerAction, PickerGroup, PickerRadio, PickerSeparator } from 
 import { inboxSwipeHint, inboxView, useFolding, type InboxGrouping, type InboxSort } from "./prefs";
 import { useStored } from "./remember";
 import type { InboxTab, Route } from "./route";
-import { KeywordField, NoMatches, useKeywordFilter, useKeywordQuery, type KeywordFilter } from "./keywords";
+import { KeywordField, NoMatches, useListFilter, type KeywordFilter } from "./keywords";
 import { InboxRow, mentionsYouOnly, RepoChip, type RowLayout } from "./row";
 import { InboxSkeleton } from "./skeleton";
 
@@ -279,6 +279,58 @@ function SectionHeading({ section, days, folded, onFold }: { section: Section; d
 }
 
 type Menu = { kind: "snooze" | "more"; key: string } | null;
+
+/** What an Inbox row asks of its list; the same object on every render. */
+interface RowApi {
+  open(key: string): void;
+  toggle(key: string, range: boolean): void;
+  focus(key: string): void;
+  leave(keys: readonly string[]): void;
+  dismiss(prs: readonly PrView[]): void;
+  menu(kind: "snooze" | "more", key: string, open: boolean): void;
+}
+
+/** One Inbox row with its hover actions and menus; it redraws only when one of its props changes. */
+const InboxListRow = memo(function InboxListRow({ pr, phone, selected, checked, selecting, cursor, menu, kindChip, repoChip, inbox, api }: {
+  pr: PrView;
+  phone: boolean;
+  selected: boolean;
+  checked: boolean;
+  selecting: boolean;
+  cursor: boolean;
+  /** This row's open menu. */
+  menu: "snooze" | "more" | null;
+  kindChip: boolean;
+  repoChip: boolean;
+  inbox: readonly PrView[];
+  api: RowApi;
+}) {
+  const menuOf = (kind: "snooze" | "more") => ({ open: menu === kind, onOpenChange: (next: boolean) => api.menu(kind, pr.key, next) });
+  const snooze = (
+    <SnoozeMenu prs={[pr]} phone={phone} {...menuOf("snooze")} triggerClassName={ICON_GHOST} triggerLabel={`Snooze ${tinyKey(pr)}`}
+      tip={{ text: "Snooze: hide it until a time you pick", keys: selecting ? undefined : "S" }} trigger={<Icon name="Clock" className="size-4" aria-hidden />} onPick={() => api.leave([pr.key])} />
+  );
+  const more = <RowMenu pr={pr} inbox={inbox} phone={phone} {...menuOf("more")} onDismiss={() => api.dismiss([pr])} onSnooze={() => api.menu("snooze", pr.key, true)} />;
+  return (
+    <InboxRow pr={pr} mode="inbox" phone={phone} selected={selected} checked={checked} selecting={selecting}
+      cursor={cursor} active={menu !== null} kindChip={kindChip} repoChip={repoChip}
+      onOpen={() => api.open(pr.key)} onCheck={(range) => api.toggle(pr.key, range)} onFocus={() => api.focus(pr.key)}
+      overlay={(
+        <>
+          {pr.next.primary !== null && <span className="inline-flex @max-[720px]:hidden"><NextButton pr={pr} action={pr.next.primary} primary small /></span>}
+          {snooze}
+          <Tip text="Dismiss: keep it out of the Inbox for good" keys={selecting ? undefined : "E"}>
+            <button type="button" aria-label={`Dismiss ${tinyKey(pr)} from the Inbox`} className={ICON_GHOST} onClick={() => api.dismiss([pr])}>
+              <Icon name="ArchiveX" fallback="Archive" className="size-4" aria-hidden />
+            </button>
+          </Tip>
+          {more}
+        </>
+      )}
+      menu={phone ? <>{more}<span className="hidden">{snooze}</span></> : undefined}
+      onSwipe={phone ? { left: () => api.dismiss([pr]), right: () => api.menu("snooze", pr.key, true) } : undefined} />
+  );
+});
 /** The selection bar's snooze menu, as opposed to one row's. */
 const SELECTION = "";
 
@@ -311,9 +363,9 @@ function InboxList({ data, layout, keywords, onGo, onShortcuts }: { data: InboxD
   const [menu, setMenu] = useState<Menu>(null);
   const anchor = useRef<string | null>(null);
 
-  const all = data.prs.filter((pr) => pr.next.inbox);
-  const shown = filter.active ? all.filter((pr) => filter.rank(pr) !== null) : all;
-  const sections = sectionsOf(shown, prefs.group, prefs.sort, filter.compare);
+  const all = useMemo(() => data.prs.filter((pr) => pr.next.inbox), [data.prs]);
+  const shown = useMemo(() => (filter.active ? all.filter((pr) => filter.rank(pr) !== null) : all), [all, filter]);
+  const sections = useMemo(() => sectionsOf(shown, prefs.group, prefs.sort, filter.compare), [shown, prefs.group, prefs.sort, filter]);
   const visible = sections.filter((section) => !folding.folded(section.key)).flatMap((section) => section.prs);
   const order = visible.map((pr) => pr.key);
   const selection = [...visible, ...all.filter((pr) => !order.includes(pr.key))].filter((pr) => checked.has(pr.key));
@@ -469,32 +521,35 @@ function InboxList({ data, layout, keywords, onGo, onShortcuts }: { data: InboxD
     </div>
   );
 
-  const rowOf = (pr: PrView) => {
-    const snooze = (
-      <SnoozeMenu prs={[pr]} phone={phone} {...menuOf("snooze", pr.key)} triggerClassName={ICON_GHOST} triggerLabel={`Snooze ${tinyKey(pr)}`}
-        tip={{ text: "Snooze: hide it until a time you pick", keys: selecting ? undefined : "S" }} trigger={<Icon name="Clock" className="size-4" aria-hidden />} onPick={() => leave([pr.key])} />
-    );
-    const more = <RowMenu pr={pr} inbox={all} phone={phone} {...menuOf("more", pr.key)} onDismiss={() => dismiss([pr])} onSnooze={() => setMenu({ kind: "snooze", key: pr.key })} />;
+  // The rows' handlers stay the same objects across renders and call this render's functions, so a row redraws only
+  // when what it shows changes.
+  const latest = useRef({ open, toggle, leave, dismiss });
+  latest.current = { open, toggle, leave, dismiss };
+  const api = useMemo<RowApi>(() => ({
+    open: (key) => latest.current.open(key),
+    toggle: (key, range) => latest.current.toggle(key, range),
+    focus: (key) => setCursor(key),
+    leave: (keys) => latest.current.leave(keys),
+    dismiss: (prs) => latest.current.dismiss(prs),
+    menu: (kind, key, next) => setMenu((current) => (next ? { kind, key } : current?.kind === kind && current.key === key ? null : current)),
+  }), []);
+  const rowOf = (pr: PrView) => (
+    <InboxListRow key={pr.key} pr={pr} phone={phone} selected={layout.selected === pr.key} checked={checked.has(pr.key)} selecting={selecting}
+      cursor={cursor === pr.key} menu={menu !== null && menu.key === pr.key ? menu.kind : null} kindChip={prefs.group !== "kind"} repoChip={prefs.group !== "repo"}
+      inbox={all} api={api} />
+  );
+
+  // Rebuilt only when what the rows show changes, not on every keystroke in the search field. Every value the rows'
+  // handlers read is a dependency, or derives from one.
+  const rows = useMemo(() => sections.map((section) => {
+    const folded = folding.folded(section.key);
     return (
-      <InboxRow key={pr.key} pr={pr} mode="inbox" phone={phone} selected={layout.selected === pr.key} checked={checked.has(pr.key)} selecting={selecting}
-        cursor={cursor === pr.key} active={menu !== null && menu.key === pr.key} kindChip={prefs.group !== "kind"} repoChip={prefs.group !== "repo"}
-        onOpen={() => open(pr.key)} onCheck={(range) => toggle(pr.key, range)} onFocus={() => setCursor(pr.key)}
-        overlay={(
-          <>
-            {pr.next.primary !== null && <span className="inline-flex @max-[720px]:hidden"><NextButton pr={pr} action={pr.next.primary} primary small /></span>}
-            {snooze}
-            <Tip text="Dismiss: keep it out of the Inbox for good" keys={selecting ? undefined : "E"}>
-              <button type="button" aria-label={`Dismiss ${tinyKey(pr)} from the Inbox`} className={ICON_GHOST} onClick={() => dismiss([pr])}>
-                <Icon name="ArchiveX" fallback="Archive" className="size-4" aria-hidden />
-              </button>
-            </Tip>
-            {more}
-          </>
-        )}
-        menu={phone ? <>{more}<span className="hidden">{snooze}</span></> : undefined}
-        onSwipe={phone ? { left: () => dismiss([pr]), right: () => setMenu({ kind: "snooze", key: pr.key }) } : undefined} />
+      <section key={section.key} data-section={section.key} aria-label={section.heading === null ? "Pull requests" : "group" in section.heading ? section.heading.group.title : section.heading.repo.repo} className={section.heading === null ? "mt-2" : ""}>
+        <SectionHeading section={section} days={days} folded={folded} onFold={() => folding.toggle(section.key)} />
+        {!folded && <ul className="overflow-hidden rounded-lg border border-border bg-card">{section.prs.map(rowOf)}</ul>}
+      </section>
     );
-  };
+  }), [sections, folding, days, phone, layout.selected, checked, cursor, menu, selecting, prefs.group, all, api]);
 
   const foot: ReactNode[] = [];
   if (data.olderRequests > 0) {
@@ -553,15 +608,7 @@ function InboxList({ data, layout, keywords, onGo, onShortcuts }: { data: InboxD
         </div>
       )}
       {all.length > 0 && shown.length === 0 && <NoMatches query={filter.query} onClear={() => setQuery("")} />}
-      {sections.map((section) => {
-        const folded = folding.folded(section.key);
-        return (
-          <section key={section.key} data-section={section.key} aria-label={section.heading === null ? "Pull requests" : "group" in section.heading ? section.heading.group.title : section.heading.repo.repo} className={section.heading === null ? "mt-2" : ""}>
-            <SectionHeading section={section} days={days} folded={folded} onFold={() => folding.toggle(section.key)} />
-            {!folded && <ul className="overflow-hidden rounded-lg border border-border bg-card">{section.prs.map(rowOf)}</ul>}
-          </section>
-        );
-      })}
+      {rows}
       {foot.length > 0 && (
         <div data-foot className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs text-muted-foreground">{foot}</div>
       )}
@@ -700,8 +747,8 @@ export function InboxView({ tab, layout, onGo }: { tab: InboxTab | "inbox"; layo
   const { writes } = useActions();
   const inbox = useShuttleQuery("inbox", {});
   const reviewed = useShuttleQuery("overview", {}).data?.counts.reviewed;
-  const [query, setQuery] = useKeywordQuery("inbox");
-  const keywords: InboxKeywords = { query, setQuery, filter: useKeywordFilter(query) };
+  const { query, setQuery, filter } = useListFilter("inbox");
+  const keywords: InboxKeywords = { query, setQuery, filter };
   const [shortcuts, setShortcuts] = useState(false);
   const data = inbox.data;
   const fresh = data?.dismissed.filter((pr) => pr.dismissed?.activity).length ?? 0;

@@ -18,8 +18,13 @@ Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` i
 - Search, in the header, a board's Add PRs dialog and `bb shuttle search`, also finds words in descriptions. Open PRs still come first; among them, and among merged and closed ones, PRs rank by where the words are, the same way as the filters, instead of title matches first and then the rest.
 - The Inbox's search and a board's filter match like every other list: a board's filter needs each word rather than the whole phrase, and both read branches, labels and descriptions too.
 
+- Shuttle keeps an index of every PR's view and search text in memory, for every PR it has however many, and the Inbox, every list, the overview, Insights and search read from it. It is built once after anything changes, just before the page hears of it, and again in the background when the clock alone could have changed it, at most once a minute. Opening a list never rebuilds every PR. With 1,224 PRs, a read of the Inbox, a list or the overview took 280 to 450 ms; from the index it takes under 1 ms, and building the index after a change about 40 ms. Search and the filters' description matches went from about 60 ms to about 10.
+- A keystroke in a filter repaints the field at once and the rows in a render the next keystroke can drop, and only rows whose content changed are drawn again. With 400 rows a keystroke held the page for 50 to 60 ms in Reviews and My PRs and about 550 ms in the Inbox, and now holds it for at most 3 ms.
+- A long list draws its first rows at once and the rest right after, in a render typing or a click can interrupt, and rows off screen skip layout and paint until scrolled to. Reviews with 700 PRs shows its first rows in about half the time.
+
 ### Fixed
 
+- Opening or refreshing Shuttle stalled bb's server, and so every panel, for up to a second, about once a minute. Each read built every PR's view again, compiling each of its queries and parsing the whole config again for each PR. Queries are now compiled once, the config is parsed once until it is saved, and the views come from the index.
 - A command server's list that printed `body` counted as the PR's own read, so the PR on screen was never read by itself for what lists lack, such as its reviewers. Only a PR's own read counts now.
 
 ## 0.8.0 (2026-11-04)

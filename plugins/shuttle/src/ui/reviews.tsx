@@ -7,7 +7,7 @@ import { messageOf, useShuttleQuery } from "./data";
 import { BoardChooserDialog, BoardFormDialog, BoardSelectionToolbar, useBoardSelection } from "./boards";
 import { useFolding, type ReviewFilter } from "./prefs";
 import { SOURCES, type Route, type Source } from "./route";
-import { KeywordField, NoMatches, useKeywordFilter, useKeywordQuery } from "./keywords";
+import { KeywordField, NoMatches, useListFilter } from "./keywords";
 import { FoldAllButton, GroupList, ReviewRow, type RowLayout } from "./row";
 import { PrListSkeleton } from "./skeleton";
 
@@ -61,8 +61,7 @@ export function ReviewsView({ source, filter, layout, onFilter, onGo }: {
   onGo(route: Route): void;
 }) {
   const list = useShuttleQuery("list", { area: "reviews" });
-  const [query, setQuery] = useKeywordQuery("reviews");
-  const keyword = useKeywordFilter(query);
+  const { query, setQuery, filter: keyword } = useListFilter("reviews");
   const boardSelection = useBoardSelection();
   const [boardDialog, setBoardDialog] = useState<null | "create" | "choose">(null);
   useEffect(() => boardSelection.clear(), [source]);
@@ -75,21 +74,31 @@ export function ReviewsView({ source, filter, layout, onFilter, onGo }: {
   const bots = inScope.filter((pr) => pr.bot).length;
   const quiet = inScope.filter((pr) => pr.quiet && !pr.bot).length;
   const unfiltered = inScope.filter((pr) => !(filter.hideBots && pr.bot) && !(filter.hideQuiet && pr.quiet));
-  const shown = keyword.active ? unfiltered.filter((pr) => keyword.rank(pr) !== null) : unfiltered;
-  // What the words match among the PRs Hide bots and Hide quiet keep out.
-  const kept = new Set(unfiltered);
-  const hiddenMatches = keyword.active ? inScope.filter((pr) => !kept.has(pr) && keyword.rank(pr) !== null).length : 0;
+  const scope = `${source}/${team}/${filter.hideBots}/${filter.hideQuiet}`;
+  // Kept while you type, and rebuilt in the render the words' filter lags into.
+  const { shown, hiddenMatches, sections } = useMemo(() => {
+    const matched = keyword.active ? unfiltered.filter((pr) => keyword.rank(pr) !== null) : unfiltered;
+    // What the words match among the PRs Hide bots and Hide quiet keep out.
+    const kept = new Set(unfiltered);
+    const hidden = keyword.active ? inScope.filter((pr) => !kept.has(pr) && keyword.rank(pr) !== null).length : 0;
+    const grouped = new Set(REVIEW_GROUPS.flatMap((group) => group.kinds));
+    const oldestFirst = (items: PrView[]) => [...items].sort((a, b) => (a.requestedAt ?? Number.POSITIVE_INFINITY) - (b.requestedAt ?? Number.POSITIVE_INFINITY));
+    const groups = [...REVIEW_GROUPS, OTHER].map((group) => {
+      const members = group === OTHER ? matched.filter((pr) => !grouped.has(pr.next.kind)) : matched.filter((pr) => group.kinds.includes(pr.next.kind));
+      // The best keyword matches first; the group's own order sorts equals.
+      return { group, prs: keyword.apply(group.title === "Not reviewed yet" ? oldestFirst(members) : members) };
+    }).filter((section) => section.prs.length > 0);
+    return { shown: matched, hiddenMatches: hidden, sections: groups };
+    // `scope` names every input of inScope and unfiltered, which are new arrays on each render.
+  }, [prs, scope, keyword]);
   const chip = (on: boolean) => `inline-flex shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs ${on ? "border-input bg-state-active text-foreground" : "border-border text-muted-foreground hover:text-foreground"}`;
   const selectedSet = useMemo(() => new Set(boardSelection.selected), [boardSelection.selected]);
-  const row = (pr: PrView) => <ReviewRow key={pr.key} pr={pr} layout={{ ...layout, selection: { checked: selectedSet.has(pr.key), onToggle: () => boardSelection.toggle(pr.key) } }} />;
-  const grouped = new Set(REVIEW_GROUPS.flatMap((group) => group.kinds));
-  const oldestFirst = (items: PrView[]) => [...items].sort((a, b) => (a.requestedAt ?? Number.POSITIVE_INFINITY) - (b.requestedAt ?? Number.POSITIVE_INFINITY));
   const folding = useFolding("reviews");
-  const sections = [...REVIEW_GROUPS, OTHER].map((group) => {
-    const members = group === OTHER ? shown.filter((pr) => !grouped.has(pr.next.kind)) : shown.filter((pr) => group.kinds.includes(pr.next.kind));
-    // The best keyword matches first; the group's own order sorts equals.
-    return { group, prs: keyword.apply(group.title === "Not reviewed yet" ? oldestFirst(members) : members) };
-  }).filter((section) => section.prs.length > 0);
+  const { toggle } = boardSelection;
+  const rows = useMemo(() => {
+    const row = (pr: PrView) => <ReviewRow key={pr.key} pr={pr} layout={{ ...layout, selection: { checked: selectedSet.has(pr.key), onToggle: () => toggle(pr.key) } }} />;
+    return sections.map((section) => <GroupList key={section.group.title} group={section.group} prs={section.prs} layout={layout} row={row} folding={folding} />);
+  }, [sections, layout, selectedSet, toggle, folding]);
 
   return (
     <div className={PAGE}>
@@ -132,7 +141,7 @@ export function ReviewsView({ source, filter, layout, onFilter, onGo }: {
       {prs !== undefined && source !== "tracked" && unfiltered.length === 0 && (
         <div className="py-10 text-center text-sm text-muted-foreground">{inScope.length === 0 ? "Nothing here." : "Everything here is hidden by the filters above."}</div>
       )}
-      {sections.map((section) => <GroupList key={section.group.title} group={section.group} prs={section.prs} layout={layout} row={row} folding={folding} />)}
+      {rows}
       {boardDialog === "choose" && <BoardChooserDialog prs={boardSelection.selected} onClose={() => setBoardDialog(null)} onCreateBoard={() => setBoardDialog("create")} />}
       {boardDialog === "create" && <BoardFormDialog mode="create" prs={boardSelection.selected} onClose={() => setBoardDialog(null)} />}
     </div>

@@ -64,6 +64,7 @@ function toThread(thread: ThreadLike): ThreadInfo {
 
 export function createBbPort(bb: BbPluginApi, setSettings: BbPort["setSettings"] = async () => {}): BbPort {
   let publishTimer: ReturnType<typeof setTimeout> | null = null;
+  let warm: (() => void) | null = null;
   let pendingInvalidations = new Set<string>();
   /** A managed worktree is made on a machine: the one with the project's default checkout, else bb's primary machine. */
   const hostFor = async (projectId: string): Promise<string> => {
@@ -207,8 +208,19 @@ export function createBbPort(bb: BbPluginApi, setSettings: BbPort["setSettings"]
         publishTimer = null;
         const invalidate = [...pendingInvalidations];
         pendingInvalidations = new Set<string>();
+        // The page reads again as soon as it hears; what it reads is built once here, not once for each read.
+        if (invalidate.includes("prs")) {
+          try {
+            warm?.();
+          } catch (error) {
+            bb.log.warn(`index: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
         bb.rpc.experimental_invalidate(invalidate);
       }, 150);
+    },
+    beforePublish(fn) {
+      warm = fn;
     },
     log(level, text) {
       bb.log[level](text);

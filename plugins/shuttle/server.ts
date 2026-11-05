@@ -35,6 +35,9 @@ export function createShuttlePlugin(deps: PluginDeps = {}) {
     const port = deps.port ? deps.port(bb) : createBbPort(bb, setSettings);
     const lifetime = new AbortController();
     const app = new Shuttle({ store, port, now, settings: () => settings, runner: deps.runner, lifetime: lifetime.signal });
+    port.beforePublish?.(() => {
+      if (!disposed) app.warmIndexes();
+    });
     let disposed = false;
     bb.onDispose(() => {
       disposed = true;

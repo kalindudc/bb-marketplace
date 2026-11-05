@@ -28,11 +28,11 @@ import { matchProject } from "./projects";
 import { archiveDoneReviewThreads, unarchiveForDraft } from "./review-threads";
 import { endQuietReviews, endReview, failReviewsOfThread, resumeReviews, type ThreadFailure } from "./review-runs";
 import { startReview } from "./reviews";
-import { descriptionMatches, searchPrs } from "./search";
+import { descriptionMatches, searchIndex, searchPrs } from "./search";
 import type { Settings } from "./settings";
 import { primaryStep } from "./failures";
 import { RECHECK_MS, runAutoReviews, syncServer } from "./sync";
-import { allViews, inArea, inboxOf, toView } from "./views";
+import { allViews, inArea, inboxCandidates, inboxOf, toView } from "./views";
 import { editOptions, editPr } from "./edit";
 import { LinkCards } from "./link-cards";
 import { deliver, pollWatches } from "./watch";
@@ -1017,6 +1017,14 @@ export class Shuttle implements Ctx {
     // A server whose sync just started is read by that sync.
     this.fastLane.start((id) => this.syncingServer(id), signal);
     await this.deliver();
+    // Rebuilt here when the clock alone made them old, so opening a list never waits for it.
+    this.warmIndexes();
+  }
+
+  /** Builds every PR's view and search text now when they are out of date; a no-op otherwise. */
+  warmIndexes(): void {
+    inboxCandidates(this);
+    searchIndex(this);
   }
 
   /** Keeps a sync the tick started, for syncsSettled, and logs how it failed. */

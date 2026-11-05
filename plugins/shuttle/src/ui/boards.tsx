@@ -6,9 +6,9 @@ import { PANEL_PATH } from "./constants";
 import { ago, clock, plural, shortKey } from "./format";
 import { BUTTON, BUTTON_DANGER, BUTTON_GHOST, BUTTON_ON, BUTTON_PRIMARY, Dialog, ErrorNote, FIELD, FIELD_SMALL, ICON_GHOST_LARGE, PageHeading } from "./common";
 import { messageOf, undoToast, useShuttleMutation, useShuttleQuery } from "./data";
-import { KeywordField, NoMatches, useKeywordFilter, useKeywordQuery } from "./keywords";
+import { KeywordField, NoMatches, useListFilter } from "./keywords";
 import { StatePill } from "./pills";
-import { FoldAllButton, GroupHeader, MineRow, ReviewRow, type RowLayout } from "./row";
+import { FoldAllButton, GroupHeader, MineRow, ProgressiveRows, ReviewRow, type RowLayout } from "./row";
 import { BoardsSkeleton, PrListSkeleton } from "./skeleton";
 import { boardViews, useFolding } from "./prefs";
 import { useStored } from "./remember";
@@ -460,8 +460,7 @@ export function BoardDetailView({ id, layout, onGo }: { id: string; layout: RowL
   const update = useShuttleMutation("boardUpdate");
   const remove = useShuttleMutation("boardRemove");
   const addBack = useShuttleMutation("boardAdd");
-  const [query, setQuery] = useKeywordQuery(`board/${id}`);
-  const keyword = useKeywordFilter(query);
+  const { query, setQuery, filter: keyword } = useListFilter(`board/${id}`);
   const [dialog, setDialog] = useState<null | { kind: "edit" | "duplicate" | "add" | "archive" | "tools" | "remove" | "create" | "choose" }>(null);
   const [status, setStatus] = useState<BoardStatus>("all");
   const selection = useSelectedKeys();
@@ -473,7 +472,41 @@ export function BoardDetailView({ id, layout, onGo }: { id: string; layout: RowL
   const navigate = useBbNavigate();
   const detail: BoardDetail | undefined = boardQuery.data;
   const selected = useMemo(() => new Set(selection.selected), [selection.selected]);
-  const toggleSelected = useCallback((key: string) => selection.toggle(key), [selection]);
+  const toggleSelected = selection.toggle;
+  const members = detail?.prs;
+  const filtered = useMemo(() => (members ?? []).filter((pr) => hasStatus(pr, status)), [members, status]);
+  // The best keyword matches first; the sort orders equals.
+  const visible = useMemo(() => keyword.apply(view.sort === "saved" ? filtered : sortPrs(filtered, view.sort)), [filtered, view.sort, keyword]);
+  const sections = useMemo(() => groupBoardPrs(visible, view.group), [visible, view.group]);
+  const archivedBoard = detail !== undefined && detail.board.archivedAt !== null;
+  // Rebuilt only when what the rows show changes, not on every keystroke in the filter.
+  const rows = useMemo(() => {
+    const openPr = (key: string) => onGo({ view: "board", id, key });
+    const row = (pr: PrView) => {
+      const rowLayout: RowLayout = {
+        ...layout,
+        selection: archivedBoard ? undefined : { checked: selected.has(pr.key), onToggle: () => toggleSelected(pr.key) },
+        onSelect: openPr,
+      };
+      return pr.mine ? <MineRow key={pr.key} pr={pr} layout={rowLayout} time={view.sort === "saved" ? undefined : rowTime(pr, view.sort)} /> : <ReviewRow key={pr.key} pr={pr} layout={rowLayout} />;
+    };
+    return (
+      <>
+        {visible.length > 0 && view.group === "none" && (
+          <ul aria-label="Board PRs" className="overflow-hidden rounded-lg border border-border bg-card"><ProgressiveRows prs={visible} row={row} /></ul>
+        )}
+        {sections.map((section) => {
+          const folded = groupFolding.folded(section.key);
+          return (
+            <section key={section.key} aria-label={section.title} data-group={section.title} data-folded={folded ? "" : undefined}>
+              <GroupHeader title={section.title} count={section.prs.length} layout={layout} folded={folded} onFold={() => groupFolding.toggle(section.key)} />
+              {!folded && <ul className="overflow-hidden rounded-lg border border-border bg-card"><ProgressiveRows prs={section.prs} row={row} /></ul>}
+            </section>
+          );
+        })}
+      </>
+    );
+  }, [visible, sections, view.group, view.sort, layout, selected, toggleSelected, archivedBoard, groupFolding, onGo, id]);
 
   if (boardQuery.error !== null) {
     return (
@@ -491,10 +524,6 @@ export function BoardDetailView({ id, layout, onGo }: { id: string; layout: RowL
   const board = detail.board;
   const archived = board.archivedAt !== null;
   const prs = detail.prs;
-  const filtered = prs.filter((pr) => hasStatus(pr, status));
-  // The best keyword matches first; the sort orders equals.
-  const visible = keyword.apply(view.sort === "saved" ? filtered : sortPrs(filtered, view.sort));
-  const sections = groupBoardPrs(visible, view.group);
   const removeSelected = async () => {
     if (selection.selected.length === 0) return;
     const out = await remove.run({ id: board.id, prs: selection.selected });
@@ -517,16 +546,6 @@ export function BoardDetailView({ id, layout, onGo }: { id: string; layout: RowL
     undoToast(`Restored “${board.name}”.`, () => void update.run({ id: board.id, archived: true }));
     navigate.toPluginPanel(PANEL_PATH, { subPath: formatRoute({ view: "board", id: board.id, key: null }) });
   })();
-  const openPr = (key: string) => onGo({ view: "board", id, key });
-  const row = (pr: PrView) => {
-    const rowLayout: RowLayout = {
-      ...layout,
-      selection: archived ? undefined : { checked: selected.has(pr.key), onToggle: () => toggleSelected(pr.key) },
-      onSelect: openPr,
-    };
-    return pr.mine ? <MineRow key={pr.key} pr={pr} layout={rowLayout} time={view.sort === "saved" ? undefined : rowTime(pr, view.sort)} /> : <ReviewRow key={pr.key} pr={pr} layout={rowLayout} />;
-  };
-
   const facts = (
     <>
       <p className="mt-0.5 text-xs text-muted-foreground">{board.description || "Saved PRs that stay live."}</p>
@@ -644,18 +663,7 @@ export function BoardDetailView({ id, layout, onGo }: { id: string; layout: RowL
       {visible.length === 0 && (keyword.active && filtered.length > 0
         ? <NoMatches query={keyword.query} onClear={() => setQuery("")} />
         : <div className="py-10 text-center text-sm text-muted-foreground">{prs.length === 0 ? "This board is empty." : "No matching PRs."}</div>)}
-      {visible.length > 0 && view.group === "none" && (
-        <ul aria-label="Board PRs" className="overflow-hidden rounded-lg border border-border bg-card">{visible.map(row)}</ul>
-      )}
-      {sections.map((section) => {
-        const folded = groupFolding.folded(section.key);
-        return (
-          <section key={section.key} aria-label={section.title} data-group={section.title} data-folded={folded ? "" : undefined}>
-            <GroupHeader title={section.title} count={section.prs.length} layout={layout} folded={folded} onFold={() => groupFolding.toggle(section.key)} />
-            {!folded && <ul className="overflow-hidden rounded-lg border border-border bg-card">{section.prs.map(row)}</ul>}
-          </section>
-        );
-      })}
+      {rows}
       <section aria-label="Board activity" data-folded={activityFolded ? "" : undefined} className="mt-6">
         <GroupHeader title="Activity" count={detail.activity.length} layout={layout} folded={activityFolded} onFold={() => folding.toggle("Activity")} />
         {!activityFolded && (detail.activity.length === 0 ? <p className="text-xs text-muted-foreground">No activity yet.</p> : (

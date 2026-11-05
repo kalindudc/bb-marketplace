@@ -111,5 +111,7 @@ export interface BbPort {
   /** Changes Shuttle's own bb settings. */
   setSettings(patch: { autoAgent?: boolean; inboxRequests?: boolean }): Promise<void>;
   publish(tags?: string[]): void;
+  /** Runs `fn` just before each publish reaches the page, such as to rebuild what its reads will ask for. */
+  beforePublish?(fn: () => void): void;
   log(level: "info" | "warn" | "error", text: string): void;
 }

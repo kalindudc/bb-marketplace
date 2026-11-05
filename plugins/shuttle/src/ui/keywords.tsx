@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import type { PrView } from "../contract";
 import { compareRanks, describedWords, matchText, rankOf, searchTerms, textWords, type Rank } from "../match";
@@ -28,6 +28,17 @@ export function useKeywordQuery(list: string): [string, (next: string) => void] 
     keywordFilters.set(next === "" ? rest : { ...rest, [list]: next });
   };
   return [query, set];
+}
+
+/**
+ * A list's words and their filter. The filter lags the words by a render, so a keystroke repaints the field at once
+ * and the rows after it, in a render a later keystroke can drop. A list built in a `useMemo` on `filter` is then
+ * reused while you type, and so is it while description matches arrive.
+ */
+export function useListFilter(list: string): { query: string; setQuery(next: string): void; filter: KeywordFilter } {
+  const [query, setQuery] = useKeywordQuery(list);
+  const filter = useDeferredValue(useKeywordFilter(query));
+  return { query, setQuery, filter };
 }
 
 function useDebounced<T>(value: T, ms: number): T {

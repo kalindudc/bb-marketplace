@@ -11,8 +11,8 @@ import { isLive } from "./pills";
 import { doneSort, mineLayout, mineSort, useFolding } from "./prefs";
 import { useStored } from "./remember";
 import type { Route } from "./route";
-import { KeywordField, NoMatches, useKeywordFilter, useKeywordQuery } from "./keywords";
-import { FoldAllButton, GroupList, MineRow, type RowLayout } from "./row";
+import { KeywordField, NoMatches, useListFilter } from "./keywords";
+import { ProgressiveRows, FoldAllButton, GroupList, MineRow, type RowLayout } from "./row";
 import { PrListSkeleton } from "./skeleton";
 import { DONE_SORTS, MINE_SORTS, rowTime, SORT_LABELS, sortPrs, type SortKey } from "./sort";
 
@@ -79,22 +79,30 @@ export function MineView({ done, layout, overview, onGo }: { done: boolean; layo
   const boardSelection = useBoardSelection();
   const [boardDialog, setBoardDialog] = useState<null | "create" | "choose">(null);
   useEffect(() => boardSelection.clear(), [done]);
-  const [query, setQuery] = useKeywordQuery(done ? "done" : "mine");
-  const keyword = useKeywordFilter(query);
+  const { query, setQuery, filter: keyword } = useListFilter(done ? "done" : "mine");
   const prs = list.data?.prs;
   // The best keyword matches first; the sort orders equals.
   const sorted = useMemo(() => (prs === undefined ? undefined : keyword.apply(sortPrs(prs, sort))), [prs, sort, keyword]);
   const grouped = !done && shape === "grouped";
-  const sections = grouped && sorted !== undefined
+  const sections = useMemo(() => (grouped && sorted !== undefined
     ? [...MINE_GROUPS, OTHER].map((group) => ({ group, prs: sorted.filter((pr) => groupOf(pr) === group) })).filter((section) => section.prs.length > 0)
-    : [];
+    : []), [grouped, sorted]);
   const tabs = (
     <Segmented label="My PRs" value={done ? "done" : "mine"} onChange={(view) => onGo({ view, key: null })}
       options={[{ value: "mine" as const, label: "Open" }, { value: "done" as const, label: "Merged" }]} />
   );
   const selectedSet = useMemo(() => new Set(boardSelection.selected), [boardSelection.selected]);
-  const row = (pr: PrView) => <MineRow key={pr.key} pr={pr} layout={{ ...layout, selection: { checked: selectedSet.has(pr.key), onToggle: () => boardSelection.toggle(pr.key) } }} time={rowTime(pr, sort)} group={done || grouped ? undefined : groupOf(pr).title} />;
-  const flat = (items: readonly PrView[]) => <ul aria-label="Pull requests" className="overflow-hidden rounded-lg border border-border bg-card">{items.map(row)}</ul>;
+  const { toggle } = boardSelection;
+  // Rebuilt only when what the rows show changes, not on every keystroke in the filter.
+  const rows = useMemo(() => {
+    const row = (pr: PrView) => <MineRow key={pr.key} pr={pr} layout={{ ...layout, selection: { checked: selectedSet.has(pr.key), onToggle: () => toggle(pr.key) } }} time={rowTime(pr, sort)} group={done || grouped ? undefined : groupOf(pr).title} />;
+    return (
+      <>
+        {sorted !== undefined && sorted.length > 0 && !grouped && <ul aria-label="Pull requests" className="overflow-hidden rounded-lg border border-border bg-card"><ProgressiveRows prs={sorted} row={row} /></ul>}
+        {sections.map((section) => <GroupList key={section.group.title} group={section.group} prs={section.prs} layout={layout} row={row} folding={folding} />)}
+      </>
+    );
+  }, [sorted, sections, grouped, done, sort, layout, selectedSet, toggle, folding]);
   const tools = prs !== undefined && prs.length > 0 && (
     <div data-list-tools className="mb-1 mt-2 flex flex-wrap items-center gap-1.5">
       <KeywordField value={query} onChange={setQuery} label={done ? "Filter your merged and closed PRs" : "Filter your PRs"} count={{ shown: sorted!.length, total: prs.length }} unavailable={keyword.unavailable} phone={layout.phone} className="w-72 @max-[560px]:w-full" />
@@ -115,8 +123,7 @@ export function MineView({ done, layout, overview, onGo }: { done: boolean; layo
       {((prs !== undefined && prs.length > 0) || boardSelection.selected.length > 0) && <BoardSelectionToolbar selected={boardSelection.selected} onCreate={() => setBoardDialog("create")} onAdd={() => setBoardDialog("choose")} onClear={boardSelection.clear} />}
       {tools}
       {prs !== undefined && prs.length > 0 && sorted!.length === 0 && <NoMatches query={keyword.query} onClear={() => setQuery("")} />}
-      {sorted !== undefined && sorted.length > 0 && !grouped && flat(sorted)}
-      {sections.map((section) => <GroupList key={section.group.title} group={section.group} prs={section.prs} layout={layout} row={row} folding={folding} />)}
+      {rows}
       {boardDialog === "choose" && <BoardChooserDialog prs={boardSelection.selected} onClose={() => setBoardDialog(null)} onCreateBoard={() => setBoardDialog("create")} />}
       {boardDialog === "create" && <BoardFormDialog mode="create" prs={boardSelection.selected} onClose={() => setBoardDialog(null)} />}
     </div>

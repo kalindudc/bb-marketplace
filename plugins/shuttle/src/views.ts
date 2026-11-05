@@ -1,7 +1,7 @@
 // PR rows as the UI, the tools and the CLI see them, and which area each one belongs in.
 import type { AgentView, Area, CheckCounts, MyReview, PrView, Reason } from "./contract";
 import type { Ctx } from "./ctx";
-import type { InboxRuleRow, LinkRow, PrRow, ServerRow } from "./db/store";
+import type { InboxRuleRow, LinkRow, PrRow, ServerRow, Store } from "./db/store";
 import { actionsOf, parseLabels, parseReviewers } from "./edit";
 import { agentActive, feedbackSignature, INBOX_ORDER, nextStep, ruleMatches, stepOf, stillHandled, type NextFacts } from "./next";
 import { mergeView, SENT_MERGE_MS } from "./merges";
@@ -295,14 +295,38 @@ export function allViews(ctx: Ctx): PrView[] {
   return inboxCandidates(ctx).map((entry) => entry.view);
 }
 
+/**
+ * How long every PR's view is kept while nothing is written to the store and the settings stay the same. Only what
+ * depends on the clock alone, such as "asked 3d ago" or a snooze running out, can be this late.
+ */
+export const VIEW_INDEX_MS = 60_000;
+
+type Candidate = Readonly<{ view: PrView; wanted: boolean }>;
+interface ViewIndex {
+  version: number;
+  settings: string;
+  at: number;
+  entries: readonly Candidate[];
+}
+/** Every PR's view, built once for the Inbox, every list, the overview and Insights, which all read it. */
+const indexes = new WeakMap<Store, ViewIndex>();
+
 /** allViews, each with whether its step would put it in the Inbox if no snooze, dismissal or rule held it out. */
-export function inboxCandidates(ctx: Ctx): Array<{ view: PrView; wanted: boolean }> {
+export function inboxCandidates(ctx: Ctx): readonly Candidate[] {
+  const now = ctx.now();
+  const settings = JSON.stringify(ctx.settings());
+  const index = indexes.get(ctx.store);
+  if (index && index.version === ctx.store.version && index.settings === settings && now >= index.at && now - index.at < VIEW_INDEX_MS) return index.entries;
   const enabled = enabledServerIds(ctx);
   const rules = ctx.store.inboxRules();
-  return ctx.store
-    .allPrs()
-    .filter((pr) => enabled.has(pr.server))
-    .map((pr) => viewOf(ctx, pr, rules));
+  // Shared by every reader, so nobody may change them.
+  const entries = Object.freeze(ctx.store.allPrs().filter((pr) => enabled.has(pr.server)).map((pr) => {
+    const entry = viewOf(ctx, pr, rules);
+    Object.freeze(entry.view);
+    return Object.freeze(entry);
+  }));
+  indexes.set(ctx.store, { version: ctx.store.version, settings, at: now, entries });
+  return entries;
 }
 
 export function inboxOf(views: PrView[]): PrView[] {

@@ -1,10 +1,29 @@
 // @vitest-environment node
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createBbPort, spawnErrorOf } from "../src/bb-port";
 import { SpawnUnavailableError } from "../src/ports";
 
 describe("bb port", () => {
+  it("builds what the page reads just before telling it PRs changed, once for a burst of changes", async () => {
+    vi.useFakeTimers();
+    try {
+      const host = createFakePluginHost({ pluginId: "shuttle" });
+      const order: string[] = [];
+      vi.spyOn(host.bb.rpc, "experimental_invalidate").mockImplementation((tags) => void order.push(`invalidate ${[...(tags ?? [])].join(",")}`));
+      const port = createBbPort(host.bb);
+      port.beforePublish!(() => order.push("warm"));
+      port.publish();
+      port.publish(["prs"]);
+      await vi.advanceTimersByTimeAsync(200);
+      port.publish(["config"]);
+      await vi.advanceTimersByTimeAsync(200);
+      expect(order).toEqual(["warm", "invalidate prs,servers,conversation,boards", "invalidate config"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("creates a worktree review on the machine with the project's default checkout", async () => {
     const spawned: unknown[] = [];
     const host = createFakePluginHost({
