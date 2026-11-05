@@ -2,6 +2,12 @@
 
 Notable changes to Jumpstart, newest first. Releases are tagged `jumpstart/vX.Y.Z` in this repository.
 
+## 0.1.1 (2026-11-05)
+
+### Fixed
+
+- Jumpstart installs from the marketplace. 0.1.0 could not: bb's build of its frontend from git stopped at an import of the plugin SDK, which a git install leaves out, so `bb plugin install jumpstart@kalindudc` failed.
+
 ## 0.1.0 (2026-11-05)
 
 The first release: resume the threads a network blip stopped, from one button.

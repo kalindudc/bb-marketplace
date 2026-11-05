@@ -1,5 +1,5 @@
-import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { defineContract } from "./define-contract";
 
 export const MAX_THREADS = 200;
 
@@ -21,7 +21,7 @@ export type KickResult = z.infer<typeof kickResultSchema>;
 
 export const failureTag = (id: string): string => `jumpstart:failure:${id}`;
 
-export const rpcContract = defineRpcContract({
+export const rpcContract = defineContract({
   failures: {
     input: z.object({ keys: z.array(threadId).max(MAX_THREADS) }),
     output: z.record(z.string(), failureSchema),
