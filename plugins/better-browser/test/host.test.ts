@@ -12,11 +12,17 @@ import { deriveLinuxKey, encryptValue } from "../src/chromium";
  * machine without the tool would.
  */
 const secretResponses = new Map<string, string>();
+/** Links the host would open: `open` is recorded instead of run, so no test opens a real browser. */
+const opened: string[][] = [];
 vi.mock("../src/keychain", async (original) => {
   const actual = await original<typeof import("../src/keychain")>();
   return {
     ...actual,
     runCommand: (file: string, args: readonly string[]) => {
+      if (file === "/usr/bin/open") {
+        opened.push([...args]);
+        return Promise.resolve({ code: 0, stdout: "", stderr: "" });
+      }
       if (file === "secret-tool" || file === "kwallet-query" || file === "xdg-settings") {
         const password = secretResponses.get([file, ...args].join(" "));
         return Promise.resolve({ code: password === undefined ? 1 : 0, stdout: password ?? "", stderr: "" });
@@ -115,6 +121,18 @@ describe.skipIf(process.platform !== "darwin")("the host entry", () => {
     expect(harness.experimental_getSignals()).toEqual([{ signal: "changed", payload: { browserId: "chrome", profile: "Default" } }]);
     expect(await harness.experimental_call("watch", { browserId: "chrome" })).toEqual({ ok: true, profile: "Default" });
     expect(watches).toHaveLength(1);
+  });
+
+  it("hands a link to the running browser, naming a profile only when it is not the one used last", async () => {
+    opened.length = 0;
+    expect(await harness.experimental_call("openUrl", { url: "https://a.test/", browserId: "chrome", profile: "Default" })).toEqual({ ok: true });
+    expect(await harness.experimental_call("openUrl", { url: "https://a.test/", browserId: "chrome" })).toEqual({ ok: true });
+    expect(await harness.experimental_call("openUrl", { url: "https://a.test/", browserId: "chrome", profile: "Profile 1" })).toEqual({ ok: true });
+    expect(opened).toEqual([
+      ["-b", "com.google.Chrome", "https://a.test/"],
+      ["-b", "com.google.Chrome", "https://a.test/"],
+      ["-n", "-b", "com.google.Chrome", "--args", "--profile-directory=Profile 1", "https://a.test/"],
+    ]);
   });
 
   it("explains a missing profile or an unknown browser", async () => {

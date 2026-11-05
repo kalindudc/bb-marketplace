@@ -17,7 +17,8 @@ A bb plugin that makes bb's Browser follow the browser you already use:
   copies your browser's session for that app and retries it, then offers to
   open the app in your browser if the gateway still says no.
 - **Cmd+click** (Ctrl+click off macOS) opens a link in your browser, in the
-  same profile, instead of a new bb tab.
+  same profile, whether the link is in a conversation or on a page in bb's
+  Browser. A plain click still opens it in bb.
 - A sync button beside the address bar, with the last sync or any problem in
   its tooltip.
 
@@ -44,12 +45,12 @@ without a prompt; if neither answers, the basic password store is tried.
 | Key | Default | What it does |
 | --- | --- | --- |
 | `browser` | `system` | Select a named browser in Settings, or System default. CLI values are `system` or a supported browser ID such as `chrome`, `arc`, `brave` or `firefox`. Existing empty values still follow the system default. |
-| `profile` | empty | Profile directory, such as `Default` or `Profile 1`. Empty uses the profile the browser used last. |
+| `profile` | empty | Profile directory, such as `Default` or `Profile 1`. Empty uses the profile the browser used last. Links open more slowly while it names a profile other than the one the browser used last, because naming one starts a second copy of the browser for a few seconds. |
 | `sync` | `true` | Copy sessions into bb's Browser. |
 | `signIn` | `automatic` | `automatic` hands sign-in pages to your browser, `ask` shows a button, `off` leaves them alone. |
 | `signInPages` | empty | More sign-in pages, one per line: `*.example.com`, `login.example.com` or `example.com/login`. |
 | `gatewayPages` | empty | Access gateway pages, one per line in the same form: pages that check your browser or device and turn bb's Browser away without a sign-in form. See [Access gateways](#access-gateways). |
-| `modifierClick` | `true` | Cmd+click (Ctrl+click) opens links in your browser. |
+| `modifierClick` | `true` | Cmd+click (Ctrl+click) opens links in your browser, from conversations and from bb's Browser. |
 
 ## CLI
 
@@ -72,7 +73,7 @@ that rather than replacing the view:
 | --- | --- | --- |
 | `host.ts` | The host daemon on the machine with the bb app | Finds browsers and profiles, reads a private copy of a profile's cookie database (`VACUUM INTO`, or a file copy when the browser holds an exclusive lock), decrypts Chromium values with the "Safe Storage" key, watches the cookie file, writes cookies over CDP, and opens links with `open -b` or the browser binary. |
 | `server.ts` and `src/engine.ts` | The bb server | Decides when to sync, finds the desktop app's Browser, creates a hidden `about:blank` tab, takes a short control lease on it, hands the CDP endpoint to the host, then releases and closes the tab. |
-| `app.tsx` and `src/ui/` | The bb app | The Browser toolbar control: heartbeats, the Cmd+click handler it installs in each page's isolated world, the sign-in handoff, and connection status in Settings. |
+| `app.tsx` and `src/ui/` | The bb app | The Browser toolbar control: heartbeats, the Cmd+click handler it installs in each page's isolated world, the sign-in handoff, and connection status in Settings. An app-wide overlay that renders nothing handles Cmd+click on links in bb's own window. |
 
 A sync writes cookies with `Network.setCookies` on the leased tab; every bb
 Browser tab shares one cookie store, so they all see them. The host remembers
@@ -92,6 +93,13 @@ write and closed again.
 The Cmd+click handler is a capture-phase click listener in the page's
 isolated world. Each toolbar refresh keeps it on for six seconds, so it
 lapses on its own when the plugin is disabled or the tab is hidden.
+
+Links in bb's own window, such as those in a conversation, are handled by a
+capture-phase click listener on that window, ahead of bb's link handlers,
+which open a link in bb's Browser whatever modifier is held. Links to bb
+itself keep bb's behaviour, where Cmd+click opens a split. The listener runs
+only in the desktop app, because the link opens on the computer running it; a
+bb web client on another device keeps its own browser's Cmd+click.
 
 ### Access gateways
 
@@ -137,8 +145,9 @@ the same in each copy.
   wrong source never silently reads garbage; cookies it cannot decrypt are
   reported as unreadable. Portal-encrypted values (Chromium's `v12`, used
   inside Flatpak sandboxes) are not supported yet.
-- On Linux a link opens in the browser binary the plugin finds on `PATH` with
-  `--profile-directory`, falling back to `xdg-open` when no binary is found.
+- On Linux a link opens in the browser binary the plugin finds on `PATH`, with
+  `--profile-directory` when the profile override names a profile other than
+  the one used last, falling back to `xdg-open` when no binary is found.
 - Partitioned (CHIPS) cookies are skipped, as bb's own import skips them.
 - Cookies a browser binds to the device cannot be copied by anything.
 - The sign-in handoff waits for a visible sign-in form, so the Okta dashboard

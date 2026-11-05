@@ -60,7 +60,7 @@ export default function betterBrowser(bb: BbPluginApi): void {
     modifierClick: {
       type: "boolean",
       label: "Cmd/Ctrl-click opens your browser",
-      description: "Open links externally with Cmd+click on macOS or Ctrl+click elsewhere.",
+      description: "Cmd+click on macOS (Ctrl+click elsewhere) opens a link in your browser, from a conversation or a page in bb's Browser.",
       default: true,
     },
     profile: {

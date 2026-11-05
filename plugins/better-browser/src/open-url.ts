@@ -14,6 +14,15 @@ export interface OpenOptions {
 }
 
 /**
+ * The profile a link has to name, or undefined to hand the link straight to the running browser. Naming a profile starts a
+ * second copy of the browser that passes the link on to the first, about four seconds on macOS, while the running browser
+ * opens a link in the profile it used last within a fraction of a second. So only a different profile is named.
+ */
+export function profileToName(profile: string | undefined, usedLast: string | undefined): string | undefined {
+  return profile === usedLast ? undefined : profile;
+}
+
+/**
  * The command that opens `url` in the chosen browser. On macOS a Chrome-style browser is relaunched with
  * --profile-directory, which its single-instance check forwards to the running browser, so the link opens in the same
  * profile the plugin syncs from; other browsers get the URL through `open -b`. On Linux the browser binary is launched

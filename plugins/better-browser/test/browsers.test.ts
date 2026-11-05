@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 import { dataDirectory, findBrowser, linuxDefaultBrowser, parseLocalState, parseProfilesIni, profileRoot } from "../src/browsers";
-import { defaultHttpsHandler, openCommand } from "../src/open-url";
+import { defaultHttpsHandler, openCommand, profileToName } from "../src/open-url";
 
 describe("Chromium Local State", () => {
   it("lists each profile with its name and account and names the one used last", () => {
@@ -84,6 +84,13 @@ describe("opening links", () => {
       file: "/usr/bin/firefox", args: ["-profile", "/home/me/.mozilla/firefox/abc.default-release", "https://a.test/"],
     });
     expect(openCommand("linux", findBrowser("chrome")!, "https://a.test/")).toEqual({ file: "xdg-open", args: ["https://a.test/"] });
+  });
+
+  it("names a profile only when the running browser would open the link in another one", () => {
+    expect(profileToName("Default", "Default")).toBeUndefined();
+    expect(profileToName(undefined, "Default")).toBeUndefined();
+    expect(profileToName("Profile 1", "Default")).toBe("Profile 1");
+    expect(profileToName("Profiles/abc.default-release", undefined)).toBe("Profiles/abc.default-release");
   });
 
   it("finds the https handler in LaunchServices' list", () => {

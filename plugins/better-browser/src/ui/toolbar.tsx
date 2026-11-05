@@ -13,7 +13,7 @@ import type { RpcContract, Status } from "../rpc";
 import {
   IDLE, concernsPages, gatewayReturnUrl, isSignInPage, pagePatterns, signInPatterns, type Effect, type Episode, type SignInEvent, type SignInMode,
 } from "../signin";
-import { ICON_BUTTON, PILL, describeSync, isStatus, readSettings } from "./common";
+import { ICON_BUTTON, PILL, describeSync, isStatus, openExternally, readSettings } from "./common";
 
 const HEARTBEAT_MS = 30_000;
 const LINK_REFRESH_MS = 2_000;
@@ -66,17 +66,7 @@ export function BrowserToolbarControl({ threadId, tabId, url, isCompactViewport,
     };
   }, [rpc, threadId, tabId, page]);
 
-  const openExternal = useCallback(
-    (target: string) => {
-      rpc.call("openExternal", { url: target }).then(
-        (result) => {
-          if (!result.ok) toast.error(result.message);
-        },
-        (error: unknown) => toast.error(error instanceof Error ? error.message : String(error)),
-      );
-    },
-    [rpc],
-  );
+  const openExternal = useCallback((target: string) => openExternally(rpc, target), [rpc]);
 
   // Cmd+click: keep the page's handler leased while this toolbar shows; the URL dependency reinstalls it after a navigation.
   useEffect(() => {

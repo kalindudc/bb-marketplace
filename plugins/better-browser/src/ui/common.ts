@@ -1,5 +1,7 @@
+import { toast } from "sonner";
+import type { PluginRpcClient } from "@get-bb/plugin-sdk/app";
 import { DISTRIBUTION_DEFAULTS } from "../distribution";
-import type { Status, SyncSummary } from "../rpc";
+import type { RpcContract, Status, SyncSummary } from "../rpc";
 import type { SignInMode } from "../signin";
 
 export const ICON_BUTTON =
@@ -27,6 +29,16 @@ export function readSettings(values: Record<string, unknown> | undefined): UiSet
     modifierClick: values?.modifierClick !== false,
     sync: values?.sync !== false,
   };
+}
+
+/** Opens a link in the browser the plugin follows; a failure shows as a toast. */
+export function openExternally(rpc: PluginRpcClient<RpcContract>, url: string): void {
+  rpc.call("openExternal", { url }).then(
+    (result) => {
+      if (!result.ok) toast.error(result.message);
+    },
+    (error: unknown) => toast.error(error instanceof Error ? error.message : String(error)),
+  );
 }
 
 export function isStatus(value: unknown): value is Status {

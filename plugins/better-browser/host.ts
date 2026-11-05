@@ -16,7 +16,7 @@ import { SyncError, describeError } from "./src/errors";
 import { readFirefoxCookies } from "./src/firefox";
 import { createKeychain, runCommand } from "./src/keychain";
 import { createLinuxKeyring } from "./src/keyring";
-import { defaultHttpsHandler, openCommand } from "./src/open-url";
+import { defaultHttpsHandler, openCommand, profileToName } from "./src/open-url";
 import { withSnapshot } from "./src/snapshot";
 
 type Context = ExperimentalHostRpcContext<typeof hostSignals>;
@@ -85,12 +85,23 @@ async function cookieDatabase(browser: BrowserDefinition, directory: string): Pr
   return undefined;
 }
 
-async function listProfiles(browser: BrowserDefinition): Promise<ProfileList> {
+/** The profiles the browser's own list names, whether or not they hold cookies. */
+async function listedProfiles(browser: BrowserDefinition): Promise<ProfileList | null> {
   const root = dataDirectory(browser, home, process.platform);
-  if (!root || browser.engine === "safari") return { profiles: [] };
-  const listed = browser.engine === "chromium"
+  if (!root || browser.engine === "safari") return null;
+  return browser.engine === "chromium"
     ? parseLocalState((await readText(join(root, "Local State"))) ?? "")
     : parseProfilesIni((await readText(join(root, "profiles.ini"))) ?? "", root);
+}
+
+/** The profile the running browser opens a link in when none is named. Chromium uses Default when Local State names none. */
+async function profileUsedLast(browser: BrowserDefinition): Promise<string | undefined> {
+  return (await listedProfiles(browser))?.lastUsed ?? (browser.engine === "chromium" ? "Default" : undefined);
+}
+
+async function listProfiles(browser: BrowserDefinition): Promise<ProfileList> {
+  const listed = await listedProfiles(browser);
+  if (!listed) return { profiles: [] };
   if (browser.engine === "chromium" && listed.profiles.length === 0) listed.profiles.push({ directory: "Default", name: "Default" });
   const profiles = [];
   for (const profile of listed.profiles) if (await cookieDatabase(browser, profile.directory)) profiles.push(profile);
@@ -335,9 +346,10 @@ export default experimental_defineHostEntry({
       }
     },
 
-    async openUrl({ url, browserId, profile }) {
+    async openUrl({ url, browserId, profile: requested }) {
       const browser = findBrowser(browserId);
       if (!browser) return failure(new SyncError("unsupportedBrowser", `Better Browser does not know the browser "${browserId}"`));
+      const profile = profileToName(requested, await profileUsedLast(browser));
       const executable = process.platform === "linux" ? await linuxExecutable(browser) : undefined;
       // profileRoot keeps an already-absolute profile path (a moved Firefox profile) instead of nesting it under the data dir.
       const profilePath = profile && browser.engine === "firefox" ? profileRoot(browser, homedir(), process.platform, profile) : undefined;

@@ -2,6 +2,16 @@
 
 Notable changes to Better Browser, newest first. Releases are tagged `better-browser/vX.Y.Z` in this repository.
 
+## 0.4.0 (2026-11-05)
+
+### Added
+
+- Cmd+click (Ctrl+click off macOS) on a link in a conversation now opens it in your browser, in the profile the plugin follows, the same as a link on a page in bb's Browser. bb opened these links in its own Browser whatever modifier was held. A plain click still opens them in bb, and Cmd+click on a link to bb itself still opens a split. This works in the desktop app; a bb web client on another device keeps its own browser's Cmd+click, because the plugin opens links on the computer running the desktop app.
+
+### Fixed
+
+- A link opened in your browser now appears there at once instead of after about four seconds. To name the profile, the plugin used to start a second copy of the browser, which then passed the link on to the copy already running. It now gives the link straight to the running browser, which opens it in the profile you used last, the same one the plugin follows. Only a profile override that names a different profile still takes the slower way.
+
 ## 0.3.0 (2026-10-30)
 
 ### Added
