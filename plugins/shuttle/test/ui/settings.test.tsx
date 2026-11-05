@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { fireEvent, waitFor, within } from "@testing-library/react";
 import type { PluginSettingsSectionProps } from "@get-bb/plugin-sdk/app";
 import { DEFAULT_REVIEW_PROMPT, DEFAULT_VERIFIER_COMMAND, type Config } from "../../src/config";
-import { app, callsTo, config, handlers, mount, server, overview, unmountAll, type Handlers } from "./helpers";
+import { app, autoPostInsights, callsTo, config, handlers, mount, server, overview, shadowRepo, unmountAll, type Handlers } from "./helpers";
 
 afterEach(unmountAll);
 
@@ -273,6 +273,98 @@ describe("Shuttle settings sections", () => {
       repos: [{ repo: "Shopify/terraform-the-cloud", mode: "shadow", guidelines: "Actuator plans are the source of truth.", holdPaths: ["terraform/*/iam/*", "*.sql"], allowAuthors: ["terraform-actuator", "aquifer-*"] }],
       minSeverity: "high", targetPrecision: 0.95, floors: { holds: 0.8, worth: 0.7 }, verifier: DEFAULT_VERIFIER_COMMAND,
     });
+  }, 20_000);
+
+  it("keeps path lists you did not edit exactly, even globs with spaces and commas, and splits edited ones on commas and lines", async () => {
+    const tuned = config();
+    tuned.autoPost = {
+      ...tuned.autoPost,
+      repos: [{ repo: "acme/app", mode: "shadow", approve: "shadow", guidelines: "", holdPaths: ["docs/file,name.md"], allowAuthors: [], approvePaths: ["docs/Release Notes.md", "src/*"], disclosure: "" }],
+    };
+    const slot = await section("automations", { getConfig: () => ({ config: tuned }) });
+    await slot.findByText("Auto post");
+    fireEvent.change(slot.getByRole("textbox", { name: "Allowed authors for repository 1" }), { target: { value: "deploy-bot,\nrelease bot" } });
+    fireEvent.click(slot.getByRole("button", { name: "Save automations" }));
+    await waitFor(() => expect(saved(slot)).toHaveLength(1));
+    expect(saved(slot)[0]!.autoPost.repos[0]).toMatchObject({ holdPaths: ["docs/file,name.md"], approvePaths: ["docs/Release Notes.md", "src/*"], allowAuthors: ["deploy-bot", "release bot"] });
+  });
+
+  it("offers the four auto post modes, saves the posting fields and keeps the ones it does not show", async () => {
+    const tuned = config();
+    tuned.autoPost = {
+      ...tuned.autoPost, verifierTimeoutSeconds: 333, maxLines: 1234, targetPrecision: 0.93,
+      repos: [{ repo: "acme/app", mode: "shadow", approve: "shadow", guidelines: "Keep it boring.", holdPaths: ["db/*"], allowAuthors: ["deploy-bot"], approvePaths: [], disclosure: "" }],
+    };
+    const slot = await section("automations", { getConfig: () => ({ config: tuned }) });
+    await slot.findByText("Auto post");
+    const mode = slot.getByRole("combobox", { name: "Mode for repository 1" }) as HTMLSelectElement;
+    expect([...mode.options].map((option) => [option.value, option.textContent])).toEqual([
+      ["off", "Off"], ["shadow", "Shadow: decide, never post"], ["countdown", "Countdown: post after a delay unless you stop it"], ["auto", "Auto: post at once"],
+    ]);
+    expect((slot.getByRole("combobox", { name: "Approvals mode for repository 1" }) as HTMLSelectElement).value).toBe("shadow");
+    expect(slot.container.querySelector("[data-approve-paths-missing]")).toBeNull();
+    expect(slot.container.querySelector("[data-auto-post-record]")).toBeNull();
+    expect((slot.getByRole("textbox", { name: "Footer for repository 1" }) as HTMLTextAreaElement).placeholder).toContain("Shuttle posted this review");
+
+    fireEvent.change(mode, { target: { value: "countdown" } });
+    fireEvent.change(slot.getByRole("combobox", { name: "Approvals mode for repository 1" }), { target: { value: "auto" } });
+    expect(slot.getByText("Approvals never post until you list the paths they may cover.")).toBeTruthy();
+    fireEvent.change(slot.getByRole("textbox", { name: "Approval paths for repository 1" }), { target: { value: "docs/*, locales/*.yml" } });
+    expect(slot.container.querySelector("[data-approve-paths-missing]")).toBeNull();
+    fireEvent.change(slot.getByRole("textbox", { name: "Footer for repository 1" }), { target: { value: "_Posted by Shuttle for acme._" } });
+    fireEvent.change(slot.getByRole("spinbutton", { name: "Minutes a comment review waits" }), { target: { value: "45" } });
+    fireEvent.change(slot.getByRole("spinbutton", { name: "Minutes an approval waits" }), { target: { value: "180" } });
+    fireEvent.change(slot.getByRole("spinbutton", { name: "Reviews Shuttle posts a day in a repository" }), { target: { value: "3" } });
+    fireEvent.change(slot.getByRole("textbox", { name: "Footer of posted reviews" }), { target: { value: "_Shuttle wrote this._" } });
+    expect(slot.container.querySelector("[data-disclosure-preview]")!.textContent).toContain("Shuttle wrote this.");
+    expect((slot.getByRole("textbox", { name: "Footer for repository 1" }) as HTMLTextAreaElement).placeholder).toBe("_Shuttle wrote this._");
+    fireEvent.change(slot.getByRole("spinbutton", { name: "Lowest verifier blocking score that holds an approval" }), { target: { value: "0.35" } });
+    fireEvent.change(slot.getByRole("spinbutton", { name: "Posted findings the breaker looks at" }), { target: { value: "30" } });
+    fireEvent.change(slot.getByRole("spinbutton", { name: "Marked findings that stop posting" }), { target: { value: "1" } });
+    fireEvent.click(slot.getByRole("button", { name: "Save automations" }));
+    await waitFor(() => expect(saved(slot)).toHaveLength(1));
+    const next = saved(slot)[0]!.autoPost;
+    expect(next).toMatchObject({
+      countdownMinutes: 45, maxPerDay: 3, disclosure: "_Shuttle wrote this._", breaker: { window: 30, maxMarked: 1 },
+      floors: { holds: 0.7, worth: 0.7, blocking: 0.35 }, approvals: { ...tuned.autoPost.approvals, countdownMinutes: 180 },
+      verifierTimeoutSeconds: 333, maxLines: 1234, targetPrecision: 0.93, holdConcerns: tuned.autoPost.holdConcerns, verifier: tuned.autoPost.verifier,
+    });
+    expect(next.repos).toEqual([{
+      repo: "acme/app", mode: "countdown", approve: "auto", guidelines: "Keep it boring.", holdPaths: ["db/*"], allowAuthors: ["deploy-bot"],
+      approvePaths: ["docs/*", "locales/*.yml"], disclosure: "_Posted by Shuttle for acme._",
+    }]);
+  }, 20_000);
+
+  it("warns that the record has not proven the target when a mode posts, and still saves", async () => {
+    const tuned = config();
+    tuned.autoPost = { ...tuned.autoPost, repos: [{ repo: "acme/app", mode: "countdown", approve: "countdown", guidelines: "", holdPaths: [], allowAuthors: [], approvePaths: ["docs/*"], disclosure: "" }] };
+    const record = autoPostInsights({
+      repos: [shadowRepo({
+        repo: "acme/app", mode: "countdown", approveMode: "countdown",
+        findings: { agreed: 9, against: 1, precision: 0.9, lowerBound: 0.596, needed: 41 },
+        approvals: { agreed: 50, against: 0, precision: 1, lowerBound: 0.99, needed: 0 },
+        trips: [{ kind: "comment", reason: "you marked 3 of the last 20 comments it posted", at: Date.now() - 3_600_000 }],
+      })],
+    });
+    const slot = await section("automations", { getConfig: () => ({ config: tuned }), autoPostInsights: ({ range }) => ({ ...record, range }), resumeAutoPost: () => ({ cleared: 1 }) });
+    const comments = await waitFor(() => slot.container.querySelector<HTMLElement>("[data-auto-post-record='comments']") ?? Promise.reject(new Error("no record")));
+    await waitFor(() => expect(comments.textContent).toContain("precision 90% (9 of 10 decided findings), proven at least 60% against a 90% target; 41 more agreeing findings in a row would prove it."));
+    expect(comments.querySelector("[data-auto-post-unproven='comments']")!.textContent).toContain("The record has not proven the 90% target for comments here. Shuttle will still post them");
+    const approvals = slot.container.querySelector<HTMLElement>("[data-auto-post-record='approvals']")!;
+    expect(approvals.textContent).toContain("proven at least 99% against a 98% target.");
+    expect(approvals.querySelector("[data-auto-post-unproven]")).toBeNull();
+    expect(callsTo(slot, "autoPostInsights")).toEqual([{ range: "90d" }]);
+
+    const trip = slot.container.querySelector<HTMLElement>("[data-auto-post-trip='comment']")!;
+    expect(trip.textContent).toContain("Posting comments stopped: you marked 3 of the last 20 comments it posted");
+    fireEvent.click(within(trip).getByRole("button", { name: "Resume posting comments in acme/app" }));
+    await waitFor(() => expect(callsTo(slot, "resumeAutoPost")).toEqual([{ repo: "acme/app", kind: "comment" }]));
+
+    fireEvent.change(slot.getByRole("combobox", { name: "Approvals mode for repository 1" }), { target: { value: "auto" } });
+    expect((slot.getByRole("button", { name: "Save automations" }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(slot.getByRole("button", { name: "Save automations" }));
+    await waitFor(() => expect(saved(slot)).toHaveLength(1));
+    expect(saved(slot)[0]!.autoPost.repos[0]).toMatchObject({ mode: "countdown", approve: "auto", approvePaths: ["docs/*"] });
   }, 20_000);
 
   it("names agents, not watching, in the automations", async () => {

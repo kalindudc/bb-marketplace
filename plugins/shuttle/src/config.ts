@@ -133,8 +133,15 @@ export const watchSchema = z
   })
   .strict();
 
-export const AUTO_POST_MODES = ["off", "shadow"] as const;
+/**
+ * off: nothing runs. shadow: decisions are recorded and nothing posts. countdown: a passing review posts after a delay,
+ * unless you stop it. auto: it posts at once. Only off and shadow are defaults; you choose to post.
+ */
+export const AUTO_POST_MODES = ["off", "shadow", "countdown", "auto"] as const;
 export type AutoPostMode = (typeof AUTO_POST_MODES)[number];
+export const POSTING_MODES: readonly AutoPostMode[] = ["countdown", "auto"];
+export const DEFAULT_DISCLOSURE =
+  "_Shuttle posted this review from an AI review it checked against the review's critics, the quoted code and a second model. Reply here if anything in it is wrong._";
 export const AUTO_POST_SEVERITIES = ["low", "medium", "high"] as const;
 /**
  * What a reviewer's concern about the PR as a whole is about: the description does not match the diff, changes outside
@@ -163,6 +170,12 @@ export const autoPostRepoSchema = z
     holdPaths: z.array(repoGlob).max(50).default([]),
     /** Author globs judged like people although they count as bots, such as an agent account that opens PRs for someone. */
     allowAuthors: z.array(repoGlob).max(50).default([]),
+    /** Approvals' own mode; posting needs `approvePaths` too. */
+    approve: z.enum(AUTO_POST_MODES).default("shadow"),
+    /** Path globs an approval may cover: a PR that changes any other file is never approved. Empty means never approve. */
+    approvePaths: z.array(repoGlob).max(50).default([]),
+    /** The footer of reviews Shuttle posts here; empty uses the one in auto post's settings. */
+    disclosure: z.string().max(1000).default(""),
   })
   .strict();
 export type AutoPostRepo = z.infer<typeof autoPostRepoSchema>;
@@ -179,7 +192,16 @@ export const autoPostSchema = z
     maxLines: z.number().int().min(10).max(100_000).default(800),
     /** The share of auto-posted findings you would have posted yourself. */
     targetPrecision: z.number().min(0.5).max(1).default(0.9),
-    floors: z.object({ holds: unit(0.7), worth: unit(0.7) }).strict().prefault({}),
+    /** Floors for the verifier's scores; `blocking` vetoes an approval when the verifier puts a blocking problem at or above it. */
+    floors: z.object({ holds: unit(0.7), worth: unit(0.7), blocking: unit(0.2) }).strict().prefault({}),
+    /** In countdown mode, how long a comment review waits before it posts. */
+    countdownMinutes: z.number().int().min(1).max(1440).default(30),
+    /** Reviews Shuttle may post in a repository in a day, comments and approvals together. */
+    maxPerDay: z.number().int().min(0).max(50).default(5),
+    /** The footer of every review Shuttle posts, below the review's summary. Approvals always carry one. */
+    disclosure: z.string().max(1000).default(DEFAULT_DISCLOSURE),
+    /** Shuttle stops posting comments in a repository when you mark more than `maxMarked` of its last `window` posted findings. */
+    breaker: z.object({ window: z.number().int().min(1).max(200).default(20), maxMarked: z.number().int().min(0).max(50).default(2) }).strict().prefault({}),
     /** The kinds of reviewer concern that hold a draft: comments by default only for signs of a careless change; approvals for more. */
     holdConcerns: z
       .object({
@@ -197,6 +219,8 @@ export const autoPostSchema = z
         maxSeverity: z.enum(["nit", "low", "medium"]).default("low"),
         /** passed: every check passed (or there are none); not_failed: checks may still be running. */
         checks: z.enum(["passed", "not_failed"]).default("passed"),
+        /** In countdown mode, how long an approval waits before it posts. */
+        countdownMinutes: z.number().int().min(1).max(2880).default(120),
       })
       .strict()
       .prefault({}),

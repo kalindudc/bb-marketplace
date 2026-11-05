@@ -116,6 +116,7 @@ export const taxDraft: ReviewDraft = {
   notes: "- **Intent:** move tax math into a pure module so checkout and invoices share one implementation (the PR description).\n- **Does it get there:** not yet. Per-line rounding changes what customers pay.\n- **Lean:** worth doing once the rounding matches; invoices still carry their own copy of the math.",
   assessment: null,
   gate: null,
+  autoPost: null,
 };
 
 export const taxItems: ConversationItem[] = [

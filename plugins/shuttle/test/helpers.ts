@@ -36,6 +36,10 @@ export class FakePort implements BbPort {
   private next = 1;
 
   settingsPatches: Array<{ autoAgent?: boolean; inboxRequests?: boolean }> = [];
+  notifications: Array<{ title: string; body: string }> = [];
+  async notify(title: string, body: string): Promise<void> {
+    this.notifications.push({ title, body });
+  }
 
   addThread(id: string, title = `Thread ${id}`, archived = false, extra: Partial<ThreadInfo> = {}): void {
     this.threads.set(id, { id, title, archived, projectId: "proj_app", status: "idle", waiting: false, branch: null, updatedAt: 0, ...extra });

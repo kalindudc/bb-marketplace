@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { experimental_Icon as Icon, experimental_usePluginId, UrlLink } from "@get-bb/plugin-sdk/app";
+import type { AutoPostMode } from "../config";
 import type { AutoPostInsights, ShadowLabel } from "../contract";
-import { ErrorNote, Pill, Segmented } from "./common";
-import { messageOf, useShuttleQuery } from "./data";
-import { ago, percent, plural, seconds, settingsHref } from "./format";
+import { BUTTON, ErrorNote, Pill, Segmented, type Tone } from "./common";
+import { messageOf, useShuttleMutation, useShuttleQuery } from "./data";
+import { ago, clock, percent, plural, seconds, settingsHref, span } from "./format";
 import { color, Kpi, Panel } from "./insight-parts";
 import { InsightsSkeleton } from "./skeleton";
 
@@ -21,6 +22,10 @@ const LABEL_TEXT: Record<ShadowLabel, string> = {
 const LABEL_COLOR: Record<ShadowLabel, string> = { agreed: color(3), against: color(6), pending: color(1), missed: color(5), held: color(2) };
 const OUTCOME_TEXT = { posted: "You posted it", discarded: "You discarded it", superseded: "Replaced by a newer review", pending: "Not decided yet" } as const;
 const VERDICT_TEXT = { approve: "approved", comment: "commented", changes: "requested changes" } as const;
+const MODE_TEXT: Record<AutoPostMode, string> = { off: "Off", shadow: "Shadow", countdown: "Countdown", auto: "Auto" };
+const MODE_TONE: Record<AutoPostMode, Tone> = { off: "neutral", shadow: "info", countdown: "ok", auto: "ok" };
+const MODE_ICON: Record<AutoPostMode, string | undefined> = { off: undefined, shadow: "Eye", countdown: "Clock", auto: "Sent" };
+const KIND_TEXT = { comment: "comments", approve: "approvals" } as const;
 const table = "w-full border-collapse text-xs [&_td]:border-t [&_td]:border-border [&_td]:px-1 [&_td]:py-1.5 [&_th]:px-1 [&_th]:pb-1 [&_th]:text-left [&_th]:text-[11px] [&_th]:font-medium [&_th]:text-muted-foreground";
 
 const ratio = (value: number | null) => (value === null ? "\u2014" : percent(value));
@@ -63,16 +68,50 @@ function Confusion({ id, record, would, held, edited }: { id: string; record: Sh
   );
 }
 
+/** A repository's mode for comments or approvals, as a pill. */
+export function ModePill({ kind, mode }: { kind: "comment" | "approve"; mode: AutoPostMode }) {
+  return <Pill tone={MODE_TONE[mode]} icon={MODE_ICON[mode]} title={`${kind === "comment" ? "Comments" : "Approvals"}: ${MODE_TEXT[mode].toLowerCase()}`}>{kind === "comment" ? "Comments" : "Approvals"}: {MODE_TEXT[mode]}</Pill>;
+}
+
+/** Why Shuttle stopped posting one kind of review in a repository by itself, with Resume. The settings stay as they are. */
+export function TripNote({ repo, trip }: { repo: string; trip: Repo["trips"][number] }) {
+  const resume = useShuttleMutation("resumeAutoPost");
+  return (
+    <div role="alert" data-auto-post-trip={trip.kind} className="flex flex-wrap items-center gap-2 rounded-md border border-warning/40 bg-warning/5 px-2.5 py-1.5 text-xs text-warning-text">
+      <Icon name="OctagonPause" fallback="Pause" className="size-3.5 shrink-0" aria-hidden />
+      <span className="min-w-0 flex-1"><b className="font-semibold">Posting {KIND_TEXT[trip.kind]} stopped:</b> {trip.reason} <span className="text-muted-foreground">· {ago(trip.at)}</span></span>
+      <button type="button" className={BUTTON} disabled={resume.isPending} aria-label={`Resume posting ${KIND_TEXT[trip.kind]} in ${repo}`} onClick={() => void resume.run({ repo, kind: trip.kind })}>
+        {resume.isPending ? "Resuming\u2026" : "Resume"}
+      </button>
+    </div>
+  );
+}
+
+/** What Shuttle posted itself in a repository, and how much of it you marked as a mistake. */
+function PostedLine({ posted }: { posted: Repo["posted"] }) {
+  const marked = posted.marked + posted.mistakes;
+  return (
+    <div data-posted className={`text-[11.5px] ${marked > 0 ? "text-warning-text" : "text-muted-foreground"}`}>
+      Posted by Shuttle: {plural(posted.reviews, "review")} ({plural(posted.approvals, "approval")}), {plural(posted.findings, "comment")}, {marked} marked as mistakes
+    </div>
+  );
+}
+
 function RepoCard({ repo, target, approvalTarget }: { repo: Repo; target: number; approvalTarget: number }) {
   const { findings, policy, approvals } = repo;
   const decided = findings.agreed + findings.against;
   const approvalsDecided = approvals.agreed + approvals.against;
   return (
     <section data-auto-post-repo={repo.repo} className="min-w-0 rounded-lg border border-border bg-card px-3.5 py-3">
-      <div className="mb-2.5 flex flex-wrap items-center gap-2">
+      <div className="mb-1.5 flex flex-wrap items-center gap-2">
         <h3 className="min-w-0 truncate font-mono text-[13px] font-semibold">{repo.repo}</h3>
-        <Pill tone={repo.mode === "shadow" ? "info" : "neutral"} icon={repo.mode === "shadow" ? "Eye" : undefined}>{repo.mode === "shadow" ? "Shadow" : "Off"}</Pill>
+        <ModePill kind="comment" mode={repo.mode} />
+        <ModePill kind="approve" mode={repo.approveMode} />
         <span className="ml-auto text-[11.5px] text-muted-foreground">{plural(repo.drafts, "draft")} checked, {plural(findings.judged, "finding")} judged</span>
+      </div>
+      <div className="mb-2.5 flex flex-col gap-1.5">
+        <PostedLine posted={repo.posted} />
+        {repo.trips.map((trip) => <TripNote key={trip.kind} repo={repo.repo} trip={trip} />)}
       </div>
       <div data-record="findings">
         <div className="mb-1.5 text-[12px] font-semibold">Comments: the gate's judgment of each finding</div>
@@ -161,6 +200,35 @@ function Reasons({ reasons }: { reasons: AutoPostInsights["reasons"] }) {
   );
 }
 
+/** Drafts Shuttle will post on its own once their countdown ends, soonest first; stop one from its PR. */
+function Scheduled({ rows, onOpenPr }: { rows: AutoPostInsights["scheduled"]; onOpenPr(key: string): void }) {
+  const now = Date.now();
+  return (
+    <div className="overflow-x-auto">
+      <table className={table} data-scheduled-posts>
+        <thead><tr><th>PR</th><th>Posts</th><th>In</th><th>At</th></tr></thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.draftId} data-scheduled-post={row.draftId}>
+              <td className="max-w-[18rem]">
+                <button type="button" className="block max-w-full cursor-pointer truncate text-left text-primary hover:underline" title={row.title} onClick={() => onOpenPr(row.key)}>{row.display}</button>
+                <div className="truncate text-[11px] text-muted-foreground">{row.title}</div>
+              </td>
+              <td className="whitespace-nowrap">
+                {row.verdict === "approve"
+                  ? <Pill tone="ok" icon="Check">Approval{row.findings > 0 ? ` with ${plural(row.findings, "comment")}` : ""}</Pill>
+                  : <Pill tone="info" icon="MessageSquare">{plural(row.findings, "comment")}</Pill>}
+              </td>
+              <td className="whitespace-nowrap">{row.at <= now ? "any moment" : span(row.at - now)}</td>
+              <td className="whitespace-nowrap text-muted-foreground">{clock(row.at)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function Recent({ rows, onOpenPr }: { rows: AutoPostInsights["recent"]; onOpenPr(key: string): void }) {
   if (rows.length === 0) return <div className="text-sm text-muted-foreground">No drafts were checked in this range.</div>;
   return (
@@ -221,6 +289,13 @@ export function AutoPostView({ onOpenPr }: { onOpenPr(key: string): void }) {
             Add a repository in shadow mode under{" "}
             <UrlLink href={settingsHref(pluginId)} className="text-primary hover:underline">Settings › Automations › Auto post</UrlLink>. Shuttle then checks each AI review draft there, records what it would post, and this page compares that with what you post.
           </div>
+        </div>
+      )}
+      {data !== undefined && data.scheduled.length > 0 && (
+        <div className="mb-3">
+          <Panel title={<><Icon name="Clock" className="size-3.5" aria-hidden />Waiting to post</>} sub={`${plural(data.scheduled.length, "review")} Shuttle posts on its own unless you stop it from the PR`}>
+            <Scheduled rows={data.scheduled} onOpenPr={onOpenPr} />
+          </Panel>
         </div>
       )}
       {data !== undefined && data.repos.length > 0 && (

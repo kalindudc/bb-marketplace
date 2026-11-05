@@ -200,7 +200,10 @@ function viewOf(ctx: Ctx, pr: PrRow, rules: readonly InboxRuleRow[]): { view: Pr
     lastReview,
     lastReviewFinishedAt: last?.finished_at ?? null,
     lastReviewHandled: last ? ctx.store.hasDraftSince(pr.id, last.created_at) : false,
-    draft: draft ? { findings: draftFindings, preset: last?.preset ?? null, auto: last?.trigger === "auto" } : null,
+    draft: draft ? {
+      findings: draftFindings, preset: last?.preset ?? null, auto: last?.trigger === "auto",
+      posts: draft.auto_post_state === "scheduled" && draft.auto_post_at !== null && draft.auto_post_verdict !== null ? { at: draft.auto_post_at, verdict: draft.auto_post_verdict } : null,
+    } : null,
     post,
     merge,
     myReview,

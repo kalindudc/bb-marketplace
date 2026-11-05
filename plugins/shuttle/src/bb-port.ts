@@ -1,4 +1,5 @@
 import type { BbPluginApi, JsonValue } from "@get-bb/plugin-sdk";
+import { z } from "zod";
 import { SpawnUnavailableError, type BbPort, type SpawnArgs, type ThreadInfo } from "./ports";
 
 type ThreadSpawnArgs = Parameters<BbPluginApi["sdk"]["threads"]["spawn"]>[0];
@@ -224,6 +225,16 @@ export function createBbPort(bb: BbPluginApi, setSettings: BbPort["setSettings"]
     },
     log(level, text) {
       bb.log[level](text);
+    },
+    async notify(title, body) {
+      try {
+        await bb.sdk.plugins.callRpc({
+          pluginId: "push-notifications", method: "notifications.send", input: { title: title.slice(0, 200), body: body.slice(0, 1000) },
+          outputSchema: z.object({ ok: z.literal(true) }).passthrough(),
+        });
+      } catch (error) {
+        bb.log.info(`no notification sent (${title}): ${error instanceof Error ? error.message : String(error)}`);
+      }
     },
   };
 }

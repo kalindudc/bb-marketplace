@@ -177,11 +177,21 @@ never ran its agent. Shuttle starts the same review again in a new thread, up to
 then stops and brings the PR to the Inbox. An auto review isn't started again while
 automations are paused or auto review is off. The PR's next review also skips such a thread.
 
-### Auto post (shadow mode)
+### Auto post
 
 Auto post decides, for each AI review draft in a repository you opt in, whether Shuttle could post it
-for you. For now it only runs in shadow mode: it records the decision on the draft and never posts.
-Turn it on per repository in **Settings › Automations › Auto post**. It is off everywhere by default.
+for you, and posts it only in a mode you chose. Comments and approvals each have a mode per
+repository in **Settings › Automations › Auto post**:
+
+- **Off:** nothing runs.
+- **Shadow:** the decision is recorded on the draft and in Insights; nothing posts. A repository you
+  add starts here.
+- **Countdown:** a review that passes posts after a wait (30 minutes for comments, 2 hours for
+  approvals), unless you stop it. You get a notification when it is scheduled, posted or refused.
+- **Auto:** it posts as soon as it passes.
+
+Nothing posts by default. Settings shows each repository's shadow record beside its modes and warns
+when the record has not proven its target, but the choice is yours.
 
 A finding would post only when it clears every check:
 
@@ -211,19 +221,45 @@ a draft the review only commented on. The rules would approve a PR that is open 
 read, no larger than the approval limit (200 lines by default), with checks passed (or none failed, if
 you choose), no requested changes, no bot author outside the allowed ones, a low-risk assessment with no
 concern of a kind set to hold approvals, and no finding above the allowed severity (low by default, posted
-as comments). Shadow mode records the decision against the verdict you posted; nothing is approved.
+as comments). Shadow mode records the decision against the verdict you posted.
+
+To post an approval, more rules apply. The review must have suggested approving, with at least two critic
+threads behind it. The repository must list the paths approvals may cover, and
+every file the PR changes must be under them; with none listed, Shuttle never approves there. Paths
+match by case, and `*` matches across folders, so `docs/*` covers `docs/guides/setup.md`. And the
+verifier reads the PR's whole diff and is asked whether anything should block merging: a score at or
+above the blocking floor (0.2 by default), a failed check, or a file whose diff the server did not send
+holds the approval. The blocking check is a veto only and runs only when every other rule would approve.
+
+Before a scheduled review posts, Shuttle checks again against the PR as its server has it: still open
+and at the commit the review read, the mode unchanged, automations not paused, the repository under its
+daily limit (5 reviews a day), the review thread holding as many critic threads as the votes it reports,
+you not having reviewed the PR yourself since the draft came, and for an approval, checks passed and no
+requested changes. Changing a rule a decision reads (a mode, the paths, floors, held concerns, limits on
+size and severity, the verifier, or the bot authors) stops the reviews already scheduled there; check
+them again to schedule them anew. Footers, countdowns and the daily limit apply as they are. Anything that fails leaves the draft for
+you and says why. A review Shuttle posts is the draft's summary with a footer saying Shuttle posted it,
+which you can change in settings or per repository; approvals always carry one. Requests for changes
+are never posted.
+
+Each comment Shuttle posted has **Should not have posted**, and an approval it posted has **This
+approval was a mistake**, in the PR's Your review tab. A marked comment counts against the record; an
+unmarked one counts as agreed once the PR is merged or closed. Marking more than 2 of the last 20
+comments it posted in a repository stops posting comments there, and one marked approval stops
+approvals there, until you resume it in settings. The stop never changes your settings.
 
 The verifier is a fast model that runs as a command with no tools, so it judges only what Shuttle
 gives it: the finding, the lines the reviewer quoted, the file's diff and the code around the line.
 It never sees the PR's description. The default runs Kimi K3 at low thinking through `pi -p`, from the
 temp directory with tools, skills and context files off; extensions still load, since some provide the
-model's credentials, so add `--no-extensions -e <that extension>` to leave the rest out. Any command
+model's credentials (and a device with managed pi extensions refuses `--no-extensions`). Any command
 that reads the prompt on stdin and prints `{"holds", "worth_posting", "reason"}` works. Only findings
 that pass every other check go to it, at most eight a draft.
 
 The draft's Your review tab shows what auto post would do, with a chip on each finding whose tooltip
-lists every check and the verifier's scores, and whether the approval rules would approve. **Check
-again** runs the checks once more, and so does `bb shuttle gate <pr>`. `bb shuttle rescore` judges the
+lists every check and the verifier's scores, and whether the approval rules would approve. When the
+draft is scheduled it shows when it posts, with **Stop** and **Post now**. **Check again** runs the
+checks once more, and so does `bb shuttle gate <pr>`; in a repository that posts, either may schedule it. `bb shuttle rescore` judges the
 findings of drafts checked in the last 30 days again, posted ones included, keeping each draft's holds.
 Posting a draft records which findings you kept, edited or dropped and the verdict you posted, and a
 discard records whether you discarded it or a newer review replaced it. **Insights › Auto post**

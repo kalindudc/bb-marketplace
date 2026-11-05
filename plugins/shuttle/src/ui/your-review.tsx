@@ -3,9 +3,9 @@ import { experimental_Icon as Icon, experimental_usePluginId, Markdown, UrlLink 
 import type { GateFinding, MyReview, PostView, PrView, ReviewDraft, ReviewHistoryItem, Severity } from "../contract";
 import { postText } from "../next";
 import { NextButtons, useActions } from "./actions";
-import { BUTTON, BUTTON_GHOST, BUTTON_PRIMARY_LARGE, FIELD, FitTextarea, Segmented } from "./common";
+import { BUTTON, BUTTON_GHOST, BUTTON_PRIMARY, BUTTON_PRIMARY_LARGE, FIELD, FitTextarea, Segmented } from "./common";
 import { useShuttleMutation, useShuttleQuery } from "./data";
-import { ago, plural, settingsHref } from "./format";
+import { ago, clock, plural, settingsHref, span } from "./format";
 import { isLive } from "./pills";
 import { reviewInQueue, useQueueReview } from "./posts";
 import { usePrState } from "./pr-state";
@@ -46,7 +46,7 @@ function GateNote({ pr, draft }: { pr: PrView; draft: ReviewDraft }) {
       <div className="flex flex-wrap items-center gap-1.5 text-[12.5px] font-semibold text-foreground">
         <Icon name="Eye" className="size-3.5 text-muted-foreground" aria-hidden />
         Auto post would {post ? `post ${plural(gate.posting.length, "finding")}` : "hold this draft"}
-        <span className="font-normal text-muted-foreground">· shadow mode, nothing is posted · checked {ago(gate.at)}</span>
+        <span className="font-normal text-muted-foreground">{draft.autoPost === null ? "· nothing from this check is posted" : ""} · checked {ago(gate.at)}</span>
         <button type="button" className="ml-auto cursor-pointer text-xs font-normal text-primary disabled:opacity-60" disabled={check.isPending} onClick={() => void check.run({ key: pr.key, draftId: draft.id })}>
           {check.isPending ? "Checking\u2026" : "Check again"}
         </button>
@@ -60,6 +60,64 @@ function GateNote({ pr, draft }: { pr: PrView; draft: ReviewDraft }) {
           {gate.approval.reasons.length > 0 && <ul className="mt-0.5 list-disc pl-5 text-muted-foreground">{gate.approval.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>}
         </div>
       )}
+    </section>
+  );
+}
+
+const STOPPED_FALLBACK = { stopped: "you stopped it", refused: "it did not pass at post time" } as const;
+
+/** Shuttle's own plan for the draft in a repository that posts: when it posts, what, and Stop or Post now while it waits. */
+function AutoPostBanner({ pr, draft, edited }: { pr: PrView; draft: ReviewDraft; edited: boolean }) {
+  const stop = useShuttleMutation("stopAutoPost");
+  const now = useShuttleMutation("autoPostNow");
+  const plan = draft.autoPost;
+  if (plan === null) return null;
+  const posting = draft.findings.filter((finding) => plan.findings.includes(finding.id));
+  const what = plan.verdict === "approve" ? `approve this PR${posting.length > 0 ? ` with ${plural(posting.length, "comment")}` : ""}` : `post ${plural(posting.length, "comment")}`;
+  const frame = "mt-3 rounded-md border px-3 py-2 text-xs";
+  if (plan.state === "scheduled") {
+    const at = plan.at;
+    const left = at === null ? null : at <= Date.now() ? "any moment now" : `in ${span(at - Date.now())}, at ${clock(at)}`;
+    return (
+      <section role="status" aria-label="Shuttle's post" data-auto-post="scheduled" className={`${frame} border-warning/40 bg-warning/5`}>
+        <div className="flex flex-wrap items-center gap-1.5 text-[12.5px] font-semibold text-foreground">
+          <Icon name="Clock" className="size-3.5 text-warning-text" aria-hidden />
+          Shuttle will {what}{left === null ? "" : ` ${left}`} unless you stop it.
+        </div>
+        {posting.length > 0 && (
+          <div className="mt-1 text-muted-foreground">
+            It posts {posting.map((finding, index) => (
+              <span key={finding.id}>{index > 0 ? ", " : ""}<span className={`font-semibold uppercase ${SEVERITY_TEXT[finding.severity]}`}>{finding.severity}</span> at <span className="font-mono">{location(finding.path, finding.line)}</span></span>
+            ))}, as Shuttle, with the footer from its settings.
+          </div>
+        )}
+        <div className="mt-1.5 flex flex-wrap items-center gap-2">
+          <button type="button" className={BUTTON_PRIMARY} disabled={stop.isPending || now.isPending} onClick={() => void stop.run({ key: pr.key, draftId: draft.id })}>
+            <Icon name="X" className="size-3.5" aria-hidden />{stop.isPending ? "Stopping\u2026" : "Stop"}
+          </button>
+          {/* Post now sends Shuttle's review as checked, never your edits, so it is gone once you edit. */}
+          {!edited && (
+            <button type="button" className={BUTTON} disabled={stop.isPending || now.isPending} onClick={() => void now.run({ key: pr.key, draftId: draft.id })}>
+              <Icon name="Sent" className="size-3.5" aria-hidden />{now.isPending ? "Posting\u2026" : plan.verdict === "approve" ? "Approve now" : "Post now"}
+            </button>
+          )}
+          <span className="text-muted-foreground">{edited ? "You edited the review, so Shuttle is stopping its post; post yours below." : "Or post it yourself below: that stops Shuttle's post too."}</span>
+        </div>
+      </section>
+    );
+  }
+  if (plan.state === "queued" || plan.state === "posted") {
+    return (
+      <section role="status" aria-label="Shuttle's post" data-auto-post={plan.state} className={`${frame} border-border bg-card text-muted-foreground`}>
+        <Icon name="Sent" className="mr-1.5 inline size-3.5 align-text-bottom" aria-hidden />
+        {plan.state === "queued" ? `Shuttle queued it to post${plan.verdict === null ? "" : `: it will ${what}`}.` : `Shuttle posted it${plan.at === null ? "" : ` ${ago(plan.at)}`}.`}
+      </section>
+    );
+  }
+  return (
+    <section role="status" aria-label="Shuttle's post" data-auto-post={plan.state} className={`${frame} border-border bg-card text-muted-foreground`}>
+      <Icon name="CircleSlash" fallback="Ban" className="mr-1.5 inline size-3.5 align-text-bottom" aria-hidden />
+      Shuttle won't post this on its own: {plan.reason ?? STOPPED_FALLBACK[plan.state]}.
     </section>
   );
 }
@@ -82,6 +140,19 @@ function DraftReview({ pr, draft }: { pr: PrView; draft: ReviewDraft }) {
   const all = ticked.length === findings.length;
   const inQueue = reviewInQueue(pr);
   const gated = new Map((draft.gate?.findings ?? []).map((finding) => [finding.id, finding]));
+  // Any edit makes the review yours: Shuttle's scheduled post of the draft as it was must not go out instead.
+  const edited = summary !== draft.summary || chosenVerdict !== draft.verdict
+    || findings.some((finding) => {
+      const original = draft.findings.find((f) => f.id === finding.id);
+      return original === undefined || finding.body !== original.body || finding.on !== (original.severity !== "nit");
+    });
+  const stopAuto = useShuttleMutation("stopAutoPost");
+  const stoppedFor = useRef<number | null>(null);
+  useEffect(() => {
+    if (!edited || draft.autoPost?.state !== "scheduled" || stoppedFor.current === draft.id) return;
+    stoppedFor.current = draft.id;
+    void stopAuto.run({ key: pr.key, draftId: draft.id });
+  }, [edited, draft.autoPost?.state, draft.id, pr.key, stopAuto]);
 
   const post = () => submit.run(pr, {
     verdict, body: summary.trim(), draftId: draft.id, ...(stale ? { staleOk } : {}),
@@ -115,6 +186,7 @@ function DraftReview({ pr, draft }: { pr: PrView; draft: ReviewDraft }) {
           </div>
         </div>
       )}
+      <AutoPostBanner pr={pr} draft={draft} edited={edited} />
       <GateNote pr={pr} draft={draft} />
       {draft.notes !== null && (
         <section aria-label="For you" data-draft-notes className="mt-3 rounded-md border border-border bg-card px-3 py-2">
@@ -226,14 +298,61 @@ function Buttons({ children }: { children: ReactNode }) {
 const POSTED_AS: Record<ReviewDraft["verdict"], string> = { approve: "you approved", comment: "you commented", changes: "you requested changes" };
 
 function historyFate(item: ReviewHistoryItem): string {
+  if (item.autoPosted !== null) {
+    const did = item.autoPosted.verdict === "approve" ? "Shuttle approved" : "Shuttle commented";
+    return item.autoPosted.findings.length === 0 ? did : `${did} with ${plural(item.autoPosted.findings.length, "comment")}`;
+  }
   if (item.state === "unposted") return "never posted";
   if (item.state === "discarded") return item.discardReason === "superseded" ? "replaced by a newer review" : "you discarded it";
   const posted = item.posted === null ? "you posted it" : POSTED_AS[item.posted];
   return item.postedFindings === null ? posted : `${posted} with ${plural(item.postedFindings, "comment")}`;
 }
 
+/**
+ * What Shuttle posted from an earlier draft, with a mark on each comment and on the approval: a mark counts against the
+ * record and can stop posting in the repository; unticking it takes the mark back.
+ */
+function AutoPosted({ pr, item }: { pr: PrView; item: ReviewHistoryItem }) {
+  const mark = useShuttleMutation("markAutoPost");
+  const posted = item.autoPosted;
+  if (posted === null) return null;
+  const toggle = (findingId: string | null, undo: boolean) => void mark.run({ key: pr.key, draftId: item.id, ...(findingId === null ? {} : { findingId }), ...(undo ? { undo } : {}) });
+  const box = "size-4 shrink-0 cursor-pointer accent-foreground";
+  return (
+    <div data-auto-posted={posted.verdict} className="mt-1.5 rounded-md border border-border bg-card px-3 py-2 text-xs">
+      <div className="flex items-center gap-1.5 text-[12.5px] font-semibold text-foreground">
+        <Icon name="Sent" className="size-3.5 text-muted-foreground" aria-hidden />
+        Shuttle {posted.verdict === "approve" ? "approved this PR" : "commented"}{posted.findings.length > 0 ? ` with ${plural(posted.findings.length, "comment")}` : ""}
+        <span className="font-normal text-muted-foreground">· mark what it got wrong; enough marks stop it posting here</span>
+      </div>
+      {posted.verdict === "approve" && (
+        <label className="mt-1.5 flex cursor-pointer items-center gap-2 text-foreground">
+          <input type="checkbox" className={box} checked={posted.mistake !== null} disabled={mark.isPending} onChange={() => toggle(null, posted.mistake !== null)} />
+          This approval was a mistake{posted.mistake !== null && <span className="text-muted-foreground">· marked {ago(posted.mistake)}</span>}
+        </label>
+      )}
+      {posted.findings.length > 0 && (
+        <ul className="mt-1">
+          {posted.findings.map((finding) => (
+            <li key={finding.id} data-auto-posted-finding={finding.id} className="flex items-start gap-2.5 border-t border-border py-1.5 first:border-t-0">
+              <div className="min-w-0 flex-1">
+                <span title={`${finding.path}${finding.line === null ? "" : `:${finding.line}`}`} className="rounded border border-border bg-background px-1 font-mono text-[11px] text-muted-foreground">{location(finding.path, finding.line)}</span>
+                <div className={`mt-0.5 line-clamp-2 text-[12.5px] ${finding.marked ? "text-muted-foreground line-through" : ""}`}>{finding.body}</div>
+              </div>
+              <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-foreground">
+                <input type="checkbox" className={box} aria-label={`Should not have posted the comment at ${location(finding.path, finding.line)}`} checked={finding.marked} disabled={mark.isPending} onChange={() => toggle(finding.id, finding.marked)} />
+                Should not have posted
+              </label>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 /** One earlier review: when, what it suggested and what became of it, its notes for you, and its summary folded. */
-function EarlierReview({ item, open }: { item: ReviewHistoryItem; open: boolean }) {
+function EarlierReview({ pr, item, open }: { pr: PrView; item: ReviewHistoryItem; open: boolean }) {
   const actions = useActions();
   return (
     <li data-earlier-review={item.id} className="border-t border-border py-2.5 first:border-t-0">
@@ -244,6 +363,7 @@ function EarlierReview({ item, open }: { item: ReviewHistoryItem; open: boolean 
         <span>· suggested {item.suggested === "changes" ? "requesting changes" : item.suggested === "approve" ? "approving" : "a comment"}, {historyFate(item)}</span>
         <button type="button" className="cursor-pointer text-primary hover:underline" onClick={() => actions.openThread(item.threadId)}>open its thread</button>
       </div>
+      <AutoPosted pr={pr} item={item} />
       {item.notes !== null
         ? <div data-earlier-notes className="mt-1.5 min-w-0 break-words rounded-md border border-border bg-card px-3 py-2 text-[13px]"><Markdown content={item.notes} /></div>
         : <div className="mt-1 text-xs text-muted-foreground">No notes for you.</div>}
@@ -263,7 +383,7 @@ function EarlierReviews({ pr }: { pr: PrView }) {
   return (
     <section aria-label="Earlier reviews" data-earlier-reviews className="mt-5">
       <div className="mb-1.5 text-[12.5px] font-semibold text-foreground">Earlier reviews <span className="font-normal text-muted-foreground">· notes for you, never posted</span></div>
-      <ul>{items.map((item, index) => <EarlierReview key={item.id} item={item} open={index === 0} />)}</ul>
+      <ul>{items.map((item, index) => <EarlierReview key={item.id} pr={pr} item={item} open={index === 0} />)}</ul>
     </section>
   );
 }

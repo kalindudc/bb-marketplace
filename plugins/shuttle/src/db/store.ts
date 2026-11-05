@@ -169,6 +169,27 @@ export interface DraftRow {
   discard_reason: "user" | "superseded" | null;
   /** The verdict the user posted from it. */
   posted_verdict: "comment" | "approve" | "changes" | null;
+  /** Auto post's schedule: scheduled to post at `auto_post_at`, stopped by the user, queued, posted, or refused at post time. */
+  auto_post_state: "scheduled" | "stopped" | "queued" | "posted" | "refused" | null;
+  auto_post_at: number | null;
+  auto_post_verdict: "comment" | "approve" | null;
+  /** Why it was stopped or refused. */
+  auto_post_reason: string | null;
+  approval_mistake_at: number | null;
+  /** The auto post settings it was scheduled under. */
+  auto_post_policy: string | null;
+  /** JSON string[]: the findings the schedule posts. */
+  auto_post_findings: string | null;
+}
+
+export interface TripRow {
+  id: number;
+  /** The auto post repository entry, such as `Shopify/*`. */
+  repo: string;
+  kind: "comment" | "approve";
+  reason: string;
+  at: number;
+  cleared_at: number | null;
 }
 
 export interface MyReviewRow {
@@ -267,6 +288,8 @@ export interface PostRow {
   finished_at: number | null;
   /** A failed post the user dismissed, or one a later post of the PR made moot. */
   cleared_at: number | null;
+  /** 1 when auto post queued it rather than the user. */
+  auto: number;
 }
 
 export type MergeRunState = "queued" | "merging" | "done" | "failed" | "cancelled";
@@ -876,10 +899,21 @@ export class Store {
 
   addDraft(row: Pick<DraftRow, "pr_id" | "thread_id" | "review_id" | "head" | "summary" | "verdict" | "findings" | "notes"> & { assessment?: string | null }): DraftRow {
     return this.tx(() => {
-      // One live draft per PR: a newer one from the same review replaces it, except one queued to post, which is the user's choice and still posts.
+      // One live draft per PR: a newer one from the same review replaces it, except one the user queued to post, which is
+      // their choice and still posts. Auto post's own queued review goes with its draft: the newer review may say otherwise.
+      this.sql(
+        `UPDATE review_posts SET state = 'cancelled', finished_at = ? WHERE auto = 1 AND state = 'queued'
+         AND draft_id IN (SELECT id FROM review_drafts WHERE pr_id = ? AND state = 'draft')`,
+      ).run(this.now(), row.pr_id);
+      this.sql(
+        `UPDATE review_drafts SET auto_post_state = 'stopped', auto_post_reason = 'a newer review of the PR replaced it'
+         WHERE pr_id = ? AND state = 'draft' AND auto_post_state IN ('scheduled', 'queued')
+         AND id NOT IN (SELECT draft_id FROM review_posts WHERE draft_id IS NOT NULL AND state = 'posting')`,
+      ).run(row.pr_id);
       this.sql(
         `UPDATE review_drafts SET state = 'discarded', discard_reason = 'superseded' WHERE pr_id = ? AND state = 'draft'
-         AND id NOT IN (SELECT draft_id FROM review_posts WHERE draft_id IS NOT NULL AND state IN ('queued', 'posting'))`,
+         AND id NOT IN (SELECT draft_id FROM review_posts WHERE draft_id IS NOT NULL AND state IN ('queued', 'posting') AND auto = 0)
+         AND id NOT IN (SELECT draft_id FROM review_posts WHERE draft_id IS NOT NULL AND state = 'posting')`,
       ).run(row.pr_id);
       const result = this.sql("INSERT INTO review_drafts (pr_id, thread_id, review_id, head, summary, verdict, findings, notes, assessment, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?)")
         .run(row.pr_id, row.thread_id, row.review_id, row.head, row.summary, row.verdict, row.findings, row.notes, row.assessment ?? null, this.now());
@@ -927,6 +961,63 @@ export class Store {
     return this.sql("SELECT * FROM review_drafts WHERE pr_id = ? ORDER BY id DESC LIMIT ?").all(prId, limit) as DraftRow[];
   }
 
+  setAutoPost(id: number, patch: { state: DraftRow["auto_post_state"]; at?: number | null; verdict?: DraftRow["auto_post_verdict"]; reason?: string | null; policy?: string | null; findings?: string | null }): void {
+    this.sql(`UPDATE review_drafts SET auto_post_state = @state, auto_post_at = CASE WHEN @setAt THEN @at ELSE auto_post_at END,
+      auto_post_verdict = CASE WHEN @setVerdict THEN @verdict ELSE auto_post_verdict END, auto_post_reason = @reason,
+      auto_post_policy = CASE WHEN @setPolicy THEN @policy ELSE auto_post_policy END,
+      auto_post_findings = CASE WHEN @setFindings THEN @findings ELSE auto_post_findings END WHERE id = @id`)
+      .run({
+        id, state: patch.state, setAt: patch.at !== undefined ? 1 : 0, at: patch.at ?? null, setVerdict: patch.verdict !== undefined ? 1 : 0, verdict: patch.verdict ?? null,
+        reason: patch.reason ?? null, setPolicy: patch.policy !== undefined ? 1 : 0, policy: patch.policy ?? null,
+        setFindings: patch.findings !== undefined ? 1 : 0, findings: patch.findings ?? null,
+      });
+  }
+
+  /** Live drafts whose auto post is due, oldest first. */
+  dueAutoPosts(now: number): DraftRow[] {
+    return this.sql("SELECT * FROM review_drafts WHERE auto_post_state = 'scheduled' AND auto_post_at <= ? AND state = 'draft' ORDER BY auto_post_at, id").all(now) as DraftRow[];
+  }
+
+  /** Live drafts waiting to auto post, soonest first. */
+  scheduledAutoPosts(): DraftRow[] {
+    return this.sql("SELECT * FROM review_drafts WHERE auto_post_state = 'scheduled' AND state = 'draft' ORDER BY auto_post_at, id").all() as DraftRow[];
+  }
+
+  /** Drafts auto post posted since `at`, for the daily cap and the breaker, newest first. */
+  autoPostedSince(at: number): DraftRow[] {
+    return this.sql("SELECT * FROM review_drafts WHERE auto_post_state = 'posted' AND posted_at >= ? ORDER BY posted_at DESC, id DESC").all(at) as DraftRow[];
+  }
+
+  /** Live drafts auto post queued and that have not posted yet. */
+  autoQueued(): DraftRow[] {
+    return this.sql(`SELECT * FROM review_drafts d WHERE d.auto_post_state = 'queued' AND d.state = 'draft'
+      AND EXISTS (SELECT 1 FROM review_posts p WHERE p.draft_id = d.id AND p.auto = 1 AND p.state IN ('queued', 'posting')) ORDER BY d.id`).all() as DraftRow[];
+  }
+
+  setApprovalMistake(id: number, at: number | null): void {
+    this.sql("UPDATE review_drafts SET approval_mistake_at = ? WHERE id = ?").run(at, id);
+  }
+
+  setDraftFindingOutcomes(id: number, outcome: string): void {
+    this.sql("UPDATE review_drafts SET outcome = ? WHERE id = ?").run(outcome, id);
+  }
+
+  openTrip(repo: string, kind: TripRow["kind"]): TripRow | null {
+    return (this.sql("SELECT * FROM auto_post_trips WHERE repo = ? AND kind = ? AND cleared_at IS NULL ORDER BY id DESC LIMIT 1").get(repo, kind) as TripRow | undefined) ?? null;
+  }
+
+  openTrips(): TripRow[] {
+    return this.sql("SELECT * FROM auto_post_trips WHERE cleared_at IS NULL ORDER BY id").all() as TripRow[];
+  }
+
+  addTrip(repo: string, kind: TripRow["kind"], reason: string): void {
+    this.sql("INSERT INTO auto_post_trips (repo, kind, reason, at) VALUES (?, ?, ?, ?)").run(repo, kind, reason, this.now());
+  }
+
+  clearTrips(repo: string, kind: TripRow["kind"]): number {
+    return this.sql("UPDATE auto_post_trips SET cleared_at = ? WHERE repo = ? AND kind = ? AND cleared_at IS NULL").run(this.now(), repo, kind).changes;
+  }
+
   /** Drafts auto post decided about, oldest first. */
   gatedDrafts(): DraftRow[] {
     return this.sql("SELECT * FROM review_drafts WHERE gate IS NOT NULL ORDER BY created_at, id").all() as DraftRow[];
@@ -940,9 +1031,9 @@ export class Store {
     return this.sql("SELECT * FROM review_drafts WHERE created_at >= ?").all(at) as DraftRow[];
   }
 
-  addPost(row: Pick<PostRow, "pr_id" | "server" | "draft_id" | "verdict" | "body" | "findings" | "stale_ok">): PostRow {
-    const result = this.sql("INSERT INTO review_posts (pr_id, server, draft_id, verdict, body, findings, stale_ok, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?)")
-      .run(row.pr_id, row.server, row.draft_id, row.verdict, row.body, row.findings, row.stale_ok, this.now());
+  addPost(row: Pick<PostRow, "pr_id" | "server" | "draft_id" | "verdict" | "body" | "findings" | "stale_ok"> & { auto?: number }): PostRow {
+    const result = this.sql("INSERT INTO review_posts (pr_id, server, draft_id, verdict, body, findings, stale_ok, state, created_at, auto) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)")
+      .run(row.pr_id, row.server, row.draft_id, row.verdict, row.body, row.findings, row.stale_ok, this.now(), row.auto ?? 0);
     return this.postById(Number(result.lastInsertRowid))!;
   }
 

@@ -2,7 +2,7 @@
 import type { AutoPostInsights, Finding, ShadowLabel } from "./contract";
 import type { Ctx } from "./ctx";
 import type { DraftRow } from "./db/store";
-import type { FindingOutcome } from "./drafts";
+import { autoPostOf, type FindingOutcome } from "./drafts";
 import { APPROVAL_ROUTE, ASKS_CHANGES, CHANGES_ROUTE, NO_FINDING_PASSED, parseGate, unreadable } from "./gate";
 import { shortKey } from "./prs";
 import { globMatch } from "./sync";
@@ -30,7 +30,7 @@ export function neededFor(agreed: number, against: number, target: number): numb
   return null;
 }
 
-type Decided = "kept" | "edited" | "dropped" | "pending" | "superseded";
+type Decided = "kept" | "edited" | "dropped" | "pending" | "superseded" | "auto" | "retracted";
 
 /** What the user did with each finding: from what they posted, from their discard, or not yet. */
 export function decisionsOf(draft: DraftRow): Map<string, Decided> {
@@ -85,11 +85,14 @@ function finish<T extends Tally>(row: T, target: number): T & { precision: numbe
 export function autoPostInsights(ctx: Ctx, range: AutoPostInsights["range"]): AutoPostInsights {
   const config = ctx.config().autoPost;
   const from = ctx.now() - RANGE_DAYS[range] * DAY;
+  const trips = ctx.store.openTrips();
   const repos = config.repos.map((repo) => ({
-    repo: repo.repo, mode: repo.mode, drafts: 0,
+    repo: repo.repo, mode: repo.mode, approveMode: repo.approve, drafts: 0,
     findings: { ...tally(), edited: 0, judged: 0 },
     policy: { drafts: 0, findings: 0, agreed: 0, against: 0 },
     approvals: { ...tally(), drafts: 0, wouldApprove: 0 },
+    posted: { reviews: 0, approvals: 0, findings: 0, marked: 0, mistakes: 0 },
+    trips: trips.filter((trip) => trip.repo === repo.repo).map((trip) => ({ kind: trip.kind, reason: trip.reason, at: trip.at })),
   }));
   const reasons = new Map<string, { check: string; reason: string; count: number }>();
   const count = (check: string, reason: string) => {
@@ -112,6 +115,8 @@ export function autoPostInsights(ctx: Ctx, range: AutoPostInsights["range"]): Au
     const findings = JSON.parse(draft.findings) as Finding[];
     const severity = new Map(findings.map((f) => [f.id, f.severity]));
     const decided = decisionsOf(draft);
+    // What Shuttle posted itself is agreed once the PR is done and you have not marked it; until then it is pending.
+    const closed = pr.state === "merged" || pr.state === "closed";
     const index = config.repos.findIndex((repo) => globMatch(repo.repo, pr.repo));
     const row = index >= 0 ? repos[index]! : null;
     durations.push(gate.ms);
@@ -129,10 +134,14 @@ export function autoPostInsights(ctx: Ctx, range: AutoPostInsights["range"]): Au
       // and a passing one the verifier never scored (from a check before every finding went to it).
       const failedChecks = finding.checks.filter((c) => !c.ok);
       const unread = failedChecks.length > 0 && failedChecks.every((c) => unreadable(c.reason));
-      if (finding.unjudged || unread || (finding.pass && finding.holds === null)) continue;
-      const took = verdict === "kept" || verdict === "edited" ? "yes" : verdict === "dropped" ? "no" : verdict === "pending" ? "pending" : null;
+      const posted = verdict === "auto" || verdict === "retracted";
+      if (!posted && (finding.unjudged || unread || (finding.pass && finding.holds === null))) continue;
+      const took = verdict === "kept" || verdict === "edited" ? "yes" : verdict === "dropped" || verdict === "retracted" ? "no"
+        : verdict === "auto" ? (closed ? "yes" : "pending") : verdict === "pending" ? "pending" : null;
       // A finding below the minimum severity is not the gate's to post, so posting it is no miss.
-      const label = labelOf(finding.pass, finding.pass || RANK[severity.get(finding.id) ?? "nit"] >= RANK[config.minSeverity] || took !== "yes" ? took : null);
+      // What Shuttle posted is its decision whatever a later check says, so a rescore cannot move a mark out of "against".
+      const would = posted || finding.pass;
+      const label = labelOf(would, would || RANK[severity.get(finding.id) ?? "nit"] >= RANK[config.minSeverity] || took !== "yes" ? took : null);
       if (row && label) {
         row.findings[label]++;
         if (label === "agreed" && verdict === "edited") row.findings.edited++;
@@ -146,6 +155,14 @@ export function autoPostInsights(ctx: Ctx, range: AutoPostInsights["range"]): Au
       if (label === "against") against++;
       if (finding.holds !== null && finding.worth !== null && label) points.push({ holds: finding.holds, worth: finding.worth, label });
     }
+    if (row && draft.auto_post_state === "posted") {
+      const outcomes = draft.outcome ? (JSON.parse(draft.outcome) as FindingOutcome[]) : [];
+      row.posted.reviews++;
+      if (draft.auto_post_verdict === "approve") row.posted.approvals++;
+      if (draft.approval_mistake_at !== null) row.posted.mistakes++;
+      row.posted.findings += outcomes.filter((o) => o.outcome === "auto" || o.outcome === "retracted").length;
+      row.posted.marked += outcomes.filter((o) => o.outcome === "retracted").length;
+    }
     if (row) {
       row.drafts++;
       if (gate.decision === "post") {
@@ -156,7 +173,11 @@ export function autoPostInsights(ctx: Ctx, range: AutoPostInsights["range"]): Au
         row.approvals.drafts++;
         const would = gate.approval.decision === "approve";
         if (would) row.approvals.wouldApprove++;
-        const took = draft.state === "draft" ? "pending"
+        const mine = draft.auto_post_state === "posted" && draft.auto_post_verdict === "approve";
+        // A comment review Shuttle posted itself is its choice, not yours, so it says nothing about approving.
+        const shuttles = draft.auto_post_state === "posted" && draft.auto_post_verdict === "comment";
+        const took = shuttles ? null : mine ? (draft.approval_mistake_at !== null ? "no" : closed ? "yes" : "pending")
+          : draft.state === "draft" ? "pending"
           : draft.state === "posted" ? (draft.posted_verdict === null ? null : draft.posted_verdict === "approve" ? "yes" : "no")
           : draft.discard_reason === "user" ? "no" : null;
         const label = labelOf(would, took);
@@ -180,6 +201,11 @@ export function autoPostInsights(ctx: Ctx, range: AutoPostInsights["range"]): Au
     approvalTarget: config.approvals.target,
     repos: repos.map((row) => ({ ...row, findings: finish(row.findings, config.targetPrecision), approvals: finish(row.approvals, config.approvals.target) })),
     reasons: [...reasons.values()].sort((a, b) => b.count - a.count).slice(0, 14),
+    scheduled: ctx.store.scheduledAutoPosts().flatMap((draft) => {
+      const pr = ctx.store.prById(draft.pr_id);
+      if (!pr || draft.auto_post_at === null || draft.auto_post_verdict === null) return [];
+      return [{ draftId: draft.id, key: pr.key, display: shortKey(ctx, pr), title: pr.title, at: draft.auto_post_at, verdict: draft.auto_post_verdict, findings: autoPostOf(ctx, draft)?.findings.length ?? 0 }];
+    }),
     points,
     verifier: { runs, failures, medianMs: durations.length ? durations[Math.floor(durations.length / 2)]! : null },
     recent: recent.reverse().slice(0, 50),

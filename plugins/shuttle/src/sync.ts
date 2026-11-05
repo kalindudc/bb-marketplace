@@ -402,8 +402,8 @@ interface AutoWait {
   last: number;
 }
 
-export function globMatch(glob: string, value: string): boolean {
-  const re = new RegExp(`^${glob.trim().replace(/[.+^${}()|[\]\\]/gu, "\\$&").replace(/\*/gu, ".*").replace(/\?/gu, ".")}$`, "iu");
+export function globMatch(glob: string, value: string, caseSensitive = false): boolean {
+  const re = new RegExp(`^${glob.trim().replace(/[.+^${}()|[\]\\]/gu, "\\$&").replace(/\*/gu, ".*").replace(/\?/gu, ".")}$`, caseSensitive ? "u" : "iu");
   return re.test(value);
 }
 

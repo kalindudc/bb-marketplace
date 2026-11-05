@@ -736,7 +736,7 @@ describe("the PR view of someone else's PR", () => {
     const card = await find(tab(await view(), "review"), "[data-draft]");
     const note = within(card).getByRole("region", { name: "Auto post" });
     expect(note.textContent).toContain("Auto post would post 1 finding");
-    expect(note.textContent).toContain("shadow mode, nothing is posted");
+    expect(note.textContent).toContain("nothing from this check is posted");
     expect(card.querySelector("[data-finding='a'] [data-gate-finding='post']")!.textContent).toBe("would post");
     const held = card.querySelector("[data-finding='b'] [data-gate-finding='held']")!;
     expect(held.textContent).toBe("held: no critic votes b");
@@ -767,10 +767,123 @@ describe("the PR view of someone else's PR", () => {
     expect(approval.textContent).toContain("checks are still running");
   });
 
+  it("says when Shuttle will post the draft itself, with Stop and Post now", async () => {
+    const ready = { ...theirs, draft: { id: 7, findings: 3, at: Date.now() }, next: next({ kind: "post", tone: "info", label: "AI review ready" }) };
+    const gate = { mode: "shadow" as const, decision: "post" as const, reasons: [], posting: ["a", "b"], at: Date.now() - 60_000, ms: 10, findings: [] };
+    const autoPost = { state: "scheduled" as const, at: Date.now() + 25 * 60_000, verdict: "comment" as const, reason: null, findings: ["a", "b"], mistake: null };
+    const { slot, view } = await prPage(ready, { stopAutoPost: () => ({ pr: ready }), autoPostNow: () => ({ pr: ready }) }, { draft: draft({ gate, autoPost }) });
+    const card = await find(tab(await view(), "review"), "[data-draft]");
+    const banner = within(card).getByRole("status", { name: "Shuttle's post" });
+    expect(banner.getAttribute("data-auto-post")).toBe("scheduled");
+    expect(banner.textContent).toContain("Shuttle will post 2 comments in 25m, at ");
+    expect(banner.textContent).toContain("unless you stop it.");
+    expect(banner.textContent).toContain("It posts high at header/actions.tsx:88, medium at header/menu.tsx:31");
+    expect(within(card).getByRole("region", { name: "Auto post" }).textContent).not.toContain("nothing from this check is posted");
+    fireEvent.click(within(banner).getByRole("button", { name: "Stop" }));
+    await waitFor(() => expect(callsTo(slot, "stopAutoPost")).toEqual([{ key: theirs.key, draftId: 7 }]));
+    fireEvent.click(within(banner).getByRole("button", { name: "Post now" }));
+    await waitFor(() => expect(callsTo(slot, "autoPostNow")).toEqual([{ key: theirs.key, draftId: 7 }]));
+  });
+
+  it("stops Shuttle's scheduled post once you edit the review, and never offers to post the original over your edits", async () => {
+    const ready = { ...theirs, draft: { id: 7, findings: 3, at: Date.now() }, next: next({ kind: "post", tone: "info", label: "AI review ready" }) };
+    const gate = { mode: "shadow" as const, decision: "post" as const, reasons: [], posting: ["a"], at: Date.now() - 60_000, ms: 10, findings: [] };
+    const autoPost = { state: "scheduled" as const, at: Date.now() + 25 * 60_000, verdict: "comment" as const, reason: null, findings: ["a"], mistake: null };
+    const { slot, view } = await prPage(ready, { stopAutoPost: () => ({ pr: ready }) }, { draft: draft({ gate, autoPost }) });
+    const card = await find(tab(await view(), "review"), "[data-draft]");
+    const banner = within(card).getByRole("status", { name: "Shuttle's post" });
+    expect(within(banner).getByRole("button", { name: "Post now" })).toBeTruthy();
+    fireEvent.change(within(card).getByRole("textbox", { name: "Summary" }), { target: { value: "Do not approve; this is broken." } });
+    await waitFor(() => expect(callsTo(slot, "stopAutoPost")).toEqual([{ key: theirs.key, draftId: 7 }]));
+    expect(within(banner).queryByRole("button", { name: "Post now" })).toBeNull();
+    expect(banner.textContent).toContain("You edited the review, so Shuttle is stopping its post");
+    fireEvent.change(within(card).getByRole("textbox", { name: "Summary" }), { target: { value: "Still editing." } });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(callsTo(slot, "stopAutoPost")).toHaveLength(1);
+  });
+
+  it("says when Shuttle will approve, when it won't post on its own, and when it queued the post", async () => {
+    const ready = { ...theirs, draft: { id: 7, findings: 3, at: Date.now() }, next: next({ kind: "post", tone: "info", label: "AI review ready" }) };
+    const approve = { state: "scheduled" as const, at: Date.now() + 2 * 3_600_000, verdict: "approve" as const, reason: null, findings: [], mistake: null };
+    const { view } = await prPage(ready, {}, { draft: draft({ autoPost: approve }) });
+    let banner = within(await find(tab(await view(), "review"), "[data-draft]")).getByRole("status", { name: "Shuttle's post" });
+    expect(banner.textContent).toContain("Shuttle will approve this PR in 2h, at ");
+
+    unmountAll();
+    const stopped = { state: "stopped" as const, at: null, verdict: "comment" as const, reason: "you posted your own review", findings: ["a"], mistake: null };
+    const second = await prPage(ready, {}, { draft: draft({ autoPost: stopped }) });
+    banner = within(await find(tab(await second.view(), "review"), "[data-draft]")).getByRole("status", { name: "Shuttle's post" });
+    expect(banner.getAttribute("data-auto-post")).toBe("stopped");
+    expect(banner.textContent).toBe("Shuttle won't post this on its own: you posted your own review.");
+    expect(within(banner).queryByRole("button")).toBeNull();
+
+    unmountAll();
+    const refused = { state: "refused" as const, at: Date.now(), verdict: "approve" as const, reason: "the PR moved to a new head", findings: [], mistake: null };
+    const third = await prPage(ready, {}, { draft: draft({ autoPost: refused }) });
+    banner = within(await find(tab(await third.view(), "review"), "[data-draft]")).getByRole("status", { name: "Shuttle's post" });
+    expect(banner.getAttribute("data-auto-post")).toBe("refused");
+    expect(banner.textContent).toBe("Shuttle won't post this on its own: the PR moved to a new head.");
+
+    unmountAll();
+    const queued = { state: "queued" as const, at: Date.now(), verdict: "comment" as const, reason: null, findings: ["a"], mistake: null };
+    const fourth = await prPage(ready, {}, { draft: draft({ autoPost: queued }) });
+    banner = within(await find(tab(await fourth.view(), "review"), "[data-draft]")).getByRole("status", { name: "Shuttle's post" });
+    expect(banner.getAttribute("data-auto-post")).toBe("queued");
+    expect(banner.textContent).toContain("Shuttle queued it to post");
+  });
+
+  it("marks what Shuttle posted from an earlier review as a mistake, and takes the mark back", async () => {
+    const base = {
+      threadId: "thr_review", threadTitle: "Review", preset: "Thorough", trigger: "auto", head: "3e9a7c1000", state: "posted", discardReason: null, suggested: "comment",
+      posted: null, postedAt: Date.now(), summary: "Summary", notes: null, findings: 2, postedFindings: 2,
+    };
+    const history = {
+      items: [
+        { ...base, id: 1, at: Date.now() - 3_600_000, autoPosted: { verdict: "comment", mistake: null, findings: [
+          { id: "a", path: "src/header/actions.tsx", line: 88, body: "The compact prop never reaches the overflow menu.", marked: false },
+          { id: "b", path: "src/header/menu.tsx", line: 31, body: "The menu closes before the action runs.", marked: true },
+        ] } },
+        { ...base, id: 2, at: Date.now() - 2 * 3_600_000, suggested: "approve", findings: 0, postedFindings: 0, autoPosted: { verdict: "approve", mistake: null, findings: [] } },
+        { ...base, id: 3, at: Date.now() - 3 * 3_600_000, suggested: "approve", findings: 0, postedFindings: 0, autoPosted: { verdict: "approve", mistake: Date.now() - 60_000, findings: [] } },
+      ],
+    };
+    const ready = { ...theirs, draft: { id: 7, findings: 3, at: Date.now() }, next: next({ kind: "post", tone: "info", label: "AI review ready" }) };
+    const { slot, view } = await prPage(ready, { reviewHistory: () => history as never, markAutoPost: () => ({ pr: ready }) }, { draft: draft() });
+    const earlier = await find(tab(await view(), "review"), "[data-earlier-reviews]");
+    const rows = [...earlier.querySelectorAll<HTMLElement>("[data-earlier-review]")];
+    expect(rows[0]!.textContent).toContain("suggested a comment, Shuttle commented with 2 comments");
+    expect(rows[1]!.textContent).toContain("suggested approving, Shuttle approved");
+    const commented = rows[0]!.querySelector<HTMLElement>("[data-auto-posted='comment']")!;
+    expect(commented.textContent).toContain("Shuttle commented with 2 comments");
+    const first = within(commented).getByRole("checkbox", { name: "Should not have posted the comment at header/actions.tsx:88" }) as HTMLInputElement;
+    const second = within(commented).getByRole("checkbox", { name: "Should not have posted the comment at header/menu.tsx:31" }) as HTMLInputElement;
+    expect([first.checked, second.checked]).toEqual([false, true]);
+    expect(within(commented).queryByRole("checkbox", { name: "This approval was a mistake" })).toBeNull();
+    fireEvent.click(first);
+    await waitFor(() => expect(callsTo(slot, "markAutoPost")).toEqual([{ key: theirs.key, draftId: 1, findingId: "a" }]));
+    fireEvent.click(second);
+    await waitFor(() => expect(callsTo(slot, "markAutoPost")).toHaveLength(2));
+    expect(callsTo(slot, "markAutoPost")[1]).toEqual({ key: theirs.key, draftId: 1, findingId: "b", undo: true });
+
+    const approved = rows[1]!.querySelector<HTMLElement>("[data-auto-posted='approve']")!;
+    expect(approved.textContent).toContain("Shuttle approved this PR");
+    const mistake = within(approved).getByRole("checkbox", { name: "This approval was a mistake" }) as HTMLInputElement;
+    expect(mistake.checked).toBe(false);
+    fireEvent.click(mistake);
+    await waitFor(() => expect(callsTo(slot, "markAutoPost")).toHaveLength(3));
+    expect(callsTo(slot, "markAutoPost")[2]).toEqual({ key: theirs.key, draftId: 2 });
+
+    const marked = within(rows[2]!.querySelector<HTMLElement>("[data-auto-posted='approve']")!).getByRole("checkbox", { name: /This approval was a mistake/u }) as HTMLInputElement;
+    expect(marked.checked).toBe(true);
+    fireEvent.click(marked);
+    await waitFor(() => expect(callsTo(slot, "markAutoPost")).toHaveLength(4));
+    expect(callsTo(slot, "markAutoPost")[3]).toEqual({ key: theirs.key, draftId: 3, undo: true });
+  });
+
   it("lists earlier reviews with their notes under the draft, and keeps them on a merged PR", async () => {
     const item = (id: number, patch: Record<string, unknown>) => ({
       id, threadId: "thr_review", threadTitle: "Review", preset: "Thorough", trigger: "auto", head: "3e9a7c1000", at: Date.now() - id * 3_600_000,
-      state: "posted", discardReason: null, suggested: "comment", posted: "approve", postedAt: Date.now(), summary: `Summary ${id}`, notes: `Notes ${id}`, findings: 2, postedFindings: 1, ...patch,
+      state: "posted", discardReason: null, suggested: "comment", posted: "approve", postedAt: Date.now(), summary: `Summary ${id}`, notes: `Notes ${id}`, findings: 2, postedFindings: 1, autoPosted: null, ...patch,
     });
     const history = { items: [item(1, {}), item(2, { state: "discarded", discardReason: "superseded", posted: null, postedFindings: null, notes: null }), item(3, { state: "unposted", posted: null, postedAt: null, postedFindings: null })] };
     const ready = { ...theirs, draft: { id: 7, findings: 3, at: Date.now() }, next: next({ kind: "post", tone: "info", label: "AI review ready" }) };

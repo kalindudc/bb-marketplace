@@ -102,6 +102,10 @@ export function registerRpc(bb: BbPluginApi, shuttle: Shuttle): void {
     clearPost: ({ id }) => refusing(() => ({ pr: shuttle.clearPost(id) })),
     discardDraft: ({ key, draftId }) => refusing(async () => ({ pr: await shuttle.discardDraft(key, draftId) })),
     checkDraft: ({ key, draftId }) => refusing(async () => ({ pr: await shuttle.checkDraft(key, draftId) })),
+    stopAutoPost: ({ key, draftId }) => refusing(async () => ({ pr: shuttle.stopAutoPost(key, draftId) })),
+    autoPostNow: ({ key, draftId }) => refusing(async () => ({ pr: shuttle.autoPostNow(key, draftId) })),
+    markAutoPost: ({ key, draftId, findingId, undo }) => refusing(async () => ({ pr: shuttle.markAutoPost(key, draftId, findingId, undo) })),
+    resumeAutoPost: ({ repo, kind }) => refusing(async () => shuttle.resumeAutoPost(repo, kind)),
     restoreDraft: ({ key, draftId }) => refusing(async () => ({ pr: await shuttle.restoreDraft(key, draftId) })),
     reply: ({ key, thread, body }) => refusing(async () => {
       await shuttle.reply(key, thread, body);

@@ -114,4 +114,6 @@ export interface BbPort {
   /** Runs `fn` just before each publish reaches the page, such as to rebuild what its reads will ask for. */
   beforePublish?(fn: () => void): void;
   log(level: "info" | "warn" | "error", text: string): void;
+  /** Sends the user a notification through bb's push-notifications plugin; without it, only logs. */
+  notify(title: string, body: string): Promise<void>;
 }

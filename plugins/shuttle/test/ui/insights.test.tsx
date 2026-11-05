@@ -148,6 +148,53 @@ describe("Insights", () => {
     expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: formatRoute({ view: "pr", key: waiting.key }) } });
   });
 
+  it("lists what is waiting to post, each repository's modes and what Shuttle posted, and resumes a stopped kind", async () => {
+    const record = autoPostInsights({
+      repos: [shadowRepo({
+        repo: "acme/app", mode: "countdown", approveMode: "auto", drafts: 4,
+        posted: { reviews: 3, approvals: 1, findings: 5, marked: 1, mistakes: 1 },
+        trips: [{ kind: "approve", reason: "you marked 2 approvals as mistakes", at: Date.now() - 2 * HOUR }],
+      }), shadowRepo({ repo: "acme/docs" })],
+      scheduled: [
+        { draftId: 11, key: waiting.key, display: "terraform-the-cloud#74066", title: "Move the WAF rules", at: Date.now() + 12 * 60_000, verdict: "comment", findings: 2 },
+        { draftId: 12, key: "github:acme/app#9", display: "app#9", title: "Bump locales", at: Date.now() + 90 * 60_000, verdict: "approve", findings: 0 },
+      ],
+    });
+    const { slot } = await insightsPage("insights/autopost", full, {
+      autoPostInsights: ({ range }: { range: "7d" | "30d" | "90d" }) => ({ ...record, range }), getConfig: () => ({ config: config() }), resumeAutoPost: () => ({ cleared: 1 }),
+    });
+    const scheduled = await find(slot.container, "[data-scheduled-posts]");
+    const rows = [...scheduled.querySelectorAll<HTMLElement>("[data-scheduled-post]")];
+    expect(rows.map((row) => row.getAttribute("data-scheduled-post"))).toEqual(["11", "12"]);
+    expect(rows[0]!.textContent).toContain("Move the WAF rules");
+    expect(rows[0]!.textContent).toContain("2 comments");
+    expect(rows[0]!.textContent).toContain("12m");
+    expect(rows[1]!.textContent).toContain("Approval");
+    expect(rows[1]!.textContent).toContain("2h");
+    fireEvent.click(within(rows[0]!).getByRole("button", { name: "terraform-the-cloud#74066" }));
+    expect(lastNavigation(slot)).toEqual({ method: "toPluginPanel", path: "shuttle", options: { subPath: formatRoute({ view: "pr", key: waiting.key }) } });
+
+    const card = slot.container.querySelector<HTMLElement>("[data-auto-post-repo='acme/app']")!;
+    expect([...card.querySelectorAll("[data-pill]")].slice(0, 2).map((pill) => pill.textContent)).toEqual(["Comments: Countdown", "Approvals: Auto"]);
+    expect(card.querySelector("[data-posted]")!.textContent).toBe("Posted by Shuttle: 3 reviews (1 approval), 5 comments, 2 marked as mistakes");
+    const trip = card.querySelector<HTMLElement>("[data-auto-post-trip='approve']")!;
+    expect(trip.textContent).toContain("Posting approvals stopped: you marked 2 approvals as mistakes");
+    fireEvent.click(within(trip).getByRole("button", { name: "Resume posting approvals in acme/app" }));
+    await waitFor(() => expect(callsTo(slot, "resumeAutoPost")).toEqual([{ repo: "acme/app", kind: "approve" }]));
+
+    const quiet = slot.container.querySelector<HTMLElement>("[data-auto-post-repo='acme/docs']")!;
+    expect([...quiet.querySelectorAll("[data-pill]")].slice(0, 2).map((pill) => pill.textContent)).toEqual(["Comments: Shadow", "Approvals: Shadow"]);
+    expect(quiet.querySelector("[data-posted]")!.textContent).toBe("Posted by Shuttle: 0 reviews (0 approvals), 0 comments, 0 marked as mistakes");
+    expect(quiet.querySelector("[data-auto-post-trip]")).toBeNull();
+  });
+
+  it("shows no waiting list when nothing is scheduled", async () => {
+    const record = autoPostInsights({ repos: [shadowRepo({ repo: "acme/app" })] });
+    const { slot } = await insightsPage("insights/autopost", full, { autoPostInsights: ({ range }: { range: "7d" | "30d" | "90d" }) => ({ ...record, range }), getConfig: () => ({ config: config() }) });
+    await find(slot.container, "[data-auto-post-repo='acme/app']");
+    expect(slot.container.querySelector("[data-scheduled-posts]")).toBeNull();
+  });
+
   it("says how to turn auto post on when no repository is in shadow mode", async () => {
     const { slot } = await insightsPage("insights/autopost", full, { getConfig: () => ({ config: config() }) });
     const empty = await find(slot.container, "[data-auto-post-empty]");

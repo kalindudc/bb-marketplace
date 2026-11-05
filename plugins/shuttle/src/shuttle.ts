@@ -11,6 +11,7 @@ import { askAgent, runAutoAgent, setAgent, setAgentMode, type AgentChange } from
 import { board as readBoard, boardAdd, boardCreate, boardRemove, boards as listBoards, boardUpdate } from "./boards";
 import { cancelAutoMerge, comment, Conversations, merge, mergeOptions, recordOutcomes, reply, resolve, type MergeOutcome } from "./conversation";
 import { draftView, historyView, saveDraft, setDraftState, submitReview, type DraftInput, type SubmitInput } from "./drafts";
+import { AutoPostRefused, autoPostNow, markAutoPost, refusedAtPost, resumeAutoPost, runAutoPosts, stopAutoPost } from "./auto-post";
 import { cancelPost, clearPost, failInterruptedPosts, inputOf, postView, queueReview, recentPosts, retryPost } from "./posts";
 import { FastLane, type BackOffKind } from "./fast-lane";
 import { cancelMerge, clearMerge, failInterruptedMerges, mergeInputOf, mergeView, queueMerge, recentMerges, retryMerge } from "./merges";
@@ -378,6 +379,31 @@ export class Shuttle implements Ctx {
     return toView(this, this.store.prById(pr.id)!);
   }
 
+  stopAutoPost(key: string, draftId: number): PrView {
+    return toView(this, stopAutoPost(this, key, draftId));
+  }
+
+  autoPostNow(key: string, draftId: number): PrView {
+    const pr = autoPostNow(this, key, draftId);
+    this.drainPosts();
+    return toView(this, this.store.prById(pr.id)!);
+  }
+
+  markAutoPost(key: string, draftId: number, findingId?: string, undo?: boolean): PrView {
+    return toView(this, markAutoPost(this, key, draftId, findingId, undo));
+  }
+
+  resumeAutoPost(repo: string, kind: "comment" | "approve"): { cleared: number } {
+    return { cleared: resumeAutoPost(this, repo, kind) };
+  }
+
+  /** Queues the drafts whose countdown ended, then hands the queue what they queued. */
+  runAutoPosts(): number {
+    const queued = runAutoPosts(this);
+    if (queued > 0) this.drainPosts();
+    return queued;
+  }
+
   view(key: string): PrView {
     return toView(this, requirePr(this, key));
   }
@@ -706,8 +732,19 @@ export class Shuttle implements Ctx {
       if (pr === null) throw new ShuttleError("Shuttle no longer has this PR");
       out = await submitReview(this, pr.key, inputOf(row));
     } catch (error) {
+      // Auto post's own check refused it: nothing was sent, and the draft goes back to the user.
+      if (error instanceof AutoPostRefused && pr !== null && row.draft_id !== null) {
+        this.store.tx(() => {
+          this.store.finishPost(row.id, { state: "cancelled" });
+          refusedAtPost(this, pr, row.draft_id!, error.message);
+          this.store.retireReplacedDraft(row.draft_id!);
+        });
+        this.port.publish();
+        return;
+      }
       this.store.finishPost(row.id, { state: "failed", error: errText(error) });
       this.store.addEvent("post_failed", `Your review of ${pr === null ? "a PR" : shortKey(this, pr)} did not post: ${errText(error)}`, row.pr_id);
+      if (row.auto === 1 && pr !== null) void this.port.notify(`Shuttle's review of ${shortKey(this, pr)} did not post`, `${errText(error)}. Try it again or dismiss it from the PR.`);
       this.port.publish();
       return;
     }
@@ -995,6 +1032,7 @@ export class Shuttle implements Ctx {
    */
   async tick(signal?: AbortSignal): Promise<void> {
     this.drainPosts();
+    if (!signal?.aborted) this.runAutoPosts();
     this.drainMerges();
     await endQuietReviews(this).catch((error: unknown) => this.port.log("warn", `quiet reviews: ${errText(error)}`));
     if (signal?.aborted) return;

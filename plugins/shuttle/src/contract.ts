@@ -214,7 +214,7 @@ export const gateFindingSchema = z.object({
   unjudged: z.boolean().optional(),
 });
 export type GateFinding = z.infer<typeof gateFindingSchema>;
-/** What auto post decided about a draft. In shadow mode it only records the decision; it never posts. */
+/** What auto post decided about a draft. The decision itself never posts, so its mode is always shadow; posting is the draft's schedule (`autoPost`). */
 export const gateSchema = z.object({
   mode: z.literal("shadow"),
   decision: z.enum(["post", "hold"]),
@@ -224,13 +224,34 @@ export const gateSchema = z.object({
   posting: z.array(z.string()),
   findings: z.array(gateFindingSchema),
   /** Whether the approval rules would approve the PR, whatever verdict the draft suggests; one asking for changes is held. Shadow mode never approves. */
-  approval: z.object({ decision: z.enum(["approve", "hold"]), reasons: z.array(z.string()) }).nullable().optional(),
+  approval: z.object({
+    decision: z.enum(["approve", "hold"]),
+    reasons: z.array(z.string()),
+    /** The verifier's read of the whole diff for a problem that should block merging, 0 to 1; absent when it did not run. */
+    blocking: z.object({ score: z.number(), why: z.string().nullable() }).nullable().optional(),
+  }).nullable().optional(),
   at: z.number(),
   ms: z.number(),
   /** When its findings were judged again by `bb shuttle rescore`; the draft's own holds are kept from `at`. */
   rescoredAt: z.number().optional(),
 });
 export type Gate = z.infer<typeof gateSchema>;
+
+export const AUTO_POST_STATES = ["scheduled", "stopped", "queued", "posted", "refused"] as const;
+/**
+ * A review Shuttle posts itself: scheduled for `at`, stopped by you, queued or posted, or refused at post time with the
+ * reason. `mistake` is when you marked an approval it posted as a mistake.
+ */
+export const autoPostScheduleSchema = z.object({
+  state: z.enum(AUTO_POST_STATES),
+  at: z.number().nullable(),
+  verdict: z.enum(["comment", "approve"]).nullable(),
+  reason: z.string().nullable(),
+  /** The findings it posts or posted, by id. */
+  findings: z.array(z.string()),
+  mistake: z.number().nullable(),
+});
+export type AutoPostSchedule = z.infer<typeof autoPostScheduleSchema>;
 
 export const reviewDraftSchema = z.object({
   id: z.number(),
@@ -249,6 +270,8 @@ export const reviewDraftSchema = z.object({
   assessment: assessmentSchema.nullable(),
   /** Auto post's decision, for a repository in shadow mode; null when it did not run (yet). */
   gate: gateSchema.nullable(),
+  /** Auto post's schedule for this draft, in a repository that posts; null when it has none. */
+  autoPost: autoPostScheduleSchema.nullable(),
 });
 export type ReviewDraft = z.infer<typeof reviewDraftSchema>;
 
@@ -273,6 +296,13 @@ export const reviewHistoryItemSchema = z.object({
   findings: z.number(),
   /** How many findings the user posted from it; null when not posted. */
   postedFindings: z.number().nullable(),
+  /** What Shuttle posted itself from this draft, with what you marked as mistakes; null when you posted it, or nothing did. */
+  autoPosted: z.object({
+    verdict: z.enum(["comment", "approve"]),
+    findings: z.array(z.object({ id: z.string(), path: z.string(), line: z.number().nullable(), body: z.string(), marked: z.boolean() })),
+    /** When you marked its approval as a mistake. */
+    mistake: z.number().nullable(),
+  }).nullable(),
 });
 export type ReviewHistoryItem = z.infer<typeof reviewHistoryItemSchema>;
 
@@ -822,7 +852,14 @@ export const autoPostInsightsSchema = z.object({
     policy: z.object({ drafts: z.number(), findings: z.number(), agreed: z.number(), against: z.number() }),
     /** Every checked draft: would the approval rules approve, against whether you approved. */
     approvals: recordSchema.extend({ drafts: z.number(), wouldApprove: z.number() }),
+    approveMode: z.enum(AUTO_POST_MODES),
+    /** What Shuttle posted itself: reviews, the findings in them you marked as mistakes, and approvals you marked. */
+    posted: z.object({ reviews: z.number(), approvals: z.number(), findings: z.number(), marked: z.number(), mistakes: z.number() }),
+    /** Why posting stopped by itself, until you resume it; one per kind. */
+    trips: z.array(z.object({ kind: z.enum(["comment", "approve"]), reason: z.string(), at: z.number() })),
   })),
+  /** Drafts waiting to post on their own, soonest first. */
+  scheduled: z.array(z.object({ draftId: z.number(), key: z.string(), display: z.string(), title: z.string(), at: z.number(), verdict: z.enum(["comment", "approve"]), findings: z.number() })),
   /** Why drafts, approvals and findings were held, most frequent first. */
   reasons: z.array(z.object({ check: z.string(), reason: z.string(), count: z.number() })),
   /** The verifier's scores for each finding it judged, with what became of the finding. */
@@ -1038,6 +1075,17 @@ export const rpcContract = defineContract({
   reviewHistory: { input: z.object({ key }), output: z.object({ items: z.array(reviewHistoryItemSchema) }), tags: PRS },
   /** Run auto post's checks on a live draft again, such as after the verifier failed. Never posts. */
   checkDraft: { input: z.object({ key, draftId: z.number().int() }), output: prOut, invalidates: PRS },
+  /** Stop a draft from posting on its own; it stays a draft for you to post or discard. */
+  stopAutoPost: { input: z.object({ key, draftId: z.number().int() }), output: prOut, invalidates: PRS },
+  /** Post a scheduled draft now, with every post-time check. */
+  autoPostNow: { input: z.object({ key, draftId: z.number().int() }), output: prOut, invalidates: PRS },
+  /**
+   * Mark what Shuttle posted as a mistake: one finding with `findingId`, else the approval. It counts against the record,
+   * and can stop posting in the repository by itself; `undo` takes the mark back.
+   */
+  markAutoPost: { input: z.object({ key, draftId: z.number().int(), findingId: z.string().min(1).max(40).optional(), undo: z.boolean().optional() }), output: prOut, invalidates: PRS },
+  /** Let a repository entry post again after its breaker stopped it. */
+  resumeAutoPost: { input: z.object({ repo: z.string().min(1).max(200), kind: z.enum(["comment", "approve"]) }), output: z.object({ cleared: z.number() }), invalidates: () => ["prs", "config"] },
   /** Undo a discard. */
   restoreDraft: { input: z.object({ key, draftId: z.number().int() }), output: prOut, invalidates: PRS },
   reply: { input: z.object({ key, thread: z.string().min(1).max(300), body }), output: ok, invalidates: CONVERSATION },

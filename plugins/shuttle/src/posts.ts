@@ -37,6 +37,7 @@ export function inputOf(row: PostRow): SubmitInput {
     findings: JSON.parse(row.findings) as PostFinding[],
     ...(row.draft_id === null ? {} : { draftId: row.draft_id }),
     ...(row.stale_ok === 1 ? { staleOk: true } : {}),
+    ...(row.auto === 1 ? { auto: true } : {}),
   };
 }
 
@@ -60,6 +61,7 @@ export function queueReview(ctx: Ctx, key: string, input: SubmitInput): PostRow 
     ctx.store.setSnooze(pr.id, null, null);
     return ctx.store.addPost({
       pr_id: pr.id, server: pr.server, draft_id: draft?.id ?? null, verdict: input.verdict, body: input.body, findings: JSON.stringify(input.findings), stale_ok: input.staleOk ? 1 : 0,
+      auto: input.auto ? 1 : 0,
     });
   });
   ctx.port.publish();
@@ -86,6 +88,7 @@ export function cancelPost(ctx: Ctx, id: number): PrRow {
   ctx.store.tx(() => {
     ctx.store.finishPost(row.id, { state: "cancelled" });
     if (row.draft_id !== null) ctx.store.retireReplacedDraft(row.draft_id);
+    if (row.auto === 1 && row.draft_id !== null) ctx.store.setAutoPost(row.draft_id, { state: "stopped", reason: "you cancelled it before it posted" });
   });
   ctx.store.addEvent("post_cancelled", `Cancelled your ${VERDICT_TEXT[row.verdict]} on ${shortKey(ctx, pr)} before it posted.`, pr.id);
   ctx.port.publish();
@@ -113,6 +116,7 @@ export function clearPost(ctx: Ctx, id: number): PrRow {
   ctx.store.tx(() => {
     ctx.store.clearPost(row.id);
     if (row.draft_id !== null) ctx.store.retireReplacedDraft(row.draft_id);
+    if (row.auto === 1 && row.draft_id !== null) ctx.store.setAutoPost(row.draft_id, { state: "stopped", reason: "it failed to post and you dismissed it" });
   });
   ctx.port.publish();
   return pr;

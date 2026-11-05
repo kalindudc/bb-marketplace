@@ -300,4 +300,27 @@ export const MIGRATIONS: string[] = [
   // and which try of that review the run is.
   `ALTER TABLE reviews ADD COLUMN input TEXT`,
   `ALTER TABLE reviews ADD COLUMN attempt INTEGER NOT NULL DEFAULT 1`,
+  // Auto post's schedule for a draft in a repository that posts: when, as what, and what became of it.
+  `ALTER TABLE review_drafts ADD COLUMN auto_post_state TEXT CHECK (auto_post_state IN ('scheduled', 'stopped', 'queued', 'posted', 'refused'))`,
+  `ALTER TABLE review_drafts ADD COLUMN auto_post_at INTEGER`,
+  `ALTER TABLE review_drafts ADD COLUMN auto_post_verdict TEXT CHECK (auto_post_verdict IN ('comment', 'approve'))`,
+  `ALTER TABLE review_drafts ADD COLUMN auto_post_reason TEXT`,
+  // When the user marked an approval Shuttle posted as a mistake.
+  `ALTER TABLE review_drafts ADD COLUMN approval_mistake_at INTEGER`,
+  // Breaker trips: posting of one kind stops in a repository entry until the user resumes it. The config is left alone.
+  `CREATE TABLE auto_post_trips (
+    id INTEGER PRIMARY KEY,
+    repo TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('comment', 'approve')),
+    reason TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    cleared_at INTEGER
+  )`,
+  `CREATE INDEX review_drafts_auto_post ON review_drafts (auto_post_state, auto_post_at)`,
+  // A review auto post queued, as opposed to one the user posted.
+  `ALTER TABLE review_posts ADD COLUMN auto INTEGER NOT NULL DEFAULT 0`,
+  // The auto post settings a schedule was checked under; a review whose settings changed since does not post.
+  `ALTER TABLE review_drafts ADD COLUMN auto_post_policy TEXT`,
+  // The findings a schedule posts, by id, so a check again that changes them starts a new countdown and says so.
+  `ALTER TABLE review_drafts ADD COLUMN auto_post_findings TEXT`,
 ];

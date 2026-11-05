@@ -264,7 +264,7 @@ export function createCli(shuttle: Shuttle): PluginCliRegistration {
           }),
       }),
       gate: cliCommand({
-        summary: "Run auto post's checks on a PR's AI review draft now and print the decision; shadow mode never posts",
+        summary: "Run auto post's checks on a PR's AI review draft now and print the decision and any schedule; the check itself never posts",
         positionals: [PR],
         options: { json },
         run: ({ options, positionals }) =>
@@ -273,10 +273,17 @@ export function createCli(shuttle: Shuttle): PluginCliRegistration {
             const live = shuttle.detail(known.key).draft;
             if (live === null) throw new PluginCliError(`${known.key} has no AI review draft to check`);
             await shuttle.checkDraft(known.key, live.id);
-            const gate = shuttle.detail(known.key).draft?.gate ?? null;
-            if (options.json) return out(toJson(gate));
+            const checked = shuttle.detail(known.key).draft;
+            const gate = checked?.gate ?? null;
+            if (options.json) return out(toJson(gate === null ? null : { ...gate, autoPost: checked?.autoPost ?? null }));
             if (gate === null) return out(`Auto post did not check the draft on ${known.key}; see bb shuttle show ${known.key} for its activity.`);
-            const lines = [`Auto post (shadow) would ${gate.decision === "post" ? `post ${gate.posting.length} finding${gate.posting.length === 1 ? "" : "s"}` : "hold the draft"} on ${known.key}, in ${(gate.ms / 1000).toFixed(1)}s. Nothing was posted.`];
+            const lines = [`Auto post would ${gate.decision === "post" ? `post ${gate.posting.length} finding${gate.posting.length === 1 ? "" : "s"}` : "hold the draft"} on ${known.key}, in ${(gate.ms / 1000).toFixed(1)}s. The check posted nothing.`];
+            const plan = checked?.autoPost ?? null;
+            if (plan) {
+              const what = plan.verdict === "approve" ? "approve it" : "post its comments";
+              lines.push(plan.state === "scheduled" && plan.at !== null ? `  schedule: Shuttle will ${what} at ${new Date(plan.at).toLocaleString()} unless you stop it`
+                : `  schedule: ${plan.state}${plan.reason ? `, ${plan.reason}` : ""}`);
+            }
             for (const reason of gate.reasons) lines.push(`  held: ${reason}`);
             if (gate.approval) lines.push(`  approval: ${gate.approval.decision === "approve" ? "would approve" : `would not approve: ${gate.approval.reasons.join("; ")}`}`);
             for (const finding of gate.findings) {

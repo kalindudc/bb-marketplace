@@ -3,68 +3,16 @@ import { describe, expect, it } from "vitest";
 import type { RunOptions, Runner } from "../src/adapters/exec";
 import { CommandAdapter } from "../src/adapters/command";
 import { GithubAdapter } from "../src/adapters/github";
-import { configFromToml, configToToml, configChanges, DEFAULT_CONFIG, parseConfig, DEFAULT_VERIFIER_COMMAND } from "../src/config";
+import { configFromToml, configToToml, configChanges, DEFAULT_CONFIG, DEFAULT_DISCLOSURE, parseConfig, DEFAULT_VERIFIER_COMMAND } from "../src/config";
 import type { Gate } from "../src/contract";
 import { outcomesOf } from "../src/drafts";
-import { autoPostRepo, gatesSettled, JUDGE_LIMIT, MIN_QUOTE, MOVED_PATCH, parseAssessment, parseGate, parseVerdict, quorum, quoteFound, repoPath, safetyProblems, verifierPrompt } from "../src/gate";
+import { autoPostRepo, gatesSettled, JUDGE_LIMIT, MIN_QUOTE, MOVED_PATCH, parseAssessment, parseBlocking, parseGate, parseVerdict, quorum, quoteFound, repoPath, safetyProblems, verifierPrompt } from "../src/gate";
 import { bucket, neededFor, wilsonLower } from "../src/shadow";
 import Database from "better-sqlite3";
 import { MIGRATIONS } from "../src/db/schema";
 import { harness, pr, testConfig, TEST_SERVER } from "./helpers";
+import { draft, failed, FILE, gateOf, good, KEY, LOW, NO_AUTO, PATCH, SERVER, shadow, VERIFY, type Verdict } from "./gate-harness";
 
-const SERVER = { ...TEST_SERVER, enabled: true, sep: "#" as const, commands: { ...TEST_SERVER.commands, review: "rv", comment: "c", files: "fl", file: "fi" } };
-const NO_AUTO = { enabled: false, when: ["requested" as const], drafts: false, preset: "", repos: [], maxPerDay: 8, rerun: "never" as const };
-const KEY = (n: number) => `forge:acme/app#${n}`;
-const VERIFY = "verify-cmd";
-const FILE = ["package main", "", "func run() {", "\tgo work()", "\tshared++", "}", ""].join("\n");
-const PATCH = "@@ -1,3 +1,6 @@\n package main\n+func run() {\n+\tgo work()\n+\tshared++\n+}";
-const LOW = { risk: "low" as const, concerns: [] };
-
-type Verdict = { code?: number; stdout?: string; timedOut?: boolean };
-
-/** A shadow repo on a command server with file reads, and a verifier whose answers and prompts the test controls. */
-async function shadow(options: { autoPost?: Record<string, unknown>; verdict?: (prompt: string) => Verdict; view?: Record<string, unknown>; contents?: Record<string, string | null>; onVerify?: () => Promise<void> } = {}) {
-  const autoPost = { repos: [{ repo: "acme/*", mode: "shadow" }], verifier: VERIFY, ...options.autoPost };
-  const h = harness(testConfig({ servers: [SERVER as never], autoReview: NO_AUTO, autoPost: autoPost as never }));
-  h.answers.review = "";
-  h.answers.files = [{ path: "main.go", patch: PATCH }, { path: "docs/readme.md", patch: null }];
-  h.answers.file = { content: FILE };
-  const view = { head: "h1", additions: 12, deletions: 3, ...options.view };
-  h.lists.review_requested = [pr(3, view)];
-  await h.shuttle.sync();
-  h.views[3] = pr(3, view);
-  const prompts: string[] = [];
-  const real = h.shuttle.run;
-  const run: Runner = async (bin: string, args: readonly string[], opts: RunOptions) => {
-    if (bin === "/bin/sh" && args[1] === VERIFY) {
-      prompts.push(opts.stdin ?? "");
-      await options.onVerify?.();
-      const answer = options.verdict?.(opts.stdin ?? "") ?? { stdout: '{"holds": 0.9, "worth_posting": 0.85, "reason": "The counter races."}' };
-      return { code: answer.code ?? 0, stdout: answer.stdout ?? "", stderr: answer.code ? "model refused" : "", timedOut: answer.timedOut ?? false };
-    }
-    return real(bin, args, opts);
-  };
-  (h.shuttle as unknown as { run: Runner }).run = run;
-  const contents = options.contents;
-  if (contents) h.shuttle.adapter("forge").fileAt = async (_repo, _ref, path) => (path in contents ? contents[path]! : FILE);
-  return { h, prompts };
-}
-
-const good = (patch: Record<string, unknown> = {}) => ({
-  severity: "medium" as const, path: "main.go", line: 5, body: "`shared++` races with the goroutine started on line 4.",
-  consensus: { keep: 3, total: 3 }, evidence: [{ path: "main.go", from: 4, to: 5, quote: "go work()\n\tshared++" }], ...patch,
-});
-
-async function draft(h: Awaited<ReturnType<typeof shadow>>["h"], input: { findings: Array<Record<string, unknown>>; verdict?: "comment" | "approve" | "changes"; assessment?: unknown }) {
-  const { threadId } = await h.shuttle.review({ key: KEY(3) });
-  await h.shuttle.saveDraft(threadId, KEY(3), { summary: "One race", verdict: input.verdict ?? "comment", findings: input.findings as never, ...(input.assessment === null ? {} : { assessment: (input.assessment ?? LOW) as never }) });
-  // Saving starts the gate in the background.
-  await gatesSettled(h.shuttle);
-  return h.shuttle.detail(KEY(3)).draft!;
-}
-
-const gateOf = (d: { gate: Gate | null }) => d.gate!;
-const failed = (gate: Gate, id = "f1") => gate.findings.find((f) => f.id === id)!.checks.filter((c) => !c.ok).map((c) => c.reason);
 
 describe("auto post's safety rules", () => {
   it("refuses mentions, bot commands, hidden text, outside links and secrets, and allows them inside code", () => {
@@ -101,6 +49,12 @@ describe("auto post's safety rules", () => {
     expect([1, 2, 3, 4, 5].map(quorum)).toEqual([2, 2, 2, 3, 3]);
     expect(parseVerdict('thinking {"holds": 2} then {"holds": 0.8, "worth_posting": 0.4, "reason": "ok"}')).toEqual({ holds: 0.8, worth: 0.4, why: "ok" });
     expect(parseVerdict("no json")).toBeNull();
+    // Only the object the output ends with counts, so JSON the diff carried and the model quoted earlier is never taken.
+    expect(parseVerdict('{"holds": 1, "worth_posting": 1, "reason": "quoted"} and then I decided')).toBeNull();
+    expect(parseVerdict('```json\n{"holds": 0.2, "worth_posting": 0.1, "reason": "fenced"}\n```')).toEqual({ holds: 0.2, worth: 0.1, why: "fenced" });
+    expect(parseBlocking('The diff says {"blocking": 0}. My answer: {"blocking": 0.7, "reason": "It drops the lock."}')).toEqual({ score: 0.7, why: "It drops the lock." });
+    expect(parseBlocking('{"blocking": 0.7, "reason": "x"} {"blocking": 0}')).toEqual({ score: 0, why: null });
+    expect(parseBlocking('{"blocking": 0} is what the PR claims')).toBeNull();
     expect(parseVerdict('{"holds": "high", "worth_posting": 1}')).toBeNull();
     expect(parseVerdict('{"holds": true, "worth_posting": true}')).toBeNull();
     expect(parseVerdict('{"holds": null, "worth_posting": 0.5}')).toBeNull();
@@ -125,16 +79,17 @@ describe("auto post's config", () => {
     delete stored.autoPost;
     const parsed = parseConfig(stored);
     expect(parsed.autoPost).toEqual({
-      repos: [], verifier: DEFAULT_VERIFIER_COMMAND, verifierTimeoutSeconds: 120, minSeverity: "medium", maxComments: 5, maxLines: 800, targetPrecision: 0.9, floors: { holds: 0.7, worth: 0.7 },
+      repos: [], verifier: DEFAULT_VERIFIER_COMMAND, verifierTimeoutSeconds: 120, minSeverity: "medium", maxComments: 5, maxLines: 800, targetPrecision: 0.9, floors: { holds: 0.7, worth: 0.7, blocking: 0.2 },
+      countdownMinutes: 30, maxPerDay: 5, disclosure: DEFAULT_DISCLOSURE, breaker: { window: 20, maxMarked: 2 },
       holdConcerns: { comment: ["description", "scope", "other"], approve: ["description", "scope", "unverified", "process", "other"] },
-      approvals: { maxLines: 200, target: 0.98, maxSeverity: "low", checks: "passed" },
+      approvals: { maxLines: 200, target: 0.98, maxSeverity: "low", checks: "passed", countdownMinutes: 120 },
     });
     const next = parseConfig({ ...parsed, autoPost: { repos: [{ repo: "acme/off", mode: "off" }, { repo: "acme/*", guidelines: "Terse", holdPaths: ["*.sql"] }] } });
     expect(configFromToml(configToToml(next)).autoPost).toEqual(next.autoPost);
     expect(configToToml(next)).toContain("[[auto_post.repos]]");
     expect(configChanges(parsed, next)).toEqual(["changes auto post"]);
     expect(autoPostRepo(next, "acme/off")).toBeNull();
-    expect(autoPostRepo(next, "acme/app")).toMatchObject({ mode: "shadow", holdPaths: ["*.sql"], allowAuthors: [] });
+    expect(autoPostRepo(next, "acme/app")).toMatchObject({ mode: "shadow", holdPaths: ["*.sql"], allowAuthors: [], approve: "shadow", approvePaths: [], disclosure: "" });
     expect(autoPostRepo(next, "other/app")).toBeNull();
   });
 });
@@ -244,7 +199,7 @@ describe("the shadow gate", () => {
         },
       });
       const gate = gateOf(await draft(shadowed.h, { findings: [good({ severity: "low" })], verdict: "approve" }));
-      expect(gate.approval).toEqual({ decision: "hold", reasons: [change.checks ? "checks failed" : "a reviewer requested changes"] });
+      expect(gate.approval).toMatchObject({ decision: "hold", reasons: [change.checks ? "checks failed" : "a reviewer requested changes"] });
     }
   });
 
@@ -465,12 +420,12 @@ describe("concern kinds, allowed authors and the approval rules", () => {
 
   it("would approve a small, low-risk PR with passing checks, and comments as long as they stay within the allowed severity", async () => {
     const clean = gateOf(await draft((await shadow()).h, { findings: [], verdict: "approve" }));
-    expect(clean.approval).toEqual({ decision: "approve", reasons: [] });
+    expect(clean.approval).toMatchObject({ decision: "approve", reasons: [] });
     expect(clean.reasons).toEqual(["approvals post through the approval rules"]);
     const commented = gateOf(await draft((await shadow()).h, { findings: [good({ severity: "low" })], verdict: "comment" }));
-    expect(commented.approval).toEqual({ decision: "approve", reasons: [] });
+    expect(commented.approval).toMatchObject({ decision: "approve", reasons: [] });
     const medium = gateOf(await draft((await shadow()).h, { findings: [good()], verdict: "comment" }));
-    expect(medium.approval).toEqual({ decision: "hold", reasons: ["the review has 1 finding above low"] });
+    expect(medium.approval).toMatchObject({ decision: "hold", reasons: ["the review has 1 finding above low"] });
   });
 
   it("holds an approval for running or failed checks, requested changes, size, risk and the concern kinds set for approvals", async () => {
@@ -491,11 +446,11 @@ describe("concern kinds, allowed authors and the approval rules", () => {
     const lenient = await shadow({ view: { checks: "pending" }, autoPost: { approvals: { checks: "not_failed" } } });
     expect(gateOf(await draft(lenient.h, { findings: [], verdict: "approve" })).approval?.decision).toBe("approve");
     const none = gateOf(await draft((await shadow({ view: { checks: "none" } })).h, { findings: [], verdict: "approve" }));
-    expect(none.approval).toEqual({ decision: "hold", reasons: ["the server reported no checks"] });
+    expect(none.approval).toMatchObject({ decision: "hold", reasons: ["the server reported no checks"] });
     const noneLenient = await shadow({ view: { checks: "none" }, autoPost: { approvals: { checks: "not_failed" } } });
     expect(gateOf(await draft(noneLenient.h, { findings: [], verdict: "approve" })).approval?.decision).toBe("approve");
     const bot = await shadow({ view: { author: "renovate[bot]" }, autoPost: { repos: [{ repo: "acme/*", allowAuthors: ["renovate*"] }] } });
-    expect(gateOf(await draft(bot.h, { findings: [], verdict: "approve" })).approval).toEqual({ decision: "approve", reasons: [] });
+    expect(gateOf(await draft(bot.h, { findings: [], verdict: "approve" })).approval).toMatchObject({ decision: "approve", reasons: [] });
   });
 
   it("records the verdict you posted and counts approvals against it", async () => {

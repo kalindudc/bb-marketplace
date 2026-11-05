@@ -43,7 +43,8 @@ export interface NextFacts {
   lastReviewFinishedAt: number | null;
   /** A draft, posted or discarded, came from the last review. */
   lastReviewHandled: boolean;
-  draft: { findings: number; preset: string | null; auto: boolean } | null;
+  /** `posts` is when auto post posts it on its own, and as what; null when it does not. */
+  draft: { findings: number; preset: string | null; auto: boolean; posts?: { at: number; verdict: "comment" | "approve" } | null } | null;
   /** Your review waiting or posting, else one that failed to post and is not dismissed. */
   post: PostView | null;
   /** On your own PR: your merge waiting or running, else one that failed and is not dismissed. */
@@ -245,6 +246,16 @@ function othersNext(f: NextFacts): NextStep {
       clears: "Leaves when you try again, post another review, or dismiss it.",
       primary: fromDraft ? act("choose", "Open the draft") : act("retry_post", "Try again"),
       more: [...(fromDraft ? [act("retry_post", "Try again")] : []), act("clear_post", "Dismiss")],
+    });
+  }
+  if (f.draft?.posts) {
+    const { at, verdict } = f.draft.posts;
+    const left = at - f.now;
+    const when = left <= 0 ? "now" : left < MINUTE ? "in under a minute" : `in ${agoText(left).replace(" ago", "")}`;
+    return step("post", "info", `Shuttle will ${verdict === "approve" ? "approve" : "post"} this ${when}`, `${verdict === "approve" ? "An approval" : "A review"} from the AI review's draft, unless you stop it. Open the draft to stop it or post it now.`, {
+      inbox: true,
+      clears: "Leaves when it posts, or when you stop, post or discard it.",
+      primary: act("choose", "Open the draft"),
     });
   }
   if (f.draft) {

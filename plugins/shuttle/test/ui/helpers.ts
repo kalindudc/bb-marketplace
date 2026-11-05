@@ -165,6 +165,7 @@ export function draft(overrides: Partial<ReviewDraft> = {}): ReviewDraft {
     notes: null,
     assessment: null,
     gate: null,
+    autoPost: null,
     ...overrides,
   };
 }
@@ -214,17 +215,23 @@ export function insights(overrides: Partial<InsightsView> = {}): InsightsView {
 }
 
 export function autoPostInsights(overrides: Partial<AutoPostInsights> = {}): AutoPostInsights {
-  return { range: "30d", target: 0.9, approvalTarget: 0.98, repos: [], reasons: [], points: [], verifier: { runs: 0, failures: 0, medianMs: null }, recent: [], ...overrides };
+  return { range: "30d", target: 0.9, approvalTarget: 0.98, repos: [], scheduled: [], reasons: [], points: [], verifier: { runs: 0, failures: 0, medianMs: null }, recent: [], ...overrides };
 }
 
 const RECORD = { agreed: 0, against: 0, pending: 0, missed: 0, held: 0, precision: null, lowerBound: null, needed: null };
 type ShadowRepo = AutoPostInsights["repos"][number];
-export function shadowRepo(overrides: { repo?: string; drafts?: number; findings?: Partial<ShadowRepo["findings"]>; policy?: Partial<ShadowRepo["policy"]>; approvals?: Partial<ShadowRepo["approvals"]> } = {}): ShadowRepo {
+export function shadowRepo(overrides: {
+  repo?: string; mode?: ShadowRepo["mode"]; approveMode?: ShadowRepo["approveMode"]; drafts?: number;
+  findings?: Partial<ShadowRepo["findings"]>; policy?: Partial<ShadowRepo["policy"]>; approvals?: Partial<ShadowRepo["approvals"]>;
+  posted?: Partial<ShadowRepo["posted"]>; trips?: ShadowRepo["trips"];
+} = {}): ShadowRepo {
   return {
-    repo: overrides.repo ?? "acme/app", mode: "shadow", drafts: overrides.drafts ?? 0,
+    repo: overrides.repo ?? "acme/app", mode: overrides.mode ?? "shadow", approveMode: overrides.approveMode ?? "shadow", drafts: overrides.drafts ?? 0,
     findings: { ...RECORD, edited: 0, judged: 0, ...overrides.findings },
     policy: { drafts: 0, findings: 0, agreed: 0, against: 0, ...overrides.policy },
     approvals: { ...RECORD, drafts: 0, wouldApprove: 0, ...overrides.approvals },
+    posted: { reviews: 0, approvals: 0, findings: 0, marked: 0, mistakes: 0, ...overrides.posted },
+    trips: overrides.trips ?? [],
   };
 }
 
@@ -319,6 +326,10 @@ export function handlers(overrides: Partial<Handlers> = {}): Handlers {
     clearPost: unexpected("clearPost"),
     discardDraft: unexpected("discardDraft"),
     checkDraft: unexpected("checkDraft"),
+    stopAutoPost: unexpected("stopAutoPost"),
+    autoPostNow: unexpected("autoPostNow"),
+    markAutoPost: unexpected("markAutoPost"),
+    resumeAutoPost: unexpected("resumeAutoPost"),
     reviewHistory: () => ({ items: [] }),
     restoreDraft: unexpected("restoreDraft"),
     reply: unexpected("reply"),
