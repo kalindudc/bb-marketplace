@@ -1,4 +1,20 @@
-import type { TimelineDelta, TimelinePage, TimelineRow } from "./types";
+import type {
+  ActiveThinking, TimelineDelta, TimelineDeltaResponse, TimelinePage, TimelineResponse, TimelineRow,
+} from "./types";
+
+/** What the log keeps of the server's latest window, so it can apply the next delta to it. */
+export interface LatestWindow {
+  tag: string;
+  maxSeq: number;
+  rows: readonly TimelineRow[];
+  timelinePage: TimelinePage;
+  activeThinking: ActiveThinking | null;
+}
+
+export function windowOf(response: TimelineResponse): LatestWindow {
+  const { tag, maxSeq, rows, timelinePage, activeThinking } = response;
+  return { tag, maxSeq, rows, timelinePage, activeThinking };
+}
 
 export function childRowsOf(row: TimelineRow): readonly TimelineRow[] | null {
   if (row.kind === "turn") return row.children;
@@ -49,21 +65,71 @@ export function prependOlderRows(older: readonly TimelineRow[], loaded: readonly
   return result;
 }
 
-export function applyDelta(previous: readonly TimelineRow[], delta: TimelineDelta): readonly TimelineRow[] | null {
-  if (delta.upsertRows.length === 0 && delta.rowOrder === undefined) return previous;
-
-  const byId = new Map(previous.map((row) => [row.id, row]));
-  for (const row of delta.upsertRows) byId.set(row.id, row);
-  const ids = delta.rowOrder ?? previous.map((row) => row.id);
-  if (delta.rowOrder === undefined && delta.upsertRows.some((row) => !ids.includes(row.id))) return null;
-
-  const next: TimelineRow[] = [];
-  for (const id of ids) {
-    const row = byId.get(id);
-    if (!row) return null;
-    next.push(row);
+/**
+ * Applies a delta's rows to the window it was computed from, as bb's own client does: `rowOrder`
+ * lists runs `[start, count]` of the previous rows and the ids of new ones, and is left out when the
+ * order did not change. Returns null when the delta does not fit `previous`.
+ */
+export function applyDelta(
+  previous: readonly TimelineRow[],
+  delta: Pick<TimelineDelta, "upsertRows" | "rowOrder">,
+): readonly TimelineRow[] | null {
+  const upserts = new Map(delta.upsertRows.map((row) => [row.id, row]));
+  let used = 0;
+  const current = (row: TimelineRow): TimelineRow => {
+    const upsert = upserts.get(row.id);
+    if (upsert === undefined) return row;
+    used++;
+    return upsert;
+  };
+  let next: TimelineRow[];
+  if (delta.rowOrder === undefined) {
+    next = previous.map(current);
+  } else {
+    next = [];
+    for (const part of delta.rowOrder) {
+      if (typeof part === "string") {
+        const row = upserts.get(part);
+        if (row === undefined) return null;
+        used++;
+        next.push(row);
+        continue;
+      }
+      const [start, count] = part;
+      for (let index = start; index < start + count; index++) {
+        const row = previous[index];
+        if (row === undefined) return null;
+        next.push(current(row));
+      }
+    }
   }
+  if (used !== upserts.size) return null;
   return sameRows(previous, next) ? previous : next;
+}
+
+function patchPage(page: TimelinePage, patch: TimelineDelta["fields"]["timelinePage"]): TimelinePage {
+  if (patch === undefined) return page;
+  const { olderRowUpdates, ...fields } = patch;
+  const { olderRowUpdates: previousUpdates, ...rest } = page;
+  // A null olderRowUpdates means the new window has none.
+  const updates = olderRowUpdates === undefined ? previousUpdates : olderRowUpdates ?? undefined;
+  return { ...rest, ...fields, ...(updates === undefined ? {} : { olderRowUpdates: updates }) };
+}
+
+/** The window after `response`, or null when the delta was computed from another window or does not fit this one. */
+export function applyWindowDelta(previous: LatestWindow, response: TimelineDeltaResponse): LatestWindow | null {
+  const { delta } = response;
+  if (delta.afterTag !== previous.tag) return null;
+  const rows = applyDelta(previous.rows, delta);
+  if (rows === null) return null;
+  const { activeThinking, timelinePage } = delta.fields;
+  return {
+    tag: response.tag,
+    maxSeq: response.maxSeq,
+    rows,
+    timelinePage: patchPage(previous.timelinePage, timelinePage),
+    activeThinking: activeThinking === undefined ? previous.activeThinking : activeThinking,
+  };
 }
 
 export function spliceLatestWindow(

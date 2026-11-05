@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSessionLogStore, type SessionLogStore } from "../src/store";
 import { childRowsOf } from "../src/merge";
-import type { SessionLogSdk, ThreadEventRow, TimelineResponse } from "../src/types";
+import type { SessionLogSdk, ThreadEventRow, TimelineDeltaResponse, TimelineResponse } from "../src/types";
 import {
-  acceptedEvent, assistantRow, commandRow, requestEvent, timelineResponse, turnRow, userRow,
+  acceptedEvent, assistantRow, commandRow, requestEvent, timelineDelta, timelineResponse, turnRow, userRow,
 } from "./fixtures";
 
 type TimelineArgs = Parameters<SessionLogSdk["threads"]["timeline"]>[0];
+type TimelineAnswer = TimelineResponse | TimelineDeltaResponse;
 type EventsArgs = Parameters<SessionLogSdk["threads"]["events"]["list"]>[0];
 type EventsResponder = (args: EventsArgs, call: number) => ThreadEventRow[] | Promise<ThreadEventRow[]>;
 const stores: SessionLogStore[] = [];
@@ -27,7 +28,7 @@ function deferred<T>() {
 }
 
 function fakeSdk(
-  respond: (args: TimelineArgs, call: number) => TimelineResponse | Promise<TimelineResponse>,
+  respond: (args: TimelineArgs, call: number) => TimelineAnswer | Promise<TimelineAnswer>,
   respondEvents: EventsResponder = () => [],
 ) {
   const calls: TimelineArgs[] = [];
@@ -73,8 +74,8 @@ function fakeSdk(
   };
 }
 
-function makeStore(sdk: SessionLogSdk, refreshIntervalMs = 500) {
-  const store = createSessionLogStore({ sdk, threadId: "thr_1", refreshIntervalMs });
+function makeStore(sdk: SessionLogSdk, refreshIntervalMs = 500, visible = true) {
+  const store = createSessionLogStore({ sdk, threadId: "thr_1", refreshIntervalMs, visible });
   stores.push(store);
   return store;
 }
@@ -120,23 +121,22 @@ describe("createSessionLogStore", () => {
     vi.setSystemTime(0);
     const first = userRow("first");
     const second = assistantRow("second");
-    const pending = deferred<TimelineResponse>();
+    const pending = deferred<TimelineAnswer>();
     const fake = fakeSdk((_args, call) => {
-      if (call === 1) return timelineResponse([first], { maxSeq: 10 });
+      if (call === 1) return timelineResponse([first], { maxSeq: 10, tag: "tag-10" });
       if (call === 2) return pending.promise;
-      return timelineResponse([], { maxSeq: 12, delta: { upsertRows: [] } });
+      return timelineDelta({ afterTag: "tag-11", tag: "tag-12", maxSeq: 12 });
     });
     const store = makeStore(fake.sdk);
     await settle();
     for (let i = 0; i < 8; i++) fake.emitThread(["events-appended"]);
     await vi.advanceTimersByTimeAsync(500);
     expect(fake.calls).toHaveLength(2);
-    expect(fake.calls[1]?.afterSequence).toBe("10");
+    expect(fake.calls[1]).toEqual({ threadId: "thr_1", includeNestedRows: "true", afterTag: "tag-10" });
 
     for (let i = 0; i < 8; i++) fake.emitThread(["events-appended"]);
-    pending.resolve(timelineResponse([], {
-      maxSeq: 11,
-      delta: { upsertRows: [second], rowOrder: ["first", "second"] },
+    pending.resolve(timelineDelta({
+      afterTag: "tag-10", tag: "tag-11", maxSeq: 11, upsertRows: [second], rowOrder: [[0, 1], "second"],
     }));
     await settle();
     expect(store.getSnapshot().rows.map((row) => row.id)).toEqual(["first", "second"]);
@@ -144,7 +144,7 @@ describe("createSessionLogStore", () => {
     expect(fake.calls).toHaveLength(2);
     await vi.advanceTimersByTimeAsync(1);
     expect(fake.calls).toHaveLength(3);
-    expect(fake.calls[2]?.afterSequence).toBe("11");
+    expect(fake.calls[2]?.afterTag).toBe("tag-11");
   });
 
   it("applies delta upserts to the latest window and preserves the full list", async () => {
@@ -154,33 +154,143 @@ describe("createSessionLogStore", () => {
     const updated = commandRow("cmd", { output: "new" });
     const fake = fakeSdk((_args, call) => call === 1
       ? timelineResponse([first, original], { maxSeq: 20 })
-      : timelineResponse([], { maxSeq: 21, delta: { upsertRows: [updated] } }));
+      : timelineDelta({ maxSeq: 21, upsertRows: [updated] }));
     const store = makeStore(fake.sdk);
     await settle();
     fake.emitThread(["events-appended"]);
     await vi.advanceTimersByTimeAsync(500);
     expect(store.getSnapshot().rows).toEqual([first, updated]);
+    expect(store.getSnapshot().rows[0]).toBe(first);
     expect(fake.calls).toHaveLength(2);
   });
 
-  it("refetches without afterSequence when a delta refers to a missing id", async () => {
+  it("takes a whole window in place of a delta when bb no longer has the log's baseline", async () => {
     vi.useFakeTimers();
     const first = userRow("first");
-    const added = assistantRow("added");
+    const replaced = assistantRow("replaced");
     const fake = fakeSdk((_args, call) => {
       if (call === 1) return timelineResponse([first], { maxSeq: 10 });
-      if (call === 2) return timelineResponse([], {
-        maxSeq: 11,
-        delta: { upsertRows: [], rowOrder: ["first", "missing"] },
-      });
-      return timelineResponse([first, added], { maxSeq: 11 });
+      if (call === 2) return timelineResponse([first, replaced], { maxSeq: 11, tag: "tag-2" });
+      return timelineDelta({ afterTag: "tag-2", tag: "tag-3" });
     });
     const store = makeStore(fake.sdk);
     await settle();
     fake.emitThread(["events-appended"]);
     await vi.advanceTimersByTimeAsync(500);
-    expect(fake.calls.map((call) => call.afterSequence)).toEqual([undefined, "10", undefined]);
+    expect(store.getSnapshot().rows).toEqual([first, replaced]);
+    fake.emitThread(["events-appended"]);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(fake.calls.map((call) => call.afterTag)).toEqual([undefined, "tag-1", "tag-2"]);
+  });
+
+  it.each([
+    ["names a row it does not send", timelineDelta({ rowOrder: [[0, 1], "missing"] })],
+    ["was computed from another window", timelineDelta({ afterTag: "tag-0" })],
+  ])("refetches the whole latest window when a delta %s", async (_case, delta) => {
+    vi.useFakeTimers();
+    const first = userRow("first");
+    const added = assistantRow("added");
+    const fake = fakeSdk((_args, call) => {
+      if (call === 1) return timelineResponse([first], { maxSeq: 10 });
+      if (call === 2) return delta;
+      return timelineResponse([first, added], { maxSeq: 11, tag: "tag-11" });
+    });
+    const store = makeStore(fake.sdk);
+    await settle();
+    fake.emitThread(["events-appended"]);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(fake.calls.map((call) => call.afterTag)).toEqual([undefined, "tag-1", undefined]);
     expect(store.getSnapshot().rows).toEqual([first, added]);
+    fake.emitThread(["events-appended"]);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(fake.calls[3]?.afterTag).toBe("tag-11");
+  });
+
+  it("applies older row updates from a whole window, and from a delta only when they change", async () => {
+    vi.useFakeTimers();
+    const prefix = turnRow("prefix", { children: [commandRow("child-a")] });
+    const update = turnRow("prefix", { children: [commandRow("child-b")] });
+    const page = {
+      historySnapshot: "snap",
+      olderCursor: { anchorId: "window", anchorSeq: 20 },
+      olderRowsSourceSeqEnd: 20,
+      returnedSegmentCount: 1,
+    };
+    const fake = fakeSdk((args, call) => {
+      if (call === 1) return timelineResponse([assistantRow("window")], { maxSeq: 30, timelinePage: { ...page, olderRowUpdates: [update] } });
+      if (call === 2) return timelineResponse([prefix], { maxSeq: 20 });
+      return call === 3
+        ? timelineDelta({ afterTag: "tag-1", tag: "tag-2", maxSeq: 31 })
+        : timelineDelta({ afterTag: args.afterTag, tag: "tag-3", maxSeq: 32, fields: { timelinePage: { olderRowUpdates: null } } });
+    });
+    const store = makeStore(fake.sdk);
+    await settle();
+    const loaded = store.getSnapshot().rows;
+    expect(loaded.map((row) => row.id)).toEqual(["prefix", "window"]);
+    expect(childRowsOf(loaded[0]!)?.map((row) => row.id)).toEqual(["child-a", "child-b"]);
+
+    fake.emitThread(["events-appended"]);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(fake.calls).toHaveLength(3);
+    expect(store.getSnapshot().rows).toBe(loaded);
+    fake.emitThread(["events-appended"]);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(fake.calls).toHaveLength(4);
+    expect(store.getSnapshot().rows).toBe(loaded);
+  });
+
+  it("does not load or refresh while the tab is hidden, and catches up once when it shows", async () => {
+    vi.useFakeTimers();
+    const first = userRow("first");
+    const added = assistantRow("added");
+    const fake = fakeSdk((_args, call) => call === 1
+      ? timelineResponse([first], { maxSeq: 10 })
+      : timelineDelta({ maxSeq: 11, upsertRows: [added], rowOrder: [[0, 1], "added"] }));
+    const store = makeStore(fake.sdk, 500, false);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fake.calls).toHaveLength(0);
+    expect(store.getSnapshot().status).toBe("loading");
+
+    store.setVisible(true);
+    await settle();
+    expect(store.getSnapshot()).toMatchObject({ status: "ready", rows: [first] });
+
+    store.setVisible(false);
+    for (let i = 0; i < 5; i++) {
+      fake.emitThread(["events-appended"]);
+      await vi.advanceTimersByTimeAsync(1_000);
+    }
+    expect(fake.calls).toHaveLength(1);
+    expect(fake.eventCalls).toHaveLength(1);
+
+    store.setVisible(true);
+    await settle();
+    expect(fake.calls).toHaveLength(2);
+    expect(store.getSnapshot().rows).toEqual([first, added]);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fake.calls).toHaveLength(2);
+  });
+
+  it("waits longer between refreshes when the server takes longer to answer", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const fake = fakeSdk(async (_args, call) => {
+      if (call === 1) return timelineResponse([userRow("first")], { maxSeq: 10 });
+      // The server takes 400 ms to build this window.
+      await new Promise((done) => setTimeout(done, 400));
+      return timelineDelta({ afterTag: `tag-${call - 1}`, tag: `tag-${call}` });
+    });
+    makeStore(fake.sdk);
+    await settle();
+    fake.emitThread(["events-appended"]);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(fake.calls).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(400);
+    fake.emitThread(["events-appended"]);
+    await vi.advanceTimersByTimeAsync(1_599);
+    expect(fake.calls).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fake.calls).toHaveLength(3);
   });
 
   it("reloads on rewritten history and refreshes after reconnect", async () => {
@@ -190,19 +300,19 @@ describe("createSessionLogStore", () => {
       ? timelineResponse([userRow("original")], { maxSeq: 10 })
       : call === 2
         ? timelineResponse([replacement], { maxSeq: 20 })
-        : timelineResponse([], { maxSeq: 20, delta: { upsertRows: [] } }));
+        : timelineDelta({ maxSeq: 20 }));
     const store = makeStore(fake.sdk);
     await settle();
     fake.emitThread(["history-rewritten"]);
     await settle();
-    expect(fake.calls[1]?.afterSequence).toBeUndefined();
+    expect(fake.calls[1]?.afterTag).toBeUndefined();
     expect(store.getSnapshot().rows).toEqual([replacement]);
     fake.emitConnection(false);
     await vi.advanceTimersByTimeAsync(500);
     expect(fake.calls).toHaveLength(2);
     fake.emitConnection(true);
     await vi.advanceTimersByTimeAsync(500);
-    expect(fake.calls[2]?.afterSequence).toBe("20");
+    expect(fake.calls[2]?.afterTag).toBe("tag-1");
   });
 
   it("restarts a failed older-page walk once, shows the error, and retry recovers", async () => {
@@ -236,7 +346,7 @@ describe("createSessionLogStore", () => {
     const fake = fakeSdk((_args, call) => {
       if (call === 1) return timelineResponse([first], { maxSeq: 10 });
       if (call === 2) throw new Error("temporarily offline");
-      return timelineResponse([], { maxSeq: 11, delta: { upsertRows: [] } });
+      return timelineDelta({ maxSeq: 11 });
     });
     const store = makeStore(fake.sdk);
     await settle();
@@ -250,10 +360,10 @@ describe("createSessionLogStore", () => {
 
   it("refreshes once after an event received while loading", async () => {
     vi.useFakeTimers();
-    const pending = deferred<TimelineResponse>();
+    const pending = deferred<TimelineAnswer>();
     const fake = fakeSdk((_args, call) => call === 1
       ? pending.promise
-      : timelineResponse([], { maxSeq: 10, delta: { upsertRows: [] } }));
+      : timelineDelta({ maxSeq: 10 }));
     const store = makeStore(fake.sdk);
     fake.emitThread(["events-appended"]);
     pending.resolve(timelineResponse([userRow("first")], { maxSeq: 10 }));
@@ -266,7 +376,7 @@ describe("createSessionLogStore", () => {
   it("unsubscribes on dispose and ignores a request that resolves afterward", async () => {
     vi.useFakeTimers();
     const first = userRow("first");
-    const pending = deferred<TimelineResponse>();
+    const pending = deferred<TimelineAnswer>();
     const fake = fakeSdk((_args, call) => call === 1
       ? timelineResponse([first], { maxSeq: 10 })
       : pending.promise);
@@ -305,7 +415,7 @@ describe("createSessionLogStore", () => {
     const fake = fakeSdk(
       (_args, call) => call === 1
         ? timelineResponse([userRow("first")], { maxSeq: 20 })
-        : timelineResponse([], { maxSeq: 30, delta: { upsertRows: [] } }),
+        : timelineDelta({ maxSeq: 30 }),
       (_args, call) => call === 1 ? [requestEvent(20)] : call === 2 ? [acceptedEvent(22, "creq_20")] : [],
     );
     const store = makeStore(fake.sdk);
@@ -330,7 +440,7 @@ describe("createSessionLogStore", () => {
     const fake = fakeSdk(
       (_args, call) => call === 1
         ? timelineResponse([userRow("first")], { maxSeq: 20 })
-        : timelineResponse([], { maxSeq: 30, delta: { upsertRows: [] } }),
+        : timelineDelta({ maxSeq: 30 }),
       (_args, call) => {
         if (call === 1) throw new Error("events unavailable");
         return [requestEvent(25)];

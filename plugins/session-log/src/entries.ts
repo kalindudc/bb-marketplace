@@ -57,6 +57,7 @@ const SYSTEM_MESSAGE_LABELS: Record<SystemMessageKind, string> = {
   "tool-result-delivered": "Tool result",
   "ownership-assigned": "Ownership changed",
   "ownership-removed": "Ownership changed",
+  "environment-directory-updated": "Working directory changed",
   unlabeled: "System",
 };
 
@@ -317,7 +318,14 @@ export function toLogEntries(rows: readonly TimelineRow[], hidden: readonly Hidd
   return entries;
 }
 
-export function collectTurnStats(entries: readonly LogEntry[]): ReadonlyMap<string, TurnStats> {
+const sameStats = (left: TurnStats, right: TurnStats) => left.workCount === right.workCount &&
+  left.errorCount === right.errorCount && left.durationMs === right.durationMs && left.running === right.running;
+
+/** Stats for each turn's opening divider, keyed by its entry id; an unchanged turn keeps its object from `previous`. */
+export function collectTurnStats(
+  entries: readonly LogEntry[],
+  previous: ReadonlyMap<string, TurnStats> = new Map(),
+): ReadonlyMap<string, TurnStats> {
   const turns = new Map<string, {
     dividerId: string;
     stats: TurnStats;
@@ -360,7 +368,8 @@ export function collectTurnStats(entries: readonly LogEntry[]): ReadonlyMap<stri
   const stats = new Map<string, TurnStats>();
   for (const turn of turns.values()) {
     if (turn.last !== null) turn.stats.durationMs = turn.last - turn.first;
-    stats.set(turn.dividerId, turn.stats);
+    const before = previous.get(turn.dividerId);
+    stats.set(turn.dividerId, before && sameStats(before, turn.stats) ? before : turn.stats);
   }
   return stats;
 }

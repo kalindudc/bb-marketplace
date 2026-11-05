@@ -4,9 +4,9 @@ import { join } from "node:path";
 import { fireEvent, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { toast } from "sonner";
-import type { PluginCommandContext } from "@get-bb/plugin-sdk/app";
+import type { ExperimentalPanelController, PluginCommandContext } from "@get-bb/plugin-sdk/app";
 import {
-  LOG_ACTION_ID, consumePanelFocus, createCommands, onPanelFocusRequest, requestPanelFocus,
+  LOG_TAB, consumePanelFocus, createCommands, headerAction, onPanelFocusRequest, requestPanelFocus,
 } from "../src/commands";
 import { EXPANDED_STORAGE_KEY, createPreference } from "../src/preference";
 import type { SessionLogSdk } from "../src/types";
@@ -26,6 +26,17 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+function fakePanel(accepts = true): ExperimentalPanelController {
+  return {
+    openTab: vi.fn(() => accepts), toggleTab: vi.fn(() => accepts), selectTab: vi.fn(() => accepts),
+    closeTab: vi.fn(() => accepts), close: vi.fn(() => accepts), getTabs: vi.fn(() => ({ open: false, selectedKey: null, tabs: [] })),
+  } as unknown as ExperimentalPanelController;
+}
+
+const context = (threadId: string | null, panel = fakePanel()): PluginCommandContext => ({
+  threadId, projectId: threadId === null ? null : "proj_1", experimental_panel: panel,
+});
+
 describe("Session Log commands", () => {
   it("registers the open shortcut, only where a thread exists", () => {
     const commands = createCommands(createPreference(window));
@@ -33,28 +44,25 @@ describe("Session Log commands", () => {
     const open = commands[0]!;
     expect(open.title).toBe("Session Log: Open for this thread");
     expect(open.defaultShortcut).toEqual({ key: "l", mod: true, shift: true });
-    expect(open.isAvailable?.({ threadId: null, projectId: null, openPanel: vi.fn() })).toBe(false);
-    expect(open.isAvailable?.({ threadId: "thr_1", projectId: "proj_1", openPanel: vi.fn() })).toBe(true);
+    expect(open.isAvailable?.(context(null))).toBe(false);
+    expect(open.isAvailable?.(context("thr_1"))).toBe(true);
     expect(commands[1]?.defaultShortcut).toBeUndefined();
   });
 
-  it("opens the panel and requests focus only when the host accepts it", async () => {
+  it("opens the log tab and requests focus only when the host accepts it", async () => {
     const open = createCommands(createPreference(window))[0]!;
-    const accepted: PluginCommandContext = {
-      threadId: "thr_open", projectId: "proj_1", openPanel: vi.fn(() => true),
-    };
+    const accepted = context("thr_open");
     await open.run(accepted);
-    expect(accepted.openPanel).toHaveBeenCalledWith({ actionId: LOG_ACTION_ID });
+    expect(accepted.experimental_panel.openTab).toHaveBeenCalledWith({ tab: LOG_TAB });
+    expect(LOG_TAB).toEqual({ id: "log", context: { kind: "thread" }, availability: "action" });
     expect(consumePanelFocus("thr_open")).toBe(true);
     expect(consumePanelFocus("thr_open")).toBe(false);
 
-    const declined: PluginCommandContext = {
-      threadId: "thr_declined", projectId: "proj_1", openPanel: vi.fn(() => false),
-    };
-    await open.run(declined);
+    const declinedPanel = fakePanel(false);
+    await open.run(context("thr_declined", declinedPanel));
     expect(consumePanelFocus("thr_declined")).toBe(false);
-    await open.run({ threadId: null, projectId: null, openPanel: declined.openPanel });
-    expect(declined.openPanel).toHaveBeenCalledTimes(1);
+    await open.run(context(null, declinedPanel));
+    expect(declinedPanel.openTab).toHaveBeenCalledTimes(1);
   });
 
   it("hands the latest focus request to exactly one matching panel and notifies listeners", () => {
@@ -72,15 +80,28 @@ describe("Session Log commands", () => {
     expect(consumePanelFocus("thr_third")).toBe(true);
   });
 
+  it("offers a labelled header button that opens the tab and focuses the log", () => {
+    expect(headerAction).toMatchObject({ id: "open-log", title: "Session log", icon: "session-log/logs", placement: "header" });
+    const panel = fakePanel();
+    const item = headerAction.item({ thread: { id: "thr_button" }, experimental_panel: panel } as never)!;
+    expect(item.label).toBe("Session log");
+    item.run({} as never);
+    expect(panel.openTab).toHaveBeenCalledWith({ tab: LOG_TAB });
+    expect(consumePanelFocus("thr_button")).toBe(true);
+
+    const declined = fakePanel(false);
+    headerAction.item({ thread: { id: "thr_declined" }, experimental_panel: declined } as never)!.run({} as never);
+    expect(consumePanelFocus("thr_declined")).toBe(false);
+  });
+
   it("toggles expanded view and announces the mode", async () => {
     const preference = createPreference(window);
     const toggle = createCommands(preference)[1]!;
-    const context: PluginCommandContext = { threadId: null, projectId: null, openPanel: vi.fn() };
-    await toggle.run(context);
+    await toggle.run(context(null));
     expect(preference.isExpanded()).toBe(true);
     expect(window.localStorage.getItem(EXPANDED_STORAGE_KEY)).toBe("true");
     expect(toast).toHaveBeenCalledWith("Session log: everything expanded");
-    await toggle.run(context);
+    await toggle.run(context(null));
     expect(preference.isExpanded()).toBe(false);
     expect(toast).toHaveBeenCalledWith("Session log: previews");
   });
@@ -89,25 +110,24 @@ describe("Session Log commands", () => {
 describe("plugin app", () => {
   const headerProps = { threadId: "thr_header", projectId: "proj_1", isCompactViewport: false };
 
-  it("registers the flush log panel and its thread-header action without a content script", async () => {
+  it("registers the flush log tab and its thread-header button without a content script", async () => {
     const app = await loadPluginApp(() => import("../app"));
-    expect(app.threadPanelActions).toHaveLength(1);
-    expect(app.threadPanelActions[0]).toMatchObject({
-      id: "log", title: "Session log", icon: "session-log/logs", layout: "flush",
+    expect(app.tabs).toHaveLength(1);
+    expect(app.tabs[0]).toMatchObject({
+      id: "log", context: { kind: "thread" }, availability: "action", title: "Session log", icon: "session-log/logs", layout: "flush",
     });
     expect(app.threadHeaderActions.map(({ id }) => id)).toEqual(["open-log"]);
+    expect(app.threadActions).toHaveLength(0);
     expect(app.contentScripts).toHaveLength(0);
   });
 
-  it("opens the panel from the header button and hands focus to its panel", async () => {
+  it("opens the tab from the header button and hands focus to its panel", async () => {
     const app = await loadPluginApp(() => import("../app"));
     const slot = renderSlot(app.threadHeaderActions[0]!, headerProps, {
-      pluginId: "session-log", openThreadPanel: () => true,
+      pluginId: "session-log", experimental_panel: { openTab: () => true },
     });
     fireEvent.click(within(slot.container).getByRole("button", { name: "Open session log" }));
-    expect(slot.inspection.navigateCalls).toEqual([
-      { method: "openThreadPanel", options: { actionId: "log" } },
-    ]);
+    expect(slot.inspection.experimental_panelCalls).toEqual([{ method: "openTab", options: { tab: LOG_TAB } }]);
     expect(consumePanelFocus("thr_header")).toBe(true);
     slot.lifecycle.unmount();
   });
@@ -115,17 +135,15 @@ describe("plugin app", () => {
   it("leaves the phone header to bb, since the panel launcher already opens the log", async () => {
     const app = await loadPluginApp(() => import("../app"));
     const slot = renderSlot(app.threadHeaderActions[0]!, { ...headerProps, isCompactViewport: true }, {
-      pluginId: "session-log", openThreadPanel: () => true,
+      pluginId: "session-log", experimental_panel: { openTab: () => true },
     });
     expect(within(slot.container).queryByRole("button")).toBeNull();
     slot.lifecycle.unmount();
   });
 
-  it("does not request focus if the host refuses to open the panel", async () => {
+  it("does not request focus if the host refuses to open the tab", async () => {
     const app = await loadPluginApp(() => import("../app"));
-    const slot = renderSlot(app.threadHeaderActions[0]!, headerProps, {
-      pluginId: "session-log", openThreadPanel: () => false,
-    });
+    const slot = renderSlot(app.threadHeaderActions[0]!, headerProps, { pluginId: "session-log" });
     fireEvent.click(within(slot.container).getByRole("button", { name: "Open session log" }));
     expect(consumePanelFocus("thr_header")).toBe(false);
     slot.lifecycle.unmount();
@@ -144,7 +162,8 @@ describe("plugin app", () => {
       plugins: { getSettings: async () => ({ ok: true, schema: {}, values: {} }) },
       subscribe: () => () => {},
     } as unknown as SessionLogSdk;
-    const slot = renderSlot(app.threadPanelActions[0]!, { threadId: "thr_1", params: null }, {
+    const tab = app.tabs[0] as Extract<(typeof app.tabs)[number], { availability: "action"; context: { kind: "thread" } }>;
+    const slot = renderSlot(tab, { threadId: "thr_1", environment: null, params: null }, {
       pluginId: "session-log", sdk,
     });
     await waitFor(() => expect(slot.container.querySelector('[data-entry-id="cmd"]')).toBeTruthy());

@@ -2,6 +2,24 @@
 
 Notable changes to Session Log, newest first. Releases are tagged `session-log/vX.Y.Z` in this repository.
 
+## 0.5.0 (2026-11-05)
+
+### Changed
+
+- The log waits longer between refreshes on threads that bb is slow to read: at least four times as long as the last request took, up to 5 seconds, and never less than half a second. bb builds the whole latest window for every refresh and blocks its event loop while it does, so on a long, busy thread a fixed half-second pace could keep bb's server busy for about a third of the time.
+- The tab and the thread header button are registered through SDK 0.6.104's tab and thread-action slots. The tab keeps its id, so a log tab left open keeps working.
+
+### Fixed
+
+- The log no longer slows bb down on long threads. bb 0.48 stopped reading the `afterSequence` parameter the log sent, so every refresh, up to twice a second, downloaded the whole latest window and redrew every row in it: on a 34,000-event thread that was about 860 KB and 183 rows each time. Refreshes now send bb 0.48's `afterTag` and get back only the rows that changed: 121 bytes when nothing changed, and about 1 KB a refresh on average over a minute of an active thread.
+- A log tab that is closed, or hidden behind another tab, stops reading the thread and catches up with one refresh when it shows again. bb keeps a closed panel's tab mounted, so before this the log kept refreshing in the background.
+- Rows draw faster. Timestamps share one formatter instead of building one per row, which cost tens of microseconds each across thousands of rows, and a turn's divider redraws only when its totals change.
+- A message that says the thread's working directory changed is labelled "Working directory changed" instead of "undefined".
+
+### Compatibility
+
+- Needs bb 0.48.1 or later and builds with SDK 0.6.104.
+
 ## 0.4.0 (2026-10-21)
 
 ### Added

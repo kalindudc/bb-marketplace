@@ -12,7 +12,7 @@ See everything an agent did in a thread without opening nested chat rows.
 
 ## How it works
 
-The plugin loads bb's public timeline API, including nested rows, when you open the tab. It applies live deltas afterward, with at most two refresh requests a second. Because the timeline leaves hidden input out, it also reads the thread's request events and places each hidden message by its sequence number. It does not change bb's chat markup or store thread data; only the expanded-view choice is saved on this device. If you also want bb's chat itself to stop folding finished turns, use `bb settings completed-turns <provider> flat`.
+The plugin loads bb's public timeline API, including nested rows, when you open the tab. Afterward it asks bb only for what changed, waits longer between refreshes on threads that bb is slow to read, and reads nothing while its tab is closed or hidden behind another tab. Because the timeline leaves hidden input out, it also reads the thread's request events and places each hidden message by its sequence number. It does not change bb's chat markup or store thread data; only the expanded-view choice is saved on this device. If you also want bb's chat itself to stop folding finished turns, use `bb settings completed-turns <provider> flat`.
 
 ## Limits
 

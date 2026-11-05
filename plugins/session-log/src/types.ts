@@ -1,9 +1,13 @@
 import type { PluginBrowserBbSdk } from "@get-bb/plugin-sdk/app";
 
-export type TimelineResponse = Awaited<ReturnType<PluginBrowserBbSdk["threads"]["timeline"]>>;
+type TimelineRead = Awaited<ReturnType<PluginBrowserBbSdk["threads"]["timeline"]>>;
+/** A whole window of the timeline: the latest one, or an older page. */
+export type TimelineResponse = Exclude<TimelineRead, { delta: unknown }>;
+/** bb's answer to `afterTag`: what changed since the latest window that carried that tag. */
+export type TimelineDeltaResponse = Extract<TimelineRead, { delta: unknown }>;
+export type TimelineDelta = TimelineDeltaResponse["delta"];
 export type TimelineRow = TimelineResponse["rows"][number];
 export type TimelinePage = TimelineResponse["timelinePage"];
-export type TimelineDelta = NonNullable<TimelineResponse["delta"]>;
 export type ActiveThinking = NonNullable<TimelineResponse["activeThinking"]>;
 export type ThreadEventRow = Awaited<ReturnType<PluginBrowserBbSdk["threads"]["events"]["list"]>>[number];
 

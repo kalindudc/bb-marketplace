@@ -4,11 +4,12 @@ import {
 } from "react";
 import { toast } from "sonner";
 import {
-  experimental_copyToClipboard, experimental_Icon as Icon, useBbNavigate, useSdk,
-  type PluginThreadPanelProps,
+  experimental_copyToClipboard, experimental_Icon as Icon, experimental_useTabVisible, useBbNavigate, useSdk,
 } from "@get-bb/plugin-sdk/app";
 import { consumePanelFocus, onPanelFocusRequest } from "./commands";
-import { collectTurnStats, previewLines, toLogEntries, type EntryCategory, type LogEntry } from "./entries";
+import {
+  collectTurnStats, previewLines, toLogEntries, type EntryCategory, type LogEntry, type TurnStats,
+} from "./entries";
 import { LogRow } from "./log-row";
 import type { ExpandedPreference } from "./preference";
 import {
@@ -91,23 +92,26 @@ function chatHref(entry: LogEntry, projectId: string | null, threadId: string): 
   return `${path}#msg=${entry.messageSeq}`;
 }
 
-export function SessionLogPanel({ threadId, preference }: PluginThreadPanelProps & {
-  preference: ExpandedPreference;
-}) {
+export function SessionLogPanel({ threadId, preference }: { threadId: string; preference: ExpandedPreference }) {
   const sdk = useSdk();
   const sdkRef = useRef(sdk);
   sdkRef.current = sdk;
   const navigate = useBbNavigate();
   const navigateRef = useRef(navigate);
   navigateRef.current = navigate;
+  // bb keeps a closed panel's tab mounted, so the log stops reading the thread until it shows again.
+  const tabVisible = experimental_useTabVisible();
+  const tabVisibleRef = useRef(tabVisible);
+  tabVisibleRef.current = tabVisible;
   const [mountedStore, setMountedStore] = useState<{ threadId: string; store: SessionLogStore } | null>(null);
   const store = mountedStore?.threadId === threadId ? mountedStore.store : null;
 
   useEffect(() => {
-    const next = createSessionLogStore({ sdk: sdkRef.current, threadId });
+    const next = createSessionLogStore({ sdk: sdkRef.current, threadId, visible: tabVisibleRef.current });
     setMountedStore({ threadId, store: next });
     return () => next.dispose();
   }, [threadId]);
+  useEffect(() => { store?.setVisible(tabVisible); }, [store, tabVisible]);
   const subscribe = useCallback((listener: () => void) => store?.subscribe(listener) ?? (() => {}), [store]);
   const getSnapshot = useCallback(() => store?.getSnapshot() ?? EMPTY_SNAPSHOT, [store]);
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
@@ -161,7 +165,10 @@ export function SessionLogPanel({ threadId, preference }: PluginThreadPanelProps
   }, [threadId]);
 
   const entries = useMemo(() => toLogEntries(snapshot.rows, snapshot.hidden), [snapshot.rows, snapshot.hidden]);
-  const turnStats = useMemo(() => collectTurnStats(entries), [entries]);
+  const turnStatsRef = useRef<ReadonlyMap<string, TurnStats>>(new Map());
+  // Reuses each divider's stats object while its numbers hold, so a refresh does not redraw every divider.
+  const turnStats = useMemo(() => collectTurnStats(entries, turnStatsRef.current), [entries]);
+  turnStatsRef.current = turnStats;
   const normalizedQuery = query.toLowerCase();
   const visible = useMemo(
     () => entries.filter((entry) => isShown(entry, filters, errorsOnly, normalizedQuery)),

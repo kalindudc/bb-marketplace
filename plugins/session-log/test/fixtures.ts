@@ -1,4 +1,4 @@
-import type { ThreadEventRow, TimelineResponse, TimelineRow } from "../src/types";
+import type { ThreadEventRow, TimelineDelta, TimelineDeltaResponse, TimelineResponse, TimelineRow } from "../src/types";
 
 type UserRow = Extract<TimelineRow, { kind: "conversation"; role: "user" }>;
 type AssistantRow = Extract<TimelineRow, { kind: "conversation"; role: "assistant" }>;
@@ -174,8 +174,22 @@ export function timelineResponse(rows: TimelineRow[] = [], overrides: Partial<Ti
       olderRowsSourceSeqEnd: null,
       returnedSegmentCount: 1,
     },
+    tag: "tag-1",
     ...overrides,
   };
+}
+
+/** bb's answer to `afterTag`; the default says nothing changed since the window tagged `tag-1`. */
+export function timelineDelta(options: {
+  afterTag?: string;
+  tag?: string;
+  maxSeq?: number;
+  upsertRows?: TimelineRow[];
+  rowOrder?: TimelineDelta["rowOrder"];
+  fields?: TimelineDelta["fields"];
+} = {}): TimelineDeltaResponse {
+  const { afterTag = "tag-1", tag = "tag-2", maxSeq = 0, upsertRows = [], rowOrder, fields = {} } = options;
+  return { maxSeq, tag, delta: { afterTag, upsertRows, ...(rowOrder === undefined ? {} : { rowOrder }), fields } };
 }
 
 type RequestedEvent = Extract<ThreadEventRow, { type: "client/turn/requested" }>;

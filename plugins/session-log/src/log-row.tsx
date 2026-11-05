@@ -36,10 +36,16 @@ function badgeFor(entry: LogEntry): string | null {
 
 const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
 
+// toLocaleTimeString with options builds a new formatter on every call, tens of microseconds each,
+// which adds up across thousands of rows.
+const TIME_FORMATTERS: Record<TimeFormat, Intl.DateTimeFormat> = {
+  "12h": new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true }),
+  "24h": new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }),
+};
+const DATE_FORMATTER = new Intl.DateTimeFormat();
+
 function formatTime(timestamp: number, format: TimeFormat): string {
-  return new Date(timestamp).toLocaleTimeString(undefined, format === "12h"
-    ? { hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true }
-    : { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  return TIME_FORMATTERS[format].format(timestamp);
 }
 
 // Clamps by rendered lines, so a long paragraph counts as the lines it wraps to.
@@ -159,7 +165,7 @@ export const LogRow = memo(function LogRow({
       </div>
       {entry.divider && (
         <div data-sl-nosearch="" className="mt-1 flex flex-wrap gap-x-2 text-xs text-muted-foreground">
-          <span>{new Date(entry.startedAt).toLocaleDateString()}</span>
+          <span>{DATE_FORMATTER.format(entry.startedAt)}</span>
           {turnStats && (
             <span>
               {plural(turnStats.workCount, "tool")} · {plural(turnStats.errorCount, "error")}

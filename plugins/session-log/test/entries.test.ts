@@ -150,6 +150,23 @@ describe("toLogEntries", () => {
     expect(entries[0]?.divider?.label).toBe("You");
   });
 
+  it("keeps a turn's stats object while its numbers hold, so its divider does not redraw", () => {
+    const rows = [
+      userRow("first"),
+      commandRow("work", { startedAt: 1_000, completedAt: 1_500 }),
+      userRow("second", { turnId: "turn-2" }),
+      commandRow("running", { turnId: "turn-2", status: "pending", completedAt: null }),
+    ];
+    const before = collectTurnStats(toLogEntries(rows));
+    const after = collectTurnStats(toLogEntries([
+      ...rows.slice(0, 3),
+      commandRow("running", { turnId: "turn-2", startedAt: 1_000, completedAt: 1_900 }),
+    ]), before);
+    expect(after.get("first")).toBe(before.get("first"));
+    expect(after.get("second")).not.toBe(before.get("second"));
+    expect(after.get("second")).toEqual({ workCount: 1, errorCount: 0, durationMs: 900, running: false });
+  });
+
   it("does not resolve a null-id divider across the next divider", () => {
     const stats = collectTurnStats(toLogEntries([
       userRow("unresolved", { turnId: null }),

@@ -1,17 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, waitFor, within } from "@testing-library/react";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
-import type { PluginThreadPanelProps } from "@get-bb/plugin-sdk/app";
 import { requestPanelFocus } from "../src/commands";
 import { LogRow, type LogRowProps } from "../src/log-row";
 import { SessionLogPanel } from "../src/panel";
 import { toLogEntries } from "../src/entries";
 import { EXPANDED_STORAGE_KEY, createPreference } from "../src/preference";
 import { DEFAULT_SETTINGS, SETTINGS_CHANNEL } from "../src/settings";
-import type { SessionLogSdk, ThreadEventRow, TimelineResponse } from "../src/types";
+import type { SessionLogSdk, ThreadEventRow, TimelineDeltaResponse, TimelineResponse } from "../src/types";
 import {
-  FakeResizeObserver, assistantRow, commandRow, fileChangeRow, reasoningRow, requestEvent, timelineResponse, toolRow,
-  userRow,
+  FakeResizeObserver, assistantRow, commandRow, fileChangeRow, reasoningRow, requestEvent, timelineDelta, timelineResponse,
+  toolRow, userRow,
 } from "./fixtures";
 
 class FakeHighlight extends Set<Range> {}
@@ -208,12 +207,15 @@ describe("LogRow", () => {
 type TimelineArgs = Parameters<SessionLogSdk["threads"]["timeline"]>[0];
 type EventsArgs = Parameters<SessionLogSdk["threads"]["events"]["list"]>[0];
 function panelFake(
-  initial: TimelineResponse, refreshed?: TimelineResponse, projectId = "proj_1", settings: Record<string, unknown> = {},
+  initial: TimelineResponse, refreshed?: TimelineDeltaResponse, projectId = "proj_1", settings: Record<string, unknown> = {},
   requestEvents: readonly ThreadEventRow[] | Error = [],
 ) {
   const callbacks = new Map<string, (event: unknown) => void>();
-  const timeline = vi.fn(async (args: TimelineArgs) => args.afterSequence
-    ? refreshed ?? timelineResponse([], { maxSeq: initial.maxSeq, delta: { upsertRows: [] } })
+  // Every refresh gets `refreshed`, computed from whichever window the panel last received.
+  const timeline = vi.fn(async (args: TimelineArgs): Promise<TimelineResponse | TimelineDeltaResponse> => args.afterTag
+    ? refreshed
+      ? { ...refreshed, delta: { ...refreshed.delta, afterTag: args.afterTag } }
+      : timelineDelta({ afterTag: args.afterTag, tag: args.afterTag, maxSeq: initial.maxSeq })
     : initial);
   const events = {
     list: vi.fn(async (args: EventsArgs) => {
@@ -236,13 +238,13 @@ function panelFake(
   };
 }
 
-function renderPanel(fake: ReturnType<typeof panelFake>, threadId = "thr_1") {
+function renderPanel(fake: ReturnType<typeof panelFake>, threadId = "thr_1", tabVisible = true) {
   const preference = createPreference(window);
-  function Component(props: PluginThreadPanelProps) {
+  function Component(props: { threadId: string }) {
     return <SessionLogPanel {...props} preference={preference} />;
   }
-  const slot = renderSlot({ component: Component }, { threadId, params: null }, {
-    pluginId: "session-log", sdk: fake.sdk,
+  const slot = renderSlot({ component: Component }, { threadId }, {
+    pluginId: "session-log", sdk: fake.sdk, tabVisible,
   });
   mounts.push(slot);
   return slot;
@@ -471,12 +473,10 @@ describe("SessionLogPanel", () => {
     const initial = timelineResponse([userRow("first", { text: "marker one" })], { maxSeq: 10 });
     const fake = panelFake(initial);
     fake.timeline.mockResolvedValueOnce(initial);
-    fake.timeline.mockResolvedValueOnce(timelineResponse([], {
+    fake.timeline.mockResolvedValueOnce(timelineDelta({
       maxSeq: 11,
-      delta: {
-        upsertRows: [assistantRow("second", { text: "marker two", sourceSeqStart: 11, sourceSeqEnd: 11 })],
-        rowOrder: ["first", "second"],
-      },
+      upsertRows: [assistantRow("second", { text: "marker two", sourceSeqStart: 11, sourceSeqEnd: 11 })],
+      rowOrder: [[0, 1], "second"],
     }));
     const slot = renderPanel(fake);
     await waitFor(() => expect(slot.container.querySelector('[data-entry-id="first"]')).toBeTruthy());
@@ -525,12 +525,12 @@ describe("SessionLogPanel", () => {
     fake.timeline.mockResolvedValueOnce(initial);
     for (const [index, id] of ["third", "fourth", "fifth"].entries()) {
       const seq = 11 + index;
-      fake.timeline.mockResolvedValueOnce(timelineResponse([], {
+      fake.timeline.mockResolvedValueOnce(timelineDelta({
+        afterTag: `tag-${index + 1}`,
+        tag: `tag-${index + 2}`,
         maxSeq: seq,
-        delta: {
-          upsertRows: [toolRow(id, { sourceSeqStart: seq, sourceSeqEnd: seq })],
-          rowOrder: ["first", "second", "third", "fourth", "fifth"].slice(0, index + 3),
-        },
+        upsertRows: [toolRow(id, { sourceSeqStart: seq, sourceSeqEnd: seq })],
+        rowOrder: [[0, index + 2], id],
       }));
     }
     const slot = renderPanel(fake);
@@ -556,9 +556,7 @@ describe("SessionLogPanel", () => {
     const output = Array.from({ length: 12 }, (_, index) => `line ${index}`).join("\n");
     const initial = timelineResponse([userRow("first"), toolRow("second", { output })], { maxSeq: 10 });
     const third = toolRow("third", { output, sourceSeqStart: 11, sourceSeqEnd: 11 });
-    const fake = panelFake(initial, timelineResponse([], {
-      maxSeq: 11, delta: { upsertRows: [third], rowOrder: ["first", "second", "third"] },
-    }));
+    const fake = panelFake(initial, timelineDelta({ maxSeq: 11, upsertRows: [third], rowOrder: [[0, 2], "third"] }));
     const slot = renderPanel(fake);
     await waitFor(() => expect(cursorId(slot.container)).toBe("second"));
     const root = slot.container.querySelector("[data-session-log-panel]") as HTMLElement;
@@ -633,9 +631,7 @@ describe("SessionLogPanel", () => {
       assistantRow("reply"), toolRow("last"),
     ], { maxSeq: 10 });
     const latest = toolRow("newest", { sourceSeqStart: 11, sourceSeqEnd: 11 });
-    const fake = panelFake(initial, timelineResponse([], {
-      maxSeq: 11, delta: { upsertRows: [latest], rowOrder: ["request", "match", "reply", "last", "newest"] },
-    }));
+    const fake = panelFake(initial, timelineDelta({ maxSeq: 11, upsertRows: [latest], rowOrder: [[0, 4], "newest"] }));
     const slot = renderPanel(fake);
     await waitFor(() => expect(cursorId(slot.container)).toBe("last"));
     (slot.container.querySelector('[data-entry-id="last"]') as HTMLElement).focus();
@@ -749,11 +745,9 @@ describe("SessionLogPanel", () => {
     const initial = timelineResponse([first], { maxSeq: 10 });
     const fake = panelFake(initial);
     fake.timeline.mockResolvedValueOnce(initial);
-    fake.timeline.mockResolvedValueOnce(timelineResponse([], {
-      maxSeq: 11, delta: { upsertRows: [latest], rowOrder: ["first", "new"] },
-    }));
-    fake.timeline.mockResolvedValueOnce(timelineResponse([], {
-      maxSeq: 12, delta: { upsertRows: [after], rowOrder: ["first", "new", "after"] },
+    fake.timeline.mockResolvedValueOnce(timelineDelta({ maxSeq: 11, upsertRows: [latest], rowOrder: [[0, 1], "new"] }));
+    fake.timeline.mockResolvedValueOnce(timelineDelta({
+      afterTag: "tag-2", tag: "tag-3", maxSeq: 12, upsertRows: [after], rowOrder: [[0, 2], "after"],
     }));
     const slot = renderPanel(fake);
     await waitFor(() => expect(cursorId(slot.container)).toBe("first"));
@@ -804,6 +798,16 @@ describe("SessionLogPanel", () => {
     expect(slot.container.textContent).toContain("j/k move");
     fireEvent.keyDown(root, { key: "x", metaKey: true });
     expect(window.localStorage.getItem(EXPANDED_STORAGE_KEY)).toBeNull();
+  });
+
+  it("does not read the thread while its tab is hidden", async () => {
+    const fake = panelFake(timelineResponse([userRow("request")]));
+    const slot = renderPanel(fake, "thr_1", false);
+    await waitFor(() => expect(fake.getSettings).toHaveBeenCalled());
+    await new Promise((done) => setTimeout(done, 50));
+    expect(fake.timeline).not.toHaveBeenCalled();
+    expect(fake.events.list).not.toHaveBeenCalled();
+    expect(slot.container.textContent).toContain("Loading session…");
   });
 
   it("shows empty and failed-load states with a working Retry", async () => {

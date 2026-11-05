@@ -79,7 +79,7 @@ Changes reach open panels straight away.
 
 ## Install
 
-After the first release is tagged:
+Session Log needs bb 0.48.1 or later.
 
 ```sh
 bb marketplace add git:github.com/kalindudc/bb-marketplace@main
@@ -90,10 +90,20 @@ bb plugin install session-log@kalindudc
 
 The panel reads bb's public `threads.timeline` API with nested rows. It
 loads every page when opened, then keeps the server's latest window separate
-from the complete list so it can apply `afterSequence` deltas and splice
-updates into that list. Thread events and reconnects trigger refreshes, at
-most twice per second while activity continues; rewritten history triggers
-a new load. Follow works like bb's own sticky scrollers: only a scroll by the
+from the complete list. Each refresh passes that window's `afterTag`, so bb
+answers with only the rows and fields that changed, and the panel splices
+them into the list; rows that did not change keep their objects and are not
+redrawn. Thread events and reconnects trigger refreshes; rewritten history
+triggers a new load.
+
+bb builds the whole latest window for every refresh, which blocks its event
+loop for a few hundred milliseconds on a long thread. The panel therefore
+waits at least half a second between refreshes, and at least four times as
+long as the last request took, up to 5 seconds. bb keeps a closed panel's
+tab mounted, so while the log tab is closed or behind another tab it reads
+nothing, and it catches up with one refresh when it shows again.
+
+Follow works like bb's own sticky scrollers: only a scroll by the
 reader (a wheel, touch, drag or scroll key within 350 ms) pauses it, and any
 other change in size or position re-pins the newest row.
 
