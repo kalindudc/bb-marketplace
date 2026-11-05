@@ -211,7 +211,7 @@ export function InsightsView({ tab, onTab, onAction, onOpenPr }: { tab: Insights
   if (tab === "autopost") {
     return (
       <div className={PAGE}>
-        <PageHeading title="Insights" description="What auto post would have posted in shadow mode, against what you posted.">{tabs}</PageHeading>
+        <PageHeading title="Insights" description="What auto post would do with your settings, against what you did. Try a change and see what would post instead.">{tabs}</PageHeading>
         <AutoPostView onOpenPr={onOpenPr} />
       </div>
     );

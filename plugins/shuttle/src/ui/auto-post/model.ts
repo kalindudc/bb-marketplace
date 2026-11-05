@@ -8,7 +8,7 @@ export type Tab = "comment" | "approve";
 export type Group = "post" | "settings" | "other";
 
 export const KIND_NAME: Record<ConcernKind, string> = {
-  other: "Other or unkinded concerns", unverified: "Couldn't verify", process: "CI or merge state", design: "Design point", description: "Description mismatch", scope: "Out-of-scope changes",
+  other: "Other concerns", unverified: "Couldn't verify", process: "CI or merge state", design: "Design point", description: "Description mismatch", scope: "Out-of-scope changes",
 };
 export const KIND_TIP: Partial<Record<ConcernKind, string>> = { other: "Concerns of kind other, and every concern from reviews written before concerns had kinds." };
 

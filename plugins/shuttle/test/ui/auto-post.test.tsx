@@ -90,7 +90,7 @@ describe("Insights › Auto post", () => {
 
     const rows = [...root.querySelectorAll("[data-hold-row]")].map((row) => [row.getAttribute("data-hold-row"), text(row, "[data-hold-count]"), text(row, "[data-hold-gain]")]);
     expect(rows).toEqual([["concern:other", "2", "+1"], ["concern:unverified", "1", null], ["concern:scope", "1", null], ["size", "1", null], ["findings", "2", null]]);
-    expect(within(holdRow(root, "concern:other")).getByRole("switch", { name: "Hold comments for: Other or unkinded concerns" }).getAttribute("aria-checked")).toBe("true");
+    expect(within(holdRow(root, "concern:other")).getByRole("switch", { name: "Hold comments for: Other concerns" }).getAttribute("aria-checked")).toBe("true");
     expect(within(holdRow(root, "concern:unverified")).getByRole("switch", { name: "Hold comments for: Couldn't verify" }).getAttribute("aria-checked")).toBe("false");
     expect((within(holdRow(root, "size")).getByRole("spinbutton", { name: "Largest PR for comments, in lines" }) as HTMLInputElement).value).toBe("800");
     expect([...root.querySelectorAll("[data-fixed-holds] [data-pill]")].map((chip) => chip.textContent)).toEqual(["Suggested approving 2", "No findings 2", "Asked for changes 1", "No risk rating 1"]);
@@ -107,7 +107,7 @@ describe("Insights › Auto post", () => {
     expect(row.getAttribute("aria-expanded")).toBe("true");
     const detail = root.querySelector<HTMLElement>("[data-draft='3'] [data-draft-detail]")!;
     expect([...detail.querySelectorAll("[data-draft-holds] [data-hold]")].map((chip) => [chip.getAttribute("data-hold"), chip.textContent, chip.querySelector("[data-pill]")!.getAttribute("data-pill")]))
-      .toEqual([["size", "Over 800 lines", "warn"], ["concern", "Other or unkinded concerns", "warn"], ["findings", "No finding passes", "warn"]]);
+      .toEqual([["size", "Over 800 lines", "warn"], ["concern", "Other concerns", "warn"], ["findings", "No finding passes", "warn"]]);
     const finding = detail.querySelector<HTMLElement>("[data-finding='f3']")!;
     expect(finding.textContent).toContain("medium");
     expect(finding.textContent).toContain("Not sure it's right");
@@ -126,7 +126,7 @@ describe("Insights › Auto post", () => {
 
   it("tries a concern switch and a floor, then saves only the replayed fields or resets", async () => {
     const { slot, root } = await autoPostPage();
-    fireEvent.click(within(holdRow(root, "concern:other")).getByRole("switch", { name: "Hold comments for: Other or unkinded concerns" }));
+    fireEvent.click(within(holdRow(root, "concern:other")).getByRole("switch", { name: "Hold comments for: Other concerns" }));
     expect(text(root, "[data-hero-count]")).toBe("2");
     expect(text(root, "[data-hero-delta]")).toBe("+1");
     expect(text(root, "[data-changes]")).toBe("Trying 1 changeResetSave");

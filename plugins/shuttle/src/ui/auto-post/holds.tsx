@@ -90,7 +90,7 @@ export function Holds({ rows, drafts, tab, settings, onChange, onTuneFloors }: {
         {defs.map((def) => {
           const gain = def.on ? only.get(def.key) ?? 0 : 0;
           return (
-            <div key={def.key} data-hold-row={def.key} data-on={def.on} className="grid min-h-9 grid-cols-[minmax(6rem,1fr)_minmax(3rem,1.1fr)_1.5rem_auto] items-center gap-2.5 border-t border-border py-1 first:border-t-0">
+            <div key={def.key} data-hold-row={def.key} data-on={def.on} className="grid min-h-9 grid-cols-[minmax(8.5rem,1.5fr)_minmax(2.5rem,0.8fr)_1.5rem_auto] items-center gap-2.5 border-t border-border py-1 first:border-t-0">
               <span className={`flex min-w-0 items-baseline gap-1.5 text-xs ${def.on ? "" : "text-muted-foreground"}`}>
                 <span className="truncate" title={def.tip}>{def.name}</span>
                 {gain > 0 && <span data-hold-gain className="shrink-0 text-[11px] font-semibold text-success" title={`${plural(gain, "draft")} ${verb} if only this changed`}>+{gain}</span>}
