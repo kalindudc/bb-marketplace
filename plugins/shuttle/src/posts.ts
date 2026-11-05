@@ -83,7 +83,10 @@ export function cancelPost(ctx: Ctx, id: number): PrRow {
   if (row.state === "posting") throw new ShuttleError("It has started posting, so it can't be cancelled");
   if (row.state !== "queued") throw new ShuttleError(`That review is ${row.state === "cancelled" ? "already cancelled" : `already ${row.state}`}`);
   const pr = prOf(ctx, row);
-  ctx.store.finishPost(row.id, { state: "cancelled" });
+  ctx.store.tx(() => {
+    ctx.store.finishPost(row.id, { state: "cancelled" });
+    if (row.draft_id !== null) ctx.store.retireReplacedDraft(row.draft_id);
+  });
   ctx.store.addEvent("post_cancelled", `Cancelled your ${VERDICT_TEXT[row.verdict]} on ${shortKey(ctx, pr)} before it posted.`, pr.id);
   ctx.port.publish();
   return pr;
@@ -107,7 +110,10 @@ export function clearPost(ctx: Ctx, id: number): PrRow {
   const row = requirePost(ctx, id);
   if (row.state !== "failed") throw new ShuttleError("Only a review that failed to post can be dismissed");
   const pr = prOf(ctx, row);
-  ctx.store.clearPost(row.id);
+  ctx.store.tx(() => {
+    ctx.store.clearPost(row.id);
+    if (row.draft_id !== null) ctx.store.retireReplacedDraft(row.draft_id);
+  });
   ctx.port.publish();
   return pr;
 }

@@ -170,9 +170,11 @@ export async function syncServer(ctx: Ctx, server: ServerConfig, signal?: AbortS
   const supported = new Set(adapter.operations());
   const before = ctx.store.server(server.id);
   const steps = new Steps(ctx, server, signal);
-  const found = await steps.run("whoami", () => adapter.whoami(signal), (name) => `Signed in as ${name}`);
+  // whoami is optional: a server without it still lists PRs, and only telling your own PRs and comments apart waits on a login.
+  const asked = supported.has("whoami");
+  const found = asked ? await steps.run("whoami", () => adapter.whoami(signal), (name) => `Signed in as ${name}`) : undefined;
   const login = found ?? before?.login ?? null;
-  if (found === undefined && steps.stop === null) {
+  if (asked && found === undefined && steps.stop === null) {
     steps.stop = "Not run: Shuttle could not tell who you are";
     // A server that cannot say who you are because it is down cannot answer for watched PRs either.
     const kind = steps.steps[0]?.failure?.kind;

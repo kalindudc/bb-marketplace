@@ -211,6 +211,47 @@ describe("the review queue", () => {
     expect(h.shuttle.posts()[0]).toMatchObject({ state: "posted" });
   });
 
+  it("keeps a queued draft when its review thread hands back a newer draft, and shows the newer one after", async () => {
+    const h = await queue();
+    const { threadId, draftId } = await withDraft(h);
+    const held = gate(h.shuttle.adapter("forge"));
+    // Another review posting first keeps this one queued while the new draft lands.
+    h.shuttle.queueReview(KEY(4), { verdict: "comment", body: "Ahead", findings: [] });
+    const { post } = h.shuttle.queueReview(KEY(3), { verdict: "changes", body: "Two things", findings: [{ path: "a.go", line: 3, body: "Race" }], draftId });
+    const listed = () => h.shuttle.list("reviews").find((view) => view.key === KEY(3))!;
+    expect(listed().draft?.id).toBe(draftId);
+    await h.shuttle.saveDraft(threadId, KEY(3), { summary: "One more", verdict: "comment", findings: [{ severity: "low", path: "c.go", line: 1, body: "Typo" }] });
+    expect(listed().draft?.id).toBe(h.shuttle.detail(KEY(3)).draft!.id);
+    expect(listed().draft?.id).not.toBe(draftId);
+    expect(h.store.postById(post.id)!.state).toBe("queued");
+    expect(h.store.draftById(draftId)!.state).toBe("draft");
+    held.release();
+    await h.shuttle.postsSettled();
+    expect(h.store.postById(post.id)).toMatchObject({ state: "posted", draft_id: draftId });
+    expect(h.store.draftById(draftId)).toMatchObject({ state: "posted" });
+    expect(h.shuttle.detail(KEY(3)).draft).toMatchObject({ summary: "One more" });
+  });
+
+  it("retires a queued draft that a newer one replaced once its post is cancelled, so only one draft stays live", async () => {
+    const h = await queue();
+    const { threadId, draftId } = await withDraft(h);
+    const held = gate(h.shuttle.adapter("forge"));
+    h.shuttle.queueReview(KEY(4), { verdict: "comment", body: "Ahead", findings: [] });
+    const { post } = h.shuttle.queueReview(KEY(3), { verdict: "changes", body: "Two things", findings: [], draftId });
+    await h.shuttle.saveDraft(threadId, KEY(3), { summary: "One more", verdict: "comment", findings: [{ severity: "low", path: "c.go", line: 1, body: "Typo" }] });
+    expect(h.store.draftById(draftId)!.state).toBe("draft");
+    const listed = () => h.shuttle.list("reviews").find((view) => view.key === KEY(3))!;
+    expect(listed().draft?.id).not.toBe(draftId);
+    expect(listed().post?.state).toBe("queued");
+    h.shuttle.cancelPost(post.id);
+    expect(listed().post).toBeNull();
+    expect(listed().draft?.id).toBe(h.shuttle.detail(KEY(3)).draft!.id);
+    expect(h.store.draftById(draftId)).toMatchObject({ state: "discarded", discard_reason: "superseded" });
+    expect(h.shuttle.detail(KEY(3)).draft).toMatchObject({ summary: "One more" });
+    held.release();
+    await h.shuttle.postsSettled();
+  });
+
   it("fails a review a stopped Shuttle left posting, since the server may have it, and resumes the ones still waiting", async () => {
     const h = await queue();
     const prId = (n: number) => h.store.prByKey(KEY(n))!.id;

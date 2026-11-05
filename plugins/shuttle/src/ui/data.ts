@@ -78,7 +78,19 @@ function sortInbox(current: InboxView, each: (pr: PrView) => PrView): InboxView 
 /** Every thread a PR's lists in thread tabs may be cached under. */
 export const threadsOf = (prs: readonly PrView[]) => [...new Set(prs.flatMap((pr) => [...pr.links.map((link) => link.threadId), ...(pr.agent ? [pr.agent.threadId] : [])]))];
 
-/** openUrl is experimental and owns only HTTP(S); anything it declines opens the ordinary way. */
+/** True for an http(s) link. Links from servers (check details, PR URLs) are data, so any other scheme is never opened. */
+export function isWebUrl(url: string | null | undefined): url is string {
+  if (!url) return false;
+  try {
+    const { protocol } = new URL(url);
+    return protocol === "https:" || protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+/** openUrl is experimental and owns only HTTP(S); an http(s) link it declines opens the ordinary way, and nothing else opens. */
 export function openExternal(navigate: BbNavigate, url: string): void {
+  if (!isWebUrl(url)) return;
   if (!navigate.openUrl(url)) window.open(url, "_blank", "noopener,noreferrer");
 }

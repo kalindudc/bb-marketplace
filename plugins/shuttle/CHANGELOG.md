@@ -25,6 +25,9 @@ Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` i
 ### Fixed
 
 - Opening or refreshing Shuttle stalled bb's server, and so every panel, for up to a second, about once a minute. Each read built every PR's view again, compiling each of its queries and parsing the whole config again for each PR. Queries are now compiled once, the config is parsed once until it is saved, and the views come from the index.
+- A command server without a `whoami` command syncs. Every operation but `view` is optional, yet sync asked `whoami` first and skipped every list when it failed, so such a server never showed a PR.
+- A review queued to post still posts when its review thread hands back a newer draft. The newer draft discarded it, so the queued review failed as already discarded. A draft replaced that way stops being live once its post is cancelled or dismissed.
+- Shuttle opens only http(s) links from servers. A check's details link went to the browser whatever its scheme when bb did not take it; any other scheme now never opens, and its Log and Watch buttons are hidden.
 - A command server's list that printed `body` counted as the PR's own read, so the PR on screen was never read by itself for what lists lack, such as its reviewers. Only a PR's own read counts now.
 
 ## 0.8.0 (2026-11-04)

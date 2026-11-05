@@ -876,12 +876,23 @@ export class Store {
 
   addDraft(row: Pick<DraftRow, "pr_id" | "thread_id" | "review_id" | "head" | "summary" | "verdict" | "findings" | "notes"> & { assessment?: string | null }): DraftRow {
     return this.tx(() => {
-      // One live draft per PR: a newer one from the same review replaces it.
-      this.sql("UPDATE review_drafts SET state = 'discarded', discard_reason = 'superseded' WHERE pr_id = ? AND state = 'draft'").run(row.pr_id);
+      // One live draft per PR: a newer one from the same review replaces it, except one queued to post, which is the user's choice and still posts.
+      this.sql(
+        `UPDATE review_drafts SET state = 'discarded', discard_reason = 'superseded' WHERE pr_id = ? AND state = 'draft'
+         AND id NOT IN (SELECT draft_id FROM review_posts WHERE draft_id IS NOT NULL AND state IN ('queued', 'posting'))`,
+      ).run(row.pr_id);
       const result = this.sql("INSERT INTO review_drafts (pr_id, thread_id, review_id, head, summary, verdict, findings, notes, assessment, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?)")
         .run(row.pr_id, row.thread_id, row.review_id, row.head, row.summary, row.verdict, row.findings, row.notes, row.assessment ?? null, this.now());
       return this.draftById(Number(result.lastInsertRowid))!;
     });
+  }
+
+  /** A draft a newer one replaced while it was queued to post stops being live once that post is cancelled or dismissed. */
+  retireReplacedDraft(id: number): void {
+    this.sql(
+      `UPDATE review_drafts SET state = 'discarded', discard_reason = 'superseded' WHERE id = ? AND state = 'draft'
+       AND EXISTS (SELECT 1 FROM review_drafts newer WHERE newer.pr_id = review_drafts.pr_id AND newer.state = 'draft' AND newer.id > review_drafts.id)`,
+    ).run(id);
   }
 
   draftById(id: number): DraftRow | null {

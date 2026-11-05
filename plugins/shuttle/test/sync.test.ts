@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SyncStep } from "../src/contract";
 import { SpawnUnavailableError } from "../src/ports";
-import { testConfig, harness, pr } from "./helpers";
+import { testConfig, harness, pr, TEST_SERVER } from "./helpers";
 
 describe("sync", () => {
   it("stores every list with its reason and marks authored PRs as mine", async () => {
@@ -20,6 +20,18 @@ describe("sync", () => {
     expect(h.shuttle.overview().servers[0]).toMatchObject({ ok: true, login: "me" });
     const closed = h.runner.calls.find((c) => c.operation === "authored" && c.env.SHUTTLE_STATE === "closed");
     expect(closed?.env.SHUTTLE_SINCE).toBe("2026-10-09");
+  });
+
+  it("syncs a command server that has no whoami command, without a login", async () => {
+    const { whoami: _, ...commands } = TEST_SERVER.commands;
+    const h = harness(testConfig({ servers: [{ ...TEST_SERVER, enabled: true, sep: "#", commands }] }));
+    h.lists.authored = [pr(1)];
+    h.lists.review_requested = [pr(3)];
+    await h.shuttle.sync();
+    expect(h.runner.calls.map((c) => c.operation)).not.toContain("whoami");
+    expect(h.shuttle.list("mine").map((p) => p.number)).toEqual([1]);
+    expect(h.shuttle.list("reviews").map((p) => p.number)).toEqual([3]);
+    expect(h.shuttle.overview().servers[0]).toMatchObject({ ok: true, login: null });
   });
 
   it("drops a reason when the PR leaves that list, and keeps the old data when a list fails", async () => {

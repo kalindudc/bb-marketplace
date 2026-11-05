@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { experimental_Icon as Icon, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import type { CheckRun, CheckState, ConversationItem, PrDetails, PrView, RunState } from "../contract";
 import { BUTTON_GHOST } from "./common";
-import { openExternal } from "./data";
+import { isWebUrl, openExternal } from "./data";
 import { ago, checkName, plural, seconds } from "./format";
 import { usePrState } from "./pr-state";
 import { Tag, tagOf } from "./tags";
@@ -75,7 +75,7 @@ function Row({ pr, run, items }: { pr: PrView; run: CheckRun; items: readonly Co
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         {tag !== null && <Tag tag={tag} />}
         {duration !== null && <span>{duration}</span>}
-        {run.url !== null && (
+        {isWebUrl(run.url) && (
           <button type="button" className="inline-flex cursor-pointer items-center gap-1 text-primary hover:underline" onClick={() => openExternal(navigate, run.url!)}>
             {run.state === "running" ? "Watch" : "Log"}<Icon name="ExternalLink" className="size-3" aria-hidden />
           </button>
@@ -163,7 +163,7 @@ export function ChecksPane({ pr, items, details }: { pr: PrView; items: readonly
                     <Icon name="CircleX" fallback="X" className="size-4 shrink-0 text-destructive-text" aria-hidden />
                     <span className="min-w-0 flex-1 truncate">{checkName(item.body)}</span>
                     {tag !== null && <Tag tag={tag} />}
-                    {item.url !== null && <button type="button" className="cursor-pointer text-xs text-primary hover:underline" onClick={() => openExternal(navigate, item.url!)}>Log</button>}
+                    {isWebUrl(item.url) && <button type="button" className="cursor-pointer text-xs text-primary hover:underline" onClick={() => openExternal(navigate, item.url!)}>Log</button>}
                   </li>
                 );
               })}
