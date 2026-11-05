@@ -1,9 +1,9 @@
 import { loadPluginApp, renderSlot, type PluginRpcTestHandlers, type RenderSlotOptions, type RenderedSlot } from "@get-bb/plugin-sdk/testing/app";
 import { createElement, type ComponentType } from "react";
 import { afterEach, beforeEach, vi } from "vitest";
-import { DEFAULT_CONFIG, type Config } from "../../src/config";
+import { autoPostRepoSchema, DEFAULT_CONFIG, type AutoPostRepo, type Config } from "../../src/config";
 import {
-  type AutoPostInsights,
+  type AutoPostInsights, type ReplayDraft, type ReplayFinding,
   rpcContract, type AgentView, type ConversationItem, type EventView, type InboxView, type InsightsView, type LinkView, type MergeOptions,
   type MergeView, type NextStep, type Overview, type PostView, type PrView, type ReviewDraft, type ServerStatus,
 } from "../../src/contract";
@@ -235,6 +235,26 @@ export function shadowRepo(overrides: {
   };
 }
 
+/** A repository auto post watches, with every default: what a config's `autoPost.repos` holds. */
+export const autoPostRepo = (repo: string, overrides: Partial<AutoPostRepo> = {}): AutoPostRepo => autoPostRepoSchema.parse({ repo, ...overrides });
+
+/** A finding as the Auto post page replays it: medium, scored well by the verifier, and posted by you. */
+export function replayFinding(overrides: Partial<ReplayFinding> = {}): ReplayFinding {
+  return { id: "f1", severity: "medium", path: "app/jobs/waf.rb", line: 42, body: "The retry never backs off.", holds: 0.9, worth: 0.85, other: null, you: "posted", ...overrides };
+}
+
+/** A checked draft as the Auto post page replays it: a comment review of a small, low-risk PR with passing checks and one good finding. */
+export function replayDraft(overrides: Partial<ReplayDraft> = {}): ReplayDraft {
+  const id = overrides.id ?? 1;
+  const repo = overrides.repo ?? "acme/app";
+  return {
+    id, key: `github:${repo}#${id}`, display: `${repo}#${id}`, title: "Retry WAF deletes", repo, at: NOW - id * HOUR, verdict: "comment", you: "commented",
+    size: 120, checks: "passed", review: "none", serverName: "GitHub", risk: "low", concerns: [], bot: false, timing: null, kept: [], keptApproval: [], blocking: null, exact: true,
+    findings: [replayFinding()],
+    ...overrides,
+  };
+}
+
 export const mergeOptions = (overrides: Partial<MergeOptions> = {}): MergeOptions => ({
   methods: ["squash", "merge"], default: "squash", deleteBranch: true, canAuto: true, state: "clean", detail: null, ...overrides,
 });
@@ -272,6 +292,8 @@ export function handlers(overrides: Partial<Handlers> = {}): Handlers {
     activity: () => ({ events: [] }),
     insights: () => insights(),
     autoPostInsights: () => autoPostInsights(),
+    autoPostReplay: () => ({ drafts: [] }),
+    saveAutoPostSettings: () => ({ config: config() }),
     sync: () => ({ ok: true }),
     syncHistory: () => ({ windowMs: 3 * 3_600_000, servers: [] }),
     link: unexpected("link"),

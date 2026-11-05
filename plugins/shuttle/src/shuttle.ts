@@ -3,7 +3,7 @@ import { adapterFor, type Adapter } from "./adapters";
 import { runProcess, sleep, type Runner } from "./adapters/exec";
 import { configChanges, configFromToml, configToToml, ConfigError, parseConfig, serverSchema, type Config, type ServerConfig, type WatchMode } from "./config";
 import type {
-  AutoPostInsights, ReviewHistoryItem,
+  AutoPostInsights, ReplayDraft, ReviewHistoryItem,
   AgentMode, AgentTarget, Area, BoardDetail, BoardSummary, ConversationItem, EventView, InboxRule, InboxRuleKind, InboxView, InsightsView, LinkRole, MergeMethod, MergeOptions, MergeView, Outcome, Overview, LinkCard, PostFinding, PrChange, PrDetails,
   PostView, PrView, ReviewDraft, ReviewInput, ServerStatus, SyncHistory, SyncRun, SyncStep, SyncStepName, TestResult, ThreadOption, Verdict,
 } from "./contract";
@@ -18,7 +18,8 @@ import { cancelMerge, clearMerge, failInterruptedMerges, mergeInputOf, mergeView
 import { addRule, dismiss, inbox as readInbox, markSeen, removeRule, snooze } from "./inbox";
 import { insights, INSIGHTS_SINCE, snapshotCounts } from "./insights";
 import { autoPostRepo, gateDraft, parseGate, rescoreDraft } from "./gate";
-import { autoPostInsights } from "./shadow";
+import { autoPostInsights, replayDrafts } from "./shadow";
+import { replaySettingsOf, withReplaySettings, type ReplaySettings } from "./replay";
 import { feedbackSignature, phaseOf } from "./next";
 import { errText, ShuttleError, type Ctx } from "./ctx";
 import type { EventRow, MergeRow, PostRow, ServerRow, Store, SyncRunRow } from "./db/store";
@@ -158,6 +159,12 @@ export class Shuttle implements Ctx {
     const projects = await this.port.listProjects();
     this.projectCache = { at: this.now(), projects };
     return projects;
+  }
+
+  /** Merges settings changed on Insights › Auto post into the settings as they are now, so a save elsewhere meanwhile stays. */
+  saveAutoPostSettings(changes: Partial<ReplaySettings>): Config {
+    const config = this.config();
+    return this.saveConfig({ ...config, autoPost: withReplaySettings(config.autoPost, { ...replaySettingsOf(config.autoPost), ...changes }) });
   }
 
   saveConfig(raw: unknown): Config {
@@ -336,6 +343,10 @@ export class Shuttle implements Ctx {
 
   autoPostInsights(range: AutoPostInsights["range"]): AutoPostInsights {
     return autoPostInsights(this, range);
+  }
+
+  autoPostReplay(range: AutoPostInsights["range"]): { drafts: ReplayDraft[] } {
+    return { drafts: replayDrafts(this, range) };
   }
 
   /**
