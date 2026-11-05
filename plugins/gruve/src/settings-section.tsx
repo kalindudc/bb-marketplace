@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { experimental_usePluginId, useRealtime, useSdk } from "@get-bb/plugin-sdk/app";
-import { accentColours, applyAppearance, codeFontStack, interfaceFontStack, isGruveTheme, lightPalette, promptGlyph } from "./appearance";
-import { DEFAULT_APPEARANCE, parseAppearance, SETTING_DESCRIPTORS, SETTINGS_CHANNEL, type GruveAppearance } from "./settings";
+import { accentColours, applyAppearance, codeFontStack, interfaceFontStack, isGruveTheme, palette, promptGlyph } from "./appearance";
+import { DEFAULT_APPEARANCE, parseAppearance, SETTING_DESCRIPTORS, SETTINGS_CHANNEL, type GruveAppearance, type Mode } from "./settings";
 
 /**
  * The section under the settings form: a preview of the choices, and the way a
@@ -33,10 +33,8 @@ export function GruveAppearanceSettings() {
   }, [sdk, pluginId, revision]);
 
   const shown = appearance ?? DEFAULT_APPEARANCE;
-  const [primary, onPrimary] = accentColours(shown.accent, useDarkMode() ? "dark" : "light", shown.lightMode);
+  const [primary, onPrimary] = accentColours(shown.accent, useDarkMode() ? "dark" : "light", shown.mode);
   const glyph = promptGlyph(shown.prompt);
-  const paper = lightPalette(shown.lightMode);
-  const [lightPrimary] = accentColours(shown.accent, "light", shown.lightMode);
 
   return (
     <div className="flex flex-col gap-3">
@@ -61,25 +59,38 @@ export function GruveAppearanceSettings() {
           </span>
         </p>
       </div>
-      {/* Drawn from the palette itself, so it shows light mode's paper from dark mode too. */}
-      <div
-        className="flex flex-col gap-1.5 rounded-lg p-2 text-sm"
-        style={{ background: paper["--canvas"], border: `1px solid ${paper["--border"]}`, fontFamily: interfaceFontStack(shown.interfaceFont) }}
-      >
-        <div
-          className="flex flex-wrap items-center gap-2 rounded px-2 py-1.5"
-          style={{ background: paper["--card"], border: `1px solid ${paper["--border-seam"]}`, color: paper["--ink"] }}
-        >
-          <span>{SETTING_DESCRIPTORS.lightMode.experimental_optionLabels[shown.lightMode]}</span>
-          <span className="rounded px-1.5" style={{ background: paper["--secondary"], color: paper["--muted-foreground"] }}>
-            chip
-          </span>
-          <span style={{ color: lightPrimary }}>link</span>
-        </div>
-        <span className="px-2 text-xs" style={{ color: paper["--subtle-foreground"] }}>
-          Light mode: timestamps and hints
-        </span>
+      <p className="text-xs text-muted-foreground">{SETTING_DESCRIPTORS.mode.experimental_optionLabels[shown.mode]}</p>
+      {/* Drawn from the palettes themselves, so both schemes show whichever one bb is in. */}
+      <div className="grid grid-cols-2 gap-2">
+        <ModeSample mode={shown.mode} scheme="light" appearance={shown} />
+        <ModeSample mode={shown.mode} scheme="dark" appearance={shown} />
       </div>
+    </div>
+  );
+}
+
+function ModeSample({ mode, scheme, appearance }: { mode: Mode; scheme: "light" | "dark"; appearance: GruveAppearance }) {
+  const colours = palette(mode, scheme);
+  const [accent] = accentColours(appearance.accent, scheme, mode);
+  return (
+    <div
+      aria-label={`${scheme === "light" ? "Light" : "Dark"} preview`}
+      className="flex flex-col gap-1.5 rounded-lg p-2 text-sm"
+      style={{ background: colours["--canvas"], border: `1px solid ${colours["--border"]}`, fontFamily: interfaceFontStack(appearance.interfaceFont) }}
+    >
+      <div
+        className="flex flex-wrap items-center gap-2 rounded px-2 py-1.5"
+        style={{ background: colours["--card"], border: `1px solid ${colours["--border-seam"]}`, color: colours["--ink"] }}
+      >
+        <span>{scheme === "light" ? "Light" : "Dark"}</span>
+        <span className="rounded px-1.5" style={{ background: colours["--secondary"], color: colours["--muted-foreground"] }}>
+          chip
+        </span>
+        <span style={{ color: accent }}>link</span>
+      </div>
+      <span className="px-2 text-xs" style={{ color: colours["--subtle-foreground"] }}>
+        timestamps and hints
+      </span>
     </div>
   );
 }

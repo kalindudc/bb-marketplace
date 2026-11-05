@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-gruve",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "type": "module",
   "engines": {
@@ -9,7 +9,7 @@
   },
   "bb": {
     "name": "Gruve",
-    "description": "A gruvbox theme for coding: sharp corners, flat surfaces, a monospace UI and a composer styled as a terminal prompt, with settings for the accent colour, light mode's brightness, fonts, text size, corners and prompt. Dark mode is gruvbox soft; light mode puts gruvbox ink on a dimmed neutral paper instead of bright yellow.",
+    "description": "A gruvbox theme for coding: sharp corners, flat surfaces, a monospace UI and a composer styled as a terminal prompt, with settings for the accent colour, a light-and-dark mode for brightness and contrast, fonts, text size, corners and prompt. Dark mode is gruvbox soft; light mode puts gruvbox ink on a dimmed neutral paper instead of bright yellow.",
     "branding": {
       "icon": "./icons/gruve.svg"
     },

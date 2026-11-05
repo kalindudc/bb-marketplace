@@ -7,7 +7,7 @@ export const MIN_FONT_SIZE = 12;
 export const MAX_FONT_SIZE = 20;
 
 export type Accent = "yellow" | "orange" | "red" | "green" | "aqua" | "blue" | "purple";
-export type LightMode = "classic" | "bright" | "soft" | "dim";
+export type Mode = "classic" | "crisp" | "soft" | "dim";
 export type InterfaceFont = "jetbrains" | "plex" | "fira" | "source" | "cascadia" | "system-mono" | "system-sans";
 export type CodeFont = Exclude<InterfaceFont, "system-sans">;
 export type Corners = "square" | "soft" | "rounded";
@@ -15,8 +15,8 @@ export type Prompt = "chevron" | "angle" | "dollar" | "lambda" | "none";
 
 export interface GruveAppearance {
   accent: Accent;
-  /** How bright light mode's paper is and how firmly it draws lines; dark mode is not affected. */
-  lightMode: LightMode;
+  /** How much light the theme gives off and how firmly it draws lines, in light and dark alike. */
+  mode: Mode;
   interfaceFont: InterfaceFont;
   codeFont: CodeFont;
   /** Root font size in px; the whole interface is laid out in rem. */
@@ -28,7 +28,7 @@ export interface GruveAppearance {
 /** What the theme ships as written: these values inject no CSS at all. */
 export const DEFAULT_APPEARANCE: GruveAppearance = {
   accent: "yellow",
-  lightMode: "soft",
+  mode: "soft",
   interfaceFont: "jetbrains",
   codeFont: "jetbrains",
   fontSize: 16,
@@ -37,7 +37,10 @@ export const DEFAULT_APPEARANCE: GruveAppearance = {
 };
 
 const ACCENTS: readonly Accent[] = ["yellow", "orange", "red", "green", "aqua", "blue", "purple"];
-export const LIGHT_MODES: readonly LightMode[] = ["classic", "bright", "soft", "dim"];
+export const MODES: readonly Mode[] = ["classic", "crisp", "soft", "dim"];
+
+/* Gruve 0.3.0 stored a light-only setting under this key; its choices map onto the modes. */
+const LEGACY_LIGHT_MODES: Readonly<Record<string, Mode>> = { classic: "classic", bright: "crisp", soft: "soft", dim: "dim" };
 const INTERFACE_FONTS: readonly InterfaceFont[] = ["jetbrains", "plex", "fira", "source", "cascadia", "system-mono", "system-sans"];
 const CODE_FONTS: readonly CodeFont[] = ["jetbrains", "plex", "fira", "source", "cascadia", "system-mono"];
 const CORNERS: readonly Corners[] = ["square", "soft", "rounded"];
@@ -74,18 +77,19 @@ export const SETTING_DESCRIPTORS = {
     },
     default: DEFAULT_APPEARANCE.accent,
   },
-  lightMode: {
+  mode: {
     type: "select",
-    label: "Light mode",
-    description: "How bright light mode's paper is and how firmly it draws lines and borders. Dark mode is not affected.",
-    options: [...LIGHT_MODES],
+    label: "Mode",
+    description:
+      "How much light Gruve gives off and how firmly it draws lines. Each mode has a light and a dark version, and bb's own light or dark setting picks between them.",
+    options: [...MODES],
     experimental_optionLabels: {
-      classic: "Classic: bright paper, faint lines",
-      bright: "Bright: bright paper, firm lines",
-      soft: "Soft: dimmed paper, firm lines (default)",
-      dim: "Dim: dimmest paper, firm lines",
+      classic: "Classic: the colours of Gruve 0.2.0",
+      crisp: "Crisp: the most contrast, with the brightest text",
+      soft: "Soft: dimmed paper and gruvbox soft dark (default)",
+      dim: "Dim: the least light, for a dark room",
     },
-    default: DEFAULT_APPEARANCE.lightMode,
+    default: DEFAULT_APPEARANCE.mode,
   },
   interfaceFont: {
     type: "select",
@@ -155,7 +159,11 @@ export function parseAppearance(values: Readonly<Record<string, unknown>> | unde
   const read = values ?? {};
   return {
     accent: oneOf(ACCENTS, read.accent) ? read.accent : DEFAULT_APPEARANCE.accent,
-    lightMode: oneOf(LIGHT_MODES, read.lightMode) ? read.lightMode : DEFAULT_APPEARANCE.lightMode,
+    mode: oneOf(MODES, read.mode)
+      ? read.mode
+      : typeof read.lightMode === "string"
+        ? (LEGACY_LIGHT_MODES[read.lightMode] ?? DEFAULT_APPEARANCE.mode)
+        : DEFAULT_APPEARANCE.mode,
     interfaceFont: oneOf(INTERFACE_FONTS, read.interfaceFont) ? read.interfaceFont : DEFAULT_APPEARANCE.interfaceFont,
     codeFont: oneOf(CODE_FONTS, read.codeFont) ? read.codeFont : DEFAULT_APPEARANCE.codeFont,
     fontSize: isWholeNumber(read.fontSize) ? read.fontSize : DEFAULT_APPEARANCE.fontSize,

@@ -49,16 +49,18 @@ describe("plugin app", () => {
     expect(slot.queryByText(/Pick Gruve under Appearance/u)).toBeNull();
   });
 
-  it("previews the chosen light paper, even from dark mode", async () => {
+  it("previews both schemes of the chosen mode, whichever one bb is in", async () => {
     page();
     document.documentElement.className = "dark";
     const app = await loadPluginApp(() => import("../app"));
-    const getSettings = settings({ lightMode: "dim" });
+    const getSettings = settings({ mode: "dim" });
     const slot = renderSlot(app.settingsSections[0]!, {}, { pluginId: "gruve", sdk: { plugins: { getSettings } } });
 
-    const label = await vi.waitFor(() => slot.getByText("Dim: dimmest paper, firm lines"));
-    expect(label.parentElement!.style.background).toBe("rgb(227, 224, 216)");
+    expect(await vi.waitFor(() => slot.getByText("Dim: the least light, for a dark room"))).toBeTruthy();
+    expect(slot.getByLabelText("Light preview").style.background).toBe("rgb(221, 217, 206)");
+    expect(slot.getByLabelText("Dark preview").style.background).toBe("rgb(29, 32, 33)");
     expect(injected()!.textContent).toContain("--canvas: #ddd9ce;");
+    expect(injected()!.textContent).toContain("--canvas: #1d2021;");
   });
 
   it("re-reads the settings when the server reports a change", async () => {

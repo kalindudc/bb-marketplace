@@ -2,6 +2,19 @@
 
 Notable changes to Gruve, newest first. Releases are tagged `gruve/vX.Y.Z` in this repository.
 
+## 0.3.1 (2026-11-05)
+
+### Fixed
+
+- The **Light mode** setting added in 0.3.0 only changed light mode. It is now **Mode**, and every mode has a dark version as well as a light one; bb's own light or dark setting still picks between them.
+  - Classic: the colours of Gruve 0.2.0 in both schemes.
+  - Crisp, which replaces Bright: the most contrast. Light mode keeps the bright paper and draws borders at 2.3:1 and input outlines at 3.3:1; dark mode moves to gruvbox's medium `#282828` with its brightest text, `#fbf1c7`, and firmer lines.
+  - Soft (default): unchanged in both schemes.
+  - Dim: the least light. Light mode keeps the dimmest paper; dark mode moves to gruvbox's hard `#1d2021` with the dimmer `#d5c4a1` text and gruvbox's normal accents in place of the bright ones.
+- A Light mode saved by 0.3.0 carries over, with Bright becoming Crisp.
+- The settings page previews the light and dark versions of the chosen mode side by side.
+- Tests run the contrast checks on every mode in both schemes, hold Crisp to firmer lines than Soft, and check that Dim gives off less light than Soft in dark mode.
+
 ## 0.3.0 (2026-11-05)
 
 ### Added

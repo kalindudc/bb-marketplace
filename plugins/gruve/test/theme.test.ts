@@ -2,8 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { accentColours } from "../src/appearance";
-import { LIGHT_PALETTES } from "../src/palettes";
-import { DEFAULT_APPEARANCE, LIGHT_MODES, SETTING_DESCRIPTORS, type Accent, type LightMode } from "../src/settings";
+import { PALETTES } from "../src/palettes";
+import { DEFAULT_APPEARANCE, MODES, SETTING_DESCRIPTORS, type Accent, type Mode } from "../src/settings";
 
 const root = join(import.meta.dirname, "..");
 const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
@@ -23,13 +23,14 @@ function block(selector: string): Record<string, string> {
 const light = block(":root,\n.light");
 const dark = { ...light, ...block(".dark") };
 
-/** Light mode as a setting paints it: the theme's light block with the palette and its yellow on top. */
-const paper = (mode: LightMode): Record<string, string> => ({
-  ...light,
-  ...LIGHT_PALETTES[mode].tokens,
-  "--primary": LIGHT_PALETTES[mode].accents.yellow,
-});
-const LIGHT_PAPERS = LIGHT_MODES.map((mode) => [`light (${mode})`, paper(mode)] as const);
+type Scheme = "light" | "dark";
+
+/** A scheme as the Mode setting paints it: the theme's block with the mode's palette and its yellow on top. */
+const painted = (mode: Mode, scheme: Scheme): Record<string, string> => {
+  const [primary, onPrimary] = PALETTES[mode][scheme].accents.yellow;
+  return { ...(scheme === "light" ? light : dark), ...PALETTES[mode][scheme].tokens, "--primary": primary, "--primary-foreground": onPrimary };
+};
+const SCHEMES = MODES.flatMap((mode) => (["light", "dark"] as const).map((scheme) => [`${mode} ${scheme}`, painted(mode, scheme)] as const));
 
 function hex(tokens: Record<string, string>, name: string): string {
   let value = tokens[name];
@@ -68,7 +69,7 @@ const ON_FILLS = ["--ink", "--muted-foreground", "--readback-foreground", "--sub
 // treats as its background, so it is exempt.
 const ANSI = Array.from({ length: 15 }, (_, i) => `--ansi-${i + 1}`);
 
-describe.each([...LIGHT_PAPERS, ["dark", dark] as const])("%s mode", (_mode, tokens) => {
+describe.each(SCHEMES)("%s", (_name, tokens) => {
   it.each(TEXT.flatMap((text) => SURFACES.map((surface) => [text, surface])))(
     "%s on %s clears 4.5:1",
     (text, surface) => {
@@ -110,11 +111,10 @@ describe.each([...LIGHT_PAPERS, ["dark", dark] as const])("%s mode", (_mode, tok
 });
 
 // With square corners and no shadows, borders and the card step are the only separation between layers.
-// Floors keep cards, buttons, chips and selected rows distinct from the page; in dark mode a ceiling also
-// keeps lines from going harsh, while light mode's lines need more weight to show on paper.
+// Floors keep cards, buttons, chips and selected rows distinct from the page. Classic keeps 0.2.0's faint
+// light lines, and Crisp draws firmer ones than the rest.
 type Floor = [string, string, number];
 
-// Every paper but classic, which keeps 0.2.0's faint lines for whoever preferred them.
 const FIRM_LIGHT: Floor[] = [
   ["--card", "--canvas", 1.06],
   ["--border-seam", "--canvas", 1.9],
@@ -130,75 +130,110 @@ const FIRM_LIGHT: Floor[] = [
   ["--input", "--canvas", 3.0],
 ];
 
+const DARK: Floor[] = [
+  ["--card", "--canvas", 1.1],
+  ["--border-seam", "--canvas", 1.45],
+  ["--border-seam", "--card", 1.3],
+  ["--border", "--canvas", 1.6],
+  ["--border", "--card", 1.45],
+  ["--secondary", "--card", 1.08],
+  ["--sidebar-accent", "--sidebar", 1.2],
+];
+
+const FIRM_DARK: Floor[] = [
+  ["--card", "--canvas", 1.1],
+  ["--border-seam", "--canvas", 1.8],
+  ["--border-seam", "--card", 1.6],
+  ["--border", "--canvas", 2.1],
+  ["--border", "--card", 1.9],
+  ["--secondary", "--card", 1.08],
+  ["--sidebar-accent", "--sidebar", 1.3],
+  ["--input", "--canvas", 3.0],
+];
+
 describe.each<[string, Record<string, string>, Floor[]]>([
-  ["dark", dark, [
-    ["--card", "--canvas", 1.12],
-    ["--border-seam", "--canvas", 1.45],
-    ["--border-seam", "--card", 1.3],
-    ["--border", "--canvas", 1.6],
-    ["--border", "--card", 1.45],
-    ["--secondary", "--card", 1.08],
-  ]],
-  ...(["bright", "soft", "dim"] as const).map((mode): [string, Record<string, string>, Floor[]] => [`light (${mode})`, paper(mode), FIRM_LIGHT]),
-])("%s mode layers", (_mode, tokens, floors) => {
+  ...(["classic", "soft", "dim"] as const).map((mode): [string, Record<string, string>, Floor[]] => [`${mode} dark`, painted(mode, "dark"), DARK]),
+  ["crisp dark", painted("crisp", "dark"), FIRM_DARK],
+  ...(["crisp", "soft", "dim"] as const).map((mode): [string, Record<string, string>, Floor[]] => [`${mode} light`, painted(mode, "light"), FIRM_LIGHT]),
+])("%s layers", (_name, tokens, floors) => {
   it.each(floors)("%s stands apart from %s by at least %s:1", (a, b, floor) => {
     expect(contrast(hex(tokens, a), hex(tokens, b))).toBeGreaterThanOrEqual(floor);
   });
 });
 
-// A light theme glares when its big surfaces sit near white, so the default paper and the dimmer one
-// keep the page and the cards on it dimmed.
-describe.each(["soft", "dim"] as const)("light mode glare (%s)", (mode) => {
+// A light theme glares when its big surfaces sit near white, so Soft and Dim keep the paper and the cards
+// on it dimmed.
+describe.each(["soft", "dim"] as const)("%s light glare", (mode) => {
   it.each([["--canvas", 0.8], ["--card", 0.85], ["--popover", 0.85], ["--sidebar", 0.8]])(
     "%s stays at or under %s relative luminance",
     (surface, ceiling) => {
-      expect(luminance(hex(paper(mode), surface))).toBeLessThanOrEqual(ceiling);
+      expect(luminance(hex(painted(mode, "light"), surface))).toBeLessThanOrEqual(ceiling);
     },
   );
 });
 
-// The setting swaps in a whole palette, so each one must cover every colour the theme's light block
-// sets; a colour it missed would keep the default paper's value and mix two palettes.
-describe("light palettes", () => {
-  const SHARED = new Set(["--primary", "--primary-foreground", "--destructive-foreground", "--attention-foreground", "--file-accent"]);
-  const colours = Object.keys(light).filter(
-    (name) => !SHARED.has(name) && !/^--(ansi-bg-fg-|font-|gruve-|radius|shadow|pill-shadow)/u.test(name),
-  );
+// Crisp asks for the most contrast; the other dark palettes keep lines soft and body text from blooming.
+describe.each(["classic", "soft", "dim"] as const)("%s dark", (mode) => {
+  const tokens = painted(mode, "dark");
 
-  it.each(LIGHT_MODES)("%s sets every colour of the theme's light block", (mode) => {
-    expect(Object.keys(LIGHT_PALETTES[mode].tokens).sort()).toEqual([...colours].sort());
+  it.each(["--border", "--border-seam", "--border-hairline", "--input"])("keeps %s under 2.2:1 on the canvas", (line) => {
+    expect(contrast(hex(tokens, line), hex(tokens, "--canvas"))).toBeLessThan(2.2);
   });
 
-  it("repeats the theme's own light block as the default paper", () => {
-    expect(LIGHT_PALETTES[DEFAULT_APPEARANCE.lightMode].tokens).toEqual(Object.fromEntries(colours.map((name) => [name, light[name]])));
-    expect(LIGHT_PALETTES[DEFAULT_APPEARANCE.lightMode].accents.yellow).toBe(light["--primary"]);
-  });
-
-  it("keeps the classic paper as Gruve 0.2.0 shipped it", () => {
-    expect(LIGHT_PALETTES.classic.tokens["--canvas"]).toBe("#f4f1e8");
-    expect(LIGHT_PALETTES.classic.tokens["--card"]).toBe("#faf8f1");
-    expect(LIGHT_PALETTES.classic.tokens["--border"]).toBe("#d3ccba");
-    expect(LIGHT_PALETTES.classic.accents.yellow).toBe("#7d520b");
-  });
-
-  it.each(["--canvas", "--card", "--sidebar"])("dims %s from the two bright papers to soft, then to dim", (surface) => {
-    const brightness = (mode: LightMode) => luminance(hex(paper(mode), surface));
-    expect(brightness("soft")).toBeLessThan(Math.min(brightness("classic"), brightness("bright")));
-    expect(brightness("dim")).toBeLessThan(brightness("soft"));
+  it("keeps body text under 12:1 so it does not bloom on a dark screen", () => {
+    expect(contrast(hex(tokens, "--ink"), hex(tokens, "--canvas"))).toBeLessThan(12);
   });
 });
 
-describe("dark mode lines", () => {
-  it.each(["--border", "--border-seam", "--border-hairline", "--input"])("%s stays under 2.2:1 on the canvas", (line) => {
-    expect(contrast(hex(dark, line), hex(dark, "--canvas"))).toBeLessThan(2.2);
+// The setting swaps in whole palettes, so each one must cover every colour the theme sets for its scheme;
+// a colour it missed would keep the default's value and mix two palettes.
+describe("palettes", () => {
+  const SHARED = new Set(["--primary", "--primary-foreground", "--destructive-foreground", "--attention-foreground", "--file-accent"]);
+  const colours = (block: Record<string, string>) =>
+    Object.keys(block).filter((name) => !SHARED.has(name) && !/^--(ansi-bg-fg-|font-|gruve-|radius|shadow|pill-shadow)/u.test(name));
+  const themeBlock = { light, dark: block(".dark") };
+
+  it.each(MODES.flatMap((mode) => (["light", "dark"] as const).map((scheme) => [mode, scheme] as const)))(
+    "%s %s sets every colour the theme sets",
+    (mode, scheme) => {
+      expect(Object.keys(PALETTES[mode][scheme].tokens).sort()).toEqual(colours(themeBlock[scheme]).sort());
+    },
+  );
+
+  it.each(["light", "dark"] as const)("repeats the theme sheet's own %s block as the default mode", (scheme) => {
+    const own = scheme === "light" ? light : dark;
+    const palette = PALETTES[DEFAULT_APPEARANCE.mode][scheme];
+    expect(palette.tokens).toEqual(Object.fromEntries(colours(themeBlock[scheme]).map((name) => [name, own[name]])));
+    expect(palette.accents.yellow).toEqual([own["--primary"], own["--primary-foreground"]]);
+  });
+
+  it("keeps Classic as Gruve 0.2.0 shipped it, whose dark mode is today's", () => {
+    expect(PALETTES.classic.light.tokens["--canvas"]).toBe("#f4f1e8");
+    expect(PALETTES.classic.light.tokens["--card"]).toBe("#faf8f1");
+    expect(PALETTES.classic.light.tokens["--border"]).toBe("#d3ccba");
+    expect(PALETTES.classic.light.accents.yellow[0]).toBe("#7d520b");
+    expect(PALETTES.classic.dark).toEqual(PALETTES.soft.dark);
+  });
+
+  it.each(["--canvas", "--card", "--sidebar"])("dims light %s from Classic and Crisp to Soft, then to Dim", (surface) => {
+    const brightness = (mode: Mode) => luminance(hex(painted(mode, "light"), surface));
+    expect(brightness("soft")).toBeLessThan(Math.min(brightness("classic"), brightness("crisp")));
+    expect(brightness("dim")).toBeLessThan(brightness("soft"));
+  });
+
+  it.each(["--canvas", "--card", "--ink"])("gives off less light in Dim's dark %s than in Soft's", (token) => {
+    expect(luminance(hex(painted("dim", "dark"), token))).toBeLessThan(luminance(hex(painted("soft", "dark"), token)));
+  });
+
+  it.each(["light", "dark"] as const)("draws Crisp's %s text and borders with more contrast than Soft's", (scheme) => {
+    const on = (mode: Mode, token: string) => contrast(hex(painted(mode, scheme), token), hex(painted(mode, scheme), "--canvas"));
+    expect(on("crisp", "--ink")).toBeGreaterThan(on("soft", "--ink"));
+    expect(on("crisp", "--border")).toBeGreaterThan(on("soft", "--border"));
+    expect(on("crisp", "--input")).toBeGreaterThan(on("soft", "--input"));
   });
 });
 
 describe("theme", () => {
-  it("keeps dark body text under 12:1 so it does not bloom on dark screens", () => {
-    expect(contrast(hex(dark, "--ink"), hex(dark, "--canvas"))).toBeLessThan(12);
-  });
-
   it("is declared in the manifest and points at a file that exists", () => {
     const [theme] = manifest.bb.themes;
     expect(theme.id).toBe("gruve");
@@ -249,26 +284,26 @@ describe("theme", () => {
 
 // The accent is a setting, so each choice has to keep the promise the theme makes:
 // it is drawn as text and as a fill.
-describe.each([
-  ...LIGHT_MODES.map((lightMode) => ["light", lightMode, paper(lightMode)] as const),
-  ["dark", DEFAULT_APPEARANCE.lightMode, dark] as const,
-])("%s mode accents on the %s paper", (mode, lightMode, tokens) => {
-  const accents = SETTING_DESCRIPTORS.accent.options as Accent[];
+describe.each(MODES.flatMap((mode) => (["light", "dark"] as const).map((scheme) => [mode, scheme, painted(mode, scheme)] as const)))(
+  "%s %s accents",
+  (mode, scheme, tokens) => {
+    const accents = SETTING_DESCRIPTORS.accent.options as Accent[];
 
-  it.each(accents)("%s is readable as text on every surface", (accent) => {
-    const [primary] = accentColours(accent, mode, lightMode);
-    for (const surface of SURFACES) expect(contrast(primary, hex(tokens, surface))).toBeGreaterThanOrEqual(4.5);
-  });
+    it.each(accents)("%s is readable as text on every surface", (accent) => {
+      const [primary] = accentColours(accent, scheme, mode);
+      for (const surface of SURFACES) expect(contrast(primary, hex(tokens, surface))).toBeGreaterThanOrEqual(4.5);
+    });
 
-  it.each(accents)("%s carries text on its own fill", (accent) => {
-    const [primary, onPrimary] = accentColours(accent, mode, lightMode);
-    expect(contrast(onPrimary, primary)).toBeGreaterThanOrEqual(4.5);
-  });
-});
+    it.each(accents)("%s carries text on its own fill", (accent) => {
+      const [primary, onPrimary] = accentColours(accent, scheme, mode);
+      expect(contrast(onPrimary, primary)).toBeGreaterThanOrEqual(4.5);
+    });
+  },
+);
 
-describe.each([["light", light], ["dark", dark]] as const)("%s mode default accent", (mode, tokens) => {
+describe.each([["light", light], ["dark", dark]] as const)("%s default accent", (scheme, tokens) => {
   it("ships gruvbox yellow as the theme's own accent", () => {
-    const [primary, onPrimary] = accentColours(DEFAULT_APPEARANCE.accent, mode);
+    const [primary, onPrimary] = accentColours(DEFAULT_APPEARANCE.accent, scheme);
     expect(hex(tokens, "--primary")).toBe(primary);
     expect(hex(tokens, "--primary-foreground")).toBe(onPrimary);
   });

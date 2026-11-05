@@ -41,25 +41,27 @@ The integrated terminal paints on `--sidebar`, so it is paper in light mode. The
 | Setting | Values | Changes |
 |---|---|---|
 | Accent colour | Yellow (default), Orange, Red, Green, Aqua, Blue, Purple | `--primary` and `--primary-foreground`: links, the composer prompt and caret, focused controls |
-| Light mode | Classic, Bright, Soft (default), Dim | Light mode's whole palette: how bright the paper and cards are and how firmly lines are drawn. Dark mode is not affected |
+| Mode | Classic, Crisp, Soft (default), Dim | The whole palette of both light and dark mode: how much light the surfaces give off, how bright the text is and how firmly lines are drawn. bb's own light or dark setting still picks between the two |
 | Interface font | JetBrains Mono (default), IBM Plex Mono, Fira Code, Source Code Pro, Cascadia Code, System monospace, System sans | `--font-sans`, so the app, its menus and your messages |
 | Code and terminal font | The same families, minus the proportional one | `--font-mono` and `--font-terminal`: code blocks, diffs, file previews, the integrated terminal |
 | Text size (px) | 12 to 20, default 16 | The root font size; bb is laid out in rem, so the whole interface scales |
 | Corners | Square (default), Soft 3px, Rounded 6px | `--gruve-corner`, which every radius in the theme derives from |
 | Composer prompt | `❯` (default), `›`, `$`, `λ`, None | `--gruve-prompt`; None also gives the composer its left inset back |
 
-Each accent has a dark shade and a light shade for each paper, so the choice stays readable everywhere; a test checks every accent against every surface of every paper. The settings are stored by bb and shared by every window. A change applies as you save it, and switching away from Gruve removes its additions without a reload.
+Each mode has its own light and dark shade of every accent, so the choice stays readable everywhere; a test checks every accent against every surface of every mode, light and dark. The settings are stored by bb and shared by every window. A change applies as you save it, and switching away from Gruve removes its additions without a reload.
 
-The light papers, from brightest to dimmest:
+The modes, each with a light and a dark version:
 
-| Light mode | Page | Cards | Borders on the page | Body text |
+| Mode | Light page and cards | Light borders, body text | Dark page and cards | Dark borders, body text |
 |---|---|---|---|---|
-| Classic: bright paper, faint lines (Gruve 0.2.0) | `#f4f1e8` | `#faf8f1` | 1.42:1 | 10.3:1 |
-| Bright: bright paper, firm lines | `#f4f1e8` | `#fffdf8` | 2.07:1 | 13.1:1 |
-| Soft: dimmed paper, firm lines (default) | `#e7e3d8` | `#edeae1` | 2.16:1 | 11.5:1 |
-| Dim: dimmest paper, firm lines | `#ddd9ce` | `#e3e0d8` | 2.19:1 | 10.5:1 |
+| Classic: the colours of Gruve 0.2.0 | `#f4f1e8`, `#faf8f1` | 1.42:1, 10.3:1 | `#32302f`, `#3c3836` | 1.72:1, 9.6:1 |
+| Crisp: the most contrast, with the brightest text | `#f4f1e8`, `#fffdf8` | 2.30:1, 13.1:1 | `#282828`, `#32302f` | 2.26:1, 13.0:1 |
+| Soft: dimmed paper and gruvbox soft dark (default) | `#e7e3d8`, `#edeae1` | 2.16:1, 11.5:1 | `#32302f`, `#3c3836` | 1.72:1, 9.6:1 |
+| Dim: the least light, for a dark room | `#ddd9ce`, `#e3e0d8` | 2.19:1, 10.5:1 | `#1d2021`, `#282828` | 1.71:1, 9.6:1 |
 
-Soft is the theme sheet's own light block; the other papers live in `src/palettes.ts` and replace every surface, line, text, status and terminal colour, with accent shades of their own. They are written in a `:root:not(.dark), .light` block, so a paper never reaches dark mode. A test fails if Soft in `src/palettes.ts` drifts from the theme sheet, or if a paper misses one of its colours.
+Dark Crisp sits on gruvbox's medium background with its brightest text, `#fbf1c7`. Dark Dim sits on gruvbox's hard background with the dimmer `#d5c4a1` text and gruvbox's normal accents in place of the bright ones, so it gives off the least light at the same contrast as Soft. Classic's dark version is Soft's, since Gruve 0.2.0 shipped today's dark mode.
+
+Soft is the theme sheet itself; the other modes live in `src/palettes.ts` and replace every surface, line, text, status and terminal colour in both schemes, with accent shades of their own. Light colours go in a `:root:not(.dark), .light` block and dark ones in `.dark`, so neither reaches the other scheme. A test fails if Soft in `src/palettes.ts` drifts from the theme sheet, or if a palette misses one of its colours.
 
 The appearance runs in a content script (`app.tsx`), not in the theme sheet, because a theme CSS file is static. It adds one `<style>` next to bb's own theme sheet and keeps it last, removes it when another theme is active, and follows the theme changing live. The settings form saves through bb's declarative settings, so the options are plain descriptors in `src/settings.ts`.
 

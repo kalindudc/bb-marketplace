@@ -9,10 +9,10 @@ import {
   type Corners,
   type GruveAppearance,
   type InterfaceFont,
-  type LightMode,
+  type Mode,
   type Prompt,
 } from "./settings";
-import { LIGHT_PALETTES } from "./palettes";
+import { PALETTES } from "./palettes";
 
 /** Marks the injected stylesheet, so it can be found and removed again. */
 export const STYLE_ATTRIBUTE = "data-gruve-appearance";
@@ -25,23 +25,6 @@ export const STYLE_ATTRIBUTE = "data-gruve-appearance";
 export const THEME_MARKER = "--gruve-prompt";
 
 const THEME_ELEMENT_ID = "bb-app-theme";
-
-/* Gruvbox accents in dark mode: the bright shade on gruvbox soft, with the text
-   drawn on it. Light mode's shades depend on the paper, so each light palette
-   carries its own (src/palettes.ts). Every shade clears 4.5:1 as text on the
-   surfaces of its mode and each foreground clears 4.5:1 on its own fill;
-   test/theme.test.ts checks the whole matrix. */
-const DARK_ACCENTS: Record<Accent, readonly [string, string]> = {
-  yellow: ["#fabd2f", "#282828"],
-  orange: ["#fe8019", "#282828"],
-  red: ["#fd8270", "#1d2021"],
-  green: ["#b8bb26", "#282828"],
-  aqua: ["#8ec07c", "#282828"],
-  blue: ["#8fb8ac", "#1d2021"],
-  purple: ["#dc95aa", "#282828"],
-};
-
-const ON_LIGHT_ACCENT = "#faf8f1";
 
 /* Light-only tokens go here rather than in `:root`: this sheet loads after the
    theme's, so a `:root` palette would also win over the theme's dark block. */
@@ -80,8 +63,8 @@ const PROMPTS: Record<Prompt, string | null> = { chevron: "❯", angle: "›", d
 /**
  * The stylesheet for these settings, or "" when every value is the theme's own.
  * It only rewrites theme tokens, so the theme stays the one thing that styles
- * bb. Values for both modes go in `:root`, light-only ones in a block that
- * cannot match in dark mode, and dark shades in a `.dark` block.
+ * bb. Values for both schemes go in `:root`, light ones in a block that
+ * cannot match in dark mode, and dark ones in a `.dark` block.
  */
 export function appearanceCss(appearance: GruveAppearance): string {
   const root: string[] = [];
@@ -96,17 +79,16 @@ export function appearanceCss(appearance: GruveAppearance): string {
   }
   if (appearance.corners !== DEFAULT_APPEARANCE.corners) root.push(`--gruve-corner: ${CORNERS[appearance.corners]};`);
 
-  if (appearance.lightMode !== DEFAULT_APPEARANCE.lightMode) {
-    for (const [token, value] of Object.entries(LIGHT_PALETTES[appearance.lightMode].tokens)) light.push(`${token}: ${value};`);
-  }
-  // The yellow default is drawn in a shade that depends on the paper, so a new paper needs its accent too.
-  if (appearance.accent !== DEFAULT_APPEARANCE.accent || appearance.lightMode !== DEFAULT_APPEARANCE.lightMode) {
-    const [primary, onPrimary] = accentColours(appearance.accent, "light", appearance.lightMode);
-    light.push(`--primary: ${primary};`, `--primary-foreground: ${onPrimary};`);
-  }
-  if (appearance.accent !== DEFAULT_APPEARANCE.accent) {
-    const [primary, onPrimary] = DARK_ACCENTS[appearance.accent];
-    dark.push(`--primary: ${primary};`, `--primary-foreground: ${onPrimary};`);
+  const modeChanged = appearance.mode !== DEFAULT_APPEARANCE.mode;
+  for (const [scheme, block] of [["light", light], ["dark", dark]] as const) {
+    if (modeChanged) {
+      for (const [token, value] of Object.entries(PALETTES[appearance.mode][scheme].tokens)) block.push(`${token}: ${value};`);
+    }
+    // Each mode draws even the default accent in its own shade, so a new mode needs its accent too.
+    if (modeChanged || appearance.accent !== DEFAULT_APPEARANCE.accent) {
+      const [primary, onPrimary] = accentColours(appearance.accent, scheme, appearance.mode);
+      block.push(`--primary: ${primary};`, `--primary-foreground: ${onPrimary};`);
+    }
   }
 
   const glyph = PROMPTS[appearance.prompt];
@@ -139,12 +121,12 @@ export const codeFontStack = (font: CodeFont): string => CODE_FONTS[font];
 export const promptGlyph = (prompt: Prompt): string | null => PROMPTS[prompt];
 export const accentColours = (
   accent: Accent,
-  mode: "light" | "dark",
-  lightMode: LightMode = DEFAULT_APPEARANCE.lightMode,
-): readonly [string, string] => (mode === "dark" ? DARK_ACCENTS[accent] : [LIGHT_PALETTES[lightMode].accents[accent], ON_LIGHT_ACCENT]);
+  scheme: "light" | "dark",
+  mode: Mode = DEFAULT_APPEARANCE.mode,
+): readonly [string, string] => PALETTES[mode][scheme].accents[accent];
 
-/** A light palette's colours, for previewing it from either mode. */
-export const lightPalette = (lightMode: LightMode): Readonly<Record<string, string>> => LIGHT_PALETTES[lightMode].tokens;
+/** One scheme of a mode's colours, for previewing it from either scheme. */
+export const palette = (mode: Mode, scheme: "light" | "dark"): Readonly<Record<string, string>> => PALETTES[mode][scheme].tokens;
 
 /** The appearance in effect in this window, set by whoever read the settings. */
 let applied: GruveAppearance | null = null;

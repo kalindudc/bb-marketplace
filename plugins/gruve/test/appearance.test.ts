@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { appearanceCss } from "../src/appearance";
-import { LIGHT_PALETTES } from "../src/palettes";
+import { PALETTES } from "../src/palettes";
 import { DEFAULT_APPEARANCE, parseAppearance, SETTING_DESCRIPTORS, type GruveAppearance } from "../src/settings";
 
 const changed = (patch: Partial<GruveAppearance>): GruveAppearance => ({ ...DEFAULT_APPEARANCE, ...patch });
@@ -43,26 +43,28 @@ describe("appearanceCss", () => {
   });
 
   // This sheet loads after the theme's, so a light value in `:root` would beat the theme's dark block.
-  it("keeps light shades in a block that cannot match in dark mode", () => {
-    const css = appearanceCss(changed({ accent: "green", lightMode: "dim" }));
+  it("keeps light colours in a block that cannot match in dark mode", () => {
+    const css = appearanceCss(changed({ accent: "green", mode: "dim" }));
     expect(css).toContain(LIGHT_BLOCK);
     expect(rule(css, ":root")).toBe("");
-    expect(rule(css, ".dark")).not.toContain("--canvas");
+    expect(rule(css, ".dark")).toContain(`--canvas: ${PALETTES.dim.dark.tokens["--canvas"]};`);
+    expect(rule(css, ".dark")).not.toContain(PALETTES.dim.light.tokens["--canvas"]!);
   });
 
-  it("swaps in the whole light palette and its shade of the default accent", () => {
-    const css = appearanceCss(changed({ lightMode: "dim" }));
-    const light = rule(css, ":root:not(.dark), .light");
-    for (const [token, value] of Object.entries(LIGHT_PALETTES.dim.tokens)) expect(light).toContain(`${token}: ${value};`);
-    expect(light).toContain(`--primary: ${LIGHT_PALETTES.dim.accents.yellow};`);
-    expect(rule(css, ".dark")).toBe("");
+  it.each(["light", "dark"] as const)("swaps in the mode's whole %s palette and its shade of the default accent", (scheme) => {
+    const css = appearanceCss(changed({ mode: "crisp" }));
+    const block = rule(css, scheme === "light" ? ":root:not(.dark), .light" : ".dark");
+    for (const [token, value] of Object.entries(PALETTES.crisp[scheme].tokens)) expect(block).toContain(`${token}: ${value};`);
+    const [primary, onPrimary] = PALETTES.crisp[scheme].accents.yellow;
+    expect(block).toContain(`--primary: ${primary};`);
+    expect(block).toContain(`--primary-foreground: ${onPrimary};`);
   });
 
-  it("draws a chosen accent in the shade made for the chosen paper", () => {
-    const css = appearanceCss(changed({ lightMode: "classic", accent: "orange" }));
-    expect(rule(css, ":root:not(.dark), .light")).toContain("--primary: #a63c06;");
-    expect(rule(css, ":root:not(.dark), .light")).toContain("--canvas: #f4f1e8;");
-    expect(rule(css, ".dark")).toContain("--primary: #fe8019;");
+  it("draws a chosen accent in the shade each mode made for it", () => {
+    const css = appearanceCss(changed({ mode: "dim", accent: "orange" }));
+    expect(rule(css, ":root:not(.dark), .light")).toContain(`--primary: ${PALETTES.dim.light.accents.orange[0]};`);
+    expect(rule(css, ".dark")).toContain(`--primary: ${PALETTES.dim.dark.accents.orange[0]};`);
+    expect(PALETTES.dim.dark.accents.orange[0]).not.toBe(PALETTES.soft.dark.accents.orange[0]);
   });
 
   it("rounds every corner the theme squares", () => {
@@ -82,7 +84,7 @@ describe("appearanceCss", () => {
 
   it("keeps every rule inside the scope it declares and never names another plugin", () => {
     const css = appearanceCss(
-      changed({ accent: "orange", lightMode: "bright", interfaceFont: "fira", codeFont: "plex", fontSize: 19, corners: "soft", prompt: "lambda" }),
+      changed({ accent: "orange", mode: "crisp", interfaceFont: "fira", codeFont: "plex", fontSize: 19, corners: "soft", prompt: "lambda" }),
     );
     expect(css).not.toMatch(/\.sb-/u);
     const blocks = [...css.matchAll(/[^{}]+\{/gu)].map(([block]) => block.replace(/\{\s*$/u, "").replace(/\/\*[\s\S]*?\*\//gu, "").trim());
@@ -97,13 +99,13 @@ describe("parseAppearance", () => {
   });
 
   it("reads every stored value", () => {
-    const stored = { accent: "purple", lightMode: "dim", interfaceFont: "plex", codeFont: "source", fontSize: 15, corners: "rounded", prompt: "angle" };
+    const stored = { accent: "purple", mode: "dim", interfaceFont: "plex", codeFont: "source", fontSize: 15, corners: "rounded", prompt: "angle" };
     expect(parseAppearance(stored)).toEqual(stored);
   });
 
   it.each([
     [{ accent: "pink" }, "accent"],
-    [{ lightMode: "sepia" }, "lightMode"],
+    [{ mode: "sepia" }, "mode"],
     [{ interfaceFont: "comic-sans" }, "interfaceFont"],
     [{ codeFont: "system-sans" }, "codeFont"],
     [{ corners: "blob" }, "corners"],
@@ -111,6 +113,21 @@ describe("parseAppearance", () => {
   ])("keeps the default for %s", (stored, key) => {
     const appearance = parseAppearance(stored);
     expect(appearance).toEqual({ ...DEFAULT_APPEARANCE, ...stored, [key]: DEFAULT_APPEARANCE[key as keyof GruveAppearance] });
+  });
+
+  // Gruve 0.3.0 had a light-only setting in place of the mode.
+  it.each([
+    ["classic", "classic"],
+    ["bright", "crisp"],
+    ["soft", "soft"],
+    ["dim", "dim"],
+    ["sepia", "soft"],
+  ])("carries a stored light mode of %s over as the %s mode", (lightMode, mode) => {
+    expect(parseAppearance({ lightMode }).mode).toBe(mode);
+  });
+
+  it("prefers the mode to an older light mode", () => {
+    expect(parseAppearance({ mode: "crisp", lightMode: "dim" }).mode).toBe("crisp");
   });
 
   it.each([11, 21, 15.5, Number.NaN, "16", null])("keeps the default text size for %s", (fontSize) => {
@@ -138,7 +155,7 @@ describe("setting descriptors", () => {
 
   it("shows the default in the accent and font labels, so the form says what it ships with", () => {
     expect(SETTING_DESCRIPTORS.accent.experimental_optionLabels[DEFAULT_APPEARANCE.accent]).toMatch(/default/u);
-    expect(SETTING_DESCRIPTORS.lightMode.experimental_optionLabels[DEFAULT_APPEARANCE.lightMode]).toMatch(/default/u);
+    expect(SETTING_DESCRIPTORS.mode.experimental_optionLabels[DEFAULT_APPEARANCE.mode]).toMatch(/default/u);
     expect(SETTING_DESCRIPTORS.interfaceFont.experimental_optionLabels[DEFAULT_APPEARANCE.interfaceFont]).toMatch(/default/u);
     expect(SETTING_DESCRIPTORS.codeFont.experimental_optionLabels[DEFAULT_APPEARANCE.codeFont]).toMatch(/default/u);
     expect(SETTING_DESCRIPTORS.corners.experimental_optionLabels[DEFAULT_APPEARANCE.corners]).toMatch(/default/u);
