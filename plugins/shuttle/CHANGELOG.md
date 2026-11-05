@@ -21,6 +21,7 @@ Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` i
 
 ### Changed
 
+- Earlier reviews in the Your review tab show the whole review, not only its summary: the text as it posted, then every finding with its severity, place and text, and whether it posted as drafted, posted with your edits, was left out or was posted by Shuttle. A finding you edited shows the text that posted. A review that never posted shows its summary and findings as drafted, and a review posted before Shuttle kept what it posted shows them as drafted, without what became of each.
 - Search, in the header, a board's Add PRs dialog and `bb shuttle search`, also finds words in descriptions. Open PRs still come first; among them, and among merged and closed ones, PRs rank by where the words are, the same way as the filters, instead of title matches first and then the rest.
 - The Inbox's search and a board's filter match like every other list: a board's filter needs each word rather than the whole phrase, and both read branches, labels and descriptions too.
 
@@ -30,6 +31,10 @@ Notable changes to Shuttle, newest first. Releases are tagged `shuttle/vX.Y.Z` i
 
 ### Fixed
 
+- A review of yours that the server dismissed comes back for a re-review. Some repositories dismiss approvals by themselves, such as terraform-the-cloud's workflow when plans have not run or failed. When Shuttle had posted the approval, it kept its own record of the post, which is a second or so newer than the date the server gives the review, and that record outranked the server's dismissal. The PR still read as approved by you, and new commits never brought it back. The server's copy of a review Shuttle posted now says what became of it.
+  - A dismissed review goes to the Inbox under Updated since your review as Your review was dismissed, at the same commit or a newer one, until you review it again or snooze it.
+  - Auto review treats it as a request by name once the PR has new commits since the review, when it starts on requests by name, and with Again on new commits deciding as for any request. A PR already dismissed with new commits when auto review first looks, as after this update, waits for its next commits, so an update never reviews a backlog.
+  - A review you post from Shuttle after the dismissal shows at once, even seconds later: the dismissal belongs to the post that made the review it dismissed, not to a newer one the server has not listed yet. A server that does not date reviews matches the dismissal to Shuttle's post by the commit it reviewed.
 - A numbered list in a PR's description shows its whole numbers. In a monospace font a number was wider than the room bb's Markdown leaves it, and the description's scroller cut off its first digit.
 - Opening or refreshing Shuttle stalled bb's server, and so every panel, for up to a second, about once a minute. Each read built every PR's view again, compiling each of its queries and parsing the whole config again for each PR. Queries are now compiled once, the config is parsed once until it is saved, and the views come from the index.
 - A command server without a `whoami` command syncs. Every operation but `view` is optional, yet sync asked `whoami` first and skipped every list when it failed, so such a server never showed a PR.

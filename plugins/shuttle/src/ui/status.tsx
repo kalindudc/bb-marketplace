@@ -148,9 +148,11 @@ function yourReviewRow(pr: PrView, draft: ReviewDraft | null): Row | null {
   if (run?.state === "running") return { id: "yours", label: "Your review", tone: "info", icon: "Loading", text: <>{b(run.preset)} is reviewing in “{run.title}”, started {ago(run.at)}</>, go: "review" };
   const mine = pr.myReview;
   if (mine !== null) {
-    const verb = mine.verdict === "approve" ? "You approved" : mine.verdict === "changes" ? "You requested changes" : mine.verdict === "dismissed" ? "Your review was dismissed" : "You commented";
+    // The time is when you reviewed, not when the review was dismissed.
+    const verb = mine.verdict === "approve" ? "You approved" : mine.verdict === "changes" ? "You requested changes" : mine.verdict === "dismissed" ? "You reviewed" : "You commented";
     const moved = pr.next.kind === "rereview";
-    return { id: "yours", label: "Your review", tone: moved ? "warn" : mine.verdict === "approve" ? "ok" : "neutral", icon: moved ? "RotateCcw" : "Check", text: <>{b(verb)}{mine.at !== null && ` ${ago(mine.at)}`}{moved && <span className="text-warning-text"> · updated since</span>}</>, go: "review" };
+    const since = mine.verdict === "dismissed" ? "dismissed since" : moved ? "updated since" : null;
+    return { id: "yours", label: "Your review", tone: moved ? "warn" : mine.verdict === "approve" ? "ok" : "neutral", icon: moved ? "RotateCcw" : "Check", text: <>{b(verb)}{mine.at !== null && ` ${ago(mine.at)}`}{since !== null && <span className={moved ? "text-warning-text" : ""}> · {since}</span>}</>, go: "review" };
   }
   return { id: "yours", label: "Your review", tone: "neutral", icon: "UserRound", text: <>{b("Not started")}{pr.requestedAt !== null && <span className="text-muted-foreground"> · asked {ago(pr.requestedAt)}</span>}</>, go: "review" };
 }

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { experimental_Icon as Icon, experimental_usePluginId, Markdown, UrlLink } from "@get-bb/plugin-sdk/app";
-import type { GateFinding, MyReview, PostView, PrView, ReviewDraft, ReviewHistoryItem, Severity } from "../contract";
+import type { GateFinding, HistoryFate, MyReview, PostView, PrView, ReviewDraft, ReviewHistoryItem, Severity } from "../contract";
 import { postText } from "../next";
 import { NextButtons, useActions } from "./actions";
 import { BUTTON, BUTTON_GHOST, BUTTON_PRIMARY, BUTTON_PRIMARY_LARGE, FIELD, FitTextarea, Segmented } from "./common";
@@ -351,7 +351,35 @@ function AutoPosted({ pr, item }: { pr: PrView; item: ReviewHistoryItem }) {
   );
 }
 
-/** One earlier review: when, what it suggested and what became of it, its notes for you, and its summary folded. */
+const FATE_TEXT: Record<HistoryFate, string> = { posted: "posted", edited: "posted with your edits", left_out: "not posted", auto: "Shuttle posted it", retracted: "Shuttle posted it; you marked it a mistake" };
+
+/** The review as it posted, or its summary when it never did, then every finding with what became of it. */
+function EarlierReviewBody({ item }: { item: ReviewHistoryItem }) {
+  const text = item.postedBody ?? item.summary;
+  return (
+    <div data-earlier-body>
+      {text.trim()
+        ? <div className="mt-1 min-w-0 break-words text-[13px]"><Markdown content={text} /></div>
+        : <div className="mt-1 text-muted-foreground">{item.postedBody !== null ? "Posted without text, only its comments." : "No summary."}</div>}
+      {item.findings.length > 0 && (
+        <ul aria-label="Findings" className="mt-1.5">
+          {item.findings.map((finding) => (
+            <li key={finding.id} data-earlier-finding={finding.id} data-fate={finding.fate ?? undefined} className="border-t border-border py-1.5 first:border-t-0">
+              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                <span className={`text-[10px] font-bold uppercase tracking-wide ${SEVERITY_TEXT[finding.severity]}`}>{finding.severity}</span>
+                <span title={`${finding.path}${finding.line === null ? "" : `:${finding.line}`}`} className="min-w-0 truncate rounded border border-border bg-background px-1 font-mono text-[11px] text-muted-foreground">{location(finding.path, finding.line)}</span>
+                {finding.fate !== null && <span className="text-muted-foreground">· {FATE_TEXT[finding.fate]}</span>}
+              </div>
+              <div className={`mt-0.5 min-w-0 break-words text-[13px] ${finding.fate === "left_out" ? "text-muted-foreground" : ""}`}><Markdown content={finding.body} /></div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/** One earlier review: when, what it suggested and what became of it, its notes for you, and the whole review folded. */
 function EarlierReview({ pr, item, open }: { pr: PrView; item: ReviewHistoryItem; open: boolean }) {
   const actions = useActions();
   return (
@@ -368,8 +396,10 @@ function EarlierReview({ pr, item, open }: { pr: PrView; item: ReviewHistoryItem
         ? <div data-earlier-notes className="mt-1.5 min-w-0 break-words rounded-md border border-border bg-card px-3 py-2 text-[13px]"><Markdown content={item.notes} /></div>
         : <div className="mt-1 text-xs text-muted-foreground">No notes for you.</div>}
       <details className="mt-1.5 text-xs" open={open && item.notes === null}>
-        <summary className="cursor-pointer text-muted-foreground">Summary{item.findings ? ` and ${plural(item.findings, "finding")}` : ""}</summary>
-        <div className="mt-1 min-w-0 whitespace-pre-wrap break-words text-[13px]">{item.summary}</div>
+        <summary className="cursor-pointer text-muted-foreground">
+          {item.postedBody === null ? "Summary" : item.autoPosted !== null ? "The review Shuttle posted" : "The review you posted"}{item.findings.length > 0 ? ` and ${plural(item.findings.length, "finding")}` : ""}
+        </summary>
+        <EarlierReviewBody item={item} />
       </details>
     </li>
   );
@@ -382,7 +412,7 @@ function EarlierReviews({ pr }: { pr: PrView }) {
   if (items.length === 0) return null;
   return (
     <section aria-label="Earlier reviews" data-earlier-reviews className="mt-5">
-      <div className="mb-1.5 text-[12.5px] font-semibold text-foreground">Earlier reviews <span className="font-normal text-muted-foreground">· notes for you, never posted</span></div>
+      <div className="mb-1.5 text-[12.5px] font-semibold text-foreground">Earlier reviews <span className="font-normal text-muted-foreground">· what each found and posted; notes for you are never posted</span></div>
       <ul>{items.map((item, index) => <EarlierReview key={item.id} pr={pr} item={item} open={index === 0} />)}</ul>
     </section>
   );
@@ -435,7 +465,8 @@ export function YourReviewCard({ pr, draft }: { pr: PrView; draft: ReviewDraft |
       <>
         <div className="flex items-center gap-2 text-sm">
           <Icon name={pr.myReview.verdict === "approve" ? "Check" : "MessageSquare"} className={`size-4 shrink-0 ${pr.myReview.verdict === "approve" ? "text-success" : ""}`} aria-hidden />
-          <span className="min-w-0 flex-1"><b>{DID[pr.myReview.verdict]}</b>{pr.myReview.at !== null && ` ${ago(pr.myReview.at)}`}</span>
+          {/* A dismissed review's time is when you reviewed, which the next step's words already say. */}
+          <span className="min-w-0 flex-1"><b>{DID[pr.myReview.verdict]}</b>{pr.myReview.at !== null && pr.myReview.verdict !== "dismissed" && ` ${ago(pr.myReview.at)}`}</span>
           {run !== null && <button type="button" className="cursor-pointer text-xs text-primary hover:underline" onClick={() => actions.openThread(run.threadId)}>its thread</button>}
         </div>
         {next.kind === "rereview" ? (

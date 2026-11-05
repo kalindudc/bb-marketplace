@@ -835,7 +835,7 @@ describe("the PR view of someone else's PR", () => {
   it("marks what Shuttle posted from an earlier review as a mistake, and takes the mark back", async () => {
     const base = {
       threadId: "thr_review", threadTitle: "Review", preset: "Thorough", trigger: "auto", head: "3e9a7c1000", state: "posted", discardReason: null, suggested: "comment",
-      posted: null, postedAt: Date.now(), summary: "Summary", notes: null, findings: 2, postedFindings: 2,
+      posted: null, postedAt: Date.now(), summary: "Summary", postedBody: null, notes: null, findings: [], postedFindings: 2,
     };
     const history = {
       items: [
@@ -843,8 +843,8 @@ describe("the PR view of someone else's PR", () => {
           { id: "a", path: "src/header/actions.tsx", line: 88, body: "The compact prop never reaches the overflow menu.", marked: false },
           { id: "b", path: "src/header/menu.tsx", line: 31, body: "The menu closes before the action runs.", marked: true },
         ] } },
-        { ...base, id: 2, at: Date.now() - 2 * 3_600_000, suggested: "approve", findings: 0, postedFindings: 0, autoPosted: { verdict: "approve", mistake: null, findings: [] } },
-        { ...base, id: 3, at: Date.now() - 3 * 3_600_000, suggested: "approve", findings: 0, postedFindings: 0, autoPosted: { verdict: "approve", mistake: Date.now() - 60_000, findings: [] } },
+        { ...base, id: 2, at: Date.now() - 2 * 3_600_000, suggested: "approve", postedFindings: 0, autoPosted: { verdict: "approve", mistake: null, findings: [] } },
+        { ...base, id: 3, at: Date.now() - 3 * 3_600_000, suggested: "approve", postedFindings: 0, autoPosted: { verdict: "approve", mistake: Date.now() - 60_000, findings: [] } },
       ],
     };
     const ready = { ...theirs, draft: { id: 7, findings: 3, at: Date.now() }, next: next({ kind: "post", tone: "info", label: "AI review ready" }) };
@@ -883,9 +883,15 @@ describe("the PR view of someone else's PR", () => {
   it("lists earlier reviews with their notes under the draft, and keeps them on a merged PR", async () => {
     const item = (id: number, patch: Record<string, unknown>) => ({
       id, threadId: "thr_review", threadTitle: "Review", preset: "Thorough", trigger: "auto", head: "3e9a7c1000", at: Date.now() - id * 3_600_000,
-      state: "posted", discardReason: null, suggested: "comment", posted: "approve", postedAt: Date.now(), summary: `Summary ${id}`, notes: `Notes ${id}`, findings: 2, postedFindings: 1, autoPosted: null, ...patch,
+      state: "posted", discardReason: null, suggested: "comment", posted: "approve", postedAt: Date.now(), summary: `Summary ${id}`, postedBody: `Posted **${id}**`, notes: `Notes ${id}`,
+      findings: [
+        { id: "f1", severity: "high", path: "src/edge/retry.ts", line: 42, body: "Retries never back off.", fate: "edited" },
+        { id: "f2", severity: "nit", path: "src/edge/names.ts", line: null, body: "Rename `x`.", fate: "left_out" },
+      ],
+      postedFindings: 1, autoPosted: null, ...patch,
     });
-    const history = { items: [item(1, {}), item(2, { state: "discarded", discardReason: "superseded", posted: null, postedFindings: null, notes: null }), item(3, { state: "unposted", posted: null, postedAt: null, postedFindings: null })] };
+    const unposted = { posted: null, postedBody: null, postedFindings: null, findings: [{ id: "f1", severity: "low", path: "src/a.ts", line: 3, body: "Unused import.", fate: null }] };
+    const history = { items: [item(1, {}), item(2, { ...unposted, state: "discarded", discardReason: "superseded", notes: null }), item(3, { ...unposted, state: "unposted", postedAt: null })] };
     const ready = { ...theirs, draft: { id: 7, findings: 3, at: Date.now() }, next: next({ kind: "post", tone: "info", label: "AI review ready" }) };
     const { slot, view } = await prPage(ready, { reviewHistory: () => history as never }, { draft: draft() });
     const earlier = await find(tab(await view(), "review"), "[data-earlier-reviews]");
@@ -896,6 +902,19 @@ describe("the PR view of someone else's PR", () => {
     expect(rows[1]!.textContent).toContain("replaced by a newer review");
     expect(rows[1]!.textContent).toContain("No notes for you.");
     expect(rows[2]!.textContent).toContain("suggested a comment, never posted");
+    // The whole review folds under each: what posted, then every finding with what became of it.
+    const posted = rows[0]!.querySelector("details")!;
+    expect(posted.querySelector("summary")!.textContent).toBe("The review you posted and 2 findings");
+    expect(posted.querySelector("[data-earlier-body] [data-testid='bb-markdown']")!.textContent).toBe("Posted **1**");
+    const findings = [...posted.querySelectorAll<HTMLElement>("[data-earlier-finding]")];
+    expect(findings.map((f) => [f.getAttribute("data-fate"), f.textContent])).toEqual([
+      ["edited", "highedge/retry.ts:42· posted with your editsRetries never back off."],
+      ["left_out", "nitedge/names.ts· not postedRename `x`."],
+    ]);
+    const replaced = rows[1]!.querySelector("details")!;
+    expect(replaced.querySelector("summary")!.textContent).toBe("Summary and 1 finding");
+    expect(replaced.querySelector("[data-earlier-body]")!.textContent).toBe("Summary 2lowsrc/a.ts:3Unused import.");
+    expect(replaced.querySelector("[data-earlier-finding]")!.hasAttribute("data-fate")).toBe(false);
     expect(callsTo(slot, "reviewHistory")).toEqual([{ key: theirs.key }]);
 
     unmountAll();

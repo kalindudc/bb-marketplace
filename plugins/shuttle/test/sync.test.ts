@@ -302,6 +302,54 @@ describe("auto review", () => {
     expect(h.port.sent.map((s) => s.threadId)).toEqual([h.port.spawned[0]!.threadId]);
   });
 
+  it("reviews again when your dismissed review is on an older head, as a request by name", async () => {
+    const servers = [{ ...TEST_SERVER, enabled: true, sep: "#" as const, commands: { ...TEST_SERVER.commands, reviewed: "rd" } }];
+    const auto = { enabled: true, when: ["requested" as const], drafts: false, preset: "", repos: [], maxPerDay: 8, rerun: "new_head" as const };
+    const dismissed = (head: string, at: string) => [pr(3, { head, my_review: { state: "dismissed", at, head: "head3" } })];
+    const run = async (config: typeof auto, reviewed: unknown[], local?: { verdict: string; head: string }) => {
+      const h = harness(testConfig({ servers, autoReview: config }));
+      h.answers.reviewed = [pr(3, { my_review: { state: "approved", at: "2026-10-23T11:00:00Z", head: "head3" } })];
+      h.lists.reviewed_closed = [];
+      await h.shuttle.sync();
+      h.clock.now += 10 * 60_000;
+      h.answers.reviewed = reviewed;
+      if (local) h.store.addMyReview({ pr_id: h.store.prByKey("forge:acme/app#3")!.id, verdict: local.verdict, head: local.head, findings: 0 });
+      await h.shuttle.sync();
+      return h.port.spawned.length;
+    };
+    expect(await run(auto, dismissed("newhead", "2026-10-23T12:00:30Z"))).toBe(1);
+    expect(await run(auto, dismissed("head3", "2026-10-23T12:00:30Z"))).toBe(0);
+    // A review dismissed before the first sync was already waiting then.
+    expect(await run(auto, dismissed("newhead", "2026-10-23T11:00:00Z"))).toBe(0);
+    expect(await run({ ...auto, when: ["team" as never] }, dismissed("newhead", "2026-10-23T12:00:30Z"))).toBe(0);
+    // You approved it again from Shuttle since, and the server does not list that yet.
+    expect(await run(auto, dismissed("newhead", "2026-10-23T12:00:30Z"), { verdict: "approve", head: "newhead" })).toBe(0);
+    // A server that does not say the PR's head now can't say it has new commits.
+    expect(await run(auto, dismissed(null as never, "2026-10-23T12:00:30Z"))).toBe(0);
+  });
+
+  it("leaves dismissed reviews already there when auto review first looks, until the PR gets new commits", async () => {
+    const servers = [{ ...TEST_SERVER, enabled: true, sep: "#" as const, commands: { ...TEST_SERVER.commands, reviewed: "rd" } }];
+    const auto = { enabled: true, when: ["requested" as const], drafts: false, preset: "", repos: [], maxPerDay: 8, rerun: "new_head" as const };
+    const h = harness(testConfig({ servers, autoReview: { ...auto, enabled: false } }));
+    h.lists.reviewed_closed = [];
+    h.answers.reviewed = [];
+    await h.shuttle.sync();
+    h.clock.now += 10 * 60_000;
+    const dismissed = (head: string) => [pr(3, { head, my_review: { state: "dismissed", at: "2026-10-23T12:01:00Z", head: "head3" } })];
+    h.answers.reviewed = dismissed("h2");
+    await h.shuttle.sync();
+    // Turning on auto review, as an upgrade does, finds it already dismissed with new commits: it stays yours to review.
+    h.store.saveConfig(testConfig({ servers, autoReview: auto }));
+    await h.shuttle.sync();
+    await h.shuttle.sync();
+    expect(h.port.spawned).toHaveLength(0);
+    expect(h.shuttle.view("forge:acme/app#3").next).toMatchObject({ kind: "rereview", inbox: true });
+    h.answers.reviewed = dismissed("h3");
+    await h.shuttle.sync();
+    expect(h.port.spawned).toHaveLength(1);
+  });
+
   it("reviews a server without heads once, even with rerun on new heads", async () => {
     const h = harness(testConfig({ autoReview: { enabled: true, when: ["requested"], drafts: false, preset: "", repos: [], maxPerDay: 8, rerun: "new_head" } }));
     await h.shuttle.sync();

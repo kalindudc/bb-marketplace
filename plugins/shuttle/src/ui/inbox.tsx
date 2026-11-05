@@ -56,7 +56,7 @@ const KIND_GROUPS: readonly KindGroup[] = [
   { id: "needs", title: "Needs you", kinds: ["agent_waiting", "nobody", "merge_failed", "post_failed"], icon: "AlertTriangle", tone: "bad", description: () => "An agent waits on your answer, feedback nobody is handling, or a merge or review that didn't go through" },
   { id: "merge", title: "Ready to merge", kinds: ["ready_to_merge"], icon: "GitMerge", tone: "ok", description: () => "Approved, with green checks" },
   { id: "post", title: "AI reviews to post", kinds: ["post", "review_done", "review_failed"], icon: "Sparkles", tone: "info", description: () => "You choose what goes out; nothing is posted yet" },
-  { id: "rereview", title: "Updated since your review", kinds: ["rereview"], icon: "RotateCcw", tone: "warn", description: () => "The author pushed or asked again" },
+  { id: "rereview", title: "Updated since your review", kinds: ["rereview"], icon: "RotateCcw", tone: "warn", description: () => "The author pushed or asked again, or your review was dismissed" },
   { id: "new", title: "New review requests", kinds: ["new_request"], icon: "UserRound", tone: "info", description: (days) => `Asked you by name, or mentioned you, in the last ${plural(days, "day")}` },
 ];
 const OTHER_GROUP: KindGroup = { id: "other", title: "Other", kinds: [], icon: "Circle", tone: "neutral", description: () => "" };

@@ -331,7 +331,8 @@ export class Shuttle implements Ctx {
     const live = pr.state === "open" || pr.state === "draft";
     const rows = this.store.pastDrafts(pr.id);
     const items = rows.filter((row, at) => !(row.discard_reason === "superseded" && row.review_id !== null && rows.slice(0, at).some((newer) => newer.review_id === row.review_id)));
-    return { items: items.filter((row) => !live || row.state !== "draft").map((row) => historyView(this, row)) };
+    const posts = new Map(this.store.postedFromDrafts(pr.id).map((post) => [post.draft_id, post]));
+    return { items: items.filter((row) => !live || row.state !== "draft").map((row) => historyView(this, row, posts.get(row.id) ?? null)) };
   }
 
   autoPostInsights(range: AutoPostInsights["range"]): AutoPostInsights {

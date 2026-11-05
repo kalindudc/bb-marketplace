@@ -80,6 +80,7 @@ export function MyReviewPill({ pr }: { pr: PrView }) {
   if (pr.post !== null) return <Pill tone="info" icon="Sent">Posting</Pill>;
   if (pr.draft !== null) return <Pill tone="info" icon="Check">Draft ready</Pill>;
   if (pr.lastReview?.state === "running") return <Pill tone="info" icon="Bot">AI reviewing</Pill>;
+  if (pr.myReview?.verdict === "dismissed") return <Pill tone={pr.next.kind === "rereview" ? "warn" : "neutral"} icon="X">Review dismissed</Pill>;
   if (pr.next.kind === "rereview") return <Pill tone="warn" icon="RotateCcw">Updated since</Pill>;
   if (pr.myReview === null) return null;
   if (pr.myReview.verdict === "approve") return <Pill tone="ok" icon="Check">You approved</Pill>;

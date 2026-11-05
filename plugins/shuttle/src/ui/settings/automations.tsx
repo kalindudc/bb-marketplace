@@ -13,7 +13,7 @@ type Watch = Config["watch"];
 type Trigger = (typeof AUTO_TRIGGERS)[number];
 
 const TRIGGER_LABELS: Record<Trigger, { label: string; hint?: string }> = {
-  requested: { label: "I am requested as a reviewer by name", hint: "Never for my own PRs." },
+  requested: { label: "I am requested as a reviewer by name", hint: "Or a review of mine was dismissed and the PR has new commits since. Never for my own PRs." },
   team: { label: "One of my teams is requested", hint: "Can be many PRs: consider a repository filter." },
   mentioned: { label: "I am @mentioned" },
 };

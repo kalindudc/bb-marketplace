@@ -1,8 +1,8 @@
 // AI review drafts: a review thread hands Shuttle its findings, and the user chooses what to post.
 import { AdapterError } from "./adapters/adapter";
-import { type Consensus, type ReviewHistoryItem, type Evidence, type Finding, type PostFinding, type ReviewDraft, type Severity, type Verdict } from "./contract";
+import { type Consensus, type HistoryFate, type HistoryFinding, type ReviewHistoryItem, type Evidence, type Finding, type PostFinding, type ReviewDraft, type Severity, type Verdict } from "./contract";
 import { errText, ShuttleError, type Ctx } from "./ctx";
-import type { DraftRow, PrRow } from "./db/store";
+import type { DraftRow, PostRow, PrRow } from "./db/store";
 import { parseKey } from "./keys";
 import { autoPostRepo, gateDraft, normalizeAssessment, parseAssessment, parseGate, type AssessmentInput } from "./gate";
 import { fetchPr, lookup, requirePr, shortKey } from "./prs";
@@ -82,8 +82,30 @@ export function autoPostOf(ctx: Ctx, row: DraftRow): ReviewDraft["autoPost"] {
   return { state: row.auto_post_state, at: row.auto_post_at, verdict: row.auto_post_verdict, reason: row.auto_post_reason, findings, mistake: row.approval_mistake_at };
 }
 
-/** An earlier draft as the Your review tab lists it. */
-export function historyView(ctx: Ctx, row: DraftRow): ReviewHistoryItem {
+const FATE: Record<FindingOutcome["outcome"], HistoryFate> = { kept: "posted", edited: "edited", dropped: "left_out", auto: "auto", retracted: "retracted" };
+
+/**
+ * Every finding of the draft, with the text it posted with and what became of it. A draft posted before Shuttle kept
+ * outcomes takes them from its post when the post names its findings. A finding Shuttle left out of its own post has no
+ * outcome, and was left out. When the post holds a comment that names no finding, a finding it did not name may be that
+ * comment, so what became of it is not known.
+ */
+function historyFindings(row: DraftRow, post: PostRow | null): HistoryFinding[] {
+  const drafted = JSON.parse(row.findings) as Finding[];
+  const sent = post === null ? [] : (JSON.parse(post.findings) as PostFinding[]);
+  const outcomes = row.state !== "posted" ? null : row.outcome ? (JSON.parse(row.outcome) as FindingOutcome[]) : post === null ? null : outcomesOf(drafted, sent);
+  const fates = outcomes === null ? null : new Map(outcomes.map((o) => [o.id, FATE[o.outcome]]));
+  const texts = new Map(sent.flatMap((f) => (f.id === undefined ? [] : [[f.id, f.body] as const])));
+  const unnamed = sent.some((f) => f.id === undefined);
+  const fateOf = (id: string): HistoryFate | null => {
+    if (fates === null || (unnamed && !texts.has(id))) return null;
+    return fates.get(id) ?? "left_out";
+  };
+  return drafted.map((f) => ({ id: f.id, severity: f.severity, path: f.path, line: f.line, body: texts.get(f.id) ?? f.body, fate: fateOf(f.id) }));
+}
+
+/** An earlier draft as the Your review tab lists it, with the post it went out in, if Shuttle posted it. */
+export function historyView(ctx: Ctx, row: DraftRow, post: PostRow | null = null): ReviewHistoryItem {
   const review = row.review_id !== null ? ctx.store.reviewsOf(row.pr_id).find((r) => r.id === row.review_id) ?? null : null;
   return {
     id: row.id,
@@ -99,8 +121,9 @@ export function historyView(ctx: Ctx, row: DraftRow): ReviewHistoryItem {
     posted: row.state === "posted" ? row.posted_verdict : null,
     postedAt: row.posted_at,
     summary: row.summary,
+    postedBody: row.state === "posted" && post !== null ? post.body : null,
     notes: row.notes,
-    findings: (JSON.parse(row.findings) as unknown[]).length,
+    findings: historyFindings(row, post),
     postedFindings: row.state === "posted" ? row.posted_findings : null,
     autoPosted: autoPostedOf(row),
   };

@@ -303,9 +303,15 @@ function othersNext(f: NextFacts): NextStep {
     const when = my.at !== null ? ` ${agoText(f.now - my.at)}` : "";
     const askedAgain = f.reasons.includes("requested") && f.requestedAt !== null && my.at !== null && f.requestedAt > my.at;
     const moved = my.head !== null && f.head !== null && my.head !== f.head;
-    if (askedAgain || moved) {
-      const why = askedAgain ? `${f.author} asked you to review again since you ${VERDICT_WORDS[my.verdict]}${when}.` : `New commits since you ${VERDICT_WORDS[my.verdict]}${when}.`;
-      return step("rereview", "warn", "Updated after your review", why, {
+    // A dismissed review no longer counts, as when a repository dismisses approvals given before its checks ran.
+    const dismissed = my.verdict === "dismissed";
+    if (askedAgain || moved || dismissed) {
+      const why = askedAgain
+        ? `${f.author} asked you to review again since you ${VERDICT_WORDS[my.verdict]}${when}.`
+        : dismissed
+          ? moved ? `You reviewed${when}, and it has new commits since.` : `You reviewed${when}; a dismissed review no longer counts.`
+          : `New commits since you ${VERDICT_WORDS[my.verdict]}${when}.`;
+      return step("rereview", "warn", dismissed && !askedAgain ? "Your review was dismissed" : "Updated after your review", why, {
         inbox: askedAgain || my.verdict !== "approve",
         clears: "Leaves when you review again, or when you snooze it.",
         primary: act("review", "Re-review\u2026"),

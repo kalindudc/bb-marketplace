@@ -1,7 +1,7 @@
 // Finding PRs and linking them to threads. A thread can own several PRs, and a PR can be linked
 // to several threads.
 import type { WatchMode } from "./config";
-import type { LinkRole } from "./contract";
+import type { LinkRole, MyReview } from "./contract";
 import { NotFoundError, ShuttleError, type Ctx } from "./ctx";
 import type { PrRow } from "./db/store";
 import { displayKey, linkFor, parseKey, resolveQuery, type PrRef } from "./keys";
@@ -43,6 +43,32 @@ export function requirePr(ctx: Ctx, key: string): PrRow {
 
 export function shortKey(ctx: Ctx, pr: PrRow): string {
   return displayKey({ server: pr.server, repo: pr.repo, number: pr.number }, ctx.server(pr.server)?.sep ?? "#");
+}
+
+/**
+ * Shuttle's record of a review it posted is dated when the post came back, within a command's timeout of when the server
+ * took it and dated it; the server's date can run a few seconds ahead, as it drops the milliseconds and clocks differ.
+ */
+const POST_LAG_MS = 2 * 60_000;
+const CLOCK_SKEW_MS = 5_000;
+
+/**
+ * Your latest review of the PR: the server's, or the one Shuttle posted when the server does not list it yet. Only a
+ * server dismisses a review, so its dismissed review wins over Shuttle's record when that record is of the post that
+ * made it, rather than of a newer review the server has not listed yet.
+ */
+export function myReviewOf(ctx: Ctx, pr: PrRow): MyReview | null {
+  const server = pr.my_review ? (JSON.parse(pr.my_review) as MyReview) : null;
+  const local = ctx.store.latestMyReview(pr.id);
+  if (!local) return server;
+  const fromShuttle: MyReview = { verdict: local.verdict as MyReview["verdict"], at: local.at, head: local.head };
+  if (!server) return fromShuttle;
+  if ((server.at ?? 0) >= local.at) return server;
+  if (server.verdict !== "dismissed") return fromShuttle;
+  // A server that does not date reviews: a dismissed review at the head Shuttle's last post reviewed is that post.
+  if (server.at === null) return server.head !== null && server.head === local.head ? server : fromShuttle;
+  const post = ctx.store.firstMyReviewBetween(pr.id, server.at - CLOCK_SKEW_MS, server.at + POST_LAG_MS);
+  return post?.id === local.id ? server : fromShuttle;
 }
 
 export async function rememberThread(ctx: Ctx, threadId: string): Promise<void> {

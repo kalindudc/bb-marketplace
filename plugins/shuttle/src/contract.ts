@@ -275,7 +275,25 @@ export const reviewDraftSchema = z.object({
 });
 export type ReviewDraft = z.infer<typeof reviewDraftSchema>;
 
-/** An earlier AI review of the PR: what it suggested, what became of it, and the notes it left for the user. */
+/**
+ * What became of one finding of an earlier review once it posted: posted as drafted, posted with your edits, left out, or
+ * posted by Shuttle and, when retracted, marked a mistake since.
+ */
+export const HISTORY_FATES = ["posted", "edited", "left_out", "auto", "retracted"] as const;
+export type HistoryFate = (typeof HISTORY_FATES)[number];
+export const historyFindingSchema = z.object({
+  id: z.string(),
+  severity: z.enum(SEVERITIES),
+  path: z.string(),
+  line: z.number().int().positive().nullable(),
+  /** The text as it posted, else as drafted. */
+  body: z.string(),
+  /** Null when the review never posted, or posted before Shuttle kept what became of each finding. */
+  fate: z.enum(HISTORY_FATES).nullable(),
+});
+export type HistoryFinding = z.infer<typeof historyFindingSchema>;
+
+/** An earlier AI review of the PR: what it suggested and found, what became of it, and the notes it left for the user. */
 export const reviewHistoryItemSchema = z.object({
   id: z.number(),
   threadId: z.string(),
@@ -292,8 +310,10 @@ export const reviewHistoryItemSchema = z.object({
   posted: z.enum(VERDICTS).nullable(),
   postedAt: z.number().nullable(),
   summary: z.string(),
+  /** The review's text as it posted; null when it never posted, or posted before Shuttle kept what it posted. */
+  postedBody: z.string().nullable(),
   notes: z.string().nullable(),
-  findings: z.number(),
+  findings: z.array(historyFindingSchema),
   /** How many findings the user posted from it; null when not posted. */
   postedFindings: z.number().nullable(),
   /** What Shuttle posted itself from this draft, with what you marked as mistakes; null when you posted it, or nothing did. */

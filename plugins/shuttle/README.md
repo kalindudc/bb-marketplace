@@ -28,6 +28,12 @@ and sort; the choice is kept on this device. Pointing at a row, or moving to it 
 shows its next step, Snooze, Dismiss and ⋯; each says what it does, and its key, in a tooltip. A
 row's ⋯ menu holds Snooze and Dismiss too (the only menu on a phone, besides swiping), then its rules.
 
+A review of yours that the server dismissed no longer counts, so its PR comes back under Updated
+since your review, even at the commit you reviewed. Some repositories dismiss approvals by themselves,
+such as until their checks have run. Auto review, when it starts on requests by name, treats such a PR
+as asking you again once it has new commits. A PR already dismissed with new commits when auto review
+first looks waits for its next commits, so turning auto review on never reviews a backlog.
+
 - **Reviewing** lists your reviews on their way to their servers, then the PRs an AI review is
   running on, which are out of the Inbox until it finishes or stops: the preset, when it started,
   whether its thread waits on your answer or is idle, and a button to its thread. The Inbox's foot
@@ -270,7 +276,10 @@ drafts were held, how the verifier scored each finding, and the latest decisions
 ### Earlier reviews
 
 The Your review tab lists the PR's earlier AI reviews under the current one, newest first: when each
-ran, what it suggested, what you did with it, its notes for you, and its summary. A merged or closed
+ran, what it suggested, what you did with it and its notes for you. Under each, the whole review folds:
+its text as it posted, or its summary when it never posted, then every finding with its severity,
+place and text, and whether it posted, posted with your edits (showing the text that posted), was left
+out, or was posted by Shuttle. A merged or closed
 PR keeps the tab for them when an AI review ran on it, and a draft you never posted joins them there.
 
 ## Agents

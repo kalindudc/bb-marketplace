@@ -68,6 +68,44 @@ describe("the review queue", () => {
     expect(h.shuttle.activity(5).map((e) => e.text)).toContain("You requested changes on acme/app#3 with 1 comment.");
   });
 
+  it("keeps the whole review it posted for Earlier reviews: its text, and each finding as posted, edited or left out", async () => {
+    const h = await queue();
+    const { draftId } = await withDraft(h);
+    h.shuttle.queueReview(KEY(3), { verdict: "changes", body: "Two things, **one** blocking", findings: [{ id: "f1", path: "a.go", line: 3, body: "Race on the cache map" }], draftId });
+    await h.shuttle.postsSettled();
+    // Discarding a newer draft makes the posted one history while the PR is open.
+    const { threadId } = await h.shuttle.review({ key: KEY(3) });
+    await h.shuttle.saveDraft(threadId, KEY(3), { summary: "Looks fixed", verdict: "comment", findings: [{ severity: "nit", path: "c.go", line: null, body: "Typo" }] });
+    await h.shuttle.discardDraft(KEY(3), h.shuttle.detail(KEY(3)).draft!.id);
+    const [newer, posted] = h.shuttle.reviewHistory(KEY(3)).items;
+    expect(posted).toMatchObject({
+      id: draftId, state: "posted", summary: "Two things", postedBody: "Two things, **one** blocking", postedFindings: 1,
+      findings: [
+        { id: "f1", severity: "high", path: "a.go", line: 3, body: "Race on the cache map", fate: "edited" },
+        { id: "f2", severity: "low", path: "b.go", line: 9, body: "Name", fate: "left_out" },
+      ],
+    });
+    expect(newer).toMatchObject({ state: "discarded", postedBody: null, findings: [{ id: "f1", severity: "nit", path: "c.go", line: null, body: "Typo", fate: null }] });
+  });
+
+  it("says nothing of each finding's fate for a review an older page posted without naming its findings", async () => {
+    const h = await queue();
+    const { draftId } = await withDraft(h);
+    h.shuttle.queueReview(KEY(3), { verdict: "comment", body: "Two things", findings: [{ path: "a.go", line: 3, body: "Race" }], draftId });
+    await h.shuttle.postsSettled();
+    const [posted] = h.shuttle.reviewHistory(KEY(3)).items;
+    expect(posted).toMatchObject({ postedBody: "Two things", findings: [{ id: "f1", body: "Race", fate: null }, { id: "f2", body: "Name", fate: null }] });
+  });
+
+  it("keeps what it knows of a finding a post names, and nothing of one an unnamed comment may be", async () => {
+    const h = await queue();
+    const { draftId } = await withDraft(h);
+    h.shuttle.queueReview(KEY(3), { verdict: "comment", body: "Two things", findings: [{ id: "f1", path: "a.go", line: 3, body: "Race" }, { path: "b.go", line: 9, body: "A clearer name" }], draftId });
+    await h.shuttle.postsSettled();
+    const [posted] = h.shuttle.reviewHistory(KEY(3)).items;
+    expect(posted!.findings.map((f) => [f.id, f.body, f.fate])).toEqual([["f1", "Race", "posted"], ["f2", "Name", null]]);
+  });
+
   it("posts one review at a time on each server, in the order they were queued, and servers do not wait on each other", async () => {
     const h = await queue([WRITE_SERVER, SECOND_SERVER]);
     const forge = gate(h.shuttle.adapter("forge"));

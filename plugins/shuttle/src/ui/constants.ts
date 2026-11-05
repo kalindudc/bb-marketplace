@@ -45,7 +45,7 @@ export const MINE_GROUPS: readonly Group[] = [
 export const REVIEW_GROUPS: readonly Group[] = [
   { title: "Ready to post", kinds: ["post_failed", "post", "review_done", "review_failed"], description: "An AI review drafted findings; you choose what goes out" },
   { title: "Posting", kinds: ["posting"], description: "Shuttle posts your review in the background" },
-  { title: "Updated since your review", kinds: ["rereview"], description: "The author pushed or replied" },
+  { title: "Updated since your review", kinds: ["rereview"], description: "The author pushed or replied, or your review was dismissed" },
   { title: "AI review running", kinds: ["running"], description: "Findings land here when it finishes" },
   { title: "Not reviewed yet", kinds: ["new_request", "not_reviewed", "looked_up"], description: "Oldest request first" },
   { title: "Reviewed, waiting on the author", kinds: ["reviewed"], description: "Comes back when they push or reply" },

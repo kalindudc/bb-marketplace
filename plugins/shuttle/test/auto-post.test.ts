@@ -449,6 +449,18 @@ describe("marking what Shuttle posted", () => {
     expect(h.shuttle.autoPostInsights("30d").repos[0]!.findings).toMatchObject({ agreed: 1, against: 0 });
   });
 
+  it("keeps the whole review Shuttle posted for Earlier reviews: its text, what it posted, what it left out and what you marked", async () => {
+    const s = await shadow(posting({ mode: "auto", ...APPROVE }));
+    const d = await draft(s.h, { findings: [good(), { ...good(), severity: "nit", body: "Nit: a clearer name would help here." }] });
+    critics(s.h, d.threadId);
+    await due(s.h, 0);
+    const history = () => s.h.shuttle.reviewHistory(KEY(3)).items[0]!;
+    expect(history().postedBody).toContain("Shuttle posted this review");
+    expect(history().findings.map((f) => [f.id, f.fate])).toEqual([["f1", "auto"], ["f2", "left_out"]]);
+    s.h.shuttle.markAutoPost(KEY(3), d.id, "f1");
+    expect(history().findings.map((f) => [f.id, f.fate])).toEqual([["f1", "retracted"], ["f2", "left_out"]]);
+  });
+
   it("stops posting comments in the repository when you mark more than the breaker allows, until you resume", async () => {
     const { h, d } = await postedComment({ breaker: { window: 20, maxMarked: 0 } });
     h.shuttle.markAutoPost(KEY(3), d.id, "f1");

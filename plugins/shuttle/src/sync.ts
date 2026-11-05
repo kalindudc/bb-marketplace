@@ -11,7 +11,7 @@ import { linkFor } from "./keys";
 import type { PrSummary } from "./model";
 import { SpawnUnavailableError } from "./ports";
 import { startReview } from "./reviews";
-import { shortKey } from "./prs";
+import { myReviewOf, shortKey } from "./prs";
 
 const DAY = 86_400_000;
 /** How long an auto review waits for bb to have a machine or environment for it before it counts as failed. */
@@ -410,7 +410,29 @@ export function globMatch(glob: string, value: string, caseSensitive = false): b
 const TRIGGER_REASON = { requested: "requested", team: "team", mentioned: "mentioned" } as const;
 
 /**
- * PRs that newly asked for the user's review since the server's baseline and have no review for this head.
+ * Your reviews the server dismissed, on PRs with new commits since. The first look notes the head of each PR already so
+ * and leaves it to you, so an upgrade or turning on auto review does not review a backlog; such a PR comes once its head
+ * moves on.
+ */
+function dismissedWithNewCommits(ctx: Ctx, serverId: string, baseline: number): number[] {
+  const key = `auto_dismissed_heads:${serverId}`;
+  const stored = ctx.store.kv(key);
+  const noted = stored === null ? null : (JSON.parse(stored) as Record<string, string>);
+  const out: PrRow[] = [];
+  for (const row of ctx.store.reasonRows("reviewed")) {
+    const pr = row.server === serverId ? ctx.store.prById(row.pr_id) : null;
+    if (!pr || pr.head === null || noted?.[pr.id] === pr.head) continue;
+    const mine = myReviewOf(ctx, pr);
+    if (mine?.verdict === "dismissed" && mine.at !== null && mine.at > baseline && mine.head !== null && mine.head !== pr.head) out.push(pr);
+  }
+  if (noted !== null) return out.map((pr) => pr.id);
+  ctx.store.setKv(key, JSON.stringify(Object.fromEntries(out.map((pr) => [pr.id, pr.head]))));
+  return [];
+}
+
+/**
+ * PRs that newly asked for the user's review since the server's baseline and have no review for this head. A review of
+ * the user's that the server dismissed asks again, as a request by name does, once the PR has new commits.
  * With `passed`, only requests from lists this sync read: a list that failed may hold a withdrawn request.
  */
 export function autoReviewCandidates(ctx: Ctx, serverId: string, passed?: ReadonlySet<SyncStepName>): PrRow[] {
@@ -421,6 +443,9 @@ export function autoReviewCandidates(ctx: Ctx, serverId: string, passed?: Readon
   for (const trigger of config.when) {
     if (passed !== undefined && !passed.has(STEP_OF_REASON[TRIGGER_REASON[trigger]])) continue;
     for (const row of ctx.store.reasonRows(TRIGGER_REASON[trigger])) if (row.server === serverId && row.since > baseline) ids.add(row.pr_id);
+  }
+  if (config.when.includes("requested") && (passed === undefined || passed.has(STEP_OF_REASON.reviewed))) {
+    for (const id of dismissedWithNewCommits(ctx, serverId, baseline)) ids.add(id);
   }
   const out: PrRow[] = [];
   for (const id of ids) {

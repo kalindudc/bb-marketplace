@@ -303,7 +303,7 @@ function inboxFacts(pr: PrView, kindChip: boolean): Fact[] {
   if (pr.next.kind === "rereview" && pr.myReview !== null) {
     const done = DONE[pr.myReview.verdict];
     // Asked by name again after reviewing: the server lists you as requested once more.
-    out.push({ text: has("requested") ? `Asked again since you ${done}` : `New commits since you ${done}` });
+    out.push({ text: has("requested") ? `Asked again since you ${done}` : pr.myReview.verdict === "dismissed" ? "Your review was dismissed" : `New commits since you ${done}` });
   }
   if (mentionsYouOnly(pr) && !(kindChip && pr.next.kind === "new_request")) out.push({ text: "Mentioned you", icon: "AtSign" });
   if (pr.checks === "pending") out.push({ text: pr.checkCounts !== null ? `Checks ${pr.checkCounts.passed}/${pr.checkCounts.total}` : "Checks running", icon: "Clock", tone: "warn" });

@@ -648,7 +648,7 @@ describe("earlier reviews", () => {
     const first = h.shuttle.detail(KEY(3)).draft!;
     await h.shuttle.submitReview(KEY(3), { verdict: "approve", body: "First pass", findings: [{ id: "f1", path: "main.go", line: 5, body: good().body }], draftId: first.id });
     expect(h.shuttle.reviewHistory(KEY(3)).items).toEqual([expect.objectContaining({
-      id: first.id, state: "posted", discardReason: null, suggested: "comment", posted: "approve", summary: "First pass", notes: "Intent: fix the race.", findings: 1, postedFindings: 1,
+      id: first.id, state: "posted", discardReason: null, suggested: "comment", posted: "approve", summary: "First pass", postedBody: null, notes: "Intent: fix the race.", findings: [expect.objectContaining({ id: "f1", fate: "posted" })], postedFindings: 1,
     })]);
     const again = await h.shuttle.review({ key: KEY(3) });
     await h.shuttle.saveDraft(again.threadId, KEY(3), { summary: "Second pass", verdict: "comment", findings: [], notes: "Nothing new." });

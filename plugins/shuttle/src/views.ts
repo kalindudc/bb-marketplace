@@ -1,11 +1,12 @@
 // PR rows as the UI, the tools and the CLI see them, and which area each one belongs in.
-import type { AgentView, Area, CheckCounts, MyReview, PrView, Reason } from "./contract";
+import type { AgentView, Area, CheckCounts, PrView, Reason } from "./contract";
 import type { Ctx } from "./ctx";
 import type { InboxRuleRow, LinkRow, PrRow, ServerRow, Store } from "./db/store";
 import { actionsOf, parseLabels, parseReviewers } from "./edit";
 import { agentActive, feedbackSignature, INBOX_ORDER, nextStep, ruleMatches, stepOf, stillHandled, type NextFacts } from "./next";
 import { mergeView, SENT_MERGE_MS } from "./merges";
 import { postView } from "./posts";
+import { myReviewOf } from "./prs";
 import { globMatch, STEP_OF_REASON } from "./sync";
 
 const DAY = 86_400_000;
@@ -70,15 +71,6 @@ export function isBot(ctx: Ctx, pr: PrRow): boolean {
 /** Team slugs without @ or org, so GitHub's @acme/platform and another server's @platform match. */
 export function normalizeTeam(team: string): string {
   return team.replace(/^@/u, "").split("/").pop()!.toLowerCase();
-}
-
-function myReviewOf(ctx: Ctx, pr: PrRow): MyReview | null {
-  const server = pr.my_review ? (JSON.parse(pr.my_review) as MyReview) : null;
-  const local = ctx.store.latestMyReview(pr.id);
-  const fromShuttle: MyReview | null = local ? { verdict: local.verdict as MyReview["verdict"], at: local.at, head: local.head } : null;
-  if (!server) return fromShuttle;
-  if (!fromShuttle) return server;
-  return (server.at ?? 0) >= (fromShuttle.at ?? 0) ? server : fromShuttle;
 }
 
 function requestedAtOf(ctx: Ctx, pr: PrRow, reasons: Array<{ reason: string; since: number }>): number | null {

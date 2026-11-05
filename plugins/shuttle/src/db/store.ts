@@ -1060,6 +1060,11 @@ export class Store {
     return this.sql("SELECT * FROM review_posts WHERE state IN ('posted', 'failed') AND finished_at >= ? ORDER BY finished_at DESC, id DESC").all(at) as PostRow[];
   }
 
+  /** The PR's reviews that posted from a draft, oldest first. */
+  postedFromDrafts(prId: number): PostRow[] {
+    return this.sql("SELECT * FROM review_posts WHERE pr_id = ? AND state = 'posted' AND draft_id IS NOT NULL ORDER BY id").all(prId) as PostRow[];
+  }
+
   /** The PR's oldest post still waiting or posting, else its newest failed post not cleared. */
   currentPost(prId: number): PostRow | null {
     return (this.sql("SELECT * FROM review_posts WHERE pr_id = ? AND (state IN ('queued', 'posting') OR (state = 'failed' AND cleared_at IS NULL)) ORDER BY CASE WHEN state = 'failed' THEN 1 ELSE 0 END, CASE WHEN state = 'failed' THEN -id ELSE id END LIMIT 1")
@@ -1196,6 +1201,11 @@ export class Store {
 
   latestMyReview(prId: number): MyReviewRow | null {
     return (this.sql("SELECT * FROM my_reviews WHERE pr_id = ? ORDER BY at DESC, id DESC LIMIT 1").get(prId) as MyReviewRow | undefined) ?? null;
+  }
+
+  /** The PR's first review posted from Shuttle within the range, inclusive. */
+  firstMyReviewBetween(prId: number, from: number, to: number): MyReviewRow | null {
+    return (this.sql("SELECT * FROM my_reviews WHERE pr_id = ? AND at BETWEEN ? AND ? ORDER BY at, id LIMIT 1").get(prId, from, to) as MyReviewRow | undefined) ?? null;
   }
 
   myReviewsSince(at: number): MyReviewRow[] {

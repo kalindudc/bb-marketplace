@@ -129,6 +129,14 @@ describe("the next-step rule", () => {
     expect(nextStep({ ...reviewed, reasons: ["requested"], requestedAt: now - HOUR })).toMatchObject({ kind: "rereview", inbox: true });
   });
 
+  it("brings a dismissed review back for a re-review, with or without new commits", () => {
+    const now = facts({}).now;
+    const dismissed = facts({ mine: false, author: "dana", reasons: ["reviewed"], head: "h1", myReview: { verdict: "dismissed", at: now - DAY, head: "h1" } });
+    expect(nextStep(dismissed)).toMatchObject({ kind: "rereview", inbox: true, label: "Your review was dismissed", why: "You reviewed 1 day ago; a dismissed review no longer counts.", primary: { id: "review" } });
+    expect(nextStep({ ...dismissed, head: "h2" })).toMatchObject({ kind: "rereview", inbox: true, label: "Your review was dismissed", why: "You reviewed 1 day ago, and it has new commits since." });
+    expect(nextStep({ ...dismissed, reasons: ["requested"], requestedAt: now - HOUR })).toMatchObject({ kind: "rereview", inbox: true, label: "Updated after your review", why: "dana asked you to review again since you reviewed 1 day ago." });
+  });
+
   it("keeps every snoozed card out of the Inbox, whatever its kind", () => {
     const now = facts({}).now;
     const agent = { threadId: "t", title: "Fixer", mode: "fix" as const, status: "waiting" as const, auto: false, lastSent: null };
@@ -616,6 +624,48 @@ describe("your review history", () => {
     expect(h.shuttle.list("reviewed")).toEqual([]);
     h.store.addMyReview({ pr_id: h.store.prByKey(KEY(3))!.id, verdict: "approve", head: "head3", findings: 0 });
     expect(h.shuttle.list("reviewed").map((p) => [p.number, p.myReview?.verdict])).toEqual([[3, "approve"]]);
+  });
+
+  it("shows the approval Shuttle posted as dismissed once the server says so, and brings the PR back to the Inbox", async () => {
+    const h = reviewer();
+    h.lists.reviewed_closed = [];
+    h.answers.reviewed = [pr(3, review("2026-10-20T10:00:00Z", "commented"))];
+    await h.shuttle.sync();
+    h.store.addMyReview({ pr_id: h.store.prByKey(KEY(3))!.id, verdict: "approve", head: "head3", findings: 0 });
+    // Until the server lists it, the approval Shuttle posted is newer than the server's older comment.
+    expect(h.shuttle.view(KEY(3))).toMatchObject({ myReview: { verdict: "approve" }, next: { kind: "reviewed", inbox: false } });
+    // The server dates the review a second before Shuttle's record, from when it took the post, and has dismissed it since.
+    h.answers.reviewed = [pr(3, { my_review: { state: "dismissed", at: new Date(h.clock.now - 1_000).toISOString(), head: "head3" } })];
+    h.clock.now += 10_000;
+    await h.shuttle.sync();
+    expect(h.shuttle.view(KEY(3))).toMatchObject({ myReview: { verdict: "dismissed", head: "head3" }, next: { kind: "rereview", inbox: true, label: "Your review was dismissed" } });
+    expect(h.shuttle.inbox().prs.map((p) => p.number)).toEqual([3]);
+    // Approving again from Shuttle, even seconds later, is a newer review than the one the server dismissed.
+    h.clock.now += 20_000;
+    h.store.addMyReview({ pr_id: h.store.prByKey(KEY(3))!.id, verdict: "approve", head: "head3", findings: 0 });
+    expect(h.shuttle.view(KEY(3))).toMatchObject({ myReview: { verdict: "approve" }, next: { kind: "reviewed", inbox: false } });
+  });
+
+  it("keeps a review posted from Shuttle over an older one the server lists that it did not dismiss", async () => {
+    const h = reviewer();
+    h.lists.reviewed_closed = [];
+    // You commented on the server, then approved from Shuttle 30 seconds later, before the server lists the approval.
+    h.answers.reviewed = [pr(3, { my_review: { state: "commented", at: new Date(h.clock.now - 30_000).toISOString(), head: "head3" } })];
+    await h.shuttle.sync();
+    h.store.addMyReview({ pr_id: h.store.prByKey(KEY(3))!.id, verdict: "approve", head: "head3", findings: 0 });
+    expect(h.shuttle.view(KEY(3)).myReview).toMatchObject({ verdict: "approve" });
+  });
+
+  it("matches a dismissed review to Shuttle's post by head on a server that does not date reviews", async () => {
+    const h = reviewer();
+    h.lists.reviewed_closed = [];
+    h.answers.reviewed = [pr(3, { my_review: { state: "dismissed", at: null, head: "head3" } })];
+    await h.shuttle.sync();
+    const id = h.store.prByKey(KEY(3))!.id;
+    h.store.addMyReview({ pr_id: id, verdict: "approve", head: "head3", findings: 0 });
+    expect(h.shuttle.view(KEY(3)).myReview).toMatchObject({ verdict: "dismissed" });
+    h.store.addMyReview({ pr_id: id, verdict: "approve", head: "head4", findings: 0 });
+    expect(h.shuttle.view(KEY(3)).myReview).toMatchObject({ verdict: "approve", head: "head4" });
   });
 
   it("leaves a server without a reviewed list alone", async () => {
