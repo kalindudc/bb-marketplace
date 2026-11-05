@@ -495,7 +495,8 @@ of it said: checks that passed, not a draft, and approved. A pull request whose
 checks pass without that reads "Checks pass", one that targets a branch other
 than its base or another ticket's says so, and on a project with
 `max_fix_rounds = 0` Loom does not read checks, so they read "Checks not
-read".
+read". On a repo whose forge sets `auto_merge`, this verdict is what Loom
+merges on (see [Merging ready pull requests](#merging-ready-pull-requests)).
 
 #### Rollout
 
@@ -519,7 +520,8 @@ order.
   request inside a window or with one starting within 14 days, a step whose
   earlier stage has not soaked, and one that needs a milestone that does not
   hold. They are advice for you: none of them holds a start, a review or a
-  merge.
+  merge, apart from the merges Loom makes itself with `auto_merge`, which wait
+  out a window that is on and, with `require_live`, for what must be live.
 - Calendar puts the freeze windows on a dated strip with today marked, and the
   earliest date each stage could be done if every step went live as soon as it
   could. A stage that waits on a milestone that does not hold has no date.
@@ -740,7 +742,11 @@ its own pull request.
   before Loom added them), or one the new section would make longer than a
   pull request takes, is left alone, and Loom says so once on the ticket; the
   Rollout tab stays the source of truth.
-- You merge the pull request, and Loom completes the ticket.
+- You merge the pull request, and Loom completes the ticket. On a repo whose
+  forge sets `auto_merge`, Loom merges it once it is ready (see
+  [Merging ready pull requests](#merging-ready-pull-requests)), and with
+  `reviewers` it asks people to review each one it opens (see
+  [Asking for reviews](#asking-for-reviews)).
 - An open pull request can fall behind its base while it waits for a person,
   and some CI systems fail every pipeline once a branch is far enough behind.
   See [Keeping pull requests fresh](#keeping-pull-requests-fresh).
@@ -754,6 +760,114 @@ its own pull request.
   the earlier worker's thread. `merge.release_workers = false` keeps every
   worker until its pull request merges; a spec version approved later may
   change it either way.
+
+### Merging ready pull requests
+
+Loom merges nothing by itself unless a repo's forge says how, with
+`auto_merge`. It is off by default; approving a spec version that sets it is
+your consent for that repo. Merging is not deploying: `[rollout]` stays advice
+about deploys.
+
+```toml
+[merge.forge]                 # or [repo.forge] for one repo of a multi-repo project
+kind = "gh"
+auto_merge = { method = "squash" }
+```
+
+- `method` is how the repo merges. With `gh`: `"squash"`, `"merge"` or
+  `"rebase"` run `gh pr merge` with that method; `"queue"` runs
+  `gh pr merge --auto`, which adds the pull request to the repo's merge queue;
+  `"comment"` posts `comment` on the pull request, for a merge bot that merges
+  on a command such as `/merge`. With `kind = "command"`, `"command"` runs the
+  forge's `merge` command. Every gh merge names the commit Loom pushed
+  (`--match-head-commit`), so a branch that changed is never merged.
+- Loom asks only when the pull request is ready by the Merge order tab's own
+  verdict: nothing it waits on is still open (its `depends_on` and
+  `merge_after` tickets, and the pull request it is stacked on, which must
+  have merged and Loom must have moved it to its base), not a draft, no
+  conflict with its base, every check it reads passed and the forge says it is
+  approved, and its branch has no commits Loom did not push and review. Loom's reviewers approve inside Loom only, so approved means a
+  person approved it on the forge; `approval = "loom"` makes Loom's own
+  approval enough, as long as the forge does not ask for changes. Checks that
+  `ignore_checks` names do not count, as everywhere else; the forge's own rules
+  still apply, so a required check you told Loom to ignore makes the forge turn
+  the merge down. The project must be running and the ticket not blocked, no
+  `[[rollout.window]]` may be on, and with `require_live = true` everything the
+  ticket's `rollout.requires_live` names, and every milestone that gates its
+  stage, must be live; as on the Rollout tab, a cancelled ticket or a name the
+  spec no longer has holds nothing back. A held draft stays a draft, so it is
+  never merged. Loom judges all of this again right before it sends the
+  merge, so pausing the project, turning auto-merge off or a new push stops
+  one that was about to go.
+- Each ask is an attempt, recorded on the ticket before Loom calls the forge
+  and posted, so a comment or a command is never sent twice for one attempt,
+  also after a restart or a lost answer. While it is in flight Loom reads the
+  outcome from the pull request: merged completes the ticket as before; for
+  `"queue"`, GitHub's own record of why it took the pull request out of the
+  queue, newer than the removal it saw before the attempt and never while the
+  pull request is in the queue; for `"comment"` and `"command"`, a comment that
+  matches one of the `rejected` globs and is new since the attempt (by the
+  comment's own id, so editing an old comment does not count) and was made
+  after it. A rejection the worker can address, such as a conflict
+  found at merge time or the queue's checks failing, goes back to the worker
+  as a fix round with the forge's words, and counts against `max_fix_rounds`
+  like other feedback. A refusal it cannot fix, and a rejection on the last of
+  `max_attempts` (3 by default), blocks the ticket with the reason. A person
+  who takes the pull request out of the merge queue turns auto-merge off for
+  that ticket. With gh's `"squash"`, `"merge"`, `"rebase"` and `"queue"`, which
+  never merge twice, a temporary failure is tried again at the next read and
+  uses no attempt. A comment or a command might have gone out whatever the
+  answer, so after a temporary failure, a timeout or a lost answer its attempt
+  stays open and is never sent again: a later read settles it, or you clear it
+  with `retry` once you have checked. The ticket says so once per attempt, also
+  for one a restart left without its answer, and an answer that comes back
+  after you cleared its attempt is posted and changes nothing. An attempt made
+  before a requeue or `on` does not count against the fresh budget.
+- A merge command gets `LOOM_URL`, `LOOM_PR_NUMBER`, `LOOM_HEAD`,
+  `LOOM_BASE`, `LOOM_SHA` (the commit Loom pushed) and `LOOM_ATTEMPT`. Exit 0
+  means the merge happened or the server took it; exit 3 means the server
+  turned it away in a way the worker can fix, and exit 4 in a way it cannot,
+  with the reason in the output; any other failure is read like other forge
+  commands' failures. See the spec reference for the details.
+- `bb loom auto-merge <slug> off` stops Loom's merging for the project, and
+  `--ticket CSV-1` for one ticket; `on` turns it back on, and for a ticket
+  counts its attempts afresh. `bb loom auto-merge <slug> retry --ticket CSV-1`
+  clears an attempt in flight whose outcome Loom cannot see, so it asks again.
+
+### Asking for reviews
+
+A forge's `reviewers` lists who Loom asks to review each pull request it
+opens: a sample of a team, or of fixed logins.
+
+```toml
+[[merge.forge.reviewers]]
+team = "acme/platform"        # with gh, an organization and a team slug
+count = 2
+```
+
+- Loom asks once per pull request, at its first read that says it is not a
+  draft: right after it opens ready, or once a held draft is marked ready. A
+  read that does not say waits, so a command forge needs a `feedback` command
+  that prints `draft`.
+- The pick is random but stable: members are ordered by a hash of the pull
+  request's URL and their login, so a retry or a restart picks the same
+  people. The author and bots are never picked and never count, and members
+  already asked or reviewing count toward `count`. `users = ["alice", "bob"]`
+  picks from fixed logins, all of them when `count` is unset. A forge's rules
+  may ask at most 20 people for one pull request.
+- With `gh` Loom lists the team with `gh api` and asks with the same call as
+  its re-requests. A command forge needs `request_reviews`, which gets the
+  logins comma-separated in `LOOM_REVIEWERS`, and for a team rule
+  `team_members`, which gets `LOOM_TEAM` and prints one login per line, in the
+  login form that server's `request_reviews` takes. Loom records the request
+  before it sends it. A `request_reviews` command that exits non-zero must
+  have asked no one, and Loom tries again at the next read, three times in
+  all; one that runs out of time, is stopped after it started, or whose
+  answer is lost, may have asked them, so Loom never runs it again for that pull request and says so on the
+  ticket. gh reads who is already asked first, so it is tried again the same
+  way after any failure.
+- A post on the ticket says who was asked, by which rule, who was skipped,
+  and anyone the forge refused.
 
 ### Keeping pull requests fresh
 
@@ -1171,6 +1285,7 @@ bb loom sync <slug> [--ticket CSV-1]         # pull request strategy: read the o
 bb loom forge check <slug> CSV-1 [--version N]  # read a live pull request through the repo's forge, as a poll would
 bb loom rollout <slug>                       # the deploy order: next safe step, warnings, stages, milestones
 bb loom live <slug> CSV-1 [--note t] [--undo]  # mark a rollout step or milestone live, or take the mark back
+bb loom auto-merge <slug> off|on|retry [--ticket CSV-1]  # stop or resume Loom's merging; retry clears a ticket's attempt
 bb loom archive <slug>
 ```
 

@@ -60,6 +60,15 @@ export const PR_BATCH_MAX = 10;
 export const BEHIND_MAX = 50;
 
 const prState = z.enum(["OPEN", "MERGED", "CLOSED"]);
+// GitHub logins, and the e-mail-like logins some other forges use; never an option or a word break.
+const forgeLogin = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.@+-]{0,199}$/u, "must be a forge login");
+const mergeQueue = z
+  .object({
+    queued: z.boolean(),
+    auto: z.boolean(),
+    removed: z.object({ at: z.number().int(), reason: z.string() }).strict().nullable(),
+  })
+  .strict();
 const prUrl = z.string().regex(/^https?:\/\/\S+$/, "must be a pull request URL").max(500);
 export const REVIEW_DECISIONS = ["APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED"] as const;
 const reviewDecision = z.enum(REVIEW_DECISIONS);
@@ -114,6 +123,9 @@ const feedbackOk = z
           state: z.string().nullable(),
           path: z.string().nullable(),
           line: z.number().int().nullable(),
+          /** What names it across edits, unlike `key`, and when it was made: a comment's id and creation time. Optional, as from an older host or a forge that does not say. */
+          stableId: z.string().nullable().optional(),
+          createdAt: z.number().int().nullable().optional(),
         })
         .strict(),
     ),
@@ -481,19 +493,60 @@ export const hostContract = defineRpcContract({
     output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), state: prState }).strict(), unavailable]),
   },
   // Asks each login for a review of the pull request, again for one who already reviewed it: one REST call each through gh,
-  // so one who cannot be asked, such as a person without access to the repository, does not stop the others.
+  // so one who cannot be asked, such as a person without access to the repository, does not stop the others. A command
+  // forge's request_reviews command gets them all at once, comma-separated in LOOM_REVIEWERS.
   prRequestReview: {
     input: z
       .object({
         repo: absPath,
         url: z.string().regex(/^https?:\/\/\S+$/, "must be a pull request URL").max(500),
-        reviewers: z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/, "must be a forge login")).min(1).max(20),
+        reviewers: z.array(forgeLogin).min(1).max(20),
+        forge: z.discriminatedUnion("kind", [z.object({ kind: z.literal("gh") }).strict(), z.object({ kind: z.literal("command"), request_reviews: forgeCommand }).strict()]).optional(),
       })
       .strict(),
+    // `unknown`: a request_reviews command that ran out of time, which may have asked them; Loom does not run it again.
     output: z.discriminatedUnion("outcome", [
       z.object({ outcome: z.literal("ok"), requested: z.array(z.string()), failed: z.array(z.object({ login: z.string(), message: z.string() }).strict()) }).strict(),
+      z.object({ outcome: z.literal("unknown"), message: z.string() }).strict(),
       unavailable,
     ]),
+  },
+  // Who opened a GitHub pull request, who is asked to review it and who reviewed it: gh pr view --json author,reviewRequests,reviews.
+  prReviewState: {
+    input: z.object({ repo: absPath, url: prUrl }).strict(),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), author: z.string().nullable(), requested: z.array(z.string()), reviewed: z.array(z.string()) }).strict(), unavailable]),
+  },
+  // A team's members: through gh, the organization team `team` (org/slug) on `host`; or the spec's team_members command,
+  // which gets LOOM_TEAM and prints one login per line.
+  teamMembers: {
+    input: z
+      .object({
+        repo: absPath,
+        team: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.@/-]{0,199}$/u, "must be a team name"),
+        forge: z.discriminatedUnion("kind", [z.object({ kind: z.literal("gh"), host: ghHost }).strict(), z.object({ kind: z.literal("command"), team_members: forgeCommand }).strict()]),
+      })
+      .strict(),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok"), members: z.array(z.object({ login: z.string(), bot: z.boolean() }).strict()) }).strict(), unavailable]),
+  },
+  // Merges a ready pull request, or hands it to the forge's merge: gh pr merge with the method and --match-head-commit, gh
+  // pr merge --auto for a merge queue, a gh comment for a merge service, or the spec's merge command. `rejected` is the
+  // forge refusing this pull request in a way Loom reports: `fix` when the worker can address it, such as a conflict.
+  prMerge: {
+    input: z
+      .object({
+        repo: absPath,
+        url: prUrl,
+        sha: commit,
+        head: ref,
+        base: ref,
+        attempt: z.number().int().min(1).max(10),
+        forge: z.discriminatedUnion("kind", [
+          z.object({ kind: z.literal("gh"), method: z.enum(["squash", "merge", "rebase", "queue", "comment"]), comment: z.string().min(1).max(500).optional() }).strict(),
+          z.object({ kind: z.literal("command"), merge: forgeCommand }).strict(),
+        ]),
+      })
+      .strict(),
+    output: z.discriminatedUnion("outcome", [z.object({ outcome: z.literal("ok") }).strict(), z.object({ outcome: z.literal("rejected"), fix: z.boolean(), message: z.string() }).strict(), unavailable]),
   },
   // A pull request's feedback (feedbackOk) through gh, or the spec's feedback command, which prints the same object as JSON on its last line.
   prFeedback: {
@@ -517,6 +570,8 @@ export const hostContract = defineRpcContract({
         name: ghName,
         numbers: z.array(z.number().int().min(1).max(2_147_483_647)).min(1).max(PR_BATCH_MAX),
         feedback: z.boolean(),
+        /** Also read each one's place in a merge queue; optional so a caller from before it still sends what it always did. */
+        queue: z.boolean().optional(),
       })
       .strict(),
     output: z.discriminatedUnion("outcome", [
@@ -539,6 +594,8 @@ export const hostContract = defineRpcContract({
                 mergeable: z.boolean().nullable().optional(),
                 /** What prFeedback answers for it; null when `feedback` was not asked for. */
                 feedback: feedbackOk.nullable(),
+                /** With `queue`: whether it is in the merge queue or set to merge itself, and when and why the queue last removed it. */
+                queue: mergeQueue.nullable().optional(),
               })
               .strict(),
           ),

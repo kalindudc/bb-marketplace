@@ -116,3 +116,25 @@ export function freshBaseOf(spec: Spec, name: string | null): string {
   const settings = repoSettings(spec, name);
   return settings.branch ?? `${settings.remote}/${settings.base}`;
 }
+
+/** How Loom merges a repo's ready pull requests itself, with the spec's unset keys filled in; null when the repo's forge does not opt in. */
+export interface AutoMergeSettings {
+  method: NonNullable<ForgeSpec["auto_merge"]>["method"];
+  comment: string | null;
+  rejected: string[];
+  /** "forge": the forge's review decision must be approved; "loom": Loom's own reviewers' approval is enough, unless the forge asks for changes. */
+  approval: "forge" | "loom";
+  requireLive: boolean;
+  maxAttempts: number;
+}
+
+export const AUTO_MERGE_ATTEMPTS = 3;
+
+export function autoMergeOf(forge: ForgeSpec): AutoMergeSettings | null {
+  const auto = forge.auto_merge;
+  if (auto === undefined || forge.kind === "none") return null;
+  return { method: auto.method, comment: auto.comment ?? null, rejected: [...(auto.rejected ?? [])], approval: auto.approval ?? "forge", requireLive: auto.require_live ?? false, maxAttempts: auto.max_attempts ?? AUTO_MERGE_ATTEMPTS };
+}
+
+/** The methods that may run again after a failure Loom cannot read: gh merges or queues a pull request at most once, while a comment or a command could be posted twice. */
+export const repeatableMerge = (method: AutoMergeSettings["method"]) => method !== "comment" && method !== "command";

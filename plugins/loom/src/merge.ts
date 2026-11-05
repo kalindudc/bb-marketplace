@@ -39,7 +39,9 @@ import { githubPull, prNumber, PR_BATCH_MAX, type HostInput, type HostOutput as 
 import type { EnvironmentInfo } from "./ports";
 import { readMeta, type PrMeta } from "./pr-meta";
 import { LoomError } from "./projects";
-import { followsFeedback, freshBaseOf, gitNetwork, isMultiRepo, prSettings, repoSettings, type RepoSettings } from "./repos";
+import { autoMergeOf, followsFeedback, freshBaseOf, gitNetwork, isMultiRepo, prSettings, repoSettings, type RepoSettings } from "./repos";
+import { followAutoMerge, type MergeRead } from "./auto-merge";
+import { requestReviewers } from "./review-requests";
 import { forgetClosedReads, noteAnswer, readGoesOut } from "./pr-sync";
 import { recordingHost } from "./runs";
 import { refreshDue, refreshedMeta, refreshedText, type Refresh } from "./fresh";
@@ -1308,7 +1310,7 @@ type Feedback = Extract<HostOutputOf<"prFeedback">, { outcome: "ok" }>;
  * request), and its feedback when Loom follows it; or why it failed, with `transient` for a forge failure worth waiting out.
  */
 type PrRead =
-  | { outcome: "ok"; state: "OPEN" | "MERGED" | "CLOSED"; meta: Pick<PrMeta, "draft" | "review" | "base" | "mergeable"> | null; feedback: Feedback | null; text?: PrTextRead }
+  | { outcome: "ok"; state: "OPEN" | "MERGED" | "CLOSED"; meta: Pick<PrMeta, "draft" | "review" | "base" | "mergeable"> | null; feedback: Feedback | null; text?: PrTextRead; queue?: MergeRead["queue"] }
   | { outcome: "unavailable"; message: string; transient?: "server" | "rate_limit" | "network"; retryAfterMs?: number };
 
 /** The title and description a read gave; null when it gave neither, as a state command or a host from before Loom read them. */
@@ -1323,6 +1325,8 @@ interface Batch {
   owner: string;
   name: string;
   tickets: Array<{ id: number; number: number }>;
+  /** Read each one's merge queue state too: the repo merges through GitHub's merge queue (auto_merge.method = "queue"). */
+  queue: boolean;
 }
 
 /**
@@ -1394,8 +1398,9 @@ async function readDue(ctx: EngineCtx, project: ProjectRow, spec: Spec, due: Tic
         continue;
       }
       const key = `${host}/${pull.owner}/${pull.name}`;
-      const batch = batches.get(key) ?? batches.set(key, { checkout, host: pull.host, forgeHost: host!, owner: pull.owner, name: pull.name, tickets: [] }).get(key)!;
+      const batch = batches.get(key) ?? batches.set(key, { checkout, host: pull.host, forgeHost: host!, owner: pull.owner, name: pull.name, tickets: [], queue: false }).get(key)!;
       batch.tickets.push({ id: ticket.id, number: pull.number });
+      batch.queue ||= autoMergeOf(forge)?.method === "queue";
       continue;
     }
     markRead(ctx, ticket.id);
@@ -1528,7 +1533,7 @@ async function readBatch(ctx: EngineCtx, project: ProjectRow, spec: Spec, batch:
   const { checkout, host, owner, name } = batch;
   let answer: HostOutputOf<"prBatch">;
   try {
-    answer = await ctx.host.call(checkout.hostId, "prBatch", { repo: checkout.path, host, owner, name, numbers: [...new Set(polled.map((each) => each.number))], feedback: follows });
+    answer = await ctx.host.call(checkout.hostId, "prBatch", { repo: checkout.path, host, owner, name, numbers: [...new Set(polled.map((each) => each.number))], feedback: follows, ...(batch.queue ? { queue: true } : {}) });
   } catch (error) {
     const what = polled.length === 1 ? `the pull request of ${polled[0]!.ticket.key}` : `the pull requests of ${andList(polled.map(({ ticket }) => ticket.key))}`;
     const message = `Reading ${what} stopped: ${errText(error)}`;
@@ -1559,7 +1564,7 @@ async function readBatch(ctx: EngineCtx, project: ProjectRow, spec: Spec, batch:
     const read: PrRead =
       pull === undefined
         ? missedRead(ticket, missOf(number))
-        : { outcome: "ok", state: pull.state, meta: { draft: pull.draft, review: pull.review, base: pull.base, mergeable: pull.mergeable ?? null }, feedback: pull.feedback, text: textRead(pull) };
+        : { outcome: "ok", state: pull.state, meta: { draft: pull.draft, review: pull.review, base: pull.base, mergeable: pull.mergeable ?? null }, feedback: pull.feedback, text: textRead(pull), ...(pull.queue === undefined ? {} : { queue: pull.queue }) };
     await settleRead(ctx, project, repoSettings(spec, ticket.repo), ticket, read, batch.forgeHost);
   }
   // However many pull requests of the one answer GitHub rate-limited, it is one limit: one backoff, one post, the longest wait it named.
@@ -1614,8 +1619,11 @@ async function settleRead(ctx: EngineCtx, project: ProjectRow, settings: RepoSet
   } else if (read.state === "CLOSED") {
     await settleClosed(ctx, project, settings, current, base);
   } else {
-    if (read.feedback !== null) await followFeedback(ctx, store.project(project.id)!, current, read.feedback);
+    const reviewed = (read.feedback?.items ?? []).filter((item) => item.kind === "review").map((item) => item.author);
+    await requestReviewers(ctx, project, current.id, { draft: read.meta?.draft ?? null, author: read.feedback?.author || null, reviewed });
+    if (read.feedback !== null) await followFeedback(ctx, store.project(project.id)!, store.ticket(current.id)!, read.feedback);
     await syncPrText(ctx, store.project(project.id)!, current.id, read.text ?? null);
+    await followAutoMerge(ctx, project, current.id, { head: read.feedback?.head ?? null, items: read.feedback?.items ?? null, ...(read.queue === undefined ? {} : { queue: read.queue }) });
   }
 }
 

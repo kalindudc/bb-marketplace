@@ -62,6 +62,32 @@ export function feedText(event: EventRow, keys: Map<number, string>, { you = fal
       if (data.moved !== true) return `Loom ran the after_push commands for ${push}.`;
       return data.pushed === false ? `Loom ran the after_push commands for the move of ${data.url} to ${data.base}.` : `Loom ran the after_push commands for ${push} and its move to ${data.base}.`;
     }
+    case "ticket.merge_attempt":
+      return `Loom asked the forge to merge ${key}'s pull request (attempt ${data.n}, ${data.method}).`;
+    case "ticket.merge_outcome": {
+      const outcomes: Record<string, string> = { rejected: "was turned away", refused: "was refused", failed: "failed with a temporary error", stopped: "stopped: a person took it out of the merge queue", unconfirmed: "did not show up, so Loom asks again", superseded: "was replaced by a newer push", cleared: "was cleared by the human" };
+      return `The merge of ${key}'s pull request (attempt ${data.n}) ${outcomes[String(data.outcome)] ?? String(data.outcome)}.`;
+    }
+    case "ticket.merge_answered":
+      return data.restart === true ? `Loom cannot tell whether its merge of ${key}'s pull request went out before a restart, and does not send it again.` : data.unknown === true ? `Loom cannot tell whether its merge of ${key}'s pull request went out, and does not send it again.` : `The forge took Loom's merge of ${key}'s pull request.`;
+    case "ticket.merge_held":
+      return `${key}'s pull request is ready, and Loom waits to merge it: ${Array.isArray(data.holds) ? data.holds.join("; ") : "a hold"}.`;
+    case "ticket.auto_merge":
+    case "project.auto_merge": {
+      const what = event.kind === "project.auto_merge" ? "the project's pull requests" : `${key}'s pull request`;
+      const who = event.actor === "human" ? human : "Loom";
+      return data.on === true ? `${who} turned Loom's merging back on for ${what}.` : `${who} turned Loom's merging off for ${what}.`;
+    }
+    case "ticket.reviewers_requested": {
+      const asked = Array.isArray(data.requested) ? (data.requested as unknown[]).map(String) : [];
+      const unknown = Array.isArray(data.unknown) ? (data.unknown as unknown[]).map(String) : [];
+      if (unknown.length > 0) return `Loom cannot tell whether ${unknown.join(", ")} were asked to review ${key}'s pull request, and does not ask again.`;
+      return asked.length === 0 ? `Loom asked no one new to review ${key}'s pull request.` : `Loom asked ${asked.join(", ")} to review ${key}'s pull request.`;
+    }
+    case "ticket.reviewers_asking":
+      return `Loom is asking ${Array.isArray(data.reviewers) ? (data.reviewers as unknown[]).map(String).join(", ") : "people"} to review ${key}'s pull request.`;
+    case "ticket.reviewers_failed":
+      return `Asking for reviews of ${key}'s pull request failed: ${String(data.message)}.`;
     case "turn.retry":
       return `${key}'s worker hit a rate limit; retry ${data.attempt} is scheduled.`;
     case "human.action": {

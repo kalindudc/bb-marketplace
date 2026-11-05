@@ -44,6 +44,11 @@ function everything(doc: Doc): void {
       after_open: ["ci-cli run"],
       after_push: ['ci-cli run --sha "$LOOM_SHA"', "pr-cli ready"],
       ignore_checks: ["Review Bot*", "* (advisory)"],
+      merge: 'pr-cli comment "$LOOM_PR_NUMBER" --body /merge',
+      request_reviews: 'pr-cli edit "$LOOM_PR_NUMBER" --add-reviewer "$LOOM_REVIEWERS"',
+      team_members: 'people-cli members "$LOOM_TEAM"',
+      auto_merge: { method: "command", rejected: ["Merge failed*"], approval: "loom", require_live: true, max_attempts: 2 },
+      reviewers: [{ team: "platform", count: 2 }, { users: ["alice", "bob"], count: 1 }],
     },
   };
   doc.project = { ...doc.project, done_when: ["Orders export as CSV"], non_goals: ["Excel files"] };
@@ -65,7 +70,13 @@ function everything(doc: Doc): void {
       checks: ["npm run web-test"],
       ci: false,
       protected: ["web.lock"],
-      forge: { kind: "gh", after_push: ["ci-cli rerun"], ignore_checks: ["Lint*"] },
+      forge: {
+        kind: "gh",
+        after_push: ["ci-cli rerun"],
+        ignore_checks: ["Lint*"],
+        auto_merge: { method: "comment", comment: "/merge", rejected: ["❌*"], approval: "forge", require_live: false, max_attempts: 4 },
+        reviewers: [{ team: "acme/web", count: 1 }, { users: ["carol"] }],
+      },
       environment: { provider: "git-worktree", inputs: { sparse: "web" } },
       deploy: { on_merge: true, how: "The actuator applies on merge" },
       refresh_behind: 100,
@@ -77,7 +88,23 @@ function everything(doc: Doc): void {
       base: "trunk",
       remote: "upstream",
       ci: true,
-      forge: { kind: "command", open: "api-pr open", state: "api-pr state", feedback: "api-pr feedback", edit: "api-pr edit", reply: "api-pr reply", retarget: "api-pr retarget", after_open: ["api-ci run"], after_push: ["api-ci again"], ignore_checks: ["Bot*"] },
+      forge: {
+        kind: "command",
+        open: "api-pr open",
+        state: "api-pr state",
+        feedback: "api-pr feedback",
+        edit: "api-pr edit",
+        reply: "api-pr reply",
+        retarget: "api-pr retarget",
+        after_open: ["api-ci run"],
+        after_push: ["api-ci again"],
+        ignore_checks: ["Bot*"],
+        merge: "api-pr merge",
+        request_reviews: "api-pr ask",
+        team_members: "api-people",
+        auto_merge: { method: "command" },
+        reviewers: [{ team: "api-team", count: 1 }],
+      },
       environment: { provider: "example-world", inputs: { zone: "west" }, machine: { provider: "example-world", inputs: { pool: "big" } }, reviewer: { provider: "light-trees", inputs: { zone: "east" }, machine: { provider: "small-machines", inputs: { pool: "small" } } } },
       deploy: { how: "The deploy tool ships trunk" },
       refresh_behind: 20,
@@ -132,9 +159,15 @@ const full = (): Spec => {
   const spec = valid(specToml(everything));
   return { ...spec, project: { ...spec.project, open_questions: ["Which columns come first?"] } };
 };
+/** `everything` whose project-wide forge is gh, merging through a merge service's comment: the keys only a gh forge takes. */
+function mergingEverything(doc: Doc): void {
+  everything(doc);
+  doc.merge.forge = { kind: "gh", auto_merge: { method: "comment", comment: "/merge please", rejected: ["Merge failed*"], max_attempts: 2 }, reviewers: [{ team: "acme/platform", count: 2 }] };
+}
 const FIXTURES = [
   ["a pull request", full],
   ["an integration", () => valid(specToml(integrationEverything))],
+  ["a merging", () => valid(specToml(mergingEverything))],
 ] as const;
 
 /**
@@ -291,7 +324,7 @@ describe("spec settings", () => {
     const changes = specDiff(skeleton(spec), spec).filter((change) => change.kind !== "list" || change.steps.length > 0);
     // The fixture really sets the settings added since Loom 0.24, so the walk below covers them.
     const paths = changes.map((change) => change.path);
-    const expected = strategy === "an integration" ? ["merge.branch", "merge.worktree.plugin", "checks.after_merge", "repo[0].after_merge", "repo[0].worktree.command"] : ["merge.forge.retarget", "merge.forge.after_push", "merge.refresh_behind", "merge.git_network_timeout_seconds", "checks.ci", "environment.reviewer.machine.inputs.size", "repo[1].forge.after_push", "repo[0].deploy.on_merge", "repo[1].git_network_timeout_seconds", "rollout.stage[0].soak", "rollout.milestone[0].check", "rollout.window[0].note", "ticket[csv-export].rollout.requires_live", "ticket[csv-export].environment.inputs.sparse"];
+    const expected = strategy === "a merging" ? ["merge.forge.auto_merge.method", "merge.forge.auto_merge.comment", "merge.forge.auto_merge.rejected", "merge.forge.reviewers[0].team", "repo[0].forge.auto_merge.comment", "repo[1].forge.merge"] : strategy === "an integration" ? ["merge.branch", "merge.worktree.plugin", "checks.after_merge", "repo[0].after_merge", "repo[0].worktree.command"] : ["merge.forge.retarget", "merge.forge.merge", "merge.forge.auto_merge.require_live", "merge.forge.reviewers[1].users", "repo[0].forge.auto_merge.max_attempts", "repo[1].forge.reviewers[0].count", "merge.forge.after_push", "merge.refresh_behind", "merge.git_network_timeout_seconds", "checks.ci", "environment.reviewer.machine.inputs.size", "repo[1].forge.after_push", "repo[0].deploy.on_merge", "repo[1].git_network_timeout_seconds", "rollout.stage[0].soak", "rollout.milestone[0].check", "rollout.window[0].note", "ticket[csv-export].rollout.requires_live", "ticket[csv-export].environment.inputs.sparse"];
     for (const path of expected) {
       expect(paths).toContain(path);
     }

@@ -6,7 +6,7 @@ import type { Store } from "./db/store";
 import { environmentFor, inputsProblems, usesNewMachine } from "./environments";
 import type { HostOutput } from "./host-contract";
 import type { BbPort, EnvironmentProviderInfo, HostPort, MachineProviderInfo, PluginInfo } from "./ports";
-import { isMultiRepo, repoSettings, type RepoSettings } from "./repos";
+import { autoMergeOf, isMultiRepo, repoSettings, type RepoSettings } from "./repos";
 import type { EnvironmentSpec, MachineSpec, Spec } from "./spec";
 
 const PAST_PICKS = 3;
@@ -165,6 +165,15 @@ const environmentFix = (facts: RepoTarget, providers: readonly EnvironmentProvid
 const worktreeFix = (facts: RepoTarget) =>
   `Use merge.strategy = "pr", or set ${pathOf(facts, "worktree")} to a command, or a plugin's CLI command (plugin = "<id>"), that prepares a checkout of the repository and prints its path last.`;
 
+/** Merging stays the human's unless the spec opts in, so this is a fact to report, not a choice to ask about. */
+function mergingLine(facts: RepoFacts): string {
+  const forge = facts.settings?.forge;
+  const auto = forge === undefined ? null : autoMergeOf(forge);
+  const now = auto === null ? "off: people merge its pull requests" : `on, with method = "${auto.method}"`;
+  const reviewers = forge?.reviewers === undefined ? "" : `; ${forge.reviewers.length === 1 ? "1 reviewers rule" : `${forge.reviewers.length} reviewers rules`} ask people to review each pull request`;
+  return `- Merging: found: ${now}${reviewers}. Set ${pathOf(facts, "forge")}.auto_merge only when the human asks Loom to merge ready pull requests itself (gh: squash, merge, rebase, queue for a merge queue, or comment for a merge bot; a command forge: its merge command), and ${pathOf(facts, "forge")}.reviewers when they want people asked to review each one.`;
+}
+
 // ---------------------------------------------------------------- loom_discover
 
 /** The planner's report: per repo, every choice ends in "found" or "ask". */
@@ -187,6 +196,7 @@ function repoText(facts: RepoFacts): string {
     const problem = ghProblem(entry.gh, entry.pushUrls[0]!);
     lines.push(problem === null ? `- Forge for ${entry.name}: found: gh can open pull requests on ${entry.gh.host}.` : `- Forge for ${entry.name}: ask: ${problem}. ${forgeFix(facts, entry.gh.host)}`);
   }
+  lines.push(mergingLine(facts));
 
   const own = facts.providers.filter((provider) => provider.builtin).map((provider) => provider.id);
   const plugins = pluginProviders(facts);

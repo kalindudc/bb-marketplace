@@ -1,6 +1,7 @@
 import { PluginCliError, cliCommand, defineCli, type PluginCliRegistration, type PluginCliResult } from "@get-bb/plugin-sdk";
 import type { Store } from "./db/store";
 import type { Approved, Engine } from "./engine";
+import { setAutoMerge } from "./auto-merge";
 import { forgeCheck, formatForgeCheck } from "./forge-check";
 import { formatDuration, isMultiRepoProject, its, noTokenUsage, plural, readyToLand, reposHave } from "./format";
 import type { ProjectMetrics } from "./metrics";
@@ -416,6 +417,25 @@ export function createCli(projects: Projects, engine: Engine, store: Store, now:
             const data = { slug, ...which, ...(options.note === undefined ? {} : { note: options.note }) };
             const mark = await humanAction(deps, ctx, undo ? "unlive" : "live", data, () => engine.markLive(slug, target, { note: options.note, undo }, HUMAN_ACTOR));
             return out(options.json ? toJson(mark) : undo ? `${target} is no longer marked live.\n` : `${target} is live.\n`);
+          }),
+      }),
+      "auto-merge": cliCommand({
+        summary:
+          "Turn Loom's merging of ready pull requests off or on again, for a project or one ticket with --ticket, on repos whose forge sets auto_merge; retry clears a ticket's merge attempt in flight so Loom asks again. On for a ticket counts its attempts afresh (human only)",
+        positionals: [SLUG, { name: "action", description: "off, on or retry.", required: true }],
+        options: { ticket: { type: "string", description: "Only this ticket, such as CSV-1; retry needs it." }, json },
+        run: ({ options, positionals }, ctx) =>
+          guarded(async () => {
+            const { slug, action } = positionals;
+            if (action !== "on" && action !== "off" && action !== "retry") throw new LoomError("loom_invalid_input", `"${action}" is not an auto-merge action.`, "Use off, on or retry.");
+            const project = projects.require(slug);
+            const ticket = options.ticket === undefined ? null : store.ticketByKey(options.ticket);
+            if (options.ticket !== undefined && ticket?.project_id !== project.id) throw new LoomError("loom_not_found", `${slug} has no ticket ${options.ticket}.`);
+            if (action === "retry" && ticket === null) throw new LoomError("loom_invalid_input", "retry clears one ticket's merge attempt, so it needs --ticket.");
+            const data = { slug, action, ...(ticket === null ? {} : { key: ticket.key }) };
+            const said = await humanAction(deps, ctx, `auto-merge ${action}`, data, () => setAutoMerge(store, project, action, ticket));
+            if (action !== "off") engine.kick();
+            return out(options.json ? toJson({ slug, action, ticket: ticket?.key ?? null, message: said }) : `${said}\n`);
           }),
       }),
       sync: cliCommand({

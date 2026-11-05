@@ -1,7 +1,7 @@
 // The pull request stage on the pr strategy. After approval the worker writes the pull request (loom_pr), or Loom's
 // template stands in. While it is open, Loom follows its checks and reviews through the forge and sends what needs a fix
 // back to the worker as a fix round, which goes through the checks and a review again before Loom pushes one more
-// commit. Merging stays the human's.
+// commit. Merging stays the human's, unless the repo's forge sets auto_merge (auto-merge.ts).
 import { checkWaitOf, durationsKey, holdOf, median, queuedSince, USUAL_RUNS, type CheckWait, type Skipped } from "./check-wait";
 import { delivers, workerOf } from "./checks";
 import { repoCheckout, type RepoCheckout } from "./checkouts";
@@ -726,6 +726,42 @@ export async function humanFixRound(ctx: EngineCtx, ticket: TicketRow, reply: Po
   if (ticket.state !== "pr_open" || !delivers(ctx, ticket.project_id)) return false;
   const item: FeedbackItem = { kind: "reply", author: `the ${from}`, body: reply.body, url: null, state: null, path: null, line: null };
   return startFixRound(ctx, ticket, { checks: [], items: [item], seen: [], ignored: { bots: 0, own: 0 }, skipped: [], foreign: null, human: true, replyId: reply.id });
+}
+
+/**
+ * A merge Loom asked the forge for was turned away in a way the worker can address, such as a conflict found at merge time
+ * or a merge queue's failed checks: a fix round with what the forge said, counted like the pull request's own feedback.
+ */
+export async function mergeFixRound(ctx: EngineCtx, ticket: TicketRow, item: FeedbackItem, seen: readonly string[] = []): Promise<boolean> {
+  if (!delivers(ctx, ticket.project_id)) return false;
+  return startFixRound(ctx, ticket, { checks: [], items: [item], seen: [...seen], ignored: { bots: 0, own: 0 }, skipped: [], foreign: null, human: false });
+}
+
+/**
+ * Blocks a ticket whose pull request is open, with `reason` and Loom's post saying why, the way a fix round over the limit
+ * does: a worker that is there ends first and carries the move. The pull request stays open, so a requeue with --review
+ * brings the ticket back to it. False when the ticket moved on meanwhile.
+ */
+export async function blockOpenPr(ctx: EngineCtx, seen: TicketRow, reason: string, said: { body: string; data: object }): Promise<boolean> {
+  const { store } = ctx;
+  const result = store.tx((): { kind: "blocking"; worker: ThreadRow } | { kind: "blocked" } | null => {
+    const ticket = store.ticket(seen.id);
+    if (ticket?.state !== "pr_open") return null;
+    const worker = workerOf(store, ticket);
+    if (worker.standing === "ending") return null;
+    if (worker.standing === "active" && !store.claimThread(worker.row.id, "blocked")) return null;
+    store.updateTicket(ticket.id, { blocked_reason: reason });
+    post(ctx, ticket, said);
+    store.addPost({ project_id: ticket.project_id, ticket_id: ticket.id, parent_id: null, author_kind: "loom", author_thread_id: null, kind: "block", body: reason, data_json: JSON.stringify({ reason, needs: "" }) });
+    if (worker.standing === "active") return { kind: "blocking", worker: store.thread(worker.row.id)! };
+    applyMove(ctx, store.ticket(ticket.id)!, { to: "blocked", patch: { ...released, blocked_reason: reason } }, LOOM_ACTOR, { reason });
+    return { kind: "blocked" };
+  });
+  if (result === null) return false;
+  store.changed(seen.project_id);
+  ctx.kick();
+  if (result.kind === "blocking") await resumeEnding(ctx, result.worker);
+  return true;
 }
 
 interface Round {

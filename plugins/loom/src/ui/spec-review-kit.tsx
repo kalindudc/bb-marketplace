@@ -170,6 +170,9 @@ const ITEM_NOUNS: Record<string, [one: string, many: string]> = {
   after_open: ["command", "commands"],
   after_push: ["command", "commands"],
   ignore_checks: ["pattern", "patterns"],
+  rejected: ["pattern", "patterns"],
+  reviewers: ["rule", "rules"],
+  users: ["login", "logins"],
   requires_live: ["prerequisite", "prerequisites"],
 };
 const humanize = (path: string) =>

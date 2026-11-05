@@ -1,7 +1,7 @@
 import { Fragment, useState, type ReactNode } from "react";
 import { GIT_NETWORK_TIMEOUT_MS } from "../git-network";
 import { HOOK_EVENT_NAMES, HOOK_EVENTS } from "../hook-events";
-import type { EnvironmentSpec, ForgeSpec, MachineSpec, RepoSpec, Spec } from "../spec";
+import type { AutoMergeSpec, EnvironmentSpec, ForgeSpec, MachineSpec, RepoSpec, Spec } from "../spec";
 import { textSteps, type TextStep } from "../spec-diff";
 import { isUnder } from "../spec-paths";
 import { BUTTON, CHIP, HEADING, RepoChip, listText, plural } from "./common";
@@ -306,12 +306,131 @@ const FORGE_COMMANDS = [
   ["edit", "Edits a pull request's text"],
   ["reply", "Replies to review comments"],
   ["retarget", "Moves a pull request to another base"],
+  ["merge", "Merges a ready pull request"],
+  ["request_reviews", "Asks people to review"],
+  ["team_members", "Lists a team's members"],
 ] as const;
+const MERGE_METHODS: Record<AutoMergeSpec["method"], string> = {
+  squash: "gh: squash and merge",
+  merge: "gh: merge commit",
+  rebase: "gh: rebase and merge",
+  queue: "gh: the merge queue",
+  comment: "gh: a comment for the merge service",
+  command: "the forge's merge command",
+};
+const APPROVALS = { forge: "the forge says approved", loom: "Loom's reviewers are enough" };
 const FORGE_HOOKS = [
   ["after_open", "After opening"],
   ["after_push", "After each push"],
 ] as const;
-const hasForgeParts = (forge: ForgeSpec | undefined) => forge !== undefined && (FORGE_COMMANDS.some(([key]) => forge[key] !== undefined) || FORGE_HOOKS.some(([key]) => (forge[key]?.length ?? 0) > 0) || (forge.ignore_checks?.length ?? 0) > 0);
+const hasForgeParts = (forge: ForgeSpec | undefined) =>
+  forge !== undefined && (FORGE_COMMANDS.some(([key]) => forge[key] !== undefined) || FORGE_HOOKS.some(([key]) => (forge[key]?.length ?? 0) > 0) || (forge.ignore_checks?.length ?? 0) > 0 || forge.auto_merge !== undefined || forge.reviewers !== undefined);
+
+/** A forge's auto_merge: how Loom merges a ready pull request, what counts as ready, and the comments that mean it was turned away. */
+function AutoMergeParts({ path, label, auto }: { path: string; label: string; auto: AutoMergeSpec | undefined }) {
+  const review = useReview();
+  const at = `${path}.auto_merge`;
+  const shown = (key: keyof AutoMergeSpec) => auto?.[key] !== undefined || changedAt(review, `${at}.${key}`);
+  const rejected = auto?.rejected ?? [];
+  return (
+    <Part label="Merges a ready pull request itself" paths={[at]}>
+      <div data-auto-merge={path} className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
+        {auto === undefined ? (
+          <Commentable as="span" target={{ paths: [at, ...review.changes.map((change) => change.path).filter((one) => one.startsWith(`${at}.`))], label: `${label} › auto merge`, kind: "text" }} className="text-muted-foreground">
+            off
+          </Commentable>
+        ) : (
+          <Commentable as="span" target={value(`${at}.method`, `${label} › auto merge › method`, "enum", auto.method, { options: Object.keys(MERGE_METHODS), names: MERGE_METHODS })} className={`${CHIP} px-2`}>
+            {MERGE_METHODS[auto.method]}
+          </Commentable>
+        )}
+        {shown("comment") && (
+          <Commentable as="span" target={value(`${at}.comment`, `${label} › auto merge › comment`, "text", auto?.comment)} className={CODE}>
+            {auto?.comment ?? "no comment"}
+          </Commentable>
+        )}
+        {auto !== undefined && (
+          <Commentable as="span" target={value(`${at}.approval`, `${label} › auto merge › approval`, "enum", auto.approval ?? "forge", { options: ["forge", "loom"], names: APPROVALS })} className="text-muted-foreground">
+            once {APPROVALS[auto.approval ?? "forge"]}
+          </Commentable>
+        )}
+        {shown("require_live") && (
+          <Commentable as="span" target={value(`${at}.require_live`, `${label} › auto merge › require live`, "bool", auto?.require_live ?? false)} className="text-muted-foreground">
+            {auto?.require_live === true ? "and what its rollout requires is live" : "whatever is live"}
+          </Commentable>
+        )}
+        {auto !== undefined && (
+          <Commentable as="span" target={value(`${at}.max_attempts`, `${label} › auto merge › max attempts`, "number", auto.max_attempts ?? 3, { min: 1, max: 10 })} className="text-muted-foreground">
+            at most {plural(auto.max_attempts ?? 3, "attempt")}
+          </Commentable>
+        )}
+      </div>
+      {shown("rejected") && (
+        <div className="flex min-w-0 flex-wrap items-center gap-1">
+          <Commentable as="span" target={value(`${at}.rejected`, `${label} › auto merge › rejected`, "text")} className="text-[11px] text-muted-foreground">
+            Turned away when a new comment matches
+          </Commentable>
+          <DiffList
+            path={`${at}.rejected`}
+            items={rejected}
+            compact={false}
+            render={(glob, mark, index) =>
+              mark === "removed" ? (
+                <span data-removed className="rounded-full bg-destructive-text/10 px-2 font-mono text-[11px] leading-5 text-destructive-text line-through">
+                  {glob}
+                </span>
+              ) : (
+                <Commentable as="span" target={value(`${at}.rejected[${index}]`, `${label} › auto merge › rejected ${index + 1}`, "text")} className={`rounded-full border px-2 font-mono text-[11px] leading-5 [overflow-wrap:anywhere] ${mark === "added" ? "border-success bg-success/15" : "border-border-seam"}`}>
+                  {glob}
+                </Commentable>
+              )
+            }
+          />
+        </div>
+      )}
+    </Part>
+  );
+}
+
+/** A forge's reviewer rules: how many people of which team or list Loom asks to review each pull request. */
+function ReviewerParts({ path, label, rules }: { path: string; label: string; rules: NonNullable<ForgeSpec["reviewers"]> | undefined }) {
+  const review = useReview();
+  const at = `${path}.reviewers`;
+  const listed = rules ?? [];
+  const gone = removedTables(review, at, listed.length);
+  return (
+    <Part label="Asks for reviews from" paths={[at]} target={value(at, `${label} › reviewers`, "text")}>
+      <ul className="space-y-0.5">
+        {listed.map((rule, index) => {
+          const one = `${at}[${index}]`;
+          return (
+            <li key={index} data-reviewer-rule={index} className="flex min-w-0 flex-wrap items-baseline gap-1.5 text-xs">
+              <Commentable as="span" target={value(`${one}.count`, `${label} › reviewers ${index + 1} › count`, "number", rule.count, { min: 1, max: 10 })} className="font-semibold tabular-nums">
+                {rule.count ?? "every one"}
+              </Commentable>
+              <span className="text-muted-foreground">of</span>
+              {(rule.team !== undefined || changedAt(review, `${one}.team`)) && (
+                <Commentable as="span" target={value(`${one}.team`, `${label} › reviewers ${index + 1} › team`, "text", rule.team)} className={CODE}>
+                  {rule.team ?? "no team"}
+                </Commentable>
+              )}
+              {(rule.users !== undefined || changedAt(review, `${one}.users`)) && (
+                <Commentable as="span" target={value(`${one}.users`, `${label} › reviewers ${index + 1} › users`, "text")} className={CODE}>
+                  {(rule.users ?? []).join(", ") || "no logins"}
+                </Commentable>
+              )}
+            </li>
+          );
+        })}
+        {gone.map((table) => (
+          <RemovedRow key={table.at} table={table} label={`${label} › reviewer rule (removed)`}>
+            {oldText(table, "team") || "fixed logins"}
+          </RemovedRow>
+        ))}
+      </ul>
+    </Part>
+  );
+}
 
 /**
  * A forge as rows of a settings list: its kind, then each command it sets, in words and folded to its first line, and the
@@ -324,6 +443,8 @@ function ForgeRows({ path, label, forge, inherited }: { path: string; label: str
   const hooks = FORGE_HOOKS.filter(([key]) => shown(key, (forge?.[key]?.length ?? 0) > 0));
   const ignored = forge?.ignore_checks ?? [];
   const ignoring = shown("ignore_checks", ignored.length > 0);
+  const merging = shown("auto_merge", forge?.auto_merge !== undefined);
+  const asking = shown("reviewers", forge?.reviewers !== undefined);
   const kind = forge === undefined ? (changeAt(review, `${path}.kind`) === undefined ? path : `${path}.kind`) : `${path}.kind`;
   return (
     <>
@@ -338,7 +459,7 @@ function ForgeRows({ path, label, forge, inherited }: { path: string; label: str
           </Commentable>
         )}
       </Row>
-      {(commands.length > 0 || hooks.length > 0 || ignoring) && (
+      {(commands.length > 0 || hooks.length > 0 || ignoring || merging || asking) && (
         <dd data-forge={path} className="col-span-full min-w-0 space-y-1.5 border-l-2 border-border-seam pl-2">
           {commands.map(([key, name]) => (
             <Part key={key} label={name} paths={[`${path}.${key}`]}>
@@ -385,6 +506,8 @@ function ForgeRows({ path, label, forge, inherited }: { path: string; label: str
               </div>
             </Part>
           )}
+          {merging && <AutoMergeParts path={path} label={label} auto={forge?.auto_merge} />}
+          {asking && <ReviewerParts path={path} label={label} rules={forge?.reviewers} />}
         </dd>
       )}
     </>
@@ -441,12 +564,13 @@ interface RemovedTable {
 function removedTables(review: Review, list: string, kept: number): RemovedTable[] {
   const tables = new Map<number, RemovedTable & { old: Record<string, unknown> }>();
   for (const change of review.changes) {
-    const match = /^(.*?)\[(\d+)\]\.(\w+)/.exec(change.path);
-    if (match === null || match[1] !== list || Number(match[2]) < kept) continue;
-    const index = Number(match[2]);
+    if (!change.path.startsWith(`${list}[`)) continue;
+    const match = /^\[(\d+)\]\.(\w+)/.exec(change.path.slice(list.length));
+    if (match === null || Number(match[1]) < kept) continue;
+    const index = Number(match[1]);
     const table = tables.get(index) ?? { index, at: `${list}[${index}]`, paths: [], old: {} };
     table.paths.push(change.path);
-    if (change.path === `${table.at}.${match[3]}` && (change.kind === "value" || change.kind === "text")) table.old[match[3]!] = change.before;
+    if (change.path === `${table.at}.${match[2]}` && (change.kind === "value" || change.kind === "text")) table.old[match[2]!] = change.before;
     tables.set(index, table);
   }
   return [...tables.values()].sort((a, b) => a.index - b.index);

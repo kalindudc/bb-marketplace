@@ -111,6 +111,7 @@ describe("discoverText", () => {
     expect(text).toContain("This thread's repository (bb project proj_1), checkout /repo");
     expect(text).toContain("- Remote: found: origin.");
     expect(text).toContain("- Forge for origin: found: gh can open pull requests on github.com.");
+    expect(text).toContain("- Merging: found: off: people merge its pull requests. Set merge.forge.auto_merge only when the human asks Loom to merge ready pull requests itself");
     expect(text).toContain("- Environment: found: no plugin offers an environment");
     expect(text).toContain("- Integration worktree: found: Loom can add its own worktree");
     expect(text).not.toContain("ask:");

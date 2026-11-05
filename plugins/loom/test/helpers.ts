@@ -368,6 +368,12 @@ export class FakeHost implements HostPort {
   prMeta = new Map<string, Partial<Pick<PrBatchPull, "draft" | "review" | "base" | "mergeable">>>();
   /** Pull requests prBatch leaves out of its answer, by URL. */
   missingPrs = new Set<string>();
+  /** What prBatch reports of each pull request's merge queue when asked, by URL. */
+  queues = new Map<string, NonNullable<PrBatchPull["queue"]>>();
+  /** Who prReviewState says opened, is asked to review and reviewed each pull request, by URL; a missing entry is kalindudc's with no one. */
+  reviewState = new Map<string, { author: string | null; requested: string[]; reviewed: string[] }>();
+  /** Each team's members as teamMembers lists them; a missing team has none. */
+  teams = new Map<string, Array<{ login: string; bot: boolean }>>();
   /** Each pull request's title and description as the forge has them, by URL: prCreate and prEdit set them, and prBatch and prFeedback read them. */
   texts = new Map<string, { title: string | null; body: string | null }>();
   private squashes = 0;
@@ -592,6 +598,12 @@ export class FakeHost implements HostPort {
       }
       case "prRequestReview":
         return { outcome: "ok", requested: [...(input as HostInput<"prRequestReview">).reviewers], failed: [] };
+      case "prReviewState":
+        return { outcome: "ok", ...(this.reviewState.get((input as HostInput<"prReviewState">).url) ?? { author: "kalindudc", requested: [], reviewed: [] }) };
+      case "teamMembers":
+        return { outcome: "ok", members: [...(this.teams.get((input as HostInput<"teamMembers">).team) ?? [])] };
+      case "prMerge":
+        return { outcome: "ok" };
       case "push": {
         const { src, branch } = input as HostInput<"push">;
         this.remoteBranches.set(branch, src);
@@ -601,7 +613,7 @@ export class FakeHost implements HostPort {
       case "prFeedback":
         return this.feedbackOf((input as HostInput<"prFeedback">).url);
       case "prBatch": {
-        const { host, owner, name, numbers, feedback } = input as HostInput<"prBatch">;
+        const { host, owner, name, numbers, feedback, queue } = input as HostInput<"prBatch">;
         const pulls: PrBatchPull[] = [];
         const missing: Array<{ number: number; message: string }> = [];
         for (const number of numbers) {
@@ -611,7 +623,7 @@ export class FakeHost implements HostPort {
             continue;
           }
           const read = feedback ? this.feedbackOf(url) : null;
-          pulls.push({ number, state: read?.state ?? this.prStates.get(url) ?? "OPEN", draft: false, review: null, base: null, ...this.prMeta.get(url), ...this.texts.get(url), feedback: read });
+          pulls.push({ number, state: read?.state ?? this.prStates.get(url) ?? "OPEN", draft: false, review: null, base: null, ...this.prMeta.get(url), ...this.texts.get(url), feedback: read, ...(queue === true ? { queue: this.queues.get(url) ?? { queued: false, auto: false, removed: null } } : {}) });
         }
         return { outcome: "ok", pulls, missing };
       }

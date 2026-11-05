@@ -84,6 +84,37 @@ export const rolloutSchema = z
   })
   .strict();
 
+// Globs, not regular expressions, for the same reason as ignore_checks.
+const nonBlankGlob = z.string().max(200).refine((pattern) => pattern.trim() !== "", "must not be blank");
+
+export const AUTO_MERGE_METHODS = ["squash", "merge", "rebase", "queue", "comment", "command"] as const;
+
+// Opt-in: Loom merges a ticket's pull request itself once its Ready to merge verdict holds. No defaults, so a forge without
+// it hashes as it did before it existed; autoMergeOf fills them in.
+export const autoMergeSchema = z
+  .object({
+    method: z.enum(AUTO_MERGE_METHODS),
+    // method = "comment": the comment gh posts to hand the pull request to a merge service.
+    comment: z.string().trim().min(1).max(500).optional(),
+    // Comments that appear after Loom's attempt and match one of these are the merge service rejecting it.
+    rejected: z.array(nonBlankGlob).max(10).optional(),
+    approval: z.enum(["forge", "loom"]).optional(),
+    require_live: z.boolean().optional(),
+    max_attempts: z.number().int().min(1).max(10).optional(),
+  })
+  .strict();
+
+const forgeLogin = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.@+-]{0,199}$/, "must be a forge login, such as alice or alice@example.com");
+
+// Who Loom asks to review each pull request it opens: a sample of a team, or of fixed logins.
+export const reviewerRuleSchema = z
+  .object({
+    team: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.@/-]{0,199}$/, "must be a team name, such as acme/platform").optional(),
+    users: z.array(forgeLogin).min(1).max(50).optional(),
+    count: z.number().int().min(1).max(10).optional(),
+  })
+  .strict();
+
 // The server that hosts a repo's pull requests: gh, the spec's own commands, or none (Loom only pushes the branch).
 export const forgeSchema = z
   .object({
@@ -99,7 +130,14 @@ export const forgeSchema = z
     // Run after each push to an open pull request, and after Loom moves one to another base.
     after_push: z.array(command).max(5).optional(),
     // Globs, not regular expressions: a pattern from a spec must never be able to stall the plugin's thread.
-    ignore_checks: z.array(z.string().max(200).refine((pattern) => pattern.trim() !== "", "must not be blank")).max(20).optional(),
+    ignore_checks: z.array(nonBlankGlob).max(20).optional(),
+    // Hands a ready pull request to the forge's merge; auto_merge says when.
+    merge: command.optional(),
+    // Asks the logins in LOOM_REVIEWERS to review; and lists a team's members, one login per line.
+    request_reviews: command.optional(),
+    team_members: command.optional(),
+    auto_merge: autoMergeSchema.optional(),
+    reviewers: z.array(reviewerRuleSchema).min(1).max(10).optional(),
   })
   .strict();
 
@@ -309,6 +347,8 @@ export type TicketSpec = z.output<typeof ticketSpecSchema>;
 export type TicketPatch = z.output<typeof ticketPatchSchema>;
 export type RepoSpec = z.output<typeof repoSpecSchema>;
 export type ForgeSpec = z.output<typeof forgeSchema>;
+export type AutoMergeSpec = z.output<typeof autoMergeSchema>;
+export type ReviewerRuleSpec = z.output<typeof reviewerRuleSchema>;
 export type EnvironmentSpec = z.output<typeof environmentSchema>;
 export type MachineSpec = z.output<typeof machineSchema>;
 export type WorktreeSpec = z.output<typeof worktreeSchema>;
@@ -568,7 +608,7 @@ export function validateSemantics(spec: Spec, rawToml: string): { errors: string
     errors.push(...ciForgeErrors(spec));
   }
 
-  errors.push(...forgeErrors(spec.merge.forge, "merge.forge"), ...worktreeErrors(spec, spec.merge.worktree, "merge.worktree"), ...environmentErrors(spec.environment, "environment"));
+  errors.push(...forgeErrors(spec, spec.merge.forge, "merge.forge"), ...worktreeErrors(spec, spec.merge.worktree, "merge.worktree"), ...environmentErrors(spec.environment, "environment"));
   spec.ticket.forEach((ticket, index) => {
     const repo = ticket.repo === undefined ? undefined : repos.find((entry) => entry.name === ticket.repo);
     // A ticket whose repo is unknown has an error above.
@@ -576,7 +616,7 @@ export function validateSemantics(spec: Spec, rawToml: string): { errors: string
     errors.push(...ticketEnvironmentErrors(ticket.environment, repo?.environment ?? spec.environment ?? null, `ticket[${index}].environment`));
   });
   repos.forEach((repo, index) => {
-    errors.push(...forgeErrors(repo.forge, `repo[${index}].forge`), ...worktreeErrors(spec, repo.worktree, `repo[${index}].worktree`), ...environmentErrors(repo.environment, `repo[${index}].environment`));
+    errors.push(...forgeErrors(spec, repo.forge, `repo[${index}].forge`), ...worktreeErrors(spec, repo.worktree, `repo[${index}].worktree`), ...environmentErrors(repo.environment, `repo[${index}].environment`));
   });
   errors.push(...machineErrors(spec), ...hookErrors(spec));
 
@@ -585,9 +625,18 @@ export function validateSemantics(spec: Spec, rawToml: string): { errors: string
     warnings.push("agents.reviewer: the reviewer uses the same provider and model as the worker, so it shares the worker's blind spots. Set agents.reviewer.provider and model to a different model.");
   }
   warnings.push(...overlapWarnings(scopeOverlaps(spec.ticket)));
+  for (const [forge, at] of forgesOf(spec)) {
+    const method = forge?.auto_merge?.method;
+    if ((method === "comment" || method === "command") && forge!.auto_merge!.rejected === undefined) {
+      warnings.push(`${at}.auto_merge.rejected: unset, so Loom cannot tell when the merge service turns the pull request away; it waits until the pull request merges. Add globs for the service's failure comments, such as "Merge failed*".`);
+    }
+  }
 
   return { errors, warnings };
 }
+
+/** The forges the spec sets, with their paths. */
+const forgesOf = (spec: Spec): Array<[ForgeSpec | undefined, string]> => [[spec.merge.forge, "merge.forge"], ...(spec.repo ?? []).map((repo, index): [ForgeSpec | undefined, string] => [repo.forge, `repo[${index}].forge`])];
 
 /**
  * The rollout's own checks. Deploy order is advice for each ticket's pull request, so the integration strategy refuses it;
@@ -725,9 +774,9 @@ function hookErrors(spec: Spec): string[] {
   });
 }
 
-function forgeErrors(forge: ForgeSpec | undefined, at: string): string[] {
+function forgeErrors(spec: Spec, forge: ForgeSpec | undefined, at: string): string[] {
   if (forge === undefined) return [];
-  const errors: string[] = [];
+  const errors = [...autoMergeErrors(spec, forge, at), ...reviewerErrors(spec, forge, at)];
   if (forge.kind === "command") {
     if (forge.open === undefined) {
       errors.push(`${at}.open: is required when ${at}.kind is "command". Add the command that opens a pull request: it gets LOOM_REMOTE, LOOM_BASE, LOOM_HEAD, LOOM_TITLE and LOOM_DRAFT, reads the body on stdin, and prints the pull request's URL.`);
@@ -737,7 +786,7 @@ function forgeErrors(forge: ForgeSpec | undefined, at: string): string[] {
     }
     return errors;
   }
-  for (const key of ["open", "state", "feedback", "edit", "reply", "retarget"] as const) {
+  for (const key of ["open", "state", "feedback", "edit", "reply", "retarget", "merge", "request_reviews", "team_members"] as const) {
     if (forge[key] !== undefined) errors.push(`${at}.${key}: only kind = "command" runs it, and ${at}.kind is "${forge.kind}". Remove it, or set kind = "command".`);
   }
   if (forge.kind === "none") {
@@ -747,6 +796,60 @@ function forgeErrors(forge: ForgeSpec | undefined, at: string): string[] {
     if (forge.ignore_checks !== undefined) errors.push(`${at}.ignore_checks: kind = "none" reads no checks, so there is nothing to ignore. Remove ignore_checks, or use kind = "gh" or "command".`);
   }
   return errors;
+}
+
+/** The most people Loom asks to review one pull request: what one prRequestReview call takes. */
+export const REVIEWERS_MAX = 20;
+
+const PR_ONLY = (at: string, what: string) => `${at}: ${what} the pull request Loom opens for each ticket, but merge.strategy is "integration". Remove it, or use merge.strategy = "pr".`;
+
+/** auto_merge needs a forge that opens pull requests, reports what Ready to merge reads, and has the method it names. */
+function autoMergeErrors(spec: Spec, forge: ForgeSpec, at: string): string[] {
+  const auto = forge.auto_merge;
+  const errors: string[] = [];
+  if (forge.kind === "command" && forge.merge !== undefined && auto === undefined) errors.push(`${at}.merge: only auto_merge runs it, and ${at} has none. Add ${at}.auto_merge with method = "command", or remove merge.`);
+  if (auto === undefined) return errors;
+  const path = `${at}.auto_merge`;
+  if (spec.merge.strategy === "integration") return [...errors, PR_ONLY(path, "it merges")];
+  if (forge.kind === "none") return [...errors, `${path}: kind = "none" opens no pull request, so there is nothing to merge. Remove auto_merge, or use kind = "gh" or "command".`];
+  if ((spec.merge.max_fix_rounds ?? 5) === 0) errors.push(`${path}: merge.max_fix_rounds is 0, so Loom reads no checks or reviews and its Ready to merge verdict can never hold. Raise max_fix_rounds, or remove auto_merge.`);
+  if (forge.kind === "command") {
+    if (auto.method !== "command") errors.push(`${path}.method: a kind = "command" forge merges with its own merge command. Use method = "command".`);
+    if (forge.merge === undefined) errors.push(`${at}.merge: is required with auto_merge on a kind = "command" forge. Add the command that merges the pull request in LOOM_URL, or hands it to the server's merge service.`);
+    if (forge.feedback === undefined) errors.push(`${path}: Loom merges only once the forge says the pull request is approved, not a draft and its checks pass, and this forge has no feedback command to say so. Add ${at}.feedback, or remove auto_merge.`);
+  } else {
+    if (auto.method === "command") errors.push(`${path}.method: "command" runs a kind = "command" forge's merge command, and ${at}.kind is "gh". Use "squash", "merge", "rebase", "queue" or "comment".`);
+    if (auto.method === "comment" && auto.comment === undefined) errors.push(`${path}.comment: is required with method = "comment". Set the comment that hands the pull request to the merge service, such as "/merge".`);
+  }
+  if (auto.comment !== undefined && auto.method !== "comment") errors.push(`${path}.comment: only method = "comment" posts it. Remove comment, or use method = "comment".`);
+  if (auto.rejected !== undefined && auto.method !== "comment" && auto.method !== "command") {
+    errors.push(`${path}.rejected: ${auto.method === "queue" ? "GitHub's merge queue says itself why it removed a pull request" : `gh pr merge --${auto.method} answers at once`}, so there are no comments to read. Remove rejected.`);
+  }
+  return errors;
+}
+
+/** reviewers needs a forge that opens pull requests and can ask people, and each rule one source of logins. */
+function reviewerErrors(spec: Spec, forge: ForgeSpec, at: string): string[] {
+  const errors: string[] = [];
+  if (forge.kind === "command" && forge.request_reviews !== undefined && forge.reviewers === undefined) errors.push(`${at}.request_reviews: only reviewers runs it, and ${at} has none. Add ${at}.reviewers, or remove request_reviews.`);
+  if (forge.kind === "command" && forge.team_members !== undefined && !(forge.reviewers ?? []).some((rule) => rule.team !== undefined)) errors.push(`${at}.team_members: only a reviewers rule with a team runs it. Add one, or remove team_members.`);
+  const rules = forge.reviewers;
+  if (rules === undefined) return errors;
+  if (spec.merge.strategy === "integration") return [...errors, PR_ONLY(`${at}.reviewers`, "it asks for reviews of")];
+  if (forge.kind === "none") return [...errors, `${at}.reviewers: kind = "none" opens no pull request, so there is no one to ask. Remove reviewers, or use kind = "gh" or "command".`];
+  if (forge.kind === "command" && forge.request_reviews === undefined) errors.push(`${at}.request_reviews: is required with reviewers on a kind = "command" forge. Add the command that asks the logins in LOOM_REVIEWERS to review the pull request in LOOM_URL.`);
+  if (forge.kind === "command" && forge.feedback === undefined) errors.push(`${at}.reviewers: Loom asks for reviews once the forge says the pull request is not a draft, and this forge has no feedback command to say so. Add ${at}.feedback, printing draft, or remove reviewers.`);
+  const most = rules.reduce((sum, rule) => sum + (rule.count ?? rule.users?.length ?? 0), 0);
+  if (most > REVIEWERS_MAX) errors.push(`${at}.reviewers: these rules may ask up to ${most} people to review one pull request, and Loom asks at most ${REVIEWERS_MAX}. Lower the counts, or set count on a rule of users.`);
+  rules.forEach((rule, index) => {
+    const path = `${at}.reviewers[${index}]`;
+    if ((rule.team === undefined) === (rule.users === undefined)) errors.push(`${path}: set team or users, not ${rule.team === undefined ? "neither" : "both"}.`);
+    if (rule.team !== undefined && rule.count === undefined) errors.push(`${path}.count: is required with team. Set how many of its members to ask, such as 2.`);
+    if (rule.team !== undefined && forge.kind === "gh" && !/^[^/]+\/[^/]+$/.test(rule.team)) errors.push(`${path}.team: "${rule.team}" is not an organization and a team slug, such as acme/platform.`);
+    if (rule.team !== undefined && forge.kind === "command" && forge.team_members === undefined) errors.push(`${at}.team_members: is required for a reviewers rule with a team on a kind = "command" forge. Add the command that prints the members of the team in LOOM_TEAM, one login per line.`);
+    if (rule.users !== undefined && rule.count !== undefined && rule.count > rule.users.length) errors.push(`${path}.count: ${rule.count} is more than the ${plural(rule.users.length, "login")} in users. Lower count, or add logins.`);
+  });
+  return [...new Set(errors)];
 }
 
 function worktreeErrors(spec: Spec, worktree: WorktreeSpec | undefined, at: string): string[] {

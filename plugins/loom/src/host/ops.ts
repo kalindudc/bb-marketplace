@@ -1111,7 +1111,7 @@ const FEEDBACK_FRAGMENT = `fragment F on PullRequest {
     ... on StatusContext { context state targetUrl } } } } } } }
   reviews(last: 50) { nodes { databaseId author { __typename login } state body url } }
   reviewThreads(last: 100) { nodes { id isResolved path line comments(last: 20) { nodes { databaseId author { __typename login } body url } } } }
-  comments(last: 50) { nodes { databaseId author { __typename login } body url } }
+  comments(last: 50) { nodes { databaseId author { __typename login } body url createdAt } }
 }`;
 
 const FEEDBACK_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
@@ -1120,9 +1120,23 @@ const FEEDBACK_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
 ${FEEDBACK_FRAGMENT}`;
 
 /** One query for many pull requests of a repository: an aliased pullRequest field per number over the fragment F. The numbers are integers, so they go in the text. */
-export function batchQuery(numbers: readonly number[], feedback: boolean): string {
-  const fields = numbers.map((number, index) => `    p${index}: pullRequest(number: ${Math.trunc(number)}) { ...F }`).join("\n");
-  return `query($owner: String!, $name: String!) {\n  repository(owner: $owner, name: $name) {\n${fields}\n  }\n}\n${feedback ? FEEDBACK_FRAGMENT : LIGHT_FRAGMENT}`;
+export function batchQuery(numbers: readonly number[], feedback: boolean, queue = false): string {
+  const fields = numbers.map((number, index) => `    p${index}: pullRequest(number: ${Math.trunc(number)}) { ...F${queue ? " ...Q" : ""} }`).join("\n");
+  return `query($owner: String!, $name: String!) {\n  repository(owner: $owner, name: $name) {\n${fields}\n  }\n}\n${feedback ? FEEDBACK_FRAGMENT : LIGHT_FRAGMENT}${queue ? `\n${QUEUE_FRAGMENT}` : ""}`;
+}
+
+// Only for a repo that merges through GitHub's merge queue: a server without merge queues would fail every read that asks.
+const QUEUE_FRAGMENT = `fragment Q on PullRequest {
+  mergeQueueEntry { state } autoMergeRequest { enabledAt }
+  timelineItems(last: 5, itemTypes: [REMOVED_FROM_MERGE_QUEUE_EVENT]) { nodes { ... on RemovedFromMergeQueueEvent { createdAt reason } } }
+}`;
+
+type GhQueue = { mergeQueueEntry?: { state?: string } | null; autoMergeRequest?: { enabledAt?: string } | null; timelineItems?: { nodes?: Array<{ createdAt?: string; reason?: string } | null> } | null };
+
+/** Whether GitHub has the pull request in its merge queue or set to merge itself, and the newest removal from the queue. */
+export function ghQueue(pull: GhQueue): NonNullable<Extract<HostOutput<"prBatch">, { outcome: "ok" }>["pulls"][number]["queue"]> {
+  const removals = (pull.timelineItems?.nodes ?? []).flatMap((node) => (node?.createdAt === undefined || typeof node.reason !== "string" ? [] : [{ at: Date.parse(node.createdAt), reason: node.reason.toLowerCase() }])).filter((each) => Number.isFinite(each.at));
+  return { queued: pull.mergeQueueEntry != null, auto: pull.autoMergeRequest != null, removed: removals.at(-1) ?? null };
 }
 
 type GhAuthor = { __typename?: string; login?: string } | null;
@@ -1143,7 +1157,7 @@ interface GhPull extends GhMeta {
   commits: { nodes: Array<{ commit: { statusCheckRollup: { contexts: { nodes: Array<Record<string, unknown>> } } | null } }> };
   reviews: { nodes: Array<{ databaseId: number; author: GhAuthor; state: string; body: string; url: string }> };
   reviewThreads: { nodes: Array<{ id: string; isResolved: boolean; path: string | null; line: number | null; comments: { nodes: Array<{ databaseId: number; author: GhAuthor; body: string; url: string }> } }> };
-  comments: { nodes: Array<{ databaseId: number; author: GhAuthor; body: string; url: string }> };
+  comments: { nodes: Array<{ databaseId: number; author: GhAuthor; body: string; url: string; createdAt?: string }> };
 }
 
 const stateOf = (state: string): Feedback["state"] => (state === "MERGED" || state === "CLOSED" ? state : "OPEN");
@@ -1214,7 +1228,20 @@ function ghFeedback(pull: GhPull, steps: ReadonlyMap<string, GhSteps>): Feedback
     items.push({ key: `thread:${thread.id}:${last.databaseId}:${digest(body)}`, kind: "thread", author: loginOf(last.author), bot: isBot(last.author), body: clipBody(body), url: last.url, state: null, path: thread.path, line: thread.line });
   }
   for (const comment of pull.comments.nodes) {
-    items.push({ key: `comment:${comment.databaseId}:${digest(comment.body)}`, kind: "comment", author: loginOf(comment.author), bot: isBot(comment.author), body: clipBody(comment.body), url: comment.url, state: null, path: null, line: null });
+    const createdAt = comment.createdAt === undefined ? Number.NaN : Date.parse(comment.createdAt);
+    items.push({
+      key: `comment:${comment.databaseId}:${digest(comment.body)}`,
+      kind: "comment",
+      author: loginOf(comment.author),
+      bot: isBot(comment.author),
+      body: clipBody(comment.body),
+      url: comment.url,
+      state: null,
+      path: null,
+      line: null,
+      stableId: `comment:${comment.databaseId}`,
+      createdAt: Number.isFinite(createdAt) ? createdAt : null,
+    });
   }
   return { outcome: "ok", state: stateOf(pull.state), head, author: loginOf(pull.author), ...ghMeta(pull), checks, items };
 }
@@ -1284,6 +1311,8 @@ const commandFeedbackSchema = z.object({
         state: z.string().max(100).nullish(),
         path: z.string().max(4096).nullish(),
         line: z.number().int().nullish(),
+        stable_id: z.union([z.string().max(200), z.number()]).nullish(),
+        created_at: z.iso.datetime({ offset: true }).nullish(),
       }),
     )
     .max(500)
@@ -1323,7 +1352,19 @@ async function feedbackWithCommand(input: HostInput<"prFeedback">, command: stri
       progress: check.progress ?? null,
       steps: null,
     })),
-    items: data.items.map((item) => ({ key: `${item.kind}:${item.id}`, kind: item.kind, author: item.author, bot: item.bot, body: clipBody(item.body), url: item.url ?? null, state: item.state ?? null, path: item.path ?? null, line: item.line ?? null })),
+    items: data.items.map((item) => ({
+      key: `${item.kind}:${item.id}`,
+      kind: item.kind,
+      author: item.author,
+      bot: item.bot,
+      body: clipBody(item.body),
+      url: item.url ?? null,
+      state: item.state ?? null,
+      path: item.path ?? null,
+      line: item.line ?? null,
+      ...(item.stable_id == null ? {} : { stableId: `${item.kind}:${item.stable_id}` }),
+      ...(item.created_at == null ? {} : { createdAt: Date.parse(item.created_at) }),
+    })),
   };
 }
 
@@ -1350,7 +1391,7 @@ type GhAnswer = { data?: { repository?: Record<string, GhPull | null> | null } |
 export async function prBatch(input: HostInput<"prBatch">, signal?: AbortSignal): Promise<HostOutput<"prBatch">> {
   const { repo, host, owner, name, feedback } = input;
   const numbers = [...new Set(input.numbers)];
-  const asked = await ghCall(repo, ["api", "graphql", "--hostname", host, "-f", `owner=${owner}`, "-f", `name=${name}`, "-f", `query=${batchQuery(numbers, feedback)}`], { signal });
+  const asked = await ghCall(repo, ["api", "graphql", "--hostname", host, "-f", `owner=${owner}`, "-f", `name=${name}`, "-f", `query=${batchQuery(numbers, feedback, input.queue === true)}`], { signal });
   if (asked === "missing") return { outcome: "unavailable", message: GH_MISSING };
   const answer = parseJson<GhAnswer>(asked.stdout);
   const found = answer?.data?.repository;
@@ -1398,13 +1439,14 @@ export async function prBatch(input: HostInput<"prBatch">, signal?: AbortSignal)
         continue;
       }
     }
-    pulls.push({ number, state: stateOf(pull.state), ...ghMeta(pull), ...ghText(pull), feedback: read });
+    pulls.push({ number, state: stateOf(pull.state), ...ghMeta(pull), ...ghText(pull), feedback: read, ...(input.queue === true ? { queue: ghQueue(pull as GhQueue) } : {}) });
   }
   return { outcome: "ok", pulls, missing };
 }
 
 // GitHub re-requests a review from someone who already reviewed when they are requested again, as its Re-request button does.
 export async function prRequestReview(input: HostInput<"prRequestReview">, signal?: AbortSignal): Promise<HostOutput<"prRequestReview">> {
+  if (input.forge?.kind === "command") return requestWithCommand(input, input.forge.request_reviews, signal);
   const pr = githubPull(input.url);
   if (pr === null) return { outcome: "unavailable", message: `${input.url} is not a GitHub pull request URL.` };
   const { host, owner, name, number } = pr;
@@ -1417,6 +1459,75 @@ export async function prRequestReview(input: HostInput<"prRequestReview">, signa
     else failed.push({ login, message: tail(asked.stderr || asked.stdout, 500) });
   }
   return { outcome: "ok", requested, failed };
+}
+
+export async function prReviewState(input: HostInput<"prReviewState">, signal?: AbortSignal): Promise<HostOutput<"prReviewState">> {
+  const viewed = await ghCall(input.repo, ["pr", "view", input.url, "--json", "author,reviewRequests,reviews"], { signal });
+  if (viewed === "missing") return { outcome: "unavailable", message: GH_MISSING };
+  if (viewed.code !== 0) return readFailed("gh pr view", viewed);
+  type Who = { login?: unknown; name?: unknown; slug?: unknown; __typename?: unknown } | null;
+  const read = parseJson<{ author?: Who; reviewRequests?: Who[]; reviews?: Array<{ author?: Who }> }>(viewed.stdout);
+  if (read === null) return { outcome: "unavailable", message: `gh pr view printed no JSON: ${tail(viewed.stdout)}` };
+  const login = (who: Who | undefined) => (typeof who?.login === "string" && who.login !== "" ? who.login : null);
+  // A team's request has a name or slug and no login; only people count.
+  const requested = (read.reviewRequests ?? []).flatMap((who) => (login(who) === null ? [] : [login(who)!]));
+  const reviewed = [...new Set((read.reviews ?? []).flatMap((review) => (login(review.author) === null ? [] : [login(review.author)!])))];
+  return { outcome: "ok", author: login(read.author), requested, reviewed };
+}
+
+const TEAM_LOGIN = /^[A-Za-z0-9][A-Za-z0-9_.@+-]{0,199}$/u;
+
+export async function teamMembers(input: HostInput<"teamMembers">, signal?: AbortSignal): Promise<HostOutput<"teamMembers">> {
+  if (input.forge.kind === "command") {
+    const result = await spawnCommand({ cwd: input.repo, command: input.forge.team_members, timeoutMs: FORGE_COMMAND_MS, env: { LOOM_TEAM: input.team } }, signal);
+    const failed = commandReadFailed("team_members", result);
+    if (failed !== null) return failed;
+    const logins = result.output.split("\n").map((line) => line.trim()).filter((line) => TEAM_LOGIN.test(line));
+    return { outcome: "ok", members: [...new Set(logins)].map((login) => ({ login, bot: login.endsWith("[bot]") })) };
+  }
+  const [org, slug] = input.team.split("/");
+  if (org === undefined || slug === undefined || slug === "") return { outcome: "unavailable", message: `${input.team} is not an organization and a team slug, such as acme/platform.` };
+  const listed = await ghCall(input.repo, ["api", "--hostname", input.forge.host, "--paginate", `orgs/${org}/teams/${slug}/members?per_page=100`, "--jq", ".[] | [.login, .type] | @tsv"], { signal });
+  if (listed === "missing") return { outcome: "unavailable", message: GH_MISSING };
+  if (listed.code !== 0) return readFailed(`gh api orgs/${org}/teams/${slug}/members`, listed);
+  const members = listed.stdout.split("\n").flatMap((line) => {
+    const [login, type] = line.split("\t");
+    return login !== undefined && TEAM_LOGIN.test(login) ? [{ login, bot: type === "Bot" }] : [];
+  });
+  return { outcome: "ok", members };
+}
+
+// gh's own words for a pull request that cannot merge because its branch conflicts with, or lags behind, its base: the worker can fix those.
+const MERGE_FIXABLE = /conflict|not mergeable|cannot be cleanly created|out of date|head branch was modified|is behind/iu;
+export const MERGE_COMMAND_MS = 5 * 60_000;
+/** A merge command's exit code for a refusal the worker can address, such as a conflict; and for one it cannot. */
+export const MERGE_REJECTED_EXIT = 3;
+export const MERGE_REFUSED_EXIT = 4;
+
+export async function prMerge(input: HostInput<"prMerge">, signal?: AbortSignal): Promise<HostOutput<"prMerge">> {
+  const { repo, url, sha } = input;
+  if (input.forge.kind === "command") {
+    const env = { LOOM_URL: url, LOOM_PR_NUMBER: prNumber(url), LOOM_HEAD: input.head, LOOM_BASE: input.base, LOOM_SHA: sha, LOOM_ATTEMPT: String(input.attempt) };
+    const result = await spawnCommand({ cwd: repo, command: input.forge.merge, timeoutMs: MERGE_COMMAND_MS, env }, signal);
+    // Stopped by a signal after it started: it may have merged, so the answer is as unknown as a timeout's.
+    if (!result.timedOut && result.exitCode === null) return { outcome: "unavailable", message: `The forge's merge command was stopped before it finished: ${tail(result.output)}`, transient: "server" };
+    if (!result.timedOut && (result.exitCode === MERGE_REJECTED_EXIT || result.exitCode === MERGE_REFUSED_EXIT)) return { outcome: "rejected", fix: result.exitCode === MERGE_REJECTED_EXIT, message: tail(result.output, 2000) };
+    return commandReadFailed("merge", result, MERGE_COMMAND_MS) ?? { outcome: "ok" };
+  }
+  const { method } = input.forge;
+  if (method === "comment") {
+    const commented = await ghCall(repo, ["pr", "comment", url, "--body-file", "-"], { stdin: input.forge.comment ?? "", signal });
+    if (commented === "missing") return { outcome: "unavailable", message: GH_MISSING };
+    return commented.code === 0 ? { outcome: "ok" } : readFailed("gh pr comment", commented);
+  }
+  // With a merge queue, --auto adds the pull request to it, or sets it to join once its required checks pass.
+  const args = ["pr", "merge", url, "--match-head-commit", sha, ...(method === "queue" ? ["--auto"] : [`--${method}`])];
+  const merged = await ghCall(repo, args, { signal });
+  if (merged === "missing") return { outcome: "unavailable", message: GH_MISSING };
+  if (merged.code === 0) return { outcome: "ok" };
+  const failed = readFailed("gh pr merge", merged);
+  if (failed.transient !== undefined || merged.code === GH_AUTH_EXIT) return failed;
+  return { outcome: "rejected", fix: MERGE_FIXABLE.test(ghErrorText(merged)), message: failed.message };
 }
 
 export async function prEdit(input: HostInput<"prEdit">, signal?: AbortSignal): Promise<HostOutput<"prEdit">> {
@@ -1513,6 +1624,19 @@ async function retargetWithCommand(input: HostInput<"prRetarget">, command: stri
   const env = { LOOM_URL: input.url, LOOM_PR_NUMBER: prNumber(input.url), LOOM_BASE: input.base };
   const result = await spawnCommand({ cwd: input.repo, command, timeoutMs: RETARGET_COMMAND_MS, env }, signal);
   return commandReadFailed("retarget", result, RETARGET_COMMAND_MS) ?? { outcome: "ok" };
+}
+
+// The command asks them all in one run: exit 0 means it did, and any other exit that it asked no one. One that ran out of
+// time, or was stopped after it started (no exit code: a signal ended it), may have asked some of them, so its outcome is
+// unknown. One that could not start throws, which Loom counts as a definite failure.
+async function requestWithCommand(input: HostInput<"prRequestReview">, command: string, signal?: AbortSignal): Promise<HostOutput<"prRequestReview">> {
+  const env = { LOOM_URL: input.url, LOOM_PR_NUMBER: prNumber(input.url), LOOM_REVIEWERS: input.reviewers.join(",") };
+  const result = await spawnCommand({ cwd: input.repo, command, timeoutMs: FORGE_COMMAND_MS, env }, signal);
+  if (result.timedOut) return { outcome: "unknown", message: `The forge's request_reviews command took longer than ${FORGE_COMMAND_MS / 60_000} minutes: ${tail(result.output)}` };
+  if (result.exitCode === null) return { outcome: "unknown", message: `The forge's request_reviews command was stopped before it finished: ${tail(result.output)}` };
+  const failed = commandReadFailed("request_reviews", result);
+  if (failed !== null) return failed;
+  return { outcome: "ok", requested: [...input.reviewers], failed: [] };
 }
 
 // The command is trusted to resolve the thread when LOOM_RESOLVE is 1; a URL it prints is the reply's.
