@@ -29,7 +29,8 @@ export function Description({ prKey, body }: { prKey: string; body: string | nul
         <div className="text-sm text-muted-foreground">No description.</div>
       ) : (
         <div className="rounded-lg border border-border bg-card px-3.5 py-3">
-          <div data-description className={`min-w-0 overflow-x-auto break-words text-[13.5px] ${long && !expanded ? "max-h-80 overflow-y-hidden [mask-image:linear-gradient(to_bottom,black_75%,transparent)]" : ""}`}>
+          {/* The scroller takes the card's side padding so it doesn't clip list markers that sit left of a list's box. */}
+          <div data-description className={`-mx-3.5 min-w-0 overflow-x-auto break-words px-3.5 text-[13.5px] ${long && !expanded ? "max-h-80 overflow-y-hidden [mask-image:linear-gradient(to_bottom,black_75%,transparent)]" : ""}`}>
             <Markdown content={body} />
           </div>
           {long && (
