@@ -116,6 +116,8 @@ export function feedText(event: EventRow, keys: Map<number, string>, { you = fal
       if (data.action === "notes") return `${human} sent ${notesLabel(data.notes)} on the spec to the planner.`;
       if (data.action === "approve" && data.skipReview === true) return `${human} approved the spec without a passed spec review.`;
       if (data.action === "dismissAsk") return `${human} set the planner's asks aside.`;
+      if (data.action === "askStepDone") return `${human} marked step ${Number(data.step) + 1} of the planner's asks done.`;
+      if (data.action === "ackBadge") return `${human} acknowledged the ${data.tab === "merge" ? "Merge order" : "Rollout"} tab's badge.`;
       const target = text(data.key);
       return `${human} ran ${data.action}${target === null ? "" : ` on ${target}`}.`;
     }

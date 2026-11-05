@@ -140,7 +140,10 @@ A spec version the planner proposes after approval waits for your approval,
 and Loom's spec review checks it first, as a change to the version in force.
 When you have to act, for example approve that version and then requeue the
 tickets it unblocks, the planner records the steps with `loom_ask_human`, and
-the Planner tab lists them under Needs you with a button for each.
+the Planner tab lists them under Needs you with a button for each. Loom checks
+a step off once it sees you take it: an approval, a requeue, a reply, a start,
+a resume, a land, or a live mark on the ticket or milestone a `live` step names.
+Mark done checks off any other step, such as one you did outside Loom.
 
 When bb refuses to start a worker or a reviewer with a client error (an HTTP
 4xx status other than 408, 409 and 429), the ticket blocks at once with bb's
@@ -307,13 +310,27 @@ count), the time left at that pace, the token budget and the deadline when the
 spec sets them, and worker and reviewer capacity with the ready tickets and the
 work going back to workers that wait for a slot.
 
-A tab that needs you carries a badge until the thing is resolved: Board counts
-the blocked tickets, Spec marks a draft or a pending version waiting for you,
-Planner shows "?" while the planner waits on a question and otherwise counts
-the steps it asked you to take, Changes counts the files you have not
-marked viewed on a project ready to land, Merge order counts the pull
-requests with nothing before them, or turns red for one that merged into
-another ticket's branch, and Rollout counts its warnings.
+A tab carries a badge only for something that needs you, and the tab opens
+with a short notice that says what the badge counts, lists those items with a
+link to each, and says what clears it:
+
+| Tab | The badge counts | It clears when |
+| --- | --- | --- |
+| Board | Blocked tickets (red) | each ticket is requeued, by you or by the planner in a triage round, or cancelled |
+| Spec | A draft or a pending version waiting for you | you approve it; comments get you a new version instead |
+| Planner, "?" | bb's word that the planner's thread waits for an answer, such as a question or a tool approval | it is answered, under Needs you or in the thread, or the planner's turn is stopped; reading the thread does not clear it |
+| Planner, a number | The steps of the planner's newest `loom_ask_human` ask that are not done | Loom sees you take each step, or you mark it done; Set aside hides the whole ask |
+| Changes | Files of a project ready to land you have not marked Viewed | you mark each one Viewed (kept in this browser) |
+| Merge order | Pull requests merged into another ticket's branch, so their change is not on the base (red) | the ticket whose branch each went into merges, or you acknowledge it |
+| Rollout | Warning-tone rollout warnings, such as a step that deploys on merge before what it needs is live | what each waits for goes live, or you acknowledge them |
+
+A badge Loom cannot see you resolve, Merge order and Rollout, has
+Acknowledge in its notice. It records your acknowledgement with the items it
+counted then, and the badge stays hidden until a new item appears. A pull
+request at step 1 with nothing before it is no badge: it waits on its own
+review and checks, which the Merge order tab shows. Info-tone rollout warnings,
+such as a milestone that does not hold yet or a freeze window a few days away,
+show on the Rollout tab without a badge.
 
 #### Board
 
@@ -440,8 +457,11 @@ before approval, where planning stands.
 
 - Needs you holds what it waits for: its Ask User Question rounds, one question
   at a time with "Use the recommended answers for the rest"; the steps it asked
-  for with `loom_ask_human`, each checked off when done; or a version ready for
-  your review.
+  for with `loom_ask_human`, each checked off when done, each with Mark done
+  for a step Loom cannot see you take, and Set aside for the whole ask; or a
+  version ready for your review. When bb says the thread waits on something
+  the page cannot show, such as a tool approval, a card says so and opens the
+  thread to answer it there.
 - What happened tells its work in chapters, one per spec version and one for
   the running project: your input, its proposals and board changes, Loom's
   reviews, your approvals, and each triage round with what the planner did.

@@ -372,6 +372,8 @@ function lineOf(ev: Ev, ctx: Ctx): Phrase {
     }
     if (action === "requeue" || action === "block" || action === "cancel") return [`You ran ${action}${target === null ? "" : ` on ${target}`}.`];
     if (action === "report") return ["You sent the project's record to the done hook."];
+    if (action === "askStepDone") return [`You marked step ${Number(d.step) + 1} of the planner's asks done.`];
+    if (action === "ackBadge") return [`You acknowledged the ${d.tab === "merge" ? "Merge order" : "Rollout"} tab's badge.`];
     if (action === "archive") return ["You archived the project."];
   }
   if (ev.kind === "ticket.created") return ["Created."];
@@ -779,6 +781,8 @@ function summaryOf(ctx: Ctx, rows: ProjectRows, n: InsightsNumbers, range: { fro
       block: ["a block", "blocks"],
       cancel: ["a cancel", "cancels"],
       dismissAsk: ["a dismissed ask", "dismissed asks"],
+      askStepDone: ["a step marked done", "steps marked done"],
+      ackBadge: ["an acknowledged badge", "acknowledged badges"],
       message: ["a message to the planner", "messages to the planner"],
       report: ["a report sent to the done hook", "reports sent to the done hook"],
       archive: ["the archive", "archives"],

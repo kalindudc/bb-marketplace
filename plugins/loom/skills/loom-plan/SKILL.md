@@ -206,7 +206,7 @@ After approval, a message that starts with "[loom] A hook of" or "[loom] <n> hoo
 
 ## When the human has to act
 
-Whenever the human has to do something, such as approve a pending version and then requeue the tickets it unblocks, call `loom_ask_human` with the steps in order, as well as saying them in your reply. The Loom page shows them under Needs you on the Planner tab, with a button for each: `approve` with the version, `requeue` or `reply` with the ticket key, `start`, `resume`, `land`, or `other` for anything the page cannot do. Each call replaces your earlier asks, and a step is checked off when the human does it. Call it with no steps once nothing is needed.
+Whenever the human has to do something, such as approve a pending version and then requeue the tickets it unblocks, call `loom_ask_human` with the steps in order, as well as saying them in your reply. The Loom page shows them under Needs you on the Planner tab, with a button for each: `approve` with the version, `requeue` or `reply` with the ticket key, `start`, `resume`, `land`, `live` with the ticket key or milestone ref to mark live, or `other` for anything the page cannot do. Each call replaces your earlier asks, and a step is checked off when Loom sees the human do it, such as a live mark on that key; the human checks off an `other` step themselves. Call it with no steps once nothing is needed.
 
 ## 7. Hand over
 

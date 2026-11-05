@@ -2,6 +2,26 @@
 
 Notable changes to Loom, newest first. Releases are tagged `loom/vX.Y.Z` in this repository; releases before this file existed are described in their commit messages.
 
+## 0.34.0 (2026-11-05)
+
+### Added
+
+- Each step of the planner's ask has Mark done, which records an `askStepDone` human action for that step, so an `other` step, or a step the human will not take, no longer holds the badge until the whole ask is set aside.
+- `loom_ask_human` takes a `live` step with a ticket key or milestone ref. Loom checks it off once that target has a live mark, by the human, a merge, a verify or a check, and the step has a Mark live button.
+- Acknowledge on the Merge order and Rollout badges, which Loom cannot see the human resolve: it records an `ackBadge` human action with the items counted then, and the badge stays hidden until a new item appears.
+
+### Changed
+
+- A project tab with a badge now opens with a notice that says what the badge counts, lists each item with a link (a ticket, a pull request, a step of the planner's ask or the planner's thread), and says what clears it. Before, the label was only in the tab's tooltip, so the badge was a number without an explanation.
+- The Merge order tab no longer counts the pull requests with nothing before them. They wait on their own reviews and checks, which the tab shows, not on the human, so the badge never cleared until they merged. It still counts, in red, pull requests that merged into another ticket's branch.
+- The Rollout tab counts only its warning-tone warnings. Info-tone ones, such as a milestone that does not hold yet or a freeze window a few days away, still show on the tab without a badge.
+- The Planner tab's "?" says that the planner's thread waits for an answer in its chat and links to it. When bb's wait is on something the Planner page cannot show, such as a tool approval from the planner's provider, Needs you now says so and opens the thread, where it used to say that nothing needed you.
+
+### Compatibility
+
+- No migration: both acknowledgements are `human.action` events, which the feed and Insights describe. An acknowledgement does not count as a human intervention in the metrics.
+- Asks recorded before this release read as before. New RPC methods `askStepDone` and `ackBadge`; the project view's `openAsks` count is replaced by `askSteps`, the open steps, and gains `badgeAcks`.
+
 ## 0.33.1 (2026-11-05)
 
 ### Fixed

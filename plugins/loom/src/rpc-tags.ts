@@ -36,6 +36,8 @@ export const RPC_TAGS = {
   plannerView: { tags: (_: unknown, view: PlannerView | null) => ofThread(view?.slug) },
   messagePlanner: { invalidates: (_: unknown, view: PlannerView | null) => changedTags(view?.slug ?? null) },
   dismissAsk: { invalidates: changesProject },
+  askStepDone: { invalidates: changesProject },
+  ackBadge: { invalidates: changesProject },
   syncPullRequests: { invalidates: changesProject },
   markLive: { invalidates: changesProject },
   bbProjects: { tags: anything },

@@ -3,12 +3,13 @@ import { experimental_usePluginId, useBbNavigate, type ExperimentalPageTitle, ty
 import type { ControlAction, ProjectView } from "../contract";
 import { isMultiRepoProject } from "../format";
 import { readyToLand, specReviewBlocks } from "../format";
+import { BadgeNotice } from "./badge-notice";
 import { STAGES } from "../next-step";
 import { AboutStrip } from "./about";
 import { AgentsView } from "./agents";
 import { Board } from "./board";
 import { ChangesTab, landingFiles, useViewed } from "./changes";
-import { BUTTON_PRIMARY, ConfirmButton, MoreMenu, RepoChip, StateBadge, SyncButton, countsLabel, listText, mergeLabel, momentLabel, plural, useAction, useLoom, useLoomWrite, useSyncPullRequests } from "./common";
+import { BUTTON_PRIMARY, ConfirmButton, MoreMenu, RepoChip, StateBadge, SyncButton, countsLabel, listText, mergeLabel, momentLabel, useAction, useLoom, useLoomWrite, useSyncPullRequests } from "./common";
 import { Guide } from "./guide";
 import { HealthStrip } from "./health";
 import { Home } from "./home";
@@ -22,6 +23,7 @@ import { PlanningView } from "./planning";
 import { createStored, createStoredMap, useScrollMemory, useStored } from "./remember";
 import { useWaiting } from "./questions";
 import { SpecPage, bbProjectNamesOf } from "./spec-page";
+import { tabBadges, type TabBadge } from "./tab-badges";
 import { TicketView } from "./ticket";
 import { TimelineStrip } from "./timeline-strip";
 
@@ -68,35 +70,7 @@ export function sidewaysInto(bar: Pick<DOMRect, "left" | "right">, tab: Pick<DOM
 /** A project shows its changes once it has started: before that no worker has changed anything. */
 const hasChangesTab = (state: ProjectView["overview"]["state"]) => state !== "draft" && state !== "ready";
 
-interface TabBadge {
-  text: string;
-  label: string;
-  tone: "destructive" | "warning" | "info";
-}
-const BADGE_TONES = { destructive: "bg-destructive text-destructive-foreground", warning: "bg-warning text-black", info: "bg-primary text-primary-foreground" };
-
-/**
- * What waits for the human on each tab. A badge is a state, not unread news, so it stays until the thing is resolved.
- * `unviewed` counts the files of a project ready to land that the human has not marked viewed; `plannerWaiting` is bb's
- * word that the planner's thread waits on a question.
- */
-export function tabBadges(view: ProjectView, unviewed: number | null = null, plannerWaiting = false): Partial<Record<Tab, TabBadge>> {
-  const { overview, spec } = view;
-  const badges: Partial<Record<Tab, TabBadge>> = {};
-  const blocked = view.board.filter((card) => card.state === "blocked").length;
-  if (blocked > 0) badges.board = { text: String(blocked), label: `${plural(blocked, "ticket")} ${blocked === 1 ? "is" : "are"} blocked`, tone: "destructive" };
-  if (overview.state === "draft") badges.spec = { text: "1", label: `Draft v${spec.version} waits for your review`, tone: "warning" };
-  else if (overview.state !== "archived" && overview.pendingVersion !== null) badges.spec = { text: "1", label: `Spec v${overview.pendingVersion} waits for your approval`, tone: "warning" };
-  if (plannerWaiting) badges.planner = { text: "?", label: "The planner asks you a question", tone: "warning" };
-  else if (view.openAsks > 0) badges.planner = { text: String(view.openAsks), label: `The planner asks you to do ${plural(view.openAsks, "thing")}`, tone: "warning" };
-  if (unviewed !== null && unviewed > 0 && readyToLand(overview)) badges.changes = { text: String(unviewed), label: `${plural(unviewed, "file")} to land you have not marked viewed`, tone: "warning" };
-  const order = view.mergeOrder?.counts;
-  if (order !== undefined && order.wrong > 0) badges.merge = { text: String(order.wrong), label: `${plural(order.wrong, "pull request")} merged into another ticket's branch`, tone: "destructive" };
-  else if (order !== undefined && order.first > 0) badges.merge = { text: String(order.first), label: `${plural(order.first, "pull request")} with nothing before ${order.first === 1 ? "it" : "them"}`, tone: "info" };
-  const warnings = view.rollout?.warnings ?? [];
-  if (warnings.length > 0) badges.rollout = { text: String(warnings.length), label: `${plural(warnings.length, "rollout warning")} for you to read`, tone: warnings.some((warning) => warning.tone === "warning") ? "warning" : "info" };
-  return badges;
-}
+const BADGE_TONES = { destructive: "bg-destructive text-destructive-foreground", warning: "bg-warning text-black" };
 
 export type Route = { view: "home" } | { view: "guide" } | { view: "new" } | { view: "plan"; threadId: string } | { view: "project"; slug: string } | { view: "ticket"; slug: string; key: string };
 
@@ -335,7 +309,8 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek, go }: { slug: string; tab:
   const rolloutTab = !rewound && view.rollout !== null;
   const shownTab = (rewound && tab === "planner") || (!changesTab && tab === "changes") || (!mergeTab && tab === "merge") || (!rolloutTab && tab === "rollout") ? "board" : tab;
   const landing = landingFiles(changes.data ?? null);
-  const badges = rewound ? {} : tabBadges(view, landing === null ? null : viewed.unviewed(landing), plannerWaiting);
+  const badges: Partial<Record<Tab, TabBadge>> = rewound ? {} : tabBadges(view, landing === null ? null : viewed.unviewed(landing), plannerWaiting);
+  const shownBadge = badges[shownTab];
   const openChanges = (id: string | null) => {
     setChosenChange(id);
     onTab("changes");
@@ -406,6 +381,11 @@ function ProjectPanel({ slug, tab, onTab, at, onSeek, go }: { slug: string; tab:
         onHeight={setTabsHeight}
       />
       <div role="tabpanel" className="min-h-0 flex-1">
+        {shownBadge !== undefined && (
+          <div className="px-4 pt-3">
+            <BadgeNotice key={shownTab} slug={slug} tab={shownTab} badge={shownBadge} onTicket={(key) => go(`${slug}/${key}`)} />
+          </div>
+        )}
         {shownTab === "board" && <Board slug={slug} cards={view.board} strategy={overview.strategy} now={view.now} draftVersion={overview.state === "draft" ? view.spec.version : null} onChanges={changesTab ? openChanges : undefined} />}
         {shownTab === "agents" && <AgentsView agents={view.agents} byRole={view.metrics.tokens.byRole} unreported={view.metrics.tokens.unreported} now={view.now} />}
         {shownTab === "insights" && <InsightsTab slug={slug} at={at} onTicket={(key) => go(`${slug}/${key}`)} />}

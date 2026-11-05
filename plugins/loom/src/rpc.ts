@@ -29,7 +29,8 @@ import { parseSpec, type Spec } from "./spec";
 import { specReviewStatus } from "./spec-review";
 import { isReleased } from "./release";
 import { waitOf } from "./starts";
-import { dismissAsk, plannerAsk } from "./asks";
+import { dismissAsk, markStepDone, plannerAsk } from "./asks";
+import { badgeAcksOf, noAcks } from "./badge-acks";
 import { plannerView } from "./planner-view";
 import { specVersionView } from "./spec-view";
 import { HUMAN_ACTOR, type TicketState } from "./states";
@@ -346,7 +347,8 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       now: at,
       at: past?.eventId ?? null,
       specReview,
-      openAsks: past === null && project.state !== "archived" ? (plannerAsk(store, project)?.steps.filter((step) => !step.done).length ?? 0) : 0,
+      askSteps: past === null && project.state !== "archived" ? (plannerAsk(store, project)?.steps.flatMap((step, index) => (step.done ? [] : [{ index, action: step.action, text: step.text, key: step.key ?? null }])) ?? []) : [],
+      badgeAcks: past === null ? badgeAcksOf(store, project) : noAcks(),
       mergeOrder: past === null && approved !== null ? mergeOrderOf(approved, tickets, new Map(tickets.map((ticket) => [ticket.key, finalBadge(store, approved, ticket)] as const))) : null,
       // What is live is kept only as it is now, so a rewound view leaves the rollout out, as it does the merge order.
       rollout: past === null && approved !== null ? rolloutOf(approved, tickets, store.rolloutMarks(project.id), at) : null,
@@ -503,6 +505,17 @@ export function registerRpc(bb: BbPluginApi, deps: RpcDeps): void {
       const project = projects.require(slug);
       await act(ctx, "dismissAsk", { slug, ask }, () => dismissAsk(store, project, ask));
       return project.planner_thread_id === null ? null : plannerView({ store, projects }, project.planner_thread_id, now());
+    },
+    askStepDone: async ({ slug, ask, step }, ctx) => {
+      const project = projects.require(slug);
+      await act(ctx, "askStepDone", { slug, ask, step }, () => markStepDone(store, project, ask, step));
+      return project.planner_thread_id === null ? null : plannerView({ store, projects }, project.planner_thread_id, now());
+    },
+    ackBadge: async ({ slug, tab, items }, ctx) => {
+      const project = projects.require(slug);
+      if (project.state === "archived") throw new LoomError("loom_invalid_state", `Project ${slug} is archived, so its tabs carry no badges.`);
+      await act(ctx, "ackBadge", { slug, tab, items: [...new Set(items)] }, () => undefined);
+      return projectView(slug);
     },
     specVersion: ({ slug, version, base }) => specVersionView({ store, projects }, slug, version, base),
     markLive: async ({ slug, target, note, undo }, ctx) => {

@@ -130,8 +130,9 @@ function VersionSummary({ entry, draft }: { entry: PlannerVersion | undefined; d
 }
 
 /** The planner's asks from loom_ask_human as a checklist, a button on each step the page can take. */
-function AsksCard({ ask, project, versions, busy, onControl, onSpec, onTicket, onDismiss }: { ask: PlannerAsk; project: ProjectView; versions: readonly PlannerVersion[]; busy: boolean; onDismiss(): void } & Pick<PlannerPageProps, "onControl" | "onSpec" | "onTicket">) {
+function AsksCard({ ask, project, versions, busy, onControl, onSpec, onTicket, onDismiss, onStepDone }: { ask: PlannerAsk; project: ProjectView; versions: readonly PlannerVersion[]; busy: boolean; onDismiss(): void; onStepDone(index: number): void } & Pick<PlannerPageProps, "onControl" | "onSpec" | "onTicket">) {
   const requeue = useLoomWrite("ticketAction");
+  const markLive = useLoomWrite("markLive");
   const { busy: requeueing, act } = useAction();
   const blocked = new Set(project.board.filter((card) => card.state === "blocked").map((card) => card.key));
   // A requeue waits for an approve step listed before it, as the planner ordered them.
@@ -172,17 +173,26 @@ function AsksCard({ ask, project, versions, busy, onControl, onSpec, onTicket, o
       case "resume":
       case "land":
         return onControl === undefined ? null : <ConfirmButton label={step.action === "start" ? "Start" : step.action === "resume" ? "Resume" : "Land"} disabled={busy} onConfirm={() => control(step.action as ControlAction)} />;
+      case "live":
+        return <ConfirmButton label={`Mark ${step.key} live`} disabled={busy || requeueing} onConfirm={() => void act(() => markLive({ slug: project.overview.slug, target: step.key!, note: `Marked live as the planner asked: ${step.text}`, confirm: true }), `${step.key} marked live`)} />;
       case "other":
         return null;
     }
   };
+  // Every step the human has not taken can be marked done by hand: an other step Loom cannot see, or one they will not take.
+  const actions = (step: AskStep & { done: boolean }, index: number): ReactNode => (
+    <>
+      {action(step, index)}
+      {!step.done && <ConfirmButton label="Mark done" confirmLabel={`Click again to mark step ${index + 1} done`} disabled={busy} onConfirm={() => onStepDone(index)} />}
+    </>
+  );
   return (
     <section data-planner-asks aria-label="The planner asks you to" className={NEED}>
       <div className="flex flex-wrap items-center gap-2">
         <PlannerMark />
         <h3 className="text-sm font-semibold">The planner asks you to</h3>
         <span className="text-xs text-muted-foreground">asked {timeLabel(ask.at, project.now)}</span>
-        <button type="button" className={`${BUTTON} ml-auto`} title="Hides these asks until the planner asks again" onClick={onDismiss}>
+        <button type="button" className={`${BUTTON} ml-auto`} title="Hides every step of these asks until the planner asks again" onClick={onDismiss}>
           Set aside
         </button>
       </div>
@@ -202,11 +212,30 @@ function AsksCard({ ask, project, versions, busy, onControl, onSpec, onTicket, o
               )}
             </span>
             <span data-ask-actions className="col-start-2 flex flex-wrap gap-1.5 empty:hidden @xl:col-start-auto @xl:justify-end">
-              {action(step, index)}
+              {actions(step, index)}
             </span>
           </li>
         ))}
       </ol>
+    </section>
+  );
+}
+
+/** bb says the planner's thread waits on the human for something only its chat shows, such as a tool approval. */
+function WaitsInChat({ threadId }: { threadId: string }) {
+  const navigate = useBbNavigate();
+  return (
+    <section data-waits-in-chat aria-label="The planner waits in its chat" className={NEED}>
+      <div className="flex flex-wrap items-center gap-2">
+        <PlannerMark />
+        <h3 className="text-sm font-semibold">The planner's thread waits for your answer in its chat</h3>
+        <button type="button" className={`${BUTTON} ml-auto`} onClick={() => navigate.toThread(threadId)}>
+          Answer in the thread
+        </button>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        It waits on something this page cannot show, such as a tool approval. The "?" on the Planner tab clears once you answer it in the thread or stop the planner's turn there; reading the thread does not clear it.
+      </p>
     </section>
   );
 }
@@ -305,6 +334,7 @@ const WIDE = 1024;
 export function PlannerPage({ threadId, project, busy = false, onControl, onSpec, onTicket }: PlannerPageProps) {
   const remote = useLoom("plannerView", { threadId }, { keep: true });
   const dismissAsk = useLoomWrite("dismissAsk");
+  const askStepDone = useLoomWrite("askStepDone");
   const status = useStatus(threadId);
   const view = remote.data ?? null;
   const rounds = useQuestionRounds(threadId, `${status}:${view?.steps.length ?? 0}`);
@@ -332,9 +362,11 @@ export function PlannerPage({ threadId, project, busy = false, onControl, onSpec
   const commented = view.steps.some((step) => step.kind === "notes" && step.version === waitingVersion);
   const versionCard = waitingVersion !== null && !askedApprove && !commented && (!specReviewBlocks(view.review) || view.review.kind === "failed");
   const pendingQuestions = questions.rows.length;
+  // bb says the thread waits, but on nothing this page can draw: a provider's own approval or question, which only its chat shows.
+  const waitsInChat = status === "waiting" && questions.loaded && pendingQuestions === 0 && questions.error === null;
   // One Ask User Question round can hold several questions; the strip counts the questions, Needs you the rounds.
   const askedCount = questions.rows.reduce((sum, row) => sum + (questionsOf(row.payload.data)?.length ?? 1), 0);
-  const needCount = pendingQuestions + (ask === null ? 0 : ask.steps.filter((step) => !step.done).length) + (versionCard ? 1 : 0);
+  const needCount = pendingQuestions + (waitsInChat ? 1 : 0) + (ask === null ? 0 : ask.steps.filter((step) => !step.done).length) + (versionCard ? 1 : 0);
   const repos = (project?.overview.repos ?? []).flatMap((repo) => (repo.name === null ? [] : [repo.name]));
   const toNeeds = () => needs.current?.scrollIntoView({ behavior: "smooth", block: "start" });
 
@@ -345,8 +377,19 @@ export function PlannerPage({ threadId, project, busy = false, onControl, onSpec
         {needCount > 0 && <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-warning px-1 text-[10px] font-semibold text-black">{needCount}</span>}
       </h2>
       <PlannerQuestions threadId={threadId} rows={questions.rows} error={questions.error} respond={questions.respond} />
+      {waitsInChat && <WaitsInChat threadId={threadId} />}
       {ask !== null && project !== null && (
-        <AsksCard ask={ask} project={project} versions={view.versions} busy={busy} onControl={onControl} onSpec={onSpec} onTicket={onTicket} onDismiss={() => void dismiss.act(() => dismissAsk({ slug: project.overview.slug, ask: ask.id, confirm: true }), "Set aside until the planner asks again")} />
+        <AsksCard
+          ask={ask}
+          project={project}
+          versions={view.versions}
+          busy={busy || dismiss.busy}
+          onControl={onControl}
+          onSpec={onSpec}
+          onTicket={onTicket}
+          onDismiss={() => void dismiss.act(() => dismissAsk({ slug: project.overview.slug, ask: ask.id, confirm: true }), "Set aside until the planner asks again")}
+          onStepDone={(index) => void dismiss.act(() => askStepDone({ slug: project.overview.slug, ask: ask.id, step: index, confirm: true }), `Step ${index + 1} marked done`)}
+        />
       )}
       {versionCard && project !== null && <VersionCard view={view} project={project} onSpec={onSpec} />}
       {needCount === 0 && (

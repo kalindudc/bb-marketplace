@@ -250,6 +250,8 @@ const handlers = (over: Partial<Handlers>): Handlers => ({
   plannerView: () => null,
   messagePlanner: unexpected,
   dismissAsk: unexpected,
+  askStepDone: unexpected,
+  ackBadge: unexpected,
   syncPullRequests: unexpected,
   markLive: unexpected,
   specVersion: unexpected,

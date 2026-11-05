@@ -50,5 +50,7 @@ describe("tags", () => {
     expect(invalidates("startPlanning", {})).toEqual([ANY]);
     expect(invalidates("syncPullRequests", { slug: "csv", key: "CSV-1" })).toEqual(["project:csv", ANY]);
     expect(invalidates("markLive", { slug: "csv", target: "CSV-1" })).toEqual(["project:csv", ANY]);
+    expect(invalidates("askStepDone", { slug: "csv", ask: 7, step: 0 })).toEqual(["project:csv", ANY]);
+    expect(invalidates("ackBadge", { slug: "csv", tab: "merge", items: ["CSV-1"] })).toEqual(["project:csv", ANY]);
   });
 });

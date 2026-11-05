@@ -286,7 +286,7 @@ describe("checks, blocks and human interventions", () => {
     expect(compute({ events }).blocks).toBe(2);
   });
 
-  it("leaves out start and the approve of a draft, and counts every other human action", () => {
+  it("leaves out start, the approve of a draft and a badge acknowledgement, and counts every other human action", () => {
     const events = [
       human(at(1), "approve", { pending: false }),
       human(at(1), "start"),
@@ -296,10 +296,13 @@ describe("checks, blocks and human interventions", () => {
       human(at(3), "post", { key: "CSV-1" }),
       human(at(4), "requeue", { key: "CSV-1" }),
       human(at(4), "cancel", { key: "CSV-2" }),
+      // Acknowledging a badge reads the page and steers nothing; marking a step done counts, as setting the asks aside does.
+      human(at(5), "ackBadge", { tab: "rollout", items: ["soak:CSV-2"] }),
+      human(at(5), "askStepDone", { ask: 7, step: 0 }),
       created(1, at(1)),
       event(at(1), "post.added", 1, { post: 1 }, "human"),
     ];
-    expect(compute({ events }).humanInterventions).toBe(6);
+    expect(compute({ events }).humanInterventions).toBe(7);
   });
 });
 
@@ -528,6 +531,8 @@ describe("feedText", () => {
     const note = { version: 1, paths: ["project.goal"], body: "Shorter." };
     expect(text(human(at(1), "notes", { notes: [note, note] }))).toBe("The human sent 2 notes on the spec to the planner.");
     expect(text(human(at(1), "notes", { notes: [note] }))).toBe("The human sent 1 note on the spec to the planner.");
+    expect(text(human(at(1), "askStepDone", { ask: 7, step: 1 }))).toBe("The human marked step 2 of the planner's asks done.");
+    expect(text(human(at(1), "ackBadge", { tab: "merge", items: ["CSV-2"] }))).toBe("The human acknowledged the Merge order tab's badge.");
     expect(text(projectMoved(at(1), "running", "paused"))).toBe("The project moved from running to paused.");
     expect(text(event(at(1), "project.state", null, { from: "running", to: "paused", reason: "The deadline 2026-01-01 has passed." }))).toBe("The project moved from running to paused: The deadline 2026-01-01 has passed.");
     expect(text(event(at(1), "spec.proposed", null, { version: 2, hash: "x" }, "thr_1"))).toBe("Spec version 2 was proposed.");

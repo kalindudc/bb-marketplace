@@ -70,7 +70,7 @@ export function StateBadge({ state }: { state: string }) {
 }
 
 /** A two-step button: the first click turns it amber with "Click again to …" and a bar that drains for five seconds, beside Cancel; the second click acts. */
-export function ConfirmButton({ label, confirmLabel, onConfirm, disabled = false, danger = false, primary = false }: { label: string; confirmLabel?: string; onConfirm(): void; disabled?: boolean; danger?: boolean; primary?: boolean }) {
+export function ConfirmButton({ label, confirmLabel, onConfirm, onArm, disabled = false, danger = false, primary = false }: { label: string; confirmLabel?: string; onConfirm(): void; onArm?(): void; disabled?: boolean; danger?: boolean; primary?: boolean }) {
   const [armed, setArmed] = useState(false);
   const drain = useRef<HTMLSpanElement>(null);
   useEffect(() => {
@@ -95,7 +95,10 @@ export function ConfirmButton({ label, confirmLabel, onConfirm, disabled = false
         data-confirming={armed ? "" : undefined}
         className={armed ? `${BUTTON_ARMED} ${size}` : idle}
         onClick={() => {
-          if (!armed) return setArmed(true);
+          if (!armed) {
+            onArm?.();
+            return setArmed(true);
+          }
           setArmed(false);
           onConfirm();
         }}

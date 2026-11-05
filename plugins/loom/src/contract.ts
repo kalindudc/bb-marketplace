@@ -18,7 +18,8 @@ import { repoSpecSchema } from "./spec";
 import type { SpecReviewStatus } from "./spec-review";
 import type { SentNote, SpecReviewRound, SpecVersionView } from "./spec-view";
 import type { PlannerAction, PlannerStep, PlannerVersion, PlannerView, TurnStep, VersionChange } from "./planner-view";
-import type { AskStep, PlannerAsk } from "./asks";
+import type { AskAction, AskStep, PlannerAsk } from "./asks";
+import { ACK_TABS, type AckTab, type BadgeAcks } from "./badge-acks";
 import type { ActivityItem, Attempt, ChecksItem, CheckStep, Mark, MergeItem, PrFeedbackItem, PrTextItem, ReviewItem, TicketActivity } from "./activity";
 import type { ChangedFile, ChangeKind, ChangeRepo, ChangeSource, ChangesView, FilePatch } from "./changes";
 import type { AuthorKind, PostKind, ProjectState, ReviewVerdict, Role, ThreadState, TicketState } from "./states";
@@ -31,7 +32,7 @@ export type { MergeEntry, MergeOrderView, MergeVerdict, MergeWait };
 export type { PrSyncOutcome, PrSyncResult, PrSyncTicket };
 export type { RolloutCheckResult, RolloutLive, RolloutMerge, RolloutMilestone, RolloutNext, RolloutRequirement, RolloutStage, RolloutStep, RolloutView, RolloutWarning, RolloutWindow };
 export type { SpecReviewRound };
-export type { AskStep, PlannerAction, PlannerAsk, PlannerStep, PlannerVersion, PlannerView, TurnStep, VersionChange };
+export type { AckTab, AskAction, AskStep, BadgeAcks, PlannerAction, PlannerAsk, PlannerStep, PlannerVersion, PlannerView, TurnStep, VersionChange };
 export type { ActivityItem, Attempt, BbProjectChoice, ChecksItem, CheckStep, PrFeedbackItem, PrTextItem, HomeProject, HomeView, Mark, MergeItem, Moment, MomentKind, NeedItem, NextStep, PlanningSession, ProjectHealth, ProjectTimeline, RepoOverview, ReviewItem, SentNote, SessionBar, SpecVersionView, TicketActivity, TicketBar };
 
 export interface BoardCard {
@@ -145,12 +146,22 @@ export interface ProjectView {
   at: number | null;
   /** The automatic spec review of the draft or the pending version; null in a rewound view. */
   specReview: SpecReviewStatus | null;
-  /** The steps the planner asked the human to take (loom_ask_human) that are not done yet; 0 in a rewound view. */
-  openAsks: number;
+  /** The steps of the planner's newest ask (loom_ask_human) that are not done yet; none in a rewound view. */
+  askSteps: OpenAskStep[];
+  /** The items of the human's newest acknowledgement of each tab badge that takes one; none in a rewound view. */
+  badgeAcks: BadgeAcks;
   /** The order the project's pull requests merge in, on the pull request strategy; null otherwise and in a rewound view, since what Loom read from the forge is kept only as it is now. */
   mergeOrder: MergeOrderView | null;
   /** The project's deploy order, advice for the human, when its spec or a ticket has one; null otherwise and in a rewound view. */
   rollout: RolloutView | null;
+}
+
+/** A step of the planner's newest ask that is not done, by its place in the ask. */
+export interface OpenAskStep {
+  index: number;
+  action: AskAction;
+  text: string;
+  key: string | null;
 }
 
 export interface PostDto {
@@ -358,6 +369,14 @@ export const rpcContract = defineRpcContract({
   plannerView: { input: z.object({ threadId: z.string().min(1).max(200) }).strict(), output: typed<PlannerView | null>(), ...RPC_TAGS.plannerView },
   messagePlanner: { input: z.object({ threadId: z.string().min(1).max(200), text: z.string().trim().min(1).max(20_000), confirm }).strict(), output: typed<PlannerView | null>(), ...RPC_TAGS.messagePlanner },
   dismissAsk: { input: z.object({ slug, ask: z.number().int().positive(), confirm }).strict(), output: typed<PlannerView | null>(), ...RPC_TAGS.dismissAsk },
+  // The human marks one step of the planner's newest ask done, by its place in the ask.
+  askStepDone: { input: z.object({ slug, ask: z.number().int().positive(), step: z.number().int().min(0).max(9), confirm }).strict(), output: typed<PlannerView | null>(), ...RPC_TAGS.askStepDone },
+  // The human acknowledges a tab badge: it hides while every item it counts is among `items`.
+  ackBadge: {
+    input: z.object({ slug, tab: z.enum(ACK_TABS), items: z.array(z.string().min(1).max(300)).min(1).max(200), confirm }).strict(),
+    output: typed<ProjectView>(),
+    ...RPC_TAGS.ackBadge,
+  },
   // The human's Mark live on a rollout step or milestone, or with undo its undo.
   markLive: {
     input: z.object({ slug, target: z.string().min(1).max(100), note: z.string().trim().max(2000).optional(), undo: z.literal(true).optional(), confirm }).strict(),

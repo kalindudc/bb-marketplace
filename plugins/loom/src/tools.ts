@@ -50,9 +50,9 @@ const specFindingSchema = z.object({
 });
 
 const askStepSchema = z.object({
-  action: z.enum(ASK_ACTIONS).describe("approve a spec version, requeue or reply on a ticket, start, resume or land the project, or other for anything else."),
+  action: z.enum(ASK_ACTIONS).describe("approve a spec version, requeue or reply on a ticket, start, resume or land the project, live to mark a ticket or milestone live, or other for anything else."),
   version: z.number().int().positive().optional().describe("For approve: the version that waits for approval."),
-  key: z.string().min(1).max(40).optional().describe("For requeue and reply: the ticket key, such as CSV-1."),
+  key: z.string().min(1).max(40).optional().describe("For requeue and reply: the ticket key, such as CSV-1. For live: the ticket key or the milestone ref."),
   text: z.string().min(1).max(500).describe("One sentence the human reads: what to do and why."),
 });
 
@@ -277,7 +277,7 @@ export function registerTools(bb: BbPluginApi, projects: Projects, engine: Engin
   bb.agents.registerTool({
     name: "loom_ask_human",
     description:
-      "Tell the human what you need them to do, as steps the Loom page shows under Needs you with a button for each: approve a spec version, requeue or reply on a ticket, start, resume or land the project, or other for anything else. Each call replaces your earlier asks; call it with no steps once nothing is needed. Say the same in your reply too: the human may read the chat instead.",
+      "Tell the human what you need them to do, as steps the Loom page shows under Needs you with a button for each: approve a spec version, requeue or reply on a ticket, start, resume or land the project, live to mark a ticket or milestone live (with its key), or other for anything else. Loom checks a step off once it sees the human take it, such as a live mark for that key; the human marks an other step, or any step they will not take, done themselves. Each call replaces your earlier asks; call it with no steps once nothing is needed. Say the same in your reply too: the human may read the chat instead.",
     presentation: { label: { pending: "Asking the human", completed: "Asked the human" } },
     parameters: z.object({
       why: z.string().max(2000).describe("One or two sentences: why you need this, for example what blocks the tickets."),

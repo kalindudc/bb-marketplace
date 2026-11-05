@@ -849,6 +849,36 @@ describe("spec versions", () => {
     expect(humanEvents().at(-1)).toEqual({ actor: "human", action: "dismissAsk", slug: "csv", ask });
   });
 
+  it("askStepDone marks one step of the planner's newest ask done as the human, and the project view counts the rest", async () => {
+    await approved();
+    const project = host.store.projectBySlug("csv")!;
+    host.store.event(project.id, null, "planner.asked", "thr_plan", { why: "", steps: [{ action: "other", text: "Check the alert." }, { action: "reply", key: "CSV-2", text: "Answer CSV-2." }] });
+    const ask = host.store.eventsOfKind(project.id, "planner.asked")[0]!.id;
+    expect((await call<ProjectView>("project", { slug: "csv" })).askSteps).toEqual([
+      { index: 0, action: "other", text: "Check the alert.", key: null },
+      { index: 1, action: "reply", text: "Answer CSV-2.", key: "CSV-2" },
+    ]);
+    const view = await call<{ ask: { open: boolean; steps: Array<{ done: boolean }> } }>("askStepDone", { slug: "csv", ask, step: 0, confirm: true });
+    expect(view.ask).toMatchObject({ open: true, steps: [{ done: true }, { done: false }] });
+    expect(humanEvents().at(-1)).toEqual({ actor: "human", action: "askStepDone", slug: "csv", ask, step: 0 });
+    expect((await call<ProjectView>("project", { slug: "csv" })).askSteps.map((step) => step.index)).toEqual([1]);
+    await expect(call("askStepDone", { slug: "csv", ask, step: 0, confirm: true })).rejects.toThrow("Step 1 is done already.");
+    await expect(call("askStepDone", { slug: "csv", ask, step: 1, confirm: true }, { experimental_caller: { kind: "plugin", pluginId: "other" } })).rejects.toThrow("for the human");
+  });
+
+  it("ackBadge records the items a badge counted as the human's event, which every later project view carries", async () => {
+    await approved();
+    expect((await call<ProjectView>("project", { slug: "csv" })).badgeAcks).toEqual({ merge: [], rollout: [] });
+    const view = await call<ProjectView>("ackBadge", { slug: "csv", tab: "merge", items: ["CSV-2", "CSV-2", "CSV-3"], confirm: true });
+    expect(view.badgeAcks).toEqual({ merge: ["CSV-2", "CSV-3"], rollout: [] });
+    expect(humanEvents().at(-1)).toEqual({ actor: "human", action: "ackBadge", slug: "csv", tab: "merge", items: ["CSV-2", "CSV-3"] });
+    await call("ackBadge", { slug: "csv", tab: "rollout", items: ["ships_on_merge:CSV-2"], confirm: true });
+    await call("ackBadge", { slug: "csv", tab: "merge", items: ["CSV-4"], confirm: true });
+    expect((await call<ProjectView>("project", { slug: "csv" })).badgeAcks).toEqual({ merge: ["CSV-4"], rollout: ["ships_on_merge:CSV-2"] });
+    await expect(call("ackBadge", { slug: "csv", tab: "board", items: ["CSV-1"], confirm: true })).rejects.toThrow();
+    await expect(call("ackBadge", { slug: "csv", tab: "merge", items: ["CSV-1"], confirm: true }, { experimental_caller: { kind: "plugin", pluginId: "other" } })).rejects.toThrow("for the human");
+  });
+
   it("specVersion compares a draft with the version before, or with the base it is given", async () => {
     await propose();
     await revise();

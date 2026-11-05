@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { dismissAsk, plannerAsk, recordAsk, type AskStep } from "../src/asks";
+import { dismissAsk, markStepDone, plannerAsk, recordAsk, type AskStep } from "../src/asks";
+import { markLiveByHuman } from "../src/rollout-live";
 import { requeueTicket } from "../src/workers";
 import { makeCtx, seedProject, seedRepoProject, specToml, type EngineHarness } from "./helpers";
 
@@ -86,5 +87,55 @@ describe("the planner's asks", () => {
     expect(plannerAsk(h.store, project())!.steps[0]!.done).toBe(false);
     h.store.event(project().id, null, "project.landed", "human", { repo: "api", url: "https://example.com/api/1" });
     expect(plannerAsk(h.store, project())).toMatchObject({ open: false, steps: [{ done: true }] });
+  });
+
+  it("marks a live step done once its ticket or milestone is live, and keeps it done after an undo", async () => {
+    await seedProject(h, (doc) => {
+      doc.merge = { strategy: "pr", describe: "loom", squash: false, max_fix_rounds: 0 };
+      doc.rollout = { deploy: { how: "Shipit deploys main" }, milestone: [{ ref: "traffic-low", title: "Old traffic is near zero" }] };
+    });
+    expect(() => ask([{ action: "live", text: "Mark it live." }])).toThrow("steps[0]: live needs the ticket key or milestone ref.");
+    expect(() => ask([{ action: "live", key: "traffic-high", text: "Mark it live." }])).toThrow('steps[0]: "traffic-high" is neither a ticket of csv nor a milestone of its spec. Its milestones: traffic-low.');
+    ask([
+      { action: "live", key: "traffic-low", text: "Mark traffic-low live once old traffic is near zero." },
+      { action: "live", key: "CSV-1", text: "Mark CSV-1 live once Shipit deployed it." },
+    ]);
+    expect(plannerAsk(h.store, project())!.steps.map((step) => step.done)).toEqual([false, false]);
+    markLiveByHuman(h.ctx, "csv", "traffic-low", {}, "human");
+    expect(plannerAsk(h.store, project())!.steps.map((step) => step.done)).toEqual([true, false]);
+    markLiveByHuman(h.ctx, "csv", "CSV-1", {}, "human");
+    markLiveByHuman(h.ctx, "csv", "CSV-1", { undo: true }, "human");
+    expect(plannerAsk(h.store, project())).toMatchObject({ open: false, steps: [{ done: true }, { done: true }] });
+  });
+
+  it("keeps an ask written before live existed valid, and refuses live on a draft or a project without a rollout", async () => {
+    await h.projects.propose({ toml: specToml(), threadId: "thr_plan", bbProjectId: "proj_1", hostId: "host_1" });
+    expect(() => ask([{ action: "live", key: "CSV-1", text: "Mark CSV-1 live." }])).toThrow("steps[0]: csv is draft, so nothing of it goes live.");
+    await h.projects.approve("csv", "human");
+    expect(() => ask([{ action: "live", key: "CSV-1", text: "Mark CSV-1 live." }])).toThrow("steps[0]: csv has no rollout, so nothing is marked live");
+    // An ask recorded by an older Loom has the same shape: no field was added or renamed.
+    h.store.event(project().id, null, "planner.asked", "thr_plan", { why: "Old ask.", steps: [{ action: "other", text: "Check the dashboard." }] });
+    expect(plannerAsk(h.store, project())).toMatchObject({ why: "Old ask.", open: true, steps: [{ action: "other", done: false }] });
+  });
+
+  it("lets the human mark any step done by hand, recorded as an event, and refuses a stale, missing or finished step", async () => {
+    await seedProject(h);
+    ask([
+      { action: "other", text: "Rotate the API token in 1Password." },
+      { action: "reply", key: "CSV-2", text: "Tell CSV-2 which delimiter to use." },
+    ]);
+    const current = plannerAsk(h.store, project())!;
+    expect(() => markStepDone(h.store, project(), current.id, 2)).toThrow("The planner's asks have no step 3.");
+    markStepDone(h.store, project(), current.id, 0);
+    h.store.event(project().id, null, "human.action", "human", { action: "askStepDone", ask: current.id, step: 0, slug: "csv" });
+    expect(plannerAsk(h.store, project())).toMatchObject({ open: true, steps: [{ action: "other", done: true }, { action: "reply", done: false }] });
+    expect(() => markStepDone(h.store, project(), current.id, 0)).toThrow("Step 1 is done already.");
+    h.store.event(project().id, null, "human.action", "human", { action: "askStepDone", ask: current.id, step: 1, slug: "csv" });
+    expect(plannerAsk(h.store, project())).toMatchObject({ open: false, steps: [{ done: true }, { done: true }] });
+
+    // A mark belongs to its ask: the planner's next ask starts with every step open.
+    ask([{ action: "other", text: "Rotate the API token in 1Password." }]);
+    expect(plannerAsk(h.store, project())!.steps[0]!.done).toBe(false);
+    expect(() => markStepDone(h.store, project(), current.id, 0)).toThrow("no longer the planner's newest");
   });
 });

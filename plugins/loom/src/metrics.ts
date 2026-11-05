@@ -142,7 +142,8 @@ export function computeMetrics(a: { tickets: TicketRow[]; events: EventRow[]; po
     reviewRounds: { mean: mean(done.map((ticket) => ticket.review_round)), n: done.length },
     checks: { total: checkData.length, failed: checkData.filter((data) => data.passed === false).length },
     blocks: events.filter((event) => event.row.kind === "ticket.state" && event.data.to === "blocked").length,
-    humanInterventions: events.filter((event) => event.row.kind === "human.action" && event.data.action !== "start" && !(event.data.action === "approve" && event.data.pending !== true)).length,
+    // Acknowledging a badge only reads the page; it steers nothing.
+    humanInterventions: events.filter((event) => event.row.kind === "human.action" && event.data.action !== "start" && event.data.action !== "ackBadge" && !(event.data.action === "approve" && event.data.pending !== true)).length,
     tokens: { total: tokenTotal, perDoneTicket: done.length === 0 ? null : tokenTotal / done.length, byRole: tokens, unreported },
     cumulativeFlow: cumulativeFlow(a.tickets, events, createdAt, window),
     activeMs: activeMs(events, a.now),

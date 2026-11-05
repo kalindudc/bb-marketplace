@@ -1,17 +1,19 @@
 // What the planner asks the human to do, recorded with loom_ask_human as a planner.asked event. Each call replaces the
-// asks before it. Whether a step is done is read from the events that follow, so the page never stores a checkmark.
+// asks before it. Whether a step is done is read from the events that follow: what the human did that Loom can see, or
+// the human's own askStepDone for one step, so the page never stores a checkmark.
 import type { EventRow, ProjectRow, Store } from "./db/store";
 import { LoomError, landsOf, repoOverviews } from "./projects";
+import { followsRollout } from "./rollout";
 import type { Spec } from "./spec";
 
-export const ASK_ACTIONS = ["approve", "requeue", "start", "resume", "land", "reply", "other"] as const;
+export const ASK_ACTIONS = ["approve", "requeue", "start", "resume", "land", "reply", "live", "other"] as const;
 export type AskAction = (typeof ASK_ACTIONS)[number];
 
 export interface AskStep {
   action: AskAction;
   /** For approve: the version that waits for approval. */
   version?: number;
-  /** For requeue and reply: the ticket. */
+  /** For requeue and reply: the ticket. For live: the ticket or the milestone to mark live. */
   key?: string;
   /** One sentence the human reads: what to do and why. */
   text: string;
@@ -23,7 +25,7 @@ export interface PlannerAsk {
   at: number;
   why: string;
   steps: Array<AskStep & { done: boolean }>;
-  /** A step is not done yet; an ask of only `other` steps stays open until the human dismisses it. */
+  /** A step is not done yet; an `other` step stays open until the human marks it done or sets the asks aside. */
   open: boolean;
 }
 
@@ -54,10 +56,22 @@ function stepError(store: Store, project: ProjectRow, step: AskStep, index: numb
       return project.state === "paused" ? null : `${at}: ${project.slug} is ${project.state}, not paused.`;
     case "land":
       return project.state === "draft" || project.state === "archived" ? `${at}: ${project.slug} is ${project.state}, so there is nothing to land.` : null;
+    case "live": {
+      if (step.key === undefined) return `${at}: live needs the ticket key or milestone ref.`;
+      if (project.approved_version === null || project.state === "archived") return `${at}: ${project.slug} is ${project.state}, so nothing of it goes live.`;
+      const spec = approvedSpec(store, project);
+      if (!followsRollout(spec, store.tickets(project.id))) return `${at}: ${project.slug} has no rollout, so nothing is marked live: its spec has no [rollout] table, no repo deploy and no ticket rollout.`;
+      const ticket = store.ticketByKey(step.key);
+      if (ticket !== null && ticket.project_id === project.id) return null;
+      const milestones = (spec.rollout?.milestone ?? []).map((milestone) => milestone.ref);
+      return milestones.includes(step.key) ? null : `${at}: "${step.key}" is neither a ticket of ${project.slug} nor a milestone of its spec.${milestones.length === 0 ? "" : ` Its milestones: ${milestones.join(", ")}.`}`;
+    }
     case "other":
       return null;
   }
 }
+
+const approvedSpec = (store: Store, project: ProjectRow) => JSON.parse(store.specVersion(project.id, project.approved_version!)!.spec_json) as Spec;
 
 /** Records the planner's asks, replacing the ones before; no steps clears them. */
 export function recordAsk(store: Store, project: ProjectRow, actor: string, data: AskData): void {
@@ -71,6 +85,15 @@ const moved = (event: EventRow, from: string, to: string) => {
   const data = JSON.parse(event.data_json) as { from?: string; to?: string };
   return data.from === from && data.to === to;
 };
+
+const humanAction = (event: EventRow) => (event.kind === "human.action" ? (JSON.parse(event.data_json) as { action?: string; ask?: number; step?: number }) : null);
+
+/** Whether the human marked step `index` of ask `ask` done themselves, with askStepDone. */
+const markedDone = (later: readonly EventRow[], ask: number, index: number) =>
+  later.some((event) => {
+    const action = humanAction(event);
+    return action?.action === "askStepDone" && action.ask === ask && action.step === index;
+  });
 
 /** Whether the human took the step after the ask, read from the events that follow it, so a later change does not undo it. */
 function stepDone(store: Store, project: ProjectRow, later: readonly EventRow[], step: AskStep): boolean {
@@ -97,6 +120,9 @@ function stepDone(store: Store, project: ProjectRow, later: readonly EventRow[],
       const spec = JSON.parse(store.specVersion(project.id, project.approved_version)!.spec_json) as Spec;
       return !repoOverviews(project, spec, store.tickets(project.id), landsOf(store.eventsOfKind(project.id, "project.landed"))).some((repo) => repo.toLand);
     }
+    case "live":
+      // Live now, by any means, or marked live since the ask even if a later undo took the mark away.
+      return store.rolloutMark(project.id, step.key!)?.live_at != null || later.some((event) => event.kind === "rollout.live" && (JSON.parse(event.data_json) as { target?: string }).target === step.key);
     case "other":
       return false;
   }
@@ -110,12 +136,11 @@ export function plannerAsk(store: Store, project: ProjectRow): PlannerAsk | null
   if (data.steps.length === 0) return null;
   const later = store.events(project.id, ask.id, 100_000);
   const dismissed = later.some((event) => {
-    if (event.kind !== "human.action") return false;
-    const action = JSON.parse(event.data_json) as { action?: string; ask?: number };
-    return action.action === "dismissAsk" && action.ask === ask.id;
+    const action = humanAction(event);
+    return action?.action === "dismissAsk" && action.ask === ask.id;
   });
   if (dismissed) return null;
-  const steps = data.steps.map((step) => ({ ...step, done: stepDone(store, project, later, step) }));
+  const steps = data.steps.map((step, index) => ({ ...step, done: markedDone(later, ask.id, index) || stepDone(store, project, later, step) }));
   return { id: ask.id, at: ask.at, why: data.why, steps, open: steps.some((step) => !step.done) };
 }
 
@@ -123,4 +148,16 @@ export function plannerAsk(store: Store, project: ProjectRow): PlannerAsk | null
 export function dismissAsk(store: Store, project: ProjectRow, id: number): void {
   const current = plannerAsk(store, project);
   if (current === null || current.id !== id) throw new LoomError("loom_invalid_state", "These asks are no longer the planner's newest. Reload the page.");
+}
+
+/**
+ * The human marks one step done, such as an `other` step they did outside Loom, or a step they decided against. It only
+ * checks; the caller writes the askStepDone human.action event that plannerAsk reads.
+ */
+export function markStepDone(store: Store, project: ProjectRow, id: number, index: number): void {
+  const current = plannerAsk(store, project);
+  if (current === null || current.id !== id) throw new LoomError("loom_invalid_state", "These asks are no longer the planner's newest. Reload the page.");
+  const step = current.steps[index];
+  if (step === undefined) throw new LoomError("loom_invalid_input", `The planner's asks have no step ${index + 1}.`);
+  if (step.done) throw new LoomError("loom_invalid_state", `Step ${index + 1} is done already.`);
 }

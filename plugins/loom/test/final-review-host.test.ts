@@ -28,7 +28,8 @@ const print = async (repo: string) => {
   return answer;
 };
 
-describe("checkoutPrint", () => {
+// Each case runs several git commands, which a loaded full run can slow past vitest's 5 seconds.
+describe("checkoutPrint", { timeout: 20_000 }, () => {
   it("is the same for the same checkout, and reading it changes nothing", async () => {
     const repo = makeRepo();
     const first = await print(repo);

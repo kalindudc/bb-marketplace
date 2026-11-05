@@ -52,6 +52,8 @@ const handlers = (over: Partial<Handlers> = {}): Handlers => ({
   plannerView: () => null,
   messagePlanner: unexpected,
   dismissAsk: unexpected,
+  askStepDone: unexpected,
+  ackBadge: unexpected,
   syncPullRequests: unexpected,
   markLive: unexpected,
   specVersion: unexpected,
@@ -1271,7 +1273,11 @@ describe("planner page", () => {
         },
       });
     let current = asked(false);
-    const running = projectView({ overview: overview({ pendingVersion: 2 }), board: [card({ key: "CSV-1", state: "blocked" })], openAsks: 3 });
+    const running = projectView({ overview: overview({ pendingVersion: 2 }), board: [card({ key: "CSV-1", state: "blocked" })], askSteps: [
+        { index: 0, action: "approve", text: "Approve v2.", key: null },
+        { index: 1, action: "requeue", text: "Then requeue CSV-1.", key: "CSV-1" },
+        { index: 2, action: "other", text: "Check the alert in Observe.", key: null },
+      ] });
     const control = vi.fn(() => {
       current = asked(true);
       return running;
@@ -1326,8 +1332,9 @@ describe("planner page", () => {
     expect(classes(step)).toEqual(expect.arrayContaining(["grid-cols-[1.25rem_minmax(0,1fr)]", "@xl:grid-cols-[1.25rem_minmax(0,1fr)_auto]"]));
     const actions = step.querySelector("[data-ask-actions]")!;
     expect(classes(actions)).toEqual(expect.arrayContaining(["col-start-2", "@xl:col-start-auto", "@xl:justify-end", "empty:hidden"]));
-    expect(within(actions as HTMLElement).getAllByRole("button").map((button) => button.textContent)).toEqual(["See what changed", "Approve v2"]);
-    expect(page(slot).querySelector('[data-ask-step="other"] [data-ask-actions]')!.childElementCount).toBe(0);
+    expect(within(actions as HTMLElement).getAllByRole("button").map((button) => button.textContent)).toEqual(["See what changed", "Approve v2", "Mark done"]);
+    // An other step has no button of its own, only the human's Mark done.
+    expect(within(page(slot).querySelector<HTMLElement>('[data-ask-step="other"] [data-ask-actions]')!).getAllByRole("button").map((button) => button.textContent)).toEqual(["Mark done"]);
     // A story step's title breaks a long link or name rather than run off the page.
     expect(classes(page(slot).querySelector("[data-story-step] span.font-medium"))).toEqual(expect.arrayContaining(["min-w-0", "[overflow-wrap:anywhere]"]));
   });
@@ -1355,6 +1362,61 @@ describe("planner page", () => {
     expect(card.textContent).not.toContain("repo[0].forge.edit,");
     expect([...card.querySelectorAll("[data-setting-path]")].map((item) => item.textContent)).toEqual(["web › forge › edit", "web › forge › reply", "infra › forge › kind"]);
     expect(card.querySelector<HTMLDetailsElement>("[data-setting-paths]")!.open).toBe(false);
+  });
+
+  it("lets the human mark each step done, marks a live step live, and lists the open steps at the top of the tab", async () => {
+    const asked = (done: boolean[]) =>
+      plannerViewOf({
+        projectState: "running",
+        approvedVersion: 1,
+        ask: {
+          id: 9,
+          at: NOW - 60_000,
+          why: "The rollout needs two things from you.",
+          open: done.some((value) => !value),
+          steps: [
+            { action: "other", text: "Rotate the API token in 1Password.", done: done[0]! },
+            { action: "live", key: "CSV-1", text: "Mark CSV-1 live once Shipit deployed it.", done: done[1]! },
+          ],
+        },
+      });
+    const steps = (done: boolean[]) => [
+      ...(done[0] ? [] : [{ index: 0, action: "other" as const, text: "Rotate the API token in 1Password.", key: null }]),
+      ...(done[1] ? [] : [{ index: 1, action: "live" as const, text: "Mark CSV-1 live once Shipit deployed it.", key: "CSV-1" }]),
+    ];
+    let done = [false, false];
+    const current = () => projectView({ askSteps: steps(done) });
+    const askStepDone = vi.fn(() => {
+      done = [true, done[1]!];
+      return asked(done);
+    });
+    const markLive = vi.fn(() => {
+      done = [done[0]!, true];
+      return current();
+    });
+    const slot = await openPlanner({ plannerView: () => asked(done), project: current, askStepDone, markLive }, current());
+    expect(slot.container.querySelector('[data-tab-badge="planner"]')!.textContent).toBe("2");
+    const notice = slot.container.querySelector<HTMLElement>('[data-badge-notice="planner"]')!;
+    expect(notice.textContent).toContain("The planner asks you to do 2 things.");
+    expect([...notice.querySelectorAll("[data-badge-item]")].map((item) => item.textContent)).toEqual(["Step 1: Rotate the API token in 1Password.", "Step 2: Mark CSV-1 live once Shipit deployed it."]);
+    fireEvent.click(within(notice).getByRole("button", { name: "Step 2: Mark CSV-1 live once Shipit deployed it." }));
+    expect(slot.inspection.navigateCalls.at(-1)).toEqual(pushed("csv/CSV-1"));
+
+    const asks = () => page(slot).querySelector<HTMLElement>("[data-planner-asks]")!;
+    const other = () => within(asks().querySelector<HTMLElement>('[data-ask-step="other"]')!);
+    fireEvent.click(other().getByRole("button", { name: "Mark done" }));
+    fireEvent.click(other().getByRole("button", { name: "Click again to mark step 1 done" }));
+    await waitFor(() => expect(askStepDone).toHaveBeenCalledWith({ slug: "csv", ask: 9, step: 0, confirm: true }));
+    await waitFor(() => expect(asks().querySelector('[data-ask-step="other"]')!.hasAttribute("data-done")).toBe(true));
+    expect(toast.success).toHaveBeenCalledWith("Step 1 marked done");
+    await waitFor(() => expect(slot.container.querySelector('[data-tab-badge="planner"]')!.textContent).toBe("1"));
+
+    const live = () => within(asks().querySelector<HTMLElement>('[data-ask-step="live"]')!);
+    fireEvent.click(live().getByRole("button", { name: "Mark CSV-1 live" }));
+    fireEvent.click(live().getByRole("button", { name: /^Click again/ }));
+    await waitFor(() => expect(markLive).toHaveBeenCalledWith({ slug: "csv", target: "CSV-1", note: "Marked live as the planner asked: Mark CSV-1 live once Shipit deployed it.", confirm: true }));
+    await waitFor(() => expect(slot.container.querySelector('[data-tab-badge="planner"]')).toBeNull());
+    expect(slot.container.querySelector("[data-badge-notice]")).toBeNull();
   });
 
   it("sends the human's message to the planner and shows it in the story", async () => {
@@ -1632,6 +1694,31 @@ describe("planner questions", () => {
     fireEvent.click(slot.getByRole("tab", { name: "Planner" }));
     await waitFor(() => expect(card(slot)).not.toBeNull());
     expect(list).toHaveBeenCalledWith({ threadId: "thr_plan" });
+    expect(slot.container.querySelector("[data-waits-in-chat]")).toBeNull();
+  });
+
+  it("says the planner waits in its chat, with the way there, when bb's wait is on nothing the page can show", async () => {
+    // A provider's own tool approval is no plugin interaction, so the list Loom reads has nothing for it.
+    const sdk = { threads: { interactions: { list: async () => [] } } } as unknown as PluginSdkTestFakes;
+    const { slot } = await mountPage("csv", { project: () => projectView(), plannerView: () => plannerViewOf({ projectState: "running", approvedVersion: 1 }) }, { sdk, sidebarThreads: sidebar("thr_plan", true) });
+    const tab = await slot.findByRole("tab", { name: "Planner" });
+    expect(tab.getAttribute("title")).toBe("The planner's thread waits for your answer in its chat");
+    fireEvent.click(tab);
+    const waits = await waitFor(() => {
+      const found = slot.container.querySelector<HTMLElement>("[data-waits-in-chat]");
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    expect(waits.textContent).toContain("reading the thread does not clear it");
+    expect(slot.container.querySelector("[data-nothing-needed]")).toBeNull();
+    const notice = slot.container.querySelector<HTMLElement>('[data-badge-notice="planner"]')!;
+    expect(notice.textContent).toContain("It clears once the question or approval is answered, here under Needs you or in the thread, or the planner's turn is stopped. Reading the thread does not clear it.");
+    fireEvent.click(within(notice).getByRole("button", { name: "Open the planner's thread" }));
+    fireEvent.click(within(waits).getByRole("button", { name: "Answer in the thread" }));
+    expect(slot.inspection.navigateCalls.slice(-2)).toEqual([
+      { method: "toThread", threadId: "thr_plan" },
+      { method: "toThread", threadId: "thr_plan" },
+    ]);
   });
 });
 
@@ -2050,6 +2137,12 @@ describe("spec tab", () => {
       expect(board.getAttribute("title")).toBe("2 tickets are blocked");
       expect(board.getAttribute("aria-description")).toBe("2 tickets are blocked");
       expect(badge(slot, "spec")).toBeNull();
+      // The tab says the same at its top, with each ticket one click away and what clears it.
+      const notice = slot.container.querySelector<HTMLElement>('[data-badge-notice="board"]')!;
+      expect(notice.textContent).toContain("2 tickets are blocked. A ticket leaves the count once it is requeued, by you or by the planner in a triage round, or cancelled.");
+      expect(notice.className).toContain("border-l-destructive");
+      fireEvent.click(within(notice).getByRole("button", { name: /^CSV-3: / }));
+      expect(slot.inspection.navigateCalls.at(-1)).toEqual(pushed("csv/CSV-3"));
 
       slot.lifecycle.unmount();
       const { slot: calm } = await mountPage("csv", { project: () => projectView() });
@@ -4897,10 +4990,14 @@ describe("merge order tab", () => {
     expect(slot.queryByRole("tab", { name: /Merge order/ })).toBeNull();
   });
 
-  it("is a tab on a pull request project that has started, with the count of pull requests that can go first", async () => {
+  it("is a tab on a pull request project that has started, with no badge for pull requests that only have nothing before them", async () => {
     const slot = await mountOrder();
     const tab = await slot.findByRole("tab", { name: /Merge order/ });
-    expect(tab.querySelector("[data-tab-badge]")!.textContent).toBe("1");
+    // A pull request at step 1 waits on its own review and checks, not on the human, so it is no badge.
+    expect(tab.querySelector("[data-tab-badge]")).toBeNull();
+    fireEvent.click(tab);
+    await waitFor(() => expect(slot.container.querySelector("[data-merge-lead]")).not.toBeNull());
+    expect(slot.container.querySelector("[data-badge-notice]")).toBeNull();
   });
 
   it("opens on Steps: what to merge first, what each waits on, and a warning for the approved stacked one", async () => {
@@ -4971,6 +5068,56 @@ describe("merge order tab", () => {
     expect(alert.textContent).toContain("CSV-2's pull request #2 merged into CSV-1's branch, not main.");
     expect(alert.textContent).toContain("CSV-1 (#1) has not merged, so the change is not on main.");
     expect(alert.textContent).toContain("Loom counted CSV-2 as done before it checked where a pull request merged.");
+  });
+
+  it("explains the red badge at the top of the tab, and hides it once acknowledged until another pull request merges the wrong way", async () => {
+    const elsewhere = (key: string) => entry({ key, state: "done", step: 0, verdict: "merged_elsewhere", mergedInto: "CSV-1", mergedIntoState: "pr_open", prUrl: `https://github.com/acme/shop/pull/${key.slice(4)}` });
+    const wrong = (keys: string[], acked: string[]) =>
+      projectView({ overview: overview({ strategy: "pr", branch: null }), badgeAcks: { merge: acked, rollout: [] }, mergeOrder: order({ entries: [entry({ key: "CSV-1", verdict: "first", holds: ["draft"] }), ...keys.map(elsewhere)], counts: { open: 1, first: 1, ready: 0, wrong: keys.length } }) });
+    let current = wrong(["CSV-2"], []);
+    const ackBadge = vi.fn(() => (current = wrong(["CSV-2"], ["CSV-2"])));
+    const { slot } = await mountPage("csv", { project: () => current, ackBadge });
+    fireEvent.click(await slot.findByRole("tab", { name: /Merge order/ }));
+    const notice = await waitFor(() => {
+      const found = slot.container.querySelector<HTMLElement>('[data-badge-notice="merge"]');
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    expect(notice.textContent).toContain("1 pull request merged into another ticket's branch, so its change is not on the base.");
+    expect(notice.textContent).toContain("A pull request leaves the count once the ticket whose branch it went into merges too.");
+    fireEvent.click(within(notice).getByRole("button", { name: "CSV-2 merged into CSV-1's branch" }));
+    expect(slot.inspection.navigateCalls.at(-1)).toEqual(pushed("csv/CSV-2"));
+    fireEvent.click(within(notice).getByRole("button", { name: "Open CSV-2's pull request" }));
+    expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "openUrl", url: "https://github.com/acme/shop/pull/2" });
+
+    fireEvent.click(within(notice).getByRole("button", { name: "Acknowledge" }));
+    fireEvent.click(within(notice).getByRole("button", { name: "Click again to hide the badge" }));
+    await waitFor(() => expect(ackBadge).toHaveBeenCalledWith({ slug: "csv", tab: "merge", items: ["CSV-2"], confirm: true }));
+    await waitFor(() => expect(slot.container.querySelector('[data-tab-badge="merge"]')).toBeNull());
+    expect(slot.container.querySelector("[data-badge-notice]")).toBeNull();
+    expect(toast.success).toHaveBeenCalledWith("Badge hidden until something new comes up");
+  });
+
+  it("disarms Acknowledge when the badge's items change, so it never acknowledges one the human did not see", async () => {
+    const elsewhere = (key: string) => entry({ key, state: "done", step: 0, verdict: "merged_elsewhere", mergedInto: "CSV-1", mergedIntoState: "pr_open" });
+    const wrong = (keys: string[]) => projectView({ overview: overview({ strategy: "pr", branch: null }), mergeOrder: order({ entries: [entry({ key: "CSV-1", verdict: "first", holds: ["draft"] }), ...keys.map(elsewhere)], counts: { open: 1, first: 1, ready: 0, wrong: keys.length } }) });
+    let current = wrong(["CSV-2"]);
+    const ackBadge = vi.fn(() => current);
+    const { slot } = await mountPage("csv", { project: () => current, ackBadge });
+    fireEvent.click(await slot.findByRole("tab", { name: /Merge order/ }));
+    const notice = () => slot.container.querySelector<HTMLElement>('[data-badge-notice="merge"]')!;
+    await waitFor(() => expect(notice()).not.toBeNull());
+    fireEvent.click(within(notice()).getByRole("button", { name: "Acknowledge" }));
+    expect(within(notice()).queryByRole("button", { name: "Click again to hide the badge" })).not.toBeNull();
+
+    current = wrong(["CSV-2", "CSV-3"]);
+    await slot.experimental_invalidateRpc(changedTags("csv"));
+    await waitFor(() => expect(notice().querySelector('[data-badge-item="CSV-3"]')).not.toBeNull());
+    expect(within(notice()).queryByRole("button", { name: "Click again to hide the badge" })).toBeNull();
+    fireEvent.click(within(notice()).getByRole("button", { name: "Acknowledge" }));
+    fireEvent.click(within(notice()).getByRole("button", { name: "Click again to hide the badge" }));
+    await waitFor(() => expect(ackBadge).toHaveBeenCalledWith({ slug: "csv", tab: "merge", items: ["CSV-2", "CSV-3"], confirm: true }));
+    expect(ackBadge).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -5053,6 +5200,34 @@ describe("rollout tab", () => {
     const badge = (await slot.findByRole("tab", { name: /Rollout/ })).querySelector("[data-tab-badge]")!;
     expect(badge.textContent).toBe("1");
     expect(badge.className).toContain("bg-warning");
+  });
+
+  it("badges only warning-tone warnings, explains them on the tab, and hides the badge once acknowledged", async () => {
+    const info = { kind: "milestone" as const, tone: "info" as const, keys: ["CSV-2"], text: "CSV-2 needs traffic-low to hold before it deploys, and it does not yet." };
+    const quiet = await mountRollout({}, prView(rollout({ warnings: [info] })));
+    expect((await quiet.findByRole("tab", { name: /Rollout/ })).querySelector("[data-tab-badge]")).toBeNull();
+    unmountAll();
+
+    const warned = (acked: string[]) => projectView({ overview: overview({ strategy: "pr", branch: null }), rollout: rollout({ warnings: [info, ...rollout().warnings] }), badgeAcks: { merge: [], rollout: acked } });
+    let current = warned([]);
+    const id = "ships_on_merge:CSV-2:CSV-2 deploys when it merges, and CSV-1 is not live yet.";
+    const ackBadge = vi.fn(() => (current = warned([id])));
+    const slot = await mountRollout({ ackBadge, project: () => current }, current);
+    const tab = await slot.findByRole("tab", { name: /Rollout/ });
+    expect(tab.querySelector("[data-tab-badge]")!.textContent).toBe("1");
+    expect(tab.getAttribute("title")).toBe("1 rollout warning before you merge or deploy");
+    fireEvent.click(tab);
+    const notice = await waitFor(() => {
+      const found = slot.container.querySelector<HTMLElement>('[data-badge-notice="rollout"]');
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    expect(notice.textContent).toContain("CSV-2 deploys when it merges, and CSV-1 is not live yet.");
+    expect(notice.textContent).not.toContain("traffic-low");
+    fireEvent.click(within(notice).getByRole("button", { name: "Acknowledge" }));
+    fireEvent.click(within(notice).getByRole("button", { name: "Click again to hide the badge" }));
+    await waitFor(() => expect(ackBadge).toHaveBeenCalledWith({ slug: "csv", tab: "rollout", items: [id], confirm: true }));
+    await waitFor(() => expect(tab.querySelector("[data-tab-badge]")).toBeNull());
   });
 
   const open = async (slot: Slot, key: string) => {

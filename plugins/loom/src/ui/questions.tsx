@@ -60,6 +60,8 @@ export function usePendingQuestions(threadId: string, also = false) {
   const waiting = useWaiting(threadId) || also;
   const [rows, setRows] = useState<PluginInteraction[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // Whether a list came back since the thread began to wait, so an empty `rows` means none rather than not read yet.
+  const [loaded, setLoaded] = useState(false);
   const latest = useRef(sdk);
   latest.current = sdk;
 
@@ -74,6 +76,7 @@ export function usePendingQuestions(threadId: string, also = false) {
           if (generation.current !== asked) return;
           setRows(list.filter(isPluginRow).filter((row) => row.status === "pending").sort((a, b) => a.createdAt - b.createdAt));
           setError(null);
+          setLoaded(true);
         },
         (failure: unknown) => generation.current === asked && setError(messageOf(failure)),
       );
@@ -83,6 +86,7 @@ export function usePendingQuestions(threadId: string, also = false) {
     else {
       setRows([]);
       setError(null);
+      setLoaded(false);
     }
     return () => {
       generation.current += 1;
@@ -93,7 +97,7 @@ export function usePendingQuestions(threadId: string, also = false) {
     await latest.current.threads.interactions.respond({ threadId, interactionId, value: { answers } });
     load();
   };
-  return { rows, error, respond, waiting };
+  return { rows, error, respond, waiting, loaded };
 }
 
 /** One answered or open round from a `system/interaction/lifecycle` event's interaction; null for anything that is not a planner question. */

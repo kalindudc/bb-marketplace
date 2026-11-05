@@ -155,12 +155,20 @@ describe("a comment's identity across edits, for auto_merge's rejected", () => {
   });
 });
 
-describe("a forge command stopped after it started", () => {
+// A loaded run can take seconds to start a shell, so these wait for the command itself rather than vitest's 5 seconds.
+describe("a forge command stopped after it started", { timeout: 20_000 }, () => {
   const stopAfterStart = async <T>(run: (signal: AbortSignal) => Promise<T>): Promise<T> => {
     const controller = new AbortController();
     const pending = run(controller.signal);
-    // The command prints its marker at once, then sleeps: wait for the marker, so the process has started.
-    for (let waited = 0; !existsSync(join(bin, "started")) && waited < 5000; waited += 20) await new Promise((done) => setTimeout(done, 20));
+    let ended = false;
+    void pending.then(
+      () => (ended = true),
+      () => (ended = true),
+    );
+    // The command touches its marker, then sleeps: abort only once the marker is there, however long the shell takes to start.
+    const marker = join(bin, "started");
+    while (!existsSync(marker) && !ended) await new Promise((done) => setTimeout(done, 10));
+    if (!existsSync(marker)) throw new Error("The command ended before it touched its start marker, so it was never stopped after it started.");
     controller.abort();
     return pending;
   };
