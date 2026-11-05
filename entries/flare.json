@@ -3,6 +3,11 @@
   "displayName": "Flare",
   "description": "Let an agent tell you what it found while it is still working. The agent sends up a flare, a finding, a decision, progress or a blocker, and keeps going: you see it at once in a banner above the message box and in the thread's Flares tab, with a push notification for blockers. The flare tool returns at once and never holds the agent's turn.",
   "icon": { "url": "plugins/flare/icons/flare.svg" },
+  "screenshots": [
+    "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/flare/overview.jpg",
+    "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/flare/finding.jpg",
+    "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/flare/blocker-summary.jpg"
+  ],
   "tags": ["agents", "findings", "progress", "notifications", "threads", "mid-turn"],
   "author": {
     "name": "Kalindu De Costa",

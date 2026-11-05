@@ -101,6 +101,11 @@
       "icon": {
         "url": "plugins/flare/icons/flare.svg"
       },
+      "screenshots": [
+        "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/flare/overview.jpg",
+        "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/flare/finding.jpg",
+        "https://raw.githubusercontent.com/kalindudc/bb-marketplace/main/screenshots/flare/blocker-summary.jpg"
+      ],
       "tags": [
         "agents",
         "findings",

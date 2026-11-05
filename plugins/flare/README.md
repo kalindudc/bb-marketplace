@@ -17,6 +17,16 @@ above the message box, instead of waiting for the message that ends its turn.
 - `bb flare send` and `bb flare list` do the same from a terminal;
   `skills/flare` teaches agents the commands.
 
+## Screenshots
+
+Captured in an isolated demo bb with a made-up checkout service, in the default theme, light mode.
+
+![The newest flare above the message box, with the Flares tab beside the thread](../../screenshots/flare/overview.jpg)
+
+![A finding with a diagram and a diff, drawn the way bb draws a reply](../../screenshots/flare/finding.jpg)
+
+![A decision, a blocker from a child thread and a closing summary](../../screenshots/flare/blocker-summary.jpg)
+
 ## Install
 
 ```sh
