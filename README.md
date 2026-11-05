@@ -12,6 +12,7 @@ bb plugin install better-browser@kalindudc
 bb plugin install follow-thinking@kalindudc
 bb plugin install forage@kalindudc
 bb plugin install gruve@kalindudc
+bb plugin install jumpstart@kalindudc
 bb plugin install lan-connect@kalindudc
 bb plugin install lineup@kalindudc
 bb plugin install loom@kalindudc
@@ -36,6 +37,7 @@ plugin store.
 | [Follow Thinking](plugins/follow-thinking) | `follow-thinking` | Opens thinking blocks in the timeline automatically and keeps live thinking scrolled to its newest line. Toggle it from the thread header, a thread's actions menu or the command palette. |
 | [Forage](plugins/forage) | `forage` | Gives every agent web search and web fetch as bb's own tools, so a pi, Codex, Claude Code or ACP thread gets results in a real timeline row instead of a raw tool call. Keyless DuckDuckGo and Exa, Brave or SearXNG with a key, batch queries, recency and domain filters, readable markdown, GitHub-aware fetching, paging and passage search. |
 | [Gruve](plugins/gruve) | `gruve` | A gruvbox theme for coding: 0px corners, flat surfaces, a JetBrains Mono interface and a composer styled as a terminal prompt. Dark mode is gruvbox soft; light mode keeps gruvbox's ink on neutral paper instead of yellow. Its settings pick the accent, the interface and code fonts, the text size, the corners and the prompt glyph. Pick it under Settings → Appearance. |
+| [Jumpstart](plugins/jumpstart) | `jumpstart` | Resumes the threads a network blip stopped, in one click: a button in the sidebar footer lists every failed thread with the error that stopped it, ticks the ones that failed on a dropped connection or a timeout, and retries the ticked ones through bb's own retry. `bb jumpstart` does the same from a terminal. |
 | [LAN Connect](plugins/lan-connect) | `lan-connect` | Opens this bb to phones and laptops on your home network: pair a device once with a code or QR code, then use bb in its browser at `<computer>.local`, its LAN IP or your own name. No bb account needed. |
 | [Lineup](plugins/lineup) | `lineup` | Adds a Lineup tab to bb's own model menu: the models you pin from any row, then the 3 your threads used most recently. Search also finds every recent model and matches from every provider, and the menu reopens on the list you used last. |
 | [Loom](plugins/loom) | `loom` | Run a software project with agents: a planner turns a goal into a validated spec and tickets, workers pick up tickets in their own worktrees, separate reviewers approve or request changes, and approved work merges into an integration branch or opens a pull request. |

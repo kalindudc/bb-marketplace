@@ -1,0 +1,21 @@
+{
+  "id": "jumpstart",
+  "displayName": "Jumpstart",
+  "description": "Resume the threads a network blip stopped, in one click. A button in the sidebar footer lists every failed thread with the error that stopped it, ticks the ones that failed on a dropped connection or a timeout, and retries the ticked ones through bb's own retry, restarting an agent that stopped answering first. `bb jumpstart` does the same from a terminal.",
+  "icon": "RotateCcw",
+  "tags": ["threads", "retry", "resume", "network", "errors", "sidebar"],
+  "author": {
+    "name": "Kalindu De Costa",
+    "github": "kalindudc"
+  },
+  "category": "utilities",
+  "overview": "./plugins/jumpstart/PLUGIN_OVERVIEW.md",
+  "source": {
+    "git": {
+      "url": "https://github.com/kalindudc/bb-marketplace.git",
+      "subdir": "plugins/jumpstart",
+      "range": ">=0.1.0 <1.0.0",
+      "tagPrefix": "jumpstart/"
+    }
+  }
+}

@@ -196,6 +196,34 @@
       }
     },
     {
+      "id": "jumpstart",
+      "displayName": "Jumpstart",
+      "description": "Resume the threads a network blip stopped, in one click. A button in the sidebar footer lists every failed thread with the error that stopped it, ticks the ones that failed on a dropped connection or a timeout, and retries the ticked ones through bb's own retry, restarting an agent that stopped answering first. `bb jumpstart` does the same from a terminal.",
+      "icon": "RotateCcw",
+      "tags": [
+        "threads",
+        "retry",
+        "resume",
+        "network",
+        "errors",
+        "sidebar"
+      ],
+      "author": {
+        "name": "Kalindu De Costa",
+        "github": "kalindudc"
+      },
+      "category": "utilities",
+      "overview": "Resume the threads a network blip stopped, in one click, instead of opening each one and typing \"continue\".\n\n## What you get\n\n- A **Resume failed threads** button in the sidebar footer. It opens a list of every thread that stopped on an error, newest first, with the error that stopped it and how long ago.\n- Threads that stopped on a network error start ticked: a dropped connection, a timeout, or a provider that was unavailable or overloaded. Threads that stopped for another reason, such as a model that does not exist, start unticked, and so do threads that already have a message waiting. Tick or untick any row, or use **All** and **None**.\n- **Resume** retries the failed turn on every ticked thread, the same way bb's own retry does: a turn the agent had started continues with \"Please continue.\", and a turn it never received is sent again, with the thread's model and reasoning level.\n- When the error says the agent's process died or stopped answering, Jumpstart stops the thread first, so bb starts a fresh agent on the same conversation. Without that, the retry would fail at once with \"No active Pi session\".\n- Each row then shows what happened: resuming, queued behind something such as a machine that is offline, or why it could not resume. Threads that resume leave the list.\n- The command palette command **Jumpstart: resume failed threads** opens the same list.\n- `bb jumpstart list` and `bb jumpstart kick --network` do the same from a terminal, and agents learn them from the plugin's skill.\n\n## Limits\n\n- Jumpstart never retries on its own: you press the button. bb's Provider retry plugin already retries some Codex and Claude Code failures by itself.\n- Whether an error counts as a network error comes from the provider's own error category when it reports one (Codex and Claude Code do), and otherwise from the error text bb logged (pi reports only text). An error Jumpstart does not recognise starts unticked; tick it to resume it anyway.\n- Only threads in bb's failed state are listed. Archived threads and hidden worker threads are left out.\n- Needs bb 0.48.1 or later.",
+      "source": {
+        "git": {
+          "url": "https://github.com/kalindudc/bb-marketplace.git",
+          "subdir": "plugins/jumpstart",
+          "range": ">=0.1.0 <1.0.0",
+          "tagPrefix": "jumpstart/"
+        }
+      }
+    },
+    {
       "id": "lan-connect",
       "displayName": "LAN Connect",
       "description": "Open this bb from phones and laptops on your home network: pair a device once with a code or QR code, then use bb in its browser at <computer>.local, its LAN IP or your own name. No bb account or getbb.app needed.",
